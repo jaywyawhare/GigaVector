@@ -1,5 +1,5 @@
 ################################################################################
-# C-VECTOR Machine Learning Library Makefile (Simplified)
+# GigaVector Library Makefile (Simplified)
 ################################################################################
 
 # Compiler and flags
@@ -15,7 +15,7 @@ BIN_DIR     := bin
 LIB_DIR     := lib
 
 # Library configuration
-LIB_NAME    := c_vector
+LIB_NAME    := GigaVector
 LIB_VERSION := 0.0.1 
 STATIC_LIB  := $(LIB_DIR)/lib$(LIB_NAME).a
 
