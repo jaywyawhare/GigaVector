@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "gigavector/gv_database.h"
+#include "gigavector/gv_distance.h"
 #include "gigavector/gv_kdtree.h"
 #include "gigavector/gv_vector.h"
 
@@ -196,5 +197,22 @@ int gv_db_save(const GV_Database *db, const char *filepath) {
     }
 
     return 0;
+}
+
+int gv_db_search(const GV_Database *db, const float *query_data, size_t k,
+                 GV_SearchResult *results, GV_DistanceType distance_type) {
+    if (db == NULL || query_data == NULL || results == NULL || k == 0) {
+        return -1;
+    }
+
+    if (db->root == NULL) {
+        return 0;
+    }
+
+    GV_Vector query_vec;
+    query_vec.dimension = db->dimension;
+    query_vec.data = (float *)query_data;
+
+    return gv_kdtree_knn_search(db->root, &query_vec, k, results, distance_type);
 }
 
