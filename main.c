@@ -20,6 +20,22 @@ int main(void) {
 
     printf("Inserted %zu vectors into KD-tree (root axis=%zu)\n", db->count, db->root ? db->root->axis : 0U);
 
+    if (gv_db_save(db, "database.bin") != 0) {
+        fprintf(stderr, "Failed to save database\n");
+        gv_db_close(db);
+        return 1;
+    }
+
+    printf("Saved database to database.bin\n");
+
     gv_db_close(db);
+
+    GV_Database *db2 = gv_db_open("database.bin", 3);
+    if (db2 == NULL) {
+        fprintf(stderr, "Failed to open database\n");
+        return 1;
+    }
+    printf("Opened database with %zu vectors\n", db2->count);
+    gv_db_close(db2);
     return 0;
 }
