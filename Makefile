@@ -1,6 +1,6 @@
 # Compiler and flags
 CC      := gcc
-CFLAGS  := -g -Wall -MMD -Iinclude
+CFLAGS  := -g -Wall -MMD -Iinclude -march=native -msse4.2 -mavx2 -mfma
 LDFLAGS := -lm
 
 # Project structure
