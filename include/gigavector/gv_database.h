@@ -60,6 +60,19 @@ int gv_db_add_vector(GV_Database *db, const float *data, size_t dimension);
  */
 int gv_db_save(const GV_Database *db, const char *filepath);
 
+/**
+ * @brief Search for k nearest neighbors to a query vector.
+ *
+ * @param db Database to search; must be non-NULL.
+ * @param query_data Query vector data array.
+ * @param k Number of nearest neighbors to find.
+ * @param results Output array of at least @p k elements.
+ * @param distance_type Distance metric to use.
+ * @return Number of neighbors found (0 to k), or -1 on error.
+ */
+int gv_db_search(const GV_Database *db, const float *query_data, size_t k,
+                 GV_SearchResult *results, GV_DistanceType distance_type);
+
 #ifdef __cplusplus
 }
 #endif
