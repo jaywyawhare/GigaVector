@@ -1,9 +1,11 @@
 #include <stdint.h>
-#include <stdint.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
+#include <float.h>
 
 #include "gigavector/gv_kdtree.h"
+#include "gigavector/gv_distance.h"
 #include "gigavector/gv_vector.h"
 
 static GV_KDNode *gv_kdtree_create_node(GV_Vector *point, size_t axis) {
@@ -176,5 +178,113 @@ void gv_kdtree_destroy_recursive(GV_KDNode *node) {
     gv_kdtree_destroy_recursive(node->right);
     gv_vector_destroy(node->point);
     free(node);
+}
+
+typedef struct {
+    GV_SearchResult *results;
+    size_t count;
+    size_t capacity;
+    float worst_distance;
+    GV_DistanceType distance_type;
+} GV_KNNContext;
+
+static void gv_knn_insert_result(GV_KNNContext *ctx, const GV_Vector *vector, float distance) {
+    if (ctx == NULL || vector == NULL) {
+        return;
+    }
+
+    if (ctx->count < ctx->capacity) {
+        ctx->results[ctx->count].vector = vector;
+        ctx->results[ctx->count].distance = distance;
+        ctx->count++;
+
+        for (size_t i = ctx->count - 1; i > 0; --i) {
+            if (ctx->results[i].distance < ctx->results[i - 1].distance) {
+                GV_SearchResult temp = ctx->results[i];
+                ctx->results[i] = ctx->results[i - 1];
+                ctx->results[i - 1] = temp;
+            } else {
+                break;
+            }
+        }
+
+        if (ctx->count == ctx->capacity) {
+            ctx->worst_distance = ctx->results[ctx->count - 1].distance;
+        }
+    } else if (distance < ctx->worst_distance) {
+        ctx->results[ctx->count - 1].vector = vector;
+        ctx->results[ctx->count - 1].distance = distance;
+
+        for (size_t i = ctx->count - 1; i > 0; --i) {
+            if (ctx->results[i].distance < ctx->results[i - 1].distance) {
+                GV_SearchResult temp = ctx->results[i];
+                ctx->results[i] = ctx->results[i - 1];
+                ctx->results[i - 1] = temp;
+            } else {
+                break;
+            }
+        }
+
+        ctx->worst_distance = ctx->results[ctx->count - 1].distance;
+    }
+}
+
+static void gv_knn_search_recursive(const GV_KDNode *node, const GV_Vector *query,
+                                     GV_KNNContext *ctx) {
+    if (node == NULL || query == NULL || ctx == NULL || node->point == NULL) {
+        return;
+    }
+
+    float dist = gv_distance(node->point, query, ctx->distance_type);
+    if (dist < 0.0f) {
+        return;
+    }
+
+    if (ctx->distance_type == GV_DISTANCE_COSINE) {
+        dist = 1.0f - dist;
+    }
+
+    gv_knn_insert_result(ctx, node->point, dist);
+
+    size_t axis = node->axis;
+    float query_value = query->data[axis];
+    float node_value = node->point->data[axis];
+    float diff = query_value - node_value;
+    float axis_distance = diff * diff;
+
+    const GV_KDNode *near = (query_value < node_value) ? node->left : node->right;
+    const GV_KDNode *far = (query_value < node_value) ? node->right : node->left;
+
+    if (near != NULL) {
+        gv_knn_search_recursive(near, query, ctx);
+    }
+
+    if (far != NULL && (ctx->count < ctx->capacity || axis_distance < ctx->worst_distance)) {
+        gv_knn_search_recursive(far, query, ctx);
+    }
+}
+
+int gv_kdtree_knn_search(const GV_KDNode *root, const GV_Vector *query, size_t k,
+                          GV_SearchResult *results, GV_DistanceType distance_type) {
+    if (root == NULL || query == NULL || results == NULL || k == 0) {
+        return -1;
+    }
+
+    if (query->dimension == 0 || query->data == NULL) {
+        return -1;
+    }
+
+    GV_KNNContext ctx;
+    ctx.results = results;
+    ctx.count = 0;
+    ctx.capacity = k;
+    ctx.worst_distance = FLT_MAX;
+    ctx.distance_type = distance_type;
+
+    memset(results, 0, k * sizeof(GV_SearchResult));
+
+    gv_knn_search_recursive(root, query, &ctx);
+
+    return (int)ctx.count;
 }
 

@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include <stdio.h>
 
+#include "gv_distance.h"
 #include "gv_types.h"
 
 #ifdef __cplusplus
@@ -57,6 +58,19 @@ int gv_kdtree_load_recursive(GV_KDNode **root, FILE *in, size_t dimension);
  * @param node Root of the subtree to destroy; may be NULL.
  */
 void gv_kdtree_destroy_recursive(GV_KDNode *node);
+
+/**
+ * @brief Find k nearest neighbors in the K-D tree.
+ *
+ * @param root Root of the K-D tree to search; may be NULL.
+ * @param query Query vector to find neighbors for.
+ * @param k Number of nearest neighbors to find.
+ * @param results Output array of at least @p k elements.
+ * @param distance_type Distance metric to use.
+ * @return Number of neighbors found (0 to k), or -1 on error.
+ */
+int gv_kdtree_knn_search(const GV_KDNode *root, const GV_Vector *query, size_t k,
+                          GV_SearchResult *results, GV_DistanceType distance_type);
 
 #ifdef __cplusplus
 }
