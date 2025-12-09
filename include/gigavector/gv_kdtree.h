@@ -2,6 +2,7 @@
 #define GIGAVECTOR_GV_KDTREE_H
 
 #include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 
 #include "gv_distance.h"
@@ -24,18 +25,21 @@ extern "C" {
 int gv_kdtree_insert(GV_KDNode **root, GV_Vector *point, size_t depth);
 
 /**
- * @brief Recursively serialize a K-D tree to an open FILE stream.
+ * @brief Recursively serialize a K-D tree (including metadata) to an open FILE stream.
  *
  * The format uses a pre-order traversal with presence flags for null nodes.
  * A byte flag is written for each node (1 = present, 0 = null). For present
  * nodes, the axis (uint32_t) and all vector components (float) are written
- * before recursing into children.
+ * before recursing into children. For format version >= 2, metadata is also
+ * written: uint32_t metadata_count, followed by key/value length-prefixed
+ * pairs (uint32_t key_len, key bytes, uint32_t value_len, value bytes).
  *
  * @param node Root of the subtree to serialize; may be NULL.
  * @param out Open FILE stream in binary mode.
+ * @param version Format version; metadata is included when version >= 2.
  * @return 0 on success, -1 on invalid arguments or write failure.
  */
-int gv_kdtree_save_recursive(const GV_KDNode *node, FILE *out);
+int gv_kdtree_save_recursive(const GV_KDNode *node, FILE *out, uint32_t version);
 
 /**
  * @brief Recursively load a K-D tree from an open FILE stream.
@@ -46,9 +50,10 @@ int gv_kdtree_save_recursive(const GV_KDNode *node, FILE *out);
  * @param root Pointer to receive the root pointer; must be non-NULL.
  * @param in Open FILE stream positioned at the start of a node record.
  * @param dimension Expected vector dimensionality.
+ * @param version Format version read from file; metadata is loaded when version >= 2.
  * @return 0 on success, -1 on invalid arguments or read/allocation failure.
  */
-int gv_kdtree_load_recursive(GV_KDNode **root, FILE *in, size_t dimension);
+int gv_kdtree_load_recursive(GV_KDNode **root, FILE *in, size_t dimension, uint32_t version);
 
 /**
  * @brief Recursively destroy a K-D tree and all its nodes.
@@ -71,6 +76,22 @@ void gv_kdtree_destroy_recursive(GV_KDNode *node);
  */
 int gv_kdtree_knn_search(const GV_KDNode *root, const GV_Vector *query, size_t k,
                           GV_SearchResult *results, GV_DistanceType distance_type);
+
+/**
+ * @brief Find k nearest neighbors with metadata filtering.
+ *
+ * @param root Root of the K-D tree to search; may be NULL.
+ * @param query Query vector to find neighbors for.
+ * @param k Number of nearest neighbors to find.
+ * @param results Output array of at least @p k elements.
+ * @param distance_type Distance metric to use.
+ * @param filter_key Metadata key to filter by; NULL to disable filtering.
+ * @param filter_value Metadata value to match; NULL if filter_key is NULL.
+ * @return Number of neighbors found (0 to k), or -1 on error.
+ */
+int gv_kdtree_knn_search_filtered(const GV_KDNode *root, const GV_Vector *query, size_t k,
+                                   GV_SearchResult *results, GV_DistanceType distance_type,
+                                   const char *filter_key, const char *filter_value);
 
 #ifdef __cplusplus
 }
