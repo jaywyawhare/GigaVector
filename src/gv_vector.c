@@ -2,6 +2,7 @@
 #include <string.h>
 
 #include "gigavector/gv_vector.h"
+#include "gigavector/gv_metadata.h"
 
 static int gv_vector_validate_index(const GV_Vector *vector, size_t index) {
     if (vector == NULL || vector->data == NULL) {
@@ -27,6 +28,7 @@ GV_Vector *gv_vector_create(size_t dimension) {
         return NULL;
     }
 
+    vector->metadata = NULL;
     return vector;
 }
 
@@ -49,6 +51,7 @@ void gv_vector_destroy(GV_Vector *vector) {
         return;
     }
 
+    gv_vector_clear_metadata(vector);
     free(vector->data);
     vector->data = NULL;
     free(vector);
