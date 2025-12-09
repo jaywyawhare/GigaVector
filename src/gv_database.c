@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "gigavector/gv_database.h"
+#include "gigavector/gv_kdtree.h"
 #include "gigavector/gv_vector.h"
 
 static char *gv_db_strdup(const char *src) {
@@ -18,16 +19,6 @@ static char *gv_db_strdup(const char *src) {
     }
     memcpy(copy, src, len);
     return copy;
-}
-
-static void gv_kdtree_destroy_recursive(GV_KDNode *node) {
-    if (node == NULL) {
-        return;
-    }
-    gv_kdtree_destroy_recursive(node->left);
-    gv_kdtree_destroy_recursive(node->right);
-    gv_vector_destroy(node->point);
-    free(node);
 }
 
 static int gv_db_write_header(FILE *out, uint32_t dimension, uint64_t count) {
@@ -70,6 +61,10 @@ static int gv_db_read_header(FILE *in, uint32_t *dimension_out, uint64_t *count_
 }
 
 GV_Database *gv_db_open(const char *filepath, size_t dimension) {
+    if (dimension == 0 && filepath == NULL) {
+        return NULL;
+    }
+
     GV_Database *db = (GV_Database *)malloc(sizeof(GV_Database));
     if (db == NULL) {
         return NULL;
@@ -77,31 +72,24 @@ GV_Database *gv_db_open(const char *filepath, size_t dimension) {
 
     db->dimension = dimension;
     db->root = NULL;
-    db->filepath = gv_db_strdup(filepath);
+    db->filepath = NULL;
     db->count = 0;
 
-    if (filepath != NULL && db->filepath == NULL) {
-        free(db);
-        return NULL;
-    }
-
-    if (filepath == NULL) {
-        if (dimension == 0) {
-            free(db->filepath);
+    if (filepath != NULL) {
+        db->filepath = gv_db_strdup(filepath);
+        if (db->filepath == NULL) {
             free(db);
             return NULL;
         }
+    }
+
+    if (filepath == NULL) {
         return db;
     }
 
     FILE *in = fopen(filepath, "rb");
     if (in == NULL) {
         if (errno == ENOENT) {
-            if (dimension == 0) {
-                free(db->filepath);
-                free(db);
-                return NULL;
-            }
             return db;
         }
         free(db->filepath);
@@ -135,7 +123,13 @@ GV_Database *gv_db_open(const char *filepath, size_t dimension) {
         return NULL;
     }
 
-    fclose(in);
+    if (fclose(in) != 0) {
+        gv_kdtree_destroy_recursive(db->root);
+        free(db->filepath);
+        free(db);
+        return NULL;
+    }
+
     db->count = file_count;
     return db;
 }
@@ -197,6 +191,10 @@ int gv_db_save(const GV_Database *db, const char *filepath) {
         status = -1;
     }
 
-    return status;
+    if (status != 0) {
+        return -1;
+    }
+
+    return 0;
 }
 
