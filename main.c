@@ -1,29 +1,25 @@
 #include <stdio.h>
 
-#include "gigavector/gv_vector.h"
-
-static void print_vector(const GV_Vector *vector) {
-    printf("Vector (dim=%zu): [", vector->dimension);
-    for (size_t i = 0; i < vector->dimension; ++i) {
-        float value = 0.0f;
-        gv_vector_get(vector, i, &value);
-        printf("%s%.3f", (i == 0) ? "" : ", ", value);
-    }
-    printf("]\n");
-}
+#include "gigavector/gigavector.h"
 
 int main(void) {
-    float sample_data[] = {1.0f, 2.0f, 3.5f};
-    GV_Vector *vector = gv_vector_create_from_data(3, sample_data);
-    if (vector == NULL) {
-        fprintf(stderr, "Failed to create vector\n");
+    GV_Database *db = gv_db_open("in-memory", 3);
+    if (db == NULL) {
+        fprintf(stderr, "Failed to create database\n");
         return 1;
     }
 
-    gv_vector_set(vector, 2, 4.25f);
+    float v1[] = {1.0f, 2.0f, 3.0f};
+    float v2[] = {4.0f, 1.5f, -0.5f};
 
-    print_vector(vector);
+    if (gv_db_add_vector(db, v1, 3) != 0 || gv_db_add_vector(db, v2, 3) != 0) {
+        fprintf(stderr, "Failed to insert vectors\n");
+        gv_db_close(db);
+        return 1;
+    }
 
-    gv_vector_destroy(vector);
+    printf("Inserted %zu vectors into KD-tree (root axis=%zu)\n", db->count, db->root ? db->root->axis : 0U);
+
+    gv_db_close(db);
     return 0;
 }
