@@ -49,6 +49,15 @@ int gv_kdtree_save_recursive(const GV_KDNode *node, FILE *out);
  */
 int gv_kdtree_load_recursive(GV_KDNode **root, FILE *in, size_t dimension);
 
+/**
+ * @brief Recursively destroy a K-D tree and all its nodes.
+ *
+ * Frees all nodes and their associated vectors. Safe to call with NULL.
+ *
+ * @param node Root of the subtree to destroy; may be NULL.
+ */
+void gv_kdtree_destroy_recursive(GV_KDNode *node);
+
 #ifdef __cplusplus
 }
 #endif

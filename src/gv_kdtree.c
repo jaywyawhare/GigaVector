@@ -125,8 +125,16 @@ int gv_kdtree_load_recursive(GV_KDNode **root, FILE *in, size_t dimension) {
         return 0;
     }
 
+    if (present != 1) {
+        return -1;
+    }
+
     uint32_t axis_u32 = 0;
     if (gv_read_uint32(in, &axis_u32) != 0) {
+        return -1;
+    }
+
+    if (axis_u32 >= dimension) {
         return -1;
     }
 
@@ -146,14 +154,27 @@ int gv_kdtree_load_recursive(GV_KDNode **root, FILE *in, size_t dimension) {
         return -1;
     }
 
-    if (gv_kdtree_load_recursive(&(node->left), in, dimension) != 0 ||
-        gv_kdtree_load_recursive(&(node->right), in, dimension) != 0) {
-        gv_vector_destroy(node->point);
-        free(node);
+    if (gv_kdtree_load_recursive(&(node->left), in, dimension) != 0) {
+        gv_kdtree_destroy_recursive(node);
+        return -1;
+    }
+
+    if (gv_kdtree_load_recursive(&(node->right), in, dimension) != 0) {
+        gv_kdtree_destroy_recursive(node);
         return -1;
     }
 
     *root = node;
     return 0;
+}
+
+void gv_kdtree_destroy_recursive(GV_KDNode *node) {
+    if (node == NULL) {
+        return;
+    }
+    gv_kdtree_destroy_recursive(node->left);
+    gv_kdtree_destroy_recursive(node->right);
+    gv_vector_destroy(node->point);
+    free(node);
 }
 
