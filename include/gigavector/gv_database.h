@@ -21,11 +21,14 @@ typedef struct GV_Database {
 } GV_Database;
 
 /**
- * @brief Create a new in-memory database with a target vector dimension.
+ * @brief Open an in-memory database, optionally loading from a file.
+ *
+ * If @p filepath points to an existing file, the database is loaded from it.
+ * If the file does not exist, a new empty database is created.
  *
  * @param filepath Optional file path string to associate with the database.
- * @param dimension Dimensionality all vectors in this database must share.
- * @return Allocated database instance or NULL on invalid arguments or allocation failure.
+ * @param dimension Expected dimensionality; if loading, it must match the file.
+ * @return Allocated database instance or NULL on invalid arguments or failure.
  */
 GV_Database *gv_db_open(const char *filepath, size_t dimension);
 
@@ -47,6 +50,15 @@ void gv_db_close(GV_Database *db);
  * @return 0 on success, -1 on invalid arguments or allocation failure.
  */
 int gv_db_add_vector(GV_Database *db, const float *data, size_t dimension);
+
+/**
+ * @brief Save the database (tree and vectors) to a binary file.
+ *
+ * @param db Database to persist; must be non-NULL.
+ * @param filepath Output file path; if NULL, uses db->filepath.
+ * @return 0 on success, -1 on invalid arguments or I/O failures.
+ */
+int gv_db_save(const GV_Database *db, const char *filepath);
 
 #ifdef __cplusplus
 }
