@@ -4,11 +4,21 @@
 #include <stddef.h>
 
 /**
- * @brief Represents a single floating-point vector.
+ * @brief Represents a key-value metadata pair.
+ */
+typedef struct GV_Metadata {
+    char *key;
+    char *value;
+    struct GV_Metadata *next;
+} GV_Metadata;
+
+/**
+ * @brief Represents a single floating-point vector with optional metadata.
  */
 typedef struct {
     size_t dimension;
     float *data;
+    GV_Metadata *metadata;
 } GV_Vector;
 
 /**
