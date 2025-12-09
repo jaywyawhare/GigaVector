@@ -7,6 +7,7 @@
 #include "gigavector/gv_database.h"
 #include "gigavector/gv_distance.h"
 #include "gigavector/gv_kdtree.h"
+#include "gigavector/gv_metadata.h"
 #include "gigavector/gv_vector.h"
 
 static char *gv_db_strdup(const char *src) {
@@ -22,9 +23,8 @@ static char *gv_db_strdup(const char *src) {
     return copy;
 }
 
-static int gv_db_write_header(FILE *out, uint32_t dimension, uint64_t count) {
+static int gv_db_write_header(FILE *out, uint32_t dimension, uint64_t count, uint32_t version) {
     const uint32_t magic = 0x47564442; /* "GVDB" in hex */
-    const uint32_t version = 1;
     if (fwrite(&magic, sizeof(uint32_t), 1, out) != 1) {
         return -1;
     }
@@ -40,7 +40,7 @@ static int gv_db_write_header(FILE *out, uint32_t dimension, uint64_t count) {
     return 0;
 }
 
-static int gv_db_read_header(FILE *in, uint32_t *dimension_out, uint64_t *count_out) {
+static int gv_db_read_header(FILE *in, uint32_t *dimension_out, uint64_t *count_out, uint32_t *version_out) {
     uint32_t magic = 0;
     uint32_t version = 0;
     if (fread(&magic, sizeof(uint32_t), 1, in) != 1) {
@@ -49,7 +49,7 @@ static int gv_db_read_header(FILE *in, uint32_t *dimension_out, uint64_t *count_
     if (fread(&version, sizeof(uint32_t), 1, in) != 1) {
         return -1;
     }
-    if (magic != 0x47564442 /* "GVDB" */ || version != 1) {
+    if (magic != 0x47564442 /* "GVDB" */) {
         return -1;
     }
     if (fread(dimension_out, sizeof(uint32_t), 1, in) != 1) {
@@ -57,6 +57,9 @@ static int gv_db_read_header(FILE *in, uint32_t *dimension_out, uint64_t *count_
     }
     if (fread(count_out, sizeof(uint64_t), 1, in) != 1) {
         return -1;
+    }
+    if (version_out != NULL) {
+        *version_out = version;
     }
     return 0;
 }
@@ -100,7 +103,8 @@ GV_Database *gv_db_open(const char *filepath, size_t dimension) {
 
     uint32_t file_dim = 0;
     uint64_t file_count = 0;
-    if (gv_db_read_header(in, &file_dim, &file_count) != 0) {
+    uint32_t file_version = 0;
+    if (gv_db_read_header(in, &file_dim, &file_count, &file_version) != 0) {
         fclose(in);
         free(db->filepath);
         free(db);
@@ -116,7 +120,14 @@ GV_Database *gv_db_open(const char *filepath, size_t dimension) {
 
     db->dimension = (size_t)file_dim;
 
-    if (gv_kdtree_load_recursive(&(db->root), in, db->dimension) != 0) {
+    if (file_version != 1 && file_version != 2) {
+        fclose(in);
+        free(db->filepath);
+        free(db);
+        return NULL;
+    }
+
+    if (gv_kdtree_load_recursive(&(db->root), in, db->dimension, file_version) != 0) {
         fclose(in);
         gv_kdtree_destroy_recursive(db->root);
         free(db->filepath);
@@ -164,6 +175,33 @@ int gv_db_add_vector(GV_Database *db, const float *data, size_t dimension) {
     return 0;
 }
 
+int gv_db_add_vector_with_metadata(GV_Database *db, const float *data, size_t dimension,
+                                    const char *metadata_key, const char *metadata_value) {
+    if (db == NULL || data == NULL || dimension == 0 || dimension != db->dimension) {
+        return -1;
+    }
+
+    GV_Vector *vector = gv_vector_create_from_data(dimension, data);
+    if (vector == NULL) {
+        return -1;
+    }
+
+    if (metadata_key != NULL && metadata_value != NULL) {
+        if (gv_vector_set_metadata(vector, metadata_key, metadata_value) != 0) {
+            gv_vector_destroy(vector);
+            return -1;
+        }
+    }
+
+    if (gv_kdtree_insert(&(db->root), vector, 0) != 0) {
+        gv_vector_destroy(vector);
+        return -1;
+    }
+
+    db->count += 1;
+    return 0;
+}
+
 int gv_db_save(const GV_Database *db, const char *filepath) {
     if (db == NULL) {
         return -1;
@@ -183,9 +221,10 @@ int gv_db_save(const GV_Database *db, const char *filepath) {
         return -1;
     }
 
-    int status = gv_db_write_header(out, (uint32_t)db->dimension, db->count);
+    const uint32_t version = 2;
+    int status = gv_db_write_header(out, (uint32_t)db->dimension, db->count, version);
     if (status == 0) {
-        status = gv_kdtree_save_recursive(db->root, out);
+        status = gv_kdtree_save_recursive(db->root, out, version);
     }
 
     if (fclose(out) != 0) {
@@ -212,7 +251,28 @@ int gv_db_search(const GV_Database *db, const float *query_data, size_t k,
     GV_Vector query_vec;
     query_vec.dimension = db->dimension;
     query_vec.data = (float *)query_data;
+    query_vec.metadata = NULL;
 
     return gv_kdtree_knn_search(db->root, &query_vec, k, results, distance_type);
+}
+
+int gv_db_search_filtered(const GV_Database *db, const float *query_data, size_t k,
+                          GV_SearchResult *results, GV_DistanceType distance_type,
+                          const char *filter_key, const char *filter_value) {
+    if (db == NULL || query_data == NULL || results == NULL || k == 0) {
+        return -1;
+    }
+
+    if (db->root == NULL) {
+        return 0;
+    }
+
+    GV_Vector query_vec;
+    query_vec.dimension = db->dimension;
+    query_vec.data = (float *)query_data;
+    query_vec.metadata = NULL;
+
+    return gv_kdtree_knn_search_filtered(db->root, &query_vec, k, results, distance_type,
+                                        filter_key, filter_value);
 }
 

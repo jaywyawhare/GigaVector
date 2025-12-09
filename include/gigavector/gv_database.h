@@ -52,6 +52,19 @@ void gv_db_close(GV_Database *db);
 int gv_db_add_vector(GV_Database *db, const float *data, size_t dimension);
 
 /**
+ * @brief Add a vector with metadata to the database.
+ *
+ * @param db Target database; must be non-NULL.
+ * @param data Pointer to an array of @p dimension floats.
+ * @param dimension Number of components provided in @p data; must equal db->dimension.
+ * @param metadata_key Optional metadata key; NULL to skip.
+ * @param metadata_value Optional metadata value; NULL if key is NULL.
+ * @return 0 on success, -1 on invalid arguments or allocation failure.
+ */
+int gv_db_add_vector_with_metadata(GV_Database *db, const float *data, size_t dimension,
+                                    const char *metadata_key, const char *metadata_value);
+
+/**
  * @brief Save the database (tree and vectors) to a binary file.
  *
  * @param db Database to persist; must be non-NULL.
@@ -72,6 +85,24 @@ int gv_db_save(const GV_Database *db, const char *filepath);
  */
 int gv_db_search(const GV_Database *db, const float *query_data, size_t k,
                  GV_SearchResult *results, GV_DistanceType distance_type);
+
+/**
+ * @brief Search for k nearest neighbors with metadata filtering.
+ *
+ * Only vectors matching the metadata filter (key-value pair) are considered.
+ *
+ * @param db Database to search; must be non-NULL.
+ * @param query_data Query vector data array.
+ * @param k Number of nearest neighbors to find.
+ * @param results Output array of at least @p k elements.
+ * @param distance_type Distance metric to use.
+ * @param filter_key Metadata key to filter by; NULL to disable filtering.
+ * @param filter_value Metadata value to match; NULL if filter_key is NULL.
+ * @return Number of neighbors found (0 to k), or -1 on error.
+ */
+int gv_db_search_filtered(const GV_Database *db, const float *query_data, size_t k,
+                          GV_SearchResult *results, GV_DistanceType distance_type,
+                          const char *filter_key, const char *filter_value);
 
 #ifdef __cplusplus
 }
