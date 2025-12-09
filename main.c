@@ -56,7 +56,43 @@ int main(void) {
         fprintf(stderr, "Warning: Expected 3 vectors, got %zu\n", db2->count);
     }
 
+    float query[] = {1.5f, 2.0f, 2.5f};
+    GV_SearchResult results[3];
+    int found = gv_db_search(db2, query, 3, results, GV_DISTANCE_EUCLIDEAN);
+    if (found < 0) {
+        fprintf(stderr, "Error: Search failed\n");
+        gv_db_close(db2);
+        return EXIT_FAILURE;
+    }
+
+    printf("\nEuclidean distance search results (query: [%.2f, %.2f, %.2f]):\n",
+           query[0], query[1], query[2]);
+    for (int i = 0; i < found; ++i) {
+        printf("  %d. Distance: %.4f, Vector: [", i + 1, results[i].distance);
+        for (size_t j = 0; j < db2->dimension; ++j) {
+            printf("%s%.2f", (j == 0) ? "" : ", ", results[i].vector->data[j]);
+        }
+        printf("]\n");
+    }
+
+    found = gv_db_search(db2, query, 3, results, GV_DISTANCE_COSINE);
+    if (found < 0) {
+        fprintf(stderr, "Error: Cosine search failed\n");
+        gv_db_close(db2);
+        return EXIT_FAILURE;
+    }
+
+    printf("\nCosine similarity search results:\n");
+    for (int i = 0; i < found; ++i) {
+        float similarity = 1.0f - results[i].distance;
+        printf("  %d. Similarity: %.4f, Vector: [", i + 1, similarity);
+        for (size_t j = 0; j < db2->dimension; ++j) {
+            printf("%s%.2f", (j == 0) ? "" : ", ", results[i].vector->data[j]);
+        }
+        printf("]\n");
+    }
+
     gv_db_close(db2);
-    printf("Database lifecycle completed successfully\n");
+    printf("\nDatabase lifecycle completed successfully\n");
     return EXIT_SUCCESS;
 }
