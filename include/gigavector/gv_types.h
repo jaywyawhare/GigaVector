@@ -21,5 +21,13 @@ typedef struct GV_KDNode {
     struct GV_KDNode *right;
 } GV_KDNode;
 
+/**
+ * @brief Represents a single search result with distance.
+ */
+typedef struct {
+    const GV_Vector *vector;
+    float distance;
+} GV_SearchResult;
+
 #endif
 
