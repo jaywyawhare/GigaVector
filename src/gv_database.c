@@ -74,6 +74,26 @@ static int gv_read_uint32(FILE *in, uint32_t *value) {
     return (value != NULL && fread(value, sizeof(uint32_t), 1, in) == 1) ? 0 : -1;
 }
 
+/* Simple CRC32 (polynomial 0xEDB88320), tableless for portability */
+static uint32_t gv_crc32_init(void) {
+    return 0xFFFFFFFFu;
+}
+
+static uint32_t gv_crc32_update(uint32_t crc, const void *data, size_t len) {
+    const uint8_t *p = (const uint8_t *)data;
+    for (size_t i = 0; i < len; ++i) {
+        crc ^= p[i];
+        for (int k = 0; k < 8; ++k) {
+            crc = (crc >> 1) ^ (0xEDB88320u & -(int)(crc & 1u));
+        }
+    }
+    return crc;
+}
+
+static uint32_t gv_crc32_finish(uint32_t crc) {
+    return crc ^ 0xFFFFFFFFu;
+}
+
 static char *gv_db_build_wal_path(const char *filepath) {
     if (filepath == NULL) {
         return NULL;
@@ -204,7 +224,7 @@ GV_Database *gv_db_open(const char *filepath, size_t dimension, GV_IndexType ind
 
     db->dimension = (size_t)file_dim;
 
-    if (file_version != 1 && file_version != 2) {
+    if (file_version != 1 && file_version != 2 && file_version != 3) {
         fclose(in);
         if (db->hnsw_index) gv_hnsw_destroy(db->hnsw_index);
         free(db->filepath);
@@ -268,16 +288,43 @@ GV_Database *gv_db_open(const char *filepath, size_t dimension, GV_IndexType ind
         return NULL;
     }
 
-    if (fclose(in) != 0) {
-        if (db->index_type == GV_INDEX_TYPE_KDTREE) {
-            gv_kdtree_destroy_recursive(db->root);
-        } else if (db->index_type == GV_INDEX_TYPE_HNSW) {
-            if (db->hnsw_index) gv_hnsw_destroy(db->hnsw_index);
+    if (file_version >= 3) {
+        if (fseek(in, 0, SEEK_END) != 0) {
+            goto load_fail;
         }
-        free(db->filepath);
-        free(db->wal_path);
-        free(db);
-        return NULL;
+        long end_pos = ftell(in);
+        if (end_pos < 4) {
+            goto load_fail;
+        }
+        if (fseek(in, end_pos - (long)sizeof(uint32_t), SEEK_SET) != 0) {
+            goto load_fail;
+        }
+        uint32_t stored_crc = 0;
+        if (gv_read_uint32(in, &stored_crc) != 0) {
+            goto load_fail;
+        }
+        if (fseek(in, 0, SEEK_SET) != 0) {
+            goto load_fail;
+        }
+        uint32_t crc = gv_crc32_init();
+        char buf[65536];
+        long remaining = end_pos - (long)sizeof(uint32_t);
+        while (remaining > 0) {
+            size_t chunk = (remaining > (long)sizeof(buf)) ? sizeof(buf) : (size_t)remaining;
+            if (fread(buf, 1, chunk, in) != chunk) {
+                goto load_fail;
+            }
+            crc = gv_crc32_update(crc, buf, chunk);
+            remaining -= (long)chunk;
+        }
+        crc = gv_crc32_finish(crc);
+        if (crc != stored_crc) {
+            goto load_fail;
+        }
+    }
+
+    if (fclose(in) != 0) {
+        goto load_fail;
     }
 
     if (db->index_type == GV_INDEX_TYPE_KDTREE) {
@@ -318,6 +365,20 @@ GV_Database *gv_db_open(const char *filepath, size_t dimension, GV_IndexType ind
         db->wal_replaying = 0;
     }
     return db;
+
+load_fail:
+    if (in != NULL) {
+        fclose(in);
+    }
+    if (db->index_type == GV_INDEX_TYPE_KDTREE) {
+        gv_kdtree_destroy_recursive(db->root);
+    } else if (db->index_type == GV_INDEX_TYPE_HNSW) {
+        if (db->hnsw_index) gv_hnsw_destroy(db->hnsw_index);
+    }
+    free(db->filepath);
+    free(db->wal_path);
+    free(db);
+    return NULL;
 }
 
 void gv_db_close(GV_Database *db) {
@@ -478,10 +539,11 @@ int gv_db_save(const GV_Database *db, const char *filepath) {
         return -1;
     }
 
-    const uint32_t version = 2;
+    const uint32_t version = 3;
     int status = gv_db_write_header(out, (uint32_t)db->dimension, db->count, version);
     if (status == 0) {
-        if (gv_write_uint32(out, (uint32_t)db->index_type) != 0) {
+        uint32_t index_type_u32 = (uint32_t)db->index_type;
+        if (gv_write_uint32(out, index_type_u32) != 0) {
             status = -1;
         } else if (db->index_type == GV_INDEX_TYPE_KDTREE) {
             status = gv_kdtree_save_recursive(db->root, out, version);
@@ -492,12 +554,39 @@ int gv_db_save(const GV_Database *db, const char *filepath) {
         }
     }
 
-    if (fclose(out) != 0) {
-        status = -1;
+    /* Append checksum (version >=3) */
+    if (status == 0) {
+        long end_pos = ftell(out);
+        if (end_pos < 0) {
+            status = -1;
+        } else {
+            uint32_t crc = gv_crc32_init();
+            if (fflush(out) != 0 || fseek(out, 0, SEEK_SET) != 0) {
+                status = -1;
+            } else {
+                char buf[65536];
+                long remaining = end_pos;
+                while (status == 0 && remaining > 0) {
+                    size_t chunk = (remaining > (long)sizeof(buf)) ? sizeof(buf) : (size_t)remaining;
+                    if (fread(buf, 1, chunk, out) != chunk) {
+                        status = -1;
+                        break;
+                    }
+                    crc = gv_crc32_update(crc, buf, chunk);
+                    remaining -= (long)chunk;
+                }
+                if (status == 0) {
+                    crc = gv_crc32_finish(crc);
+                    if (fseek(out, 0, SEEK_END) != 0 || gv_write_uint32(out, crc) != 0) {
+                        status = -1;
+                    }
+                }
+            }
+        }
     }
 
-    if (status != 0) {
-        return -1;
+    if (fclose(out) != 0) {
+        status = -1;
     }
 
     if (db->wal_path != NULL) {
