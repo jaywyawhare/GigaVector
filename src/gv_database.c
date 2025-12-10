@@ -10,6 +10,7 @@
 #include "gigavector/gv_kdtree.h"
 #include "gigavector/gv_metadata.h"
 #include "gigavector/gv_vector.h"
+#include "gigavector/gv_wal.h"
 
 static char *gv_db_strdup(const char *src) {
     if (src == NULL) {
@@ -73,6 +74,35 @@ static int gv_read_uint32(FILE *in, uint32_t *value) {
     return (value != NULL && fread(value, sizeof(uint32_t), 1, in) == 1) ? 0 : -1;
 }
 
+static char *gv_db_build_wal_path(const char *filepath) {
+    if (filepath == NULL) {
+        return NULL;
+    }
+
+    const char *dir_override = getenv("GV_WAL_DIR");
+    const char *basename = strrchr(filepath, '/');
+    basename = (basename == NULL) ? filepath : basename + 1;
+
+    char buf[1024];
+    if (dir_override != NULL && dir_override[0] != '\0') {
+        snprintf(buf, sizeof(buf), "%s/%s.wal", dir_override, basename);
+    } else {
+        snprintf(buf, sizeof(buf), "%s.wal", filepath);
+    }
+
+    return gv_db_strdup(buf);
+}
+
+static int gv_db_wal_apply(void *ctx, const float *data, size_t dimension,
+                           const char *metadata_key, const char *metadata_value) {
+    GV_Database *db = (GV_Database *)ctx;
+    (void)dimension;
+    if (gv_db_add_vector_with_metadata(db, data, db->dimension, metadata_key, metadata_value) != 0) {
+        return -1;
+    }
+    return 0;
+}
+
 GV_Database *gv_db_open(const char *filepath, size_t dimension, GV_IndexType index_type) {
     if (dimension == 0 && filepath == NULL) {
         return NULL;
@@ -88,6 +118,9 @@ GV_Database *gv_db_open(const char *filepath, size_t dimension, GV_IndexType ind
     db->root = NULL;
     db->hnsw_index = NULL;
     db->filepath = NULL;
+    db->wal_path = NULL;
+    db->wal = NULL;
+    db->wal_replaying = 0;
     db->count = 0;
 
     if (index_type == GV_INDEX_TYPE_HNSW && filepath == NULL) {
@@ -104,9 +137,19 @@ GV_Database *gv_db_open(const char *filepath, size_t dimension, GV_IndexType ind
             free(db);
             return NULL;
         }
+
+        db->wal_path = gv_db_build_wal_path(filepath);
+        if (db->wal_path == NULL) {
+            free(db->filepath);
+            free(db);
+            return NULL;
+        }
     }
 
     if (filepath == NULL) {
+        if (db->wal_path != NULL) {
+            db->wal = gv_wal_open(db->wal_path, db->dimension);
+        }
         return db;
     }
 
@@ -117,6 +160,17 @@ GV_Database *gv_db_open(const char *filepath, size_t dimension, GV_IndexType ind
                 db->hnsw_index = gv_hnsw_create(dimension, NULL);
                 if (db->hnsw_index == NULL) {
                     free(db->filepath);
+                    free(db->wal_path);
+                    free(db);
+                    return NULL;
+                }
+            }
+            if (db->wal_path != NULL) {
+                db->wal = gv_wal_open(db->wal_path, db->dimension);
+                if (db->wal == NULL) {
+                    if (db->hnsw_index) gv_hnsw_destroy(db->hnsw_index);
+                    free(db->filepath);
+                    free(db->wal_path);
                     free(db);
                     return NULL;
                 }
@@ -124,6 +178,7 @@ GV_Database *gv_db_open(const char *filepath, size_t dimension, GV_IndexType ind
             return db;
         }
         free(db->filepath);
+        free(db->wal_path);
         free(db);
         return NULL;
     }
@@ -134,6 +189,7 @@ GV_Database *gv_db_open(const char *filepath, size_t dimension, GV_IndexType ind
     if (gv_db_read_header(in, &file_dim, &file_count, &file_version) != 0) {
         fclose(in);
         free(db->filepath);
+        free(db->wal_path);
         free(db);
         return NULL;
     }
@@ -141,6 +197,7 @@ GV_Database *gv_db_open(const char *filepath, size_t dimension, GV_IndexType ind
     if (dimension != 0 && dimension != (size_t)file_dim) {
         fclose(in);
         free(db->filepath);
+        free(db->wal_path);
         free(db);
         return NULL;
     }
@@ -151,6 +208,7 @@ GV_Database *gv_db_open(const char *filepath, size_t dimension, GV_IndexType ind
         fclose(in);
         if (db->hnsw_index) gv_hnsw_destroy(db->hnsw_index);
         free(db->filepath);
+        free(db->wal_path);
         free(db);
         return NULL;
     }
@@ -161,6 +219,7 @@ GV_Database *gv_db_open(const char *filepath, size_t dimension, GV_IndexType ind
             fclose(in);
             if (db->hnsw_index) gv_hnsw_destroy(db->hnsw_index);
             free(db->filepath);
+            free(db->wal_path);
             free(db);
             return NULL;
         }
@@ -170,6 +229,7 @@ GV_Database *gv_db_open(const char *filepath, size_t dimension, GV_IndexType ind
         fclose(in);
         if (db->hnsw_index) gv_hnsw_destroy(db->hnsw_index);
         free(db->filepath);
+        free(db->wal_path);
         free(db);
         return NULL;
     }
@@ -179,6 +239,7 @@ GV_Database *gv_db_open(const char *filepath, size_t dimension, GV_IndexType ind
             fclose(in);
             gv_kdtree_destroy_recursive(db->root);
             free(db->filepath);
+            free(db->wal_path);
             free(db);
             return NULL;
         }
@@ -189,6 +250,7 @@ GV_Database *gv_db_open(const char *filepath, size_t dimension, GV_IndexType ind
             if (loaded_index) gv_hnsw_destroy(loaded_index);
             if (db->hnsw_index) gv_hnsw_destroy(db->hnsw_index);
             free(db->filepath);
+            free(db->wal_path);
             free(db);
             return NULL;
         }
@@ -201,6 +263,7 @@ GV_Database *gv_db_open(const char *filepath, size_t dimension, GV_IndexType ind
         fclose(in);
         if (db->hnsw_index) gv_hnsw_destroy(db->hnsw_index);
         free(db->filepath);
+        free(db->wal_path);
         free(db);
         return NULL;
     }
@@ -212,6 +275,7 @@ GV_Database *gv_db_open(const char *filepath, size_t dimension, GV_IndexType ind
             if (db->hnsw_index) gv_hnsw_destroy(db->hnsw_index);
         }
         free(db->filepath);
+        free(db->wal_path);
         free(db);
         return NULL;
     }
@@ -221,6 +285,38 @@ GV_Database *gv_db_open(const char *filepath, size_t dimension, GV_IndexType ind
     } else if (db->index_type == GV_INDEX_TYPE_HNSW) {
         db->count = gv_hnsw_count(db->hnsw_index);
     }
+
+    if (db->wal_path != NULL) {
+        db->wal = gv_wal_open(db->wal_path, db->dimension);
+        if (db->wal == NULL) {
+            if (db->index_type == GV_INDEX_TYPE_KDTREE) {
+                gv_kdtree_destroy_recursive(db->root);
+            } else if (db->index_type == GV_INDEX_TYPE_HNSW) {
+                if (db->hnsw_index) gv_hnsw_destroy(db->hnsw_index);
+            }
+            free(db->filepath);
+            free(db->wal_path);
+            free(db);
+            return NULL;
+        }
+
+        db->wal_replaying = 1;
+        if (gv_wal_replay(db->wal_path, db->dimension, gv_db_wal_apply, db) != 0) {
+            db->wal_replaying = 0;
+            gv_wal_close(db->wal);
+            db->wal = NULL;
+            if (db->index_type == GV_INDEX_TYPE_KDTREE) {
+                gv_kdtree_destroy_recursive(db->root);
+            } else if (db->index_type == GV_INDEX_TYPE_HNSW) {
+                if (db->hnsw_index) gv_hnsw_destroy(db->hnsw_index);
+            }
+            free(db->filepath);
+            free(db->wal_path);
+            free(db);
+            return NULL;
+        }
+        db->wal_replaying = 0;
+    }
     return db;
 }
 
@@ -229,18 +325,77 @@ void gv_db_close(GV_Database *db) {
         return;
     }
 
+    if (db->wal) {
+        gv_wal_close(db->wal);
+    }
+
     if (db->index_type == GV_INDEX_TYPE_KDTREE) {
         gv_kdtree_destroy_recursive(db->root);
     } else if (db->index_type == GV_INDEX_TYPE_HNSW) {
         gv_hnsw_destroy(db->hnsw_index);
     }
     free(db->filepath);
+    free(db->wal_path);
     free(db);
+}
+
+int gv_db_set_wal(GV_Database *db, const char *wal_path) {
+    if (db == NULL) {
+        return -1;
+    }
+
+    if (db->wal) {
+        gv_wal_close(db->wal);
+        db->wal = NULL;
+    }
+    free(db->wal_path);
+    db->wal_path = NULL;
+
+    if (wal_path == NULL) {
+        return 0;
+    }
+
+    db->wal_path = gv_db_strdup(wal_path);
+    if (db->wal_path == NULL) {
+        return -1;
+    }
+    db->wal = gv_wal_open(db->wal_path, db->dimension);
+    if (db->wal == NULL) {
+        free(db->wal_path);
+        db->wal_path = NULL;
+        return -1;
+    }
+    return 0;
+}
+
+void gv_db_disable_wal(GV_Database *db) {
+    if (db == NULL) {
+        return;
+    }
+    if (db->wal) {
+        gv_wal_close(db->wal);
+        db->wal = NULL;
+    }
+    free(db->wal_path);
+    db->wal_path = NULL;
+}
+
+int gv_db_wal_dump(const GV_Database *db, FILE *out) {
+    if (db == NULL || out == NULL || db->wal_path == NULL) {
+        return -1;
+    }
+    return gv_wal_dump(db->wal_path, db->dimension, out);
 }
 
 int gv_db_add_vector(GV_Database *db, const float *data, size_t dimension) {
     if (db == NULL || data == NULL || dimension == 0 || dimension != db->dimension) {
         return -1;
+    }
+
+    if (db->wal != NULL && db->wal_replaying == 0) {
+        if (gv_wal_append_insert(db->wal, data, dimension, NULL, NULL) != 0) {
+            return -1;
+        }
     }
 
     GV_Vector *vector = gv_vector_create_from_data(dimension, data);
@@ -268,6 +423,12 @@ int gv_db_add_vector_with_metadata(GV_Database *db, const float *data, size_t di
                                     const char *metadata_key, const char *metadata_value) {
     if (db == NULL || data == NULL || dimension == 0 || dimension != db->dimension) {
         return -1;
+    }
+
+    if (db->wal != NULL && db->wal_replaying == 0) {
+        if (gv_wal_append_insert(db->wal, data, dimension, metadata_key, metadata_value) != 0) {
+            return -1;
+        }
     }
 
     GV_Vector *vector = gv_vector_create_from_data(dimension, data);
@@ -337,6 +498,10 @@ int gv_db_save(const GV_Database *db, const char *filepath) {
 
     if (status != 0) {
         return -1;
+    }
+
+    if (db->wal_path != NULL) {
+        gv_wal_reset(db->wal_path);
     }
 
     return 0;

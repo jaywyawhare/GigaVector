@@ -3,8 +3,9 @@
 
 #include <stddef.h>
 
-#include "gv_kdtree.h"
 #include "gv_types.h"
+#include "gv_kdtree.h"
+#include "gv_wal.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -27,6 +28,9 @@ typedef struct GV_Database {
     GV_KDNode *root;
     void *hnsw_index;
     char *filepath;
+    char *wal_path;
+    GV_WAL *wal;
+    int wal_replaying;
     size_t count;
 } GV_Database;
 
@@ -114,6 +118,34 @@ int gv_db_search(const GV_Database *db, const float *query_data, size_t k,
 int gv_db_search_filtered(const GV_Database *db, const float *query_data, size_t k,
                           GV_SearchResult *results, GV_DistanceType distance_type,
                           const char *filter_key, const char *filter_value);
+
+/**
+ * @brief Enable or reconfigure WAL for a database.
+ *
+ * If a WAL is already open, it is closed and replaced. Passing NULL disables
+ * WAL logging.
+ *
+ * @param db Database handle; must be non-NULL.
+ * @param wal_path Filesystem path for the WAL; NULL to disable WAL.
+ * @return 0 on success, -1 on invalid arguments or I/O failure.
+ */
+int gv_db_set_wal(GV_Database *db, const char *wal_path);
+
+/**
+ * @brief Disable WAL for the database, closing any open WAL handle.
+ *
+ * @param db Database handle; must be non-NULL.
+ */
+void gv_db_disable_wal(GV_Database *db);
+
+/**
+ * @brief Dump the current WAL contents in human-readable form.
+ *
+ * @param db Database handle; must be non-NULL and have WAL enabled.
+ * @param out Output stream (e.g., stdout); must be non-NULL.
+ * @return 0 on success, -1 on error or if WAL is disabled.
+ */
+int gv_db_wal_dump(const GV_Database *db, FILE *out);
 
 #ifdef __cplusplus
 }
