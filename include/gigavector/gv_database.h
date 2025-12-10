@@ -2,6 +2,7 @@
 #define GIGAVECTOR_GV_DATABASE_H
 
 #include <stddef.h>
+#include <pthread.h>
 
 #include "gv_types.h"
 #include "gv_kdtree.h"
@@ -31,6 +32,8 @@ typedef struct GV_Database {
     char *wal_path;
     GV_WAL *wal;
     int wal_replaying;
+    pthread_rwlock_t rwlock;
+    pthread_mutex_t wal_mutex;
     size_t count;
 } GV_Database;
 

@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <pthread.h>
 
 #include "gigavector/gv_database.h"
 #include "gigavector/gv_distance.h"
@@ -74,7 +75,6 @@ static int gv_read_uint32(FILE *in, uint32_t *value) {
     return (value != NULL && fread(value, sizeof(uint32_t), 1, in) == 1) ? 0 : -1;
 }
 
-/* Simple CRC32 (polynomial 0xEDB88320), tableless for portability */
 static uint32_t gv_crc32_init(void) {
     return 0xFFFFFFFFu;
 }
@@ -141,6 +141,8 @@ GV_Database *gv_db_open(const char *filepath, size_t dimension, GV_IndexType ind
     db->wal_path = NULL;
     db->wal = NULL;
     db->wal_replaying = 0;
+    pthread_rwlock_init(&db->rwlock, NULL);
+    pthread_mutex_init(&db->wal_mutex, NULL);
     db->count = 0;
 
     if (index_type == GV_INDEX_TYPE_HNSW && filepath == NULL) {
@@ -390,6 +392,8 @@ void gv_db_close(GV_Database *db) {
         gv_wal_close(db->wal);
     }
 
+    pthread_rwlock_destroy(&db->rwlock);
+    pthread_mutex_destroy(&db->wal_mutex);
     if (db->index_type == GV_INDEX_TYPE_KDTREE) {
         gv_kdtree_destroy_recursive(db->root);
     } else if (db->index_type == GV_INDEX_TYPE_HNSW) {
@@ -454,13 +458,18 @@ int gv_db_add_vector(GV_Database *db, const float *data, size_t dimension) {
     }
 
     if (db->wal != NULL && db->wal_replaying == 0) {
-        if (gv_wal_append_insert(db->wal, data, dimension, NULL, NULL) != 0) {
+        pthread_mutex_lock(&db->wal_mutex);
+        int wal_res = gv_wal_append_insert(db->wal, data, dimension, NULL, NULL);
+        pthread_mutex_unlock(&db->wal_mutex);
+        if (wal_res != 0) {
             return -1;
         }
     }
 
+    pthread_rwlock_wrlock(&db->rwlock);
     GV_Vector *vector = gv_vector_create_from_data(dimension, data);
     if (vector == NULL) {
+        pthread_rwlock_unlock(&db->rwlock);
         return -1;
     }
 
@@ -473,10 +482,12 @@ int gv_db_add_vector(GV_Database *db, const float *data, size_t dimension) {
 
     if (status != 0) {
         gv_vector_destroy(vector);
+        pthread_rwlock_unlock(&db->rwlock);
         return -1;
     }
 
     db->count += 1;
+    pthread_rwlock_unlock(&db->rwlock);
     return 0;
 }
 
@@ -487,13 +498,18 @@ int gv_db_add_vector_with_metadata(GV_Database *db, const float *data, size_t di
     }
 
     if (db->wal != NULL && db->wal_replaying == 0) {
-        if (gv_wal_append_insert(db->wal, data, dimension, metadata_key, metadata_value) != 0) {
+        pthread_mutex_lock(&db->wal_mutex);
+        int wal_res = gv_wal_append_insert(db->wal, data, dimension, metadata_key, metadata_value);
+        pthread_mutex_unlock(&db->wal_mutex);
+        if (wal_res != 0) {
             return -1;
         }
     }
 
+    pthread_rwlock_wrlock(&db->rwlock);
     GV_Vector *vector = gv_vector_create_from_data(dimension, data);
     if (vector == NULL) {
+        pthread_rwlock_unlock(&db->rwlock);
         return -1;
     }
 
@@ -513,10 +529,12 @@ int gv_db_add_vector_with_metadata(GV_Database *db, const float *data, size_t di
 
     if (status != 0) {
         gv_vector_destroy(vector);
+        pthread_rwlock_unlock(&db->rwlock);
         return -1;
     }
 
     db->count += 1;
+    pthread_rwlock_unlock(&db->rwlock);
     return 0;
 }
 
@@ -525,17 +543,22 @@ int gv_db_save(const GV_Database *db, const char *filepath) {
         return -1;
     }
 
+    /* Serialize writers while saving */
+    pthread_rwlock_rdlock((pthread_rwlock_t *)&db->rwlock);
     const char *out_path = filepath != NULL ? filepath : db->filepath;
     if (out_path == NULL) {
+        pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
         return -1;
     }
 
     if (db->dimension == 0 || db->dimension > UINT32_MAX) {
+        pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
         return -1;
     }
 
     FILE *out = fopen(out_path, "wb");
     if (out == NULL) {
+        pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
         return -1;
     }
 
@@ -555,45 +578,42 @@ int gv_db_save(const GV_Database *db, const char *filepath) {
     }
 
     /* Append checksum (version >=3) */
+    if (fclose(out) != 0) {
+        status = -1;
+    }
+
     if (status == 0) {
-        long end_pos = ftell(out);
-        if (end_pos < 0) {
+        /* Compute checksum over file and append */
+        FILE *rf = fopen(out_path, "rb");
+        if (rf == NULL) {
             status = -1;
         } else {
             uint32_t crc = gv_crc32_init();
-            if (fflush(out) != 0 || fseek(out, 0, SEEK_SET) != 0) {
+            char buf[65536];
+            size_t nread = 0;
+            while ((nread = fread(buf, 1, sizeof(buf), rf)) > 0) {
+                crc = gv_crc32_update(crc, buf, nread);
+            }
+            if (ferror(rf)) {
                 status = -1;
-            } else {
-                char buf[65536];
-                long remaining = end_pos;
-                while (status == 0 && remaining > 0) {
-                    size_t chunk = (remaining > (long)sizeof(buf)) ? sizeof(buf) : (size_t)remaining;
-                    if (fread(buf, 1, chunk, out) != chunk) {
-                        status = -1;
-                        break;
-                    }
-                    crc = gv_crc32_update(crc, buf, chunk);
-                    remaining -= (long)chunk;
-                }
-                if (status == 0) {
-                    crc = gv_crc32_finish(crc);
-                    if (fseek(out, 0, SEEK_END) != 0 || gv_write_uint32(out, crc) != 0) {
-                        status = -1;
-                    }
+            }
+            fclose(rf);
+            if (status == 0) {
+                crc = gv_crc32_finish(crc);
+                FILE *af = fopen(out_path, "ab");
+                if (af == NULL || gv_write_uint32(af, crc) != 0 || fclose(af) != 0) {
+                    status = -1;
                 }
             }
         }
     }
 
-    if (fclose(out) != 0) {
-        status = -1;
-    }
-
-    if (db->wal_path != NULL) {
+    if (db->wal_path != NULL && status == 0) {
         gv_wal_reset(db->wal_path);
     }
 
-    return 0;
+    pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
+    return status == 0 ? 0 : -1;
 }
 
 int gv_db_search(const GV_Database *db, const float *query_data, size_t k,
@@ -602,10 +622,14 @@ int gv_db_search(const GV_Database *db, const float *query_data, size_t k,
         return -1;
     }
 
+    pthread_rwlock_rdlock((pthread_rwlock_t *)&db->rwlock);
+
     if (db->index_type == GV_INDEX_TYPE_KDTREE && db->root == NULL) {
+        pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
         return 0;
     }
     if (db->index_type == GV_INDEX_TYPE_HNSW && db->hnsw_index == NULL) {
+        pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
         return 0;
     }
 
@@ -615,10 +639,15 @@ int gv_db_search(const GV_Database *db, const float *query_data, size_t k,
     query_vec.metadata = NULL;
 
     if (db->index_type == GV_INDEX_TYPE_KDTREE) {
-        return gv_kdtree_knn_search(db->root, &query_vec, k, results, distance_type);
+        int r = gv_kdtree_knn_search(db->root, &query_vec, k, results, distance_type);
+        pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
+        return r;
     } else if (db->index_type == GV_INDEX_TYPE_HNSW) {
-        return gv_hnsw_search(db->hnsw_index, &query_vec, k, results, distance_type, NULL, NULL);
+        int r = gv_hnsw_search(db->hnsw_index, &query_vec, k, results, distance_type, NULL, NULL);
+        pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
+        return r;
     }
+    pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
     return -1;
 }
 
@@ -629,10 +658,14 @@ int gv_db_search_filtered(const GV_Database *db, const float *query_data, size_t
         return -1;
     }
 
+    pthread_rwlock_rdlock((pthread_rwlock_t *)&db->rwlock);
+
     if (db->index_type == GV_INDEX_TYPE_KDTREE && db->root == NULL) {
+        pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
         return 0;
     }
     if (db->index_type == GV_INDEX_TYPE_HNSW && db->hnsw_index == NULL) {
+        pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
         return 0;
     }
 
@@ -642,12 +675,17 @@ int gv_db_search_filtered(const GV_Database *db, const float *query_data, size_t
     query_vec.metadata = NULL;
 
     if (db->index_type == GV_INDEX_TYPE_KDTREE) {
-        return gv_kdtree_knn_search_filtered(db->root, &query_vec, k, results, distance_type,
+        int r = gv_kdtree_knn_search_filtered(db->root, &query_vec, k, results, distance_type,
                                             filter_key, filter_value);
+        pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
+        return r;
     } else if (db->index_type == GV_INDEX_TYPE_HNSW) {
-        return gv_hnsw_search(db->hnsw_index, &query_vec, k, results, distance_type,
+        int r = gv_hnsw_search(db->hnsw_index, &query_vec, k, results, distance_type,
                             filter_key, filter_value);
+        pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
+        return r;
     }
+    pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
     return -1;
 }
 
