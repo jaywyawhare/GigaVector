@@ -11,6 +11,7 @@ OBJ_DIR     := $(BUILD_DIR)/obj
 BIN_DIR     := $(BUILD_DIR)
 LIB_DIR     := $(BUILD_DIR)/lib
 DATA_DIR    := snapshots
+BENCH_DIR   := $(BUILD_DIR)/bench
 
 # Library configuration
 LIB_NAME    := GigaVector
@@ -21,6 +22,7 @@ STATIC_LIB  := $(LIB_DIR)/lib$(LIB_NAME).a
 SRC_FILES   := $(shell find $(SRC_DIR) -name "*.c")
 # Define the main source file for the executable
 MAIN_FILE   := main.c
+BENCH_FILES := benchmark_simd.c benchmark_compare.c
 
 # Generate object file paths
 # Library objects (from SRC_DIR)
@@ -42,6 +44,10 @@ run: $(BIN_DIR)/main
 	@mkdir -p $(DATA_DIR)
 	@echo "Running demo with outputs in $(DATA_DIR)/"
 	@cd $(DATA_DIR) && GV_DATA_DIR="$(abspath $(DATA_DIR))" GV_WAL_DIR="$(abspath $(DATA_DIR))" ../main
+
+.PHONY: bench
+bench: $(BENCH_DIR)/benchmark_simd $(BENCH_DIR)/benchmark_compare
+	@echo "Benchmarks built in $(BENCH_DIR)"
 
 # Build the main executable
 $(BIN_DIR)/main: $(ALL_OBJS) $(STATIC_LIB)
@@ -70,10 +76,21 @@ $(OBJ_DIR)/$(MAIN_FILE:.c=.o): $(MAIN_FILE)
 	$(CC) $(CFLAGS) -c $< -o $@
 	@echo "Compiled $< -> $@"
 
+# Build benchmarks
+$(BENCH_DIR)/benchmark_simd: benchmark_simd.c $(STATIC_LIB)
+	@mkdir -p $(BENCH_DIR)
+	$(CC) $(CFLAGS) $< -L$(LIB_DIR) -l$(LIB_NAME) $(LDFLAGS) -o $@
+	@echo "Built benchmark: $@"
+
+$(BENCH_DIR)/benchmark_compare: benchmark_compare.c $(STATIC_LIB)
+	@mkdir -p $(BENCH_DIR)
+	$(CC) $(CFLAGS) $< -L$(LIB_DIR) -l$(LIB_NAME) $(LDFLAGS) -o $@
+	@echo "Built benchmark: $@"
+
 # Clean build artifacts
 .PHONY: clean
 clean:
-	rm -rf $(BUILD_DIR) a.out *.d $(OBJ_DIR)/*.d
+	rm -rf $(BUILD_DIR) a.out *.d $(OBJ_DIR)/*.d $(DATA_DIR)
 	@echo "Cleaned build artifacts"
 
 -include $(DEPS)
