@@ -10,6 +10,7 @@ INCLUDE_DIR := include
 OBJ_DIR     := $(BUILD_DIR)/obj
 BIN_DIR     := $(BUILD_DIR)
 LIB_DIR     := $(BUILD_DIR)/lib
+DATA_DIR    := snapshots
 
 # Library configuration
 LIB_NAME    := GigaVector
@@ -35,6 +36,12 @@ DEPS := $(ALL_OBJS:.o=.d)
 # Default target: build the main executable
 .PHONY: all
 all: $(BIN_DIR)/main
+
+.PHONY: run
+run: $(BIN_DIR)/main
+	@mkdir -p $(DATA_DIR)
+	@echo "Running demo with outputs in $(DATA_DIR)/"
+	@cd $(DATA_DIR) && GV_DATA_DIR="$(abspath $(DATA_DIR))" GV_WAL_DIR="$(abspath $(DATA_DIR))" ../main
 
 # Build the main executable
 $(BIN_DIR)/main: $(ALL_OBJS) $(STATIC_LIB)
