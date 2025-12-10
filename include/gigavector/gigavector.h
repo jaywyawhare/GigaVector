@@ -8,6 +8,7 @@
 #include "gv_distance.h"
 #include "gv_kdtree.h"
 #include "gv_hnsw.h"
+#include "gv_wal.h"
 #include "gv_database.h"
 
 #endif
