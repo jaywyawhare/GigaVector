@@ -123,6 +123,51 @@ int gv_db_search_filtered(const GV_Database *db, const float *query_data, size_t
                           const char *filter_key, const char *filter_value);
 
 /**
+ * @brief Batch-insert multiple vectors from a contiguous float buffer.
+ *
+ * Layout: data is count * dimension floats, contiguous. Each vector has no
+ * metadata. Equivalent to calling gv_db_add_vector repeatedly but with less
+ * per-call overhead.
+ *
+ * @param db Target database; must be non-NULL.
+ * @param data Pointer to contiguous floats of size count * dimension.
+ * @param count Number of vectors.
+ * @param dimension Vector dimensionality (must match db->dimension).
+ * @return 0 on success, -1 on error (no partial rollback).
+ */
+int gv_db_add_vectors(GV_Database *db, const float *data, size_t count, size_t dimension);
+
+/**
+ * @brief Batch-insert vectors with optional metadata (one key/value per vector).
+ *
+ * @param db Target database; must be non-NULL.
+ * @param data Contiguous floats of size count * dimension.
+ * @param keys Optional array of metadata keys (can be NULL).
+ * @param values Optional array of metadata values (can be NULL if keys is NULL).
+ * @param count Number of vectors.
+ * @param dimension Vector dimensionality (must match db->dimension).
+ * @return 0 on success, -1 on error (no partial rollback).
+ */
+int gv_db_add_vectors_with_metadata(GV_Database *db, const float *data,
+                                    const char *const *keys, const char *const *values,
+                                    size_t count, size_t dimension);
+
+/**
+ * @brief Batch search for multiple queries.
+ *
+ * @param db Database to search; must be non-NULL.
+ * @param queries Contiguous float array of size qcount * dimension.
+ * @param qcount Number of queries.
+ * @param k Number of neighbors per query.
+ * @param results Output array sized qcount * k. Results for query i start at
+ *                results[i * k].
+ * @param distance_type Distance metric to use.
+ * @return Total results written (qcount * k) on success, or -1 on error.
+ */
+int gv_db_search_batch(const GV_Database *db, const float *queries, size_t qcount, size_t k,
+                       GV_SearchResult *results, GV_DistanceType distance_type);
+
+/**
  * @brief Enable or reconfigure WAL for a database.
  *
  * If a WAL is already open, it is closed and replaced. Passing NULL disables

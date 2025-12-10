@@ -538,6 +538,36 @@ int gv_db_add_vector_with_metadata(GV_Database *db, const float *data, size_t di
     return 0;
 }
 
+int gv_db_add_vectors(GV_Database *db, const float *data, size_t count, size_t dimension) {
+    if (db == NULL || data == NULL || count == 0 || dimension != db->dimension) {
+        return -1;
+    }
+    for (size_t i = 0; i < count; ++i) {
+        const float *vec = data + i * dimension;
+        if (gv_db_add_vector(db, vec, dimension) != 0) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
+int gv_db_add_vectors_with_metadata(GV_Database *db, const float *data,
+                                    const char *const *keys, const char *const *values,
+                                    size_t count, size_t dimension) {
+    if (db == NULL || data == NULL || count == 0 || dimension != db->dimension) {
+        return -1;
+    }
+    for (size_t i = 0; i < count; ++i) {
+        const float *vec = data + i * dimension;
+        const char *k = (keys != NULL) ? keys[i] : NULL;
+        const char *v = (values != NULL) ? values[i] : NULL;
+        if (gv_db_add_vector_with_metadata(db, vec, dimension, k, v) != 0) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
 int gv_db_save(const GV_Database *db, const char *filepath) {
     if (db == NULL) {
         return -1;
@@ -649,6 +679,45 @@ int gv_db_search(const GV_Database *db, const float *query_data, size_t k,
     }
     pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
     return -1;
+}
+
+int gv_db_search_batch(const GV_Database *db, const float *queries, size_t qcount, size_t k,
+                       GV_SearchResult *results, GV_DistanceType distance_type) {
+    if (db == NULL || queries == NULL || results == NULL || qcount == 0 || k == 0) {
+        return -1;
+    }
+    pthread_rwlock_rdlock((pthread_rwlock_t *)&db->rwlock);
+    if (db->index_type == GV_INDEX_TYPE_KDTREE && db->root == NULL) {
+        pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
+        return 0;
+    }
+    if (db->index_type == GV_INDEX_TYPE_HNSW && db->hnsw_index == NULL) {
+        pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
+        return 0;
+    }
+
+    GV_Vector qv;
+    qv.dimension = db->dimension;
+    qv.metadata = NULL;
+
+    for (size_t i = 0; i < qcount; ++i) {
+        qv.data = (float *)(queries + i * db->dimension);
+        GV_SearchResult *slot = results + i * k;
+        int r = -1;
+        if (db->index_type == GV_INDEX_TYPE_KDTREE) {
+            r = gv_kdtree_knn_search(db->root, &qv, k, slot, distance_type);
+        } else if (db->index_type == GV_INDEX_TYPE_HNSW) {
+            r = gv_hnsw_search(db->hnsw_index, &qv, k, slot, distance_type, NULL, NULL);
+        }
+        if (r < 0) {
+            pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
+            return -1;
+        }
+        /* If fewer than k, remaining results are unspecified; caller can check r. */
+    }
+
+    pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
+    return (int)(qcount * k);
 }
 
 int gv_db_search_filtered(const GV_Database *db, const float *query_data, size_t k,
