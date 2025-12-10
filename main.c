@@ -4,6 +4,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <errno.h>
+#include <time.h>
 
 #include "gigavector/gigavector.h"
 
@@ -28,8 +29,63 @@ static int gv_demo_join(char *out, size_t out_sz, const char *dir, const char *n
     return (n > 0 && (size_t)n < out_sz) ? 0 : -1;
 }
 
-int main(void) {
+static void gv_demo_usage(const char *prog) {
+    printf("Usage: %s [--index {kdtree|hnsw|ivfpq}] [--dim N]\n", prog);
+    printf("             [--ivf-nlist N] [--ivf-m N] [--ivf-nbits N]\n");
+    printf("             [--ivf-nprobe N] [--ivf-rerank N] [--ivf-cosine]\n");
+    printf("\nDefaults: kdtree index, dim=3; IVF-PQ defaults only used when --index ivfpq.\n");
+}
+
+static void gv_demo_fill_random(float *data, size_t count, size_t dim) {
+    for (size_t i = 0; i < count * dim; ++i) {
+        data[i] = (float)rand() / (float)RAND_MAX;
+    }
+}
+
+int main(int argc, char **argv) {
     printf("=== GigaVector Database Demo ===\n\n");
+
+    GV_IndexType index_type = GV_INDEX_TYPE_KDTREE;
+    size_t dim = 3;
+    size_t ivf_nlist = 256;
+    size_t ivf_m = 8;
+    uint8_t ivf_nbits = 8;
+    size_t ivf_nprobe = 16;
+    size_t ivf_rerank = 32;
+    int ivf_cosine = 0;
+
+    for (int i = 1; i < argc; ++i) {
+        const char *arg = argv[i];
+        if (strcmp(arg, "--help") == 0) {
+            gv_demo_usage(argv[0]);
+            return 0;
+        } else if (strcmp(arg, "--index") == 0 && i + 1 < argc) {
+            const char *v = argv[++i];
+            if (strcmp(v, "kdtree") == 0) index_type = GV_INDEX_TYPE_KDTREE;
+            else if (strcmp(v, "hnsw") == 0) index_type = GV_INDEX_TYPE_HNSW;
+            else if (strcmp(v, "ivfpq") == 0) { index_type = GV_INDEX_TYPE_IVFPQ; dim = 64; }
+        } else if (strcmp(arg, "--dim") == 0 && i + 1 < argc) {
+            dim = (size_t)strtoul(argv[++i], NULL, 10);
+        } else if (strcmp(arg, "--ivf-nlist") == 0 && i + 1 < argc) {
+            ivf_nlist = (size_t)strtoul(argv[++i], NULL, 10);
+        } else if (strcmp(arg, "--ivf-m") == 0 && i + 1 < argc) {
+            ivf_m = (size_t)strtoul(argv[++i], NULL, 10);
+        } else if (strcmp(arg, "--ivf-nbits") == 0 && i + 1 < argc) {
+            ivf_nbits = (uint8_t)strtoul(argv[++i], NULL, 10);
+        } else if (strcmp(arg, "--ivf-nprobe") == 0 && i + 1 < argc) {
+            ivf_nprobe = (size_t)strtoul(argv[++i], NULL, 10);
+        } else if (strcmp(arg, "--ivf-rerank") == 0 && i + 1 < argc) {
+            ivf_rerank = (size_t)strtoul(argv[++i], NULL, 10);
+        } else if (strcmp(arg, "--ivf-cosine") == 0) {
+            ivf_cosine = 1;
+        } else {
+            fprintf(stderr, "Unknown or incomplete option: %s\n", arg);
+            gv_demo_usage(argv[0]);
+            return EXIT_FAILURE;
+        }
+    }
+
+    srand((unsigned int)time(NULL));
 
     const char *data_dir = gv_demo_data_dir();
     if (gv_demo_mkpath(data_dir) != 0) {
@@ -37,233 +93,128 @@ int main(void) {
         return EXIT_FAILURE;
     }
     if (getenv("GV_WAL_DIR") == NULL) {
-        /* Keep WAL files alongside snapshots; cleaned by make clean */
         setenv("GV_WAL_DIR", data_dir, 1);
     }
 
-    char kdtree_path[512];
-    char hnsw_path[512];
-    if (gv_demo_join(kdtree_path, sizeof(kdtree_path), data_dir, "database.bin") != 0 ||
-        gv_demo_join(hnsw_path, sizeof(hnsw_path), data_dir, "hnsw_database.bin") != 0) {
+    char db_path[512];
+    if (gv_demo_join(db_path, sizeof(db_path), data_dir,
+                     (index_type == GV_INDEX_TYPE_KDTREE) ? "database.bin" :
+                     (index_type == GV_INDEX_TYPE_HNSW) ? "hnsw_database.bin" :
+                     "ivfpq_database.bin") != 0) {
         fprintf(stderr, "Error: Path construction failed\n");
         return EXIT_FAILURE;
     }
-    
-    printf("1. Testing KD-Tree Index:\n");
-    printf("------------------------\n");
-    GV_Database *db = gv_db_open(kdtree_path, 3, GV_INDEX_TYPE_KDTREE);
+
+    printf("Index: %s | dim=%zu\n", index_type == GV_INDEX_TYPE_KDTREE ? "kdtree" :
+                                   index_type == GV_INDEX_TYPE_HNSW ? "hnsw" : "ivfpq", dim);
+    GV_Database *db = gv_db_open(db_path, dim, index_type);
     if (db == NULL) {
-        fprintf(stderr, "Error: Failed to create database\n");
+        fprintf(stderr, "Error: Failed to create database (check WAL/index compatibility)\n");
         return EXIT_FAILURE;
     }
 
-    float v1[] = {1.0f, 2.0f, 3.0f};
-    float v2[] = {4.0f, 1.5f, -0.5f};
-    float v3[] = {0.0f, 0.0f, 0.0f};
-    float v4[] = {2.0f, 2.5f, 3.5f};
-    float v5[] = {5.0f, 0.0f, 1.0f};
+    if (index_type == GV_INDEX_TYPE_IVFPQ) {
+        GV_IVFPQConfig cfg = {.nlist = ivf_nlist, .m = ivf_m, .nbits = ivf_nbits,
+                              .nprobe = ivf_nprobe, .train_iters = 20,
+                              .default_rerank = ivf_rerank, .use_cosine = ivf_cosine};
+        gv_ivfpq_destroy(db->hnsw_index);
+        db->hnsw_index = gv_ivfpq_create(dim, &cfg);
+        if (!db->hnsw_index) {
+            fprintf(stderr, "Error: IVF-PQ create failed\n");
+            gv_db_close(db);
+            return EXIT_FAILURE;
+        }
+    }
 
-    if (gv_db_add_vector_with_metadata(db, v1, 3, "category", "A") != 0) {
-        fprintf(stderr, "Error: Failed to insert first vector\n");
+    size_t train_count = (index_type == GV_INDEX_TYPE_IVFPQ) ? 2048 : 0;
+    size_t vec_count = 16;
+    float *train = NULL;
+    if (train_count > 0) {
+        train = (float *)malloc(train_count * dim * sizeof(float));
+        if (!train) {
+            gv_db_close(db);
+            return EXIT_FAILURE;
+        }
+        gv_demo_fill_random(train, train_count, dim);
+        if (gv_ivfpq_train(db->hnsw_index, train, train_count) != 0) {
+            fprintf(stderr, "Error: IVF-PQ training failed\n");
+            free(train);
+            gv_db_close(db);
+            return EXIT_FAILURE;
+        }
+    }
+
+    float *data = (float *)malloc(vec_count * dim * sizeof(float));
+    if (!data) {
+        free(train);
         gv_db_close(db);
         return EXIT_FAILURE;
     }
+    gv_demo_fill_random(data, vec_count, dim);
+    for (size_t i = 0; i < vec_count; ++i) {
+        char idbuf[32];
+        snprintf(idbuf, sizeof(idbuf), "%zu", i);
+        if (gv_db_add_vector_with_metadata(db, data + i * dim, dim, "id", idbuf) != 0) {
+            fprintf(stderr, "Error: insert failed at %zu\n", i);
+            free(data);
+            free(train);
+            gv_db_close(db);
+            return EXIT_FAILURE;
+        }
+    }
 
-    if (gv_db_add_vector_with_metadata(db, v2, 3, "category", "B") != 0) {
-        fprintf(stderr, "Error: Failed to insert second vector\n");
+    printf("Inserted %zu vectors%s.\n", vec_count,
+           index_type == GV_INDEX_TYPE_IVFPQ ? " (IVF-PQ trained)" : "");
+
+    float *qbuf = (float *)malloc(dim * sizeof(float));
+    if (!qbuf) {
+        free(data);
+        free(train);
         gv_db_close(db);
         return EXIT_FAILURE;
     }
+    gv_demo_fill_random(qbuf, 1, dim);
 
-    if (gv_db_add_vector_with_metadata(db, v3, 3, "category", "A") != 0) {
-        fprintf(stderr, "Error: Failed to insert third vector\n");
-        gv_db_close(db);
-        return EXIT_FAILURE;
+    GV_SearchResult results[5] = {0};
+    int found = -1;
+    if (index_type == GV_INDEX_TYPE_IVFPQ) {
+        found = gv_db_search_ivfpq_opts(db, qbuf, 5, results,
+                                        ivf_cosine ? GV_DISTANCE_COSINE : GV_DISTANCE_EUCLIDEAN,
+                                        ivf_nprobe, ivf_rerank);
+    } else {
+        found = gv_db_search(db, qbuf, 5, results, GV_DISTANCE_EUCLIDEAN);
     }
 
-    if (gv_db_add_vector_with_metadata(db, v4, 3, "category", "A") != 0) {
-        fprintf(stderr, "Error: Failed to insert fourth vector\n");
-        gv_db_close(db);
-        return EXIT_FAILURE;
-    }
-
-    if (gv_db_add_vector_with_metadata(db, v5, 3, "category", "B") != 0) {
-        fprintf(stderr, "Error: Failed to insert fifth vector\n");
-        gv_db_close(db);
-        return EXIT_FAILURE;
-    }
-
-    printf("Successfully inserted %zu vectors with metadata into KD-tree (root axis=%zu)\n",
-           db->count, db->root ? db->root->axis : 0U);
-
-    if (gv_db_save(db, NULL) != 0) {
-        fprintf(stderr, "Error: Failed to save database to %s\n", kdtree_path);
-        gv_db_close(db);
-        return EXIT_FAILURE;
-    }
-
-    printf("Successfully saved database to %s\n", kdtree_path);
-
-    GV_Database *db2 = gv_db_open(kdtree_path, 3, GV_INDEX_TYPE_KDTREE);
-    if (db2 == NULL) {
-        fprintf(stderr, "Error: Failed to load database from %s\n", kdtree_path);
-        gv_db_close(db);
-        return EXIT_FAILURE;
-    }
-
-    printf("Successfully loaded database with %zu vectors\n", db2->count);
-    if (db2->count != 5) {
-        fprintf(stderr, "Warning: Expected 5 vectors, got %zu\n", db2->count);
-    }
-
-    float query[] = {1.5f, 2.0f, 2.5f};
-    GV_SearchResult results[5];
-    int found = gv_db_search(db2, query, 3, results, GV_DISTANCE_EUCLIDEAN);
     if (found < 0) {
         fprintf(stderr, "Error: Search failed\n");
+        free(qbuf);
+        free(data);
+        free(train);
         gv_db_close(db);
-        gv_db_close(db2);
         return EXIT_FAILURE;
     }
 
-    printf("\nEuclidean distance search results (query: [%.2f, %.2f, %.2f]):\n",
-           query[0], query[1], query[2]);
+    printf("\nSearch results (top %d):\n", found);
     for (int i = 0; i < found; ++i) {
-        const char *category = gv_vector_get_metadata(results[i].vector, "category");
-        printf("  %d. Distance: %.4f, Vector: [", i + 1, results[i].distance);
-        for (size_t j = 0; j < db2->dimension; ++j) {
-            printf("%s%.2f", (j == 0) ? "" : ", ", results[i].vector->data[j]);
-        }
-        printf("], Category: %s\n", category ? category : "none");
+        printf("Rank %d: Distance = %f\n", i + 1, results[i].distance);
     }
 
-    found = gv_db_search(db2, query, 5, results, GV_DISTANCE_COSINE);
-    if (found < 0) {
-        fprintf(stderr, "Error: Cosine search failed\n");
+    printf("\nSaving database to %s\n", db_path);
+    if (gv_db_save(db, NULL) != 0) {
+        fprintf(stderr, "Error: Failed to save database\n");
+        free(qbuf);
+        free(data);
+        free(train);
         gv_db_close(db);
-        gv_db_close(db2);
         return EXIT_FAILURE;
     }
+    printf("Database saved successfully.\n");
 
-    printf("\nCosine similarity search results:\n");
-    for (int i = 0; i < found; ++i) {
-        float similarity = 1.0f - results[i].distance;
-        const char *category = gv_vector_get_metadata(results[i].vector, "category");
-        printf("  %d. Similarity: %.4f, Vector: [", i + 1, similarity);
-        for (size_t j = 0; j < db2->dimension; ++j) {
-            printf("%s%.2f", (j == 0) ? "" : ", ", results[i].vector->data[j]);
-        }
-        printf("], Category: %s\n", category ? category : "none");
-    }
-
-    found = gv_db_search_filtered(db2, query, 5, results, GV_DISTANCE_EUCLIDEAN,
-                                   "category", "A");
-    if (found < 0) {
-        fprintf(stderr, "Error: Filtered search failed\n");
-        gv_db_close(db);
-        gv_db_close(db2);
-        return EXIT_FAILURE;
-    }
-
-    printf("\nFiltered search (category='A') results:\n");
-    for (int i = 0; i < found; ++i) {
-        const char *category = gv_vector_get_metadata(results[i].vector, "category");
-        printf("  %d. Distance: %.4f, Vector: [", i + 1, results[i].distance);
-        for (size_t j = 0; j < db2->dimension; ++j) {
-            printf("%s%.2f", (j == 0) ? "" : ", ", results[i].vector->data[j]);
-        }
-        printf("], Category: %s\n", category ? category : "none");
-    }
-
+    free(qbuf);
+    free(data);
+    free(train);
     gv_db_close(db);
-    gv_db_close(db2);
-    printf("\nKD-Tree database lifecycle completed successfully\n\n");
-
-    printf("2. Testing HNSW Index:\n");
-    printf("----------------------\n");
-    GV_Database *db_hnsw = gv_db_open(hnsw_path, 3, GV_INDEX_TYPE_HNSW);
-    if (db_hnsw == NULL) {
-        fprintf(stderr, "Error: Failed to create HNSW database\n");
-        return EXIT_FAILURE;
-    }
-
-    float v1_hnsw[] = {1.0f, 2.0f, 3.0f};
-    float v2_hnsw[] = {4.0f, 1.5f, -0.5f};
-    float v3_hnsw[] = {0.0f, 0.0f, 0.0f};
-    float v4_hnsw[] = {2.0f, 2.5f, 3.5f};
-    float v5_hnsw[] = {5.0f, 0.0f, 1.0f};
-
-    if (gv_db_add_vector_with_metadata(db_hnsw, v1_hnsw, 3, "category", "A") != 0 ||
-        gv_db_add_vector_with_metadata(db_hnsw, v2_hnsw, 3, "category", "B") != 0 ||
-        gv_db_add_vector_with_metadata(db_hnsw, v3_hnsw, 3, "category", "A") != 0 ||
-        gv_db_add_vector_with_metadata(db_hnsw, v4_hnsw, 3, "category", "A") != 0 ||
-        gv_db_add_vector_with_metadata(db_hnsw, v5_hnsw, 3, "category", "B") != 0) {
-        fprintf(stderr, "Error: Failed to insert vectors into HNSW\n");
-        gv_db_close(db_hnsw);
-        return EXIT_FAILURE;
-    }
-
-    printf("Successfully inserted %zu vectors into HNSW index\n", db_hnsw->count);
-
-    if (gv_db_save(db_hnsw, NULL) != 0) {
-        fprintf(stderr, "Error: Failed to save HNSW database to %s\n", hnsw_path);
-        gv_db_close(db_hnsw);
-        return EXIT_FAILURE;
-    }
-    printf("Successfully saved HNSW database to %s\n", hnsw_path);
-
-    GV_Database *db_hnsw2 = gv_db_open(hnsw_path, 3, GV_INDEX_TYPE_HNSW);
-    if (db_hnsw2 == NULL) {
-        fprintf(stderr, "Error: Failed to load HNSW database from file %s\n", hnsw_path);
-        gv_db_close(db_hnsw);
-        return EXIT_FAILURE;
-    }
-    printf("Successfully loaded HNSW database with %zu vectors\n\n", db_hnsw2->count);
-
-    float query_hnsw[] = {1.5f, 2.0f, 2.5f};
-    GV_SearchResult results_hnsw[5];
-    int found_hnsw = gv_db_search(db_hnsw2, query_hnsw, 5, results_hnsw, GV_DISTANCE_EUCLIDEAN);
-    
-    if (found_hnsw < 0) {
-        fprintf(stderr, "Error: HNSW search failed (returned %d)\n", found_hnsw);
-        gv_db_close(db_hnsw);
-        return EXIT_FAILURE;
-    }
-    
-    if (found_hnsw == 0) {
-        printf("HNSW search returned 0 results (index may be empty or search failed)\n");
-        gv_db_close(db_hnsw);
-        return EXIT_FAILURE;
-    }
-
-    printf("\nHNSW Search Results (k=5, query: [%.2f, %.2f, %.2f]):\n",
-           query_hnsw[0], query_hnsw[1], query_hnsw[2]);
-    for (int i = 0; i < found_hnsw; ++i) {
-        const char *category = gv_vector_get_metadata(results_hnsw[i].vector, "category");
-        printf("  %d. Distance: %.4f, Vector: [", i + 1, results_hnsw[i].distance);
-        for (size_t j = 0; j < db_hnsw->dimension; ++j) {
-            printf("%s%.2f", (j == 0) ? "" : ", ", results_hnsw[i].vector->data[j]);
-        }
-        printf("], Category: %s\n", category ? category : "none");
-    }
-
-    found_hnsw = gv_db_search_filtered(db_hnsw2, query_hnsw, 5, results_hnsw, GV_DISTANCE_EUCLIDEAN,
-                                       "category", "A");
-    if (found_hnsw >= 0) {
-        printf("\nHNSW Filtered Search (category='A'):\n");
-        for (int i = 0; i < found_hnsw; ++i) {
-            const char *category = gv_vector_get_metadata(results_hnsw[i].vector, "category");
-            printf("  %d. Distance: %.4f, Vector: [", i + 1, results_hnsw[i].distance);
-            for (size_t j = 0; j < db_hnsw->dimension; ++j) {
-                printf("%s%.2f", (j == 0) ? "" : ", ", results_hnsw[i].vector->data[j]);
-            }
-            printf("], Category: %s\n", category ? category : "none");
-        }
-    }
-
-    gv_db_close(db_hnsw);
-    gv_db_close(db_hnsw2);
-    printf("\nHNSW database lifecycle completed successfully\n");
-    printf("\n=== All tests completed successfully ===\n");
+    printf("\nDemo completed successfully.\n");
     return EXIT_SUCCESS;
 }
+
