@@ -1,6 +1,6 @@
 # Compiler and flags
 CC      := gcc
-CFLAGS  := -g -Wall -MMD -Iinclude -march=native -msse4.2 -mavx2 -mfma -pthread
+CFLAGS  := -g -Wall -MMD -Iinclude -march=native -msse4.2 -mavx2 -mavx512f -mfma -pthread
 LDFLAGS := -lm -pthread
 
 # Project structure
@@ -22,7 +22,8 @@ STATIC_LIB  := $(LIB_DIR)/lib$(LIB_NAME).a
 SRC_FILES   := $(shell find $(SRC_DIR) -name "*.c")
 # Define the main source file for the executable
 MAIN_FILE   := main.c
-BENCH_FILES := benchmark_simd.c benchmark_compare.c
+BENCH_FILES := benchmark_simd.c benchmark_compare.c benchmark_ivfpq.c benchmark_ivfpq_recall.c
+TEST_DIR    := tests
 
 # Generate object file paths
 # Library objects (from SRC_DIR)
@@ -46,7 +47,7 @@ run: $(BIN_DIR)/main
 	@cd $(DATA_DIR) && GV_DATA_DIR="$(abspath $(DATA_DIR))" GV_WAL_DIR="$(abspath $(DATA_DIR))" ../main
 
 .PHONY: bench
-bench: $(BENCH_DIR)/benchmark_simd $(BENCH_DIR)/benchmark_compare
+bench: $(BENCH_DIR)/benchmark_simd $(BENCH_DIR)/benchmark_compare $(BENCH_DIR)/benchmark_ivfpq $(BENCH_DIR)/benchmark_ivfpq_recall
 	@echo "Benchmarks built in $(BENCH_DIR)"
 
 # Build the main executable
@@ -87,10 +88,32 @@ $(BENCH_DIR)/benchmark_compare: benchmark_compare.c $(STATIC_LIB)
 	$(CC) $(CFLAGS) $< -L$(LIB_DIR) -l$(LIB_NAME) $(LDFLAGS) -o $@
 	@echo "Built benchmark: $@"
 
+$(BENCH_DIR)/benchmark_ivfpq: benchmark_ivfpq.c $(STATIC_LIB)
+	@mkdir -p $(BENCH_DIR)
+	$(CC) $(CFLAGS) $< -L$(LIB_DIR) -l$(LIB_NAME) $(LDFLAGS) -o $@
+	@echo "Built benchmark: $@"
+
+$(BENCH_DIR)/benchmark_ivfpq_recall: benchmark_ivfpq_recall.c $(STATIC_LIB)
+	@mkdir -p $(BENCH_DIR)
+	$(CC) $(CFLAGS) $< -L$(LIB_DIR) -l$(LIB_NAME) $(LDFLAGS) -o $@
+	@echo "Built benchmark: $@"
+
 # Clean build artifacts
 .PHONY: clean
 clean:
 	rm -rf $(BUILD_DIR) a.out *.d $(OBJ_DIR)/*.d $(DATA_DIR)
 	@echo "Cleaned build artifacts"
+
+.PHONY: test-corrupt-wal
+test-corrupt-wal: $(BIN_DIR)/main
+	@bash $(TEST_DIR)/corrupt_wal.sh $(DATA_DIR)/database.bin.wal || true
+
+.PHONY: test-corrupt-snapshot
+test-corrupt-snapshot: $(BIN_DIR)/main
+	@bash $(TEST_DIR)/corrupt_snapshot.sh $(DATA_DIR)/database.bin || true
+
+.PHONY: bench-ivfpq-suite
+bench-ivfpq-suite: $(BENCH_DIR)/benchmark_ivfpq $(BENCH_DIR)/benchmark_ivfpq_recall
+	@BIN_DIR=$(BENCH_DIR) bash $(TEST_DIR)/ivfpq_suite.sh
 
 -include $(DEPS)
