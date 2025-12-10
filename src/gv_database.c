@@ -566,6 +566,8 @@ int gv_db_add_vector_with_metadata(GV_Database *db, const float *data, size_t di
         status = gv_kdtree_insert(&(db->root), vector, 0);
     } else if (db->index_type == GV_INDEX_TYPE_HNSW) {
         status = gv_hnsw_insert(db->hnsw_index, vector);
+    } else if (db->index_type == GV_INDEX_TYPE_IVFPQ) {
+        status = gv_ivfpq_insert(db->hnsw_index, vector);
     }
 
     if (status != 0) {
