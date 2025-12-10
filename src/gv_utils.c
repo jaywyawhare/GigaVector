@@ -49,6 +49,9 @@ unsigned int gv_cpu_detect_features(void) {
         if (ebx & bit_AVX2) {
             features |= GV_CPU_FEATURE_AVX2;
         }
+        if (ebx & bit_AVX512F) {
+            features |= GV_CPU_FEATURE_AVX512F;
+        }
     }
 
     g_cpu_features = features;
