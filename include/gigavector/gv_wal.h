@@ -21,9 +21,10 @@ typedef struct GV_WAL GV_WAL;
  *
  * @param path Filesystem path to the WAL file.
  * @param dimension Expected vector dimension.
+ * @param index_type Index type identifier (as uint32_t); validated when nonzero.
  * @return Allocated WAL handle or NULL on failure.
  */
-GV_WAL *gv_wal_open(const char *path, size_t dimension);
+GV_WAL *gv_wal_open(const char *path, size_t dimension, uint32_t index_type);
 
 /**
  * @brief Append an insert operation to the WAL.
@@ -48,13 +49,14 @@ int gv_wal_append_insert(GV_WAL *wal, const float *data, size_t dimension,
  *
  * @param path WAL file path.
  * @param expected_dimension Dimension the WAL must match.
+ * @param expected_index_type Index type; validated when nonzero (skipped for old WALs).
  * @param on_insert Callback invoked per insert record; must return 0 on success.
  * @return 0 on success, -1 on I/O or validation failure, or if the callback fails.
  */
 int gv_wal_replay(const char *path, size_t expected_dimension,
                   int (*on_insert)(void *ctx, const float *data, size_t dimension,
                                    const char *metadata_key, const char *metadata_value),
-                  void *ctx);
+                  void *ctx, uint32_t expected_index_type);
 
 /**
  * @brief Human-readable dump of WAL contents for debugging.
@@ -64,10 +66,11 @@ int gv_wal_replay(const char *path, size_t expected_dimension,
  *
  * @param path WAL file path.
  * @param expected_dimension Expected vector dimension (must match the WAL).
+ * @param expected_index_type Expected index type; 0 to skip (for old WALs).
  * @param out Output stream; must be non-NULL (e.g., stdout).
  * @return 0 on success, -1 on error.
  */
-int gv_wal_dump(const char *path, size_t expected_dimension, FILE *out);
+int gv_wal_dump(const char *path, size_t expected_dimension, uint32_t expected_index_type, FILE *out);
 
 /**
  * @brief Close a WAL handle.

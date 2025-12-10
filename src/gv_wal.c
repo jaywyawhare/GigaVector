@@ -7,13 +7,14 @@
 #include "gigavector/gv_wal.h"
 
 #define GV_WAL_MAGIC "GVW1"
-#define GV_WAL_VERSION 2u
+#define GV_WAL_VERSION 3u
 #define GV_WAL_TYPE_INSERT 1u
 
 struct GV_WAL {
     FILE *file;
     char *path;
     size_t dimension;
+    uint32_t index_type;
     uint32_t version;
 };
 
@@ -90,7 +91,7 @@ static int gv_wal_read_string(FILE *f, char **out) {
     return 0;
 }
 
-GV_WAL *gv_wal_open(const char *path, size_t dimension) {
+GV_WAL *gv_wal_open(const char *path, size_t dimension, uint32_t index_type) {
     if (path == NULL || dimension == 0) {
         return NULL;
     }
@@ -113,7 +114,8 @@ GV_WAL *gv_wal_open(const char *path, size_t dimension) {
             return NULL;
         }
         if (gv_wal_write_u32(f, GV_WAL_VERSION) != 0 ||
-            gv_wal_write_u32(f, (uint32_t)dimension) != 0) {
+            gv_wal_write_u32(f, (uint32_t)dimension) != 0 ||
+            gv_wal_write_u32(f, index_type) != 0) {
             fclose(f);
             return NULL;
         }
@@ -121,13 +123,29 @@ GV_WAL *gv_wal_open(const char *path, size_t dimension) {
     } else {
         uint32_t version = 0;
         uint32_t file_dim = 0;
+        uint32_t file_index = 0;
         if (memcmp(magic, GV_WAL_MAGIC, 4) != 0 ||
             gv_wal_read_u32(f, &version) != 0 ||
             gv_wal_read_u32(f, &file_dim) != 0) {
             fclose(f);
             return NULL;
         }
-        if ((version != 1 && version != GV_WAL_VERSION) || file_dim != (uint32_t)dimension) {
+        if (version >= 3) {
+            if (gv_wal_read_u32(f, &file_index) != 0) {
+                fclose(f);
+                return NULL;
+            }
+        }
+        if ((version != 1 && version != 2 && version != GV_WAL_VERSION) || file_dim != (uint32_t)dimension) {
+            fprintf(stderr, "WAL open failed: version/dimension mismatch (got v%u dim=%u expected dim=%zu)\n",
+                    version, file_dim, dimension);
+            fclose(f);
+            errno = EINVAL;
+            return NULL;
+        }
+        if (index_type != 0 && file_index != 0 && file_index != index_type) {
+            fprintf(stderr, "WAL open failed: index type mismatch (got %u expected %u)\n",
+                    file_index, index_type);
             fclose(f);
             errno = EINVAL;
             return NULL;
@@ -148,6 +166,7 @@ GV_WAL *gv_wal_open(const char *path, size_t dimension) {
     wal->file = f;
     wal->dimension = dimension;
     wal->path = strdup(path);
+    wal->index_type = index_type;
     wal->version = file_version;
     if (wal->path == NULL) {
         fclose(f);
@@ -205,7 +224,7 @@ int gv_wal_append_insert(GV_WAL *wal, const float *data, size_t dimension,
 int gv_wal_replay(const char *path, size_t expected_dimension,
                   int (*on_insert)(void *ctx, const float *data, size_t dimension,
                                    const char *metadata_key, const char *metadata_value),
-                  void *ctx) {
+                  void *ctx, uint32_t expected_index_type) {
     if (path == NULL || expected_dimension == 0 || on_insert == NULL) {
         return -1;
     }
@@ -218,14 +237,27 @@ int gv_wal_replay(const char *path, size_t expected_dimension,
     char magic[4] = {0};
     uint32_t version = 0;
     uint32_t file_dim = 0;
+    uint32_t file_index = 0;
     if (fread(magic, 1, 4, f) != 4 ||
         memcmp(magic, GV_WAL_MAGIC, 4) != 0 ||
         gv_wal_read_u32(f, &version) != 0 ||
         gv_wal_read_u32(f, &file_dim) != 0 ||
-        (version != 1 && version != GV_WAL_VERSION) ||
+        (version != 1 && version != 2 && version != GV_WAL_VERSION) ||
         file_dim != (uint32_t)expected_dimension) {
         fclose(f);
         return -1;
+    }
+    if (version >= 3) {
+        if (gv_wal_read_u32(f, &file_index) != 0) {
+            fclose(f);
+            return -1;
+        }
+        if (expected_index_type != 0 && file_index != 0 && file_index != expected_index_type) {
+            fprintf(stderr, "WAL replay failed: index type mismatch (got %u expected %u)\n",
+                    file_index, expected_index_type);
+            fclose(f);
+            return -1;
+        }
     }
     int has_crc = (version >= 2);
 
@@ -315,7 +347,7 @@ int gv_wal_replay(const char *path, size_t expected_dimension,
     return 0;
 }
 
-int gv_wal_dump(const char *path, size_t expected_dimension, FILE *out) {
+int gv_wal_dump(const char *path, size_t expected_dimension, uint32_t expected_index_type, FILE *out) {
     if (path == NULL || expected_dimension == 0 || out == NULL) {
         return -1;
     }
@@ -328,17 +360,30 @@ int gv_wal_dump(const char *path, size_t expected_dimension, FILE *out) {
     char magic[4] = {0};
     uint32_t version = 0;
     uint32_t file_dim = 0;
+    uint32_t file_index = 0;
     if (fread(magic, 1, 4, f) != 4 ||
         memcmp(magic, GV_WAL_MAGIC, 4) != 0 ||
         gv_wal_read_u32(f, &version) != 0 ||
         gv_wal_read_u32(f, &file_dim) != 0 ||
-        (version != 1 && version != GV_WAL_VERSION) ||
+        (version != 1 && version != 2 && version != GV_WAL_VERSION) ||
         file_dim != (uint32_t)expected_dimension) {
         fclose(f);
         return -1;
     }
+    if (version >= 3) {
+        if (gv_wal_read_u32(f, &file_index) != 0) {
+            fclose(f);
+            return -1;
+        }
+        if (expected_index_type != 0 && file_index != 0 && file_index != expected_index_type) {
+            fprintf(stderr, "WAL dump failed: index type mismatch (got %u expected %u)\n",
+                    file_index, expected_index_type);
+            fclose(f);
+            return -1;
+        }
+    }
 
-    fprintf(out, "WAL %s: version=%u dimension=%u\n", path, version, file_dim);
+    fprintf(out, "WAL %s: version=%u dimension=%u index_type=%u\n", path, version, file_dim, file_index);
     int has_crc = (version >= 2);
     size_t record_index = 0;
     while (1) {
