@@ -1,14 +1,57 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <errno.h>
 
 #include "gigavector/gigavector.h"
 
+static const char *gv_demo_data_dir(void) {
+    const char *dir = getenv("GV_DATA_DIR");
+    return (dir && dir[0] != '\0') ? dir : "snapshots";
+}
+
+static int gv_demo_mkpath(const char *path) {
+    struct stat st;
+    if (stat(path, &st) == 0) {
+        return S_ISDIR(st.st_mode) ? 0 : -1;
+    }
+    if (errno != ENOENT) {
+        return -1;
+    }
+    return mkdir(path, 0755);
+}
+
+static int gv_demo_join(char *out, size_t out_sz, const char *dir, const char *name) {
+    int n = snprintf(out, out_sz, "%s/%s", dir, name);
+    return (n > 0 && (size_t)n < out_sz) ? 0 : -1;
+}
+
 int main(void) {
     printf("=== GigaVector Database Demo ===\n\n");
+
+    const char *data_dir = gv_demo_data_dir();
+    if (gv_demo_mkpath(data_dir) != 0) {
+        fprintf(stderr, "Error: Failed to create data dir %s\n", data_dir);
+        return EXIT_FAILURE;
+    }
+    if (getenv("GV_WAL_DIR") == NULL) {
+        /* Keep WAL files alongside snapshots; cleaned by make clean */
+        setenv("GV_WAL_DIR", data_dir, 1);
+    }
+
+    char kdtree_path[512];
+    char hnsw_path[512];
+    if (gv_demo_join(kdtree_path, sizeof(kdtree_path), data_dir, "database.bin") != 0 ||
+        gv_demo_join(hnsw_path, sizeof(hnsw_path), data_dir, "hnsw_database.bin") != 0) {
+        fprintf(stderr, "Error: Path construction failed\n");
+        return EXIT_FAILURE;
+    }
     
     printf("1. Testing KD-Tree Index:\n");
     printf("------------------------\n");
-    GV_Database *db = gv_db_open("in-memory", 3, GV_INDEX_TYPE_KDTREE);
+    GV_Database *db = gv_db_open(kdtree_path, 3, GV_INDEX_TYPE_KDTREE);
     if (db == NULL) {
         fprintf(stderr, "Error: Failed to create database\n");
         return EXIT_FAILURE;
@@ -53,17 +96,17 @@ int main(void) {
     printf("Successfully inserted %zu vectors with metadata into KD-tree (root axis=%zu)\n",
            db->count, db->root ? db->root->axis : 0U);
 
-    if (gv_db_save(db, "database.bin") != 0) {
-        fprintf(stderr, "Error: Failed to save database to database.bin\n");
+    if (gv_db_save(db, NULL) != 0) {
+        fprintf(stderr, "Error: Failed to save database to %s\n", kdtree_path);
         gv_db_close(db);
         return EXIT_FAILURE;
     }
 
-    printf("Successfully saved database to database.bin\n");
+    printf("Successfully saved database to %s\n", kdtree_path);
 
-    GV_Database *db2 = gv_db_open("database.bin", 3, GV_INDEX_TYPE_KDTREE);
+    GV_Database *db2 = gv_db_open(kdtree_path, 3, GV_INDEX_TYPE_KDTREE);
     if (db2 == NULL) {
-        fprintf(stderr, "Error: Failed to load database from database.bin\n");
+        fprintf(stderr, "Error: Failed to load database from %s\n", kdtree_path);
         gv_db_close(db);
         return EXIT_FAILURE;
     }
@@ -138,7 +181,7 @@ int main(void) {
 
     printf("2. Testing HNSW Index:\n");
     printf("----------------------\n");
-    GV_Database *db_hnsw = gv_db_open("hnsw-demo", 3, GV_INDEX_TYPE_HNSW);
+    GV_Database *db_hnsw = gv_db_open(hnsw_path, 3, GV_INDEX_TYPE_HNSW);
     if (db_hnsw == NULL) {
         fprintf(stderr, "Error: Failed to create HNSW database\n");
         return EXIT_FAILURE;
@@ -162,16 +205,16 @@ int main(void) {
 
     printf("Successfully inserted %zu vectors into HNSW index\n", db_hnsw->count);
 
-    if (gv_db_save(db_hnsw, "hnsw_database.bin") != 0) {
-        fprintf(stderr, "Error: Failed to save HNSW database\n");
+    if (gv_db_save(db_hnsw, NULL) != 0) {
+        fprintf(stderr, "Error: Failed to save HNSW database to %s\n", hnsw_path);
         gv_db_close(db_hnsw);
         return EXIT_FAILURE;
     }
-    printf("Successfully saved HNSW database to hnsw_database.bin\n");
+    printf("Successfully saved HNSW database to %s\n", hnsw_path);
 
-    GV_Database *db_hnsw2 = gv_db_open("hnsw_database.bin", 3, GV_INDEX_TYPE_HNSW);
+    GV_Database *db_hnsw2 = gv_db_open(hnsw_path, 3, GV_INDEX_TYPE_HNSW);
     if (db_hnsw2 == NULL) {
-        fprintf(stderr, "Error: Failed to load HNSW database from file\n");
+        fprintf(stderr, "Error: Failed to load HNSW database from file %s\n", hnsw_path);
         gv_db_close(db_hnsw);
         return EXIT_FAILURE;
     }
