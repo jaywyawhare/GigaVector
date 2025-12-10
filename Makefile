@@ -1,7 +1,7 @@
 # Compiler and flags
 CC      := gcc
-CFLAGS  := -g -Wall -MMD -Iinclude -march=native -msse4.2 -mavx2 -mfma
-LDFLAGS := -lm
+CFLAGS  := -g -Wall -MMD -Iinclude -march=native -msse4.2 -mavx2 -mfma -pthread
+LDFLAGS := -lm -pthread
 
 # Project structure
 BUILD_DIR   := build
