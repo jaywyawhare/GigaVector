@@ -785,7 +785,7 @@ int gv_ivfpq_search(void *index_ptr, const GV_Vector *query, size_t k,
     }
 
     free(probe_ids);
-    free(lut);
+    /* lut is cached in idx->lut_buf; do not free */
     free(bestd);
     free(beste);
     free(qbuf);
