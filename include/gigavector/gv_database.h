@@ -11,11 +11,21 @@ extern "C" {
 #endif
 
 /**
+ * @brief Index type enumeration.
+ */
+typedef enum {
+    GV_INDEX_TYPE_KDTREE = 0,
+    GV_INDEX_TYPE_HNSW = 1
+} GV_IndexType;
+
+/**
  * @brief Represents an in-memory vector database.
  */
 typedef struct GV_Database {
     size_t dimension;
+    GV_IndexType index_type;
     GV_KDNode *root;
+    void *hnsw_index;
     char *filepath;
     size_t count;
 } GV_Database;
@@ -28,9 +38,10 @@ typedef struct GV_Database {
  *
  * @param filepath Optional file path string to associate with the database.
  * @param dimension Expected dimensionality; if loading, it must match the file.
+ * @param index_type Type of index to use (KD-tree or HNSW).
  * @return Allocated database instance or NULL on invalid arguments or failure.
  */
-GV_Database *gv_db_open(const char *filepath, size_t dimension);
+GV_Database *gv_db_open(const char *filepath, size_t dimension, GV_IndexType index_type);
 
 /**
  * @brief Release all resources held by the database, including its K-D tree.
