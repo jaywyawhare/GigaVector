@@ -8,6 +8,7 @@
 #include "gigavector/gv_database.h"
 #include "gigavector/gv_distance.h"
 #include "gigavector/gv_hnsw.h"
+#include "gigavector/gv_ivfpq.h"
 #include "gigavector/gv_kdtree.h"
 #include "gigavector/gv_metadata.h"
 #include "gigavector/gv_vector.h"
@@ -116,7 +117,18 @@ static char *gv_db_build_wal_path(const char *filepath) {
 static int gv_db_wal_apply(void *ctx, const float *data, size_t dimension,
                            const char *metadata_key, const char *metadata_value) {
     GV_Database *db = (GV_Database *)ctx;
-    (void)dimension;
+    if (db == NULL || data == NULL) {
+        return -1;
+    }
+    if (dimension != db->dimension) {
+        return -1;
+    }
+    /* IVF-PQ requires training before inserts can be replayed */
+    if (db->index_type == GV_INDEX_TYPE_IVFPQ) {
+        if (gv_ivfpq_is_trained(db->hnsw_index) == 0) {
+            return -1;
+        }
+    }
     if (gv_db_add_vector_with_metadata(db, data, db->dimension, metadata_key, metadata_value) != 0) {
         return -1;
     }
@@ -148,6 +160,19 @@ GV_Database *gv_db_open(const char *filepath, size_t dimension, GV_IndexType ind
     if (index_type == GV_INDEX_TYPE_HNSW && filepath == NULL) {
         db->hnsw_index = gv_hnsw_create(dimension, NULL);
         if (db->hnsw_index == NULL) {
+            pthread_rwlock_destroy(&db->rwlock);
+            pthread_mutex_destroy(&db->wal_mutex);
+            free(db);
+            return NULL;
+        }
+    } else if (index_type == GV_INDEX_TYPE_IVFPQ && filepath == NULL) {
+        db->hnsw_index = NULL;
+        db->root = NULL;
+        GV_IVFPQConfig cfg = {.nlist = 64, .m = 8, .nbits = 8, .nprobe = 4, .train_iters = 15};
+        db->hnsw_index = gv_ivfpq_create(dimension, &cfg);
+        if (db->hnsw_index == NULL) {
+            pthread_rwlock_destroy(&db->rwlock);
+            pthread_mutex_destroy(&db->wal_mutex);
             free(db);
             return NULL;
         }
@@ -170,7 +195,7 @@ GV_Database *gv_db_open(const char *filepath, size_t dimension, GV_IndexType ind
 
     if (filepath == NULL) {
         if (db->wal_path != NULL) {
-            db->wal = gv_wal_open(db->wal_path, db->dimension);
+            db->wal = gv_wal_open(db->wal_path, db->dimension, (uint32_t)db->index_type);
         }
         return db;
     }
@@ -188,7 +213,7 @@ GV_Database *gv_db_open(const char *filepath, size_t dimension, GV_IndexType ind
                 }
             }
             if (db->wal_path != NULL) {
-                db->wal = gv_wal_open(db->wal_path, db->dimension);
+                db->wal = gv_wal_open(db->wal_path, db->dimension, (uint32_t)db->index_type);
                 if (db->wal == NULL) {
                     if (db->hnsw_index) gv_hnsw_destroy(db->hnsw_index);
                     free(db->filepath);
@@ -226,7 +251,7 @@ GV_Database *gv_db_open(const char *filepath, size_t dimension, GV_IndexType ind
 
     db->dimension = (size_t)file_dim;
 
-    if (file_version != 1 && file_version != 2 && file_version != 3) {
+    if (file_version != 1 && file_version != 2 && file_version != 3 && file_version != 4) {
         fclose(in);
         if (db->hnsw_index) gv_hnsw_destroy(db->hnsw_index);
         free(db->filepath);
@@ -281,6 +306,18 @@ GV_Database *gv_db_open(const char *filepath, size_t dimension, GV_IndexType ind
         }
         db->hnsw_index = loaded_index;
         db->count = gv_hnsw_count(db->hnsw_index);
+    } else if (db->index_type == GV_INDEX_TYPE_IVFPQ) {
+        void *loaded_index = NULL;
+        if (gv_ivfpq_load(&loaded_index, in, db->dimension, file_version) != 0) {
+            fclose(in);
+            if (loaded_index) gv_ivfpq_destroy(loaded_index);
+            free(db->filepath);
+            free(db->wal_path);
+            free(db);
+            return NULL;
+        }
+        db->hnsw_index = loaded_index;
+        db->count = gv_ivfpq_count(db->hnsw_index);
     } else {
         fclose(in);
         if (db->hnsw_index) gv_hnsw_destroy(db->hnsw_index);
@@ -333,10 +370,12 @@ GV_Database *gv_db_open(const char *filepath, size_t dimension, GV_IndexType ind
         db->count = file_count;
     } else if (db->index_type == GV_INDEX_TYPE_HNSW) {
         db->count = gv_hnsw_count(db->hnsw_index);
+    } else if (db->index_type == GV_INDEX_TYPE_IVFPQ) {
+        db->count = gv_ivfpq_count(db->hnsw_index);
     }
 
     if (db->wal_path != NULL) {
-        db->wal = gv_wal_open(db->wal_path, db->dimension);
+        db->wal = gv_wal_open(db->wal_path, db->dimension, (uint32_t)db->index_type);
         if (db->wal == NULL) {
             if (db->index_type == GV_INDEX_TYPE_KDTREE) {
                 gv_kdtree_destroy_recursive(db->root);
@@ -350,7 +389,7 @@ GV_Database *gv_db_open(const char *filepath, size_t dimension, GV_IndexType ind
         }
 
         db->wal_replaying = 1;
-        if (gv_wal_replay(db->wal_path, db->dimension, gv_db_wal_apply, db) != 0) {
+        if (gv_wal_replay(db->wal_path, db->dimension, gv_db_wal_apply, db, (uint32_t)db->index_type) != 0) {
             db->wal_replaying = 0;
             gv_wal_close(db->wal);
             db->wal = NULL;
@@ -424,7 +463,7 @@ int gv_db_set_wal(GV_Database *db, const char *wal_path) {
     if (db->wal_path == NULL) {
         return -1;
     }
-    db->wal = gv_wal_open(db->wal_path, db->dimension);
+    db->wal = gv_wal_open(db->wal_path, db->dimension, (uint32_t)db->index_type);
     if (db->wal == NULL) {
         free(db->wal_path);
         db->wal_path = NULL;
@@ -449,7 +488,7 @@ int gv_db_wal_dump(const GV_Database *db, FILE *out) {
     if (db == NULL || out == NULL || db->wal_path == NULL) {
         return -1;
     }
-    return gv_wal_dump(db->wal_path, db->dimension, out);
+    return gv_wal_dump(db->wal_path, db->dimension, (uint32_t)db->index_type, out);
 }
 
 int gv_db_add_vector(GV_Database *db, const float *data, size_t dimension) {
@@ -478,6 +517,8 @@ int gv_db_add_vector(GV_Database *db, const float *data, size_t dimension) {
         status = gv_kdtree_insert(&(db->root), vector, 0);
     } else if (db->index_type == GV_INDEX_TYPE_HNSW) {
         status = gv_hnsw_insert(db->hnsw_index, vector);
+    } else if (db->index_type == GV_INDEX_TYPE_IVFPQ) {
+        status = gv_ivfpq_insert(db->hnsw_index, vector);
     }
 
     if (status != 0) {
@@ -592,7 +633,7 @@ int gv_db_save(const GV_Database *db, const char *filepath) {
         return -1;
     }
 
-    const uint32_t version = 3;
+    const uint32_t version = 4;
     int status = gv_db_write_header(out, (uint32_t)db->dimension, db->count, version);
     if (status == 0) {
         uint32_t index_type_u32 = (uint32_t)db->index_type;
@@ -602,6 +643,8 @@ int gv_db_save(const GV_Database *db, const char *filepath) {
             status = gv_kdtree_save_recursive(db->root, out, version);
         } else if (db->index_type == GV_INDEX_TYPE_HNSW) {
             status = gv_hnsw_save(db->hnsw_index, out, version);
+        } else if (db->index_type == GV_INDEX_TYPE_IVFPQ) {
+            status = gv_ivfpq_save(db->hnsw_index, out, version);
         } else {
             status = -1;
         }
@@ -662,6 +705,14 @@ int gv_db_search(const GV_Database *db, const float *query_data, size_t k,
         pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
         return 0;
     }
+    if (db->index_type == GV_INDEX_TYPE_IVFPQ && db->hnsw_index == NULL) {
+        pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
+        return 0;
+    }
+    if (db->index_type == GV_INDEX_TYPE_IVFPQ && db->hnsw_index == NULL) {
+        pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
+        return 0;
+    }
 
     GV_Vector query_vec;
     query_vec.dimension = db->dimension;
@@ -676,9 +727,41 @@ int gv_db_search(const GV_Database *db, const float *query_data, size_t k,
         int r = gv_hnsw_search(db->hnsw_index, &query_vec, k, results, distance_type, NULL, NULL);
         pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
         return r;
+    } else if (db->index_type == GV_INDEX_TYPE_IVFPQ) {
+        int r = gv_ivfpq_search(db->hnsw_index, &query_vec, k, results, distance_type, 0, 0);
+        pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
+        return r;
     }
     pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
     return -1;
+}
+
+int gv_db_search_ivfpq_opts(const GV_Database *db, const float *query_data, size_t k,
+                            GV_SearchResult *results, GV_DistanceType distance_type,
+                            size_t nprobe_override, size_t rerank_top) {
+    if (db == NULL || query_data == NULL || results == NULL || k == 0) {
+        return -1;
+    }
+    if (db->index_type != GV_INDEX_TYPE_IVFPQ) {
+        return -1;
+    }
+
+    pthread_rwlock_rdlock((pthread_rwlock_t *)&db->rwlock);
+
+    if (db->hnsw_index == NULL) {
+        pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
+        return 0;
+    }
+
+    GV_Vector query_vec;
+    query_vec.dimension = db->dimension;
+    query_vec.data = (float *)query_data;
+    query_vec.metadata = NULL;
+
+    int r = gv_ivfpq_search(db->hnsw_index, &query_vec, k, results, distance_type,
+                            nprobe_override, rerank_top);
+    pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
+    return r;
 }
 
 int gv_db_search_batch(const GV_Database *db, const float *queries, size_t qcount, size_t k,
@@ -708,6 +791,8 @@ int gv_db_search_batch(const GV_Database *db, const float *queries, size_t qcoun
             r = gv_kdtree_knn_search(db->root, &qv, k, slot, distance_type);
         } else if (db->index_type == GV_INDEX_TYPE_HNSW) {
             r = gv_hnsw_search(db->hnsw_index, &qv, k, slot, distance_type, NULL, NULL);
+        } else if (db->index_type == GV_INDEX_TYPE_IVFPQ) {
+            r = gv_ivfpq_search(db->hnsw_index, &qv, k, slot, distance_type, 0, 0);
         }
         if (r < 0) {
             pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
@@ -753,6 +838,33 @@ int gv_db_search_filtered(const GV_Database *db, const float *query_data, size_t
                             filter_key, filter_value);
         pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
         return r;
+    } else if (db->index_type == GV_INDEX_TYPE_IVFPQ) {
+        /* No native filter; apply post-filter on results */
+        GV_SearchResult *tmp = (GV_SearchResult *)malloc(sizeof(GV_SearchResult) * k);
+        if (!tmp) {
+            pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
+            return -1;
+        }
+        int r = gv_ivfpq_search(db->hnsw_index, &query_vec, k, tmp, distance_type, 0, 0);
+        if (r <= 0) {
+            free(tmp);
+            pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
+            return r;
+        }
+        int out = 0;
+        for (int i = 0; i < r && out < (int)k; ++i) {
+            if (filter_key == NULL || filter_value == NULL) {
+                results[out++] = tmp[i];
+            } else {
+                const char *val = gv_vector_get_metadata(tmp[i].vector, filter_key);
+                if (val && strcmp(val, filter_value) == 0) {
+                    results[out++] = tmp[i];
+                }
+            }
+        }
+        free(tmp);
+        pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
+        return out;
     }
     pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
     return -1;

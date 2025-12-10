@@ -17,7 +17,8 @@ extern "C" {
  */
 typedef enum {
     GV_INDEX_TYPE_KDTREE = 0,
-    GV_INDEX_TYPE_HNSW = 1
+    GV_INDEX_TYPE_HNSW = 1,
+    GV_INDEX_TYPE_IVFPQ = 2
 } GV_IndexType;
 
 /**
@@ -121,6 +122,22 @@ int gv_db_search(const GV_Database *db, const float *query_data, size_t k,
 int gv_db_search_filtered(const GV_Database *db, const float *query_data, size_t k,
                           GV_SearchResult *results, GV_DistanceType distance_type,
                           const char *filter_key, const char *filter_value);
+
+/**
+ * @brief IVF-PQ search with per-query overrides.
+ *
+ * @param db Database to search; must be IVF-PQ.
+ * @param query_data Query vector data array.
+ * @param k Number of nearest neighbors to find.
+ * @param results Output array of at least k elements.
+ * @param distance_type Distance metric to use.
+ * @param nprobe_override If >0, overrides configured nprobe (capped at nlist).
+ * @param rerank_top If >0, reranks this many top PQ hits with exact L2.
+ * @return Number of neighbors found (0 to k), or -1 on error.
+ */
+int gv_db_search_ivfpq_opts(const GV_Database *db, const float *query_data, size_t k,
+                            GV_SearchResult *results, GV_DistanceType distance_type,
+                            size_t nprobe_override, size_t rerank_top);
 
 /**
  * @brief Batch-insert multiple vectors from a contiguous float buffer.
