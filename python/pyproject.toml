@@ -8,7 +8,7 @@ version = "0.0.2"
 description = "Python bindings for the GigaVector vector database"
 readme = "README.md"
 requires-python = ">=3.9"
-license = { file = "../LICENCE.md" }
+license = { file = "LICENCE.md" }
 authors = [{ name = "GigaVector Maintainers" }]
 dependencies = ["cffi>=1.16"]
 classifiers = [
