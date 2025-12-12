@@ -53,12 +53,5 @@ with Database.open(None, dimension=8, index=IndexType.IVFPQ) as db:
     db.add_vector([0.5] * 8)
 ```
 
-## Tests
-```bash
-make python-test   # runs Python unit tests
-make c-test        # runs C tests
-./run_test.sh      # end-to-end install-and-test from PyPI (uses conda env ML9)
-```
-
 ## License
 This project is licensed under the DBaJ-NC-CFL [License](./LICENCE).
