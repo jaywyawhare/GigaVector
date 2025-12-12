@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68", "wheel", "cffi>=1.16"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gigavector"
+version = "0.0.2"
+description = "Python bindings for the GigaVector vector database"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { file = "../LICENCE.md" }
+authors = [{ name = "GigaVector Maintainers" }]
+dependencies = ["cffi>=1.16"]
+classifiers = [
+    "License :: Other/Proprietary License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: C",
+]
+
+[project.urls]
+Homepage = "https://github.com/jaywyawhare/GigaVector"
+Repository = "https://github.com/jaywyawhare/GigaVector"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+packages = ["gigavector"]
+include-package-data = true
+
+[tool.setuptools.package-data]
+gigavector = ["libGigaVector.so"]
+
+
