@@ -27,9 +27,13 @@ class BuildPyWithMake(build_py):
             else:
                 raise FileNotFoundError(f"libGigaVector.so not found and Makefile missing at {repo_root}")
 
-        package_lib_path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(lib_path, package_lib_path)
-        self.announce(f"Copied {lib_path} -> {package_lib_path}", level=3)
+        # Avoid copying onto itself inside sdist build trees.
+        if lib_path.resolve() != package_lib_path.resolve():
+            package_lib_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(lib_path, package_lib_path)
+            self.announce(f"Copied {lib_path} -> {package_lib_path}", level=3)
+        else:
+            self.announce(f"Library already present at {package_lib_path}", level=3)
 
         super().run()
 
