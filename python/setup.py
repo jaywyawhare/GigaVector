@@ -14,8 +14,13 @@ class BuildPyWithMake(build_py):
         lib_path = repo_root / "build" / "lib" / "libGigaVector.so"
         package_lib_path = Path(__file__).resolve().parent / "src" / "gigavector" / "libGigaVector.so"
 
-        self.announce("Building GigaVector shared library via make", level=3)
-        subprocess.check_call(["make", "-C", str(repo_root), "lib"])
+        if lib_path.exists():
+            self.announce("Using prebuilt GigaVector shared library", level=3)
+        elif (repo_root / "Makefile").exists():
+            self.announce("Building GigaVector shared library via make", level=3)
+            subprocess.check_call(["make", "-C", str(repo_root), "lib"])
+        else:
+            raise FileNotFoundError(f"libGigaVector.so not found and Makefile missing at {repo_root}")
 
         package_lib_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(lib_path, package_lib_path)

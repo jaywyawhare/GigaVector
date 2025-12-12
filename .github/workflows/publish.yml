@@ -21,6 +21,12 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+
+    - name: Build native library
+      working-directory: .
+      run: |
+        make lib
+        cp build/lib/libGigaVector.so python/src/gigavector/
     
     - name: Set up Python
       uses: actions/setup-python@v5
