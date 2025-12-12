@@ -11,9 +11,6 @@ jobs:
     defaults:
       run:
         working-directory: python
-    environment:
-      name: pypi
-      url: https://pypi.org/p/gigavector
     permissions:
       contents: read
       id-token: write
