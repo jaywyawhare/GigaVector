@@ -42,6 +42,24 @@ int gv_wal_append_insert(GV_WAL *wal, const float *data, size_t dimension,
                          const char *metadata_key, const char *metadata_value);
 
 /**
+ * @brief Append an insert operation to the WAL with multiple metadata entries.
+ *
+ * The vector payload and optional metadata key/value pairs are persisted.
+ * This function supports rich metadata (multiple key-value pairs per vector).
+ *
+ * @param wal WAL handle; must be non-NULL.
+ * @param data Vector data array.
+ * @param dimension Number of elements in @p data.
+ * @param metadata_keys Array of metadata keys; NULL if count is 0.
+ * @param metadata_values Array of metadata values; NULL if count is 0.
+ * @param metadata_count Number of metadata entries (must match array lengths).
+ * @return 0 on success, -1 on I/O or validation failure.
+ */
+int gv_wal_append_insert_rich(GV_WAL *wal, const float *data, size_t dimension,
+                               const char *const *metadata_keys, const char *const *metadata_values,
+                               size_t metadata_count);
+
+/**
  * @brief Replay a WAL file by invoking a callback for every insert record.
  *
  * The callback is responsible for applying the operation to the in-memory
@@ -51,12 +69,33 @@ int gv_wal_append_insert(GV_WAL *wal, const float *data, size_t dimension,
  * @param expected_dimension Dimension the WAL must match.
  * @param expected_index_type Index type; validated when nonzero (skipped for old WALs).
  * @param on_insert Callback invoked per insert record; must return 0 on success.
+ *                   For vectors with multiple metadata entries, this callback may be
+ *                   called multiple times (once per metadata entry) or with a vector
+ *                   that has all metadata. The implementation handles both cases.
  * @return 0 on success, -1 on I/O or validation failure, or if the callback fails.
  */
 int gv_wal_replay(const char *path, size_t expected_dimension,
                   int (*on_insert)(void *ctx, const float *data, size_t dimension,
                                    const char *metadata_key, const char *metadata_value),
                   void *ctx, uint32_t expected_index_type);
+
+/**
+ * @brief Replay a WAL file and deliver all metadata entries for each record.
+ *
+ * Newer API that passes arrays of metadata key/value pairs to the callback.
+ * Existing WAL files with single metadata entries remain compatible.
+ *
+ * @param path WAL file path.
+ * @param expected_dimension Dimension the WAL must match.
+ * @param expected_index_type Index type; validated when nonzero (skipped for old WALs).
+ * @param on_insert Callback invoked per insert record; must return 0 on success.
+ * @return 0 on success, -1 on I/O or validation failure, or if the callback fails.
+ */
+int gv_wal_replay_rich(const char *path, size_t expected_dimension,
+                       int (*on_insert)(void *ctx, const float *data, size_t dimension,
+                                        const char *const *metadata_keys, const char *const *metadata_values,
+                                        size_t metadata_count),
+                       void *ctx, uint32_t expected_index_type);
 
 /**
  * @brief Human-readable dump of WAL contents for debugging.

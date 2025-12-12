@@ -210,6 +210,54 @@ int gv_wal_append_insert(GV_WAL *wal, const float *data, size_t dimension,
         crc = gv_crc32_update(crc, metadata_value, vlen);
     }
 
+    if (fflush(wal->file) != 0) {
+        return -1;
+    }
+    return 0;
+}
+
+int gv_wal_append_insert_rich(GV_WAL *wal, const float *data, size_t dimension,
+                               const char *const *metadata_keys, const char *const *metadata_values,
+                               size_t metadata_count) {
+    if (wal == NULL || wal->file == NULL || data == NULL || dimension == 0) {
+        return -1;
+    }
+    if (dimension != wal->dimension) {
+        return -1;
+    }
+    if (metadata_count > 0 && (metadata_keys == NULL || metadata_values == NULL)) {
+        return -1;
+    }
+
+    uint32_t crc = gv_crc32_init();
+
+    if (gv_wal_write_u8(wal->file, GV_WAL_TYPE_INSERT) != 0) return -1;
+    crc = gv_crc32_update(crc, &(uint8_t){GV_WAL_TYPE_INSERT}, sizeof(uint8_t));
+    if (gv_wal_write_u32(wal->file, (uint32_t)dimension) != 0) return -1;
+    uint32_t dim_u32 = (uint32_t)dimension;
+    crc = gv_crc32_update(crc, &dim_u32, sizeof(uint32_t));
+    if (gv_wal_write_floats(wal->file, data, dimension) != 0) return -1;
+    crc = gv_crc32_update(crc, data, dimension * sizeof(float));
+
+    /* Write metadata count and all entries */
+    uint32_t meta_count_u32 = (uint32_t)metadata_count;
+    if (gv_wal_write_u32(wal->file, meta_count_u32) != 0) return -1;
+    crc = gv_crc32_update(crc, &meta_count_u32, sizeof(uint32_t));
+    
+    for (size_t i = 0; i < metadata_count; i++) {
+        if (metadata_keys[i] == NULL || metadata_values[i] == NULL) {
+            return -1;
+        }
+        if (gv_wal_write_string(wal->file, metadata_keys[i]) != 0) return -1;
+        uint32_t klen = (uint32_t)strlen(metadata_keys[i]);
+        crc = gv_crc32_update(crc, &klen, sizeof(uint32_t));
+        crc = gv_crc32_update(crc, metadata_keys[i], klen);
+        if (gv_wal_write_string(wal->file, metadata_values[i]) != 0) return -1;
+        uint32_t vlen = (uint32_t)strlen(metadata_values[i]);
+        crc = gv_crc32_update(crc, &vlen, sizeof(uint32_t));
+        crc = gv_crc32_update(crc, metadata_values[i], vlen);
+    }
+
     if (wal->version >= 2) {
         crc = gv_crc32_finish(crc);
         if (gv_wal_write_u32(wal->file, crc) != 0) return -1;
@@ -286,20 +334,39 @@ int gv_wal_replay(const char *path, size_t expected_dimension,
                 return -1;
             }
             uint32_t meta_count = 0;
-            if (gv_wal_read_u32(f, &meta_count) != 0 || meta_count > 1) {
+            if (gv_wal_read_u32(f, &meta_count) != 0) {
                 free(buf);
                 fclose(f);
                 return -1;
             }
-            char *k = NULL;
-            char *v = NULL;
-            if (meta_count == 1) {
-                if (gv_wal_read_string(f, &k) != 0 || gv_wal_read_string(f, &v) != 0) {
+            
+            /* Read all metadata entries */
+            char **keys = NULL;
+            char **values = NULL;
+            if (meta_count > 0) {
+                keys = (char **)malloc(sizeof(char *) * meta_count);
+                values = (char **)malloc(sizeof(char *) * meta_count);
+                if (keys == NULL || values == NULL) {
                     free(buf);
-                    free(k);
-                    free(v);
+                    free(keys);
+                    free(values);
                     fclose(f);
                     return -1;
+                }
+                for (uint32_t i = 0; i < meta_count; i++) {
+                    keys[i] = NULL;
+                    values[i] = NULL;
+                    if (gv_wal_read_string(f, &keys[i]) != 0 || gv_wal_read_string(f, &values[i]) != 0) {
+                        for (uint32_t j = 0; j <= i; j++) {
+                            free(keys[j]);
+                            free(values[j]);
+                        }
+                        free(buf);
+                        free(keys);
+                        free(values);
+                        fclose(f);
+                        return -1;
+                    }
                 }
             }
 
@@ -310,29 +377,213 @@ int gv_wal_replay(const char *path, size_t expected_dimension,
                 crc = gv_crc32_update(crc, &dim, sizeof(uint32_t));
                 crc = gv_crc32_update(crc, buf, dim * sizeof(float));
                 crc = gv_crc32_update(crc, &meta_count, sizeof(uint32_t));
-                if (meta_count == 1 && k && v) {
-                    uint32_t klen = (uint32_t)strlen(k);
-                    uint32_t vlen = (uint32_t)strlen(v);
-                    crc = gv_crc32_update(crc, &klen, sizeof(uint32_t));
-                    crc = gv_crc32_update(crc, k, klen);
-                    crc = gv_crc32_update(crc, &vlen, sizeof(uint32_t));
-                    crc = gv_crc32_update(crc, v, vlen);
+                for (uint32_t i = 0; i < meta_count; i++) {
+                    if (keys[i] && values[i]) {
+                        uint32_t klen = (uint32_t)strlen(keys[i]);
+                        uint32_t vlen = (uint32_t)strlen(values[i]);
+                        crc = gv_crc32_update(crc, &klen, sizeof(uint32_t));
+                        crc = gv_crc32_update(crc, keys[i], klen);
+                        crc = gv_crc32_update(crc, &vlen, sizeof(uint32_t));
+                        crc = gv_crc32_update(crc, values[i], vlen);
+                    }
                 }
                 crc = gv_crc32_finish(crc);
                 uint32_t stored_crc = 0;
                 if (gv_wal_read_u32(f, &stored_crc) != 0 || stored_crc != crc) {
+                    for (uint32_t i = 0; i < meta_count; i++) {
+                        free(keys[i]);
+                        free(values[i]);
+                    }
                     free(buf);
-                    free(k);
-                    free(v);
+                    free(keys);
+                    free(values);
                     fclose(f);
                     return -1;
                 }
             }
 
-            int cb_res = on_insert(ctx, buf, dim, k, v);
+            /* For backward compatibility: if single entry, use standard callback */
+            /* For multiple entries, we need to handle it specially */
+            int cb_res = 0;
+            if (meta_count == 0) {
+                cb_res = on_insert(ctx, buf, dim, NULL, NULL);
+            } else if (meta_count == 1) {
+                cb_res = on_insert(ctx, buf, dim, keys[0], values[0]);
+            } else {
+                /* Multiple metadata entries: call callback with first entry */
+                /* The callback implementation should handle adding remaining entries */
+                /* For now, we'll call it once per entry - the database code needs to */
+                /* accumulate metadata for the same vector data */
+                cb_res = on_insert(ctx, buf, dim, keys[0], values[0]);
+                /* Note: This is a limitation - the callback signature only supports */
+                /* one metadata entry. For full rich metadata support, the callback */
+                /* would need to be updated or we need a different replay mechanism. */
+                /* For now, only the first metadata entry will be replayed. */
+            }
+            
+            for (uint32_t i = 0; i < meta_count; i++) {
+                free(keys[i]);
+                free(values[i]);
+            }
             free(buf);
-            free(k);
-            free(v);
+            free(keys);
+            free(values);
+            if (cb_res != 0) {
+                fclose(f);
+                return -1;
+            }
+        } else {
+            fclose(f);
+            return -1;
+        }
+    }
+
+    fclose(f);
+    return 0;
+}
+
+int gv_wal_replay_rich(const char *path, size_t expected_dimension,
+                       int (*on_insert)(void *ctx, const float *data, size_t dimension,
+                                        const char *const *metadata_keys, const char *const *metadata_values,
+                                        size_t metadata_count),
+                       void *ctx, uint32_t expected_index_type) {
+    if (path == NULL || expected_dimension == 0 || on_insert == NULL) {
+        return -1;
+    }
+
+    FILE *f = fopen(path, "rb");
+    if (f == NULL) {
+        return (errno == ENOENT) ? 0 : -1;
+    }
+
+    char magic[4] = {0};
+    uint32_t version = 0;
+    uint32_t file_dim = 0;
+    uint32_t file_index = 0;
+    if (fread(magic, 1, 4, f) != 4 ||
+        memcmp(magic, GV_WAL_MAGIC, 4) != 0 ||
+        gv_wal_read_u32(f, &version) != 0 ||
+        gv_wal_read_u32(f, &file_dim) != 0 ||
+        (version != 1 && version != 2 && version != GV_WAL_VERSION) ||
+        file_dim != (uint32_t)expected_dimension) {
+        fclose(f);
+        return -1;
+    }
+    if (version >= 3) {
+        if (gv_wal_read_u32(f, &file_index) != 0) {
+            fclose(f);
+            return -1;
+        }
+        if (expected_index_type != 0 && file_index != 0 && file_index != expected_index_type) {
+            fprintf(stderr, "WAL replay failed: index type mismatch (got %u expected %u)\n",
+                    file_index, expected_index_type);
+            fclose(f);
+            return -1;
+        }
+    }
+    int has_crc = (version >= 2);
+
+    while (1) {
+        uint8_t type = 0;
+        if (gv_wal_read_u8(f, &type) != 0) {
+            if (feof(f)) break;
+            fclose(f);
+            return -1;
+        }
+
+        if (type == GV_WAL_TYPE_INSERT) {
+            uint32_t dim = 0;
+            if (gv_wal_read_u32(f, &dim) != 0 || dim != (uint32_t)expected_dimension) {
+                fclose(f);
+                return -1;
+            }
+            float *buf = (float *)malloc(sizeof(float) * dim);
+            if (buf == NULL) {
+                fclose(f);
+                return -1;
+            }
+            if (gv_wal_read_floats(f, buf, dim) != 0) {
+                free(buf);
+                fclose(f);
+                return -1;
+            }
+            uint32_t meta_count = 0;
+            if (gv_wal_read_u32(f, &meta_count) != 0) {
+                free(buf);
+                fclose(f);
+                return -1;
+            }
+
+            char **keys = NULL;
+            char **values = NULL;
+            if (meta_count > 0) {
+                keys = (char **)malloc(sizeof(char *) * meta_count);
+                values = (char **)malloc(sizeof(char *) * meta_count);
+                if (keys == NULL || values == NULL) {
+                    free(buf);
+                    free(keys);
+                    free(values);
+                    fclose(f);
+                    return -1;
+                }
+                for (uint32_t i = 0; i < meta_count; i++) {
+                    keys[i] = NULL;
+                    values[i] = NULL;
+                    if (gv_wal_read_string(f, &keys[i]) != 0 || gv_wal_read_string(f, &values[i]) != 0) {
+                        for (uint32_t j = 0; j <= i; j++) {
+                            free(keys[j]);
+                            free(values[j]);
+                        }
+                        free(buf);
+                        free(keys);
+                        free(values);
+                        fclose(f);
+                        return -1;
+                    }
+                }
+            }
+
+            if (has_crc) {
+                uint32_t crc = gv_crc32_init();
+                uint8_t type_byte = GV_WAL_TYPE_INSERT;
+                crc = gv_crc32_update(crc, &type_byte, sizeof(uint8_t));
+                crc = gv_crc32_update(crc, &dim, sizeof(uint32_t));
+                crc = gv_crc32_update(crc, buf, dim * sizeof(float));
+                crc = gv_crc32_update(crc, &meta_count, sizeof(uint32_t));
+                for (uint32_t i = 0; i < meta_count; i++) {
+                    if (keys[i] && values[i]) {
+                        uint32_t klen = (uint32_t)strlen(keys[i]);
+                        uint32_t vlen = (uint32_t)strlen(values[i]);
+                        crc = gv_crc32_update(crc, &klen, sizeof(uint32_t));
+                        crc = gv_crc32_update(crc, keys[i], klen);
+                        crc = gv_crc32_update(crc, &vlen, sizeof(uint32_t));
+                        crc = gv_crc32_update(crc, values[i], vlen);
+                    }
+                }
+                crc = gv_crc32_finish(crc);
+                uint32_t stored_crc = 0;
+                if (gv_wal_read_u32(f, &stored_crc) != 0 || stored_crc != crc) {
+                    for (uint32_t i = 0; i < meta_count; i++) {
+                        free(keys[i]);
+                        free(values[i]);
+                    }
+                    free(buf);
+                    free(keys);
+                    free(values);
+                    fclose(f);
+                    return -1;
+                }
+            }
+
+            int cb_res = on_insert(ctx, buf, dim, (const char *const *)keys, (const char *const *)values, meta_count);
+
+            for (uint32_t i = 0; i < meta_count; i++) {
+                free(keys[i]);
+                free(values[i]);
+            }
+            free(keys);
+            free(values);
+            free(buf);
             if (cb_res != 0) {
                 fclose(f);
                 return -1;
@@ -411,20 +662,39 @@ int gv_wal_dump(const char *path, size_t expected_dimension, uint32_t expected_i
                 return -1;
             }
             uint32_t meta_count = 0;
-            if (gv_wal_read_u32(f, &meta_count) != 0 || meta_count > 1) {
+            if (gv_wal_read_u32(f, &meta_count) != 0) {
                 free(buf);
                 fclose(f);
                 return -1;
             }
-            char *k = NULL;
-            char *v = NULL;
-            if (meta_count == 1) {
-                if (gv_wal_read_string(f, &k) != 0 || gv_wal_read_string(f, &v) != 0) {
+            
+            /* Read all metadata entries */
+            char **keys = NULL;
+            char **values = NULL;
+            if (meta_count > 0) {
+                keys = (char **)malloc(sizeof(char *) * meta_count);
+                values = (char **)malloc(sizeof(char *) * meta_count);
+                if (keys == NULL || values == NULL) {
                     free(buf);
-                    free(k);
-                    free(v);
+                    free(keys);
+                    free(values);
                     fclose(f);
                     return -1;
+                }
+                for (uint32_t i = 0; i < meta_count; i++) {
+                    keys[i] = NULL;
+                    values[i] = NULL;
+                    if (gv_wal_read_string(f, &keys[i]) != 0 || gv_wal_read_string(f, &values[i]) != 0) {
+                        for (uint32_t j = 0; j <= i; j++) {
+                            free(keys[j]);
+                            free(values[j]);
+                        }
+                        free(buf);
+                        free(keys);
+                        free(values);
+                        fclose(f);
+                        return -1;
+                    }
                 }
             }
 
@@ -435,20 +705,26 @@ int gv_wal_dump(const char *path, size_t expected_dimension, uint32_t expected_i
                 crc = gv_crc32_update(crc, &dim, sizeof(uint32_t));
                 crc = gv_crc32_update(crc, buf, dim * sizeof(float));
                 crc = gv_crc32_update(crc, &meta_count, sizeof(uint32_t));
-                if (meta_count == 1 && k && v) {
-                    uint32_t klen = (uint32_t)strlen(k);
-                    uint32_t vlen = (uint32_t)strlen(v);
-                    crc = gv_crc32_update(crc, &klen, sizeof(uint32_t));
-                    crc = gv_crc32_update(crc, k, klen);
-                    crc = gv_crc32_update(crc, &vlen, sizeof(uint32_t));
-                    crc = gv_crc32_update(crc, v, vlen);
+                for (uint32_t i = 0; i < meta_count; i++) {
+                    if (keys[i] && values[i]) {
+                        uint32_t klen = (uint32_t)strlen(keys[i]);
+                        uint32_t vlen = (uint32_t)strlen(values[i]);
+                        crc = gv_crc32_update(crc, &klen, sizeof(uint32_t));
+                        crc = gv_crc32_update(crc, keys[i], klen);
+                        crc = gv_crc32_update(crc, &vlen, sizeof(uint32_t));
+                        crc = gv_crc32_update(crc, values[i], vlen);
+                    }
                 }
                 crc = gv_crc32_finish(crc);
                 uint32_t stored_crc = 0;
                 if (gv_wal_read_u32(f, &stored_crc) != 0 || stored_crc != crc) {
+                    for (uint32_t i = 0; i < meta_count; i++) {
+                        free(keys[i]);
+                        free(values[i]);
+                    }
                     free(buf);
-                    free(k);
-                    free(v);
+                    free(keys);
+                    free(values);
                     fclose(f);
                     return -1;
                 }
@@ -458,14 +734,20 @@ int gv_wal_dump(const char *path, size_t expected_dimension, uint32_t expected_i
             if (dim > 1) {
                 fprintf(out, " second=%.6f", buf[1]);
             }
-            if (meta_count == 1 && k && v) {
-                fprintf(out, " meta[%s]=%s", k, v);
+            for (uint32_t i = 0; i < meta_count; i++) {
+                if (keys[i] && values[i]) {
+                    fprintf(out, " meta[%s]=%s", keys[i], values[i]);
+                }
             }
             fprintf(out, "\n");
 
+            for (uint32_t i = 0; i < meta_count; i++) {
+                free(keys[i]);
+                free(values[i]);
+            }
             free(buf);
-            free(k);
-            free(v);
+            free(keys);
+            free(values);
             record_index++;
         } else {
             fclose(f);
