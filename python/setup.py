@@ -7,7 +7,7 @@ from setuptools.command.build_py import build_py
 
 
 class BuildPyWithMake(build_py):
-    """Run `make shared` in the repository root and copy the .so into the package."""
+    """Run `make lib` in the repository root and copy the .so into the package."""
 
     def run(self):
         repo_root = Path(__file__).resolve().parent.parent
@@ -15,7 +15,7 @@ class BuildPyWithMake(build_py):
         package_lib_path = Path(__file__).resolve().parent / "src" / "gigavector" / "libGigaVector.so"
 
         self.announce("Building GigaVector shared library via make", level=3)
-        subprocess.check_call(["make", "-C", str(repo_root), "shared"])
+        subprocess.check_call(["make", "-C", str(repo_root), "lib"])
 
         package_lib_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(lib_path, package_lib_path)
