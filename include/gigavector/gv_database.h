@@ -82,6 +82,31 @@ int gv_db_add_vector(GV_Database *db, const float *data, size_t dimension);
  */
 int gv_db_add_vector_with_metadata(GV_Database *db, const float *data, size_t dimension,
                                     const char *metadata_key, const char *metadata_value);
+/**
+ * @brief Train IVF-PQ index with provided training data.
+ *
+ * @param db Database; must be IVF-PQ type.
+ * @param data Contiguous floats of size count * dimension.
+ * @param count Number of training vectors.
+ * @param dimension Vector dimension; must match db->dimension.
+ * @return 0 on success, -1 on invalid args or training failure.
+ */
+int gv_db_ivfpq_train(GV_Database *db, const float *data, size_t count, size_t dimension);
+
+/**
+ * @brief Add a vector with multiple metadata entries to the database.
+ *
+ * @param db Target database; must be non-NULL.
+ * @param data Pointer to an array of @p dimension floats.
+ * @param dimension Number of components provided in @p data; must equal db->dimension.
+ * @param metadata_keys Array of metadata keys; NULL if count is 0.
+ * @param metadata_values Array of metadata values; NULL if count is 0.
+ * @param metadata_count Number of metadata entries.
+ * @return 0 on success, -1 on invalid arguments or allocation failure.
+ */
+int gv_db_add_vector_with_rich_metadata(GV_Database *db, const float *data, size_t dimension,
+                                        const char *const *metadata_keys, const char *const *metadata_values,
+                                        size_t metadata_count);
 
 /**
  * @brief Save the database (tree and vectors) to a binary file.

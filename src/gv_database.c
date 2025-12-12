@@ -114,8 +114,10 @@ static char *gv_db_build_wal_path(const char *filepath) {
     return gv_db_strdup(buf);
 }
 
-static int gv_db_wal_apply(void *ctx, const float *data, size_t dimension,
-                           const char *metadata_key, const char *metadata_value) {
+
+static int gv_db_wal_apply_rich(void *ctx, const float *data, size_t dimension,
+                                const char *const *metadata_keys, const char *const *metadata_values,
+                                size_t metadata_count) {
     GV_Database *db = (GV_Database *)ctx;
     if (db == NULL || data == NULL) {
         return -1;
@@ -129,7 +131,7 @@ static int gv_db_wal_apply(void *ctx, const float *data, size_t dimension,
             return -1;
         }
     }
-    if (gv_db_add_vector_with_metadata(db, data, db->dimension, metadata_key, metadata_value) != 0) {
+    if (gv_db_add_vector_with_rich_metadata(db, data, db->dimension, metadata_keys, metadata_values, metadata_count) != 0) {
         return -1;
     }
     return 0;
@@ -389,7 +391,7 @@ GV_Database *gv_db_open(const char *filepath, size_t dimension, GV_IndexType ind
         }
 
         db->wal_replaying = 1;
-        if (gv_wal_replay(db->wal_path, db->dimension, gv_db_wal_apply, db, (uint32_t)db->index_type) != 0) {
+        if (gv_wal_replay_rich(db->wal_path, db->dimension, gv_db_wal_apply_rich, db, (uint32_t)db->index_type) != 0) {
             db->wal_replaying = 0;
             gv_wal_close(db->wal);
             db->wal = NULL;
@@ -579,6 +581,72 @@ int gv_db_add_vector_with_metadata(GV_Database *db, const float *data, size_t di
     db->count += 1;
     pthread_rwlock_unlock(&db->rwlock);
     return 0;
+}
+
+int gv_db_add_vector_with_rich_metadata(GV_Database *db, const float *data, size_t dimension,
+                                        const char *const *metadata_keys, const char *const *metadata_values,
+                                        size_t metadata_count) {
+    if (db == NULL || data == NULL || dimension == 0 || dimension != db->dimension) {
+        return -1;
+    }
+    if (metadata_count > 0 && (metadata_keys == NULL || metadata_values == NULL)) {
+        return -1;
+    }
+
+    if (db->wal != NULL && db->wal_replaying == 0) {
+        pthread_mutex_lock(&db->wal_mutex);
+        int wal_res = gv_wal_append_insert_rich(db->wal, data, dimension, metadata_keys, metadata_values, metadata_count);
+        pthread_mutex_unlock(&db->wal_mutex);
+        if (wal_res != 0) {
+            return -1;
+        }
+    }
+
+    pthread_rwlock_wrlock(&db->rwlock);
+    GV_Vector *vector = gv_vector_create_from_data(dimension, data);
+    if (vector == NULL) {
+        pthread_rwlock_unlock(&db->rwlock);
+        return -1;
+    }
+
+    for (size_t i = 0; i < metadata_count; i++) {
+        if (metadata_keys[i] != NULL && metadata_values[i] != NULL) {
+            if (gv_vector_set_metadata(vector, metadata_keys[i], metadata_values[i]) != 0) {
+                gv_vector_destroy(vector);
+                pthread_rwlock_unlock(&db->rwlock);
+                return -1;
+            }
+        }
+    }
+
+    int status = -1;
+    if (db->index_type == GV_INDEX_TYPE_KDTREE) {
+        status = gv_kdtree_insert(&(db->root), vector, 0);
+    } else if (db->index_type == GV_INDEX_TYPE_HNSW) {
+        status = gv_hnsw_insert(db->hnsw_index, vector);
+    } else if (db->index_type == GV_INDEX_TYPE_IVFPQ) {
+        status = gv_ivfpq_insert(db->hnsw_index, vector);
+    }
+
+    if (status != 0) {
+        gv_vector_destroy(vector);
+        pthread_rwlock_unlock(&db->rwlock);
+        return -1;
+    }
+
+    db->count += 1;
+    pthread_rwlock_unlock(&db->rwlock);
+    return 0;
+}
+
+int gv_db_ivfpq_train(GV_Database *db, const float *data, size_t count, size_t dimension) {
+    if (db == NULL || data == NULL || count == 0 || dimension != db->dimension) {
+        return -1;
+    }
+    if (db->index_type != GV_INDEX_TYPE_IVFPQ || db->hnsw_index == NULL) {
+        return -1;
+    }
+    return gv_ivfpq_train(db->hnsw_index, data, count);
 }
 
 int gv_db_add_vectors(GV_Database *db, const float *data, size_t count, size_t dimension) {
