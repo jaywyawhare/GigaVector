@@ -1,6 +1,6 @@
 # Compiler and flags
 CC      := gcc
-CFLAGS  := -g -Wall -MMD -Iinclude -march=native -msse4.2 -mavx2 -mavx512f -mfma -pthread
+CFLAGS  := -g -Wall -MMD -Iinclude -march=native -msse4.2 -mavx2 -mavx512f -mfma -pthread -fPIC
 LDFLAGS := -lm -pthread
 
 # Project structure
@@ -17,6 +17,7 @@ BENCH_DIR   := $(BUILD_DIR)/bench
 LIB_NAME    := GigaVector
 LIB_VERSION := 0.0.1 
 STATIC_LIB  := $(LIB_DIR)/lib$(LIB_NAME).a
+SHARED_LIB  := $(LIB_DIR)/lib$(LIB_NAME).so
 
 # Find all source files for the library
 SRC_FILES   := $(shell find $(SRC_DIR) -name "*.c")
@@ -24,6 +25,11 @@ SRC_FILES   := $(shell find $(SRC_DIR) -name "*.c")
 MAIN_FILE   := main.c
 BENCH_FILES := benchmark_simd.c benchmark_compare.c benchmark_ivfpq.c benchmark_ivfpq_recall.c
 TEST_DIR    := tests
+
+# Python paths
+PYTHON_DIR  := python
+PYTHON_SRC  := $(PYTHON_DIR)/src
+PYTHON_TEST := $(PYTHON_DIR)/tests
 
 # Generate object file paths
 # Library objects (from SRC_DIR)
@@ -58,12 +64,17 @@ $(BIN_DIR)/main: $(ALL_OBJS) $(STATIC_LIB)
 
 # Build the static library
 .PHONY: lib
-lib: $(STATIC_LIB)
+lib: $(STATIC_LIB) $(SHARED_LIB)
 
 $(STATIC_LIB): $(LIB_OBJS)
 	@mkdir -p $(LIB_DIR)
 	ar rcs $@ $^
 	@echo "Built static library: $@"
+
+$(SHARED_LIB): $(LIB_OBJS)
+	@mkdir -p $(LIB_DIR)
+	$(CC) -shared $(CFLAGS) $^ -o $@ $(LDFLAGS)
+	@echo "Built shared library: $@"
 
 # Compile library source files (from SRC_DIR)
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.c
@@ -115,5 +126,14 @@ test-corrupt-snapshot: $(BIN_DIR)/main
 .PHONY: bench-ivfpq-suite
 bench-ivfpq-suite: $(BENCH_DIR)/benchmark_ivfpq $(BENCH_DIR)/benchmark_ivfpq_recall
 	@BIN_DIR=$(BENCH_DIR) bash $(TEST_DIR)/ivfpq_suite.sh
+
+.PHONY: python-test
+python-test: lib
+	@cd $(PYTHON_DIR) && PYTHONPATH=src python -m unittest discover -s tests
+
+.PHONY: c-test
+c-test: lib
+	$(CC) $(CFLAGS) -Iinclude tests/test_db.c -L$(LIB_DIR) -l$(LIB_NAME) $(LDFLAGS) -o $(BUILD_DIR)/test_db
+	LD_LIBRARY_PATH=$(LIB_DIR):$$LD_LIBRARY_PATH $(BUILD_DIR)/test_db
 
 -include $(DEPS)
