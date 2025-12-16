@@ -257,6 +257,107 @@ float gv_distance_cosine(const GV_Vector *a, const GV_Vector *b) {
     return dot_product / (norm_a * norm_b);
 }
 
+#ifdef __AVX2__
+static float gv_distance_manhattan_avx2(const float *a, const float *b, size_t dimension) {
+    __m256 sum_vec = _mm256_setzero_ps();
+    __m256 sign_mask = _mm256_set1_ps(-0.0f);
+    size_t i = 0;
+    
+    for (; i + 8 <= dimension; i += 8) {
+        __m256 va = _mm256_loadu_ps(&a[i]);
+        __m256 vb = _mm256_loadu_ps(&b[i]);
+        __m256 diff = _mm256_sub_ps(va, vb);
+        __m256 abs_diff = _mm256_andnot_ps(sign_mask, diff);
+        sum_vec = _mm256_add_ps(sum_vec, abs_diff);
+    }
+    
+    float sum = 0.0f;
+    __m128 sum_low = _mm256_extractf128_ps(sum_vec, 0);
+    __m128 sum_high = _mm256_extractf128_ps(sum_vec, 1);
+    __m128 sum_128 = _mm_add_ps(sum_low, sum_high);
+    sum_128 = _mm_hadd_ps(sum_128, sum_128);
+    sum_128 = _mm_hadd_ps(sum_128, sum_128);
+    sum = _mm_cvtss_f32(sum_128);
+    
+    for (; i < dimension; ++i) {
+        float diff = a[i] - b[i];
+        sum += (diff < 0.0f) ? -diff : diff;
+    }
+    
+    return sum;
+}
+#endif
+
+#ifdef __SSE4_2__
+static float gv_distance_manhattan_sse(const float *a, const float *b, size_t dimension) {
+    __m128 sum_vec = _mm_setzero_ps();
+    __m128 sign_mask = _mm_set1_ps(-0.0f);
+    size_t i = 0;
+    
+    for (; i + 4 <= dimension; i += 4) {
+        __m128 va = _mm_loadu_ps(&a[i]);
+        __m128 vb = _mm_loadu_ps(&b[i]);
+        __m128 diff = _mm_sub_ps(va, vb);
+        __m128 abs_diff = _mm_andnot_ps(sign_mask, diff);
+        sum_vec = _mm_add_ps(sum_vec, abs_diff);
+    }
+    
+    float sum = 0.0f;
+    sum_vec = _mm_hadd_ps(sum_vec, sum_vec);
+    sum_vec = _mm_hadd_ps(sum_vec, sum_vec);
+    sum = _mm_cvtss_f32(sum_vec);
+    
+    for (; i < dimension; ++i) {
+        float diff = a[i] - b[i];
+        sum += (diff < 0.0f) ? -diff : diff;
+    }
+    
+    return sum;
+}
+#endif
+
+static float gv_distance_manhattan_scalar(const float *a, const float *b, size_t dimension) {
+    float sum = 0.0f;
+    for (size_t i = 0; i < dimension; ++i) {
+        float diff = a[i] - b[i];
+        sum += (diff < 0.0f) ? -diff : diff;
+    }
+    return sum;
+}
+
+float gv_distance_manhattan(const GV_Vector *a, const GV_Vector *b) {
+    if (a == NULL || b == NULL || a->data == NULL || b->data == NULL) {
+        return -1.0f;
+    }
+    if (a->dimension != b->dimension || a->dimension == 0) {
+        return -1.0f;
+    }
+
+#ifdef __AVX2__
+    if (gv_cpu_has_feature(GV_CPU_FEATURE_AVX2)) {
+        return gv_distance_manhattan_avx2(a->data, b->data, a->dimension);
+    }
+#endif
+#ifdef __SSE4_2__
+    if (gv_cpu_has_feature(GV_CPU_FEATURE_SSE4_2)) {
+        return gv_distance_manhattan_sse(a->data, b->data, a->dimension);
+    }
+#endif
+    return gv_distance_manhattan_scalar(a->data, b->data, a->dimension);
+}
+
+float gv_distance_dot_product(const GV_Vector *a, const GV_Vector *b) {
+    if (a == NULL || b == NULL || a->data == NULL || b->data == NULL) {
+        return -1.0f;
+    }
+    if (a->dimension != b->dimension || a->dimension == 0) {
+        return -1.0f;
+    }
+
+    float dot = gv_vector_dot(a, b);
+    return -dot;
+}
+
 float gv_distance(const GV_Vector *a, const GV_Vector *b, GV_DistanceType type) {
     if (a == NULL || b == NULL) {
         return -1.0f;
@@ -267,6 +368,10 @@ float gv_distance(const GV_Vector *a, const GV_Vector *b, GV_DistanceType type) 
             return gv_distance_euclidean(a, b);
         case GV_DISTANCE_COSINE:
             return gv_distance_cosine(a, b);
+        case GV_DISTANCE_DOT_PRODUCT:
+            return gv_distance_dot_product(a, b);
+        case GV_DISTANCE_MANHATTAN:
+            return gv_distance_manhattan(a, b);
         default:
             return -1.0f;
     }

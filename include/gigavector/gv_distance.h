@@ -14,7 +14,9 @@ extern "C" {
  */
 typedef enum {
     GV_DISTANCE_EUCLIDEAN = 0,
-    GV_DISTANCE_COSINE = 1
+    GV_DISTANCE_COSINE = 1,
+    GV_DISTANCE_DOT_PRODUCT = 2,
+    GV_DISTANCE_MANHATTAN = 3
 } GV_DistanceType;
 
 /**
@@ -36,6 +38,28 @@ float gv_distance_euclidean(const GV_Vector *a, const GV_Vector *b);
  * @return Cosine similarity in [-1, 1], or -2.0f on invalid arguments.
  */
 float gv_distance_cosine(const GV_Vector *a, const GV_Vector *b);
+
+/**
+ * @brief Calculate dot product between two vectors.
+ *
+ * Returns negative dot product as distance (higher dot product = lower distance).
+ * This allows dot product to be used in similarity search where lower distance
+ * indicates higher similarity.
+ *
+ * @param a First vector; must be non-NULL with matching dimension.
+ * @param b Second vector; must be non-NULL with matching dimension.
+ * @return Negative dot product (distance), or -1.0f on invalid arguments.
+ */
+float gv_distance_dot_product(const GV_Vector *a, const GV_Vector *b);
+
+/**
+ * @brief Calculate Manhattan (L1) distance between two vectors.
+ *
+ * @param a First vector; must be non-NULL with matching dimension.
+ * @param b Second vector; must be non-NULL with matching dimension.
+ * @return Manhattan distance (non-negative), or -1.0f on invalid arguments.
+ */
+float gv_distance_manhattan(const GV_Vector *a, const GV_Vector *b);
 
 /**
  * @brief Calculate distance using the specified metric type.
