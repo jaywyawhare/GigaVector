@@ -32,6 +32,43 @@ class SearchHit:
     vector: Vector
 
 
+@dataclass
+class HNSWConfig:
+    """Configuration for HNSW index."""
+    M: int = 16
+    ef_construction: int = 200
+    ef_search: int = 50
+    max_level: int = 16
+    use_binary_quant: bool = False
+    quant_rerank: int = 0
+
+
+@dataclass
+class ScalarQuantConfig:
+    """Configuration for scalar quantization."""
+    bits: int = 8
+    per_dimension: bool = False
+
+
+@dataclass
+class IVFPQConfig:
+    """Configuration for IVFPQ index."""
+    nlist: int = 64
+    m: int = 8
+    nbits: int = 8
+    nprobe: int = 4
+    train_iters: int = 15
+    default_rerank: int = 32
+    use_cosine: bool = False
+    use_scalar_quant: bool = False
+    scalar_quant_config: ScalarQuantConfig = None
+    oversampling_factor: float = 1.0
+    
+    def __post_init__(self):
+        if self.scalar_quant_config is None:
+            self.scalar_quant_config = ScalarQuantConfig()
+
+
 def _metadata_to_dict(meta_ptr) -> dict[str, str]:
     if meta_ptr == ffi.NULL:
         return {}
@@ -59,9 +96,54 @@ class Database:
         self._closed = False
 
     @classmethod
-    def open(cls, path: str | None, dimension: int, index: IndexType = IndexType.KDTREE):
+    def open(cls, path: str | None, dimension: int, index: IndexType = IndexType.KDTREE, 
+             hnsw_config: HNSWConfig | None = None, ivfpq_config: IVFPQConfig | None = None):
+        """
+        Open a database instance.
+        
+        Args:
+            path: File path for persistent storage. Use None for in-memory database.
+            dimension: Vector dimension (must be consistent for all vectors).
+            index: Index type to use. Defaults to KDTREE.
+            hnsw_config: Optional HNSW configuration. Only used when index is HNSW.
+            ivfpq_config: Optional IVFPQ configuration. Only used when index is IVFPQ.
+        
+        Returns:
+            Database instance
+        """
         c_path = path.encode("utf-8") if path is not None else ffi.NULL
-        db = lib.gv_db_open(c_path, dimension, int(index))
+        
+        if hnsw_config is not None and index == IndexType.HNSW:
+            config = ffi.new("GV_HNSWConfig *", {
+                "M": hnsw_config.M,
+                "efConstruction": hnsw_config.ef_construction,
+                "efSearch": hnsw_config.ef_search,
+                "maxLevel": hnsw_config.max_level,
+                "use_binary_quant": 1 if hnsw_config.use_binary_quant else 0,
+                "quant_rerank": hnsw_config.quant_rerank
+            })
+            db = lib.gv_db_open_with_hnsw_config(c_path, dimension, int(index), config)
+        elif ivfpq_config is not None and index == IndexType.IVFPQ:
+            sq_config = ffi.new("GV_ScalarQuantConfig *", {
+                "bits": ivfpq_config.scalar_quant_config.bits,
+                "per_dimension": 1 if ivfpq_config.scalar_quant_config.per_dimension else 0
+            })
+            config = ffi.new("GV_IVFPQConfig *", {
+                "nlist": ivfpq_config.nlist,
+                "m": ivfpq_config.m,
+                "nbits": ivfpq_config.nbits,
+                "nprobe": ivfpq_config.nprobe,
+                "train_iters": ivfpq_config.train_iters,
+                "default_rerank": ivfpq_config.default_rerank,
+                "use_cosine": 1 if ivfpq_config.use_cosine else 0,
+                "use_scalar_quant": 1 if ivfpq_config.use_scalar_quant else 0,
+                "scalar_quant_config": sq_config[0],
+                "oversampling_factor": ivfpq_config.oversampling_factor
+            })
+            db = lib.gv_db_open_with_ivfpq_config(c_path, dimension, int(index), config)
+        else:
+            db = lib.gv_db_open(c_path, dimension, int(index))
+        
         if db == ffi.NULL:
             raise RuntimeError("gv_db_open failed")
         return cls(db, dimension)

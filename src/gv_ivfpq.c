@@ -238,6 +238,7 @@ static void gv_ivfpq_heap_sift_up(GV_IVFPQHeapItem *heap, size_t idx) {
 typedef struct GV_IVFPQEntry {
     uint8_t *codes;        /* length m */
     GV_Vector *vector;     /* original vector for output */
+    GV_ScalarQuantVector *scalar_quant; /* scalar quantized version if enabled */
 } GV_IVFPQEntry;
 
 typedef struct {
@@ -259,6 +260,10 @@ typedef struct {
     int trained;
     size_t default_rerank;
     int use_cosine;
+    int use_scalar_quant;
+    GV_ScalarQuantConfig scalar_quant_config;
+    GV_ScalarQuantVector *scalar_quant_template; /* template with min/max from training */
+    float oversampling_factor; /* Factor to oversample candidates before reranking */
     float *coarse;   /* nlist * dimension */
     float *pq;       /* m * codebook_size * subdim */
     GV_IVFPQList *lists;
@@ -347,6 +352,16 @@ void *gv_ivfpq_create(size_t dimension, const GV_IVFPQConfig *config) {
     idx->train_iters = (config && config->train_iters) ? config->train_iters : 15;
     idx->default_rerank = (config && config->default_rerank) ? config->default_rerank : 32;
     idx->use_cosine = (config ? config->use_cosine : 0);
+    idx->use_scalar_quant = (config && config->use_scalar_quant) ? 1 : 0;
+    idx->oversampling_factor = (config && config->oversampling_factor > 0.0f) ? config->oversampling_factor : 1.0f;
+    if (idx->use_scalar_quant && config) {
+        idx->scalar_quant_config = config->scalar_quant_config;
+        idx->scalar_quant_template = NULL;
+    } else {
+        idx->scalar_quant_config.bits = 0;
+        idx->scalar_quant_config.per_dimension = 0;
+        idx->scalar_quant_template = NULL;
+    }
     if (idx->m == 0 || idx->dimension % idx->m != 0) {
         free(idx);
         return NULL;
@@ -431,6 +446,19 @@ int gv_ivfpq_train(void *index_ptr, const float *data, size_t count) {
         }
     }
     free(subbuf);
+    
+    if (idx->use_scalar_quant) {
+        if (idx->scalar_quant_template != NULL) {
+            gv_scalar_quant_vector_destroy(idx->scalar_quant_template);
+        }
+        idx->scalar_quant_template = gv_scalar_quantize_train(train_buf, count, idx->dimension, &idx->scalar_quant_config);
+        if (idx->scalar_quant_template == NULL) {
+            free(train_buf);
+            pthread_rwlock_unlock(&idx->rwlock);
+            return -1;
+        }
+    }
+    
     free(train_buf);
     idx->trained = 1;
     pthread_rwlock_unlock(&idx->rwlock);
@@ -524,6 +552,46 @@ int gv_ivfpq_insert(void *index_ptr, GV_Vector *vector) {
     }
     list->entries[list->count].codes = codes;
     list->entries[list->count].vector = vector;
+    list->entries[list->count].scalar_quant = NULL;
+    
+    if (idx->use_scalar_quant && idx->scalar_quant_template != NULL) {
+        GV_ScalarQuantVector *sqv = (GV_ScalarQuantVector *)malloc(sizeof(GV_ScalarQuantVector));
+        if (sqv != NULL) {
+            sqv->dimension = idx->dimension;
+            sqv->bits = idx->scalar_quant_config.bits;
+            sqv->per_dimension = idx->scalar_quant_config.per_dimension;
+            sqv->bytes_per_vector = idx->scalar_quant_template->bytes_per_vector;
+            sqv->min_vals = idx->scalar_quant_template->min_vals;
+            sqv->max_vals = idx->scalar_quant_template->max_vals;
+            sqv->quantized = (uint8_t *)calloc(sqv->bytes_per_vector, sizeof(uint8_t));
+            if (sqv->quantized != NULL) {
+                size_t max_quant = (1ULL << sqv->bits) - 1;
+                for (size_t i = 0; i < idx->dimension; ++i) {
+                    float min_val = sqv->per_dimension ? sqv->min_vals[i] : sqv->min_vals[0];
+                    float max_val = sqv->per_dimension ? sqv->max_vals[i] : sqv->max_vals[0];
+                    float range = max_val - min_val;
+                    if (range <= 0.0f) continue;
+                    float normalized = (vector->data[i] - min_val) / range;
+                    normalized = (normalized < 0.0f) ? 0.0f : (normalized > 1.0f) ? 1.0f : normalized;
+                    size_t quantized_val = (size_t)(normalized * max_quant + 0.5f);
+                    if (quantized_val > max_quant) quantized_val = max_quant;
+                    if (sqv->bits == 4) {
+                        size_t byte_idx = i / 2;
+                        size_t bit_offset = (i % 2) * 4;
+                        sqv->quantized[byte_idx] |= (uint8_t)(quantized_val << (4 - bit_offset));
+                    } else if (sqv->bits == 8) {
+                        sqv->quantized[i] = (uint8_t)quantized_val;
+                    } else if (sqv->bits == 16) {
+                        ((uint16_t *)sqv->quantized)[i] = (uint16_t)quantized_val;
+                    }
+                }
+                list->entries[list->count].scalar_quant = sqv;
+            } else {
+                free(sqv);
+            }
+        }
+    }
+    
     /* copy into SoA */
     for (size_t m = 0; m < idx->m; ++m) {
         list->codes_soa[m * list->capacity + list->count] = codes[m];
@@ -644,8 +712,12 @@ int gv_ivfpq_search(void *index_ptr, const GV_Vector *query, size_t k,
         }
     }
 
-    /* bounded max-heap for top-k */
-    GV_IVFPQHeapItem *heap = (GV_IVFPQHeapItem *)malloc(k * sizeof(GV_IVFPQHeapItem));
+    /* Calculate oversampled candidate count */
+    size_t oversampled_k = (size_t)(k * idx->oversampling_factor + 0.5f);
+    if (oversampled_k < k) oversampled_k = k;
+    
+    /* bounded max-heap for top-k (or oversampled-k) */
+    GV_IVFPQHeapItem *heap = (GV_IVFPQHeapItem *)malloc(oversampled_k * sizeof(GV_IVFPQHeapItem));
     size_t hsize = 0;
     if (!heap) {
         free(probe_ids);
@@ -682,7 +754,7 @@ int gv_ivfpq_search(void *index_ptr, const GV_Vector *query, size_t k,
                         d += lut[m * idx->codebook_size + base[m * cap]];
                     }
                     GV_IVFPQEntry *ent = &list->entries[e];
-                    if (hsize < k) {
+                    if (hsize < oversampled_k) {
                         heap[hsize].dist = d;
                         heap[hsize].entry = ent;
                         gv_ivfpq_heap_sift_up(heap, hsize);
@@ -711,7 +783,7 @@ int gv_ivfpq_search(void *index_ptr, const GV_Vector *query, size_t k,
                     for (; m < idx->m; ++m) {
                         d += lut[m * idx->codebook_size + ent->codes[m]];
                     }
-                    if (hsize < k) {
+                    if (hsize < oversampled_k) {
                         heap[hsize].dist = d;
                         heap[hsize].entry = ent;
                         gv_ivfpq_heap_sift_up(heap, hsize);
@@ -747,15 +819,25 @@ int gv_ivfpq_search(void *index_ptr, const GV_Vector *query, size_t k,
     }
     free(heap);
 
-    /* Optional rerank with exact L2 on top entries */
+    /* Optional rerank with exact distance on oversampled candidates */
     size_t rr = rerank_top > 0 ? rerank_top : idx->default_rerank;
     if (rr > found) rr = found;
-    if (rr > k) rr = k;
+    if (rr == 0 && idx->oversampling_factor > 1.0f) {
+        rr = found;
+    }
     if (rr > 0) {
-        /* simple insertion sort on refined distance */
+        /* Rerank oversampled candidates with exact distances */
         for (size_t i = 0; i < rr; ++i) {
             if (beste[i] == NULL) continue;
-            float dist = gv_distance(query, beste[i]->vector, cosine ? GV_DISTANCE_COSINE : GV_DISTANCE_EUCLIDEAN);
+            
+            float dist;
+            if (idx->use_scalar_quant && beste[i]->scalar_quant != NULL) {
+                dist = gv_scalar_quant_distance(query->data, beste[i]->scalar_quant, 
+                                                 (int)(cosine ? GV_DISTANCE_COSINE : GV_DISTANCE_EUCLIDEAN));
+            } else {
+                dist = gv_distance(query, beste[i]->vector, cosine ? GV_DISTANCE_COSINE : GV_DISTANCE_EUCLIDEAN);
+            }
+            
             if (cosine && dist > -1.5f) {
                 dist = 1.0f - dist; /* convert similarity to distance */
             }
@@ -778,8 +860,10 @@ int gv_ivfpq_search(void *index_ptr, const GV_Vector *query, size_t k,
             }
         }
     }
-
-    for (size_t i = 0; i < found; ++i) {
+    
+    /* Limit results to k after reranking */
+    size_t result_count = (found < k) ? found : k;
+    for (size_t i = 0; i < result_count; ++i) {
         results[i].distance = bestd[i];
         results[i].vector = beste[i] ? beste[i]->vector : NULL;
     }
@@ -790,7 +874,7 @@ int gv_ivfpq_search(void *index_ptr, const GV_Vector *query, size_t k,
     free(beste);
     free(qbuf);
     pthread_rwlock_unlock(&idx->rwlock);
-    return (int)found;
+    return (int)result_count;
 }
 
 void gv_ivfpq_destroy(void *index_ptr) {
@@ -803,12 +887,24 @@ void gv_ivfpq_destroy(void *index_ptr) {
             if (list->entries) {
                 for (size_t e = 0; e < list->count; ++e) {
                     free(list->entries[e].codes);
+                    if (list->entries[e].scalar_quant != NULL) {
+                        GV_ScalarQuantVector *sqv = list->entries[e].scalar_quant;
+                        if (sqv->quantized != NULL) {
+                            free(sqv->quantized);
+                        }
+                        sqv->min_vals = NULL;
+                        sqv->max_vals = NULL;
+                        free(sqv);
+                    }
                     gv_vector_destroy(list->entries[e].vector);
                 }
                 free(list->entries);
             }
             free(list->codes_soa);
         }
+    }
+    if (idx->scalar_quant_template != NULL) {
+        gv_scalar_quant_vector_destroy(idx->scalar_quant_template);
     }
     free(idx->lists);
     /* list_mutex freed separately */
@@ -847,6 +943,8 @@ int gv_ivfpq_save(const void *index_ptr, FILE *out, uint32_t version) {
     crc = gv_crc32_update(crc, &idx->default_rerank, sizeof(size_t));
     if (fwrite(&idx->use_cosine, sizeof(int), 1, out) != 1) return -1;
     crc = gv_crc32_update(crc, &idx->use_cosine, sizeof(int));
+    if (fwrite(&idx->oversampling_factor, sizeof(float), 1, out) != 1) return -1;
+    crc = gv_crc32_update(crc, &idx->oversampling_factor, sizeof(float));
     if (fwrite(&idx->trained, sizeof(int), 1, out) != 1) return -1;
     crc = gv_crc32_update(crc, &idx->trained, sizeof(int));
     if (idx->trained) {
@@ -897,6 +995,7 @@ int gv_ivfpq_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version
     size_t dim = 0, nlist = 0, m = 0, nprobe = 0, train_iters = 0, default_rerank = 0;
     uint8_t nbits = 0;
     int trained = 0, use_cosine = 0;
+    float oversampling_factor = 1.0f;
     uint32_t crc = gv_crc32_init();
     if (fread(&dim, sizeof(size_t), 1, in) != 1) return -1;
     crc = gv_crc32_update(crc, &dim, sizeof(size_t));
@@ -915,10 +1014,15 @@ int gv_ivfpq_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version
     crc = gv_crc32_update(crc, &default_rerank, sizeof(size_t));
     if (fread(&use_cosine, sizeof(int), 1, in) != 1) return -1;
     crc = gv_crc32_update(crc, &use_cosine, sizeof(int));
+    if (fread(&oversampling_factor, sizeof(float), 1, in) != 1) {
+        oversampling_factor = 1.0f;
+    } else {
+        crc = gv_crc32_update(crc, &oversampling_factor, sizeof(float));
+    }
     if (fread(&trained, sizeof(int), 1, in) != 1) return -1;
     crc = gv_crc32_update(crc, &trained, sizeof(int));
 
-    GV_IVFPQConfig cfg = {.nlist = nlist, .m = m, .nbits = nbits, .nprobe = nprobe, .train_iters = train_iters, .default_rerank = default_rerank, .use_cosine = use_cosine};
+    GV_IVFPQConfig cfg = {.nlist = nlist, .m = m, .nbits = nbits, .nprobe = nprobe, .train_iters = train_iters, .default_rerank = default_rerank, .use_cosine = use_cosine, .oversampling_factor = oversampling_factor};
     void *idx_ptr = gv_ivfpq_create(dim, &cfg);
     if (!idx_ptr) return -1;
     GV_IVFPQIndex *idx = (GV_IVFPQIndex *)idx_ptr;
