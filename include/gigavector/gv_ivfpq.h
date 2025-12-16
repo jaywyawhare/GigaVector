@@ -25,6 +25,7 @@ typedef struct {
     int use_cosine;     /**< Treat vectors as cosine (normalize query; LUT uses dot). */
     int use_scalar_quant; /**< Enable scalar quantization for memory reduction (default: 0) */
     GV_ScalarQuantConfig scalar_quant_config; /**< Scalar quantization config if enabled */
+    float oversampling_factor; /**< Oversampling factor for candidate selection (e.g., 2.0 = 2x k candidates, default: 1.0) */
 } GV_IVFPQConfig;
 
 /**
