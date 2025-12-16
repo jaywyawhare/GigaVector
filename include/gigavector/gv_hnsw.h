@@ -5,6 +5,7 @@
 
 #include "gv_distance.h"
 #include "gv_types.h"
+#include "gv_binary_quant.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -18,6 +19,8 @@ typedef struct {
     size_t efConstruction; /**< Candidate list size during construction (default: 200) */
     size_t efSearch;       /**< Candidate list size during search (default: 50) */
     size_t maxLevel;       /**< Maximum level in hierarchy (auto-calculated if 0) */
+    int use_binary_quant;  /**< Enable binary quantization for fast candidate selection (default: 0) */
+    size_t quant_rerank;   /**< Number of candidates to rerank with exact distance (0 = disable, default: 0) */
 } GV_HNSWConfig;
 
 /**

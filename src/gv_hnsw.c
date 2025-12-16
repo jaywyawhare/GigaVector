@@ -10,9 +10,11 @@
 #include "gigavector/gv_distance.h"
 #include "gigavector/gv_metadata.h"
 #include "gigavector/gv_vector.h"
+#include "gigavector/gv_binary_quant.h"
 
 typedef struct GV_HNSWNode {
     GV_Vector *vector;
+    GV_BinaryVector *binary_vector;  /**< Binary quantized version for fast search */
     struct GV_HNSWNode ***neighbors;
     size_t *neighbor_counts;
     size_t level;
@@ -29,6 +31,8 @@ typedef struct {
     size_t efConstruction;
     size_t efSearch;
     size_t maxLevel;
+    int use_binary_quant;
+    size_t quant_rerank;
     GV_HNSWNode *entryPoint;
     size_t count;
     GV_HNSWNode **nodes;
@@ -67,6 +71,9 @@ static void gv_hnsw_node_destroy(GV_HNSWNode *node) {
     }
     free(node->neighbor_counts);
     gv_vector_destroy(node->vector);
+    if (node->binary_vector != NULL) {
+        gv_binary_vector_destroy(node->binary_vector);
+    }
     free(node);
 }
 
@@ -85,6 +92,8 @@ void *gv_hnsw_create(size_t dimension, const GV_HNSWConfig *config) {
     index->efConstruction = (config && config->efConstruction > 0) ? config->efConstruction : 200;
     index->efSearch = (config && config->efSearch > 0) ? config->efSearch : 50;
     index->maxLevel = (config && config->maxLevel > 0) ? config->maxLevel : 16;
+    index->use_binary_quant = (config && config->use_binary_quant) ? 1 : 0;
+    index->quant_rerank = (config && config->quant_rerank > 0) ? config->quant_rerank : 0;
     index->entryPoint = NULL;
     index->count = 0;
     index->nodes_capacity = 1024;
@@ -114,6 +123,7 @@ int gv_hnsw_insert(void *index_ptr, GV_Vector *vector) {
     }
 
     new_node->vector = vector;
+    new_node->binary_vector = NULL;
     new_node->level = level;
     new_node->neighbors = (GV_HNSWNode ***)malloc((level + 1) * sizeof(GV_HNSWNode **));
     new_node->neighbor_counts = (size_t *)calloc(level + 1, sizeof(size_t));
@@ -122,6 +132,19 @@ int gv_hnsw_insert(void *index_ptr, GV_Vector *vector) {
         free(new_node->neighbor_counts);
         free(new_node);
         return -1;
+    }
+
+    if (index->use_binary_quant) {
+        new_node->binary_vector = gv_binary_quantize(vector->data, vector->dimension);
+        if (new_node->binary_vector == NULL) {
+            for (size_t l = 0; l <= level; ++l) {
+                free(new_node->neighbors[l]);
+            }
+            free(new_node->neighbors);
+            free(new_node->neighbor_counts);
+            free(new_node);
+            return -1;
+        }
     }
 
     for (size_t l = 0; l <= level; ++l) {
@@ -284,6 +307,14 @@ int gv_hnsw_search(void *index_ptr, const GV_Vector *query, size_t k,
 
     memset(results, 0, k * sizeof(GV_SearchResult));
 
+    GV_BinaryVector *query_binary = NULL;
+    if (index->use_binary_quant) {
+        query_binary = gv_binary_quantize(query->data, query->dimension);
+        if (query_binary == NULL) {
+            return -1;
+        }
+    }
+
     GV_HNSWNode *current = index->entryPoint;
     size_t currentLevel = index->entryPoint->level;
 
@@ -299,7 +330,15 @@ int gv_hnsw_search(void *index_ptr, const GV_Vector *query, size_t k,
             for (size_t i = 0; i < current->neighbor_counts[lc]; ++i) {
                 if (current->neighbors[lc][i] != NULL && 
                     current->neighbors[lc][i]->vector != NULL) {
-                    float dist = gv_distance(current->neighbors[lc][i]->vector, query, distance_type);
+                    float dist;
+                    if (index->use_binary_quant && query_binary != NULL && 
+                        current->neighbors[lc][i]->binary_vector != NULL) {
+                        size_t hamming = gv_binary_hamming_distance_fast(
+                            query_binary, current->neighbors[lc][i]->binary_vector);
+                        dist = (float)hamming;
+                    } else {
+                        dist = gv_distance(current->neighbors[lc][i]->vector, query, distance_type);
+                    }
                     if (dist < minDist) {
                         minDist = dist;
                         closest = current->neighbors[lc][i];
@@ -329,8 +368,15 @@ int gv_hnsw_search(void *index_ptr, const GV_Vector *query, size_t k,
         return -1;
     }
 
+    float current_dist;
+    if (index->use_binary_quant && query_binary != NULL && current->binary_vector != NULL) {
+        size_t hamming = gv_binary_hamming_distance_fast(query_binary, current->binary_vector);
+        current_dist = (float)hamming;
+    } else {
+        current_dist = gv_distance(current->vector, query, distance_type);
+    }
     candidates[candidate_count].node = current;
-    candidates[candidate_count++].distance = gv_distance(current->vector, query, distance_type);
+    candidates[candidate_count++].distance = current_dist;
     
     size_t current_idx = 0;
     for (size_t i = 0; i < index->count; ++i) {
@@ -374,7 +420,13 @@ int gv_hnsw_search(void *index_ptr, const GV_Vector *query, size_t k,
             visited[node_idx] = 1;
             visited_count++;
 
-            float dist = gv_distance(neighbor->vector, query, distance_type);
+            float dist;
+            if (index->use_binary_quant && query_binary != NULL && neighbor->binary_vector != NULL) {
+                size_t hamming = gv_binary_hamming_distance_fast(query_binary, neighbor->binary_vector);
+                dist = (float)hamming;
+            } else {
+                dist = gv_distance(neighbor->vector, query, distance_type);
+            }
 
             if (candidate_count < index->efSearch) {
                 candidates[candidate_count].node = neighbor;
@@ -394,11 +446,24 @@ int gv_hnsw_search(void *index_ptr, const GV_Vector *query, size_t k,
     free(visited);
 
     if (candidate_count == 0) {
+        if (query_binary != NULL) {
+            gv_binary_vector_destroy(query_binary);
+        }
         free(candidates);
         return 0;
     }
 
     qsort(candidates, candidate_count, sizeof(GV_HNSWCandidate), compare_candidates);
+
+    if (index->use_binary_quant && index->quant_rerank > 0 && query_binary != NULL) {
+        size_t rerank_count = (candidate_count < index->quant_rerank) ? candidate_count : index->quant_rerank;
+        for (size_t i = 0; i < rerank_count; ++i) {
+            if (candidates[i].node != NULL && candidates[i].node->vector != NULL) {
+                candidates[i].distance = gv_distance(candidates[i].node->vector, query, distance_type);
+            }
+        }
+        qsort(candidates, candidate_count, sizeof(GV_HNSWCandidate), compare_candidates);
+    }
 
     size_t result_count = 0;
     for (size_t i = 0; i < candidate_count && result_count < k; ++i) {
@@ -416,6 +481,9 @@ int gv_hnsw_search(void *index_ptr, const GV_Vector *query, size_t k,
         }
     }
 
+    if (query_binary != NULL) {
+        gv_binary_vector_destroy(query_binary);
+    }
     free(candidates);
     return (int)result_count;
 }
