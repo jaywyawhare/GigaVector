@@ -1,5 +1,9 @@
 # GigaVector
 
+![GigaVector Logo](https://raw.githubusercontent.com/jaywyawhare/GigaVector/master/gigavector-logo.png)
+
+[![PyPI Downloads](https://static.pepy.tech/personalized-badge/gigavector?period=total&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=GREEN&left_text=downloads)](https://pepy.tech/projects/gigavector)
+
 A fast, modular vector database in C with optional Python bindings.
 
 ## Features
