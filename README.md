@@ -1,8 +1,14 @@
 # GigaVector
 
-![GigaVector Logo](https://raw.githubusercontent.com/jaywyawhare/GigaVector/master/gigavector-logo.png)
+<p align="center">
+  <img src="https://raw.githubusercontent.com/jaywyawhare/GigaVector/master/gigavector-logo.png" alt="GigaVector Logo" width="200" />
+</p>
 
-[![PyPI Downloads](https://static.pepy.tech/personalized-badge/gigavector?period=total&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=GREEN&left_text=downloads)](https://pepy.tech/projects/gigavector)
+<p align="center">
+  <a href="https://pepy.tech/projects/gigavector">
+    <img src="https://static.pepy.tech/personalized-badge/gigavector?period=total&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=GREEN&left_text=downloads" alt="PyPI Downloads" />
+  </a>
+</p>
 
 A fast, modular vector database in C with optional Python bindings.
 
