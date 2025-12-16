@@ -388,7 +388,7 @@ static void gv_knn_search_recursive(const GV_KDNode *node, const GV_Vector *quer
     }
 
     float dist = gv_distance(node->point, query, ctx->distance_type);
-    if (dist < 0.0f) {
+    if (dist < 0.0f && ctx->distance_type != GV_DISTANCE_DOT_PRODUCT) {
         return;
     }
 
