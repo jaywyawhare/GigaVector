@@ -22,6 +22,23 @@ typedef struct {
     size_t quant_rerank;
 } GV_HNSWConfig;
 
+typedef struct {
+    uint8_t bits;
+    int per_dimension;
+} GV_ScalarQuantConfig;
+
+typedef struct {
+    size_t nlist;
+    size_t m;
+    uint8_t nbits;
+    size_t nprobe;
+    size_t train_iters;
+    size_t default_rerank;
+    int use_cosine;
+    int use_scalar_quant;
+    GV_ScalarQuantConfig scalar_quant_config;
+} GV_IVFPQConfig;
+
 typedef struct GV_Metadata {
     char *key;
     char *value;
@@ -64,6 +81,7 @@ typedef struct {
 
 GV_Database *gv_db_open(const char *filepath, size_t dimension, GV_IndexType index_type);
 GV_Database *gv_db_open_with_hnsw_config(const char *filepath, size_t dimension, GV_IndexType index_type, const GV_HNSWConfig *hnsw_config);
+GV_Database *gv_db_open_with_ivfpq_config(const char *filepath, size_t dimension, GV_IndexType index_type, const GV_IVFPQConfig *ivfpq_config);
 void gv_db_close(GV_Database *db);
 
 int gv_db_add_vector(GV_Database *db, const float *data, size_t dimension);
