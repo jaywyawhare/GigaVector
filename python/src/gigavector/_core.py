@@ -32,6 +32,17 @@ class SearchHit:
     vector: Vector
 
 
+@dataclass
+class HNSWConfig:
+    """Configuration for HNSW index."""
+    M: int = 16
+    ef_construction: int = 200
+    ef_search: int = 50
+    max_level: int = 16
+    use_binary_quant: bool = False
+    quant_rerank: int = 0
+
+
 def _metadata_to_dict(meta_ptr) -> dict[str, str]:
     if meta_ptr == ffi.NULL:
         return {}
@@ -59,9 +70,35 @@ class Database:
         self._closed = False
 
     @classmethod
-    def open(cls, path: str | None, dimension: int, index: IndexType = IndexType.KDTREE):
+    def open(cls, path: str | None, dimension: int, index: IndexType = IndexType.KDTREE, 
+             hnsw_config: HNSWConfig | None = None):
+        """
+        Open a database instance.
+        
+        Args:
+            path: File path for persistent storage. Use None for in-memory database.
+            dimension: Vector dimension (must be consistent for all vectors).
+            index: Index type to use. Defaults to KDTREE.
+            hnsw_config: Optional HNSW configuration. Only used when index is HNSW.
+        
+        Returns:
+            Database instance
+        """
         c_path = path.encode("utf-8") if path is not None else ffi.NULL
-        db = lib.gv_db_open(c_path, dimension, int(index))
+        
+        if hnsw_config is not None and index == IndexType.HNSW:
+            config = ffi.new("GV_HNSWConfig *", {
+                "M": hnsw_config.M,
+                "efConstruction": hnsw_config.ef_construction,
+                "efSearch": hnsw_config.ef_search,
+                "maxLevel": hnsw_config.max_level,
+                "use_binary_quant": 1 if hnsw_config.use_binary_quant else 0,
+                "quant_rerank": hnsw_config.quant_rerank
+            })
+            db = lib.gv_db_open_with_hnsw_config(c_path, dimension, int(index), config)
+        else:
+            db = lib.gv_db_open(c_path, dimension, int(index))
+        
         if db == ffi.NULL:
             raise RuntimeError("gv_db_open failed")
         return cls(db, dimension)
