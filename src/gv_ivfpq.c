@@ -238,6 +238,7 @@ static void gv_ivfpq_heap_sift_up(GV_IVFPQHeapItem *heap, size_t idx) {
 typedef struct GV_IVFPQEntry {
     uint8_t *codes;        /* length m */
     GV_Vector *vector;     /* original vector for output */
+    GV_ScalarQuantVector *scalar_quant; /* scalar quantized version if enabled */
 } GV_IVFPQEntry;
 
 typedef struct {
@@ -259,6 +260,9 @@ typedef struct {
     int trained;
     size_t default_rerank;
     int use_cosine;
+    int use_scalar_quant;
+    GV_ScalarQuantConfig scalar_quant_config;
+    GV_ScalarQuantVector *scalar_quant_template; /* template with min/max from training */
     float *coarse;   /* nlist * dimension */
     float *pq;       /* m * codebook_size * subdim */
     GV_IVFPQList *lists;
@@ -347,6 +351,15 @@ void *gv_ivfpq_create(size_t dimension, const GV_IVFPQConfig *config) {
     idx->train_iters = (config && config->train_iters) ? config->train_iters : 15;
     idx->default_rerank = (config && config->default_rerank) ? config->default_rerank : 32;
     idx->use_cosine = (config ? config->use_cosine : 0);
+    idx->use_scalar_quant = (config && config->use_scalar_quant) ? 1 : 0;
+    if (idx->use_scalar_quant && config) {
+        idx->scalar_quant_config = config->scalar_quant_config;
+        idx->scalar_quant_template = NULL;
+    } else {
+        idx->scalar_quant_config.bits = 0;
+        idx->scalar_quant_config.per_dimension = 0;
+        idx->scalar_quant_template = NULL;
+    }
     if (idx->m == 0 || idx->dimension % idx->m != 0) {
         free(idx);
         return NULL;
@@ -431,6 +444,19 @@ int gv_ivfpq_train(void *index_ptr, const float *data, size_t count) {
         }
     }
     free(subbuf);
+    
+    if (idx->use_scalar_quant) {
+        if (idx->scalar_quant_template != NULL) {
+            gv_scalar_quant_vector_destroy(idx->scalar_quant_template);
+        }
+        idx->scalar_quant_template = gv_scalar_quantize_train(train_buf, count, idx->dimension, &idx->scalar_quant_config);
+        if (idx->scalar_quant_template == NULL) {
+            free(train_buf);
+            pthread_rwlock_unlock(&idx->rwlock);
+            return -1;
+        }
+    }
+    
     free(train_buf);
     idx->trained = 1;
     pthread_rwlock_unlock(&idx->rwlock);
@@ -524,6 +550,46 @@ int gv_ivfpq_insert(void *index_ptr, GV_Vector *vector) {
     }
     list->entries[list->count].codes = codes;
     list->entries[list->count].vector = vector;
+    list->entries[list->count].scalar_quant = NULL;
+    
+    if (idx->use_scalar_quant && idx->scalar_quant_template != NULL) {
+        GV_ScalarQuantVector *sqv = (GV_ScalarQuantVector *)malloc(sizeof(GV_ScalarQuantVector));
+        if (sqv != NULL) {
+            sqv->dimension = idx->dimension;
+            sqv->bits = idx->scalar_quant_config.bits;
+            sqv->per_dimension = idx->scalar_quant_config.per_dimension;
+            sqv->bytes_per_vector = idx->scalar_quant_template->bytes_per_vector;
+            sqv->min_vals = idx->scalar_quant_template->min_vals;
+            sqv->max_vals = idx->scalar_quant_template->max_vals;
+            sqv->quantized = (uint8_t *)calloc(sqv->bytes_per_vector, sizeof(uint8_t));
+            if (sqv->quantized != NULL) {
+                size_t max_quant = (1ULL << sqv->bits) - 1;
+                for (size_t i = 0; i < idx->dimension; ++i) {
+                    float min_val = sqv->per_dimension ? sqv->min_vals[i] : sqv->min_vals[0];
+                    float max_val = sqv->per_dimension ? sqv->max_vals[i] : sqv->max_vals[0];
+                    float range = max_val - min_val;
+                    if (range <= 0.0f) continue;
+                    float normalized = (vector->data[i] - min_val) / range;
+                    normalized = (normalized < 0.0f) ? 0.0f : (normalized > 1.0f) ? 1.0f : normalized;
+                    size_t quantized_val = (size_t)(normalized * max_quant + 0.5f);
+                    if (quantized_val > max_quant) quantized_val = max_quant;
+                    if (sqv->bits == 4) {
+                        size_t byte_idx = i / 2;
+                        size_t bit_offset = (i % 2) * 4;
+                        sqv->quantized[byte_idx] |= (uint8_t)(quantized_val << (4 - bit_offset));
+                    } else if (sqv->bits == 8) {
+                        sqv->quantized[i] = (uint8_t)quantized_val;
+                    } else if (sqv->bits == 16) {
+                        ((uint16_t *)sqv->quantized)[i] = (uint16_t)quantized_val;
+                    }
+                }
+                list->entries[list->count].scalar_quant = sqv;
+            } else {
+                free(sqv);
+            }
+        }
+    }
+    
     /* copy into SoA */
     for (size_t m = 0; m < idx->m; ++m) {
         list->codes_soa[m * list->capacity + list->count] = codes[m];
@@ -803,12 +869,24 @@ void gv_ivfpq_destroy(void *index_ptr) {
             if (list->entries) {
                 for (size_t e = 0; e < list->count; ++e) {
                     free(list->entries[e].codes);
+                    if (list->entries[e].scalar_quant != NULL) {
+                        GV_ScalarQuantVector *sqv = list->entries[e].scalar_quant;
+                        if (sqv->quantized != NULL) {
+                            free(sqv->quantized);
+                        }
+                        sqv->min_vals = NULL;
+                        sqv->max_vals = NULL;
+                        free(sqv);
+                    }
                     gv_vector_destroy(list->entries[e].vector);
                 }
                 free(list->entries);
             }
             free(list->codes_soa);
         }
+    }
+    if (idx->scalar_quant_template != NULL) {
+        gv_scalar_quant_vector_destroy(idx->scalar_quant_template);
     }
     free(idx->lists);
     /* list_mutex freed separately */

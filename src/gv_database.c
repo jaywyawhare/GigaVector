@@ -487,6 +487,54 @@ GV_Database *gv_db_open_with_hnsw_config(const char *filepath, size_t dimension,
     return db;
 }
 
+GV_Database *gv_db_open_with_ivfpq_config(const char *filepath, size_t dimension, 
+                                          GV_IndexType index_type, const GV_IVFPQConfig *ivfpq_config) {
+    if (index_type != GV_INDEX_TYPE_IVFPQ || filepath != NULL) {
+        return gv_db_open(filepath, dimension, index_type);
+    }
+
+    if (dimension == 0) {
+        return NULL;
+    }
+
+    GV_Database *db = (GV_Database *)malloc(sizeof(GV_Database));
+    if (db == NULL) {
+        return NULL;
+    }
+
+    db->dimension = dimension;
+    db->index_type = index_type;
+    db->root = NULL;
+    db->hnsw_index = NULL;
+    db->filepath = NULL;
+    db->wal_path = NULL;
+    db->wal = NULL;
+    db->wal_replaying = 0;
+    pthread_rwlock_init(&db->rwlock, NULL);
+    pthread_mutex_init(&db->wal_mutex, NULL);
+    db->count = 0;
+
+    if (ivfpq_config != NULL) {
+        db->hnsw_index = gv_ivfpq_create(dimension, ivfpq_config);
+    } else {
+        GV_IVFPQConfig default_cfg = {.nlist = 64, .m = 8, .nbits = 8, .nprobe = 4, .train_iters = 15};
+        db->hnsw_index = gv_ivfpq_create(dimension, &default_cfg);
+    }
+    
+    if (db->hnsw_index == NULL) {
+        pthread_rwlock_destroy(&db->rwlock);
+        pthread_mutex_destroy(&db->wal_mutex);
+        free(db);
+        return NULL;
+    }
+
+    if (db->wal_path != NULL) {
+        db->wal = gv_wal_open(db->wal_path, db->dimension, (uint32_t)db->index_type);
+    }
+
+    return db;
+}
+
 int gv_db_set_wal(GV_Database *db, const char *wal_path) {
     if (db == NULL) {
         return -1;

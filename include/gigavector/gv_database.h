@@ -8,6 +8,7 @@
 #include "gv_kdtree.h"
 #include "gv_wal.h"
 #include "gv_hnsw.h"
+#include "gv_ivfpq.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -66,6 +67,21 @@ GV_Database *gv_db_open(const char *filepath, size_t dimension, GV_IndexType ind
  */
 GV_Database *gv_db_open_with_hnsw_config(const char *filepath, size_t dimension, 
                                           GV_IndexType index_type, const GV_HNSWConfig *hnsw_config);
+
+/**
+ * @brief Open an in-memory database with IVFPQ configuration.
+ *
+ * Similar to gv_db_open, but allows specifying IVFPQ configuration parameters.
+ * Only applicable when index_type is GV_INDEX_TYPE_IVFPQ.
+ *
+ * @param filepath Optional file path string to associate with the database.
+ * @param dimension Expected dimensionality; if loading, it must match the file.
+ * @param index_type Type of index to use (must be GV_INDEX_TYPE_IVFPQ for config to apply).
+ * @param ivfpq_config IVFPQ configuration; NULL to use defaults. Ignored if index_type is not IVFPQ.
+ * @return Allocated database instance or NULL on invalid arguments or failure.
+ */
+GV_Database *gv_db_open_with_ivfpq_config(const char *filepath, size_t dimension, 
+                                           GV_IndexType index_type, const GV_IVFPQConfig *ivfpq_config);
 
 /**
  * @brief Release all resources held by the database, including its K-D tree.
