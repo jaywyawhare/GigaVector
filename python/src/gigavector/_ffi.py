@@ -11,7 +11,7 @@ ffi = FFI()
 ffi.cdef(
     """
 typedef enum { GV_INDEX_TYPE_KDTREE = 0, GV_INDEX_TYPE_HNSW = 1, GV_INDEX_TYPE_IVFPQ = 2 } GV_IndexType;
-typedef enum { GV_DISTANCE_EUCLIDEAN = 0, GV_DISTANCE_COSINE = 1 } GV_DistanceType;
+typedef enum { GV_DISTANCE_EUCLIDEAN = 0, GV_DISTANCE_COSINE = 1, GV_DISTANCE_DOT_PRODUCT = 2, GV_DISTANCE_MANHATTAN = 3 } GV_DistanceType;
 
 typedef struct GV_Metadata {
     char *key;

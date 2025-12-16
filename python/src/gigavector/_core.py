@@ -16,6 +16,8 @@ class IndexType(IntEnum):
 class DistanceType(IntEnum):
     EUCLIDEAN = 0
     COSINE = 1
+    DOT_PRODUCT = 2
+    MANHATTAN = 3
 
 
 @dataclass(frozen=True)
