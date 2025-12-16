@@ -37,6 +37,7 @@ typedef struct {
     int use_cosine;
     int use_scalar_quant;
     GV_ScalarQuantConfig scalar_quant_config;
+    float oversampling_factor;
 } GV_IVFPQConfig;
 
 typedef struct GV_Metadata {

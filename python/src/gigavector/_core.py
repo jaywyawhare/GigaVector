@@ -62,6 +62,7 @@ class IVFPQConfig:
     use_cosine: bool = False
     use_scalar_quant: bool = False
     scalar_quant_config: ScalarQuantConfig = None
+    oversampling_factor: float = 1.0
     
     def __post_init__(self):
         if self.scalar_quant_config is None:
@@ -136,7 +137,8 @@ class Database:
                 "default_rerank": ivfpq_config.default_rerank,
                 "use_cosine": 1 if ivfpq_config.use_cosine else 0,
                 "use_scalar_quant": 1 if ivfpq_config.use_scalar_quant else 0,
-                "scalar_quant_config": sq_config[0]
+                "scalar_quant_config": sq_config[0],
+                "oversampling_factor": ivfpq_config.oversampling_factor
             })
             db = lib.gv_db_open_with_ivfpq_config(c_path, dimension, int(index), config)
         else:
