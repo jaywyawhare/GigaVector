@@ -27,6 +27,8 @@ int gv_exact_knn_search_vectors(GV_Vector *const *vectors, size_t count,
 
     for (size_t i = 0; i < k; ++i) {
         results[i].vector = NULL;
+        results[i].sparse_vector = NULL;
+        results[i].is_sparse = 0;
         results[i].distance = FLT_MAX;
     }
 
@@ -43,6 +45,8 @@ int gv_exact_knn_search_vectors(GV_Vector *const *vectors, size_t count,
 
         if (filled < k) {
             results[filled].vector = v;
+            results[filled].sparse_vector = NULL;
+            results[filled].is_sparse = 0;
             results[filled].distance = dist;
             ++filled;
             for (size_t j = filled; j > 0 && j > 1; --j) {
@@ -56,6 +60,8 @@ int gv_exact_knn_search_vectors(GV_Vector *const *vectors, size_t count,
             }
         } else if (dist < results[k - 1].distance) {
             results[k - 1].vector = v;
+            results[k - 1].sparse_vector = NULL;
+            results[k - 1].is_sparse = 0;
             results[k - 1].distance = dist;
             for (size_t j = k; j > 0 && j > 1; --j) {
                 if (results[j - 1].distance < results[j - 2].distance) {
@@ -114,5 +120,6 @@ int gv_exact_knn_search_kdtree(const GV_KDNode *root, size_t total_count,
     free(vecs);
     return r;
 }
+
 
 

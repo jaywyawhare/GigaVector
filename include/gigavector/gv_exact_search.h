@@ -60,3 +60,4 @@ int gv_exact_knn_search_kdtree(const GV_KDNode *root, size_t total_count,
 #endif /* GIGAVECTOR_GV_EXACT_SEARCH_H */
 
 
+
