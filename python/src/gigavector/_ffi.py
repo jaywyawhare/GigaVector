@@ -20,6 +20,8 @@ typedef struct {
     size_t maxLevel;
     int use_binary_quant;
     size_t quant_rerank;
+    int use_acorn;
+    size_t acorn_hops;
 } GV_HNSWConfig;
 
 typedef struct {

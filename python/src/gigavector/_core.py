@@ -41,6 +41,8 @@ class HNSWConfig:
     max_level: int = 16
     use_binary_quant: bool = False
     quant_rerank: int = 0
+    use_acorn: bool = False
+    acorn_hops: int = 1
 
 
 @dataclass
@@ -120,7 +122,9 @@ class Database:
                 "efSearch": hnsw_config.ef_search,
                 "maxLevel": hnsw_config.max_level,
                 "use_binary_quant": 1 if hnsw_config.use_binary_quant else 0,
-                "quant_rerank": hnsw_config.quant_rerank
+                "quant_rerank": hnsw_config.quant_rerank,
+                "use_acorn": 1 if hnsw_config.use_acorn else 0,
+                "acorn_hops": hnsw_config.acorn_hops,
             })
             db = lib.gv_db_open_with_hnsw_config(c_path, dimension, int(index), config)
         elif ivfpq_config is not None and index == IndexType.IVFPQ:
