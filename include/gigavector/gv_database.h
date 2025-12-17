@@ -91,6 +91,26 @@ GV_Database *gv_db_open_with_ivfpq_config(const char *filepath, size_t dimension
                                            GV_IndexType index_type, const GV_IVFPQConfig *ivfpq_config);
 
 /**
+ * @brief Open a database from an in-memory snapshot.
+ *
+ * The snapshot must contain a full GVDB binary image as produced by
+ * gv_db_save(), including header, index data, and trailing checksum.
+ * This function is read-only: WAL is disabled and modifications are
+ * not persisted back to the snapshot.
+ *
+ * A common pattern is to memory map a snapshot file with gv_mmap_open_readonly()
+ * and then call this function with the mapped pointer and size.
+ *
+ * @param data Pointer to contiguous snapshot bytes.
+ * @param size Size of the snapshot in bytes.
+ * @param dimension Expected dimensionality; if non-zero, must match snapshot.
+ * @param index_type Index type stored in the snapshot.
+ * @return Allocated database instance or NULL on invalid arguments or failure.
+ */
+GV_Database *gv_db_open_from_memory(const void *data, size_t size,
+                                    size_t dimension, GV_IndexType index_type);
+
+/**
  * @brief Release all resources held by the database, including its K-D tree.
  *
  * Safe to call with NULL; no action is taken.
