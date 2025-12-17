@@ -165,6 +165,25 @@ class Database:
         if rc != 0:
             raise RuntimeError("gv_db_save failed")
 
+    def set_exact_search_threshold(self, threshold: int) -> None:
+        """
+        Configure the exact-search fallback threshold.
+
+        When the number of stored vectors is <= threshold, the database may
+        use a brute-force exact search path instead of the index (for
+        supported index types). A threshold of 0 disables automatic fallback.
+        """
+        if threshold < 0:
+            raise ValueError("threshold must be non-negative")
+        lib.gv_db_set_exact_search_threshold(self._db, int(threshold))
+
+    def set_force_exact_search(self, enabled: bool) -> None:
+        """
+        Force or disable exact search regardless of collection size.
+        This is mainly intended for testing and benchmarking.
+        """
+        lib.gv_db_set_force_exact_search(self._db, 1 if enabled else 0)
+
     def train_ivfpq(self, data: Sequence[Sequence[float]]):
         """Train IVF-PQ index with provided vectors (only for IVFPQ index)."""
         flat = [item for vec in data for item in vec]
