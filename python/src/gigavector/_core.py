@@ -257,6 +257,34 @@ class Database:
             raise RuntimeError("gv_db_search failed")
         return [SearchHit(distance=float(results[i].distance), vector=_copy_vector(results[i].vector)) for i in range(n)]
 
+    def search_with_filter_expr(self, query: Sequence[float], k: int,
+                                distance: DistanceType = DistanceType.EUCLIDEAN,
+                                filter_expr: str | None = None) -> list[SearchHit]:
+        """
+        Advanced search with a metadata filter expression.
+
+        The filter expression supports logical operators (AND, OR, NOT),
+        comparison operators (==, !=, >, >=, <, <=) on numeric or string
+        metadata, and string matching (CONTAINS, PREFIX).
+
+        Example:
+            db.search_with_filter_expr(
+                [0.1] * 128,
+                k=10,
+                distance=DistanceType.EUCLIDEAN,
+                filter_expr='category == "A" AND score >= 0.5'
+            )
+        """
+        if filter_expr is None:
+            raise ValueError("filter_expr must be provided")
+        self._check_dimension(query)
+        qbuf = ffi.new("float[]", list(query))
+        results = ffi.new("GV_SearchResult[]", k)
+        n = lib.gv_db_search_with_filter_expr(self._db, qbuf, k, results, int(distance), filter_expr.encode())
+        if n < 0:
+            raise RuntimeError("gv_db_search_with_filter_expr failed")
+        return [SearchHit(distance=float(results[i].distance), vector=_copy_vector(results[i].vector)) for i in range(n)]
+
     def range_search(self, query: Sequence[float], radius: float, max_results: int = 1000,
                      distance: DistanceType = DistanceType.EUCLIDEAN,
                      filter_metadata: tuple[str, str] | None = None) -> list[SearchHit]:
