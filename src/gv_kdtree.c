@@ -469,3 +469,137 @@ int gv_kdtree_knn_search_filtered(const GV_KDNode *root, const GV_Vector *query,
     return (int)ctx.count;
 }
 
+
+typedef struct {
+    GV_SearchResult *results;
+    size_t count;
+    size_t capacity;
+    float radius;
+    GV_DistanceType distance_type;
+    const char *filter_key;
+    const char *filter_value;
+} GV_RangeContext;
+
+static void gv_range_insert_result(GV_RangeContext *ctx, const GV_Vector *vector, float distance) {
+    if (ctx == NULL || vector == NULL || distance > ctx->radius) {
+        return;
+    }
+
+    if (ctx->count >= ctx->capacity) {
+        return;
+    }
+
+    ctx->results[ctx->count].vector = vector;
+    ctx->results[ctx->count].distance = distance;
+    ctx->count++;
+}
+
+static void gv_range_search_recursive(const GV_KDNode *node, const GV_Vector *query,
+                                      GV_RangeContext *ctx) {
+    if (node == NULL || query == NULL || ctx == NULL || node->point == NULL) {
+        return;
+    }
+
+    if (!gv_knn_check_metadata_filter(node->point, ctx->filter_key, ctx->filter_value)) {
+        return;
+    }
+
+    float dist = gv_distance(node->point, query, ctx->distance_type);
+    if (dist < 0.0f && ctx->distance_type != GV_DISTANCE_DOT_PRODUCT) {
+        return;
+    }
+
+    if (dist <= ctx->radius) {
+        gv_range_insert_result(ctx, node->point, dist);
+    }
+
+    size_t axis = node->axis;
+    float query_value = query->data[axis];
+    float node_value = node->point->data[axis];
+    float diff = query_value - node_value;
+    float diff_sq = diff * diff;
+
+    if (ctx->distance_type == GV_DISTANCE_EUCLIDEAN) {
+        if (diff_sq <= ctx->radius * ctx->radius) {
+            if (query_value < node_value) {
+                gv_range_search_recursive(node->left, query, ctx);
+                gv_range_search_recursive(node->right, query, ctx);
+            } else {
+                gv_range_search_recursive(node->right, query, ctx);
+                gv_range_search_recursive(node->left, query, ctx);
+            }
+        } else {
+            if (query_value < node_value) {
+                gv_range_search_recursive(node->left, query, ctx);
+            } else {
+                gv_range_search_recursive(node->right, query, ctx);
+            }
+        }
+    } else {
+        if (query_value < node_value) {
+            gv_range_search_recursive(node->left, query, ctx);
+            if (diff_sq <= ctx->radius * ctx->radius || ctx->distance_type != GV_DISTANCE_EUCLIDEAN) {
+                gv_range_search_recursive(node->right, query, ctx);
+            }
+        } else {
+            gv_range_search_recursive(node->right, query, ctx);
+            if (diff_sq <= ctx->radius * ctx->radius || ctx->distance_type != GV_DISTANCE_EUCLIDEAN) {
+                gv_range_search_recursive(node->left, query, ctx);
+            }
+        }
+    }
+}
+
+int gv_kdtree_range_search(const GV_KDNode *root, const GV_Vector *query, float radius,
+                            GV_SearchResult *results, size_t max_results, GV_DistanceType distance_type) {
+    if (root == NULL || query == NULL || results == NULL || max_results == 0 || radius < 0.0f) {
+        return -1;
+    }
+
+    if (query->dimension == 0 || query->data == NULL) {
+        return -1;
+    }
+
+    GV_RangeContext ctx;
+    ctx.results = results;
+    ctx.count = 0;
+    ctx.capacity = max_results;
+    ctx.radius = radius;
+    ctx.distance_type = distance_type;
+    ctx.filter_key = NULL;
+    ctx.filter_value = NULL;
+
+    memset(results, 0, max_results * sizeof(GV_SearchResult));
+
+    gv_range_search_recursive(root, query, &ctx);
+
+    return (int)ctx.count;
+}
+
+int gv_kdtree_range_search_filtered(const GV_KDNode *root, const GV_Vector *query, float radius,
+                                     GV_SearchResult *results, size_t max_results,
+                                     GV_DistanceType distance_type,
+                                     const char *filter_key, const char *filter_value) {
+    if (root == NULL || query == NULL || results == NULL || max_results == 0 || radius < 0.0f) {
+        return -1;
+    }
+
+    if (query->dimension == 0 || query->data == NULL) {
+        return -1;
+    }
+
+    GV_RangeContext ctx;
+    ctx.results = results;
+    ctx.count = 0;
+    ctx.capacity = max_results;
+    ctx.radius = radius;
+    ctx.distance_type = distance_type;
+    ctx.filter_key = filter_key;
+    ctx.filter_value = filter_value;
+
+    memset(results, 0, max_results * sizeof(GV_SearchResult));
+
+    gv_range_search_recursive(root, query, &ctx);
+
+    return (int)ctx.count;
+}
