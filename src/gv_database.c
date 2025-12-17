@@ -1,5 +1,7 @@
 #include <errno.h>
 #include <stdint.h>
+#define _GNU_SOURCE
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -14,6 +16,7 @@
 #include "gigavector/gv_metadata.h"
 #include "gigavector/gv_vector.h"
 #include "gigavector/gv_wal.h"
+#include "gigavector/gv_mmap.h"
 
 static char *gv_db_strdup(const char *src) {
     if (src == NULL) {
@@ -460,6 +463,263 @@ void gv_db_close(GV_Database *db) {
     free(db->filepath);
     free(db->wal_path);
     free(db);
+}
+
+GV_Database *gv_db_open_from_memory(const void *data, size_t size,
+                                    size_t dimension, GV_IndexType index_type) {
+    if (data == NULL || size == 0) {
+        return NULL;
+    }
+    if (dimension == 0) {
+        return NULL;
+    }
+
+    GV_Database *db = (GV_Database *)malloc(sizeof(GV_Database));
+    if (db == NULL) {
+        return NULL;
+    }
+
+    db->dimension = dimension;
+    db->index_type = index_type;
+    db->root = NULL;
+    db->hnsw_index = NULL;
+    db->sparse_index = NULL;
+    db->filepath = NULL;
+    db->wal_path = NULL;
+    db->wal = NULL;
+    db->wal_replaying = 0;
+    pthread_rwlock_init(&db->rwlock, NULL);
+    pthread_mutex_init(&db->wal_mutex, NULL);
+    db->count = 0;
+    db->exact_search_threshold = 1000;
+    db->force_exact_search = 0;
+
+    FILE *in = fmemopen((void *)data, size, "rb");
+    if (in == NULL) {
+        pthread_rwlock_destroy(&db->rwlock);
+        pthread_mutex_destroy(&db->wal_mutex);
+        free(db);
+        return NULL;
+    }
+
+    uint32_t file_dim = 0;
+    uint64_t file_count = 0;
+    uint32_t file_version = 0;
+    if (gv_db_read_header(in, &file_dim, &file_count, &file_version) != 0) {
+        fclose(in);
+        pthread_rwlock_destroy(&db->rwlock);
+        pthread_mutex_destroy(&db->wal_mutex);
+        free(db);
+        return NULL;
+    }
+
+    if (dimension != 0 && dimension != (size_t)file_dim) {
+        fclose(in);
+        pthread_rwlock_destroy(&db->rwlock);
+        pthread_mutex_destroy(&db->wal_mutex);
+        free(db);
+        return NULL;
+    }
+    db->dimension = (size_t)file_dim;
+
+    if (file_version != 1 && file_version != 2 && file_version != 3 && file_version != 4) {
+        fclose(in);
+        pthread_rwlock_destroy(&db->rwlock);
+        pthread_mutex_destroy(&db->wal_mutex);
+        free(db);
+        return NULL;
+    }
+
+    uint32_t file_index_type = GV_INDEX_TYPE_KDTREE;
+    if (file_version >= 2) {
+        if (gv_read_uint32(in, &file_index_type) != 0) {
+            fclose(in);
+            pthread_rwlock_destroy(&db->rwlock);
+            pthread_mutex_destroy(&db->wal_mutex);
+            free(db);
+            return NULL;
+        }
+    }
+
+    if (file_index_type != (uint32_t)db->index_type) {
+        fclose(in);
+        pthread_rwlock_destroy(&db->rwlock);
+        pthread_mutex_destroy(&db->wal_mutex);
+        free(db);
+        return NULL;
+    }
+
+    if (db->index_type == GV_INDEX_TYPE_KDTREE) {
+        if (gv_kdtree_load_recursive(&(db->root), in, db->dimension, file_version) != 0) {
+            fclose(in);
+            pthread_rwlock_destroy(&db->rwlock);
+            pthread_mutex_destroy(&db->wal_mutex);
+            free(db);
+            return NULL;
+        }
+    } else if (db->index_type == GV_INDEX_TYPE_HNSW) {
+        void *loaded_index = NULL;
+        if (gv_hnsw_load(&loaded_index, in, db->dimension, file_version) != 0) {
+            fclose(in);
+            if (loaded_index) gv_hnsw_destroy(loaded_index);
+            pthread_rwlock_destroy(&db->rwlock);
+            pthread_mutex_destroy(&db->wal_mutex);
+            free(db);
+            return NULL;
+        }
+        db->hnsw_index = loaded_index;
+        db->count = gv_hnsw_count(db->hnsw_index);
+    } else if (db->index_type == GV_INDEX_TYPE_IVFPQ) {
+        void *loaded_index = NULL;
+        if (gv_ivfpq_load(&loaded_index, in, db->dimension, file_version) != 0) {
+            fclose(in);
+            if (loaded_index) gv_ivfpq_destroy(loaded_index);
+            pthread_rwlock_destroy(&db->rwlock);
+            pthread_mutex_destroy(&db->wal_mutex);
+            free(db);
+            return NULL;
+        }
+        db->hnsw_index = loaded_index;
+        db->count = gv_ivfpq_count(db->hnsw_index);
+    } else if (db->index_type == GV_INDEX_TYPE_SPARSE) {
+        /* Sparse indexes are not yet persisted via snapshots. */
+        fclose(in);
+        pthread_rwlock_destroy(&db->rwlock);
+        pthread_mutex_destroy(&db->wal_mutex);
+        free(db);
+        return NULL;
+    } else {
+        fclose(in);
+        pthread_rwlock_destroy(&db->rwlock);
+        pthread_mutex_destroy(&db->wal_mutex);
+        free(db);
+        return NULL;
+    }
+
+    if (file_version >= 3) {
+        if (fseek(in, 0, SEEK_END) != 0) {
+            fclose(in);
+            if (db->index_type == GV_INDEX_TYPE_KDTREE) {
+                gv_kdtree_destroy_recursive(db->root);
+            } else if (db->index_type == GV_INDEX_TYPE_HNSW) {
+                if (db->hnsw_index) gv_hnsw_destroy(db->hnsw_index);
+            } else if (db->index_type == GV_INDEX_TYPE_IVFPQ) {
+                if (db->hnsw_index) gv_ivfpq_destroy(db->hnsw_index);
+            }
+            pthread_rwlock_destroy(&db->rwlock);
+            pthread_mutex_destroy(&db->wal_mutex);
+            free(db);
+            return NULL;
+        }
+        long end_pos = ftell(in);
+        if (end_pos < 4) {
+            fclose(in);
+            if (db->index_type == GV_INDEX_TYPE_KDTREE) {
+                gv_kdtree_destroy_recursive(db->root);
+            } else if (db->index_type == GV_INDEX_TYPE_HNSW) {
+                if (db->hnsw_index) gv_hnsw_destroy(db->hnsw_index);
+            } else if (db->index_type == GV_INDEX_TYPE_IVFPQ) {
+                if (db->hnsw_index) gv_ivfpq_destroy(db->hnsw_index);
+            }
+            pthread_rwlock_destroy(&db->rwlock);
+            pthread_mutex_destroy(&db->wal_mutex);
+            free(db);
+            return NULL;
+        }
+        if (fseek(in, end_pos - (long)sizeof(uint32_t), SEEK_SET) != 0) {
+            fclose(in);
+            if (db->index_type == GV_INDEX_TYPE_KDTREE) {
+                gv_kdtree_destroy_recursive(db->root);
+            } else if (db->index_type == GV_INDEX_TYPE_HNSW) {
+                if (db->hnsw_index) gv_hnsw_destroy(db->hnsw_index);
+            } else if (db->index_type == GV_INDEX_TYPE_IVFPQ) {
+                if (db->hnsw_index) gv_ivfpq_destroy(db->hnsw_index);
+            }
+            pthread_rwlock_destroy(&db->rwlock);
+            pthread_mutex_destroy(&db->wal_mutex);
+            free(db);
+            return NULL;
+        }
+        uint32_t stored_crc = 0;
+        if (gv_read_uint32(in, &stored_crc) != 0) {
+            fclose(in);
+            if (db->index_type == GV_INDEX_TYPE_KDTREE) {
+                gv_kdtree_destroy_recursive(db->root);
+            } else if (db->index_type == GV_INDEX_TYPE_HNSW) {
+                if (db->hnsw_index) gv_hnsw_destroy(db->hnsw_index);
+            } else if (db->index_type == GV_INDEX_TYPE_IVFPQ) {
+                if (db->hnsw_index) gv_ivfpq_destroy(db->hnsw_index);
+            }
+            pthread_rwlock_destroy(&db->rwlock);
+            pthread_mutex_destroy(&db->wal_mutex);
+            free(db);
+            return NULL;
+        }
+        if (fseek(in, 0, SEEK_SET) != 0) {
+            fclose(in);
+            if (db->index_type == GV_INDEX_TYPE_KDTREE) {
+                gv_kdtree_destroy_recursive(db->root);
+            } else if (db->index_type == GV_INDEX_TYPE_HNSW) {
+                if (db->hnsw_index) gv_hnsw_destroy(db->hnsw_index);
+            } else if (db->index_type == GV_INDEX_TYPE_IVFPQ) {
+                if (db->hnsw_index) gv_ivfpq_destroy(db->hnsw_index);
+            }
+            pthread_rwlock_destroy(&db->rwlock);
+            pthread_mutex_destroy(&db->wal_mutex);
+            free(db);
+            return NULL;
+        }
+        uint32_t crc = gv_crc32_init();
+        char buf[65536];
+        long remaining = end_pos - (long)sizeof(uint32_t);
+        while (remaining > 0) {
+            size_t chunk = (remaining > (long)sizeof(buf)) ? sizeof(buf) : (size_t)remaining;
+            if (fread(buf, 1, chunk, in) != chunk) {
+                fclose(in);
+                if (db->index_type == GV_INDEX_TYPE_KDTREE) {
+                    gv_kdtree_destroy_recursive(db->root);
+                } else if (db->index_type == GV_INDEX_TYPE_HNSW) {
+                    if (db->hnsw_index) gv_hnsw_destroy(db->hnsw_index);
+                } else if (db->index_type == GV_INDEX_TYPE_IVFPQ) {
+                    if (db->hnsw_index) gv_ivfpq_destroy(db->hnsw_index);
+                }
+                pthread_rwlock_destroy(&db->rwlock);
+                pthread_mutex_destroy(&db->wal_mutex);
+                free(db);
+                return NULL;
+            }
+            crc = gv_crc32_update(crc, buf, chunk);
+            remaining -= (long)chunk;
+        }
+        crc = gv_crc32_finish(crc);
+        if (crc != stored_crc) {
+            fclose(in);
+            if (db->index_type == GV_INDEX_TYPE_KDTREE) {
+                gv_kdtree_destroy_recursive(db->root);
+            } else if (db->index_type == GV_INDEX_TYPE_HNSW) {
+                if (db->hnsw_index) gv_hnsw_destroy(db->hnsw_index);
+            } else if (db->index_type == GV_INDEX_TYPE_IVFPQ) {
+                if (db->hnsw_index) gv_ivfpq_destroy(db->hnsw_index);
+            }
+            pthread_rwlock_destroy(&db->rwlock);
+            pthread_mutex_destroy(&db->wal_mutex);
+            free(db);
+            return NULL;
+        }
+    }
+
+    fclose(in);
+
+    if (db->index_type == GV_INDEX_TYPE_KDTREE) {
+        db->count = file_count;
+    } else if (db->index_type == GV_INDEX_TYPE_HNSW) {
+        db->count = gv_hnsw_count(db->hnsw_index);
+    } else if (db->index_type == GV_INDEX_TYPE_IVFPQ) {
+        db->count = gv_ivfpq_count(db->hnsw_index);
+    }
+
+    /* WAL is intentionally disabled for memory-backed snapshots. */
+    return db;
 }
 
 GV_Database *gv_db_open_with_hnsw_config(const char *filepath, size_t dimension, 
