@@ -11,6 +11,7 @@ class IndexType(IntEnum):
     KDTREE = 0
     HNSW = 1
     IVFPQ = 2
+    SPARSE = 3
 
 
 class DistanceType(IntEnum):
@@ -88,6 +89,19 @@ def _copy_vector(vec_ptr) -> Vector:
     dim = int(vec_ptr.dimension)
     data = list(ffi.unpack(vec_ptr.data, dim))
     metadata = _metadata_to_dict(vec_ptr.metadata)
+    return Vector(data=data, metadata=metadata)
+
+def _copy_sparse_vector(sv_ptr, dim: int) -> Vector:
+    if sv_ptr == ffi.NULL:
+        return Vector(data=[], metadata={})
+    nnz = int(sv_ptr.nnz)
+    data = [0.0] * dim
+    for i in range(nnz):
+        ent = sv_ptr.entries[i]
+        idx = int(ent.index)
+        if 0 <= idx < dim:
+            data[idx] = float(ent.value)
+    metadata = _metadata_to_dict(sv_ptr.metadata)
     return Vector(data=data, metadata=metadata)
 
 
@@ -274,7 +288,15 @@ class Database:
             n = lib.gv_db_search(self._db, qbuf, k, results, int(distance))
         if n < 0:
             raise RuntimeError("gv_db_search failed")
-        return [SearchHit(distance=float(results[i].distance), vector=_copy_vector(results[i].vector)) for i in range(n)]
+        out: list[SearchHit] = []
+        for i in range(n):
+            res = results[i]
+            if res.is_sparse and res.sparse_vector != ffi.NULL:
+                out.append(SearchHit(distance=float(res.distance),
+                                     vector=_copy_sparse_vector(res.sparse_vector, self.dimension)))
+            else:
+                out.append(SearchHit(distance=float(res.distance), vector=_copy_vector(res.vector)))
+        return out
 
     def search_with_filter_expr(self, query: Sequence[float], k: int,
                                 distance: DistanceType = DistanceType.EUCLIDEAN,
@@ -302,7 +324,55 @@ class Database:
         n = lib.gv_db_search_with_filter_expr(self._db, qbuf, k, results, int(distance), filter_expr.encode())
         if n < 0:
             raise RuntimeError("gv_db_search_with_filter_expr failed")
-        return [SearchHit(distance=float(results[i].distance), vector=_copy_vector(results[i].vector)) for i in range(n)]
+        out: list[SearchHit] = []
+        for i in range(n):
+            res = results[i]
+            if res.is_sparse and res.sparse_vector != ffi.NULL:
+                out.append(SearchHit(distance=float(res.distance),
+                                     vector=_copy_sparse_vector(res.sparse_vector, self.dimension)))
+            else:
+                out.append(SearchHit(distance=float(res.distance), vector=_copy_vector(res.vector)))
+        return out
+
+    def add_sparse_vector(self, indices: Sequence[int], values: Sequence[float],
+                          metadata: dict[str, str] | None = None) -> None:
+        if self._db is None or self._closed:
+            raise RuntimeError("database is closed")
+        if len(indices) != len(values):
+            raise ValueError("indices and values must have same length")
+        nnz = len(indices)
+        idx_buf = ffi.new("uint32_t[]", [int(i) for i in indices])
+        val_buf = ffi.new("float[]", [float(v) for v in values])
+        key = None
+        val = None
+        if metadata:
+            if len(metadata) != 1:
+                raise ValueError("only one metadata key/value supported in this helper")
+            key, val = next(iter(metadata.items()))
+        rc = lib.gv_db_add_sparse_vector(self._db, idx_buf, val_buf, nnz, self.dimension,
+                                         key.encode() if key else ffi.NULL,
+                                         val.encode() if val else ffi.NULL)
+        if rc != 0:
+            raise RuntimeError("gv_db_add_sparse_vector failed")
+
+    def search_sparse(self, indices: Sequence[int], values: Sequence[float], k: int,
+                      distance: DistanceType = DistanceType.DOT_PRODUCT) -> list[SearchHit]:
+        if len(indices) != len(values):
+            raise ValueError("indices and values must have same length")
+        nnz = len(indices)
+        idx_buf = ffi.new("uint32_t[]", [int(i) for i in indices])
+        val_buf = ffi.new("float[]", [float(v) for v in values])
+        results = ffi.new("GV_SearchResult[]", k)
+        n = lib.gv_db_search_sparse(self._db, idx_buf, val_buf, nnz, k, results, int(distance))
+        if n < 0:
+            raise RuntimeError("gv_db_search_sparse failed")
+        out: list[SearchHit] = []
+        for i in range(n):
+            res = results[i]
+            if res.sparse_vector != ffi.NULL:
+                out.append(SearchHit(distance=float(res.distance),
+                                     vector=_copy_sparse_vector(res.sparse_vector, self.dimension)))
+        return out
 
     def range_search(self, query: Sequence[float], radius: float, max_results: int = 1000,
                      distance: DistanceType = DistanceType.EUCLIDEAN,
