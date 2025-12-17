@@ -7,6 +7,7 @@
 
 #include "gigavector/gv_database.h"
 #include "gigavector/gv_distance.h"
+#include "gigavector/gv_exact_search.h"
 #include "gigavector/gv_hnsw.h"
 #include "gigavector/gv_ivfpq.h"
 #include "gigavector/gv_kdtree.h"
@@ -158,6 +159,8 @@ GV_Database *gv_db_open(const char *filepath, size_t dimension, GV_IndexType ind
     pthread_rwlock_init(&db->rwlock, NULL);
     pthread_mutex_init(&db->wal_mutex, NULL);
     db->count = 0;
+    db->exact_search_threshold = 1000;
+    db->force_exact_search = 0;
 
     if (index_type == GV_INDEX_TYPE_HNSW && filepath == NULL) {
         db->hnsw_index = gv_hnsw_create(dimension, NULL);
@@ -471,6 +474,8 @@ GV_Database *gv_db_open_with_hnsw_config(const char *filepath, size_t dimension,
     pthread_rwlock_init(&db->rwlock, NULL);
     pthread_mutex_init(&db->wal_mutex, NULL);
     db->count = 0;
+    db->exact_search_threshold = 1000;
+    db->force_exact_search = 0;
 
     db->hnsw_index = gv_hnsw_create(dimension, hnsw_config);
     if (db->hnsw_index == NULL) {
@@ -513,6 +518,8 @@ GV_Database *gv_db_open_with_ivfpq_config(const char *filepath, size_t dimension
     pthread_rwlock_init(&db->rwlock, NULL);
     pthread_mutex_init(&db->wal_mutex, NULL);
     db->count = 0;
+    db->exact_search_threshold = 1000;
+    db->force_exact_search = 0;
 
     if (ivfpq_config != NULL) {
         db->hnsw_index = gv_ivfpq_create(dimension, ivfpq_config);
@@ -879,6 +886,20 @@ int gv_db_search(const GV_Database *db, const float *query_data, size_t k,
     query_vec.data = (float *)query_data;
     query_vec.metadata = NULL;
 
+    int use_exact = 0;
+    if (db->exact_search_threshold > 0 && db->count <= db->exact_search_threshold) {
+        use_exact = 1;
+    }
+    if (db->force_exact_search) {
+        use_exact = 1;
+    }
+
+    if (db->index_type == GV_INDEX_TYPE_KDTREE && use_exact) {
+        int r = gv_exact_knn_search_kdtree(db->root, db->count, &query_vec, k, results, distance_type);
+        pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
+        return r;
+    }
+
     if (db->index_type == GV_INDEX_TYPE_KDTREE) {
         int r = gv_kdtree_knn_search(db->root, &query_vec, k, results, distance_type);
         pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
@@ -1124,6 +1145,20 @@ int gv_db_search_with_filter_expr(const GV_Database *db, const float *query_data
     pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
     gv_filter_destroy(filter);
     return (int)out;
+}
+
+void gv_db_set_exact_search_threshold(GV_Database *db, size_t threshold) {
+    if (db == NULL) {
+        return;
+    }
+    db->exact_search_threshold = threshold;
+}
+
+void gv_db_set_force_exact_search(GV_Database *db, int enabled) {
+    if (db == NULL) {
+        return;
+    }
+    db->force_exact_search = enabled ? 1 : 0;
 }
 
 

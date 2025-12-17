@@ -39,6 +39,8 @@ typedef struct GV_Database {
     pthread_rwlock_t rwlock;
     pthread_mutex_t wal_mutex;
     size_t count;
+    size_t exact_search_threshold; /**< Max collection size to use brute-force exact search. */
+    int force_exact_search;        /**< Force exact search even when above threshold. */
 } GV_Database;
 
 /**
@@ -296,6 +298,30 @@ int gv_db_search_batch(const GV_Database *db, const float *queries, size_t qcoun
 int gv_db_search_with_filter_expr(const GV_Database *db, const float *query_data, size_t k,
                                   GV_SearchResult *results, GV_DistanceType distance_type,
                                   const char *filter_expr);
+
+/**
+ * @brief Configure the exact search threshold for a database.
+ *
+ * When the number of stored vectors is less than or equal to this threshold,
+ * the database may choose a brute-force exact search path instead of using
+ * the index. A threshold of 0 disables automatic exact search fallback.
+ *
+ * @param db Database handle; must be non-NULL.
+ * @param threshold New threshold value.
+ */
+void gv_db_set_exact_search_threshold(GV_Database *db, size_t threshold);
+
+/**
+ * @brief Force or disable exact search regardless of collection size.
+ *
+ * When enabled, the database prefers brute-force exact search over indexed
+ * search for supported index types. This is primarily intended for testing
+ * and benchmarking exact-search behavior.
+ *
+ * @param db Database handle; must be non-NULL.
+ * @param enabled Non-zero to force exact search, zero to use automatic logic.
+ */
+void gv_db_set_force_exact_search(GV_Database *db, int enabled);
 
 /**
  * @brief Enable or reconfigure WAL for a database.
