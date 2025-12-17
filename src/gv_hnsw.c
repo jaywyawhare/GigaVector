@@ -33,6 +33,8 @@ typedef struct {
     size_t maxLevel;
     int use_binary_quant;
     size_t quant_rerank;
+    int use_acorn;
+    size_t acorn_hops;
     GV_HNSWNode *entryPoint;
     size_t count;
     GV_HNSWNode **nodes;
@@ -94,6 +96,8 @@ void *gv_hnsw_create(size_t dimension, const GV_HNSWConfig *config) {
     index->maxLevel = (config && config->maxLevel > 0) ? config->maxLevel : 16;
     index->use_binary_quant = (config && config->use_binary_quant) ? 1 : 0;
     index->quant_rerank = (config && config->quant_rerank > 0) ? config->quant_rerank : 0;
+    index->use_acorn = (config && config->use_acorn) ? 1 : 0;
+    index->acorn_hops = (config && config->acorn_hops > 0 && config->acorn_hops <= 2) ? config->acorn_hops : 1;
     index->entryPoint = NULL;
     index->count = 0;
     index->nodes_capacity = 1024;
@@ -356,7 +360,18 @@ int gv_hnsw_search(void *index_ptr, const GV_Vector *query, size_t k,
         return 0;
     }
 
-    GV_HNSWCandidate *candidates = (GV_HNSWCandidate *)malloc(index->efSearch * sizeof(GV_HNSWCandidate));
+    size_t ef = index->efSearch;
+    if (filter_key != NULL && index->use_acorn) {
+        size_t factor = index->acorn_hops + 1;
+        if (factor > 3) {
+            factor = 3;
+        }
+        if (ef > 0 && ef <= SIZE_MAX / factor) {
+            ef *= factor;
+        }
+    }
+
+    GV_HNSWCandidate *candidates = (GV_HNSWCandidate *)malloc(ef * sizeof(GV_HNSWCandidate));
     if (candidates == NULL) {
         return -1;
     }
@@ -400,7 +415,7 @@ int gv_hnsw_search(void *index_ptr, const GV_Vector *query, size_t k,
             continue;
         }
         
-        if (candidate_count >= index->efSearch) {
+        if (candidate_count >= ef) {
             break;
         }
 
@@ -428,7 +443,7 @@ int gv_hnsw_search(void *index_ptr, const GV_Vector *query, size_t k,
                 dist = gv_distance(neighbor->vector, query, distance_type);
             }
 
-            if (candidate_count < index->efSearch) {
+            if (candidate_count < ef) {
                 candidates[candidate_count].node = neighbor;
                 candidates[candidate_count++].distance = dist;
                 qsort(candidates, candidate_count, sizeof(GV_HNSWCandidate), compare_candidates);

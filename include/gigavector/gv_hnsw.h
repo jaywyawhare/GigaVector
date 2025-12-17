@@ -21,6 +21,8 @@ typedef struct {
     size_t maxLevel;       /**< Maximum level in hierarchy (auto-calculated if 0) */
     int use_binary_quant;  /**< Enable binary quantization for fast candidate selection (default: 0) */
     size_t quant_rerank;   /**< Number of candidates to rerank with exact distance (0 = disable, default: 0) */
+    int use_acorn;         /**< Enable ACORN-style extra exploration for filtered search (default: 0) */
+    size_t acorn_hops;     /**< ACORN exploration depth in hops (1–2; default: 1) */
 } GV_HNSWConfig;
 
 /**
