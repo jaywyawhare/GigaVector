@@ -181,6 +181,41 @@ int gv_db_search_filtered(const GV_Database *db, const float *query_data, size_t
                           const char *filter_key, const char *filter_value);
 
 /**
+ * @brief Range search: find all vectors within a distance threshold.
+ *
+ * @param db Database to search; must be non-NULL.
+ * @param query_data Query vector data array.
+ * @param radius Maximum distance threshold (inclusive).
+ * @param results Output array to store results; must be pre-allocated with sufficient capacity.
+ * @param max_results Maximum number of results to return (capacity of results array).
+ * @param distance_type Distance metric to use.
+ * @return Number of vectors found within radius (0 to max_results), or -1 on error.
+ *         If more vectors are found than max_results, returns max_results.
+ */
+int gv_db_range_search(const GV_Database *db, const float *query_data, float radius,
+                       GV_SearchResult *results, size_t max_results, GV_DistanceType distance_type);
+
+/**
+ * @brief Range search with metadata filtering.
+ *
+ * Only vectors matching the metadata filter and within the distance threshold are returned.
+ *
+ * @param db Database to search; must be non-NULL.
+ * @param query_data Query vector data array.
+ * @param radius Maximum distance threshold (inclusive).
+ * @param results Output array to store results; must be pre-allocated with sufficient capacity.
+ * @param max_results Maximum number of results to return (capacity of results array).
+ * @param distance_type Distance metric to use.
+ * @param filter_key Metadata key to filter by; NULL to disable filtering.
+ * @param filter_value Metadata value to match; NULL if filter_key is NULL.
+ * @return Number of vectors found within radius (0 to max_results), or -1 on error.
+ */
+int gv_db_range_search_filtered(const GV_Database *db, const float *query_data, float radius,
+                                 GV_SearchResult *results, size_t max_results,
+                                 GV_DistanceType distance_type,
+                                 const char *filter_key, const char *filter_value);
+
+/**
  * @brief IVF-PQ search with per-query overrides.
  *
  * @param db Database to search; must be IVF-PQ.

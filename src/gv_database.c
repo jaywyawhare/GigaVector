@@ -1030,3 +1030,104 @@ int gv_db_search_filtered(const GV_Database *db, const float *query_data, size_t
     return -1;
 }
 
+
+int gv_db_range_search(const GV_Database *db, const float *query_data, float radius,
+                       GV_SearchResult *results, size_t max_results, GV_DistanceType distance_type) {
+    if (db == NULL || query_data == NULL || results == NULL || max_results == 0 || radius < 0.0f) {
+        return -1;
+    }
+
+    pthread_rwlock_rdlock((pthread_rwlock_t *)&db->rwlock);
+
+    if (db->index_type == GV_INDEX_TYPE_KDTREE && db->root == NULL) {
+        pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
+        return 0;
+    }
+    if (db->index_type == GV_INDEX_TYPE_HNSW && db->hnsw_index == NULL) {
+        pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
+        return 0;
+    }
+    if (db->index_type == GV_INDEX_TYPE_IVFPQ && db->hnsw_index == NULL) {
+        pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
+        return 0;
+    }
+
+    GV_Vector query_vec;
+    query_vec.dimension = db->dimension;
+    query_vec.data = (float *)query_data;
+    query_vec.metadata = NULL;
+
+    int r;
+    if (db->index_type == GV_INDEX_TYPE_KDTREE) {
+        r = gv_kdtree_range_search(db->root, &query_vec, radius, results, max_results, distance_type);
+    } else if (db->index_type == GV_INDEX_TYPE_HNSW) {
+        r = gv_hnsw_range_search(db->hnsw_index, &query_vec, radius, results, max_results, distance_type, NULL, NULL);
+    } else if (db->index_type == GV_INDEX_TYPE_IVFPQ) {
+        r = gv_ivfpq_range_search(db->hnsw_index, &query_vec, radius, results, max_results, distance_type);
+    } else {
+        pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
+        return -1;
+    }
+    
+    pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
+    return r;
+}
+
+int gv_db_range_search_filtered(const GV_Database *db, const float *query_data, float radius,
+                                 GV_SearchResult *results, size_t max_results,
+                                 GV_DistanceType distance_type,
+                                 const char *filter_key, const char *filter_value) {
+    if (db == NULL || query_data == NULL || results == NULL || max_results == 0 || radius < 0.0f) {
+        return -1;
+    }
+
+    pthread_rwlock_rdlock((pthread_rwlock_t *)&db->rwlock);
+
+    if (db->index_type == GV_INDEX_TYPE_KDTREE && db->root == NULL) {
+        pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
+        return 0;
+    }
+    if (db->index_type == GV_INDEX_TYPE_HNSW && db->hnsw_index == NULL) {
+        pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
+        return 0;
+    }
+    if (db->index_type == GV_INDEX_TYPE_IVFPQ && db->hnsw_index == NULL) {
+        pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
+        return 0;
+    }
+
+    GV_Vector query_vec;
+    query_vec.dimension = db->dimension;
+    query_vec.data = (float *)query_data;
+    query_vec.metadata = NULL;
+
+    int r;
+    if (db->index_type == GV_INDEX_TYPE_KDTREE) {
+        r = gv_kdtree_range_search_filtered(db->root, &query_vec, radius, results, max_results,
+                                            distance_type, filter_key, filter_value);
+    } else if (db->index_type == GV_INDEX_TYPE_HNSW) {
+        r = gv_hnsw_range_search(db->hnsw_index, &query_vec, radius, results, max_results,
+                                distance_type, filter_key, filter_value);
+    } else if (db->index_type == GV_INDEX_TYPE_IVFPQ) {
+        r = gv_ivfpq_range_search(db->hnsw_index, &query_vec, radius, results, max_results, distance_type);
+        if (r > 0 && filter_key != NULL) {
+            int out = 0;
+            for (int i = 0; i < r && out < (int)max_results; ++i) {
+                const char *val = gv_vector_get_metadata(results[i].vector, filter_key);
+                if (val && strcmp(val, filter_value) == 0) {
+                    if (out != i) {
+                        results[out] = results[i];
+                    }
+                    out++;
+                }
+            }
+            r = out;
+        }
+    } else {
+        pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
+        return -1;
+    }
+    
+    pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
+    return r;
+}
