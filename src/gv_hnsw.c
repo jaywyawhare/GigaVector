@@ -895,3 +895,42 @@ int gv_hnsw_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version)
     *index_ptr = index;
     return 0;
 }
+
+int gv_hnsw_range_search(void *index_ptr, const GV_Vector *query, float radius,
+                         GV_SearchResult *results, size_t max_results,
+                         GV_DistanceType distance_type,
+                         const char *filter_key, const char *filter_value) {
+    GV_HNSWIndex *index = (GV_HNSWIndex *)index_ptr;
+    if (index == NULL || query == NULL || results == NULL || max_results == 0 || radius < 0.0f ||
+        query->dimension != index->dimension || query->data == NULL) {
+        return -1;
+    }
+
+    if (index->count == 0 || index->entryPoint == NULL) {
+        return 0;
+    }
+
+    /* Reuse the standard HNSW k-NN search and post-filter by radius. This keeps
+     * the implementation simple and consistent with the main search path. */
+    GV_SearchResult *tmp = (GV_SearchResult *)malloc(max_results * sizeof(GV_SearchResult));
+    if (tmp == NULL) {
+        return -1;
+    }
+
+    int n = gv_hnsw_search(index_ptr, query, max_results, tmp, distance_type,
+                           filter_key, filter_value);
+    if (n <= 0) {
+        free(tmp);
+        return n;
+    }
+
+    size_t out = 0;
+    for (int i = 0; i < n && out < max_results; ++i) {
+        if (tmp[i].distance <= radius) {
+            results[out++] = tmp[i];
+        }
+    }
+
+    free(tmp);
+    return (int)out;
+}

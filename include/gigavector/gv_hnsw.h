@@ -58,6 +58,24 @@ int gv_hnsw_search(void *index, const GV_Vector *query, size_t k,
                    const char *filter_key, const char *filter_value);
 
 /**
+ * @brief Range search: find all vectors within a distance threshold.
+ *
+ * @param index HNSW index instance; must be non-NULL.
+ * @param query Query vector.
+ * @param radius Maximum distance threshold (inclusive).
+ * @param results Output array to store results; must be pre-allocated.
+ * @param max_results Maximum number of results to return (capacity of results array).
+ * @param distance_type Distance metric to use.
+ * @param filter_key Optional metadata filter key; NULL to disable.
+ * @param filter_value Optional metadata filter value; NULL if key is NULL.
+ * @return Number of vectors found within radius (0 to max_results), or -1 on error.
+ */
+int gv_hnsw_range_search(void *index, const GV_Vector *query, float radius,
+                         GV_SearchResult *results, size_t max_results,
+                         GV_DistanceType distance_type,
+                         const char *filter_key, const char *filter_value);
+
+/**
  * @brief Destroy HNSW index and free all resources.
  *
  * @param index HNSW index instance; safe to call with NULL.
