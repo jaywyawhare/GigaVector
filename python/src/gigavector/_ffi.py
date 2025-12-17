@@ -110,6 +110,8 @@ int gv_db_search_batch(const GV_Database *db, const float *queries, size_t qcoun
 int gv_db_search_with_filter_expr(const GV_Database *db, const float *query_data, size_t k,
                                   GV_SearchResult *results, GV_DistanceType distance_type,
                                   const char *filter_expr);
+void gv_db_set_exact_search_threshold(GV_Database *db, size_t threshold);
+void gv_db_set_force_exact_search(GV_Database *db, int enabled);
 int gv_db_range_search(const GV_Database *db, const float *query_data, float radius,
                        GV_SearchResult *results, size_t max_results, GV_DistanceType distance_type);
 int gv_db_range_search_filtered(const GV_Database *db, const float *query_data, float radius,
