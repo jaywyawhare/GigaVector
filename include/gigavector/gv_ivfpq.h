@@ -73,6 +73,21 @@ int gv_ivfpq_search(void *index, const GV_Vector *query, size_t k,
                     size_t nprobe_override, size_t rerank_top);
 
 /**
+ * @brief Range search: find all vectors within a distance threshold.
+ *
+ * @param index IVF-PQ index instance; must be non-NULL.
+ * @param query Query vector.
+ * @param radius Maximum distance threshold (inclusive).
+ * @param results Output array to store results; must be pre-allocated.
+ * @param max_results Maximum number of results to return (capacity of results array).
+ * @param distance_type Distance metric to use.
+ * @return Number of vectors found within radius (0 to max_results), or -1 on error.
+ */
+int gv_ivfpq_range_search(void *index, const GV_Vector *query, float radius,
+                           GV_SearchResult *results, size_t max_results,
+                           GV_DistanceType distance_type);
+
+/**
  * @brief Destroy IVF-PQ index and free resources.
  *
  * @param index IVF-PQ index; safe to call with NULL.

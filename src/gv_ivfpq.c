@@ -1170,3 +1170,175 @@ int gv_ivfpq_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version
     return 0;
 }
 
+
+int gv_ivfpq_range_search(void *index_ptr, const GV_Vector *query, float radius,
+                           GV_SearchResult *results, size_t max_results,
+                           GV_DistanceType distance_type) {
+    GV_IVFPQIndex *idx = (GV_IVFPQIndex *)index_ptr;
+    if (idx == NULL || query == NULL || results == NULL || max_results == 0 || radius < 0.0f ||
+        query->dimension != idx->dimension || query->data == NULL || idx->trained == 0) {
+        return -1;
+    }
+
+    pthread_rwlock_rdlock(&idx->rwlock);
+
+    int cosine = (distance_type == GV_DISTANCE_COSINE) ? 1 : 0;
+    float *qbuf = (float *)malloc(idx->dimension * sizeof(float));
+    if (!qbuf) {
+        pthread_rwlock_unlock(&idx->rwlock);
+        return -1;
+    }
+    memcpy(qbuf, query->data, idx->dimension * sizeof(float));
+
+    if (cosine) {
+        float norm = 0.0f;
+        for (size_t i = 0; i < idx->dimension; ++i) norm += qbuf[i] * qbuf[i];
+        if (norm > 0.0f) {
+            norm = 1.0f / sqrtf(norm);
+            for (size_t i = 0; i < idx->dimension; ++i) qbuf[i] *= norm;
+        }
+    }
+
+    int *probe_ids = (int *)malloc(idx->nprobe * sizeof(int));
+    if (!probe_ids) {
+        free(qbuf);
+        pthread_rwlock_unlock(&idx->rwlock);
+        return -1;
+    }
+
+    for (size_t i = 0; i < idx->nprobe; ++i) probe_ids[i] = -1;
+
+    for (size_t i = 0; i < idx->nlist; ++i) {
+        float d = 0.0f;
+        for (size_t j = 0; j < idx->dimension; ++j) {
+            float diff = qbuf[j] - idx->coarse[i * idx->dimension + j];
+            d += diff * diff;
+        }
+        for (size_t p = 0; p < idx->nprobe; ++p) {
+            if (probe_ids[p] < 0 || d < probe_ids[p]) {
+                for (size_t q = idx->nprobe - 1; q > p; --q) {
+                    probe_ids[q] = probe_ids[q - 1];
+                }
+                probe_ids[p] = (int)i;
+                break;
+            }
+        }
+    }
+
+    size_t codebook_size = idx->codebook_size;
+    float *lut = idx->lut_buf;
+    size_t lut_needed = idx->m * codebook_size;
+    if (lut == NULL || idx->lut_buf_size < lut_needed) {
+        lut = (float *)realloc(lut, lut_needed * sizeof(float));
+        if (!lut) {
+            free(probe_ids);
+            free(qbuf);
+            pthread_rwlock_unlock(&idx->rwlock);
+            return -1;
+        }
+        idx->lut_buf = lut;
+        idx->lut_buf_size = lut_needed;
+    }
+
+    for (size_t m = 0; m < idx->m; ++m) {
+        float *lut_row = lut + m * codebook_size;
+        float *pq_row = idx->pq + m * codebook_size * idx->subdim;
+        for (size_t c = 0; c < codebook_size; ++c) {
+            float d = 0.0f;
+            for (size_t s = 0; s < idx->subdim; ++s) {
+                float diff = qbuf[m * idx->subdim + s] - pq_row[c * idx->subdim + s];
+                d += diff * diff;
+            }
+            lut_row[c] = d;
+        }
+    }
+
+    typedef struct {
+        GV_Vector *vector;
+        GV_IVFPQEntry *entry;
+        float pq_distance;
+    } RangeCandidate;
+    
+    RangeCandidate *candidates = (RangeCandidate *)malloc(max_results * 2 * sizeof(RangeCandidate));
+    if (!candidates) {
+        free(probe_ids);
+        free(qbuf);
+        pthread_rwlock_unlock(&idx->rwlock);
+        return -1;
+    }
+    size_t found = 0;
+
+    for (size_t pi = 0; pi < idx->nprobe; ++pi) {
+        int lid = probe_ids[pi];
+        if (lid < 0) continue;
+        GV_IVFPQList *list = &idx->lists[lid];
+        const uint8_t *codes_soa = list->codes_soa;
+        size_t lcount = list->count;
+        if (codes_soa) {
+            const size_t cap = list->capacity;
+            for (size_t e = 0; e < lcount && found < max_results * 2; ++e) {
+                float d = 0.0f;
+                const uint8_t *base = codes_soa + e;
+                for (size_t m = 0; m < idx->m; ++m) {
+                    d += lut[m * idx->codebook_size + base[m * cap]];
+                }
+                if (d <= radius) {
+                    GV_IVFPQEntry *ent = &list->entries[e];
+                    if (ent->vector != NULL) {
+                        candidates[found].vector = ent->vector;
+                        candidates[found].entry = ent;
+                        candidates[found].pq_distance = d;
+                        found++;
+                    }
+                }
+            }
+        } else {
+            for (size_t e = 0; e < lcount && found < max_results * 2; ++e) {
+                GV_IVFPQEntry *ent = &list->entries[e];
+                float d = 0.0f;
+                for (size_t m = 0; m < idx->m; ++m) {
+                    d += lut[m * idx->codebook_size + ent->codes[m]];
+                }
+                if (d <= radius) {
+                    if (ent->vector != NULL) {
+                        candidates[found].vector = ent->vector;
+                        candidates[found].entry = ent;
+                        candidates[found].pq_distance = d;
+                        found++;
+                    }
+                }
+            }
+        }
+    }
+
+    size_t result_count = 0;
+    for (size_t i = 0; i < found && result_count < max_results; ++i) {
+        if (candidates[i].vector != NULL) {
+            float dist;
+            if (idx->use_scalar_quant && candidates[i].entry != NULL && 
+                candidates[i].entry->scalar_quant != NULL) {
+                dist = gv_scalar_quant_distance(query->data, candidates[i].entry->scalar_quant,
+                    (int)(cosine ? GV_DISTANCE_COSINE : GV_DISTANCE_EUCLIDEAN));
+                if (cosine && dist > -1.5f) {
+                    dist = 1.0f - dist;
+                }
+            } else {
+                dist = gv_distance(query, candidates[i].vector, cosine ? GV_DISTANCE_COSINE : GV_DISTANCE_EUCLIDEAN);
+                if (cosine && dist > -1.5f) {
+                    dist = 1.0f - dist;
+                }
+            }
+            if (dist <= radius) {
+                results[result_count].vector = candidates[i].vector;
+                results[result_count].distance = dist;
+                result_count++;
+            }
+        }
+    }
+
+    free(candidates);
+    free(probe_ids);
+    free(qbuf);
+    pthread_rwlock_unlock(&idx->rwlock);
+    return (int)result_count;
+}
