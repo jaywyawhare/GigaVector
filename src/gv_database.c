@@ -1030,6 +1030,102 @@ int gv_db_search_filtered(const GV_Database *db, const float *query_data, size_t
     return -1;
 }
 
+int gv_db_search_with_filter_expr(const GV_Database *db, const float *query_data, size_t k,
+                                  GV_SearchResult *results, GV_DistanceType distance_type,
+                                  const char *filter_expr) {
+    if (db == NULL || query_data == NULL || results == NULL || k == 0 || filter_expr == NULL) {
+        return -1;
+    }
+
+    GV_Filter *filter = gv_filter_parse(filter_expr);
+    if (filter == NULL) {
+        return -1;
+    }
+
+    pthread_rwlock_rdlock((pthread_rwlock_t *)&db->rwlock);
+
+    if (db->index_type == GV_INDEX_TYPE_KDTREE && db->root == NULL) {
+        pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
+        gv_filter_destroy(filter);
+        return 0;
+    }
+    if (db->index_type == GV_INDEX_TYPE_HNSW && db->hnsw_index == NULL) {
+        pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
+        gv_filter_destroy(filter);
+        return 0;
+    }
+    if (db->index_type == GV_INDEX_TYPE_IVFPQ && db->hnsw_index == NULL) {
+        pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
+        gv_filter_destroy(filter);
+        return 0;
+    }
+
+    size_t max_candidates = k * 4;
+    if (max_candidates < k) {
+        max_candidates = k;
+    }
+    if (max_candidates > db->count) {
+        max_candidates = db->count;
+    }
+    if (max_candidates == 0) {
+        pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
+        gv_filter_destroy(filter);
+        return 0;
+    }
+
+    GV_SearchResult *tmp = (GV_SearchResult *)malloc(max_candidates * sizeof(GV_SearchResult));
+    if (!tmp) {
+        pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
+        gv_filter_destroy(filter);
+        return -1;
+    }
+
+    GV_Vector query_vec;
+    query_vec.dimension = db->dimension;
+    query_vec.data = (float *)query_data;
+    query_vec.metadata = NULL;
+
+    int n = 0;
+    if (db->index_type == GV_INDEX_TYPE_KDTREE) {
+        n = gv_kdtree_knn_search(db->root, &query_vec, max_candidates, tmp, distance_type);
+    } else if (db->index_type == GV_INDEX_TYPE_HNSW) {
+        n = gv_hnsw_search(db->hnsw_index, &query_vec, max_candidates, tmp, distance_type, NULL, NULL);
+    } else if (db->index_type == GV_INDEX_TYPE_IVFPQ) {
+        n = gv_ivfpq_search(db->hnsw_index, &query_vec, max_candidates, tmp, distance_type, 0, 0);
+    } else {
+        free(tmp);
+        pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
+        gv_filter_destroy(filter);
+        return -1;
+    }
+
+    if (n <= 0) {
+        free(tmp);
+        pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
+        gv_filter_destroy(filter);
+        return n;
+    }
+
+    size_t out = 0;
+    for (int i = 0; i < n && out < k; ++i) {
+        int match = gv_filter_eval(filter, tmp[i].vector);
+        if (match < 0) {
+            free(tmp);
+            pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
+            gv_filter_destroy(filter);
+            return -1;
+        }
+        if (match == 1) {
+            results[out++] = tmp[i];
+        }
+    }
+
+    free(tmp);
+    pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
+    gv_filter_destroy(filter);
+    return (int)out;
+}
+
 
 int gv_db_range_search(const GV_Database *db, const float *query_data, float radius,
                        GV_SearchResult *results, size_t max_results, GV_DistanceType distance_type) {
