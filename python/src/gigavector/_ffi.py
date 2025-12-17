@@ -105,6 +105,12 @@ int gv_db_search_filtered(const GV_Database *db, const float *query_data, size_t
                           const char *filter_key, const char *filter_value);
 int gv_db_search_batch(const GV_Database *db, const float *queries, size_t qcount, size_t k,
                        GV_SearchResult *results, GV_DistanceType distance_type);
+int gv_db_range_search(const GV_Database *db, const float *query_data, float radius,
+                       GV_SearchResult *results, size_t max_results, GV_DistanceType distance_type);
+int gv_db_range_search_filtered(const GV_Database *db, const float *query_data, float radius,
+                                 GV_SearchResult *results, size_t max_results,
+                                 GV_DistanceType distance_type,
+                                 const char *filter_key, const char *filter_value);
 
 // Vector creation and metadata management
 GV_Vector *gv_vector_create_from_data(size_t dimension, const float *data);

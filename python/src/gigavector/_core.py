@@ -253,6 +253,40 @@ class Database:
             raise RuntimeError("gv_db_search failed")
         return [SearchHit(distance=float(results[i].distance), vector=_copy_vector(results[i].vector)) for i in range(n)]
 
+    def range_search(self, query: Sequence[float], radius: float, max_results: int = 1000,
+                     distance: DistanceType = DistanceType.EUCLIDEAN,
+                     filter_metadata: tuple[str, str] | None = None) -> list[SearchHit]:
+        """
+        Range search: find all vectors within a distance threshold.
+        
+        Args:
+            query: Query vector.
+            radius: Maximum distance threshold (inclusive).
+            max_results: Maximum number of results to return.
+            distance: Distance metric to use.
+            filter_metadata: Optional (key, value) tuple for metadata filtering.
+        
+        Returns:
+            List of search hits within the radius.
+        """
+        self._check_dimension(query)
+        if radius < 0.0:
+            raise ValueError("radius must be non-negative")
+        if max_results <= 0:
+            raise ValueError("max_results must be positive")
+        
+        qbuf = ffi.new("float[]", list(query))
+        results = ffi.new("GV_SearchResult[]", max_results)
+        if filter_metadata:
+            key, value = filter_metadata
+            n = lib.gv_db_range_search_filtered(self._db, qbuf, radius, results, max_results,
+                                                int(distance), key.encode(), value.encode())
+        else:
+            n = lib.gv_db_range_search(self._db, qbuf, radius, results, max_results, int(distance))
+        if n < 0:
+            raise RuntimeError("gv_db_range_search failed")
+        return [SearchHit(distance=float(results[i].distance), vector=_copy_vector(results[i].vector)) for i in range(n)]
+
     def search_batch(self, queries: Iterable[Sequence[float]], k: int,
                      distance: DistanceType = DistanceType.EUCLIDEAN) -> list[list[SearchHit]]:
         queries_list = list(queries)
