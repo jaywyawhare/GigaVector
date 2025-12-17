@@ -10,8 +10,27 @@ ffi = FFI()
 # Keep this cdef in sync with the C headers.
 ffi.cdef(
     """
-typedef enum { GV_INDEX_TYPE_KDTREE = 0, GV_INDEX_TYPE_HNSW = 1, GV_INDEX_TYPE_IVFPQ = 2 } GV_IndexType;
+typedef enum { GV_INDEX_TYPE_KDTREE = 0, GV_INDEX_TYPE_HNSW = 1, GV_INDEX_TYPE_IVFPQ = 2, GV_INDEX_TYPE_SPARSE = 3 } GV_IndexType;
 typedef enum { GV_DISTANCE_EUCLIDEAN = 0, GV_DISTANCE_COSINE = 1, GV_DISTANCE_DOT_PRODUCT = 2, GV_DISTANCE_MANHATTAN = 3 } GV_DistanceType;
+
+typedef struct {
+    uint32_t index;
+    float value;
+} GV_SparseEntry;
+
+typedef struct GV_SparseVector {
+    size_t dimension;
+    size_t nnz;
+    GV_SparseEntry *entries;
+    void *metadata; /* GV_Metadata* */
+} GV_SparseVector;
+
+typedef struct {
+    const GV_Vector *vector;
+    const GV_SparseVector *sparse_vector;
+    int is_sparse;
+    float distance;
+} GV_SearchResult;
 
 typedef struct {
     size_t M;
@@ -112,6 +131,11 @@ int gv_db_search_with_filter_expr(const GV_Database *db, const float *query_data
                                   const char *filter_expr);
 void gv_db_set_exact_search_threshold(GV_Database *db, size_t threshold);
 void gv_db_set_force_exact_search(GV_Database *db, int enabled);
+int gv_db_add_sparse_vector(GV_Database *db, const uint32_t *indices, const float *values,
+                            size_t nnz, size_t dimension,
+                            const char *metadata_key, const char *metadata_value);
+int gv_db_search_sparse(const GV_Database *db, const uint32_t *indices, const float *values,
+                        size_t nnz, size_t k, GV_SearchResult *results, GV_DistanceType distance_type);
 int gv_db_range_search(const GV_Database *db, const float *query_data, float radius,
                        GV_SearchResult *results, size_t max_results, GV_DistanceType distance_type);
 int gv_db_range_search_filtered(const GV_Database *db, const float *query_data, float radius,
