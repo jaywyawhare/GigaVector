@@ -35,7 +35,21 @@ typedef struct GV_KDNode {
  * @brief Represents a single search result with distance.
  */
 typedef struct {
+    uint32_t index;
+    float value;
+} GV_SparseEntry;
+
+typedef struct GV_SparseVector {
+    size_t dimension;
+    size_t nnz;
+    GV_SparseEntry *entries;
+    GV_Metadata *metadata;
+} GV_SparseVector;
+
+typedef struct {
     const GV_Vector *vector;
+    const GV_SparseVector *sparse_vector;
+    int is_sparse;
     float distance;
 } GV_SearchResult;
 
