@@ -10,6 +10,8 @@
 #include "gv_hnsw.h"
 #include "gv_ivfpq.h"
 #include "gv_filter.h"
+#include "gv_sparse_index.h"
+#include "gv_sparse_vector.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -21,7 +23,8 @@ extern "C" {
 typedef enum {
     GV_INDEX_TYPE_KDTREE = 0,
     GV_INDEX_TYPE_HNSW = 1,
-    GV_INDEX_TYPE_IVFPQ = 2
+    GV_INDEX_TYPE_IVFPQ = 2,
+    GV_INDEX_TYPE_SPARSE = 3
 } GV_IndexType;
 
 /**
@@ -41,6 +44,7 @@ typedef struct GV_Database {
     size_t count;
     size_t exact_search_threshold; /**< Max collection size to use brute-force exact search. */
     int force_exact_search;        /**< Force exact search even when above threshold. */
+    GV_SparseIndex *sparse_index;  /**< Sparse inverted index when index_type == GV_INDEX_TYPE_SPARSE. */
 } GV_Database;
 
 /**
@@ -142,6 +146,22 @@ int gv_db_ivfpq_train(GV_Database *db, const float *data, size_t count, size_t d
 int gv_db_add_vector_with_rich_metadata(GV_Database *db, const float *data, size_t dimension,
                                         const char *const *metadata_keys, const char *const *metadata_values,
                                         size_t metadata_count);
+
+/**
+ * @brief Add a sparse vector to the database (sparse index only).
+ *
+ * @param db Target database; must be GV_INDEX_TYPE_SPARSE.
+ * @param indices Dimension indices array of length nnz.
+ * @param values Values array of length nnz.
+ * @param nnz Number of non-zero entries.
+ * @param dimension Vector dimension; must match db->dimension.
+ * @param metadata_key Optional metadata key; NULL to skip.
+ * @param metadata_value Optional metadata value; NULL if key is NULL.
+ * @return 0 on success, -1 on error.
+ */
+int gv_db_add_sparse_vector(GV_Database *db, const uint32_t *indices, const float *values,
+                            size_t nnz, size_t dimension,
+                            const char *metadata_key, const char *metadata_value);
 
 /**
  * @brief Save the database (tree and vectors) to a binary file.
@@ -322,6 +342,21 @@ void gv_db_set_exact_search_threshold(GV_Database *db, size_t threshold);
  * @param enabled Non-zero to force exact search, zero to use automatic logic.
  */
 void gv_db_set_force_exact_search(GV_Database *db, int enabled);
+
+/**
+ * @brief Search sparse index with a sparse query.
+ *
+ * @param db Database; must be GV_INDEX_TYPE_SPARSE.
+ * @param indices Query indices array.
+ * @param values Query values array.
+ * @param nnz Number of entries in query.
+ * @param k Number of results.
+ * @param results Output array of at least k elements.
+ * @param distance_type GV_DISTANCE_DOT_PRODUCT or GV_DISTANCE_COSINE.
+ * @return Number of results (0..k) or -1 on error.
+ */
+int gv_db_search_sparse(const GV_Database *db, const uint32_t *indices, const float *values,
+                        size_t nnz, size_t k, GV_SearchResult *results, GV_DistanceType distance_type);
 
 /**
  * @brief Enable or reconfigure WAL for a database.

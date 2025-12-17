@@ -152,6 +152,8 @@ GV_Database *gv_db_open(const char *filepath, size_t dimension, GV_IndexType ind
     db->index_type = index_type;
     db->root = NULL;
     db->hnsw_index = NULL;
+    db->sparse_index = NULL;
+    db->sparse_index = NULL;
     db->filepath = NULL;
     db->wal_path = NULL;
     db->wal = NULL;
@@ -176,6 +178,14 @@ GV_Database *gv_db_open(const char *filepath, size_t dimension, GV_IndexType ind
         GV_IVFPQConfig cfg = {.nlist = 64, .m = 8, .nbits = 8, .nprobe = 4, .train_iters = 15};
         db->hnsw_index = gv_ivfpq_create(dimension, &cfg);
         if (db->hnsw_index == NULL) {
+            pthread_rwlock_destroy(&db->rwlock);
+            pthread_mutex_destroy(&db->wal_mutex);
+            free(db);
+            return NULL;
+        }
+    } else if (index_type == GV_INDEX_TYPE_SPARSE && filepath == NULL) {
+        db->sparse_index = gv_sparse_index_create(dimension);
+        if (db->sparse_index == NULL) {
             pthread_rwlock_destroy(&db->rwlock);
             pthread_mutex_destroy(&db->wal_mutex);
             free(db);
@@ -442,6 +452,10 @@ void gv_db_close(GV_Database *db) {
         gv_kdtree_destroy_recursive(db->root);
     } else if (db->index_type == GV_INDEX_TYPE_HNSW) {
         gv_hnsw_destroy(db->hnsw_index);
+    } else if (db->index_type == GV_INDEX_TYPE_IVFPQ) {
+        gv_ivfpq_destroy(db->hnsw_index);
+    } else if (db->index_type == GV_INDEX_TYPE_SPARSE) {
+        gv_sparse_index_destroy(db->sparse_index);
     }
     free(db->filepath);
     free(db->wal_path);
@@ -467,6 +481,7 @@ GV_Database *gv_db_open_with_hnsw_config(const char *filepath, size_t dimension,
     db->index_type = index_type;
     db->root = NULL;
     db->hnsw_index = NULL;
+    db->sparse_index = NULL;
     db->filepath = NULL;
     db->wal_path = NULL;
     db->wal = NULL;
@@ -511,6 +526,8 @@ GV_Database *gv_db_open_with_ivfpq_config(const char *filepath, size_t dimension
     db->index_type = index_type;
     db->root = NULL;
     db->hnsw_index = NULL;
+    db->sparse_index = NULL;
+    db->sparse_index = NULL;
     db->filepath = NULL;
     db->wal_path = NULL;
     db->wal = NULL;
@@ -675,6 +692,41 @@ int gv_db_add_vector_with_metadata(GV_Database *db, const float *data, size_t di
         return -1;
     }
 
+    db->count += 1;
+    pthread_rwlock_unlock(&db->rwlock);
+    return 0;
+}
+
+int gv_db_add_sparse_vector(GV_Database *db, const uint32_t *indices, const float *values,
+                            size_t nnz, size_t dimension,
+                            const char *metadata_key, const char *metadata_value) {
+    if (db == NULL || db->index_type != GV_INDEX_TYPE_SPARSE || dimension != db->dimension) {
+        return -1;
+    }
+    if ((indices == NULL || values == NULL) && nnz > 0) {
+        return -1;
+    }
+
+    pthread_rwlock_wrlock(&db->rwlock);
+    GV_SparseVector *sv = gv_sparse_vector_create(dimension, indices, values, nnz);
+    if (sv == NULL) {
+        pthread_rwlock_unlock(&db->rwlock);
+        return -1;
+    }
+    if (metadata_key && metadata_value) {
+        if (gv_metadata_set(&sv->metadata, metadata_key, metadata_value) != 0) {
+            gv_sparse_vector_destroy(sv);
+            pthread_rwlock_unlock(&db->rwlock);
+            return -1;
+        }
+    }
+
+    int status = gv_sparse_index_add(db->sparse_index, sv);
+    if (status != 0) {
+        gv_sparse_vector_destroy(sv);
+        pthread_rwlock_unlock(&db->rwlock);
+        return -1;
+    }
     db->count += 1;
     pthread_rwlock_unlock(&db->rwlock);
     return 0;
@@ -862,6 +914,9 @@ int gv_db_search(const GV_Database *db, const float *query_data, size_t k,
         return -1;
     }
 
+    /* ensure result fields start clean */
+    memset(results, 0, k * sizeof(GV_SearchResult));
+
     pthread_rwlock_rdlock((pthread_rwlock_t *)&db->rwlock);
 
     if (db->index_type == GV_INDEX_TYPE_KDTREE && db->root == NULL) {
@@ -992,6 +1047,8 @@ int gv_db_search_filtered(const GV_Database *db, const float *query_data, size_t
     if (db == NULL || query_data == NULL || results == NULL || k == 0) {
         return -1;
     }
+
+    memset(results, 0, k * sizeof(GV_SearchResult));
 
     pthread_rwlock_rdlock((pthread_rwlock_t *)&db->rwlock);
 
@@ -1161,12 +1218,31 @@ void gv_db_set_force_exact_search(GV_Database *db, int enabled) {
     db->force_exact_search = enabled ? 1 : 0;
 }
 
+int gv_db_search_sparse(const GV_Database *db, const uint32_t *indices, const float *values,
+                        size_t nnz, size_t k, GV_SearchResult *results, GV_DistanceType distance_type) {
+    if (db == NULL || db->index_type != GV_INDEX_TYPE_SPARSE || results == NULL || k == 0) {
+        return -1;
+    }
+    if ((indices == NULL || values == NULL) && nnz > 0) {
+        return -1;
+    }
+    GV_SparseVector *query = gv_sparse_vector_create(db->dimension, indices, values, nnz);
+    if (query == NULL) {
+        return -1;
+    }
+    int r = gv_sparse_index_search(db->sparse_index, query, k, results, distance_type);
+    gv_sparse_vector_destroy(query);
+    return r;
+}
+
 
 int gv_db_range_search(const GV_Database *db, const float *query_data, float radius,
                        GV_SearchResult *results, size_t max_results, GV_DistanceType distance_type) {
     if (db == NULL || query_data == NULL || results == NULL || max_results == 0 || radius < 0.0f) {
         return -1;
     }
+
+    memset(results, 0, max_results * sizeof(GV_SearchResult));
 
     pthread_rwlock_rdlock((pthread_rwlock_t *)&db->rwlock);
 
@@ -1211,6 +1287,8 @@ int gv_db_range_search_filtered(const GV_Database *db, const float *query_data, 
     if (db == NULL || query_data == NULL || results == NULL || max_results == 0 || radius < 0.0f) {
         return -1;
     }
+
+    memset(results, 0, max_results * sizeof(GV_SearchResult));
 
     pthread_rwlock_rdlock((pthread_rwlock_t *)&db->rwlock);
 
