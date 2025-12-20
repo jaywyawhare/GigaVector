@@ -2,6 +2,7 @@
 #include <string.h>
 
 #include "gigavector/gv_sparse_vector.h"
+#include "gigavector/gv_metadata.h"
 
 GV_SparseVector *gv_sparse_vector_create(size_t dimension,
                                          const uint32_t *indices,
@@ -37,7 +38,7 @@ GV_SparseVector *gv_sparse_vector_create(size_t dimension,
 void gv_sparse_vector_destroy(GV_SparseVector *sv) {
     if (!sv) return;
     free(sv->entries);
-    gv_metadata_destroy(sv->metadata);
+    gv_vector_clear_metadata((GV_Vector *)sv);
     free(sv);
 }
 
