@@ -1536,7 +1536,16 @@ int gv_db_save(const GV_Database *db, const char *filepath) {
         }
     }
 
-    if (db->wal_path != NULL && status == 0) {
+    if (db->wal != NULL && status == 0) {
+        pthread_mutex_lock((pthread_mutex_t *)&db->wal_mutex);
+        int truncate_status = gv_wal_truncate(db->wal);
+        if (truncate_status == 0) {
+            /* Reset WAL record count after successful truncation */
+            ((GV_Database *)db)->total_wal_records = 0;
+        }
+        pthread_mutex_unlock((pthread_mutex_t *)&db->wal_mutex);
+    } else if (db->wal_path != NULL && status == 0) {
+        /* Fallback: if WAL handle is NULL but path exists, use reset */
         gv_wal_reset(db->wal_path);
     }
 
@@ -2052,6 +2061,136 @@ int gv_db_delete_vector_by_index(GV_Database *db, size_t vector_index) {
 
     if (status == 0 && db->wal != NULL) {
         if (gv_wal_append_delete(db->wal, vector_index) != 0) {
+            pthread_rwlock_unlock(&db->rwlock);
+            return -1;
+        }
+        db->total_wal_records += 1;
+    }
+
+    pthread_rwlock_unlock(&db->rwlock);
+    return status;
+}
+
+int gv_db_update_vector(GV_Database *db, size_t vector_index, const float *new_data, size_t dimension) {
+    if (db == NULL || new_data == NULL || dimension != db->dimension) {
+        return -1;
+    }
+
+    pthread_rwlock_wrlock(&db->rwlock);
+
+    int status = -1;
+    if (db->index_type == GV_INDEX_TYPE_KDTREE) {
+        if (db->soa_storage == NULL || vector_index >= db->soa_storage->count) {
+            pthread_rwlock_unlock(&db->rwlock);
+            return -1;
+        }
+        status = gv_kdtree_update(&(db->root), db->soa_storage, vector_index, new_data);
+    } else if (db->index_type == GV_INDEX_TYPE_HNSW) {
+        if (db->hnsw_index == NULL) {
+            pthread_rwlock_unlock(&db->rwlock);
+            return -1;
+        }
+        status = gv_hnsw_update(db->hnsw_index, vector_index, new_data, dimension);
+    } else if (db->index_type == GV_INDEX_TYPE_IVFPQ) {
+        if (db->hnsw_index == NULL) {
+            pthread_rwlock_unlock(&db->rwlock);
+            return -1;
+        }
+        status = gv_ivfpq_update(db->hnsw_index, vector_index, new_data, dimension);
+    } else if (db->index_type == GV_INDEX_TYPE_SPARSE) {
+        pthread_rwlock_unlock(&db->rwlock);
+        return -1; /* Sparse vectors require special handling - use gv_db_update_sparse_vector */
+    } else {
+        pthread_rwlock_unlock(&db->rwlock);
+        return -1;
+    }
+
+    if (status == 0 && db->wal != NULL) {
+        /* Write update record to WAL with empty metadata (data-only update) */
+        if (gv_wal_append_update(db->wal, vector_index, new_data, dimension, NULL, NULL, 0) != 0) {
+            pthread_rwlock_unlock(&db->rwlock);
+            return -1;
+        }
+        db->total_wal_records += 1;
+    }
+
+    pthread_rwlock_unlock(&db->rwlock);
+    return status;
+}
+
+int gv_db_update_vector_metadata(GV_Database *db, size_t vector_index,
+                                  const char *const *metadata_keys, const char *const *metadata_values,
+                                  size_t metadata_count) {
+    if (db == NULL || vector_index >= db->count) {
+        return -1;
+    }
+
+    pthread_rwlock_wrlock(&db->rwlock);
+
+    int status = -1;
+    const float *vector_data = NULL;
+
+    if (db->index_type == GV_INDEX_TYPE_KDTREE) {
+        if (db->soa_storage == NULL || vector_index >= db->soa_storage->count) {
+            pthread_rwlock_unlock(&db->rwlock);
+            return -1;
+        }
+        if (gv_soa_storage_is_deleted(db->soa_storage, vector_index) == 1) {
+            pthread_rwlock_unlock(&db->rwlock);
+            return -1;
+        }
+        vector_data = gv_soa_storage_get_data(db->soa_storage, vector_index);
+        if (vector_data == NULL) {
+            pthread_rwlock_unlock(&db->rwlock);
+            return -1;
+        }
+        
+        /* Create new metadata chain by building a temporary vector */
+        GV_Vector temp_vec;
+        temp_vec.dimension = db->dimension;
+        temp_vec.data = NULL;
+        temp_vec.metadata = NULL;
+        
+        for (size_t i = 0; i < metadata_count; ++i) {
+            if (metadata_keys[i] != NULL && metadata_values[i] != NULL) {
+                if (gv_vector_set_metadata(&temp_vec, metadata_keys[i], metadata_values[i]) != 0) {
+                    gv_vector_clear_metadata(&temp_vec);
+                    pthread_rwlock_unlock(&db->rwlock);
+                    return -1;
+                }
+            }
+        }
+        
+        status = gv_soa_storage_update_metadata(db->soa_storage, vector_index, temp_vec.metadata);
+    } else if (db->index_type == GV_INDEX_TYPE_HNSW) {
+        if (db->hnsw_index == NULL) {
+            pthread_rwlock_unlock(&db->rwlock);
+            return -1;
+        }
+        /* For HNSW, we need to get the vector and update its metadata */
+        /* This is a simplified approach - in practice, HNSW should also use SoA */
+        pthread_rwlock_unlock(&db->rwlock);
+        return -1; /* Not fully implemented for HNSW without SoA */
+    } else if (db->index_type == GV_INDEX_TYPE_IVFPQ) {
+        if (db->hnsw_index == NULL) {
+            pthread_rwlock_unlock(&db->rwlock);
+            return -1;
+        }
+        /* Similar to HNSW - would need vector access */
+        pthread_rwlock_unlock(&db->rwlock);
+        return -1; /* Not fully implemented for IVFPQ */
+    } else if (db->index_type == GV_INDEX_TYPE_SPARSE) {
+        pthread_rwlock_unlock(&db->rwlock);
+        return -1; /* Sparse vectors require special handling */
+    } else {
+        pthread_rwlock_unlock(&db->rwlock);
+        return -1;
+    }
+
+    if (status == 0 && db->wal != NULL && vector_data != NULL) {
+        /* Write update record to WAL with metadata */
+        if (gv_wal_append_update(db->wal, vector_index, vector_data, db->dimension, 
+                                 metadata_keys, metadata_values, metadata_count) != 0) {
             pthread_rwlock_unlock(&db->rwlock);
             return -1;
         }
