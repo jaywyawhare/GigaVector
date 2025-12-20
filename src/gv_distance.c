@@ -9,8 +9,58 @@
 #include <emmintrin.h>
 #endif
 
-#ifdef __AVX2__
+#if defined(__AVX2__) || defined(__AVX512F__)
 #include <immintrin.h>
+#endif
+
+#ifdef __AVX512F__
+static float gv_vector_dot_avx512(const float *a, const float *b, size_t dimension) {
+    __m512 sum_vec = _mm512_setzero_ps();
+    size_t i = 0;
+
+    for (; i + 16 <= dimension; i += 16) {
+        __m512 va = _mm512_loadu_ps(&a[i]);
+        __m512 vb = _mm512_loadu_ps(&b[i]);
+        sum_vec = _mm512_fmadd_ps(va, vb, sum_vec);
+    }
+
+    float tmp[16];
+    _mm512_storeu_ps(tmp, sum_vec);
+    float sum = 0.0f;
+    for (int t = 0; t < 16; ++t) {
+        sum += tmp[t];
+    }
+
+    for (; i < dimension; ++i) {
+        sum += a[i] * b[i];
+    }
+
+    return sum;
+}
+
+static float gv_vector_norm_avx512(const float *v, size_t dimension) {
+    __m512 sum_vec = _mm512_setzero_ps();
+    size_t i = 0;
+
+    for (; i + 16 <= dimension; i += 16) {
+        __m512 vv = _mm512_loadu_ps(&v[i]);
+        sum_vec = _mm512_fmadd_ps(vv, vv, sum_vec);
+    }
+
+    float tmp[16];
+    _mm512_storeu_ps(tmp, sum_vec);
+    float sum_sq = 0.0f;
+    for (int t = 0; t < 16; ++t) {
+        sum_sq += tmp[t];
+    }
+
+    for (; i < dimension; ++i) {
+        float val = v[i];
+        sum_sq += val * val;
+    }
+
+    return sqrtf(sum_sq);
+}
 #endif
 
 #ifdef __AVX2__
@@ -126,6 +176,11 @@ static float gv_vector_norm_scalar(const float *v, size_t dimension) {
 }
 
 static float gv_vector_dot(const GV_Vector *a, const GV_Vector *b) {
+#ifdef __AVX512F__
+    if (gv_cpu_has_feature(GV_CPU_FEATURE_AVX512F)) {
+        return gv_vector_dot_avx512(a->data, b->data, a->dimension);
+    }
+#endif
 #ifdef __AVX2__
     if (gv_cpu_has_feature(GV_CPU_FEATURE_AVX2) && gv_cpu_has_feature(GV_CPU_FEATURE_FMA)) {
         return gv_vector_dot_avx2(a->data, b->data, a->dimension);
@@ -140,6 +195,11 @@ static float gv_vector_dot(const GV_Vector *a, const GV_Vector *b) {
 }
 
 static float gv_vector_norm(const GV_Vector *v) {
+#ifdef __AVX512F__
+    if (gv_cpu_has_feature(GV_CPU_FEATURE_AVX512F)) {
+        return gv_vector_norm_avx512(v->data, v->dimension);
+    }
+#endif
 #ifdef __AVX2__
     if (gv_cpu_has_feature(GV_CPU_FEATURE_AVX2) && gv_cpu_has_feature(GV_CPU_FEATURE_FMA)) {
         return gv_vector_norm_avx2(v->data, v->dimension);
@@ -152,6 +212,34 @@ static float gv_vector_norm(const GV_Vector *v) {
 #endif
     return gv_vector_norm_scalar(v->data, v->dimension);
 }
+
+#ifdef __AVX512F__
+static float gv_distance_euclidean_avx512(const float *a, const float *b, size_t dimension) {
+    __m512 sum_vec = _mm512_setzero_ps();
+    size_t i = 0;
+
+    for (; i + 16 <= dimension; i += 16) {
+        __m512 va = _mm512_loadu_ps(&a[i]);
+        __m512 vb = _mm512_loadu_ps(&b[i]);
+        __m512 diff = _mm512_sub_ps(va, vb);
+        sum_vec = _mm512_fmadd_ps(diff, diff, sum_vec);
+    }
+
+    float tmp[16];
+    _mm512_storeu_ps(tmp, sum_vec);
+    float sum_sq_diff = 0.0f;
+    for (int t = 0; t < 16; ++t) {
+        sum_sq_diff += tmp[t];
+    }
+
+    for (; i < dimension; ++i) {
+        float diff = a[i] - b[i];
+        sum_sq_diff += diff * diff;
+    }
+
+    return sqrtf(sum_sq_diff);
+}
+#endif
 
 #ifdef __AVX2__
 static float gv_distance_euclidean_avx2(const float *a, const float *b, size_t dimension) {
@@ -225,6 +313,11 @@ float gv_distance_euclidean(const GV_Vector *a, const GV_Vector *b) {
         return -1.0f;
     }
 
+#ifdef __AVX512F__
+    if (gv_cpu_has_feature(GV_CPU_FEATURE_AVX512F)) {
+        return gv_distance_euclidean_avx512(a->data, b->data, a->dimension);
+    }
+#endif
 #ifdef __AVX2__
     if (gv_cpu_has_feature(GV_CPU_FEATURE_AVX2) && gv_cpu_has_feature(GV_CPU_FEATURE_FMA)) {
         return gv_distance_euclidean_avx2(a->data, b->data, a->dimension);
