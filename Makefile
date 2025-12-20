@@ -1,6 +1,7 @@
 # Compiler and flags
 CC      := gcc
-CFLAGS  := -g -Wall -MMD -Iinclude -march=native -msse4.2 -mavx2 -mavx512f -mfma -pthread -fPIC
+# Enable high optimization and SIMD tuned for the local CPU. Keep debug symbols for profiling.
+CFLAGS  := -O3 -g -Wall -MMD -Iinclude -march=native -msse4.2 -mavx2 -mavx512f -mfma -pthread -fPIC
 LDFLAGS := -lm -pthread
 
 # Project structure
