@@ -4,6 +4,7 @@
 
 #include "gigavector/gv_exact_search.h"
 #include "gigavector/gv_distance.h"
+#include "gigavector/gv_soa_storage.h"
 
 int gv_exact_knn_search_vectors(GV_Vector *const *vectors, size_t count,
                                 const GV_Vector *query, size_t k,
@@ -77,47 +78,57 @@ int gv_exact_knn_search_vectors(GV_Vector *const *vectors, size_t count,
     return (int)filled;
 }
 
-static void gv_exact_collect_kdtree(const GV_KDNode *node, GV_Vector **out,
-                                    size_t max_count, size_t *count) {
-    if (node == NULL || out == NULL || count == NULL) {
+static void gv_exact_collect_kdtree(const GV_KDNode *node, const GV_SoAStorage *storage,
+                                    GV_Vector *out_views, size_t max_count, size_t *count) {
+    if (node == NULL || storage == NULL || out_views == NULL || count == NULL) {
         return;
     }
     if (*count >= max_count) {
         return;
     }
-    if (node->point != NULL) {
-        out[*count] = node->point;
-        (*count)++;
-        if (*count >= max_count) {
-            return;
+    if (node->vector_index < storage->count) {
+        if (gv_soa_storage_get_vector_view(storage, node->vector_index, &out_views[*count]) == 0) {
+            (*count)++;
+            if (*count >= max_count) {
+                return;
+            }
         }
     }
-    gv_exact_collect_kdtree(node->left, out, max_count, count);
-    gv_exact_collect_kdtree(node->right, out, max_count, count);
+    gv_exact_collect_kdtree(node->left, storage, out_views, max_count, count);
+    gv_exact_collect_kdtree(node->right, storage, out_views, max_count, count);
 }
 
-int gv_exact_knn_search_kdtree(const GV_KDNode *root, size_t total_count,
+int gv_exact_knn_search_kdtree(const GV_KDNode *root, const GV_SoAStorage *storage, size_t total_count,
                                const GV_Vector *query, size_t k,
                                GV_SearchResult *results, GV_DistanceType distance_type) {
-    if (query == NULL || results == NULL || k == 0) {
+    if (query == NULL || results == NULL || k == 0 || storage == NULL) {
         return -1;
     }
-    if (query->dimension == 0 || query->data == NULL) {
+    if (query->dimension == 0 || query->data == NULL || query->dimension != storage->dimension) {
         return -1;
     }
     if (root == NULL || total_count == 0) {
         return 0;
     }
 
-    GV_Vector **vecs = (GV_Vector **)malloc(total_count * sizeof(GV_Vector *));
-    if (!vecs) {
+    GV_Vector *vec_views = (GV_Vector *)malloc(total_count * sizeof(GV_Vector));
+    if (!vec_views) {
+        return -1;
+    }
+    GV_Vector **vec_ptrs = (GV_Vector **)malloc(total_count * sizeof(GV_Vector *));
+    if (!vec_ptrs) {
+        free(vec_views);
         return -1;
     }
     size_t collected = 0;
-    gv_exact_collect_kdtree(root, vecs, total_count, &collected);
+    gv_exact_collect_kdtree(root, storage, vec_views, total_count, &collected);
+    for (size_t i = 0; i < collected; i++) {
+        vec_ptrs[i] = &vec_views[i];
+    }
 
-    int r = gv_exact_knn_search_vectors(vecs, collected, query, k, results, distance_type);
-    free(vecs);
+    int r = gv_exact_knn_search_vectors(vec_ptrs, collected, query, k, results, distance_type);
+    free(vec_ptrs);
+    free(vec_views);
     return r;
 }
 
