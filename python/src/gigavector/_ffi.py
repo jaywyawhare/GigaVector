@@ -120,6 +120,7 @@ int gv_db_add_vector_with_metadata(GV_Database *db, const float *data, size_t di
 int gv_db_add_vector_with_rich_metadata(GV_Database *db, const float *data, size_t dimension,
                                         const char *const *metadata_keys, const char *const *metadata_values,
                                         size_t metadata_count);
+int gv_db_delete_vector_by_index(GV_Database *db, size_t vector_index);
 int gv_db_save(const GV_Database *db, const char *filepath);
 int gv_db_ivfpq_train(GV_Database *db, const float *data, size_t count, size_t dimension);
 int gv_db_add_vectors(GV_Database *db, const float *data, size_t count, size_t dimension);

@@ -356,6 +356,20 @@ class Database:
         if rc != 0:
             raise RuntimeError("gv_db_add_vectors failed")
 
+    def delete_vector(self, vector_index: int):
+        """
+        Delete a vector from the database by its index (insertion order).
+        
+        Args:
+            vector_index: Index of the vector to delete (0-based insertion order)
+        
+        Raises:
+            RuntimeError: If deletion fails
+        """
+        rc = lib.gv_db_delete_vector_by_index(self._db, vector_index)
+        if rc != 0:
+            raise RuntimeError(f"gv_db_delete_vector_by_index failed for index {vector_index}")
+
     def search(self, query: Sequence[float], k: int, distance: DistanceType = DistanceType.EUCLIDEAN,
                filter_metadata: tuple[str, str] | None = None) -> list[SearchHit]:
         self._check_dimension(query)
