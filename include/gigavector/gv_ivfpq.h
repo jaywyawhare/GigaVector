@@ -137,6 +137,17 @@ int gv_ivfpq_is_trained(const void *index);
  */
 int gv_ivfpq_delete(void *index, size_t entry_index);
 
+/**
+ * @brief Update a vector in the IVF-PQ index by its entry index.
+ *
+ * @param index IVF-PQ index instance; must be non-NULL.
+ * @param entry_index Index of the entry to update (0-based insertion order across all lists).
+ * @param new_data New vector data array.
+ * @param dimension Vector dimension; must match index dimension.
+ * @return 0 on success, -1 on invalid arguments or entry not found.
+ */
+int gv_ivfpq_update(void *index, size_t entry_index, const float *new_data, size_t dimension);
+
 #ifdef __cplusplus
 }
 #endif
