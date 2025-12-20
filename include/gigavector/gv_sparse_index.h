@@ -86,6 +86,15 @@ int gv_sparse_index_save(const GV_SparseIndex *index, FILE *out, uint32_t versio
 int gv_sparse_index_load(GV_SparseIndex **index_out, FILE *in,
                          size_t dimension, size_t count, uint32_t version);
 
+/**
+ * @brief Delete a vector from the sparse index by its index.
+ *
+ * @param index Sparse index instance; must be non-NULL.
+ * @param vector_index Index of the vector to delete (0-based insertion order).
+ * @return 0 on success, -1 on invalid arguments or vector not found.
+ */
+int gv_sparse_index_delete(GV_SparseIndex *index, size_t vector_index);
+
 #ifdef __cplusplus
 }
 #endif

@@ -24,6 +24,7 @@ struct GV_SparseIndex {
     double *doc_len;             /* document length per vector (sum of values) */
     double avg_doc_len;
     int use_bm25;                /* non-zero to use BM25 scoring */
+    int *deleted;                /* Deletion flags: 1 if deleted, 0 if active */
 };
 
 static int gv_sparse_write_uint32(FILE *out, uint32_t value) {
@@ -173,7 +174,10 @@ GV_SparseIndex *gv_sparse_index_create(size_t dimension) {
     idx->dimension = dimension;
     idx->capacity = 1024;
     idx->vectors = (GV_SparseVector **)calloc(idx->capacity, sizeof(GV_SparseVector *));
-    if (!idx->vectors) {
+    idx->deleted = (int *)calloc(idx->capacity, sizeof(int));
+    if (!idx->vectors || !idx->deleted) {
+        free(idx->vectors);
+        free(idx->deleted);
         free(idx);
         return NULL;
     }
@@ -221,6 +225,7 @@ void gv_sparse_index_destroy(GV_SparseIndex *index) {
     free(index->postings);
     free(index->df);
     free(index->doc_len);
+    free(index->deleted);
     if (index->vectors) {
         for (size_t i = 0; i < index->count; ++i) {
             gv_sparse_vector_destroy(index->vectors[i]);
@@ -245,15 +250,20 @@ int gv_sparse_index_add(GV_SparseIndex *index, GV_SparseVector *vector) {
             return -1;
         }
         double *tmp_len = (double *)realloc(index->doc_len, newcap * sizeof(double));
-        if (!tmp_len) {
+        int *tmp_deleted = (int *)realloc(index->deleted, newcap * sizeof(int));
+        if (!tmp_len || !tmp_deleted) {
             /* keep old arrays intact */
-            index->vectors = tmp_vec; /* already reallocated; but failure is unlikely */
+            if (tmp_vec) free(tmp_vec);
+            if (tmp_len) free(tmp_len);
+            if (tmp_deleted) free(tmp_deleted);
             return -1;
         }
-        /* zero-init new doc_len region */
+        /* zero-init new doc_len and deleted regions */
         memset(tmp_len + index->capacity, 0, (newcap - index->capacity) * sizeof(double));
+        memset(tmp_deleted + index->capacity, 0, (newcap - index->capacity) * sizeof(int));
         index->vectors = tmp_vec;
         index->doc_len = tmp_len;
+        index->deleted = tmp_deleted;
         index->capacity = newcap;
     }
 
@@ -283,6 +293,7 @@ int gv_sparse_index_add(GV_SparseIndex *index, GV_SparseVector *vector) {
         index->df[dim] += 1.0;
     }
     index->doc_len[vid] = dl > 0.0 ? dl : 0.0;
+    index->deleted[vid] = 0;
 
     /* update average document length incrementally */
     index->count++;
@@ -342,6 +353,10 @@ int gv_sparse_index_search(const GV_SparseIndex *index, const GV_SparseVector *q
 
             while (p) {
                 size_t vid = p->vector_id;
+                if (index->deleted[vid] != 0) {
+                    p = p->next;
+                    continue;
+                }
                 double tf = (double)p->value;
                 double dl = index->doc_len[vid] > 0.0 ? index->doc_len[vid] : avgdl;
                 double denom = tf + k1 * (1.0 - b + b * dl / avgdl);
@@ -355,8 +370,11 @@ int gv_sparse_index_search(const GV_SparseIndex *index, const GV_SparseVector *q
         } else {
             /* plain dot-product scoring */
             while (p) {
-                scores[p->vector_id] += qv * p->value;
-                touched[p->vector_id] = 1;
+                size_t vid = p->vector_id;
+                if (index->deleted[vid] == 0) {
+                    scores[vid] += qv * p->value;
+                    touched[vid] = 1;
+                }
                 p = p->next;
             }
         }
@@ -371,7 +389,7 @@ int gv_sparse_index_search(const GV_SparseIndex *index, const GV_SparseVector *q
 
     size_t filled = 0;
     for (size_t vid = 0; vid < index->count; ++vid) {
-        if (!touched[vid]) continue;
+        if (!touched[vid] || index->deleted[vid] != 0) continue;
         float score = scores[vid];
         float dist;
         if (distance_type == GV_DISTANCE_DOT_PRODUCT || distance_type == GV_DISTANCE_COSINE) {
@@ -523,3 +541,16 @@ int gv_sparse_index_load(GV_SparseIndex **index_out, FILE *in,
 
 
 
+
+int gv_sparse_index_delete(GV_SparseIndex *index, size_t vector_index) {
+    if (index == NULL || vector_index >= index->count) {
+        return -1;
+    }
+
+    if (index->deleted[vector_index] != 0) {
+        return -1;
+    }
+
+    index->deleted[vector_index] = 1;
+    return 0;
+}
