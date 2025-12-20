@@ -93,6 +93,15 @@ void gv_hnsw_destroy(void *index);
 size_t gv_hnsw_count(const void *index);
 
 /**
+ * @brief Delete a vector from the HNSW index by its node index.
+ *
+ * @param index HNSW index instance; must be non-NULL.
+ * @param node_index Index of the node to delete (0-based insertion order).
+ * @return 0 on success, -1 on invalid arguments or node not found.
+ */
+int gv_hnsw_delete(void *index, size_t node_index);
+
+/**
  * @brief Save HNSW index to file.
  *
  * @param index HNSW index instance; must be non-NULL.

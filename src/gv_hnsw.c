@@ -19,6 +19,7 @@ typedef struct GV_HNSWNode {
     size_t *neighbor_counts;
     size_t level;
     size_t index;                    /**< Stable index position in GV_HNSWIndex::nodes */
+    int deleted;                     /**< Deletion flag: 1 if deleted, 0 if active */
 } GV_HNSWNode;
 
 typedef struct {
@@ -130,6 +131,7 @@ int gv_hnsw_insert(void *index_ptr, GV_Vector *vector) {
     new_node->vector = vector;
     new_node->binary_vector = NULL;
     new_node->level = level;
+    new_node->deleted = 0;
     new_node->neighbors = (GV_HNSWNode ***)malloc((level + 1) * sizeof(GV_HNSWNode **));
     new_node->neighbor_counts = (size_t *)calloc(level + 1, sizeof(size_t));
     if (new_node->neighbors == NULL || new_node->neighbor_counts == NULL) {
@@ -212,7 +214,8 @@ int gv_hnsw_insert(void *index_ptr, GV_Vector *vector) {
             current->neighbors[lc] != NULL) {
             for (size_t i = 0; i < current->neighbor_counts[lc]; ++i) {
                 if (current->neighbors[lc][i] != NULL && 
-                    current->neighbors[lc][i]->vector != NULL) {
+                    current->neighbors[lc][i]->vector != NULL &&
+                    current->neighbors[lc][i]->deleted == 0) {
                     float dist = gv_distance_euclidean(current->neighbors[lc][i]->vector, vector);
                     if (dist < minDist) {
                         minDist = dist;
@@ -221,7 +224,7 @@ int gv_hnsw_insert(void *index_ptr, GV_Vector *vector) {
                 }
             }
         }
-        if (closest != NULL && closest != current && closest->vector != NULL) {
+        if (closest != NULL && closest != current && closest->vector != NULL && closest->deleted == 0) {
             current = closest;
             currentLevel = current->level;
             if (currentLevel > index->maxLevel) {
@@ -262,7 +265,8 @@ int gv_hnsw_insert(void *index_ptr, GV_Vector *vector) {
             current->neighbors[lc] != NULL) {
             for (size_t i = 0; i < current->neighbor_counts[lc] && candidate_count < index->efConstruction; ++i) {
                 if (current->neighbors[lc][i] != NULL && 
-                    current->neighbors[lc][i]->vector != NULL) {
+                    current->neighbors[lc][i]->vector != NULL &&
+                    current->neighbors[lc][i]->deleted == 0) {
                     candidates[candidate_count].node = current->neighbors[lc][i];
                     candidates[candidate_count++].distance = gv_distance_euclidean(current->neighbors[lc][i]->vector, vector);
                 }
@@ -278,7 +282,7 @@ int gv_hnsw_insert(void *index_ptr, GV_Vector *vector) {
 
         size_t selected_count = (candidate_count < index->M) ? candidate_count : index->M;
         for (size_t i = 0; i < selected_count; ++i) {
-            if (candidates[i].node == NULL || candidates[i].node == new_node) continue;
+            if (candidates[i].node == NULL || candidates[i].node == new_node || candidates[i].node->deleted != 0) continue;
             if (candidates[i].node->neighbors == NULL || candidates[i].node->neighbor_counts == NULL) continue;
             
             if ((size_t)lc <= new_node->level && new_node->neighbor_counts != NULL &&
@@ -335,7 +339,8 @@ int gv_hnsw_search(void *index_ptr, const GV_Vector *query, size_t k,
             current->neighbors[lc] != NULL) {
             for (size_t i = 0; i < current->neighbor_counts[lc]; ++i) {
                 if (current->neighbors[lc][i] != NULL && 
-                    current->neighbors[lc][i]->vector != NULL) {
+                    current->neighbors[lc][i]->vector != NULL &&
+                    current->neighbors[lc][i]->deleted == 0) {
                     float dist;
                     if (index->use_binary_quant && query_binary != NULL && 
                         current->neighbors[lc][i]->binary_vector != NULL) {
@@ -352,7 +357,7 @@ int gv_hnsw_search(void *index_ptr, const GV_Vector *query, size_t k,
                 }
             }
         }
-        if (closest != NULL && closest != current && closest->vector != NULL) {
+        if (closest != NULL && closest != current && closest->vector != NULL && closest->deleted == 0) {
             current = closest;
             currentLevel = current->level;
         }
@@ -462,7 +467,7 @@ int gv_hnsw_search(void *index_ptr, const GV_Vector *query, size_t k,
     if (index->use_binary_quant && index->quant_rerank > 0 && query_binary != NULL) {
         size_t rerank_count = (candidate_count < index->quant_rerank) ? candidate_count : index->quant_rerank;
         for (size_t i = 0; i < rerank_count; ++i) {
-            if (candidates[i].node != NULL && candidates[i].node->vector != NULL) {
+            if (candidates[i].node != NULL && candidates[i].node->vector != NULL && candidates[i].node->deleted == 0) {
                 candidates[i].distance = gv_distance(candidates[i].node->vector, query, distance_type);
             }
         }
@@ -471,7 +476,7 @@ int gv_hnsw_search(void *index_ptr, const GV_Vector *query, size_t k,
 
     size_t result_count = 0;
     for (size_t i = 0; i < candidate_count && result_count < k; ++i) {
-        if (candidates[i].node == NULL || candidates[i].node->vector == NULL) continue;
+        if (candidates[i].node == NULL || candidates[i].node->vector == NULL || candidates[i].node->deleted != 0) continue;
         
         if (filter_key == NULL || gv_vector_get_metadata(candidates[i].node->vector, filter_key) != NULL) {
             if (filter_key == NULL || strcmp(gv_vector_get_metadata(candidates[i].node->vector, filter_key), filter_value) == 0) {
@@ -510,6 +515,59 @@ size_t gv_hnsw_count(const void *index_ptr) {
         return 0;
     }
     return ((GV_HNSWIndex *)index_ptr)->count;
+}
+
+int gv_hnsw_delete(void *index_ptr, size_t node_index) {
+    if (index_ptr == NULL) {
+        return -1;
+    }
+
+    GV_HNSWIndex *index = (GV_HNSWIndex *)index_ptr;
+    if (node_index >= index->count) {
+        return -1;
+    }
+
+    GV_HNSWNode *node = index->nodes[node_index];
+    if (node == NULL || node->deleted != 0) {
+        return -1;
+    }
+
+    node->deleted = 1;
+
+    for (size_t i = 0; i < index->count; ++i) {
+        GV_HNSWNode *other = index->nodes[i];
+        if (other == NULL || other->deleted != 0 || other == node) {
+            continue;
+        }
+
+        for (size_t l = 0; l <= other->level; ++l) {
+            if (other->neighbors == NULL || other->neighbor_counts == NULL) {
+                continue;
+            }
+            if ((size_t)l > other->level || other->neighbors[l] == NULL) {
+                continue;
+            }
+
+            size_t write_pos = 0;
+            for (size_t j = 0; j < other->neighbor_counts[l]; ++j) {
+                if (other->neighbors[l][j] != node) {
+                    other->neighbors[l][write_pos++] = other->neighbors[l][j];
+                }
+            }
+            other->neighbor_counts[l] = write_pos;
+        }
+    }
+
+    if (index->entryPoint == node) {
+        for (size_t i = 0; i < index->count; ++i) {
+            if (index->nodes[i] != NULL && index->nodes[i]->deleted == 0) {
+                index->entryPoint = index->nodes[i];
+                break;
+            }
+        }
+    }
+
+    return 0;
 }
 
 static int gv_write_uint32(FILE *out, uint32_t value) {
@@ -831,6 +889,7 @@ int gv_hnsw_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version)
 
         node->vector = vector;
         node->level = level;
+        node->deleted = 0;
         node->neighbors = (GV_HNSWNode ***)malloc((level + 1) * sizeof(GV_HNSWNode **));
         node->neighbor_counts = (size_t *)calloc(level + 1, sizeof(size_t));
         if (node->neighbors == NULL || node->neighbor_counts == NULL) {
