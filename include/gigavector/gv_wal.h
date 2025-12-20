@@ -71,6 +71,25 @@ int gv_wal_append_insert_rich(GV_WAL *wal, const float *data, size_t dimension,
 int gv_wal_append_delete(GV_WAL *wal, size_t vector_index);
 
 /**
+ * @brief Append an update operation to the WAL.
+ *
+ * Records the update of a vector by its index (insertion order).
+ * The vector payload and optional metadata are persisted.
+ *
+ * @param wal WAL handle; must be non-NULL.
+ * @param vector_index Index of the vector to update (0-based insertion order).
+ * @param data Vector data array.
+ * @param dimension Number of elements in @p data.
+ * @param metadata_keys Array of metadata keys; NULL if count is 0.
+ * @param metadata_values Array of metadata values; NULL if count is 0.
+ * @param metadata_count Number of metadata entries (must match array lengths).
+ * @return 0 on success, -1 on I/O or validation failure.
+ */
+int gv_wal_append_update(GV_WAL *wal, size_t vector_index, const float *data, size_t dimension,
+                         const char *const *metadata_keys, const char *const *metadata_values,
+                         size_t metadata_count);
+
+/**
  * @brief Replay a WAL file by invoking a callback for every insert record.
  *
  * The callback is responsible for applying the operation to the in-memory
@@ -138,6 +157,17 @@ void gv_wal_close(GV_WAL *wal);
  * @return 0 on success, -1 on error.
  */
 int gv_wal_reset(const char *path);
+
+/**
+ * @brief Truncate an open WAL file, resetting it to a fresh state.
+ *
+ * This function closes the current file handle, truncates the file,
+ * and reopens it for future writes. The WAL header is rewritten.
+ *
+ * @param wal WAL handle; must be non-NULL.
+ * @return 0 on success, -1 on error.
+ */
+int gv_wal_truncate(GV_WAL *wal);
 
 #ifdef __cplusplus
 }
