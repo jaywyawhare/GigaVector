@@ -26,13 +26,6 @@ typedef struct GV_SparseVector {
 } GV_SparseVector;
 
 typedef struct {
-    const GV_Vector *vector;
-    const GV_SparseVector *sparse_vector;
-    int is_sparse;
-    float distance;
-} GV_SearchResult;
-
-typedef struct {
     size_t M;
     size_t efConstruction;
     size_t efSearch;
@@ -97,13 +90,28 @@ typedef struct GV_Database {
 } GV_Database;
 
 typedef struct {
+    uint64_t total_inserts;
+    uint64_t total_queries;
+    uint64_t total_range_queries;
+    uint64_t total_wal_records;
+} GV_DBStats;
+
+typedef struct {
     const GV_Vector *vector;
+    const GV_SparseVector *sparse_vector;
+    int is_sparse;
     float distance;
 } GV_SearchResult;
 
 GV_Database *gv_db_open(const char *filepath, size_t dimension, GV_IndexType index_type);
 GV_Database *gv_db_open_with_hnsw_config(const char *filepath, size_t dimension, GV_IndexType index_type, const GV_HNSWConfig *hnsw_config);
 GV_Database *gv_db_open_with_ivfpq_config(const char *filepath, size_t dimension, GV_IndexType index_type, const GV_IVFPQConfig *ivfpq_config);
+GV_Database *gv_db_open_from_memory(const void *data, size_t size,
+                                    size_t dimension, GV_IndexType index_type);
+GV_Database *gv_db_open_mmap(const char *filepath, size_t dimension, GV_IndexType index_type);
+GV_IndexType gv_index_suggest(size_t dimension, size_t expected_count);
+void gv_db_get_stats(const GV_Database *db, GV_DBStats *out);
+void gv_db_set_cosine_normalized(GV_Database *db, int enabled);
 void gv_db_close(GV_Database *db);
 
 int gv_db_add_vector(GV_Database *db, const float *data, size_t dimension);

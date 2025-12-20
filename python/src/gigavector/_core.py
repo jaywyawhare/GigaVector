@@ -33,6 +33,14 @@ class SearchHit:
     vector: Vector
 
 
+@dataclass(frozen=True)
+class DBStats:
+    total_inserts: int
+    total_queries: int
+    total_range_queries: int
+    total_wal_records: int
+
+
 @dataclass
 class HNSWConfig:
     """Configuration for HNSW index."""
@@ -70,6 +78,21 @@ class IVFPQConfig:
     def __post_init__(self):
         if self.scalar_quant_config is None:
             self.scalar_quant_config = ScalarQuantConfig()
+
+
+def _choose_index_type(dimension: int, expected_count: int | None) -> IndexType:
+    """
+    Heuristic index selector based on dimension and estimated collection size.
+
+    - For small collections (<= 20k) and low/moderate dimensions (<= 64), use KDTREE.
+    - For very large collections (>= 500k) and high dimensions (>= 128), prefer IVFPQ.
+    - Otherwise, default to HNSW.
+    """
+    if expected_count is None or expected_count < 0:
+        # Fall back to HNSW when we don't know collection size.
+        return IndexType.HNSW
+    val = lib.gv_index_suggest(dimension, int(expected_count))
+    return IndexType(int(val))
 
 
 def _metadata_to_dict(meta_ptr) -> dict[str, str]:
@@ -166,11 +189,59 @@ class Database:
             raise RuntimeError("gv_db_open failed")
         return cls(db, dimension)
 
+    @classmethod
+    def open_auto(cls, path: str | None, dimension: int,
+                  expected_count: int | None = None,
+                  hnsw_config: HNSWConfig | None = None,
+                  ivfpq_config: IVFPQConfig | None = None):
+        """
+        Open a database and automatically choose a reasonable index type.
+
+        Args:
+            path: Optional path for persistence (None for in-memory).
+            dimension: Vector dimensionality.
+            expected_count: Optional estimate of the number of vectors.
+            hnsw_config: Optional HNSW configuration (used if HNSW is selected).
+            ivfpq_config: Optional IVFPQ configuration (used if IVFPQ is selected).
+        """
+        index = _choose_index_type(dimension, expected_count)
+        return cls.open(path, dimension, index=index,
+                        hnsw_config=hnsw_config, ivfpq_config=ivfpq_config)
+
+    @classmethod
+    def open_mmap(cls, path: str, dimension: int, index: IndexType = IndexType.KDTREE):
+        """
+        Open a read-only database by memory-mapping an existing snapshot file.
+
+        This is a thin wrapper around gv_db_open_mmap(). The returned Database
+        instance shares the mapped file; modifications are not persisted.
+        """
+        if not path:
+            raise ValueError("path must be non-empty")
+        c_path = path.encode("utf-8")
+        db = lib.gv_db_open_mmap(c_path, dimension, int(index))
+        if db == ffi.NULL:
+            raise RuntimeError("gv_db_open_mmap failed")
+        return cls(db, dimension)
+
     def close(self):
         if self._closed:
             return
         lib.gv_db_close(self._db)
         self._closed = True
+
+    def get_stats(self) -> DBStats:
+        """
+        Return aggregate runtime statistics for this database.
+        """
+        stats_c = ffi.new("GV_DBStats *")
+        lib.gv_db_get_stats(self._db, stats_c)
+        return DBStats(
+            total_inserts=int(stats_c.total_inserts),
+            total_queries=int(stats_c.total_queries),
+            total_range_queries=int(stats_c.total_range_queries),
+            total_wal_records=int(stats_c.total_wal_records),
+        )
 
     def save(self, path: str | None = None):
         """Persist the database to a binary snapshot file."""
@@ -197,6 +268,15 @@ class Database:
         This is mainly intended for testing and benchmarking.
         """
         lib.gv_db_set_force_exact_search(self._db, 1 if enabled else 0)
+
+    def set_cosine_normalized(self, enabled: bool) -> None:
+        """
+        Enable or disable L2 pre-normalization for subsequently inserted dense vectors.
+
+        When enabled, all new inserts are normalized to unit length. For cosine
+        distance, this allows treating similarity as negative dot product.
+        """
+        lib.gv_db_set_cosine_normalized(self._db, 1 if enabled else 0)
 
     def train_ivfpq(self, data: Sequence[Sequence[float]]):
         """Train IVF-PQ index with provided vectors (only for IVFPQ index)."""
