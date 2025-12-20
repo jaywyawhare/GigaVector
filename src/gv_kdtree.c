@@ -844,3 +844,32 @@ int gv_kdtree_delete(GV_KDNode **root, GV_SoAStorage *storage, size_t vector_ind
 
     return 0;
 }
+
+int gv_kdtree_update(GV_KDNode **root, GV_SoAStorage *storage, size_t vector_index, const float *new_data) {
+    if (root == NULL || storage == NULL || new_data == NULL || vector_index >= storage->count) {
+        return -1;
+    }
+
+    if (gv_soa_storage_is_deleted(storage, vector_index) == 1) {
+        return -1;
+    }
+
+    /* Delete the old node from the tree */
+    int delete_status = gv_kdtree_delete(root, storage, vector_index);
+    if (delete_status != 0) {
+        return -1;
+    }
+
+    /* Update the data in SoA storage */
+    if (gv_soa_storage_update_data(storage, vector_index, new_data) != 0) {
+        return -1;
+    }
+
+    /* Reinsert the updated vector into the tree */
+    int insert_status = gv_kdtree_insert(root, storage, vector_index, 0);
+    if (insert_status != 0) {
+        return -1;
+    }
+
+    return 0;
+}

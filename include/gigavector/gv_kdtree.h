@@ -142,6 +142,21 @@ int gv_kdtree_range_search_filtered(const GV_KDNode *root, const GV_SoAStorage *
  */
 int gv_kdtree_delete(GV_KDNode **root, GV_SoAStorage *storage, size_t vector_index);
 
+/**
+ * @brief Update a vector in the K-D tree by its index in SoA storage.
+ *
+ * This function updates the vector data and rebuilds the tree structure
+ * if necessary. The tree is updated by deleting the old node and inserting
+ * a new one with the updated data.
+ *
+ * @param root Pointer to the root node pointer; will be updated if needed.
+ * @param storage SoA storage containing vectors; must be non-NULL.
+ * @param vector_index Index of the vector to update in SoA storage.
+ * @param new_data New vector data to store.
+ * @return 0 on success, -1 on invalid arguments or vector not found.
+ */
+int gv_kdtree_update(GV_KDNode **root, GV_SoAStorage *storage, size_t vector_index, const float *new_data);
+
 #ifdef __cplusplus
 }
 #endif
