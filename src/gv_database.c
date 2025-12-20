@@ -14,6 +14,7 @@
 #include "gigavector/gv_ivfpq.h"
 #include "gigavector/gv_kdtree.h"
 #include "gigavector/gv_metadata.h"
+#include "gigavector/gv_sparse_index.h"
 #include "gigavector/gv_vector.h"
 #include "gigavector/gv_wal.h"
 #include "gigavector/gv_mmap.h"
@@ -2010,4 +2011,53 @@ int gv_db_range_search_filtered(const GV_Database *db, const float *query_data, 
     
     pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
     return r;
+}
+
+int gv_db_delete_vector_by_index(GV_Database *db, size_t vector_index) {
+    if (db == NULL) {
+        return -1;
+    }
+
+    pthread_rwlock_wrlock(&db->rwlock);
+
+    int status = -1;
+    if (db->index_type == GV_INDEX_TYPE_KDTREE) {
+        if (db->soa_storage == NULL || vector_index >= db->soa_storage->count) {
+            pthread_rwlock_unlock(&db->rwlock);
+            return -1;
+        }
+        status = gv_kdtree_delete(&(db->root), db->soa_storage, vector_index);
+    } else if (db->index_type == GV_INDEX_TYPE_HNSW) {
+        if (db->hnsw_index == NULL) {
+            pthread_rwlock_unlock(&db->rwlock);
+            return -1;
+        }
+        status = gv_hnsw_delete(db->hnsw_index, vector_index);
+    } else if (db->index_type == GV_INDEX_TYPE_IVFPQ) {
+        if (db->hnsw_index == NULL) {
+            pthread_rwlock_unlock(&db->rwlock);
+            return -1;
+        }
+        status = gv_ivfpq_delete(db->hnsw_index, vector_index);
+    } else if (db->index_type == GV_INDEX_TYPE_SPARSE) {
+        if (db->sparse_index == NULL) {
+            pthread_rwlock_unlock(&db->rwlock);
+            return -1;
+        }
+        status = gv_sparse_index_delete(db->sparse_index, vector_index);
+    } else {
+        pthread_rwlock_unlock(&db->rwlock);
+        return -1;
+    }
+
+    if (status == 0 && db->wal != NULL) {
+        if (gv_wal_append_delete(db->wal, vector_index) != 0) {
+            pthread_rwlock_unlock(&db->rwlock);
+            return -1;
+        }
+        db->total_wal_records += 1;
+    }
+
+    pthread_rwlock_unlock(&db->rwlock);
+    return status;
 }

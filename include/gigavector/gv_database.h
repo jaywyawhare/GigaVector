@@ -251,6 +251,15 @@ int gv_db_add_sparse_vector(GV_Database *db, const uint32_t *indices, const floa
                             const char *metadata_key, const char *metadata_value);
 
 /**
+ * @brief Delete a vector from the database by its index (insertion order).
+ *
+ * @param db Target database; must be non-NULL.
+ * @param vector_index Index of the vector to delete (0-based insertion order).
+ * @return 0 on success, -1 on invalid arguments or vector not found.
+ */
+int gv_db_delete_vector_by_index(GV_Database *db, size_t vector_index);
+
+/**
  * @brief Save the database (tree and vectors) to a binary file.
  *
  * @param db Database to persist; must be non-NULL.
