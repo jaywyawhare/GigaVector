@@ -31,6 +31,14 @@ GV_SoAStorage *gv_soa_storage_create(size_t dimension, size_t initial_capacity) 
         return NULL;
     }
 
+    storage->deleted = (int *)calloc(storage->capacity, sizeof(int));
+    if (storage->deleted == NULL) {
+        free(storage->metadata);
+        free(storage->data);
+        free(storage);
+        return NULL;
+    }
+
     return storage;
 }
 
@@ -52,6 +60,7 @@ void gv_soa_storage_destroy(GV_SoAStorage *storage) {
         free(storage->metadata);
     }
 
+    free(storage->deleted);
     free(storage->data);
     free(storage);
 }
@@ -76,6 +85,13 @@ size_t gv_soa_storage_add(GV_SoAStorage *storage, const float *data, GV_Metadata
         }
         memset(new_metadata + storage->capacity, 0, (new_capacity - storage->capacity) * sizeof(GV_Metadata *));
         storage->metadata = new_metadata;
+
+        int *new_deleted = (int *)realloc(storage->deleted, new_capacity * sizeof(int));
+        if (new_deleted == NULL) {
+            return (size_t)-1;
+        }
+        memset(new_deleted + storage->capacity, 0, (new_capacity - storage->capacity) * sizeof(int));
+        storage->deleted = new_deleted;
         storage->capacity = new_capacity;
     }
 
@@ -83,6 +99,7 @@ size_t gv_soa_storage_add(GV_SoAStorage *storage, const float *data, GV_Metadata
     float *dest = storage->data + (index * storage->dimension);
     memcpy(dest, data, storage->dimension * sizeof(float));
     storage->metadata[index] = metadata;
+    storage->deleted[index] = 0;
     storage->count++;
 
     return index;
@@ -125,5 +142,20 @@ size_t gv_soa_storage_dimension(const GV_SoAStorage *storage) {
         return 0;
     }
     return storage->dimension;
+}
+
+int gv_soa_storage_mark_deleted(GV_SoAStorage *storage, size_t index) {
+    if (storage == NULL || index >= storage->count) {
+        return -1;
+    }
+    storage->deleted[index] = 1;
+    return 0;
+}
+
+int gv_soa_storage_is_deleted(const GV_SoAStorage *storage, size_t index) {
+    if (storage == NULL || index >= storage->count) {
+        return -1;
+    }
+    return storage->deleted[index];
 }
 

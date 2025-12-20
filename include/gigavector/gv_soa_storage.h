@@ -20,6 +20,7 @@ typedef struct {
     size_t capacity;         /**< Allocated capacity (number of vectors). */
     float *data;             /**< Contiguous array: [vec0_dim0, vec0_dim1, ..., vec1_dim0, ...]. */
     GV_Metadata **metadata;  /**< Array of metadata pointers, one per vector (may be NULL). */
+    int *deleted;            /**< Array of deletion flags: 1 if deleted, 0 if active. */
 } GV_SoAStorage;
 
 /**
@@ -98,6 +99,24 @@ size_t gv_soa_storage_count(const GV_SoAStorage *storage);
  * @return Vector dimension.
  */
 size_t gv_soa_storage_dimension(const GV_SoAStorage *storage);
+
+/**
+ * @brief Mark a vector as deleted.
+ *
+ * @param storage Storage to modify; must be non-NULL.
+ * @param index Vector index to mark as deleted; must be < storage->count.
+ * @return 0 on success, -1 on invalid arguments.
+ */
+int gv_soa_storage_mark_deleted(GV_SoAStorage *storage, size_t index);
+
+/**
+ * @brief Check if a vector is deleted.
+ *
+ * @param storage Storage to query; must be non-NULL.
+ * @param index Vector index to check; must be < storage->count.
+ * @return 1 if deleted, 0 if active, -1 on invalid arguments.
+ */
+int gv_soa_storage_is_deleted(const GV_SoAStorage *storage, size_t index);
 
 #ifdef __cplusplus
 }
