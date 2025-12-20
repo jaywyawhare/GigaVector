@@ -2,6 +2,7 @@
 #define GIGAVECTOR_GV_TYPES_H
 
 #include <stddef.h>
+#include <stdint.h>
 
 /**
  * @brief Represents a key-value metadata pair.
@@ -23,9 +24,11 @@ typedef struct {
 
 /**
  * @brief Node for a simple K-D tree storing vectors.
+ * 
+ * Uses Structure-of-Arrays storage: stores vector index instead of pointer.
  */
 typedef struct GV_KDNode {
-    GV_Vector *point;
+    size_t vector_index;  /**< Index into SoA storage. */
     size_t axis;
     struct GV_KDNode *left;
     struct GV_KDNode *right;
