@@ -234,8 +234,11 @@ GV_Database *gv_db_open(const char *filepath, size_t dimension, GV_IndexType ind
     }
 
     if (index_type == GV_INDEX_TYPE_HNSW && filepath == NULL) {
-        db->hnsw_index = gv_hnsw_create(dimension, NULL);
+        db->hnsw_index = gv_hnsw_create(dimension, NULL, db->soa_storage);
         if (db->hnsw_index == NULL) {
+            if (db->soa_storage != NULL) {
+                gv_soa_storage_destroy(db->soa_storage);
+            }
             pthread_rwlock_destroy(&db->rwlock);
             pthread_mutex_destroy(&db->wal_mutex);
             free(db);
@@ -288,7 +291,7 @@ GV_Database *gv_db_open(const char *filepath, size_t dimension, GV_IndexType ind
     if (in == NULL) {
         if (errno == ENOENT) {
             if (index_type == GV_INDEX_TYPE_HNSW) {
-                db->hnsw_index = gv_hnsw_create(dimension, NULL);
+                db->hnsw_index = gv_hnsw_create(dimension, NULL, db->soa_storage);
                 if (db->hnsw_index == NULL) {
                     free(db->filepath);
                     free(db->wal_path);
@@ -918,8 +921,11 @@ GV_Database *gv_db_open_with_hnsw_config(const char *filepath, size_t dimension,
         }
     }
 
-    db->hnsw_index = gv_hnsw_create(dimension, hnsw_config);
+    db->hnsw_index = gv_hnsw_create(dimension, hnsw_config, db->soa_storage);
     if (db->hnsw_index == NULL) {
+        if (db->soa_storage != NULL) {
+            gv_soa_storage_destroy(db->soa_storage);
+        }
         pthread_rwlock_destroy(&db->rwlock);
         pthread_mutex_destroy(&db->wal_mutex);
         free(db);
