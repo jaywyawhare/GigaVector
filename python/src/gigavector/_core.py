@@ -370,6 +370,49 @@ class Database:
         if rc != 0:
             raise RuntimeError(f"gv_db_delete_vector_by_index failed for index {vector_index}")
 
+    def update_vector(self, vector_index: int, new_data: Sequence[float]):
+        """
+        Update a vector in the database by its index (insertion order).
+        
+        Args:
+            vector_index: Index of the vector to update (0-based insertion order)
+            new_data: New vector data as a sequence of floats
+        
+        Raises:
+            ValueError: If vector dimension doesn't match database dimension
+            RuntimeError: If update fails
+        """
+        self._check_dimension(new_data)
+        buf = ffi.new("float[]", list(new_data))
+        rc = lib.gv_db_update_vector(self._db, vector_index, buf, self.dimension)
+        if rc != 0:
+            raise RuntimeError(f"gv_db_update_vector failed for index {vector_index}")
+
+    def update_metadata(self, vector_index: int, metadata: dict[str, str]):
+        """
+        Update metadata for a vector in the database by its index.
+        
+        Args:
+            vector_index: Index of the vector to update (0-based insertion order)
+            metadata: Dictionary of key-value metadata pairs to set
+        
+        Raises:
+            RuntimeError: If update fails
+        """
+        if not metadata:
+            return
+        
+        metadata_items = list(metadata.items())
+        key_cdatas = [ffi.new("char[]", k.encode()) for k, _ in metadata_items]
+        val_cdatas = [ffi.new("char[]", v.encode()) for _, v in metadata_items]
+        keys_c = ffi.new("const char * []", key_cdatas)
+        vals_c = ffi.new("const char * []", val_cdatas)
+        rc = lib.gv_db_update_vector_metadata(
+            self._db, vector_index, keys_c, vals_c, len(metadata_items)
+        )
+        if rc != 0:
+            raise RuntimeError(f"gv_db_update_vector_metadata failed for index {vector_index}")
+
     def search(self, query: Sequence[float], k: int, distance: DistanceType = DistanceType.EUCLIDEAN,
                filter_metadata: tuple[str, str] | None = None) -> list[SearchHit]:
         self._check_dimension(query)
