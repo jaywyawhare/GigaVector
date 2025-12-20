@@ -95,6 +95,19 @@ int gv_sparse_index_load(GV_SparseIndex **index_out, FILE *in,
  */
 int gv_sparse_index_delete(GV_SparseIndex *index, size_t vector_index);
 
+/**
+ * @brief Update a sparse vector in the index by its index.
+ *
+ * Ownership of the new vector is transferred to the index.
+ * The old vector is destroyed.
+ *
+ * @param index Sparse index instance; must be non-NULL.
+ * @param vector_index Index of the vector to update (0-based insertion order).
+ * @param new_vector New sparse vector to replace the old one; ownership transferred.
+ * @return 0 on success, -1 on invalid arguments or vector not found.
+ */
+int gv_sparse_index_update(GV_SparseIndex *index, size_t vector_index, GV_SparseVector *new_vector);
+
 #ifdef __cplusplus
 }
 #endif
