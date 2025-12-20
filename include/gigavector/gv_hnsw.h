@@ -102,6 +102,17 @@ size_t gv_hnsw_count(const void *index);
 int gv_hnsw_delete(void *index, size_t node_index);
 
 /**
+ * @brief Update a vector in the HNSW index by its node index.
+ *
+ * @param index HNSW index instance; must be non-NULL.
+ * @param node_index Index of the node to update (0-based insertion order).
+ * @param new_data New vector data array.
+ * @param dimension Vector dimension; must match index dimension.
+ * @return 0 on success, -1 on invalid arguments or node not found.
+ */
+int gv_hnsw_update(void *index, size_t node_index, const float *new_data, size_t dimension);
+
+/**
  * @brief Save HNSW index to file.
  *
  * @param index HNSW index instance; must be non-NULL.

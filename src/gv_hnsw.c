@@ -997,3 +997,35 @@ int gv_hnsw_range_search(void *index_ptr, const GV_Vector *query, float radius,
     free(tmp);
     return (int)out;
 }
+
+int gv_hnsw_update(void *index_ptr, size_t node_index, const float *new_data, size_t dimension) {
+    if (index_ptr == NULL || new_data == NULL) {
+        return -1;
+    }
+
+    GV_HNSWIndex *index = (GV_HNSWIndex *)index_ptr;
+    if (node_index >= index->count || dimension != index->dimension) {
+        return -1;
+    }
+
+    GV_HNSWNode *node = index->nodes[node_index];
+    if (node == NULL || node->deleted != 0 || node->vector == NULL) {
+        return -1;
+    }
+
+    /* Update vector data */
+    memcpy(node->vector->data, new_data, dimension * sizeof(float));
+
+    /* Rebuild binary quantization if enabled */
+    if (index->use_binary_quant) {
+        if (node->binary_vector != NULL) {
+            gv_binary_vector_destroy(node->binary_vector);
+        }
+        node->binary_vector = gv_binary_quantize(new_data, dimension);
+        if (node->binary_vector == NULL) {
+            return -1;
+        }
+    }
+
+    return 0;
+}
