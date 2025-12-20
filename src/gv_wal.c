@@ -9,6 +9,7 @@
 #define GV_WAL_MAGIC "GVW1"
 #define GV_WAL_VERSION 3u
 #define GV_WAL_TYPE_INSERT 1u
+#define GV_WAL_TYPE_DELETE 2u
 
 struct GV_WAL {
     FILE *file;
@@ -269,6 +270,29 @@ int gv_wal_append_insert_rich(GV_WAL *wal, const float *data, size_t dimension,
     return 0;
 }
 
+int gv_wal_append_delete(GV_WAL *wal, size_t vector_index) {
+    if (wal == NULL || wal->file == NULL) {
+        return -1;
+    }
+
+    uint32_t crc = gv_crc32_init();
+
+    if (gv_wal_write_u8(wal->file, GV_WAL_TYPE_DELETE) != 0) return -1;
+    crc = gv_crc32_update(crc, &(uint8_t){GV_WAL_TYPE_DELETE}, sizeof(uint8_t));
+    
+    uint64_t index_u64 = (uint64_t)vector_index;
+    if (fwrite(&index_u64, sizeof(uint64_t), 1, wal->file) != 1) return -1;
+    crc = gv_crc32_update(crc, &index_u64, sizeof(uint64_t));
+
+    if (wal->version >= 2) {
+        crc = gv_crc32_finish(crc);
+        if (gv_wal_write_u32(wal->file, crc) != 0) return -1;
+    }
+
+    if (fflush(wal->file) != 0) return -1;
+    return 0;
+}
+
 int gv_wal_replay(const char *path, size_t expected_dimension,
                   int (*on_insert)(void *ctx, const float *data, size_t dimension,
                                    const char *metadata_key, const char *metadata_value),
@@ -315,6 +339,28 @@ int gv_wal_replay(const char *path, size_t expected_dimension,
             if (feof(f)) break;
             fclose(f);
             return -1;
+        }
+
+        if (type == GV_WAL_TYPE_DELETE) {
+            uint64_t index_u64 = 0;
+            if (fread(&index_u64, sizeof(uint64_t), 1, f) != 1) {
+                fclose(f);
+                return -1;
+            }
+            if (has_crc) {
+                uint32_t crc = gv_crc32_init();
+                uint8_t type_byte = GV_WAL_TYPE_DELETE;
+                crc = gv_crc32_update(crc, &type_byte, sizeof(uint8_t));
+                crc = gv_crc32_update(crc, &index_u64, sizeof(uint64_t));
+                crc = gv_crc32_finish(crc);
+                uint32_t stored_crc = 0;
+                if (gv_wal_read_u32(f, &stored_crc) != 0 || stored_crc != crc) {
+                    fclose(f);
+                    return -1;
+                }
+            }
+            /* Skip delete records in replay - they are handled during load */
+            continue;
         }
 
         if (type == GV_WAL_TYPE_INSERT) {
