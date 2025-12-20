@@ -1382,3 +1382,125 @@ int gv_ivfpq_delete(void *index_ptr, size_t entry_index) {
     pthread_rwlock_unlock(&idx->rwlock);
     return -1;
 }
+
+int gv_ivfpq_update(void *index_ptr, size_t entry_index, const float *new_data, size_t dimension) {
+    if (index_ptr == NULL || new_data == NULL) {
+        return -1;
+    }
+
+    GV_IVFPQIndex *idx = (GV_IVFPQIndex *)index_ptr;
+    if (dimension != idx->dimension || idx->trained == 0) {
+        return -1;
+    }
+
+    pthread_rwlock_wrlock(&idx->rwlock);
+
+    size_t current_index = 0;
+    for (size_t list_id = 0; list_id < idx->nlist; ++list_id) {
+        GV_IVFPQList *list = &idx->lists[list_id];
+        pthread_mutex_lock(&idx->list_mutex[list_id]);
+        
+        for (size_t e = 0; e < list->count; ++e) {
+            if (current_index == entry_index) {
+                if (list->entries[e].deleted != 0) {
+                    pthread_mutex_unlock(&idx->list_mutex[list_id]);
+                    pthread_rwlock_unlock(&idx->rwlock);
+                    return -1;
+                }
+                
+                GV_IVFPQEntry *ent = &list->entries[e];
+                
+                /* Update vector data */
+                if (ent->vector != NULL) {
+                    memcpy(ent->vector->data, new_data, dimension * sizeof(float));
+                }
+                
+                /* Recompute PQ codes */
+                if (ent->codes != NULL && idx->pq != NULL && idx->coarse != NULL) {
+                    /* Find closest coarse centroid */
+                    float best = INFINITY;
+                    int best_coarse_id = -1;
+                    for (size_t c = 0; c < idx->nlist; ++c) {
+                        const float *cent = idx->coarse + c * idx->dimension;
+                        float d = 0.0f;
+                        for (size_t j = 0; j < idx->dimension; ++j) {
+                            float diff = new_data[j] - cent[j];
+                            d += diff * diff;
+                        }
+                        if (d < best) {
+                            best = d;
+                            best_coarse_id = (int)c;
+                        }
+                    }
+                    
+                    if (best_coarse_id >= 0) {
+                        const float *centroid = idx->coarse + best_coarse_id * idx->dimension;
+                        float *residual = (float *)malloc(idx->dimension * sizeof(float));
+                        if (residual != NULL) {
+                            for (size_t j = 0; j < idx->dimension; ++j) {
+                                residual[j] = new_data[j] - centroid[j];
+                            }
+                            
+                            for (size_t m = 0; m < idx->m; ++m) {
+                                const float *codebook = idx->pq + m * idx->codebook_size * idx->subdim;
+                                const float *subvec = residual + m * idx->subdim;
+                                float bestd = INFINITY;
+                                uint8_t bestc = 0;
+                                for (size_t c = 0; c < idx->codebook_size; ++c) {
+                                    const float *cb = codebook + c * idx->subdim;
+                                    float d = 0.0f;
+                                    for (size_t d_idx = 0; d_idx < idx->subdim; ++d_idx) {
+                                        float diff = subvec[d_idx] - cb[d_idx];
+                                        d += diff * diff;
+                                    }
+                                    if (d < bestd) {
+                                        bestd = d;
+                                        bestc = (uint8_t)c;
+                                    }
+                                }
+                                ent->codes[m] = bestc;
+                                list->codes_soa[m * list->capacity + e] = bestc;
+                            }
+                            free(residual);
+                        }
+                    }
+                }
+                
+                /* Update scalar quantization if enabled */
+                if (idx->use_scalar_quant && ent->scalar_quant != NULL && idx->scalar_quant_template != NULL) {
+                    GV_ScalarQuantVector *sqv = ent->scalar_quant;
+                    size_t max_quant = (1ULL << sqv->bits) - 1;
+                    for (size_t i = 0; i < dimension; ++i) {
+                        float min_val = sqv->per_dimension ? sqv->min_vals[i] : sqv->min_vals[0];
+                        float max_val = sqv->per_dimension ? sqv->max_vals[i] : sqv->max_vals[0];
+                        float range = max_val - min_val;
+                        if (range > 0.0f) {
+                            float normalized = (new_data[i] - min_val) / range;
+                            uint8_t quantized = (uint8_t)(normalized * max_quant + 0.5f);
+                            if (quantized > max_quant) quantized = max_quant;
+                            size_t byte_idx = i * sqv->bits / 8;
+                            size_t bit_offset = (i * sqv->bits) % 8;
+                            if (sqv->bits == 8) {
+                                sqv->quantized[byte_idx] = quantized;
+                            } else {
+                                /* Handle bit packing for non-8-bit quantization */
+                                uint8_t mask = (1 << sqv->bits) - 1;
+                                sqv->quantized[byte_idx] = (sqv->quantized[byte_idx] & ~(mask << bit_offset)) | (quantized << bit_offset);
+                            }
+                        }
+                    }
+                }
+                
+                pthread_mutex_unlock(&idx->list_mutex[list_id]);
+                pthread_rwlock_unlock(&idx->rwlock);
+                return 0;
+            }
+            current_index++;
+        }
+        
+        pthread_mutex_unlock(&idx->list_mutex[list_id]);
+    }
+
+    pthread_rwlock_unlock(&idx->rwlock);
+    return -1;
+}
