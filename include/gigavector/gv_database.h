@@ -260,6 +260,31 @@ int gv_db_add_sparse_vector(GV_Database *db, const uint32_t *indices, const floa
 int gv_db_delete_vector_by_index(GV_Database *db, size_t vector_index);
 
 /**
+ * @brief Update a vector in the database by its index (insertion order).
+ *
+ * @param db Target database; must be non-NULL.
+ * @param vector_index Index of the vector to update (0-based insertion order).
+ * @param new_data Pointer to an array of @p dimension floats.
+ * @param dimension Number of components provided in @p new_data; must equal db->dimension.
+ * @return 0 on success, -1 on invalid arguments or vector not found.
+ */
+int gv_db_update_vector(GV_Database *db, size_t vector_index, const float *new_data, size_t dimension);
+
+/**
+ * @brief Update metadata for a vector in the database by its index.
+ *
+ * @param db Target database; must be non-NULL.
+ * @param vector_index Index of the vector to update (0-based insertion order).
+ * @param metadata_keys Array of metadata keys; NULL if count is 0.
+ * @param metadata_values Array of metadata values; NULL if count is 0.
+ * @param metadata_count Number of metadata entries.
+ * @return 0 on success, -1 on invalid arguments or vector not found.
+ */
+int gv_db_update_vector_metadata(GV_Database *db, size_t vector_index,
+                                  const char *const *metadata_keys, const char *const *metadata_values,
+                                  size_t metadata_count);
+
+/**
  * @brief Save the database (tree and vectors) to a binary file.
  *
  * @param db Database to persist; must be non-NULL.
