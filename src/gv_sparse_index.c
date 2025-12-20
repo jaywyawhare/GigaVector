@@ -554,3 +554,75 @@ int gv_sparse_index_delete(GV_SparseIndex *index, size_t vector_index) {
     index->deleted[vector_index] = 1;
     return 0;
 }
+
+int gv_sparse_index_update(GV_SparseIndex *index, size_t vector_index, GV_SparseVector *new_vector) {
+    if (index == NULL || new_vector == NULL || vector_index >= index->count) {
+        return -1;
+    }
+
+    if (index->deleted[vector_index] != 0) {
+        return -1;
+    }
+
+    if (new_vector->dimension != index->dimension) {
+        return -1;
+    }
+
+    GV_SparseVector *old_vector = index->vectors[vector_index];
+    if (old_vector == NULL) {
+        return -1;
+    }
+
+    /* Remove old vector from postings and update document frequency */
+    for (size_t i = 0; i < old_vector->nnz; ++i) {
+        uint32_t dim = old_vector->entries[i].index;
+        if (dim >= index->dimension) continue;
+        
+        GV_SparsePosting **p = &index->postings[dim];
+        while (*p != NULL) {
+            if ((*p)->vector_id == vector_index) {
+                GV_SparsePosting *to_remove = *p;
+                *p = to_remove->next;
+                free(to_remove);
+                break;
+            }
+            p = &((*p)->next);
+        }
+        index->df[dim] -= 1.0;
+    }
+
+    /* Update document length */
+    double old_dl = index->doc_len[vector_index];
+    double new_dl = 0.0;
+    for (size_t i = 0; i < new_vector->nnz; ++i) {
+        new_dl += (double)new_vector->entries[i].value;
+    }
+    index->doc_len[vector_index] = new_dl > 0.0 ? new_dl : 0.0;
+
+    /* Update average document length */
+    if (index->count > 0) {
+        index->avg_doc_len = ((index->avg_doc_len * (double)index->count) - old_dl + index->doc_len[vector_index]) / (double)index->count;
+    }
+
+    /* Add new vector to postings and update document frequency */
+    for (size_t i = 0; i < new_vector->nnz; ++i) {
+        uint32_t dim = new_vector->entries[i].index;
+        if (dim >= index->dimension) continue;
+        
+        GV_SparsePosting *p = (GV_SparsePosting *)malloc(sizeof(GV_SparsePosting));
+        if (p == NULL) {
+            return -1;
+        }
+        p->vector_id = vector_index;
+        p->value = new_vector->entries[i].value;
+        p->next = index->postings[dim];
+        index->postings[dim] = p;
+        index->df[dim] += 1.0;
+    }
+
+    /* Replace the vector */
+    gv_sparse_vector_destroy(old_vector);
+    index->vectors[vector_index] = new_vector;
+
+    return 0;
+}
