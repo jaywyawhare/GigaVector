@@ -9,6 +9,7 @@
 #include "gigavector/gv_metadata.h"
 #include "gigavector/gv_vector.h"
 #include "gigavector/gv_soa_storage.h"
+#include <math.h>
 
 static GV_KDNode *gv_kdtree_create_node(size_t vector_index, size_t axis) {
     GV_KDNode *node = (GV_KDNode *)malloc(sizeof(GV_KDNode));
@@ -453,6 +454,10 @@ static void gv_knn_search_recursive(const GV_KDNode *node, const GV_SoAStorage *
         return;
     }
 
+    if (gv_soa_storage_is_deleted(storage, node->vector_index) == 1) {
+        return;
+    }
+
     if (!gv_knn_check_metadata_filter(storage, node->vector_index, ctx->filter_key, ctx->filter_value)) {
         return;
     }
@@ -597,6 +602,10 @@ static void gv_range_search_recursive(const GV_KDNode *node, const GV_SoAStorage
         return;
     }
 
+    if (gv_soa_storage_is_deleted(storage, node->vector_index) == 1) {
+        return;
+    }
+
     if (!gv_knn_check_metadata_filter(storage, node->vector_index, ctx->filter_key, ctx->filter_value)) {
         return;
     }
@@ -721,4 +730,117 @@ int gv_kdtree_range_search_filtered(const GV_KDNode *root, const GV_SoAStorage *
 
     free(storage_ctx.temp_views);
     return (int)ctx.count;
+}
+
+static GV_KDNode *gv_kdtree_find_min(GV_KDNode *node, size_t axis, size_t target_axis, const GV_SoAStorage *storage) {
+    if (node == NULL) {
+        return NULL;
+    }
+
+    if (node->axis == target_axis) {
+        if (node->left == NULL) {
+            return node;
+        }
+        return gv_kdtree_find_min(node->left, (axis + 1) % storage->dimension, target_axis, storage);
+    }
+
+    GV_KDNode *best = node;
+    const float *best_data = gv_soa_storage_get_data(storage, node->vector_index);
+    if (best_data == NULL) {
+        return NULL;
+    }
+
+    GV_KDNode *left_min = gv_kdtree_find_min(node->left, (axis + 1) % storage->dimension, target_axis, storage);
+    if (left_min != NULL) {
+        const float *left_data = gv_soa_storage_get_data(storage, left_min->vector_index);
+        if (left_data != NULL && left_data[target_axis] < best_data[target_axis]) {
+            best = left_min;
+        }
+    }
+
+    GV_KDNode *right_min = gv_kdtree_find_min(node->right, (axis + 1) % storage->dimension, target_axis, storage);
+    if (right_min != NULL) {
+        const float *right_data = gv_soa_storage_get_data(storage, right_min->vector_index);
+        if (right_data != NULL) {
+            const float *best_data_check = gv_soa_storage_get_data(storage, best->vector_index);
+            if (best_data_check != NULL && right_data[target_axis] < best_data_check[target_axis]) {
+                best = right_min;
+            }
+        }
+    }
+
+    return best;
+}
+
+static GV_KDNode *gv_kdtree_delete_recursive(GV_KDNode *node, size_t vector_index, size_t depth, 
+                                               const GV_SoAStorage *storage) {
+    if (node == NULL) {
+        return NULL;
+    }
+
+    size_t axis = depth % storage->dimension;
+
+    if (node->vector_index == vector_index) {
+        if (node->right != NULL) {
+            GV_KDNode *min_node = gv_kdtree_find_min(node->right, (axis + 1) % storage->dimension, axis, storage);
+            if (min_node != NULL) {
+                node->vector_index = min_node->vector_index;
+                node->right = gv_kdtree_delete_recursive(node->right, min_node->vector_index, depth + 1, storage);
+            } else {
+                GV_KDNode *temp = node->left;
+                free(node);
+                return temp;
+            }
+        } else if (node->left != NULL) {
+            GV_KDNode *min_node = gv_kdtree_find_min(node->left, (axis + 1) % storage->dimension, axis, storage);
+            if (min_node != NULL) {
+                node->vector_index = min_node->vector_index;
+                node->right = node->left;
+                node->left = NULL;
+                node->right = gv_kdtree_delete_recursive(node->right, min_node->vector_index, depth + 1, storage);
+            } else {
+                GV_KDNode *temp = node->left;
+                free(node);
+                return temp;
+            }
+        } else {
+            free(node);
+            return NULL;
+        }
+    } else {
+        const float *node_data = gv_soa_storage_get_data(storage, node->vector_index);
+        const float *target_data = gv_soa_storage_get_data(storage, vector_index);
+        if (node_data == NULL || target_data == NULL) {
+            return node;
+        }
+
+        if (target_data[axis] < node_data[axis]) {
+            node->left = gv_kdtree_delete_recursive(node->left, vector_index, depth + 1, storage);
+        } else {
+            node->right = gv_kdtree_delete_recursive(node->right, vector_index, depth + 1, storage);
+        }
+    }
+
+    return node;
+}
+
+int gv_kdtree_delete(GV_KDNode **root, GV_SoAStorage *storage, size_t vector_index) {
+    if (root == NULL || storage == NULL || vector_index >= storage->count) {
+        return -1;
+    }
+
+    if (*root == NULL) {
+        return -1;
+    }
+
+    if (gv_soa_storage_is_deleted(storage, vector_index) == 1) {
+        return -1;
+    }
+
+    *root = gv_kdtree_delete_recursive(*root, vector_index, 0, storage);
+    if (gv_soa_storage_mark_deleted(storage, vector_index) != 0) {
+        return -1;
+    }
+
+    return 0;
 }

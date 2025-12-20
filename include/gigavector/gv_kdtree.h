@@ -132,6 +132,16 @@ int gv_kdtree_range_search_filtered(const GV_KDNode *root, const GV_SoAStorage *
                                      GV_DistanceType distance_type,
                                      const char *filter_key, const char *filter_value);
 
+/**
+ * @brief Delete a vector from the K-D tree by its index in SoA storage.
+ *
+ * @param root Pointer to the root node pointer; will be updated if root is deleted.
+ * @param storage SoA storage containing vectors; must be non-NULL.
+ * @param vector_index Index of the vector to delete in SoA storage.
+ * @return 0 on success, -1 on invalid arguments or vector not found.
+ */
+int gv_kdtree_delete(GV_KDNode **root, GV_SoAStorage *storage, size_t vector_index);
+
 #ifdef __cplusplus
 }
 #endif
