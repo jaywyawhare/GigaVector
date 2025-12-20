@@ -239,6 +239,7 @@ typedef struct GV_IVFPQEntry {
     uint8_t *codes;        /* length m */
     GV_Vector *vector;     /* original vector for output */
     GV_ScalarQuantVector *scalar_quant; /* scalar quantized version if enabled */
+    int deleted;           /* Deletion flag: 1 if deleted, 0 if active */
 } GV_IVFPQEntry;
 
 typedef struct {
@@ -553,6 +554,7 @@ int gv_ivfpq_insert(void *index_ptr, GV_Vector *vector) {
     list->entries[list->count].codes = codes;
     list->entries[list->count].vector = vector;
     list->entries[list->count].scalar_quant = NULL;
+    list->entries[list->count].deleted = 0;
     
     if (idx->use_scalar_quant && idx->scalar_quant_template != NULL) {
         GV_ScalarQuantVector *sqv = (GV_ScalarQuantVector *)malloc(sizeof(GV_ScalarQuantVector));
@@ -754,6 +756,7 @@ int gv_ivfpq_search(void *index_ptr, const GV_Vector *query, size_t k,
                         d += lut[m * idx->codebook_size + base[m * cap]];
                     }
                     GV_IVFPQEntry *ent = &list->entries[e];
+                    if (ent->deleted != 0) continue;
                     if (hsize < oversampled_k) {
                         heap[hsize].dist = d;
                         heap[hsize].entry = ent;
@@ -768,6 +771,7 @@ int gv_ivfpq_search(void *index_ptr, const GV_Vector *query, size_t k,
             } else {
                 for (size_t e = 0; e < lcount; ++e) {
                     GV_IVFPQEntry *ent = &list->entries[e];
+                    if (ent->deleted != 0) continue;
                     float d = 0.0f;
                     size_t m = 0;
                     for (; m + 4 <= idx->m; m += 4) {
@@ -828,7 +832,7 @@ int gv_ivfpq_search(void *index_ptr, const GV_Vector *query, size_t k,
     if (rr > 0) {
         /* Rerank oversampled candidates with exact distances */
         for (size_t i = 0; i < rr; ++i) {
-            if (beste[i] == NULL) continue;
+            if (beste[i] == NULL || beste[i]->deleted != 0) continue;
             
             float dist;
             if (idx->use_scalar_quant && beste[i]->scalar_quant != NULL) {
@@ -1147,6 +1151,7 @@ int gv_ivfpq_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version
                 free(v);
             }
             ent->vector = vec;
+            ent->deleted = 0;
         }
         list->count = lcount;
         loaded_total += lcount;
@@ -1300,7 +1305,7 @@ int gv_ivfpq_range_search(void *index_ptr, const GV_Vector *query, float radius,
                     d += lut[m * idx->codebook_size + ent->codes[m]];
                 }
                 if (d <= radius) {
-                    if (ent->vector != NULL) {
+                    if (ent->vector != NULL && ent->deleted == 0) {
                         candidates[found].vector = ent->vector;
                         candidates[found].entry = ent;
                         candidates[found].pq_distance = d;
@@ -1341,4 +1346,39 @@ int gv_ivfpq_range_search(void *index_ptr, const GV_Vector *query, float radius,
     free(qbuf);
     pthread_rwlock_unlock(&idx->rwlock);
     return (int)result_count;
+}
+
+int gv_ivfpq_delete(void *index_ptr, size_t entry_index) {
+    if (index_ptr == NULL) {
+        return -1;
+    }
+
+    GV_IVFPQIndex *idx = (GV_IVFPQIndex *)index_ptr;
+    pthread_rwlock_wrlock(&idx->rwlock);
+
+    size_t current_index = 0;
+    for (size_t list_id = 0; list_id < idx->nlist; ++list_id) {
+        GV_IVFPQList *list = &idx->lists[list_id];
+        pthread_mutex_lock(&idx->list_mutex[list_id]);
+        
+        for (size_t e = 0; e < list->count; ++e) {
+            if (current_index == entry_index) {
+                if (list->entries[e].deleted != 0) {
+                    pthread_mutex_unlock(&idx->list_mutex[list_id]);
+                    pthread_rwlock_unlock(&idx->rwlock);
+                    return -1;
+                }
+                list->entries[e].deleted = 1;
+                pthread_mutex_unlock(&idx->list_mutex[list_id]);
+                pthread_rwlock_unlock(&idx->rwlock);
+                return 0;
+            }
+            current_index++;
+        }
+        
+        pthread_mutex_unlock(&idx->list_mutex[list_id]);
+    }
+
+    pthread_rwlock_unlock(&idx->rwlock);
+    return -1;
 }

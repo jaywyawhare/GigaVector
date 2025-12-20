@@ -128,6 +128,15 @@ size_t gv_ivfpq_count(const void *index);
  */
 int gv_ivfpq_is_trained(const void *index);
 
+/**
+ * @brief Delete a vector from the IVF-PQ index by its entry index.
+ *
+ * @param index IVF-PQ index instance; must be non-NULL.
+ * @param entry_index Index of the entry to delete (0-based insertion order across all lists).
+ * @return 0 on success, -1 on invalid arguments or entry not found.
+ */
+int gv_ivfpq_delete(void *index, size_t entry_index);
+
 #ifdef __cplusplus
 }
 #endif
