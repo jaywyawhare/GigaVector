@@ -1,8 +1,3 @@
-/**
- * @file gv_exact_search.h
- * @brief Brute-force exact k-NN search helpers.
- */
-
 #ifndef GIGAVECTOR_GV_EXACT_SEARCH_H
 #define GIGAVECTOR_GV_EXACT_SEARCH_H
 
@@ -11,6 +6,7 @@
 #include "gv_distance.h"
 #include "gv_kdtree.h"
 #include "gv_types.h"
+#include "gv_soa_storage.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -42,6 +38,7 @@ int gv_exact_knn_search_vectors(GV_Vector *const *vectors, size_t count,
  * This is intended for small collections where a linear scan is competitive.
  *
  * @param root Root of the K-D tree; may be NULL.
+ * @param storage SoA storage containing vectors; must be non-NULL.
  * @param total_count Expected number of vectors stored in the tree.
  * @param query Query vector; must be non-NULL and dimension-compatible.
  * @param k Number of nearest neighbors to return (up to @p total_count).
@@ -49,7 +46,7 @@ int gv_exact_knn_search_vectors(GV_Vector *const *vectors, size_t count,
  * @param distance_type Distance metric to use.
  * @return Number of neighbors found (0 to min(k, total_count)), or -1 on error.
  */
-int gv_exact_knn_search_kdtree(const GV_KDNode *root, size_t total_count,
+int gv_exact_knn_search_kdtree(const GV_KDNode *root, const GV_SoAStorage *storage, size_t total_count,
                                const GV_Vector *query, size_t k,
                                GV_SearchResult *results, GV_DistanceType distance_type);
 
@@ -57,7 +54,7 @@ int gv_exact_knn_search_kdtree(const GV_KDNode *root, size_t total_count,
 }
 #endif
 
-#endif /* GIGAVECTOR_GV_EXACT_SEARCH_H */
+#endif
 
 
 

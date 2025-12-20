@@ -1,8 +1,3 @@
-/**
- * @file gv_sparse_vector.h
- * @brief Sparse vector utilities (COO format).
- */
-
 #ifndef GIGAVECTOR_GV_SPARSE_VECTOR_H
 #define GIGAVECTOR_GV_SPARSE_VECTOR_H
 
@@ -40,7 +35,7 @@ void gv_sparse_vector_destroy(GV_SparseVector *sv);
 }
 #endif
 
-#endif /* GIGAVECTOR_GV_SPARSE_VECTOR_H */
+#endif
 
 
 

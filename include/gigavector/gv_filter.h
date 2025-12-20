@@ -1,13 +1,3 @@
-/**
- * @file gv_filter.h
- * @brief Advanced metadata filter expression API.
- *
- * Provides a small expression language for filtering vectors based on their
- * metadata. Expressions support logical operators (AND, OR, NOT),
- * comparison operators on numeric and string values, and basic string
- * matching operations.
- */
-
 #ifndef GIGAVECTOR_GV_FILTER_H
 #define GIGAVECTOR_GV_FILTER_H
 
@@ -70,6 +60,6 @@ void gv_filter_destroy(GV_Filter *filter);
 }
 #endif
 
-#endif /* GIGAVECTOR_GV_FILTER_H */
+#endif
 
 
