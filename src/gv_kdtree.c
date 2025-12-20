@@ -8,28 +8,29 @@
 #include "gigavector/gv_distance.h"
 #include "gigavector/gv_metadata.h"
 #include "gigavector/gv_vector.h"
+#include "gigavector/gv_soa_storage.h"
 
-static GV_KDNode *gv_kdtree_create_node(GV_Vector *point, size_t axis) {
+static GV_KDNode *gv_kdtree_create_node(size_t vector_index, size_t axis) {
     GV_KDNode *node = (GV_KDNode *)malloc(sizeof(GV_KDNode));
     if (node == NULL) {
         return NULL;
     }
 
-    node->point = point;
+    node->vector_index = vector_index;
     node->axis = axis;
     node->left = NULL;
     node->right = NULL;
     return node;
 }
 
-int gv_kdtree_insert(GV_KDNode **root, GV_Vector *point, size_t depth) {
-    if (root == NULL || point == NULL || point->dimension == 0 || point->data == NULL) {
+int gv_kdtree_insert(GV_KDNode **root, GV_SoAStorage *storage, size_t vector_index, size_t depth) {
+    if (root == NULL || storage == NULL || vector_index >= storage->count) {
         return -1;
     }
 
     if (*root == NULL) {
-        size_t axis = depth % point->dimension;
-        GV_KDNode *node = gv_kdtree_create_node(point, axis);
+        size_t axis = depth % storage->dimension;
+        GV_KDNode *node = gv_kdtree_create_node(vector_index, axis);
         if (node == NULL) {
             return -1;
         }
@@ -38,19 +39,21 @@ int gv_kdtree_insert(GV_KDNode **root, GV_Vector *point, size_t depth) {
     }
 
     GV_KDNode *current = *root;
-    if (current->point == NULL || current->point->dimension != point->dimension) {
+    const float *current_data = gv_soa_storage_get_data(storage, current->vector_index);
+    const float *point_data = gv_soa_storage_get_data(storage, vector_index);
+    if (current_data == NULL || point_data == NULL) {
         return -1;
     }
 
     size_t axis = current->axis;
-    float point_value = point->data[axis];
-    float current_value = current->point->data[axis];
+    float point_value = point_data[axis];
+    float current_value = current_data[axis];
 
     if (point_value < current_value) {
-        return gv_kdtree_insert(&(current->left), point, depth + 1);
+        return gv_kdtree_insert(&(current->left), storage, vector_index, depth + 1);
     }
 
-    return gv_kdtree_insert(&(current->right), point, depth + 1);
+    return gv_kdtree_insert(&(current->right), storage, vector_index, depth + 1);
 }
 
 static int gv_write_uint8(FILE *out, uint8_t value) {
@@ -108,8 +111,8 @@ static int gv_write_metadata(FILE *out, const GV_Metadata *meta_head) {
     return 0;
 }
 
-int gv_kdtree_save_recursive(const GV_KDNode *node, FILE *out, uint32_t version) {
-    if (out == NULL) {
+int gv_kdtree_save_recursive(const GV_KDNode *node, const GV_SoAStorage *storage, FILE *out, uint32_t version) {
+    if (out == NULL || storage == NULL) {
         return -1;
     }
 
@@ -121,11 +124,16 @@ int gv_kdtree_save_recursive(const GV_KDNode *node, FILE *out, uint32_t version)
         return -1;
     }
 
-    if (node->point == NULL || node->point->data == NULL) {
+    if (node->vector_index >= storage->count) {
         return -1;
     }
 
-    if (node->point->dimension > UINT32_MAX || node->axis > UINT32_MAX) {
+    const float *data = gv_soa_storage_get_data(storage, node->vector_index);
+    if (data == NULL) {
+        return -1;
+    }
+
+    if (storage->dimension > UINT32_MAX || node->axis > UINT32_MAX) {
         return -1;
     }
 
@@ -133,21 +141,22 @@ int gv_kdtree_save_recursive(const GV_KDNode *node, FILE *out, uint32_t version)
         return -1;
     }
 
-    if (gv_write_floats(out, node->point->data, node->point->dimension) != 0) {
+    if (gv_write_floats(out, data, storage->dimension) != 0) {
         return -1;
     }
 
     if (version >= 2) {
-        if (gv_write_metadata(out, node->point->metadata) != 0) {
+        GV_Metadata *metadata = gv_soa_storage_get_metadata(storage, node->vector_index);
+        if (gv_write_metadata(out, metadata) != 0) {
             return -1;
         }
     }
 
-    if (gv_kdtree_save_recursive(node->left, out, version) != 0) {
+    if (gv_kdtree_save_recursive(node->left, storage, out, version) != 0) {
         return -1;
     }
 
-    return gv_kdtree_save_recursive(node->right, out, version);
+    return gv_kdtree_save_recursive(node->right, storage, out, version);
 }
 
 static int gv_read_uint8(FILE *in, uint8_t *value) {
@@ -236,8 +245,12 @@ static int gv_read_metadata(FILE *in, GV_Vector *vec) {
     return 0;
 }
 
-int gv_kdtree_load_recursive(GV_KDNode **root, FILE *in, size_t dimension, uint32_t version) {
-    if (root == NULL || in == NULL || dimension == 0) {
+int gv_kdtree_load_recursive(GV_KDNode **root, GV_SoAStorage *storage, FILE *in, size_t dimension, uint32_t version) {
+    if (root == NULL || in == NULL || dimension == 0 || storage == NULL) {
+        return -1;
+    }
+
+    if (storage->dimension != dimension) {
         return -1;
     }
 
@@ -264,36 +277,53 @@ int gv_kdtree_load_recursive(GV_KDNode **root, FILE *in, size_t dimension, uint3
         return -1;
     }
 
-    GV_Vector *vec = gv_vector_create(dimension);
-    if (vec == NULL) {
+    float *temp_data = (float *)malloc(dimension * sizeof(float));
+    if (temp_data == NULL) {
         return -1;
     }
 
-    if (gv_read_floats(in, vec->data, dimension) != 0) {
-        gv_vector_destroy(vec);
+    if (gv_read_floats(in, temp_data, dimension) != 0) {
+        free(temp_data);
         return -1;
     }
 
-    GV_KDNode *node = gv_kdtree_create_node(vec, (size_t)axis_u32);
-    if (node == NULL) {
-        gv_vector_destroy(vec);
-        return -1;
-    }
-
+    GV_Metadata *metadata = NULL;
     if (version >= 2) {
-        if (gv_read_metadata(in, vec) != 0) {
-            gv_vector_destroy(vec);
-            free(node);
+        GV_Vector temp_vec;
+        temp_vec.dimension = dimension;
+        temp_vec.data = NULL;
+        temp_vec.metadata = NULL;
+        if (gv_read_metadata(in, &temp_vec) != 0) {
+            free(temp_data);
             return -1;
         }
+        metadata = temp_vec.metadata;
     }
 
-    if (gv_kdtree_load_recursive(&(node->left), in, dimension, version) != 0) {
+    size_t vector_index = gv_soa_storage_add(storage, temp_data, metadata);
+    free(temp_data);
+    if (vector_index == (size_t)-1) {
+        if (metadata != NULL) {
+            GV_Vector temp_vec;
+            temp_vec.dimension = dimension;
+            temp_vec.data = NULL;
+            temp_vec.metadata = metadata;
+            gv_vector_clear_metadata(&temp_vec);
+        }
+        return -1;
+    }
+
+    GV_KDNode *node = gv_kdtree_create_node(vector_index, (size_t)axis_u32);
+    if (node == NULL) {
+        return -1;
+    }
+
+    if (gv_kdtree_load_recursive(&(node->left), storage, in, dimension, version) != 0) {
         gv_kdtree_destroy_recursive(node);
         return -1;
     }
 
-    if (gv_kdtree_load_recursive(&(node->right), in, dimension, version) != 0) {
+    if (gv_kdtree_load_recursive(&(node->right), storage, in, dimension, version) != 0) {
         gv_kdtree_destroy_recursive(node);
         return -1;
     }
@@ -308,7 +338,6 @@ void gv_kdtree_destroy_recursive(GV_KDNode *node) {
     }
     gv_kdtree_destroy_recursive(node->left);
     gv_kdtree_destroy_recursive(node->right);
-    gv_vector_destroy(node->point);
     free(node);
 }
 
@@ -322,8 +351,41 @@ typedef struct {
     const char *filter_value;
 } GV_KNNContext;
 
-static void gv_knn_insert_result(GV_KNNContext *ctx, const GV_Vector *vector, float distance) {
-    if (ctx == NULL || vector == NULL) {
+typedef struct {
+    GV_SoAStorage *storage;
+    GV_Vector *temp_views;
+    size_t temp_views_capacity;
+} GV_KNNStorageContext;
+
+static GV_Vector *gv_knn_get_vector_view(GV_KNNStorageContext *storage_ctx, size_t index) {
+    if (storage_ctx == NULL || storage_ctx->storage == NULL) {
+        return NULL;
+    }
+    if (index >= storage_ctx->temp_views_capacity) {
+        size_t new_capacity = (storage_ctx->temp_views_capacity == 0) ? 16 : storage_ctx->temp_views_capacity * 2;
+        while (new_capacity <= index) {
+            new_capacity *= 2;
+        }
+        GV_Vector *new_views = (GV_Vector *)realloc(storage_ctx->temp_views, new_capacity * sizeof(GV_Vector));
+        if (new_views == NULL) {
+            return NULL;
+        }
+        storage_ctx->temp_views = new_views;
+        storage_ctx->temp_views_capacity = new_capacity;
+    }
+    if (gv_soa_storage_get_vector_view(storage_ctx->storage, index, &storage_ctx->temp_views[index]) != 0) {
+        return NULL;
+    }
+    return &storage_ctx->temp_views[index];
+}
+
+static void gv_knn_insert_result(GV_KNNContext *ctx, GV_KNNStorageContext *storage_ctx, size_t vector_index, float distance) {
+    if (ctx == NULL || storage_ctx == NULL) {
+        return;
+    }
+
+    GV_Vector *vector = gv_knn_get_vector_view(storage_ctx, vector_index);
+    if (vector == NULL) {
         return;
     }
 
@@ -363,31 +425,49 @@ static void gv_knn_insert_result(GV_KNNContext *ctx, const GV_Vector *vector, fl
     }
 }
 
-static int gv_knn_check_metadata_filter(const GV_Vector *vector, const char *key, const char *value) {
+static int gv_knn_check_metadata_filter(const GV_SoAStorage *storage, size_t vector_index, const char *key, const char *value) {
     if (key == NULL || value == NULL) {
         return 1;
     }
-    if (vector == NULL) {
+    if (storage == NULL) {
         return 0;
     }
-    const char *meta_value = gv_vector_get_metadata(vector, key);
+    GV_Metadata *metadata = gv_soa_storage_get_metadata(storage, vector_index);
+    if (metadata == NULL) {
+        return 0;
+    }
+    GV_Vector temp_vec;
+    temp_vec.dimension = storage->dimension;
+    temp_vec.data = NULL;
+    temp_vec.metadata = metadata;
+    const char *meta_value = gv_vector_get_metadata(&temp_vec, key);
     if (meta_value == NULL) {
         return 0;
     }
     return (strcmp(meta_value, value) == 0) ? 1 : 0;
 }
 
-static void gv_knn_search_recursive(const GV_KDNode *node, const GV_Vector *query,
-                                     GV_KNNContext *ctx) {
-    if (node == NULL || query == NULL || ctx == NULL || node->point == NULL) {
+static void gv_knn_search_recursive(const GV_KDNode *node, const GV_SoAStorage *storage, const GV_Vector *query,
+                                     GV_KNNContext *ctx, GV_KNNStorageContext *storage_ctx) {
+    if (node == NULL || query == NULL || ctx == NULL || storage == NULL || storage_ctx == NULL) {
         return;
     }
 
-    if (!gv_knn_check_metadata_filter(node->point, ctx->filter_key, ctx->filter_value)) {
+    if (!gv_knn_check_metadata_filter(storage, node->vector_index, ctx->filter_key, ctx->filter_value)) {
         return;
     }
 
-    float dist = gv_distance(node->point, query, ctx->distance_type);
+    const float *node_data = gv_soa_storage_get_data(storage, node->vector_index);
+    if (node_data == NULL) {
+        return;
+    }
+
+    GV_Vector node_vec;
+    node_vec.dimension = storage->dimension;
+    node_vec.data = (float *)node_data;
+    node_vec.metadata = gv_soa_storage_get_metadata(storage, node->vector_index);
+
+    float dist = gv_distance(&node_vec, query, ctx->distance_type);
     if (dist < 0.0f && ctx->distance_type != GV_DISTANCE_DOT_PRODUCT) {
         return;
     }
@@ -396,11 +476,11 @@ static void gv_knn_search_recursive(const GV_KDNode *node, const GV_Vector *quer
         dist = 1.0f - dist;
     }
 
-    gv_knn_insert_result(ctx, node->point, dist);
+    gv_knn_insert_result(ctx, storage_ctx, node->vector_index, dist);
 
     size_t axis = node->axis;
     float query_value = query->data[axis];
-    float node_value = node->point->data[axis];
+    float node_value = node_data[axis];
     float diff = query_value - node_value;
     float axis_distance = diff * diff;
 
@@ -408,21 +488,21 @@ static void gv_knn_search_recursive(const GV_KDNode *node, const GV_Vector *quer
     const GV_KDNode *far = (query_value < node_value) ? node->right : node->left;
 
     if (near != NULL) {
-        gv_knn_search_recursive(near, query, ctx);
+        gv_knn_search_recursive(near, storage, query, ctx, storage_ctx);
     }
 
     if (far != NULL && (ctx->count < ctx->capacity || axis_distance < ctx->worst_distance)) {
-        gv_knn_search_recursive(far, query, ctx);
+        gv_knn_search_recursive(far, storage, query, ctx, storage_ctx);
     }
 }
 
-int gv_kdtree_knn_search(const GV_KDNode *root, const GV_Vector *query, size_t k,
+int gv_kdtree_knn_search(const GV_KDNode *root, const GV_SoAStorage *storage, const GV_Vector *query, size_t k,
                           GV_SearchResult *results, GV_DistanceType distance_type) {
-    if (root == NULL || query == NULL || results == NULL || k == 0) {
+    if (root == NULL || storage == NULL || query == NULL || results == NULL || k == 0) {
         return -1;
     }
 
-    if (query->dimension == 0 || query->data == NULL) {
+    if (query->dimension == 0 || query->data == NULL || query->dimension != storage->dimension) {
         return -1;
     }
 
@@ -435,21 +515,27 @@ int gv_kdtree_knn_search(const GV_KDNode *root, const GV_Vector *query, size_t k
     ctx.filter_key = NULL;
     ctx.filter_value = NULL;
 
+    GV_KNNStorageContext storage_ctx;
+    storage_ctx.storage = (GV_SoAStorage *)storage;
+    storage_ctx.temp_views = NULL;
+    storage_ctx.temp_views_capacity = 0;
+
     memset(results, 0, k * sizeof(GV_SearchResult));
 
-    gv_knn_search_recursive(root, query, &ctx);
+    gv_knn_search_recursive(root, storage, query, &ctx, &storage_ctx);
 
+    free(storage_ctx.temp_views);
     return (int)ctx.count;
 }
 
-int gv_kdtree_knn_search_filtered(const GV_KDNode *root, const GV_Vector *query, size_t k,
+int gv_kdtree_knn_search_filtered(const GV_KDNode *root, const GV_SoAStorage *storage, const GV_Vector *query, size_t k,
                                    GV_SearchResult *results, GV_DistanceType distance_type,
                                    const char *filter_key, const char *filter_value) {
-    if (root == NULL || query == NULL || results == NULL || k == 0) {
+    if (root == NULL || storage == NULL || query == NULL || results == NULL || k == 0) {
         return -1;
     }
 
-    if (query->dimension == 0 || query->data == NULL) {
+    if (query->dimension == 0 || query->data == NULL || query->dimension != storage->dimension) {
         return -1;
     }
 
@@ -462,10 +548,16 @@ int gv_kdtree_knn_search_filtered(const GV_KDNode *root, const GV_Vector *query,
     ctx.filter_key = filter_key;
     ctx.filter_value = filter_value;
 
+    GV_KNNStorageContext storage_ctx;
+    storage_ctx.storage = (GV_SoAStorage *)storage;
+    storage_ctx.temp_views = NULL;
+    storage_ctx.temp_views_capacity = 0;
+
     memset(results, 0, k * sizeof(GV_SearchResult));
 
-    gv_knn_search_recursive(root, query, &ctx);
+    gv_knn_search_recursive(root, storage, query, &ctx, &storage_ctx);
 
+    free(storage_ctx.temp_views);
     return (int)ctx.count;
 }
 
@@ -480,12 +572,17 @@ typedef struct {
     const char *filter_value;
 } GV_RangeContext;
 
-static void gv_range_insert_result(GV_RangeContext *ctx, const GV_Vector *vector, float distance) {
-    if (ctx == NULL || vector == NULL || distance > ctx->radius) {
+static void gv_range_insert_result(GV_RangeContext *ctx, GV_KNNStorageContext *storage_ctx, size_t vector_index, float distance) {
+    if (ctx == NULL || storage_ctx == NULL || distance > ctx->radius) {
         return;
     }
 
     if (ctx->count >= ctx->capacity) {
+        return;
+    }
+
+    GV_Vector *vector = gv_knn_get_vector_view(storage_ctx, vector_index);
+    if (vector == NULL) {
         return;
     }
 
@@ -494,69 +591,79 @@ static void gv_range_insert_result(GV_RangeContext *ctx, const GV_Vector *vector
     ctx->count++;
 }
 
-static void gv_range_search_recursive(const GV_KDNode *node, const GV_Vector *query,
-                                      GV_RangeContext *ctx) {
-    if (node == NULL || query == NULL || ctx == NULL || node->point == NULL) {
+static void gv_range_search_recursive(const GV_KDNode *node, const GV_SoAStorage *storage, const GV_Vector *query,
+                                      GV_RangeContext *ctx, GV_KNNStorageContext *storage_ctx) {
+    if (node == NULL || query == NULL || ctx == NULL || storage == NULL || storage_ctx == NULL) {
         return;
     }
 
-    if (!gv_knn_check_metadata_filter(node->point, ctx->filter_key, ctx->filter_value)) {
+    if (!gv_knn_check_metadata_filter(storage, node->vector_index, ctx->filter_key, ctx->filter_value)) {
         return;
     }
 
-    float dist = gv_distance(node->point, query, ctx->distance_type);
+    const float *node_data = gv_soa_storage_get_data(storage, node->vector_index);
+    if (node_data == NULL) {
+        return;
+    }
+
+    GV_Vector node_vec;
+    node_vec.dimension = storage->dimension;
+    node_vec.data = (float *)node_data;
+    node_vec.metadata = gv_soa_storage_get_metadata(storage, node->vector_index);
+
+    float dist = gv_distance(&node_vec, query, ctx->distance_type);
     if (dist < 0.0f && ctx->distance_type != GV_DISTANCE_DOT_PRODUCT) {
         return;
     }
 
     if (dist <= ctx->radius) {
-        gv_range_insert_result(ctx, node->point, dist);
+        gv_range_insert_result(ctx, storage_ctx, node->vector_index, dist);
     }
 
     size_t axis = node->axis;
     float query_value = query->data[axis];
-    float node_value = node->point->data[axis];
+    float node_value = node_data[axis];
     float diff = query_value - node_value;
     float diff_sq = diff * diff;
 
     if (ctx->distance_type == GV_DISTANCE_EUCLIDEAN) {
         if (diff_sq <= ctx->radius * ctx->radius) {
             if (query_value < node_value) {
-                gv_range_search_recursive(node->left, query, ctx);
-                gv_range_search_recursive(node->right, query, ctx);
+                gv_range_search_recursive(node->left, storage, query, ctx, storage_ctx);
+                gv_range_search_recursive(node->right, storage, query, ctx, storage_ctx);
             } else {
-                gv_range_search_recursive(node->right, query, ctx);
-                gv_range_search_recursive(node->left, query, ctx);
+                gv_range_search_recursive(node->right, storage, query, ctx, storage_ctx);
+                gv_range_search_recursive(node->left, storage, query, ctx, storage_ctx);
             }
         } else {
             if (query_value < node_value) {
-                gv_range_search_recursive(node->left, query, ctx);
+                gv_range_search_recursive(node->left, storage, query, ctx, storage_ctx);
             } else {
-                gv_range_search_recursive(node->right, query, ctx);
+                gv_range_search_recursive(node->right, storage, query, ctx, storage_ctx);
             }
         }
     } else {
         if (query_value < node_value) {
-            gv_range_search_recursive(node->left, query, ctx);
+            gv_range_search_recursive(node->left, storage, query, ctx, storage_ctx);
             if (diff_sq <= ctx->radius * ctx->radius || ctx->distance_type != GV_DISTANCE_EUCLIDEAN) {
-                gv_range_search_recursive(node->right, query, ctx);
+                gv_range_search_recursive(node->right, storage, query, ctx, storage_ctx);
             }
         } else {
-            gv_range_search_recursive(node->right, query, ctx);
+            gv_range_search_recursive(node->right, storage, query, ctx, storage_ctx);
             if (diff_sq <= ctx->radius * ctx->radius || ctx->distance_type != GV_DISTANCE_EUCLIDEAN) {
-                gv_range_search_recursive(node->left, query, ctx);
+                gv_range_search_recursive(node->left, storage, query, ctx, storage_ctx);
             }
         }
     }
 }
 
-int gv_kdtree_range_search(const GV_KDNode *root, const GV_Vector *query, float radius,
+int gv_kdtree_range_search(const GV_KDNode *root, const GV_SoAStorage *storage, const GV_Vector *query, float radius,
                             GV_SearchResult *results, size_t max_results, GV_DistanceType distance_type) {
-    if (root == NULL || query == NULL || results == NULL || max_results == 0 || radius < 0.0f) {
+    if (root == NULL || storage == NULL || query == NULL || results == NULL || max_results == 0 || radius < 0.0f) {
         return -1;
     }
 
-    if (query->dimension == 0 || query->data == NULL) {
+    if (query->dimension == 0 || query->data == NULL || query->dimension != storage->dimension) {
         return -1;
     }
 
@@ -569,22 +676,28 @@ int gv_kdtree_range_search(const GV_KDNode *root, const GV_Vector *query, float 
     ctx.filter_key = NULL;
     ctx.filter_value = NULL;
 
+    GV_KNNStorageContext storage_ctx;
+    storage_ctx.storage = (GV_SoAStorage *)storage;
+    storage_ctx.temp_views = NULL;
+    storage_ctx.temp_views_capacity = 0;
+
     memset(results, 0, max_results * sizeof(GV_SearchResult));
 
-    gv_range_search_recursive(root, query, &ctx);
+    gv_range_search_recursive(root, storage, query, &ctx, &storage_ctx);
 
+    free(storage_ctx.temp_views);
     return (int)ctx.count;
 }
 
-int gv_kdtree_range_search_filtered(const GV_KDNode *root, const GV_Vector *query, float radius,
+int gv_kdtree_range_search_filtered(const GV_KDNode *root, const GV_SoAStorage *storage, const GV_Vector *query, float radius,
                                      GV_SearchResult *results, size_t max_results,
                                      GV_DistanceType distance_type,
                                      const char *filter_key, const char *filter_value) {
-    if (root == NULL || query == NULL || results == NULL || max_results == 0 || radius < 0.0f) {
+    if (root == NULL || storage == NULL || query == NULL || results == NULL || max_results == 0 || radius < 0.0f) {
         return -1;
     }
 
-    if (query->dimension == 0 || query->data == NULL) {
+    if (query->dimension == 0 || query->data == NULL || query->dimension != storage->dimension) {
         return -1;
     }
 
@@ -597,9 +710,15 @@ int gv_kdtree_range_search_filtered(const GV_KDNode *root, const GV_Vector *quer
     ctx.filter_key = filter_key;
     ctx.filter_value = filter_value;
 
+    GV_KNNStorageContext storage_ctx;
+    storage_ctx.storage = (GV_SoAStorage *)storage;
+    storage_ctx.temp_views = NULL;
+    storage_ctx.temp_views_capacity = 0;
+
     memset(results, 0, max_results * sizeof(GV_SearchResult));
 
-    gv_range_search_recursive(root, query, &ctx);
+    gv_range_search_recursive(root, storage, query, &ctx, &storage_ctx);
 
+    free(storage_ctx.temp_views);
     return (int)ctx.count;
 }
