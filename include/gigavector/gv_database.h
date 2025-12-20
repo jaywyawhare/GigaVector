@@ -2,6 +2,7 @@
 #define GIGAVECTOR_GV_DATABASE_H
 
 #include <stddef.h>
+#include <stdint.h>
 #include <pthread.h>
 
 #include "gv_types.h"
@@ -12,6 +13,7 @@
 #include "gv_filter.h"
 #include "gv_sparse_index.h"
 #include "gv_sparse_vector.h"
+#include "gv_soa_storage.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -45,7 +47,23 @@ typedef struct GV_Database {
     size_t exact_search_threshold; /**< Max collection size to use brute-force exact search. */
     int force_exact_search;        /**< Force exact search even when above threshold. */
     GV_SparseIndex *sparse_index;  /**< Sparse inverted index when index_type == GV_INDEX_TYPE_SPARSE. */
+    GV_SoAStorage *soa_storage;    /**< Structure-of-Arrays storage for dense vectors (KD-tree, HNSW). */
+    uint64_t total_inserts;        /**< Total successful vector insertions (dense + sparse). */
+    uint64_t total_queries;        /**< Total k-NN / filtered / batch queries. */
+    uint64_t total_range_queries;  /**< Total range-search calls. */
+    uint64_t total_wal_records;    /**< Total WAL records appended. */
+    int cosine_normalized;         /**< If non-zero, stored dense vectors are L2-normalized. */
 } GV_Database;
+
+/**
+ * @brief Aggregated runtime statistics for a database.
+ */
+typedef struct {
+    uint64_t total_inserts;        /**< Total successful vector insertions (dense + sparse). */
+    uint64_t total_queries;        /**< Total k-NN / filtered / batch queries. */
+    uint64_t total_range_queries;  /**< Total range-search calls. */
+    uint64_t total_wal_records;    /**< Total WAL records appended. */
+} GV_DBStats;
 
 /**
  * @brief Open an in-memory database, optionally loading from a file.
@@ -91,6 +109,40 @@ GV_Database *gv_db_open_with_ivfpq_config(const char *filepath, size_t dimension
                                            GV_IndexType index_type, const GV_IVFPQConfig *ivfpq_config);
 
 /**
+ * @brief Suggest an index type based on dimension and expected collection size.
+ *
+ * Heuristic:
+ *  - Small datasets (<= 20k) and low/moderate dimensions (<= 64): KDTREE.
+ *  - Very large datasets (>= 500k) and high dimensions (>= 128): IVFPQ.
+ *  - Otherwise: HNSW.
+ *
+ * @param dimension Vector dimensionality.
+ * @param expected_count Estimated number of vectors to be stored.
+ * @return Suggested GV_IndexType.
+ */
+GV_IndexType gv_index_suggest(size_t dimension, size_t expected_count);
+
+/**
+ * @brief Retrieve current runtime statistics for a database.
+ *
+ * @param db Database handle; must be non-NULL.
+ * @param out Output pointer; must be non-NULL. Filled on success.
+ */
+void gv_db_get_stats(const GV_Database *db, GV_DBStats *out);
+
+/**
+ * @brief Enable or disable cosine pre-normalization for dense vectors.
+ *
+ * When enabled, all subsequently inserted dense vectors are L2-normalized
+ * to unit length. For cosine distance, callers may safely treat it as
+ * negative dot product on these normalized vectors.
+ *
+ * @param db Database handle; must be non-NULL.
+ * @param enabled Non-zero to enable normalization, zero to disable.
+ */
+void gv_db_set_cosine_normalized(GV_Database *db, int enabled);
+
+/**
  * @brief Open a database from an in-memory snapshot.
  *
  * The snapshot must contain a full GVDB binary image as produced by
@@ -109,6 +161,21 @@ GV_Database *gv_db_open_with_ivfpq_config(const char *filepath, size_t dimension
  */
 GV_Database *gv_db_open_from_memory(const void *data, size_t size,
                                     size_t dimension, GV_IndexType index_type);
+
+/**
+ * @brief Open a database by memory-mapping an existing snapshot file.
+ *
+ * This is a convenience wrapper around gv_mmap_open_readonly() and
+ * gv_db_open_from_memory(). The mapping is owned by the database and
+ * released when gv_db_close() is called. The resulting database is
+ * read-only: WAL is disabled and modifications are not persisted.
+ *
+ * @param filepath Path to a GVDB snapshot file produced by gv_db_save().
+ * @param dimension Expected dimensionality; if non-zero, must match snapshot.
+ * @param index_type Expected index type stored in the snapshot.
+ * @return Allocated database instance or NULL on error.
+ */
+GV_Database *gv_db_open_mmap(const char *filepath, size_t dimension, GV_IndexType index_type);
 
 /**
  * @brief Release all resources held by the database, including its K-D tree.
