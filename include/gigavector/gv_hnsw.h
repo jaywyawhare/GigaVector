@@ -6,6 +6,7 @@
 #include "gv_distance.h"
 #include "gv_types.h"
 #include "gv_binary_quant.h"
+#include "gv_soa_storage.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -30,9 +31,10 @@ typedef struct {
  *
  * @param dimension Vector dimensionality.
  * @param config Configuration parameters; NULL for defaults.
+ * @param soa_storage Optional SoA storage to use; if NULL, creates a new one.
  * @return Allocated HNSW index, or NULL on error.
  */
-void *gv_hnsw_create(size_t dimension, const GV_HNSWConfig *config);
+void *gv_hnsw_create(size_t dimension, const GV_HNSWConfig *config, GV_SoAStorage *soa_storage);
 
 /**
  * @brief Insert a vector into the HNSW index.

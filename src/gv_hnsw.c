@@ -11,9 +11,10 @@
 #include "gigavector/gv_metadata.h"
 #include "gigavector/gv_vector.h"
 #include "gigavector/gv_binary_quant.h"
+#include "gigavector/gv_soa_storage.h"
 
 typedef struct GV_HNSWNode {
-    GV_Vector *vector;
+    size_t vector_index;             /**< Index into GV_SoAStorage */
     GV_BinaryVector *binary_vector;  /**< Binary quantized version for fast search */
     struct GV_HNSWNode ***neighbors;
     size_t *neighbor_counts;
@@ -41,7 +42,75 @@ typedef struct {
     size_t count;
     GV_HNSWNode **nodes;
     size_t nodes_capacity;
+    GV_SoAStorage *soa_storage;      /**< Structure-of-Arrays storage for vectors */
+    int soa_storage_owned;           /**< 1 if we own the storage (should destroy), 0 if shared */
 } GV_HNSWIndex;
+
+static const char *gv_metadata_get_direct(GV_Metadata *metadata, const char *key) {
+    if (metadata == NULL || key == NULL) {
+        return NULL;
+    }
+    GV_Metadata *current = metadata;
+    while (current != NULL) {
+        if (strcmp(current->key, key) == 0) {
+            return current->value;
+        }
+        current = current->next;
+    }
+    return NULL;
+}
+
+static GV_Metadata *gv_metadata_copy(GV_Metadata *src) {
+    if (src == NULL) {
+        return NULL;
+    }
+    GV_Metadata *head = NULL;
+    GV_Metadata *tail = NULL;
+    GV_Metadata *current = src;
+    
+    while (current != NULL) {
+        GV_Metadata *new_meta = (GV_Metadata *)malloc(sizeof(GV_Metadata));
+        if (new_meta == NULL) {
+            /* Free what we've allocated so far */
+            while (head != NULL) {
+                GV_Metadata *next = head->next;
+                free(head->key);
+                free(head->value);
+                free(head);
+                head = next;
+            }
+            return NULL;
+        }
+        new_meta->key = (char *)malloc(strlen(current->key) + 1);
+        new_meta->value = (char *)malloc(strlen(current->value) + 1);
+        if (new_meta->key == NULL || new_meta->value == NULL) {
+            free(new_meta->key);
+            free(new_meta->value);
+            free(new_meta);
+            /* Free what we've allocated so far */
+            while (head != NULL) {
+                GV_Metadata *next = head->next;
+                free(head->key);
+                free(head->value);
+                free(head);
+                head = next;
+            }
+            return NULL;
+        }
+        strcpy(new_meta->key, current->key);
+        strcpy(new_meta->value, current->value);
+        new_meta->next = NULL;
+        
+        if (head == NULL) {
+            head = tail = new_meta;
+        } else {
+            tail->next = new_meta;
+            tail = new_meta;
+        }
+        current = current->next;
+    }
+    return head;
+}
 
 static double random_level(void) {
     return -log((double)rand() / (RAND_MAX + 1.0)) * 1.4426950408889634;
@@ -74,14 +143,14 @@ static void gv_hnsw_node_destroy(GV_HNSWNode *node) {
         free(node->neighbors);
     }
     free(node->neighbor_counts);
-    gv_vector_destroy(node->vector);
+    /* Vector is stored in SoA, don't destroy it here */
     if (node->binary_vector != NULL) {
         gv_binary_vector_destroy(node->binary_vector);
     }
     free(node);
 }
 
-void *gv_hnsw_create(size_t dimension, const GV_HNSWConfig *config) {
+void *gv_hnsw_create(size_t dimension, const GV_HNSWConfig *config, GV_SoAStorage *soa_storage) {
     if (dimension == 0) {
         return NULL;
     }
@@ -109,6 +178,19 @@ void *gv_hnsw_create(size_t dimension, const GV_HNSWConfig *config) {
         return NULL;
     }
 
+    if (soa_storage != NULL) {
+        index->soa_storage = soa_storage;
+        index->soa_storage_owned = 0;  /* Shared storage, don't destroy */
+    } else {
+        index->soa_storage = gv_soa_storage_create(dimension, 1024);
+        if (index->soa_storage == NULL) {
+            free(index->nodes);
+            free(index);
+            return NULL;
+        }
+        index->soa_storage_owned = 1;  /* We own it, should destroy */
+    }
+
     return index;
 }
 
@@ -122,13 +204,24 @@ int gv_hnsw_insert(void *index_ptr, GV_Vector *vector) {
         return -1;
     }
 
+    /* Add vector to SoA storage */
+    /* Transfer metadata ownership to SoA storage */
+    GV_Metadata *metadata = vector->metadata;
+    vector->metadata = NULL;  /* Clear from original vector to transfer ownership */
+    size_t vector_index = gv_soa_storage_add(index->soa_storage, vector->data, metadata);
+    if (vector_index == (size_t)-1) {
+        /* Restore metadata if add failed */
+        vector->metadata = metadata;
+        return -1;
+    }
+
     size_t level = calculate_level(index->maxLevel);
     GV_HNSWNode *new_node = (GV_HNSWNode *)malloc(sizeof(GV_HNSWNode));
     if (new_node == NULL) {
         return -1;
     }
 
-    new_node->vector = vector;
+    new_node->vector_index = vector_index;
     new_node->binary_vector = NULL;
     new_node->level = level;
     new_node->deleted = 0;
@@ -142,7 +235,17 @@ int gv_hnsw_insert(void *index_ptr, GV_Vector *vector) {
     }
 
     if (index->use_binary_quant) {
-        new_node->binary_vector = gv_binary_quantize(vector->data, vector->dimension);
+        const float *vector_data = gv_soa_storage_get_data(index->soa_storage, vector_index);
+        if (vector_data == NULL) {
+            for (size_t l = 0; l <= level; ++l) {
+                free(new_node->neighbors[l]);
+            }
+            free(new_node->neighbors);
+            free(new_node->neighbor_counts);
+            free(new_node);
+            return -1;
+        }
+        new_node->binary_vector = gv_binary_quantize(vector_data, vector->dimension);
         if (new_node->binary_vector == NULL) {
             for (size_t l = 0; l <= level; ++l) {
                 free(new_node->neighbors[l]);
@@ -193,8 +296,13 @@ int gv_hnsw_insert(void *index_ptr, GV_Vector *vector) {
         return 0;
     }
 
+    const float *new_vector_data = gv_soa_storage_get_data(index->soa_storage, vector_index);
+    if (new_vector_data == NULL) {
+        return -1;
+    }
+
     GV_HNSWNode *current = index->entryPoint;
-    if (current == NULL || current->vector == NULL) {
+    if (current == NULL) {
         return 0;
     }
     
@@ -214,17 +322,23 @@ int gv_hnsw_insert(void *index_ptr, GV_Vector *vector) {
             current->neighbors[lc] != NULL) {
             for (size_t i = 0; i < current->neighbor_counts[lc]; ++i) {
                 if (current->neighbors[lc][i] != NULL && 
-                    current->neighbors[lc][i]->vector != NULL &&
                     current->neighbors[lc][i]->deleted == 0) {
-                    float dist = gv_distance_euclidean(current->neighbors[lc][i]->vector, vector);
-                    if (dist < minDist) {
-                        minDist = dist;
-                        closest = current->neighbors[lc][i];
+                    const float *neighbor_data = gv_soa_storage_get_data(index->soa_storage, current->neighbors[lc][i]->vector_index);
+                    if (neighbor_data != NULL) {
+                        float dist = 0.0f;
+                        for (size_t d = 0; d < index->dimension; ++d) {
+                            float diff = new_vector_data[d] - neighbor_data[d];
+                            dist += diff * diff;
+                        }
+                        if (dist < minDist) {
+                            minDist = dist;
+                            closest = current->neighbors[lc][i];
+                        }
                     }
                 }
             }
         }
-        if (closest != NULL && closest != current && closest->vector != NULL && closest->deleted == 0) {
+        if (closest != NULL && closest != current && closest->deleted == 0) {
             current = closest;
             currentLevel = current->level;
             if (currentLevel > index->maxLevel) {
@@ -233,7 +347,7 @@ int gv_hnsw_insert(void *index_ptr, GV_Vector *vector) {
         }
     }
     
-    if (current == NULL || current->vector == NULL) {
+    if (current == NULL) {
         return 0;
     }
 
@@ -255,9 +369,15 @@ int gv_hnsw_insert(void *index_ptr, GV_Vector *vector) {
         if (candidates == NULL) continue;
 
         size_t candidate_count = 0;
-        if (current->vector != NULL) {
+        const float *current_data = gv_soa_storage_get_data(index->soa_storage, current->vector_index);
+        if (current_data != NULL) {
             candidates[candidate_count].node = current;
-            candidates[candidate_count++].distance = gv_distance_euclidean(current->vector, vector);
+            float dist = 0.0f;
+            for (size_t d = 0; d < index->dimension; ++d) {
+                float diff = new_vector_data[d] - current_data[d];
+                dist += diff * diff;
+            }
+            candidates[candidate_count++].distance = dist;
         }
 
         if (current->neighbor_counts != NULL && current->neighbors != NULL &&
@@ -265,10 +385,17 @@ int gv_hnsw_insert(void *index_ptr, GV_Vector *vector) {
             current->neighbors[lc] != NULL) {
             for (size_t i = 0; i < current->neighbor_counts[lc] && candidate_count < index->efConstruction; ++i) {
                 if (current->neighbors[lc][i] != NULL && 
-                    current->neighbors[lc][i]->vector != NULL &&
                     current->neighbors[lc][i]->deleted == 0) {
-                    candidates[candidate_count].node = current->neighbors[lc][i];
-                    candidates[candidate_count++].distance = gv_distance_euclidean(current->neighbors[lc][i]->vector, vector);
+                    const float *neighbor_data = gv_soa_storage_get_data(index->soa_storage, current->neighbors[lc][i]->vector_index);
+                    if (neighbor_data != NULL) {
+                        candidates[candidate_count].node = current->neighbors[lc][i];
+                        float dist = 0.0f;
+                        for (size_t d = 0; d < index->dimension; ++d) {
+                            float diff = new_vector_data[d] - neighbor_data[d];
+                            dist += diff * diff;
+                        }
+                        candidates[candidate_count++].distance = dist;
+                    }
                 }
             }
         }
@@ -339,7 +466,6 @@ int gv_hnsw_search(void *index_ptr, const GV_Vector *query, size_t k,
             current->neighbors[lc] != NULL) {
             for (size_t i = 0; i < current->neighbor_counts[lc]; ++i) {
                 if (current->neighbors[lc][i] != NULL && 
-                    current->neighbors[lc][i]->vector != NULL &&
                     current->neighbors[lc][i]->deleted == 0) {
                     float dist;
                     if (index->use_binary_quant && query_binary != NULL && 
@@ -348,7 +474,13 @@ int gv_hnsw_search(void *index_ptr, const GV_Vector *query, size_t k,
                             query_binary, current->neighbors[lc][i]->binary_vector);
                         dist = (float)hamming;
                     } else {
-                        dist = gv_distance(current->neighbors[lc][i]->vector, query, distance_type);
+                        const float *neighbor_data = gv_soa_storage_get_data(index->soa_storage, current->neighbors[lc][i]->vector_index);
+                        if (neighbor_data != NULL) {
+                            GV_Vector temp_neighbor = {.data = (float *)neighbor_data, .dimension = query->dimension, .metadata = NULL};
+                            dist = gv_distance(&temp_neighbor, query, distance_type);
+                        } else {
+                            continue;
+                        }
                     }
                     if (dist < minDist) {
                         minDist = dist;
@@ -357,13 +489,13 @@ int gv_hnsw_search(void *index_ptr, const GV_Vector *query, size_t k,
                 }
             }
         }
-        if (closest != NULL && closest != current && closest->vector != NULL && closest->deleted == 0) {
+        if (closest != NULL && closest != current && closest->deleted == 0) {
             current = closest;
             currentLevel = current->level;
         }
     }
     
-    if (current == NULL || current->vector == NULL) {
+    if (current == NULL) {
         return 0;
     }
 
@@ -395,7 +527,17 @@ int gv_hnsw_search(void *index_ptr, const GV_Vector *query, size_t k,
         size_t hamming = gv_binary_hamming_distance_fast(query_binary, current->binary_vector);
         current_dist = (float)hamming;
     } else {
-        current_dist = gv_distance(current->vector, query, distance_type);
+        const float *current_data = gv_soa_storage_get_data(index->soa_storage, current->vector_index);
+        if (current_data == NULL) {
+            free(candidates);
+            free(visited);
+            if (query_binary != NULL) {
+                gv_binary_vector_destroy(query_binary);
+            }
+            return -1;
+        }
+        GV_Vector temp_current = {.data = (float *)current_data, .dimension = query->dimension, .metadata = NULL};
+        current_dist = gv_distance(&temp_current, query, distance_type);
     }
     candidates[candidate_count].node = current;
     candidates[candidate_count++].distance = current_dist;
@@ -421,7 +563,7 @@ int gv_hnsw_search(void *index_ptr, const GV_Vector *query, size_t k,
 
         for (size_t i = 0; i < candidate_node->neighbor_counts[0]; ++i) {
             GV_HNSWNode *neighbor = candidate_node->neighbors[0][i];
-            if (neighbor == NULL || neighbor->vector == NULL) continue;
+            if (neighbor == NULL || neighbor->deleted != 0) continue;
 
             size_t node_idx = neighbor->index;
             if (node_idx >= index->count || visited[node_idx]) continue;
@@ -434,7 +576,10 @@ int gv_hnsw_search(void *index_ptr, const GV_Vector *query, size_t k,
                 size_t hamming = gv_binary_hamming_distance_fast(query_binary, neighbor->binary_vector);
                 dist = (float)hamming;
             } else {
-                dist = gv_distance(neighbor->vector, query, distance_type);
+                const float *neighbor_data = gv_soa_storage_get_data(index->soa_storage, neighbor->vector_index);
+                if (neighbor_data == NULL) continue;
+                GV_Vector temp_neighbor = {.data = (float *)neighbor_data, .dimension = query->dimension, .metadata = NULL};
+                dist = gv_distance(&temp_neighbor, query, distance_type);
             }
 
             if (candidate_count < ef) {
@@ -467,8 +612,12 @@ int gv_hnsw_search(void *index_ptr, const GV_Vector *query, size_t k,
     if (index->use_binary_quant && index->quant_rerank > 0 && query_binary != NULL) {
         size_t rerank_count = (candidate_count < index->quant_rerank) ? candidate_count : index->quant_rerank;
         for (size_t i = 0; i < rerank_count; ++i) {
-            if (candidates[i].node != NULL && candidates[i].node->vector != NULL && candidates[i].node->deleted == 0) {
-                candidates[i].distance = gv_distance(candidates[i].node->vector, query, distance_type);
+            if (candidates[i].node != NULL && candidates[i].node->deleted == 0) {
+                const float *node_data = gv_soa_storage_get_data(index->soa_storage, candidates[i].node->vector_index);
+                if (node_data != NULL) {
+                    GV_Vector temp_vec = {.data = (float *)node_data, .dimension = query->dimension, .metadata = NULL};
+                    candidates[i].distance = gv_distance(&temp_vec, query, distance_type);
+                }
             }
         }
         qsort(candidates, candidate_count, sizeof(GV_HNSWCandidate), compare_candidates);
@@ -476,11 +625,26 @@ int gv_hnsw_search(void *index_ptr, const GV_Vector *query, size_t k,
 
     size_t result_count = 0;
     for (size_t i = 0; i < candidate_count && result_count < k; ++i) {
-        if (candidates[i].node == NULL || candidates[i].node->vector == NULL || candidates[i].node->deleted != 0) continue;
+        if (candidates[i].node == NULL || candidates[i].node->deleted != 0) continue;
         
-        if (filter_key == NULL || gv_vector_get_metadata(candidates[i].node->vector, filter_key) != NULL) {
-            if (filter_key == NULL || strcmp(gv_vector_get_metadata(candidates[i].node->vector, filter_key), filter_value) == 0) {
-                results[result_count].vector = candidates[i].node->vector;
+        const float *node_data = gv_soa_storage_get_data(index->soa_storage, candidates[i].node->vector_index);
+        if (node_data == NULL) continue;
+        
+        GV_Metadata *node_metadata = gv_soa_storage_get_metadata(index->soa_storage, candidates[i].node->vector_index);
+        if (filter_key == NULL || gv_metadata_get_direct(node_metadata, filter_key) != NULL) {
+            if (filter_key == NULL || strcmp(gv_metadata_get_direct(node_metadata, filter_key), filter_value) == 0) {
+                /* Create a temporary vector view for the result */
+                GV_Vector *result_vec = (GV_Vector *)malloc(sizeof(GV_Vector));
+                if (result_vec == NULL) continue;
+                result_vec->data = (float *)malloc(query->dimension * sizeof(float));
+                if (result_vec->data == NULL) {
+                    free(result_vec);
+                    continue;
+                }
+                memcpy(result_vec->data, node_data, query->dimension * sizeof(float));
+                result_vec->dimension = query->dimension;
+                result_vec->metadata = gv_metadata_copy(node_metadata);
+                results[result_count].vector = result_vec;
                 results[result_count].distance = candidates[i].distance;
                 if (distance_type == GV_DISTANCE_COSINE) {
                     results[result_count].distance = 1.0f - results[result_count].distance;
@@ -507,6 +671,10 @@ void gv_hnsw_destroy(void *index_ptr) {
         gv_hnsw_node_destroy(index->nodes[i]);
     }
     free(index->nodes);
+    /* Only destroy SoA storage if we own it (created it ourselves) */
+    if (index->soa_storage != NULL && index->soa_storage_owned != 0) {
+        gv_soa_storage_destroy(index->soa_storage);
+    }
     free(index);
 }
 
@@ -749,7 +917,7 @@ int gv_hnsw_save(const void *index_ptr, FILE *out, uint32_t version) {
        reconstruct nodes before wiring up graph links. */
     for (size_t i = 0; i < index->count; ++i) {
         GV_HNSWNode *node = index->nodes[i];
-        if (node == NULL || node->vector == NULL) {
+        if (node == NULL) {
             return -1;
         }
 
@@ -757,12 +925,17 @@ int gv_hnsw_save(const void *index_ptr, FILE *out, uint32_t version) {
             return -1;
         }
 
-        if (gv_write_floats(out, node->vector->data, node->vector->dimension) != 0) {
+        const float *vector_data = gv_soa_storage_get_data(index->soa_storage, node->vector_index);
+        if (vector_data == NULL) {
+            return -1;
+        }
+        if (gv_write_floats(out, vector_data, index->dimension) != 0) {
             return -1;
         }
 
         if (version >= 2) {
-            if (gv_write_metadata(out, node->vector->metadata) != 0) {
+            GV_Metadata *metadata = gv_soa_storage_get_metadata(index->soa_storage, node->vector_index);
+            if (gv_write_metadata(out, metadata) != 0) {
                 return -1;
             }
         }
@@ -830,7 +1003,7 @@ int gv_hnsw_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version)
     }
 
     GV_HNSWConfig config = {.M = M, .efConstruction = efConstruction, .efSearch = efSearch, .maxLevel = maxLevel};
-    void *index = gv_hnsw_create(dimension, &config);
+    void *index = gv_hnsw_create(dimension, &config, NULL);
     if (index == NULL) {
         return -1;
     }
@@ -860,45 +1033,53 @@ int gv_hnsw_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version)
             return -1;
         }
 
-        GV_Vector *vector = gv_vector_create(dimension);
-        if (vector == NULL) {
+        float *vector_data = (float *)malloc(dimension * sizeof(float));
+        if (vector_data == NULL) {
             gv_hnsw_destroy(index);
             return -1;
         }
 
-        if (gv_read_floats(in, vector->data, dimension) != 0) {
-            gv_vector_destroy(vector);
+        if (gv_read_floats(in, vector_data, dimension) != 0) {
+            free(vector_data);
             gv_hnsw_destroy(index);
             return -1;
         }
 
+        GV_Metadata *metadata = NULL;
         if (version >= 2) {
-            if (gv_read_metadata(in, vector) != 0) {
-                gv_vector_destroy(vector);
+            GV_Vector temp_vec = {.data = vector_data, .dimension = dimension, .metadata = NULL};
+            if (gv_read_metadata(in, &temp_vec) != 0) {
+                free(vector_data);
                 gv_hnsw_destroy(index);
                 return -1;
             }
+            metadata = temp_vec.metadata;
+        }
+
+        size_t vector_index = gv_soa_storage_add(hnsw_index->soa_storage, vector_data, metadata);
+        free(vector_data);
+        if (vector_index == (size_t)-1) {
+            gv_hnsw_destroy(index);
+            return -1;
         }
 
         GV_HNSWNode *node = (GV_HNSWNode *)malloc(sizeof(GV_HNSWNode));
         if (node == NULL) {
-            gv_vector_destroy(vector);
             gv_hnsw_destroy(index);
             return -1;
         }
 
-        node->vector = vector;
+        node->vector_index = vector_index;
         node->level = level;
         node->deleted = 0;
         node->neighbors = (GV_HNSWNode ***)malloc((level + 1) * sizeof(GV_HNSWNode **));
         node->neighbor_counts = (size_t *)calloc(level + 1, sizeof(size_t));
         if (node->neighbors == NULL || node->neighbor_counts == NULL) {
-            free(node->neighbors);
-            free(node->neighbor_counts);
-            gv_vector_destroy(vector);
-            free(node);
-            gv_hnsw_destroy(index);
-            return -1;
+                free(node->neighbors);
+                free(node->neighbor_counts);
+                free(node);
+                gv_hnsw_destroy(index);
+                return -1;
         }
 
         for (size_t l = 0; l <= level; ++l) {
@@ -910,7 +1091,6 @@ int gv_hnsw_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version)
                 }
                 free(node->neighbors);
                 free(node->neighbor_counts);
-                gv_vector_destroy(vector);
                 free(node);
                 gv_hnsw_destroy(index);
                 return -1;
@@ -1009,12 +1189,14 @@ int gv_hnsw_update(void *index_ptr, size_t node_index, const float *new_data, si
     }
 
     GV_HNSWNode *node = index->nodes[node_index];
-    if (node == NULL || node->deleted != 0 || node->vector == NULL) {
+    if (node == NULL || node->deleted != 0) {
         return -1;
     }
 
-    /* Update vector data */
-    memcpy(node->vector->data, new_data, dimension * sizeof(float));
+    /* Update vector data in SoA storage */
+    if (gv_soa_storage_update_data(index->soa_storage, node->vector_index, new_data) != 0) {
+        return -1;
+    }
 
     /* Rebuild binary quantization if enabled */
     if (index->use_binary_quant) {
