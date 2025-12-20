@@ -18,6 +18,7 @@ typedef struct GV_HNSWNode {
     struct GV_HNSWNode ***neighbors;
     size_t *neighbor_counts;
     size_t level;
+    size_t index;                    /**< Stable index position in GV_HNSWIndex::nodes */
 } GV_HNSWNode;
 
 typedef struct {
@@ -183,6 +184,7 @@ int gv_hnsw_insert(void *index_ptr, GV_Vector *vector) {
         index->nodes_capacity = new_capacity;
     }
 
+    new_node->index = index->count;
     index->nodes[index->count++] = new_node;
 
     if (index->count == 1) {
@@ -393,14 +395,7 @@ int gv_hnsw_search(void *index_ptr, const GV_Vector *query, size_t k,
     candidates[candidate_count].node = current;
     candidates[candidate_count++].distance = current_dist;
     
-    size_t current_idx = 0;
-    for (size_t i = 0; i < index->count; ++i) {
-        if (index->nodes[i] == current) {
-            current_idx = i;
-            break;
-        }
-    }
-    visited[current_idx] = 1;
+    visited[current->index] = 1;
 
     size_t visited_count = 1;
     size_t candidate_idx = 0;
@@ -423,14 +418,8 @@ int gv_hnsw_search(void *index_ptr, const GV_Vector *query, size_t k,
             GV_HNSWNode *neighbor = candidate_node->neighbors[0][i];
             if (neighbor == NULL || neighbor->vector == NULL) continue;
 
-            size_t node_idx = SIZE_MAX;
-            for (size_t j = 0; j < index->count; ++j) {
-                if (index->nodes[j] == neighbor) {
-                    node_idx = j;
-                    break;
-                }
-            }
-            if (node_idx == SIZE_MAX || node_idx >= index->count || visited[node_idx]) continue;
+            size_t node_idx = neighbor->index;
+            if (node_idx >= index->count || visited[node_idx]) continue;
 
             visited[node_idx] = 1;
             visited_count++;
