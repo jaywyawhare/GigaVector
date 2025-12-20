@@ -60,6 +60,17 @@ int gv_wal_append_insert_rich(GV_WAL *wal, const float *data, size_t dimension,
                                size_t metadata_count);
 
 /**
+ * @brief Append a delete operation to the WAL.
+ *
+ * Records the deletion of a vector by its index (insertion order).
+ *
+ * @param wal WAL handle; must be non-NULL.
+ * @param vector_index Index of the vector to delete (0-based insertion order).
+ * @return 0 on success, -1 on I/O or validation failure.
+ */
+int gv_wal_append_delete(GV_WAL *wal, size_t vector_index);
+
+/**
  * @brief Replay a WAL file by invoking a callback for every insert record.
  *
  * The callback is responsible for applying the operation to the in-memory
