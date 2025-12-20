@@ -118,6 +118,29 @@ int gv_soa_storage_mark_deleted(GV_SoAStorage *storage, size_t index);
  */
 int gv_soa_storage_is_deleted(const GV_SoAStorage *storage, size_t index);
 
+/**
+ * @brief Update vector data at a given index.
+ *
+ * @param storage Storage to modify; must be non-NULL.
+ * @param index Vector index to update; must be < storage->count.
+ * @param data Pointer to dimension floats to copy.
+ * @return 0 on success, -1 on invalid arguments.
+ */
+int gv_soa_storage_update_data(GV_SoAStorage *storage, size_t index, const float *data);
+
+/**
+ * @brief Update metadata for a vector at a given index.
+ *
+ * Ownership of the new metadata is transferred to the storage.
+ * Old metadata is freed.
+ *
+ * @param storage Storage to modify; must be non-NULL.
+ * @param index Vector index to update; must be < storage->count.
+ * @param metadata New metadata to attach; ownership transferred if non-NULL.
+ * @return 0 on success, -1 on invalid arguments.
+ */
+int gv_soa_storage_update_metadata(GV_SoAStorage *storage, size_t index, GV_Metadata *metadata);
+
 #ifdef __cplusplus
 }
 #endif

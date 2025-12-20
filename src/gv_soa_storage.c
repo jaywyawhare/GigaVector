@@ -159,3 +159,30 @@ int gv_soa_storage_is_deleted(const GV_SoAStorage *storage, size_t index) {
     return storage->deleted[index];
 }
 
+int gv_soa_storage_update_data(GV_SoAStorage *storage, size_t index, const float *data) {
+    if (storage == NULL || data == NULL || index >= storage->count) {
+        return -1;
+    }
+    if (storage->deleted[index] != 0) {
+        return -1;
+    }
+    float *dest = storage->data + (index * storage->dimension);
+    memcpy(dest, data, storage->dimension * sizeof(float));
+    return 0;
+}
+
+int gv_soa_storage_update_metadata(GV_SoAStorage *storage, size_t index, GV_Metadata *metadata) {
+    if (storage == NULL || index >= storage->count) {
+        return -1;
+    }
+    if (storage->deleted[index] != 0) {
+        return -1;
+    }
+    if (storage->metadata[index] != NULL) {
+        GV_Vector temp_vec = { .dimension = storage->dimension, .data = NULL, .metadata = storage->metadata[index] };
+        gv_vector_clear_metadata(&temp_vec);
+    }
+    storage->metadata[index] = metadata;
+    return 0;
+}
+
