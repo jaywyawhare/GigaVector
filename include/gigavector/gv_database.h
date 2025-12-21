@@ -14,6 +14,7 @@
 #include "gv_sparse_index.h"
 #include "gv_sparse_vector.h"
 #include "gv_soa_storage.h"
+#include "gv_metadata_index.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -53,6 +54,7 @@ typedef struct GV_Database {
     uint64_t total_range_queries;  /**< Total range-search calls. */
     uint64_t total_wal_records;    /**< Total WAL records appended. */
     int cosine_normalized;         /**< If non-zero, stored dense vectors are L2-normalized. */
+    GV_MetadataIndex *metadata_index; /**< Inverted index for fast metadata filtering. */
 } GV_Database;
 
 /**

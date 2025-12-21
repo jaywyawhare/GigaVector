@@ -19,6 +19,7 @@
 #include "gigavector/gv_wal.h"
 #include "gigavector/gv_mmap.h"
 #include "gigavector/gv_soa_storage.h"
+#include "gigavector/gv_metadata_index.h"
 
 #include <math.h>
 
@@ -222,10 +223,18 @@ GV_Database *gv_db_open(const char *filepath, size_t dimension, GV_IndexType ind
     db->total_range_queries = 0;
     db->total_wal_records = 0;
     db->cosine_normalized = 0;
+    db->metadata_index = gv_metadata_index_create();
+    if (db->metadata_index == NULL) {
+        pthread_rwlock_destroy(&db->rwlock);
+        pthread_mutex_destroy(&db->wal_mutex);
+        free(db);
+        return NULL;
+    }
 
     if (index_type == GV_INDEX_TYPE_KDTREE || index_type == GV_INDEX_TYPE_HNSW) {
         db->soa_storage = gv_soa_storage_create(dimension, 0);
         if (db->soa_storage == NULL) {
+            gv_metadata_index_destroy(db->metadata_index);
             pthread_rwlock_destroy(&db->rwlock);
             pthread_mutex_destroy(&db->wal_mutex);
             free(db);
@@ -557,6 +566,9 @@ void gv_db_close(GV_Database *db) {
     if (db->soa_storage != NULL) {
         gv_soa_storage_destroy(db->soa_storage);
     }
+    if (db->metadata_index != NULL) {
+        gv_metadata_index_destroy(db->metadata_index);
+    }
     free(db->filepath);
     free(db->wal_path);
     free(db);
@@ -596,10 +608,18 @@ GV_Database *gv_db_open_from_memory(const void *data, size_t size,
     db->total_range_queries = 0;
     db->total_wal_records = 0;
     db->cosine_normalized = 0;
+    db->metadata_index = gv_metadata_index_create();
+    if (db->metadata_index == NULL) {
+        pthread_rwlock_destroy(&db->rwlock);
+        pthread_mutex_destroy(&db->wal_mutex);
+        free(db);
+        return NULL;
+    }
 
     if (index_type == GV_INDEX_TYPE_KDTREE || index_type == GV_INDEX_TYPE_HNSW) {
         db->soa_storage = gv_soa_storage_create(dimension, 0);
         if (db->soa_storage == NULL) {
+            gv_metadata_index_destroy(db->metadata_index);
             pthread_rwlock_destroy(&db->rwlock);
             pthread_mutex_destroy(&db->wal_mutex);
             free(db);
@@ -910,10 +930,18 @@ GV_Database *gv_db_open_with_hnsw_config(const char *filepath, size_t dimension,
     db->total_range_queries = 0;
     db->total_wal_records = 0;
     db->cosine_normalized = 0;
+    db->metadata_index = gv_metadata_index_create();
+    if (db->metadata_index == NULL) {
+        pthread_rwlock_destroy(&db->rwlock);
+        pthread_mutex_destroy(&db->wal_mutex);
+        free(db);
+        return NULL;
+    }
 
     if (index_type == GV_INDEX_TYPE_KDTREE || index_type == GV_INDEX_TYPE_HNSW) {
         db->soa_storage = gv_soa_storage_create(dimension, 0);
         if (db->soa_storage == NULL) {
+            gv_metadata_index_destroy(db->metadata_index);
             pthread_rwlock_destroy(&db->rwlock);
             pthread_mutex_destroy(&db->wal_mutex);
             free(db);
@@ -1198,6 +1226,14 @@ int gv_db_add_vector_with_metadata(GV_Database *db, const float *data, size_t di
             pthread_rwlock_unlock(&db->rwlock);
             return -1;
         }
+        /* Update metadata index */
+        if (metadata != NULL && db->metadata_index != NULL) {
+            GV_Metadata *current = metadata;
+            while (current != NULL) {
+                gv_metadata_index_add(db->metadata_index, current->key, current->value, vector_index);
+                current = current->next;
+            }
+        }
         status = gv_kdtree_insert(&(db->root), db->soa_storage, vector_index, 0);
     } else if (db->index_type == GV_INDEX_TYPE_HNSW) {
         GV_Vector *vector = gv_vector_create_from_data(dimension, data);
@@ -1216,6 +1252,15 @@ int gv_db_add_vector_with_metadata(GV_Database *db, const float *data, size_t di
             }
         }
         status = gv_hnsw_insert(db->hnsw_index, vector);
+        if (status == 0 && vector->metadata != NULL && db->metadata_index != NULL) {
+            /* Update metadata index - use db->count as vector index */
+            size_t vector_index = db->count;
+            GV_Metadata *current = vector->metadata;
+            while (current != NULL) {
+                gv_metadata_index_add(db->metadata_index, current->key, current->value, vector_index);
+                current = current->next;
+            }
+        }
         if (status != 0) {
             gv_vector_destroy(vector);
         }
@@ -1236,6 +1281,15 @@ int gv_db_add_vector_with_metadata(GV_Database *db, const float *data, size_t di
             }
         }
         status = gv_ivfpq_insert(db->hnsw_index, vector);
+        if (status == 0 && vector->metadata != NULL && db->metadata_index != NULL) {
+            /* Update metadata index - use db->count as vector index */
+            size_t vector_index = db->count;
+            GV_Metadata *current = vector->metadata;
+            while (current != NULL) {
+                gv_metadata_index_add(db->metadata_index, current->key, current->value, vector_index);
+                current = current->next;
+            }
+        }
         if (status != 0) {
             gv_vector_destroy(vector);
         }
@@ -2065,12 +2119,19 @@ int gv_db_delete_vector_by_index(GV_Database *db, size_t vector_index) {
         return -1;
     }
 
-    if (status == 0 && db->wal != NULL) {
-        if (gv_wal_append_delete(db->wal, vector_index) != 0) {
-            pthread_rwlock_unlock(&db->rwlock);
-            return -1;
+    if (status == 0) {
+        /* Remove from metadata index */
+        if (db->metadata_index != NULL) {
+            gv_metadata_index_remove_vector(db->metadata_index, vector_index);
         }
-        db->total_wal_records += 1;
+        /* Update WAL */
+        if (db->wal != NULL) {
+            if (gv_wal_append_delete(db->wal, vector_index) != 0) {
+                pthread_rwlock_unlock(&db->rwlock);
+                return -1;
+            }
+            db->total_wal_records += 1;
+        }
     }
 
     pthread_rwlock_unlock(&db->rwlock);
@@ -2167,7 +2228,15 @@ int gv_db_update_vector_metadata(GV_Database *db, size_t vector_index,
             }
         }
         
+        /* Get old metadata before updating */
+        GV_Metadata *old_metadata = gv_soa_storage_get_metadata(db->soa_storage, vector_index);
+        
         status = gv_soa_storage_update_metadata(db->soa_storage, vector_index, temp_vec.metadata);
+        
+        /* Update metadata index */
+        if (status == 0 && db->metadata_index != NULL) {
+            gv_metadata_index_update(db->metadata_index, vector_index, old_metadata, temp_vec.metadata);
+        }
     } else if (db->index_type == GV_INDEX_TYPE_HNSW) {
         if (db->hnsw_index == NULL) {
             pthread_rwlock_unlock(&db->rwlock);
