@@ -31,6 +31,15 @@ typedef enum {
 } GV_IndexType;
 
 /**
+ * @brief Resource limits configuration for a database.
+ */
+typedef struct {
+    size_t max_memory_bytes;           /**< Maximum memory usage in bytes (0 = unlimited). */
+    size_t max_vectors;                /**< Maximum number of vectors (0 = unlimited). */
+    size_t max_concurrent_operations;  /**< Maximum concurrent operations (0 = unlimited). */
+} GV_ResourceLimits;
+
+/**
  * @brief Represents an in-memory vector database.
  */
 typedef struct GV_Database {
@@ -63,6 +72,11 @@ typedef struct GV_Database {
     size_t compaction_interval_sec;    /**< Compaction interval in seconds (default: 300). */
     size_t wal_compaction_threshold;   /**< WAL size threshold for compaction in bytes (default: 10MB). */
     double deleted_ratio_threshold;    /**< Ratio of deleted vectors to trigger compaction (default: 0.1). */
+    /* Resource limits */
+    GV_ResourceLimits resource_limits; /**< Resource limits configuration. */
+    size_t current_memory_bytes;       /**< Current estimated memory usage in bytes. */
+    size_t current_concurrent_ops;     /**< Current number of concurrent operations. */
+    pthread_mutex_t resource_mutex;     /**< Mutex for resource tracking. */
 } GV_Database;
 
 /**
@@ -576,6 +590,39 @@ void gv_db_set_wal_compaction_threshold(GV_Database *db, size_t threshold_bytes)
  * @param ratio Threshold ratio (0.0 to 1.0, default: 0.1).
  */
 void gv_db_set_deleted_ratio_threshold(GV_Database *db, double ratio);
+
+/**
+ * @brief Set resource limits for the database.
+ *
+ * @param db Database instance; must be non-NULL.
+ * @param limits Resource limits structure; must be non-NULL.
+ * @return 0 on success, -1 on error.
+ */
+int gv_db_set_resource_limits(GV_Database *db, const GV_ResourceLimits *limits);
+
+/**
+ * @brief Get current resource limits.
+ *
+ * @param db Database instance; must be non-NULL.
+ * @param limits Output structure to fill; must be non-NULL.
+ */
+void gv_db_get_resource_limits(const GV_Database *db, GV_ResourceLimits *limits);
+
+/**
+ * @brief Get current estimated memory usage in bytes.
+ *
+ * @param db Database instance; must be non-NULL.
+ * @return Current memory usage in bytes.
+ */
+size_t gv_db_get_memory_usage(const GV_Database *db);
+
+/**
+ * @brief Get current number of concurrent operations.
+ *
+ * @param db Database instance; must be non-NULL.
+ * @return Current number of concurrent operations.
+ */
+size_t gv_db_get_concurrent_operations(const GV_Database *db);
 
 #ifdef __cplusplus
 }

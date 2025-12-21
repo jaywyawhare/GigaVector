@@ -25,6 +25,13 @@
 
 #include <math.h>
 
+/* Forward declarations for resource limits */
+static size_t gv_db_estimate_vector_memory(size_t dimension);
+static void gv_db_update_memory_usage(GV_Database *db);
+static int gv_db_check_resource_limits(GV_Database *db, size_t additional_vectors, size_t additional_memory);
+static void gv_db_increment_concurrent_ops(GV_Database *db);
+static void gv_db_decrement_concurrent_ops(GV_Database *db);
+
 static char *gv_db_strdup(const char *src) {
     if (src == NULL) {
         return NULL;
@@ -239,6 +246,13 @@ GV_Database *gv_db_open(const char *filepath, size_t dimension, GV_IndexType ind
     db->compaction_interval_sec = 300;  /* Default: 5 minutes */
     db->wal_compaction_threshold = 10 * 1024 * 1024;  /* Default: 10MB */
     db->deleted_ratio_threshold = 0.1;  /* Default: 10% */
+    /* Initialize resource limits */
+    db->resource_limits.max_memory_bytes = 0;  /* Unlimited by default */
+    db->resource_limits.max_vectors = 0;  /* Unlimited by default */
+    db->resource_limits.max_concurrent_operations = 0;  /* Unlimited by default */
+    db->current_memory_bytes = 0;
+    db->current_concurrent_ops = 0;
+    pthread_mutex_init(&db->resource_mutex, NULL);
 
     if (index_type == GV_INDEX_TYPE_KDTREE || index_type == GV_INDEX_TYPE_HNSW) {
         db->soa_storage = gv_soa_storage_create(dimension, 0);
@@ -584,6 +598,7 @@ void gv_db_close(GV_Database *db) {
     }
     pthread_mutex_destroy(&db->compaction_mutex);
     pthread_cond_destroy(&db->compaction_cond);
+    pthread_mutex_destroy(&db->resource_mutex);
     free(db->filepath);
     free(db->wal_path);
     free(db);
@@ -637,6 +652,13 @@ GV_Database *gv_db_open_from_memory(const void *data, size_t size,
     db->compaction_interval_sec = 300;  /* Default: 5 minutes */
     db->wal_compaction_threshold = 10 * 1024 * 1024;  /* Default: 10MB */
     db->deleted_ratio_threshold = 0.1;  /* Default: 10% */
+    /* Initialize resource limits */
+    db->resource_limits.max_memory_bytes = 0;  /* Unlimited by default */
+    db->resource_limits.max_vectors = 0;  /* Unlimited by default */
+    db->resource_limits.max_concurrent_operations = 0;  /* Unlimited by default */
+    db->current_memory_bytes = 0;
+    db->current_concurrent_ops = 0;
+    pthread_mutex_init(&db->resource_mutex, NULL);
 
     if (index_type == GV_INDEX_TYPE_KDTREE || index_type == GV_INDEX_TYPE_HNSW) {
         db->soa_storage = gv_soa_storage_create(dimension, 0);
@@ -966,6 +988,13 @@ GV_Database *gv_db_open_with_hnsw_config(const char *filepath, size_t dimension,
     db->compaction_interval_sec = 300;  /* Default: 5 minutes */
     db->wal_compaction_threshold = 10 * 1024 * 1024;  /* Default: 10MB */
     db->deleted_ratio_threshold = 0.1;  /* Default: 10% */
+    /* Initialize resource limits */
+    db->resource_limits.max_memory_bytes = 0;  /* Unlimited by default */
+    db->resource_limits.max_vectors = 0;  /* Unlimited by default */
+    db->resource_limits.max_concurrent_operations = 0;  /* Unlimited by default */
+    db->current_memory_bytes = 0;
+    db->current_concurrent_ops = 0;
+    pthread_mutex_init(&db->resource_mutex, NULL);
 
     if (index_type == GV_INDEX_TYPE_KDTREE || index_type == GV_INDEX_TYPE_HNSW) {
         db->soa_storage = gv_soa_storage_create(dimension, 0);
@@ -1106,11 +1135,21 @@ int gv_db_add_vector(GV_Database *db, const float *data, size_t dimension) {
         return -1;
     }
 
+    /* Check resource limits */
+    size_t vector_memory = gv_db_estimate_vector_memory(dimension);
+    if (gv_db_check_resource_limits(db, 1, vector_memory) != 0) {
+        return -1; /* Resource limit exceeded */
+    }
+
+    /* Increment concurrent operations */
+    gv_db_increment_concurrent_ops(db);
+
     if (db->wal != NULL && db->wal_replaying == 0) {
         pthread_mutex_lock(&db->wal_mutex);
         int wal_res = gv_wal_append_insert(db->wal, data, dimension, NULL, NULL);
         pthread_mutex_unlock(&db->wal_mutex);
         if (wal_res != 0) {
+            gv_db_decrement_concurrent_ops(db);
             return -1;
         }
         db->total_wal_records += 1;
@@ -1180,17 +1219,32 @@ int gv_db_add_vector(GV_Database *db, const float *data, size_t dimension) {
 
     if (status != 0) {
         pthread_rwlock_unlock(&db->rwlock);
+        gv_db_decrement_concurrent_ops(db);
         return -1;
     }
 
     db->count += 1;
     db->total_inserts += 1;
+    gv_db_update_memory_usage(db);
     pthread_rwlock_unlock(&db->rwlock);
+    gv_db_decrement_concurrent_ops(db);
     return 0;
 }
 
 int gv_db_add_vector_with_metadata(GV_Database *db, const float *data, size_t dimension,
                                     const char *metadata_key, const char *metadata_value) {
+    if (db == NULL || data == NULL || dimension == 0 || dimension != db->dimension) {
+        return -1;
+    }
+
+    /* Check resource limits */
+    size_t vector_memory = gv_db_estimate_vector_memory(dimension);
+    if (gv_db_check_resource_limits(db, 1, vector_memory) != 0) {
+        return -1; /* Resource limit exceeded */
+    }
+
+    /* Increment concurrent operations */
+    gv_db_increment_concurrent_ops(db);
     if (db == NULL || data == NULL || dimension == 0 || dimension != db->dimension) {
         return -1;
     }
@@ -1498,12 +1552,15 @@ int gv_db_add_vector_with_rich_metadata(GV_Database *db, const float *data, size
 
     if (status != 0) {
         pthread_rwlock_unlock(&db->rwlock);
+        gv_db_decrement_concurrent_ops(db);
         return -1;
     }
 
     db->count += 1;
     db->total_inserts += 1;
+    gv_db_update_memory_usage(db);
     pthread_rwlock_unlock(&db->rwlock);
+    gv_db_decrement_concurrent_ops(db);
     return 0;
 }
 
@@ -2638,4 +2695,211 @@ void gv_db_set_deleted_ratio_threshold(GV_Database *db, double ratio) {
         ratio = 1.0;
     }
     db->deleted_ratio_threshold = ratio;
+}
+
+/* Resource limits implementation */
+
+/**
+ * @brief Estimate memory usage for a vector.
+ */
+static size_t gv_db_estimate_vector_memory(size_t dimension) {
+    /* Vector data: dimension * sizeof(float) */
+    size_t data_size = dimension * sizeof(float);
+    /* Metadata overhead: assume average 64 bytes per vector */
+    size_t metadata_overhead = 64;
+    /* SoA storage overhead: deleted flag, metadata pointer */
+    size_t storage_overhead = sizeof(int) + sizeof(void *);
+    return data_size + metadata_overhead + storage_overhead;
+}
+
+/**
+ * @brief Update memory usage estimate.
+ */
+static void gv_db_update_memory_usage(GV_Database *db) {
+    if (db == NULL) {
+        return;
+    }
+
+    pthread_mutex_lock(&db->resource_mutex);
+
+    size_t total_memory = 0;
+
+    /* Base database structure */
+    total_memory += sizeof(GV_Database);
+
+    /* SoA storage */
+    if (db->soa_storage != NULL) {
+        size_t vector_memory = gv_db_estimate_vector_memory(db->soa_storage->dimension);
+        total_memory += sizeof(GV_SoAStorage);
+        total_memory += db->soa_storage->count * vector_memory;
+        total_memory += db->soa_storage->capacity * (sizeof(GV_Metadata *) + sizeof(int));
+    }
+
+    /* Index memory (rough estimate) */
+    if (db->index_type == GV_INDEX_TYPE_KDTREE) {
+        /* KD-tree: roughly 3 pointers per node */
+        total_memory += db->count * (sizeof(GV_KDNode) + sizeof(size_t));
+    } else if (db->index_type == GV_INDEX_TYPE_HNSW) {
+        /* HNSW: estimate based on node count and connections */
+        total_memory += db->count * (sizeof(void *) * 2); /* Rough estimate */
+    } else if (db->index_type == GV_INDEX_TYPE_IVFPQ) {
+        /* IVFPQ: estimate based on entries */
+        total_memory += db->count * (sizeof(void *) * 2); /* Rough estimate */
+    }
+
+    /* Metadata index */
+    if (db->metadata_index != NULL) {
+        /* Rough estimate: 100 bytes per metadata entry */
+        total_memory += db->count * 100;
+    }
+
+    /* WAL (if exists) */
+    if (db->wal != NULL && db->wal_path != NULL) {
+        FILE *wal_file = fopen(db->wal_path, "rb");
+        if (wal_file != NULL) {
+            if (fseek(wal_file, 0, SEEK_END) == 0) {
+                long wal_size = ftell(wal_file);
+                if (wal_size > 0) {
+                    total_memory += (size_t)wal_size;
+                }
+            }
+            fclose(wal_file);
+        }
+    }
+
+    db->current_memory_bytes = total_memory;
+
+    pthread_mutex_unlock(&db->resource_mutex);
+}
+
+/**
+ * @brief Check if resource limits would be exceeded.
+ */
+static int gv_db_check_resource_limits(GV_Database *db, size_t additional_vectors, size_t additional_memory) {
+    if (db == NULL) {
+        return -1;
+    }
+
+    pthread_mutex_lock(&db->resource_mutex);
+
+    /* Check vector count limit */
+    if (db->resource_limits.max_vectors > 0) {
+        if (db->count + additional_vectors > db->resource_limits.max_vectors) {
+            pthread_mutex_unlock(&db->resource_mutex);
+            return -1; /* Limit exceeded */
+        }
+    }
+
+    /* Check memory limit */
+    if (db->resource_limits.max_memory_bytes > 0) {
+        size_t estimated_new_memory = db->current_memory_bytes + additional_memory;
+        if (estimated_new_memory > db->resource_limits.max_memory_bytes) {
+            pthread_mutex_unlock(&db->resource_mutex);
+            return -1; /* Limit exceeded */
+        }
+    }
+
+    /* Check concurrent operations limit */
+    if (db->resource_limits.max_concurrent_operations > 0) {
+        if (db->current_concurrent_ops >= db->resource_limits.max_concurrent_operations) {
+            pthread_mutex_unlock(&db->resource_mutex);
+            return -1; /* Limit exceeded */
+        }
+    }
+
+    pthread_mutex_unlock(&db->resource_mutex);
+    return 0;
+}
+
+/**
+ * @brief Increment concurrent operations counter.
+ */
+static void gv_db_increment_concurrent_ops(GV_Database *db) {
+    if (db == NULL) {
+        return;
+    }
+    pthread_mutex_lock(&db->resource_mutex);
+    db->current_concurrent_ops++;
+    pthread_mutex_unlock(&db->resource_mutex);
+}
+
+/**
+ * @brief Decrement concurrent operations counter.
+ */
+static void gv_db_decrement_concurrent_ops(GV_Database *db) {
+    if (db == NULL) {
+        return;
+    }
+    pthread_mutex_lock(&db->resource_mutex);
+    if (db->current_concurrent_ops > 0) {
+        db->current_concurrent_ops--;
+    }
+    pthread_mutex_unlock(&db->resource_mutex);
+}
+
+/**
+ * @brief Set resource limits for the database.
+ */
+int gv_db_set_resource_limits(GV_Database *db, const GV_ResourceLimits *limits) {
+    if (db == NULL || limits == NULL) {
+        return -1;
+    }
+
+    pthread_mutex_lock(&db->resource_mutex);
+    db->resource_limits.max_memory_bytes = limits->max_memory_bytes;
+    db->resource_limits.max_vectors = limits->max_vectors;
+    db->resource_limits.max_concurrent_operations = limits->max_concurrent_operations;
+    pthread_mutex_unlock(&db->resource_mutex);
+
+    /* Update memory usage estimate */
+    gv_db_update_memory_usage(db);
+
+    return 0;
+}
+
+/**
+ * @brief Get current resource limits.
+ */
+void gv_db_get_resource_limits(const GV_Database *db, GV_ResourceLimits *limits) {
+    if (db == NULL || limits == NULL) {
+        return;
+    }
+
+    pthread_mutex_lock((pthread_mutex_t *)&db->resource_mutex);
+    limits->max_memory_bytes = db->resource_limits.max_memory_bytes;
+    limits->max_vectors = db->resource_limits.max_vectors;
+    limits->max_concurrent_operations = db->resource_limits.max_concurrent_operations;
+    pthread_mutex_unlock((pthread_mutex_t *)&db->resource_mutex);
+}
+
+/**
+ * @brief Get current estimated memory usage in bytes.
+ */
+size_t gv_db_get_memory_usage(const GV_Database *db) {
+    if (db == NULL) {
+        return 0;
+    }
+
+    gv_db_update_memory_usage((GV_Database *)db);
+
+    pthread_mutex_lock((pthread_mutex_t *)&db->resource_mutex);
+    size_t usage = db->current_memory_bytes;
+    pthread_mutex_unlock((pthread_mutex_t *)&db->resource_mutex);
+
+    return usage;
+}
+
+/**
+ * @brief Get current number of concurrent operations.
+ */
+size_t gv_db_get_concurrent_operations(const GV_Database *db) {
+    if (db == NULL) {
+        return 0;
+    }
+
+    pthread_mutex_lock((pthread_mutex_t *)&db->resource_mutex);
+    size_t ops = db->current_concurrent_ops;
+    pthread_mutex_unlock((pthread_mutex_t *)&db->resource_mutex);
+
+    return ops;
 }
