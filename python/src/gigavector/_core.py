@@ -358,6 +358,62 @@ class Database:
             raise ValueError("ratio must be between 0.0 and 1.0")
         lib.gv_db_set_deleted_ratio_threshold(self._db, float(ratio))
 
+    def set_resource_limits(
+        self,
+        max_memory_bytes: int | None = None,
+        max_vectors: int | None = None,
+        max_concurrent_operations: int | None = None,
+    ) -> None:
+        """
+        Set resource limits for the database.
+
+        Args:
+            max_memory_bytes: Maximum memory usage in bytes (0 or None = unlimited).
+            max_vectors: Maximum number of vectors (0 or None = unlimited).
+            max_concurrent_operations: Maximum concurrent operations (0 or None = unlimited).
+        """
+        limits = ffi.new("GV_ResourceLimits *")
+        limits.max_memory_bytes = max_memory_bytes if max_memory_bytes is not None else 0
+        limits.max_vectors = max_vectors if max_vectors is not None else 0
+        limits.max_concurrent_operations = max_concurrent_operations if max_concurrent_operations is not None else 0
+
+        rc = lib.gv_db_set_resource_limits(self._db, limits)
+        if rc != 0:
+            raise RuntimeError("gv_db_set_resource_limits failed")
+
+    def get_resource_limits(self) -> dict[str, int]:
+        """
+        Get current resource limits.
+
+        Returns:
+            Dictionary with 'max_memory_bytes', 'max_vectors', 'max_concurrent_operations'.
+        """
+        limits = ffi.new("GV_ResourceLimits *")
+        lib.gv_db_get_resource_limits(self._db, limits)
+        return {
+            "max_memory_bytes": limits.max_memory_bytes,
+            "max_vectors": limits.max_vectors,
+            "max_concurrent_operations": limits.max_concurrent_operations,
+        }
+
+    def get_memory_usage(self) -> int:
+        """
+        Get current estimated memory usage in bytes.
+
+        Returns:
+            Current memory usage in bytes.
+        """
+        return lib.gv_db_get_memory_usage(self._db)
+
+    def get_concurrent_operations(self) -> int:
+        """
+        Get current number of concurrent operations.
+
+        Returns:
+            Current number of concurrent operations.
+        """
+        return lib.gv_db_get_concurrent_operations(self._db)
+
     def __enter__(self):
         return self
 

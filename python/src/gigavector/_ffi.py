@@ -174,6 +174,18 @@ int gv_wal_append_insert_rich(GV_WAL *wal, const float *data, size_t dimension,
                               size_t metadata_count);
 int gv_wal_truncate(GV_WAL *wal);
 
+// Resource limits
+typedef struct {
+    size_t max_memory_bytes;
+    size_t max_vectors;
+    size_t max_concurrent_operations;
+} GV_ResourceLimits;
+
+int gv_db_set_resource_limits(GV_Database *db, const GV_ResourceLimits *limits);
+void gv_db_get_resource_limits(const GV_Database *db, GV_ResourceLimits *limits);
+size_t gv_db_get_memory_usage(const GV_Database *db);
+size_t gv_db_get_concurrent_operations(const GV_Database *db);
+
 // Compaction functions
 int gv_db_start_background_compaction(GV_Database *db);
 void gv_db_stop_background_compaction(GV_Database *db);
