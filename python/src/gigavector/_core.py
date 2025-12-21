@@ -293,6 +293,71 @@ class Database:
         if rc != 0:
             raise RuntimeError("gv_db_ivfpq_train failed")
 
+    def start_background_compaction(self) -> None:
+        """
+        Start background compaction thread.
+
+        The compaction thread periodically:
+        - Removes deleted vectors from storage
+        - Rebuilds indexes to remove gaps
+        - Compacts WAL when it grows too large
+        """
+        rc = lib.gv_db_start_background_compaction(self._db)
+        if rc != 0:
+            raise RuntimeError("gv_db_start_background_compaction failed")
+
+    def stop_background_compaction(self) -> None:
+        """
+        Stop background compaction thread gracefully.
+        """
+        lib.gv_db_stop_background_compaction(self._db)
+
+    def compact(self) -> None:
+        """
+        Manually trigger compaction (runs synchronously).
+
+        This performs the same compaction operations as the background thread
+        but runs synchronously in the current thread.
+        """
+        rc = lib.gv_db_compact(self._db)
+        if rc != 0:
+            raise RuntimeError("gv_db_compact failed")
+
+    def set_compaction_interval(self, interval_sec: int) -> None:
+        """
+        Set compaction interval in seconds.
+
+        Args:
+            interval_sec: Compaction interval in seconds (default: 300).
+        """
+        if interval_sec < 0:
+            raise ValueError("interval_sec must be non-negative")
+        lib.gv_db_set_compaction_interval(self._db, int(interval_sec))
+
+    def set_wal_compaction_threshold(self, threshold_bytes: int) -> None:
+        """
+        Set WAL compaction threshold in bytes.
+
+        Args:
+            threshold_bytes: WAL size threshold for compaction (default: 10MB).
+        """
+        if threshold_bytes < 0:
+            raise ValueError("threshold_bytes must be non-negative")
+        lib.gv_db_set_wal_compaction_threshold(self._db, int(threshold_bytes))
+
+    def set_deleted_ratio_threshold(self, ratio: float) -> None:
+        """
+        Set deleted vector ratio threshold for triggering compaction.
+
+        Compaction is triggered when the ratio of deleted vectors exceeds this threshold.
+
+        Args:
+            ratio: Threshold ratio (0.0 to 1.0, default: 0.1).
+        """
+        if ratio < 0.0 or ratio > 1.0:
+            raise ValueError("ratio must be between 0.0 and 1.0")
+        lib.gv_db_set_deleted_ratio_threshold(self._db, float(ratio))
+
     def __enter__(self):
         return self
 

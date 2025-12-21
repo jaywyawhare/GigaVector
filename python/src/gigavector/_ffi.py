@@ -173,6 +173,14 @@ int gv_wal_append_insert_rich(GV_WAL *wal, const float *data, size_t dimension,
                               const char *const *metadata_keys, const char *const *metadata_values,
                               size_t metadata_count);
 int gv_wal_truncate(GV_WAL *wal);
+
+// Compaction functions
+int gv_db_start_background_compaction(GV_Database *db);
+void gv_db_stop_background_compaction(GV_Database *db);
+int gv_db_compact(GV_Database *db);
+void gv_db_set_compaction_interval(GV_Database *db, size_t interval_sec);
+void gv_db_set_wal_compaction_threshold(GV_Database *db, size_t threshold_bytes);
+void gv_db_set_deleted_ratio_threshold(GV_Database *db, double ratio);
 """
 )
 
