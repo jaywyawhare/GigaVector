@@ -55,6 +55,14 @@ typedef struct GV_Database {
     uint64_t total_wal_records;    /**< Total WAL records appended. */
     int cosine_normalized;         /**< If non-zero, stored dense vectors are L2-normalized. */
     GV_MetadataIndex *metadata_index; /**< Inverted index for fast metadata filtering. */
+    /* Background compaction */
+    pthread_t compaction_thread;   /**< Background compaction thread handle. */
+    int compaction_running;        /**< 1 if compaction thread is running, 0 otherwise. */
+    pthread_mutex_t compaction_mutex; /**< Mutex for compaction thread control. */
+    pthread_cond_t compaction_cond;    /**< Condition variable for compaction thread. */
+    size_t compaction_interval_sec;    /**< Compaction interval in seconds (default: 300). */
+    size_t wal_compaction_threshold;   /**< WAL size threshold for compaction in bytes (default: 10MB). */
+    double deleted_ratio_threshold;    /**< Ratio of deleted vectors to trigger compaction (default: 0.1). */
 } GV_Database;
 
 /**
@@ -508,6 +516,66 @@ void gv_db_disable_wal(GV_Database *db);
  * @return 0 on success, -1 on error or if WAL is disabled.
  */
 int gv_db_wal_dump(const GV_Database *db, FILE *out);
+
+/**
+ * @brief Start background compaction thread.
+ *
+ * The compaction thread periodically:
+ * - Removes deleted vectors from SoA storage
+ * - Rebuilds indexes to remove gaps
+ * - Compacts WAL when it grows too large
+ *
+ * @param db Database instance; must be non-NULL.
+ * @return 0 on success, -1 on error.
+ */
+int gv_db_start_background_compaction(GV_Database *db);
+
+/**
+ * @brief Stop background compaction thread.
+ *
+ * This function waits for the compaction thread to finish its current operation
+ * and then stops it gracefully.
+ *
+ * @param db Database instance; must be non-NULL.
+ */
+void gv_db_stop_background_compaction(GV_Database *db);
+
+/**
+ * @brief Manually trigger compaction (runs synchronously).
+ *
+ * This function performs the same compaction operations as the background thread
+ * but runs synchronously in the current thread.
+ *
+ * @param db Database instance; must be non-NULL.
+ * @return 0 on success, -1 on error.
+ */
+int gv_db_compact(GV_Database *db);
+
+/**
+ * @brief Set compaction interval in seconds.
+ *
+ * @param db Database instance; must be non-NULL.
+ * @param interval_sec Compaction interval in seconds (default: 300).
+ */
+void gv_db_set_compaction_interval(GV_Database *db, size_t interval_sec);
+
+/**
+ * @brief Set WAL compaction threshold in bytes.
+ *
+ * @param db Database instance; must be non-NULL.
+ * @param threshold_bytes WAL size threshold for compaction (default: 10MB).
+ */
+void gv_db_set_wal_compaction_threshold(GV_Database *db, size_t threshold_bytes);
+
+/**
+ * @brief Set deleted vector ratio threshold for triggering compaction.
+ *
+ * Compaction is triggered when the ratio of deleted vectors exceeds this threshold.
+ *
+ * @param db Database instance; must be non-NULL.
+ * @param ratio Threshold ratio (0.0 to 1.0, default: 0.1).
+ */
+void gv_db_set_deleted_ratio_threshold(GV_Database *db, double ratio);
 
 #ifdef __cplusplus
 }
