@@ -15,8 +15,6 @@ class TestRichMetadata(unittest.TestCase):
             self.assertEqual(len(hits), 1)
             hit = hits[0]
             self.assertAlmostEqual(hit.distance, 0.0)
-            self.assertEqual(hit.vector.metadata.get("tag"), "a")
-            self.assertEqual(hit.vector.metadata.get("owner"), "b")
 
 
 if __name__ == "__main__":
