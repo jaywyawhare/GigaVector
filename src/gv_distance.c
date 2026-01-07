@@ -177,17 +177,17 @@ static float gv_vector_norm_scalar(const float *v, size_t dimension) {
 
 static float gv_vector_dot(const GV_Vector *a, const GV_Vector *b) {
 #ifdef __AVX512F__
-    if (gv_cpu_has_feature(GV_CPU_FEATURE_AVX512F)) {
+    if (gv_cpu_has_feature(GV_CPU_FEATURE_AVX512F) && a->dimension >= 32 && (a->dimension % 16 == 0)) {
         return gv_vector_dot_avx512(a->data, b->data, a->dimension);
     }
 #endif
 #ifdef __AVX2__
-    if (gv_cpu_has_feature(GV_CPU_FEATURE_AVX2) && gv_cpu_has_feature(GV_CPU_FEATURE_FMA)) {
+    if (gv_cpu_has_feature(GV_CPU_FEATURE_AVX2) && gv_cpu_has_feature(GV_CPU_FEATURE_FMA) && a->dimension >= 16 && (a->dimension % 8 == 0)) {
         return gv_vector_dot_avx2(a->data, b->data, a->dimension);
     }
 #endif
 #ifdef __SSE4_2__
-    if (gv_cpu_has_feature(GV_CPU_FEATURE_SSE4_2)) {
+    if (gv_cpu_has_feature(GV_CPU_FEATURE_SSE4_2) && a->dimension >= 8 && (a->dimension % 4 == 0)) {
         return gv_vector_dot_sse(a->data, b->data, a->dimension);
     }
 #endif
@@ -196,17 +196,17 @@ static float gv_vector_dot(const GV_Vector *a, const GV_Vector *b) {
 
 static float gv_vector_norm(const GV_Vector *v) {
 #ifdef __AVX512F__
-    if (gv_cpu_has_feature(GV_CPU_FEATURE_AVX512F)) {
+    if (gv_cpu_has_feature(GV_CPU_FEATURE_AVX512F) && v->dimension >= 32 && (v->dimension % 16 == 0)) {
         return gv_vector_norm_avx512(v->data, v->dimension);
     }
 #endif
 #ifdef __AVX2__
-    if (gv_cpu_has_feature(GV_CPU_FEATURE_AVX2) && gv_cpu_has_feature(GV_CPU_FEATURE_FMA)) {
+    if (gv_cpu_has_feature(GV_CPU_FEATURE_AVX2) && gv_cpu_has_feature(GV_CPU_FEATURE_FMA) && v->dimension >= 16 && (v->dimension % 8 == 0)) {
         return gv_vector_norm_avx2(v->data, v->dimension);
     }
 #endif
 #ifdef __SSE4_2__
-    if (gv_cpu_has_feature(GV_CPU_FEATURE_SSE4_2)) {
+    if (gv_cpu_has_feature(GV_CPU_FEATURE_SSE4_2) && v->dimension >= 8 && (v->dimension % 4 == 0)) {
         return gv_vector_norm_sse(v->data, v->dimension);
     }
 #endif
@@ -314,17 +314,17 @@ float gv_distance_euclidean(const GV_Vector *a, const GV_Vector *b) {
     }
 
 #ifdef __AVX512F__
-    if (gv_cpu_has_feature(GV_CPU_FEATURE_AVX512F)) {
+    if (gv_cpu_has_feature(GV_CPU_FEATURE_AVX512F) && a->dimension >= 16 && (a->dimension % 16 == 0)) {
         return gv_distance_euclidean_avx512(a->data, b->data, a->dimension);
     }
 #endif
 #ifdef __AVX2__
-    if (gv_cpu_has_feature(GV_CPU_FEATURE_AVX2) && gv_cpu_has_feature(GV_CPU_FEATURE_FMA)) {
+    if (gv_cpu_has_feature(GV_CPU_FEATURE_AVX2) && gv_cpu_has_feature(GV_CPU_FEATURE_FMA) && a->dimension >= 8 && (a->dimension % 8 == 0)) {
         return gv_distance_euclidean_avx2(a->data, b->data, a->dimension);
     }
 #endif
 #ifdef __SSE4_2__
-    if (gv_cpu_has_feature(GV_CPU_FEATURE_SSE4_2)) {
+    if (gv_cpu_has_feature(GV_CPU_FEATURE_SSE4_2) && a->dimension >= 4 && (a->dimension % 4 == 0)) {
         return gv_distance_euclidean_sse(a->data, b->data, a->dimension);
     }
 #endif

@@ -864,7 +864,7 @@ int gv_ivfpq_search(void *index_ptr, const GV_Vector *query, size_t k,
             }
         }
     }
-    
+
     /* Limit results to k after reranking */
     size_t result_count = (found < k) ? found : k;
     for (size_t i = 0; i < result_count; ++i) {
@@ -927,6 +927,7 @@ void gv_ivfpq_destroy(void *index_ptr) {
 }
 
 int gv_ivfpq_save(const void *index_ptr, FILE *out, uint32_t version) {
+    (void)version;
     const GV_IVFPQIndex *idx = (const GV_IVFPQIndex *)index_ptr;
     if (idx == NULL || out == NULL) return -1;
     uint32_t crc = gv_crc32_init();
@@ -995,6 +996,7 @@ int gv_ivfpq_save(const void *index_ptr, FILE *out, uint32_t version) {
 }
 
 int gv_ivfpq_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version) {
+    (void)version;
     if (index_ptr == NULL || in == NULL) return -1;
     size_t dim = 0, nlist = 0, m = 0, nprobe = 0, train_iters = 0, default_rerank = 0;
     uint8_t nbits = 0;
