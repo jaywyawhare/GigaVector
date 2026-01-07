@@ -529,6 +529,48 @@ int gv_kdtree_knn_search(const GV_KDNode *root, const GV_SoAStorage *storage, co
 
     gv_knn_search_recursive(root, storage, query, &ctx, &storage_ctx);
 
+    /* Copy vector data from views to ensure results remain valid after temp_views is freed */
+    for (size_t i = 0; i < ctx.count; ++i) {
+        if (ctx.results[i].vector != NULL && !ctx.results[i].is_sparse) {
+            const GV_Vector *view = ctx.results[i].vector;
+            GV_Vector *copy = gv_vector_create_from_data(view->dimension, view->data);
+            if (copy != NULL && view->metadata != NULL) {
+                /* Copy metadata chain */
+                GV_Metadata *src = view->metadata;
+                GV_Metadata *dst_head = NULL;
+                GV_Metadata *dst_tail = NULL;
+                while (src != NULL) {
+                    GV_Metadata *new_meta = (GV_Metadata *)malloc(sizeof(GV_Metadata));
+                    if (new_meta == NULL) {
+                        /* Free what we've copied so far */
+                        while (dst_head != NULL) {
+                            GV_Metadata *next = dst_head->next;
+                            free(dst_head->key);
+                            free(dst_head->value);
+                            free(dst_head);
+                            dst_head = next;
+                        }
+                        gv_vector_destroy(copy);
+                        copy = NULL;
+                        break;
+                    }
+                    new_meta->key = src->key ? strdup(src->key) : NULL;
+                    new_meta->value = src->value ? strdup(src->value) : NULL;
+                    new_meta->next = NULL;
+                    if (dst_head == NULL) {
+                        dst_head = dst_tail = new_meta;
+                    } else {
+                        dst_tail->next = new_meta;
+                        dst_tail = new_meta;
+                    }
+                    src = src->next;
+                }
+                copy->metadata = dst_head;
+            }
+            ctx.results[i].vector = copy;
+        }
+    }
+
     free(storage_ctx.temp_views);
     return (int)ctx.count;
 }
@@ -561,6 +603,47 @@ int gv_kdtree_knn_search_filtered(const GV_KDNode *root, const GV_SoAStorage *st
     memset(results, 0, k * sizeof(GV_SearchResult));
 
     gv_knn_search_recursive(root, storage, query, &ctx, &storage_ctx);
+
+    /* Copy vector data from views to ensure results remain valid after temp_views is freed */
+    for (size_t i = 0; i < ctx.count; ++i) {
+        if (ctx.results[i].vector != NULL && !ctx.results[i].is_sparse) {
+            const GV_Vector *view = ctx.results[i].vector;
+            GV_Vector *copy = gv_vector_create_from_data(view->dimension, view->data);
+            if (copy != NULL && view->metadata != NULL) {
+                /* Copy metadata chain */
+                GV_Metadata *src = view->metadata;
+                GV_Metadata *dst_head = NULL;
+                GV_Metadata *dst_tail = NULL;
+                while (src != NULL) {
+                    GV_Metadata *new_meta = (GV_Metadata *)malloc(sizeof(GV_Metadata));
+                    if (new_meta == NULL) {
+                        while (dst_head != NULL) {
+                            GV_Metadata *next = dst_head->next;
+                            free(dst_head->key);
+                            free(dst_head->value);
+                            free(dst_head);
+                            dst_head = next;
+                        }
+                        gv_vector_destroy(copy);
+                        copy = NULL;
+                        break;
+                    }
+                    new_meta->key = src->key ? strdup(src->key) : NULL;
+                    new_meta->value = src->value ? strdup(src->value) : NULL;
+                    new_meta->next = NULL;
+                    if (dst_head == NULL) {
+                        dst_head = dst_tail = new_meta;
+                    } else {
+                        dst_tail->next = new_meta;
+                        dst_tail = new_meta;
+                    }
+                    src = src->next;
+                }
+                copy->metadata = dst_head;
+            }
+            ctx.results[i].vector = copy;
+        }
+    }
 
     free(storage_ctx.temp_views);
     return (int)ctx.count;

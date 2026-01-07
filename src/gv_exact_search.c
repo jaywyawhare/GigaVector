@@ -5,6 +5,7 @@
 #include "gigavector/gv_exact_search.h"
 #include "gigavector/gv_distance.h"
 #include "gigavector/gv_soa_storage.h"
+#include "gigavector/gv_vector.h"
 
 int gv_exact_knn_search_vectors(GV_Vector *const *vectors, size_t count,
                                 const GV_Vector *query, size_t k,
@@ -45,7 +46,32 @@ int gv_exact_knn_search_vectors(GV_Vector *const *vectors, size_t count,
         }
 
         if (filled < k) {
-            results[filled].vector = v;
+            GV_Vector *copy = gv_vector_create_from_data(v->dimension, v->data);
+            if (copy != NULL && v->metadata != NULL) {
+                // Deep copy metadata
+                GV_Metadata *src = v->metadata;
+                GV_Metadata **dst = &copy->metadata;
+                while (src != NULL) {
+                    GV_Metadata *new_meta = (GV_Metadata *)malloc(sizeof(GV_Metadata));
+                    if (new_meta == NULL) break;
+                    new_meta->key = strdup(src->key);
+                    if (new_meta->key == NULL) {
+                        free(new_meta);
+                        break;
+                    }
+                    new_meta->value = strdup(src->value);
+                    if (new_meta->value == NULL) {
+                        free(new_meta->key);
+                        free(new_meta);
+                        break;
+                    }
+                    new_meta->next = NULL;
+                    *dst = new_meta;
+                    dst = &new_meta->next;
+                    src = src->next;
+                }
+            }
+            results[filled].vector = copy ? copy : v;
             results[filled].sparse_vector = NULL;
             results[filled].is_sparse = 0;
             results[filled].distance = dist;
@@ -60,7 +86,32 @@ int gv_exact_knn_search_vectors(GV_Vector *const *vectors, size_t count,
                 }
             }
         } else if (dist < results[k - 1].distance) {
-            results[k - 1].vector = v;
+            GV_Vector *copy = gv_vector_create_from_data(v->dimension, v->data);
+            if (copy != NULL && v->metadata != NULL) {
+                // Deep copy metadata
+                GV_Metadata *src = v->metadata;
+                GV_Metadata **dst = &copy->metadata;
+                while (src != NULL) {
+                    GV_Metadata *new_meta = (GV_Metadata *)malloc(sizeof(GV_Metadata));
+                    if (new_meta == NULL) break;
+                    new_meta->key = strdup(src->key);
+                    if (new_meta->key == NULL) {
+                        free(new_meta);
+                        break;
+                    }
+                    new_meta->value = strdup(src->value);
+                    if (new_meta->value == NULL) {
+                        free(new_meta->key);
+                        free(new_meta);
+                        break;
+                    }
+                    new_meta->next = NULL;
+                    *dst = new_meta;
+                    dst = &new_meta->next;
+                    src = src->next;
+                }
+            }
+            results[k - 1].vector = copy ? copy : v;
             results[k - 1].sparse_vector = NULL;
             results[k - 1].is_sparse = 0;
             results[k - 1].distance = dist;
@@ -107,28 +158,50 @@ int gv_exact_knn_search_kdtree(const GV_KDNode *root, const GV_SoAStorage *stora
     if (query->dimension == 0 || query->data == NULL || query->dimension != storage->dimension) {
         return -1;
     }
-    if (root == NULL || total_count == 0) {
+    if (total_count == 0) {
         return 0;
     }
 
-    GV_Vector *vec_views = (GV_Vector *)malloc(total_count * sizeof(GV_Vector));
-    if (!vec_views) {
-        return -1;
-    }
+    GV_Vector *vec_views = NULL;
     GV_Vector **vec_ptrs = (GV_Vector **)malloc(total_count * sizeof(GV_Vector *));
     if (!vec_ptrs) {
-        free(vec_views);
         return -1;
     }
     size_t collected = 0;
-    gv_exact_collect_kdtree(root, storage, vec_views, total_count, &collected);
-    for (size_t i = 0; i < collected; i++) {
-        vec_ptrs[i] = &vec_views[i];
+    if (root == NULL) {
+        // For in-memory databases, collect all vectors from SOA storage
+        for (size_t i = 0; i < total_count; i++) {
+            GV_Vector *vec = gv_vector_create(storage->dimension);
+            if (vec == NULL) {
+                for (size_t j = 0; j < i; j++) {
+                    gv_vector_destroy(vec_ptrs[j]);
+                }
+                free(vec_ptrs);
+                return -1;
+            }
+            vec->data = (float *)gv_soa_storage_get_data(storage, i);
+            vec->metadata = gv_soa_storage_get_metadata(storage, i);
+            vec_ptrs[i] = vec;
+        }
+        collected = total_count;
+    } else {
+        vec_views = (GV_Vector *)malloc(total_count * sizeof(GV_Vector));
+        if (!vec_views) {
+            free(vec_ptrs);
+            return -1;
+        }
+        gv_exact_collect_kdtree(root, storage, vec_views, total_count, &collected);
+        for (size_t i = 0; i < collected; i++) {
+            vec_ptrs[i] = &vec_views[i];
+        }
     }
 
     int r = gv_exact_knn_search_vectors(vec_ptrs, collected, query, k, results, distance_type);
+    if (root != NULL) {
+        free(vec_views);
+    }
+    // For root == NULL, don't free vec_ptrs[i] as they are used by results
     free(vec_ptrs);
-    free(vec_views);
     return r;
 }
 
