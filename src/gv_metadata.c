@@ -115,3 +115,42 @@ void gv_vector_clear_metadata(GV_Vector *vector) {
     vector->metadata = NULL;
 }
 
+void gv_metadata_free(GV_Metadata *meta) {
+    GV_Metadata *current = meta;
+    while (current != NULL) {
+        GV_Metadata *next = current->next;
+        free(current->key);
+        free(current->value);
+        free(current);
+        current = next;
+    }
+}
+
+GV_Metadata *gv_metadata_from_keys_values(const char **keys, const char **values, size_t count) {
+    GV_Metadata *head = NULL;
+    GV_Metadata **tail = &head;
+    for (size_t i = 0; i < count; i++) {
+        GV_Metadata *item = malloc(sizeof(GV_Metadata));
+        if (!item) {
+            gv_metadata_free(head);
+            return NULL;
+        }
+        item->key = strdup(keys[i]);
+        if (!item->key) {
+            free(item);
+            gv_metadata_free(head);
+            return NULL;
+        }
+        item->value = strdup(values[i]);
+        if (!item->value) {
+            free(item->key);
+            free(item);
+            gv_metadata_free(head);
+            return NULL;
+        }
+        item->next = NULL;
+        *tail = item;
+        tail = &item->next;
+    }
+    return head;
+}

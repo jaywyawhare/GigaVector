@@ -44,6 +44,23 @@ int gv_vector_remove_metadata(GV_Vector *vector, const char *key);
  */
 void gv_vector_clear_metadata(GV_Vector *vector);
 
+/**
+ * @brief Create metadata from key-value pairs.
+ *
+ * @param keys Array of key strings.
+ * @param values Array of value strings.
+ * @param count Number of key-value pairs.
+ * @return New metadata linked list, or NULL on failure.
+ */
+GV_Metadata *gv_metadata_from_keys_values(const char **keys, const char **values, size_t count);
+
+/**
+ * @brief Free a metadata linked list.
+ *
+ * @param meta Metadata to free; safe to call with NULL.
+ */
+void gv_metadata_free(GV_Metadata *meta);
+
 #ifdef __cplusplus
 }
 #endif

@@ -85,19 +85,36 @@ void gv_metadata_index_destroy(GV_MetadataIndex *index) {
         return;
     }
 
-    for (size_t i = 0; i < index->bucket_count; ++i) {
-        GV_MetadataKVEntry *entry = index->buckets[i].head;
-        while (entry != NULL) {
-            GV_MetadataKVEntry *next = entry->next;
-            free(entry->key);
-            free(entry->value);
-            free(entry->vector_indices);
-            free(entry);
-            entry = next;
+    if (index->buckets != NULL) {
+        /* Sanity check: bucket_count should be reasonable (max 1M buckets) */
+        /* Also check that bucket_count matches the expected hash size */
+        size_t bucket_count = index->bucket_count;
+        if (bucket_count == 0 || bucket_count >= 1000000) {
+            /* Invalid bucket_count - just free buckets array */
+            free(index->buckets);
+        } else {
+            for (size_t i = 0; i < bucket_count; ++i) {
+                GV_MetadataKVEntry *entry = index->buckets[i].head;
+                while (entry != NULL) {
+                    GV_MetadataKVEntry *next = entry->next;
+                    if (entry->key != NULL) {
+                        free(entry->key);
+                    }
+                    if (entry->value != NULL) {
+                        free(entry->value);
+                    }
+                    if (entry->vector_indices != NULL) {
+                        free(entry->vector_indices);
+                    }
+                    free(entry);
+                    entry = next;
+                }
+            }
+            free(index->buckets);
         }
+        index->buckets = NULL;
     }
-
-    free(index->buckets);
+    index->bucket_count = 0;
     free(index);
 }
 
