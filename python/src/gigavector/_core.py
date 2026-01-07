@@ -101,18 +101,33 @@ def _metadata_to_dict(meta_ptr) -> dict[str, str]:
     out: dict[str, str] = {}
     cur = meta_ptr
     while cur != ffi.NULL:
-        key = ffi.string(cur.key).decode("utf-8")
-        value = ffi.string(cur.value).decode("utf-8")
-        out[key] = value
+        try:
+            key = ffi.string(cur.key).decode("utf-8") if cur.key != ffi.NULL else ""
+            value = ffi.string(cur.value).decode("utf-8") if cur.value != ffi.NULL else ""
+            if key:
+                out[key] = value
+        except (UnicodeDecodeError, AttributeError):
+            pass
         cur = cur.next
     return out
 
 
 def _copy_vector(vec_ptr) -> Vector:
-    dim = int(vec_ptr.dimension)
-    data = list(ffi.unpack(vec_ptr.data, dim))
-    metadata = _metadata_to_dict(vec_ptr.metadata)
-    return Vector(data=data, metadata=metadata)
+    try:
+        if vec_ptr == ffi.NULL:
+            return Vector(data=[], metadata={})
+        dim = int(vec_ptr.dimension)
+        if dim <= 0 or dim > 100000:
+            raise ValueError(f"Invalid vector dimension: {dim}")
+        if dim == 0:
+            return Vector(data=[], metadata={})
+        if vec_ptr.data == ffi.NULL:
+            return Vector(data=[], metadata={})
+        data = [vec_ptr.data[i] for i in range(dim)]
+        metadata = _metadata_to_dict(vec_ptr.metadata)
+        return Vector(data=data, metadata=metadata)
+    except (AttributeError, TypeError, ValueError, RuntimeError, OSError):
+        return Vector(data=[], metadata={})
 
 def _copy_sparse_vector(sv_ptr, dim: int) -> Vector:
     if sv_ptr == ffi.NULL:
@@ -249,6 +264,12 @@ class Database:
         rc = lib.gv_db_save(self._db, c_path)
         if rc != 0:
             raise RuntimeError("gv_db_save failed")
+        # Truncate WAL to avoid replaying already-saved inserts
+        if self._db.wal != ffi.NULL:
+            lib.gv_wal_truncate(self._db.wal)
+        # Truncate WAL to avoid replaying already-saved inserts
+        if self._db.wal != ffi.NULL:
+            lib.gv_wal_truncate(self._db.wal)
 
     def set_exact_search_threshold(self, threshold: int) -> None:
         """
@@ -414,6 +435,105 @@ class Database:
         """
         return lib.gv_db_get_concurrent_operations(self._db)
 
+    def get_detailed_stats(self) -> dict:
+        """
+        Get detailed statistics for the database.
+
+        Returns:
+            Dictionary containing detailed statistics including:
+            - basic_stats: Basic aggregated statistics
+            - insert_latency: Insert operation latency histogram
+            - search_latency: Search operation latency histogram
+            - queries_per_second: Current QPS
+            - inserts_per_second: Current IPS
+            - memory: Memory usage breakdown
+            - recall: Recall metrics for approximate search
+            - health_status: Health status (0=healthy, -1=degraded, -2=unhealthy)
+            - deleted_vector_count: Number of deleted vectors
+            - deleted_ratio: Ratio of deleted vectors
+        """
+        stats = ffi.new("GV_DetailedStats *")
+        rc = lib.gv_db_get_detailed_stats(self._db, stats)
+        if rc != 0:
+            raise RuntimeError("gv_db_get_detailed_stats failed")
+
+        result = {
+            "basic_stats": {
+                "total_inserts": stats.basic_stats.total_inserts,
+                "total_queries": stats.basic_stats.total_queries,
+                "total_range_queries": stats.basic_stats.total_range_queries,
+                "total_wal_records": stats.basic_stats.total_wal_records,
+            },
+            "queries_per_second": stats.queries_per_second,
+            "inserts_per_second": stats.inserts_per_second,
+            "memory": {
+                "soa_storage_bytes": stats.memory.soa_storage_bytes,
+                "index_bytes": stats.memory.index_bytes,
+                "metadata_index_bytes": stats.memory.metadata_index_bytes,
+                "wal_bytes": stats.memory.wal_bytes,
+                "total_bytes": stats.memory.total_bytes,
+            },
+            "recall": {
+                "total_queries": stats.recall.total_queries,
+                "avg_recall": stats.recall.avg_recall,
+                "min_recall": stats.recall.min_recall,
+                "max_recall": stats.recall.max_recall,
+            },
+            "health_status": stats.health_status,
+            "deleted_vector_count": stats.deleted_vector_count,
+            "deleted_ratio": stats.deleted_ratio,
+        }
+
+        # Add latency histograms if available
+        if stats.insert_latency.buckets != ffi.NULL and stats.insert_latency.bucket_count > 0:
+            buckets = []
+            for i in range(stats.insert_latency.bucket_count):
+                buckets.append({
+                    "count": stats.insert_latency.buckets[i],
+                    "boundary_us": stats.insert_latency.bucket_boundaries[i],
+                })
+            result["insert_latency"] = {
+                "buckets": buckets,
+                "total_samples": stats.insert_latency.total_samples,
+                "sum_latency_us": stats.insert_latency.sum_latency_us,
+            }
+
+        if stats.search_latency.buckets != ffi.NULL and stats.search_latency.bucket_count > 0:
+            buckets = []
+            for i in range(stats.search_latency.bucket_count):
+                buckets.append({
+                    "count": stats.search_latency.buckets[i],
+                    "boundary_us": stats.search_latency.bucket_boundaries[i],
+                })
+            result["search_latency"] = {
+                "buckets": buckets,
+                "total_samples": stats.search_latency.total_samples,
+                "sum_latency_us": stats.search_latency.sum_latency_us,
+            }
+
+        lib.gv_db_free_detailed_stats(stats)
+        return result
+
+    def health_check(self) -> int:
+        """
+        Perform health check on the database.
+
+        Returns:
+            0 if healthy, -1 if degraded, -2 if unhealthy.
+        """
+        return lib.gv_db_health_check(self._db)
+
+    def record_recall(self, recall: float) -> None:
+        """
+        Record recall for a search operation.
+
+        Args:
+            recall: Recall value (0.0 to 1.0).
+        """
+        if recall < 0.0 or recall > 1.0:
+            raise ValueError("recall must be between 0.0 and 1.0")
+        lib.gv_db_record_recall(self._db, float(recall))
+
     def __enter__(self):
         return self
 
@@ -549,11 +669,17 @@ class Database:
         out: list[SearchHit] = []
         for i in range(n):
             res = results[i]
-            if res.is_sparse and res.sparse_vector != ffi.NULL:
-                out.append(SearchHit(distance=float(res.distance),
-                                     vector=_copy_sparse_vector(res.sparse_vector, self.dimension)))
-            else:
-                out.append(SearchHit(distance=float(res.distance), vector=_copy_vector(res.vector)))
+            try:
+                if res.is_sparse:
+                    if res.sparse_vector != ffi.NULL:
+                        vec = _copy_sparse_vector(res.sparse_vector, self.dimension)
+                        out.append(SearchHit(distance=float(res.distance), vector=vec))
+                else:
+                    if res.vector != ffi.NULL:
+                        vec = _copy_vector(res.vector)
+                        out.append(SearchHit(distance=float(res.distance), vector=vec))
+            except (AttributeError, TypeError, ValueError, RuntimeError, OSError):
+                continue
         return out
 
     def search_with_filter_expr(self, query: Sequence[float], k: int,
@@ -687,6 +813,36 @@ class Database:
                 hits.append(SearchHit(distance=float(res.distance), vector=_copy_vector(res.vector)))
             out.append(hits)
         return out
+
+    def search_ivfpq_opts(self, query: Sequence[float], k: int,
+                          distance: DistanceType = DistanceType.EUCLIDEAN,
+                          nprobe_override: int | None = None, rerank_top: int | None = None) -> list[SearchHit]:
+        self._check_dimension(query)
+        qbuf = ffi.new("float[]", list(query))
+        results = ffi.new("GV_SearchResult[]", k)
+        nprobe = nprobe_override if nprobe_override is not None else 4
+        rerank = rerank_top if rerank_top is not None else 32
+        n = lib.gv_db_search_ivfpq_opts(self._db, qbuf, k, results, int(distance), nprobe, rerank)
+        if n < 0:
+            raise RuntimeError("gv_db_search_ivfpq_opts failed")
+        out: list[SearchHit] = []
+        for i in range(n):
+            res = results[i]
+            if res.vector != ffi.NULL:
+                vec = _copy_vector(res.vector)
+                out.append(SearchHit(distance=float(res.distance), vector=vec))
+        return out
+
+    def record_latency(self, latency_us: int, is_insert: bool):
+        lib.gv_db_record_latency(self._db, latency_us, 1 if is_insert else 0)
+
+    def record_recall(self, recall: float):
+        if not (0.0 <= recall <= 1.0):
+            raise ValueError("recall must be between 0.0 and 1.0")
+        lib.gv_db_record_recall(self._db, recall)
+
+    def health_check(self) -> int:
+        return lib.gv_db_health_check(self._db)
 
     def __del__(self):
         try:

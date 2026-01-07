@@ -123,8 +123,8 @@ int gv_db_add_vector_with_rich_metadata(GV_Database *db, const float *data, size
 int gv_db_delete_vector_by_index(GV_Database *db, size_t vector_index);
 int gv_db_update_vector(GV_Database *db, size_t vector_index, const float *new_data, size_t dimension);
 int gv_db_update_vector_metadata(GV_Database *db, size_t vector_index,
-                                  const char *const *metadata_keys, const char *const *metadata_values,
-                                  size_t metadata_count);
+                                        const char *const *metadata_keys, const char *const *metadata_values,
+                                        size_t metadata_count);
 int gv_db_save(const GV_Database *db, const char *filepath);
 int gv_db_ivfpq_train(GV_Database *db, const float *data, size_t count, size_t dimension);
 int gv_db_add_vectors(GV_Database *db, const float *data, size_t count, size_t dimension);
@@ -140,8 +140,11 @@ int gv_db_search_filtered(const GV_Database *db, const float *query_data, size_t
 int gv_db_search_batch(const GV_Database *db, const float *queries, size_t qcount, size_t k,
                        GV_SearchResult *results, GV_DistanceType distance_type);
 int gv_db_search_with_filter_expr(const GV_Database *db, const float *query_data, size_t k,
-                                  GV_SearchResult *results, GV_DistanceType distance_type,
-                                  const char *filter_expr);
+                                   GV_SearchResult *results, GV_DistanceType distance_type,
+                                   const char *filter_expr);
+int gv_db_search_ivfpq_opts(const GV_Database *db, const float *query_data, size_t k,
+                  GV_SearchResult *results, GV_DistanceType distance_type,
+                  size_t nprobe_override, size_t rerank_top);
 void gv_db_set_exact_search_threshold(GV_Database *db, size_t threshold);
 void gv_db_set_force_exact_search(GV_Database *db, int enabled);
 int gv_db_add_sparse_vector(GV_Database *db, const uint32_t *indices, const float *values,
@@ -193,6 +196,51 @@ int gv_db_compact(GV_Database *db);
 void gv_db_set_compaction_interval(GV_Database *db, size_t interval_sec);
 void gv_db_set_wal_compaction_threshold(GV_Database *db, size_t threshold_bytes);
 void gv_db_set_deleted_ratio_threshold(GV_Database *db, double ratio);
+
+// Observability structures
+typedef struct {
+    uint64_t *buckets;
+    size_t bucket_count;
+    double *bucket_boundaries;
+    uint64_t total_samples;
+    uint64_t sum_latency_us;
+} GV_LatencyHistogram;
+
+typedef struct {
+    size_t soa_storage_bytes;
+    size_t index_bytes;
+    size_t metadata_index_bytes;
+    size_t wal_bytes;
+    size_t total_bytes;
+} GV_MemoryBreakdown;
+
+typedef struct {
+    uint64_t total_queries;
+    double avg_recall;
+    double min_recall;
+    double max_recall;
+} GV_RecallMetrics;
+
+typedef struct {
+    GV_DBStats basic_stats;
+    GV_LatencyHistogram insert_latency;
+    GV_LatencyHistogram search_latency;
+    double queries_per_second;
+    double inserts_per_second;
+    uint64_t last_qps_update_time;
+    GV_MemoryBreakdown memory;
+    GV_RecallMetrics recall;
+    int health_status;
+    size_t deleted_vector_count;
+    double deleted_ratio;
+} GV_DetailedStats;
+
+// Observability functions
+int gv_db_get_detailed_stats(const GV_Database *db, GV_DetailedStats *out);
+void gv_db_free_detailed_stats(GV_DetailedStats *stats);
+int gv_db_health_check(const GV_Database *db);
+void gv_db_record_latency(GV_Database *db, uint64_t latency_us, int is_insert);
+void gv_db_record_recall(GV_Database *db, double recall);
 """
 )
 
