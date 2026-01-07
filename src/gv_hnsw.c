@@ -330,13 +330,13 @@ int gv_hnsw_insert(void *index_ptr, GV_Vector *vector) {
                             float diff = new_vector_data[d] - neighbor_data[d];
                             dist += diff * diff;
                         }
-                        if (dist < minDist) {
-                            minDist = dist;
-                            closest = current->neighbors[lc][i];
-                        }
+                    if (dist < minDist) {
+                        minDist = dist;
+                        closest = current->neighbors[lc][i];
                     }
                 }
             }
+        }
         }
         if (closest != NULL && closest != current && closest->deleted == 0) {
             current = closest;
@@ -388,7 +388,7 @@ int gv_hnsw_insert(void *index_ptr, GV_Vector *vector) {
                     current->neighbors[lc][i]->deleted == 0) {
                     const float *neighbor_data = gv_soa_storage_get_data(index->soa_storage, current->neighbors[lc][i]->vector_index);
                     if (neighbor_data != NULL) {
-                        candidates[candidate_count].node = current->neighbors[lc][i];
+                    candidates[candidate_count].node = current->neighbors[lc][i];
                         float dist = 0.0f;
                         for (size_t d = 0; d < index->dimension; ++d) {
                             float diff = new_vector_data[d] - neighbor_data[d];
@@ -1075,11 +1075,11 @@ int gv_hnsw_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version)
         node->neighbors = (GV_HNSWNode ***)malloc((level + 1) * sizeof(GV_HNSWNode **));
         node->neighbor_counts = (size_t *)calloc(level + 1, sizeof(size_t));
         if (node->neighbors == NULL || node->neighbor_counts == NULL) {
-                free(node->neighbors);
-                free(node->neighbor_counts);
-                free(node);
-                gv_hnsw_destroy(index);
-                return -1;
+            free(node->neighbors);
+            free(node->neighbor_counts);
+            free(node);
+            gv_hnsw_destroy(index);
+            return -1;
         }
 
         for (size_t l = 0; l <= level; ++l) {

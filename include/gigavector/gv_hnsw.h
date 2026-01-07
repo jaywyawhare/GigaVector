@@ -77,7 +77,7 @@ int gv_hnsw_search(void *index, const GV_Vector *query, size_t k,
 int gv_hnsw_range_search(void *index, const GV_Vector *query, float radius,
                          GV_SearchResult *results, size_t max_results,
                          GV_DistanceType distance_type,
-                         const char *filter_key, const char *filter_value);
+                   const char *filter_key, const char *filter_value);
 
 /**
  * @brief Destroy HNSW index and free all resources.
