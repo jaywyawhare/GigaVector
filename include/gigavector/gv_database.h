@@ -40,6 +40,38 @@ typedef struct {
 } GV_ResourceLimits;
 
 /**
+ * @brief Latency histogram for operation timing.
+ */
+typedef struct {
+    uint64_t *buckets;             /**< Array of bucket counts. */
+    size_t bucket_count;           /**< Number of buckets. */
+    double *bucket_boundaries;     /**< Upper boundaries for each bucket (in microseconds). */
+    uint64_t total_samples;        /**< Total number of samples. */
+    uint64_t sum_latency_us;       /**< Sum of all latencies in microseconds. */
+} GV_LatencyHistogram;
+
+/**
+ * @brief Memory usage breakdown.
+ */
+typedef struct {
+    size_t soa_storage_bytes;      /**< Memory used by SoA storage. */
+    size_t index_bytes;            /**< Memory used by index structures. */
+    size_t metadata_index_bytes;   /**< Memory used by metadata index. */
+    size_t wal_bytes;              /**< Memory used by WAL. */
+    size_t total_bytes;            /**< Total estimated memory usage. */
+} GV_MemoryBreakdown;
+
+/**
+ * @brief Recall metrics for approximate search.
+ */
+typedef struct {
+    uint64_t total_queries;        /**< Total queries used for recall calculation. */
+    double avg_recall;             /**< Average recall (0.0 to 1.0). */
+    double min_recall;             /**< Minimum recall observed. */
+    double max_recall;             /**< Maximum recall observed. */
+} GV_RecallMetrics;
+
+/**
  * @brief Represents an in-memory vector database.
  */
 typedef struct GV_Database {
@@ -77,6 +109,18 @@ typedef struct GV_Database {
     size_t current_memory_bytes;       /**< Current estimated memory usage in bytes. */
     size_t current_concurrent_ops;     /**< Current number of concurrent operations. */
     pthread_mutex_t resource_mutex;     /**< Mutex for resource tracking. */
+    /* Observability */
+    GV_LatencyHistogram insert_latency_hist; /**< Insert operation latency histogram. */
+    GV_LatencyHistogram search_latency_hist; /**< Search operation latency histogram. */
+    uint64_t last_qps_update_time_us;  /**< Last QPS calculation time (microseconds). */
+    uint64_t last_ips_update_time_us;  /**< Last IPS calculation time (microseconds). */
+    uint64_t first_insert_time_us;     /**< Time of first insert (microseconds) - preserved for precise IPS calculation. */
+    uint64_t query_count_since_update;  /**< Query count since last QPS update. */
+    uint64_t insert_count_since_update; /**< Insert count since last IPS update. */
+    double current_qps;                /**< Current queries per second. */
+    double current_ips;                 /**< Current inserts per second. */
+    GV_RecallMetrics recall_metrics;   /**< Recall metrics for approximate search. */
+    pthread_mutex_t observability_mutex; /**< Mutex for observability data. */
 } GV_Database;
 
 /**
@@ -88,6 +132,34 @@ typedef struct {
     uint64_t total_range_queries;  /**< Total range-search calls. */
     uint64_t total_wal_records;    /**< Total WAL records appended. */
 } GV_DBStats;
+
+/**
+ * @brief Detailed statistics for a database.
+ */
+typedef struct {
+    /* Basic stats */
+    GV_DBStats basic_stats;        /**< Basic aggregated statistics. */
+    
+    /* Latency histograms */
+    GV_LatencyHistogram insert_latency;    /**< Insert operation latency histogram. */
+    GV_LatencyHistogram search_latency;    /**< Search operation latency histogram. */
+    
+    /* QPS tracking */
+    double queries_per_second;     /**< Current queries per second. */
+    double inserts_per_second;     /**< Current inserts per second. */
+    uint64_t last_qps_update_time; /**< Last QPS calculation time (microseconds since epoch). */
+    
+    /* Memory breakdown */
+    GV_MemoryBreakdown memory;      /**< Memory usage breakdown. */
+    
+    /* Recall metrics */
+    GV_RecallMetrics recall;       /**< Recall metrics for approximate search. */
+    
+    /* Health indicators */
+    int health_status;             /**< Health status: 0 = healthy, -1 = degraded, -2 = unhealthy. */
+    size_t deleted_vector_count;  /**< Number of deleted vectors. */
+    double deleted_ratio;          /**< Ratio of deleted vectors (0.0 to 1.0). */
+} GV_DetailedStats;
 
 /**
  * @brief Open an in-memory database, optionally loading from a file.
@@ -305,8 +377,8 @@ int gv_db_update_vector(GV_Database *db, size_t vector_index, const float *new_d
  * @return 0 on success, -1 on invalid arguments or vector not found.
  */
 int gv_db_update_vector_metadata(GV_Database *db, size_t vector_index,
-                                  const char *const *metadata_keys, const char *const *metadata_values,
-                                  size_t metadata_count);
+                                        const char *const *metadata_keys, const char *const *metadata_values,
+                                        size_t metadata_count);
 
 /**
  * @brief Save the database (tree and vectors) to a binary file.
@@ -381,7 +453,7 @@ int gv_db_range_search(const GV_Database *db, const float *query_data, float rad
 int gv_db_range_search_filtered(const GV_Database *db, const float *query_data, float radius,
                                  GV_SearchResult *results, size_t max_results,
                                  GV_DistanceType distance_type,
-                                 const char *filter_key, const char *filter_value);
+                          const char *filter_key, const char *filter_value);
 
 /**
  * @brief IVF-PQ search with per-query overrides.
@@ -623,6 +695,49 @@ size_t gv_db_get_memory_usage(const GV_Database *db);
  * @return Current number of concurrent operations.
  */
 size_t gv_db_get_concurrent_operations(const GV_Database *db);
+
+/**
+ * @brief Get detailed statistics for the database.
+ *
+ * @param db Database instance; must be non-NULL.
+ * @param out Output structure to fill; must be non-NULL.
+ * @return 0 on success, -1 on error.
+ */
+int gv_db_get_detailed_stats(const GV_Database *db, GV_DetailedStats *out);
+
+/**
+ * @brief Free resources allocated by gv_db_get_detailed_stats().
+ *
+ * @param stats Detailed stats structure to free.
+ */
+void gv_db_free_detailed_stats(GV_DetailedStats *stats);
+
+/**
+ * @brief Perform health check on the database.
+ *
+ * Checks database integrity, index consistency, and resource usage.
+ *
+ * @param db Database instance; must be non-NULL.
+ * @return 0 if healthy, -1 if degraded, -2 if unhealthy.
+ */
+int gv_db_health_check(const GV_Database *db);
+
+/**
+ * @brief Record latency for an operation.
+ *
+ * @param db Database instance; must be non-NULL.
+ * @param latency_us Latency in microseconds.
+ * @param is_insert 1 for insert operations, 0 for search operations.
+ */
+void gv_db_record_latency(GV_Database *db, uint64_t latency_us, int is_insert);
+
+/**
+ * @brief Record recall for a search operation.
+ *
+ * @param db Database instance; must be non-NULL.
+ * @param recall Recall value (0.0 to 1.0).
+ */
+void gv_db_record_recall(GV_Database *db, double recall);
 
 #ifdef __cplusplus
 }
