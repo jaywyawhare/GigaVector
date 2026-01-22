@@ -57,16 +57,24 @@ include_directories(include)
 # Source files
 set(SOURCES
     src/gv_binary_quant.c
+    src/gv_context_graph.c
+    src/gv_embedding.c
     src/gv_database.c
     src/gv_distance.c
     src/gv_exact_search.c
     src/gv_filter.c
     src/gv_hnsw.c
+    src/gv_importance.c
     src/gv_ivfpq.c
+    src/gv_json.c
     src/gv_kdtree.c
+    src/gv_llm.c
     src/gv_metadata_index.c
     src/gv_metadata.c
     src/gv_mmap.c
+    src/gv_memory_consolidation.c
+    src/gv_memory_extraction.c
+    src/gv_memory_layer.c
     src/gv_scalar_quant.c
     src/gv_soa_storage.c
     src/gv_sparse_index.c
@@ -78,6 +86,18 @@ set(SOURCES
 
 # Create library
 add_library(GigaVector ${SOURCES})
+
+# Check for libcurl (required for LLM support)
+find_package(CURL)
+if(CURL_FOUND)
+    target_compile_definitions(GigaVector PRIVATE HAVE_CURL)
+    target_link_libraries(GigaVector PRIVATE ${CURL_LIBRARIES})
+    target_include_directories(GigaVector PRIVATE ${CURL_INCLUDE_DIRS})
+    message(STATUS "  LLM support: Enabled (libcurl found)")
+else()
+    message(STATUS "  LLM support: Disabled (libcurl not found)")
+    message(WARNING "Install libcurl-dev/libcurl-devel to enable LLM-based memory extraction")
+endif()
 
 # Link libraries
 target_link_libraries(GigaVector PRIVATE m pthread)
@@ -132,11 +152,16 @@ if(BUILD_TESTS)
         tests/test_distance.c
         tests/test_metadata.c
         tests/test_hnsw.c
+        tests/test_importance.c
         tests/test_ivfpq.c
         tests/test_sparse.c
         tests/test_wal.c
         tests/test_filter.c
         tests/test_advanced.c
+        tests/test_llm.c
+        tests/test_memory_llm.c
+        tests/test_context_graph.c
+        tests/test_json.c
     )
     
     foreach(TEST_SRC ${TEST_SOURCES})
@@ -160,7 +185,7 @@ if(BUILD_BENCHMARKS)
     foreach(BENCH_SRC ${BENCHMARK_SOURCES})
         get_filename_component(BENCH_NAME ${BENCH_SRC} NAME_WE)
         add_executable(${BENCH_NAME} ${BENCH_SRC})
-        target_link_libraries(${BENCH_NAME} PRIVATE GigaVector)
+        target_link_libraries(${BENCH_NAME} PRIVATE GigaVector m)
     endforeach()
 endif()
 

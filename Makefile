@@ -1,6 +1,6 @@
 CC      := gcc
-CFLAGS  := -O3 -g -Wall -Wextra -MMD -Iinclude -march=native -msse4.2 -mavx2 -mavx512f -mfma -pthread -fPIC
-LDFLAGS := -lm -pthread
+CFLAGS  := -O3 -g -Wall -Wextra -MMD -Iinclude -march=native -msse4.2 -mavx2 -mavx512f -mfma -pthread -fPIC -DHAVE_CURL
+LDFLAGS := -lm -pthread -lcurl
 
 BUILD_DIR   := build
 SRC_DIR     := src
@@ -99,7 +99,7 @@ test-corrupt-snapshot: $(BIN_DIR)/main
 bench-ivfpq-suite: $(BENCH_DIR)/benchmark_ivfpq $(BENCH_DIR)/benchmark_ivfpq_recall
 	@BIN_DIR=$(BENCH_DIR) bash $(TEST_DIR)/ivfpq_suite.sh
 
-TEST_FILES := test_db test_distance test_metadata test_hnsw test_ivfpq test_sparse test_wal test_filter test_advanced
+TEST_FILES := test_db test_distance test_metadata test_hnsw test_ivfpq test_sparse test_wal test_filter test_advanced test_llm test_memory_llm test_embedding test_context_graph test_memory test_json
 TEST_SRCS := $(patsubst %,tests/%.c,$(TEST_FILES))
 TEST_BINS := $(patsubst %,$(BUILD_DIR)/test_%,$(TEST_FILES))
 
@@ -132,13 +132,13 @@ c-test-single: lib
 		exit 1; \
 	fi
 	@mkdir -p $(BUILD_DIR)
-	@$(CC) $(CFLAGS) tests/$(TEST).c -L$(LIB_DIR) -l$(LIB_NAME) $(LDFLAGS) -o $(BUILD_DIR)/$(TEST)
+	@$(CC) $(CFLAGS) tests/$(TEST).c -L$(LIB_DIR) -l$(LIB_NAME) $(LDFLAGS) -Wl,-rpath,$(abspath $(LIB_DIR)) -o $(BUILD_DIR)/$(TEST)
 	@echo "Built test: $(BUILD_DIR)/$(TEST)"
-	@LD_LIBRARY_PATH=$(LIB_DIR):$$LD_LIBRARY_PATH $(BUILD_DIR)/$(TEST)
+	@$(BUILD_DIR)/$(TEST)
 
 $(BUILD_DIR)/test_%: tests/%.c $(STATIC_LIB)
 	@mkdir -p $(BUILD_DIR)
-	$(CC) $(CFLAGS) $< -L$(LIB_DIR) -l$(LIB_NAME) $(LDFLAGS) -o $@
+	$(CC) $(CFLAGS) $< -L$(LIB_DIR) -l$(LIB_NAME) $(LDFLAGS) -Wl,-rpath,$(abspath $(LIB_DIR)) -o $@
 	@echo "Built test: $@"
 
 .PHONY: test-asan
@@ -211,32 +211,55 @@ test-all: c-test python-test-comprehensive test-asan test-tsan test-ubsan
 	@echo "All tests and sanitizers completed"
 
 .PHONY: test-coverage
-test-coverage: CFLAGS += --coverage -O0
-test-coverage: LDFLAGS += --coverage
 test-coverage:
 	@$(MAKE) clean
-	@$(MAKE) lib $(TEST_BINS)
+	@echo "Building with coverage instrumentation (using -O0 for accurate coverage)..."
+	@$(MAKE) CFLAGS="-O0 -g -Wall -Wextra -MMD -Iinclude -march=native -msse4.2 -mavx2 -mavx512f -mfma -pthread -fPIC -DHAVE_CURL --coverage" \
+		LDFLAGS="-lm -pthread -lcurl --coverage" lib $(TEST_BINS)
 	@echo "Running tests with coverage..."
 	@for test in $(TEST_BINS); do \
 		LD_LIBRARY_PATH=$(LIB_DIR):$$LD_LIBRARY_PATH $$test || exit 1; \
 	done
-	@echo "Coverage data generated in .gcda files"
-	@if command -v gcov >/dev/null 2>&1; then \
-		echo "Generating coverage report..."; \
-		for src in $(SRC_FILES); do \
-			gcov -r $$src 2>/dev/null | head -5; \
-		done; \
+	@echo "Coverage data generated in .gcda files in $(OBJ_DIR)/"
+	@if command -v lcov >/dev/null 2>&1; then \
+		echo ""; \
+		echo "Generating coverage summary..."; \
+		lcov --capture --directory $(OBJ_DIR) --output-file $(BUILD_DIR)/coverage.info --quiet 2>/dev/null; \
+		lcov --remove $(BUILD_DIR)/coverage.info '/usr/*' '*/tests/*' --output-file $(BUILD_DIR)/coverage.info --quiet 2>/dev/null; \
+		echo ""; \
+		lcov --summary $(BUILD_DIR)/coverage.info 2>/dev/null | tail -4; \
+		echo ""; \
+		echo "For detailed HTML report, run: make test-coverage-html"; \
+	else \
+		echo ""; \
+		echo "For detailed coverage reports, install 'lcov':"; \
+		echo "  Ubuntu/Debian: sudo apt-get install lcov"; \
+		echo "  Fedora/RHEL:   sudo dnf install lcov"; \
+		echo "  macOS:         brew install lcov"; \
+		echo "  Arch Linux:    sudo pacman -S lcov"; \
+		echo ""; \
+		echo "Then run: make test-coverage-html"; \
 	fi
 
 .PHONY: test-coverage-html
 test-coverage-html: test-coverage
 	@if command -v lcov >/dev/null 2>&1 && command -v genhtml >/dev/null 2>&1; then \
 		echo "Generating HTML coverage report..."; \
-		lcov --capture --directory $(OBJ_DIR) --output-file $(BUILD_DIR)/coverage.info; \
-		genhtml $(BUILD_DIR)/coverage.info --output-directory $(BUILD_DIR)/coverage_html; \
-		echo "Coverage report available at $(BUILD_DIR)/coverage_html/index.html"; \
+		lcov --capture --directory $(OBJ_DIR) --output-file $(BUILD_DIR)/coverage.info --quiet; \
+		lcov --remove $(BUILD_DIR)/coverage.info '/usr/*' '*/tests/*' --output-file $(BUILD_DIR)/coverage.info --quiet; \
+		genhtml $(BUILD_DIR)/coverage.info --output-directory $(BUILD_DIR)/coverage_html --quiet; \
+		echo ""; \
+		echo "Coverage report available at: $(BUILD_DIR)/coverage_html/index.html"; \
+		echo "Open with: xdg-open $(BUILD_DIR)/coverage_html/index.html  (Linux)"; \
+		echo "           open $(BUILD_DIR)/coverage_html/index.html     (macOS)"; \
 	else \
-		echo "lcov/genhtml not found, skipping HTML report"; \
+		echo ""; \
+		echo "ERROR: lcov/genhtml not found. Install to generate HTML coverage reports:"; \
+		echo "  Ubuntu/Debian: sudo apt-get install lcov"; \
+		echo "  Fedora/RHEL:   sudo dnf install lcov"; \
+		echo "  macOS:         brew install lcov"; \
+		echo "  Arch Linux:    sudo pacman -S lcov"; \
+		exit 1; \
 	fi
 
 -include $(DEPS)
