@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.15)
-project(GigaVector VERSION 0.0.1 LANGUAGES C)
+project(GigaVector VERSION 0.6.0 LANGUAGES C)
 
 # Set C standard
 set(CMAKE_C_STANDARD 11)
