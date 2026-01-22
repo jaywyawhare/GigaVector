@@ -2,7 +2,7 @@
 
 This document lists all API keys used in GigaVector, categorized by requirement level and feature.
 
-## 📋 Quick Reference
+## Quick Reference
 
 ### Required for Testing
 - `OPENAI_API_KEY` - For LLM and embedding tests
@@ -14,7 +14,7 @@ This document lists all API keys used in GigaVector, categorized by requirement 
 
 ---
 
-## 🔴 Required API Keys
+## Required API Keys
 
 ### For Running Tests
 
@@ -27,7 +27,7 @@ This document lists all API keys used in GigaVector, categorized by requirement 
 - **Format**: Must start with `sk-`
 - **Get it**: https://platform.openai.com/api-keys
 - **Example**: `OPENAI_API_KEY=sk-proj-...`
-- **Status**: ✅ **REQUIRED** for real API call tests
+- **Status**: **REQUIRED** for real API call tests
 
 #### 2. `ANTHROPIC_API_KEY`
 - **Purpose**: Anthropic/Claude LLM services
@@ -36,11 +36,11 @@ This document lists all API keys used in GigaVector, categorized by requirement 
 - **Format**: Must start with `sk-ant-`
 - **Get it**: https://console.anthropic.com/settings/keys
 - **Example**: `ANTHROPIC_API_KEY=sk-ant-...`
-- **Status**: ✅ **REQUIRED** for Anthropic LLM tests
+- **Status**: **REQUIRED** for Anthropic LLM tests
 
 ---
 
-## 🟡 Optional API Keys
+## Optional API Keys
 
 ### For Embedding Services
 
@@ -51,7 +51,7 @@ This document lists all API keys used in GigaVector, categorized by requirement 
 - **Format**: Google API key (no specific prefix)
 - **Get it**: https://aistudio.google.com
 - **Example**: `GOOGLE_API_KEY=your-google-api-key`
-- **Status**: ⚠️ **OPTIONAL** - Only needed for Google embeddings
+- **Status**: **OPTIONAL** - Only needed for Google embeddings
 - **Default Model**: `text-embedding-004`
 - **Default Dimension**: 768
 
@@ -64,7 +64,7 @@ This document lists all API keys used in GigaVector, categorized by requirement 
   - Requires `api_key` (not an env var, set in config)
 - **Format**: 32+ alphanumeric characters
 - **Get it**: Azure Portal → Your OpenAI resource
-- **Status**: ⚠️ **OPTIONAL** - Only needed for Azure OpenAI
+- **Status**: **OPTIONAL** - Only needed for Azure OpenAI
 - **Note**: Must provide both `base_url` and `api_key` in code/config
 
 #### 5. Custom LLM Providers
@@ -72,25 +72,25 @@ This document lists all API keys used in GigaVector, categorized by requirement 
 - **Configuration**: 
   - Requires `base_url` (set in config)
   - Requires `api_key` (set in config)
-- **Status**: ⚠️ **OPTIONAL** - For custom endpoints
+- **Status**: **OPTIONAL** - For custom endpoints
 - **Examples**: Groq, Together AI, LiteLLM, etc.
 
 ---
 
-## 🟢 No API Key Required
+## No API Key Required
 
 ### Local/Free Services
 
 #### HuggingFace Embeddings
 - **Purpose**: Local embedding models
-- **API Key**: ❌ Not required
-- **Status**: ✅ **FREE** - Runs locally
+- **API Key**: Not required
+- **Status**: **FREE** - Runs locally
 - **Models**: Any sentence-transformers model
 - **Examples**: `all-MiniLM-L6-v2`, `all-mpnet-base-v2`
 
 ---
 
-## 📝 Complete .env File Template
+## Complete .env File Template
 
 Create a `.env` file in the project root with:
 
@@ -124,7 +124,7 @@ GOOGLE_API_KEY=your-google-api-key-here
 
 ---
 
-## 🎯 Usage by Feature
+## Usage by Feature
 
 ### LLM Features
 
@@ -141,7 +141,7 @@ GOOGLE_API_KEY=your-google-api-key-here
 |---------|--------------|---------------|
 | OpenAI Embeddings | `OPENAI_API_KEY` | - |
 | Google Embeddings | - | `GOOGLE_API_KEY` |
-| HuggingFace Embeddings | ❌ None (local) | - |
+| HuggingFace Embeddings | None (local) | - |
 | Custom Embeddings | - | `api_key` + `base_url` (in config) |
 
 ### Testing
@@ -153,7 +153,7 @@ GOOGLE_API_KEY=your-google-api-key-here
 
 ---
 
-## 🔍 Key Format Validation
+## Key Format Validation
 
 ### OpenAI
 - **Format**: `sk-...`
@@ -177,7 +177,7 @@ GOOGLE_API_KEY=your-google-api-key-here
 
 ---
 
-## 📚 Where Keys Are Used
+## Where Keys Are Used
 
 ### Test Files
 - `tests/test_llm.c` - Uses `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`
@@ -192,7 +192,7 @@ GOOGLE_API_KEY=your-google-api-key-here
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Minimum Setup (Tests Only)
 ```bash
@@ -217,7 +217,7 @@ EOF
 
 ---
 
-## ⚠️ Security Notes
+## Security Notes
 
 1. **Never commit `.env` files** - Add to `.gitignore`
 2. **Use environment variables** in production (not `.env` files)
@@ -227,7 +227,7 @@ EOF
 
 ---
 
-## 📖 Additional Resources
+## Additional Resources
 
 - [OpenAI API Keys](https://platform.openai.com/api-keys)
 - [Anthropic API Keys](https://console.anthropic.com/settings/keys)
@@ -236,7 +236,7 @@ EOF
 
 ---
 
-## 🔄 Key Priority (How Keys Are Loaded)
+## Key Priority (How Keys Are Loaded)
 
 1. **First**: Check `.env` file in current directory
 2. **Second**: Check environment variables
@@ -245,18 +245,18 @@ EOF
 
 ---
 
-## ✅ Summary
+## Summary
 
 ### Required for Testing
-- ✅ `OPENAI_API_KEY` - **REQUIRED**
-- ✅ `ANTHROPIC_API_KEY` - **REQUIRED**
+- `OPENAI_API_KEY` - **REQUIRED**
+- `ANTHROPIC_API_KEY` - **REQUIRED**
 
 ### Optional Features
-- ⚠️ `GOOGLE_API_KEY` - For Google embeddings
-- ⚠️ Azure OpenAI - Requires config (not env var)
-- ⚠️ Custom providers - Require config (not env var)
+- `GOOGLE_API_KEY` - For Google embeddings
+- Azure OpenAI - Requires config (not env var)
+- Custom providers - Require config (not env var)
 
 ### No Key Needed
-- ✅ HuggingFace - Local/free models
+- HuggingFace - Local/free models
 
 
