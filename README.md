@@ -23,9 +23,12 @@ A fast, modular vector database in C with optional Python bindings.
 
 ### Using Make (default)
 ```bash
+make            # builds everything (library + main executable)
 make lib        # builds static and shared libraries into build/lib/
 make c-test     # runs C tests (needs LD_LIBRARY_PATH=build/lib)
 ```
+
+**For complete build and test instructions including LLM tests, see [Build and Test Guide](docs/BUILD_AND_TEST.md)**
 
 ### Using CMake
 ```bash
@@ -98,6 +101,27 @@ with Database.open(None, dimension=8, index=IndexType.IVFPQ) as db:
     db.train_ivfpq(train)
     db.add_vector([0.5] * 8)
 ```
+
+## Environment Variables
+
+GigaVector supports various environment variables for API keys and configuration. 
+
+**Quick Setup:**
+```bash
+# Copy the example file and fill in your API keys
+cp .env.example .env
+# Edit .env with your actual API keys
+```
+
+**Required for Tests:**
+- `OPENAI_API_KEY` - For LLM and embedding tests
+- `ANTHROPIC_API_KEY` - For Anthropic/Claude LLM tests
+
+**Optional:**
+- `GOOGLE_API_KEY` - For Google embeddings
+- `GV_WAL_DIR` - Override WAL directory location
+
+See [`.env.example`](.env.example) for a complete list with descriptions, or [API Keys Documentation](docs/API_KEYS_REQUIRED.md) for detailed information.
 
 ## Documentation
 
