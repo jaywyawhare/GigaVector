@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <time.h>
 #include <math.h>
+#include "gigavector/gigavector.h"
 
 #define ITERATIONS 500000
 #define DIMENSION 128
@@ -54,10 +55,9 @@ int main(void) {
         total += euclidean_scalar(a_data, b_data, DIMENSION);
     }
     double scalar_time = get_time_ms() - start;
-    printf("Scalar:    %.2f ms (%.2f ops/sec)\n", 
+    printf("Scalar:    %.2f ms (%.2f ops/sec)\n",
            scalar_time, (ITERATIONS / scalar_time) * 1000.0);
 
-    #include "gigavector/gigavector.h"
     GV_Vector a, b;
     a.dimension = DIMENSION;
     a.data = a_data;
