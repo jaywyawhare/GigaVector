@@ -287,7 +287,7 @@ Testing LLM creation with valid config...
 ## Next Steps
 
 - Read the [Usage Guide](usage.md) for how to use GigaVector
-- Check [API Keys Documentation](API_KEYS_REQUIRED.md) for detailed API key information
+- Check [API Keys Documentation](api_keys_required.md) for detailed API key information
 - See [Examples](examples/basic_usage.md) for code samples
 
 
