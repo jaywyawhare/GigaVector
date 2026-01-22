@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import IntEnum
-from typing import Iterable, Sequence
+from typing import Callable, Iterable, Optional, Sequence
 
 from ._ffi import ffi, lib
 
@@ -850,4 +850,1137 @@ class Database:
         except Exception:
             # Avoid raising during interpreter shutdown
             pass
+
+
+# ============================================================================
+# LLM Module
+# ============================================================================
+
+class LLMError(IntEnum):
+    SUCCESS = 0
+    NULL_POINTER = -1
+    INVALID_CONFIG = -2
+    INVALID_API_KEY = -3
+    INVALID_URL = -4
+    MEMORY_ALLOCATION = -5
+    CURL_INIT = -6
+    NETWORK = -7
+    TIMEOUT = -8
+    RESPONSE_TOO_LARGE = -9
+    PARSE_FAILED = -10
+    INVALID_RESPONSE = -11
+    CUSTOM_URL_REQUIRED = -12
+
+
+class LLMProvider(IntEnum):
+    """LLM provider enumeration.
+
+    Supported providers:
+    - OPENAI: OpenAI GPT models (tested, recommended)
+    - GOOGLE: Google Gemini models (tested)
+    - CUSTOM: Custom OpenAI-compatible endpoints
+
+    Internal/experimental (not exposed to end users):
+    - ANTHROPIC: Claude models (not yet tested due to API key unavailability)
+    """
+    OPENAI = 0
+    ANTHROPIC = 1      # Internal: not yet tested, API keys unavailable
+    GOOGLE = 2
+    # AZURE_OPENAI removed - use CUSTOM with Azure endpoint instead
+    CUSTOM = 3
+
+
+@dataclass
+class LLMConfig:
+    provider: LLMProvider
+    api_key: str
+    model: str
+    base_url: Optional[str] = None
+    temperature: float = 0.7
+    max_tokens: int = 2000
+    timeout_seconds: int = 30
+    custom_prompt: Optional[str] = None
+
+    def _to_c_config(self) -> ffi.CData:
+        c_config = ffi.new("GV_LLMConfig *")
+        c_config.provider = int(self.provider)
+        c_config.api_key = ffi.new("char[]", self.api_key.encode())
+        c_config.model = ffi.new("char[]", self.model.encode())
+        c_config.base_url = ffi.new("char[]", self.base_url.encode()) if self.base_url else ffi.NULL
+        c_config.temperature = self.temperature
+        c_config.max_tokens = self.max_tokens
+        c_config.timeout_seconds = self.timeout_seconds
+        c_config.custom_prompt = ffi.new("char[]", self.custom_prompt.encode()) if self.custom_prompt else ffi.NULL
+        return c_config
+
+
+@dataclass
+class LLMMessage:
+    role: str
+    content: str
+
+    def _to_c_message(self) -> tuple[ffi.CData, bytes, bytes]:
+        """Returns (c_msg, role_bytes, content_bytes) to keep references alive"""
+        role_bytes = self.role.encode()
+        content_bytes = self.content.encode()
+        c_msg = ffi.new("GV_LLMMessage *")
+        c_msg.role = ffi.new("char[]", role_bytes)
+        c_msg.content = ffi.new("char[]", content_bytes)
+        return (c_msg, role_bytes, content_bytes)
+
+
+@dataclass
+class LLMResponse:
+    content: str
+    finish_reason: int
+    token_count: int
+
+
+class LLM:
+    def __init__(self, config: LLMConfig):
+        c_config = config._to_c_config()
+        self._llm = lib.gv_llm_create(c_config)
+        if self._llm == ffi.NULL:
+            raise RuntimeError("Failed to create LLM instance. Make sure libcurl is installed and API key is valid.")
+        self._closed = False
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+    def close(self):
+        if not self._closed and self._llm != ffi.NULL:
+            lib.gv_llm_destroy(self._llm)
+            self._llm = ffi.NULL
+            self._closed = True
+
+    def generate_response(
+        self,
+        messages: Sequence[LLMMessage],
+        response_format: Optional[str] = None
+    ) -> LLMResponse:
+        if self._closed:
+            raise ValueError("LLM instance is closed")
+
+        # Allocate array of messages
+        c_messages = ffi.new("GV_LLMMessage[]", len(messages))
+        message_refs = []  # Keep references alive
+        
+        for i, msg in enumerate(messages):
+            c_msg, role_bytes, content_bytes = msg._to_c_message()
+            c_messages[i] = c_msg[0]
+            message_refs.append((c_msg, role_bytes, content_bytes))
+
+        response_format_bytes = response_format.encode() if response_format else ffi.NULL
+        c_response = ffi.new("GV_LLMResponse *")
+
+        result = lib.gv_llm_generate_response(
+            self._llm, c_messages, len(messages), response_format_bytes, c_response
+        )
+
+        # Free message copies
+        for c_msg, _, _ in message_refs:
+            lib.gv_llm_message_free(c_msg)
+
+        if result != 0:
+            error_msg = lib.gv_llm_get_last_error(self._llm)
+            error_str = lib.gv_llm_error_string(result)
+            lib.gv_llm_response_free(c_response)
+            error_detail = ffi.string(error_msg).decode("utf-8") if error_msg != ffi.NULL else error_str.decode("utf-8") if error_str != ffi.NULL else "Unknown error"
+            raise RuntimeError(f"Failed to generate LLM response: {error_detail} (code: {result})")
+
+        content = ffi.string(c_response.content).decode("utf-8") if c_response.content != ffi.NULL else ""
+        response = LLMResponse(
+            content=content,
+            finish_reason=int(c_response.finish_reason),
+            token_count=int(c_response.token_count)
+        )
+
+        lib.gv_llm_response_free(c_response)
+        return response
+    
+    def get_last_error(self) -> Optional[str]:
+        """Get the last error message from the LLM instance."""
+        if self._closed or self._llm == ffi.NULL:
+            return None
+        error_msg = lib.gv_llm_get_last_error(self._llm)
+        if error_msg == ffi.NULL:
+            return None
+        return ffi.string(error_msg).decode("utf-8")
+    
+    @staticmethod
+    def error_string(error_code: int) -> str:
+        """Get human-readable error description for an error code."""
+        error_str = lib.gv_llm_error_string(error_code)
+        if error_str == ffi.NULL:
+            return "Unknown error"
+        return ffi.string(error_str).decode("utf-8")
+
+
+# ============================================================================
+# Embedding Service Module
+# ============================================================================
+
+class EmbeddingProvider(IntEnum):
+    OPENAI = 0
+    HUGGINGFACE = 1
+    CUSTOM = 2
+    NONE = 3
+
+
+@dataclass
+class EmbeddingConfig:
+    provider: EmbeddingProvider = EmbeddingProvider.NONE
+    api_key: Optional[str] = None
+    model: Optional[str] = None
+    base_url: Optional[str] = None
+    embedding_dimension: int = 0
+    batch_size: int = 100
+    enable_cache: bool = True
+    cache_size: int = 1000
+    timeout_seconds: int = 30
+    huggingface_model_path: Optional[str] = None
+
+    def _to_c_config(self) -> ffi.CData:
+        c_config = ffi.new("GV_EmbeddingConfig *")
+        c_config.provider = int(self.provider)
+        if self.api_key:
+            c_config.api_key = ffi.new("char[]", self.api_key.encode())
+        else:
+            c_config.api_key = ffi.NULL
+        if self.model:
+            c_config.model = ffi.new("char[]", self.model.encode())
+        else:
+            c_config.model = ffi.NULL
+        if self.base_url:
+            c_config.base_url = ffi.new("char[]", self.base_url.encode())
+        else:
+            c_config.base_url = ffi.NULL
+        c_config.embedding_dimension = self.embedding_dimension
+        c_config.batch_size = self.batch_size
+        c_config.enable_cache = 1 if self.enable_cache else 0
+        c_config.cache_size = self.cache_size
+        c_config.timeout_seconds = self.timeout_seconds
+        if self.huggingface_model_path:
+            c_config.huggingface_model_path = ffi.new("char[]", self.huggingface_model_path.encode())
+        else:
+            c_config.huggingface_model_path = ffi.NULL
+        return c_config
+
+
+class EmbeddingService:
+    """Embedding service for generating vector embeddings from text."""
+    
+    def __init__(self, config: EmbeddingConfig):
+        c_config = config._to_c_config()
+        self._service = lib.gv_embedding_service_create(c_config)
+        if self._service == ffi.NULL:
+            raise RuntimeError("Failed to create embedding service")
+        self._closed = False
+    
+    def __enter__(self):
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+    
+    def close(self):
+        if not self._closed and self._service != ffi.NULL:
+            lib.gv_embedding_service_destroy(self._service)
+            self._service = ffi.NULL
+            self._closed = True
+    
+    def generate(self, text: str) -> Optional[Sequence[float]]:
+        """Generate embedding for a single text.
+        
+        Args:
+            text: Text to embed
+            
+        Returns:
+            Embedding vector or None on error
+        """
+        if self._closed:
+            raise ValueError("Embedding service is closed")
+        
+        embedding_dim_ptr = ffi.new("size_t *")
+        embedding_ptr = ffi.new("float **")
+        
+        result = lib.gv_embedding_generate(
+            self._service, text.encode(), embedding_dim_ptr, embedding_ptr
+        )
+        
+        if result != 0:
+            return None
+        
+        if embedding_ptr[0] == ffi.NULL:
+            return None
+        
+        embedding = [embedding_ptr[0][i] for i in range(embedding_dim_ptr[0])]
+        lib.free(embedding_ptr[0])
+        
+        return embedding
+    
+    def generate_batch(self, texts: Sequence[str]) -> list[Optional[Sequence[float]]]:
+        """Generate embeddings for multiple texts (batch operation).
+        
+        Args:
+            texts: List of texts to embed
+            
+        Returns:
+            List of embedding vectors (None for failed embeddings)
+        """
+        if self._closed:
+            raise ValueError("Embedding service is closed")
+        
+        if not texts:
+            return []
+        
+        text_ptrs = [ffi.new("char[]", text.encode()) for text in texts]
+        text_array = ffi.new("char *[]", text_ptrs)
+        
+        embedding_dims_ptr = ffi.new("size_t **")
+        embeddings_ptr = ffi.new("float ***")
+        
+        result = lib.gv_embedding_generate_batch(
+            self._service, text_array, len(texts), embedding_dims_ptr, embeddings_ptr
+        )
+        
+        if result < 0:
+            return [None] * len(texts)
+        
+        embeddings = []
+        if embeddings_ptr[0] != ffi.NULL:
+            for i in range(len(texts)):
+                if embeddings_ptr[0][i] != ffi.NULL and embedding_dims_ptr[0][i] > 0:
+                    emb = [embeddings_ptr[0][i][j] for j in range(embedding_dims_ptr[0][i])]
+                    lib.free(embeddings_ptr[0][i])
+                    embeddings.append(emb)
+                else:
+                    embeddings.append(None)
+            lib.free(embeddings_ptr[0])
+            lib.free(embedding_dims_ptr[0])
+        
+        return embeddings
+
+
+class EmbeddingCache:
+    """Embedding cache for storing and retrieving embeddings."""
+    
+    def __init__(self, max_size: int = 1000):
+        self._cache = lib.gv_embedding_cache_create(max_size)
+        if self._cache == ffi.NULL:
+            raise RuntimeError("Failed to create embedding cache")
+        self._closed = False
+    
+    def __enter__(self):
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+    
+    def close(self):
+        if not self._closed and self._cache != ffi.NULL:
+            lib.gv_embedding_cache_destroy(self._cache)
+            self._cache = ffi.NULL
+            self._closed = True
+    
+    def get(self, text: str) -> Optional[Sequence[float]]:
+        """Get embedding from cache.
+        
+        Args:
+            text: Text key
+            
+        Returns:
+            Embedding vector if found, None otherwise
+        """
+        if self._closed:
+            raise ValueError("Cache is closed")
+        
+        embedding_dim_ptr = ffi.new("size_t *")
+        embedding_ptr = ffi.new("const float **")
+        
+        result = lib.gv_embedding_cache_get(
+            self._cache, text.encode(), embedding_dim_ptr, embedding_ptr
+        )
+        
+        if result != 1:
+            return None
+        
+        if embedding_ptr[0] == ffi.NULL:
+            return None
+        
+        embedding = [embedding_ptr[0][i] for i in range(embedding_dim_ptr[0])]
+        return embedding
+    
+    def put(self, text: str, embedding: Sequence[float]) -> bool:
+        """Store embedding in cache.
+        
+        Args:
+            text: Text key
+            embedding: Embedding vector
+            
+        Returns:
+            True on success, False on error
+        """
+        if self._closed:
+            raise ValueError("Cache is closed")
+        
+        c_embedding = ffi.new("float[]", embedding)
+        result = lib.gv_embedding_cache_put(
+            self._cache, text.encode(), len(embedding), c_embedding
+        )
+        
+        return result == 0
+    
+    def clear(self):
+        """Clear all entries from cache."""
+        if self._closed:
+            raise ValueError("Cache is closed")
+        lib.gv_embedding_cache_clear(self._cache)
+    
+    def stats(self) -> dict:
+        """Get cache statistics.
+        
+        Returns:
+            Dictionary with 'size', 'hits', 'misses'
+        """
+        if self._closed:
+            raise ValueError("Cache is closed")
+        
+        size_ptr = ffi.new("size_t *")
+        hits_ptr = ffi.new("uint64_t *")
+        misses_ptr = ffi.new("uint64_t *")
+        
+        lib.gv_embedding_cache_stats(self._cache, size_ptr, hits_ptr, misses_ptr)
+        
+        return {
+            'size': size_ptr[0],
+            'hits': hits_ptr[0],
+            'misses': misses_ptr[0]
+        }
+
+
+# ============================================================================
+# Memory Layer Module
+# ============================================================================
+
+class MemoryType(IntEnum):
+    FACT = 0
+    PREFERENCE = 1
+    RELATIONSHIP = 2
+    EVENT = 3
+
+
+class ConsolidationStrategy(IntEnum):
+    MERGE = 0
+    UPDATE = 1
+    LINK = 2
+    ARCHIVE = 3
+
+
+@dataclass(frozen=True)
+class MemoryMetadata:
+    memory_id: Optional[str] = None
+    memory_type: MemoryType = MemoryType.FACT
+    source: Optional[str] = None
+    timestamp: Optional[int] = None
+    importance_score: float = 0.5
+    extraction_metadata: Optional[str] = None
+    related_memory_ids: Sequence[str] = ()
+    consolidated: bool = False
+
+
+@dataclass(frozen=True)
+class MemoryResult:
+    memory_id: str
+    content: str
+    relevance_score: float
+    distance: float
+    metadata: Optional[MemoryMetadata] = None
+    related: Sequence[MemoryResult] = ()
+
+
+@dataclass
+class MemoryLayerConfig:
+    extraction_threshold: float = 0.5
+    consolidation_threshold: float = 0.85
+    default_strategy: ConsolidationStrategy = ConsolidationStrategy.MERGE
+    enable_temporal_weighting: bool = True
+    enable_relationship_retrieval: bool = True
+    max_related_memories: int = 5
+    llm_config: Optional[LLMConfig] = None
+    use_llm_extraction: bool = True
+    use_llm_consolidation: bool = False
+
+
+def _create_c_metadata(meta: Optional[MemoryMetadata]) -> ffi.CData:
+    if meta is None:
+        return ffi.NULL
+    
+    c_meta = ffi.new("GV_MemoryMetadata *")
+    c_meta.memory_id = ffi.new("char[]", meta.memory_id.encode()) if meta.memory_id else ffi.NULL
+    c_meta.memory_type = int(meta.memory_type)
+    c_meta.source = ffi.new("char[]", meta.source.encode()) if meta.source else ffi.NULL
+    c_meta.timestamp = meta.timestamp if meta.timestamp else 0
+    c_meta.importance_score = meta.importance_score
+    c_meta.extraction_metadata = ffi.new("char[]", meta.extraction_metadata.encode()) if meta.extraction_metadata else ffi.NULL
+    c_meta.related_count = len(meta.related_memory_ids) if meta.related_memory_ids else 0
+    c_meta.consolidated = 1 if meta.consolidated else 0
+    
+    if meta.related_memory_ids:
+        c_meta.related_memory_ids = ffi.new("char*[]", [ffi.new("char[]", id.encode()) for id in meta.related_memory_ids])
+    else:
+        c_meta.related_memory_ids = ffi.NULL
+    
+    return c_meta
+
+
+def _copy_memory_metadata(c_meta_ptr) -> Optional[MemoryMetadata]:
+    if c_meta_ptr == ffi.NULL:
+        return None
+    
+    try:
+        memory_id = ffi.string(c_meta_ptr.memory_id).decode("utf-8") if c_meta_ptr.memory_id != ffi.NULL else None
+        source = ffi.string(c_meta_ptr.source).decode("utf-8") if c_meta_ptr.source != ffi.NULL else None
+        extraction_metadata = ffi.string(c_meta_ptr.extraction_metadata).decode("utf-8") if c_meta_ptr.extraction_metadata != ffi.NULL else None
+        
+        related_ids = []
+        if c_meta_ptr.related_memory_ids != ffi.NULL and c_meta_ptr.related_count > 0:
+            for i in range(c_meta_ptr.related_count):
+                if c_meta_ptr.related_memory_ids[i] != ffi.NULL:
+                    related_ids.append(ffi.string(c_meta_ptr.related_memory_ids[i]).decode("utf-8"))
+        
+        return MemoryMetadata(
+            memory_id=memory_id,
+            memory_type=MemoryType(int(c_meta_ptr.memory_type)),
+            source=source,
+            timestamp=int(c_meta_ptr.timestamp) if c_meta_ptr.timestamp > 0 else None,
+            importance_score=float(c_meta_ptr.importance_score),
+            extraction_metadata=extraction_metadata,
+            related_memory_ids=tuple(related_ids),
+            consolidated=bool(c_meta_ptr.consolidated)
+        )
+    except (AttributeError, TypeError, ValueError, UnicodeDecodeError):
+        return None
+
+
+def _copy_memory_result(c_result_ptr) -> Optional[MemoryResult]:
+    if c_result_ptr == ffi.NULL:
+        return None
+    
+    try:
+        memory_id = ffi.string(c_result_ptr.memory_id).decode("utf-8") if c_result_ptr.memory_id != ffi.NULL else ""
+        content = ffi.string(c_result_ptr.content).decode("utf-8") if c_result_ptr.content != ffi.NULL else ""
+        
+        metadata = _copy_memory_metadata(c_result_ptr.metadata) if c_result_ptr.metadata != ffi.NULL else None
+        
+        related = []
+        if c_result_ptr.related != ffi.NULL and c_result_ptr.related_count > 0:
+            for i in range(c_result_ptr.related_count):
+                if c_result_ptr.related[i] != ffi.NULL:
+                    rel = _copy_memory_result(c_result_ptr.related[i])
+                    if rel:
+                        related.append(rel)
+        
+        return MemoryResult(
+            memory_id=memory_id,
+            content=content,
+            relevance_score=float(c_result_ptr.relevance_score),
+            distance=float(c_result_ptr.distance),
+            metadata=metadata,
+            related=tuple(related)
+        )
+    except (AttributeError, TypeError, ValueError, UnicodeDecodeError):
+        return None
+
+
+class MemoryLayer:
+    def __init__(self, db: Database, config: Optional[MemoryLayerConfig] = None):
+        if db._closed:
+            raise ValueError("Database is closed")
+        
+        if config is None:
+            config = MemoryLayerConfig()
+        
+        c_config = ffi.new("GV_MemoryLayerConfig *")
+        c_config.extraction_threshold = config.extraction_threshold
+        c_config.consolidation_threshold = config.consolidation_threshold
+        c_config.default_strategy = int(config.default_strategy)
+        c_config.enable_temporal_weighting = 1 if config.enable_temporal_weighting else 0
+        c_config.enable_relationship_retrieval = 1 if config.enable_relationship_retrieval else 0
+        c_config.max_related_memories = config.max_related_memories
+        c_config.use_llm_extraction = 1 if config.use_llm_extraction else 0
+        c_config.use_llm_consolidation = 1 if config.use_llm_consolidation else 0
+        
+        # Set LLM config if provided
+        if config.llm_config:
+            c_llm_config = config.llm_config._to_c_config()
+            c_config.llm_config = c_llm_config
+        else:
+            c_config.llm_config = ffi.NULL
+        
+        self._layer = lib.gv_memory_layer_create(db._db, c_config)
+        if self._layer == ffi.NULL:
+            raise RuntimeError("Failed to create memory layer")
+        
+        self._db = db
+        self._closed = False
+    
+    def __enter__(self):
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+    
+    def close(self):
+        if not self._closed and self._layer != ffi.NULL:
+            lib.gv_memory_layer_destroy(self._layer)
+            self._layer = ffi.NULL
+            self._closed = True
+    
+    def add(self, content: str, embedding: Sequence[float], metadata: Optional[MemoryMetadata] = None) -> str:
+        if self._closed:
+            raise ValueError("Memory layer is closed")
+        
+        if len(embedding) != self._db.dimension:
+            raise ValueError(f"Embedding dimension {len(embedding)} does not match database dimension {self._db.dimension}")
+        
+        c_embedding = ffi.new("float[]", embedding)
+        c_meta = _create_c_metadata(metadata) if metadata else ffi.NULL
+        
+        memory_id_ptr = lib.gv_memory_add(self._layer, content.encode(), c_embedding, c_meta)
+        if memory_id_ptr == ffi.NULL:
+            raise RuntimeError("Failed to add memory")
+        
+        memory_id = ffi.string(memory_id_ptr).decode("utf-8")
+        lib.free(memory_id_ptr)
+        
+        return memory_id
+    
+    def extract_from_conversation(self, conversation: str, conversation_id: Optional[str] = None) -> list[str]:
+        if self._closed:
+            raise ValueError("Memory layer is closed")
+        
+        conv_id_bytes = conversation_id.encode() if conversation_id else ffi.NULL
+        embeddings_ptr = ffi.new("float**")
+        count_ptr = ffi.new("size_t *")
+        
+        memory_ids_ptr = lib.gv_memory_extract_from_conversation(
+            self._layer, conversation.encode(), conv_id_bytes, embeddings_ptr, count_ptr
+        )
+        
+        if memory_ids_ptr == ffi.NULL:
+            return []
+        
+        count = int(count_ptr[0])
+        memory_ids = []
+        for i in range(count):
+            if memory_ids_ptr[i] != ffi.NULL:
+                memory_ids.append(ffi.string(memory_ids_ptr[i]).decode("utf-8"))
+                lib.free(memory_ids_ptr[i])
+        
+        lib.free(memory_ids_ptr)
+        if embeddings_ptr[0] != ffi.NULL:
+            lib.free(embeddings_ptr[0])
+        
+        return memory_ids
+    
+    def extract_from_text(self, text: str, source: Optional[str] = None) -> list[str]:
+        if self._closed:
+            raise ValueError("Memory layer is closed")
+        
+        source_bytes = source.encode() if source else ffi.NULL
+        embeddings_ptr = ffi.new("float**")
+        count_ptr = ffi.new("size_t *")
+        
+        memory_ids_ptr = lib.gv_memory_extract_from_text(
+            self._layer, text.encode(), source_bytes, embeddings_ptr, count_ptr
+        )
+        
+        if memory_ids_ptr == ffi.NULL:
+            return []
+        
+        count = int(count_ptr[0])
+        memory_ids = []
+        for i in range(count):
+            if memory_ids_ptr[i] != ffi.NULL:
+                memory_ids.append(ffi.string(memory_ids_ptr[i]).decode("utf-8"))
+                lib.free(memory_ids_ptr[i])
+        
+        lib.free(memory_ids_ptr)
+        if embeddings_ptr[0] != ffi.NULL:
+            lib.free(embeddings_ptr[0])
+        
+        return memory_ids
+    
+    def consolidate(self, threshold: Optional[float] = None, strategy: Optional[ConsolidationStrategy] = None) -> int:
+        if self._closed:
+            raise ValueError("Memory layer is closed")
+        
+        actual_threshold = threshold if threshold is not None else -1.0
+        actual_strategy = int(strategy) if strategy is not None else -1
+        
+        result = lib.gv_memory_consolidate(self._layer, actual_threshold, actual_strategy)
+        if result < 0:
+            raise RuntimeError("Failed to consolidate memories")
+        
+        return result
+    
+    def search(self, query_embedding: Sequence[float], k: int = 10, distance: DistanceType = DistanceType.COSINE) -> list[MemoryResult]:
+        if self._closed:
+            raise ValueError("Memory layer is closed")
+        
+        if len(query_embedding) != self._db.dimension:
+            raise ValueError(f"Query embedding dimension {len(query_embedding)} does not match database dimension {self._db.dimension}")
+        
+        c_embedding = ffi.new("float[]", query_embedding)
+        c_results = ffi.new("GV_MemoryResult[]", k)
+        
+        count = lib.gv_memory_search(self._layer, c_embedding, k, c_results, int(distance))
+        if count < 0:
+            raise RuntimeError("Failed to search memories")
+        
+        results = []
+        for i in range(count):
+            result = _copy_memory_result(c_results + i)
+            if result:
+                results.append(result)
+            lib.gv_memory_result_free(c_results + i)
+        
+        return results
+    
+    def get(self, memory_id: str) -> Optional[MemoryResult]:
+        if self._closed:
+            raise ValueError("Memory layer is closed")
+        
+        c_result = ffi.new("GV_MemoryResult *")
+        ret = lib.gv_memory_get(self._layer, memory_id.encode(), c_result)
+        
+        if ret != 0:
+            return None
+        
+        result = _copy_memory_result(c_result)
+        lib.gv_memory_result_free(c_result)
+        return result
+    
+    def delete(self, memory_id: str) -> bool:
+        if self._closed:
+            raise ValueError("Memory layer is closed")
+        
+        result = lib.gv_memory_delete(self._layer, memory_id.encode())
+        return result == 0
+
+
+# ============================================================================
+# Context Graph Module
+# ============================================================================
+
+class EntityType(IntEnum):
+    PERSON = 0
+    ORGANIZATION = 1
+    LOCATION = 2
+    EVENT = 3
+    OBJECT = 4
+    CONCEPT = 5
+    USER = 6
+
+
+@dataclass
+class GraphEntity:
+    entity_id: Optional[str] = None
+    name: str = ""
+    entity_type: EntityType = EntityType.PERSON
+    embedding: Optional[Sequence[float]] = None
+    embedding_dim: int = 0
+    created: int = 0
+    updated: int = 0
+    mentions: int = 0
+    user_id: Optional[str] = None
+    agent_id: Optional[str] = None
+    run_id: Optional[str] = None
+
+    def _to_c_entity(self) -> ffi.CData:
+        c_entity = ffi.new("GV_GraphEntity *")
+        if self.entity_id:
+            c_entity.entity_id = ffi.new("char[]", self.entity_id.encode())
+        if self.name:
+            c_entity.name = ffi.new("char[]", self.name.encode())
+        c_entity.entity_type = int(self.entity_type)
+        if self.embedding:
+            c_entity.embedding = ffi.new("float[]", self.embedding)
+            c_entity.embedding_dim = len(self.embedding)
+        c_entity.created = self.created
+        c_entity.updated = self.updated
+        c_entity.mentions = self.mentions
+        if self.user_id:
+            c_entity.user_id = ffi.new("char[]", self.user_id.encode())
+        if self.agent_id:
+            c_entity.agent_id = ffi.new("char[]", self.agent_id.encode())
+        if self.run_id:
+            c_entity.run_id = ffi.new("char[]", self.run_id.encode())
+        return c_entity
+
+
+@dataclass
+class GraphRelationship:
+    relationship_id: Optional[str] = None
+    source_entity_id: str = ""
+    destination_entity_id: str = ""
+    relationship_type: str = ""
+    created: int = 0
+    updated: int = 0
+    mentions: int = 0
+
+    def _to_c_relationship(self) -> ffi.CData:
+        c_rel = ffi.new("GV_GraphRelationship *")
+        if self.relationship_id:
+            c_rel.relationship_id = ffi.new("char[]", self.relationship_id.encode())
+        else:
+            c_rel.relationship_id = ffi.NULL
+        if self.source_entity_id:
+            c_rel.source_entity_id = ffi.new("char[]", self.source_entity_id.encode())
+        else:
+            c_rel.source_entity_id = ffi.NULL
+        if self.destination_entity_id:
+            c_rel.destination_entity_id = ffi.new("char[]", self.destination_entity_id.encode())
+        else:
+            c_rel.destination_entity_id = ffi.NULL
+        if self.relationship_type:
+            c_rel.relationship_type = ffi.new("char[]", self.relationship_type.encode())
+        else:
+            c_rel.relationship_type = ffi.NULL
+        c_rel.created = self.created
+        c_rel.updated = self.updated
+        c_rel.mentions = self.mentions
+        return c_rel
+
+
+@dataclass
+class GraphQueryResult:
+    source_name: str = ""
+    relationship_type: str = ""
+    destination_name: str = ""
+    similarity: float = 0.0
+
+
+@dataclass
+class ContextGraphConfig:
+    llm: Optional[LLM] = None  # LLM instance
+    similarity_threshold: float = 0.7
+    enable_entity_extraction: bool = True
+    enable_relationship_extraction: bool = True
+    max_traversal_depth: int = 3
+    max_results: int = 100
+    embedding_callback: Optional[Callable[[str], Sequence[float]]] = None
+    embedding_dimension: int = 0
+    embedding_service: Optional[EmbeddingService] = None  # EmbeddingService instance
+
+    def _to_c_config(self) -> ffi.CData:
+        c_config = ffi.new("GV_ContextGraphConfig *")
+        if self.llm is not None:
+            # Access internal C pointer from LLM object
+            if hasattr(self.llm, '_llm'):
+                c_config.llm = self.llm._llm
+            else:
+                c_config.llm = ffi.NULL
+        else:
+            c_config.llm = ffi.NULL
+        
+        # Set embedding service if provided
+        if self.embedding_service is not None:
+            if hasattr(self.embedding_service, '_service'):
+                c_config.embedding_service = self.embedding_service._service
+            else:
+                c_config.embedding_service = ffi.NULL
+        else:
+            c_config.embedding_service = ffi.NULL
+        
+        c_config.similarity_threshold = self.similarity_threshold
+        c_config.enable_entity_extraction = 1 if self.enable_entity_extraction else 0
+        c_config.enable_relationship_extraction = 1 if self.enable_relationship_extraction else 0
+        c_config.max_traversal_depth = self.max_traversal_depth
+        c_config.max_results = self.max_results
+        
+        # Embedding callback setup
+        # Note: C callbacks from Python are complex, so we'll handle this differently
+        # For now, embeddings should be provided when adding entities
+        c_config.embedding_callback = ffi.NULL
+        c_config.embedding_user_data = ffi.NULL
+        c_config.embedding_dimension = self.embedding_dimension
+        
+        return c_config
+
+
+class ContextGraph:
+    def __init__(self, config: Optional[ContextGraphConfig] = None):
+        if config is None:
+            config = ContextGraphConfig()
+        
+        c_config = config._to_c_config()
+        self._graph = lib.gv_context_graph_create(c_config)
+        if self._graph == ffi.NULL:
+            raise RuntimeError("Failed to create context graph")
+        self._config = config
+        self._closed = False
+    
+    def __enter__(self):
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+    
+    def close(self):
+        if not self._closed and self._graph != ffi.NULL:
+            lib.gv_context_graph_destroy(self._graph)
+            self._graph = ffi.NULL
+            self._closed = True
+    
+    def extract(self, text: str, user_id: Optional[str] = None, 
+                agent_id: Optional[str] = None, run_id: Optional[str] = None,
+                generate_embeddings: Optional[Callable[[str], Sequence[float]]] = None,
+                use_batch_embeddings: bool = True):
+        """Extract entities and relationships from text.
+        
+        Args:
+            text: Text to extract from
+            user_id: Optional user ID filter
+            agent_id: Optional agent ID filter
+            run_id: Optional run ID filter
+            generate_embeddings: Optional callback to generate embeddings for extracted entities
+            use_batch_embeddings: If True and embedding_service is set, use batch generation
+        
+        Returns:
+            Tuple of (entities, relationships)
+        """
+        entities_ptr = ffi.new("GV_GraphEntity **")
+        entity_count_ptr = ffi.new("size_t *")
+        relationships_ptr = ffi.new("GV_GraphRelationship **")
+        relationship_count_ptr = ffi.new("size_t *")
+        
+        user_id_bytes = user_id.encode() if user_id else ffi.NULL
+        agent_id_bytes = agent_id.encode() if agent_id else ffi.NULL
+        run_id_bytes = run_id.encode() if run_id else ffi.NULL
+        
+        result = lib.gv_context_graph_extract(
+            self._graph, text.encode(), 
+            user_id_bytes, agent_id_bytes, run_id_bytes,
+            entities_ptr, entity_count_ptr,
+            relationships_ptr, relationship_count_ptr
+        )
+        
+        if result != 0:
+            raise RuntimeError("Failed to extract entities and relationships")
+        
+        entities = []
+        if entities_ptr[0] != ffi.NULL:
+            # Collect all entity names for batch embedding generation
+            entity_names = []
+            entity_indices = []
+            for i in range(entity_count_ptr[0]):
+                c_entity = entities_ptr[0] + i
+                name = ffi.string(c_entity.name).decode("utf-8") if c_entity.name else ""
+                if name:
+                    entity_names.append(name)
+                    entity_indices.append(i)
+            
+            # Generate embeddings in batch if service is available
+            embeddings_map = {}
+            if use_batch_embeddings and self._config.embedding_service and entity_names:
+                try:
+                    batch_embeddings = self._config.embedding_service.generate_batch(entity_names)
+                    embeddings_map = {name: emb for name, emb in zip(entity_names, batch_embeddings) if emb is not None}
+                except Exception:
+                    pass
+            
+            # Process entities
+            for i in range(entity_count_ptr[0]):
+                c_entity = entities_ptr[0] + i
+                name = ffi.string(c_entity.name).decode("utf-8") if c_entity.name else ""
+                
+                # Get embedding from C entity, batch service, or callback
+                embedding = None
+                embedding_dim = 0
+                if c_entity.embedding != ffi.NULL and c_entity.embedding_dim > 0:
+                    embedding = [c_entity.embedding[j] for j in range(c_entity.embedding_dim)]
+                    embedding_dim = c_entity.embedding_dim
+                elif name in embeddings_map:
+                    embedding = embeddings_map[name]
+                    embedding_dim = len(embedding)
+                elif generate_embeddings and name:
+                    try:
+                        embedding = generate_embeddings(name)
+                        if embedding:
+                            embedding_dim = len(embedding)
+                    except Exception:
+                        pass
+                elif self._config.embedding_service and name:
+                    try:
+                        embedding = self._config.embedding_service.generate(name)
+                        if embedding:
+                            embedding_dim = len(embedding)
+                    except Exception:
+                        pass
+                
+                entity = GraphEntity(
+                    entity_id=ffi.string(c_entity.entity_id).decode("utf-8") if c_entity.entity_id else None,
+                    name=name,
+                    entity_type=EntityType(c_entity.entity_type),
+                    embedding=embedding,
+                    embedding_dim=embedding_dim,
+                    created=c_entity.created,
+                    updated=c_entity.updated,
+                    mentions=c_entity.mentions,
+                    user_id=ffi.string(c_entity.user_id).decode("utf-8") if c_entity.user_id else None,
+                    agent_id=ffi.string(c_entity.agent_id).decode("utf-8") if c_entity.agent_id else None,
+                    run_id=ffi.string(c_entity.run_id).decode("utf-8") if c_entity.run_id else None,
+                )
+                entities.append(entity)
+                lib.gv_graph_entity_free(c_entity)
+            lib.free(entities_ptr[0])
+        
+        relationships = []
+        if relationships_ptr[0] != ffi.NULL:
+            for i in range(relationship_count_ptr[0]):
+                c_rel = relationships_ptr[0] + i
+                rel = GraphRelationship(
+                    relationship_id=ffi.string(c_rel.relationship_id).decode("utf-8") if c_rel.relationship_id else None,
+                    source_entity_id=ffi.string(c_rel.source_entity_id).decode("utf-8") if c_rel.source_entity_id else "",
+                    destination_entity_id=ffi.string(c_rel.destination_entity_id).decode("utf-8") if c_rel.destination_entity_id else "",
+                    relationship_type=ffi.string(c_rel.relationship_type).decode("utf-8") if c_rel.relationship_type else "",
+                    created=c_rel.created,
+                    updated=c_rel.updated,
+                    mentions=c_rel.mentions,
+                )
+                relationships.append(rel)
+                lib.gv_graph_relationship_free(c_rel)
+            lib.free(relationships_ptr[0])
+        
+        return entities, relationships
+    
+    def add_entities(self, entities: Sequence[GraphEntity],
+                     generate_embeddings: Optional[Callable[[str], Sequence[float]]] = None,
+                     use_batch_embeddings: bool = True):
+        """Add entities to the graph.
+        
+        Args:
+            entities: List of entities to add
+            generate_embeddings: Optional callback to generate embeddings for entities without them
+            use_batch_embeddings: If True and embedding_service is set, use batch generation
+        """
+        if not entities:
+            return
+        
+        # Collect entities that need embeddings
+        entities_needing_embeddings = [
+            (i, entity) for i, entity in enumerate(entities)
+            if entity.embedding is None and entity.name
+        ]
+        
+        # Generate embeddings in batch if service is available
+        if use_batch_embeddings and self._config.embedding_service and entities_needing_embeddings:
+            try:
+                entity_names = [entity.name for _, entity in entities_needing_embeddings]
+                batch_embeddings = self._config.embedding_service.generate_batch(entity_names)
+                for (i, entity), embedding in zip(entities_needing_embeddings, batch_embeddings):
+                    if embedding is not None:
+                        entity.embedding = embedding
+                        entity.embedding_dim = len(embedding)
+            except Exception:
+                pass
+        
+        # Generate embeddings individually if callback provided or service available
+        if generate_embeddings or (self._config.embedding_service and not use_batch_embeddings):
+            for i, entity in entities_needing_embeddings:
+                if entity.embedding is None and entity.name:
+                    try:
+                        if generate_embeddings:
+                            entity.embedding = generate_embeddings(entity.name)
+                        elif self._config.embedding_service:
+                            entity.embedding = self._config.embedding_service.generate(entity.name)
+                        if entity.embedding:
+                            entity.embedding_dim = len(entity.embedding)
+                    except Exception:
+                        pass
+        
+        c_entities = ffi.new("GV_GraphEntity[]", len(entities))
+        for i, entity in enumerate(entities):
+            c_entity = entity._to_c_entity()
+            c_entities[i] = c_entity[0]
+        
+        result = lib.gv_context_graph_add_entities(self._graph, c_entities, len(entities))
+        if result != 0:
+            raise RuntimeError("Failed to add entities")
+    
+    def add_relationships(self, relationships: Sequence[GraphRelationship]):
+        """Add relationships to the graph."""
+        if not relationships:
+            return
+        
+        c_rels = ffi.new("GV_GraphRelationship[]", len(relationships))
+        for i, rel in enumerate(relationships):
+            c_rel = rel._to_c_relationship()
+            c_rels[i] = c_rel[0]
+        
+        result = lib.gv_context_graph_add_relationships(self._graph, c_rels, len(relationships))
+        if result != 0:
+            raise RuntimeError("Failed to add relationships")
+    
+    def search(self, query_embedding: Sequence[float], user_id: Optional[str] = None,
+               agent_id: Optional[str] = None, run_id: Optional[str] = None,
+               max_results: int = 10):
+        """Search for related entities in the graph."""
+        c_embedding = ffi.new("float[]", query_embedding)
+        c_results = ffi.new("GV_GraphQueryResult[]", max_results)
+        
+        user_id_bytes = user_id.encode() if user_id else ffi.NULL
+        agent_id_bytes = agent_id.encode() if agent_id else ffi.NULL
+        run_id_bytes = run_id.encode() if run_id else ffi.NULL
+        
+        count = lib.gv_context_graph_search(
+            self._graph, c_embedding, len(query_embedding),
+            user_id_bytes, agent_id_bytes, run_id_bytes,
+            c_results, max_results
+        )
+        
+        if count < 0:
+            raise RuntimeError("Failed to search graph")
+        
+        results = []
+        for i in range(count):
+            result = GraphQueryResult(
+                source_name=ffi.string(c_results[i].source_name).decode("utf-8") if c_results[i].source_name else "",
+                relationship_type=ffi.string(c_results[i].relationship_type).decode("utf-8") if c_results[i].relationship_type else "",
+                destination_name=ffi.string(c_results[i].destination_name).decode("utf-8") if c_results[i].destination_name else "",
+                similarity=c_results[i].similarity,
+            )
+            results.append(result)
+            lib.gv_graph_query_result_free(c_results + i)
+        
+        return results
+    
+    def get_related(self, entity_id: str, max_depth: int = 3, max_results: int = 10):
+        """Get related entities for a given entity."""
+        c_results = ffi.new("GV_GraphQueryResult[]", max_results)
+        
+        count = lib.gv_context_graph_get_related(
+            self._graph, entity_id.encode(), max_depth, c_results, max_results
+        )
+        
+        if count < 0:
+            raise RuntimeError("Failed to get related entities")
+        
+        results = []
+        for i in range(count):
+            result = GraphQueryResult(
+                source_name=ffi.string(c_results[i].source_name).decode("utf-8") if c_results[i].source_name else "",
+                relationship_type=ffi.string(c_results[i].relationship_type).decode("utf-8") if c_results[i].relationship_type else "",
+                destination_name=ffi.string(c_results[i].destination_name).decode("utf-8") if c_results[i].destination_name else "",
+                similarity=c_results[i].similarity,
+            )
+            results.append(result)
+            lib.gv_graph_query_result_free(c_results + i)
+        
+        return results
 

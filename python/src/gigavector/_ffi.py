@@ -10,6 +10,7 @@ ffi = FFI()
 # Keep this cdef in sync with the C headers.
 ffi.cdef(
     """
+typedef long time_t;  // Define time_t for FFI
 typedef enum { GV_INDEX_TYPE_KDTREE = 0, GV_INDEX_TYPE_HNSW = 1, GV_INDEX_TYPE_IVFPQ = 2, GV_INDEX_TYPE_SPARSE = 3 } GV_IndexType;
 typedef enum { GV_DISTANCE_EUCLIDEAN = 0, GV_DISTANCE_COSINE = 1, GV_DISTANCE_DOT_PRODUCT = 2, GV_DISTANCE_MANHATTAN = 3 } GV_DistanceType;
 
@@ -241,6 +242,206 @@ void gv_db_free_detailed_stats(GV_DetailedStats *stats);
 int gv_db_health_check(const GV_Database *db);
 void gv_db_record_latency(GV_Database *db, uint64_t latency_us, int is_insert);
 void gv_db_record_recall(GV_Database *db, double recall);
+
+// LLM types
+typedef enum { GV_LLM_PROVIDER_OPENAI = 0, GV_LLM_PROVIDER_ANTHROPIC = 1, GV_LLM_PROVIDER_GOOGLE = 2, GV_LLM_PROVIDER_CUSTOM = 3 } GV_LLMProvider;
+
+typedef struct {
+    GV_LLMProvider provider;
+    char *api_key;
+    char *model;
+    char *base_url;
+    double temperature;
+    int max_tokens;
+    int timeout_seconds;
+    char *custom_prompt;
+} GV_LLMConfig;
+
+typedef struct {
+    char *role;
+    char *content;
+} GV_LLMMessage;
+
+typedef struct {
+    char *content;
+    int finish_reason;
+    int token_count;
+} GV_LLMResponse;
+
+typedef struct GV_LLM GV_LLM;
+
+// LLM functions
+GV_LLM *gv_llm_create(const GV_LLMConfig *config);
+void gv_llm_destroy(GV_LLM *llm);
+int gv_llm_generate_response(GV_LLM *llm, const GV_LLMMessage *messages, size_t message_count, const char *response_format, GV_LLMResponse *response);
+void gv_llm_response_free(GV_LLMResponse *response);
+void gv_llm_message_free(GV_LLMMessage *message);
+void gv_llm_messages_free(GV_LLMMessage *messages, size_t count);
+
+// Embedding service types
+typedef enum { GV_EMBEDDING_PROVIDER_OPENAI = 0, GV_EMBEDDING_PROVIDER_HUGGINGFACE = 1, GV_EMBEDDING_PROVIDER_CUSTOM = 2, GV_EMBEDDING_PROVIDER_NONE = 3 } GV_EmbeddingProvider;
+
+typedef struct {
+    GV_EmbeddingProvider provider;
+    char *api_key;
+    char *model;
+    char *base_url;
+    size_t embedding_dimension;
+    size_t batch_size;
+    int enable_cache;
+    size_t cache_size;
+    int timeout_seconds;
+    char *huggingface_model_path;
+} GV_EmbeddingConfig;
+
+typedef struct GV_EmbeddingService GV_EmbeddingService;
+typedef struct GV_EmbeddingCache GV_EmbeddingCache;
+
+// Embedding service functions
+GV_EmbeddingService *gv_embedding_service_create(const GV_EmbeddingConfig *config);
+void gv_embedding_service_destroy(GV_EmbeddingService *service);
+int gv_embedding_generate(GV_EmbeddingService *service, const char *text, size_t *embedding_dim, float **embedding);
+int gv_embedding_generate_batch(GV_EmbeddingService *service, const char **texts, size_t text_count, size_t **embedding_dims, float ***embeddings);
+GV_EmbeddingConfig gv_embedding_config_default(void);
+void gv_embedding_config_free(GV_EmbeddingConfig *config);
+GV_EmbeddingCache *gv_embedding_cache_create(size_t max_size);
+void gv_embedding_cache_destroy(GV_EmbeddingCache *cache);
+int gv_embedding_cache_get(GV_EmbeddingCache *cache, const char *text, size_t *embedding_dim, const float **embedding);
+int gv_embedding_cache_put(GV_EmbeddingCache *cache, const char *text, size_t embedding_dim, const float *embedding);
+void gv_embedding_cache_clear(GV_EmbeddingCache *cache);
+void gv_embedding_cache_stats(GV_EmbeddingCache *cache, size_t *size, uint64_t *hits, uint64_t *misses);
+const char *gv_embedding_get_last_error(GV_EmbeddingService *service);
+
+// Context graph types
+typedef enum { GV_ENTITY_TYPE_PERSON = 0, GV_ENTITY_TYPE_ORGANIZATION = 1, GV_ENTITY_TYPE_LOCATION = 2, GV_ENTITY_TYPE_EVENT = 3, GV_ENTITY_TYPE_OBJECT = 4, GV_ENTITY_TYPE_CONCEPT = 5, GV_ENTITY_TYPE_USER = 6 } GV_EntityType;
+
+typedef struct {
+    char *entity_id;
+    char *name;
+    GV_EntityType entity_type;
+    float *embedding;
+    size_t embedding_dim;
+    time_t created;
+    time_t updated;
+    uint64_t mentions;
+    char *user_id;
+    char *agent_id;
+    char *run_id;
+} GV_GraphEntity;
+
+typedef struct {
+    char *relationship_id;
+    char *source_entity_id;
+    char *destination_entity_id;
+    char *relationship_type;
+    time_t created;
+    time_t updated;
+    uint64_t mentions;
+} GV_GraphRelationship;
+
+typedef struct {
+    char *source_name;
+    char *relationship_type;
+    char *destination_name;
+    float similarity;
+} GV_GraphQueryResult;
+
+typedef struct GV_ContextGraph GV_ContextGraph;
+
+typedef float *(*GV_EmbeddingCallback)(const char *text, size_t *embedding_dim, void *user_data);
+
+typedef struct {
+    void *llm;
+    double similarity_threshold;
+    int enable_entity_extraction;
+    int enable_relationship_extraction;
+    size_t max_traversal_depth;
+    size_t max_results;
+    GV_EmbeddingCallback embedding_callback;
+    void *embedding_user_data;
+    size_t embedding_dimension;
+} GV_ContextGraphConfig;
+
+// Context graph functions
+GV_ContextGraph *gv_context_graph_create(const GV_ContextGraphConfig *config);
+void gv_context_graph_destroy(GV_ContextGraph *graph);
+int gv_context_graph_extract(GV_ContextGraph *graph, const char *text, const char *user_id, const char *agent_id, const char *run_id, GV_GraphEntity **entities, size_t *entity_count, GV_GraphRelationship **relationships, size_t *relationship_count);
+int gv_context_graph_add_entities(GV_ContextGraph *graph, const GV_GraphEntity *entities, size_t entity_count);
+int gv_context_graph_add_relationships(GV_ContextGraph *graph, const GV_GraphRelationship *relationships, size_t relationship_count);
+int gv_context_graph_search(GV_ContextGraph *graph, const float *query_embedding, size_t embedding_dim, const char *user_id, const char *agent_id, const char *run_id, GV_GraphQueryResult *results, size_t max_results);
+int gv_context_graph_get_related(GV_ContextGraph *graph, const char *entity_id, size_t max_depth, GV_GraphQueryResult *results, size_t max_results);
+int gv_context_graph_delete_entities(GV_ContextGraph *graph, const char **entity_ids, size_t entity_count);
+int gv_context_graph_delete_relationships(GV_ContextGraph *graph, const char **relationship_ids, size_t relationship_count);
+void gv_graph_entity_free(GV_GraphEntity *entity);
+void gv_graph_relationship_free(GV_GraphRelationship *relationship);
+void gv_graph_query_result_free(GV_GraphQueryResult *result);
+GV_ContextGraphConfig gv_context_graph_config_default(void);
+
+// Memory layer types
+typedef enum { GV_MEMORY_TYPE_FACT = 0, GV_MEMORY_TYPE_PREFERENCE = 1, GV_MEMORY_TYPE_RELATIONSHIP = 2, GV_MEMORY_TYPE_EVENT = 3 } GV_MemoryType;
+typedef enum { GV_CONSOLIDATION_MERGE = 0, GV_CONSOLIDATION_UPDATE = 1, GV_CONSOLIDATION_LINK = 2, GV_CONSOLIDATION_ARCHIVE = 3 } GV_ConsolidationStrategy;
+
+typedef struct {
+    char *memory_id;
+    GV_MemoryType memory_type;
+    char *source;
+    time_t timestamp;
+    double importance_score;
+    char *extraction_metadata;
+    char **related_memory_ids;
+    size_t related_count;
+    int consolidated;
+} GV_MemoryMetadata;
+
+typedef struct {
+    char *memory_id;
+    char *content;
+    float relevance_score;
+    float distance;
+    GV_MemoryMetadata *metadata;
+    GV_MemoryMetadata **related;
+    size_t related_count;
+} GV_MemoryResult;
+
+typedef struct {
+    double extraction_threshold;
+    double consolidation_threshold;
+    GV_ConsolidationStrategy default_strategy;
+    int enable_temporal_weighting;
+    int enable_relationship_retrieval;
+    size_t max_related_memories;
+    void *llm_config;
+    int use_llm_extraction;
+    int use_llm_consolidation;
+} GV_MemoryLayerConfig;
+
+typedef struct GV_MemoryLayer {
+    GV_Database *db;
+    GV_MemoryLayerConfig config;
+    uint64_t next_memory_id;
+    void *mutex;
+} GV_MemoryLayer;
+
+// Memory layer functions
+GV_MemoryLayerConfig gv_memory_layer_config_default(void);
+GV_MemoryLayer *gv_memory_layer_create(GV_Database *db, const GV_MemoryLayerConfig *config);
+void gv_memory_layer_destroy(GV_MemoryLayer *layer);
+char *gv_memory_add(GV_MemoryLayer *layer, const char *content, const float *embedding, GV_MemoryMetadata *metadata);
+char **gv_memory_extract_from_conversation(GV_MemoryLayer *layer, const char *conversation, const char *conversation_id, float **embeddings, size_t *memory_count);
+char **gv_memory_extract_from_text(GV_MemoryLayer *layer, const char *text, const char *source, float **embeddings, size_t *memory_count);
+int gv_memory_extract_candidates_from_conversation_llm(GV_LLM *llm, const char *conversation, const char *conversation_id, int is_agent_memory, const char *custom_prompt, void *candidates, size_t max_candidates, size_t *actual_count);
+const char *gv_llm_get_last_error(GV_LLM *llm);
+const char *gv_llm_error_string(int error_code);
+typedef enum { GV_LLM_SUCCESS = 0, GV_LLM_ERROR_NULL_POINTER = -1, GV_LLM_ERROR_INVALID_CONFIG = -2, GV_LLM_ERROR_INVALID_API_KEY = -3, GV_LLM_ERROR_INVALID_URL = -4, GV_LLM_ERROR_MEMORY_ALLOCATION = -5, GV_LLM_ERROR_CURL_INIT = -6, GV_LLM_ERROR_NETWORK = -7, GV_LLM_ERROR_TIMEOUT = -8, GV_LLM_ERROR_RESPONSE_TOO_LARGE = -9, GV_LLM_ERROR_PARSE_FAILED = -10, GV_LLM_ERROR_INVALID_RESPONSE = -11, GV_LLM_ERROR_CUSTOM_URL_REQUIRED = -12 } GV_LLMError;
+int gv_memory_consolidate(GV_MemoryLayer *layer, double threshold, int strategy);
+int gv_memory_search(GV_MemoryLayer *layer, const float *query_embedding, size_t k, GV_MemoryResult *results, GV_DistanceType distance_type);
+int gv_memory_search_filtered(GV_MemoryLayer *layer, const float *query_embedding, size_t k, GV_MemoryResult *results, GV_DistanceType distance_type, int memory_type, const char *source, time_t min_timestamp, time_t max_timestamp);
+int gv_memory_get_related(GV_MemoryLayer *layer, const char *memory_id, size_t k, GV_MemoryResult *results);
+int gv_memory_get(GV_MemoryLayer *layer, const char *memory_id, GV_MemoryResult *result);
+int gv_memory_update(GV_MemoryLayer *layer, const char *memory_id, const float *new_embedding, GV_MemoryMetadata *new_metadata);
+int gv_memory_delete(GV_MemoryLayer *layer, const char *memory_id);
+void gv_memory_result_free(GV_MemoryResult *result);
+void gv_memory_metadata_free(GV_MemoryMetadata *metadata);
 """
 )
 
@@ -250,7 +451,8 @@ def _load_lib():
     repo_root = here.parent.parent.parent  # .../GigaVector
     # Prefer freshly built library, fall back to packaged copy
     candidate_paths = [
-        repo_root / "build" / "lib" / "libGigaVector.so",
+        repo_root / "build" / "libGigaVector.so",  # Check build/ first
+        repo_root / "build" / "lib" / "libGigaVector.so",  # Then build/lib/
         here / "libGigaVector.so",
     ]
     for lib_path in candidate_paths:
