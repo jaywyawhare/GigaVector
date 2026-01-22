@@ -2628,9 +2628,70 @@ static int gv_db_compact_soa_storage(GV_Database *db) {
         }
         gv_kdtree_destroy_recursive(old_root);
     } else if (db->index_type == GV_INDEX_TYPE_HNSW) {
-        /* HNSW rebuild would be complex - for now, just update indices in nodes */
-        /* This is a simplified approach - full rebuild would be better */
-        /* TODO: Implement full HNSW rebuild */
+        /* Full HNSW rebuild: destroy old index and rebuild from compacted storage */
+        if (db->hnsw_index != NULL) {
+            /* Forward declaration for accessing HNSW index internals */
+            typedef struct {
+                size_t dimension;
+                size_t M;
+                size_t efConstruction;
+                size_t efSearch;
+                size_t maxLevel;
+                int use_binary_quant;
+                size_t quant_rerank;
+                int use_acorn;
+                size_t acorn_hops;
+                void *entryPoint;
+                size_t count;
+                void **nodes;
+                size_t nodes_capacity;
+                GV_SoAStorage *soa_storage;
+                int soa_storage_owned;
+            } GV_HNSWIndex_Internal;
+            
+            /* Extract config from existing index before destroying */
+            GV_HNSWIndex_Internal *old_index = (GV_HNSWIndex_Internal *)db->hnsw_index;
+            GV_HNSWConfig config = {
+                .M = old_index->M,
+                .efConstruction = old_index->efConstruction,
+                .efSearch = old_index->efSearch,
+                .maxLevel = old_index->maxLevel,
+                .use_binary_quant = old_index->use_binary_quant,
+                .quant_rerank = old_index->quant_rerank,
+                .use_acorn = old_index->use_acorn,
+                .acorn_hops = old_index->acorn_hops
+            };
+            
+            /* Destroy old index (but SoA storage is shared, so it won't be destroyed) */
+            gv_hnsw_destroy(db->hnsw_index);
+            db->hnsw_index = NULL;
+            
+            /* Create new HNSW index with same config and existing SoA storage */
+            db->hnsw_index = gv_hnsw_create(dimension, &config, storage);
+            if (db->hnsw_index == NULL) {
+                return -1; /* Failed to create new index */
+            }
+            
+            /* Re-insert all vectors from compacted storage */
+            for (size_t i = 0; i < new_count; ++i) {
+                GV_Vector temp_vec = {
+                    .dimension = dimension,
+                    .data = storage->data + (i * dimension),
+                    .metadata = storage->metadata[i]
+                };
+                
+                /* Insert vector (metadata ownership transferred) */
+                if (gv_hnsw_insert(db->hnsw_index, &temp_vec) != 0) {
+                    /* On failure, clean up */
+                    gv_hnsw_destroy(db->hnsw_index);
+                    db->hnsw_index = NULL;
+                    return -1;
+                }
+                
+                /* Clear metadata pointer since ownership was transferred */
+                temp_vec.metadata = NULL;
+            }
+        }
     }
 
     /* Update metadata index */
