@@ -2,9 +2,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import IntEnum
-from typing import Callable, Iterable, Optional, Sequence
+from types import TracebackType
+from typing import Any, Callable, Iterable, Optional, Sequence, TypeAlias
 
 from ._ffi import ffi, lib
+
+# Type alias for CFFI pointer types.
+# At runtime, this is Any to allow cffi's dynamic CData objects.
+# For type checking, this documents that the value is a CFFI pointer.
+CData: TypeAlias = Any
 
 
 class IndexType(IntEnum):
@@ -72,10 +78,10 @@ class IVFPQConfig:
     default_rerank: int = 32
     use_cosine: bool = False
     use_scalar_quant: bool = False
-    scalar_quant_config: ScalarQuantConfig = None
+    scalar_quant_config: Optional[ScalarQuantConfig] = None
     oversampling_factor: float = 1.0
-    
-    def __post_init__(self):
+
+    def __post_init__(self) -> None:
         if self.scalar_quant_config is None:
             self.scalar_quant_config = ScalarQuantConfig()
 
@@ -95,7 +101,15 @@ def _choose_index_type(dimension: int, expected_count: int | None) -> IndexType:
     return IndexType(int(val))
 
 
-def _metadata_to_dict(meta_ptr) -> dict[str, str]:
+def _metadata_to_dict(meta_ptr: CData) -> dict[str, str]:
+    """Convert C metadata linked list to Python dict.
+
+    Args:
+        meta_ptr: CFFI pointer to GV_Metadata structure (linked list).
+
+    Returns:
+        Dictionary of key-value metadata pairs.
+    """
     if meta_ptr == ffi.NULL:
         return {}
     out: dict[str, str] = {}
@@ -112,7 +126,15 @@ def _metadata_to_dict(meta_ptr) -> dict[str, str]:
     return out
 
 
-def _copy_vector(vec_ptr) -> Vector:
+def _copy_vector(vec_ptr: CData) -> Vector:
+    """Copy a C vector structure to a Python Vector object.
+
+    Args:
+        vec_ptr: CFFI pointer to GV_Vector structure.
+
+    Returns:
+        Python Vector object with copied data and metadata.
+    """
     try:
         if vec_ptr == ffi.NULL:
             return Vector(data=[], metadata={})
@@ -129,7 +151,17 @@ def _copy_vector(vec_ptr) -> Vector:
     except (AttributeError, TypeError, ValueError, RuntimeError, OSError):
         return Vector(data=[], metadata={})
 
-def _copy_sparse_vector(sv_ptr, dim: int) -> Vector:
+
+def _copy_sparse_vector(sv_ptr: CData, dim: int) -> Vector:
+    """Copy a C sparse vector structure to a dense Python Vector object.
+
+    Args:
+        sv_ptr: CFFI pointer to GV_SparseVector structure.
+        dim: Target dimension for the dense vector.
+
+    Returns:
+        Python Vector object with sparse values expanded to dense representation.
+    """
     if sv_ptr == ffi.NULL:
         return Vector(data=[], metadata={})
     nnz = int(sv_ptr.nnz)
@@ -144,14 +176,20 @@ def _copy_sparse_vector(sv_ptr, dim: int) -> Vector:
 
 
 class Database:
-    def __init__(self, handle, dimension: int):
+    """GigaVector database for storing and querying high-dimensional vectors."""
+
+    _db: CData
+    dimension: int
+    _closed: bool
+
+    def __init__(self, handle: CData, dimension: int) -> None:
         self._db = handle
         self.dimension = int(dimension)
         self._closed = False
 
     @classmethod
-    def open(cls, path: str | None, dimension: int, index: IndexType = IndexType.KDTREE, 
-             hnsw_config: HNSWConfig | None = None, ivfpq_config: IVFPQConfig | None = None):
+    def open(cls, path: str | None, dimension: int, index: IndexType = IndexType.KDTREE,
+             hnsw_config: HNSWConfig | None = None, ivfpq_config: IVFPQConfig | None = None) -> Database:
         """
         Open a database instance.
         
@@ -180,9 +218,10 @@ class Database:
             })
             db = lib.gv_db_open_with_hnsw_config(c_path, dimension, int(index), config)
         elif ivfpq_config is not None and index == IndexType.IVFPQ:
+            sq_cfg = ivfpq_config.scalar_quant_config or ScalarQuantConfig()
             sq_config = ffi.new("GV_ScalarQuantConfig *", {
-                "bits": ivfpq_config.scalar_quant_config.bits,
-                "per_dimension": 1 if ivfpq_config.scalar_quant_config.per_dimension else 0
+                "bits": sq_cfg.bits,
+                "per_dimension": 1 if sq_cfg.per_dimension else 0
             })
             config = ffi.new("GV_IVFPQConfig *", {
                 "nlist": ivfpq_config.nlist,
@@ -208,9 +247,8 @@ class Database:
     def open_auto(cls, path: str | None, dimension: int,
                   expected_count: int | None = None,
                   hnsw_config: HNSWConfig | None = None,
-                  ivfpq_config: IVFPQConfig | None = None):
-        """
-        Open a database and automatically choose a reasonable index type.
+                  ivfpq_config: IVFPQConfig | None = None) -> Database:
+        """Open a database and automatically choose a reasonable index type.
 
         Args:
             path: Optional path for persistence (None for in-memory).
@@ -218,18 +256,28 @@ class Database:
             expected_count: Optional estimate of the number of vectors.
             hnsw_config: Optional HNSW configuration (used if HNSW is selected).
             ivfpq_config: Optional IVFPQ configuration (used if IVFPQ is selected).
+
+        Returns:
+            Database instance with automatically selected index type.
         """
         index = _choose_index_type(dimension, expected_count)
         return cls.open(path, dimension, index=index,
                         hnsw_config=hnsw_config, ivfpq_config=ivfpq_config)
 
     @classmethod
-    def open_mmap(cls, path: str, dimension: int, index: IndexType = IndexType.KDTREE):
-        """
-        Open a read-only database by memory-mapping an existing snapshot file.
+    def open_mmap(cls, path: str, dimension: int, index: IndexType = IndexType.KDTREE) -> Database:
+        """Open a read-only database by memory-mapping an existing snapshot file.
 
         This is a thin wrapper around gv_db_open_mmap(). The returned Database
         instance shares the mapped file; modifications are not persisted.
+
+        Args:
+            path: Path to the snapshot file.
+            dimension: Vector dimensionality.
+            index: Index type to use.
+
+        Returns:
+            Database instance backed by memory-mapped file.
         """
         if not path:
             raise ValueError("path must be non-empty")
@@ -239,7 +287,8 @@ class Database:
             raise RuntimeError("gv_db_open_mmap failed")
         return cls(db, dimension)
 
-    def close(self):
+    def close(self) -> None:
+        """Close the database and release resources."""
         if self._closed:
             return
         lib.gv_db_close(self._db)
@@ -258,8 +307,12 @@ class Database:
             total_wal_records=int(stats_c.total_wal_records),
         )
 
-    def save(self, path: str | None = None):
-        """Persist the database to a binary snapshot file."""
+    def save(self, path: str | None = None) -> None:
+        """Persist the database to a binary snapshot file.
+
+        Args:
+            path: Output path. If None, uses the path from open().
+        """
         c_path = path.encode("utf-8") if path is not None else ffi.NULL
         rc = lib.gv_db_save(self._db, c_path)
         if rc != 0:
@@ -299,8 +352,16 @@ class Database:
         """
         lib.gv_db_set_cosine_normalized(self._db, 1 if enabled else 0)
 
-    def train_ivfpq(self, data: Sequence[Sequence[float]]):
-        """Train IVF-PQ index with provided vectors (only for IVFPQ index)."""
+    def train_ivfpq(self, data: Sequence[Sequence[float]]) -> None:
+        """Train IVF-PQ index with provided vectors (only for IVFPQ index).
+
+        Args:
+            data: Training vectors, each must have the same dimension as the database.
+
+        Raises:
+            ValueError: If training data is empty or has inconsistent dimensions.
+            RuntimeError: If training fails.
+        """
         flat = [item for vec in data for item in vec]
         count = len(data)
         if count == 0:
@@ -534,28 +595,32 @@ class Database:
             raise ValueError("recall must be between 0.0 and 1.0")
         lib.gv_db_record_recall(self._db, float(recall))
 
-    def __enter__(self):
+    def __enter__(self) -> Database:
         return self
 
-    def __exit__(self, exc_type, exc, tb):
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
         self.close()
 
-    def _check_dimension(self, vec: Sequence[float]):
+    def _check_dimension(self, vec: Sequence[float]) -> None:
         if len(vec) != self.dimension:
             raise ValueError(f"expected vector of dim {self.dimension}, got {len(vec)}")
 
-    def add_vector(self, vector: Sequence[float], metadata: dict[str, str] | None = None):
-        """
-        Add a vector to the database with optional metadata.
-        
+    def add_vector(self, vector: Sequence[float], metadata: dict[str, str] | None = None) -> None:
+        """Add a vector to the database with optional metadata.
+
         Args:
-            vector: Vector data as a sequence of floats
+            vector: Vector data as a sequence of floats.
             metadata: Optional dictionary of key-value metadata pairs.
-                     Supports multiple entries; all entries are persisted via WAL when enabled.
-        
+                Supports multiple entries; all entries are persisted via WAL when enabled.
+
         Raises:
-            ValueError: If vector dimension doesn't match database dimension
-            RuntimeError: If insertion fails
+            ValueError: If vector dimension doesn't match database dimension.
+            RuntimeError: If insertion fails.
         """
         self._check_dimension(vector)
         buf = ffi.new("float[]", list(vector))
@@ -587,7 +652,16 @@ class Database:
         if rc != 0:
             raise RuntimeError("gv_db_add_vector_with_rich_metadata failed")
 
-    def add_vectors(self, vectors: Iterable[Sequence[float]]):
+    def add_vectors(self, vectors: Iterable[Sequence[float]]) -> None:
+        """Add multiple vectors to the database in batch.
+
+        Args:
+            vectors: Iterable of vectors, each must match the database dimension.
+
+        Raises:
+            ValueError: If any vector has incorrect dimension.
+            RuntimeError: If insertion fails.
+        """
         data = [item for vec in vectors for item in vec]
         count = len(data) // self.dimension if self.dimension else 0
         if count * self.dimension != len(data):
@@ -597,31 +671,29 @@ class Database:
         if rc != 0:
             raise RuntimeError("gv_db_add_vectors failed")
 
-    def delete_vector(self, vector_index: int):
-        """
-        Delete a vector from the database by its index (insertion order).
-        
+    def delete_vector(self, vector_index: int) -> None:
+        """Delete a vector from the database by its index (insertion order).
+
         Args:
-            vector_index: Index of the vector to delete (0-based insertion order)
-        
+            vector_index: Index of the vector to delete (0-based insertion order).
+
         Raises:
-            RuntimeError: If deletion fails
+            RuntimeError: If deletion fails.
         """
         rc = lib.gv_db_delete_vector_by_index(self._db, vector_index)
         if rc != 0:
             raise RuntimeError(f"gv_db_delete_vector_by_index failed for index {vector_index}")
 
-    def update_vector(self, vector_index: int, new_data: Sequence[float]):
-        """
-        Update a vector in the database by its index (insertion order).
-        
+    def update_vector(self, vector_index: int, new_data: Sequence[float]) -> None:
+        """Update a vector in the database by its index (insertion order).
+
         Args:
-            vector_index: Index of the vector to update (0-based insertion order)
-            new_data: New vector data as a sequence of floats
-        
+            vector_index: Index of the vector to update (0-based insertion order).
+            new_data: New vector data as a sequence of floats.
+
         Raises:
-            ValueError: If vector dimension doesn't match database dimension
-            RuntimeError: If update fails
+            ValueError: If vector dimension doesn't match database dimension.
+            RuntimeError: If update fails.
         """
         self._check_dimension(new_data)
         buf = ffi.new("float[]", list(new_data))
@@ -629,16 +701,15 @@ class Database:
         if rc != 0:
             raise RuntimeError(f"gv_db_update_vector failed for index {vector_index}")
 
-    def update_metadata(self, vector_index: int, metadata: dict[str, str]):
-        """
-        Update metadata for a vector in the database by its index.
-        
+    def update_metadata(self, vector_index: int, metadata: dict[str, str]) -> None:
+        """Update metadata for a vector in the database by its index.
+
         Args:
-            vector_index: Index of the vector to update (0-based insertion order)
-            metadata: Dictionary of key-value metadata pairs to set
-        
+            vector_index: Index of the vector to update (0-based insertion order).
+            metadata: Dictionary of key-value metadata pairs to set.
+
         Raises:
-            RuntimeError: If update fails
+            RuntimeError: If update fails.
         """
         if not metadata:
             return
@@ -833,18 +904,16 @@ class Database:
                 out.append(SearchHit(distance=float(res.distance), vector=vec))
         return out
 
-    def record_latency(self, latency_us: int, is_insert: bool):
+    def record_latency(self, latency_us: int, is_insert: bool) -> None:
+        """Record operation latency for monitoring.
+
+        Args:
+            latency_us: Latency in microseconds.
+            is_insert: True for insert operations, False for search operations.
+        """
         lib.gv_db_record_latency(self._db, latency_us, 1 if is_insert else 0)
 
-    def record_recall(self, recall: float):
-        if not (0.0 <= recall <= 1.0):
-            raise ValueError("recall must be between 0.0 and 1.0")
-        lib.gv_db_record_recall(self._db, recall)
-
-    def health_check(self) -> int:
-        return lib.gv_db_health_check(self._db)
-
-    def __del__(self):
+    def __del__(self) -> None:
         try:
             self.close()
         except Exception:
@@ -901,7 +970,12 @@ class LLMConfig:
     timeout_seconds: int = 30
     custom_prompt: Optional[str] = None
 
-    def _to_c_config(self) -> ffi.CData:
+    def _to_c_config(self) -> CData:
+        """Convert to C configuration structure.
+
+        Returns:
+            CFFI pointer to GV_LLMConfig structure.
+        """
         c_config = ffi.new("GV_LLMConfig *")
         c_config.provider = int(self.provider)
         c_config.api_key = ffi.new("char[]", self.api_key.encode())
@@ -919,8 +993,12 @@ class LLMMessage:
     role: str
     content: str
 
-    def _to_c_message(self) -> tuple[ffi.CData, bytes, bytes]:
-        """Returns (c_msg, role_bytes, content_bytes) to keep references alive"""
+    def _to_c_message(self) -> tuple[CData, bytes, bytes]:
+        """Convert to C message structure.
+
+        Returns:
+            Tuple of (c_msg, role_bytes, content_bytes) to keep references alive.
+        """
         role_bytes = self.role.encode()
         content_bytes = self.content.encode()
         c_msg = ffi.new("GV_LLMMessage *")
@@ -937,20 +1015,31 @@ class LLMResponse:
 
 
 class LLM:
-    def __init__(self, config: LLMConfig):
+    """LLM client for generating responses using various providers."""
+
+    _llm: CData
+    _closed: bool
+
+    def __init__(self, config: LLMConfig) -> None:
         c_config = config._to_c_config()
         self._llm = lib.gv_llm_create(c_config)
         if self._llm == ffi.NULL:
             raise RuntimeError("Failed to create LLM instance. Make sure libcurl is installed and API key is valid.")
         self._closed = False
 
-    def __enter__(self):
+    def __enter__(self) -> LLM:
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         self.close()
 
-    def close(self):
+    def close(self) -> None:
+        """Close the LLM client and release resources."""
         if not self._closed and self._llm != ffi.NULL:
             lib.gv_llm_destroy(self._llm)
             self._llm = ffi.NULL
@@ -1043,7 +1132,12 @@ class EmbeddingConfig:
     timeout_seconds: int = 30
     huggingface_model_path: Optional[str] = None
 
-    def _to_c_config(self) -> ffi.CData:
+    def _to_c_config(self) -> CData:
+        """Convert to C configuration structure.
+
+        Returns:
+            CFFI pointer to GV_EmbeddingConfig structure.
+        """
         c_config = ffi.new("GV_EmbeddingConfig *")
         c_config.provider = int(self.provider)
         if self.api_key:
@@ -1072,21 +1166,30 @@ class EmbeddingConfig:
 
 class EmbeddingService:
     """Embedding service for generating vector embeddings from text."""
-    
-    def __init__(self, config: EmbeddingConfig):
+
+    _service: CData
+    _closed: bool
+
+    def __init__(self, config: EmbeddingConfig) -> None:
         c_config = config._to_c_config()
         self._service = lib.gv_embedding_service_create(c_config)
         if self._service == ffi.NULL:
             raise RuntimeError("Failed to create embedding service")
         self._closed = False
-    
-    def __enter__(self):
+
+    def __enter__(self) -> EmbeddingService:
         return self
-    
-    def __exit__(self, exc_type, exc_val, exc_tb):
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         self.close()
-    
-    def close(self):
+
+    def close(self) -> None:
+        """Close the embedding service and release resources."""
         if not self._closed and self._service != ffi.NULL:
             lib.gv_embedding_service_destroy(self._service)
             self._service = ffi.NULL
@@ -1149,38 +1252,47 @@ class EmbeddingService:
         
         if result < 0:
             return [None] * len(texts)
-        
-        embeddings = []
+
+        embeddings: list[Optional[Sequence[float]]] = []
         if embeddings_ptr[0] != ffi.NULL:
             for i in range(len(texts)):
                 if embeddings_ptr[0][i] != ffi.NULL and embedding_dims_ptr[0][i] > 0:
-                    emb = [embeddings_ptr[0][i][j] for j in range(embedding_dims_ptr[0][i])]
+                    emb: list[float] = [embeddings_ptr[0][i][j] for j in range(embedding_dims_ptr[0][i])]
                     lib.free(embeddings_ptr[0][i])
                     embeddings.append(emb)
                 else:
                     embeddings.append(None)
             lib.free(embeddings_ptr[0])
             lib.free(embedding_dims_ptr[0])
-        
+
         return embeddings
 
 
 class EmbeddingCache:
     """Embedding cache for storing and retrieving embeddings."""
-    
-    def __init__(self, max_size: int = 1000):
+
+    _cache: CData
+    _closed: bool
+
+    def __init__(self, max_size: int = 1000) -> None:
         self._cache = lib.gv_embedding_cache_create(max_size)
         if self._cache == ffi.NULL:
             raise RuntimeError("Failed to create embedding cache")
         self._closed = False
-    
-    def __enter__(self):
+
+    def __enter__(self) -> EmbeddingCache:
         return self
-    
-    def __exit__(self, exc_type, exc_val, exc_tb):
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         self.close()
-    
-    def close(self):
+
+    def close(self) -> None:
+        """Close the cache and release resources."""
         if not self._closed and self._cache != ffi.NULL:
             lib.gv_embedding_cache_destroy(self._cache)
             self._cache = ffi.NULL
@@ -1234,7 +1346,7 @@ class EmbeddingCache:
         
         return result == 0
     
-    def clear(self):
+    def clear(self) -> None:
         """Clear all entries from cache."""
         if self._closed:
             raise ValueError("Cache is closed")
@@ -1315,10 +1427,18 @@ class MemoryLayerConfig:
     use_llm_consolidation: bool = False
 
 
-def _create_c_metadata(meta: Optional[MemoryMetadata]) -> ffi.CData:
+def _create_c_metadata(meta: Optional[MemoryMetadata]) -> CData:
+    """Convert Python MemoryMetadata to C structure.
+
+    Args:
+        meta: Python memory metadata object, or None.
+
+    Returns:
+        CFFI pointer to GV_MemoryMetadata, or ffi.NULL if meta is None.
+    """
     if meta is None:
         return ffi.NULL
-    
+
     c_meta = ffi.new("GV_MemoryMetadata *")
     c_meta.memory_id = ffi.new("char[]", meta.memory_id.encode()) if meta.memory_id else ffi.NULL
     c_meta.memory_type = int(meta.memory_type)
@@ -1328,30 +1448,38 @@ def _create_c_metadata(meta: Optional[MemoryMetadata]) -> ffi.CData:
     c_meta.extraction_metadata = ffi.new("char[]", meta.extraction_metadata.encode()) if meta.extraction_metadata else ffi.NULL
     c_meta.related_count = len(meta.related_memory_ids) if meta.related_memory_ids else 0
     c_meta.consolidated = 1 if meta.consolidated else 0
-    
+
     if meta.related_memory_ids:
         c_meta.related_memory_ids = ffi.new("char*[]", [ffi.new("char[]", id.encode()) for id in meta.related_memory_ids])
     else:
         c_meta.related_memory_ids = ffi.NULL
-    
+
     return c_meta
 
 
-def _copy_memory_metadata(c_meta_ptr) -> Optional[MemoryMetadata]:
+def _copy_memory_metadata(c_meta_ptr: CData) -> Optional[MemoryMetadata]:
+    """Copy C memory metadata structure to Python object.
+
+    Args:
+        c_meta_ptr: CFFI pointer to GV_MemoryMetadata structure.
+
+    Returns:
+        Python MemoryMetadata object, or None on error.
+    """
     if c_meta_ptr == ffi.NULL:
         return None
-    
+
     try:
         memory_id = ffi.string(c_meta_ptr.memory_id).decode("utf-8") if c_meta_ptr.memory_id != ffi.NULL else None
         source = ffi.string(c_meta_ptr.source).decode("utf-8") if c_meta_ptr.source != ffi.NULL else None
         extraction_metadata = ffi.string(c_meta_ptr.extraction_metadata).decode("utf-8") if c_meta_ptr.extraction_metadata != ffi.NULL else None
-        
+
         related_ids = []
         if c_meta_ptr.related_memory_ids != ffi.NULL and c_meta_ptr.related_count > 0:
             for i in range(c_meta_ptr.related_count):
                 if c_meta_ptr.related_memory_ids[i] != ffi.NULL:
                     related_ids.append(ffi.string(c_meta_ptr.related_memory_ids[i]).decode("utf-8"))
-        
+
         return MemoryMetadata(
             memory_id=memory_id,
             memory_type=MemoryType(int(c_meta_ptr.memory_type)),
@@ -1366,10 +1494,18 @@ def _copy_memory_metadata(c_meta_ptr) -> Optional[MemoryMetadata]:
         return None
 
 
-def _copy_memory_result(c_result_ptr) -> Optional[MemoryResult]:
+def _copy_memory_result(c_result_ptr: CData) -> Optional[MemoryResult]:
+    """Copy C memory result structure to Python object.
+
+    Args:
+        c_result_ptr: CFFI pointer to GV_MemoryResult structure.
+
+    Returns:
+        Python MemoryResult object, or None on error.
+    """
     if c_result_ptr == ffi.NULL:
         return None
-    
+
     try:
         memory_id = ffi.string(c_result_ptr.memory_id).decode("utf-8") if c_result_ptr.memory_id != ffi.NULL else ""
         content = ffi.string(c_result_ptr.content).decode("utf-8") if c_result_ptr.content != ffi.NULL else ""
@@ -1397,13 +1533,19 @@ def _copy_memory_result(c_result_ptr) -> Optional[MemoryResult]:
 
 
 class MemoryLayer:
-    def __init__(self, db: Database, config: Optional[MemoryLayerConfig] = None):
+    """Memory layer for semantic memory storage and retrieval."""
+
+    _layer: CData
+    _db: Database
+    _closed: bool
+
+    def __init__(self, db: Database, config: Optional[MemoryLayerConfig] = None) -> None:
         if db._closed:
             raise ValueError("Database is closed")
-        
+
         if config is None:
             config = MemoryLayerConfig()
-        
+
         c_config = ffi.new("GV_MemoryLayerConfig *")
         c_config.extraction_threshold = config.extraction_threshold
         c_config.consolidation_threshold = config.consolidation_threshold
@@ -1427,14 +1569,20 @@ class MemoryLayer:
         
         self._db = db
         self._closed = False
-    
-    def __enter__(self):
+
+    def __enter__(self) -> MemoryLayer:
         return self
-    
-    def __exit__(self, exc_type, exc_val, exc_tb):
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         self.close()
-    
-    def close(self):
+
+    def close(self) -> None:
+        """Close the memory layer and release resources."""
         if not self._closed and self._layer != ffi.NULL:
             lib.gv_memory_layer_destroy(self._layer)
             self._layer = ffi.NULL
@@ -1601,7 +1749,12 @@ class GraphEntity:
     agent_id: Optional[str] = None
     run_id: Optional[str] = None
 
-    def _to_c_entity(self) -> ffi.CData:
+    def _to_c_entity(self) -> CData:
+        """Convert to C entity structure.
+
+        Returns:
+            CFFI pointer to GV_GraphEntity structure.
+        """
         c_entity = ffi.new("GV_GraphEntity *")
         if self.entity_id:
             c_entity.entity_id = ffi.new("char[]", self.entity_id.encode())
@@ -1633,7 +1786,12 @@ class GraphRelationship:
     updated: int = 0
     mentions: int = 0
 
-    def _to_c_relationship(self) -> ffi.CData:
+    def _to_c_relationship(self) -> CData:
+        """Convert to C relationship structure.
+
+        Returns:
+            CFFI pointer to GV_GraphRelationship structure.
+        """
         c_rel = ffi.new("GV_GraphRelationship *")
         if self.relationship_id:
             c_rel.relationship_id = ffi.new("char[]", self.relationship_id.encode())
@@ -1677,7 +1835,12 @@ class ContextGraphConfig:
     embedding_dimension: int = 0
     embedding_service: Optional[EmbeddingService] = None  # EmbeddingService instance
 
-    def _to_c_config(self) -> ffi.CData:
+    def _to_c_config(self) -> CData:
+        """Convert to C configuration structure.
+
+        Returns:
+            CFFI pointer to GV_ContextGraphConfig structure.
+        """
         c_config = ffi.new("GV_ContextGraphConfig *")
         if self.llm is not None:
             # Access internal C pointer from LLM object
@@ -1687,7 +1850,7 @@ class ContextGraphConfig:
                 c_config.llm = ffi.NULL
         else:
             c_config.llm = ffi.NULL
-        
+
         # Set embedding service if provided
         if self.embedding_service is not None:
             if hasattr(self.embedding_service, '_service'):
@@ -1696,63 +1859,80 @@ class ContextGraphConfig:
                 c_config.embedding_service = ffi.NULL
         else:
             c_config.embedding_service = ffi.NULL
-        
+
         c_config.similarity_threshold = self.similarity_threshold
         c_config.enable_entity_extraction = 1 if self.enable_entity_extraction else 0
         c_config.enable_relationship_extraction = 1 if self.enable_relationship_extraction else 0
         c_config.max_traversal_depth = self.max_traversal_depth
         c_config.max_results = self.max_results
-        
+
         # Embedding callback setup
         # Note: C callbacks from Python are complex, so we'll handle this differently
         # For now, embeddings should be provided when adding entities
         c_config.embedding_callback = ffi.NULL
         c_config.embedding_user_data = ffi.NULL
         c_config.embedding_dimension = self.embedding_dimension
-        
+
         return c_config
 
 
 class ContextGraph:
-    def __init__(self, config: Optional[ContextGraphConfig] = None):
+    """Context graph for entity and relationship extraction and querying."""
+
+    _graph: CData
+    _config: ContextGraphConfig
+    _closed: bool
+
+    def __init__(self, config: Optional[ContextGraphConfig] = None) -> None:
         if config is None:
             config = ContextGraphConfig()
-        
+
         c_config = config._to_c_config()
         self._graph = lib.gv_context_graph_create(c_config)
         if self._graph == ffi.NULL:
             raise RuntimeError("Failed to create context graph")
         self._config = config
         self._closed = False
-    
-    def __enter__(self):
+
+    def __enter__(self) -> ContextGraph:
         return self
-    
-    def __exit__(self, exc_type, exc_val, exc_tb):
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         self.close()
-    
-    def close(self):
+
+    def close(self) -> None:
+        """Close the context graph and release resources."""
         if not self._closed and self._graph != ffi.NULL:
             lib.gv_context_graph_destroy(self._graph)
             self._graph = ffi.NULL
             self._closed = True
     
-    def extract(self, text: str, user_id: Optional[str] = None, 
-                agent_id: Optional[str] = None, run_id: Optional[str] = None,
-                generate_embeddings: Optional[Callable[[str], Sequence[float]]] = None,
-                use_batch_embeddings: bool = True):
+    def extract(
+        self,
+        text: str,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+        generate_embeddings: Optional[Callable[[str], Sequence[float]]] = None,
+        use_batch_embeddings: bool = True,
+    ) -> tuple[list[GraphEntity], list[GraphRelationship]]:
         """Extract entities and relationships from text.
-        
+
         Args:
-            text: Text to extract from
-            user_id: Optional user ID filter
-            agent_id: Optional agent ID filter
-            run_id: Optional run ID filter
-            generate_embeddings: Optional callback to generate embeddings for extracted entities
-            use_batch_embeddings: If True and embedding_service is set, use batch generation
-        
+            text: Text to extract from.
+            user_id: Optional user ID filter.
+            agent_id: Optional agent ID filter.
+            run_id: Optional run ID filter.
+            generate_embeddings: Optional callback to generate embeddings for extracted entities.
+            use_batch_embeddings: If True and embedding_service is set, use batch generation.
+
         Returns:
-            Tuple of (entities, relationships)
+            Tuple of (entities, relationships) extracted from the text.
         """
         entities_ptr = ffi.new("GV_GraphEntity **")
         entity_count_ptr = ffi.new("size_t *")
@@ -1786,21 +1966,21 @@ class ContextGraph:
                     entity_indices.append(i)
             
             # Generate embeddings in batch if service is available
-            embeddings_map = {}
+            embeddings_map: dict[str, Sequence[float]] = {}
             if use_batch_embeddings and self._config.embedding_service and entity_names:
                 try:
                     batch_embeddings = self._config.embedding_service.generate_batch(entity_names)
                     embeddings_map = {name: emb for name, emb in zip(entity_names, batch_embeddings) if emb is not None}
                 except Exception:
                     pass
-            
+
             # Process entities
             for i in range(entity_count_ptr[0]):
                 c_entity = entities_ptr[0] + i
                 name = ffi.string(c_entity.name).decode("utf-8") if c_entity.name else ""
-                
+
                 # Get embedding from C entity, batch service, or callback
-                embedding = None
+                embedding: Optional[Sequence[float]] = None
                 embedding_dim = 0
                 if c_entity.embedding != ffi.NULL and c_entity.embedding_dim > 0:
                     embedding = [c_entity.embedding[j] for j in range(c_entity.embedding_dim)]
@@ -1810,15 +1990,17 @@ class ContextGraph:
                     embedding_dim = len(embedding)
                 elif generate_embeddings and name:
                     try:
-                        embedding = generate_embeddings(name)
-                        if embedding:
+                        emb_result = generate_embeddings(name)
+                        if emb_result:
+                            embedding = emb_result
                             embedding_dim = len(embedding)
                     except Exception:
                         pass
                 elif self._config.embedding_service and name:
                     try:
-                        embedding = self._config.embedding_service.generate(name)
-                        if embedding:
+                        service_emb = self._config.embedding_service.generate(name)
+                        if service_emb:
+                            embedding = service_emb
                             embedding_dim = len(embedding)
                     except Exception:
                         pass
@@ -1859,15 +2041,18 @@ class ContextGraph:
         
         return entities, relationships
     
-    def add_entities(self, entities: Sequence[GraphEntity],
-                     generate_embeddings: Optional[Callable[[str], Sequence[float]]] = None,
-                     use_batch_embeddings: bool = True):
+    def add_entities(
+        self,
+        entities: Sequence[GraphEntity],
+        generate_embeddings: Optional[Callable[[str], Sequence[float]]] = None,
+        use_batch_embeddings: bool = True,
+    ) -> None:
         """Add entities to the graph.
-        
+
         Args:
-            entities: List of entities to add
-            generate_embeddings: Optional callback to generate embeddings for entities without them
-            use_batch_embeddings: If True and embedding_service is set, use batch generation
+            entities: List of entities to add.
+            generate_embeddings: Optional callback to generate embeddings for entities without them.
+            use_batch_embeddings: If True and embedding_service is set, use batch generation.
         """
         if not entities:
             return
@@ -1913,8 +2098,12 @@ class ContextGraph:
         if result != 0:
             raise RuntimeError("Failed to add entities")
     
-    def add_relationships(self, relationships: Sequence[GraphRelationship]):
-        """Add relationships to the graph."""
+    def add_relationships(self, relationships: Sequence[GraphRelationship]) -> None:
+        """Add relationships to the graph.
+
+        Args:
+            relationships: List of relationships to add.
+        """
         if not relationships:
             return
         
@@ -1927,10 +2116,26 @@ class ContextGraph:
         if result != 0:
             raise RuntimeError("Failed to add relationships")
     
-    def search(self, query_embedding: Sequence[float], user_id: Optional[str] = None,
-               agent_id: Optional[str] = None, run_id: Optional[str] = None,
-               max_results: int = 10):
-        """Search for related entities in the graph."""
+    def search(
+        self,
+        query_embedding: Sequence[float],
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+        max_results: int = 10,
+    ) -> list[GraphQueryResult]:
+        """Search for related entities in the graph.
+
+        Args:
+            query_embedding: Query embedding vector.
+            user_id: Optional user ID filter.
+            agent_id: Optional agent ID filter.
+            run_id: Optional run ID filter.
+            max_results: Maximum number of results to return.
+
+        Returns:
+            List of graph query results ordered by similarity.
+        """
         c_embedding = ffi.new("float[]", query_embedding)
         c_results = ffi.new("GV_GraphQueryResult[]", max_results)
         
@@ -1960,8 +2165,17 @@ class ContextGraph:
         
         return results
     
-    def get_related(self, entity_id: str, max_depth: int = 3, max_results: int = 10):
-        """Get related entities for a given entity."""
+    def get_related(self, entity_id: str, max_depth: int = 3, max_results: int = 10) -> list[GraphQueryResult]:
+        """Get related entities for a given entity.
+
+        Args:
+            entity_id: ID of the entity to find relationships for.
+            max_depth: Maximum graph traversal depth.
+            max_results: Maximum number of results to return.
+
+        Returns:
+            List of graph query results representing related entities.
+        """
         c_results = ffi.new("GV_GraphQueryResult[]", max_results)
         
         count = lib.gv_context_graph_get_related(
