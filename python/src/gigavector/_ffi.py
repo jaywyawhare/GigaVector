@@ -1,13 +1,48 @@
+"""GigaVector CFFI bindings for the C library.
+
+This module provides low-level bindings to the libGigaVector shared library
+using CFFI (C Foreign Function Interface). The bindings expose all core
+functionality including:
+
+- Vector database operations (create, add, search, delete)
+- Multiple index types (KD-Tree, HNSW, IVFPQ, Sparse)
+- Distance metrics (Euclidean, Cosine, Dot Product, Manhattan)
+- LLM integration for memory extraction
+- Embedding service for text-to-vector conversion
+- Context graph for entity/relationship extraction
+- Memory layer for semantic memory storage
+
+Type Aliases:
+    CData: CFFI pointer type (cffi.FFI.CData)
+    GV_Database: Opaque database handle
+    GV_LLM: Opaque LLM client handle
+    GV_EmbeddingService: Opaque embedding service handle
+    GV_ContextGraph: Opaque context graph handle
+    GV_MemoryLayer: Memory layer structure
+
+Note:
+    This module is internal. Users should use the high-level classes in
+    _core.py (Database, LLM, EmbeddingService, ContextGraph, MemoryLayer).
+"""
 from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from cffi import FFI
 
-ffi = FFI()
+if TYPE_CHECKING:
+    from cffi import FFI as FFIType
 
-# Keep this cdef in sync with the C headers.
+ffi: FFIType = FFI()
+
+# =============================================================================
+# C Type Definitions
+# =============================================================================
+# Keep this cdef in sync with the C headers (include/gigavector.h).
+# The definitions below map directly to the C structures and functions
+# exposed by libGigaVector.so.
 ffi.cdef(
     """
 typedef long time_t;  // Define time_t for FFI
@@ -446,7 +481,20 @@ void gv_memory_metadata_free(GV_MemoryMetadata *metadata);
 )
 
 
-def _load_lib():
+def _load_lib() -> "FFIType.CData":
+    """Load the GigaVector shared library.
+
+    Searches for libGigaVector.so in the following locations (in order):
+    1. build/libGigaVector.so (development build)
+    2. build/lib/libGigaVector.so (alternative build location)
+    3. Packaged alongside this module
+
+    Returns:
+        CFFI library handle for calling C functions.
+
+    Raises:
+        FileNotFoundError: If libGigaVector.so is not found in any location.
+    """
     here = Path(__file__).resolve().parent
     repo_root = here.parent.parent.parent  # .../GigaVector
     # Prefer freshly built library, fall back to packaged copy
@@ -461,5 +509,7 @@ def _load_lib():
     raise FileNotFoundError(f"libGigaVector.so not found in {candidate_paths}")
 
 
-lib = _load_lib()
+#: Library handle for the GigaVector C library.
+#: Use this to call C functions directly (advanced usage).
+lib: "FFIType.CData" = _load_lib()
 
