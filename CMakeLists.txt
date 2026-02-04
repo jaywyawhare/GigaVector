@@ -82,6 +82,23 @@ set(SOURCES
     src/gv_utils.c
     src/gv_vector.c
     src/gv_wal.c
+    src/gv_server.c
+    src/gv_rest_handlers.c
+    src/gv_typed_metadata.c
+    src/gv_ttl.c
+    src/gv_namespace.c
+    src/gv_tokenizer.c
+    src/gv_bm25.c
+    src/gv_hybrid_search.c
+    src/gv_auth.c
+    src/gv_authz.c
+    src/gv_crypto.c
+    src/gv_backup.c
+    src/gv_shard.c
+    src/gv_cluster.c
+    src/gv_replication.c
+    src/gv_streaming.c
+    src/gv_gpu.c
 )
 
 # Create library
@@ -97,6 +114,43 @@ if(CURL_FOUND)
 else()
     message(STATUS "  LLM support: Disabled (libcurl not found)")
     message(WARNING "Install libcurl-dev/libcurl-devel to enable LLM-based memory extraction")
+endif()
+
+# Check for libmicrohttpd (required for HTTP server)
+find_library(MICROHTTPD_LIBRARY NAMES microhttpd)
+find_path(MICROHTTPD_INCLUDE_DIR NAMES microhttpd.h)
+if(MICROHTTPD_LIBRARY AND MICROHTTPD_INCLUDE_DIR)
+    target_compile_definitions(GigaVector PRIVATE HAVE_MICROHTTPD)
+    target_link_libraries(GigaVector PRIVATE ${MICROHTTPD_LIBRARY})
+    target_include_directories(GigaVector PRIVATE ${MICROHTTPD_INCLUDE_DIR})
+    message(STATUS "  HTTP Server: Enabled (libmicrohttpd found)")
+else()
+    message(STATUS "  HTTP Server: Disabled (libmicrohttpd not found)")
+    message(WARNING "Install libmicrohttpd-dev to enable HTTP REST server")
+endif()
+
+# Check for CUDA (optional, for GPU acceleration)
+include(CheckLanguage)
+check_language(CUDA)
+if(CMAKE_CUDA_COMPILER)
+    option(ENABLE_CUDA "Enable CUDA GPU acceleration" ON)
+    if(ENABLE_CUDA)
+        enable_language(CUDA)
+        set(CMAKE_CUDA_STANDARD 11)
+        set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+
+        target_sources(GigaVector PRIVATE src/gv_gpu_kernels.cu)
+        target_compile_definitions(GigaVector PRIVATE HAVE_CUDA)
+        set_target_properties(GigaVector PROPERTIES
+            CUDA_SEPARABLE_COMPILATION ON
+            CUDA_ARCHITECTURES "75;80;86;89;90"
+        )
+        message(STATUS "  GPU Acceleration: Enabled (CUDA found)")
+    else()
+        message(STATUS "  GPU Acceleration: Disabled (CUDA disabled)")
+    endif()
+else()
+    message(STATUS "  GPU Acceleration: Disabled (CUDA not found)")
 endif()
 
 # Link libraries
@@ -131,6 +185,21 @@ install(TARGETS gigavector_main
     RUNTIME DESTINATION bin
 )
 
+# CLI Tools
+add_executable(gvbackup tools/gv_backup_cli.c)
+target_link_libraries(gvbackup PRIVATE GigaVector)
+
+add_executable(gvrestore tools/gv_restore_cli.c)
+target_link_libraries(gvrestore PRIVATE GigaVector)
+
+add_executable(gvinspect tools/gv_inspect_cli.c)
+target_link_libraries(gvinspect PRIVATE GigaVector)
+
+# Install CLI tools
+install(TARGETS gvbackup gvrestore gvinspect
+    RUNTIME DESTINATION bin
+)
+
 # Sanitizers
 if(ENABLE_SANITIZERS)
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=address -fsanitize=thread -fsanitize=undefined -fno-omit-frame-pointer")
@@ -162,6 +231,7 @@ if(BUILD_TESTS)
         tests/test_memory_llm.c
         tests/test_context_graph.c
         tests/test_json.c
+        tests/test_server.c
     )
     
     foreach(TEST_SRC ${TEST_SOURCES})
