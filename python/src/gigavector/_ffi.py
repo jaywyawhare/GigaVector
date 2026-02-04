@@ -477,6 +477,574 @@ int gv_memory_update(GV_MemoryLayer *layer, const char *memory_id, const float *
 int gv_memory_delete(GV_MemoryLayer *layer, const char *memory_id);
 void gv_memory_result_free(GV_MemoryResult *result);
 void gv_memory_metadata_free(GV_MemoryMetadata *metadata);
+
+// ============================================================================
+// Database Accessor Functions
+// ============================================================================
+size_t gv_database_count(const GV_Database *db);
+size_t gv_database_dimension(const GV_Database *db);
+const float *gv_database_get_vector(const GV_Database *db, size_t index);
+
+// ============================================================================
+// GPU Acceleration
+// ============================================================================
+typedef struct {
+    int device_id;
+    char name[256];
+    size_t total_memory;
+    size_t free_memory;
+    int compute_capability_major;
+    int compute_capability_minor;
+    int multiprocessor_count;
+    int max_threads_per_block;
+    int warp_size;
+} GV_GPUDeviceInfo;
+
+typedef struct {
+    size_t initial_size;
+    size_t max_size;
+    int allow_growth;
+} GV_GPUMemoryConfig;
+
+typedef struct {
+    int device_id;
+    size_t max_vectors_per_batch;
+    size_t max_query_batch_size;
+    int enable_tensor_cores;
+    int enable_async_transfers;
+    int stream_count;
+    GV_GPUMemoryConfig memory;
+} GV_GPUConfig;
+
+typedef enum { GV_GPU_EUCLIDEAN = 0, GV_GPU_COSINE = 1, GV_GPU_DOT_PRODUCT = 2, GV_GPU_MANHATTAN = 3 } GV_GPUDistanceMetric;
+
+typedef struct {
+    GV_GPUDistanceMetric metric;
+    size_t k;
+    float radius;
+    int use_precomputed_norms;
+} GV_GPUSearchParams;
+
+typedef struct {
+    uint64_t total_searches;
+    uint64_t total_vectors_processed;
+    uint64_t total_distance_computations;
+    double total_gpu_time_ms;
+    double total_transfer_time_ms;
+    double avg_search_time_ms;
+    size_t peak_memory_usage;
+    size_t current_memory_usage;
+} GV_GPUStats;
+
+typedef struct GV_GPUContext GV_GPUContext;
+typedef struct GV_GPUIndex GV_GPUIndex;
+
+int gv_gpu_available(void);
+int gv_gpu_device_count(void);
+int gv_gpu_get_device_info(int device_id, GV_GPUDeviceInfo *info);
+void gv_gpu_config_init(GV_GPUConfig *config);
+GV_GPUContext *gv_gpu_create(const GV_GPUConfig *config);
+void gv_gpu_destroy(GV_GPUContext *ctx);
+int gv_gpu_synchronize(GV_GPUContext *ctx);
+GV_GPUIndex *gv_gpu_index_create(GV_GPUContext *ctx, const float *vectors, size_t count, size_t dimension);
+GV_GPUIndex *gv_gpu_index_from_db(GV_GPUContext *ctx, GV_Database *db);
+int gv_gpu_index_add(GV_GPUIndex *index, const float *vectors, size_t count);
+int gv_gpu_index_remove(GV_GPUIndex *index, const size_t *indices, size_t count);
+int gv_gpu_index_update(GV_GPUIndex *index, const size_t *indices, const float *vectors, size_t count);
+int gv_gpu_index_info(GV_GPUIndex *index, size_t *count, size_t *dimension, size_t *memory_usage);
+void gv_gpu_index_destroy(GV_GPUIndex *index);
+int gv_gpu_compute_distances(GV_GPUContext *ctx, const float *queries, size_t num_queries, const float *database, size_t num_vectors, size_t dimension, GV_GPUDistanceMetric metric, float *distances);
+int gv_gpu_index_compute_distances(GV_GPUIndex *index, const float *queries, size_t num_queries, GV_GPUDistanceMetric metric, float *distances);
+int gv_gpu_knn_search(GV_GPUContext *ctx, const float *queries, size_t num_queries, const float *database, size_t num_vectors, size_t dimension, const GV_GPUSearchParams *params, size_t *indices, float *distances);
+int gv_gpu_index_knn_search(GV_GPUIndex *index, const float *queries, size_t num_queries, const GV_GPUSearchParams *params, size_t *indices, float *distances);
+int gv_gpu_index_search(GV_GPUIndex *index, const float *query, const GV_GPUSearchParams *params, size_t *indices, float *distances);
+int gv_gpu_batch_add(GV_GPUContext *ctx, GV_Database *db, const float *vectors, size_t count);
+int gv_gpu_batch_search(GV_GPUContext *ctx, GV_Database *db, const float *queries, size_t num_queries, size_t k, size_t *indices, float *distances);
+int gv_gpu_get_stats(GV_GPUContext *ctx, GV_GPUStats *stats);
+int gv_gpu_reset_stats(GV_GPUContext *ctx);
+const char *gv_gpu_get_error(GV_GPUContext *ctx);
+
+// ============================================================================
+// HTTP Server & REST API
+// ============================================================================
+typedef enum { GV_SERVER_OK = 0, GV_SERVER_ERROR_NULL_POINTER = -1, GV_SERVER_ERROR_INVALID_CONFIG = -2, GV_SERVER_ERROR_ALREADY_RUNNING = -3, GV_SERVER_ERROR_NOT_RUNNING = -4, GV_SERVER_ERROR_START_FAILED = -5, GV_SERVER_ERROR_MEMORY = -6, GV_SERVER_ERROR_BIND_FAILED = -7 } GV_ServerError;
+
+typedef struct {
+    uint16_t port;
+    const char *bind_address;
+    size_t thread_pool_size;
+    size_t max_connections;
+    size_t request_timeout_ms;
+    size_t max_request_body_bytes;
+    int enable_cors;
+    const char *cors_origins;
+    int enable_logging;
+    const char *api_key;
+} GV_ServerConfig;
+
+typedef struct {
+    uint64_t total_requests;
+    uint64_t active_connections;
+    uint64_t requests_per_second;
+    uint64_t total_bytes_sent;
+    uint64_t total_bytes_received;
+    uint64_t error_count;
+} GV_ServerStats;
+
+typedef struct GV_Server GV_Server;
+
+void gv_server_config_init(GV_ServerConfig *config);
+GV_Server *gv_server_create(GV_Database *db, const GV_ServerConfig *config);
+int gv_server_start(GV_Server *server);
+int gv_server_stop(GV_Server *server);
+void gv_server_destroy(GV_Server *server);
+int gv_server_is_running(const GV_Server *server);
+int gv_server_get_stats(const GV_Server *server, GV_ServerStats *stats);
+uint16_t gv_server_get_port(const GV_Server *server);
+const char *gv_server_error_string(int error);
+
+// ============================================================================
+// Backup & Restore
+// ============================================================================
+typedef enum { GV_BACKUP_COMPRESS_NONE = 0, GV_BACKUP_COMPRESS_ZLIB = 1, GV_BACKUP_COMPRESS_LZ4 = 2 } GV_BackupCompression;
+
+typedef struct {
+    GV_BackupCompression compression;
+    int include_wal;
+    int include_metadata;
+    int verify_after;
+    const char *encryption_key;
+} GV_BackupOptions;
+
+typedef struct {
+    uint32_t version;
+    uint32_t flags;
+    uint64_t created_at;
+    uint64_t vector_count;
+    uint32_t dimension;
+    uint32_t index_type;
+    uint64_t original_size;
+    uint64_t compressed_size;
+    char checksum[65];
+} GV_BackupHeader;
+
+typedef struct {
+    int overwrite;
+    int verify_checksum;
+    const char *decryption_key;
+} GV_RestoreOptions;
+
+typedef struct {
+    int success;
+    char *error_message;
+    uint64_t bytes_processed;
+    uint64_t vectors_processed;
+    double elapsed_seconds;
+} GV_BackupResult;
+
+typedef void (*GV_BackupProgressCallback)(size_t current, size_t total, void *user_data);
+
+void gv_backup_options_init(GV_BackupOptions *options);
+void gv_restore_options_init(GV_RestoreOptions *options);
+GV_BackupResult *gv_backup_create(GV_Database *db, const char *backup_path, const GV_BackupOptions *options, GV_BackupProgressCallback progress, void *user_data);
+GV_BackupResult *gv_backup_create_from_file(const char *db_path, const char *backup_path, const GV_BackupOptions *options, GV_BackupProgressCallback progress, void *user_data);
+void gv_backup_result_free(GV_BackupResult *result);
+GV_BackupResult *gv_backup_restore(const char *backup_path, const char *db_path, const GV_RestoreOptions *options, GV_BackupProgressCallback progress, void *user_data);
+GV_BackupResult *gv_backup_restore_to_db(const char *backup_path, const GV_RestoreOptions *options, GV_Database **db);
+int gv_backup_read_header(const char *backup_path, GV_BackupHeader *header);
+GV_BackupResult *gv_backup_verify(const char *backup_path, const char *decryption_key);
+int gv_backup_get_info(const char *backup_path, char *info_buf, size_t buf_size);
+GV_BackupResult *gv_backup_create_incremental(GV_Database *db, const char *backup_path, const char *base_backup_path, const GV_BackupOptions *options);
+GV_BackupResult *gv_backup_merge(const char *base_backup_path, const char **incremental_paths, size_t incremental_count, const char *output_path);
+int gv_backup_compute_checksum(const char *backup_path, char *checksum_out);
+const char *gv_backup_compression_string(GV_BackupCompression compression);
+
+// ============================================================================
+// Shard Management
+// ============================================================================
+typedef enum { GV_SHARD_ACTIVE = 0, GV_SHARD_READONLY = 1, GV_SHARD_MIGRATING = 2, GV_SHARD_OFFLINE = 3 } GV_ShardState;
+typedef enum { GV_SHARD_HASH = 0, GV_SHARD_RANGE = 1, GV_SHARD_CONSISTENT = 2 } GV_ShardStrategy;
+
+typedef struct {
+    uint32_t shard_id;
+    char *node_address;
+    GV_ShardState state;
+    uint64_t vector_count;
+    uint64_t capacity;
+    uint32_t replica_count;
+    uint64_t last_heartbeat;
+} GV_ShardInfo;
+
+typedef struct {
+    uint32_t shard_count;
+    uint32_t virtual_nodes;
+    GV_ShardStrategy strategy;
+    uint32_t replication_factor;
+} GV_ShardConfig;
+
+typedef struct GV_ShardManager GV_ShardManager;
+
+void gv_shard_config_init(GV_ShardConfig *config);
+GV_ShardManager *gv_shard_manager_create(const GV_ShardConfig *config);
+void gv_shard_manager_destroy(GV_ShardManager *mgr);
+int gv_shard_add(GV_ShardManager *mgr, uint32_t shard_id, const char *node_address);
+int gv_shard_remove(GV_ShardManager *mgr, uint32_t shard_id);
+int gv_shard_for_vector(GV_ShardManager *mgr, uint64_t vector_id);
+int gv_shard_for_key(GV_ShardManager *mgr, const void *key, size_t key_len);
+int gv_shard_get_info(GV_ShardManager *mgr, uint32_t shard_id, GV_ShardInfo *info);
+int gv_shard_list(GV_ShardManager *mgr, GV_ShardInfo **shards, size_t *count);
+void gv_shard_free_list(GV_ShardInfo *shards, size_t count);
+int gv_shard_set_state(GV_ShardManager *mgr, uint32_t shard_id, GV_ShardState state);
+int gv_shard_rebalance_start(GV_ShardManager *mgr);
+int gv_shard_rebalance_status(GV_ShardManager *mgr, double *progress);
+int gv_shard_rebalance_cancel(GV_ShardManager *mgr);
+int gv_shard_attach_local(GV_ShardManager *mgr, uint32_t shard_id, GV_Database *db);
+GV_Database *gv_shard_get_local_db(GV_ShardManager *mgr, uint32_t shard_id);
+
+// ============================================================================
+// Replication
+// ============================================================================
+typedef enum { GV_REPL_LEADER = 0, GV_REPL_FOLLOWER = 1, GV_REPL_CANDIDATE = 2 } GV_ReplicationRole;
+typedef enum { GV_REPL_SYNCING = 0, GV_REPL_STREAMING = 1, GV_REPL_LAGGING = 2, GV_REPL_DISCONNECTED = 3 } GV_ReplicationState;
+
+typedef struct {
+    const char *node_id;
+    const char *listen_address;
+    const char *leader_address;
+    uint32_t sync_interval_ms;
+    uint32_t election_timeout_ms;
+    uint32_t heartbeat_interval_ms;
+    size_t max_lag_entries;
+} GV_ReplicationConfig;
+
+typedef struct {
+    char *node_id;
+    char *address;
+    GV_ReplicationRole role;
+    GV_ReplicationState state;
+    uint64_t last_wal_position;
+    uint64_t lag_entries;
+    uint64_t last_heartbeat;
+} GV_ReplicaInfo;
+
+typedef struct {
+    GV_ReplicationRole role;
+    uint64_t term;
+    char *leader_id;
+    size_t follower_count;
+    uint64_t wal_position;
+    uint64_t commit_position;
+    uint64_t bytes_replicated;
+} GV_ReplicationStats;
+
+typedef struct GV_ReplicationManager GV_ReplicationManager;
+
+void gv_replication_config_init(GV_ReplicationConfig *config);
+GV_ReplicationManager *gv_replication_create(GV_Database *db, const GV_ReplicationConfig *config);
+void gv_replication_destroy(GV_ReplicationManager *mgr);
+int gv_replication_start(GV_ReplicationManager *mgr);
+int gv_replication_stop(GV_ReplicationManager *mgr);
+GV_ReplicationRole gv_replication_get_role(GV_ReplicationManager *mgr);
+int gv_replication_step_down(GV_ReplicationManager *mgr);
+int gv_replication_request_leadership(GV_ReplicationManager *mgr);
+int gv_replication_add_follower(GV_ReplicationManager *mgr, const char *node_id, const char *address);
+int gv_replication_remove_follower(GV_ReplicationManager *mgr, const char *node_id);
+int gv_replication_list_replicas(GV_ReplicationManager *mgr, GV_ReplicaInfo **replicas, size_t *count);
+void gv_replication_free_replicas(GV_ReplicaInfo *replicas, size_t count);
+int gv_replication_sync_commit(GV_ReplicationManager *mgr, uint32_t timeout_ms);
+int64_t gv_replication_get_lag(GV_ReplicationManager *mgr);
+int gv_replication_wait_sync(GV_ReplicationManager *mgr, size_t max_lag, uint32_t timeout_ms);
+int gv_replication_get_stats(GV_ReplicationManager *mgr, GV_ReplicationStats *stats);
+void gv_replication_free_stats(GV_ReplicationStats *stats);
+int gv_replication_is_healthy(GV_ReplicationManager *mgr);
+
+// ============================================================================
+// Cluster Management
+// ============================================================================
+typedef enum { GV_NODE_COORDINATOR = 0, GV_NODE_DATA = 1, GV_NODE_QUERY = 2 } GV_NodeRole;
+typedef enum { GV_NODE_JOINING = 0, GV_NODE_ACTIVE = 1, GV_NODE_LEAVING = 2, GV_NODE_DEAD = 3 } GV_NodeState;
+
+typedef struct {
+    char *node_id;
+    char *address;
+    GV_NodeRole role;
+    GV_NodeState state;
+    uint32_t *shard_ids;
+    size_t shard_count;
+    uint64_t last_heartbeat;
+    double load;
+} GV_NodeInfo;
+
+typedef struct {
+    const char *node_id;
+    const char *listen_address;
+    const char *seed_nodes;
+    GV_NodeRole role;
+    uint32_t heartbeat_interval_ms;
+    uint32_t failure_timeout_ms;
+} GV_ClusterConfig;
+
+typedef struct {
+    size_t total_nodes;
+    size_t active_nodes;
+    size_t total_shards;
+    uint64_t total_vectors;
+    double avg_load;
+} GV_ClusterStats;
+
+typedef struct GV_Cluster GV_Cluster;
+
+void gv_cluster_config_init(GV_ClusterConfig *config);
+GV_Cluster *gv_cluster_create(const GV_ClusterConfig *config);
+void gv_cluster_destroy(GV_Cluster *cluster);
+int gv_cluster_start(GV_Cluster *cluster);
+int gv_cluster_stop(GV_Cluster *cluster);
+int gv_cluster_get_local_node(GV_Cluster *cluster, GV_NodeInfo *info);
+int gv_cluster_get_node(GV_Cluster *cluster, const char *node_id, GV_NodeInfo *info);
+int gv_cluster_list_nodes(GV_Cluster *cluster, GV_NodeInfo **nodes, size_t *count);
+void gv_cluster_free_node_info(GV_NodeInfo *info);
+void gv_cluster_free_node_list(GV_NodeInfo *nodes, size_t count);
+int gv_cluster_get_stats(GV_Cluster *cluster, GV_ClusterStats *stats);
+GV_ShardManager *gv_cluster_get_shard_manager(GV_Cluster *cluster);
+int gv_cluster_is_healthy(GV_Cluster *cluster);
+int gv_cluster_wait_ready(GV_Cluster *cluster, uint32_t timeout_ms);
+
+// ============================================================================
+// Namespace / Multi-tenancy
+// ============================================================================
+typedef enum { GV_NS_INDEX_KDTREE = 0, GV_NS_INDEX_HNSW = 1, GV_NS_INDEX_IVFPQ = 2, GV_NS_INDEX_SPARSE = 3 } GV_NSIndexType;
+
+typedef struct {
+    const char *name;
+    size_t dimension;
+    GV_NSIndexType index_type;
+    size_t max_vectors;
+    size_t max_memory_bytes;
+} GV_NamespaceConfig;
+
+typedef struct {
+    char *name;
+    size_t dimension;
+    GV_NSIndexType index_type;
+    size_t vector_count;
+    size_t memory_bytes;
+    uint64_t created_at;
+    uint64_t last_modified;
+} GV_NamespaceInfo;
+
+typedef struct GV_Namespace GV_Namespace;
+typedef struct GV_NamespaceManager GV_NamespaceManager;
+
+void gv_namespace_config_init(GV_NamespaceConfig *config);
+GV_NamespaceManager *gv_namespace_manager_create(const char *base_path);
+void gv_namespace_manager_destroy(GV_NamespaceManager *mgr);
+GV_Namespace *gv_namespace_create(GV_NamespaceManager *mgr, const GV_NamespaceConfig *config);
+GV_Namespace *gv_namespace_get(GV_NamespaceManager *mgr, const char *name);
+int gv_namespace_delete(GV_NamespaceManager *mgr, const char *name);
+int gv_namespace_list(GV_NamespaceManager *mgr, char ***names, size_t *count);
+int gv_namespace_get_info(const GV_Namespace *ns, GV_NamespaceInfo *info);
+void gv_namespace_free_info(GV_NamespaceInfo *info);
+int gv_namespace_exists(GV_NamespaceManager *mgr, const char *name);
+int gv_namespace_add_vector(GV_Namespace *ns, const float *data, size_t dimension);
+int gv_namespace_add_vector_with_metadata(GV_Namespace *ns, const float *data, size_t dimension, const char *const *keys, const char *const *values, size_t meta_count);
+int gv_namespace_search(const GV_Namespace *ns, const float *query, size_t k, GV_SearchResult *results, GV_DistanceType distance_type);
+int gv_namespace_search_filtered(const GV_Namespace *ns, const float *query, size_t k, GV_SearchResult *results, GV_DistanceType distance_type, const char *filter_key, const char *filter_value);
+int gv_namespace_delete_vector(GV_Namespace *ns, size_t vector_index);
+size_t gv_namespace_count(const GV_Namespace *ns);
+int gv_namespace_save(GV_Namespace *ns);
+int gv_namespace_manager_save_all(GV_NamespaceManager *mgr);
+int gv_namespace_manager_load_all(GV_NamespaceManager *mgr);
+GV_Database *gv_namespace_get_db(GV_Namespace *ns);
+
+// ============================================================================
+// TTL (Time-to-Live)
+// ============================================================================
+typedef struct {
+    uint64_t default_ttl_seconds;
+    uint64_t cleanup_interval_seconds;
+    int lazy_expiration;
+    size_t max_expired_per_cleanup;
+} GV_TTLConfig;
+
+typedef struct {
+    uint64_t total_vectors_with_ttl;
+    uint64_t total_expired;
+    uint64_t next_expiration_time;
+    uint64_t last_cleanup_time;
+} GV_TTLStats;
+
+typedef struct GV_TTLManager GV_TTLManager;
+
+void gv_ttl_config_init(GV_TTLConfig *config);
+GV_TTLManager *gv_ttl_create(const GV_TTLConfig *config);
+void gv_ttl_destroy(GV_TTLManager *mgr);
+int gv_ttl_set(GV_TTLManager *mgr, size_t vector_index, uint64_t ttl_seconds);
+int gv_ttl_set_absolute(GV_TTLManager *mgr, size_t vector_index, uint64_t expire_at_unix);
+int gv_ttl_get(const GV_TTLManager *mgr, size_t vector_index, uint64_t *expire_at);
+int gv_ttl_remove(GV_TTLManager *mgr, size_t vector_index);
+int gv_ttl_is_expired(const GV_TTLManager *mgr, size_t vector_index);
+int gv_ttl_get_remaining(const GV_TTLManager *mgr, size_t vector_index, uint64_t *remaining_seconds);
+int gv_ttl_cleanup_expired(GV_TTLManager *mgr, GV_Database *db);
+int gv_ttl_start_background_cleanup(GV_TTLManager *mgr, GV_Database *db);
+void gv_ttl_stop_background_cleanup(GV_TTLManager *mgr);
+int gv_ttl_is_background_cleanup_running(const GV_TTLManager *mgr);
+int gv_ttl_get_stats(const GV_TTLManager *mgr, GV_TTLStats *stats);
+int gv_ttl_set_bulk(GV_TTLManager *mgr, const size_t *indices, size_t count, uint64_t ttl_seconds);
+int gv_ttl_get_expiring_before(const GV_TTLManager *mgr, uint64_t before_unix, size_t *indices, size_t max_indices);
+
+// ============================================================================
+// BM25 Full-text Search
+// ============================================================================
+typedef struct {
+    int type;
+    int lowercase;
+    int remove_punctuation;
+    const char *stopwords;
+    int stem;
+    int ngram_min;
+    int ngram_max;
+} GV_TokenizerConfig;
+
+typedef struct {
+    double k1;
+    double b;
+    GV_TokenizerConfig tokenizer;
+} GV_BM25Config;
+
+typedef struct {
+    size_t doc_id;
+    double score;
+} GV_BM25Result;
+
+typedef struct {
+    size_t total_documents;
+    size_t total_terms;
+    size_t total_postings;
+    double avg_document_length;
+    size_t memory_bytes;
+} GV_BM25Stats;
+
+typedef struct GV_BM25Index GV_BM25Index;
+
+void gv_bm25_config_init(GV_BM25Config *config);
+GV_BM25Index *gv_bm25_create(const GV_BM25Config *config);
+void gv_bm25_destroy(GV_BM25Index *index);
+int gv_bm25_add_document(GV_BM25Index *index, size_t doc_id, const char *text);
+int gv_bm25_add_document_terms(GV_BM25Index *index, size_t doc_id, const char **terms, size_t term_count);
+int gv_bm25_remove_document(GV_BM25Index *index, size_t doc_id);
+int gv_bm25_update_document(GV_BM25Index *index, size_t doc_id, const char *text);
+int gv_bm25_search(GV_BM25Index *index, const char *query, size_t k, GV_BM25Result *results);
+int gv_bm25_search_terms(GV_BM25Index *index, const char **terms, size_t term_count, size_t k, GV_BM25Result *results);
+int gv_bm25_score_document(GV_BM25Index *index, size_t doc_id, const char *query, double *score);
+int gv_bm25_get_stats(const GV_BM25Index *index, GV_BM25Stats *stats);
+size_t gv_bm25_get_doc_freq(const GV_BM25Index *index, const char *term);
+int gv_bm25_has_document(const GV_BM25Index *index, size_t doc_id);
+int gv_bm25_save(const GV_BM25Index *index, const char *filepath);
+GV_BM25Index *gv_bm25_load(const char *filepath);
+
+// ============================================================================
+// Hybrid Search
+// ============================================================================
+typedef enum { GV_FUSION_LINEAR = 0, GV_FUSION_RRF = 1, GV_FUSION_WEIGHTED_RRF = 2 } GV_FusionType;
+
+typedef struct {
+    GV_FusionType fusion_type;
+    double vector_weight;
+    double text_weight;
+    double rrf_k;
+    GV_DistanceType distance_type;
+    size_t prefetch_k;
+} GV_HybridConfig;
+
+typedef struct {
+    size_t vector_index;
+    double combined_score;
+    double vector_score;
+    double text_score;
+    size_t vector_rank;
+    size_t text_rank;
+} GV_HybridResult;
+
+typedef struct {
+    size_t vector_candidates;
+    size_t text_candidates;
+    size_t unique_candidates;
+    double vector_search_time_ms;
+    double text_search_time_ms;
+    double fusion_time_ms;
+    double total_time_ms;
+} GV_HybridStats;
+
+typedef struct GV_HybridSearcher GV_HybridSearcher;
+
+void gv_hybrid_config_init(GV_HybridConfig *config);
+GV_HybridSearcher *gv_hybrid_create(GV_Database *db, GV_BM25Index *bm25, const GV_HybridConfig *config);
+void gv_hybrid_destroy(GV_HybridSearcher *searcher);
+int gv_hybrid_search(GV_HybridSearcher *searcher, const float *query_vector, const char *query_text, size_t k, GV_HybridResult *results);
+int gv_hybrid_search_with_stats(GV_HybridSearcher *searcher, const float *query_vector, const char *query_text, size_t k, GV_HybridResult *results, GV_HybridStats *stats);
+int gv_hybrid_search_vector_only(GV_HybridSearcher *searcher, const float *query_vector, size_t k, GV_HybridResult *results);
+int gv_hybrid_search_text_only(GV_HybridSearcher *searcher, const char *query_text, size_t k, GV_HybridResult *results);
+int gv_hybrid_set_config(GV_HybridSearcher *searcher, const GV_HybridConfig *config);
+int gv_hybrid_get_config(const GV_HybridSearcher *searcher, GV_HybridConfig *config);
+int gv_hybrid_set_weights(GV_HybridSearcher *searcher, double vector_weight, double text_weight);
+double gv_hybrid_linear_fusion(double vector_score, double text_score, double vector_weight, double text_weight);
+double gv_hybrid_rrf_fusion(size_t vector_rank, size_t text_rank, double k);
+double gv_hybrid_normalize_score(double score, double min_score, double max_score);
+
+// ============================================================================
+// Authentication
+// ============================================================================
+typedef enum { GV_AUTH_NONE = 0, GV_AUTH_API_KEY = 1, GV_AUTH_JWT = 2 } GV_AuthType;
+typedef enum { GV_AUTH_SUCCESS = 0, GV_AUTH_INVALID_KEY = 1, GV_AUTH_EXPIRED = 2, GV_AUTH_INVALID_SIGNATURE = 3, GV_AUTH_INVALID_FORMAT = 4, GV_AUTH_MISSING = 5 } GV_AuthResult;
+
+typedef struct {
+    char *key_id;
+    char *key_hash;
+    char *description;
+    uint64_t created_at;
+    uint64_t expires_at;
+    int enabled;
+} GV_APIKey;
+
+typedef struct {
+    const char *secret;
+    size_t secret_len;
+    const char *issuer;
+    const char *audience;
+    uint64_t clock_skew_seconds;
+} GV_JWTConfig;
+
+typedef struct {
+    GV_AuthType type;
+    GV_JWTConfig jwt;
+} GV_AuthConfig;
+
+typedef struct {
+    char *subject;
+    char *key_id;
+    uint64_t auth_time;
+    uint64_t expires_at;
+    void *claims;
+} GV_Identity;
+
+typedef struct GV_AuthManager GV_AuthManager;
+
+void gv_auth_config_init(GV_AuthConfig *config);
+GV_AuthManager *gv_auth_create(const GV_AuthConfig *config);
+void gv_auth_destroy(GV_AuthManager *auth);
+int gv_auth_generate_api_key(GV_AuthManager *auth, const char *description, uint64_t expires_at, char *key_out, char *key_id_out);
+int gv_auth_add_api_key(GV_AuthManager *auth, const char *key_id, const char *key_hash, const char *description, uint64_t expires_at);
+int gv_auth_revoke_api_key(GV_AuthManager *auth, const char *key_id);
+int gv_auth_list_api_keys(GV_AuthManager *auth, GV_APIKey **keys, size_t *count);
+void gv_auth_free_api_keys(GV_APIKey *keys, size_t count);
+GV_AuthResult gv_auth_verify_api_key(GV_AuthManager *auth, const char *api_key, GV_Identity *identity);
+GV_AuthResult gv_auth_verify_jwt(GV_AuthManager *auth, const char *token, GV_Identity *identity);
+GV_AuthResult gv_auth_authenticate(GV_AuthManager *auth, const char *credential, GV_Identity *identity);
+void gv_auth_free_identity(GV_Identity *identity);
+int gv_auth_generate_jwt(GV_AuthManager *auth, const char *subject, uint64_t expires_in, char *token_out, size_t token_size);
+const char *gv_auth_result_string(GV_AuthResult result);
+int gv_auth_sha256(const void *data, size_t len, unsigned char *hash_out);
+void gv_auth_to_hex(const unsigned char *hash, size_t hash_len, char *hex_out);
 """
 )
 

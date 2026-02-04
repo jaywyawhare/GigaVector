@@ -913,6 +913,29 @@ class Database:
         """
         lib.gv_db_record_latency(self._db, latency_us, 1 if is_insert else 0)
 
+    @property
+    def count(self) -> int:
+        """Get the number of vectors in the database."""
+        return int(lib.gv_database_count(self._db))
+
+    def get_dimension(self) -> int:
+        """Get the dimension of vectors in the database."""
+        return int(lib.gv_database_dimension(self._db))
+
+    def get_vector(self, index: int) -> list[float] | None:
+        """Get a vector by its index.
+
+        Args:
+            index: Vector index (0-based insertion order).
+
+        Returns:
+            Vector data as list of floats, or None if index is invalid.
+        """
+        ptr = lib.gv_database_get_vector(self._db, index)
+        if ptr == ffi.NULL:
+            return None
+        return [ptr[i] for i in range(self.dimension)]
+
     def __del__(self) -> None:
         try:
             self.close()
@@ -2177,14 +2200,14 @@ class ContextGraph:
             List of graph query results representing related entities.
         """
         c_results = ffi.new("GV_GraphQueryResult[]", max_results)
-        
+
         count = lib.gv_context_graph_get_related(
             self._graph, entity_id.encode(), max_depth, c_results, max_results
         )
-        
+
         if count < 0:
             raise RuntimeError("Failed to get related entities")
-        
+
         results = []
         for i in range(count):
             result = GraphQueryResult(
@@ -2195,6 +2218,1648 @@ class ContextGraph:
             )
             results.append(result)
             lib.gv_graph_query_result_free(c_results + i)
-        
+
         return results
+
+
+# ============================================================================
+# GPU Acceleration Module
+# ============================================================================
+
+class GPUDistanceMetric(IntEnum):
+    EUCLIDEAN = 0
+    COSINE = 1
+    DOT_PRODUCT = 2
+    MANHATTAN = 3
+
+
+@dataclass(frozen=True)
+class GPUDeviceInfo:
+    device_id: int
+    name: str
+    total_memory: int
+    free_memory: int
+    compute_capability_major: int
+    compute_capability_minor: int
+    multiprocessor_count: int
+    max_threads_per_block: int
+    warp_size: int
+
+
+@dataclass(frozen=True)
+class GPUStats:
+    total_searches: int
+    total_vectors_processed: int
+    total_distance_computations: int
+    total_gpu_time_ms: float
+    total_transfer_time_ms: float
+    avg_search_time_ms: float
+    peak_memory_usage: int
+    current_memory_usage: int
+
+
+@dataclass
+class GPUConfig:
+    device_id: int = -1
+    max_vectors_per_batch: int = 65536
+    max_query_batch_size: int = 1024
+    enable_tensor_cores: bool = True
+    enable_async_transfers: bool = True
+    stream_count: int = 4
+    memory_initial_size: int = 256 * 1024 * 1024
+    memory_max_size: int = 2 * 1024 * 1024 * 1024
+    memory_allow_growth: bool = True
+
+
+@dataclass
+class GPUSearchParams:
+    metric: GPUDistanceMetric = GPUDistanceMetric.EUCLIDEAN
+    k: int = 10
+    radius: float = 0.0
+    use_precomputed_norms: bool = True
+
+
+def gpu_available() -> bool:
+    """Check if CUDA is available."""
+    return bool(lib.gv_gpu_available())
+
+
+def gpu_device_count() -> int:
+    """Get the number of CUDA devices."""
+    return int(lib.gv_gpu_device_count())
+
+
+def gpu_get_device_info(device_id: int) -> GPUDeviceInfo | None:
+    """Get device information for a CUDA device."""
+    info = ffi.new("GV_GPUDeviceInfo *")
+    if lib.gv_gpu_get_device_info(device_id, info) != 0:
+        return None
+    return GPUDeviceInfo(
+        device_id=info.device_id,
+        name=ffi.string(info.name).decode("utf-8"),
+        total_memory=info.total_memory,
+        free_memory=info.free_memory,
+        compute_capability_major=info.compute_capability_major,
+        compute_capability_minor=info.compute_capability_minor,
+        multiprocessor_count=info.multiprocessor_count,
+        max_threads_per_block=info.max_threads_per_block,
+        warp_size=info.warp_size,
+    )
+
+
+class GPUContext:
+    """GPU context for CUDA-accelerated operations."""
+
+    _ctx: CData
+    _closed: bool
+
+    def __init__(self, config: GPUConfig | None = None) -> None:
+        c_config = ffi.new("GV_GPUConfig *")
+        lib.gv_gpu_config_init(c_config)
+        if config:
+            c_config.device_id = config.device_id
+            c_config.max_vectors_per_batch = config.max_vectors_per_batch
+            c_config.max_query_batch_size = config.max_query_batch_size
+            c_config.enable_tensor_cores = 1 if config.enable_tensor_cores else 0
+            c_config.enable_async_transfers = 1 if config.enable_async_transfers else 0
+            c_config.stream_count = config.stream_count
+            c_config.memory.initial_size = config.memory_initial_size
+            c_config.memory.max_size = config.memory_max_size
+            c_config.memory.allow_growth = 1 if config.memory_allow_growth else 0
+        self._ctx = lib.gv_gpu_create(c_config)
+        if self._ctx == ffi.NULL:
+            raise RuntimeError("Failed to create GPU context")
+        self._closed = False
+
+    def __enter__(self) -> "GPUContext":
+        return self
+
+    def __exit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: TracebackType | None) -> None:
+        self.close()
+
+    def close(self) -> None:
+        if not self._closed and self._ctx != ffi.NULL:
+            lib.gv_gpu_destroy(self._ctx)
+            self._ctx = ffi.NULL
+            self._closed = True
+
+    def synchronize(self) -> None:
+        if lib.gv_gpu_synchronize(self._ctx) != 0:
+            raise RuntimeError("GPU synchronization failed")
+
+    def get_stats(self) -> GPUStats:
+        stats = ffi.new("GV_GPUStats *")
+        if lib.gv_gpu_get_stats(self._ctx, stats) != 0:
+            raise RuntimeError("Failed to get GPU stats")
+        return GPUStats(
+            total_searches=stats.total_searches,
+            total_vectors_processed=stats.total_vectors_processed,
+            total_distance_computations=stats.total_distance_computations,
+            total_gpu_time_ms=stats.total_gpu_time_ms,
+            total_transfer_time_ms=stats.total_transfer_time_ms,
+            avg_search_time_ms=stats.avg_search_time_ms,
+            peak_memory_usage=stats.peak_memory_usage,
+            current_memory_usage=stats.current_memory_usage,
+        )
+
+    def reset_stats(self) -> None:
+        if lib.gv_gpu_reset_stats(self._ctx) != 0:
+            raise RuntimeError("Failed to reset GPU stats")
+
+    def get_error(self) -> str | None:
+        err = lib.gv_gpu_get_error(self._ctx)
+        if err == ffi.NULL:
+            return None
+        return ffi.string(err).decode("utf-8")
+
+
+class GPUIndex:
+    """GPU index for accelerated k-NN search."""
+
+    _index: CData
+    _closed: bool
+
+    def __init__(self, ctx: GPUContext, vectors: Sequence[Sequence[float]] | None = None,
+                 db: Database | None = None) -> None:
+        if vectors is not None:
+            count = len(vectors)
+            if count == 0:
+                raise ValueError("vectors cannot be empty")
+            dimension = len(vectors[0])
+            flat = [v for vec in vectors for v in vec]
+            vec_buf = ffi.new("float[]", flat)
+            self._index = lib.gv_gpu_index_create(ctx._ctx, vec_buf, count, dimension)
+        elif db is not None:
+            self._index = lib.gv_gpu_index_from_db(ctx._ctx, db._db)
+        else:
+            raise ValueError("Either vectors or db must be provided")
+        if self._index == ffi.NULL:
+            raise RuntimeError("Failed to create GPU index")
+        self._closed = False
+
+    def __enter__(self) -> "GPUIndex":
+        return self
+
+    def __exit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: TracebackType | None) -> None:
+        self.close()
+
+    def close(self) -> None:
+        if not self._closed and self._index != ffi.NULL:
+            lib.gv_gpu_index_destroy(self._index)
+            self._index = ffi.NULL
+            self._closed = True
+
+    def add(self, vectors: Sequence[Sequence[float]]) -> None:
+        count = len(vectors)
+        flat = [v for vec in vectors for v in vec]
+        vec_buf = ffi.new("float[]", flat)
+        if lib.gv_gpu_index_add(self._index, vec_buf, count) != 0:
+            raise RuntimeError("Failed to add vectors to GPU index")
+
+    def search(self, query: Sequence[float], params: GPUSearchParams) -> tuple[list[int], list[float]]:
+        c_params = ffi.new("GV_GPUSearchParams *", {
+            "metric": int(params.metric),
+            "k": params.k,
+            "radius": params.radius,
+            "use_precomputed_norms": 1 if params.use_precomputed_norms else 0,
+        })
+        indices = ffi.new("size_t[]", params.k)
+        distances = ffi.new("float[]", params.k)
+        query_buf = ffi.new("float[]", list(query))
+        n = lib.gv_gpu_index_search(self._index, query_buf, c_params, indices, distances)
+        if n < 0:
+            raise RuntimeError("GPU index search failed")
+        return ([int(indices[i]) for i in range(n)], [float(distances[i]) for i in range(n)])
+
+    def info(self) -> tuple[int, int, int]:
+        count = ffi.new("size_t *")
+        dimension = ffi.new("size_t *")
+        memory = ffi.new("size_t *")
+        if lib.gv_gpu_index_info(self._index, count, dimension, memory) != 0:
+            raise RuntimeError("Failed to get GPU index info")
+        return (int(count[0]), int(dimension[0]), int(memory[0]))
+
+
+# ============================================================================
+# HTTP Server Module
+# ============================================================================
+
+class ServerError(IntEnum):
+    OK = 0
+    NULL_POINTER = -1
+    INVALID_CONFIG = -2
+    ALREADY_RUNNING = -3
+    NOT_RUNNING = -4
+    START_FAILED = -5
+    MEMORY = -6
+    BIND_FAILED = -7
+
+
+@dataclass(frozen=True)
+class ServerStats:
+    total_requests: int
+    active_connections: int
+    requests_per_second: int
+    total_bytes_sent: int
+    total_bytes_received: int
+    error_count: int
+
+
+@dataclass
+class ServerConfig:
+    port: int = 8080
+    bind_address: str = "0.0.0.0"
+    thread_pool_size: int = 4
+    max_connections: int = 100
+    request_timeout_ms: int = 30000
+    max_request_body_bytes: int = 10 * 1024 * 1024
+    enable_cors: bool = False
+    cors_origins: str = "*"
+    enable_logging: bool = True
+    api_key: str | None = None
+
+
+class Server:
+    """HTTP REST API server for GigaVector."""
+
+    _server: CData
+    _closed: bool
+    _db: Database
+
+    def __init__(self, db: Database, config: ServerConfig | None = None) -> None:
+        self._db = db
+        c_config = ffi.new("GV_ServerConfig *")
+        lib.gv_server_config_init(c_config)
+        if config:
+            c_config.port = config.port
+            c_config.bind_address = config.bind_address.encode()
+            c_config.thread_pool_size = config.thread_pool_size
+            c_config.max_connections = config.max_connections
+            c_config.request_timeout_ms = config.request_timeout_ms
+            c_config.max_request_body_bytes = config.max_request_body_bytes
+            c_config.enable_cors = 1 if config.enable_cors else 0
+            c_config.cors_origins = config.cors_origins.encode()
+            c_config.enable_logging = 1 if config.enable_logging else 0
+            c_config.api_key = config.api_key.encode() if config.api_key else ffi.NULL
+        self._server = lib.gv_server_create(db._db, c_config)
+        if self._server == ffi.NULL:
+            raise RuntimeError("Failed to create server")
+        self._closed = False
+
+    def __enter__(self) -> "Server":
+        return self
+
+    def __exit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: TracebackType | None) -> None:
+        self.close()
+
+    def close(self) -> None:
+        if not self._closed and self._server != ffi.NULL:
+            lib.gv_server_destroy(self._server)
+            self._server = ffi.NULL
+            self._closed = True
+
+    def start(self) -> None:
+        rc = lib.gv_server_start(self._server)
+        if rc != 0:
+            raise RuntimeError(f"Failed to start server: {self.error_string(rc)}")
+
+    def stop(self) -> None:
+        rc = lib.gv_server_stop(self._server)
+        if rc != 0:
+            raise RuntimeError(f"Failed to stop server: {self.error_string(rc)}")
+
+    def is_running(self) -> bool:
+        return lib.gv_server_is_running(self._server) == 1
+
+    def get_port(self) -> int:
+        return int(lib.gv_server_get_port(self._server))
+
+    def get_stats(self) -> ServerStats:
+        stats = ffi.new("GV_ServerStats *")
+        if lib.gv_server_get_stats(self._server, stats) != 0:
+            raise RuntimeError("Failed to get server stats")
+        return ServerStats(
+            total_requests=stats.total_requests,
+            active_connections=stats.active_connections,
+            requests_per_second=stats.requests_per_second,
+            total_bytes_sent=stats.total_bytes_sent,
+            total_bytes_received=stats.total_bytes_received,
+            error_count=stats.error_count,
+        )
+
+    @staticmethod
+    def error_string(error: int) -> str:
+        s = lib.gv_server_error_string(error)
+        if s == ffi.NULL:
+            return "Unknown error"
+        return ffi.string(s).decode("utf-8")
+
+
+# ============================================================================
+# Backup & Restore Module
+# ============================================================================
+
+class BackupCompression(IntEnum):
+    NONE = 0
+    ZLIB = 1
+    LZ4 = 2
+
+
+@dataclass(frozen=True)
+class BackupHeader:
+    version: int
+    flags: int
+    created_at: int
+    vector_count: int
+    dimension: int
+    index_type: int
+    original_size: int
+    compressed_size: int
+    checksum: str
+
+
+@dataclass(frozen=True)
+class BackupResult:
+    success: bool
+    error_message: str | None
+    bytes_processed: int
+    vectors_processed: int
+    elapsed_seconds: float
+
+
+@dataclass
+class BackupOptions:
+    compression: BackupCompression = BackupCompression.NONE
+    include_wal: bool = True
+    include_metadata: bool = True
+    verify_after: bool = True
+    encryption_key: str | None = None
+
+
+@dataclass
+class RestoreOptions:
+    overwrite: bool = False
+    verify_checksum: bool = True
+    decryption_key: str | None = None
+
+
+def backup_create(db: Database, backup_path: str, options: BackupOptions | None = None) -> BackupResult:
+    """Create a backup of a database."""
+    c_options = ffi.new("GV_BackupOptions *")
+    lib.gv_backup_options_init(c_options)
+    if options:
+        c_options.compression = int(options.compression)
+        c_options.include_wal = 1 if options.include_wal else 0
+        c_options.include_metadata = 1 if options.include_metadata else 0
+        c_options.verify_after = 1 if options.verify_after else 0
+        c_options.encryption_key = options.encryption_key.encode() if options.encryption_key else ffi.NULL
+    result = lib.gv_backup_create(db._db, backup_path.encode(), c_options, ffi.NULL, ffi.NULL)
+    if result == ffi.NULL:
+        raise RuntimeError("Backup creation failed")
+    br = BackupResult(
+        success=bool(result.success),
+        error_message=ffi.string(result.error_message).decode("utf-8") if result.error_message != ffi.NULL else None,
+        bytes_processed=result.bytes_processed,
+        vectors_processed=result.vectors_processed,
+        elapsed_seconds=result.elapsed_seconds,
+    )
+    lib.gv_backup_result_free(result)
+    return br
+
+
+def backup_restore(backup_path: str, db_path: str, options: RestoreOptions | None = None) -> BackupResult:
+    """Restore a database from backup."""
+    c_options = ffi.new("GV_RestoreOptions *")
+    lib.gv_restore_options_init(c_options)
+    if options:
+        c_options.overwrite = 1 if options.overwrite else 0
+        c_options.verify_checksum = 1 if options.verify_checksum else 0
+        c_options.decryption_key = options.decryption_key.encode() if options.decryption_key else ffi.NULL
+    result = lib.gv_backup_restore(backup_path.encode(), db_path.encode(), c_options, ffi.NULL, ffi.NULL)
+    if result == ffi.NULL:
+        raise RuntimeError("Restore failed")
+    br = BackupResult(
+        success=bool(result.success),
+        error_message=ffi.string(result.error_message).decode("utf-8") if result.error_message != ffi.NULL else None,
+        bytes_processed=result.bytes_processed,
+        vectors_processed=result.vectors_processed,
+        elapsed_seconds=result.elapsed_seconds,
+    )
+    lib.gv_backup_result_free(result)
+    return br
+
+
+def backup_restore_to_db(backup_path: str, options: RestoreOptions | None = None) -> Database:
+    """Restore backup directly to an in-memory database."""
+    c_options = ffi.new("GV_RestoreOptions *")
+    lib.gv_restore_options_init(c_options)
+    if options:
+        c_options.overwrite = 1 if options.overwrite else 0
+        c_options.verify_checksum = 1 if options.verify_checksum else 0
+        c_options.decryption_key = options.decryption_key.encode() if options.decryption_key else ffi.NULL
+    db_ptr = ffi.new("GV_Database **")
+    result = lib.gv_backup_restore_to_db(backup_path.encode(), c_options, db_ptr)
+    if result == ffi.NULL or not result.success:
+        err = ffi.string(result.error_message).decode("utf-8") if result and result.error_message != ffi.NULL else "Unknown error"
+        if result:
+            lib.gv_backup_result_free(result)
+        raise RuntimeError(f"Restore to DB failed: {err}")
+    lib.gv_backup_result_free(result)
+    if db_ptr[0] == ffi.NULL:
+        raise RuntimeError("Restored database is NULL")
+    dim = int(lib.gv_database_dimension(db_ptr[0]))
+    return Database(db_ptr[0], dim)
+
+
+def backup_read_header(backup_path: str) -> BackupHeader:
+    """Read backup header without full restore."""
+    header = ffi.new("GV_BackupHeader *")
+    if lib.gv_backup_read_header(backup_path.encode(), header) != 0:
+        raise RuntimeError("Failed to read backup header")
+    return BackupHeader(
+        version=header.version,
+        flags=header.flags,
+        created_at=header.created_at,
+        vector_count=header.vector_count,
+        dimension=header.dimension,
+        index_type=header.index_type,
+        original_size=header.original_size,
+        compressed_size=header.compressed_size,
+        checksum=ffi.string(header.checksum).decode("utf-8"),
+    )
+
+
+def backup_verify(backup_path: str, decryption_key: str | None = None) -> BackupResult:
+    """Verify backup integrity."""
+    key = decryption_key.encode() if decryption_key else ffi.NULL
+    result = lib.gv_backup_verify(backup_path.encode(), key)
+    if result == ffi.NULL:
+        raise RuntimeError("Backup verification failed")
+    br = BackupResult(
+        success=bool(result.success),
+        error_message=ffi.string(result.error_message).decode("utf-8") if result.error_message != ffi.NULL else None,
+        bytes_processed=result.bytes_processed,
+        vectors_processed=result.vectors_processed,
+        elapsed_seconds=result.elapsed_seconds,
+    )
+    lib.gv_backup_result_free(result)
+    return br
+
+
+# ============================================================================
+# Shard Management Module
+# ============================================================================
+
+class ShardState(IntEnum):
+    ACTIVE = 0
+    READONLY = 1
+    MIGRATING = 2
+    OFFLINE = 3
+
+
+class ShardStrategy(IntEnum):
+    HASH = 0
+    RANGE = 1
+    CONSISTENT = 2
+
+
+@dataclass(frozen=True)
+class ShardInfo:
+    shard_id: int
+    node_address: str
+    state: ShardState
+    vector_count: int
+    capacity: int
+    replica_count: int
+    last_heartbeat: int
+
+
+@dataclass
+class ShardConfig:
+    shard_count: int = 4
+    virtual_nodes: int = 150
+    strategy: ShardStrategy = ShardStrategy.CONSISTENT
+    replication_factor: int = 3
+
+
+class ShardManager:
+    """Shard manager for distributed GigaVector."""
+
+    _mgr: CData
+    _closed: bool
+
+    def __init__(self, config: ShardConfig | None = None) -> None:
+        c_config = ffi.new("GV_ShardConfig *")
+        lib.gv_shard_config_init(c_config)
+        if config:
+            c_config.shard_count = config.shard_count
+            c_config.virtual_nodes = config.virtual_nodes
+            c_config.strategy = int(config.strategy)
+            c_config.replication_factor = config.replication_factor
+        self._mgr = lib.gv_shard_manager_create(c_config)
+        if self._mgr == ffi.NULL:
+            raise RuntimeError("Failed to create shard manager")
+        self._closed = False
+
+    def __enter__(self) -> "ShardManager":
+        return self
+
+    def __exit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: TracebackType | None) -> None:
+        self.close()
+
+    def close(self) -> None:
+        if not self._closed and self._mgr != ffi.NULL:
+            lib.gv_shard_manager_destroy(self._mgr)
+            self._mgr = ffi.NULL
+            self._closed = True
+
+    def add_shard(self, shard_id: int, node_address: str) -> None:
+        if lib.gv_shard_add(self._mgr, shard_id, node_address.encode()) != 0:
+            raise RuntimeError("Failed to add shard")
+
+    def remove_shard(self, shard_id: int) -> None:
+        if lib.gv_shard_remove(self._mgr, shard_id) != 0:
+            raise RuntimeError("Failed to remove shard")
+
+    def get_shard_for_vector(self, vector_id: int) -> int:
+        return int(lib.gv_shard_for_vector(self._mgr, vector_id))
+
+    def get_info(self, shard_id: int) -> ShardInfo:
+        info = ffi.new("GV_ShardInfo *")
+        if lib.gv_shard_get_info(self._mgr, shard_id, info) != 0:
+            raise RuntimeError("Failed to get shard info")
+        return ShardInfo(
+            shard_id=info.shard_id,
+            node_address=ffi.string(info.node_address).decode("utf-8") if info.node_address else "",
+            state=ShardState(info.state),
+            vector_count=info.vector_count,
+            capacity=info.capacity,
+            replica_count=info.replica_count,
+            last_heartbeat=info.last_heartbeat,
+        )
+
+    def list_shards(self) -> list[ShardInfo]:
+        shards_ptr = ffi.new("GV_ShardInfo **")
+        count_ptr = ffi.new("size_t *")
+        if lib.gv_shard_list(self._mgr, shards_ptr, count_ptr) != 0:
+            raise RuntimeError("Failed to list shards")
+        result = []
+        for i in range(count_ptr[0]):
+            s = shards_ptr[0][i]
+            result.append(ShardInfo(
+                shard_id=s.shard_id,
+                node_address=ffi.string(s.node_address).decode("utf-8") if s.node_address else "",
+                state=ShardState(s.state),
+                vector_count=s.vector_count,
+                capacity=s.capacity,
+                replica_count=s.replica_count,
+                last_heartbeat=s.last_heartbeat,
+            ))
+        lib.gv_shard_free_list(shards_ptr[0], count_ptr[0])
+        return result
+
+    def set_state(self, shard_id: int, state: ShardState) -> None:
+        if lib.gv_shard_set_state(self._mgr, shard_id, int(state)) != 0:
+            raise RuntimeError("Failed to set shard state")
+
+    def rebalance_start(self) -> None:
+        if lib.gv_shard_rebalance_start(self._mgr) != 0:
+            raise RuntimeError("Failed to start rebalancing")
+
+    def rebalance_status(self) -> tuple[bool, float]:
+        progress = ffi.new("double *")
+        status = lib.gv_shard_rebalance_status(self._mgr, progress)
+        return (status == 1, float(progress[0]))
+
+    def rebalance_cancel(self) -> None:
+        if lib.gv_shard_rebalance_cancel(self._mgr) != 0:
+            raise RuntimeError("Failed to cancel rebalancing")
+
+    def attach_local(self, shard_id: int, db: Database) -> None:
+        if lib.gv_shard_attach_local(self._mgr, shard_id, db._db) != 0:
+            raise RuntimeError("Failed to attach local database")
+
+
+# ============================================================================
+# Replication Module
+# ============================================================================
+
+class ReplicationRole(IntEnum):
+    LEADER = 0
+    FOLLOWER = 1
+    CANDIDATE = 2
+
+
+class ReplicationState(IntEnum):
+    SYNCING = 0
+    STREAMING = 1
+    LAGGING = 2
+    DISCONNECTED = 3
+
+
+@dataclass(frozen=True)
+class ReplicaInfo:
+    node_id: str
+    address: str
+    role: ReplicationRole
+    state: ReplicationState
+    last_wal_position: int
+    lag_entries: int
+    last_heartbeat: int
+
+
+@dataclass(frozen=True)
+class ReplicationStats:
+    role: ReplicationRole
+    term: int
+    leader_id: str | None
+    follower_count: int
+    wal_position: int
+    commit_position: int
+    bytes_replicated: int
+
+
+@dataclass
+class ReplicationConfig:
+    node_id: str = ""
+    listen_address: str = ""
+    leader_address: str | None = None
+    sync_interval_ms: int = 100
+    election_timeout_ms: int = 5000
+    heartbeat_interval_ms: int = 1000
+    max_lag_entries: int = 10000
+
+
+class ReplicationManager:
+    """Replication manager for high availability."""
+
+    _mgr: CData
+    _closed: bool
+
+    def __init__(self, db: Database, config: ReplicationConfig) -> None:
+        c_config = ffi.new("GV_ReplicationConfig *")
+        lib.gv_replication_config_init(c_config)
+        c_config.node_id = config.node_id.encode()
+        c_config.listen_address = config.listen_address.encode()
+        c_config.leader_address = config.leader_address.encode() if config.leader_address else ffi.NULL
+        c_config.sync_interval_ms = config.sync_interval_ms
+        c_config.election_timeout_ms = config.election_timeout_ms
+        c_config.heartbeat_interval_ms = config.heartbeat_interval_ms
+        c_config.max_lag_entries = config.max_lag_entries
+        self._mgr = lib.gv_replication_create(db._db, c_config)
+        if self._mgr == ffi.NULL:
+            raise RuntimeError("Failed to create replication manager")
+        self._closed = False
+
+    def __enter__(self) -> "ReplicationManager":
+        return self
+
+    def __exit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: TracebackType | None) -> None:
+        self.close()
+
+    def close(self) -> None:
+        if not self._closed and self._mgr != ffi.NULL:
+            lib.gv_replication_destroy(self._mgr)
+            self._mgr = ffi.NULL
+            self._closed = True
+
+    def start(self) -> None:
+        if lib.gv_replication_start(self._mgr) != 0:
+            raise RuntimeError("Failed to start replication")
+
+    def stop(self) -> None:
+        if lib.gv_replication_stop(self._mgr) != 0:
+            raise RuntimeError("Failed to stop replication")
+
+    def get_role(self) -> ReplicationRole:
+        return ReplicationRole(lib.gv_replication_get_role(self._mgr))
+
+    def step_down(self) -> None:
+        if lib.gv_replication_step_down(self._mgr) != 0:
+            raise RuntimeError("Failed to step down")
+
+    def request_leadership(self) -> None:
+        if lib.gv_replication_request_leadership(self._mgr) != 0:
+            raise RuntimeError("Failed to request leadership")
+
+    def add_follower(self, node_id: str, address: str) -> None:
+        if lib.gv_replication_add_follower(self._mgr, node_id.encode(), address.encode()) != 0:
+            raise RuntimeError("Failed to add follower")
+
+    def remove_follower(self, node_id: str) -> None:
+        if lib.gv_replication_remove_follower(self._mgr, node_id.encode()) != 0:
+            raise RuntimeError("Failed to remove follower")
+
+    def list_replicas(self) -> list[ReplicaInfo]:
+        replicas_ptr = ffi.new("GV_ReplicaInfo **")
+        count_ptr = ffi.new("size_t *")
+        if lib.gv_replication_list_replicas(self._mgr, replicas_ptr, count_ptr) != 0:
+            raise RuntimeError("Failed to list replicas")
+        result = []
+        for i in range(count_ptr[0]):
+            r = replicas_ptr[0][i]
+            result.append(ReplicaInfo(
+                node_id=ffi.string(r.node_id).decode("utf-8") if r.node_id else "",
+                address=ffi.string(r.address).decode("utf-8") if r.address else "",
+                role=ReplicationRole(r.role),
+                state=ReplicationState(r.state),
+                last_wal_position=r.last_wal_position,
+                lag_entries=r.lag_entries,
+                last_heartbeat=r.last_heartbeat,
+            ))
+        lib.gv_replication_free_replicas(replicas_ptr[0], count_ptr[0])
+        return result
+
+    def sync_commit(self, timeout_ms: int = 5000) -> None:
+        if lib.gv_replication_sync_commit(self._mgr, timeout_ms) != 0:
+            raise RuntimeError("Sync commit failed")
+
+    def get_lag(self) -> int:
+        return int(lib.gv_replication_get_lag(self._mgr))
+
+    def wait_sync(self, max_lag: int = 0, timeout_ms: int = 5000) -> None:
+        if lib.gv_replication_wait_sync(self._mgr, max_lag, timeout_ms) != 0:
+            raise RuntimeError("Wait sync failed")
+
+    def get_stats(self) -> ReplicationStats:
+        stats = ffi.new("GV_ReplicationStats *")
+        if lib.gv_replication_get_stats(self._mgr, stats) != 0:
+            raise RuntimeError("Failed to get replication stats")
+        result = ReplicationStats(
+            role=ReplicationRole(stats.role),
+            term=stats.term,
+            leader_id=ffi.string(stats.leader_id).decode("utf-8") if stats.leader_id else None,
+            follower_count=stats.follower_count,
+            wal_position=stats.wal_position,
+            commit_position=stats.commit_position,
+            bytes_replicated=stats.bytes_replicated,
+        )
+        lib.gv_replication_free_stats(stats)
+        return result
+
+    def is_healthy(self) -> bool:
+        return lib.gv_replication_is_healthy(self._mgr) == 1
+
+
+# ============================================================================
+# Cluster Management Module
+# ============================================================================
+
+class NodeRole(IntEnum):
+    COORDINATOR = 0
+    DATA = 1
+    QUERY = 2
+
+
+class NodeState(IntEnum):
+    JOINING = 0
+    ACTIVE = 1
+    LEAVING = 2
+    DEAD = 3
+
+
+@dataclass(frozen=True)
+class NodeInfo:
+    node_id: str
+    address: str
+    role: NodeRole
+    state: NodeState
+    shard_ids: list[int]
+    last_heartbeat: int
+    load: float
+
+
+@dataclass(frozen=True)
+class ClusterStats:
+    total_nodes: int
+    active_nodes: int
+    total_shards: int
+    total_vectors: int
+    avg_load: float
+
+
+@dataclass
+class ClusterConfig:
+    node_id: str = ""
+    listen_address: str = ""
+    seed_nodes: str = ""
+    role: NodeRole = NodeRole.DATA
+    heartbeat_interval_ms: int = 1000
+    failure_timeout_ms: int = 5000
+
+
+class Cluster:
+    """Cluster manager for distributed GigaVector."""
+
+    _cluster: CData
+    _closed: bool
+
+    def __init__(self, config: ClusterConfig) -> None:
+        c_config = ffi.new("GV_ClusterConfig *")
+        lib.gv_cluster_config_init(c_config)
+        c_config.node_id = config.node_id.encode()
+        c_config.listen_address = config.listen_address.encode()
+        c_config.seed_nodes = config.seed_nodes.encode()
+        c_config.role = int(config.role)
+        c_config.heartbeat_interval_ms = config.heartbeat_interval_ms
+        c_config.failure_timeout_ms = config.failure_timeout_ms
+        self._cluster = lib.gv_cluster_create(c_config)
+        if self._cluster == ffi.NULL:
+            raise RuntimeError("Failed to create cluster")
+        self._closed = False
+
+    def __enter__(self) -> "Cluster":
+        return self
+
+    def __exit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: TracebackType | None) -> None:
+        self.close()
+
+    def close(self) -> None:
+        if not self._closed and self._cluster != ffi.NULL:
+            lib.gv_cluster_destroy(self._cluster)
+            self._cluster = ffi.NULL
+            self._closed = True
+
+    def start(self) -> None:
+        if lib.gv_cluster_start(self._cluster) != 0:
+            raise RuntimeError("Failed to start cluster")
+
+    def stop(self) -> None:
+        if lib.gv_cluster_stop(self._cluster) != 0:
+            raise RuntimeError("Failed to stop cluster")
+
+    def get_local_node(self) -> NodeInfo:
+        info = ffi.new("GV_NodeInfo *")
+        if lib.gv_cluster_get_local_node(self._cluster, info) != 0:
+            raise RuntimeError("Failed to get local node info")
+        shard_ids = [int(info.shard_ids[i]) for i in range(info.shard_count)] if info.shard_ids else []
+        result = NodeInfo(
+            node_id=ffi.string(info.node_id).decode("utf-8") if info.node_id else "",
+            address=ffi.string(info.address).decode("utf-8") if info.address else "",
+            role=NodeRole(info.role),
+            state=NodeState(info.state),
+            shard_ids=shard_ids,
+            last_heartbeat=info.last_heartbeat,
+            load=info.load,
+        )
+        lib.gv_cluster_free_node_info(info)
+        return result
+
+    def list_nodes(self) -> list[NodeInfo]:
+        nodes_ptr = ffi.new("GV_NodeInfo **")
+        count_ptr = ffi.new("size_t *")
+        if lib.gv_cluster_list_nodes(self._cluster, nodes_ptr, count_ptr) != 0:
+            raise RuntimeError("Failed to list nodes")
+        result = []
+        for i in range(count_ptr[0]):
+            n = nodes_ptr[0][i]
+            shard_ids = [int(n.shard_ids[j]) for j in range(n.shard_count)] if n.shard_ids else []
+            result.append(NodeInfo(
+                node_id=ffi.string(n.node_id).decode("utf-8") if n.node_id else "",
+                address=ffi.string(n.address).decode("utf-8") if n.address else "",
+                role=NodeRole(n.role),
+                state=NodeState(n.state),
+                shard_ids=shard_ids,
+                last_heartbeat=n.last_heartbeat,
+                load=n.load,
+            ))
+        lib.gv_cluster_free_node_list(nodes_ptr[0], count_ptr[0])
+        return result
+
+    def get_stats(self) -> ClusterStats:
+        stats = ffi.new("GV_ClusterStats *")
+        if lib.gv_cluster_get_stats(self._cluster, stats) != 0:
+            raise RuntimeError("Failed to get cluster stats")
+        return ClusterStats(
+            total_nodes=stats.total_nodes,
+            active_nodes=stats.active_nodes,
+            total_shards=stats.total_shards,
+            total_vectors=stats.total_vectors,
+            avg_load=stats.avg_load,
+        )
+
+    def is_healthy(self) -> bool:
+        return lib.gv_cluster_is_healthy(self._cluster) == 1
+
+    def wait_ready(self, timeout_ms: int = 30000) -> None:
+        if lib.gv_cluster_wait_ready(self._cluster, timeout_ms) != 0:
+            raise RuntimeError("Cluster not ready within timeout")
+
+
+# ============================================================================
+# Namespace / Multi-tenancy Module
+# ============================================================================
+
+class NSIndexType(IntEnum):
+    KDTREE = 0
+    HNSW = 1
+    IVFPQ = 2
+    SPARSE = 3
+
+
+@dataclass(frozen=True)
+class NamespaceInfo:
+    name: str
+    dimension: int
+    index_type: NSIndexType
+    vector_count: int
+    memory_bytes: int
+    created_at: int
+    last_modified: int
+
+
+@dataclass
+class NamespaceConfig:
+    name: str
+    dimension: int
+    index_type: NSIndexType = NSIndexType.HNSW
+    max_vectors: int = 0
+    max_memory_bytes: int = 0
+
+
+class Namespace:
+    """A single namespace within the namespace manager."""
+
+    _ns: CData
+    _dimension: int
+
+    def __init__(self, handle: CData, dimension: int) -> None:
+        self._ns = handle
+        self._dimension = dimension
+
+    def add_vector(self, data: Sequence[float], metadata: dict[str, str] | None = None) -> None:
+        if len(data) != self._dimension:
+            raise ValueError(f"Expected dimension {self._dimension}, got {len(data)}")
+        vec_buf = ffi.new("float[]", list(data))
+        if metadata:
+            keys = list(metadata.keys())
+            values = list(metadata.values())
+            keys_arr = ffi.new("char*[]", [k.encode() for k in keys])
+            vals_arr = ffi.new("char*[]", [v.encode() for v in values])
+            if lib.gv_namespace_add_vector_with_metadata(self._ns, vec_buf, self._dimension, keys_arr, vals_arr, len(keys)) != 0:
+                raise RuntimeError("Failed to add vector with metadata")
+        else:
+            if lib.gv_namespace_add_vector(self._ns, vec_buf, self._dimension) != 0:
+                raise RuntimeError("Failed to add vector")
+
+    def search(self, query: Sequence[float], k: int, distance: DistanceType = DistanceType.COSINE) -> list[SearchHit]:
+        if len(query) != self._dimension:
+            raise ValueError(f"Expected dimension {self._dimension}, got {len(query)}")
+        query_buf = ffi.new("float[]", list(query))
+        results = ffi.new("GV_SearchResult[]", k)
+        n = lib.gv_namespace_search(self._ns, query_buf, k, results, int(distance))
+        if n < 0:
+            raise RuntimeError("Namespace search failed")
+        return [SearchHit(distance=float(results[i].distance), vector=_copy_vector(results[i].vector)) for i in range(n)]
+
+    def delete_vector(self, index: int) -> None:
+        if lib.gv_namespace_delete_vector(self._ns, index) != 0:
+            raise RuntimeError("Failed to delete vector")
+
+    @property
+    def count(self) -> int:
+        return int(lib.gv_namespace_count(self._ns))
+
+    def save(self) -> None:
+        if lib.gv_namespace_save(self._ns) != 0:
+            raise RuntimeError("Failed to save namespace")
+
+    def get_info(self) -> NamespaceInfo:
+        info = ffi.new("GV_NamespaceInfo *")
+        if lib.gv_namespace_get_info(self._ns, info) != 0:
+            raise RuntimeError("Failed to get namespace info")
+        result = NamespaceInfo(
+            name=ffi.string(info.name).decode("utf-8") if info.name else "",
+            dimension=info.dimension,
+            index_type=NSIndexType(info.index_type),
+            vector_count=info.vector_count,
+            memory_bytes=info.memory_bytes,
+            created_at=info.created_at,
+            last_modified=info.last_modified,
+        )
+        lib.gv_namespace_free_info(info)
+        return result
+
+
+class NamespaceManager:
+    """Manager for multiple namespaces."""
+
+    _mgr: CData
+    _closed: bool
+
+    def __init__(self, base_path: str | None = None) -> None:
+        path = base_path.encode() if base_path else ffi.NULL
+        self._mgr = lib.gv_namespace_manager_create(path)
+        if self._mgr == ffi.NULL:
+            raise RuntimeError("Failed to create namespace manager")
+        self._closed = False
+
+    def __enter__(self) -> "NamespaceManager":
+        return self
+
+    def __exit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: TracebackType | None) -> None:
+        self.close()
+
+    def close(self) -> None:
+        if not self._closed and self._mgr != ffi.NULL:
+            lib.gv_namespace_manager_destroy(self._mgr)
+            self._mgr = ffi.NULL
+            self._closed = True
+
+    def create(self, config: NamespaceConfig) -> Namespace:
+        c_config = ffi.new("GV_NamespaceConfig *")
+        lib.gv_namespace_config_init(c_config)
+        c_config.name = config.name.encode()
+        c_config.dimension = config.dimension
+        c_config.index_type = int(config.index_type)
+        c_config.max_vectors = config.max_vectors
+        c_config.max_memory_bytes = config.max_memory_bytes
+        ns = lib.gv_namespace_create(self._mgr, c_config)
+        if ns == ffi.NULL:
+            raise RuntimeError("Failed to create namespace")
+        return Namespace(ns, config.dimension)
+
+    def get(self, name: str) -> Namespace | None:
+        ns = lib.gv_namespace_get(self._mgr, name.encode())
+        if ns == ffi.NULL:
+            return None
+        dim = int(lib.gv_namespace_count(ns))  # Get dimension from namespace
+        info = ffi.new("GV_NamespaceInfo *")
+        if lib.gv_namespace_get_info(ns, info) == 0:
+            dim = info.dimension
+            lib.gv_namespace_free_info(info)
+        return Namespace(ns, dim)
+
+    def delete(self, name: str) -> None:
+        if lib.gv_namespace_delete(self._mgr, name.encode()) != 0:
+            raise RuntimeError("Failed to delete namespace")
+
+    def list(self) -> list[str]:
+        names_ptr = ffi.new("char ***")
+        count_ptr = ffi.new("size_t *")
+        if lib.gv_namespace_list(self._mgr, names_ptr, count_ptr) != 0:
+            raise RuntimeError("Failed to list namespaces")
+        result = []
+        for i in range(count_ptr[0]):
+            result.append(ffi.string(names_ptr[0][i]).decode("utf-8"))
+            lib.free(names_ptr[0][i])
+        lib.free(names_ptr[0])
+        return result
+
+    def exists(self, name: str) -> bool:
+        return lib.gv_namespace_exists(self._mgr, name.encode()) == 1
+
+    def save_all(self) -> None:
+        if lib.gv_namespace_manager_save_all(self._mgr) != 0:
+            raise RuntimeError("Failed to save all namespaces")
+
+    def load_all(self) -> int:
+        n = lib.gv_namespace_manager_load_all(self._mgr)
+        if n < 0:
+            raise RuntimeError("Failed to load namespaces")
+        return n
+
+
+# ============================================================================
+# TTL (Time-to-Live) Module
+# ============================================================================
+
+@dataclass(frozen=True)
+class TTLStats:
+    total_vectors_with_ttl: int
+    total_expired: int
+    next_expiration_time: int
+    last_cleanup_time: int
+
+
+@dataclass
+class TTLConfig:
+    default_ttl_seconds: int = 0
+    cleanup_interval_seconds: int = 60
+    lazy_expiration: bool = True
+    max_expired_per_cleanup: int = 1000
+
+
+class TTLManager:
+    """TTL manager for automatic data expiration."""
+
+    _mgr: CData
+    _closed: bool
+
+    def __init__(self, config: TTLConfig | None = None) -> None:
+        c_config = ffi.new("GV_TTLConfig *")
+        lib.gv_ttl_config_init(c_config)
+        if config:
+            c_config.default_ttl_seconds = config.default_ttl_seconds
+            c_config.cleanup_interval_seconds = config.cleanup_interval_seconds
+            c_config.lazy_expiration = 1 if config.lazy_expiration else 0
+            c_config.max_expired_per_cleanup = config.max_expired_per_cleanup
+        self._mgr = lib.gv_ttl_create(c_config)
+        if self._mgr == ffi.NULL:
+            raise RuntimeError("Failed to create TTL manager")
+        self._closed = False
+
+    def __enter__(self) -> "TTLManager":
+        return self
+
+    def __exit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: TracebackType | None) -> None:
+        self.close()
+
+    def close(self) -> None:
+        if not self._closed and self._mgr != ffi.NULL:
+            lib.gv_ttl_destroy(self._mgr)
+            self._mgr = ffi.NULL
+            self._closed = True
+
+    def set(self, vector_index: int, ttl_seconds: int) -> None:
+        if lib.gv_ttl_set(self._mgr, vector_index, ttl_seconds) != 0:
+            raise RuntimeError("Failed to set TTL")
+
+    def set_absolute(self, vector_index: int, expire_at_unix: int) -> None:
+        if lib.gv_ttl_set_absolute(self._mgr, vector_index, expire_at_unix) != 0:
+            raise RuntimeError("Failed to set absolute TTL")
+
+    def get(self, vector_index: int) -> int:
+        expire_at = ffi.new("uint64_t *")
+        if lib.gv_ttl_get(self._mgr, vector_index, expire_at) != 0:
+            raise RuntimeError("Failed to get TTL")
+        return int(expire_at[0])
+
+    def remove(self, vector_index: int) -> None:
+        if lib.gv_ttl_remove(self._mgr, vector_index) != 0:
+            raise RuntimeError("Failed to remove TTL")
+
+    def is_expired(self, vector_index: int) -> bool:
+        return lib.gv_ttl_is_expired(self._mgr, vector_index) == 1
+
+    def get_remaining(self, vector_index: int) -> int:
+        remaining = ffi.new("uint64_t *")
+        if lib.gv_ttl_get_remaining(self._mgr, vector_index, remaining) != 0:
+            raise RuntimeError("Failed to get remaining TTL")
+        return int(remaining[0])
+
+    def cleanup_expired(self, db: Database) -> int:
+        n = lib.gv_ttl_cleanup_expired(self._mgr, db._db)
+        if n < 0:
+            raise RuntimeError("Failed to cleanup expired")
+        return n
+
+    def start_background_cleanup(self, db: Database) -> None:
+        if lib.gv_ttl_start_background_cleanup(self._mgr, db._db) != 0:
+            raise RuntimeError("Failed to start background cleanup")
+
+    def stop_background_cleanup(self) -> None:
+        lib.gv_ttl_stop_background_cleanup(self._mgr)
+
+    def is_background_cleanup_running(self) -> bool:
+        return lib.gv_ttl_is_background_cleanup_running(self._mgr) == 1
+
+    def get_stats(self) -> TTLStats:
+        stats = ffi.new("GV_TTLStats *")
+        if lib.gv_ttl_get_stats(self._mgr, stats) != 0:
+            raise RuntimeError("Failed to get TTL stats")
+        return TTLStats(
+            total_vectors_with_ttl=stats.total_vectors_with_ttl,
+            total_expired=stats.total_expired,
+            next_expiration_time=stats.next_expiration_time,
+            last_cleanup_time=stats.last_cleanup_time,
+        )
+
+
+# ============================================================================
+# BM25 Full-text Search Module
+# ============================================================================
+
+@dataclass(frozen=True)
+class BM25Result:
+    doc_id: int
+    score: float
+
+
+@dataclass(frozen=True)
+class BM25Stats:
+    total_documents: int
+    total_terms: int
+    total_postings: int
+    avg_document_length: float
+    memory_bytes: int
+
+
+@dataclass
+class BM25Config:
+    k1: float = 1.2
+    b: float = 0.75
+
+
+class BM25Index:
+    """BM25 full-text search index."""
+
+    _index: CData
+    _closed: bool
+
+    def __init__(self, config: BM25Config | None = None) -> None:
+        c_config = ffi.new("GV_BM25Config *")
+        lib.gv_bm25_config_init(c_config)
+        if config:
+            c_config.k1 = config.k1
+            c_config.b = config.b
+        self._index = lib.gv_bm25_create(c_config)
+        if self._index == ffi.NULL:
+            raise RuntimeError("Failed to create BM25 index")
+        self._closed = False
+
+    def __enter__(self) -> "BM25Index":
+        return self
+
+    def __exit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: TracebackType | None) -> None:
+        self.close()
+
+    def close(self) -> None:
+        if not self._closed and self._index != ffi.NULL:
+            lib.gv_bm25_destroy(self._index)
+            self._index = ffi.NULL
+            self._closed = True
+
+    def add_document(self, doc_id: int, text: str) -> None:
+        if lib.gv_bm25_add_document(self._index, doc_id, text.encode()) != 0:
+            raise RuntimeError("Failed to add document")
+
+    def remove_document(self, doc_id: int) -> None:
+        if lib.gv_bm25_remove_document(self._index, doc_id) != 0:
+            raise RuntimeError("Failed to remove document")
+
+    def update_document(self, doc_id: int, text: str) -> None:
+        if lib.gv_bm25_update_document(self._index, doc_id, text.encode()) != 0:
+            raise RuntimeError("Failed to update document")
+
+    def search(self, query: str, k: int) -> list[BM25Result]:
+        results = ffi.new("GV_BM25Result[]", k)
+        n = lib.gv_bm25_search(self._index, query.encode(), k, results)
+        if n < 0:
+            raise RuntimeError("BM25 search failed")
+        return [BM25Result(doc_id=int(results[i].doc_id), score=float(results[i].score)) for i in range(n)]
+
+    def score_document(self, doc_id: int, query: str) -> float:
+        score = ffi.new("double *")
+        if lib.gv_bm25_score_document(self._index, doc_id, query.encode(), score) != 0:
+            raise RuntimeError("Failed to score document")
+        return float(score[0])
+
+    def get_stats(self) -> BM25Stats:
+        stats = ffi.new("GV_BM25Stats *")
+        if lib.gv_bm25_get_stats(self._index, stats) != 0:
+            raise RuntimeError("Failed to get BM25 stats")
+        return BM25Stats(
+            total_documents=stats.total_documents,
+            total_terms=stats.total_terms,
+            total_postings=stats.total_postings,
+            avg_document_length=stats.avg_document_length,
+            memory_bytes=stats.memory_bytes,
+        )
+
+    def get_doc_freq(self, term: str) -> int:
+        return int(lib.gv_bm25_get_doc_freq(self._index, term.encode()))
+
+    def has_document(self, doc_id: int) -> bool:
+        return lib.gv_bm25_has_document(self._index, doc_id) == 1
+
+    def save(self, filepath: str) -> None:
+        if lib.gv_bm25_save(self._index, filepath.encode()) != 0:
+            raise RuntimeError("Failed to save BM25 index")
+
+    @classmethod
+    def load(cls, filepath: str) -> "BM25Index":
+        index = lib.gv_bm25_load(filepath.encode())
+        if index == ffi.NULL:
+            raise RuntimeError("Failed to load BM25 index")
+        obj = cls.__new__(cls)
+        obj._index = index
+        obj._closed = False
+        return obj
+
+
+# ============================================================================
+# Hybrid Search Module
+# ============================================================================
+
+class FusionType(IntEnum):
+    LINEAR = 0
+    RRF = 1
+    WEIGHTED_RRF = 2
+
+
+@dataclass(frozen=True)
+class HybridResult:
+    vector_index: int
+    combined_score: float
+    vector_score: float
+    text_score: float
+    vector_rank: int
+    text_rank: int
+
+
+@dataclass(frozen=True)
+class HybridStats:
+    vector_candidates: int
+    text_candidates: int
+    unique_candidates: int
+    vector_search_time_ms: float
+    text_search_time_ms: float
+    fusion_time_ms: float
+    total_time_ms: float
+
+
+@dataclass
+class HybridConfig:
+    fusion_type: FusionType = FusionType.LINEAR
+    vector_weight: float = 0.5
+    text_weight: float = 0.5
+    rrf_k: float = 60.0
+    distance_type: DistanceType = DistanceType.COSINE
+    prefetch_k: int = 0
+
+
+class HybridSearcher:
+    """Hybrid searcher combining vector and text search."""
+
+    _searcher: CData
+    _closed: bool
+
+    def __init__(self, db: Database, bm25: BM25Index, config: HybridConfig | None = None) -> None:
+        c_config = ffi.new("GV_HybridConfig *")
+        lib.gv_hybrid_config_init(c_config)
+        if config:
+            c_config.fusion_type = int(config.fusion_type)
+            c_config.vector_weight = config.vector_weight
+            c_config.text_weight = config.text_weight
+            c_config.rrf_k = config.rrf_k
+            c_config.distance_type = int(config.distance_type)
+            c_config.prefetch_k = config.prefetch_k
+        self._searcher = lib.gv_hybrid_create(db._db, bm25._index, c_config)
+        if self._searcher == ffi.NULL:
+            raise RuntimeError("Failed to create hybrid searcher")
+        self._closed = False
+
+    def __enter__(self) -> "HybridSearcher":
+        return self
+
+    def __exit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: TracebackType | None) -> None:
+        self.close()
+
+    def close(self) -> None:
+        if not self._closed and self._searcher != ffi.NULL:
+            lib.gv_hybrid_destroy(self._searcher)
+            self._searcher = ffi.NULL
+            self._closed = True
+
+    def search(self, query_vector: Sequence[float] | None, query_text: str | None, k: int) -> list[HybridResult]:
+        vec_buf = ffi.new("float[]", list(query_vector)) if query_vector else ffi.NULL
+        text_buf = query_text.encode() if query_text else ffi.NULL
+        results = ffi.new("GV_HybridResult[]", k)
+        n = lib.gv_hybrid_search(self._searcher, vec_buf, text_buf, k, results)
+        if n < 0:
+            raise RuntimeError("Hybrid search failed")
+        return [HybridResult(
+            vector_index=int(results[i].vector_index),
+            combined_score=float(results[i].combined_score),
+            vector_score=float(results[i].vector_score),
+            text_score=float(results[i].text_score),
+            vector_rank=int(results[i].vector_rank),
+            text_rank=int(results[i].text_rank),
+        ) for i in range(n)]
+
+    def search_with_stats(self, query_vector: Sequence[float] | None, query_text: str | None, k: int) -> tuple[list[HybridResult], HybridStats]:
+        vec_buf = ffi.new("float[]", list(query_vector)) if query_vector else ffi.NULL
+        text_buf = query_text.encode() if query_text else ffi.NULL
+        results = ffi.new("GV_HybridResult[]", k)
+        stats = ffi.new("GV_HybridStats *")
+        n = lib.gv_hybrid_search_with_stats(self._searcher, vec_buf, text_buf, k, results, stats)
+        if n < 0:
+            raise RuntimeError("Hybrid search failed")
+        result_list = [HybridResult(
+            vector_index=int(results[i].vector_index),
+            combined_score=float(results[i].combined_score),
+            vector_score=float(results[i].vector_score),
+            text_score=float(results[i].text_score),
+            vector_rank=int(results[i].vector_rank),
+            text_rank=int(results[i].text_rank),
+        ) for i in range(n)]
+        stats_obj = HybridStats(
+            vector_candidates=stats.vector_candidates,
+            text_candidates=stats.text_candidates,
+            unique_candidates=stats.unique_candidates,
+            vector_search_time_ms=stats.vector_search_time_ms,
+            text_search_time_ms=stats.text_search_time_ms,
+            fusion_time_ms=stats.fusion_time_ms,
+            total_time_ms=stats.total_time_ms,
+        )
+        return (result_list, stats_obj)
+
+    def search_vector_only(self, query_vector: Sequence[float], k: int) -> list[HybridResult]:
+        vec_buf = ffi.new("float[]", list(query_vector))
+        results = ffi.new("GV_HybridResult[]", k)
+        n = lib.gv_hybrid_search_vector_only(self._searcher, vec_buf, k, results)
+        if n < 0:
+            raise RuntimeError("Hybrid vector search failed")
+        return [HybridResult(
+            vector_index=int(results[i].vector_index),
+            combined_score=float(results[i].combined_score),
+            vector_score=float(results[i].vector_score),
+            text_score=float(results[i].text_score),
+            vector_rank=int(results[i].vector_rank),
+            text_rank=int(results[i].text_rank),
+        ) for i in range(n)]
+
+    def search_text_only(self, query_text: str, k: int) -> list[HybridResult]:
+        results = ffi.new("GV_HybridResult[]", k)
+        n = lib.gv_hybrid_search_text_only(self._searcher, query_text.encode(), k, results)
+        if n < 0:
+            raise RuntimeError("Hybrid text search failed")
+        return [HybridResult(
+            vector_index=int(results[i].vector_index),
+            combined_score=float(results[i].combined_score),
+            vector_score=float(results[i].vector_score),
+            text_score=float(results[i].text_score),
+            vector_rank=int(results[i].vector_rank),
+            text_rank=int(results[i].text_rank),
+        ) for i in range(n)]
+
+    def set_weights(self, vector_weight: float, text_weight: float) -> None:
+        if lib.gv_hybrid_set_weights(self._searcher, vector_weight, text_weight) != 0:
+            raise RuntimeError("Failed to set weights")
+
+
+# ============================================================================
+# Authentication Module
+# ============================================================================
+
+class AuthType(IntEnum):
+    NONE = 0
+    API_KEY = 1
+    JWT = 2
+
+
+class AuthResult(IntEnum):
+    SUCCESS = 0
+    INVALID_KEY = 1
+    EXPIRED = 2
+    INVALID_SIGNATURE = 3
+    INVALID_FORMAT = 4
+    MISSING = 5
+
+
+@dataclass(frozen=True)
+class APIKey:
+    key_id: str
+    key_hash: str
+    description: str
+    created_at: int
+    expires_at: int
+    enabled: bool
+
+
+@dataclass(frozen=True)
+class Identity:
+    subject: str
+    key_id: str | None
+    auth_time: int
+    expires_at: int
+
+
+@dataclass
+class JWTConfig:
+    secret: str
+    issuer: str | None = None
+    audience: str | None = None
+    clock_skew_seconds: int = 60
+
+
+@dataclass
+class AuthConfig:
+    auth_type: AuthType = AuthType.NONE
+    jwt_config: JWTConfig | None = None
+
+
+class AuthManager:
+    """Authentication manager for API key and JWT authentication."""
+
+    _auth: CData
+    _closed: bool
+
+    def __init__(self, config: AuthConfig | None = None) -> None:
+        c_config = ffi.new("GV_AuthConfig *")
+        lib.gv_auth_config_init(c_config)
+        if config:
+            c_config.type = int(config.auth_type)
+            if config.jwt_config:
+                c_config.jwt.secret = config.jwt_config.secret.encode()
+                c_config.jwt.secret_len = len(config.jwt_config.secret)
+                c_config.jwt.issuer = config.jwt_config.issuer.encode() if config.jwt_config.issuer else ffi.NULL
+                c_config.jwt.audience = config.jwt_config.audience.encode() if config.jwt_config.audience else ffi.NULL
+                c_config.jwt.clock_skew_seconds = config.jwt_config.clock_skew_seconds
+        self._auth = lib.gv_auth_create(c_config)
+        if self._auth == ffi.NULL:
+            raise RuntimeError("Failed to create auth manager")
+        self._closed = False
+
+    def __enter__(self) -> "AuthManager":
+        return self
+
+    def __exit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: TracebackType | None) -> None:
+        self.close()
+
+    def close(self) -> None:
+        if not self._closed and self._auth != ffi.NULL:
+            lib.gv_auth_destroy(self._auth)
+            self._auth = ffi.NULL
+            self._closed = True
+
+    def generate_api_key(self, description: str, expires_at: int = 0) -> tuple[str, str]:
+        key_out = ffi.new("char[64]")
+        key_id_out = ffi.new("char[32]")
+        if lib.gv_auth_generate_api_key(self._auth, description.encode(), expires_at, key_out, key_id_out) != 0:
+            raise RuntimeError("Failed to generate API key")
+        return (ffi.string(key_out).decode("utf-8"), ffi.string(key_id_out).decode("utf-8"))
+
+    def add_api_key(self, key_id: str, key_hash: str, description: str, expires_at: int = 0) -> None:
+        if lib.gv_auth_add_api_key(self._auth, key_id.encode(), key_hash.encode(), description.encode(), expires_at) != 0:
+            raise RuntimeError("Failed to add API key")
+
+    def revoke_api_key(self, key_id: str) -> None:
+        if lib.gv_auth_revoke_api_key(self._auth, key_id.encode()) != 0:
+            raise RuntimeError("Failed to revoke API key")
+
+    def list_api_keys(self) -> list[APIKey]:
+        keys_ptr = ffi.new("GV_APIKey **")
+        count_ptr = ffi.new("size_t *")
+        if lib.gv_auth_list_api_keys(self._auth, keys_ptr, count_ptr) != 0:
+            raise RuntimeError("Failed to list API keys")
+        result = []
+        for i in range(count_ptr[0]):
+            k = keys_ptr[0][i]
+            result.append(APIKey(
+                key_id=ffi.string(k.key_id).decode("utf-8") if k.key_id else "",
+                key_hash=ffi.string(k.key_hash).decode("utf-8") if k.key_hash else "",
+                description=ffi.string(k.description).decode("utf-8") if k.description else "",
+                created_at=k.created_at,
+                expires_at=k.expires_at,
+                enabled=bool(k.enabled),
+            ))
+        lib.gv_auth_free_api_keys(keys_ptr[0], count_ptr[0])
+        return result
+
+    def verify_api_key(self, api_key: str) -> tuple[AuthResult, Identity | None]:
+        identity = ffi.new("GV_Identity *")
+        result = lib.gv_auth_verify_api_key(self._auth, api_key.encode(), identity)
+        if result != 0:
+            return (AuthResult(result), None)
+        ident = Identity(
+            subject=ffi.string(identity.subject).decode("utf-8") if identity.subject else "",
+            key_id=ffi.string(identity.key_id).decode("utf-8") if identity.key_id else None,
+            auth_time=identity.auth_time,
+            expires_at=identity.expires_at,
+        )
+        lib.gv_auth_free_identity(identity)
+        return (AuthResult.SUCCESS, ident)
+
+    def verify_jwt(self, token: str) -> tuple[AuthResult, Identity | None]:
+        identity = ffi.new("GV_Identity *")
+        result = lib.gv_auth_verify_jwt(self._auth, token.encode(), identity)
+        if result != 0:
+            return (AuthResult(result), None)
+        ident = Identity(
+            subject=ffi.string(identity.subject).decode("utf-8") if identity.subject else "",
+            key_id=ffi.string(identity.key_id).decode("utf-8") if identity.key_id else None,
+            auth_time=identity.auth_time,
+            expires_at=identity.expires_at,
+        )
+        lib.gv_auth_free_identity(identity)
+        return (AuthResult.SUCCESS, ident)
+
+    def authenticate(self, credential: str) -> tuple[AuthResult, Identity | None]:
+        identity = ffi.new("GV_Identity *")
+        result = lib.gv_auth_authenticate(self._auth, credential.encode(), identity)
+        if result != 0:
+            return (AuthResult(result), None)
+        ident = Identity(
+            subject=ffi.string(identity.subject).decode("utf-8") if identity.subject else "",
+            key_id=ffi.string(identity.key_id).decode("utf-8") if identity.key_id else None,
+            auth_time=identity.auth_time,
+            expires_at=identity.expires_at,
+        )
+        lib.gv_auth_free_identity(identity)
+        return (AuthResult.SUCCESS, ident)
+
+    def generate_jwt(self, subject: str, expires_in: int) -> str:
+        token_out = ffi.new("char[2048]")
+        if lib.gv_auth_generate_jwt(self._auth, subject.encode(), expires_in, token_out, 2048) != 0:
+            raise RuntimeError("Failed to generate JWT")
+        return ffi.string(token_out).decode("utf-8")
+
+    @staticmethod
+    def result_string(result: AuthResult) -> str:
+        s = lib.gv_auth_result_string(int(result))
+        if s == ffi.NULL:
+            return "Unknown"
+        return ffi.string(s).decode("utf-8")
 
