@@ -8,9 +8,11 @@ This guide provides comprehensive instructions for using GigaVector in your appl
 2. [Choosing the Right Index](#choosing-the-right-index)
 3. [Python Usage](#python-usage)
 4. [C API Usage](#c-api-usage)
-5. [Common Patterns](#common-patterns)
-6. [Best Practices](#best-practices)
-7. [Troubleshooting](#troubleshooting)
+5. [HTTP REST Server](#http-rest-server)
+6. [CLI Tools](#cli-tools)
+7. [Common Patterns](#common-patterns)
+8. [Best Practices](#best-practices)
+9. [Troubleshooting](#troubleshooting)
 
 ## Getting Started
 
@@ -376,6 +378,104 @@ float training_data[1000 * 128];
 // ... populate training data ...
 gv_db_ivfpq_train(db_ivfpq, training_data, 1000, 128);
 ```
+
+## HTTP REST Server
+
+Start GigaVector as an HTTP server for language-agnostic access.
+
+### Starting the Server
+
+**C:**
+```c
+#include "gigavector/gv_server.h"
+
+GV_Database *db = gv_db_open("vectors.db", 128, GV_INDEX_TYPE_HNSW);
+
+GV_ServerConfig config;
+gv_server_config_init(&config);
+config.port = 8080;
+config.enable_cors = 1;
+
+GV_Server *server = gv_server_create(db, &config);
+gv_server_start(server);
+
+// Server runs until stopped
+gv_server_stop(server);
+gv_server_destroy(server);
+gv_db_close(db);
+```
+
+### API Examples
+
+**Health check:**
+```bash
+curl http://localhost:8080/health
+```
+
+**Add vector:**
+```bash
+curl -X POST http://localhost:8080/vectors \
+  -H "Content-Type: application/json" \
+  -d '{"vector": [0.1, 0.2, ...], "metadata": {"id": "1"}}'
+```
+
+**Search:**
+```bash
+curl -X POST http://localhost:8080/search \
+  -H "Content-Type: application/json" \
+  -d '{"vector": [0.1, 0.2, ...], "k": 10}'
+```
+
+**Get stats:**
+```bash
+curl http://localhost:8080/stats
+```
+
+---
+
+## CLI Tools
+
+GigaVector includes command-line tools for database management.
+
+### gvbackup - Create backups
+
+```bash
+# Basic backup
+gvbackup mydb.db backup.gvb
+
+# Compressed backup
+gvbackup --compress mydb.db backup.gvb.gz
+
+# Include WAL
+gvbackup --include-wal mydb.db backup.gvb
+```
+
+### gvrestore - Restore from backup
+
+```bash
+# Restore to new database
+gvrestore backup.gvb restored.db
+
+# Restore with verification
+gvrestore --verify backup.gvb restored.db
+```
+
+### gvinspect - Inspect database
+
+```bash
+# Show database info
+gvinspect mydb.db
+
+# Output:
+# Database: mydb.db
+# Version: 0.7.0
+# Vectors: 1,234,567
+# Dimension: 128
+# Index: HNSW (M=16, ef=200)
+# Size: 156.2 MB
+```
+
+---
 
 ## Common Patterns
 

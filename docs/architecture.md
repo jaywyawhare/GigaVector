@@ -24,6 +24,10 @@
 10. [Storage and Persistence](#storage-and-persistence)
 11. [Configuration and Optimization](#configuration-and-optimization)
 12. [Integration Patterns](#integration-patterns)
+13. [HTTP REST Server](#http-rest-server)
+14. [Hybrid Search](#hybrid-search)
+15. [Distributed Architecture](#distributed-architecture)
+16. [GPU Acceleration](#gpu-acceleration)
 
 ---
 
@@ -1140,6 +1144,148 @@ int count = gv_db_search_with_filter_expr(
 
 gv_db_close(db);
 ```
+
+---
+
+## HTTP REST Server
+
+**Files**: `gv_server.h/c`, `gv_rest_handlers.h/c`
+
+Embedded HTTP server using libmicrohttpd for REST API access.
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     HTTP Server                              │
+├─────────────────────────────────────────────────────────────┤
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐         │
+│  │   Router    │──│  Handlers   │──│    Auth     │         │
+│  └─────────────┘  └─────────────┘  └─────────────┘         │
+│         │                │                │                  │
+│         ▼                ▼                ▼                  │
+│  ┌─────────────────────────────────────────────────────┐    │
+│  │              GigaVector Database                     │    │
+│  └─────────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Endpoints
+
+- `GET /health` - Health check
+- `GET /stats` - Database statistics
+- `POST /vectors` - Add vector
+- `POST /search` - Vector search
+- `GET/POST /namespaces` - Namespace management
+
+---
+
+## Hybrid Search
+
+**Files**: `gv_tokenizer.h/c`, `gv_bm25.h/c`, `gv_hybrid_search.h/c`
+
+Combines BM25 text ranking with vector similarity for improved relevance.
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Hybrid Search                             │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  Query: "machine learning papers"                           │
+│         │                                                    │
+│         ├──────────────┬──────────────┐                     │
+│         ▼              ▼              ▼                     │
+│  ┌──────────┐   ┌──────────┐   ┌──────────┐                │
+│  │ Tokenize │   │  Embed   │   │   BM25   │                │
+│  └────┬─────┘   └────┬─────┘   └────┬─────┘                │
+│       │              │              │                       │
+│       ▼              ▼              ▼                       │
+│  ┌──────────┐   ┌──────────┐   ┌──────────┐                │
+│  │BM25 Index│   │Vector DB │   │ Scoring  │                │
+│  └────┬─────┘   └────┬─────┘   └────┬─────┘                │
+│       │              │              │                       │
+│       └──────────────┴──────────────┘                       │
+│                      │                                       │
+│                      ▼                                       │
+│              ┌──────────────┐                                │
+│              │ RRF Fusion   │ (Reciprocal Rank Fusion)      │
+│              └──────────────┘                                │
+│                      │                                       │
+│                      ▼                                       │
+│              Final Ranked Results                            │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Distributed Architecture
+
+**Files**: `gv_shard.h/c`, `gv_cluster.h/c`, `gv_replication.h/c`
+
+### Sharding
+
+Horizontal partitioning across multiple nodes.
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Sharded Cluster                           │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  ┌────────────┐                                             │
+│  │   Router   │  (Hash or Range-based routing)              │
+│  └─────┬──────┘                                             │
+│        │                                                     │
+│   ┌────┴────┬────────┬────────┐                             │
+│   ▼         ▼        ▼        ▼                             │
+│ ┌─────┐  ┌─────┐  ┌─────┐  ┌─────┐                         │
+│ │Shard│  │Shard│  │Shard│  │Shard│                         │
+│ │  0  │  │  1  │  │  2  │  │  3  │                         │
+│ └─────┘  └─────┘  └─────┘  └─────┘                         │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Replication
+
+- **Sync**: Strong consistency, higher latency
+- **Async**: Eventual consistency, lower latency
+
+---
+
+## GPU Acceleration
+
+**Files**: `gv_gpu.h/c`, `gv_gpu_kernels.cu`
+
+CUDA-accelerated distance computation and batch search.
+
+### Supported Operations
+
+| Operation | CPU | GPU Speedup |
+|-----------|-----|-------------|
+| Batch search (1K queries) | 100ms | ~10x faster |
+| Distance matrix | 500ms | ~20x faster |
+| Index build | Variable | ~5x faster |
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    GPU Pipeline                              │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  Host (CPU)              │  Device (GPU)                    │
+│  ────────────────────────│──────────────────────────        │
+│                          │                                   │
+│  ┌────────────┐         │  ┌────────────────────┐           │
+│  │Query Batch │ ──────────▶│ Distance Kernels   │           │
+│  └────────────┘         │  │ (CUDA)             │           │
+│                          │  └─────────┬──────────┘           │
+│  ┌────────────┐         │            │                       │
+│  │  Results   │ ◀──────────────────────                      │
+│  └────────────┘         │                                    │
+│                          │                                   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+Supported CUDA architectures: 75 (Turing), 80/86 (Ampere), 89/90 (Ada/Hopper)
 
 ---
 

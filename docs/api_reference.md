@@ -582,6 +582,273 @@ gv_db_close(db);
 
 ---
 
+## HTTP REST Server
+
+### Server Configuration
+
+```c
+typedef struct {
+    int port;                    // Default: 8080
+    int thread_pool_size;        // Default: 4
+    int max_connections;         // Default: 100
+    int request_timeout_ms;      // Default: 30000
+    size_t max_request_body_bytes; // Default: 10MB
+    int enable_cors;             // Default: 0
+    int enable_logging;          // Default: 1
+    const char *api_key;         // Optional API key auth
+} GV_ServerConfig;
+```
+
+### Starting the Server
+
+```c
+GV_ServerConfig config;
+gv_server_config_init(&config);
+config.port = 9090;
+config.enable_cors = 1;
+
+GV_Server *server = gv_server_create(db, &config);
+gv_server_start(server);
+
+// ... server runs ...
+
+gv_server_stop(server);
+gv_server_destroy(server);
+```
+
+### REST Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health` | GET | Health check |
+| `/stats` | GET | Database statistics |
+| `/vectors` | POST | Add vector |
+| `/vectors/:id` | GET | Get vector by ID |
+| `/vectors/:id` | DELETE | Delete vector |
+| `/search` | POST | Vector search |
+| `/namespaces` | GET/POST | Manage namespaces |
+
+---
+
+## Hybrid Search (BM25 + Vector)
+
+Combines text-based BM25 ranking with vector similarity.
+
+### Tokenizer
+
+```c
+GV_Tokenizer *tokenizer = gv_tokenizer_create(GV_TOKENIZER_WHITESPACE);
+GV_TokenList *tokens = gv_tokenizer_tokenize(tokenizer, "hello world");
+gv_token_list_free(tokens);
+gv_tokenizer_destroy(tokenizer);
+```
+
+### BM25 Search
+
+```c
+GV_BM25Config config = {
+    .k1 = 1.2,
+    .b = 0.75
+};
+GV_BM25Index *index = gv_bm25_create(&config);
+gv_bm25_add_document(index, doc_id, "document text content");
+gv_bm25_search(index, "query terms", results, max_results);
+```
+
+### Hybrid Search
+
+```c
+GV_HybridSearchConfig config = {
+    .vector_weight = 0.7,
+    .bm25_weight = 0.3,
+    .fusion_method = GV_FUSION_RRF  // Reciprocal Rank Fusion
+};
+int count = gv_hybrid_search(db, bm25_index, query_vector, "query text",
+                             k, &config, results);
+```
+
+---
+
+## Namespaces
+
+Isolate data into separate logical collections.
+
+```c
+// Create namespace
+gv_namespace_create(db, "project_a");
+
+// Add vector to namespace
+gv_namespace_add_vector(db, "project_a", vector, dim, metadata);
+
+// Search within namespace
+gv_namespace_search(db, "project_a", query, k, distance_type, results);
+
+// List namespaces
+char **names;
+size_t count;
+gv_namespace_list(db, &names, &count);
+
+// Delete namespace
+gv_namespace_delete(db, "project_a");
+```
+
+---
+
+## TTL (Time-To-Live)
+
+Automatic expiration of vectors.
+
+```c
+// Set TTL on vector (seconds)
+gv_ttl_set(db, vector_id, 3600);  // Expires in 1 hour
+
+// Get remaining TTL
+int64_t remaining = gv_ttl_get(db, vector_id);
+
+// Remove TTL
+gv_ttl_remove(db, vector_id);
+
+// Run expiration (call periodically or use background thread)
+size_t expired = gv_ttl_expire(db);
+```
+
+---
+
+## Backup and Restore
+
+### CLI Tools
+
+```bash
+# Backup database
+gvbackup mydb.db backup.gvb
+
+# Restore database
+gvrestore backup.gvb restored.db
+
+# Inspect database
+gvinspect mydb.db
+```
+
+### C API
+
+```c
+// Create backup
+GV_BackupConfig config = {
+    .compress = 1,
+    .include_wal = 1
+};
+gv_backup_create(db, "backup.gvb", &config);
+
+// Restore backup
+GV_Database *restored = gv_backup_restore("backup.gvb", "restored.db");
+```
+
+---
+
+## Authentication
+
+### API Key Auth
+
+```c
+GV_AuthConfig auth_config = {
+    .type = GV_AUTH_API_KEY,
+    .api_key = "your-secret-key"
+};
+gv_server_set_auth(server, &auth_config);
+```
+
+### Authorization
+
+```c
+// Define permissions
+GV_Permission perms[] = {
+    {.resource = "/vectors", .action = GV_ACTION_READ},
+    {.resource = "/vectors", .action = GV_ACTION_WRITE}
+};
+gv_authz_create_role("reader", perms, 1);
+gv_authz_create_role("writer", perms, 2);
+
+// Assign role
+gv_authz_assign_role("user_123", "writer");
+```
+
+---
+
+## GPU Acceleration
+
+Requires CUDA. Enabled automatically when available.
+
+```c
+// Check GPU availability
+if (gv_gpu_available()) {
+    GV_GPUInfo info;
+    gv_gpu_get_info(&info);
+    printf("GPU: %s, Memory: %zu MB\n", info.name, info.memory_mb);
+}
+
+// Enable GPU for database
+gv_db_enable_gpu(db, 0);  // Device 0
+
+// GPU-accelerated search
+gv_db_search_gpu(db, query, k, distance_type, results);
+
+// Batch search on GPU
+gv_db_search_batch_gpu(db, queries, num_queries, k, distance_type, all_results);
+```
+
+---
+
+## Streaming
+
+For large result sets or continuous queries.
+
+```c
+// Create stream
+GV_Stream *stream = gv_stream_search(db, query, GV_DISTANCE_COSINE);
+
+// Read results incrementally
+GV_SearchResult result;
+while (gv_stream_next(stream, &result) == 0) {
+    process_result(&result);
+}
+
+gv_stream_close(stream);
+```
+
+---
+
+## Sharding and Clustering
+
+### Sharding
+
+```c
+GV_ShardConfig config = {
+    .num_shards = 4,
+    .strategy = GV_SHARD_HASH  // or GV_SHARD_RANGE
+};
+GV_ShardedDB *sdb = gv_shard_create(config);
+
+// Add shard
+gv_shard_add(sdb, "shard_0", "host1:8080");
+
+// Operations route automatically
+gv_shard_add_vector(sdb, vector, dim, metadata);
+gv_shard_search(sdb, query, k, results);
+```
+
+### Replication
+
+```c
+GV_ReplicationConfig config = {
+    .mode = GV_REPL_ASYNC,
+    .replicas = 2
+};
+gv_replication_enable(db, &config);
+gv_replication_add_replica(db, "replica1:8080");
+```
+
+---
+
 ## Thread Safety
 
 GigaVector databases are thread-safe for concurrent reads. Writes require external synchronization.
