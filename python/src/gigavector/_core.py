@@ -2490,17 +2490,27 @@ class Server:
         self._db = db
         c_config = ffi.new("GV_ServerConfig *")
         lib.gv_server_config_init(c_config)
+        # Keep references to char[] to prevent GC
+        self._bind_address = None
+        self._cors_origins = None
+        self._api_key = None
         if config:
             c_config.port = config.port
-            c_config.bind_address = config.bind_address.encode()
+            self._bind_address = ffi.new("char[]", config.bind_address.encode())
+            c_config.bind_address = self._bind_address
             c_config.thread_pool_size = config.thread_pool_size
             c_config.max_connections = config.max_connections
             c_config.request_timeout_ms = config.request_timeout_ms
             c_config.max_request_body_bytes = config.max_request_body_bytes
             c_config.enable_cors = 1 if config.enable_cors else 0
-            c_config.cors_origins = config.cors_origins.encode()
+            self._cors_origins = ffi.new("char[]", config.cors_origins.encode())
+            c_config.cors_origins = self._cors_origins
             c_config.enable_logging = 1 if config.enable_logging else 0
-            c_config.api_key = config.api_key.encode() if config.api_key else ffi.NULL
+            if config.api_key:
+                self._api_key = ffi.new("char[]", config.api_key.encode())
+                c_config.api_key = self._api_key
+            else:
+                c_config.api_key = ffi.NULL
         self._server = lib.gv_server_create(db._db, c_config)
         if self._server == ffi.NULL:
             raise RuntimeError("Failed to create server")
@@ -2899,9 +2909,17 @@ class ReplicationManager:
     def __init__(self, db: Database, config: ReplicationConfig) -> None:
         c_config = ffi.new("GV_ReplicationConfig *")
         lib.gv_replication_config_init(c_config)
-        c_config.node_id = config.node_id.encode()
-        c_config.listen_address = config.listen_address.encode()
-        c_config.leader_address = config.leader_address.encode() if config.leader_address else ffi.NULL
+        # Keep references to char[] to prevent GC
+        self._node_id = ffi.new("char[]", config.node_id.encode())
+        self._listen_address = ffi.new("char[]", config.listen_address.encode())
+        self._leader_address = None
+        c_config.node_id = self._node_id
+        c_config.listen_address = self._listen_address
+        if config.leader_address:
+            self._leader_address = ffi.new("char[]", config.leader_address.encode())
+            c_config.leader_address = self._leader_address
+        else:
+            c_config.leader_address = ffi.NULL
         c_config.sync_interval_ms = config.sync_interval_ms
         c_config.election_timeout_ms = config.election_timeout_ms
         c_config.heartbeat_interval_ms = config.heartbeat_interval_ms
@@ -3057,9 +3075,13 @@ class Cluster:
     def __init__(self, config: ClusterConfig) -> None:
         c_config = ffi.new("GV_ClusterConfig *")
         lib.gv_cluster_config_init(c_config)
-        c_config.node_id = config.node_id.encode()
-        c_config.listen_address = config.listen_address.encode()
-        c_config.seed_nodes = config.seed_nodes.encode()
+        # Keep references to char[] to prevent GC
+        self._node_id = ffi.new("char[]", config.node_id.encode())
+        self._listen_address = ffi.new("char[]", config.listen_address.encode())
+        self._seed_nodes = ffi.new("char[]", config.seed_nodes.encode())
+        c_config.node_id = self._node_id
+        c_config.listen_address = self._listen_address
+        c_config.seed_nodes = self._seed_nodes
         c_config.role = int(config.role)
         c_config.heartbeat_interval_ms = config.heartbeat_interval_ms
         c_config.failure_timeout_ms = config.failure_timeout_ms
@@ -3269,7 +3291,8 @@ class NamespaceManager:
     def create(self, config: NamespaceConfig) -> Namespace:
         c_config = ffi.new("GV_NamespaceConfig *")
         lib.gv_namespace_config_init(c_config)
-        c_config.name = config.name.encode()
+        name_bytes = ffi.new("char[]", config.name.encode())
+        c_config.name = name_bytes
         c_config.dimension = config.dimension
         c_config.index_type = int(config.index_type)
         c_config.max_vectors = config.max_vectors
@@ -3749,13 +3772,26 @@ class AuthManager:
     def __init__(self, config: AuthConfig | None = None) -> None:
         c_config = ffi.new("GV_AuthConfig *")
         lib.gv_auth_config_init(c_config)
+        # Keep references to char[] to prevent GC
+        self._jwt_secret = None
+        self._jwt_issuer = None
+        self._jwt_audience = None
         if config:
             c_config.type = int(config.auth_type)
             if config.jwt_config:
-                c_config.jwt.secret = config.jwt_config.secret.encode()
+                self._jwt_secret = ffi.new("char[]", config.jwt_config.secret.encode())
+                c_config.jwt.secret = self._jwt_secret
                 c_config.jwt.secret_len = len(config.jwt_config.secret)
-                c_config.jwt.issuer = config.jwt_config.issuer.encode() if config.jwt_config.issuer else ffi.NULL
-                c_config.jwt.audience = config.jwt_config.audience.encode() if config.jwt_config.audience else ffi.NULL
+                if config.jwt_config.issuer:
+                    self._jwt_issuer = ffi.new("char[]", config.jwt_config.issuer.encode())
+                    c_config.jwt.issuer = self._jwt_issuer
+                else:
+                    c_config.jwt.issuer = ffi.NULL
+                if config.jwt_config.audience:
+                    self._jwt_audience = ffi.new("char[]", config.jwt_config.audience.encode())
+                    c_config.jwt.audience = self._jwt_audience
+                else:
+                    c_config.jwt.audience = ffi.NULL
                 c_config.jwt.clock_skew_seconds = config.jwt_config.clock_skew_seconds
         self._auth = lib.gv_auth_create(c_config)
         if self._auth == ffi.NULL:

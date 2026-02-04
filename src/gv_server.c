@@ -386,7 +386,10 @@ int gv_server_start(GV_Server *server) {
     }
 
 #ifdef HAVE_MICROHTTPD
-    unsigned int flags = MHD_USE_SELECT_INTERNALLY | MHD_USE_THREAD_PER_CONNECTION;
+    /* Use internal select with thread pool for handling connections.
+     * Note: MHD_USE_THREAD_PER_CONNECTION and MHD_OPTION_THREAD_POOL_SIZE
+     * are mutually exclusive - we use thread pool for better resource control. */
+    unsigned int flags = MHD_USE_INTERNAL_POLLING_THREAD;
 
     server->daemon = MHD_start_daemon(
         flags,
