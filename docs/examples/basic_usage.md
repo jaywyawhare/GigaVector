@@ -135,7 +135,7 @@ with Database.open("example.db", dimension=128, index=IndexType.KDTREE) as db:
     hits = db.search(query, k=10, distance=DistanceType.EUCLIDEAN)
     
     for hit in hits:
-        print(f"Distance: {hit.distance}, Index: {hit.vector_index}")
+        print(f"Distance: {hit.distance}")
         print(f"Metadata: {hit.vector.metadata}")
 ```
 
@@ -145,7 +145,7 @@ with Database.open("example.db", dimension=128, index=IndexType.KDTREE) as db:
 # Search with metadata filter
 hits = db.search(
     query, k=10, distance=DistanceType.EUCLIDEAN,
-    filter_key="category", filter_value="electronics"
+    filter_metadata=("category", "electronics")
 )
 
 print(f"Found {len(hits)} electronics items")
@@ -270,8 +270,12 @@ hits = db.search(query, k=10, distance=DistanceType.COSINE)
 
 ```python
 stats = db.get_stats()
-print(f"Total vectors: {stats.total_vectors}")
-print(f"Memory usage: {stats.memory_usage_bytes / 1024 / 1024:.2f} MB")
+print(f"Total inserts: {stats.total_inserts}")
+print(f"Total queries: {stats.total_queries}")
+
+# For memory usage
+memory_bytes = db.get_memory_usage()
+print(f"Memory usage: {memory_bytes / 1024 / 1024:.2f} MB")
 ```
 
 ### Error Handling
@@ -302,7 +306,7 @@ db.add_vector(
 # Search with metadata filter
 hits = db.search(
     query, k=10,
-    filter_key="category", filter_value="electronics"
+    filter_metadata=("category", "electronics")
 )
 
 # Access metadata from results

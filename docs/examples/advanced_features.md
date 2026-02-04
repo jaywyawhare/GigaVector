@@ -113,7 +113,7 @@ hits = db.range_search(query, radius=radius, distance=DistanceType.EUCLIDEAN)
 
 print(f"Found {len(hits)} vectors within radius {radius}")
 for hit in hits:
-    print(f"  Distance: {hit.distance}, Index: {hit.vector_index}")
+    print(f"  Distance: {hit.distance}")
 ```
 
 ### Filtered Range Search
@@ -122,7 +122,7 @@ for hit in hits:
 # Range search with metadata filter
 hits = db.range_search(
     query, radius=0.5, distance=DistanceType.EUCLIDEAN,
-    filter_key="category", filter_value="electronics"
+    filter_metadata=("category", "electronics")
 )
 ```
 
@@ -164,18 +164,16 @@ from gigavector import Database, IndexType
 
 # Create sparse database
 with Database.open("sparse.db", dimension=1000, index=IndexType.SPARSE) as db:
-    # Create sparse vector (only non-zero dimensions)
-    sparse_vector = {
-        10: 0.5,   # dimension 10 = 0.5
-        50: 0.3,   # dimension 50 = 0.3
-        100: 0.8   # dimension 100 = 0.8
-    }
-    
-    db.add_sparse_vector(sparse_vector)
-    
+    # Create sparse vector using indices and values
+    indices = [10, 50, 100]   # non-zero dimensions
+    values = [0.5, 0.3, 0.8]  # corresponding values
+
+    db.add_sparse_vector(indices, values)
+
     # Search with sparse query
-    query_sparse = {10: 0.6, 50: 0.4}
-    hits = db.search_sparse(query_sparse, k=10)
+    query_indices = [10, 50]
+    query_values = [0.6, 0.4]
+    hits = db.search_sparse(query_indices, query_values, k=10)
 ```
 
 ## Performance Optimization
@@ -298,11 +296,18 @@ GV_Database *db = gv_db_open("readonly.db", 128, GV_INDEX_TYPE_KDTREE);
 ### Getting Detailed Statistics
 
 ```python
-# Get database statistics
+# Get basic statistics
 stats = db.get_stats()
-print(f"Total vectors: {stats.total_vectors}")
-print(f"Memory usage: {stats.memory_usage_bytes / 1024 / 1024:.2f} MB")
-print(f"Index type: {stats.index_type}")
+print(f"Total inserts: {stats.total_inserts}")
+print(f"Total queries: {stats.total_queries}")
+
+# Get memory usage
+memory_bytes = db.get_memory_usage()
+print(f"Memory usage: {memory_bytes / 1024 / 1024:.2f} MB")
+
+# Get detailed statistics (includes latency histograms, QPS, etc.)
+detailed = db.get_detailed_stats()
+print(f"Queries per second: {detailed['queries_per_second']:.2f}")
 ```
 
 ### Performance Monitoring
@@ -329,13 +334,18 @@ print(f"Insertion throughput: {throughput:.0f} vectors/sec")
 ```python
 # Check database health
 try:
-    stats = db.get_stats()
-    if stats.total_vectors == 0:
-        print("Warning: Database is empty")
-    elif stats.memory_usage_bytes > 10 * 1024 * 1024 * 1024:  # 10GB
-        print("Warning: High memory usage")
-    else:
+    health_status = db.health_check()
+    if health_status == 0:
         print("Database health: OK")
+    elif health_status == -1:
+        print("Warning: Database is degraded")
+    else:
+        print("Warning: Database is unhealthy")
+
+    # Check memory usage
+    memory_bytes = db.get_memory_usage()
+    if memory_bytes > 10 * 1024 * 1024 * 1024:  # 10GB
+        print("Warning: High memory usage")
 except Exception as e:
     print(f"Database health check failed: {e}")
 ```

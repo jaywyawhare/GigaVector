@@ -309,9 +309,9 @@ GigaVector uses SoA storage for efficient memory access patterns:
 
 Monitor memory usage:
 ```c
-GV_DBStats stats;
-gv_db_get_stats(db, &stats);
-// Check stats.memory_usage_bytes
+// Get current memory usage
+size_t memory_bytes = gv_db_get_memory_usage(db);
+printf("Memory usage: %zu bytes\n", memory_bytes);
 ```
 
 ## Benchmark Results and Comparisons
