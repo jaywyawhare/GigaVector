@@ -3613,3 +3613,23 @@ int gv_db_health_check(const GV_Database *db) {
 
     return health;
 }
+
+/* ============================================================================
+ * Database Accessor Functions
+ * ============================================================================ */
+
+size_t gv_database_count(const GV_Database *db) {
+    if (!db) return 0;
+    return db->count;
+}
+
+size_t gv_database_dimension(const GV_Database *db) {
+    if (!db) return 0;
+    return db->dimension;
+}
+
+const float *gv_database_get_vector(const GV_Database *db, size_t index) {
+    if (!db || !db->soa_storage) return NULL;
+    if (index >= db->count) return NULL;
+    return gv_soa_storage_get_data(db->soa_storage, index);
+}

@@ -739,6 +739,31 @@ void gv_db_record_latency(GV_Database *db, uint64_t latency_us, int is_insert);
  */
 void gv_db_record_recall(GV_Database *db, double recall);
 
+/**
+ * @brief Get the number of vectors in the database.
+ *
+ * @param db Database instance; must be non-NULL.
+ * @return Number of vectors stored.
+ */
+size_t gv_database_count(const GV_Database *db);
+
+/**
+ * @brief Get the dimension of vectors in the database.
+ *
+ * @param db Database instance; must be non-NULL.
+ * @return Vector dimension.
+ */
+size_t gv_database_dimension(const GV_Database *db);
+
+/**
+ * @brief Get a pointer to the vector data at the given index.
+ *
+ * @param db Database instance; must be non-NULL.
+ * @param index Vector index; must be < count.
+ * @return Pointer to vector data, or NULL on invalid index.
+ */
+const float *gv_database_get_vector(const GV_Database *db, size_t index);
+
 #ifdef __cplusplus
 }
 #endif

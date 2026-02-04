@@ -11,6 +11,22 @@
 #include "gv_wal.h"
 #include "gv_ivfpq.h"
 #include "gv_database.h"
+#include "gv_server.h"
+#include "gv_typed_metadata.h"
+#include "gv_ttl.h"
+#include "gv_namespace.h"
+#include "gv_tokenizer.h"
+#include "gv_bm25.h"
+#include "gv_hybrid_search.h"
+#include "gv_auth.h"
+#include "gv_authz.h"
+#include "gv_crypto.h"
+#include "gv_backup.h"
+#include "gv_shard.h"
+#include "gv_cluster.h"
+#include "gv_replication.h"
+#include "gv_streaming.h"
+#include "gv_gpu.h"
 
 #endif
 
