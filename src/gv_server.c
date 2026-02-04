@@ -109,6 +109,8 @@ const char *gv_server_error_string(int error) {
     }
 }
 
+#ifdef HAVE_MICROHTTPD
+
 /* ============================================================================
  * HTTP Method Parsing
  * ============================================================================ */
@@ -123,8 +125,6 @@ static GV_HttpMethod parse_method(const char *method) {
     if (strcmp(method, "HEAD") == 0) return GV_HTTP_HEAD;
     return GV_HTTP_GET;
 }
-
-#ifdef HAVE_MICROHTTPD
 
 /* ============================================================================
  * libmicrohttpd Callbacks

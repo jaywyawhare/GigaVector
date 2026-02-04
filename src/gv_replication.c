@@ -118,6 +118,7 @@ static void *replication_thread_func(void *arg) {
         } else if (mgr->role == GV_REPL_FOLLOWER) {
             /* Check for leader heartbeat timeout */
             uint64_t timeout = mgr->config.election_timeout_ms / 1000;
+            (void)timeout; /* TODO: Use for leader heartbeat check */
             if (mgr->leader_id) {
                 /* TODO: Check actual leader heartbeat */
                 /* If timeout, start election */
