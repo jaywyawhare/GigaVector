@@ -14,13 +14,29 @@ A high-performance vector database library for Python. GigaVector provides effic
 
 ## Features
 
+**Core Database:**
 - Multiple index types: KD-tree, HNSW, and IVFPQ
 - Distance metrics: Euclidean and Cosine similarity
 - Rich metadata support with key-value pairs
-- Metadata filtering in search queriesu
+- Metadata filtering in search queries
 - Persistent storage with snapshot and WAL (Write-Ahead Log)
 - Batch operations for vector insertion and search
 - Thread-safe operations
+
+**Advanced Features:**
+- GPU acceleration with CUDA support
+- HTTP REST API server
+- BM25 full-text search
+- Hybrid search (vector + text fusion)
+- Backup and restore with compression
+- TTL (Time-to-Live) for automatic data expiration
+
+**Enterprise Features:**
+- Multi-tenancy with namespaces
+- Sharding for horizontal scaling
+- Replication for high availability
+- Cluster management
+- API key and JWT authentication
 
 ## Installation
 
@@ -343,10 +359,192 @@ with Database.open(None, dimension=128, index=IndexType.KDTREE) as db:
         print(f"Query {i}: {len(hits)} results")
 ```
 
+## Advanced Features
+
+### GPU Acceleration
+
+```python
+from gigavector import gpu_available, gpu_device_count, gpu_get_device_info, GPUIndex, GPUConfig
+
+# Check GPU availability
+if gpu_available():
+    print(f"GPU devices: {gpu_device_count()}")
+    info = gpu_get_device_info(0)
+    print(f"Device 0: {info.name}, {info.total_memory // 1024**2} MB")
+
+    # Create GPU-accelerated index
+    config = GPUConfig(device_id=0, use_float16=True)
+    gpu_index = GPUIndex(dimension=128, config=config)
+    gpu_index.add_vectors(vectors)
+    results = gpu_index.search(query, k=10)
+```
+
+### HTTP REST Server
+
+```python
+from gigavector import Database, Server, ServerConfig, IndexType
+
+# Create database and server
+db = Database.open(None, dimension=128, index=IndexType.HNSW)
+config = ServerConfig(port=8080, enable_cors=True)
+
+with Server(db, config) as server:
+    server.start()
+    print("Server running on http://localhost:8080")
+    # Server handles REST API requests:
+    # GET  /health - Health check
+    # POST /vectors - Add vector
+    # POST /search - Search vectors
+    # GET  /stats - Server statistics
+```
+
+### BM25 Full-Text Search
+
+```python
+from gigavector import BM25Index, BM25Config
+
+# Create BM25 index for text search
+config = BM25Config(k1=1.2, b=0.75)
+bm25 = BM25Index(config)
+
+# Add documents
+bm25.add_document(0, "Machine learning for vector databases")
+bm25.add_document(1, "Neural networks and deep learning")
+bm25.add_document(2, "Vector similarity search algorithms")
+
+# Search
+results = bm25.search("vector search", k=10)
+for r in results:
+    print(f"Doc {r.doc_id}: score={r.score:.4f}")
+
+bm25.close()
+```
+
+### Hybrid Search (Vector + Text)
+
+```python
+from gigavector import Database, BM25Index, HybridSearcher, HybridConfig, IndexType
+
+db = Database.open(None, dimension=128, index=IndexType.HNSW)
+bm25 = BM25Index()
+
+# Add vectors and corresponding documents
+for i, (vec, text) in enumerate(zip(vectors, documents)):
+    db.add_vector(vec, metadata={"id": str(i)})
+    bm25.add_document(i, text)
+
+# Create hybrid searcher
+config = HybridConfig(vector_weight=0.7, text_weight=0.3)
+hybrid = HybridSearcher(db, bm25, config)
+
+# Search with both vector and text
+results = hybrid.search(query_vector, "search query", k=10)
+for r in results:
+    print(f"Index {r.vector_index}: combined={r.combined_score:.4f}")
+
+hybrid.close()
+```
+
+### Namespaces (Multi-Tenancy)
+
+```python
+from gigavector import NamespaceManager, NamespaceConfig
+
+# Create namespace manager
+ns_mgr = NamespaceManager("/path/to/data")
+
+# Create isolated namespaces for different tenants
+config = NamespaceConfig(name="tenant_a", dimension=128)
+tenant_a = ns_mgr.create(config)
+
+config = NamespaceConfig(name="tenant_b", dimension=128)
+tenant_b = ns_mgr.create(config)
+
+# Each namespace is isolated
+tenant_a.add_vector([0.1] * 128)
+tenant_b.add_vector([0.2] * 128)
+
+print(f"Tenant A vectors: {tenant_a.count}")
+print(f"Tenant B vectors: {tenant_b.count}")
+
+ns_mgr.close()
+```
+
+### TTL (Time-to-Live)
+
+```python
+from gigavector import TTLManager, TTLConfig
+
+# Create TTL manager for automatic expiration
+config = TTLConfig(
+    default_ttl_seconds=3600,  # 1 hour default
+    cleanup_interval_seconds=60
+)
+ttl = TTLManager(config)
+
+# Set TTL for vectors
+ttl.set_ttl(vector_index=0, ttl_seconds=1800)  # 30 minutes
+
+# Get stats
+stats = ttl.get_stats()
+print(f"Vectors with TTL: {stats.total_vectors_with_ttl}")
+print(f"Expired: {stats.total_expired}")
+
+ttl.close()
+```
+
+### Authentication
+
+```python
+from gigavector import AuthManager, AuthConfig, AuthType
+
+# Create auth manager with API key authentication
+config = AuthConfig(auth_type=AuthType.API_KEY)
+auth = AuthManager(config)
+
+# Generate API key
+key, key_id = auth.generate_api_key("My Application")
+print(f"API Key: {key}")
+print(f"Key ID: {key_id}")
+
+# Authenticate requests
+result, identity = auth.authenticate(key)
+if result == AuthResult.SUCCESS:
+    print(f"Authenticated: {identity.key_id}")
+
+auth.close()
+```
+
+### Backup and Restore
+
+```python
+from gigavector import (
+    Database, backup_create, backup_restore, backup_verify,
+    BackupOptions, RestoreOptions, BackupCompression
+)
+
+# Create backup
+options = BackupOptions(
+    compression=BackupCompression.ZSTD,
+    include_metadata=True
+)
+result = backup_create(db, "backup.gvb", options)
+print(f"Backup created: {result.vectors_backed_up} vectors")
+
+# Verify backup
+if backup_verify("backup.gvb"):
+    print("Backup is valid")
+
+# Restore to new database
+restore_opts = RestoreOptions(verify_checksums=True)
+restored_db = backup_restore("backup.gvb", "restored.db", restore_opts)
+```
+
 ## Requirements
 
 - Python 3.9 or higher
 - cffi >= 1.16
+- CUDA toolkit (optional, for GPU acceleration)
 
 ## License
 

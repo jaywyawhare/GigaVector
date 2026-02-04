@@ -503,6 +503,345 @@ for i in range(0, len(vectors), batch_size):
     db.add_vectors(batch)
 ```
 
+## Advanced Modules
+
+The Python bindings include several advanced modules for enterprise features.
+
+### GPU Acceleration
+
+```python
+from gigavector import (
+    gpu_available, gpu_device_count, gpu_get_device_info,
+    GPUContext, GPUIndex, GPUConfig, GPUSearchParams
+)
+
+# Check GPU availability
+if gpu_available():
+    count = gpu_device_count()
+    for i in range(count):
+        info = gpu_get_device_info(i)
+        print(f"GPU {i}: {info.name}, {info.total_memory // 1024**2} MB")
+
+    # Create GPU index
+    config = GPUConfig(device_id=0, use_float16=True)
+    index = GPUIndex(dimension=128, config=config)
+
+    # Add vectors and search
+    index.add_vectors(vectors)
+    results = index.search(query, k=10)
+```
+
+### HTTP REST Server
+
+```python
+from gigavector import Database, Server, ServerConfig, IndexType
+
+db = Database.open(None, dimension=128, index=IndexType.HNSW)
+
+# Configure server
+config = ServerConfig(
+    port=8080,
+    bind_address="0.0.0.0",
+    thread_pool_size=4,
+    max_connections=100,
+    enable_cors=True,
+    cors_origins="*",
+    enable_logging=True
+)
+
+# Start server
+server = Server(db, config)
+server.start()
+
+# Check stats
+stats = server.get_stats()
+print(f"Total requests: {stats.total_requests}")
+
+# Stop server
+server.stop()
+```
+
+### BM25 Full-Text Search
+
+```python
+from gigavector import BM25Index, BM25Config
+
+# Create index with custom parameters
+config = BM25Config(k1=1.2, b=0.75)
+index = BM25Index(config)
+
+# Add documents
+index.add_document(0, "First document about vectors")
+index.add_document(1, "Second document about search")
+
+# Search
+results = index.search("vector search", k=5)
+for r in results:
+    print(f"Doc {r.doc_id}: {r.score}")
+
+# Get statistics
+stats = index.get_stats()
+print(f"Documents: {stats.document_count}, Terms: {stats.term_count}")
+```
+
+### Hybrid Search
+
+Combines vector similarity search with BM25 text search.
+
+```python
+from gigavector import (
+    Database, BM25Index, HybridSearcher,
+    HybridConfig, FusionType, IndexType
+)
+
+db = Database.open(None, dimension=128, index=IndexType.HNSW)
+bm25 = BM25Index()
+
+# Add data
+for i, (vec, text) in enumerate(zip(vectors, documents)):
+    db.add_vector(vec)
+    bm25.add_document(i, text)
+
+# Configure hybrid search
+config = HybridConfig(
+    fusion_type=FusionType.RRF,  # Reciprocal Rank Fusion
+    vector_weight=0.6,
+    text_weight=0.4,
+    rrf_k=60
+)
+
+hybrid = HybridSearcher(db, bm25, config)
+
+# Search with both vector and text
+results = hybrid.search(query_vector, "query text", k=10)
+for r in results:
+    print(f"Index {r.vector_index}: combined={r.combined_score:.4f}")
+
+# Can also do vector-only or text-only through hybrid
+vector_results = hybrid.search_vector_only(query_vector, k=10)
+text_results = hybrid.search_text_only("query text", k=10)
+```
+
+### Namespace Management (Multi-Tenancy)
+
+```python
+from gigavector import NamespaceManager, NamespaceConfig, NSIndexType
+
+# Create manager (path for persistence, None for in-memory)
+mgr = NamespaceManager("/data/namespaces")
+
+# Create namespaces
+config = NamespaceConfig(
+    name="tenant_1",
+    dimension=128,
+    index_type=NSIndexType.HNSW,
+    max_vectors=1000000
+)
+ns1 = mgr.create(config)
+
+# Use namespace
+ns1.add_vector([0.1] * 128)
+results = ns1.search([0.1] * 128, k=5)
+print(f"Namespace count: {ns1.count}")
+
+# List all namespaces
+names = mgr.list_namespaces()
+print(f"Namespaces: {names}")
+
+# Delete namespace
+mgr.delete("tenant_1")
+mgr.close()
+```
+
+### TTL (Time-to-Live)
+
+```python
+from gigavector import TTLManager, TTLConfig
+
+config = TTLConfig(
+    default_ttl_seconds=3600,      # 1 hour
+    cleanup_interval_seconds=60,   # Check every minute
+    lazy_expiration=True,
+    max_expired_per_cleanup=1000
+)
+
+ttl = TTLManager(config)
+
+# Set TTL for specific vectors
+ttl.set_ttl(0, 1800)  # Vector 0 expires in 30 minutes
+ttl.set_ttl(1, 7200)  # Vector 1 expires in 2 hours
+
+# Check if expired
+if ttl.is_expired(0):
+    print("Vector 0 has expired")
+
+# Get remaining time
+remaining = ttl.get_remaining_ttl(1)
+print(f"Vector 1 expires in {remaining} seconds")
+
+# Remove TTL
+ttl.remove_ttl(1)
+
+# Manual cleanup
+expired = ttl.cleanup_expired()
+print(f"Cleaned up {expired} expired vectors")
+
+# Background cleanup (requires database)
+ttl.start_background_cleanup(db)
+ttl.stop_background_cleanup()
+
+ttl.close()
+```
+
+### Authentication
+
+```python
+from gigavector import AuthManager, AuthConfig, AuthType, JWTConfig
+
+# API Key authentication
+config = AuthConfig(auth_type=AuthType.API_KEY)
+auth = AuthManager(config)
+
+# Generate key
+key, key_id = auth.generate_api_key("My App", expires_at=0)  # 0 = never expires
+
+# Authenticate
+result, identity = auth.authenticate(key)
+if result == AuthResult.SUCCESS:
+    print(f"Authenticated as: {identity.key_id}")
+
+# List keys
+keys = auth.list_api_keys()
+for k in keys:
+    print(f"Key: {k.key_id}, Description: {k.description}")
+
+# Revoke key
+auth.revoke_api_key(key_id)
+
+auth.close()
+```
+
+### Backup and Restore
+
+```python
+from gigavector import (
+    backup_create, backup_restore, backup_verify,
+    backup_read_header, backup_restore_to_db,
+    BackupOptions, RestoreOptions, BackupCompression
+)
+
+# Create backup
+options = BackupOptions(
+    compression=BackupCompression.ZSTD,
+    include_metadata=True,
+    include_index=True
+)
+result = backup_create(db, "backup.gvb", options)
+print(f"Backed up {result.vectors_backed_up} vectors")
+print(f"Size: {result.compressed_size} bytes")
+
+# Read backup header
+header = backup_read_header("backup.gvb")
+print(f"Version: {header.version}")
+print(f"Vectors: {header.vector_count}")
+print(f"Dimension: {header.dimension}")
+
+# Verify backup integrity
+is_valid = backup_verify("backup.gvb")
+
+# Restore to file
+restore_opts = RestoreOptions(verify_checksums=True)
+new_db = backup_restore("backup.gvb", "restored.db", restore_opts)
+
+# Or restore to existing database
+backup_restore_to_db("backup.gvb", existing_db, restore_opts)
+```
+
+### Sharding
+
+```python
+from gigavector import ShardManager, ShardConfig, ShardStrategy
+
+config = ShardConfig(
+    num_shards=4,
+    strategy=ShardStrategy.HASH,
+    data_path="/data/shards"
+)
+
+mgr = ShardManager(config)
+
+# Add vector (automatically routed to correct shard)
+mgr.add_vector([0.1] * 128)
+
+# Search across all shards
+results = mgr.search([0.1] * 128, k=10)
+
+# Get shard info
+for shard in mgr.list_shards():
+    print(f"Shard {shard.id}: {shard.vector_count} vectors")
+
+mgr.close()
+```
+
+### Replication
+
+```python
+from gigavector import (
+    ReplicationManager, ReplicationConfig, ReplicationRole
+)
+
+# Leader configuration
+config = ReplicationConfig(
+    node_id="node-1",
+    listen_address="0.0.0.0:5000",
+    leader_address=None  # This is the leader
+)
+
+repl = ReplicationManager(db, config)
+repl.start()
+
+# Check role
+role = repl.get_role()
+print(f"Role: {role.name}")  # LEADER or FOLLOWER
+
+# Get replication stats
+stats = repl.get_stats()
+print(f"Replicas: {stats.replica_count}")
+print(f"Sync lag: {stats.sync_lag}")
+
+repl.stop()
+repl.close()
+```
+
+### Cluster Management
+
+```python
+from gigavector import Cluster, ClusterConfig, NodeRole
+
+config = ClusterConfig(
+    node_id="node-1",
+    listen_address="0.0.0.0:6000",
+    seed_nodes="node-2:6000,node-3:6000",
+    role=NodeRole.DATA,
+    heartbeat_interval_ms=1000
+)
+
+cluster = Cluster(config)
+cluster.start()
+
+# Get cluster info
+local = cluster.get_local_node()
+print(f"Local node: {local.node_id}, State: {local.state.name}")
+
+# List all nodes
+nodes = cluster.list_nodes()
+for node in nodes:
+    print(f"Node {node.node_id}: {node.state.name}")
+
+cluster.stop()
+cluster.close()
+```
+
 ## Summary
 
 - GigaVector Python bindings use CFFI for high-performance C integration
@@ -511,6 +850,18 @@ for i in range(0, len(vectors), batch_size):
 - Handle errors appropriately with try/except
 - Monitor resource usage for large datasets
 - The C library manages vector data; Python provides convenient wrappers
+
+**Available Modules:**
+- Core: Database, Vector, SearchHit, IndexType, DistanceType
+- Configuration: HNSWConfig, IVFPQConfig, ScalarQuantConfig
+- LLM Integration: LLM, LLMConfig, EmbeddingService
+- Memory: MemoryLayer, ContextGraph
+- GPU: GPUContext, GPUIndex, GPUConfig
+- Server: Server, ServerConfig
+- Search: BM25Index, HybridSearcher
+- Storage: NamespaceManager, TTLManager, ShardManager
+- High Availability: ReplicationManager, Cluster
+- Security: AuthManager, backup_create, backup_restore
 
 For more information, see:
 - [Usage Guide](usage.md) for general usage patterns
