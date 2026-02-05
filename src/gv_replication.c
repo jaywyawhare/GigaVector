@@ -117,11 +117,40 @@ static void *replication_thread_func(void *arg) {
             }
         } else if (mgr->role == GV_REPL_FOLLOWER) {
             /* Check for leader heartbeat timeout */
-            uint64_t timeout = mgr->config.election_timeout_ms / 1000;
-            (void)timeout; /* TODO: Use for leader heartbeat check */
+            uint64_t timeout_sec = mgr->config.election_timeout_ms / 1000;
+            if (timeout_sec == 0) timeout_sec = 3;  /* Default 3 seconds */
+
             if (mgr->leader_id) {
-                /* TODO: Check actual leader heartbeat */
-                /* If timeout, start election */
+                /* Find leader in replicas to check last heartbeat */
+                uint64_t leader_last_heartbeat = 0;
+                for (size_t i = 0; i < mgr->replica_count; i++) {
+                    if (mgr->replicas[i].node_id &&
+                        strcmp(mgr->replicas[i].node_id, mgr->leader_id) == 0) {
+                        leader_last_heartbeat = mgr->replicas[i].last_heartbeat;
+                        break;
+                    }
+                }
+
+                /* Check if leader heartbeat has timed out */
+                if (leader_last_heartbeat > 0 && now > leader_last_heartbeat) {
+                    uint64_t elapsed = now - leader_last_heartbeat;
+                    if (elapsed > timeout_sec) {
+                        /* Leader has timed out - transition to candidate and start election */
+                        mgr->role = GV_REPL_CANDIDATE;
+                        mgr->term++;
+                        free(mgr->leader_id);
+                        mgr->leader_id = NULL;
+                        free(mgr->voted_for);
+                        mgr->voted_for = mgr->node_id ? strdup(mgr->node_id) : NULL;
+
+                        /* Note: In a real implementation, this would:
+                         * 1. Request votes from all known replicas
+                         * 2. Wait for majority response
+                         * 3. If majority votes received, become leader
+                         * 4. If another leader is discovered, become follower
+                         * 5. If election times out, restart election with new term */
+                    }
+                }
             }
         }
 
@@ -439,11 +468,48 @@ int gv_replication_sync_commit(GV_ReplicationManager *mgr, uint32_t timeout_ms) 
         return 0;
     }
 
-    /* TODO: Wait for acknowledgments from replicas */
-    (void)timeout_ms;
+    /* Calculate required acknowledgments (majority) */
+    size_t required_acks = (mgr->replica_count / 2) + 1;
+    if (required_acks > mgr->replica_count) {
+        required_acks = mgr->replica_count;
+    }
 
+    uint64_t current_wal = mgr->wal_position;
     pthread_rwlock_unlock(&mgr->rwlock);
-    return 0;
+
+    /* Wait for acknowledgments with timeout */
+    uint64_t start_time = (uint64_t)time(NULL) * 1000;
+    uint64_t deadline = start_time + timeout_ms;
+
+    while ((uint64_t)time(NULL) * 1000 < deadline) {
+        pthread_rwlock_rdlock(&mgr->rwlock);
+
+        /* Count replicas that have caught up */
+        size_t acks = 0;
+        for (size_t i = 0; i < mgr->replica_count; i++) {
+            if (mgr->replicas[i].connected &&
+                mgr->replicas[i].last_wal_position >= current_wal) {
+                acks++;
+            }
+        }
+
+        pthread_rwlock_unlock(&mgr->rwlock);
+
+        if (acks >= required_acks) {
+            /* Update commit position */
+            pthread_rwlock_wrlock(&mgr->rwlock);
+            if (current_wal > mgr->commit_position) {
+                mgr->commit_position = current_wal;
+            }
+            pthread_rwlock_unlock(&mgr->rwlock);
+            return 0;
+        }
+
+        /* Sleep briefly before checking again */
+        usleep(10000);  /* 10ms */
+    }
+
+    return -1;  /* Timeout */
 }
 
 int64_t gv_replication_get_lag(GV_ReplicationManager *mgr) {
@@ -464,11 +530,39 @@ int64_t gv_replication_get_lag(GV_ReplicationManager *mgr) {
 int gv_replication_wait_sync(GV_ReplicationManager *mgr, size_t max_lag, uint32_t timeout_ms) {
     if (!mgr) return -1;
 
-    (void)max_lag;
-    (void)timeout_ms;
+    uint64_t start_time = (uint64_t)time(NULL) * 1000;
+    uint64_t deadline = start_time + timeout_ms;
 
-    /* TODO: Implement actual sync waiting */
-    return 0;
+    while ((uint64_t)time(NULL) * 1000 < deadline) {
+        pthread_rwlock_rdlock(&mgr->rwlock);
+
+        /* Check if all replicas are within acceptable lag */
+        int all_synced = 1;
+        for (size_t i = 0; i < mgr->replica_count; i++) {
+            if (!mgr->replicas[i].connected) continue;
+
+            uint64_t lag = 0;
+            if (mgr->wal_position > mgr->replicas[i].last_wal_position) {
+                lag = mgr->wal_position - mgr->replicas[i].last_wal_position;
+            }
+
+            if (lag > max_lag) {
+                all_synced = 0;
+                break;
+            }
+        }
+
+        pthread_rwlock_unlock(&mgr->rwlock);
+
+        if (all_synced) {
+            return 0;
+        }
+
+        /* Sleep briefly before checking again */
+        usleep(10000);  /* 10ms */
+    }
+
+    return -1;  /* Timeout - not all replicas synced */
 }
 
 /* ============================================================================

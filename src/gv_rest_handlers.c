@@ -280,22 +280,38 @@ GV_HttpResponse *gv_rest_handle_vectors_post(const GV_HandlerContext *ctx,
                 if (meta_count > 0) {
                     const char **keys = malloc(meta_count * sizeof(char *));
                     const char **values = malloc(meta_count * sizeof(char *));
+                    char **value_buffers = malloc(meta_count * sizeof(char *));
 
-                    if (keys && values) {
-                        /* Extract first key-value pair for now */
-                        /* TODO: Support rich metadata */
+                    if (keys && values && value_buffers) {
+                        /* Extract all key-value pairs */
                         GV_JsonEntry *entries = metadata->data.object.entries;
-                        keys[0] = entries[0].key;
-                        values[0] = gv_json_get_string(entries[0].value);
+                        for (size_t m = 0; m < meta_count; m++) {
+                            keys[m] = entries[m].key;
+                            /* Convert value to string if needed */
+                            if (gv_json_is_string(entries[m].value)) {
+                                values[m] = gv_json_get_string(entries[m].value);
+                                value_buffers[m] = NULL;
+                            } else {
+                                /* Convert non-string values to string */
+                                value_buffers[m] = gv_json_stringify(entries[m].value, false);
+                                values[m] = value_buffers[m];
+                            }
+                        }
 
-                        result = gv_db_add_vector_with_metadata(ctx->db, vec, dim,
-                                                                 keys[0], values[0]);
+                        result = gv_db_add_vector_with_rich_metadata(ctx->db, vec, dim,
+                                                                      keys, values, meta_count);
+
+                        /* Free converted value buffers */
+                        for (size_t m = 0; m < meta_count; m++) {
+                            free(value_buffers[m]);
+                        }
                     } else {
                         result = gv_db_add_vector(ctx->db, vec, dim);
                     }
 
                     free(keys);
                     free(values);
+                    free(value_buffers);
                 } else {
                     result = gv_db_add_vector(ctx->db, vec, dim);
                 }

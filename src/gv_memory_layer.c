@@ -103,6 +103,186 @@ static int deserialize_related_ids(const char *serialized, char ***out, size_t *
     return 0;
 }
 
+/**
+ * @brief Serialize memory links to JSON string.
+ * Format: [{"target":"id","type":0,"strength":0.8,"created":123456,"reason":"text"},...]
+ */
+static int serialize_links(const GV_MemoryLink *links, size_t count, char **out) {
+    if (count == 0 || links == NULL) {
+        *out = NULL;
+        return 0;
+    }
+
+    /* Estimate buffer size: ~200 bytes per link should be sufficient */
+    size_t buffer_size = count * 200 + 3;
+    char *result = (char *)malloc(buffer_size);
+    if (result == NULL) {
+        return -1;
+    }
+
+    size_t pos = 0;
+    result[pos++] = '[';
+
+    for (size_t i = 0; i < count; i++) {
+        if (i > 0) {
+            result[pos++] = ',';
+        }
+
+        int written = snprintf(result + pos, buffer_size - pos,
+            "{\"target\":\"%s\",\"type\":%d,\"strength\":%.4f,\"created\":%ld",
+            links[i].target_memory_id ? links[i].target_memory_id : "",
+            (int)links[i].link_type,
+            links[i].strength,
+            (long)links[i].created_at);
+
+        if (written < 0 || (size_t)written >= buffer_size - pos) {
+            free(result);
+            return -1;
+        }
+        pos += written;
+
+        /* Add reason if present */
+        if (links[i].reason != NULL) {
+            written = snprintf(result + pos, buffer_size - pos,
+                ",\"reason\":\"%s\"", links[i].reason);
+            if (written < 0 || (size_t)written >= buffer_size - pos) {
+                free(result);
+                return -1;
+            }
+            pos += written;
+        }
+
+        result[pos++] = '}';
+    }
+
+    result[pos++] = ']';
+    result[pos] = '\0';
+
+    *out = result;
+    return 0;
+}
+
+/**
+ * @brief Deserialize memory links from JSON string.
+ */
+static int deserialize_links(const char *serialized, GV_MemoryLink **out, size_t *count) {
+    if (serialized == NULL || strlen(serialized) == 0 || serialized[0] != '[') {
+        *out = NULL;
+        *count = 0;
+        return 0;
+    }
+
+    /* Count links by counting '{' characters */
+    size_t link_count = 0;
+    for (const char *p = serialized; *p; p++) {
+        if (*p == '{') link_count++;
+    }
+
+    if (link_count == 0) {
+        *out = NULL;
+        *count = 0;
+        return 0;
+    }
+
+    GV_MemoryLink *links = (GV_MemoryLink *)calloc(link_count, sizeof(GV_MemoryLink));
+    if (links == NULL) {
+        return -1;
+    }
+
+    /* Simple JSON parsing - find each object and extract fields */
+    const char *p = serialized + 1;  /* Skip '[' */
+    size_t idx = 0;
+
+    while (*p && idx < link_count) {
+        /* Find start of object */
+        while (*p && *p != '{') p++;
+        if (*p != '{') break;
+        p++;
+
+        /* Parse fields within object */
+        char target[MEMORY_ID_BUFFER_SIZE] = {0};
+        int type = 0;
+        float strength = 0.5f;
+        long created = 0;
+        char reason[256] = {0};
+
+        while (*p && *p != '}') {
+            /* Skip whitespace and commas */
+            while (*p && (*p == ' ' || *p == ',' || *p == '\n' || *p == '\t')) p++;
+            if (*p == '}') break;
+
+            /* Parse key */
+            if (*p == '"') {
+                p++;
+                const char *key_start = p;
+                while (*p && *p != '"') p++;
+                size_t key_len = p - key_start;
+                p++;  /* Skip closing quote */
+
+                /* Skip colon */
+                while (*p && *p == ':') p++;
+                while (*p && *p == ' ') p++;
+
+                /* Parse value */
+                if (strncmp(key_start, "target", key_len) == 0 && key_len == 6) {
+                    if (*p == '"') {
+                        p++;
+                        const char *val_start = p;
+                        while (*p && *p != '"') p++;
+                        size_t val_len = p - val_start;
+                        if (val_len < sizeof(target)) {
+                            memcpy(target, val_start, val_len);
+                            target[val_len] = '\0';
+                        }
+                        p++;
+                    }
+                } else if (strncmp(key_start, "type", key_len) == 0 && key_len == 4) {
+                    type = (int)strtol(p, (char **)&p, 10);
+                } else if (strncmp(key_start, "strength", key_len) == 0 && key_len == 8) {
+                    strength = strtof(p, (char **)&p);
+                } else if (strncmp(key_start, "created", key_len) == 0 && key_len == 7) {
+                    created = strtol(p, (char **)&p, 10);
+                } else if (strncmp(key_start, "reason", key_len) == 0 && key_len == 6) {
+                    if (*p == '"') {
+                        p++;
+                        const char *val_start = p;
+                        while (*p && *p != '"') p++;
+                        size_t val_len = p - val_start;
+                        if (val_len < sizeof(reason)) {
+                            memcpy(reason, val_start, val_len);
+                            reason[val_len] = '\0';
+                        }
+                        p++;
+                    }
+                } else {
+                    /* Skip unknown field value */
+                    if (*p == '"') {
+                        p++;
+                        while (*p && *p != '"') p++;
+                        if (*p == '"') p++;
+                    } else {
+                        while (*p && *p != ',' && *p != '}') p++;
+                    }
+                }
+            }
+        }
+
+        /* Store parsed link */
+        links[idx].target_memory_id = strlen(target) > 0 ? strdup(target) : NULL;
+        links[idx].link_type = (GV_MemoryLinkType)type;
+        links[idx].strength = strength;
+        links[idx].created_at = (time_t)created;
+        links[idx].reason = strlen(reason) > 0 ? strdup(reason) : NULL;
+        idx++;
+
+        if (*p == '}') p++;
+    }
+
+    *out = links;
+    *count = idx;
+    return 0;
+}
+
 static GV_Metadata *create_memory_metadata(const GV_MemoryMetadata *meta) {
     if (meta == NULL) {
         return NULL;
@@ -199,7 +379,24 @@ static GV_Metadata *create_memory_metadata(const GV_MemoryMetadata *meta) {
             tail = m;
         }
     }
-    
+
+    /* Serialize memory links */
+    if (meta->link_count > 0 && meta->links != NULL) {
+        char *links_str = NULL;
+        if (serialize_links(meta->links, meta->link_count, &links_str) == 0 && links_str) {
+            m = (GV_Metadata *)malloc(sizeof(GV_Metadata));
+            if (m == NULL) {
+                free(links_str);
+                goto error;
+            }
+            m->key = strdup("memory_links");
+            m->value = links_str;
+            m->next = NULL;
+            tail->next = m;
+            tail = m;
+        }
+    }
+
     return head;
     
 error:
@@ -232,10 +429,12 @@ static int parse_memory_metadata(const GV_Metadata *meta_list, GV_MemoryMetadata
             out->consolidated = atoi(current->value);
         } else if (strcmp(current->key, "related_memories") == 0) {
             deserialize_related_ids(current->value, &out->related_memory_ids, &out->related_count);
+        } else if (strcmp(current->key, "memory_links") == 0) {
+            deserialize_links(current->value, &out->links, &out->link_count);
         }
         current = current->next;
     }
-    
+
     return 0;
 }
 
@@ -1251,6 +1450,65 @@ void gv_memory_link_free(GV_MemoryLink *link) {
     memset(link, 0, sizeof(GV_MemoryLink));
 }
 
+/**
+ * @brief Helper to add a link to a memory's metadata.
+ */
+static int add_link_to_memory(GV_MemoryLayer *layer, const char *memory_id,
+                               const char *target_id, GV_MemoryLinkType link_type,
+                               float strength, const char *reason) {
+    /* Get current memory */
+    GV_MemoryResult result;
+    int ret = gv_memory_get(layer, memory_id, &result);
+    if (ret != 0) {
+        return -1;
+    }
+
+    if (result.metadata == NULL) {
+        gv_memory_result_free(&result);
+        return -1;
+    }
+
+    /* Check if link already exists */
+    for (size_t i = 0; i < result.metadata->link_count; i++) {
+        if (result.metadata->links[i].target_memory_id &&
+            strcmp(result.metadata->links[i].target_memory_id, target_id) == 0) {
+            /* Link already exists - update it */
+            result.metadata->links[i].link_type = link_type;
+            result.metadata->links[i].strength = strength;
+            if (result.metadata->links[i].reason) {
+                free(result.metadata->links[i].reason);
+            }
+            result.metadata->links[i].reason = reason ? strdup(reason) : NULL;
+
+            ret = gv_memory_update(layer, memory_id, NULL, result.metadata);
+            gv_memory_result_free(&result);
+            return ret;
+        }
+    }
+
+    /* Add new link */
+    size_t new_count = result.metadata->link_count + 1;
+    GV_MemoryLink *new_links = (GV_MemoryLink *)realloc(
+        result.metadata->links, new_count * sizeof(GV_MemoryLink));
+    if (new_links == NULL) {
+        gv_memory_result_free(&result);
+        return -1;
+    }
+
+    result.metadata->links = new_links;
+    GV_MemoryLink *new_link = &result.metadata->links[result.metadata->link_count];
+    new_link->target_memory_id = strdup(target_id);
+    new_link->link_type = link_type;
+    new_link->strength = strength;
+    new_link->created_at = time(NULL);
+    new_link->reason = reason ? strdup(reason) : NULL;
+    result.metadata->link_count = new_count;
+
+    ret = gv_memory_update(layer, memory_id, NULL, result.metadata);
+    gv_memory_result_free(&result);
+    return ret;
+}
+
 int gv_memory_link_create(GV_MemoryLayer *layer,
                            const char *source_id,
                            const char *target_id,
@@ -1265,15 +1523,71 @@ int gv_memory_link_create(GV_MemoryLayer *layer,
     if (strength < MIN_LINK_STRENGTH) strength = MIN_LINK_STRENGTH;
     if (strength > 1.0f) strength = 1.0f;
 
-    /* For now, links are stored in memory metadata as JSON in extraction_metadata
-     * A full implementation would use a separate links table/collection */
+    pthread_mutex_lock(&layer->mutex);
 
-    /* TODO: Implement persistent link storage
-     * For now this is a placeholder that returns success */
-    (void)link_type;
-    (void)reason;
+    /* Add forward link (source -> target) */
+    int ret = add_link_to_memory(layer, source_id, target_id, link_type, strength, reason);
+    if (ret != 0) {
+        pthread_mutex_unlock(&layer->mutex);
+        return -1;
+    }
 
-    return 0;
+    /* Add reciprocal link (target -> source) with reduced strength */
+    GV_MemoryLinkType reciprocal_type = gv_memory_link_reciprocal(link_type);
+    float reciprocal_strength = strength * RECIPROCAL_STRENGTH_FACTOR;
+    if (reciprocal_strength < MIN_LINK_STRENGTH) {
+        reciprocal_strength = MIN_LINK_STRENGTH;
+    }
+
+    ret = add_link_to_memory(layer, target_id, source_id, reciprocal_type,
+                             reciprocal_strength, reason);
+
+    pthread_mutex_unlock(&layer->mutex);
+    return ret;
+}
+
+/**
+ * @brief Helper to remove a link from a memory's metadata.
+ */
+static int remove_link_from_memory(GV_MemoryLayer *layer, const char *memory_id,
+                                    const char *target_id) {
+    /* Get current memory */
+    GV_MemoryResult result;
+    int ret = gv_memory_get(layer, memory_id, &result);
+    if (ret != 0) {
+        return -1;
+    }
+
+    if (result.metadata == NULL || result.metadata->link_count == 0) {
+        gv_memory_result_free(&result);
+        return 0;  /* No links to remove */
+    }
+
+    /* Find and remove the link */
+    int found = 0;
+    for (size_t i = 0; i < result.metadata->link_count; i++) {
+        if (result.metadata->links[i].target_memory_id &&
+            strcmp(result.metadata->links[i].target_memory_id, target_id) == 0) {
+            /* Free the link data */
+            free(result.metadata->links[i].target_memory_id);
+            free(result.metadata->links[i].reason);
+
+            /* Shift remaining links */
+            for (size_t j = i; j < result.metadata->link_count - 1; j++) {
+                result.metadata->links[j] = result.metadata->links[j + 1];
+            }
+            result.metadata->link_count--;
+            found = 1;
+            break;
+        }
+    }
+
+    if (found) {
+        ret = gv_memory_update(layer, memory_id, NULL, result.metadata);
+    }
+
+    gv_memory_result_free(&result);
+    return ret;
 }
 
 int gv_memory_link_remove(GV_MemoryLayer *layer,
@@ -1283,8 +1597,20 @@ int gv_memory_link_remove(GV_MemoryLayer *layer,
         return -1;
     }
 
-    /* TODO: Implement link removal */
-    return 0;
+    pthread_mutex_lock(&layer->mutex);
+
+    /* Remove forward link (source -> target) */
+    int ret = remove_link_from_memory(layer, source_id, target_id);
+    if (ret != 0) {
+        pthread_mutex_unlock(&layer->mutex);
+        return -1;
+    }
+
+    /* Remove reciprocal link (target -> source) */
+    ret = remove_link_from_memory(layer, target_id, source_id);
+
+    pthread_mutex_unlock(&layer->mutex);
+    return ret;
 }
 
 int gv_memory_link_get(GV_MemoryLayer *layer,
