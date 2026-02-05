@@ -536,27 +536,232 @@ int gv_backup_get_info(const char *backup_path, char *info_buf, size_t buf_size)
 }
 
 /* ============================================================================
- * Incremental Backup (Stub)
+ * Incremental Backup
  * ============================================================================ */
+
+/**
+ * @brief Read header from backup file.
+ */
+static int read_backup_header(const char *path, GV_BackupHeader *header) {
+    FILE *fp = fopen(path, "rb");
+    if (!fp) return -1;
+
+    char magic[BACKUP_MAGIC_LEN + 1] = {0};
+    if (fread(magic, 1, BACKUP_MAGIC_LEN, fp) != BACKUP_MAGIC_LEN) {
+        fclose(fp);
+        return -1;
+    }
+
+    if (strncmp(magic, BACKUP_MAGIC, BACKUP_MAGIC_LEN) != 0) {
+        fclose(fp);
+        return -1;
+    }
+
+    if (fread(&header->version, sizeof(header->version), 1, fp) != 1 ||
+        fread(&header->flags, sizeof(header->flags), 1, fp) != 1 ||
+        fread(&header->created_at, sizeof(header->created_at), 1, fp) != 1 ||
+        fread(&header->vector_count, sizeof(header->vector_count), 1, fp) != 1 ||
+        fread(&header->dimension, sizeof(header->dimension), 1, fp) != 1 ||
+        fread(&header->index_type, sizeof(header->index_type), 1, fp) != 1) {
+        fclose(fp);
+        return -1;
+    }
+
+    fclose(fp);
+    return 0;
+}
 
 GV_BackupResult *gv_backup_create_incremental(GV_Database *db, const char *backup_path,
                                                const char *base_backup_path,
                                                const GV_BackupOptions *options) {
-    (void)db;
-    (void)backup_path;
-    (void)base_backup_path;
-    (void)options;
-    return create_result(0, "Incremental backup not yet implemented");
+    if (!db || !backup_path || !base_backup_path) {
+        return create_result(0, "Invalid parameters");
+    }
+
+    /* Read base backup header to get starting point */
+    GV_BackupHeader base_header;
+    if (read_backup_header(base_backup_path, &base_header) != 0) {
+        return create_result(0, "Failed to read base backup header");
+    }
+
+    /* Verify dimension and index type match */
+    if (base_header.dimension != db->dimension) {
+        return create_result(0, "Dimension mismatch with base backup");
+    }
+
+    /* Calculate vectors to backup (only new ones since base) */
+    uint64_t start_idx = base_header.vector_count;
+    uint64_t current_count = db->count;
+
+    if (current_count <= start_idx) {
+        return create_result(1, NULL);  /* No new vectors to backup */
+    }
+
+    uint64_t vectors_to_backup = current_count - start_idx;
+
+    const GV_BackupOptions *opts = options ? options : &DEFAULT_BACKUP_OPTIONS;
+
+    /* Create incremental backup file */
+    FILE *fp = fopen(backup_path, "wb");
+    if (!fp) {
+        return create_result(0, "Failed to create incremental backup file");
+    }
+
+    /* Write magic */
+    fwrite(BACKUP_MAGIC, 1, BACKUP_MAGIC_LEN, fp);
+
+    /* Build and write header */
+    GV_BackupHeader header;
+    memset(&header, 0, sizeof(header));
+    header.version = GV_BACKUP_VERSION;
+    header.flags = BACKUP_FLAG_INCREMENTAL;
+    if (opts->compression != GV_BACKUP_COMPRESS_NONE) {
+        header.flags |= BACKUP_FLAG_COMPRESSED;
+    }
+    if (opts->encryption_key) {
+        header.flags |= BACKUP_FLAG_ENCRYPTED;
+    }
+    header.created_at = (uint64_t)time(NULL);
+    header.vector_count = vectors_to_backup;
+    header.dimension = db->dimension;
+    header.index_type = db->index_type;
+
+    fwrite(&header.version, sizeof(header.version), 1, fp);
+    fwrite(&header.flags, sizeof(header.flags), 1, fp);
+    fwrite(&header.created_at, sizeof(header.created_at), 1, fp);
+    fwrite(&header.vector_count, sizeof(header.vector_count), 1, fp);
+    fwrite(&header.dimension, sizeof(header.dimension), 1, fp);
+    fwrite(&header.index_type, sizeof(header.index_type), 1, fp);
+
+    /* Write base backup info */
+    fwrite(&start_idx, sizeof(start_idx), 1, fp);  /* Starting index */
+    fwrite(&base_header.created_at, sizeof(base_header.created_at), 1, fp);  /* Base backup timestamp */
+
+    /* Write vector data */
+    for (uint64_t i = start_idx; i < current_count; i++) {
+        const float *vec = gv_database_get_vector(db, (size_t)i);
+        if (vec) {
+            fwrite(vec, sizeof(float), db->dimension, fp);
+        }
+    }
+
+    /* Update result */
+    fclose(fp);
+
+    GV_BackupResult *result = create_result(1, NULL);
+    if (result) {
+        result->vectors_processed = vectors_to_backup;
+    }
+
+    return result;
 }
 
 GV_BackupResult *gv_backup_merge(const char *base_backup_path,
                                   const char **incremental_paths, size_t incremental_count,
                                   const char *output_path) {
-    (void)base_backup_path;
-    (void)incremental_paths;
-    (void)incremental_count;
-    (void)output_path;
-    return create_result(0, "Backup merge not yet implemented");
+    if (!base_backup_path || !output_path) {
+        return create_result(0, "Invalid parameters");
+    }
+
+    /* Read base backup header */
+    GV_BackupHeader base_header;
+    if (read_backup_header(base_backup_path, &base_header) != 0) {
+        return create_result(0, "Failed to read base backup header");
+    }
+
+    /* Create output file */
+    FILE *out_fp = fopen(output_path, "wb");
+    if (!out_fp) {
+        return create_result(0, "Failed to create output file");
+    }
+
+    /* Copy base backup to output */
+    FILE *base_fp = fopen(base_backup_path, "rb");
+    if (!base_fp) {
+        fclose(out_fp);
+        return create_result(0, "Failed to open base backup");
+    }
+
+    /* Reset to beginning of base file */
+    fseek(base_fp, 0, SEEK_SET);
+
+    /* Copy base backup */
+    char *buffer = malloc(BUFFER_SIZE);
+    if (!buffer) {
+        fclose(base_fp);
+        fclose(out_fp);
+        return create_result(0, "Memory allocation failed");
+    }
+
+    size_t bytes;
+    while ((bytes = fread(buffer, 1, BUFFER_SIZE, base_fp)) > 0) {
+        fwrite(buffer, 1, bytes, out_fp);
+    }
+    fclose(base_fp);
+
+    /* Track total vectors */
+    uint64_t total_vectors = base_header.vector_count;
+
+    /* Apply incremental backups */
+    for (size_t i = 0; incremental_paths && i < incremental_count; i++) {
+        FILE *inc_fp = fopen(incremental_paths[i], "rb");
+        if (!inc_fp) {
+            continue;  /* Skip missing incremental */
+        }
+
+        /* Read incremental header */
+        GV_BackupHeader inc_header;
+        if (read_backup_header(incremental_paths[i], &inc_header) != 0) {
+            fclose(inc_fp);
+            continue;
+        }
+
+        /* Verify it's incremental and dimensions match */
+        if (!(inc_header.flags & BACKUP_FLAG_INCREMENTAL) ||
+            inc_header.dimension != base_header.dimension) {
+            fclose(inc_fp);
+            continue;
+        }
+
+        /* Seek past header to vector data */
+        size_t header_size = BACKUP_MAGIC_LEN +
+            sizeof(inc_header.version) + sizeof(inc_header.flags) +
+            sizeof(inc_header.created_at) + sizeof(inc_header.vector_count) +
+            sizeof(inc_header.dimension) + sizeof(inc_header.index_type) +
+            sizeof(uint64_t) * 2;  /* start_idx + base_timestamp */
+
+        fseek(inc_fp, header_size, SEEK_SET);
+
+        /* Copy vector data */
+        size_t vector_bytes = inc_header.vector_count * inc_header.dimension * sizeof(float);
+        size_t remaining = vector_bytes;
+
+        while (remaining > 0) {
+            size_t to_read = remaining < BUFFER_SIZE ? remaining : BUFFER_SIZE;
+            bytes = fread(buffer, 1, to_read, inc_fp);
+            if (bytes == 0) break;
+            fwrite(buffer, 1, bytes, out_fp);
+            remaining -= bytes;
+        }
+
+        total_vectors += inc_header.vector_count;
+        fclose(inc_fp);
+    }
+
+    free(buffer);
+
+    /* Update header in output with new vector count */
+    fseek(out_fp, BACKUP_MAGIC_LEN + sizeof(uint32_t) * 2 + sizeof(uint64_t), SEEK_SET);
+    fwrite(&total_vectors, sizeof(total_vectors), 1, out_fp);
+
+    fclose(out_fp);
+
+    GV_BackupResult *result = create_result(1, NULL);
+    if (result) {
+        result->vectors_processed = total_vectors;
+    }
+
+    return result;
 }
 
 /* ============================================================================

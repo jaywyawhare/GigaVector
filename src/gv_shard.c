@@ -361,6 +361,67 @@ int gv_shard_set_state(GV_ShardManager *mgr, uint32_t shard_id, GV_ShardState st
  * Rebalancing
  * ============================================================================ */
 
+/**
+ * @brief Internal structure for tracking rebalance moves.
+ */
+typedef struct {
+    uint32_t from_shard;
+    uint32_t to_shard;
+    size_t count;
+} RebalanceMove;
+
+/**
+ * @brief Perform actual vector migration between local shards.
+ */
+static int migrate_vectors(GV_ShardManager *mgr, uint32_t from_shard, uint32_t to_shard, size_t count) {
+    ShardEntry *from = NULL;
+    ShardEntry *to = NULL;
+
+    for (size_t i = 0; i < mgr->shard_count; i++) {
+        if (mgr->shards[i].shard_id == from_shard) from = &mgr->shards[i];
+        if (mgr->shards[i].shard_id == to_shard) to = &mgr->shards[i];
+    }
+
+    if (!from || !to || !from->local_db || !to->local_db) {
+        return -1;  /* Cannot migrate without local databases */
+    }
+
+    size_t dimension = from->local_db->dimension;
+    if (dimension != to->local_db->dimension) {
+        return -1;  /* Dimension mismatch */
+    }
+
+    /* Migrate vectors one at a time (could be batched for efficiency) */
+    size_t migrated = 0;
+    size_t from_count = gv_database_count(from->local_db);
+
+    for (size_t i = 0; i < count && from_count > 0; i++) {
+        /* Get last vector from source (simpler than random) */
+        size_t idx = from_count - 1;
+
+        /* Get vector data */
+        const float *vec = gv_database_get_vector(from->local_db, idx);
+        if (!vec) break;
+
+        /* Add to destination */
+        if (gv_db_add_vector(to->local_db, vec, dimension) != 0) {
+            break;
+        }
+
+        /* Mark as deleted in source */
+        gv_db_delete_vector_by_index(from->local_db, idx);
+
+        migrated++;
+        from_count--;
+
+        /* Update counts */
+        from->vector_count = from_count;
+        to->vector_count = gv_database_count(to->local_db);
+    }
+
+    return (int)migrated;
+}
+
 int gv_shard_rebalance_start(GV_ShardManager *mgr) {
     if (!mgr) return -1;
 
@@ -374,15 +435,112 @@ int gv_shard_rebalance_start(GV_ShardManager *mgr) {
     mgr->rebalancing = 1;
     mgr->rebalance_progress = 0.0;
 
+    /* Calculate total vectors and target per shard */
+    uint64_t total_vectors = 0;
+    size_t active_shards = 0;
+
+    for (size_t i = 0; i < mgr->shard_count; i++) {
+        if (mgr->shards[i].state == GV_SHARD_ACTIVE) {
+            total_vectors += mgr->shards[i].vector_count;
+            active_shards++;
+        }
+    }
+
+    if (active_shards == 0) {
+        mgr->rebalancing = 0;
+        pthread_rwlock_unlock(&mgr->rwlock);
+        return 0;  /* Nothing to rebalance */
+    }
+
+    uint64_t target_per_shard = total_vectors / active_shards;
+    uint64_t tolerance = target_per_shard / 10;  /* 10% tolerance */
+    if (tolerance < 10) tolerance = 10;
+
+    /* Identify overloaded and underloaded shards */
+    size_t *overloaded = calloc(mgr->shard_count, sizeof(size_t));
+    size_t *underloaded = calloc(mgr->shard_count, sizeof(size_t));
+    int64_t *excess = calloc(mgr->shard_count, sizeof(int64_t));
+
+    if (!overloaded || !underloaded || !excess) {
+        free(overloaded);
+        free(underloaded);
+        free(excess);
+        mgr->rebalancing = 0;
+        pthread_rwlock_unlock(&mgr->rwlock);
+        return -1;
+    }
+
+    size_t over_count = 0, under_count = 0;
+
+    for (size_t i = 0; i < mgr->shard_count; i++) {
+        if (mgr->shards[i].state != GV_SHARD_ACTIVE) continue;
+
+        int64_t diff = (int64_t)mgr->shards[i].vector_count - (int64_t)target_per_shard;
+        excess[i] = diff;
+
+        if (diff > (int64_t)tolerance) {
+            overloaded[over_count++] = i;
+        } else if (diff < -(int64_t)tolerance) {
+            underloaded[under_count++] = i;
+        }
+    }
+
+    /* Perform migrations */
+    size_t total_moves = 0;
+    size_t completed_moves = 0;
+
+    /* Calculate total moves needed */
+    for (size_t i = 0; i < over_count; i++) {
+        if (excess[overloaded[i]] > (int64_t)tolerance) {
+            total_moves += (size_t)(excess[overloaded[i]] - (int64_t)tolerance);
+        }
+    }
+
     pthread_rwlock_unlock(&mgr->rwlock);
 
-    /* TODO: Implement actual rebalancing logic */
-    /* This would involve:
-     * 1. Calculate target distribution
-     * 2. Identify vectors to move
-     * 3. Stream vectors between nodes
-     * 4. Update routing table
-     */
+    /* Perform actual migrations (outside lock for long operations) */
+    for (size_t o = 0; o < over_count && under_count > 0; o++) {
+        size_t over_idx = overloaded[o];
+        int64_t to_move = excess[over_idx] - (int64_t)tolerance;
+
+        for (size_t u = 0; u < under_count && to_move > 0; u++) {
+            size_t under_idx = underloaded[u];
+            int64_t can_receive = (int64_t)tolerance - excess[under_idx];
+
+            if (can_receive <= 0) continue;
+
+            size_t move_count = (size_t)(to_move < can_receive ? to_move : can_receive);
+
+            int migrated = migrate_vectors(mgr,
+                mgr->shards[over_idx].shard_id,
+                mgr->shards[under_idx].shard_id,
+                move_count);
+
+            if (migrated > 0) {
+                excess[over_idx] -= migrated;
+                excess[under_idx] += migrated;
+                to_move -= migrated;
+                completed_moves += migrated;
+
+                /* Update progress */
+                pthread_rwlock_wrlock(&mgr->rwlock);
+                if (total_moves > 0) {
+                    mgr->rebalance_progress = (double)completed_moves / (double)total_moves;
+                }
+                pthread_rwlock_unlock(&mgr->rwlock);
+            }
+        }
+    }
+
+    /* Mark rebalancing complete */
+    pthread_rwlock_wrlock(&mgr->rwlock);
+    mgr->rebalancing = 0;
+    mgr->rebalance_progress = 1.0;
+    pthread_rwlock_unlock(&mgr->rwlock);
+
+    free(overloaded);
+    free(underloaded);
+    free(excess);
 
     return 0;
 }

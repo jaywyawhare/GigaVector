@@ -129,6 +129,128 @@ static GV_IndexType ns_index_to_db_index(GV_NSIndexType ns_type) {
     }
 }
 
+/* Convert database index type to namespace index type.
+ * Reserved for future use when reading existing database configurations. */
+static GV_NSIndexType db_index_to_ns_index(GV_IndexType db_type) __attribute__((unused));
+static GV_NSIndexType db_index_to_ns_index(GV_IndexType db_type) {
+    switch (db_type) {
+        case GV_INDEX_TYPE_KDTREE: return GV_NS_INDEX_KDTREE;
+        case GV_INDEX_TYPE_HNSW:   return GV_NS_INDEX_HNSW;
+        case GV_INDEX_TYPE_IVFPQ:  return GV_NS_INDEX_IVFPQ;
+        case GV_INDEX_TYPE_SPARSE: return GV_NS_INDEX_SPARSE;
+        default:                   return GV_NS_INDEX_HNSW;
+    }
+}
+
+/**
+ * @brief Build manifest filepath from database filepath.
+ */
+static char *build_manifest_path(const char *db_filepath) {
+    if (!db_filepath) return NULL;
+    size_t len = strlen(db_filepath) + 20;  /* Extra space for .manifest.json */
+    char *path = malloc(len);
+    if (!path) return NULL;
+
+    /* Replace .gvdb with .manifest.json */
+    const char *ext = strrchr(db_filepath, '.');
+    if (ext) {
+        size_t base_len = ext - db_filepath;
+        snprintf(path, len, "%.*s.manifest.json", (int)base_len, db_filepath);
+    } else {
+        snprintf(path, len, "%s.manifest.json", db_filepath);
+    }
+    return path;
+}
+
+/**
+ * @brief Write namespace manifest file.
+ * Format: {"dimension":N,"index_type":T,"max_vectors":M,"max_memory":B}
+ */
+static int write_manifest(const char *db_filepath, size_t dimension,
+                          GV_NSIndexType index_type, size_t max_vectors,
+                          size_t max_memory_bytes) {
+    char *manifest_path = build_manifest_path(db_filepath);
+    if (!manifest_path) return -1;
+
+    FILE *fp = fopen(manifest_path, "w");
+    if (!fp) {
+        free(manifest_path);
+        return -1;
+    }
+
+    fprintf(fp, "{\n");
+    fprintf(fp, "  \"dimension\": %zu,\n", dimension);
+    fprintf(fp, "  \"index_type\": %d,\n", (int)index_type);
+    fprintf(fp, "  \"max_vectors\": %zu,\n", max_vectors);
+    fprintf(fp, "  \"max_memory_bytes\": %zu\n", max_memory_bytes);
+    fprintf(fp, "}\n");
+
+    fclose(fp);
+    free(manifest_path);
+    return 0;
+}
+
+/**
+ * @brief Read namespace manifest file.
+ * Returns 0 on success, -1 on failure.
+ */
+static int read_manifest(const char *db_filepath, size_t *dimension,
+                         GV_NSIndexType *index_type, size_t *max_vectors,
+                         size_t *max_memory_bytes) {
+    char *manifest_path = build_manifest_path(db_filepath);
+    if (!manifest_path) return -1;
+
+    FILE *fp = fopen(manifest_path, "r");
+    if (!fp) {
+        free(manifest_path);
+        return -1;
+    }
+
+    /* Read entire file */
+    fseek(fp, 0, SEEK_END);
+    long fsize = ftell(fp);
+    fseek(fp, 0, SEEK_SET);
+
+    char *content = malloc(fsize + 1);
+    if (!content) {
+        fclose(fp);
+        free(manifest_path);
+        return -1;
+    }
+
+    fread(content, 1, fsize, fp);
+    content[fsize] = '\0';
+    fclose(fp);
+    free(manifest_path);
+
+    /* Simple JSON parsing */
+    *dimension = 128;  /* Default */
+    *index_type = GV_NS_INDEX_HNSW;
+    *max_vectors = 0;
+    *max_memory_bytes = 0;
+
+    char *p;
+    if ((p = strstr(content, "\"dimension\"")) != NULL) {
+        p = strchr(p, ':');
+        if (p) *dimension = (size_t)strtoul(p + 1, NULL, 10);
+    }
+    if ((p = strstr(content, "\"index_type\"")) != NULL) {
+        p = strchr(p, ':');
+        if (p) *index_type = (GV_NSIndexType)atoi(p + 1);
+    }
+    if ((p = strstr(content, "\"max_vectors\"")) != NULL) {
+        p = strchr(p, ':');
+        if (p) *max_vectors = (size_t)strtoul(p + 1, NULL, 10);
+    }
+    if ((p = strstr(content, "\"max_memory_bytes\"")) != NULL) {
+        p = strchr(p, ':');
+        if (p) *max_memory_bytes = (size_t)strtoul(p + 1, NULL, 10);
+    }
+
+    free(content);
+    return 0;
+}
+
 /* ============================================================================
  * Namespace Operations
  * ============================================================================ */
@@ -188,6 +310,10 @@ GV_Namespace *gv_namespace_create(GV_NamespaceManager *mgr, const GV_NamespaceCo
         pthread_rwlock_unlock(&mgr->rwlock);
         return NULL;
     }
+
+    /* Write manifest file for persistence */
+    write_manifest(ns->filepath, config->dimension, config->index_type,
+                   config->max_vectors, config->max_memory_bytes);
 
     /* Add to manager */
     mgr->namespaces[mgr->namespace_count++] = ns;
@@ -481,13 +607,37 @@ int gv_namespace_manager_load_all(GV_NamespaceManager *mgr) {
         char filepath[512];
         snprintf(filepath, sizeof(filepath), "%s/%s", mgr->base_path, entry->d_name);
 
-        /* Load database to get dimension and index type */
-        /* For simplicity, we'll use default dimension 128 and HNSW */
-        /* In production, this should be stored in a manifest file */
+        /* Read namespace config from manifest file */
         GV_NamespaceConfig config;
         gv_namespace_config_init(&config);
         config.name = name;
-        config.dimension = 128;  /* TODO: Read from manifest */
+
+        size_t dimension = 128;
+        GV_NSIndexType index_type = GV_NS_INDEX_HNSW;
+        size_t max_vectors = 0;
+        size_t max_memory_bytes = 0;
+
+        /* Try to read from manifest file */
+        if (read_manifest(filepath, &dimension, &index_type, &max_vectors, &max_memory_bytes) == 0) {
+            config.dimension = dimension;
+            config.index_type = index_type;
+            config.max_vectors = max_vectors;
+            config.max_memory_bytes = max_memory_bytes;
+        } else {
+            /* Fallback: try to read dimension from database file header */
+            FILE *db_fp = fopen(filepath, "rb");
+            if (db_fp) {
+                /* Skip magic bytes and version, read dimension */
+                fseek(db_fp, 8, SEEK_SET);  /* After magic(4) + version(4) */
+                uint32_t dim_from_file = 0;
+                if (fread(&dim_from_file, sizeof(uint32_t), 1, db_fp) == 1) {
+                    if (dim_from_file > 0 && dim_from_file <= 65536) {
+                        config.dimension = dim_from_file;
+                    }
+                }
+                fclose(db_fp);
+            }
+        }
 
         if (gv_namespace_create(mgr, &config)) {
             loaded++;
