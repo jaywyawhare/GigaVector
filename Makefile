@@ -18,7 +18,7 @@ SHARED_LIB  := $(LIB_DIR)/lib$(LIB_NAME).so
 
 SRC_FILES   := $(shell find $(SRC_DIR) -name "*.c")
 MAIN_FILE   := main.c
-BENCH_FILES := benchmark_simd.c benchmark_compare.c benchmark_ivfpq.c benchmark_ivfpq_recall.c
+BENCH_FILES := benchmarks/benchmark_simd.c benchmarks/benchmark_compare.c benchmarks/benchmark_ivfpq.c benchmarks/benchmark_ivfpq_recall.c
 TEST_DIR    := tests
 
 PYTHON_DIR  := python
@@ -72,7 +72,7 @@ $(OBJ_DIR)/$(MAIN_FILE:.c=.o): $(MAIN_FILE)
 	$(CC) $(CFLAGS) -c $< -o $@
 	@echo "Compiled $< -> $@"
 
-$(BENCH_DIR)/benchmark_%: benchmark_%.c $(STATIC_LIB)
+$(BENCH_DIR)/benchmark_%: benchmarks/benchmark_%.c $(STATIC_LIB)
 	@mkdir -p $(BENCH_DIR)
 	$(CC) $(CFLAGS) $< -L$(LIB_DIR) -l$(LIB_NAME) $(LDFLAGS) -o $@
 	@echo "Built benchmark: $@"
