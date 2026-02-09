@@ -1105,6 +1105,389 @@ int gv_auth_generate_jwt(GV_AuthManager *auth, const char *subject, uint64_t exp
 const char *gv_auth_result_string(GV_AuthResult result);
 int gv_auth_sha256(const void *data, size_t len, unsigned char *hash_out);
 void gv_auth_to_hex(const unsigned char *hash, size_t hash_len, char *hex_out);
+
+// ============================================================================
+// Multi-Vector / Chunked Documents
+// ============================================================================
+typedef enum { GV_DOC_AGG_MAX_SIM = 0, GV_DOC_AGG_AVG_SIM = 1, GV_DOC_AGG_SUM_SIM = 2 } GV_DocAggregation;
+
+typedef struct {
+    size_t max_chunks_per_doc;
+    GV_DocAggregation aggregation;
+} GV_MultiVecConfig;
+
+typedef struct {
+    uint64_t doc_id;
+    float score;
+    size_t num_chunks;
+    size_t best_chunk_index;
+} GV_DocSearchResult;
+
+void *gv_multivec_create(size_t dimension, const GV_MultiVecConfig *config);
+void gv_multivec_destroy(void *index);
+int gv_multivec_add_document(void *index, uint64_t doc_id, const float *chunks, size_t num_chunks, size_t dimension);
+int gv_multivec_delete_document(void *index, uint64_t doc_id);
+int gv_multivec_search(void *index, const float *query, size_t k, GV_DocSearchResult *results, int distance_type);
+size_t gv_multivec_count_documents(const void *index);
+size_t gv_multivec_count_chunks(const void *index);
+
+// ============================================================================
+// Point-in-Time Snapshots
+// ============================================================================
+typedef struct {
+    uint64_t snapshot_id;
+    uint64_t timestamp_us;
+    size_t vector_count;
+    char label[64];
+} GV_SnapshotInfo;
+
+typedef struct GV_SnapshotManager GV_SnapshotManager;
+typedef struct GV_Snapshot GV_Snapshot;
+
+GV_SnapshotManager *gv_snapshot_manager_create(size_t max_snapshots);
+void gv_snapshot_manager_destroy(GV_SnapshotManager *mgr);
+uint64_t gv_snapshot_create(GV_SnapshotManager *mgr, size_t vector_count, const float *vector_data, size_t dimension, const char *label);
+GV_Snapshot *gv_snapshot_open(GV_SnapshotManager *mgr, uint64_t snapshot_id);
+void gv_snapshot_close(GV_Snapshot *snap);
+size_t gv_snapshot_count(const GV_Snapshot *snap);
+const float *gv_snapshot_get_vector(const GV_Snapshot *snap, size_t index);
+size_t gv_snapshot_dimension(const GV_Snapshot *snap);
+int gv_snapshot_list(const GV_SnapshotManager *mgr, GV_SnapshotInfo *infos, size_t max_infos);
+int gv_snapshot_delete(GV_SnapshotManager *mgr, uint64_t snapshot_id);
+
+// ============================================================================
+// MVCC Transactions
+// ============================================================================
+typedef enum { GV_TXN_ACTIVE = 0, GV_TXN_COMMITTED = 1, GV_TXN_ABORTED = 2 } GV_TxnStatus;
+
+typedef struct GV_MVCCManager GV_MVCCManager;
+typedef struct GV_Transaction GV_Transaction;
+
+typedef struct {
+    size_t vector_index;
+    uint64_t create_txn;
+    uint64_t delete_txn;
+    float *data;
+    size_t dimension;
+} GV_MVCCVersion;
+
+GV_MVCCManager *gv_mvcc_create(size_t dimension);
+void gv_mvcc_destroy(GV_MVCCManager *mgr);
+GV_Transaction *gv_txn_begin(GV_MVCCManager *mgr);
+int gv_txn_commit(GV_Transaction *txn);
+int gv_txn_rollback(GV_Transaction *txn);
+uint64_t gv_txn_id(const GV_Transaction *txn);
+GV_TxnStatus gv_txn_status(const GV_Transaction *txn);
+int gv_txn_add_vector(GV_Transaction *txn, const float *data, size_t dimension);
+int gv_txn_delete_vector(GV_Transaction *txn, size_t vector_index);
+int gv_txn_get_vector(const GV_Transaction *txn, size_t vector_index, float *out);
+size_t gv_txn_count(const GV_Transaction *txn);
+int gv_mvcc_gc(GV_MVCCManager *mgr);
+size_t gv_mvcc_version_count(const GV_MVCCManager *mgr);
+size_t gv_mvcc_active_txn_count(const GV_MVCCManager *mgr);
+
+// ============================================================================
+// Query Optimizer
+// ============================================================================
+typedef enum { GV_PLAN_EXACT_SCAN = 0, GV_PLAN_INDEX_SEARCH = 1, GV_PLAN_OVERSAMPLE_FILTER = 2 } GV_PlanStrategy;
+
+typedef struct {
+    GV_PlanStrategy strategy;
+    size_t ef_search;
+    size_t nprobe;
+    size_t rerank_top;
+    double estimated_cost;
+    double estimated_recall;
+    int use_metadata_index;
+    size_t oversample_k;
+    char explanation[256];
+} GV_QueryPlan;
+
+typedef struct {
+    size_t total_vectors;
+    size_t dimension;
+    int index_type;
+    double deleted_ratio;
+    double avg_vectors_per_filter_match;
+    size_t last_search_latency_us;
+} GV_CollectionStats;
+
+typedef struct GV_QueryOptimizer GV_QueryOptimizer;
+
+GV_QueryOptimizer *gv_optimizer_create(void);
+void gv_optimizer_destroy(GV_QueryOptimizer *opt);
+void gv_optimizer_update_stats(GV_QueryOptimizer *opt, const GV_CollectionStats *stats);
+int gv_optimizer_plan(const GV_QueryOptimizer *opt, size_t k, int has_filter, double filter_selectivity, GV_QueryPlan *plan);
+void gv_optimizer_record_result(GV_QueryOptimizer *opt, const GV_QueryPlan *plan, uint64_t actual_latency_us, double actual_recall);
+size_t gv_optimizer_recommend_ef_search(const GV_QueryOptimizer *opt, size_t k);
+size_t gv_optimizer_recommend_nprobe(const GV_QueryOptimizer *opt, size_t k);
+
+// ============================================================================
+// Payload Indexing
+// ============================================================================
+typedef enum { GV_FIELD_INT = 0, GV_FIELD_FLOAT = 1, GV_FIELD_STRING = 2, GV_FIELD_BOOL = 3 } GV_FieldType;
+typedef enum { GV_PAYLOAD_OP_EQ = 0, GV_PAYLOAD_OP_NE = 1, GV_PAYLOAD_OP_GT = 2, GV_PAYLOAD_OP_GE = 3, GV_PAYLOAD_OP_LT = 4, GV_PAYLOAD_OP_LE = 5, GV_PAYLOAD_OP_CONTAINS = 6, GV_PAYLOAD_OP_PREFIX = 7 } GV_PayloadOp;
+
+typedef struct {
+    const char *field_name;
+    GV_PayloadOp op;
+    int64_t int_val;
+    double float_val;
+    const char *string_val;
+    int bool_val;
+    GV_FieldType field_type;
+} GV_PayloadQuery;
+
+typedef struct GV_PayloadIndex GV_PayloadIndex;
+
+GV_PayloadIndex *gv_payload_index_create(void);
+void gv_payload_index_destroy(GV_PayloadIndex *idx);
+int gv_payload_index_add_field(GV_PayloadIndex *idx, const char *name, GV_FieldType type);
+int gv_payload_index_remove_field(GV_PayloadIndex *idx, const char *name);
+int gv_payload_index_field_count(const GV_PayloadIndex *idx);
+int gv_payload_index_insert_int(GV_PayloadIndex *idx, size_t vector_id, const char *field, int64_t value);
+int gv_payload_index_insert_float(GV_PayloadIndex *idx, size_t vector_id, const char *field, double value);
+int gv_payload_index_insert_string(GV_PayloadIndex *idx, size_t vector_id, const char *field, const char *value);
+int gv_payload_index_insert_bool(GV_PayloadIndex *idx, size_t vector_id, const char *field, int value);
+int gv_payload_index_remove(GV_PayloadIndex *idx, size_t vector_id);
+int gv_payload_index_query(const GV_PayloadIndex *idx, const GV_PayloadQuery *query, size_t *result_ids, size_t max_results);
+int gv_payload_index_query_multi(const GV_PayloadIndex *idx, const GV_PayloadQuery *queries, size_t query_count, size_t *result_ids, size_t max_results);
+size_t gv_payload_index_total_entries(const GV_PayloadIndex *idx);
+
+// ============================================================================
+// Vector Deduplication
+// ============================================================================
+typedef struct {
+    float epsilon;
+    size_t num_hash_tables;
+    size_t hash_bits;
+    uint64_t seed;
+} GV_DedupConfig;
+
+typedef struct {
+    size_t original_index;
+    size_t duplicate_index;
+    float distance;
+} GV_DedupResult;
+
+typedef struct GV_DedupIndex GV_DedupIndex;
+
+GV_DedupIndex *gv_dedup_create(size_t dimension, const GV_DedupConfig *config);
+void gv_dedup_destroy(GV_DedupIndex *dedup);
+int gv_dedup_check(GV_DedupIndex *dedup, const float *data, size_t dimension);
+int gv_dedup_insert(GV_DedupIndex *dedup, const float *data, size_t dimension);
+int gv_dedup_scan(GV_DedupIndex *dedup, GV_DedupResult *results, size_t max_results);
+size_t gv_dedup_count(const GV_DedupIndex *dedup);
+void gv_dedup_clear(GV_DedupIndex *dedup);
+
+// ============================================================================
+// Auto Index Migration
+// ============================================================================
+typedef enum { GV_MIGRATION_PENDING = 0, GV_MIGRATION_RUNNING = 1, GV_MIGRATION_COMPLETED = 2, GV_MIGRATION_FAILED = 3, GV_MIGRATION_CANCELLED = 4 } GV_MigrationStatus;
+
+typedef struct {
+    GV_MigrationStatus status;
+    double progress;
+    size_t vectors_migrated;
+    size_t total_vectors;
+    uint64_t start_time_us;
+    uint64_t elapsed_us;
+    char error_message[256];
+} GV_MigrationInfo;
+
+typedef struct GV_Migration GV_Migration;
+
+GV_Migration *gv_migration_start(const float *source_data, size_t count, size_t dimension, int new_index_type, const void *new_index_config);
+int gv_migration_get_info(const GV_Migration *mig, GV_MigrationInfo *info);
+int gv_migration_wait(GV_Migration *mig);
+int gv_migration_cancel(GV_Migration *mig);
+void *gv_migration_take_index(GV_Migration *mig);
+void gv_migration_destroy(GV_Migration *mig);
+
+// ============================================================================
+// Collection Versioning
+// ============================================================================
+typedef struct {
+    uint64_t version_id;
+    uint64_t timestamp_us;
+    size_t vector_count;
+    size_t dimension;
+    char label[128];
+    size_t data_size_bytes;
+} GV_VersionInfo;
+
+typedef struct GV_VersionManager GV_VersionManager;
+
+GV_VersionManager *gv_version_manager_create(size_t max_versions);
+void gv_version_manager_destroy(GV_VersionManager *mgr);
+uint64_t gv_version_create(GV_VersionManager *mgr, const float *data, size_t count, size_t dimension, const char *label);
+int gv_version_list(const GV_VersionManager *mgr, GV_VersionInfo *infos, size_t max_infos);
+int gv_version_count(const GV_VersionManager *mgr);
+int gv_version_get_info(const GV_VersionManager *mgr, uint64_t version_id, GV_VersionInfo *info);
+float *gv_version_get_data(const GV_VersionManager *mgr, uint64_t version_id, size_t *count_out, size_t *dimension_out);
+int gv_version_delete(GV_VersionManager *mgr, uint64_t version_id);
+int gv_version_compare(const GV_VersionManager *mgr, uint64_t v1, uint64_t v2, size_t *added, size_t *removed, size_t *modified);
+
+// ============================================================================
+// Read Replica Load Balancing
+// ============================================================================
+typedef enum { GV_READ_LEADER_ONLY = 0, GV_READ_ROUND_ROBIN = 1, GV_READ_LEAST_LAG = 2, GV_READ_RANDOM = 3 } GV_ReadPolicy;
+
+int gv_replication_set_read_policy(GV_ReplicationManager *mgr, GV_ReadPolicy policy);
+GV_ReadPolicy gv_replication_get_read_policy(GV_ReplicationManager *mgr);
+GV_Database *gv_replication_route_read(GV_ReplicationManager *mgr);
+int gv_replication_set_max_read_lag(GV_ReplicationManager *mgr, uint64_t max_lag);
+int gv_replication_register_follower_db(GV_ReplicationManager *mgr, const char *node_id, GV_Database *db);
+
+// ============================================================================
+// Bloom Filter
+// ============================================================================
+typedef struct GV_BloomFilter GV_BloomFilter;
+
+GV_BloomFilter *gv_bloom_create(size_t expected_items, double fp_rate);
+void gv_bloom_destroy(GV_BloomFilter *bf);
+int gv_bloom_add(GV_BloomFilter *bf, const void *data, size_t len);
+int gv_bloom_add_string(GV_BloomFilter *bf, const char *str);
+int gv_bloom_check(const GV_BloomFilter *bf, const void *data, size_t len);
+int gv_bloom_check_string(const GV_BloomFilter *bf, const char *str);
+size_t gv_bloom_count(const GV_BloomFilter *bf);
+double gv_bloom_fp_rate(const GV_BloomFilter *bf);
+void gv_bloom_clear(GV_BloomFilter *bf);
+
+// ============================================================================
+// Query Tracing
+// ============================================================================
+typedef struct {
+    const char *name;
+    uint64_t start_us;
+    uint64_t duration_us;
+    const char *metadata;
+} GV_TraceSpan;
+
+typedef struct {
+    uint64_t trace_id;
+    uint64_t total_duration_us;
+    GV_TraceSpan *spans;
+    size_t span_count;
+    size_t span_capacity;
+    int active;
+} GV_QueryTrace;
+
+GV_QueryTrace *gv_trace_begin(void);
+void gv_trace_end(GV_QueryTrace *trace);
+void gv_trace_destroy(GV_QueryTrace *trace);
+void gv_trace_span_start(GV_QueryTrace *trace, const char *name);
+void gv_trace_span_end(GV_QueryTrace *trace);
+void gv_trace_span_add(GV_QueryTrace *trace, const char *name, uint64_t duration_us);
+void gv_trace_set_metadata(GV_QueryTrace *trace, const char *metadata);
+char *gv_trace_to_json(const GV_QueryTrace *trace);
+uint64_t gv_trace_get_time_us(void);
+
+// ============================================================================
+// Client-Side Caching
+// ============================================================================
+typedef enum { GV_CACHE_LRU = 0, GV_CACHE_LFU = 1 } GV_CachePolicy;
+
+typedef struct {
+    size_t max_entries;
+    size_t max_memory_bytes;
+    uint32_t ttl_seconds;
+    uint64_t invalidate_after_mutations;
+    GV_CachePolicy policy;
+} GV_CacheConfig;
+
+typedef struct {
+    uint64_t hits;
+    uint64_t misses;
+    uint64_t evictions;
+    uint64_t invalidations;
+    size_t current_entries;
+    size_t current_memory;
+    double hit_rate;
+} GV_CacheStats;
+
+typedef struct {
+    size_t *indices;
+    float *distances;
+    size_t count;
+} GV_CachedResult;
+
+typedef struct GV_Cache GV_Cache;
+
+void gv_cache_config_init(GV_CacheConfig *config);
+GV_Cache *gv_cache_create(const GV_CacheConfig *config);
+void gv_cache_destroy(GV_Cache *cache);
+int gv_cache_lookup(GV_Cache *cache, const float *query_data, size_t dimension, size_t k, int distance_type, GV_CachedResult *result);
+int gv_cache_store(GV_Cache *cache, const float *query_data, size_t dimension, size_t k, int distance_type, const size_t *indices, const float *distances, size_t count);
+void gv_cache_notify_mutation(GV_Cache *cache);
+void gv_cache_invalidate_all(GV_Cache *cache);
+void gv_cache_free_result(GV_CachedResult *result);
+int gv_cache_get_stats(const GV_Cache *cache, GV_CacheStats *stats);
+void gv_cache_reset_stats(GV_Cache *cache);
+
+// ============================================================================
+// Schema Evolution
+// ============================================================================
+typedef enum { GV_SCHEMA_STRING = 0, GV_SCHEMA_INT = 1, GV_SCHEMA_FLOAT = 2, GV_SCHEMA_BOOL = 3 } GV_SchemaFieldType;
+
+typedef struct {
+    char name[64];
+    GV_SchemaFieldType type;
+    int required;
+    char default_value[256];
+} GV_SchemaField;
+
+typedef struct {
+    uint32_t version;
+    GV_SchemaField *fields;
+    size_t field_count;
+    size_t field_capacity;
+} GV_Schema;
+
+typedef struct {
+    char name[64];
+    int added;
+    int removed;
+    int type_changed;
+    GV_SchemaFieldType old_type;
+    GV_SchemaFieldType new_type;
+} GV_SchemaDiff;
+
+GV_Schema *gv_schema_create(uint32_t version);
+void gv_schema_destroy(GV_Schema *schema);
+GV_Schema *gv_schema_copy(const GV_Schema *schema);
+int gv_schema_add_field(GV_Schema *schema, const char *name, GV_SchemaFieldType type, int required, const char *default_value);
+int gv_schema_remove_field(GV_Schema *schema, const char *name);
+int gv_schema_has_field(const GV_Schema *schema, const char *name);
+const GV_SchemaField *gv_schema_get_field(const GV_Schema *schema, const char *name);
+size_t gv_schema_field_count(const GV_Schema *schema);
+int gv_schema_validate(const GV_Schema *schema, const char *const *keys, const char *const *values, size_t count);
+int gv_schema_diff(const GV_Schema *old_schema, const GV_Schema *new_schema, GV_SchemaDiff *diffs, size_t max_diffs);
+int gv_schema_is_compatible(const GV_Schema *old_schema, const GV_Schema *new_schema);
+char *gv_schema_to_json(const GV_Schema *schema);
+
+// ============================================================================
+// Codebook Sharing
+// ============================================================================
+typedef struct {
+    size_t dimension;
+    size_t m;
+    size_t ksub;
+    uint8_t nbits;
+    size_t dsub;
+    float *centroids;
+    int trained;
+} GV_Codebook;
+
+GV_Codebook *gv_codebook_create(size_t dimension, size_t m, uint8_t nbits);
+void gv_codebook_destroy(GV_Codebook *cb);
+int gv_codebook_train(GV_Codebook *cb, const float *data, size_t count, size_t train_iters);
+int gv_codebook_encode(const GV_Codebook *cb, const float *vector, uint8_t *codes);
+int gv_codebook_decode(const GV_Codebook *cb, const uint8_t *codes, float *output);
+float gv_codebook_distance_adc(const GV_Codebook *cb, const float *query, const uint8_t *codes);
+int gv_codebook_save(const GV_Codebook *cb, const char *filepath);
+GV_Codebook *gv_codebook_load(const char *filepath);
+GV_Codebook *gv_codebook_copy(const GV_Codebook *cb);
 """
 )
 

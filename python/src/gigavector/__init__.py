@@ -137,6 +137,57 @@ from ._core import (
     AuthType,
     Identity,
     JWTConfig,
+    # Multi-vector documents
+    DocAggregation,
+    DocSearchResult,
+    MultiVecConfig,
+    MultiVecIndex,
+    # Snapshots
+    SnapshotInfo,
+    SnapshotManager,
+    # MVCC Transactions
+    MVCCManager,
+    Transaction,
+    TxnStatus,
+    # Query Optimizer
+    CollectionStats,
+    PlanStrategy,
+    QueryOptimizer,
+    QueryPlan,
+    # Payload Indexing
+    FieldType,
+    PayloadIndex,
+    PayloadOp,
+    # Vector Deduplication
+    DedupConfig,
+    DedupIndex,
+    DedupResult,
+    # Index Migration
+    Migration,
+    MigrationInfo,
+    MigrationStatus,
+    # Collection Versioning
+    VersionInfo,
+    VersionManager,
+    # Read Replica Load Balancing
+    ReadPolicy,
+    # Bloom Filter
+    BloomFilter,
+    # Query Tracing
+    QueryTrace,
+    TraceSpan,
+    # Client-Side Caching
+    Cache,
+    CacheConfig,
+    CachePolicy,
+    CacheStats,
+    # Schema Evolution
+    Schema,
+    SchemaDiff,
+    SchemaField,
+    SchemaFieldType,
+    # Codebook Sharing
+    Codebook,
 )
 
 __all__ = [
@@ -258,6 +309,57 @@ __all__ = [
     "AuthType",
     "Identity",
     "JWTConfig",
+    # Multi-vector documents
+    "DocAggregation",
+    "DocSearchResult",
+    "MultiVecConfig",
+    "MultiVecIndex",
+    # Snapshots
+    "SnapshotInfo",
+    "SnapshotManager",
+    # MVCC Transactions
+    "MVCCManager",
+    "Transaction",
+    "TxnStatus",
+    # Query Optimizer
+    "CollectionStats",
+    "PlanStrategy",
+    "QueryOptimizer",
+    "QueryPlan",
+    # Payload Indexing
+    "FieldType",
+    "PayloadIndex",
+    "PayloadOp",
+    # Vector Deduplication
+    "DedupConfig",
+    "DedupIndex",
+    "DedupResult",
+    # Index Migration
+    "Migration",
+    "MigrationInfo",
+    "MigrationStatus",
+    # Collection Versioning
+    "VersionInfo",
+    "VersionManager",
+    # Read Replica Load Balancing
+    "ReadPolicy",
+    # Bloom Filter
+    "BloomFilter",
+    # Query Tracing
+    "QueryTrace",
+    "TraceSpan",
+    # Client-Side Caching
+    "Cache",
+    "CacheConfig",
+    "CachePolicy",
+    "CacheStats",
+    # Schema Evolution
+    "Schema",
+    "SchemaDiff",
+    "SchemaField",
+    "SchemaFieldType",
+    # Codebook Sharing
+    "Codebook",
 ]
 
 __version__ = "0.8.0"
