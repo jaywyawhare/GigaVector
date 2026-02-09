@@ -16,7 +16,8 @@ typedef enum {
     GV_DISTANCE_EUCLIDEAN = 0,
     GV_DISTANCE_COSINE = 1,
     GV_DISTANCE_DOT_PRODUCT = 2,
-    GV_DISTANCE_MANHATTAN = 3
+    GV_DISTANCE_MANHATTAN = 3,
+    GV_DISTANCE_HAMMING = 4
 } GV_DistanceType;
 
 /**
@@ -60,6 +61,18 @@ float gv_distance_dot_product(const GV_Vector *a, const GV_Vector *b);
  * @return Manhattan distance (non-negative), or -1.0f on invalid arguments.
  */
 float gv_distance_manhattan(const GV_Vector *a, const GV_Vector *b);
+
+/**
+ * @brief Calculate Hamming distance between two vectors.
+ *
+ * Treats each float component as a binary value (> 0.0 = 1, <= 0.0 = 0)
+ * and counts the number of positions where the binary values differ.
+ *
+ * @param a First vector; must be non-NULL with matching dimension.
+ * @param b Second vector; must be non-NULL with matching dimension.
+ * @return Hamming distance (non-negative integer as float), or -1.0f on invalid arguments.
+ */
+float gv_distance_hamming(const GV_Vector *a, const GV_Vector *b);
 
 /**
  * @brief Calculate distance using the specified metric type.

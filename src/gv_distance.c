@@ -451,6 +451,23 @@ float gv_distance_dot_product(const GV_Vector *a, const GV_Vector *b) {
     return -dot;
 }
 
+float gv_distance_hamming(const GV_Vector *a, const GV_Vector *b) {
+    if (a == NULL || b == NULL || a->data == NULL || b->data == NULL) {
+        return -1.0f;
+    }
+    if (a->dimension != b->dimension || a->dimension == 0) {
+        return -1.0f;
+    }
+
+    float count = 0.0f;
+    for (size_t i = 0; i < a->dimension; i++) {
+        int bit_a = (a->data[i] > 0.0f) ? 1 : 0;
+        int bit_b = (b->data[i] > 0.0f) ? 1 : 0;
+        if (bit_a != bit_b) count += 1.0f;
+    }
+    return count;
+}
+
 float gv_distance(const GV_Vector *a, const GV_Vector *b, GV_DistanceType type) {
     if (a == NULL || b == NULL) {
         return -1.0f;
@@ -465,6 +482,8 @@ float gv_distance(const GV_Vector *a, const GV_Vector *b, GV_DistanceType type) 
             return gv_distance_dot_product(a, b);
         case GV_DISTANCE_MANHATTAN:
             return gv_distance_manhattan(a, b);
+        case GV_DISTANCE_HAMMING:
+            return gv_distance_hamming(a, b);
         default:
             return -1.0f;
     }
