@@ -10,7 +10,7 @@
   </a>
 </p>
 
-**GigaVector** is a high-performance, production-ready vector database library written in C with Python bindings. 40,000+ lines of C across 61 modules covering indexing, search, storage, networking, security, and AI integration.
+**GigaVector** is a high-performance, production-ready vector database library written in C with Python bindings. 54,000+ lines of C across 80 modules covering indexing, search, storage, networking, security, and AI integration.
 
 ---
 
@@ -40,6 +40,12 @@ Euclidean, Cosine, Dot Product, Manhattan, Hamming -- all with SIMD-optimized im
 - **Dynamic search params** -- per-query ef_search, nprobe, rerank tuning
 - **Hybrid search** -- combine vector similarity with BM25 full-text ranking (RRF, weighted, Borda fusion)
 - **Scroll/pagination** -- iterate over stored vectors with offset/limit
+- **Score threshold filtering** -- return only results above a distance/similarity cutoff
+- **Grouped search** -- group results by metadata field with per-group limits
+- **Geo-spatial filtering** -- radius and bounding-box queries on lat/lon fields
+- **Late interaction / ColBERT** -- multi-vector MaxSim scoring for token-level matching
+- **Recommendation API** -- positive/negative example-based recommendations with strategy selection
+- **Delete/update by filter** -- bulk delete, metadata update, and count by filter expression
 
 ### Storage and Persistence
 - **Write-Ahead Logging (WAL)** -- crash-safe durability with automatic replay
@@ -59,6 +65,10 @@ Euclidean, Cosine, Dot Product, Manhattan, Hamming -- all with SIMD-optimized im
 - **Vector deduplication** -- LSH-based near-duplicate detection
 - **BM25 full-text search** -- TF-IDF style keyword search on text fields
 - **TTL (Time-to-Live)** -- automatic expiry of vectors
+- **User-defined point IDs** -- string/UUID IDs with bidirectional mapping to internal indices
+- **Named vectors** -- multiple named vector fields per point with independent dimensions
+- **Collection aliases** -- create, swap, and manage aliases that point to collections
+- **Payload compression** -- zlib/LZ4/zstd compression for stored vector payloads
 
 ### Transactions and Concurrency
 - **MVCC transactions** -- snapshot isolation with begin/commit/rollback
@@ -73,20 +83,25 @@ Euclidean, Cosine, Dot Product, Manhattan, Hamming -- all with SIMD-optimized im
 
 ### Distributed Architecture
 - **HTTP REST server** -- embedded server with rate limiting, CORS, and API key auth
+- **gRPC API** -- binary protocol server with connection pooling and streaming support
+- **TLS/HTTPS** -- TLS 1.2/1.3 transport encryption with certificate management
 - **Sharding** -- hash/range-based data partitioning
 - **Replication** -- leader-follower with automatic failover and election
 - **Read replica load balancing** -- round-robin, least-lag, and random routing policies
 - **Cluster management** -- multi-node coordination
 - **Namespace / multi-tenancy** -- isolated collections within a single instance
+- **Configurable consistency** -- eventual, quorum, and strong consistency levels
+- **Tenant quotas** -- per-tenant limits on vector count, memory, and QPS
 
 ### Security
 - **Authentication** -- API key and JWT-based auth
-- **Authorization** -- role-based access control
+- **RBAC** -- fine-grained role-based access control with per-collection permissions
 - **Cryptographic primitives** -- SHA-256, HMAC for secure token handling
 
 ### AI Integration
 - **LLM support** -- OpenAI, Anthropic, Google Gemini (chat completions, streaming)
 - **Embedding services** -- OpenAI, Google, HuggingFace embedding APIs with caching
+- **Auto-embedding** -- server-side text-to-vector with configurable providers and batching
 - **Semantic memory layer** -- extract, store, consolidate memories from conversations
 - **Context graphs** -- entity-relationship extraction for context-aware retrieval
 - **Importance scoring** -- rank memories by relevance and recency
@@ -96,6 +111,9 @@ Euclidean, Cosine, Dot Product, Manhattan, Hamming -- all with SIMD-optimized im
 - **Query tracing** -- span-level timing for search pipeline profiling
 - **Bloom filter indexes** -- probabilistic skip indexes for fast set membership
 - **Index migration** -- background thread rebuilds index while old one continues serving
+- **DiskANN** -- on-disk approximate nearest neighbor index with Vamana graph
+- **Async vacuum** -- background compaction with configurable thresholds and scheduling
+- **Webhooks** -- event-driven notifications for insert/delete/update operations
 - **GPU acceleration** -- CUDA-based distance computation and batch search (optional)
 - **Database statistics** -- insert/query counts, latency tracking
 
@@ -261,6 +279,68 @@ with QueryTrace() as trace:
     trace.span_end()
 ```
 
+### New Features (v0.8)
+```python
+from gigavector import (
+    PointIDMap, NamedVectorStore, VectorFieldConfig,
+    GeoIndex, GeoPoint, GroupedSearch, GroupSearchConfig,
+    DiskANNIndex, DiskANNConfig, Recommender, RecommendConfig,
+    AliasManager, VacuumManager, ConsistencyLevel, ConsistencyManager,
+    search_with_threshold, delete_by_filter, count_by_filter,
+)
+
+# User-defined string/UUID point IDs
+id_map = PointIDMap()
+id_map["doc-abc-123"] = 0
+id_map["doc-def-456"] = 1
+print(id_map["doc-abc-123"])  # 0
+
+# Named vectors (multiple vector fields per point)
+store = NamedVectorStore()
+store.add_field(VectorFieldConfig(name="title", dimension=128))
+store.add_field(VectorFieldConfig(name="content", dimension=256))
+store.insert("title", 0, [0.1] * 128)
+store.insert("content", 0, [0.2] * 256)
+
+# Score threshold filtering
+results = search_with_threshold(db, [0.1]*128, k=10, threshold=0.5)
+
+# Delete/update by filter
+deleted = delete_by_filter(db, 'category == "old"')
+count = count_by_filter(db, 'status == "active"')
+
+# Geo-spatial search
+geo = GeoIndex()
+geo.add(0, GeoPoint(lat=40.7128, lon=-74.0060))
+nearby = geo.search_radius(GeoPoint(lat=40.71, lon=-74.01), radius_km=1.0, limit=10)
+
+# Grouped search
+gs = GroupedSearch(db)
+groups = gs.search([0.1]*128, group_by="category",
+                   config=GroupSearchConfig(group_size=3, num_groups=5))
+
+# DiskANN on-disk index
+disk_idx = DiskANNIndex(DiskANNConfig(dimension=128, max_degree=64, search_list_size=128))
+
+# Recommendation
+rec = Recommender(db)
+results = rec.recommend(positive_ids=[0, 1], negative_ids=[5],
+                        config=RecommendConfig(limit=10))
+
+# Collection aliases
+aliases = AliasManager()
+aliases.create("production", "vectors_v2")
+aliases.swap("production", "vectors_v3")
+
+# Vacuum / compaction
+vacuum = VacuumManager(db)
+vacuum.run()
+
+# Consistency levels
+cm = ConsistencyManager()
+cm.set_level(ConsistencyLevel.QUORUM)
+```
+
 ### JSON Import/Export
 ```python
 db.export_json("vectors.ndjson")
@@ -326,10 +406,10 @@ cp .env.example .env   # copy and edit with your keys
 
 ```
 GigaVector/
-├── include/gigavector/   # 61 public C headers
-├── src/                  # 41,000+ lines of C implementation
+├── include/gigavector/   # 81 public C headers
+├── src/                  # 54,000+ lines of C implementation
 ├── tests/                # 21 C test suites
-├── python/               # Python CFFI bindings (6,500+ lines)
+├── python/               # Python CFFI bindings (8,800+ lines)
 ├── benchmarks/           # SIMD and index benchmarks
 ├── docs/                 # Documentation
 └── scripts/              # Build and utility scripts
