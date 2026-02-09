@@ -10,6 +10,10 @@
 #include "gv_wal.h"
 #include "gv_hnsw.h"
 #include "gv_ivfpq.h"
+#include "gv_flat.h"
+#include "gv_ivfflat.h"
+#include "gv_pq.h"
+#include "gv_lsh.h"
 #include "gv_filter.h"
 #include "gv_sparse_index.h"
 #include "gv_sparse_vector.h"
@@ -24,10 +28,14 @@ extern "C" {
  * @brief Index type enumeration.
  */
 typedef enum {
-    GV_INDEX_TYPE_KDTREE = 0,
-    GV_INDEX_TYPE_HNSW = 1,
-    GV_INDEX_TYPE_IVFPQ = 2,
-    GV_INDEX_TYPE_SPARSE = 3
+    GV_INDEX_TYPE_KDTREE  = 0,
+    GV_INDEX_TYPE_HNSW    = 1,
+    GV_INDEX_TYPE_IVFPQ   = 2,
+    GV_INDEX_TYPE_SPARSE  = 3,
+    GV_INDEX_TYPE_FLAT    = 4,
+    GV_INDEX_TYPE_IVFFLAT = 5,
+    GV_INDEX_TYPE_PQ      = 6,
+    GV_INDEX_TYPE_LSH     = 7
 } GV_IndexType;
 
 /**
@@ -314,6 +322,64 @@ int gv_db_add_vector_with_metadata(GV_Database *db, const float *data, size_t di
  * @return 0 on success, -1 on invalid args or training failure.
  */
 int gv_db_ivfpq_train(GV_Database *db, const float *data, size_t count, size_t dimension);
+
+/**
+ * @brief Open an in-memory database with IVF-Flat configuration.
+ *
+ * @param filepath Optional file path string to associate with the database.
+ * @param dimension Expected dimensionality.
+ * @param index_type Must be GV_INDEX_TYPE_IVFFLAT for config to apply.
+ * @param config IVF-Flat configuration; NULL to use defaults.
+ * @return Allocated database instance or NULL on failure.
+ */
+GV_Database *gv_db_open_with_ivfflat_config(const char *filepath, size_t dimension,
+                                             GV_IndexType index_type, const GV_IVFFlatConfig *config);
+
+/**
+ * @brief Open an in-memory database with PQ configuration.
+ *
+ * @param filepath Optional file path string to associate with the database.
+ * @param dimension Expected dimensionality.
+ * @param index_type Must be GV_INDEX_TYPE_PQ for config to apply.
+ * @param config PQ configuration; NULL to use defaults.
+ * @return Allocated database instance or NULL on failure.
+ */
+GV_Database *gv_db_open_with_pq_config(const char *filepath, size_t dimension,
+                                        GV_IndexType index_type, const GV_PQConfig *config);
+
+/**
+ * @brief Open an in-memory database with LSH configuration.
+ *
+ * @param filepath Optional file path string to associate with the database.
+ * @param dimension Expected dimensionality.
+ * @param index_type Must be GV_INDEX_TYPE_LSH for config to apply.
+ * @param config LSH configuration; NULL to use defaults.
+ * @return Allocated database instance or NULL on failure.
+ */
+GV_Database *gv_db_open_with_lsh_config(const char *filepath, size_t dimension,
+                                         GV_IndexType index_type, const GV_LSHConfig *config);
+
+/**
+ * @brief Train IVF-Flat index with provided training data.
+ *
+ * @param db Database; must be IVF-Flat type.
+ * @param data Contiguous floats of size count * dimension.
+ * @param count Number of training vectors.
+ * @param dimension Vector dimension; must match db->dimension.
+ * @return 0 on success, -1 on error.
+ */
+int gv_db_ivfflat_train(GV_Database *db, const float *data, size_t count, size_t dimension);
+
+/**
+ * @brief Train PQ index with provided training data.
+ *
+ * @param db Database; must be PQ type.
+ * @param data Contiguous floats of size count * dimension.
+ * @param count Number of training vectors.
+ * @param dimension Vector dimension; must match db->dimension.
+ * @return 0 on success, -1 on error.
+ */
+int gv_db_pq_train(GV_Database *db, const float *data, size_t count, size_t dimension);
 
 /**
  * @brief Add a vector with multiple metadata entries to the database.
