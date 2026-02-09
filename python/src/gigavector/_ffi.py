@@ -1488,6 +1488,773 @@ float gv_codebook_distance_adc(const GV_Codebook *cb, const float *query, const 
 int gv_codebook_save(const GV_Codebook *cb, const char *filepath);
 GV_Codebook *gv_codebook_load(const char *filepath);
 GV_Codebook *gv_codebook_copy(const GV_Codebook *cb);
+
+/* --- Point IDs --- */
+
+typedef struct GV_PointIDMap GV_PointIDMap;
+
+GV_PointIDMap *gv_point_id_create(size_t initial_capacity);
+void gv_point_id_destroy(GV_PointIDMap *map);
+
+int gv_point_id_set(GV_PointIDMap *map, const char *string_id, size_t internal_index);
+int gv_point_id_get(const GV_PointIDMap *map, const char *string_id, size_t *out_index);
+int gv_point_id_remove(GV_PointIDMap *map, const char *string_id);
+int gv_point_id_has(const GV_PointIDMap *map, const char *string_id);
+
+const char *gv_point_id_reverse_lookup(const GV_PointIDMap *map, size_t internal_index);
+
+int gv_point_id_generate_uuid(char *buf, size_t buf_size);
+
+size_t gv_point_id_count(const GV_PointIDMap *map);
+
+int gv_point_id_iterate(const GV_PointIDMap *map, void *callback, void *ctx);
+
+int gv_point_id_save(const GV_PointIDMap *map, const char *filepath);
+GV_PointIDMap *gv_point_id_load(const char *filepath);
+
+/* --- TLS/HTTPS --- */
+
+typedef enum {
+    GV_TLS_1_2 = 0,
+    GV_TLS_1_3 = 1
+} GV_TLSVersion;
+
+typedef struct {
+    const char *cert_file;
+    const char *key_file;
+    const char *ca_file;
+    GV_TLSVersion min_version;
+    const char *cipher_list;
+    int verify_client;
+} GV_TLSConfig;
+
+typedef struct GV_TLSContext GV_TLSContext;
+
+void gv_tls_config_init(GV_TLSConfig *config);
+GV_TLSContext *gv_tls_create(const GV_TLSConfig *config);
+void gv_tls_destroy(GV_TLSContext *ctx);
+
+int gv_tls_is_available(void);
+const char *gv_tls_version_string(const GV_TLSContext *ctx);
+
+int gv_tls_accept(GV_TLSContext *ctx, int client_fd, void **tls_conn);
+int gv_tls_read(void *tls_conn, void *buf, size_t len);
+int gv_tls_write(void *tls_conn, const void *buf, size_t len);
+void gv_tls_close_conn(void *tls_conn);
+
+int gv_tls_get_peer_cn(void *tls_conn, char *buf, size_t buf_size);
+int gv_tls_cert_days_remaining(const GV_TLSContext *ctx);
+
+/* --- Score Threshold --- */
+
+typedef struct {
+    size_t index;
+    float distance;
+} GV_ThresholdResult;
+
+int gv_db_search_with_threshold(const void *db, const float *query_data, size_t k,
+                                 int distance_type, float score_threshold,
+                                 GV_ThresholdResult *results);
+
+size_t gv_threshold_filter(GV_ThresholdResult *results, size_t count,
+                            float threshold, int distance_type);
+
+int gv_threshold_passes(float distance, float threshold, int distance_type);
+
+/* --- Named Vectors --- */
+
+typedef struct GV_NamedVectorStore GV_NamedVectorStore;
+
+typedef struct {
+    const char *name;
+    size_t dimension;
+    int distance_type;
+} GV_VectorFieldConfig;
+
+typedef struct {
+    const char *field_name;
+    const float *data;
+    size_t dimension;
+} GV_NamedVector;
+
+typedef struct {
+    size_t point_index;
+    float distance;
+    const char *field_name;
+} GV_NamedSearchResult;
+
+GV_NamedVectorStore *gv_named_vectors_create(void);
+void gv_named_vectors_destroy(GV_NamedVectorStore *store);
+
+int gv_named_vectors_add_field(GV_NamedVectorStore *store, const GV_VectorFieldConfig *config);
+int gv_named_vectors_remove_field(GV_NamedVectorStore *store, const char *name);
+size_t gv_named_vectors_field_count(const GV_NamedVectorStore *store);
+int gv_named_vectors_get_field(const GV_NamedVectorStore *store, const char *name, GV_VectorFieldConfig *out);
+
+int gv_named_vectors_insert(GV_NamedVectorStore *store, size_t point_id,
+                             const GV_NamedVector *vectors, size_t vector_count);
+int gv_named_vectors_update(GV_NamedVectorStore *store, size_t point_id,
+                             const GV_NamedVector *vectors, size_t vector_count);
+int gv_named_vectors_delete(GV_NamedVectorStore *store, size_t point_id);
+
+int gv_named_vectors_search(const GV_NamedVectorStore *store, const char *field_name,
+                             const float *query, size_t k, GV_NamedSearchResult *results);
+
+const float *gv_named_vectors_get(const GV_NamedVectorStore *store, size_t point_id, const char *field_name);
+
+size_t gv_named_vectors_count(const GV_NamedVectorStore *store);
+
+int gv_named_vectors_save(const GV_NamedVectorStore *store, const char *filepath);
+GV_NamedVectorStore *gv_named_vectors_load(const char *filepath);
+
+/* --- Filter Ops --- */
+
+int gv_db_delete_by_filter(GV_Database *db, const char *filter_expr);
+
+int gv_db_update_by_filter(GV_Database *db, const char *filter_expr,
+                            const float *new_data, size_t dimension);
+
+int gv_db_update_metadata_by_filter(GV_Database *db, const char *filter_expr,
+                                     const char **metadata_keys,
+                                     const char **metadata_values,
+                                     size_t metadata_count);
+
+int gv_db_count_by_filter(const GV_Database *db, const char *filter_expr);
+
+int gv_db_find_by_filter(const GV_Database *db, const char *filter_expr,
+                          size_t *out_indices, size_t max_count);
+
+/* --- gRPC Binary Protocol --- */
+
+typedef enum {
+    GV_GRPC_OK = 0,
+    GV_GRPC_ERROR_NULL = -1,
+    GV_GRPC_ERROR_CONFIG = -2,
+    GV_GRPC_ERROR_RUNNING = -3,
+    GV_GRPC_ERROR_NOT_RUNNING = -4,
+    GV_GRPC_ERROR_START = -5,
+    GV_GRPC_ERROR_MEMORY = -6,
+    GV_GRPC_ERROR_BIND = -7
+} GV_GrpcError;
+
+typedef enum {
+    GV_MSG_ADD_VECTOR = 1,
+    GV_MSG_SEARCH = 2,
+    GV_MSG_DELETE = 3,
+    GV_MSG_UPDATE = 4,
+    GV_MSG_GET = 5,
+    GV_MSG_BATCH_ADD = 6,
+    GV_MSG_BATCH_SEARCH = 7,
+    GV_MSG_STATS = 8,
+    GV_MSG_HEALTH = 9,
+    GV_MSG_SAVE = 10,
+    GV_MSG_RESPONSE = 128
+} GV_GrpcMsgType;
+
+typedef struct {
+    uint16_t port;
+    const char *bind_address;
+    size_t max_connections;
+    size_t max_message_bytes;
+    size_t thread_pool_size;
+    int enable_compression;
+} GV_GrpcConfig;
+
+typedef struct {
+    uint32_t length;
+    uint8_t msg_type;
+    uint32_t request_id;
+    uint8_t *payload;
+    size_t payload_len;
+} GV_GrpcMessage;
+
+typedef struct {
+    uint64_t total_requests;
+    uint64_t active_connections;
+    uint64_t bytes_sent;
+    uint64_t bytes_received;
+    uint64_t errors;
+    double avg_latency_us;
+} GV_GrpcStats;
+
+typedef struct GV_GrpcServer GV_GrpcServer;
+
+void gv_grpc_config_init(GV_GrpcConfig *config);
+GV_GrpcServer *gv_grpc_create(GV_Database *db, const GV_GrpcConfig *config);
+int gv_grpc_start(GV_GrpcServer *server);
+int gv_grpc_stop(GV_GrpcServer *server);
+void gv_grpc_destroy(GV_GrpcServer *server);
+int gv_grpc_is_running(const GV_GrpcServer *server);
+
+int gv_grpc_get_stats(const GV_GrpcServer *server, GV_GrpcStats *stats);
+const char *gv_grpc_error_string(int error);
+
+int gv_grpc_encode_search_request(const float *query, size_t dimension, size_t k,
+                                   int distance_type, uint8_t *buf, size_t buf_size, size_t *out_len);
+int gv_grpc_decode_search_request(const uint8_t *buf, size_t len,
+                                   float **query, size_t *dimension, size_t *k, int *distance_type);
+int gv_grpc_encode_add_request(const float *data, size_t dimension,
+                                uint8_t *buf, size_t buf_size, size_t *out_len);
+
+/* --- Auto Embed --- */
+
+typedef enum {
+    GV_EMBED_PROVIDER_OPENAI = 0,
+    GV_EMBED_PROVIDER_GOOGLE = 1,
+    GV_EMBED_PROVIDER_HUGGINGFACE = 2,
+    GV_EMBED_PROVIDER_CUSTOM = 3
+} GV_AutoEmbedProvider;
+
+typedef struct {
+    GV_AutoEmbedProvider provider;
+    const char *api_key;
+    const char *model_name;
+    const char *base_url;
+    size_t dimension;
+    int cache_embeddings;
+    size_t max_cache_entries;
+    size_t max_text_length;
+    int batch_size;
+} GV_AutoEmbedConfig;
+
+typedef struct GV_AutoEmbedder GV_AutoEmbedder;
+
+typedef struct {
+    uint64_t total_embeddings;
+    uint64_t cache_hits;
+    uint64_t cache_misses;
+    uint64_t api_calls;
+    uint64_t api_errors;
+    double avg_latency_ms;
+} GV_AutoEmbedStats;
+
+void gv_auto_embed_config_init(GV_AutoEmbedConfig *config);
+GV_AutoEmbedder *gv_auto_embed_create(const GV_AutoEmbedConfig *config);
+void gv_auto_embed_destroy(GV_AutoEmbedder *embedder);
+
+int gv_auto_embed_add_text(GV_AutoEmbedder *embedder, GV_Database *db,
+                            const char *text, const char *metadata_key, const char *metadata_value);
+
+int gv_auto_embed_search_text(GV_AutoEmbedder *embedder, const GV_Database *db,
+                               const char *text, size_t k, int distance_type,
+                               size_t *out_indices, float *out_distances, size_t *out_count);
+
+int gv_auto_embed_add_texts(GV_AutoEmbedder *embedder, GV_Database *db,
+                             const char **texts, size_t count,
+                             const char **metadata_keys, const char **metadata_values);
+
+float *gv_auto_embed_text(GV_AutoEmbedder *embedder, const char *text, size_t *out_dimension);
+
+int gv_auto_embed_get_stats(const GV_AutoEmbedder *embedder, GV_AutoEmbedStats *stats);
+void gv_auto_embed_clear_cache(GV_AutoEmbedder *embedder);
+
+/* --- DiskANN On-Disk Index --- */
+
+typedef struct {
+    size_t max_degree;
+    float alpha;
+    size_t build_beam_width;
+    size_t search_beam_width;
+    size_t pq_dim;
+    const char *data_path;
+    size_t cache_size_mb;
+    size_t sector_size;
+} GV_DiskANNConfig;
+
+typedef struct GV_DiskANNIndex GV_DiskANNIndex;
+
+typedef struct {
+    size_t index;
+    float distance;
+} GV_DiskANNResult;
+
+typedef struct {
+    size_t total_vectors;
+    size_t graph_edges;
+    size_t cache_hits;
+    size_t cache_misses;
+    size_t disk_reads;
+    double avg_search_latency_us;
+    size_t memory_usage_bytes;
+    size_t disk_usage_bytes;
+} GV_DiskANNStats;
+
+void gv_diskann_config_init(GV_DiskANNConfig *config);
+GV_DiskANNIndex *gv_diskann_create(size_t dimension, const GV_DiskANNConfig *config);
+void gv_diskann_destroy(GV_DiskANNIndex *index);
+
+int gv_diskann_build(GV_DiskANNIndex *index, const float *data, size_t count, size_t dimension);
+int gv_diskann_insert(GV_DiskANNIndex *index, const float *data, size_t dimension);
+
+int gv_diskann_search(const GV_DiskANNIndex *index, const float *query, size_t dimension,
+                       size_t k, GV_DiskANNResult *results);
+
+int gv_diskann_delete(GV_DiskANNIndex *index, size_t vector_index);
+
+int gv_diskann_get_stats(const GV_DiskANNIndex *index, GV_DiskANNStats *stats);
+
+int gv_diskann_save(const GV_DiskANNIndex *index, const char *filepath);
+GV_DiskANNIndex *gv_diskann_load(const char *filepath, const GV_DiskANNConfig *config);
+
+size_t gv_diskann_count(const GV_DiskANNIndex *index);
+
+/* --- Group Search --- */
+
+typedef struct {
+    size_t index;
+    float distance;
+} GV_GroupHit;
+
+typedef struct {
+    char *group_value;
+    GV_GroupHit *hits;
+    size_t hit_count;
+} GV_SearchGroup;
+
+typedef struct {
+    GV_SearchGroup *groups;
+    size_t group_count;
+    size_t total_hits;
+} GV_GroupedResult;
+
+typedef struct {
+    const char *group_by;
+    size_t group_limit;
+    size_t hits_per_group;
+    int distance_type;
+    size_t oversample;
+} GV_GroupSearchConfig;
+
+void gv_group_search_config_init(GV_GroupSearchConfig *config);
+
+int gv_group_search(const GV_Database *db, const float *query, size_t dimension,
+                     const GV_GroupSearchConfig *config, GV_GroupedResult *result);
+
+void gv_group_search_free_result(GV_GroupedResult *result);
+
+/* --- Geo-Spatial Filtering --- */
+
+typedef struct { double lat; double lng; } GV_GeoPoint;
+typedef struct { GV_GeoPoint min; GV_GeoPoint max; } GV_GeoBBox;
+
+typedef struct GV_GeoIndex GV_GeoIndex;
+
+typedef struct {
+    size_t point_index;
+    double lat;
+    double lng;
+    double distance_km;
+} GV_GeoResult;
+
+GV_GeoIndex *gv_geo_create(void);
+void gv_geo_destroy(GV_GeoIndex *index);
+
+int gv_geo_insert(GV_GeoIndex *index, size_t point_index, double lat, double lng);
+int gv_geo_update(GV_GeoIndex *index, size_t point_index, double lat, double lng);
+int gv_geo_remove(GV_GeoIndex *index, size_t point_index);
+
+int gv_geo_radius_search(const GV_GeoIndex *index, double lat, double lng,
+                          double radius_km, GV_GeoResult *results, size_t max_results);
+
+int gv_geo_bbox_search(const GV_GeoIndex *index, const GV_GeoBBox *bbox,
+                        GV_GeoResult *results, size_t max_results);
+
+int gv_geo_get_candidates(const GV_GeoIndex *index, double lat, double lng,
+                           double radius_km, size_t *out_indices, size_t max_count);
+
+double gv_geo_distance_km(double lat1, double lng1, double lat2, double lng2);
+
+size_t gv_geo_count(const GV_GeoIndex *index);
+
+int gv_geo_save(const GV_GeoIndex *index, const char *filepath);
+GV_GeoIndex *gv_geo_load(const char *filepath);
+
+/* --- ColBERT Late Interaction (MaxSim) --- */
+
+typedef struct GV_LateInteractionIndex GV_LateInteractionIndex;
+
+typedef struct {
+    size_t token_dimension;
+    size_t max_doc_tokens;
+    size_t max_query_tokens;
+    size_t candidate_pool;
+} GV_LateInteractionConfig;
+
+typedef struct {
+    size_t doc_index;
+    float score;
+} GV_LateInteractionResult;
+
+typedef struct {
+    size_t total_documents;
+    size_t total_tokens_stored;
+    size_t memory_bytes;
+} GV_LateInteractionStats;
+
+void gv_late_interaction_config_init(GV_LateInteractionConfig *config);
+GV_LateInteractionIndex *gv_late_interaction_create(const GV_LateInteractionConfig *config);
+void gv_late_interaction_destroy(GV_LateInteractionIndex *index);
+
+int gv_late_interaction_add_doc(GV_LateInteractionIndex *index,
+                                 const float *token_embeddings, size_t num_tokens);
+
+int gv_late_interaction_search(const GV_LateInteractionIndex *index,
+                                const float *query_tokens, size_t num_query_tokens,
+                                size_t k, GV_LateInteractionResult *results);
+
+int gv_late_interaction_delete(GV_LateInteractionIndex *index, size_t doc_index);
+
+int gv_late_interaction_get_stats(const GV_LateInteractionIndex *index, GV_LateInteractionStats *stats);
+size_t gv_late_interaction_count(const GV_LateInteractionIndex *index);
+
+int gv_late_interaction_save(const GV_LateInteractionIndex *index, const char *filepath);
+GV_LateInteractionIndex *gv_late_interaction_load(const char *filepath);
+
+/* --- Recommendation API --- */
+
+typedef struct {
+    float positive_weight;
+    float negative_weight;
+    int distance_type;
+    size_t oversample;
+    int exclude_input;
+} GV_RecommendConfig;
+
+typedef struct {
+    size_t index;
+    float score;
+} GV_RecommendResult;
+
+void gv_recommend_config_init(GV_RecommendConfig *config);
+
+int gv_recommend_by_id(const GV_Database *db,
+                        const size_t *positive_ids, size_t positive_count,
+                        const size_t *negative_ids, size_t negative_count,
+                        size_t k, const GV_RecommendConfig *config,
+                        GV_RecommendResult *results);
+
+int gv_recommend_by_vector(const GV_Database *db,
+                            const float *positive_vectors, size_t positive_count,
+                            const float *negative_vectors, size_t negative_count,
+                            size_t dimension, size_t k, const GV_RecommendConfig *config,
+                            GV_RecommendResult *results);
+
+int gv_recommend_discover(const GV_Database *db,
+                           const float *target, const float *context,
+                           size_t dimension, size_t k, const GV_RecommendConfig *config,
+                           GV_RecommendResult *results);
+
+/* --- Collection Aliases --- */
+
+typedef struct GV_AliasManager GV_AliasManager;
+
+typedef struct {
+    char *alias_name;
+    char *collection_name;
+    uint64_t created_at;
+    uint64_t updated_at;
+} GV_AliasInfo;
+
+GV_AliasManager *gv_alias_manager_create(void);
+void gv_alias_manager_destroy(GV_AliasManager *mgr);
+
+int gv_alias_create(GV_AliasManager *mgr, const char *alias_name, const char *collection_name);
+int gv_alias_update(GV_AliasManager *mgr, const char *alias_name, const char *new_collection_name);
+int gv_alias_delete(GV_AliasManager *mgr, const char *alias_name);
+int gv_alias_exists(const GV_AliasManager *mgr, const char *alias_name);
+
+int gv_alias_swap(GV_AliasManager *mgr, const char *alias_a, const char *alias_b);
+
+const char *gv_alias_resolve(const GV_AliasManager *mgr, const char *alias_name);
+
+int gv_alias_list(const GV_AliasManager *mgr, GV_AliasInfo **out_list, size_t *out_count);
+void gv_alias_free_list(GV_AliasInfo *list, size_t count);
+
+int gv_alias_get_info(const GV_AliasManager *mgr, const char *alias_name, GV_AliasInfo *info);
+
+size_t gv_alias_count(const GV_AliasManager *mgr);
+
+int gv_alias_save(const GV_AliasManager *mgr, const char *filepath);
+GV_AliasManager *gv_alias_load(const char *filepath);
+
+/* --- Async Vacuum --- */
+
+typedef enum {
+    GV_VACUUM_IDLE = 0,
+    GV_VACUUM_RUNNING = 1,
+    GV_VACUUM_COMPLETED = 2,
+    GV_VACUUM_FAILED = 3
+} GV_VacuumState;
+
+typedef struct {
+    size_t min_deleted_count;
+    double min_fragmentation_ratio;
+    size_t batch_size;
+    int priority;
+    size_t interval_sec;
+} GV_VacuumConfig;
+
+typedef struct {
+    GV_VacuumState state;
+    size_t vectors_compacted;
+    size_t bytes_reclaimed;
+    double fragmentation_before;
+    double fragmentation_after;
+    uint64_t started_at;
+    uint64_t completed_at;
+    uint64_t duration_ms;
+    size_t total_runs;
+} GV_VacuumStats;
+
+typedef struct GV_VacuumManager GV_VacuumManager;
+
+void gv_vacuum_config_init(GV_VacuumConfig *config);
+GV_VacuumManager *gv_vacuum_create(GV_Database *db, const GV_VacuumConfig *config);
+void gv_vacuum_destroy(GV_VacuumManager *mgr);
+
+int gv_vacuum_run(GV_VacuumManager *mgr);
+
+int gv_vacuum_start_auto(GV_VacuumManager *mgr);
+int gv_vacuum_stop_auto(GV_VacuumManager *mgr);
+
+double gv_vacuum_get_fragmentation(const GV_VacuumManager *mgr);
+
+int gv_vacuum_get_stats(const GV_VacuumManager *mgr, GV_VacuumStats *stats);
+GV_VacuumState gv_vacuum_get_state(const GV_VacuumManager *mgr);
+
+/* --- Consistency Levels --- */
+
+typedef enum {
+    GV_CONSISTENCY_STRONG = 0,
+    GV_CONSISTENCY_EVENTUAL = 1,
+    GV_CONSISTENCY_BOUNDED_STALENESS = 2,
+    GV_CONSISTENCY_SESSION = 3
+} GV_ConsistencyLevel;
+
+typedef struct {
+    GV_ConsistencyLevel level;
+    uint64_t max_staleness_ms;
+    uint64_t session_token;
+} GV_ConsistencyConfig;
+
+typedef struct GV_ConsistencyManager GV_ConsistencyManager;
+
+GV_ConsistencyManager *gv_consistency_create(GV_ConsistencyLevel default_level);
+void gv_consistency_destroy(GV_ConsistencyManager *mgr);
+
+int gv_consistency_set_default(GV_ConsistencyManager *mgr, GV_ConsistencyLevel level);
+GV_ConsistencyLevel gv_consistency_get_default(const GV_ConsistencyManager *mgr);
+
+int gv_consistency_check(const GV_ConsistencyManager *mgr, const GV_ConsistencyConfig *config,
+                          uint64_t replica_lag_ms, uint64_t replica_position);
+
+uint64_t gv_consistency_new_session(GV_ConsistencyManager *mgr);
+int gv_consistency_update_session(GV_ConsistencyManager *mgr, uint64_t session_token, uint64_t write_position);
+uint64_t gv_consistency_get_session_position(const GV_ConsistencyManager *mgr, uint64_t session_token);
+
+void gv_consistency_config_init(GV_ConsistencyConfig *config);
+GV_ConsistencyConfig gv_consistency_strong(void);
+GV_ConsistencyConfig gv_consistency_eventual(void);
+GV_ConsistencyConfig gv_consistency_bounded(uint64_t max_staleness_ms);
+GV_ConsistencyConfig gv_consistency_session(uint64_t token);
+
+/* --- Tenant Quotas --- */
+
+typedef struct {
+    size_t max_vectors;
+    size_t max_memory_bytes;
+    double max_qps;
+    double max_ips;
+    size_t max_storage_bytes;
+    size_t max_collections;
+} GV_QuotaConfig;
+
+typedef struct {
+    size_t current_vectors;
+    size_t current_memory_bytes;
+    double current_qps;
+    double current_ips;
+    size_t current_storage_bytes;
+    size_t current_collections;
+    uint64_t total_throttled;
+    uint64_t total_rejected;
+} GV_QuotaUsage;
+
+typedef enum {
+    GV_QUOTA_OK = 0,
+    GV_QUOTA_THROTTLED = 1,
+    GV_QUOTA_EXCEEDED = 2,
+    GV_QUOTA_ERROR = -1
+} GV_QuotaResult;
+
+typedef struct GV_QuotaManager GV_QuotaManager;
+
+GV_QuotaManager *gv_quota_create(void);
+void gv_quota_destroy(GV_QuotaManager *mgr);
+
+int gv_quota_set(GV_QuotaManager *mgr, const char *tenant_id, const GV_QuotaConfig *config);
+int gv_quota_get(const GV_QuotaManager *mgr, const char *tenant_id, GV_QuotaConfig *config);
+int gv_quota_remove(GV_QuotaManager *mgr, const char *tenant_id);
+
+GV_QuotaResult gv_quota_check_insert(GV_QuotaManager *mgr, const char *tenant_id, size_t vector_count);
+GV_QuotaResult gv_quota_check_query(GV_QuotaManager *mgr, const char *tenant_id);
+
+int gv_quota_record_insert(GV_QuotaManager *mgr, const char *tenant_id, size_t count, size_t bytes);
+int gv_quota_record_query(GV_QuotaManager *mgr, const char *tenant_id);
+int gv_quota_record_delete(GV_QuotaManager *mgr, const char *tenant_id, size_t count, size_t bytes);
+
+int gv_quota_get_usage(const GV_QuotaManager *mgr, const char *tenant_id, GV_QuotaUsage *usage);
+
+int gv_quota_reset_usage(GV_QuotaManager *mgr, const char *tenant_id);
+
+void gv_quota_config_init(GV_QuotaConfig *config);
+
+/* --- Payload Compression --- */
+
+typedef enum {
+    GV_COMPRESS_NONE = 0,
+    GV_COMPRESS_LZ4 = 1,
+    GV_COMPRESS_ZSTD = 2,
+    GV_COMPRESS_SNAPPY = 3
+} GV_CompressionType;
+
+typedef struct {
+    GV_CompressionType type;
+    int level;
+    size_t min_size;
+} GV_CompressionConfig;
+
+typedef struct {
+    uint64_t total_compressed;
+    uint64_t total_decompressed;
+    uint64_t bytes_in;
+    uint64_t bytes_out;
+    double avg_ratio;
+} GV_CompressionStats;
+
+typedef struct GV_Compressor GV_Compressor;
+
+void gv_compression_config_init(GV_CompressionConfig *config);
+GV_Compressor *gv_compression_create(const GV_CompressionConfig *config);
+void gv_compression_destroy(GV_Compressor *comp);
+
+size_t gv_compress(GV_Compressor *comp, const void *input, size_t input_len,
+                    void *output, size_t output_capacity);
+
+size_t gv_decompress(GV_Compressor *comp, const void *input, size_t input_len,
+                      void *output, size_t output_capacity);
+
+size_t gv_compress_bound(const GV_Compressor *comp, size_t input_len);
+
+int gv_compression_get_stats(const GV_Compressor *comp, GV_CompressionStats *stats);
+
+/* --- Webhooks / Change Streams --- */
+
+typedef enum {
+    GV_EVENT_INSERT = 1,
+    GV_EVENT_UPDATE = 2,
+    GV_EVENT_DELETE = 4,
+    GV_EVENT_ALL = 7
+} GV_EventType;
+
+typedef struct {
+    GV_EventType event_type;
+    size_t vector_index;
+    uint64_t timestamp;
+    const char *collection;
+} GV_Event;
+
+typedef struct {
+    char *url;
+    GV_EventType event_mask;
+    char *secret;
+    int max_retries;
+    int timeout_ms;
+    int active;
+} GV_WebhookConfig;
+
+typedef struct GV_WebhookManager GV_WebhookManager;
+
+GV_WebhookManager *gv_webhook_create(void);
+void gv_webhook_destroy(GV_WebhookManager *mgr);
+
+int gv_webhook_register(GV_WebhookManager *mgr, const char *webhook_id, const GV_WebhookConfig *config);
+int gv_webhook_unregister(GV_WebhookManager *mgr, const char *webhook_id);
+int gv_webhook_pause(GV_WebhookManager *mgr, const char *webhook_id);
+int gv_webhook_resume(GV_WebhookManager *mgr, const char *webhook_id);
+
+int gv_webhook_list(const GV_WebhookManager *mgr, char ***out_ids, size_t *out_count);
+void gv_webhook_free_list(char **ids, size_t count);
+
+int gv_webhook_fire(GV_WebhookManager *mgr, const GV_Event *event);
+
+int gv_webhook_subscribe(GV_WebhookManager *mgr, GV_EventType mask, void *cb, void *user_data);
+int gv_webhook_unsubscribe(GV_WebhookManager *mgr, void *cb);
+
+typedef struct {
+    uint64_t events_fired;
+    uint64_t webhooks_delivered;
+    uint64_t webhooks_failed;
+    uint64_t callbacks_invoked;
+} GV_WebhookStats;
+
+int gv_webhook_get_stats(const GV_WebhookManager *mgr, GV_WebhookStats *stats);
+
+/* --- RBAC Refinements --- */
+
+typedef enum {
+    GV_PERM_READ = 1,
+    GV_PERM_WRITE = 2,
+    GV_PERM_DELETE = 4,
+    GV_PERM_ADMIN = 8,
+    GV_PERM_ALL = 15
+} GV_Permission;
+
+typedef struct {
+    char *resource;
+    uint32_t permissions;
+} GV_RBACRule;
+
+typedef struct {
+    char *role_name;
+    GV_RBACRule *rules;
+    size_t rule_count;
+    int inherits_from;
+} GV_Role;
+
+typedef struct {
+    char *user_id;
+    char **role_names;
+    size_t role_count;
+} GV_UserRoles;
+
+typedef struct GV_RBACManager GV_RBACManager;
+
+GV_RBACManager *gv_rbac_create(void);
+void gv_rbac_destroy(GV_RBACManager *mgr);
+
+int gv_rbac_create_role(GV_RBACManager *mgr, const char *role_name);
+int gv_rbac_delete_role(GV_RBACManager *mgr, const char *role_name);
+int gv_rbac_add_rule(GV_RBACManager *mgr, const char *role_name,
+                      const char *resource, uint32_t permissions);
+int gv_rbac_remove_rule(GV_RBACManager *mgr, const char *role_name, const char *resource);
+int gv_rbac_set_inheritance(GV_RBACManager *mgr, const char *role_name, const char *parent_role);
+
+int gv_rbac_assign_role(GV_RBACManager *mgr, const char *user_id, const char *role_name);
+int gv_rbac_revoke_role(GV_RBACManager *mgr, const char *user_id, const char *role_name);
+int gv_rbac_get_user_roles(const GV_RBACManager *mgr, const char *user_id,
+                            char ***out_roles, size_t *out_count);
+
+int gv_rbac_check(const GV_RBACManager *mgr, const char *user_id,
+                   const char *resource, GV_Permission required);
+
+int gv_rbac_list_roles(const GV_RBACManager *mgr, char ***out_names, size_t *out_count);
+void gv_rbac_free_string_list(char **list, size_t count);
+
+int gv_rbac_init_defaults(GV_RBACManager *mgr);
+
+int gv_rbac_save(const GV_RBACManager *mgr, const char *filepath);
+GV_RBACManager *gv_rbac_load(const char *filepath);
 """
 )
 

@@ -188,6 +188,81 @@ from ._core import (
     SchemaFieldType,
     # Codebook Sharing
     Codebook,
+    # Point ID Mapping
+    PointIDMap,
+    # TLS/HTTPS
+    TLSConfig,
+    TLSContext,
+    TLSVersion,
+    # Score Threshold
+    ThresholdResult,
+    search_with_threshold,
+    # Named Vectors
+    NamedVectorStore,
+    VectorFieldConfig,
+    # Filter Operations
+    delete_by_filter,
+    update_metadata_by_filter,
+    count_by_filter,
+    # gRPC
+    GrpcConfig,
+    GrpcServer,
+    GrpcStats,
+    # Auto-Embedding
+    AutoEmbedConfig,
+    AutoEmbedder,
+    AutoEmbedProvider,
+    AutoEmbedStats,
+    # DiskANN
+    DiskANNConfig,
+    DiskANNIndex,
+    DiskANNStats,
+    # Grouped Search
+    GroupedSearch,
+    GroupHit,
+    GroupSearchConfig,
+    SearchGroup,
+    # Geo-Spatial
+    GeoIndex,
+    GeoPoint,
+    GeoResult,
+    # Late Interaction
+    LateInteractionConfig,
+    LateInteractionIndex,
+    LateInteractionResult,
+    # Recommendation
+    RecommendConfig,
+    RecommendResult,
+    Recommender,
+    # Aliases
+    AliasInfo,
+    AliasManager,
+    # Vacuum
+    VacuumConfig,
+    VacuumManager,
+    VacuumState,
+    VacuumStats,
+    # Consistency
+    ConsistencyLevel,
+    ConsistencyManager,
+    # Quotas
+    QuotaConfig,
+    QuotaManager,
+    QuotaResult,
+    QuotaUsage,
+    # Compression
+    CompressionConfig,
+    CompressionStats,
+    CompressionType,
+    Compressor,
+    # Webhooks
+    EventType,
+    WebhookConfig,
+    WebhookManager,
+    WebhookStats,
+    # RBAC
+    Permission,
+    RBACManager,
 )
 
 __all__ = [
@@ -360,6 +435,81 @@ __all__ = [
     "SchemaFieldType",
     # Codebook Sharing
     "Codebook",
+    # Point ID Mapping
+    "PointIDMap",
+    # TLS/HTTPS
+    "TLSConfig",
+    "TLSContext",
+    "TLSVersion",
+    # Score Threshold
+    "ThresholdResult",
+    "search_with_threshold",
+    # Named Vectors
+    "NamedVectorStore",
+    "VectorFieldConfig",
+    # Filter Operations
+    "delete_by_filter",
+    "update_metadata_by_filter",
+    "count_by_filter",
+    # gRPC
+    "GrpcConfig",
+    "GrpcServer",
+    "GrpcStats",
+    # Auto-Embedding
+    "AutoEmbedConfig",
+    "AutoEmbedder",
+    "AutoEmbedProvider",
+    "AutoEmbedStats",
+    # DiskANN
+    "DiskANNConfig",
+    "DiskANNIndex",
+    "DiskANNStats",
+    # Grouped Search
+    "GroupedSearch",
+    "GroupHit",
+    "GroupSearchConfig",
+    "SearchGroup",
+    # Geo-Spatial
+    "GeoIndex",
+    "GeoPoint",
+    "GeoResult",
+    # Late Interaction
+    "LateInteractionConfig",
+    "LateInteractionIndex",
+    "LateInteractionResult",
+    # Recommendation
+    "RecommendConfig",
+    "RecommendResult",
+    "Recommender",
+    # Aliases
+    "AliasInfo",
+    "AliasManager",
+    # Vacuum
+    "VacuumConfig",
+    "VacuumManager",
+    "VacuumState",
+    "VacuumStats",
+    # Consistency
+    "ConsistencyLevel",
+    "ConsistencyManager",
+    # Quotas
+    "QuotaConfig",
+    "QuotaManager",
+    "QuotaResult",
+    "QuotaUsage",
+    # Compression
+    "CompressionConfig",
+    "CompressionStats",
+    "CompressionType",
+    "Compressor",
+    # Webhooks
+    "EventType",
+    "WebhookConfig",
+    "WebhookManager",
+    "WebhookStats",
+    # RBAC
+    "Permission",
+    "RBACManager",
 ]
 
 __version__ = "0.8.0"
