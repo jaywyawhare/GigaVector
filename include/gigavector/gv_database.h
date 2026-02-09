@@ -830,6 +830,118 @@ size_t gv_database_dimension(const GV_Database *db);
  */
 const float *gv_database_get_vector(const GV_Database *db, size_t index);
 
+/**
+ * @brief Upsert a vector: update if index exists, insert if index == count.
+ *
+ * @param db Target database; must be non-NULL.
+ * @param vector_index Index to upsert at. If < count, updates. If == count, inserts.
+ * @param data Pointer to an array of @p dimension floats.
+ * @param dimension Number of components; must equal db->dimension.
+ * @return 0 on success, -1 on error.
+ */
+int gv_db_upsert(GV_Database *db, size_t vector_index, const float *data, size_t dimension);
+
+/**
+ * @brief Upsert a vector with metadata.
+ *
+ * @param db Target database; must be non-NULL.
+ * @param vector_index Index to upsert at.
+ * @param data Pointer to an array of @p dimension floats.
+ * @param dimension Number of components; must equal db->dimension.
+ * @param metadata_keys Array of metadata keys.
+ * @param metadata_values Array of metadata values.
+ * @param metadata_count Number of metadata entries.
+ * @return 0 on success, -1 on error.
+ */
+int gv_db_upsert_with_metadata(GV_Database *db, size_t vector_index,
+                                const float *data, size_t dimension,
+                                const char *const *metadata_keys,
+                                const char *const *metadata_values,
+                                size_t metadata_count);
+
+/**
+ * @brief Delete multiple vectors by their indices.
+ *
+ * @param db Target database; must be non-NULL.
+ * @param indices Array of vector indices to delete.
+ * @param count Number of indices.
+ * @return Number of vectors successfully deleted, or -1 on error.
+ */
+int gv_db_delete_vectors(GV_Database *db, const size_t *indices, size_t count);
+
+/**
+ * @brief Scroll result entry for pagination.
+ */
+typedef struct {
+    size_t index;              /**< Vector index in the database. */
+    const float *data;         /**< Pointer to vector data (valid until next DB mutation). */
+    size_t dimension;          /**< Vector dimension. */
+    GV_Metadata *metadata;     /**< Metadata linked list (caller must NOT free). */
+} GV_ScrollResult;
+
+/**
+ * @brief Scroll through vectors with offset-based pagination.
+ *
+ * Returns vectors starting from @p offset, up to @p limit entries.
+ * Deleted vectors are skipped.
+ *
+ * @param db Database to scroll; must be non-NULL.
+ * @param offset Starting position (0-based, counts non-deleted vectors).
+ * @param limit Maximum number of results to return.
+ * @param results Output array of at least @p limit elements.
+ * @return Number of results returned (0 to limit), or -1 on error.
+ */
+int gv_db_scroll(const GV_Database *db, size_t offset, size_t limit,
+                 GV_ScrollResult *results);
+
+/**
+ * @brief Search with per-query parameter overrides.
+ *
+ * Allows overriding HNSW ef_search or IVF nprobe at query time.
+ */
+typedef struct {
+    size_t ef_search;    /**< HNSW ef_search override (0 = use default). */
+    size_t nprobe;       /**< IVF nprobe override (0 = use default). */
+    size_t rerank_top;   /**< Number of PQ candidates to rerank with exact distance (0 = disable). */
+} GV_SearchParams;
+
+/**
+ * @brief Search with dynamic per-query parameters.
+ *
+ * @param db Database to search; must be non-NULL.
+ * @param query_data Query vector data array.
+ * @param k Number of nearest neighbors to find.
+ * @param results Output array of at least @p k elements.
+ * @param distance_type Distance metric to use.
+ * @param params Per-query parameter overrides; NULL to use defaults.
+ * @return Number of neighbors found (0 to k), or -1 on error.
+ */
+int gv_db_search_with_params(const GV_Database *db, const float *query_data, size_t k,
+                              GV_SearchResult *results, GV_DistanceType distance_type,
+                              const GV_SearchParams *params);
+
+/**
+ * @brief Export database vectors and metadata to NDJSON file.
+ *
+ * Each line is a JSON object: {"index":0,"vector":[1.0,2.0,...],"metadata":{"key":"val"}}
+ *
+ * @param db Database to export; must be non-NULL.
+ * @param filepath Output file path.
+ * @return Number of vectors exported, or -1 on error.
+ */
+int gv_db_export_json(const GV_Database *db, const char *filepath);
+
+/**
+ * @brief Import vectors and metadata from an NDJSON file.
+ *
+ * Each line must be a JSON object with "vector" array and optional "metadata" object.
+ *
+ * @param db Database to import into; must be non-NULL.
+ * @param filepath Input NDJSON file path.
+ * @return Number of vectors imported, or -1 on error.
+ */
+int gv_db_import_json(GV_Database *db, const char *filepath);
+
 #ifdef __cplusplus
 }
 #endif

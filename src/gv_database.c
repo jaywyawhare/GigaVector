@@ -4421,6 +4421,362 @@ int gv_db_health_check(const GV_Database *db) {
 }
 
 /* ============================================================================
+ * Upsert Operations
+ * ============================================================================ */
+
+int gv_db_upsert(GV_Database *db, size_t vector_index, const float *data, size_t dimension) {
+    if (db == NULL || data == NULL || dimension != db->dimension) {
+        return -1;
+    }
+
+    if (vector_index < db->count) {
+        /* Update existing vector */
+        return gv_db_update_vector(db, vector_index, data, dimension);
+    } else if (vector_index == db->count) {
+        /* Insert new vector at end */
+        return gv_db_add_vector(db, data, dimension);
+    }
+
+    return -1; /* Index out of range */
+}
+
+int gv_db_upsert_with_metadata(GV_Database *db, size_t vector_index,
+                                const float *data, size_t dimension,
+                                const char *const *metadata_keys,
+                                const char *const *metadata_values,
+                                size_t metadata_count) {
+    if (db == NULL || data == NULL || dimension != db->dimension) {
+        return -1;
+    }
+
+    if (vector_index < db->count) {
+        /* Update existing vector data */
+        int status = gv_db_update_vector(db, vector_index, data, dimension);
+        if (status != 0) return status;
+        /* Update metadata if provided */
+        if (metadata_keys && metadata_values && metadata_count > 0) {
+            return gv_db_update_vector_metadata(db, vector_index,
+                                                 metadata_keys, metadata_values,
+                                                 metadata_count);
+        }
+        return 0;
+    } else if (vector_index == db->count) {
+        /* Insert with metadata using rich metadata API */
+        return gv_db_add_vector_with_rich_metadata(db, data, dimension,
+                                                    metadata_keys, metadata_values,
+                                                    metadata_count);
+    }
+
+    return -1;
+}
+
+/* ============================================================================
+ * Batch Delete
+ * ============================================================================ */
+
+int gv_db_delete_vectors(GV_Database *db, const size_t *indices, size_t count) {
+    if (db == NULL || indices == NULL || count == 0) {
+        return -1;
+    }
+
+    int deleted = 0;
+    for (size_t i = 0; i < count; i++) {
+        if (gv_db_delete_vector_by_index(db, indices[i]) == 0) {
+            deleted++;
+        }
+    }
+    return deleted;
+}
+
+/* ============================================================================
+ * Scroll / Pagination
+ * ============================================================================ */
+
+int gv_db_scroll(const GV_Database *db, size_t offset, size_t limit,
+                 GV_ScrollResult *results) {
+    if (db == NULL || results == NULL || limit == 0) {
+        return -1;
+    }
+
+    pthread_rwlock_rdlock((pthread_rwlock_t *)&db->rwlock);
+
+    /* For index types using SoA storage (KDTREE, HNSW, FLAT, LSH) */
+    if (db->soa_storage != NULL) {
+        size_t found = 0;
+        size_t skipped = 0;
+        size_t total = db->soa_storage->count;
+
+        for (size_t i = 0; i < total && found < limit; i++) {
+            if (gv_soa_storage_is_deleted(db->soa_storage, i) == 1) {
+                continue;
+            }
+            if (skipped < offset) {
+                skipped++;
+                continue;
+            }
+            results[found].index = i;
+            results[found].data = gv_soa_storage_get_data(db->soa_storage, i);
+            results[found].dimension = db->dimension;
+            results[found].metadata = gv_soa_storage_get_metadata(db->soa_storage, i);
+            found++;
+        }
+
+        pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
+        return (int)found;
+    }
+
+    pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
+    return 0;
+}
+
+/* ============================================================================
+ * Search with Dynamic Parameters
+ * ============================================================================ */
+
+/* Internal struct layouts for accessing ef_search / nprobe */
+typedef struct {
+    size_t dimension;
+    size_t M;
+    size_t efConstruction;
+    size_t efSearch;
+    /* ... rest not needed */
+} GV_HNSWIndexPartial;
+
+typedef struct {
+    size_t dimension;
+    GV_IVFFlatConfig config;
+    /* ... rest not needed */
+} GV_IVFFlatIndexPartial;
+
+int gv_db_search_with_params(const GV_Database *db, const float *query_data, size_t k,
+                              GV_SearchResult *results, GV_DistanceType distance_type,
+                              const GV_SearchParams *params) {
+    if (params == NULL) {
+        return gv_db_search(db, query_data, k, results, distance_type);
+    }
+
+    if (db == NULL || query_data == NULL || results == NULL || k == 0) {
+        return -1;
+    }
+
+    /* For HNSW: temporarily override efSearch */
+    if (db->index_type == GV_INDEX_TYPE_HNSW && params->ef_search > 0 && db->hnsw_index != NULL) {
+        GV_HNSWIndexPartial *idx = (GV_HNSWIndexPartial *)db->hnsw_index;
+        size_t saved_ef = idx->efSearch;
+        idx->efSearch = params->ef_search;
+        int r = gv_db_search(db, query_data, k, results, distance_type);
+        idx->efSearch = saved_ef;
+        return r;
+    }
+
+    /* For IVF-Flat: temporarily override nprobe */
+    if (db->index_type == GV_INDEX_TYPE_IVFFLAT && params->nprobe > 0 && db->hnsw_index != NULL) {
+        GV_IVFFlatIndexPartial *idx = (GV_IVFFlatIndexPartial *)db->hnsw_index;
+        size_t saved_nprobe = idx->config.nprobe;
+        idx->config.nprobe = params->nprobe;
+        int r = gv_db_search(db, query_data, k, results, distance_type);
+        idx->config.nprobe = saved_nprobe;
+        return r;
+    }
+
+    /* For IVF-PQ: pass nprobe and rerank_top */
+    if (db->index_type == GV_INDEX_TYPE_IVFPQ && db->hnsw_index != NULL) {
+        memset(results, 0, k * sizeof(GV_SearchResult));
+        pthread_rwlock_rdlock((pthread_rwlock_t *)&db->rwlock);
+        ((GV_Database *)db)->total_queries += 1;
+
+        GV_Vector query_vec;
+        query_vec.dimension = db->dimension;
+        query_vec.data = (float *)query_data;
+        query_vec.metadata = NULL;
+
+        int r = gv_ivfpq_search(db->hnsw_index, &query_vec, k, results, distance_type,
+                                 params->nprobe, params->rerank_top);
+        pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
+        return r;
+    }
+
+    /* Default: fall through to regular search */
+    return gv_db_search(db, query_data, k, results, distance_type);
+}
+
+/* ============================================================================
+ * JSON Import / Export
+ * ============================================================================ */
+
+#include "gigavector/gv_json.h"
+
+int gv_db_export_json(const GV_Database *db, const char *filepath) {
+    if (db == NULL || filepath == NULL) {
+        return -1;
+    }
+
+    FILE *fp = fopen(filepath, "w");
+    if (!fp) {
+        return -1;
+    }
+
+    pthread_rwlock_rdlock((pthread_rwlock_t *)&db->rwlock);
+
+    int exported = 0;
+
+    if (db->soa_storage != NULL) {
+        size_t total = db->soa_storage->count;
+        for (size_t i = 0; i < total; i++) {
+            if (gv_soa_storage_is_deleted(db->soa_storage, i) == 1) {
+                continue;
+            }
+            const float *data = gv_soa_storage_get_data(db->soa_storage, i);
+            if (!data) continue;
+
+            /* Build JSON object */
+            GV_JsonValue *obj = gv_json_object();
+            if (!obj) continue;
+
+            /* Add index */
+            gv_json_object_set(obj, "index", gv_json_number((double)i));
+
+            /* Add vector array */
+            GV_JsonValue *vec_arr = gv_json_array();
+            if (vec_arr) {
+                for (size_t d = 0; d < db->dimension; d++) {
+                    gv_json_array_push(vec_arr, gv_json_number((double)data[d]));
+                }
+                gv_json_object_set(obj, "vector", vec_arr);
+            }
+
+            /* Add metadata if present */
+            GV_Metadata *meta = gv_soa_storage_get_metadata(db->soa_storage, i);
+            if (meta) {
+                GV_JsonValue *meta_obj = gv_json_object();
+                if (meta_obj) {
+                    GV_Metadata *m = meta;
+                    while (m) {
+                        gv_json_object_set(meta_obj, m->key, gv_json_string(m->value));
+                        m = m->next;
+                    }
+                    gv_json_object_set(obj, "metadata", meta_obj);
+                }
+            }
+
+            /* Serialize and write line */
+            char *line = gv_json_stringify(obj, false);
+            gv_json_free(obj);
+            if (line) {
+                fprintf(fp, "%s\n", line);
+                free(line);
+                exported++;
+            }
+        }
+    }
+
+    pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
+    fclose(fp);
+    return exported;
+}
+
+int gv_db_import_json(GV_Database *db, const char *filepath) {
+    if (db == NULL || filepath == NULL) {
+        return -1;
+    }
+
+    FILE *fp = fopen(filepath, "r");
+    if (!fp) {
+        return -1;
+    }
+
+    int imported = 0;
+    char *line = NULL;
+    size_t line_cap = 0;
+    ssize_t line_len;
+
+    while ((line_len = getline(&line, &line_cap, fp)) != -1) {
+        /* Skip empty lines */
+        if (line_len <= 1) continue;
+
+        /* Parse JSON line */
+        GV_JsonError err;
+        GV_JsonValue *obj = gv_json_parse(line, &err);
+        if (!obj || obj->type != GV_JSON_OBJECT) {
+            gv_json_free(obj);
+            continue;
+        }
+
+        /* Extract vector array */
+        GV_JsonValue *vec_arr = gv_json_object_get(obj, "vector");
+        if (!vec_arr || vec_arr->type != GV_JSON_ARRAY) {
+            gv_json_free(obj);
+            continue;
+        }
+
+        size_t dim = gv_json_array_length(vec_arr);
+        if (dim != db->dimension) {
+            gv_json_free(obj);
+            continue;
+        }
+
+        /* Extract vector data */
+        float *data = (float *)malloc(dim * sizeof(float));
+        if (!data) {
+            gv_json_free(obj);
+            continue;
+        }
+
+        int valid = 1;
+        for (size_t d = 0; d < dim; d++) {
+            GV_JsonValue *elem = gv_json_array_get(vec_arr, d);
+            double val;
+            if (!elem || gv_json_get_number(elem, &val) != GV_JSON_OK) {
+                valid = 0;
+                break;
+            }
+            data[d] = (float)val;
+        }
+
+        if (!valid) {
+            free(data);
+            gv_json_free(obj);
+            continue;
+        }
+
+        /* Extract metadata if present */
+        GV_JsonValue *meta_obj = gv_json_object_get(obj, "metadata");
+        int insert_ok = -1;
+
+        if (meta_obj && meta_obj->type == GV_JSON_OBJECT && gv_json_object_length(meta_obj) > 0) {
+            size_t meta_count = gv_json_object_length(meta_obj);
+            const char **keys = (const char **)malloc(meta_count * sizeof(const char *));
+            const char **vals = (const char **)malloc(meta_count * sizeof(const char *));
+
+            if (keys && vals) {
+                for (size_t m = 0; m < meta_count; m++) {
+                    keys[m] = meta_obj->data.object.entries[m].key;
+                    const char *sv = gv_json_get_string(meta_obj->data.object.entries[m].value);
+                    vals[m] = sv ? sv : "";
+                }
+                insert_ok = gv_db_add_vector_with_rich_metadata(db, data, dim,
+                                                                 keys, vals, meta_count);
+            }
+            free(keys);
+            free(vals);
+        } else {
+            insert_ok = gv_db_add_vector(db, data, dim);
+        }
+
+        free(data);
+        gv_json_free(obj);
+
+        if (insert_ok == 0) {
+            imported++;
+        }
+    }
+
+    free(line);
+    fclose(fp);
+    return imported;
+}
+
+/* ============================================================================
  * Database Accessor Functions
  * ============================================================================ */
 
