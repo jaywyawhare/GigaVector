@@ -1,7 +1,7 @@
 # GigaVector
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/jaywyawhare/GigaVector/master/gigavector-logo.png" alt="GigaVector Logo" width="200" />
+  <img src="https://raw.githubusercontent.com/jaywyawhare/GigaVector/master/docs/gigavector-logo.png" alt="GigaVector Logo" width="200" />
 </p>
 
 <p align="center">
