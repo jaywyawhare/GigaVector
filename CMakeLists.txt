@@ -99,6 +99,10 @@ set(SOURCES
     src/gv_replication.c
     src/gv_streaming.c
     src/gv_gpu.c
+    src/gv_flat.c
+    src/gv_ivfflat.c
+    src/gv_pq.c
+    src/gv_lsh.c
 )
 
 # Create library
@@ -232,6 +236,10 @@ if(BUILD_TESTS)
         tests/test_context_graph.c
         tests/test_json.c
         tests/test_server.c
+        tests/test_flat.c
+        tests/test_ivfflat.c
+        tests/test_pq.c
+        tests/test_lsh.c
     )
     
     foreach(TEST_SRC ${TEST_SOURCES})
@@ -246,10 +254,10 @@ endif()
 # Benchmarks
 if(BUILD_BENCHMARKS)
     set(BENCHMARK_SOURCES
-        benchmark_simd.c
-        benchmark_compare.c
-        benchmark_ivfpq.c
-        benchmark_ivfpq_recall.c
+        benchmarks/benchmark_simd.c
+        benchmarks/benchmark_compare.c
+        benchmarks/benchmark_ivfpq.c
+        benchmarks/benchmark_ivfpq_recall.c
     )
     
     foreach(BENCH_SRC ${BENCHMARK_SOURCES})
