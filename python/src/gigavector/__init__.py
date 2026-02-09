@@ -33,6 +33,8 @@ from ._core import (
     PQConfig,
     LSHConfig,
     ScalarQuantConfig,
+    SearchParams,
+    ScrollEntry,
     # LLM types
     LLM,
     LLMConfig,
@@ -152,6 +154,8 @@ __all__ = [
     "PQConfig",
     "LSHConfig",
     "ScalarQuantConfig",
+    "SearchParams",
+    "ScrollEntry",
     # LLM
     "LLM",
     "LLMConfig",

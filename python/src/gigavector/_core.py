@@ -29,6 +29,7 @@ class DistanceType(IntEnum):
     COSINE = 1
     DOT_PRODUCT = 2
     MANHATTAN = 3
+    HAMMING = 4
 
 
 @dataclass(frozen=True)
@@ -113,6 +114,22 @@ class LSHConfig:
     num_tables: int = 8
     num_hash_bits: int = 16
     seed: int = 42
+
+
+@dataclass
+class SearchParams:
+    """Per-query parameter overrides for search."""
+    ef_search: int = 0
+    nprobe: int = 0
+    rerank_top: int = 0
+
+
+@dataclass(frozen=True)
+class ScrollEntry:
+    """A single entry returned by scroll/pagination."""
+    index: int
+    data: list[float]
+    metadata: dict[str, str]
 
 
 def _choose_index_type(dimension: int, expected_count: int | None) -> IndexType:
@@ -1021,6 +1038,133 @@ class Database:
         if ptr == ffi.NULL:
             return None
         return [ptr[i] for i in range(self.dimension)]
+
+    def upsert(self, vector_index: int, vector: Sequence[float],
+               metadata: dict[str, str] | None = None) -> None:
+        """Upsert a vector: update if index exists, insert if index == count.
+
+        Args:
+            vector_index: Index to upsert at.
+            vector: Vector data.
+            metadata: Optional metadata dictionary.
+        """
+        self._check_dimension(vector)
+        buf = ffi.new("float[]", list(vector))
+        if metadata:
+            items = list(metadata.items())
+            key_cdatas = [ffi.new("char[]", k.encode()) for k, _ in items]
+            val_cdatas = [ffi.new("char[]", v.encode()) for _, v in items]
+            keys_c = ffi.new("const char * []", key_cdatas)
+            vals_c = ffi.new("const char * []", val_cdatas)
+            rc = lib.gv_db_upsert_with_metadata(
+                self._db, vector_index, buf, self.dimension,
+                keys_c, vals_c, len(items))
+        else:
+            rc = lib.gv_db_upsert(self._db, vector_index, buf, self.dimension)
+        if rc != 0:
+            raise RuntimeError(f"gv_db_upsert failed for index {vector_index}")
+
+    def delete_vectors(self, indices: Sequence[int]) -> int:
+        """Delete multiple vectors by their indices.
+
+        Args:
+            indices: Sequence of vector indices to delete.
+
+        Returns:
+            Number of vectors successfully deleted.
+        """
+        if not indices:
+            return 0
+        buf = ffi.new("size_t[]", [int(i) for i in indices])
+        n = lib.gv_db_delete_vectors(self._db, buf, len(indices))
+        if n < 0:
+            raise RuntimeError("gv_db_delete_vectors failed")
+        return int(n)
+
+    def scroll(self, offset: int = 0, limit: int = 100) -> list[ScrollEntry]:
+        """Scroll through vectors with offset-based pagination.
+
+        Args:
+            offset: Starting position (skips non-deleted vectors).
+            limit: Maximum number of results.
+
+        Returns:
+            List of ScrollEntry objects.
+        """
+        results = ffi.new("GV_ScrollResult[]", limit)
+        n = lib.gv_db_scroll(self._db, offset, limit, results)
+        if n < 0:
+            raise RuntimeError("gv_db_scroll failed")
+        out: list[ScrollEntry] = []
+        for i in range(n):
+            r = results[i]
+            data = [r.data[d] for d in range(r.dimension)] if r.data != ffi.NULL else []
+            meta = _metadata_to_dict(r.metadata)
+            out.append(ScrollEntry(index=int(r.index), data=data, metadata=meta))
+        return out
+
+    def search_with_params(self, query: Sequence[float], k: int,
+                           distance: DistanceType = DistanceType.EUCLIDEAN,
+                           params: SearchParams | None = None) -> list[SearchHit]:
+        """Search with per-query parameter overrides.
+
+        Args:
+            query: Query vector.
+            k: Number of nearest neighbors.
+            distance: Distance metric.
+            params: Optional parameter overrides (ef_search, nprobe, rerank_top).
+
+        Returns:
+            List of search hits.
+        """
+        self._check_dimension(query)
+        qbuf = ffi.new("float[]", list(query))
+        results = ffi.new("GV_SearchResult[]", k)
+        if params is not None:
+            p = ffi.new("GV_SearchParams *", {
+                "ef_search": params.ef_search,
+                "nprobe": params.nprobe,
+                "rerank_top": params.rerank_top,
+            })
+            n = lib.gv_db_search_with_params(self._db, qbuf, k, results, int(distance), p)
+        else:
+            n = lib.gv_db_search_with_params(self._db, qbuf, k, results, int(distance), ffi.NULL)
+        if n < 0:
+            raise RuntimeError("gv_db_search_with_params failed")
+        out: list[SearchHit] = []
+        for i in range(n):
+            res = results[i]
+            if res.vector != ffi.NULL:
+                out.append(SearchHit(distance=float(res.distance), vector=_copy_vector(res.vector)))
+        return out
+
+    def export_json(self, filepath: str) -> int:
+        """Export database to NDJSON file.
+
+        Args:
+            filepath: Output file path.
+
+        Returns:
+            Number of vectors exported.
+        """
+        n = lib.gv_db_export_json(self._db, filepath.encode())
+        if n < 0:
+            raise RuntimeError("gv_db_export_json failed")
+        return int(n)
+
+    def import_json(self, filepath: str) -> int:
+        """Import vectors from NDJSON file.
+
+        Args:
+            filepath: Input file path.
+
+        Returns:
+            Number of vectors imported.
+        """
+        n = lib.gv_db_import_json(self._db, filepath.encode())
+        if n < 0:
+            raise RuntimeError("gv_db_import_json failed")
+        return int(n)
 
     def __del__(self) -> None:
         try:

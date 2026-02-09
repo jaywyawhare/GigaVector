@@ -47,7 +47,7 @@ ffi.cdef(
     """
 typedef long time_t;  // Define time_t for FFI
 typedef enum { GV_INDEX_TYPE_KDTREE = 0, GV_INDEX_TYPE_HNSW = 1, GV_INDEX_TYPE_IVFPQ = 2, GV_INDEX_TYPE_SPARSE = 3, GV_INDEX_TYPE_FLAT = 4, GV_INDEX_TYPE_IVFFLAT = 5, GV_INDEX_TYPE_PQ = 6, GV_INDEX_TYPE_LSH = 7 } GV_IndexType;
-typedef enum { GV_DISTANCE_EUCLIDEAN = 0, GV_DISTANCE_COSINE = 1, GV_DISTANCE_DOT_PRODUCT = 2, GV_DISTANCE_MANHATTAN = 3 } GV_DistanceType;
+typedef enum { GV_DISTANCE_EUCLIDEAN = 0, GV_DISTANCE_COSINE = 1, GV_DISTANCE_DOT_PRODUCT = 2, GV_DISTANCE_MANHATTAN = 3, GV_DISTANCE_HAMMING = 4 } GV_DistanceType;
 
 typedef struct {
     uint32_t index;
@@ -510,6 +510,40 @@ size_t gv_database_dimension(const GV_Database *db);
 const float *gv_database_get_vector(const GV_Database *db, size_t index);
 
 // ============================================================================
+// Upsert, Batch Delete, Scroll, Search Params, JSON Import/Export
+// ============================================================================
+int gv_db_upsert(GV_Database *db, size_t vector_index, const float *data, size_t dimension);
+int gv_db_upsert_with_metadata(GV_Database *db, size_t vector_index,
+                                const float *data, size_t dimension,
+                                const char *const *metadata_keys,
+                                const char *const *metadata_values,
+                                size_t metadata_count);
+int gv_db_delete_vectors(GV_Database *db, const size_t *indices, size_t count);
+
+typedef struct {
+    size_t index;
+    const float *data;
+    size_t dimension;
+    GV_Metadata *metadata;
+} GV_ScrollResult;
+
+int gv_db_scroll(const GV_Database *db, size_t offset, size_t limit,
+                 GV_ScrollResult *results);
+
+typedef struct {
+    size_t ef_search;
+    size_t nprobe;
+    size_t rerank_top;
+} GV_SearchParams;
+
+int gv_db_search_with_params(const GV_Database *db, const float *query_data, size_t k,
+                              GV_SearchResult *results, GV_DistanceType distance_type,
+                              const GV_SearchParams *params);
+
+int gv_db_export_json(const GV_Database *db, const char *filepath);
+int gv_db_import_json(GV_Database *db, const char *filepath);
+
+// ============================================================================
 // GPU Acceleration
 // ============================================================================
 typedef struct {
@@ -604,6 +638,8 @@ typedef struct {
     const char *cors_origins;
     int enable_logging;
     const char *api_key;
+    double max_requests_per_second;
+    size_t rate_limit_burst;
 } GV_ServerConfig;
 
 typedef struct {
