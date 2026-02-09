@@ -4,7 +4,7 @@
 #include <math.h>
 #include <string.h>
 
-#include "include/gigavector/gigavector.h"
+#include "gigavector/gigavector.h"
 
 static double now_ms(void) {
     struct timespec ts;
