@@ -10,161 +10,350 @@
   </a>
 </p>
 
-**GigaVector** is a high-performance, production-ready vector database library written in C with optional Python bindings. Designed for applications requiring fast approximate nearest neighbor search, semantic memory management, and LLM integration.
+**GigaVector** is a high-performance, production-ready vector database library written in C with Python bindings. 40,000+ lines of C across 61 modules covering indexing, search, storage, networking, security, and AI integration.
 
-## Key Features
+---
 
-### Core Capabilities
-- **Multiple Index Algorithms**: KD-Tree, HNSW (Hierarchical Navigable Small Worlds), IVFPQ (Inverted File with Product Quantization), and Sparse Index
-- **Distance Metrics**: Euclidean and cosine distance with optimized implementations
-- **Rich Metadata**: Support for multiple key-value metadata pairs per vector with efficient filtering
-- **Persistence**: Snapshot-based persistence with Write-Ahead Logging (WAL) for durability
-- **Memory Management**: Structure-of-Arrays storage, quantization options, and configurable resource limits
+## Feature Overview
 
-### Advanced Features
-- **Semantic Memory Layer**: Extract, store, and consolidate memories from conversations with importance scoring
-- **LLM Integration**: Support for OpenAI, Anthropic, and Google LLMs for memory extraction and generation
-- **Embedding Services**: Integration with OpenAI, Google, and HuggingFace embedding APIs
-- **Context Graphs**: Build entity-relationship graphs for context-aware retrieval
-- **Production Ready**: Monitoring, statistics, health checks, and comprehensive error handling
+### Index Algorithms (8 types)
 
-### Performance
-- **SIMD Optimizations**: Automatic detection and use of SSE4.2, AVX2, and AVX-512F
-- **Thread-Safe**: Concurrent read operations with external write synchronization
-- **Memory Efficient**: Optimized data structures and optional quantization
-- **Scalable**: Supports millions of vectors with configurable resource limits
+| Index | Type | Training | Best For |
+|-------|------|----------|----------|
+| **KD-Tree** | Exact | No | Low-dimensional data (< 20D) |
+| **HNSW** | Approximate | No | General-purpose, high recall |
+| **IVF-PQ** | Approximate | Yes | Large-scale, memory-efficient |
+| **IVF-Flat** | Approximate | Yes | Large-scale, higher accuracy than IVF-PQ |
+| **Flat** | Exact (brute-force) | No | Small datasets, baseline/ground-truth |
+| **PQ** | Approximate | Yes | Compressed-domain search |
+| **LSH** | Approximate | No | Fast hash-based approximate search |
+| **Sparse** | Exact | No | Sparse vectors (NLP, BoW) |
 
-## Build (C library)
+### Distance Metrics (5 types)
+Euclidean, Cosine, Dot Product, Manhattan, Hamming -- all with SIMD-optimized implementations (SSE4.2, AVX2, AVX-512F, FMA).
 
-### Using Make (default)
+### Search Capabilities
+- **k-NN search** with configurable distance metrics
+- **Range search** -- find all vectors within a radius
+- **Batch search** -- multiple queries in one call
+- **Filtered search** -- metadata-based pre/post filtering
+- **Dynamic search params** -- per-query ef_search, nprobe, rerank tuning
+- **Hybrid search** -- combine vector similarity with BM25 full-text ranking (RRF, weighted, Borda fusion)
+- **Scroll/pagination** -- iterate over stored vectors with offset/limit
+
+### Storage and Persistence
+- **Write-Ahead Logging (WAL)** -- crash-safe durability with automatic replay
+- **Snapshot persistence** -- save/load full database state
+- **Point-in-time snapshots** -- create immutable snapshots for historical queries
+- **Collection versioning** -- version datasets with diff/compare/rollback
+- **Memory-mapped I/O** -- efficient file-backed storage
+- **Incremental backup** -- full and incremental backup with compression and CRC verification
+- **JSON import/export** -- NDJSON format for interoperability
+
+### Data Management
+- **Rich metadata** -- key-value pairs per vector with typed metadata support
+- **Payload indexing** -- sorted indexes for int/float/string/bool fields with range queries
+- **Schema evolution** -- versioned schemas with validation, diff, and compatibility checking
+- **Upsert operations** -- insert-or-update semantics
+- **Batch delete** -- delete multiple vectors in one call
+- **Vector deduplication** -- LSH-based near-duplicate detection
+- **BM25 full-text search** -- TF-IDF style keyword search on text fields
+- **TTL (Time-to-Live)** -- automatic expiry of vectors
+
+### Transactions and Concurrency
+- **MVCC transactions** -- snapshot isolation with begin/commit/rollback
+- **Thread-safe** -- reader-writer locks for concurrent access
+- **Client-side caching** -- LRU/LFU cache with TTL and mutation-based invalidation
+
+### Quantization and Compression
+- **Product Quantization (PQ)** -- codebook-based compression
+- **Scalar Quantization** -- configurable bit-width reduction
+- **Binary Quantization** -- 1-bit compression for HNSW
+- **Codebook sharing** -- train once, share PQ codebooks across collections
+
+### Distributed Architecture
+- **HTTP REST server** -- embedded server with rate limiting, CORS, and API key auth
+- **Sharding** -- hash/range-based data partitioning
+- **Replication** -- leader-follower with automatic failover and election
+- **Read replica load balancing** -- round-robin, least-lag, and random routing policies
+- **Cluster management** -- multi-node coordination
+- **Namespace / multi-tenancy** -- isolated collections within a single instance
+
+### Security
+- **Authentication** -- API key and JWT-based auth
+- **Authorization** -- role-based access control
+- **Cryptographic primitives** -- SHA-256, HMAC for secure token handling
+
+### AI Integration
+- **LLM support** -- OpenAI, Anthropic, Google Gemini (chat completions, streaming)
+- **Embedding services** -- OpenAI, Google, HuggingFace embedding APIs with caching
+- **Semantic memory layer** -- extract, store, consolidate memories from conversations
+- **Context graphs** -- entity-relationship extraction for context-aware retrieval
+- **Importance scoring** -- rank memories by relevance and recency
+
+### Observability and Operations
+- **Query optimizer** -- cost-based strategy selection (exact scan vs index vs oversample+filter)
+- **Query tracing** -- span-level timing for search pipeline profiling
+- **Bloom filter indexes** -- probabilistic skip indexes for fast set membership
+- **Index migration** -- background thread rebuilds index while old one continues serving
+- **GPU acceleration** -- CUDA-based distance computation and batch search (optional)
+- **Database statistics** -- insert/query counts, latency tracking
+
+---
+
+## Build
+
+### Make (default)
 ```bash
-make            # builds everything (library + main executable)
-make lib        # builds static and shared libraries into build/lib/
-make c-test     # runs C tests (needs LD_LIBRARY_PATH=build/lib)
+make lib        # static + shared libraries -> build/lib/
+make c-test     # run all C tests (21 test suites)
+make python-test # run Python test suite
 ```
 
-**For complete build and test instructions including LLM tests, see [Build and Test Guide](docs/build_and_test.md)**
-
-### Using CMake
+### CMake
 ```bash
-# Configure build
 cmake -B build -DCMAKE_BUILD_TYPE=Release
-
-# Build library and executables
 cmake --build build
-
-# Run tests
 cd build && ctest
-
-# Install (optional)
-cmake --install build --prefix /usr/local
 ```
 
 **CMake Options:**
-- `-DBUILD_SHARED_LIBS=ON/OFF` - Build shared library (default: ON)
-- `-DBUILD_TESTS=ON/OFF` - Build test executables (default: ON)
-- `-DBUILD_BENCHMARKS=ON/OFF` - Build benchmark executables (default: ON)
-- `-DENABLE_SANITIZERS=ON/OFF` - Enable sanitizers (ASAN, TSAN, UBSAN) (default: OFF)
-- `-DENABLE_COVERAGE=ON/OFF` - Enable code coverage (default: OFF)
+- `-DBUILD_SHARED_LIBS=ON/OFF` -- shared library (default: ON)
+- `-DBUILD_TESTS=ON/OFF` -- test executables (default: ON)
+- `-DBUILD_BENCHMARKS=ON/OFF` -- benchmark executables (default: ON)
+- `-DENABLE_SANITIZERS=ON/OFF` -- ASAN, TSAN, UBSAN (default: OFF)
+- `-DENABLE_COVERAGE=ON/OFF` -- code coverage (default: OFF)
 
-**Example with options:**
+### Sanitizer and Coverage Testing
 ```bash
-cmake -B build \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DBUILD_TESTS=ON \
-    -DBUILD_BENCHMARKS=ON \
-    -DENABLE_SANITIZERS=OFF
-cmake --build build
+make test-asan      # AddressSanitizer
+make test-tsan      # ThreadSanitizer
+make test-ubsan     # UndefinedBehaviorSanitizer
+make test-valgrind  # Valgrind memory check
+make test-coverage  # gcov/lcov coverage report
+make test-all       # run everything
 ```
 
-The CMake build system automatically detects and enables available SIMD optimizations (SSE4.2, AVX2, AVX-512F, FMA) for optimal performance.
+---
 
-## Python bindings
-From PyPI:
+## Python Bindings
+
+### Install
 ```bash
-pip install gigavector
+pip install gigavector        # from PyPI
+cd python && pip install .    # from source
 ```
 
-From source:
-```bash
-cd python
-python -m pip install .
-```
-
-## Quick start (Python)
+### Quick Start
 ```python
 from gigavector import Database, DistanceType, IndexType
 
-with Database.open("example.db", dimension=4, index=IndexType.KDTREE) as db:
-    db.add_vector([1, 2, 3, 4], metadata={"tag": "sample", "owner": "user"})
-    hits = db.search([1, 2, 3, 4], k=1, distance=DistanceType.EUCLIDEAN)
-    print(hits[0].distance, hits[0].vector.metadata)
+# Open / create a database
+with Database.open("example.db", dimension=128, index=IndexType.HNSW) as db:
+    # Add vectors with metadata
+    db.add_vector([0.1] * 128, metadata={"category": "example"})
+
+    # Search
+    results = db.search([0.1] * 128, k=10, distance=DistanceType.COSINE)
+    for hit in results:
+        print(f"  index={hit.index}, distance={hit.distance:.4f}")
+
+    # Save to disk
+    db.save("example.db")
 ```
 
-Persistence:
+### Index Types
 ```python
-db.save("example.db")          # snapshot
-# On reopen, WAL is replayed automatically
-with Database.open("example.db", dimension=4, index=IndexType.KDTREE) as db:
-    ...
+# Flat (brute-force exact search)
+db = Database.open(None, dimension=128, index=IndexType.FLAT)
+
+# HNSW with custom config
+from gigavector import HNSWConfig
+db = Database.open(None, dimension=128, index=IndexType.HNSW,
+                   hnsw_config=HNSWConfig(M=32, efConstruction=200, efSearch=100))
+
+# IVF-PQ (requires training)
+db = Database.open(None, dimension=128, index=IndexType.IVFPQ)
+db.train_ivfpq(training_vectors)
+
+# IVF-Flat (requires training)
+from gigavector import IVFFlatConfig
+db = Database.open(None, dimension=128, index=IndexType.IVFFLAT,
+                   ivfflat_config=IVFFlatConfig(nlist=64, nprobe=8))
+db.train_ivfflat(training_vectors)
+
+# LSH (no training needed)
+from gigavector import LSHConfig
+db = Database.open(None, dimension=128, index=IndexType.LSH,
+                   lsh_config=LSHConfig(num_tables=8, num_hash_bits=16))
 ```
 
-IVFPQ training (dimension must match):
+### Advanced Features
 ```python
-train = [[(i % 10) / 10.0 for _ in range(8)] for i in range(256)]
-with Database.open(None, dimension=8, index=IndexType.IVFPQ) as db:
-    db.train_ivfpq(train)
-    db.add_vector([0.5] * 8)
+from gigavector import (
+    SearchParams, BloomFilter, Cache, CacheConfig,
+    Schema, SchemaFieldType, MVCCManager, QueryOptimizer,
+    PayloadIndex, FieldType, DedupIndex, MultiVecIndex,
+    SnapshotManager, VersionManager, Codebook, QueryTrace,
+)
+
+# Dynamic search parameters
+results = db.search_with_params([0.1] * 128, k=10,
+    distance=DistanceType.COSINE,
+    params=SearchParams(ef_search=200, nprobe=16))
+
+# Bloom filter for fast membership checks
+bf = BloomFilter(expected_items=10000, fp_rate=0.01)
+bf.add_string("hello")
+assert "hello" in bf
+
+# Client-side result caching
+cache = Cache(CacheConfig(max_entries=1024, ttl_seconds=30))
+
+# Schema validation
+schema = Schema(version=1)
+schema.add_field("name", SchemaFieldType.STRING, required=True)
+schema.add_field("score", SchemaFieldType.FLOAT)
+assert schema.validate({"name": "test", "score": "0.95"})
+
+# MVCC transactions
+mvcc = MVCCManager(dimension=128)
+with mvcc.begin() as txn:
+    txn.add_vector([0.1] * 128)
+    txn.add_vector([0.2] * 128)
+    # auto-commits on exit, or auto-rolls-back on exception
+
+# Query optimizer
+opt = QueryOptimizer()
+plan = opt.plan(k=10, has_filter=True, filter_selectivity=0.05)
+print(f"Strategy: {plan.strategy.name}, ef_search={plan.ef_search}")
+
+# Payload indexing
+idx = PayloadIndex()
+idx.add_field("category", FieldType.STRING)
+idx.insert_string(0, "category", "science")
+
+# Vector deduplication
+dedup = DedupIndex(dimension=128)
+dedup.insert([0.1] * 128)
+is_duplicate = dedup.check([0.1] * 128)
+
+# Multi-vector documents
+mv = MultiVecIndex(dimension=128)
+mv.add_document(doc_id=1, chunks=[[0.1]*128, [0.2]*128, [0.3]*128])
+results = mv.search([0.15]*128, k=5)
+
+# Point-in-time snapshots
+snap_mgr = SnapshotManager(max_snapshots=10)
+
+# Collection versioning
+ver_mgr = VersionManager(max_versions=20)
+
+# Codebook sharing (train once, reuse)
+cb = Codebook(dimension=128, m=8, nbits=8)
+cb.train(training_data)
+cb.save("shared_codebook.bin")
+
+# Query tracing
+with QueryTrace() as trace:
+    trace.span_start("search")
+    results = db.search([0.1]*128, k=10)
+    trace.span_end()
 ```
+
+### JSON Import/Export
+```python
+db.export_json("vectors.ndjson")
+db.import_json("vectors.ndjson")
+```
+
+### Upsert and Batch Operations
+```python
+db.upsert(index=0, data=[0.5] * 128, metadata={"updated": "true"})
+deleted = db.delete_vectors([0, 1, 2])
+entries = db.scroll(offset=0, limit=100)
+```
+
+---
+
+## REST API
+
+GigaVector includes an embedded HTTP server for remote access.
+
+```python
+from gigavector import Server, ServerConfig
+
+config = ServerConfig(port=8080, thread_pool_size=4, enable_cors=True,
+                      max_requests_per_second=100.0)
+server = Server(db, config)
+server.start()
+```
+
+**Endpoints:**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/health` | Health check |
+| `GET` | `/stats` | Database statistics |
+| `POST` | `/vectors` | Add vector(s) |
+| `GET` | `/vectors/{id}` | Get vector by index |
+| `PUT` | `/vectors/{id}` | Update vector |
+| `DELETE` | `/vectors/{id}` | Delete vector |
+| `POST` | `/search` | k-NN search |
+| `POST` | `/search/range` | Range search |
+| `POST` | `/search/batch` | Batch search |
+| `POST` | `/compact` | Trigger compaction |
+| `POST` | `/save` | Save database to disk |
+
+---
 
 ## Environment Variables
 
-GigaVector supports various environment variables for API keys and configuration. 
-
-**Quick Setup:**
 ```bash
-# Copy the example file and fill in your API keys
-cp .env.example .env
-# Edit .env with your actual API keys
+cp .env.example .env   # copy and edit with your keys
 ```
 
-**Required for Tests:**
-- `OPENAI_API_KEY` - For LLM and embedding tests
-- `ANTHROPIC_API_KEY` - For Anthropic/Claude LLM tests
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `OPENAI_API_KEY` | For LLM/embedding tests | OpenAI API key |
+| `ANTHROPIC_API_KEY` | For Anthropic tests | Anthropic/Claude API key |
+| `GOOGLE_API_KEY` | Optional | Google Gemini/embeddings |
+| `GV_WAL_DIR` | Optional | Override WAL directory |
 
-**Optional:**
-- `GOOGLE_API_KEY` - For Google embeddings
-- `GV_WAL_DIR` - Override WAL directory location
+---
 
-See [`.env.example`](.env.example) for a complete list with descriptions, or [API Keys Documentation](docs/api_keys_required.md) for detailed information.
+## Project Structure
+
+```
+GigaVector/
+├── include/gigavector/   # 61 public C headers
+├── src/                  # 41,000+ lines of C implementation
+├── tests/                # 21 C test suites
+├── python/               # Python CFFI bindings (6,500+ lines)
+├── benchmarks/           # SIMD and index benchmarks
+├── docs/                 # Documentation
+└── scripts/              # Build and utility scripts
+```
+
+---
 
 ## Documentation
 
-### Getting Started
-- [Usage Guide](docs/usage.md) - Comprehensive guide for using GigaVector
-- [Build and Test Guide](docs/build_and_test.md) - Complete build instructions and testing
-- [Python Bindings Guide](docs/python_bindings.md) - Python API documentation and best practices
-- [C API Guide](docs/c_api_guide.md) - C API usage patterns and examples
+- [Usage Guide](docs/usage.md) -- comprehensive usage guide
+- [Build and Test Guide](docs/build_and_test.md) -- build instructions and testing
+- [Python Bindings Guide](docs/python_bindings.md) -- Python API documentation
+- [C API Guide](docs/c_api_guide.md) -- C API usage patterns
+- [API Reference](docs/api_reference.md) -- complete API reference
+- [Architecture](docs/architecture.md) -- system design and internals
+- [Deployment Guide](docs/deployment.md) -- production deployment and scaling
+- [Security Guide](docs/security.md) -- security best practices
+- [Performance Tuning](docs/performance.md) -- index selection and optimization
+- [Troubleshooting](docs/troubleshooting.md) -- common issues and solutions
+- [Advanced Features](docs/examples/advanced_features.md) -- advanced patterns
+- [Contributing](CONTRIBUTING.md) -- how to contribute
 
-### Reference Documentation
-- [API Reference](docs/api_reference.md) - Complete API reference with detailed function documentation
-- [Architecture Documentation](docs/architecture.md) - Deep dive into system architecture and design
-- [API Keys Guide](docs/api_keys_required.md) - Environment variables and API key configuration
-
-### Production Guides
-- [Deployment Guide](docs/deployment.md) - Production deployment, scaling, and operations
-- [Security Guide](docs/security.md) - Security best practices and hardening
-- [Troubleshooting Guide](docs/troubleshooting.md) - Common issues and solutions
-
-### Examples and Tutorials
-- [Basic Usage Examples](docs/examples/basic_usage.md) - Getting started with C and Python APIs
-- [Advanced Features](docs/examples/advanced_features.md) - Advanced patterns and optimization techniques
-
-### Performance and Optimization
-- [Performance Tuning Guide](docs/performance.md) - Index selection, parameter tuning, and optimization
-
-### Contributing
-- [Contributing Guidelines](CONTRIBUTING.md) - How to contribute to GigaVector
+---
 
 ## License
+
 This project is licensed under the DBaJ-NC-CFL [License](./LICENCE).
