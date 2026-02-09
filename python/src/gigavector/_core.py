@@ -18,6 +18,10 @@ class IndexType(IntEnum):
     HNSW = 1
     IVFPQ = 2
     SPARSE = 3
+    FLAT = 4
+    IVFFLAT = 5
+    PQ = 6
+    LSH = 7
 
 
 class DistanceType(IntEnum):
@@ -84,6 +88,31 @@ class IVFPQConfig:
     def __post_init__(self) -> None:
         if self.scalar_quant_config is None:
             self.scalar_quant_config = ScalarQuantConfig()
+
+
+@dataclass
+class IVFFlatConfig:
+    """Configuration for IVF-Flat index."""
+    nlist: int = 64
+    nprobe: int = 4
+    train_iters: int = 15
+    use_cosine: bool = False
+
+
+@dataclass
+class PQConfig:
+    """Configuration for standalone PQ index."""
+    m: int = 8
+    nbits: int = 8
+    train_iters: int = 15
+
+
+@dataclass
+class LSHConfig:
+    """Configuration for LSH index."""
+    num_tables: int = 8
+    num_hash_bits: int = 16
+    seed: int = 42
 
 
 def _choose_index_type(dimension: int, expected_count: int | None) -> IndexType:
@@ -189,22 +218,27 @@ class Database:
 
     @classmethod
     def open(cls, path: str | None, dimension: int, index: IndexType = IndexType.KDTREE,
-             hnsw_config: HNSWConfig | None = None, ivfpq_config: IVFPQConfig | None = None) -> Database:
+             hnsw_config: HNSWConfig | None = None, ivfpq_config: IVFPQConfig | None = None,
+             ivfflat_config: IVFFlatConfig | None = None, pq_config: PQConfig | None = None,
+             lsh_config: LSHConfig | None = None) -> Database:
         """
         Open a database instance.
-        
+
         Args:
             path: File path for persistent storage. Use None for in-memory database.
             dimension: Vector dimension (must be consistent for all vectors).
             index: Index type to use. Defaults to KDTREE.
             hnsw_config: Optional HNSW configuration. Only used when index is HNSW.
             ivfpq_config: Optional IVFPQ configuration. Only used when index is IVFPQ.
-        
+            ivfflat_config: Optional IVF-Flat configuration. Only used when index is IVFFLAT.
+            pq_config: Optional PQ configuration. Only used when index is PQ.
+            lsh_config: Optional LSH configuration. Only used when index is LSH.
+
         Returns:
             Database instance
         """
         c_path = path.encode("utf-8") if path is not None else ffi.NULL
-        
+
         if hnsw_config is not None and index == IndexType.HNSW:
             config = ffi.new("GV_HNSWConfig *", {
                 "M": hnsw_config.M,
@@ -236,6 +270,28 @@ class Database:
                 "oversampling_factor": ivfpq_config.oversampling_factor
             })
             db = lib.gv_db_open_with_ivfpq_config(c_path, dimension, int(index), config)
+        elif ivfflat_config is not None and index == IndexType.IVFFLAT:
+            config = ffi.new("GV_IVFFlatConfig *", {
+                "nlist": ivfflat_config.nlist,
+                "nprobe": ivfflat_config.nprobe,
+                "train_iters": ivfflat_config.train_iters,
+                "use_cosine": 1 if ivfflat_config.use_cosine else 0,
+            })
+            db = lib.gv_db_open_with_ivfflat_config(c_path, dimension, int(index), config)
+        elif pq_config is not None and index == IndexType.PQ:
+            config = ffi.new("GV_PQConfig *", {
+                "m": pq_config.m,
+                "nbits": pq_config.nbits,
+                "train_iters": pq_config.train_iters,
+            })
+            db = lib.gv_db_open_with_pq_config(c_path, dimension, int(index), config)
+        elif lsh_config is not None and index == IndexType.LSH:
+            config = ffi.new("GV_LSHConfig *", {
+                "num_tables": lsh_config.num_tables,
+                "num_hash_bits": lsh_config.num_hash_bits,
+                "seed": lsh_config.seed,
+            })
+            db = lib.gv_db_open_with_lsh_config(c_path, dimension, int(index), config)
         else:
             db = lib.gv_db_open(c_path, dimension, int(index))
         
@@ -374,6 +430,36 @@ class Database:
         rc = lib.gv_db_ivfpq_train(self._db, buf, count, self.dimension)
         if rc != 0:
             raise RuntimeError("gv_db_ivfpq_train failed")
+
+    def train_ivfflat(self, data: Sequence[Sequence[float]]) -> None:
+        """Train IVF-Flat index with provided vectors (only for IVFFLAT index)."""
+        flat = [item for vec in data for item in vec]
+        count = len(data)
+        if count == 0:
+            raise ValueError("training data empty")
+        if len(flat) % count != 0:
+            raise ValueError("inconsistent training data")
+        if (len(flat) / count) != self.dimension:
+            raise ValueError("training vectors must match db dimension")
+        buf = ffi.new("float[]", flat)
+        rc = lib.gv_db_ivfflat_train(self._db, buf, count, self.dimension)
+        if rc != 0:
+            raise RuntimeError("gv_db_ivfflat_train failed")
+
+    def train_pq(self, data: Sequence[Sequence[float]]) -> None:
+        """Train PQ index with provided vectors (only for PQ index)."""
+        flat = [item for vec in data for item in vec]
+        count = len(data)
+        if count == 0:
+            raise ValueError("training data empty")
+        if len(flat) % count != 0:
+            raise ValueError("inconsistent training data")
+        if (len(flat) / count) != self.dimension:
+            raise ValueError("training vectors must match db dimension")
+        buf = ffi.new("float[]", flat)
+        rc = lib.gv_db_pq_train(self._db, buf, count, self.dimension)
+        if rc != 0:
+            raise RuntimeError("gv_db_pq_train failed")
 
     def start_background_compaction(self) -> None:
         """
