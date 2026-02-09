@@ -20,6 +20,66 @@
 #endif
 
 /* ============================================================================
+ * Rate Limiter
+ * ============================================================================ */
+
+/**
+ * @brief Token-bucket rate limiter state.
+ */
+typedef struct {
+    double tokens;
+    double max_tokens;
+    double refill_rate;      /* tokens per second */
+    uint64_t last_refill_us; /* microseconds (CLOCK_MONOTONIC) */
+    pthread_mutex_t mutex;
+} GV_RateLimiter;
+
+static uint64_t gv_now_us(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000ULL + (uint64_t)ts.tv_nsec / 1000ULL;
+}
+
+static void gv_rate_limiter_init(GV_RateLimiter *rl, double rate, size_t burst) {
+    rl->max_tokens = (double)burst;
+    rl->tokens = rl->max_tokens;
+    rl->refill_rate = rate;
+    rl->last_refill_us = gv_now_us();
+    pthread_mutex_init(&rl->mutex, NULL);
+}
+
+static void gv_rate_limiter_destroy(GV_RateLimiter *rl) {
+    pthread_mutex_destroy(&rl->mutex);
+}
+
+/**
+ * @brief Try to consume one token. Returns 1 if allowed, 0 if rate-limited.
+ */
+static int gv_rate_limiter_allow(GV_RateLimiter *rl) {
+    pthread_mutex_lock(&rl->mutex);
+
+    uint64_t now = gv_now_us();
+    double elapsed_sec = (double)(now - rl->last_refill_us) / 1000000.0;
+    rl->last_refill_us = now;
+
+    /* Refill tokens based on elapsed time */
+    rl->tokens += elapsed_sec * rl->refill_rate;
+    if (rl->tokens > rl->max_tokens) {
+        rl->tokens = rl->max_tokens;
+    }
+
+    /* Try to consume one token */
+    if (rl->tokens >= 1.0) {
+        rl->tokens -= 1.0;
+        pthread_mutex_unlock(&rl->mutex);
+        return 1;
+    }
+
+    pthread_mutex_unlock(&rl->mutex);
+    return 0;
+}
+
+/* ============================================================================
  * Internal Structures
  * ============================================================================ */
 
@@ -58,6 +118,10 @@ struct GV_Server {
 
     /* Handler context */
     GV_HandlerContext handler_ctx;
+
+    /* Rate limiter */
+    GV_RateLimiter rate_limiter;
+    int rate_limit_enabled;
 };
 
 /* ============================================================================
@@ -74,7 +138,9 @@ static const GV_ServerConfig DEFAULT_CONFIG = {
     .enable_cors = 0,
     .cors_origins = "*",
     .enable_logging = 1,
-    .api_key = NULL
+    .api_key = NULL,
+    .max_requests_per_second = 0,  /* unlimited */
+    .rate_limit_burst = 10
 };
 
 void gv_server_config_init(GV_ServerConfig *config) {
@@ -257,6 +323,24 @@ static enum MHD_Result answer_to_connection(void *cls,
         return ret;
     }
 
+    /* Check rate limit */
+    if (server->rate_limit_enabled && !gv_rate_limiter_allow(&server->rate_limiter)) {
+        const char *rate_json = "{\"error\":\"rate limit exceeded\"}";
+        struct MHD_Response *response = MHD_create_response_from_buffer(
+            strlen(rate_json), (void *)rate_json, MHD_RESPMEM_PERSISTENT);
+        MHD_add_response_header(response, "Content-Type", "application/json");
+        add_cors_headers(response, server);
+        enum MHD_Result ret = MHD_queue_response(connection, GV_HTTP_429_TOO_MANY_REQUESTS, response);
+        MHD_destroy_response(response);
+
+        pthread_mutex_lock(&server->stats_mutex);
+        server->total_requests++;
+        server->error_count++;
+        pthread_mutex_unlock(&server->stats_mutex);
+
+        return ret;
+    }
+
     /* Check authentication */
     if (!check_auth(server, connection)) {
         const char *error_json = "{\"error\":\"Unauthorized\",\"message\":\"Invalid or missing API key\"}";
@@ -385,6 +469,16 @@ int gv_server_start(GV_Server *server) {
         return GV_SERVER_ERROR_ALREADY_RUNNING;
     }
 
+    /* Initialize rate limiter if configured */
+    if (server->config.max_requests_per_second > 0) {
+        size_t burst = server->config.rate_limit_burst > 0 ? server->config.rate_limit_burst : 10;
+        gv_rate_limiter_init(&server->rate_limiter,
+                             server->config.max_requests_per_second, burst);
+        server->rate_limit_enabled = 1;
+    } else {
+        server->rate_limit_enabled = 0;
+    }
+
 #ifdef HAVE_MICROHTTPD
     /* Use internal select with thread pool for handling connections.
      * Note: MHD_USE_THREAD_PER_CONNECTION and MHD_OPTION_THREAD_POOL_SIZE
@@ -438,6 +532,12 @@ int gv_server_stop(GV_Server *server) {
 #endif
 
     server->running = 0;
+
+    /* Destroy rate limiter if it was enabled */
+    if (server->rate_limit_enabled) {
+        gv_rate_limiter_destroy(&server->rate_limiter);
+        server->rate_limit_enabled = 0;
+    }
 
     if (server->config.enable_logging) {
         fprintf(stderr, "[GV_Server] Stopped\n");

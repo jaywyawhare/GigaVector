@@ -57,6 +57,7 @@ typedef enum {
     GV_HTTP_404_NOT_FOUND = 404,
     GV_HTTP_405_METHOD_NOT_ALLOWED = 405,
     GV_HTTP_413_PAYLOAD_TOO_LARGE = 413,
+    GV_HTTP_429_TOO_MANY_REQUESTS = 429,
     GV_HTTP_500_INTERNAL_ERROR = 500,
     GV_HTTP_503_SERVICE_UNAVAILABLE = 503
 } GV_HttpStatus;
@@ -75,6 +76,8 @@ typedef struct {
     const char *cors_origins;          /**< Allowed CORS origins (default: "*"). */
     int enable_logging;                /**< Enable request logging (default: 1). */
     const char *api_key;               /**< Optional API key for authentication (default: NULL). */
+    double max_requests_per_second;    /**< Rate limit: max requests/sec per client IP (0 = unlimited, default: 0). */
+    size_t rate_limit_burst;           /**< Rate limit burst size (default: 10). */
 } GV_ServerConfig;
 
 /**
