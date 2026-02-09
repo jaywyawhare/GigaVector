@@ -261,6 +261,76 @@ void gv_replication_free_stats(GV_ReplicationStats *stats);
  */
 int gv_replication_is_healthy(GV_ReplicationManager *mgr);
 
+/* ============================================================================
+ * Read Replica Load Balancing
+ * ============================================================================ */
+
+/**
+ * @brief Read routing policy for distributing read queries across replicas.
+ */
+typedef enum {
+    GV_READ_LEADER_ONLY = 0,    /**< All reads go to leader (strongest consistency). */
+    GV_READ_ROUND_ROBIN = 1,    /**< Distribute reads across replicas in round-robin. */
+    GV_READ_LEAST_LAG = 2,      /**< Route reads to replica with smallest replication lag. */
+    GV_READ_RANDOM = 3          /**< Route reads to a random connected replica. */
+} GV_ReadPolicy;
+
+/**
+ * @brief Set read routing policy.
+ *
+ * @param mgr Replication manager.
+ * @param policy Desired read policy.
+ * @return 0 on success, -1 on error.
+ */
+int gv_replication_set_read_policy(GV_ReplicationManager *mgr, GV_ReadPolicy policy);
+
+/**
+ * @brief Get current read routing policy.
+ *
+ * @param mgr Replication manager.
+ * @return Current policy, or -1 on error.
+ */
+GV_ReadPolicy gv_replication_get_read_policy(GV_ReplicationManager *mgr);
+
+/**
+ * @brief Route a read query to the appropriate replica.
+ *
+ * Returns the database instance that should handle the read query,
+ * based on the current read policy. When policy is LEADER_ONLY, always
+ * returns the leader database. For other policies, may return a follower's
+ * database if followers have registered their DB instances.
+ *
+ * @param mgr Replication manager.
+ * @return Database instance for reading, or NULL if no suitable replica found.
+ */
+GV_Database *gv_replication_route_read(GV_ReplicationManager *mgr);
+
+/**
+ * @brief Set the maximum acceptable lag for read replicas.
+ *
+ * Replicas with lag exceeding this value will not receive read queries
+ * (except under LEADER_ONLY policy where this is ignored).
+ *
+ * @param mgr Replication manager.
+ * @param max_lag Maximum acceptable lag in WAL entries.
+ * @return 0 on success, -1 on error.
+ */
+int gv_replication_set_max_read_lag(GV_ReplicationManager *mgr, uint64_t max_lag);
+
+/**
+ * @brief Register a follower's database instance for read routing.
+ *
+ * When a follower connects, its local database instance can be registered
+ * so that read queries can be routed to it.
+ *
+ * @param mgr Replication manager.
+ * @param node_id Follower node ID.
+ * @param db Follower's database instance.
+ * @return 0 on success, -1 on error.
+ */
+int gv_replication_register_follower_db(GV_ReplicationManager *mgr,
+                                         const char *node_id, GV_Database *db);
+
 #ifdef __cplusplus
 }
 #endif

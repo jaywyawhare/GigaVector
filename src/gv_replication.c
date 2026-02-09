@@ -47,6 +47,12 @@ struct GV_ReplicationManager {
     uint64_t commit_position;
     uint64_t bytes_replicated;
 
+    /* Read replica load balancing */
+    GV_ReadPolicy read_policy;
+    uint64_t max_read_lag;
+    GV_Database *follower_dbs[MAX_REPLICAS];
+    size_t round_robin_next;
+
     /* Threads */
     pthread_t replication_thread;
     int running;
@@ -621,4 +627,146 @@ int gv_replication_is_healthy(GV_ReplicationManager *mgr) {
 
     pthread_rwlock_unlock(&mgr->rwlock);
     return healthy;
+}
+
+/* ============================================================================
+ * Read Replica Load Balancing
+ * ============================================================================ */
+
+int gv_replication_set_read_policy(GV_ReplicationManager *mgr, GV_ReadPolicy policy) {
+    if (!mgr) return -1;
+    if (policy < GV_READ_LEADER_ONLY || policy > GV_READ_RANDOM) return -1;
+
+    pthread_rwlock_wrlock(&mgr->rwlock);
+    mgr->read_policy = policy;
+    mgr->round_robin_next = 0;
+    pthread_rwlock_unlock(&mgr->rwlock);
+    return 0;
+}
+
+GV_ReadPolicy gv_replication_get_read_policy(GV_ReplicationManager *mgr) {
+    if (!mgr) return (GV_ReadPolicy)-1;
+
+    pthread_rwlock_rdlock(&mgr->rwlock);
+    GV_ReadPolicy policy = mgr->read_policy;
+    pthread_rwlock_unlock(&mgr->rwlock);
+    return policy;
+}
+
+int gv_replication_set_max_read_lag(GV_ReplicationManager *mgr, uint64_t max_lag) {
+    if (!mgr) return -1;
+
+    pthread_rwlock_wrlock(&mgr->rwlock);
+    mgr->max_read_lag = max_lag;
+    pthread_rwlock_unlock(&mgr->rwlock);
+    return 0;
+}
+
+int gv_replication_register_follower_db(GV_ReplicationManager *mgr,
+                                         const char *node_id, GV_Database *db) {
+    if (!mgr || !node_id || !db) return -1;
+
+    pthread_rwlock_wrlock(&mgr->rwlock);
+
+    /* Find the replica entry */
+    for (size_t i = 0; i < mgr->replica_count; i++) {
+        if (strcmp(mgr->replicas[i].node_id, node_id) == 0) {
+            mgr->follower_dbs[i] = db;
+            pthread_rwlock_unlock(&mgr->rwlock);
+            return 0;
+        }
+    }
+
+    pthread_rwlock_unlock(&mgr->rwlock);
+    return -1;  /* Replica not found */
+}
+
+/* Check if a replica is eligible for reads (connected, streaming, within lag) */
+static int replica_eligible_for_read(const GV_ReplicationManager *mgr, size_t idx) {
+    if (!mgr->replicas[idx].connected) return 0;
+    if (mgr->replicas[idx].state != GV_REPL_STREAMING) return 0;
+    if (!mgr->follower_dbs[idx]) return 0;
+
+    if (mgr->max_read_lag > 0) {
+        uint64_t lag = 0;
+        if (mgr->wal_position > mgr->replicas[idx].last_wal_position) {
+            lag = mgr->wal_position - mgr->replicas[idx].last_wal_position;
+        }
+        if (lag > mgr->max_read_lag) return 0;
+    }
+
+    return 1;
+}
+
+GV_Database *gv_replication_route_read(GV_ReplicationManager *mgr) {
+    if (!mgr) return NULL;
+
+    pthread_rwlock_wrlock(&mgr->rwlock);
+
+    /* LEADER_ONLY: always return leader DB */
+    if (mgr->read_policy == GV_READ_LEADER_ONLY) {
+        GV_Database *db = mgr->db;
+        pthread_rwlock_unlock(&mgr->rwlock);
+        return db;
+    }
+
+    /* Build list of eligible replicas */
+    size_t eligible[MAX_REPLICAS];
+    size_t eligible_count = 0;
+
+    for (size_t i = 0; i < mgr->replica_count; i++) {
+        if (replica_eligible_for_read(mgr, i)) {
+            eligible[eligible_count++] = i;
+        }
+    }
+
+    /* Fallback to leader if no eligible replicas */
+    if (eligible_count == 0) {
+        GV_Database *db = mgr->db;
+        pthread_rwlock_unlock(&mgr->rwlock);
+        return db;
+    }
+
+    GV_Database *result = NULL;
+
+    switch (mgr->read_policy) {
+        case GV_READ_ROUND_ROBIN: {
+            size_t idx = mgr->round_robin_next % eligible_count;
+            result = mgr->follower_dbs[eligible[idx]];
+            mgr->round_robin_next++;
+            break;
+        }
+
+        case GV_READ_LEAST_LAG: {
+            uint64_t min_lag = UINT64_MAX;
+            size_t best = 0;
+            for (size_t i = 0; i < eligible_count; i++) {
+                size_t ri = eligible[i];
+                uint64_t lag = 0;
+                if (mgr->wal_position > mgr->replicas[ri].last_wal_position) {
+                    lag = mgr->wal_position - mgr->replicas[ri].last_wal_position;
+                }
+                if (lag < min_lag) {
+                    min_lag = lag;
+                    best = i;
+                }
+            }
+            result = mgr->follower_dbs[eligible[best]];
+            break;
+        }
+
+        case GV_READ_RANDOM: {
+            /* Simple random selection using time */
+            size_t idx = (size_t)(time(NULL) * 2654435761UL) % eligible_count;
+            result = mgr->follower_dbs[eligible[idx]];
+            break;
+        }
+
+        default:
+            result = mgr->db;
+            break;
+    }
+
+    pthread_rwlock_unlock(&mgr->rwlock);
+    return result;
 }
