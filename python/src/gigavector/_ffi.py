@@ -46,7 +46,7 @@ ffi: FFIType = FFI()
 ffi.cdef(
     """
 typedef long time_t;  // Define time_t for FFI
-typedef enum { GV_INDEX_TYPE_KDTREE = 0, GV_INDEX_TYPE_HNSW = 1, GV_INDEX_TYPE_IVFPQ = 2, GV_INDEX_TYPE_SPARSE = 3 } GV_IndexType;
+typedef enum { GV_INDEX_TYPE_KDTREE = 0, GV_INDEX_TYPE_HNSW = 1, GV_INDEX_TYPE_IVFPQ = 2, GV_INDEX_TYPE_SPARSE = 3, GV_INDEX_TYPE_FLAT = 4, GV_INDEX_TYPE_IVFFLAT = 5, GV_INDEX_TYPE_PQ = 6, GV_INDEX_TYPE_LSH = 7 } GV_IndexType;
 typedef enum { GV_DISTANCE_EUCLIDEAN = 0, GV_DISTANCE_COSINE = 1, GV_DISTANCE_DOT_PRODUCT = 2, GV_DISTANCE_MANHATTAN = 3 } GV_DistanceType;
 
 typedef struct {
@@ -89,6 +89,25 @@ typedef struct {
     GV_ScalarQuantConfig scalar_quant_config;
     float oversampling_factor;
 } GV_IVFPQConfig;
+
+typedef struct {
+    size_t nlist;
+    size_t nprobe;
+    size_t train_iters;
+    int use_cosine;
+} GV_IVFFlatConfig;
+
+typedef struct {
+    size_t m;
+    uint8_t nbits;
+    size_t train_iters;
+} GV_PQConfig;
+
+typedef struct {
+    size_t num_tables;
+    size_t num_hash_bits;
+    uint64_t seed;
+} GV_LSHConfig;
 
 typedef struct GV_Metadata {
     char *key;
@@ -142,6 +161,9 @@ typedef struct {
 GV_Database *gv_db_open(const char *filepath, size_t dimension, GV_IndexType index_type);
 GV_Database *gv_db_open_with_hnsw_config(const char *filepath, size_t dimension, GV_IndexType index_type, const GV_HNSWConfig *hnsw_config);
 GV_Database *gv_db_open_with_ivfpq_config(const char *filepath, size_t dimension, GV_IndexType index_type, const GV_IVFPQConfig *ivfpq_config);
+GV_Database *gv_db_open_with_ivfflat_config(const char *filepath, size_t dimension, GV_IndexType index_type, const GV_IVFFlatConfig *config);
+GV_Database *gv_db_open_with_pq_config(const char *filepath, size_t dimension, GV_IndexType index_type, const GV_PQConfig *config);
+GV_Database *gv_db_open_with_lsh_config(const char *filepath, size_t dimension, GV_IndexType index_type, const GV_LSHConfig *config);
 GV_Database *gv_db_open_from_memory(const void *data, size_t size,
                                     size_t dimension, GV_IndexType index_type);
 GV_Database *gv_db_open_mmap(const char *filepath, size_t dimension, GV_IndexType index_type);
@@ -163,6 +185,8 @@ int gv_db_update_vector_metadata(GV_Database *db, size_t vector_index,
                                         size_t metadata_count);
 int gv_db_save(const GV_Database *db, const char *filepath);
 int gv_db_ivfpq_train(GV_Database *db, const float *data, size_t count, size_t dimension);
+int gv_db_ivfflat_train(GV_Database *db, const float *data, size_t count, size_t dimension);
+int gv_db_pq_train(GV_Database *db, const float *data, size_t count, size_t dimension);
 int gv_db_add_vectors(GV_Database *db, const float *data, size_t count, size_t dimension);
 int gv_db_add_vectors_with_metadata(GV_Database *db, const float *data,
                                     const char *const *keys, const char *const *values,

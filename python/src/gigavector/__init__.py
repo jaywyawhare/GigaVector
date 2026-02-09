@@ -29,6 +29,9 @@ from ._core import (
     # Configuration types
     HNSWConfig,
     IVFPQConfig,
+    IVFFlatConfig,
+    PQConfig,
+    LSHConfig,
     ScalarQuantConfig,
     # LLM types
     LLM,
@@ -145,6 +148,9 @@ __all__ = [
     # Configuration
     "HNSWConfig",
     "IVFPQConfig",
+    "IVFFlatConfig",
+    "PQConfig",
+    "LSHConfig",
     "ScalarQuantConfig",
     # LLM
     "LLM",
