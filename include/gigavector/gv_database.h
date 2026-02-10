@@ -942,6 +942,13 @@ int gv_db_export_json(const GV_Database *db, const char *filepath);
  */
 int gv_db_import_json(GV_Database *db, const char *filepath);
 
+/**
+ * @brief Free memory allocated by GigaVector (e.g. strings from to_json).
+ *
+ * @param ptr Pointer to free (safe to call with NULL).
+ */
+void gv_free(void *ptr);
+
 #ifdef __cplusplus
 }
 #endif
