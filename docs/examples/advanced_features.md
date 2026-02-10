@@ -176,6 +176,100 @@ with Database.open("sparse.db", dimension=1000, index=IndexType.SPARSE) as db:
     hits = db.search_sparse(query_indices, query_values, k=10)
 ```
 
+## Graph Database and Knowledge Graph
+
+GigaVector includes a full property graph database and a knowledge graph layer with vector embeddings.
+
+### Building a Social Graph
+
+```c
+#include "gigavector/gv_graph_db.h"
+
+GV_GraphDB *g = gv_graph_create(NULL);
+
+// Create nodes
+uint64_t alice = gv_graph_add_node(g, "Person");
+uint64_t bob = gv_graph_add_node(g, "Person");
+uint64_t charlie = gv_graph_add_node(g, "Person");
+gv_graph_set_node_prop(g, alice, "name", "Alice");
+gv_graph_set_node_prop(g, bob, "name", "Bob");
+gv_graph_set_node_prop(g, charlie, "name", "Charlie");
+
+// Create relationships
+gv_graph_add_edge(g, alice, bob, "KNOWS", 1.0f);
+gv_graph_add_edge(g, bob, charlie, "KNOWS", 1.0f);
+gv_graph_add_edge(g, alice, charlie, "FRIENDS", 0.5f);
+
+// Find shortest path
+GV_GraphPath path;
+if (gv_graph_shortest_path(g, alice, charlie, &path) == 0) {
+    printf("Path length: %zu, weight: %.2f\n", path.length, path.total_weight);
+    gv_graph_free_path(&path);
+}
+
+// Compute PageRank
+float pr = gv_graph_pagerank(g, alice, 20, 0.85f);
+printf("Alice PageRank: %.4f\n", pr);
+
+// Connected components
+uint64_t comps[3];
+int num_comps = gv_graph_connected_components(g, comps, 3);
+printf("Components: %d\n", num_comps);
+
+gv_graph_save(g, "social.gvgr");
+gv_graph_destroy(g);
+```
+
+### Knowledge Graph with Semantic Search
+
+```python
+from gigavector import KnowledgeGraph, KGConfig
+
+kg = KnowledgeGraph(KGConfig(embedding_dimension=128))
+
+# Build knowledge base
+alice = kg.add_entity("Alice", "Person", embedding=[0.1] * 128)
+bob = kg.add_entity("Bob", "Person", embedding=[0.2] * 128)
+company = kg.add_entity("Anthropic", "Company", embedding=[0.5] * 128)
+
+kg.add_relation(alice, "works_at", company)
+kg.add_relation(bob, "works_at", company)
+kg.add_relation(alice, "manages", bob)
+
+# SPO triple queries
+triples = kg.query_triples(predicate="works_at")
+print(f"Found {len(triples)} 'works_at' triples")
+
+# Semantic search
+results = kg.search_similar([0.15] * 128, k=3)
+for r in results:
+    print(f"  {r.name} ({r.type}): similarity={r.similarity:.3f}")
+
+# Hybrid search (vector + graph filters)
+results = kg.hybrid_search(
+    [0.1] * 128, entity_type="Person", predicate_filter="works_at", k=5
+)
+
+# Entity resolution (deduplicate)
+resolved = kg.resolve_entity("Alice Smith", "Person", embedding=[0.1] * 128)
+print(f"Resolved to entity {resolved}")
+
+# Link prediction
+predictions = kg.predict_links(alice, k=3)
+for p in predictions:
+    print(f"  Predicted: {p.entity_a} -> {p.entity_b} ({p.confidence:.3f})")
+
+# Subgraph extraction
+subgraph = kg.extract_subgraph(center=alice, radius=2)
+print(f"Subgraph: {len(subgraph.entity_ids)} entities, {len(subgraph.relation_ids)} relations")
+
+# Persistence
+kg.save("knowledge.gvkg")
+kg2 = KnowledgeGraph.load("knowledge.gvkg")
+```
+
+---
+
 ## Performance Optimization
 
 ### Batch Operations
