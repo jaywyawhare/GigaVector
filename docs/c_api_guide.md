@@ -590,6 +590,127 @@ if (rc != 0) {
 gv_db_stop_background_compaction(db);
 ```
 
+## Graph Database
+
+GigaVector provides a property graph database layer for storing and querying graph-structured data.
+
+### Creating a Graph
+
+```c
+#include "gigavector/gv_graph_db.h"
+
+// Create with default config
+GV_GraphDB *g = gv_graph_create(NULL);
+
+// Or with custom config
+GV_GraphDBConfig cfg;
+gv_graph_config_init(&cfg);
+cfg.node_bucket_count = 8192;
+cfg.enforce_referential_integrity = 1;
+GV_GraphDB *g = gv_graph_create(&cfg);
+```
+
+### Nodes and Edges
+
+```c
+// Add nodes
+uint64_t alice = gv_graph_add_node(g, "Person");
+uint64_t bob = gv_graph_add_node(g, "Person");
+gv_graph_set_node_prop(g, alice, "name", "Alice");
+
+// Add edges
+uint64_t edge = gv_graph_add_edge(g, alice, bob, "KNOWS", 1.0f);
+gv_graph_set_edge_prop(g, edge, "since", "2024");
+
+// Query neighbors
+uint64_t neighbors[64];
+int count = gv_graph_get_neighbors(g, alice, neighbors, 64);
+```
+
+### Traversal and Analytics
+
+```c
+// BFS / DFS
+uint64_t visited[1024];
+int n = gv_graph_bfs(g, alice, 3, visited, 1024);
+
+// Shortest path (Dijkstra)
+GV_GraphPath path;
+if (gv_graph_shortest_path(g, alice, bob, &path) == 0) {
+    printf("Path weight: %f, length: %zu\n", path.total_weight, path.length);
+    gv_graph_free_path(&path);
+}
+
+// PageRank
+float pr = gv_graph_pagerank(g, alice, 20, 0.85f);
+
+// Clustering coefficient
+float cc = gv_graph_clustering_coefficient(g, alice);
+
+// Save / Load
+gv_graph_save(g, "social.gvgr");
+GV_GraphDB *g2 = gv_graph_load("social.gvgr");
+
+gv_graph_destroy(g);
+```
+
+## Knowledge Graph
+
+The knowledge graph layer combines graph structure with vector embeddings.
+
+### Creating a Knowledge Graph
+
+```c
+#include "gigavector/gv_knowledge_graph.h"
+
+GV_KGConfig cfg;
+gv_kg_config_init(&cfg);
+cfg.embedding_dimension = 128;
+GV_KnowledgeGraph *kg = gv_kg_create(&cfg);
+```
+
+### Entities and Relations
+
+```c
+// Add entities with embeddings
+float emb_alice[128] = { /* ... */ };
+uint64_t alice = gv_kg_add_entity(kg, "Alice", "Person", emb_alice, 128);
+uint64_t company = gv_kg_add_entity(kg, "Anthropic", "Company", NULL, 0);
+
+// Add relations (SPO triples)
+uint64_t rel = gv_kg_add_relation(kg, alice, "works_at", company, 1.0f);
+
+// Query triples (NULL = wildcard)
+GV_KGTriple triples[64];
+int n = gv_kg_query_triples(kg, NULL, "works_at", NULL, triples, 64);
+gv_kg_free_triples(triples, n);
+```
+
+### Semantic Search and Link Prediction
+
+```c
+// Search by embedding similarity
+float query[128] = { /* ... */ };
+GV_KGSearchResult results[10];
+int n = gv_kg_search_similar(kg, query, 128, 10, results);
+gv_kg_free_search_results(results, n);
+
+// Predict missing links
+GV_KGLinkPrediction predictions[5];
+int np = gv_kg_predict_links(kg, alice, 5, predictions);
+
+// Entity resolution
+int resolved_id = gv_kg_resolve_entity(kg, "Alice Smith", "Person", emb_alice, 128);
+
+// Save / Load
+gv_kg_save(kg, "knowledge.gvkg");
+GV_KnowledgeGraph *kg2 = gv_kg_load("knowledge.gvkg");
+
+gv_kg_destroy(kg);
+```
+
+---
+
 ## Thread Safety
 
 ### Database Handle
