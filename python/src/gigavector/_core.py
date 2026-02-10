@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import IntEnum
 from types import TracebackType
-from typing import Any, Callable, Iterable, Optional, Sequence, TypeAlias
+from typing import Any, Callable, Iterable, List, Optional, Sequence, TypeAlias
 
 from ._ffi import ffi, lib
 
@@ -7747,5 +7747,552 @@ class LearnedSparseIndex:
             raise RuntimeError("Failed to load learned sparse index")
         obj = cls.__new__(cls)
         obj._idx = idx
+        return obj
+
+
+# ===== Graph Database =====
+
+
+@dataclass
+class GraphDBConfig:
+    node_bucket_count: int = 4096
+    edge_bucket_count: int = 8192
+    enforce_referential_integrity: bool = True
+
+
+@dataclass
+class GraphPath:
+    node_ids: List[int]
+    edge_ids: List[int]
+    total_weight: float
+
+
+class GraphDB:
+    """Property graph database with traversal and analytics."""
+
+    def __init__(self, config: Optional[GraphDBConfig] = None):
+        c_cfg = ffi.new("GV_GraphDBConfig *")
+        lib.gv_graph_config_init(c_cfg)
+        if config:
+            c_cfg.node_bucket_count = config.node_bucket_count
+            c_cfg.edge_bucket_count = config.edge_bucket_count
+            c_cfg.enforce_referential_integrity = 1 if config.enforce_referential_integrity else 0
+        self._g = lib.gv_graph_create(c_cfg)
+        if self._g == ffi.NULL:
+            raise RuntimeError("Failed to create graph database")
+
+    def __del__(self):
+        if hasattr(self, "_g") and self._g != ffi.NULL:
+            lib.gv_graph_destroy(self._g)
+
+    # -- Node ops --
+
+    def add_node(self, label: str) -> int:
+        nid = lib.gv_graph_add_node(self._g, label.encode())
+        if nid == 0:
+            raise RuntimeError("Failed to add node")
+        return nid
+
+    def remove_node(self, node_id: int) -> None:
+        if lib.gv_graph_remove_node(self._g, node_id) != 0:
+            raise RuntimeError(f"Failed to remove node {node_id}")
+
+    def get_node_label(self, node_id: int) -> Optional[str]:
+        node = lib.gv_graph_get_node(self._g, node_id)
+        if node == ffi.NULL:
+            return None
+        return ffi.string(node.label).decode() if node.label != ffi.NULL else None
+
+    def set_node_prop(self, node_id: int, key: str, value: str) -> None:
+        if lib.gv_graph_set_node_prop(self._g, node_id, key.encode(), value.encode()) != 0:
+            raise RuntimeError(f"Failed to set node property {key}")
+
+    def get_node_prop(self, node_id: int, key: str) -> Optional[str]:
+        val = lib.gv_graph_get_node_prop(self._g, node_id, key.encode())
+        if val == ffi.NULL:
+            return None
+        return ffi.string(val).decode()
+
+    def find_nodes_by_label(self, label: str, max_count: int = 1024) -> List[int]:
+        out = ffi.new("uint64_t[]", max_count)
+        n = lib.gv_graph_find_nodes_by_label(self._g, label.encode(), out, max_count)
+        if n < 0:
+            raise RuntimeError("Failed to find nodes by label")
+        return [out[i] for i in range(n)]
+
+    # -- Edge ops --
+
+    def add_edge(self, source: int, target: int, label: str, weight: float = 1.0) -> int:
+        eid = lib.gv_graph_add_edge(self._g, source, target, label.encode(), weight)
+        if eid == 0:
+            raise RuntimeError("Failed to add edge")
+        return eid
+
+    def remove_edge(self, edge_id: int) -> None:
+        if lib.gv_graph_remove_edge(self._g, edge_id) != 0:
+            raise RuntimeError(f"Failed to remove edge {edge_id}")
+
+    def get_edge(self, edge_id: int):
+        edge = lib.gv_graph_get_edge(self._g, edge_id)
+        if edge == ffi.NULL:
+            return None
+        return {
+            "edge_id": edge.edge_id,
+            "source_id": edge.source_id,
+            "target_id": edge.target_id,
+            "label": ffi.string(edge.label).decode() if edge.label != ffi.NULL else None,
+            "weight": edge.weight,
+        }
+
+    def set_edge_prop(self, edge_id: int, key: str, value: str) -> None:
+        if lib.gv_graph_set_edge_prop(self._g, edge_id, key.encode(), value.encode()) != 0:
+            raise RuntimeError(f"Failed to set edge property {key}")
+
+    def get_edge_prop(self, edge_id: int, key: str) -> Optional[str]:
+        val = lib.gv_graph_get_edge_prop(self._g, edge_id, key.encode())
+        if val == ffi.NULL:
+            return None
+        return ffi.string(val).decode()
+
+    def get_edges_out(self, node_id: int, max_count: int = 1024) -> List[int]:
+        out = ffi.new("uint64_t[]", max_count)
+        n = lib.gv_graph_get_edges_out(self._g, node_id, out, max_count)
+        if n < 0:
+            raise RuntimeError("Failed to get outgoing edges")
+        return [out[i] for i in range(n)]
+
+    def get_edges_in(self, node_id: int, max_count: int = 1024) -> List[int]:
+        out = ffi.new("uint64_t[]", max_count)
+        n = lib.gv_graph_get_edges_in(self._g, node_id, out, max_count)
+        if n < 0:
+            raise RuntimeError("Failed to get incoming edges")
+        return [out[i] for i in range(n)]
+
+    def get_neighbors(self, node_id: int, max_count: int = 1024) -> List[int]:
+        out = ffi.new("uint64_t[]", max_count)
+        n = lib.gv_graph_get_neighbors(self._g, node_id, out, max_count)
+        if n < 0:
+            raise RuntimeError("Failed to get neighbors")
+        return [out[i] for i in range(n)]
+
+    # -- Traversal --
+
+    def bfs(self, start: int, max_depth: int = 10, max_count: int = 4096) -> List[int]:
+        out = ffi.new("uint64_t[]", max_count)
+        n = lib.gv_graph_bfs(self._g, start, max_depth, out, max_count)
+        if n < 0:
+            raise RuntimeError("BFS failed")
+        return [out[i] for i in range(n)]
+
+    def dfs(self, start: int, max_depth: int = 10, max_count: int = 4096) -> List[int]:
+        out = ffi.new("uint64_t[]", max_count)
+        n = lib.gv_graph_dfs(self._g, start, max_depth, out, max_count)
+        if n < 0:
+            raise RuntimeError("DFS failed")
+        return [out[i] for i in range(n)]
+
+    def shortest_path(self, from_id: int, to_id: int) -> Optional[GraphPath]:
+        path = ffi.new("GV_GraphPath *")
+        rc = lib.gv_graph_shortest_path(self._g, from_id, to_id, path)
+        if rc != 0:
+            return None
+        result = GraphPath(
+            node_ids=[path.node_ids[i] for i in range(path.length + 1)],
+            edge_ids=[path.edge_ids[i] for i in range(path.length)],
+            total_weight=path.total_weight,
+        )
+        lib.gv_graph_free_path(path)
+        return result
+
+    # -- Analytics --
+
+    def pagerank(self, node_id: int, iterations: int = 20, damping: float = 0.85) -> float:
+        return lib.gv_graph_pagerank(self._g, node_id, iterations, damping)
+
+    def degree(self, node_id: int) -> int:
+        return lib.gv_graph_degree(self._g, node_id)
+
+    def in_degree(self, node_id: int) -> int:
+        return lib.gv_graph_in_degree(self._g, node_id)
+
+    def out_degree(self, node_id: int) -> int:
+        return lib.gv_graph_out_degree(self._g, node_id)
+
+    def connected_components(self) -> int:
+        n = self.node_count
+        if n == 0:
+            return 0
+        out = ffi.new("uint64_t[]", n)
+        rc = lib.gv_graph_connected_components(self._g, out, n)
+        if rc < 0:
+            raise RuntimeError("Failed to compute connected components")
+        return rc
+
+    def clustering_coefficient(self, node_id: int) -> float:
+        return lib.gv_graph_clustering_coefficient(self._g, node_id)
+
+    # -- Stats --
+
+    @property
+    def node_count(self) -> int:
+        return lib.gv_graph_node_count(self._g)
+
+    @property
+    def edge_count(self) -> int:
+        return lib.gv_graph_edge_count(self._g)
+
+    # -- Persistence --
+
+    def save(self, path: str) -> None:
+        if lib.gv_graph_save(self._g, path.encode()) != 0:
+            raise RuntimeError("Failed to save graph")
+
+    @classmethod
+    def load(cls, path: str) -> "GraphDB":
+        g = lib.gv_graph_load(path.encode())
+        if g == ffi.NULL:
+            raise RuntimeError("Failed to load graph")
+        obj = cls.__new__(cls)
+        obj._g = g
+        return obj
+
+
+# ===== Knowledge Graph =====
+
+
+@dataclass
+class KGConfig:
+    entity_bucket_count: int = 4096
+    relation_bucket_count: int = 8192
+    embedding_dimension: int = 128
+    similarity_threshold: float = 0.7
+    link_prediction_threshold: float = 0.8
+    max_entities: int = 1000000
+
+
+@dataclass
+class KGSearchResult:
+    entity_id: int
+    name: str
+    type: str
+    similarity: float
+
+
+@dataclass
+class KGTriple:
+    subject_id: int
+    subject_name: str
+    predicate: str
+    object_id: int
+    object_name: str
+    score: float
+
+
+@dataclass
+class KGLinkPrediction:
+    entity_a: int
+    entity_b: int
+    predicted_predicate: str
+    confidence: float
+
+
+@dataclass
+class KGSubgraph:
+    entity_ids: List[int]
+    relation_ids: List[int]
+
+
+@dataclass
+class KGStats:
+    entity_count: int
+    relation_count: int
+    triple_count: int
+    type_count: int
+    predicate_count: int
+    embedding_count: int
+
+
+class KnowledgeGraph:
+    """Knowledge graph with entities, relations, triples, embeddings, and analytics."""
+
+    def __init__(self, config: Optional[KGConfig] = None):
+        c_cfg = ffi.new("GV_KGConfig *")
+        lib.gv_kg_config_init(c_cfg)
+        if config:
+            c_cfg.entity_bucket_count = config.entity_bucket_count
+            c_cfg.relation_bucket_count = config.relation_bucket_count
+            c_cfg.embedding_dimension = config.embedding_dimension
+            c_cfg.similarity_threshold = config.similarity_threshold
+            c_cfg.link_prediction_threshold = config.link_prediction_threshold
+            c_cfg.max_entities = config.max_entities
+        self._kg = lib.gv_kg_create(c_cfg)
+        if self._kg == ffi.NULL:
+            raise RuntimeError("Failed to create knowledge graph")
+
+    def __del__(self):
+        if hasattr(self, "_kg") and self._kg != ffi.NULL:
+            lib.gv_kg_destroy(self._kg)
+
+    # -- Entity ops --
+
+    def add_entity(self, name: str, type_: str, embedding: Optional[List[float]] = None) -> int:
+        if embedding:
+            c_emb = ffi.new("float[]", embedding)
+            eid = lib.gv_kg_add_entity(self._kg, name.encode(), type_.encode(), c_emb, len(embedding))
+        else:
+            eid = lib.gv_kg_add_entity(self._kg, name.encode(), type_.encode(), ffi.NULL, 0)
+        if eid == 0:
+            raise RuntimeError("Failed to add entity")
+        return eid
+
+    def remove_entity(self, entity_id: int) -> None:
+        if lib.gv_kg_remove_entity(self._kg, entity_id) != 0:
+            raise RuntimeError(f"Failed to remove entity {entity_id}")
+
+    def get_entity(self, entity_id: int):
+        e = lib.gv_kg_get_entity(self._kg, entity_id)
+        if e == ffi.NULL:
+            return None
+        return {
+            "entity_id": e.entity_id,
+            "name": ffi.string(e.name).decode() if e.name != ffi.NULL else "",
+            "type": ffi.string(e.type).decode() if e.type != ffi.NULL else "",
+            "dimension": e.dimension,
+            "confidence": e.confidence,
+        }
+
+    def set_entity_prop(self, entity_id: int, key: str, value: str) -> None:
+        if lib.gv_kg_set_entity_prop(self._kg, entity_id, key.encode(), value.encode()) != 0:
+            raise RuntimeError(f"Failed to set entity property {key}")
+
+    def get_entity_prop(self, entity_id: int, key: str) -> Optional[str]:
+        val = lib.gv_kg_get_entity_prop(self._kg, entity_id, key.encode())
+        if val == ffi.NULL:
+            return None
+        return ffi.string(val).decode()
+
+    def find_entities_by_type(self, type_: str, max_count: int = 1024) -> List[int]:
+        out = ffi.new("uint64_t[]", max_count)
+        n = lib.gv_kg_find_entities_by_type(self._kg, type_.encode(), out, max_count)
+        if n < 0:
+            raise RuntimeError("Failed to find entities by type")
+        return [out[i] for i in range(n)]
+
+    def find_entities_by_name(self, name: str, max_count: int = 1024) -> List[int]:
+        out = ffi.new("uint64_t[]", max_count)
+        n = lib.gv_kg_find_entities_by_name(self._kg, name.encode(), out, max_count)
+        if n < 0:
+            raise RuntimeError("Failed to find entities by name")
+        return [out[i] for i in range(n)]
+
+    # -- Relation ops --
+
+    def add_relation(self, subject: int, predicate: str, object_: int, weight: float = 1.0) -> int:
+        rid = lib.gv_kg_add_relation(self._kg, subject, predicate.encode(), object_, weight)
+        if rid == 0:
+            raise RuntimeError("Failed to add relation")
+        return rid
+
+    def remove_relation(self, relation_id: int) -> None:
+        if lib.gv_kg_remove_relation(self._kg, relation_id) != 0:
+            raise RuntimeError(f"Failed to remove relation {relation_id}")
+
+    def get_relation(self, relation_id: int):
+        r = lib.gv_kg_get_relation(self._kg, relation_id)
+        if r == ffi.NULL:
+            return None
+        return {
+            "relation_id": r.relation_id,
+            "subject_id": r.subject_id,
+            "object_id": r.object_id,
+            "predicate": ffi.string(r.predicate).decode() if r.predicate != ffi.NULL else "",
+            "weight": r.weight,
+        }
+
+    def set_relation_prop(self, relation_id: int, key: str, value: str) -> None:
+        if lib.gv_kg_set_relation_prop(self._kg, relation_id, key.encode(), value.encode()) != 0:
+            raise RuntimeError(f"Failed to set relation property {key}")
+
+    # -- Triple queries --
+
+    def query_triples(self, subject: Optional[int] = None, predicate: Optional[str] = None,
+                      object_: Optional[int] = None, max_count: int = 1024) -> List[KGTriple]:
+        c_subj = ffi.new("uint64_t *", subject) if subject is not None else ffi.NULL
+        c_pred = predicate.encode() if predicate else ffi.NULL
+        c_obj = ffi.new("uint64_t *", object_) if object_ is not None else ffi.NULL
+        out = ffi.new("GV_KGTriple[]", max_count)
+        n = lib.gv_kg_query_triples(self._kg, c_subj, c_pred, c_obj, out, max_count)
+        if n < 0:
+            raise RuntimeError("Failed to query triples")
+        results = []
+        for i in range(n):
+            t = out[i]
+            results.append(KGTriple(
+                subject_id=t.subject_id,
+                subject_name=ffi.string(t.subject_name).decode() if t.subject_name != ffi.NULL else "",
+                predicate=ffi.string(t.predicate).decode() if t.predicate != ffi.NULL else "",
+                object_id=t.object_id,
+                object_name=ffi.string(t.object_name).decode() if t.object_name != ffi.NULL else "",
+                score=t.score,
+            ))
+        lib.gv_kg_free_triples(out, n)
+        return results
+
+    # -- Semantic search --
+
+    def search_similar(self, query_embedding: List[float], k: int = 10) -> List[KGSearchResult]:
+        c_emb = ffi.new("float[]", query_embedding)
+        out = ffi.new("GV_KGSearchResult[]", k)
+        n = lib.gv_kg_search_similar(self._kg, c_emb, len(query_embedding), k, out)
+        if n < 0:
+            raise RuntimeError("Failed to search similar entities")
+        results = []
+        for i in range(n):
+            r = out[i]
+            results.append(KGSearchResult(
+                entity_id=r.entity_id,
+                name=ffi.string(r.name).decode() if r.name != ffi.NULL else "",
+                type=ffi.string(r.type).decode() if r.type != ffi.NULL else "",
+                similarity=r.similarity,
+            ))
+        lib.gv_kg_free_search_results(out, n)
+        return results
+
+    def hybrid_search(self, query_embedding: List[float], entity_type: Optional[str] = None,
+                      predicate_filter: Optional[str] = None, k: int = 10) -> List[KGSearchResult]:
+        c_emb = ffi.new("float[]", query_embedding)
+        c_type = entity_type.encode() if entity_type else ffi.NULL
+        c_pred = predicate_filter.encode() if predicate_filter else ffi.NULL
+        out = ffi.new("GV_KGSearchResult[]", k)
+        n = lib.gv_kg_hybrid_search(self._kg, c_emb, len(query_embedding), c_type, c_pred, k, out)
+        if n < 0:
+            raise RuntimeError("Failed to perform hybrid search")
+        results = []
+        for i in range(n):
+            r = out[i]
+            results.append(KGSearchResult(
+                entity_id=r.entity_id,
+                name=ffi.string(r.name).decode() if r.name != ffi.NULL else "",
+                type=ffi.string(r.type).decode() if r.type != ffi.NULL else "",
+                similarity=r.similarity,
+            ))
+        lib.gv_kg_free_search_results(out, n)
+        return results
+
+    # -- Entity resolution --
+
+    def resolve_entity(self, name: str, type_: str, embedding: Optional[List[float]] = None) -> int:
+        if embedding:
+            c_emb = ffi.new("float[]", embedding)
+            eid = lib.gv_kg_resolve_entity(self._kg, name.encode(), type_.encode(), c_emb, len(embedding))
+        else:
+            eid = lib.gv_kg_resolve_entity(self._kg, name.encode(), type_.encode(), ffi.NULL, 0)
+        if eid == 0:
+            raise RuntimeError("Failed to resolve entity")
+        return eid
+
+    def find_duplicates(self, threshold: float = 0.9, max_count: int = 256) -> List[KGLinkPrediction]:
+        out = ffi.new("GV_KGLinkPrediction[]", max_count)
+        n = lib.gv_kg_find_duplicates(self._kg, threshold, out, max_count)
+        if n < 0:
+            raise RuntimeError("Failed to find duplicates")
+        results = []
+        for i in range(n):
+            p = out[i]
+            results.append(KGLinkPrediction(
+                entity_a=p.entity_a, entity_b=p.entity_b,
+                predicted_predicate=ffi.string(p.predicted_predicate).decode() if p.predicted_predicate != ffi.NULL else "",
+                confidence=p.confidence,
+            ))
+        return results
+
+    def merge_entities(self, keep_id: int, merge_id: int) -> None:
+        if lib.gv_kg_merge_entities(self._kg, keep_id, merge_id) != 0:
+            raise RuntimeError("Failed to merge entities")
+
+    # -- Link prediction --
+
+    def predict_links(self, entity_id: int, k: int = 10) -> List[KGLinkPrediction]:
+        out = ffi.new("GV_KGLinkPrediction[]", k)
+        n = lib.gv_kg_predict_links(self._kg, entity_id, k, out)
+        if n < 0:
+            raise RuntimeError("Failed to predict links")
+        results = []
+        for i in range(n):
+            p = out[i]
+            results.append(KGLinkPrediction(
+                entity_a=p.entity_a, entity_b=p.entity_b,
+                predicted_predicate=ffi.string(p.predicted_predicate).decode() if p.predicted_predicate != ffi.NULL else "",
+                confidence=p.confidence,
+            ))
+        return results
+
+    # -- Traversal --
+
+    def get_neighbors(self, entity_id: int, max_count: int = 1024) -> List[int]:
+        out = ffi.new("uint64_t[]", max_count)
+        n = lib.gv_kg_get_neighbors(self._kg, entity_id, out, max_count)
+        if n < 0:
+            raise RuntimeError("Failed to get neighbors")
+        return [out[i] for i in range(n)]
+
+    def traverse(self, start: int, max_depth: int = 3, max_count: int = 4096) -> List[int]:
+        out = ffi.new("uint64_t[]", max_count)
+        n = lib.gv_kg_traverse(self._kg, start, max_depth, out, max_count)
+        if n < 0:
+            raise RuntimeError("Traversal failed")
+        return [out[i] for i in range(n)]
+
+    def shortest_path(self, from_id: int, to_id: int, max_len: int = 256) -> Optional[List[int]]:
+        out = ffi.new("uint64_t[]", max_len)
+        n = lib.gv_kg_shortest_path(self._kg, from_id, to_id, out, max_len)
+        if n < 0:
+            return None
+        return [out[i] for i in range(n)]
+
+    # -- Subgraph --
+
+    def extract_subgraph(self, center: int, radius: int = 2) -> KGSubgraph:
+        sg = ffi.new("GV_KGSubgraph *")
+        if lib.gv_kg_extract_subgraph(self._kg, center, radius, sg) != 0:
+            raise RuntimeError("Failed to extract subgraph")
+        result = KGSubgraph(
+            entity_ids=[sg.entity_ids[i] for i in range(sg.entity_count)],
+            relation_ids=[sg.relation_ids[i] for i in range(sg.relation_count)],
+        )
+        lib.gv_kg_free_subgraph(sg)
+        return result
+
+    # -- Analytics --
+
+    def get_stats(self) -> KGStats:
+        stats = ffi.new("GV_KGStats *")
+        if lib.gv_kg_get_stats(self._kg, stats) != 0:
+            raise RuntimeError("Failed to get KG stats")
+        return KGStats(
+            entity_count=stats.entity_count,
+            relation_count=stats.relation_count,
+            triple_count=stats.triple_count,
+            type_count=stats.type_count,
+            predicate_count=stats.predicate_count,
+            embedding_count=stats.embedding_count,
+        )
+
+    def entity_centrality(self, entity_id: int) -> float:
+        return lib.gv_kg_entity_centrality(self._kg, entity_id)
+
+    # -- Persistence --
+
+    def save(self, path: str) -> None:
+        if lib.gv_kg_save(self._kg, path.encode()) != 0:
+            raise RuntimeError("Failed to save knowledge graph")
+
+    @classmethod
+    def load(cls, path: str) -> "KnowledgeGraph":
+        kg = lib.gv_kg_load(path.encode())
+        if kg == ffi.NULL:
+            raise RuntimeError("Failed to load knowledge graph")
+        obj = cls.__new__(cls)
+        obj._kg = kg
         return obj
 

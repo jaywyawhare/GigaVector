@@ -2870,6 +2870,223 @@ int gv_ls_get_stats(const GV_LearnedSparseIndex *idx, GV_LearnedSparseStats *sta
 size_t gv_ls_count(const GV_LearnedSparseIndex *idx);
 int gv_ls_save(const GV_LearnedSparseIndex *idx, const char *path);
 GV_LearnedSparseIndex *gv_ls_load(const char *path);
+
+/* ===== Graph Database ===== */
+
+typedef struct GV_GraphProp {
+    char *key;
+    char *value;
+    struct GV_GraphProp *next;
+} GV_GraphProp;
+
+typedef struct {
+    uint64_t edge_id;
+    uint64_t neighbor_id;
+} GV_GraphEdgeRef;
+
+typedef struct {
+    uint64_t node_id;
+    char *label;
+    GV_GraphProp *properties;
+    size_t prop_count;
+    GV_GraphEdgeRef *out_edges;
+    size_t out_count;
+    size_t out_cap;
+    GV_GraphEdgeRef *in_edges;
+    size_t in_count;
+    size_t in_cap;
+} GV_GraphNode;
+
+typedef struct {
+    uint64_t edge_id;
+    uint64_t source_id;
+    uint64_t target_id;
+    char *label;
+    float weight;
+    GV_GraphProp *properties;
+    size_t prop_count;
+} GV_GraphEdge;
+
+typedef struct {
+    uint64_t *node_ids;
+    uint64_t *edge_ids;
+    size_t length;
+    float total_weight;
+} GV_GraphPath;
+
+typedef struct {
+    size_t node_bucket_count;
+    size_t edge_bucket_count;
+    int enforce_referential_integrity;
+} GV_GraphDBConfig;
+
+typedef struct GV_GraphDB GV_GraphDB;
+
+void gv_graph_config_init(GV_GraphDBConfig *config);
+GV_GraphDB *gv_graph_create(const GV_GraphDBConfig *config);
+void gv_graph_destroy(GV_GraphDB *g);
+
+uint64_t gv_graph_add_node(GV_GraphDB *g, const char *label);
+int gv_graph_remove_node(GV_GraphDB *g, uint64_t node_id);
+const GV_GraphNode *gv_graph_get_node(const GV_GraphDB *g, uint64_t node_id);
+int gv_graph_set_node_prop(GV_GraphDB *g, uint64_t node_id, const char *key, const char *value);
+const char *gv_graph_get_node_prop(const GV_GraphDB *g, uint64_t node_id, const char *key);
+int gv_graph_find_nodes_by_label(const GV_GraphDB *g, const char *label, uint64_t *out_ids, size_t max_count);
+
+uint64_t gv_graph_add_edge(GV_GraphDB *g, uint64_t source, uint64_t target, const char *label, float weight);
+int gv_graph_remove_edge(GV_GraphDB *g, uint64_t edge_id);
+const GV_GraphEdge *gv_graph_get_edge(const GV_GraphDB *g, uint64_t edge_id);
+int gv_graph_set_edge_prop(GV_GraphDB *g, uint64_t edge_id, const char *key, const char *value);
+const char *gv_graph_get_edge_prop(const GV_GraphDB *g, uint64_t edge_id, const char *key);
+int gv_graph_get_edges_out(const GV_GraphDB *g, uint64_t node_id, uint64_t *out_ids, size_t max_count);
+int gv_graph_get_edges_in(const GV_GraphDB *g, uint64_t node_id, uint64_t *out_ids, size_t max_count);
+int gv_graph_get_neighbors(const GV_GraphDB *g, uint64_t node_id, uint64_t *out_ids, size_t max_count);
+
+int gv_graph_bfs(const GV_GraphDB *g, uint64_t start, size_t max_depth, uint64_t *out_ids, size_t max_count);
+int gv_graph_dfs(const GV_GraphDB *g, uint64_t start, size_t max_depth, uint64_t *out_ids, size_t max_count);
+int gv_graph_shortest_path(const GV_GraphDB *g, uint64_t from, uint64_t to, GV_GraphPath *path);
+int gv_graph_all_paths(const GV_GraphDB *g, uint64_t from, uint64_t to, size_t max_depth, GV_GraphPath *paths, size_t max_paths);
+void gv_graph_free_path(GV_GraphPath *path);
+
+float gv_graph_pagerank(const GV_GraphDB *g, uint64_t node_id, size_t iterations, float damping);
+size_t gv_graph_degree(const GV_GraphDB *g, uint64_t node_id);
+size_t gv_graph_in_degree(const GV_GraphDB *g, uint64_t node_id);
+size_t gv_graph_out_degree(const GV_GraphDB *g, uint64_t node_id);
+int gv_graph_connected_components(const GV_GraphDB *g, uint64_t *component_ids, size_t max_count);
+float gv_graph_clustering_coefficient(const GV_GraphDB *g, uint64_t node_id);
+
+size_t gv_graph_node_count(const GV_GraphDB *g);
+size_t gv_graph_edge_count(const GV_GraphDB *g);
+
+int gv_graph_save(const GV_GraphDB *g, const char *path);
+GV_GraphDB *gv_graph_load(const char *path);
+
+/* ===== Knowledge Graph ===== */
+
+typedef struct GV_KnowledgeGraph GV_KnowledgeGraph;
+
+typedef struct GV_KGProp {
+    char *key;
+    char *value;
+    struct GV_KGProp *next;
+} GV_KGProp;
+
+typedef struct {
+    uint64_t entity_id;
+    char *name;
+    char *type;
+    float *embedding;
+    size_t dimension;
+    GV_KGProp *properties;
+    size_t prop_count;
+    uint64_t created_at;
+    float confidence;
+} GV_KGEntity;
+
+typedef struct {
+    uint64_t relation_id;
+    uint64_t subject_id;
+    uint64_t object_id;
+    char *predicate;
+    float weight;
+    GV_KGProp *properties;
+    uint64_t created_at;
+} GV_KGRelation;
+
+typedef struct {
+    uint64_t subject_id;
+    char *subject_name;
+    char *predicate;
+    uint64_t object_id;
+    char *object_name;
+    float score;
+} GV_KGTriple;
+
+typedef struct {
+    size_t entity_bucket_count;
+    size_t relation_bucket_count;
+    size_t embedding_dimension;
+    float similarity_threshold;
+    float link_prediction_threshold;
+    size_t max_entities;
+} GV_KGConfig;
+
+typedef struct {
+    uint64_t *entity_ids;
+    size_t entity_count;
+    uint64_t *relation_ids;
+    size_t relation_count;
+} GV_KGSubgraph;
+
+typedef struct {
+    uint64_t entity_id;
+    char *name;
+    char *type;
+    float similarity;
+} GV_KGSearchResult;
+
+typedef struct {
+    uint64_t entity_a;
+    uint64_t entity_b;
+    char *predicted_predicate;
+    float confidence;
+} GV_KGLinkPrediction;
+
+typedef struct {
+    size_t entity_count;
+    size_t relation_count;
+    size_t triple_count;
+    size_t type_count;
+    size_t predicate_count;
+    size_t embedding_count;
+} GV_KGStats;
+
+void gv_kg_config_init(GV_KGConfig *config);
+GV_KnowledgeGraph *gv_kg_create(const GV_KGConfig *config);
+void gv_kg_destroy(GV_KnowledgeGraph *kg);
+
+uint64_t gv_kg_add_entity(GV_KnowledgeGraph *kg, const char *name, const char *type, const float *embedding, size_t dimension);
+int gv_kg_remove_entity(GV_KnowledgeGraph *kg, uint64_t entity_id);
+const GV_KGEntity *gv_kg_get_entity(const GV_KnowledgeGraph *kg, uint64_t entity_id);
+int gv_kg_set_entity_prop(GV_KnowledgeGraph *kg, uint64_t entity_id, const char *key, const char *value);
+const char *gv_kg_get_entity_prop(const GV_KnowledgeGraph *kg, uint64_t entity_id, const char *key);
+int gv_kg_find_entities_by_type(const GV_KnowledgeGraph *kg, const char *type, uint64_t *out_ids, size_t max_count);
+int gv_kg_find_entities_by_name(const GV_KnowledgeGraph *kg, const char *name, uint64_t *out_ids, size_t max_count);
+
+uint64_t gv_kg_add_relation(GV_KnowledgeGraph *kg, uint64_t subject, const char *predicate, uint64_t object, float weight);
+int gv_kg_remove_relation(GV_KnowledgeGraph *kg, uint64_t relation_id);
+const GV_KGRelation *gv_kg_get_relation(const GV_KnowledgeGraph *kg, uint64_t relation_id);
+int gv_kg_set_relation_prop(GV_KnowledgeGraph *kg, uint64_t relation_id, const char *key, const char *value);
+
+int gv_kg_query_triples(const GV_KnowledgeGraph *kg, const uint64_t *subject, const char *predicate, const uint64_t *object, GV_KGTriple *out, size_t max_count);
+void gv_kg_free_triples(GV_KGTriple *triples, size_t count);
+
+int gv_kg_search_similar(const GV_KnowledgeGraph *kg, const float *query_embedding, size_t dimension, size_t k, GV_KGSearchResult *results);
+int gv_kg_search_by_text(const GV_KnowledgeGraph *kg, const char *text, const float *text_embedding, size_t dimension, size_t k, GV_KGSearchResult *results);
+void gv_kg_free_search_results(GV_KGSearchResult *results, size_t count);
+
+int gv_kg_resolve_entity(GV_KnowledgeGraph *kg, const char *name, const char *type, const float *embedding, size_t dimension);
+int gv_kg_find_duplicates(const GV_KnowledgeGraph *kg, float threshold, GV_KGLinkPrediction *out, size_t max_count);
+int gv_kg_merge_entities(GV_KnowledgeGraph *kg, uint64_t keep_id, uint64_t merge_id);
+
+int gv_kg_predict_links(const GV_KnowledgeGraph *kg, uint64_t entity_id, size_t k, GV_KGLinkPrediction *results);
+
+int gv_kg_get_neighbors(const GV_KnowledgeGraph *kg, uint64_t entity_id, uint64_t *out_ids, size_t max_count);
+int gv_kg_traverse(const GV_KnowledgeGraph *kg, uint64_t start, size_t max_depth, uint64_t *out_ids, size_t max_count);
+int gv_kg_shortest_path(const GV_KnowledgeGraph *kg, uint64_t from, uint64_t to, uint64_t *path_ids, size_t max_len);
+
+int gv_kg_extract_subgraph(const GV_KnowledgeGraph *kg, uint64_t center, size_t radius, GV_KGSubgraph *subgraph);
+void gv_kg_free_subgraph(GV_KGSubgraph *subgraph);
+
+int gv_kg_hybrid_search(const GV_KnowledgeGraph *kg, const float *query_embedding, size_t dimension, const char *entity_type, const char *predicate_filter, size_t k, GV_KGSearchResult *results);
+
+int gv_kg_get_stats(const GV_KnowledgeGraph *kg, GV_KGStats *stats);
+float gv_kg_entity_centrality(const GV_KnowledgeGraph *kg, uint64_t entity_id);
+int gv_kg_get_entity_types(const GV_KnowledgeGraph *kg, char **out_types, size_t max_count);
+int gv_kg_get_predicates(const GV_KnowledgeGraph *kg, char **out_predicates, size_t max_count);
+
+int gv_kg_save(const GV_KnowledgeGraph *kg, const char *path);
+GV_KnowledgeGraph *gv_kg_load(const char *path);
 """
 )
 

@@ -356,6 +356,18 @@ from ._core import (
     LearnedSparseIndex,
     LearnedSparseResult,
     LearnedSparseStats,
+    # Graph Database
+    GraphDBConfig,
+    GraphPath,
+    GraphDB,
+    # Knowledge Graph
+    KGConfig,
+    KGSearchResult,
+    KGTriple,
+    KGLinkPrediction,
+    KGSubgraph,
+    KGStats,
+    KnowledgeGraph,
 )
 
 __all__ = [
@@ -696,6 +708,18 @@ __all__ = [
     "LearnedSparseIndex",
     "LearnedSparseResult",
     "LearnedSparseStats",
+    # Graph Database
+    "GraphDBConfig",
+    "GraphPath",
+    "GraphDB",
+    # Knowledge Graph
+    "KGConfig",
+    "KGSearchResult",
+    "KGTriple",
+    "KGLinkPrediction",
+    "KGSubgraph",
+    "KGStats",
+    "KnowledgeGraph",
 ]
 
 __version__ = "0.8.0"
