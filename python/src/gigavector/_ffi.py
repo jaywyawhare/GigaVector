@@ -2255,6 +2255,621 @@ int gv_rbac_init_defaults(GV_RBACManager *mgr);
 
 int gv_rbac_save(const GV_RBACManager *mgr, const char *filepath);
 GV_RBACManager *gv_rbac_load(const char *filepath);
+
+/* ===== MMR Reranking ===== */
+
+typedef struct {
+    float lambda;
+    int distance_type;
+} GV_MMRConfig;
+
+typedef struct {
+    size_t index;
+    float score;
+    float relevance;
+    float diversity;
+} GV_MMRResult;
+
+void gv_mmr_config_init(GV_MMRConfig *config);
+int gv_mmr_rerank(const float *query, size_t dimension, const float *candidates, const size_t *candidate_indices, const float *candidate_distances, size_t candidate_count, size_t k, const GV_MMRConfig *config, GV_MMRResult *results);
+int gv_mmr_search(const void *db, const float *query, size_t dimension, size_t k, size_t oversample, const GV_MMRConfig *config, GV_MMRResult *results);
+
+/* ===== Custom Ranking ===== */
+
+typedef struct GV_RankExpr GV_RankExpr;
+
+typedef struct {
+    const char *name;
+    double value;
+} GV_RankSignal;
+
+typedef struct {
+    size_t index;
+    double final_score;
+    float vector_score;
+} GV_RankedResult;
+
+GV_RankExpr *gv_rank_expr_parse(const char *expression);
+GV_RankExpr *gv_rank_expr_create_weighted(size_t n, const char **signal_names, const double *weights);
+double gv_rank_expr_eval(const GV_RankExpr *expr, float vector_score, const GV_RankSignal *signals, size_t signal_count);
+void gv_rank_expr_destroy(GV_RankExpr *expr);
+int gv_rank_search(const void *db, const float *query, size_t dimension, size_t k, size_t oversample, int distance_type, const GV_RankExpr *expr, const GV_RankSignal *per_vector_signals, size_t signal_stride, GV_RankedResult *results);
+
+/* ===== Advanced Quantization ===== */
+
+typedef enum { GV_QUANT_BINARY, GV_QUANT_TERNARY, GV_QUANT_2BIT, GV_QUANT_4BIT, GV_QUANT_8BIT, ... } GV_QuantType;
+typedef enum { GV_QUANT_SYMMETRIC, GV_QUANT_ASYMMETRIC, ... } GV_QuantMode;
+
+typedef struct {
+    GV_QuantType type;
+    GV_QuantMode mode;
+    int use_rabitq;
+    uint64_t rabitq_seed;
+} GV_QuantConfig;
+
+typedef struct GV_QuantCodebook GV_QuantCodebook;
+
+void gv_quant_config_init(GV_QuantConfig *config);
+GV_QuantCodebook *gv_quant_train(const float *vectors, size_t count, size_t dimension, const GV_QuantConfig *config);
+int gv_quant_encode(const GV_QuantCodebook *cb, const float *vector, size_t dimension, uint8_t *codes);
+int gv_quant_decode(const GV_QuantCodebook *cb, const uint8_t *codes, size_t dimension, float *output);
+float gv_quant_distance(const GV_QuantCodebook *cb, const float *query, size_t dimension, const uint8_t *codes);
+float gv_quant_distance_qq(const GV_QuantCodebook *cb, const uint8_t *codes_a, const uint8_t *codes_b, size_t dimension);
+size_t gv_quant_code_size(const GV_QuantCodebook *cb, size_t dimension);
+int gv_quant_codebook_save(const GV_QuantCodebook *cb, const char *path);
+GV_QuantCodebook *gv_quant_codebook_load(const char *path);
+void gv_quant_codebook_destroy(GV_QuantCodebook *cb);
+float gv_quant_memory_ratio(const GV_QuantCodebook *cb, size_t dimension);
+
+/* ===== Full-Text Search ===== */
+
+typedef enum { GV_FT_ENGLISH, GV_FT_GERMAN, GV_FT_FRENCH, GV_FT_SPANISH, GV_FT_ITALIAN, GV_FT_PORTUGUESE, GV_FT_AUTO, ... } GV_FTLanguage;
+
+typedef struct {
+    GV_FTLanguage language;
+    int enable_stemming;
+    int enable_phrase_match;
+    int use_blockmax_wand;
+    size_t block_size;
+} GV_FTConfig;
+
+typedef struct {
+    size_t doc_id;
+    float score;
+    size_t *match_positions;
+    size_t match_count;
+} GV_FTResult;
+
+typedef struct GV_FTIndex GV_FTIndex;
+
+void gv_ft_config_init(GV_FTConfig *config);
+GV_FTIndex *gv_ft_create(const GV_FTConfig *config);
+void gv_ft_destroy(GV_FTIndex *idx);
+int gv_ft_add_document(GV_FTIndex *idx, size_t doc_id, const char *text);
+int gv_ft_remove_document(GV_FTIndex *idx, size_t doc_id);
+int gv_ft_search(const GV_FTIndex *idx, const char *query, size_t limit, GV_FTResult *results);
+int gv_ft_search_phrase(const GV_FTIndex *idx, const char *phrase, size_t limit, GV_FTResult *results);
+int gv_ft_stem(const char *word, GV_FTLanguage lang, char *output, size_t output_size);
+void gv_ft_free_results(GV_FTResult *results, size_t count);
+size_t gv_ft_doc_count(const GV_FTIndex *idx);
+int gv_ft_save(const GV_FTIndex *idx, const char *path);
+GV_FTIndex *gv_ft_load(const char *path);
+
+/* ===== Optimized HNSW ===== */
+
+typedef struct {
+    int quant_bits;
+    int enable_prefetch;
+    size_t prefetch_distance;
+} GV_HNSWInlineConfig;
+
+typedef struct {
+    float connectivity_ratio;
+    size_t batch_size;
+    int background;
+} GV_HNSWRebuildConfig;
+
+typedef struct {
+    size_t nodes_processed;
+    size_t edges_added;
+    size_t edges_removed;
+    double elapsed_ms;
+    int completed;
+} GV_HNSWRebuildStats;
+
+typedef struct GV_HNSWInlineIndex GV_HNSWInlineIndex;
+
+GV_HNSWInlineIndex *gv_hnsw_inline_create(size_t dimension, size_t max_elements, size_t M, size_t ef_construction, const GV_HNSWInlineConfig *config);
+void gv_hnsw_inline_destroy(GV_HNSWInlineIndex *idx);
+int gv_hnsw_inline_insert(GV_HNSWInlineIndex *idx, const float *vector, size_t label);
+int gv_hnsw_inline_search(const GV_HNSWInlineIndex *idx, const float *query, size_t k, size_t ef_search, size_t *labels, float *distances);
+int gv_hnsw_inline_rebuild(GV_HNSWInlineIndex *idx, const GV_HNSWRebuildConfig *config);
+int gv_hnsw_inline_rebuild_status(const GV_HNSWInlineIndex *idx, GV_HNSWRebuildStats *stats);
+size_t gv_hnsw_inline_count(const GV_HNSWInlineIndex *idx);
+int gv_hnsw_inline_save(const GV_HNSWInlineIndex *idx, const char *path);
+GV_HNSWInlineIndex *gv_hnsw_inline_load(const char *path);
+
+/* ===== ONNX Model Serving ===== */
+
+typedef struct {
+    const char *model_path;
+    int num_threads;
+    int use_gpu;
+    size_t max_batch_size;
+    int optimization_level;
+} GV_ONNXConfig;
+
+typedef struct {
+    float *data;
+    size_t *shape;
+    size_t ndim;
+    size_t total_elements;
+} GV_ONNXTensor;
+
+typedef struct GV_ONNXModel GV_ONNXModel;
+
+int gv_onnx_available(void);
+GV_ONNXModel *gv_onnx_load(const GV_ONNXConfig *config);
+void gv_onnx_destroy(GV_ONNXModel *model);
+int gv_onnx_infer(GV_ONNXModel *model, const GV_ONNXTensor *inputs, size_t input_count, GV_ONNXTensor *outputs, size_t output_count);
+int gv_onnx_rerank(GV_ONNXModel *model, const char *query_text, const char **doc_texts, size_t doc_count, float *scores);
+int gv_onnx_embed(GV_ONNXModel *model, const char **texts, size_t text_count, float *embeddings, size_t dimension);
+GV_ONNXTensor gv_onnx_tensor_create(const size_t *shape, size_t ndim);
+void gv_onnx_tensor_destroy(GV_ONNXTensor *tensor);
+int gv_onnx_get_input_info(const GV_ONNXModel *model, size_t *input_count, char ***input_names);
+int gv_onnx_get_output_info(const GV_ONNXModel *model, size_t *output_count, char ***output_names);
+
+/* ===== Agentic Interfaces ===== */
+
+typedef enum { GV_AGENT_QUERY, GV_AGENT_TRANSFORM, GV_AGENT_PERSONALIZE, ... } GV_AgentType;
+
+typedef struct {
+    GV_AgentType agent_type;
+    int llm_provider;
+    const char *api_key;
+    const char *model;
+    float temperature;
+    int max_retries;
+    const char *system_prompt_override;
+} GV_AgentConfig;
+
+typedef struct {
+    int success;
+    char *response_text;
+    size_t *result_indices;
+    float *result_distances;
+    size_t result_count;
+    char *generated_filter;
+    char *error_message;
+} GV_AgentResult;
+
+typedef struct GV_Agent GV_Agent;
+
+GV_Agent *gv_agent_create(const void *db, const GV_AgentConfig *config);
+void gv_agent_destroy(GV_Agent *agent);
+GV_AgentResult *gv_agent_query(GV_Agent *agent, const char *natural_language_query, size_t k);
+GV_AgentResult *gv_agent_transform(GV_Agent *agent, const char *natural_language_instruction);
+GV_AgentResult *gv_agent_personalize(GV_Agent *agent, const char *query, const char *user_profile_json, size_t k);
+void gv_agent_free_result(GV_AgentResult *result);
+void gv_agent_set_schema_hint(GV_Agent *agent, const char *schema_json);
+
+/* ===== MUVERA Encoder ===== */
+
+typedef struct {
+    size_t token_dimension;
+    size_t num_projections;
+    size_t output_dimension;
+    uint64_t seed;
+    int normalize;
+} GV_MuveraConfig;
+
+typedef struct GV_MuveraEncoder GV_MuveraEncoder;
+
+void gv_muvera_config_init(GV_MuveraConfig *config);
+GV_MuveraEncoder *gv_muvera_create(const GV_MuveraConfig *config);
+void gv_muvera_destroy(GV_MuveraEncoder *enc);
+int gv_muvera_encode(const GV_MuveraEncoder *enc, const float *tokens, size_t num_tokens, float *output);
+size_t gv_muvera_output_dimension(const GV_MuveraEncoder *enc);
+int gv_muvera_encode_batch(const GV_MuveraEncoder *enc, const float **token_sets, const size_t *token_counts, size_t batch_size, float *outputs);
+int gv_muvera_save(const GV_MuveraEncoder *enc, const char *path);
+GV_MuveraEncoder *gv_muvera_load(const char *path);
+
+/* ===== Enterprise SSO ===== */
+
+typedef enum { GV_SSO_OIDC, GV_SSO_SAML, ... } GV_SSOProvider;
+
+typedef struct {
+    GV_SSOProvider provider;
+    const char *issuer_url;
+    const char *client_id;
+    const char *client_secret;
+    const char *redirect_uri;
+    const char *saml_metadata_url;
+    const char *saml_entity_id;
+    int verify_ssl;
+    uint64_t token_ttl;
+    const char *allowed_groups;
+    const char *admin_groups;
+} GV_SSOConfig;
+
+typedef struct {
+    char *subject;
+    char *email;
+    char *name;
+    char **groups;
+    size_t group_count;
+    uint64_t issued_at;
+    uint64_t expires_at;
+    int is_admin;
+} GV_SSOToken;
+
+typedef struct GV_SSOManager GV_SSOManager;
+
+GV_SSOManager *gv_sso_create(const GV_SSOConfig *config);
+void gv_sso_destroy(GV_SSOManager *mgr);
+int gv_sso_discover(GV_SSOManager *mgr);
+int gv_sso_get_auth_url(const GV_SSOManager *mgr, const char *state, char *url, size_t url_size);
+GV_SSOToken *gv_sso_exchange_code(GV_SSOManager *mgr, const char *auth_code);
+GV_SSOToken *gv_sso_validate_token(GV_SSOManager *mgr, const char *token_string);
+GV_SSOToken *gv_sso_refresh_token(GV_SSOManager *mgr, const char *refresh_token);
+void gv_sso_free_token(GV_SSOToken *token);
+int gv_sso_has_group(const GV_SSOToken *token, const char *group);
+
+/* ===== Tiered Multitenancy ===== */
+
+typedef enum { GV_TIER_SHARED, GV_TIER_DEDICATED, GV_TIER_PREMIUM, ... } GV_TenantTier;
+
+typedef struct {
+    size_t shared_max_vectors;
+    size_t dedicated_max_vectors;
+    size_t shared_max_memory_mb;
+    size_t dedicated_max_memory_mb;
+} GV_TierThresholds;
+
+typedef struct {
+    GV_TierThresholds thresholds;
+    int auto_promote;
+    int auto_demote;
+    size_t max_shared_tenants;
+    size_t max_total_tenants;
+} GV_TieredTenantConfig;
+
+typedef struct {
+    char tenant_id[128];
+    GV_TenantTier tier;
+    size_t vector_count;
+    size_t memory_bytes;
+    uint64_t created_at;
+    uint64_t last_active;
+    double qps_avg;
+} GV_TenantInfo;
+
+typedef struct GV_TieredManager GV_TieredManager;
+
+void gv_tiered_config_init(GV_TieredTenantConfig *config);
+GV_TieredManager *gv_tiered_create(const GV_TieredTenantConfig *config);
+void gv_tiered_destroy(GV_TieredManager *mgr);
+int gv_tiered_add_tenant(GV_TieredManager *mgr, const char *tenant_id, GV_TenantTier initial_tier);
+int gv_tiered_remove_tenant(GV_TieredManager *mgr, const char *tenant_id);
+int gv_tiered_promote(GV_TieredManager *mgr, const char *tenant_id, GV_TenantTier new_tier);
+int gv_tiered_get_info(const GV_TieredManager *mgr, const char *tenant_id, GV_TenantInfo *info);
+int gv_tiered_record_usage(GV_TieredManager *mgr, const char *tenant_id, size_t vectors_delta, size_t memory_delta);
+int gv_tiered_check_promote(GV_TieredManager *mgr);
+int gv_tiered_list_tenants(const GV_TieredManager *mgr, GV_TenantTier tier, GV_TenantInfo *out, size_t max_count);
+size_t gv_tiered_tenant_count(const GV_TieredManager *mgr);
+int gv_tiered_save(const GV_TieredManager *mgr, const char *path);
+GV_TieredManager *gv_tiered_load(const char *path);
+
+/* ===== Integrated Inference ===== */
+
+typedef struct {
+    int embed_provider;
+    const char *api_key;
+    const char *model;
+    size_t dimension;
+    int distance_type;
+    size_t cache_size;
+} GV_InferenceConfig;
+
+typedef struct {
+    size_t index;
+    float distance;
+    char *text;
+    char *metadata_json;
+} GV_InferenceResult;
+
+typedef struct GV_InferenceEngine GV_InferenceEngine;
+
+void gv_inference_config_init(GV_InferenceConfig *config);
+GV_InferenceEngine *gv_inference_create(void *db, const GV_InferenceConfig *config);
+void gv_inference_destroy(GV_InferenceEngine *eng);
+int gv_inference_add(GV_InferenceEngine *eng, const char *text, const char *metadata_json);
+int gv_inference_add_batch(GV_InferenceEngine *eng, const char **texts, const char **metadata_jsons, size_t count);
+int gv_inference_search(GV_InferenceEngine *eng, const char *query_text, size_t k, GV_InferenceResult *results);
+int gv_inference_search_filtered(GV_InferenceEngine *eng, const char *query_text, size_t k, const char *filter_expr, GV_InferenceResult *results);
+int gv_inference_upsert(GV_InferenceEngine *eng, size_t index, const char *text, const char *metadata_json);
+void gv_inference_free_results(GV_InferenceResult *results, size_t count);
+
+/* ===== JSON Path Indexing ===== */
+
+typedef enum { GV_JSON_PATH_STRING, GV_JSON_PATH_INT, GV_JSON_PATH_FLOAT, GV_JSON_PATH_BOOL, ... } GV_JSONPathType;
+
+typedef struct {
+    const char *path;
+    GV_JSONPathType type;
+} GV_JSONPathConfig;
+
+typedef struct GV_JSONPathIndex GV_JSONPathIndex;
+
+GV_JSONPathIndex *gv_json_index_create(void);
+void gv_json_index_destroy(GV_JSONPathIndex *idx);
+int gv_json_index_add_path(GV_JSONPathIndex *idx, const GV_JSONPathConfig *config);
+int gv_json_index_remove_path(GV_JSONPathIndex *idx, const char *path);
+int gv_json_index_insert(GV_JSONPathIndex *idx, size_t vector_index, const char *json_str);
+int gv_json_index_remove(GV_JSONPathIndex *idx, size_t vector_index);
+int gv_json_index_lookup_string(const GV_JSONPathIndex *idx, const char *path, const char *value, size_t *out_indices, size_t max_count);
+int gv_json_index_lookup_int_range(const GV_JSONPathIndex *idx, const char *path, int64_t min_val, int64_t max_val, size_t *out_indices, size_t max_count);
+int gv_json_index_lookup_float_range(const GV_JSONPathIndex *idx, const char *path, double min_val, double max_val, size_t *out_indices, size_t max_count);
+size_t gv_json_index_count(const GV_JSONPathIndex *idx, const char *path);
+int gv_json_index_save(const GV_JSONPathIndex *idx, const char *path_file);
+GV_JSONPathIndex *gv_json_index_load(const char *path_file);
+
+/* ===== Change Data Capture ===== */
+
+typedef enum { GV_CDC_INSERT, GV_CDC_UPDATE, GV_CDC_DELETE, GV_CDC_SNAPSHOT, GV_CDC_ALL, ... } GV_CDCEventType;
+
+typedef struct {
+    uint64_t sequence_number;
+    GV_CDCEventType type;
+    size_t vector_index;
+    uint64_t timestamp;
+    const float *vector_data;
+    size_t dimension;
+    const char *metadata_json;
+} GV_CDCEvent;
+
+typedef struct {
+    size_t ring_buffer_size;
+    int persist_to_file;
+    const char *log_path;
+    size_t max_log_size_mb;
+    int include_vector_data;
+} GV_CDCConfig;
+
+typedef struct {
+    uint64_t sequence_number;
+} GV_CDCCursor;
+
+typedef struct GV_CDCStream GV_CDCStream;
+
+void gv_cdc_config_init(GV_CDCConfig *config);
+GV_CDCStream *gv_cdc_create(const GV_CDCConfig *config);
+void gv_cdc_destroy(GV_CDCStream *stream);
+int gv_cdc_publish(GV_CDCStream *stream, const GV_CDCEvent *event);
+int gv_cdc_subscribe(GV_CDCStream *stream, uint32_t event_mask, void *callback, void *user_data);
+int gv_cdc_unsubscribe(GV_CDCStream *stream, int subscriber_id);
+int gv_cdc_poll(GV_CDCStream *stream, GV_CDCCursor *cursor, GV_CDCEvent *events, size_t max_events);
+GV_CDCCursor gv_cdc_get_cursor(const GV_CDCStream *stream);
+GV_CDCCursor gv_cdc_cursor_from_sequence(uint64_t seq);
+size_t gv_cdc_pending_count(const GV_CDCStream *stream, const GV_CDCCursor *cursor);
+
+/* ===== Embedded/Edge Mode ===== */
+
+typedef enum { GV_EMBEDDED_FLAT, GV_EMBEDDED_HNSW, GV_EMBEDDED_LSH, ... } GV_EmbeddedIndexType;
+
+typedef struct {
+    size_t dimension;
+    GV_EmbeddedIndexType index_type;
+    size_t max_vectors;
+    size_t memory_limit_mb;
+    int mmap_storage;
+    const char *storage_path;
+    int quantize;
+} GV_EmbeddedConfig;
+
+typedef struct {
+    size_t index;
+    float distance;
+} GV_EmbeddedResult;
+
+typedef struct GV_EmbeddedDB GV_EmbeddedDB;
+
+void gv_embedded_config_init(GV_EmbeddedConfig *config);
+GV_EmbeddedDB *gv_embedded_open(const GV_EmbeddedConfig *config);
+void gv_embedded_close(GV_EmbeddedDB *db);
+int gv_embedded_add(GV_EmbeddedDB *db, const float *vector);
+int gv_embedded_add_with_id(GV_EmbeddedDB *db, size_t id, const float *vector);
+int gv_embedded_search(const GV_EmbeddedDB *db, const float *query, size_t k, int distance_type, GV_EmbeddedResult *results);
+int gv_embedded_delete(GV_EmbeddedDB *db, size_t index);
+int gv_embedded_get(const GV_EmbeddedDB *db, size_t index, float *output);
+size_t gv_embedded_count(const GV_EmbeddedDB *db);
+size_t gv_embedded_memory_usage(const GV_EmbeddedDB *db);
+int gv_embedded_save(const GV_EmbeddedDB *db, const char *path);
+GV_EmbeddedDB *gv_embedded_load(const char *path);
+int gv_embedded_compact(GV_EmbeddedDB *db);
+
+/* ===== Conditional Updates ===== */
+
+typedef enum { GV_COND_VERSION_EQ, GV_COND_VERSION_LT, GV_COND_METADATA_EQ, GV_COND_METADATA_EXISTS, GV_COND_METADATA_NOT_EXISTS, GV_COND_NOT_DELETED, ... } GV_ConditionType;
+
+typedef struct {
+    GV_ConditionType type;
+    const char *field_name;
+    const char *field_value;
+    uint64_t version;
+} GV_Condition;
+
+typedef struct {
+    size_t index;
+    uint64_t version;
+    uint64_t updated_at;
+} GV_VersionedVector;
+
+typedef struct GV_CondManager GV_CondManager;
+
+GV_CondManager *gv_cond_create(void *db);
+void gv_cond_destroy(GV_CondManager *mgr);
+int gv_cond_update_vector(GV_CondManager *mgr, size_t index, const float *new_data, size_t dimension, const GV_Condition *conditions, size_t condition_count);
+int gv_cond_update_metadata(GV_CondManager *mgr, size_t index, const char *key, const char *value, const GV_Condition *conditions, size_t condition_count);
+int gv_cond_delete(GV_CondManager *mgr, size_t index, const GV_Condition *conditions, size_t condition_count);
+uint64_t gv_cond_get_version(const GV_CondManager *mgr, size_t index);
+int gv_cond_batch_update(GV_CondManager *mgr, const size_t *indices, const float **vectors, const GV_Condition **conditions, const size_t *condition_counts, size_t batch_size, int *results);
+int gv_cond_migrate_embedding(GV_CondManager *mgr, size_t index, const float *new_embedding, size_t dimension, uint64_t expected_version);
+
+/* ===== Time Travel ===== */
+
+typedef struct {
+    size_t max_versions;
+    size_t max_storage_mb;
+    int auto_gc;
+    size_t gc_keep_count;
+} GV_TimeTravelConfig;
+
+typedef struct {
+    uint64_t version_id;
+    uint64_t timestamp;
+    size_t vector_count;
+    char description[128];
+} GV_VersionEntry;
+
+typedef struct GV_TimeTravelManager GV_TimeTravelManager;
+
+void gv_tt_config_init(GV_TimeTravelConfig *config);
+GV_TimeTravelManager *gv_tt_create(const GV_TimeTravelConfig *config);
+void gv_tt_destroy(GV_TimeTravelManager *mgr);
+uint64_t gv_tt_record_insert(GV_TimeTravelManager *mgr, size_t index, const float *vector, size_t dimension);
+uint64_t gv_tt_record_update(GV_TimeTravelManager *mgr, size_t index, const float *old_vector, const float *new_vector, size_t dimension);
+uint64_t gv_tt_record_delete(GV_TimeTravelManager *mgr, size_t index, const float *vector, size_t dimension);
+int gv_tt_query_at_version(const GV_TimeTravelManager *mgr, uint64_t version_id, size_t index, float *output, size_t dimension);
+int gv_tt_query_at_timestamp(const GV_TimeTravelManager *mgr, uint64_t timestamp, size_t index, float *output, size_t dimension);
+size_t gv_tt_count_at_version(const GV_TimeTravelManager *mgr, uint64_t version_id);
+uint64_t gv_tt_current_version(const GV_TimeTravelManager *mgr);
+int gv_tt_list_versions(const GV_TimeTravelManager *mgr, GV_VersionEntry *out, size_t max_count);
+int gv_tt_gc(GV_TimeTravelManager *mgr);
+int gv_tt_save(const GV_TimeTravelManager *mgr, const char *path);
+GV_TimeTravelManager *gv_tt_load(const char *path);
+
+/* ===== Multimodal Storage ===== */
+
+typedef enum { GV_MEDIA_IMAGE, GV_MEDIA_AUDIO, GV_MEDIA_VIDEO, GV_MEDIA_DOCUMENT, GV_MEDIA_BLOB, ... } GV_MediaType;
+
+typedef struct {
+    const char *storage_dir;
+    size_t max_blob_size_mb;
+    int deduplicate;
+    int compress_blobs;
+} GV_MediaConfig;
+
+typedef struct {
+    size_t vector_index;
+    GV_MediaType type;
+    char filename[256];
+    size_t file_size;
+    char hash[65];
+    uint64_t created_at;
+    char mime_type[64];
+} GV_MediaEntry;
+
+typedef struct GV_MediaStore GV_MediaStore;
+
+void gv_media_config_init(GV_MediaConfig *config);
+GV_MediaStore *gv_media_create(const GV_MediaConfig *config);
+void gv_media_destroy(GV_MediaStore *store);
+int gv_media_store_blob(GV_MediaStore *store, size_t vector_index, GV_MediaType type, const void *data, size_t data_size, const char *filename, const char *mime_type);
+int gv_media_store_file(GV_MediaStore *store, size_t vector_index, GV_MediaType type, const char *file_path);
+int gv_media_retrieve(const GV_MediaStore *store, size_t vector_index, void *buffer, size_t buffer_size, size_t *actual_size);
+int gv_media_get_path(const GV_MediaStore *store, size_t vector_index, char *path, size_t path_size);
+int gv_media_get_info(const GV_MediaStore *store, size_t vector_index, GV_MediaEntry *entry);
+int gv_media_delete(GV_MediaStore *store, size_t vector_index);
+int gv_media_exists(const GV_MediaStore *store, size_t vector_index);
+size_t gv_media_count(const GV_MediaStore *store);
+size_t gv_media_total_size(const GV_MediaStore *store);
+int gv_media_save_index(const GV_MediaStore *store, const char *path);
+GV_MediaStore *gv_media_load_index(const char *index_path, const char *storage_dir);
+
+/* ===== SQL Interface ===== */
+
+typedef struct {
+    size_t *indices;
+    float *distances;
+    char **metadata_jsons;
+    size_t row_count;
+    size_t column_count;
+    char **column_names;
+} GV_SQLResult;
+
+typedef struct GV_SQLEngine GV_SQLEngine;
+
+GV_SQLEngine *gv_sql_create(void *db);
+void gv_sql_destroy(GV_SQLEngine *eng);
+int gv_sql_execute(GV_SQLEngine *eng, const char *query, GV_SQLResult *result);
+void gv_sql_free_result(GV_SQLResult *result);
+const char *gv_sql_last_error(const GV_SQLEngine *eng);
+int gv_sql_explain(GV_SQLEngine *eng, const char *query, char *plan, size_t plan_size);
+
+/* ===== Phased Ranking Pipeline ===== */
+
+typedef enum { GV_PHASE_ANN, GV_PHASE_RERANK_EXPR, GV_PHASE_RERANK_MMR, GV_PHASE_RERANK_CALLBACK, GV_PHASE_FILTER, ... } GV_PhaseType;
+
+typedef struct {
+    size_t index;
+    float score;
+    int phase_reached;
+} GV_PhasedResult;
+
+typedef struct {
+    size_t *phase_input_counts;
+    size_t *phase_output_counts;
+    double *phase_latencies_ms;
+    size_t phase_count;
+    double total_latency_ms;
+} GV_PipelineStats;
+
+typedef struct GV_Pipeline GV_Pipeline;
+
+GV_Pipeline *gv_pipeline_create(const void *db);
+void gv_pipeline_destroy(GV_Pipeline *pipe);
+int gv_pipeline_add_phase(GV_Pipeline *pipe, const void *config);
+void gv_pipeline_clear_phases(GV_Pipeline *pipe);
+size_t gv_pipeline_phase_count(const GV_Pipeline *pipe);
+int gv_pipeline_execute(GV_Pipeline *pipe, const float *query, size_t dimension, size_t final_k, GV_PhasedResult *results);
+int gv_pipeline_get_stats(const GV_Pipeline *pipe, GV_PipelineStats *stats);
+void gv_pipeline_free_stats(GV_PipelineStats *stats);
+
+/* ===== Learned Sparse Index ===== */
+
+typedef struct {
+    uint32_t vocab_size;
+    size_t max_nonzeros;
+    int use_wand;
+    size_t wand_block_size;
+} GV_LearnedSparseConfig;
+
+typedef struct {
+    size_t doc_index;
+    float score;
+} GV_LearnedSparseResult;
+
+typedef struct {
+    size_t doc_count;
+    size_t total_postings;
+    double avg_doc_length;
+    size_t vocab_used;
+} GV_LearnedSparseStats;
+
+typedef struct GV_LearnedSparseIndex GV_LearnedSparseIndex;
+
+void gv_ls_config_init(GV_LearnedSparseConfig *config);
+GV_LearnedSparseIndex *gv_ls_create(const GV_LearnedSparseConfig *config);
+void gv_ls_destroy(GV_LearnedSparseIndex *idx);
+int gv_ls_insert(GV_LearnedSparseIndex *idx, const GV_SparseEntry *entries, size_t count);
+int gv_ls_delete(GV_LearnedSparseIndex *idx, size_t doc_id);
+int gv_ls_search(const GV_LearnedSparseIndex *idx, const GV_SparseEntry *query, size_t query_count, size_t k, GV_LearnedSparseResult *results);
+int gv_ls_search_with_threshold(const GV_LearnedSparseIndex *idx, const GV_SparseEntry *query, size_t query_count, float min_score, size_t k, GV_LearnedSparseResult *results);
+int gv_ls_get_stats(const GV_LearnedSparseIndex *idx, GV_LearnedSparseStats *stats);
+size_t gv_ls_count(const GV_LearnedSparseIndex *idx);
+int gv_ls_save(const GV_LearnedSparseIndex *idx, const char *path);
+GV_LearnedSparseIndex *gv_ls_load(const char *path);
 """
 )
 

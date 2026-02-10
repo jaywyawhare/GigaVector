@@ -6084,3 +6084,1668 @@ class RBACManager:
         obj._mgr = mgr
         return obj
 
+
+# ===========================================================================
+# MMR Reranking
+# ===========================================================================
+
+
+@dataclass(frozen=True)
+class MMRConfig:
+    lambda_: float = 0.5
+    distance_type: DistanceType = DistanceType.COSINE
+
+
+@dataclass(frozen=True)
+class MMRResult:
+    index: int
+    score: float
+    relevance: float
+    diversity: float
+
+
+def mmr_rerank(
+    query: Sequence[float],
+    candidates: Sequence[Sequence[float]],
+    candidate_indices: Sequence[int],
+    candidate_distances: Sequence[float],
+    k: int,
+    config: Optional[MMRConfig] = None,
+) -> list[MMRResult]:
+    dim = len(query)
+    n = len(candidate_indices)
+    q = ffi.new("float[]", list(query))
+    flat = []
+    for c in candidates:
+        flat.extend(c)
+    cands = ffi.new("float[]", flat)
+    c_idx = ffi.new("size_t[]", list(candidate_indices))
+    c_dist = ffi.new("float[]", list(candidate_distances))
+    c_cfg = ffi.new("GV_MMRConfig *")
+    lib.gv_mmr_config_init(c_cfg)
+    if config:
+        setattr(c_cfg, 'lambda', config.lambda_)
+        c_cfg.distance_type = config.distance_type.value
+    results = ffi.new("GV_MMRResult[]", k)
+    rc = lib.gv_mmr_rerank(q, dim, cands, c_idx, c_dist, n, k, c_cfg, results)
+    if rc < 0:
+        raise RuntimeError("MMR rerank failed")
+    return [MMRResult(results[i].index, results[i].score, results[i].relevance, results[i].diversity) for i in range(rc)]
+
+
+# ===========================================================================
+# Custom Ranking Expressions
+# ===========================================================================
+
+
+@dataclass(frozen=True)
+class RankSignal:
+    name: str
+    value: float
+
+
+@dataclass(frozen=True)
+class RankedResult:
+    index: int
+    final_score: float
+    vector_score: float
+
+
+class RankExpr:
+    def __init__(self, expression: str):
+        self._expr = lib.gv_rank_expr_parse(expression.encode())
+        if self._expr == ffi.NULL:
+            raise ValueError(f"Failed to parse ranking expression: {expression}")
+
+    @classmethod
+    def weighted(cls, signal_weights: dict[str, float]) -> "RankExpr":
+        names = list(signal_weights.keys())
+        weights = list(signal_weights.values())
+        c_names = [ffi.new("char[]", n.encode()) for n in names]
+        c_names_arr = ffi.new("const char *[]", c_names)
+        c_weights = ffi.new("double[]", weights)
+        obj = cls.__new__(cls)
+        obj._expr = lib.gv_rank_expr_create_weighted(len(names), c_names_arr, c_weights)
+        if obj._expr == ffi.NULL:
+            raise ValueError("Failed to create weighted expression")
+        return obj
+
+    def eval(self, vector_score: float, signals: Sequence[RankSignal]) -> float:
+        c_sigs = ffi.new("GV_RankSignal[]", len(signals))
+        keepalive = []
+        for i, s in enumerate(signals):
+            buf = ffi.new("char[]", s.name.encode())
+            keepalive.append(buf)
+            c_sigs[i].name = buf
+            c_sigs[i].value = s.value
+        return lib.gv_rank_expr_eval(self._expr, vector_score, c_sigs, len(signals))
+
+    def close(self) -> None:
+        if self._expr and self._expr != ffi.NULL:
+            lib.gv_rank_expr_destroy(self._expr)
+            self._expr = ffi.NULL
+
+    def __del__(self) -> None:
+        self.close()
+
+
+# ===========================================================================
+# Advanced Quantization
+# ===========================================================================
+
+
+class QuantType(IntEnum):
+    BINARY = 0
+    TERNARY = 1
+    TWO_BIT = 2
+    FOUR_BIT = 3
+    EIGHT_BIT = 4
+
+
+class QuantMode(IntEnum):
+    SYMMETRIC = 0
+    ASYMMETRIC = 1
+
+
+@dataclass(frozen=True)
+class QuantConfig:
+    type: QuantType = QuantType.FOUR_BIT
+    mode: QuantMode = QuantMode.SYMMETRIC
+    use_rabitq: bool = False
+    rabitq_seed: int = 42
+
+
+class QuantCodebook:
+    def __init__(self, _ptr: CData):
+        self._cb = _ptr
+
+    @classmethod
+    def train(cls, vectors: Sequence[Sequence[float]], config: Optional[QuantConfig] = None) -> "QuantCodebook":
+        count = len(vectors)
+        dim = len(vectors[0])
+        flat = []
+        for v in vectors:
+            flat.extend(v)
+        c_vecs = ffi.new("float[]", flat)
+        c_cfg = ffi.new("GV_QuantConfig *")
+        lib.gv_quant_config_init(c_cfg)
+        if config:
+            c_cfg.type = config.type.value
+            c_cfg.mode = config.mode.value
+            c_cfg.use_rabitq = 1 if config.use_rabitq else 0
+            c_cfg.rabitq_seed = config.rabitq_seed
+        cb = lib.gv_quant_train(c_vecs, count, dim, c_cfg)
+        if cb == ffi.NULL:
+            raise RuntimeError("Failed to train quantization codebook")
+        return cls(cb)
+
+    def encode(self, vector: Sequence[float]) -> bytes:
+        dim = len(vector)
+        c_vec = ffi.new("float[]", list(vector))
+        code_sz = lib.gv_quant_code_size(self._cb, dim)
+        codes = ffi.new("uint8_t[]", code_sz)
+        if lib.gv_quant_encode(self._cb, c_vec, dim, codes) != 0:
+            raise RuntimeError("Quantization encode failed")
+        return bytes(ffi.buffer(codes, code_sz))
+
+    def distance(self, query: Sequence[float], codes: bytes) -> float:
+        dim = len(query)
+        c_q = ffi.new("float[]", list(query))
+        c_codes = ffi.new("uint8_t[]", codes)
+        return lib.gv_quant_distance(self._cb, c_q, dim, c_codes)
+
+    def memory_ratio(self, dimension: int) -> float:
+        return lib.gv_quant_memory_ratio(self._cb, dimension)
+
+    def save(self, path: str) -> None:
+        if lib.gv_quant_codebook_save(self._cb, path.encode()) != 0:
+            raise RuntimeError("Failed to save codebook")
+
+    @classmethod
+    def load(cls, path: str) -> "QuantCodebook":
+        cb = lib.gv_quant_codebook_load(path.encode())
+        if cb == ffi.NULL:
+            raise RuntimeError("Failed to load codebook")
+        return cls(cb)
+
+    def close(self) -> None:
+        if self._cb and self._cb != ffi.NULL:
+            lib.gv_quant_codebook_destroy(self._cb)
+            self._cb = ffi.NULL
+
+    def __del__(self) -> None:
+        self.close()
+
+
+# ===========================================================================
+# Full-Text Search
+# ===========================================================================
+
+
+class FTLanguage(IntEnum):
+    ENGLISH = 0
+    GERMAN = 1
+    FRENCH = 2
+    SPANISH = 3
+    ITALIAN = 4
+    PORTUGUESE = 5
+    AUTO = 6
+
+
+@dataclass(frozen=True)
+class FTConfig:
+    language: FTLanguage = FTLanguage.ENGLISH
+    enable_stemming: bool = True
+    enable_phrase_match: bool = True
+    use_blockmax_wand: bool = False
+    block_size: int = 128
+
+
+@dataclass(frozen=True)
+class FTResult:
+    doc_id: int
+    score: float
+    match_count: int
+
+
+class FTIndex:
+    def __init__(self, config: Optional[FTConfig] = None):
+        c_cfg = ffi.new("GV_FTConfig *")
+        lib.gv_ft_config_init(c_cfg)
+        if config:
+            c_cfg.language = config.language.value
+            c_cfg.enable_stemming = 1 if config.enable_stemming else 0
+            c_cfg.enable_phrase_match = 1 if config.enable_phrase_match else 0
+            c_cfg.use_blockmax_wand = 1 if config.use_blockmax_wand else 0
+            c_cfg.block_size = config.block_size
+        self._idx = lib.gv_ft_create(c_cfg)
+        if self._idx == ffi.NULL:
+            raise RuntimeError("Failed to create full-text index")
+
+    def close(self) -> None:
+        if self._idx and self._idx != ffi.NULL:
+            lib.gv_ft_destroy(self._idx)
+            self._idx = ffi.NULL
+
+    def __del__(self) -> None:
+        self.close()
+
+    def add_document(self, doc_id: int, text: str) -> None:
+        if lib.gv_ft_add_document(self._idx, doc_id, text.encode()) != 0:
+            raise RuntimeError("Failed to add document")
+
+    def remove_document(self, doc_id: int) -> None:
+        lib.gv_ft_remove_document(self._idx, doc_id)
+
+    def search(self, query: str, limit: int = 10) -> list[FTResult]:
+        results = ffi.new("GV_FTResult[]", limit)
+        rc = lib.gv_ft_search(self._idx, query.encode(), limit, results)
+        if rc < 0:
+            raise RuntimeError("Full-text search failed")
+        out = [FTResult(results[i].doc_id, results[i].score, results[i].match_count) for i in range(rc)]
+        lib.gv_ft_free_results(results, rc)
+        return out
+
+    def search_phrase(self, phrase: str, limit: int = 10) -> list[FTResult]:
+        results = ffi.new("GV_FTResult[]", limit)
+        rc = lib.gv_ft_search_phrase(self._idx, phrase.encode(), limit, results)
+        if rc < 0:
+            raise RuntimeError("Phrase search failed")
+        out = [FTResult(results[i].doc_id, results[i].score, results[i].match_count) for i in range(rc)]
+        lib.gv_ft_free_results(results, rc)
+        return out
+
+    @property
+    def doc_count(self) -> int:
+        return lib.gv_ft_doc_count(self._idx)
+
+    def save(self, path: str) -> None:
+        if lib.gv_ft_save(self._idx, path.encode()) != 0:
+            raise RuntimeError("Failed to save full-text index")
+
+    @classmethod
+    def load(cls, path: str) -> "FTIndex":
+        idx = lib.gv_ft_load(path.encode())
+        if idx == ffi.NULL:
+            raise RuntimeError("Failed to load full-text index")
+        obj = cls.__new__(cls)
+        obj._idx = idx
+        return obj
+
+
+def ft_stem(word: str, language: FTLanguage = FTLanguage.ENGLISH) -> str:
+    out = ffi.new("char[256]")
+    if lib.gv_ft_stem(word.encode(), language.value, out, 256) != 0:
+        return word
+    return ffi.string(out).decode()
+
+
+# ===========================================================================
+# Optimized HNSW with Inline Quantization
+# ===========================================================================
+
+
+@dataclass(frozen=True)
+class HNSWInlineConfig:
+    quant_bits: int = 8
+    enable_prefetch: bool = True
+    prefetch_distance: int = 2
+
+
+@dataclass(frozen=True)
+class HNSWRebuildConfig:
+    connectivity_ratio: float = 1.0
+    batch_size: int = 1000
+    background: bool = False
+
+
+@dataclass(frozen=True)
+class HNSWRebuildStats:
+    nodes_processed: int
+    edges_added: int
+    edges_removed: int
+    elapsed_ms: float
+    completed: bool
+
+
+class HNSWInlineIndex:
+    def __init__(self, dimension: int, max_elements: int, M: int = 16, ef_construction: int = 200,
+                 config: Optional[HNSWInlineConfig] = None):
+        c_cfg = ffi.new("GV_HNSWInlineConfig *")
+        c_cfg.quant_bits = config.quant_bits if config else 8
+        c_cfg.enable_prefetch = 1 if (config and config.enable_prefetch) else 1
+        c_cfg.prefetch_distance = config.prefetch_distance if config else 2
+        self._idx = lib.gv_hnsw_inline_create(dimension, max_elements, M, ef_construction, c_cfg)
+        if self._idx == ffi.NULL:
+            raise RuntimeError("Failed to create HNSW inline index")
+
+    def close(self) -> None:
+        if self._idx and self._idx != ffi.NULL:
+            lib.gv_hnsw_inline_destroy(self._idx)
+            self._idx = ffi.NULL
+
+    def __del__(self) -> None:
+        self.close()
+
+    def insert(self, vector: Sequence[float], label: int) -> None:
+        c_vec = ffi.new("float[]", list(vector))
+        if lib.gv_hnsw_inline_insert(self._idx, c_vec, label) != 0:
+            raise RuntimeError("HNSW inline insert failed")
+
+    def search(self, query: Sequence[float], k: int, ef_search: int = 100) -> list[tuple[int, float]]:
+        c_q = ffi.new("float[]", list(query))
+        labels = ffi.new("size_t[]", k)
+        dists = ffi.new("float[]", k)
+        rc = lib.gv_hnsw_inline_search(self._idx, c_q, k, ef_search, labels, dists)
+        if rc < 0:
+            raise RuntimeError("HNSW inline search failed")
+        return [(labels[i], dists[i]) for i in range(rc)]
+
+    def rebuild(self, config: Optional[HNSWRebuildConfig] = None) -> None:
+        c_cfg = ffi.new("GV_HNSWRebuildConfig *")
+        c_cfg.connectivity_ratio = config.connectivity_ratio if config else 1.0
+        c_cfg.batch_size = config.batch_size if config else 1000
+        c_cfg.background = 1 if (config and config.background) else 0
+        lib.gv_hnsw_inline_rebuild(self._idx, c_cfg)
+
+    def rebuild_status(self) -> HNSWRebuildStats:
+        stats = ffi.new("GV_HNSWRebuildStats *")
+        lib.gv_hnsw_inline_rebuild_status(self._idx, stats)
+        return HNSWRebuildStats(stats.nodes_processed, stats.edges_added, stats.edges_removed, stats.elapsed_ms, bool(stats.completed))
+
+    @property
+    def count(self) -> int:
+        return lib.gv_hnsw_inline_count(self._idx)
+
+    def save(self, path: str) -> None:
+        if lib.gv_hnsw_inline_save(self._idx, path.encode()) != 0:
+            raise RuntimeError("Failed to save HNSW inline index")
+
+    @classmethod
+    def load(cls, path: str) -> "HNSWInlineIndex":
+        idx = lib.gv_hnsw_inline_load(path.encode())
+        if idx == ffi.NULL:
+            raise RuntimeError("Failed to load HNSW inline index")
+        obj = cls.__new__(cls)
+        obj._idx = idx
+        return obj
+
+
+# ===========================================================================
+# ONNX Model Serving
+# ===========================================================================
+
+
+@dataclass(frozen=True)
+class ONNXConfig:
+    model_path: str = ""
+    num_threads: int = 1
+    use_gpu: bool = False
+    max_batch_size: int = 32
+    optimization_level: int = 1
+
+
+class ONNXModel:
+    def __init__(self, config: ONNXConfig):
+        c_cfg = ffi.new("GV_ONNXConfig *")
+        c_cfg.model_path = config.model_path.encode() if config.model_path else ffi.NULL
+        c_cfg.num_threads = config.num_threads
+        c_cfg.use_gpu = 1 if config.use_gpu else 0
+        c_cfg.max_batch_size = config.max_batch_size
+        c_cfg.optimization_level = config.optimization_level
+        self._model = lib.gv_onnx_load(c_cfg)
+        if self._model == ffi.NULL:
+            raise RuntimeError("Failed to load ONNX model")
+
+    def close(self) -> None:
+        if self._model and self._model != ffi.NULL:
+            lib.gv_onnx_destroy(self._model)
+            self._model = ffi.NULL
+
+    def __del__(self) -> None:
+        self.close()
+
+    def rerank(self, query: str, documents: Sequence[str]) -> list[float]:
+        c_docs = [ffi.new("char[]", d.encode()) for d in documents]
+        c_docs_arr = ffi.new("const char *[]", c_docs)
+        scores = ffi.new("float[]", len(documents))
+        if lib.gv_onnx_rerank(self._model, query.encode(), c_docs_arr, len(documents), scores) != 0:
+            raise RuntimeError("ONNX rerank failed")
+        return [scores[i] for i in range(len(documents))]
+
+    def embed(self, texts: Sequence[str], dimension: int) -> list[list[float]]:
+        c_texts = [ffi.new("char[]", t.encode()) for t in texts]
+        c_texts_arr = ffi.new("const char *[]", c_texts)
+        embeddings = ffi.new("float[]", len(texts) * dimension)
+        if lib.gv_onnx_embed(self._model, c_texts_arr, len(texts), embeddings, dimension) != 0:
+            raise RuntimeError("ONNX embed failed")
+        return [[embeddings[i * dimension + j] for j in range(dimension)] for i in range(len(texts))]
+
+    @staticmethod
+    def available() -> bool:
+        return lib.gv_onnx_available() == 1
+
+
+# ===========================================================================
+# Agentic Interfaces
+# ===========================================================================
+
+
+class AgentType(IntEnum):
+    QUERY = 0
+    TRANSFORM = 1
+    PERSONALIZE = 2
+
+
+@dataclass(frozen=True)
+class AgentConfig:
+    agent_type: AgentType = AgentType.QUERY
+    llm_provider: int = 0
+    api_key: str = ""
+    model: str = ""
+    temperature: float = 0.7
+    max_retries: int = 3
+    system_prompt_override: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class AgentResult:
+    success: bool
+    response_text: str
+    result_indices: list[int]
+    result_distances: list[float]
+    generated_filter: str
+    error_message: str
+
+
+class Agent:
+    def __init__(self, db: "Database", config: AgentConfig):
+        c_cfg = ffi.new("GV_AgentConfig *")
+        c_cfg.agent_type = config.agent_type.value
+        c_cfg.llm_provider = config.llm_provider
+        c_cfg.api_key = config.api_key.encode() if config.api_key else ffi.NULL
+        c_cfg.model = config.model.encode() if config.model else ffi.NULL
+        c_cfg.temperature = config.temperature
+        c_cfg.max_retries = config.max_retries
+        c_cfg.system_prompt_override = config.system_prompt_override.encode() if config.system_prompt_override else ffi.NULL
+        self._agent = lib.gv_agent_create(db._db, c_cfg)
+        if self._agent == ffi.NULL:
+            raise RuntimeError("Failed to create agent")
+
+    def close(self) -> None:
+        if self._agent and self._agent != ffi.NULL:
+            lib.gv_agent_destroy(self._agent)
+            self._agent = ffi.NULL
+
+    def __del__(self) -> None:
+        self.close()
+
+    def query(self, natural_language_query: str, k: int = 10) -> AgentResult:
+        r = lib.gv_agent_query(self._agent, natural_language_query.encode(), k)
+        return self._parse_result(r)
+
+    def transform(self, instruction: str) -> AgentResult:
+        r = lib.gv_agent_transform(self._agent, instruction.encode())
+        return self._parse_result(r)
+
+    def personalize(self, query: str, user_profile_json: str, k: int = 10) -> AgentResult:
+        r = lib.gv_agent_personalize(self._agent, query.encode(), user_profile_json.encode(), k)
+        return self._parse_result(r)
+
+    def set_schema_hint(self, schema_json: str) -> None:
+        lib.gv_agent_set_schema_hint(self._agent, schema_json.encode())
+
+    def _parse_result(self, r: CData) -> AgentResult:
+        if r == ffi.NULL:
+            return AgentResult(False, "", [], [], "", "Null result")
+        res = AgentResult(
+            success=bool(r.success),
+            response_text=ffi.string(r.response_text).decode() if r.response_text != ffi.NULL else "",
+            result_indices=[r.result_indices[i] for i in range(r.result_count)] if r.result_indices != ffi.NULL else [],
+            result_distances=[r.result_distances[i] for i in range(r.result_count)] if r.result_distances != ffi.NULL else [],
+            generated_filter=ffi.string(r.generated_filter).decode() if r.generated_filter != ffi.NULL else "",
+            error_message=ffi.string(r.error_message).decode() if r.error_message != ffi.NULL else "",
+        )
+        lib.gv_agent_free_result(r)
+        return res
+
+
+# ===========================================================================
+# MUVERA Encoder
+# ===========================================================================
+
+
+@dataclass(frozen=True)
+class MuveraConfig:
+    token_dimension: int = 128
+    num_projections: int = 16
+    output_dimension: int = 0
+    seed: int = 42
+    normalize: bool = True
+
+
+class MuveraEncoder:
+    def __init__(self, config: Optional[MuveraConfig] = None):
+        c_cfg = ffi.new("GV_MuveraConfig *")
+        lib.gv_muvera_config_init(c_cfg)
+        if config:
+            c_cfg.token_dimension = config.token_dimension
+            c_cfg.num_projections = config.num_projections
+            c_cfg.output_dimension = config.output_dimension
+            c_cfg.seed = config.seed
+            c_cfg.normalize = 1 if config.normalize else 0
+        self._enc = lib.gv_muvera_create(c_cfg)
+        if self._enc == ffi.NULL:
+            raise RuntimeError("Failed to create MUVERA encoder")
+
+    def close(self) -> None:
+        if self._enc and self._enc != ffi.NULL:
+            lib.gv_muvera_destroy(self._enc)
+            self._enc = ffi.NULL
+
+    def __del__(self) -> None:
+        self.close()
+
+    def encode(self, tokens: Sequence[Sequence[float]]) -> list[float]:
+        num = len(tokens)
+        dim = len(tokens[0])
+        flat = []
+        for t in tokens:
+            flat.extend(t)
+        c_tokens = ffi.new("float[]", flat)
+        out_dim = lib.gv_muvera_output_dimension(self._enc)
+        output = ffi.new("float[]", out_dim)
+        if lib.gv_muvera_encode(self._enc, c_tokens, num, output) != 0:
+            raise RuntimeError("MUVERA encode failed")
+        return [output[i] for i in range(out_dim)]
+
+    @property
+    def output_dimension(self) -> int:
+        return lib.gv_muvera_output_dimension(self._enc)
+
+    def save(self, path: str) -> None:
+        if lib.gv_muvera_save(self._enc, path.encode()) != 0:
+            raise RuntimeError("Failed to save MUVERA encoder")
+
+    @classmethod
+    def load(cls, path: str) -> "MuveraEncoder":
+        enc = lib.gv_muvera_load(path.encode())
+        if enc == ffi.NULL:
+            raise RuntimeError("Failed to load MUVERA encoder")
+        obj = cls.__new__(cls)
+        obj._enc = enc
+        return obj
+
+
+# ===========================================================================
+# Enterprise SSO / OIDC / SAML
+# ===========================================================================
+
+
+class SSOProvider(IntEnum):
+    OIDC = 0
+    SAML = 1
+
+
+@dataclass(frozen=True)
+class SSOConfig:
+    provider: SSOProvider = SSOProvider.OIDC
+    issuer_url: str = ""
+    client_id: str = ""
+    client_secret: str = ""
+    redirect_uri: str = ""
+    saml_metadata_url: str = ""
+    saml_entity_id: str = ""
+    verify_ssl: bool = True
+    token_ttl: int = 3600
+    allowed_groups: str = ""
+    admin_groups: str = ""
+
+
+@dataclass(frozen=True)
+class SSOToken:
+    subject: str
+    email: str
+    name: str
+    groups: list[str]
+    issued_at: int
+    expires_at: int
+    is_admin: bool
+
+
+class SSOManager:
+    def __init__(self, config: SSOConfig):
+        c_cfg = ffi.new("GV_SSOConfig *")
+        c_cfg.provider = config.provider.value
+        c_cfg.issuer_url = config.issuer_url.encode() if config.issuer_url else ffi.NULL
+        c_cfg.client_id = config.client_id.encode() if config.client_id else ffi.NULL
+        c_cfg.client_secret = config.client_secret.encode() if config.client_secret else ffi.NULL
+        c_cfg.redirect_uri = config.redirect_uri.encode() if config.redirect_uri else ffi.NULL
+        c_cfg.saml_metadata_url = config.saml_metadata_url.encode() if config.saml_metadata_url else ffi.NULL
+        c_cfg.saml_entity_id = config.saml_entity_id.encode() if config.saml_entity_id else ffi.NULL
+        c_cfg.verify_ssl = 1 if config.verify_ssl else 0
+        c_cfg.token_ttl = config.token_ttl
+        c_cfg.allowed_groups = config.allowed_groups.encode() if config.allowed_groups else ffi.NULL
+        c_cfg.admin_groups = config.admin_groups.encode() if config.admin_groups else ffi.NULL
+        self._mgr = lib.gv_sso_create(c_cfg)
+        if self._mgr == ffi.NULL:
+            raise RuntimeError("Failed to create SSO manager")
+
+    def close(self) -> None:
+        if self._mgr and self._mgr != ffi.NULL:
+            lib.gv_sso_destroy(self._mgr)
+            self._mgr = ffi.NULL
+
+    def __del__(self) -> None:
+        self.close()
+
+    def discover(self) -> None:
+        if lib.gv_sso_discover(self._mgr) != 0:
+            raise RuntimeError("SSO discovery failed")
+
+    def get_auth_url(self, state: str = "") -> str:
+        buf = ffi.new("char[4096]")
+        if lib.gv_sso_get_auth_url(self._mgr, state.encode(), buf, 4096) != 0:
+            raise RuntimeError("Failed to get auth URL")
+        return ffi.string(buf).decode()
+
+    def validate_token(self, token_string: str) -> SSOToken:
+        tok = lib.gv_sso_validate_token(self._mgr, token_string.encode())
+        if tok == ffi.NULL:
+            raise RuntimeError("Token validation failed")
+        return self._parse_token(tok)
+
+    def has_group(self, token: SSOToken, group: str) -> bool:
+        # Use direct string comparison
+        return group in token.groups
+
+    def _parse_token(self, tok: CData) -> SSOToken:
+        groups = []
+        for i in range(tok.group_count):
+            groups.append(ffi.string(tok.groups[i]).decode())
+        result = SSOToken(
+            subject=ffi.string(tok.subject).decode() if tok.subject != ffi.NULL else "",
+            email=ffi.string(tok.email).decode() if tok.email != ffi.NULL else "",
+            name=ffi.string(tok.name).decode() if tok.name != ffi.NULL else "",
+            groups=groups,
+            issued_at=tok.issued_at,
+            expires_at=tok.expires_at,
+            is_admin=bool(tok.is_admin),
+        )
+        lib.gv_sso_free_token(tok)
+        return result
+
+
+# ===========================================================================
+# Tiered Multitenancy
+# ===========================================================================
+
+
+class TenantTier(IntEnum):
+    SHARED = 0
+    DEDICATED = 1
+    PREMIUM = 2
+
+
+@dataclass(frozen=True)
+class TierThresholds:
+    shared_max_vectors: int = 100000
+    dedicated_max_vectors: int = 10000000
+    shared_max_memory_mb: int = 512
+    dedicated_max_memory_mb: int = 8192
+
+
+@dataclass(frozen=True)
+class TieredTenantConfig:
+    thresholds: TierThresholds = TierThresholds()
+    auto_promote: bool = True
+    auto_demote: bool = False
+    max_shared_tenants: int = 1000
+    max_total_tenants: int = 10000
+
+
+@dataclass(frozen=True)
+class TenantInfo:
+    tenant_id: str
+    tier: TenantTier
+    vector_count: int
+    memory_bytes: int
+    created_at: int
+    last_active: int
+    qps_avg: float
+
+
+class TieredManager:
+    def __init__(self, config: Optional[TieredTenantConfig] = None):
+        c_cfg = ffi.new("GV_TieredTenantConfig *")
+        lib.gv_tiered_config_init(c_cfg)
+        if config:
+            c_cfg.thresholds.shared_max_vectors = config.thresholds.shared_max_vectors
+            c_cfg.thresholds.dedicated_max_vectors = config.thresholds.dedicated_max_vectors
+            c_cfg.thresholds.shared_max_memory_mb = config.thresholds.shared_max_memory_mb
+            c_cfg.thresholds.dedicated_max_memory_mb = config.thresholds.dedicated_max_memory_mb
+            c_cfg.auto_promote = 1 if config.auto_promote else 0
+            c_cfg.auto_demote = 1 if config.auto_demote else 0
+            c_cfg.max_shared_tenants = config.max_shared_tenants
+            c_cfg.max_total_tenants = config.max_total_tenants
+        self._mgr = lib.gv_tiered_create(c_cfg)
+        if self._mgr == ffi.NULL:
+            raise RuntimeError("Failed to create tiered manager")
+
+    def close(self) -> None:
+        if self._mgr and self._mgr != ffi.NULL:
+            lib.gv_tiered_destroy(self._mgr)
+            self._mgr = ffi.NULL
+
+    def __del__(self) -> None:
+        self.close()
+
+    def add_tenant(self, tenant_id: str, tier: TenantTier = TenantTier.SHARED) -> None:
+        if lib.gv_tiered_add_tenant(self._mgr, tenant_id.encode(), tier.value) != 0:
+            raise RuntimeError(f"Failed to add tenant: {tenant_id}")
+
+    def remove_tenant(self, tenant_id: str) -> None:
+        lib.gv_tiered_remove_tenant(self._mgr, tenant_id.encode())
+
+    def promote(self, tenant_id: str, new_tier: TenantTier) -> None:
+        if lib.gv_tiered_promote(self._mgr, tenant_id.encode(), new_tier.value) != 0:
+            raise RuntimeError(f"Failed to promote tenant: {tenant_id}")
+
+    def get_info(self, tenant_id: str) -> TenantInfo:
+        info = ffi.new("GV_TenantInfo *")
+        if lib.gv_tiered_get_info(self._mgr, tenant_id.encode(), info) != 0:
+            raise RuntimeError(f"Tenant not found: {tenant_id}")
+        return TenantInfo(
+            tenant_id=ffi.string(info.tenant_id).decode(),
+            tier=TenantTier(info.tier),
+            vector_count=info.vector_count,
+            memory_bytes=info.memory_bytes,
+            created_at=info.created_at,
+            last_active=info.last_active,
+            qps_avg=info.qps_avg,
+        )
+
+    def record_usage(self, tenant_id: str, vectors_delta: int = 0, memory_delta: int = 0) -> None:
+        lib.gv_tiered_record_usage(self._mgr, tenant_id.encode(), vectors_delta, memory_delta)
+
+    @property
+    def tenant_count(self) -> int:
+        return lib.gv_tiered_tenant_count(self._mgr)
+
+    def save(self, path: str) -> None:
+        if lib.gv_tiered_save(self._mgr, path.encode()) != 0:
+            raise RuntimeError("Failed to save tiered manager")
+
+    @classmethod
+    def load(cls, path: str) -> "TieredManager":
+        mgr = lib.gv_tiered_load(path.encode())
+        if mgr == ffi.NULL:
+            raise RuntimeError("Failed to load tiered manager")
+        obj = cls.__new__(cls)
+        obj._mgr = mgr
+        return obj
+
+
+# ===========================================================================
+# Integrated Inference
+# ===========================================================================
+
+
+@dataclass(frozen=True)
+class InferenceConfig:
+    embed_provider: int = 0
+    api_key: str = ""
+    model: str = ""
+    dimension: int = 128
+    distance_type: DistanceType = DistanceType.COSINE
+    cache_size: int = 1024
+
+
+@dataclass(frozen=True)
+class InferenceResult:
+    index: int
+    distance: float
+    text: str
+    metadata_json: str
+
+
+class InferenceEngine:
+    def __init__(self, db: "Database", config: Optional[InferenceConfig] = None):
+        c_cfg = ffi.new("GV_InferenceConfig *")
+        lib.gv_inference_config_init(c_cfg)
+        if config:
+            c_cfg.embed_provider = config.embed_provider
+            c_cfg.api_key = config.api_key.encode() if config.api_key else ffi.NULL
+            c_cfg.model = config.model.encode() if config.model else ffi.NULL
+            c_cfg.dimension = config.dimension
+            c_cfg.distance_type = config.distance_type.value
+            c_cfg.cache_size = config.cache_size
+        self._eng = lib.gv_inference_create(db._db, c_cfg)
+        if self._eng == ffi.NULL:
+            raise RuntimeError("Failed to create inference engine")
+
+    def close(self) -> None:
+        if self._eng and self._eng != ffi.NULL:
+            lib.gv_inference_destroy(self._eng)
+            self._eng = ffi.NULL
+
+    def __del__(self) -> None:
+        self.close()
+
+    def add(self, text: str, metadata_json: str = "{}") -> None:
+        if lib.gv_inference_add(self._eng, text.encode(), metadata_json.encode()) != 0:
+            raise RuntimeError("Failed to add text")
+
+    def search(self, query_text: str, k: int = 10) -> list[InferenceResult]:
+        results = ffi.new("GV_InferenceResult[]", k)
+        rc = lib.gv_inference_search(self._eng, query_text.encode(), k, results)
+        if rc < 0:
+            raise RuntimeError("Inference search failed")
+        out = []
+        for i in range(rc):
+            out.append(InferenceResult(
+                results[i].index, results[i].distance,
+                ffi.string(results[i].text).decode() if results[i].text != ffi.NULL else "",
+                ffi.string(results[i].metadata_json).decode() if results[i].metadata_json != ffi.NULL else "",
+            ))
+        lib.gv_inference_free_results(results, rc)
+        return out
+
+
+# ===========================================================================
+# JSON Path Indexing
+# ===========================================================================
+
+
+class JSONPathType(IntEnum):
+    STRING = 0
+    INT = 1
+    FLOAT = 2
+    BOOL = 3
+
+
+@dataclass(frozen=True)
+class JSONPathConfig:
+    path: str
+    type: JSONPathType = JSONPathType.STRING
+
+
+class JSONPathIndex:
+    def __init__(self) -> None:
+        self._idx = lib.gv_json_index_create()
+        if self._idx == ffi.NULL:
+            raise RuntimeError("Failed to create JSON path index")
+
+    def close(self) -> None:
+        if self._idx and self._idx != ffi.NULL:
+            lib.gv_json_index_destroy(self._idx)
+            self._idx = ffi.NULL
+
+    def __del__(self) -> None:
+        self.close()
+
+    def add_path(self, config: JSONPathConfig) -> None:
+        c_cfg = ffi.new("GV_JSONPathConfig *")
+        c_cfg.path = config.path.encode()
+        c_cfg.type = config.type.value
+        if lib.gv_json_index_add_path(self._idx, c_cfg) != 0:
+            raise RuntimeError(f"Failed to add path: {config.path}")
+
+    def insert(self, vector_index: int, json_str: str) -> None:
+        if lib.gv_json_index_insert(self._idx, vector_index, json_str.encode()) != 0:
+            raise RuntimeError("Failed to insert into JSON index")
+
+    def remove(self, vector_index: int) -> None:
+        lib.gv_json_index_remove(self._idx, vector_index)
+
+    def lookup_string(self, path: str, value: str, max_count: int = 100) -> list[int]:
+        out = ffi.new("size_t[]", max_count)
+        rc = lib.gv_json_index_lookup_string(self._idx, path.encode(), value.encode(), out, max_count)
+        if rc < 0:
+            return []
+        return [out[i] for i in range(rc)]
+
+    def lookup_int_range(self, path: str, min_val: int, max_val: int, max_count: int = 100) -> list[int]:
+        out = ffi.new("size_t[]", max_count)
+        rc = lib.gv_json_index_lookup_int_range(self._idx, path.encode(), min_val, max_val, out, max_count)
+        if rc < 0:
+            return []
+        return [out[i] for i in range(rc)]
+
+    def lookup_float_range(self, path: str, min_val: float, max_val: float, max_count: int = 100) -> list[int]:
+        out = ffi.new("size_t[]", max_count)
+        rc = lib.gv_json_index_lookup_float_range(self._idx, path.encode(), min_val, max_val, out, max_count)
+        if rc < 0:
+            return []
+        return [out[i] for i in range(rc)]
+
+    def count(self, path: str) -> int:
+        return lib.gv_json_index_count(self._idx, path.encode())
+
+    def save(self, path: str) -> None:
+        if lib.gv_json_index_save(self._idx, path.encode()) != 0:
+            raise RuntimeError("Failed to save JSON path index")
+
+    @classmethod
+    def load(cls, path: str) -> "JSONPathIndex":
+        idx = lib.gv_json_index_load(path.encode())
+        if idx == ffi.NULL:
+            raise RuntimeError("Failed to load JSON path index")
+        obj = cls.__new__(cls)
+        obj._idx = idx
+        return obj
+
+
+# ===========================================================================
+# Change Data Capture Stream
+# ===========================================================================
+
+
+class CDCEventType(IntEnum):
+    INSERT = 0
+    UPDATE = 1
+    DELETE = 2
+    SNAPSHOT = 3
+    ALL = 4
+
+
+@dataclass(frozen=True)
+class CDCEvent:
+    sequence_number: int
+    type: CDCEventType
+    vector_index: int
+    timestamp: int
+    dimension: int
+    metadata_json: str
+
+
+@dataclass(frozen=True)
+class CDCConfig:
+    ring_buffer_size: int = 4096
+    persist_to_file: bool = False
+    log_path: str = ""
+    max_log_size_mb: int = 100
+    include_vector_data: bool = False
+
+
+@dataclass(frozen=True)
+class CDCCursor:
+    sequence_number: int
+
+
+class CDCStream:
+    def __init__(self, config: Optional[CDCConfig] = None):
+        c_cfg = ffi.new("GV_CDCConfig *")
+        lib.gv_cdc_config_init(c_cfg)
+        if config:
+            c_cfg.ring_buffer_size = config.ring_buffer_size
+            c_cfg.persist_to_file = 1 if config.persist_to_file else 0
+            c_cfg.log_path = config.log_path.encode() if config.log_path else ffi.NULL
+            c_cfg.max_log_size_mb = config.max_log_size_mb
+            c_cfg.include_vector_data = 1 if config.include_vector_data else 0
+        self._stream = lib.gv_cdc_create(c_cfg)
+        if self._stream == ffi.NULL:
+            raise RuntimeError("Failed to create CDC stream")
+
+    def close(self) -> None:
+        if self._stream and self._stream != ffi.NULL:
+            lib.gv_cdc_destroy(self._stream)
+            self._stream = ffi.NULL
+
+    def __del__(self) -> None:
+        self.close()
+
+    def get_cursor(self) -> CDCCursor:
+        c = lib.gv_cdc_get_cursor(self._stream)
+        return CDCCursor(c.sequence_number)
+
+    def poll(self, cursor: CDCCursor, max_events: int = 100) -> tuple[list[CDCEvent], CDCCursor]:
+        c_cursor = ffi.new("GV_CDCCursor *")
+        c_cursor.sequence_number = cursor.sequence_number
+        events = ffi.new("GV_CDCEvent[]", max_events)
+        rc = lib.gv_cdc_poll(self._stream, c_cursor, events, max_events)
+        if rc < 0:
+            raise RuntimeError("CDC poll failed")
+        out = []
+        for i in range(rc):
+            out.append(CDCEvent(
+                events[i].sequence_number, CDCEventType(events[i].type),
+                events[i].vector_index, events[i].timestamp, events[i].dimension,
+                ffi.string(events[i].metadata_json).decode() if events[i].metadata_json != ffi.NULL else "",
+            ))
+        return out, CDCCursor(c_cursor.sequence_number)
+
+    def pending_count(self, cursor: CDCCursor) -> int:
+        c_cursor = ffi.new("GV_CDCCursor *")
+        c_cursor.sequence_number = cursor.sequence_number
+        return lib.gv_cdc_pending_count(self._stream, c_cursor)
+
+
+# ===========================================================================
+# Embedded / Edge Mode
+# ===========================================================================
+
+
+class EmbeddedIndexType(IntEnum):
+    FLAT = 0
+    HNSW = 1
+    LSH = 2
+
+
+@dataclass(frozen=True)
+class EmbeddedConfig:
+    dimension: int = 128
+    index_type: EmbeddedIndexType = EmbeddedIndexType.HNSW
+    max_vectors: int = 100000
+    memory_limit_mb: int = 256
+    mmap_storage: bool = False
+    storage_path: str = ""
+    quantize: bool = False
+
+
+@dataclass(frozen=True)
+class EmbeddedResult:
+    index: int
+    distance: float
+
+
+class EmbeddedDB:
+    def __init__(self, config: Optional[EmbeddedConfig] = None):
+        c_cfg = ffi.new("GV_EmbeddedConfig *")
+        lib.gv_embedded_config_init(c_cfg)
+        if config:
+            c_cfg.dimension = config.dimension
+            c_cfg.index_type = config.index_type.value
+            c_cfg.max_vectors = config.max_vectors
+            c_cfg.memory_limit_mb = config.memory_limit_mb
+            c_cfg.mmap_storage = 1 if config.mmap_storage else 0
+            c_cfg.storage_path = config.storage_path.encode() if config.storage_path else ffi.NULL
+            c_cfg.quantize = 1 if config.quantize else 0
+        self._db = lib.gv_embedded_open(c_cfg)
+        if self._db == ffi.NULL:
+            raise RuntimeError("Failed to open embedded database")
+
+    def close(self) -> None:
+        if self._db and self._db != ffi.NULL:
+            lib.gv_embedded_close(self._db)
+            self._db = ffi.NULL
+
+    def __del__(self) -> None:
+        self.close()
+
+    def add(self, vector: Sequence[float]) -> int:
+        c_vec = ffi.new("float[]", list(vector))
+        rc = lib.gv_embedded_add(self._db, c_vec)
+        if rc < 0:
+            raise RuntimeError("Failed to add vector")
+        return rc
+
+    def search(self, query: Sequence[float], k: int = 10, distance: DistanceType = DistanceType.EUCLIDEAN) -> list[EmbeddedResult]:
+        c_q = ffi.new("float[]", list(query))
+        results = ffi.new("GV_EmbeddedResult[]", k)
+        rc = lib.gv_embedded_search(self._db, c_q, k, distance.value, results)
+        if rc < 0:
+            raise RuntimeError("Embedded search failed")
+        return [EmbeddedResult(results[i].index, results[i].distance) for i in range(rc)]
+
+    def delete(self, index: int) -> None:
+        lib.gv_embedded_delete(self._db, index)
+
+    @property
+    def count(self) -> int:
+        return lib.gv_embedded_count(self._db)
+
+    @property
+    def memory_usage(self) -> int:
+        return lib.gv_embedded_memory_usage(self._db)
+
+    def compact(self) -> None:
+        lib.gv_embedded_compact(self._db)
+
+    def save(self, path: str) -> None:
+        if lib.gv_embedded_save(self._db, path.encode()) != 0:
+            raise RuntimeError("Failed to save embedded database")
+
+    @classmethod
+    def load(cls, path: str) -> "EmbeddedDB":
+        db = lib.gv_embedded_load(path.encode())
+        if db == ffi.NULL:
+            raise RuntimeError("Failed to load embedded database")
+        obj = cls.__new__(cls)
+        obj._db = db
+        return obj
+
+
+# ===========================================================================
+# Conditional Updates (CAS-style)
+# ===========================================================================
+
+
+class ConditionType(IntEnum):
+    VERSION_EQ = 0
+    VERSION_LT = 1
+    METADATA_EQ = 2
+    METADATA_EXISTS = 3
+    METADATA_NOT_EXISTS = 4
+    NOT_DELETED = 5
+
+
+class ConditionalResult(IntEnum):
+    OK = 0
+    FAILED = -1
+    NOT_FOUND = -2
+    CONFLICT = -3
+
+
+@dataclass(frozen=True)
+class Condition:
+    type: ConditionType
+    field_name: str = ""
+    field_value: str = ""
+    version: int = 0
+
+
+class CondManager:
+    def __init__(self, db: "Database"):
+        self._mgr = lib.gv_cond_create(db._db)
+        if self._mgr == ffi.NULL:
+            raise RuntimeError("Failed to create conditional manager")
+
+    def close(self) -> None:
+        if self._mgr and self._mgr != ffi.NULL:
+            lib.gv_cond_destroy(self._mgr)
+            self._mgr = ffi.NULL
+
+    def __del__(self) -> None:
+        self.close()
+
+    def update_vector(self, index: int, new_data: Sequence[float], conditions: Sequence[Condition]) -> ConditionalResult:
+        c_data = ffi.new("float[]", list(new_data))
+        c_conds = ffi.new("GV_Condition[]", len(conditions))
+        keepalive = []
+        for i, cond in enumerate(conditions):
+            c_conds[i].type = cond.type.value
+            fn = ffi.new("char[]", cond.field_name.encode())
+            fv = ffi.new("char[]", cond.field_value.encode())
+            keepalive.extend([fn, fv])
+            c_conds[i].field_name = fn
+            c_conds[i].field_value = fv
+            c_conds[i].version = cond.version
+        return ConditionalResult(lib.gv_cond_update_vector(self._mgr, index, c_data, len(new_data), c_conds, len(conditions)))
+
+    def update_metadata(self, index: int, key: str, value: str, conditions: Sequence[Condition]) -> ConditionalResult:
+        c_conds = ffi.new("GV_Condition[]", len(conditions))
+        keepalive = []
+        for i, cond in enumerate(conditions):
+            c_conds[i].type = cond.type.value
+            fn = ffi.new("char[]", cond.field_name.encode())
+            fv = ffi.new("char[]", cond.field_value.encode())
+            keepalive.extend([fn, fv])
+            c_conds[i].field_name = fn
+            c_conds[i].field_value = fv
+            c_conds[i].version = cond.version
+        return ConditionalResult(lib.gv_cond_update_metadata(self._mgr, index, key.encode(), value.encode(), c_conds, len(conditions)))
+
+    def delete(self, index: int, conditions: Sequence[Condition]) -> ConditionalResult:
+        c_conds = ffi.new("GV_Condition[]", len(conditions))
+        keepalive = []
+        for i, cond in enumerate(conditions):
+            c_conds[i].type = cond.type.value
+            fn = ffi.new("char[]", cond.field_name.encode())
+            fv = ffi.new("char[]", cond.field_value.encode())
+            keepalive.extend([fn, fv])
+            c_conds[i].field_name = fn
+            c_conds[i].field_value = fv
+            c_conds[i].version = cond.version
+        return ConditionalResult(lib.gv_cond_delete(self._mgr, index, c_conds, len(conditions)))
+
+    def get_version(self, index: int) -> int:
+        return lib.gv_cond_get_version(self._mgr, index)
+
+    def migrate_embedding(self, index: int, new_embedding: Sequence[float], expected_version: int) -> ConditionalResult:
+        c_data = ffi.new("float[]", list(new_embedding))
+        return ConditionalResult(lib.gv_cond_migrate_embedding(self._mgr, index, c_data, len(new_embedding), expected_version))
+
+
+# ===========================================================================
+# Time-Travel / Auto Versioning
+# ===========================================================================
+
+
+@dataclass(frozen=True)
+class TimeTravelConfig:
+    max_versions: int = 1000
+    max_storage_mb: int = 512
+    auto_gc: bool = True
+    gc_keep_count: int = 100
+
+
+@dataclass(frozen=True)
+class TTVersionEntry:
+    version_id: int
+    timestamp: int
+    vector_count: int
+    description: str
+
+
+class TimeTravelManager:
+    def __init__(self, config: Optional[TimeTravelConfig] = None):
+        c_cfg = ffi.new("GV_TimeTravelConfig *")
+        lib.gv_tt_config_init(c_cfg)
+        if config:
+            c_cfg.max_versions = config.max_versions
+            c_cfg.max_storage_mb = config.max_storage_mb
+            c_cfg.auto_gc = 1 if config.auto_gc else 0
+            c_cfg.gc_keep_count = config.gc_keep_count
+        self._mgr = lib.gv_tt_create(c_cfg)
+        if self._mgr == ffi.NULL:
+            raise RuntimeError("Failed to create time-travel manager")
+
+    def close(self) -> None:
+        if self._mgr and self._mgr != ffi.NULL:
+            lib.gv_tt_destroy(self._mgr)
+            self._mgr = ffi.NULL
+
+    def __del__(self) -> None:
+        self.close()
+
+    def record_insert(self, index: int, vector: Sequence[float]) -> int:
+        c_vec = ffi.new("float[]", list(vector))
+        return lib.gv_tt_record_insert(self._mgr, index, c_vec, len(vector))
+
+    def record_update(self, index: int, old_vector: Sequence[float], new_vector: Sequence[float]) -> int:
+        c_old = ffi.new("float[]", list(old_vector))
+        c_new = ffi.new("float[]", list(new_vector))
+        return lib.gv_tt_record_update(self._mgr, index, c_old, c_new, len(old_vector))
+
+    def record_delete(self, index: int, vector: Sequence[float]) -> int:
+        c_vec = ffi.new("float[]", list(vector))
+        return lib.gv_tt_record_delete(self._mgr, index, c_vec, len(vector))
+
+    def query_at_version(self, version_id: int, index: int, dimension: int) -> list[float]:
+        output = ffi.new("float[]", dimension)
+        if lib.gv_tt_query_at_version(self._mgr, version_id, index, output, dimension) != 0:
+            raise RuntimeError("Failed to query at version")
+        return [output[i] for i in range(dimension)]
+
+    def query_at_timestamp(self, timestamp: int, index: int, dimension: int) -> list[float]:
+        output = ffi.new("float[]", dimension)
+        if lib.gv_tt_query_at_timestamp(self._mgr, timestamp, index, output, dimension) != 0:
+            raise RuntimeError("Failed to query at timestamp")
+        return [output[i] for i in range(dimension)]
+
+    @property
+    def current_version(self) -> int:
+        return lib.gv_tt_current_version(self._mgr)
+
+    def list_versions(self, max_count: int = 100) -> list[TTVersionEntry]:
+        entries = ffi.new("GV_VersionEntry[]", max_count)
+        rc = lib.gv_tt_list_versions(self._mgr, entries, max_count)
+        if rc < 0:
+            return []
+        return [TTVersionEntry(entries[i].version_id, entries[i].timestamp, entries[i].vector_count,
+                               ffi.string(entries[i].description).decode()) for i in range(rc)]
+
+    def gc(self) -> None:
+        lib.gv_tt_gc(self._mgr)
+
+    def save(self, path: str) -> None:
+        if lib.gv_tt_save(self._mgr, path.encode()) != 0:
+            raise RuntimeError("Failed to save time-travel data")
+
+    @classmethod
+    def load(cls, path: str) -> "TimeTravelManager":
+        mgr = lib.gv_tt_load(path.encode())
+        if mgr == ffi.NULL:
+            raise RuntimeError("Failed to load time-travel data")
+        obj = cls.__new__(cls)
+        obj._mgr = mgr
+        return obj
+
+
+# ===========================================================================
+# Multimodal Media Storage
+# ===========================================================================
+
+
+class MediaType(IntEnum):
+    IMAGE = 0
+    AUDIO = 1
+    VIDEO = 2
+    DOCUMENT = 3
+    BLOB = 4
+
+
+@dataclass(frozen=True)
+class MediaConfig:
+    storage_dir: str = "/tmp/gv_media"
+    max_blob_size_mb: int = 100
+    deduplicate: bool = True
+    compress_blobs: bool = False
+
+
+@dataclass(frozen=True)
+class MediaEntry:
+    vector_index: int
+    type: MediaType
+    filename: str
+    file_size: int
+    hash: str
+    created_at: int
+    mime_type: str
+
+
+class MediaStore:
+    def __init__(self, config: Optional[MediaConfig] = None):
+        c_cfg = ffi.new("GV_MediaConfig *")
+        lib.gv_media_config_init(c_cfg)
+        if config:
+            c_cfg.storage_dir = config.storage_dir.encode()
+            c_cfg.max_blob_size_mb = config.max_blob_size_mb
+            c_cfg.deduplicate = 1 if config.deduplicate else 0
+            c_cfg.compress_blobs = 1 if config.compress_blobs else 0
+        self._store = lib.gv_media_create(c_cfg)
+        if self._store == ffi.NULL:
+            raise RuntimeError("Failed to create media store")
+
+    def close(self) -> None:
+        if self._store and self._store != ffi.NULL:
+            lib.gv_media_destroy(self._store)
+            self._store = ffi.NULL
+
+    def __del__(self) -> None:
+        self.close()
+
+    def store_blob(self, vector_index: int, media_type: MediaType, data: bytes, filename: str = "", mime_type: str = "") -> None:
+        if lib.gv_media_store_blob(self._store, vector_index, media_type.value, data, len(data),
+                                    filename.encode() if filename else ffi.NULL,
+                                    mime_type.encode() if mime_type else ffi.NULL) != 0:
+            raise RuntimeError("Failed to store blob")
+
+    def store_file(self, vector_index: int, media_type: MediaType, file_path: str) -> None:
+        if lib.gv_media_store_file(self._store, vector_index, media_type.value, file_path.encode()) != 0:
+            raise RuntimeError("Failed to store file")
+
+    def retrieve(self, vector_index: int, max_size: int = 10 * 1024 * 1024) -> bytes:
+        buf = ffi.new("char[]", max_size)
+        actual = ffi.new("size_t *")
+        if lib.gv_media_retrieve(self._store, vector_index, buf, max_size, actual) != 0:
+            raise RuntimeError("Failed to retrieve media")
+        return bytes(ffi.buffer(buf, actual[0]))
+
+    def get_info(self, vector_index: int) -> MediaEntry:
+        entry = ffi.new("GV_MediaEntry *")
+        if lib.gv_media_get_info(self._store, vector_index, entry) != 0:
+            raise RuntimeError("Media entry not found")
+        return MediaEntry(
+            entry.vector_index, MediaType(entry.type),
+            ffi.string(entry.filename).decode(), entry.file_size,
+            ffi.string(entry.hash).decode(), entry.created_at,
+            ffi.string(entry.mime_type).decode(),
+        )
+
+    def delete(self, vector_index: int) -> None:
+        lib.gv_media_delete(self._store, vector_index)
+
+    def exists(self, vector_index: int) -> bool:
+        return lib.gv_media_exists(self._store, vector_index) == 1
+
+    @property
+    def count(self) -> int:
+        return lib.gv_media_count(self._store)
+
+    @property
+    def total_size(self) -> int:
+        return lib.gv_media_total_size(self._store)
+
+    def save(self, path: str) -> None:
+        if lib.gv_media_save_index(self._store, path.encode()) != 0:
+            raise RuntimeError("Failed to save media index")
+
+    @classmethod
+    def load(cls, index_path: str, storage_dir: str) -> "MediaStore":
+        store = lib.gv_media_load_index(index_path.encode(), storage_dir.encode())
+        if store == ffi.NULL:
+            raise RuntimeError("Failed to load media index")
+        obj = cls.__new__(cls)
+        obj._store = store
+        return obj
+
+
+# ===========================================================================
+# SQL Query Interface
+# ===========================================================================
+
+
+@dataclass
+class SQLResult:
+    indices: list[int]
+    distances: list[float]
+    metadata_jsons: list[str]
+    row_count: int
+    column_names: list[str]
+
+
+class SQLEngine:
+    def __init__(self, db: "Database"):
+        self._eng = lib.gv_sql_create(db._db)
+        if self._eng == ffi.NULL:
+            raise RuntimeError("Failed to create SQL engine")
+
+    def close(self) -> None:
+        if self._eng and self._eng != ffi.NULL:
+            lib.gv_sql_destroy(self._eng)
+            self._eng = ffi.NULL
+
+    def __del__(self) -> None:
+        self.close()
+
+    def execute(self, query: str) -> SQLResult:
+        result = ffi.new("GV_SQLResult *")
+        if lib.gv_sql_execute(self._eng, query.encode(), result) != 0:
+            err = lib.gv_sql_last_error(self._eng)
+            msg = ffi.string(err).decode() if err != ffi.NULL else "Unknown SQL error"
+            raise RuntimeError(msg)
+        indices = [result.indices[i] for i in range(result.row_count)] if result.indices != ffi.NULL else []
+        distances = [result.distances[i] for i in range(result.row_count)] if result.distances != ffi.NULL else []
+        metadata = []
+        if result.metadata_jsons != ffi.NULL:
+            for i in range(result.row_count):
+                if result.metadata_jsons[i] != ffi.NULL:
+                    metadata.append(ffi.string(result.metadata_jsons[i]).decode())
+                else:
+                    metadata.append("")
+        columns = []
+        if result.column_names != ffi.NULL:
+            for i in range(result.column_count):
+                if result.column_names[i] != ffi.NULL:
+                    columns.append(ffi.string(result.column_names[i]).decode())
+        out = SQLResult(indices, distances, metadata, result.row_count, columns)
+        lib.gv_sql_free_result(result)
+        return out
+
+    def explain(self, query: str) -> str:
+        buf = ffi.new("char[4096]")
+        if lib.gv_sql_explain(self._eng, query.encode(), buf, 4096) != 0:
+            raise RuntimeError("SQL explain failed")
+        return ffi.string(buf).decode()
+
+    @property
+    def last_error(self) -> str:
+        err = lib.gv_sql_last_error(self._eng)
+        return ffi.string(err).decode() if err != ffi.NULL else ""
+
+
+# ===========================================================================
+# Phased Ranking Pipeline
+# ===========================================================================
+
+
+class PhaseType(IntEnum):
+    ANN = 0
+    RERANK_EXPR = 1
+    RERANK_MMR = 2
+    RERANK_CALLBACK = 3
+    FILTER = 4
+
+
+@dataclass(frozen=True)
+class PhasedResult:
+    index: int
+    score: float
+    phase_reached: int
+
+
+@dataclass(frozen=True)
+class PipelineStats:
+    phase_count: int
+    total_latency_ms: float
+
+
+class Pipeline:
+    def __init__(self, db: "Database"):
+        self._pipe = lib.gv_pipeline_create(db._db)
+        if self._pipe == ffi.NULL:
+            raise RuntimeError("Failed to create pipeline")
+
+    def close(self) -> None:
+        if self._pipe and self._pipe != ffi.NULL:
+            lib.gv_pipeline_destroy(self._pipe)
+            self._pipe = ffi.NULL
+
+    def __del__(self) -> None:
+        self.close()
+
+    def clear_phases(self) -> None:
+        lib.gv_pipeline_clear_phases(self._pipe)
+
+    @property
+    def phase_count(self) -> int:
+        return lib.gv_pipeline_phase_count(self._pipe)
+
+    def execute(self, query: Sequence[float], final_k: int = 10) -> list[PhasedResult]:
+        c_q = ffi.new("float[]", list(query))
+        results = ffi.new("GV_PhasedResult[]", final_k)
+        rc = lib.gv_pipeline_execute(self._pipe, c_q, len(query), final_k, results)
+        if rc < 0:
+            raise RuntimeError("Pipeline execution failed")
+        return [PhasedResult(results[i].index, results[i].score, results[i].phase_reached) for i in range(rc)]
+
+    def get_stats(self) -> PipelineStats:
+        stats = ffi.new("GV_PipelineStats *")
+        if lib.gv_pipeline_get_stats(self._pipe, stats) != 0:
+            return PipelineStats(0, 0.0)
+        result = PipelineStats(stats.phase_count, stats.total_latency_ms)
+        lib.gv_pipeline_free_stats(stats)
+        return result
+
+
+# ===========================================================================
+# Learned Sparse Vector Index
+# ===========================================================================
+
+
+@dataclass(frozen=True)
+class LearnedSparseConfig:
+    vocab_size: int = 30000
+    max_nonzeros: int = 128
+    use_wand: bool = True
+    wand_block_size: int = 64
+
+
+@dataclass(frozen=True)
+class LearnedSparseEntry:
+    token_id: int
+    weight: float
+
+
+@dataclass(frozen=True)
+class LearnedSparseResult:
+    doc_index: int
+    score: float
+
+
+@dataclass(frozen=True)
+class LearnedSparseStats:
+    doc_count: int
+    total_postings: int
+    avg_doc_length: float
+    vocab_used: int
+
+
+class LearnedSparseIndex:
+    def __init__(self, config: Optional[LearnedSparseConfig] = None):
+        c_cfg = ffi.new("GV_LearnedSparseConfig *")
+        lib.gv_ls_config_init(c_cfg)
+        if config:
+            c_cfg.vocab_size = config.vocab_size
+            c_cfg.max_nonzeros = config.max_nonzeros
+            c_cfg.use_wand = 1 if config.use_wand else 0
+            c_cfg.wand_block_size = config.wand_block_size
+        self._idx = lib.gv_ls_create(c_cfg)
+        if self._idx == ffi.NULL:
+            raise RuntimeError("Failed to create learned sparse index")
+
+    def close(self) -> None:
+        if self._idx and self._idx != ffi.NULL:
+            lib.gv_ls_destroy(self._idx)
+            self._idx = ffi.NULL
+
+    def __del__(self) -> None:
+        self.close()
+
+    def insert(self, entries: Sequence[LearnedSparseEntry]) -> int:
+        c_entries = ffi.new("GV_SparseEntry[]", len(entries))
+        for i, e in enumerate(entries):
+            c_entries[i].token_id = e.token_id
+            c_entries[i].weight = e.weight
+        return lib.gv_ls_insert(self._idx, c_entries, len(entries))
+
+    def delete(self, doc_id: int) -> None:
+        lib.gv_ls_delete(self._idx, doc_id)
+
+    def search(self, query: Sequence[LearnedSparseEntry], k: int = 10) -> list[LearnedSparseResult]:
+        c_q = ffi.new("GV_SparseEntry[]", len(query))
+        for i, e in enumerate(query):
+            c_q[i].token_id = e.token_id
+            c_q[i].weight = e.weight
+        results = ffi.new("GV_LearnedSparseResult[]", k)
+        rc = lib.gv_ls_search(self._idx, c_q, len(query), k, results)
+        if rc < 0:
+            raise RuntimeError("Learned sparse search failed")
+        return [LearnedSparseResult(results[i].doc_index, results[i].score) for i in range(rc)]
+
+    def search_with_threshold(self, query: Sequence[LearnedSparseEntry], min_score: float, k: int = 10) -> list[LearnedSparseResult]:
+        c_q = ffi.new("GV_SparseEntry[]", len(query))
+        for i, e in enumerate(query):
+            c_q[i].token_id = e.token_id
+            c_q[i].weight = e.weight
+        results = ffi.new("GV_LearnedSparseResult[]", k)
+        rc = lib.gv_ls_search_with_threshold(self._idx, c_q, len(query), min_score, k, results)
+        if rc < 0:
+            raise RuntimeError("Learned sparse threshold search failed")
+        return [LearnedSparseResult(results[i].doc_index, results[i].score) for i in range(rc)]
+
+    def get_stats(self) -> LearnedSparseStats:
+        stats = ffi.new("GV_LearnedSparseStats *")
+        if lib.gv_ls_get_stats(self._idx, stats) != 0:
+            return LearnedSparseStats(0, 0, 0.0, 0)
+        return LearnedSparseStats(stats.doc_count, stats.total_postings, stats.avg_doc_length, stats.vocab_used)
+
+    @property
+    def count(self) -> int:
+        return lib.gv_ls_count(self._idx)
+
+    def save(self, path: str) -> None:
+        if lib.gv_ls_save(self._idx, path.encode()) != 0:
+            raise RuntimeError("Failed to save learned sparse index")
+
+    @classmethod
+    def load(cls, path: str) -> "LearnedSparseIndex":
+        idx = lib.gv_ls_load(path.encode())
+        if idx == ffi.NULL:
+            raise RuntimeError("Failed to load learned sparse index")
+        obj = cls.__new__(cls)
+        obj._idx = idx
+        return obj
+

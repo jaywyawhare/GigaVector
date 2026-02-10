@@ -263,6 +263,99 @@ from ._core import (
     # RBAC
     Permission,
     RBACManager,
+    # MMR Reranking
+    MMRConfig,
+    MMRResult,
+    mmr_rerank,
+    # Custom Ranking
+    RankExpr,
+    RankSignal,
+    RankedResult,
+    # Advanced Quantization
+    QuantCodebook,
+    QuantConfig,
+    QuantMode,
+    QuantType,
+    # Full-Text Search (Enhanced)
+    FTConfig,
+    FTIndex,
+    FTLanguage,
+    FTResult,
+    ft_stem,
+    # Optimized HNSW
+    HNSWInlineConfig,
+    HNSWInlineIndex,
+    HNSWRebuildConfig,
+    HNSWRebuildStats,
+    # ONNX Model Serving
+    ONNXConfig,
+    ONNXModel,
+    # Agentic Interfaces
+    Agent,
+    AgentConfig,
+    AgentResult,
+    AgentType,
+    # MUVERA Encoder
+    MuveraConfig,
+    MuveraEncoder,
+    # Enterprise SSO
+    SSOConfig,
+    SSOManager,
+    SSOProvider,
+    SSOToken,
+    # Tiered Multitenancy
+    TenantInfo,
+    TenantTier,
+    TierThresholds,
+    TieredManager,
+    TieredTenantConfig,
+    # Integrated Inference
+    InferenceConfig,
+    InferenceEngine,
+    InferenceResult,
+    # JSON Path Indexing
+    JSONPathConfig,
+    JSONPathIndex,
+    JSONPathType,
+    # CDC Stream
+    CDCConfig,
+    CDCCursor,
+    CDCEvent,
+    CDCEventType,
+    CDCStream,
+    # Embedded / Edge Mode
+    EmbeddedConfig,
+    EmbeddedDB,
+    EmbeddedIndexType,
+    EmbeddedResult,
+    # Conditional Updates
+    ConditionType,
+    ConditionalResult,
+    Condition,
+    CondManager,
+    # Time-Travel
+    TimeTravelConfig,
+    TimeTravelManager,
+    TTVersionEntry,
+    # Multimodal Storage
+    MediaConfig,
+    MediaEntry,
+    MediaStore,
+    MediaType,
+    # SQL Interface
+    SQLEngine,
+    SQLResult,
+    # Phased Ranking Pipeline
+    PhaseType,
+    PhasedResult,
+    Pipeline,
+    PipelineStats,
+    # Learned Sparse
+    LearnedSparseConfig,
+    LearnedSparseEntry,
+    LearnedSparseIndex,
+    LearnedSparseResult,
+    LearnedSparseStats,
 )
 
 __all__ = [
@@ -510,6 +603,99 @@ __all__ = [
     # RBAC
     "Permission",
     "RBACManager",
+    # MMR Reranking
+    "MMRConfig",
+    "MMRResult",
+    "mmr_rerank",
+    # Custom Ranking
+    "RankExpr",
+    "RankSignal",
+    "RankedResult",
+    # Advanced Quantization
+    "QuantCodebook",
+    "QuantConfig",
+    "QuantMode",
+    "QuantType",
+    # Full-Text Search (Enhanced)
+    "FTConfig",
+    "FTIndex",
+    "FTLanguage",
+    "FTResult",
+    "ft_stem",
+    # Optimized HNSW
+    "HNSWInlineConfig",
+    "HNSWInlineIndex",
+    "HNSWRebuildConfig",
+    "HNSWRebuildStats",
+    # ONNX Model Serving
+    "ONNXConfig",
+    "ONNXModel",
+    # Agentic Interfaces
+    "Agent",
+    "AgentConfig",
+    "AgentResult",
+    "AgentType",
+    # MUVERA Encoder
+    "MuveraConfig",
+    "MuveraEncoder",
+    # Enterprise SSO
+    "SSOConfig",
+    "SSOManager",
+    "SSOProvider",
+    "SSOToken",
+    # Tiered Multitenancy
+    "TenantInfo",
+    "TenantTier",
+    "TierThresholds",
+    "TieredManager",
+    "TieredTenantConfig",
+    # Integrated Inference
+    "InferenceConfig",
+    "InferenceEngine",
+    "InferenceResult",
+    # JSON Path Indexing
+    "JSONPathConfig",
+    "JSONPathIndex",
+    "JSONPathType",
+    # CDC Stream
+    "CDCConfig",
+    "CDCCursor",
+    "CDCEvent",
+    "CDCEventType",
+    "CDCStream",
+    # Embedded / Edge Mode
+    "EmbeddedConfig",
+    "EmbeddedDB",
+    "EmbeddedIndexType",
+    "EmbeddedResult",
+    # Conditional Updates
+    "ConditionType",
+    "ConditionalResult",
+    "Condition",
+    "CondManager",
+    # Time-Travel
+    "TimeTravelConfig",
+    "TimeTravelManager",
+    "TTVersionEntry",
+    # Multimodal Storage
+    "MediaConfig",
+    "MediaEntry",
+    "MediaStore",
+    "MediaType",
+    # SQL Interface
+    "SQLEngine",
+    "SQLResult",
+    # Phased Ranking Pipeline
+    "PhaseType",
+    "PhasedResult",
+    "Pipeline",
+    "PipelineStats",
+    # Learned Sparse
+    "LearnedSparseConfig",
+    "LearnedSparseEntry",
+    "LearnedSparseIndex",
+    "LearnedSparseResult",
+    "LearnedSparseStats",
 ]
 
 __version__ = "0.8.0"
