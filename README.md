@@ -10,7 +10,7 @@
   </a>
 </p>
 
-**GigaVector** is a high-performance, production-ready vector database library written in C with Python bindings. 54,000+ lines of C across 80 modules covering indexing, search, storage, networking, security, and AI integration.
+**GigaVector** is a high-performance, production-ready vector database library written in C with Python bindings. 73,000+ lines of C across 99 modules covering indexing, search, storage, networking, security, and AI integration.
 
 ---
 
@@ -46,6 +46,12 @@ Euclidean, Cosine, Dot Product, Manhattan, Hamming -- all with SIMD-optimized im
 - **Late interaction / ColBERT** -- multi-vector MaxSim scoring for token-level matching
 - **Recommendation API** -- positive/negative example-based recommendations with strategy selection
 - **Delete/update by filter** -- bulk delete, metadata update, and count by filter expression
+- **MMR diversity reranking** -- maximal marginal relevance for diverse result sets
+- **Custom ranking expressions** -- expression parser with decay functions (exp/gauss/linear) and score boosting
+- **SQL query interface** -- `SELECT ... WHERE ... ORDER BY vector_distance(...)` SQL syntax
+- **Phased ranking pipeline** -- multi-stage ANN → rerank → filter pipeline with per-phase stats
+- **Learned sparse index** -- SPLADE-style token-weighted inverted index with WAND acceleration
+- **Full-text search** -- Porter stemming, multilingual (6 languages), BlockMax WAND, phrase matching
 
 ### Storage and Persistence
 - **Write-Ahead Logging (WAL)** -- crash-safe durability with automatic replay
@@ -69,6 +75,11 @@ Euclidean, Cosine, Dot Product, Manhattan, Hamming -- all with SIMD-optimized im
 - **Named vectors** -- multiple named vector fields per point with independent dimensions
 - **Collection aliases** -- create, swap, and manage aliases that point to collections
 - **Payload compression** -- zlib/LZ4/zstd compression for stored vector payloads
+- **JSON path indexing** -- index nested JSON fields with dot-notation, type-aware range queries
+- **CDC stream** -- change data capture with ring buffer, polling cursors, and subscriber callbacks
+- **Conditional updates** -- CAS-style optimistic concurrency with per-vector versioning
+- **Time-travel queries** -- auto-versioned append-only log, query at any version or timestamp
+- **Multimodal storage** -- SHA-256 content-addressable blob storage for images, audio, video, documents
 
 ### Transactions and Concurrency
 - **MVCC transactions** -- snapshot isolation with begin/commit/rollback
@@ -80,6 +91,8 @@ Euclidean, Cosine, Dot Product, Manhattan, Hamming -- all with SIMD-optimized im
 - **Scalar Quantization** -- configurable bit-width reduction
 - **Binary Quantization** -- 1-bit compression for HNSW
 - **Codebook sharing** -- train once, share PQ codebooks across collections
+- **Advanced quantization** -- 1.5-bit (ternary), 2-bit, 4-bit, 8-bit; RaBitQ with Householder rotations; symmetric/asymmetric modes
+- **Inline HNSW + incremental rebuild** -- quantized vectors embedded in graph nodes with prefetch, background rebuild
 
 ### Distributed Architecture
 - **HTTP REST server** -- embedded server with rate limiting, CORS, and API key auth
@@ -92,11 +105,14 @@ Euclidean, Cosine, Dot Product, Manhattan, Hamming -- all with SIMD-optimized im
 - **Namespace / multi-tenancy** -- isolated collections within a single instance
 - **Configurable consistency** -- eventual, quorum, and strong consistency levels
 - **Tenant quotas** -- per-tenant limits on vector count, memory, and QPS
+- **Tiered multitenancy** -- shared/dedicated/premium tiers with auto-promote/demote and QPS tracking
+- **Embedded / edge mode** -- lightweight in-process database with memory budget, mmap, and quantization
 
 ### Security
 - **Authentication** -- API key and JWT-based auth
 - **RBAC** -- fine-grained role-based access control with per-collection permissions
 - **Cryptographic primitives** -- SHA-256, HMAC for secure token handling
+- **Enterprise SSO** -- OIDC discovery, JWT validation, SAML XML parsing for enterprise identity providers
 
 ### AI Integration
 - **LLM support** -- OpenAI, Anthropic, Google Gemini (chat completions, streaming)
@@ -105,6 +121,10 @@ Euclidean, Cosine, Dot Product, Manhattan, Hamming -- all with SIMD-optimized im
 - **Semantic memory layer** -- extract, store, consolidate memories from conversations
 - **Context graphs** -- entity-relationship extraction for context-aware retrieval
 - **Importance scoring** -- rank memories by relevance and recency
+- **ONNX model serving** -- load ONNX models for inference, reranking, and embedding in the search pipeline
+- **Agentic interfaces** -- LLM-powered natural language query, data transformation, and personalization agents
+- **MUVERA encoding** -- compress ColBERT multi-vectors into single dense vectors via random projections
+- **Integrated inference** -- text-in/results-out API that combines auto-embedding with vector search
 
 ### Observability and Operations
 - **Query optimizer** -- cost-based strategy selection (exact scan vs index vs oversample+filter)
