@@ -13,6 +13,20 @@ from ._ffi import ffi, lib
 CData: TypeAlias = Any
 
 
+def _cstr(s: str | bytes | None, keepalive: list) -> CData:
+    """Convert a Python string to a CFFI ``char[]`` and prevent GC.
+
+    The returned cdata pointer is appended to *keepalive* so that the
+    caller can ensure the underlying buffer lives long enough.
+    """
+    if s is None:
+        return ffi.NULL
+    b = s.encode() if isinstance(s, str) else s
+    p = ffi.new("char[]", b)
+    keepalive.append(p)
+    return p
+
+
 class IndexType(IntEnum):
     KDTREE = 0
     HNSW = 1
@@ -3444,11 +3458,14 @@ class Namespace:
             raise ValueError(f"Expected dimension {self._dimension}, got {len(data)}")
         vec_buf = ffi.new("float[]", list(data))
         if metadata:
-            keys = list(metadata.keys())
-            values = list(metadata.values())
-            keys_arr = ffi.new("char*[]", [k.encode() for k in keys])
-            vals_arr = ffi.new("char*[]", [v.encode() for v in values])
-            if lib.gv_namespace_add_vector_with_metadata(self._ns, vec_buf, self._dimension, keys_arr, vals_arr, len(keys)) != 0:
+            _ka: list = []
+            n = len(metadata)
+            keys_arr = ffi.new("char*[]", n)
+            vals_arr = ffi.new("char*[]", n)
+            for i, (k, v) in enumerate(metadata.items()):
+                keys_arr[i] = _cstr(k, _ka)
+                vals_arr[i] = _cstr(v, _ka)
+            if lib.gv_namespace_add_vector_with_metadata(self._ns, vec_buf, self._dimension, keys_arr, vals_arr, n) != 0:
                 raise RuntimeError("Failed to add vector with metadata")
         else:
             if lib.gv_namespace_add_vector(self._ns, vec_buf, self._dimension) != 0:
@@ -3555,8 +3572,8 @@ class NamespaceManager:
         result = []
         for i in range(count_ptr[0]):
             result.append(ffi.string(names_ptr[0][i]).decode("utf-8"))
-            lib.free(names_ptr[0][i])
-        lib.free(names_ptr[0])
+            lib.gv_free(names_ptr[0][i])
+        lib.gv_free(names_ptr[0])
         return result
 
     def exists(self, name: str) -> bool:
@@ -4536,7 +4553,7 @@ class DedupIndex:
 
     def check(self, data: list[float]) -> bool:
         arr = ffi.new("float[]", data)
-        return lib.gv_dedup_check(self._dedup, arr, len(data)) == 1
+        return lib.gv_dedup_check(self._dedup, arr, len(data)) >= 0
 
     def insert(self, data: list[float]) -> bool:
         arr = ffi.new("float[]", data)
@@ -4778,7 +4795,7 @@ class QueryTrace:
         if s == ffi.NULL:
             return "{}"
         result = ffi.string(s).decode("utf-8")
-        lib.free(s)
+        lib.gv_free(s)
         return result
 
     def __enter__(self):
@@ -4921,22 +4938,28 @@ class Schema:
         return lib.gv_schema_field_count(self._schema)
 
     def validate(self, metadata: dict[str, str]) -> bool:
-        keys = [k.encode() for k in metadata.keys()]
-        values = [v.encode() for v in metadata.values()]
-        c_keys = ffi.new("char *[]", keys)
-        c_values = ffi.new("char *[]", values)
-        return lib.gv_schema_validate(self._schema, c_keys, c_values, len(metadata)) == 0
+        n = len(metadata)
+        c_keys = ffi.new("char *[]", n)
+        c_values = ffi.new("char *[]", n)
+        _keepalive = []
+        for i, (k, v) in enumerate(metadata.items()):
+            ck = ffi.new("char[]", k.encode())
+            cv = ffi.new("char[]", v.encode())
+            c_keys[i] = ck
+            c_values[i] = cv
+            _keepalive.extend([ck, cv])
+        return lib.gv_schema_validate(self._schema, c_keys, c_values, n) == 0
 
     def to_json(self) -> str:
         s = lib.gv_schema_to_json(self._schema)
         if s == ffi.NULL:
             return "{}"
         result = ffi.string(s).decode("utf-8")
-        lib.free(s)
+        lib.gv_free(s)
         return result
 
     def is_compatible(self, other: "Schema") -> bool:
-        return lib.gv_schema_is_compatible(self._schema, other._schema) == 1
+        return lib.gv_schema_is_compatible(self._schema, other._schema) == 0
 
 
 # =============================================================================
@@ -5087,10 +5110,11 @@ class TLSConfig:
 
 class TLSContext:
     def __init__(self, config: TLSConfig):
+        _ka: list = []
         c_cfg = ffi.new("GV_TLSConfig *")
         lib.gv_tls_config_init(c_cfg)
-        c_cfg.cert_file = config.cert_file.encode() if config.cert_file else ffi.NULL
-        c_cfg.key_file = config.key_file.encode() if config.key_file else ffi.NULL
+        c_cfg.cert_file = _cstr(config.cert_file, _ka) if config.cert_file else ffi.NULL
+        c_cfg.key_file = _cstr(config.key_file, _ka) if config.key_file else ffi.NULL
         c_cfg.min_version = config.min_version.value
         c_cfg.verify_client = 1 if config.verify_client else 0
         self._ctx = lib.gv_tls_create(c_cfg)
@@ -6310,6 +6334,7 @@ class FTResult:
 
 class FTIndex:
     def __init__(self, config: Optional[FTConfig] = None):
+        self._idx = None
         c_cfg = ffi.new("GV_FTConfig *")
         lib.gv_ft_config_init(c_cfg)
         if config:
@@ -6487,8 +6512,9 @@ class ONNXConfig:
 
 class ONNXModel:
     def __init__(self, config: ONNXConfig):
+        _ka: list = []
         c_cfg = ffi.new("GV_ONNXConfig *")
-        c_cfg.model_path = config.model_path.encode() if config.model_path else ffi.NULL
+        c_cfg.model_path = _cstr(config.model_path, _ka) if config.model_path else ffi.NULL
         c_cfg.num_threads = config.num_threads
         c_cfg.use_gpu = 1 if config.use_gpu else 0
         c_cfg.max_batch_size = config.max_batch_size
@@ -6560,14 +6586,15 @@ class AgentResult:
 
 class Agent:
     def __init__(self, db: "Database", config: AgentConfig):
+        _ka: list = []
         c_cfg = ffi.new("GV_AgentConfig *")
         c_cfg.agent_type = config.agent_type.value
         c_cfg.llm_provider = config.llm_provider
-        c_cfg.api_key = config.api_key.encode() if config.api_key else ffi.NULL
-        c_cfg.model = config.model.encode() if config.model else ffi.NULL
+        c_cfg.api_key = _cstr(config.api_key, _ka) if config.api_key else ffi.NULL
+        c_cfg.model = _cstr(config.model, _ka) if config.model else ffi.NULL
         c_cfg.temperature = config.temperature
         c_cfg.max_retries = config.max_retries
-        c_cfg.system_prompt_override = config.system_prompt_override.encode() if config.system_prompt_override else ffi.NULL
+        c_cfg.system_prompt_override = _cstr(config.system_prompt_override, _ka) if config.system_prompt_override else ffi.NULL
         self._agent = lib.gv_agent_create(db._db, c_cfg)
         if self._agent == ffi.NULL:
             raise RuntimeError("Failed to create agent")
@@ -6715,18 +6742,19 @@ class SSOToken:
 
 class SSOManager:
     def __init__(self, config: SSOConfig):
+        _ka: list = []
         c_cfg = ffi.new("GV_SSOConfig *")
         c_cfg.provider = config.provider.value
-        c_cfg.issuer_url = config.issuer_url.encode() if config.issuer_url else ffi.NULL
-        c_cfg.client_id = config.client_id.encode() if config.client_id else ffi.NULL
-        c_cfg.client_secret = config.client_secret.encode() if config.client_secret else ffi.NULL
-        c_cfg.redirect_uri = config.redirect_uri.encode() if config.redirect_uri else ffi.NULL
-        c_cfg.saml_metadata_url = config.saml_metadata_url.encode() if config.saml_metadata_url else ffi.NULL
-        c_cfg.saml_entity_id = config.saml_entity_id.encode() if config.saml_entity_id else ffi.NULL
+        c_cfg.issuer_url = _cstr(config.issuer_url, _ka) if config.issuer_url else ffi.NULL
+        c_cfg.client_id = _cstr(config.client_id, _ka) if config.client_id else ffi.NULL
+        c_cfg.client_secret = _cstr(config.client_secret, _ka) if config.client_secret else ffi.NULL
+        c_cfg.redirect_uri = _cstr(config.redirect_uri, _ka) if config.redirect_uri else ffi.NULL
+        c_cfg.saml_metadata_url = _cstr(config.saml_metadata_url, _ka) if config.saml_metadata_url else ffi.NULL
+        c_cfg.saml_entity_id = _cstr(config.saml_entity_id, _ka) if config.saml_entity_id else ffi.NULL
         c_cfg.verify_ssl = 1 if config.verify_ssl else 0
         c_cfg.token_ttl = config.token_ttl
-        c_cfg.allowed_groups = config.allowed_groups.encode() if config.allowed_groups else ffi.NULL
-        c_cfg.admin_groups = config.admin_groups.encode() if config.admin_groups else ffi.NULL
+        c_cfg.allowed_groups = _cstr(config.allowed_groups, _ka) if config.allowed_groups else ffi.NULL
+        c_cfg.admin_groups = _cstr(config.admin_groups, _ka) if config.admin_groups else ffi.NULL
         self._mgr = lib.gv_sso_create(c_cfg)
         if self._mgr == ffi.NULL:
             raise RuntimeError("Failed to create SSO manager")
@@ -6911,12 +6939,13 @@ class InferenceResult:
 
 class InferenceEngine:
     def __init__(self, db: "Database", config: Optional[InferenceConfig] = None):
+        _ka: list = []
         c_cfg = ffi.new("GV_InferenceConfig *")
         lib.gv_inference_config_init(c_cfg)
         if config:
             c_cfg.embed_provider = config.embed_provider
-            c_cfg.api_key = config.api_key.encode() if config.api_key else ffi.NULL
-            c_cfg.model = config.model.encode() if config.model else ffi.NULL
+            c_cfg.api_key = _cstr(config.api_key, _ka) if config.api_key else ffi.NULL
+            c_cfg.model = _cstr(config.model, _ka) if config.model else ffi.NULL
             c_cfg.dimension = config.dimension
             c_cfg.distance_type = config.distance_type.value
             c_cfg.cache_size = config.cache_size
@@ -6985,8 +7014,9 @@ class JSONPathIndex:
         self.close()
 
     def add_path(self, config: JSONPathConfig) -> None:
+        _ka: list = []
         c_cfg = ffi.new("GV_JSONPathConfig *")
-        c_cfg.path = config.path.encode()
+        c_cfg.path = _cstr(config.path, _ka)
         c_cfg.type = config.type.value
         if lib.gv_json_index_add_path(self._idx, c_cfg) != 0:
             raise RuntimeError(f"Failed to add path: {config.path}")
@@ -7077,10 +7107,11 @@ class CDCStream:
     def __init__(self, config: Optional[CDCConfig] = None):
         c_cfg = ffi.new("GV_CDCConfig *")
         lib.gv_cdc_config_init(c_cfg)
+        _ka: list = []
         if config:
             c_cfg.ring_buffer_size = config.ring_buffer_size
             c_cfg.persist_to_file = 1 if config.persist_to_file else 0
-            c_cfg.log_path = config.log_path.encode() if config.log_path else ffi.NULL
+            c_cfg.log_path = _cstr(config.log_path, _ka) if config.log_path else ffi.NULL
             c_cfg.max_log_size_mb = config.max_log_size_mb
             c_cfg.include_vector_data = 1 if config.include_vector_data else 0
         self._stream = lib.gv_cdc_create(c_cfg)
@@ -7151,6 +7182,8 @@ class EmbeddedResult:
 
 class EmbeddedDB:
     def __init__(self, config: Optional[EmbeddedConfig] = None):
+        self._db = None
+        _ka: list = []
         c_cfg = ffi.new("GV_EmbeddedConfig *")
         lib.gv_embedded_config_init(c_cfg)
         if config:
@@ -7159,7 +7192,7 @@ class EmbeddedDB:
             c_cfg.max_vectors = config.max_vectors
             c_cfg.memory_limit_mb = config.memory_limit_mb
             c_cfg.mmap_storage = 1 if config.mmap_storage else 0
-            c_cfg.storage_path = config.storage_path.encode() if config.storage_path else ffi.NULL
+            c_cfg.storage_path = _cstr(config.storage_path, _ka) if config.storage_path else ffi.NULL
             c_cfg.quantize = 1 if config.quantize else 0
         self._db = lib.gv_embedded_open(c_cfg)
         if self._db == ffi.NULL:
@@ -7437,13 +7470,15 @@ class MediaEntry:
 
 class MediaStore:
     def __init__(self, config: Optional[MediaConfig] = None):
+        _ka: list = []
+        if config is None:
+            config = MediaConfig()
         c_cfg = ffi.new("GV_MediaConfig *")
         lib.gv_media_config_init(c_cfg)
-        if config:
-            c_cfg.storage_dir = config.storage_dir.encode()
-            c_cfg.max_blob_size_mb = config.max_blob_size_mb
-            c_cfg.deduplicate = 1 if config.deduplicate else 0
-            c_cfg.compress_blobs = 1 if config.compress_blobs else 0
+        c_cfg.storage_dir = _cstr(config.storage_dir, _ka)
+        c_cfg.max_blob_size_mb = config.max_blob_size_mb
+        c_cfg.deduplicate = 1 if config.deduplicate else 0
+        c_cfg.compress_blobs = 1 if config.compress_blobs else 0
         self._store = lib.gv_media_create(c_cfg)
         if self._store == ffi.NULL:
             raise RuntimeError("Failed to create media store")
@@ -7624,6 +7659,8 @@ class Pipeline:
         return lib.gv_pipeline_phase_count(self._pipe)
 
     def execute(self, query: Sequence[float], final_k: int = 10) -> list[PhasedResult]:
+        if self.phase_count == 0:
+            return []
         c_q = ffi.new("float[]", list(query))
         results = ffi.new("GV_PhasedResult[]", final_k)
         rc = lib.gv_pipeline_execute(self._pipe, c_q, len(query), final_k, results)
@@ -7697,8 +7734,8 @@ class LearnedSparseIndex:
     def insert(self, entries: Sequence[LearnedSparseEntry]) -> int:
         c_entries = ffi.new("GV_SparseEntry[]", len(entries))
         for i, e in enumerate(entries):
-            c_entries[i].token_id = e.token_id
-            c_entries[i].weight = e.weight
+            c_entries[i].index = e.token_id
+            c_entries[i].value = e.weight
         return lib.gv_ls_insert(self._idx, c_entries, len(entries))
 
     def delete(self, doc_id: int) -> None:
@@ -7707,8 +7744,8 @@ class LearnedSparseIndex:
     def search(self, query: Sequence[LearnedSparseEntry], k: int = 10) -> list[LearnedSparseResult]:
         c_q = ffi.new("GV_SparseEntry[]", len(query))
         for i, e in enumerate(query):
-            c_q[i].token_id = e.token_id
-            c_q[i].weight = e.weight
+            c_q[i].index = e.token_id
+            c_q[i].value = e.weight
         results = ffi.new("GV_LearnedSparseResult[]", k)
         rc = lib.gv_ls_search(self._idx, c_q, len(query), k, results)
         if rc < 0:
@@ -7718,8 +7755,8 @@ class LearnedSparseIndex:
     def search_with_threshold(self, query: Sequence[LearnedSparseEntry], min_score: float, k: int = 10) -> list[LearnedSparseResult]:
         c_q = ffi.new("GV_SparseEntry[]", len(query))
         for i, e in enumerate(query):
-            c_q[i].token_id = e.token_id
-            c_q[i].weight = e.weight
+            c_q[i].index = e.token_id
+            c_q[i].value = e.weight
         results = ffi.new("GV_LearnedSparseResult[]", k)
         rc = lib.gv_ls_search_with_threshold(self._idx, c_q, len(query), min_score, k, results)
         if rc < 0:

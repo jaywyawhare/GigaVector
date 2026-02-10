@@ -2297,8 +2297,8 @@ int gv_rank_search(const void *db, const float *query, size_t dimension, size_t 
 
 /* ===== Advanced Quantization ===== */
 
-typedef enum { GV_QUANT_BINARY, GV_QUANT_TERNARY, GV_QUANT_2BIT, GV_QUANT_4BIT, GV_QUANT_8BIT, ... } GV_QuantType;
-typedef enum { GV_QUANT_SYMMETRIC, GV_QUANT_ASYMMETRIC, ... } GV_QuantMode;
+typedef enum { GV_QUANT_BINARY = 0, GV_QUANT_TERNARY = 1, GV_QUANT_2BIT = 2, GV_QUANT_4BIT = 3, GV_QUANT_8BIT = 4 } GV_QuantType;
+typedef enum { GV_QUANT_SYMMETRIC = 0, GV_QUANT_ASYMMETRIC = 1 } GV_QuantMode;
 
 typedef struct {
     GV_QuantType type;
@@ -2323,7 +2323,7 @@ float gv_quant_memory_ratio(const GV_QuantCodebook *cb, size_t dimension);
 
 /* ===== Full-Text Search ===== */
 
-typedef enum { GV_FT_ENGLISH, GV_FT_GERMAN, GV_FT_FRENCH, GV_FT_SPANISH, GV_FT_ITALIAN, GV_FT_PORTUGUESE, GV_FT_AUTO, ... } GV_FTLanguage;
+typedef enum { GV_FT_ENGLISH = 0, GV_FT_GERMAN = 1, GV_FT_FRENCH = 2, GV_FT_SPANISH = 3, GV_FT_ITALIAN = 4, GV_FT_PORTUGUESE = 5, GV_FT_AUTO = 6 } GV_FTLanguage;
 
 typedef struct {
     GV_FTLanguage language;
@@ -2421,7 +2421,7 @@ int gv_onnx_get_output_info(const GV_ONNXModel *model, size_t *output_count, cha
 
 /* ===== Agentic Interfaces ===== */
 
-typedef enum { GV_AGENT_QUERY, GV_AGENT_TRANSFORM, GV_AGENT_PERSONALIZE, ... } GV_AgentType;
+typedef enum { GV_AGENT_QUERY = 0, GV_AGENT_TRANSFORM = 1, GV_AGENT_PERSONALIZE = 2 } GV_AgentType;
 
 typedef struct {
     GV_AgentType agent_type;
@@ -2476,7 +2476,7 @@ GV_MuveraEncoder *gv_muvera_load(const char *path);
 
 /* ===== Enterprise SSO ===== */
 
-typedef enum { GV_SSO_OIDC, GV_SSO_SAML, ... } GV_SSOProvider;
+typedef enum { GV_SSO_OIDC = 0, GV_SSO_SAML = 1 } GV_SSOProvider;
 
 typedef struct {
     GV_SSOProvider provider;
@@ -2517,7 +2517,7 @@ int gv_sso_has_group(const GV_SSOToken *token, const char *group);
 
 /* ===== Tiered Multitenancy ===== */
 
-typedef enum { GV_TIER_SHARED, GV_TIER_DEDICATED, GV_TIER_PREMIUM, ... } GV_TenantTier;
+typedef enum { GV_TIER_SHARED = 0, GV_TIER_DEDICATED = 1, GV_TIER_PREMIUM = 2 } GV_TenantTier;
 
 typedef struct {
     size_t shared_max_vectors;
@@ -2535,7 +2535,7 @@ typedef struct {
 } GV_TieredTenantConfig;
 
 typedef struct {
-    char tenant_id[128];
+    const char *tenant_id;
     GV_TenantTier tier;
     size_t vector_count;
     size_t memory_bytes;
@@ -2592,7 +2592,7 @@ void gv_inference_free_results(GV_InferenceResult *results, size_t count);
 
 /* ===== JSON Path Indexing ===== */
 
-typedef enum { GV_JSON_PATH_STRING, GV_JSON_PATH_INT, GV_JSON_PATH_FLOAT, GV_JSON_PATH_BOOL, ... } GV_JSONPathType;
+typedef enum { GV_JSON_PATH_STRING = 0, GV_JSON_PATH_INT = 1, GV_JSON_PATH_FLOAT = 2, GV_JSON_PATH_BOOL = 3 } GV_JSONPathType;
 
 typedef struct {
     const char *path;
@@ -2616,7 +2616,7 @@ GV_JSONPathIndex *gv_json_index_load(const char *path_file);
 
 /* ===== Change Data Capture ===== */
 
-typedef enum { GV_CDC_INSERT, GV_CDC_UPDATE, GV_CDC_DELETE, GV_CDC_SNAPSHOT, GV_CDC_ALL, ... } GV_CDCEventType;
+typedef enum { GV_CDC_INSERT = 1, GV_CDC_UPDATE = 2, GV_CDC_DELETE = 4, GV_CDC_SNAPSHOT = 8, GV_CDC_ALL = 15 } GV_CDCEventType;
 
 typedef struct {
     uint64_t sequence_number;
@@ -2655,7 +2655,7 @@ size_t gv_cdc_pending_count(const GV_CDCStream *stream, const GV_CDCCursor *curs
 
 /* ===== Embedded/Edge Mode ===== */
 
-typedef enum { GV_EMBEDDED_FLAT, GV_EMBEDDED_HNSW, GV_EMBEDDED_LSH, ... } GV_EmbeddedIndexType;
+typedef enum { GV_EMBEDDED_FLAT = 0, GV_EMBEDDED_HNSW = 1, GV_EMBEDDED_LSH = 2 } GV_EmbeddedIndexType;
 
 typedef struct {
     size_t dimension;
@@ -2690,7 +2690,7 @@ int gv_embedded_compact(GV_EmbeddedDB *db);
 
 /* ===== Conditional Updates ===== */
 
-typedef enum { GV_COND_VERSION_EQ, GV_COND_VERSION_LT, GV_COND_METADATA_EQ, GV_COND_METADATA_EXISTS, GV_COND_METADATA_NOT_EXISTS, GV_COND_NOT_DELETED, ... } GV_ConditionType;
+typedef enum { GV_COND_VERSION_EQ = 0, GV_COND_VERSION_LT = 1, GV_COND_METADATA_EQ = 2, GV_COND_METADATA_EXISTS = 3, GV_COND_METADATA_NOT_EXISTS = 4, GV_COND_NOT_DELETED = 5 } GV_ConditionType;
 
 typedef struct {
     GV_ConditionType type;
@@ -2751,7 +2751,7 @@ GV_TimeTravelManager *gv_tt_load(const char *path);
 
 /* ===== Multimodal Storage ===== */
 
-typedef enum { GV_MEDIA_IMAGE, GV_MEDIA_AUDIO, GV_MEDIA_VIDEO, GV_MEDIA_DOCUMENT, GV_MEDIA_BLOB, ... } GV_MediaType;
+typedef enum { GV_MEDIA_IMAGE = 0, GV_MEDIA_AUDIO = 1, GV_MEDIA_VIDEO = 2, GV_MEDIA_DOCUMENT = 3, GV_MEDIA_BLOB = 4 } GV_MediaType;
 
 typedef struct {
     const char *storage_dir;
@@ -2763,11 +2763,11 @@ typedef struct {
 typedef struct {
     size_t vector_index;
     GV_MediaType type;
-    char filename[256];
+    char *filename;
     size_t file_size;
     char hash[65];
     uint64_t created_at;
-    char mime_type[64];
+    char *mime_type;
 } GV_MediaEntry;
 
 typedef struct GV_MediaStore GV_MediaStore;
@@ -2809,7 +2809,7 @@ int gv_sql_explain(GV_SQLEngine *eng, const char *query, char *plan, size_t plan
 
 /* ===== Phased Ranking Pipeline ===== */
 
-typedef enum { GV_PHASE_ANN, GV_PHASE_RERANK_EXPR, GV_PHASE_RERANK_MMR, GV_PHASE_RERANK_CALLBACK, GV_PHASE_FILTER, ... } GV_PhaseType;
+typedef enum { GV_PHASE_ANN = 0, GV_PHASE_RERANK_EXPR = 1, GV_PHASE_RERANK_MMR = 2, GV_PHASE_RERANK_CALLBACK = 3, GV_PHASE_FILTER = 4 } GV_PhaseType;
 
 typedef struct {
     size_t index;
@@ -3087,6 +3087,8 @@ int gv_kg_get_predicates(const GV_KnowledgeGraph *kg, char **out_predicates, siz
 
 int gv_kg_save(const GV_KnowledgeGraph *kg, const char *path);
 GV_KnowledgeGraph *gv_kg_load(const char *path);
+
+void gv_free(void *ptr);
 """
 )
 
