@@ -10,7 +10,7 @@
   </a>
 </p>
 
-**GigaVector** is a high-performance, production-ready vector database library written in C with Python bindings. 73,000+ lines of C across 99 modules covering indexing, search, storage, networking, security, and AI integration.
+**GigaVector** is a high-performance, production-ready vector database library written in C with Python bindings. 78,000+ lines of C across 101 modules covering indexing, search, storage, graph, networking, security, and AI integration.
 
 ---
 
@@ -113,6 +113,18 @@ Euclidean, Cosine, Dot Product, Manhattan, Hamming -- all with SIMD-optimized im
 - **RBAC** -- fine-grained role-based access control with per-collection permissions
 - **Cryptographic primitives** -- SHA-256, HMAC for secure token handling
 - **Enterprise SSO** -- OIDC discovery, JWT validation, SAML XML parsing for enterprise identity providers
+
+### Graph and Knowledge Graph
+- **Property graph database** -- nodes with labels/properties, directed weighted edges, hash table storage
+- **Graph traversal** -- BFS, DFS, Dijkstra shortest path, all-paths enumeration
+- **Graph analytics** -- PageRank (iterative power method), connected components, clustering coefficient, degree centrality
+- **Knowledge graph** -- entities with embeddings, SPO triple store with wildcard queries
+- **Semantic entity search** -- cosine similarity search over entity embeddings
+- **Entity resolution** -- name match + embedding similarity deduplication, entity merging
+- **Link prediction** -- embedding similarity + structural patterns (shared neighbors)
+- **Hybrid graph+vector search** -- embedding similarity filtered by entity type and predicate
+- **Subgraph extraction** -- BFS-based k-hop subgraph with entity and relation IDs
+- **Graph persistence** -- binary save/load for both graph DB ("GVGR") and knowledge graph ("GVKG")
 
 ### AI Integration
 - **LLM support** -- OpenAI, Anthropic, Google Gemini (chat completions, streaming)
@@ -361,6 +373,55 @@ cm = ConsistencyManager()
 cm.set_level(ConsistencyLevel.QUORUM)
 ```
 
+### Graph Database and Knowledge Graph
+```python
+from gigavector import GraphDB, GraphDBConfig, KnowledgeGraph, KGConfig
+
+# Property graph database
+g = GraphDB(GraphDBConfig(node_bucket_count=4096))
+alice = g.add_node("Person")
+bob = g.add_node("Person")
+g.set_node_prop(alice, "name", "Alice")
+g.set_node_prop(bob, "name", "Bob")
+e = g.add_edge(alice, bob, "KNOWS", weight=1.0)
+
+# Traversal and analytics
+visited = g.bfs(alice, max_depth=3)
+path = g.shortest_path(alice, bob)
+pr = g.pagerank(alice, iterations=20, damping=0.85)
+cc = g.clustering_coefficient(alice)
+components = g.connected_components()
+
+# Persistence
+g.save("social.gvgr")
+g2 = GraphDB.load("social.gvgr")
+
+# Knowledge graph with embeddings
+kg = KnowledgeGraph(KGConfig(embedding_dimension=128))
+e1 = kg.add_entity("Alice", "Person", embedding=[0.1] * 128)
+e2 = kg.add_entity("Anthropic", "Company", embedding=[0.2] * 128)
+kg.add_relation(e1, "works_at", e2, weight=1.0)
+
+# SPO triple queries (None = wildcard)
+triples = kg.query_triples(predicate="works_at")
+
+# Semantic search over entity embeddings
+results = kg.search_similar([0.15] * 128, k=5)
+
+# Hybrid search (vector + type/predicate filters)
+results = kg.hybrid_search([0.1] * 128, entity_type="Person",
+                            predicate_filter="works_at", k=10)
+
+# Entity resolution and link prediction
+resolved_id = kg.resolve_entity("Alice Smith", "Person", embedding=[0.1] * 128)
+predictions = kg.predict_links(e1, k=5)
+subgraph = kg.extract_subgraph(center=e1, radius=2)
+
+# Persistence
+kg.save("knowledge.gvkg")
+kg2 = KnowledgeGraph.load("knowledge.gvkg")
+```
+
 ### JSON Import/Export
 ```python
 db.export_json("vectors.ndjson")
@@ -426,10 +487,10 @@ cp .env.example .env   # copy and edit with your keys
 
 ```
 GigaVector/
-├── include/gigavector/   # 81 public C headers
-├── src/                  # 54,000+ lines of C implementation
+├── include/gigavector/   # 83 public C headers
+├── src/                  # 78,000+ lines of C implementation
 ├── tests/                # 21 C test suites
-├── python/               # Python CFFI bindings (8,800+ lines)
+├── python/               # Python CFFI bindings (11,000+ lines)
 ├── benchmarks/           # SIMD and index benchmarks
 ├── docs/                 # Documentation
 └── scripts/              # Build and utility scripts
