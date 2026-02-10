@@ -112,9 +112,14 @@ static GV_JsonValue *jpi_resolve_path(const GV_JsonValue *root, const char *path
     strncpy(buf, path, sizeof(buf) - 1);
     buf[sizeof(buf) - 1] = '\0';
 
+    /* Skip leading "$." JSONPath prefix */
+    char *start = buf;
+    if (start[0] == '$' && start[1] == '.') start += 2;
+    else if (start[0] == '$' && start[1] == '\0') return (GV_JsonValue *)root;
+
     const GV_JsonValue *current = root;
     char *saveptr = NULL;
-    char *token = strtok_r(buf, ".", &saveptr);
+    char *token = strtok_r(start, ".", &saveptr);
 
     while (token && current) {
         /* Check for bracket array access: "key[N]" or just "[N]" */
