@@ -842,6 +842,94 @@ cluster.stop()
 cluster.close()
 ```
 
+## Graph Database and Knowledge Graph
+
+### Graph Database
+
+```python
+from gigavector import GraphDB, GraphDBConfig
+
+# Create a graph database
+g = GraphDB(GraphDBConfig(node_bucket_count=4096))
+
+# Add nodes with labels and properties
+alice = g.add_node("Person")
+bob = g.add_node("Person")
+g.set_node_prop(alice, "name", "Alice")
+g.set_node_prop(bob, "name", "Bob")
+
+# Add edges with labels and weights
+g.add_edge(alice, bob, "KNOWS", weight=1.0)
+
+# Traversal
+visited = g.bfs(alice, max_depth=3)        # breadth-first search
+visited = g.dfs(alice, max_depth=3)        # depth-first search
+path = g.shortest_path(alice, bob)          # Dijkstra
+print(f"Path: {path.node_ids}, weight: {path.total_weight}")
+
+# Analytics
+pr = g.pagerank(alice, iterations=20, damping=0.85)
+cc = g.clustering_coefficient(alice)
+components = g.connected_components()
+degree = g.degree(alice)
+
+# Persistence
+g.save("social.gvgr")
+g2 = GraphDB.load("social.gvgr")
+```
+
+### Knowledge Graph
+
+```python
+from gigavector import KnowledgeGraph, KGConfig
+
+# Create with embedding support
+kg = KnowledgeGraph(KGConfig(embedding_dimension=128))
+
+# Add entities with optional embeddings
+alice = kg.add_entity("Alice", "Person", embedding=[0.1] * 128)
+bob = kg.add_entity("Bob", "Person", embedding=[0.2] * 128)
+company = kg.add_entity("Anthropic", "Company", embedding=[0.3] * 128)
+
+# Add relations (SPO triples)
+kg.add_relation(alice, "works_at", company, weight=1.0)
+kg.add_relation(bob, "works_at", company, weight=0.9)
+kg.add_relation(alice, "knows", bob, weight=0.8)
+
+# Query triples (None = wildcard)
+triples = kg.query_triples(predicate="works_at")
+for t in triples:
+    print(f"{t.subject_name} --{t.predicate}--> {t.object_name}")
+
+# Semantic search over entity embeddings
+results = kg.search_similar([0.15] * 128, k=5)
+
+# Hybrid search (vector + type/predicate filters)
+results = kg.hybrid_search([0.1] * 128, entity_type="Person",
+                            predicate_filter="works_at", k=10)
+
+# Entity resolution (find or create)
+resolved = kg.resolve_entity("Alice Smith", "Person", embedding=[0.1] * 128)
+
+# Link prediction
+predictions = kg.predict_links(alice, k=5)
+
+# Graph traversal
+neighbors = kg.get_neighbors(alice)
+path = kg.shortest_path(alice, company)
+subgraph = kg.extract_subgraph(center=alice, radius=2)
+
+# Analytics
+stats = kg.get_stats()
+centrality = kg.entity_centrality(alice)
+
+# Persistence
+kg.save("knowledge.gvkg")
+kg2 = KnowledgeGraph.load("knowledge.gvkg")
+```
+
+---
+
 ## Summary
 
 - GigaVector Python bindings use CFFI for high-performance C integration
@@ -862,6 +950,8 @@ cluster.close()
 - Storage: NamespaceManager, TTLManager, ShardManager
 - High Availability: ReplicationManager, Cluster
 - Security: AuthManager, backup_create, backup_restore
+- Graph: GraphDB, GraphDBConfig, GraphPath
+- Knowledge Graph: KnowledgeGraph, KGConfig, KGTriple, KGSearchResult, KGSubgraph, KGStats
 
 For more information, see:
 - [Usage Guide](usage.md) for general usage patterns
