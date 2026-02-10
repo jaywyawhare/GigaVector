@@ -852,6 +852,91 @@ int count = gv_context_graph_get_related(graph, "entity_john", related, 10);
 
 ---
 
+## Graph Database Layer
+
+GigaVector includes a full property-graph database and a knowledge graph layer that integrates vector embeddings with graph structure.
+
+### Property Graph Model
+
+The graph database (`gv_graph_db.h`) implements a directed property graph:
+
+- **Nodes** have a label (e.g. "Person"), key-value properties, and adjacency lists (in/out edges)
+- **Edges** are directed and weighted, with a label (e.g. "KNOWS") and key-value properties
+- **Storage** uses hash tables (djb2 on uint64_t) with chaining for O(1) average lookup
+- **Adjacency lists** are dynamic arrays with doubling growth strategy
+
+```
+Node (hash table)          Edge (hash table)
+┌──────────────┐          ┌──────────────────────┐
+│ node_id      │          │ edge_id              │
+│ label        │          │ source_id → target_id│
+│ properties   │          │ label, weight        │
+│ out_edges[]  │──────────│ properties           │
+│ in_edges[]   │          └──────────────────────┘
+└──────────────┘
+```
+
+### Graph Algorithms
+
+| Algorithm | Complexity | Description |
+|-----------|-----------|-------------|
+| **BFS** | O(V + E) | Level-order traversal with depth limit |
+| **DFS** | O(V + E) | Depth-first traversal with depth limit |
+| **Dijkstra** | O((V + E) log V) | Weighted shortest path via min-heap |
+| **All Paths** | O(V!) worst case | DFS backtracking with cycle detection |
+| **PageRank** | O(k(V + E)) | Iterative power method with dangling node handling |
+| **Connected Components** | O(V + E) | BFS-based, treats edges as undirected |
+| **Clustering Coefficient** | O(k^2) | Local coefficient per node, undirected |
+
+### Knowledge Graph Architecture
+
+The knowledge graph (`gv_knowledge_graph.h`) adds semantic capabilities on top of graph structure:
+
+```
+┌─────────────────────────────────────────────┐
+│              Knowledge Graph                │
+│                                             │
+│  ┌─────────────┐     ┌──────────────┐       │
+│  │  Entity HT  │     │ Relation HT  │       │
+│  │ (id→entity) │     │ (id→relation)│       │
+│  └──────┬──────┘     └──────┬───────┘       │
+│         │                   │               │
+│  ┌──────┴───────────────────┴───────┐       │
+│  │         SPO Indexes              │       │
+│  │  subject_index (entity→rels)     │       │
+│  │  object_index  (entity→rels)     │       │
+│  │  predicate_index (string→rels)   │       │
+│  └──────────────────────────────────┘       │
+│                                             │
+│  ┌──────────────────────────────────┐       │
+│  │  Embedding Store                 │       │
+│  │  flat array of float vectors     │       │
+│  │  cosine similarity search        │       │
+│  └──────────────────────────────────┘       │
+└─────────────────────────────────────────────┘
+```
+
+**Key capabilities:**
+- **SPO Triple Store** -- subject/predicate/object indexes for fast pattern matching with wildcard support
+- **Semantic Search** -- cosine similarity over entity embeddings for finding similar entities
+- **Entity Resolution** -- deduplicate entities using name matching + embedding similarity
+- **Link Prediction** -- predict missing relations via embedding similarity + shared-neighbor patterns
+- **Hybrid Search** -- combine embedding similarity with type and predicate filters
+- **Subgraph Extraction** -- BFS-based k-hop neighborhood with entity and relation ID collection
+
+### Persistence Formats
+
+Both layers use binary persistence:
+
+| Format | Magic | Contents |
+|--------|-------|----------|
+| Graph DB | `GVGR` | Version, counts, ID counters, serialized nodes (label + properties), serialized edges (endpoints + label + weight + properties) |
+| Knowledge Graph | `GVKG` | Version, config, counts, ID counters, entities (name + type + embedding + properties), relations (SPO + weight + properties) |
+
+Thread safety is provided via `pthread_rwlock_t` -- concurrent reads, exclusive writes.
+
+---
+
 ## Core Data Structures
 
 ### Vector Types
