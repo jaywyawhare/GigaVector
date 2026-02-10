@@ -99,7 +99,7 @@ test-corrupt-snapshot: $(BIN_DIR)/main
 bench-ivfpq-suite: $(BENCH_DIR)/benchmark_ivfpq $(BENCH_DIR)/benchmark_ivfpq_recall
 	@BIN_DIR=$(BENCH_DIR) bash $(TEST_DIR)/ivfpq_suite.sh
 
-TEST_FILES := test_db test_distance test_metadata test_hnsw test_ivfpq test_sparse test_wal test_filter test_advanced test_llm test_memory_llm test_embedding test_context_graph test_memory test_json
+TEST_FILES := test_db test_distance test_metadata test_hnsw test_ivfpq test_sparse test_wal test_filter test_advanced test_llm test_memory_llm test_embedding test_context_graph test_memory test_json test_graph_db test_knowledge_graph
 TEST_SRCS := $(patsubst %,tests/%.c,$(TEST_FILES))
 TEST_BINS := $(patsubst %,$(BUILD_DIR)/test_%,$(TEST_FILES))
 
