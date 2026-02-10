@@ -474,6 +474,316 @@ int gv_context_graph_get_related(const GV_ContextGraph *graph, const char *entit
 
 ---
 
+## Graph Database
+
+### Configuration
+
+#### `gv_graph_config_init`
+
+```c
+void gv_graph_config_init(GV_GraphDBConfig *config);
+```
+
+Initialize a graph database configuration with default values (node_bucket_count=4096, edge_bucket_count=8192, enforce_referential_integrity=1).
+
+### Creating and Destroying
+
+#### `gv_graph_create`
+
+```c
+GV_GraphDB *gv_graph_create(const GV_GraphDBConfig *config);
+```
+
+Create a new graph database. Pass NULL for default configuration. Returns NULL on error.
+
+#### `gv_graph_destroy`
+
+```c
+void gv_graph_destroy(GV_GraphDB *g);
+```
+
+### Node Operations
+
+#### `gv_graph_add_node`
+
+```c
+uint64_t gv_graph_add_node(GV_GraphDB *g, const char *label);
+```
+
+Add a node with the given label. Returns node_id (>0) on success, 0 on error.
+
+#### `gv_graph_remove_node`
+
+```c
+int gv_graph_remove_node(GV_GraphDB *g, uint64_t node_id);
+```
+
+Remove a node and cascade-delete all incident edges. Returns 0 on success.
+
+#### `gv_graph_get_node`
+
+```c
+const GV_GraphNode *gv_graph_get_node(const GV_GraphDB *g, uint64_t node_id);
+```
+
+Look up a node by ID. Returns pointer valid until next mutation, or NULL.
+
+#### `gv_graph_set_node_prop` / `gv_graph_get_node_prop`
+
+```c
+int gv_graph_set_node_prop(GV_GraphDB *g, uint64_t node_id, const char *key, const char *value);
+const char *gv_graph_get_node_prop(const GV_GraphDB *g, uint64_t node_id, const char *key);
+```
+
+#### `gv_graph_find_nodes_by_label`
+
+```c
+int gv_graph_find_nodes_by_label(const GV_GraphDB *g, const char *label,
+                                 uint64_t *out_ids, size_t max_count);
+```
+
+### Edge Operations
+
+#### `gv_graph_add_edge`
+
+```c
+uint64_t gv_graph_add_edge(GV_GraphDB *g, uint64_t source, uint64_t target,
+                           const char *label, float weight);
+```
+
+Add a directed weighted edge. Returns edge_id (>0) on success, 0 on error.
+
+#### `gv_graph_remove_edge`
+
+```c
+int gv_graph_remove_edge(GV_GraphDB *g, uint64_t edge_id);
+```
+
+#### `gv_graph_get_edges_out` / `gv_graph_get_edges_in` / `gv_graph_get_neighbors`
+
+```c
+int gv_graph_get_edges_out(const GV_GraphDB *g, uint64_t node_id, uint64_t *out_ids, size_t max_count);
+int gv_graph_get_edges_in(const GV_GraphDB *g, uint64_t node_id, uint64_t *out_ids, size_t max_count);
+int gv_graph_get_neighbors(const GV_GraphDB *g, uint64_t node_id, uint64_t *out_ids, size_t max_count);
+```
+
+### Traversal
+
+#### `gv_graph_bfs` / `gv_graph_dfs`
+
+```c
+int gv_graph_bfs(const GV_GraphDB *g, uint64_t start, size_t max_depth,
+                 uint64_t *out_ids, size_t max_count);
+int gv_graph_dfs(const GV_GraphDB *g, uint64_t start, size_t max_depth,
+                 uint64_t *out_ids, size_t max_count);
+```
+
+#### `gv_graph_shortest_path`
+
+```c
+int gv_graph_shortest_path(const GV_GraphDB *g, uint64_t from, uint64_t to, GV_GraphPath *path);
+```
+
+Dijkstra's algorithm. Caller must free result with `gv_graph_free_path()`.
+
+#### `gv_graph_all_paths`
+
+```c
+int gv_graph_all_paths(const GV_GraphDB *g, uint64_t from, uint64_t to,
+                       size_t max_depth, GV_GraphPath *paths, size_t max_paths);
+```
+
+### Analytics
+
+#### `gv_graph_pagerank`
+
+```c
+float gv_graph_pagerank(const GV_GraphDB *g, uint64_t node_id, size_t iterations, float damping);
+```
+
+Iterative power method PageRank. Typical values: iterations=20, damping=0.85.
+
+#### `gv_graph_connected_components`
+
+```c
+int gv_graph_connected_components(const GV_GraphDB *g, uint64_t *component_ids, size_t max_count);
+```
+
+Returns number of distinct components. Array indexed by enumeration order.
+
+#### `gv_graph_clustering_coefficient`
+
+```c
+float gv_graph_clustering_coefficient(const GV_GraphDB *g, uint64_t node_id);
+```
+
+Local clustering coefficient in [0.0, 1.0].
+
+### Persistence
+
+#### `gv_graph_save` / `gv_graph_load`
+
+```c
+int gv_graph_save(const GV_GraphDB *g, const char *path);
+GV_GraphDB *gv_graph_load(const char *path);
+```
+
+Binary format with magic "GVGR".
+
+---
+
+## Knowledge Graph
+
+### Configuration
+
+#### `gv_kg_config_init`
+
+```c
+void gv_kg_config_init(GV_KGConfig *config);
+```
+
+Initialize with defaults: entity_bucket_count=4096, relation_bucket_count=8192, embedding_dimension=128, similarity_threshold=0.7, link_prediction_threshold=0.8, max_entities=1000000.
+
+### Creating and Destroying
+
+```c
+GV_KnowledgeGraph *gv_kg_create(const GV_KGConfig *config);
+void gv_kg_destroy(GV_KnowledgeGraph *kg);
+```
+
+### Entity Operations
+
+#### `gv_kg_add_entity`
+
+```c
+uint64_t gv_kg_add_entity(GV_KnowledgeGraph *kg, const char *name, const char *type,
+                           const float *embedding, size_t dimension);
+```
+
+Add an entity with optional embedding. Returns entity_id (>0) on success.
+
+#### `gv_kg_remove_entity`
+
+```c
+int gv_kg_remove_entity(GV_KnowledgeGraph *kg, uint64_t entity_id);
+```
+
+Cascade-deletes all relations involving this entity.
+
+#### `gv_kg_find_entities_by_type` / `gv_kg_find_entities_by_name`
+
+```c
+int gv_kg_find_entities_by_type(const GV_KnowledgeGraph *kg, const char *type,
+                                 uint64_t *out_ids, size_t max_count);
+int gv_kg_find_entities_by_name(const GV_KnowledgeGraph *kg, const char *name,
+                                 uint64_t *out_ids, size_t max_count);
+```
+
+### Relation (Triple) Operations
+
+#### `gv_kg_add_relation`
+
+```c
+uint64_t gv_kg_add_relation(GV_KnowledgeGraph *kg, uint64_t subject,
+                             const char *predicate, uint64_t object, float weight);
+```
+
+Creates a (subject, predicate, object) triple. Both entities must exist.
+
+### SPO Triple Queries
+
+#### `gv_kg_query_triples`
+
+```c
+int gv_kg_query_triples(const GV_KnowledgeGraph *kg, const uint64_t *subject,
+                         const char *predicate, const uint64_t *object,
+                         GV_KGTriple *out, size_t max_count);
+```
+
+Pass NULL for any parameter to treat it as a wildcard. Free results with `gv_kg_free_triples()`.
+
+### Semantic Search
+
+#### `gv_kg_search_similar`
+
+```c
+int gv_kg_search_similar(const GV_KnowledgeGraph *kg, const float *query_embedding,
+                          size_t dimension, size_t k, GV_KGSearchResult *results);
+```
+
+Cosine similarity search over entity embeddings. Free results with `gv_kg_free_search_results()`.
+
+#### `gv_kg_hybrid_search`
+
+```c
+int gv_kg_hybrid_search(const GV_KnowledgeGraph *kg, const float *query_embedding,
+                         size_t dimension, const char *entity_type,
+                         const char *predicate_filter, size_t k, GV_KGSearchResult *results);
+```
+
+Embedding similarity filtered by entity type and/or predicate.
+
+### Entity Resolution
+
+#### `gv_kg_resolve_entity`
+
+```c
+int gv_kg_resolve_entity(GV_KnowledgeGraph *kg, const char *name, const char *type,
+                          const float *embedding, size_t dimension);
+```
+
+Find existing match or create new entity. Returns entity_id.
+
+#### `gv_kg_merge_entities`
+
+```c
+int gv_kg_merge_entities(GV_KnowledgeGraph *kg, uint64_t keep_id, uint64_t merge_id);
+```
+
+### Link Prediction
+
+#### `gv_kg_predict_links`
+
+```c
+int gv_kg_predict_links(const GV_KnowledgeGraph *kg, uint64_t entity_id,
+                         size_t k, GV_KGLinkPrediction *results);
+```
+
+Predict missing links using embedding similarity and structural patterns.
+
+### Traversal and Subgraph
+
+```c
+int gv_kg_get_neighbors(const GV_KnowledgeGraph *kg, uint64_t entity_id,
+                         uint64_t *out_ids, size_t max_count);
+int gv_kg_traverse(const GV_KnowledgeGraph *kg, uint64_t start,
+                    size_t max_depth, uint64_t *out_ids, size_t max_count);
+int gv_kg_shortest_path(const GV_KnowledgeGraph *kg, uint64_t from,
+                         uint64_t to, uint64_t *path_ids, size_t max_len);
+int gv_kg_extract_subgraph(const GV_KnowledgeGraph *kg, uint64_t center,
+                            size_t radius, GV_KGSubgraph *subgraph);
+```
+
+### Analytics
+
+```c
+int gv_kg_get_stats(const GV_KnowledgeGraph *kg, GV_KGStats *stats);
+float gv_kg_entity_centrality(const GV_KnowledgeGraph *kg, uint64_t entity_id);
+int gv_kg_get_entity_types(const GV_KnowledgeGraph *kg, char **out_types, size_t max_count);
+int gv_kg_get_predicates(const GV_KnowledgeGraph *kg, char **out_predicates, size_t max_count);
+```
+
+### Persistence
+
+```c
+int gv_kg_save(const GV_KnowledgeGraph *kg, const char *path);
+GV_KnowledgeGraph *gv_kg_load(const char *path);
+```
+
+Binary format with magic "GVKG".
+
+---
+
 ## Index Configuration
 
 ### Index Selection
