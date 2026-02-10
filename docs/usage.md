@@ -535,6 +535,70 @@ print(f"Search latency: {latency_ms:.2f} ms")
 db.record_latency(int(latency_ms * 1000), is_insert=False)
 ```
 
+## Graph Database and Knowledge Graph
+
+GigaVector includes a property graph database and a knowledge graph layer that integrates vector embeddings with graph structure.
+
+### Building a Graph
+
+```python
+from gigavector import GraphDB
+
+g = GraphDB()
+alice = g.add_node("Person")
+bob = g.add_node("Person")
+g.set_node_prop(alice, "name", "Alice")
+g.set_node_prop(bob, "name", "Bob")
+
+g.add_edge(alice, bob, "KNOWS", weight=1.0)
+
+# Traverse and analyze
+visited = g.bfs(alice, max_depth=3)
+path = g.shortest_path(alice, bob)
+pr = g.pagerank(alice)
+
+# Persist
+g.save("social.gvgr")
+```
+
+### Knowledge Graph with Embeddings
+
+```python
+from gigavector import KnowledgeGraph, KGConfig
+
+kg = KnowledgeGraph(KGConfig(embedding_dimension=128))
+
+# Add entities with embeddings
+e1 = kg.add_entity("Alice", "Person", embedding=[0.1] * 128)
+e2 = kg.add_entity("Anthropic", "Company", embedding=[0.2] * 128)
+kg.add_relation(e1, "works_at", e2)
+
+# SPO triple queries (None = wildcard)
+triples = kg.query_triples(predicate="works_at")
+
+# Semantic search over entity embeddings
+results = kg.search_similar([0.15] * 128, k=5)
+
+# Entity resolution and link prediction
+resolved = kg.resolve_entity("Alice Smith", "Person", embedding=[0.1] * 128)
+predictions = kg.predict_links(e1, k=5)
+```
+
+```c
+// C API equivalent
+GV_GraphDB *g = gv_graph_create(NULL);
+uint64_t n1 = gv_graph_add_node(g, "Person");
+uint64_t n2 = gv_graph_add_node(g, "Person");
+gv_graph_add_edge(g, n1, n2, "KNOWS", 1.0f);
+
+GV_GraphPath path;
+gv_graph_shortest_path(g, n1, n2, &path);
+gv_graph_free_path(&path);
+gv_graph_destroy(g);
+```
+
+---
+
 ## Best Practices
 
 ### 1. Choose the Right Index Type
