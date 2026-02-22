@@ -33,18 +33,14 @@ for (int i = 0; i < 128; i++) {
 }
 
 // Add vector without metadata
-size_t index = gv_db_add_vector(db, data, 128);
-if (index == (size_t)-1) {
+if (gv_db_add_vector(db, data, 128) != 0) {
     fprintf(stderr, "Failed to add vector\n");
 }
 
 // Add vector with metadata
-GV_Metadata *metadata = gv_metadata_create();
-gv_metadata_set(metadata, "category", "electronics");
-gv_metadata_set(metadata, "price", "99.99");
-
-index = gv_db_add_vector_with_metadata(db, data, 128, metadata);
-gv_metadata_destroy(metadata);
+if (gv_db_add_vector_with_metadata(db, data, 128, "category", "electronics") != 0) {
+    fprintf(stderr, "Failed to add vector with metadata\n");
+}
 ```
 
 ### Searching for Nearest Neighbors
@@ -57,7 +53,7 @@ float query[128];
 // Search for 10 nearest neighbors
 size_t k = 10;
 GV_SearchResult results[10];
-int found = gv_db_search(db, query, 128, k, results, GV_DISTANCE_EUCLIDEAN);
+int found = gv_db_search(db, query, k, results, GV_DISTANCE_EUCLIDEAN);
 
 if (found > 0) {
     printf("Found %d neighbors:\n", found);
@@ -73,7 +69,7 @@ if (found > 0) {
 ```c
 // Search with metadata filter
 int found = gv_db_search_filtered(
-    db, query, 128, k, results, GV_DISTANCE_EUCLIDEAN,
+    db, query, k, results, GV_DISTANCE_EUCLIDEAN,
     "category", "electronics"
 );
 
