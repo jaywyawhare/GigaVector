@@ -15,6 +15,8 @@ Complete reference documentation for the GigaVector C API.
 9. [Index Configuration](#index-configuration)
 10. [Statistics and Monitoring](#statistics-and-monitoring)
 11. [Error Handling](#error-handling)
+12. [Resource Management](#resource-management)
+13. [Authentication](#authentication)
 
 ---
 
@@ -856,9 +858,38 @@ typedef struct {
 
 ```c
 int gv_db_get_detailed_stats(const GV_Database *db, GV_DetailedStats *out);
+void gv_db_free_detailed_stats(GV_DetailedStats *stats);
 ```
 
-Includes latency histograms, recall metrics, and health indicators.
+Returns comprehensive database metrics including latency histograms, throughput, memory breakdown, recall metrics, and health indicators.
+
+**Detailed Statistics Structure:**
+```c
+typedef struct {
+    GV_DBStats basic_stats;                // Basic aggregated statistics
+    GV_LatencyHistogram insert_latency;    // Insert operation latency histogram
+    GV_LatencyHistogram search_latency;    // Search operation latency histogram
+    double queries_per_second;             // Current QPS
+    double inserts_per_second;             // Current IPS
+    GV_MemoryBreakdown memory;             // Memory breakdown (SoA, index, metadata, WAL)
+    GV_RecallMetrics recall;               // Recall metrics for approximate search
+    int health_status;                     // 0=healthy, -1=degraded, -2=unhealthy
+    size_t deleted_vector_count;           // Number of deleted vectors
+    double deleted_ratio;                  // Ratio of deleted vectors (0.0--1.0)
+} GV_DetailedStats;
+```
+
+**Example:**
+```c
+GV_DetailedStats stats;
+if (gv_db_get_detailed_stats(db, &stats) == 0) {
+    printf("QPS: %.1f, Memory: %zu bytes\n",
+           stats.queries_per_second, stats.memory.total_bytes);
+    printf("Health: %d, Recall: %.2f\n",
+           stats.health_status, stats.recall.avg_recall);
+    gv_db_free_detailed_stats(&stats);
+}
+```
 
 ---
 
@@ -1082,19 +1113,87 @@ GV_AuthConfig auth_config = {
 gv_server_set_auth(server, &auth_config);
 ```
 
-### Authorization
+### Authorization (Fine-Grained)
+
+GigaVector provides a fine-grained authorization system with permission flags and resource-level access control.
+
+#### Permission Flags
 
 ```c
-// Define permissions
-GV_Permission perms[] = {
-    {.resource = "/vectors", .action = GV_ACTION_READ},
-    {.resource = "/vectors", .action = GV_ACTION_WRITE}
-};
-gv_authz_create_role("reader", perms, 1);
-gv_authz_create_role("writer", perms, 2);
+typedef enum {
+    GV_PERM_NONE   = 0,   // No permissions
+    GV_PERM_READ   = 1,   // Read vectors / search
+    GV_PERM_WRITE  = 2,   // Add / update vectors
+    GV_PERM_DELETE = 4,   // Delete vectors
+    GV_PERM_ADMIN  = 8,   // Manage users / namespaces
+    GV_PERM_ALL    = 15   // All permissions
+} GV_Permission;
 
-// Assign role
-gv_authz_assign_role("user_123", "writer");
+typedef enum {
+    GV_RESOURCE_GLOBAL    = 0,   // Database level
+    GV_RESOURCE_NAMESPACE = 1,   // Specific namespace
+    GV_RESOURCE_VECTOR    = 2    // Specific vector
+} GV_ResourceType;
+```
+
+#### Lifecycle
+
+```c
+GV_AuthzManager *gv_authz_create(void);
+void gv_authz_destroy(GV_AuthzManager *authz);
+int gv_authz_init_builtin_roles(GV_AuthzManager *authz);  // creates "admin", "reader", "writer"
+```
+
+#### Role Management
+
+```c
+int gv_authz_define_role(GV_AuthzManager *authz, const char *name,
+                          uint32_t permissions, const char **namespaces,
+                          size_t namespace_count);
+int gv_authz_remove_role(GV_AuthzManager *authz, const char *name);
+int gv_authz_get_role(GV_AuthzManager *authz, const char *name, GV_Role *role);
+int gv_authz_list_roles(GV_AuthzManager *authz, GV_Role **roles, size_t *count);
+```
+
+#### User-Role Assignment
+
+```c
+int gv_authz_assign_role(GV_AuthzManager *authz, const char *subject, const char *role_name);
+int gv_authz_revoke_role(GV_AuthzManager *authz, const char *subject, const char *role_name);
+```
+
+#### Authorization Checks
+
+```c
+int gv_authz_check(GV_AuthzManager *authz, const GV_Identity *identity,
+                    GV_Permission permission, GV_ResourceType resource_type,
+                    const char *resource_name, GV_AuthzResult *result);
+
+// Convenience helpers (return 1 if allowed, 0 if denied)
+int gv_authz_can_read(GV_AuthzManager *authz, const GV_Identity *identity, const char *ns);
+int gv_authz_can_write(GV_AuthzManager *authz, const GV_Identity *identity, const char *ns);
+int gv_authz_can_delete(GV_AuthzManager *authz, const GV_Identity *identity, const char *ns);
+int gv_authz_is_admin(GV_AuthzManager *authz, const GV_Identity *identity);
+```
+
+**Example:**
+```c
+GV_AuthzManager *authz = gv_authz_create();
+gv_authz_init_builtin_roles(authz);
+
+// Define a custom role scoped to one namespace
+const char *ns[] = {"production"};
+gv_authz_define_role(authz, "prod_reader", GV_PERM_READ, ns, 1);
+
+// Assign role to a user
+gv_authz_assign_role(authz, "user_123", "prod_reader");
+
+// Check access
+GV_AuthzResult result;
+gv_authz_check(authz, identity, GV_PERM_READ, GV_RESOURCE_NAMESPACE, "production", &result);
+if (result.allowed) { /* proceed */ }
+
+gv_authz_destroy(authz);
 ```
 
 ---
@@ -1205,15 +1304,177 @@ pthread_mutex_unlock(&db_mutex);
 
 ## Resource Management
 
-### Memory Limits
+### Resource Limits
 
+```c
+typedef struct {
+    size_t max_memory_bytes;           // Maximum memory usage (0 = unlimited)
+    size_t max_vectors;                // Maximum number of vectors (0 = unlimited)
+    size_t max_concurrent_operations;  // Maximum concurrent operations (0 = unlimited)
+} GV_ResourceLimits;
+```
+
+#### `gv_db_set_resource_limits`
+
+```c
+int gv_db_set_resource_limits(GV_Database *db, const GV_ResourceLimits *limits);
+```
+
+Applies resource constraints to the database. Inserts and operations will be rejected when limits are exceeded.
+
+**Returns:** 0 on success, -1 on error
+
+#### `gv_db_get_resource_limits`
+
+```c
+void gv_db_get_resource_limits(const GV_Database *db, GV_ResourceLimits *limits);
+```
+
+#### `gv_db_get_memory_usage`
+
+```c
+size_t gv_db_get_memory_usage(const GV_Database *db);
+```
+
+Returns estimated memory usage in bytes.
+
+#### `gv_db_get_concurrent_operations`
+
+```c
+size_t gv_db_get_concurrent_operations(const GV_Database *db);
+```
+
+Returns the number of currently active operations.
+
+**Example:**
 ```c
 GV_ResourceLimits limits = {
     .max_memory_bytes = 1024 * 1024 * 1024,  // 1GB
     .max_vectors = 1000000,
     .max_concurrent_operations = 100
 };
+gv_db_set_resource_limits(db, &limits);
+
+size_t mem = gv_db_get_memory_usage(db);
+printf("Memory usage: %zu bytes\n", mem);
 ```
+
+### Health Check
+
+#### `gv_db_health_check`
+
+```c
+int gv_db_health_check(const GV_Database *db);
+```
+
+Checks database integrity, index consistency, and resource usage.
+
+**Returns:**
+- `0` -- healthy
+- `-1` -- degraded (e.g., high deleted ratio, approaching resource limits)
+- `-2` -- unhealthy (e.g., corrupt index, exceeded limits)
+
+### Memory-Mapped Loading
+
+#### `gv_db_open_mmap`
+
+```c
+GV_Database *gv_db_open_mmap(const char *filepath, size_t dimension, GV_IndexType index_type);
+```
+
+Opens a database by memory-mapping an existing snapshot file. The database is **read-only**: WAL is disabled and modifications are not persisted. Useful for fast startup and sharing data across processes.
+
+**Returns:** Database handle or NULL on error
+
+**Example:**
+```c
+GV_Database *db = gv_db_open_mmap("snapshot.db", 128, GV_INDEX_TYPE_HNSW);
+// Search works normally
+int count = gv_db_search(db, query, 10, GV_DISTANCE_COSINE, results);
+// Writes are not persisted
+gv_db_close(db);
+```
+
+### Compaction Control
+
+#### `gv_db_compact`
+
+```c
+int gv_db_compact(GV_Database *db);
+```
+
+Triggers immediate compaction -- reclaims space from deleted vectors and compacts the WAL.
+
+**Returns:** 0 on success, -1 on error
+
+#### `gv_db_start_background_compaction` / `gv_db_stop_background_compaction`
+
+```c
+int gv_db_start_background_compaction(GV_Database *db);
+void gv_db_stop_background_compaction(GV_Database *db);
+```
+
+Starts or stops a background thread that runs compaction periodically.
+
+#### `gv_db_set_compaction_interval`
+
+```c
+void gv_db_set_compaction_interval(GV_Database *db, size_t interval_sec);
+```
+
+Sets the interval (in seconds) between background compaction runs. Default: 300.
+
+#### `gv_db_set_wal_compaction_threshold`
+
+```c
+void gv_db_set_wal_compaction_threshold(GV_Database *db, size_t threshold_bytes);
+```
+
+Sets the WAL size threshold that triggers compaction. Default: 10 MB.
+
+#### `gv_db_set_deleted_ratio_threshold`
+
+```c
+void gv_db_set_deleted_ratio_threshold(GV_Database *db, double ratio);
+```
+
+Sets the ratio of deleted vectors (0.0--1.0) that triggers compaction. Default: 0.1.
+
+### Exact Search Control
+
+#### `gv_db_set_exact_search_threshold`
+
+```c
+void gv_db_set_exact_search_threshold(GV_Database *db, size_t threshold);
+```
+
+Sets the maximum collection size below which search falls back to brute-force exact scan (bypassing the index). Useful for small collections where index overhead is wasteful.
+
+#### `gv_db_set_force_exact_search`
+
+```c
+void gv_db_set_force_exact_search(GV_Database *db, int enabled);
+```
+
+When enabled (non-zero), all searches use brute-force exact scan regardless of collection size.
+
+### IVF-PQ Per-Query Tuning
+
+#### `gv_db_search_ivfpq_opts`
+
+```c
+int gv_db_search_ivfpq_opts(const GV_Database *db, const float *query_data, size_t k,
+                            GV_SearchResult *results, GV_DistanceType distance_type,
+                            size_t nprobe_override, size_t rerank_top);
+```
+
+Performs IVF-PQ search with per-query overrides for nprobe and rerank pool size.
+
+**Parameters:**
+- `nprobe_override`: Number of inverted lists to probe (0 uses default from config)
+- `rerank_top`: Number of candidates to rerank with full-precision vectors (0 to disable)
+
+**Returns:** Number of results found
 
 ### Persistence
 
