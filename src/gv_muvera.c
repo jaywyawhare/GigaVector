@@ -26,18 +26,14 @@
 #include <stdio.h>
 #include <math.h>
 
-/* ============================================================================
- * Constants
- * ============================================================================ */
+/*  Constants  */
 
 #define GV_MUVERA_MAGIC       "GV_MUVR"
 #define GV_MUVERA_MAGIC_LEN   7
 #define GV_MUVERA_VERSION     1
 #define GV_MUVERA_NUM_BUCKETS 2   /* Binary hashing: bucket 0 and bucket 1. */
 
-/* ============================================================================
- * xoshiro256** PRNG
- * ============================================================================ */
+/*  xoshiro256** PRNG  */
 
 /**
  * @brief xoshiro256** state: 4 x uint64_t.
@@ -100,9 +96,7 @@ static float gv_xoshiro_uniform(GV_Xoshiro256 *rng) {
     return ((float)(v >> 40) / (float)(1ULL << 24)) - 1.0f;
 }
 
-/* ============================================================================
- * Internal Encoder Structure
- * ============================================================================ */
+/*  Internal Encoder Structure  */
 
 struct GV_MuveraEncoder {
     GV_MuveraConfig config;
@@ -125,9 +119,7 @@ struct GV_MuveraEncoder {
     float *proj_matrix;
 };
 
-/* ============================================================================
- * Dot-product helper (scalar)
- * ============================================================================ */
+/*  Dot-product helper (scalar)  */
 
 static float gv_muvera_dot(const float *a, const float *b, size_t dim) {
     float sum = 0.0f;
@@ -137,9 +129,7 @@ static float gv_muvera_dot(const float *a, const float *b, size_t dim) {
     return sum;
 }
 
-/* ============================================================================
- * Internal: project a token from token_dimension -> reduced_dim
- * ============================================================================ */
+/*  Internal: project a token from token_dimension -> reduced_dim  */
 
 static void gv_muvera_project_token(const GV_MuveraEncoder *enc,
                                     const float *token,
@@ -152,9 +142,7 @@ static void gv_muvera_project_token(const GV_MuveraEncoder *enc,
     }
 }
 
-/* ============================================================================
- * Internal: encode a single token set
- * ============================================================================ */
+/*  Internal: encode a single token set  */
 
 static int gv_muvera_encode_single(const GV_MuveraEncoder *enc,
                                    const float *tokens, size_t num_tokens,
@@ -242,9 +230,7 @@ static int gv_muvera_encode_single(const GV_MuveraEncoder *enc,
     return 0;
 }
 
-/* ============================================================================
- * Serialization helpers
- * ============================================================================ */
+/*  Serialization helpers  */
 
 static int gv_muvera_write_u32(FILE *f, uint32_t v) {
     return fwrite(&v, sizeof(uint32_t), 1, f) == 1 ? 0 : -1;
@@ -262,9 +248,7 @@ static int gv_muvera_read_u64(FILE *f, uint64_t *v) {
     return (v && fread(v, sizeof(uint64_t), 1, f) == 1) ? 0 : -1;
 }
 
-/* ============================================================================
- * Configuration
- * ============================================================================ */
+/*  Configuration  */
 
 static const GV_MuveraConfig DEFAULT_CONFIG = {
     .token_dimension  = 128,
@@ -279,9 +263,7 @@ void gv_muvera_config_init(GV_MuveraConfig *config) {
     *config = DEFAULT_CONFIG;
 }
 
-/* ============================================================================
- * Lifecycle
- * ============================================================================ */
+/*  Lifecycle  */
 
 GV_MuveraEncoder *gv_muvera_create(const GV_MuveraConfig *config) {
     GV_MuveraConfig cfg = config ? *config : DEFAULT_CONFIG;
@@ -360,9 +342,7 @@ void gv_muvera_destroy(GV_MuveraEncoder *enc) {
     free(enc);
 }
 
-/* ============================================================================
- * Encode
- * ============================================================================ */
+/*  Encode  */
 
 int gv_muvera_encode(const GV_MuveraEncoder *enc,
                      const float *tokens, size_t num_tokens,
@@ -399,9 +379,7 @@ int gv_muvera_encode_batch(const GV_MuveraEncoder *enc,
     return 0;
 }
 
-/* ============================================================================
- * Save
- * ============================================================================ */
+/*  Save  */
 
 int gv_muvera_save(const GV_MuveraEncoder *enc, const char *path) {
     if (!enc || !path) return -1;
@@ -443,9 +421,7 @@ fail:
     return -1;
 }
 
-/* ============================================================================
- * Load
- * ============================================================================ */
+/*  Load  */
 
 GV_MuveraEncoder *gv_muvera_load(const char *path) {
     if (!path) return NULL;

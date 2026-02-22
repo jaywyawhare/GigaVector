@@ -5,7 +5,6 @@
 
 #define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while(0)
 
-/* ------------------------------------------------------------------ */
 static int test_config_init(void) {
     GV_TieredTenantConfig cfg;
     memset(&cfg, 0xFF, sizeof(cfg));
@@ -21,7 +20,6 @@ static int test_config_init(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 static int test_create_destroy(void) {
     GV_TieredManager *mgr = gv_tiered_create(NULL);
     ASSERT(mgr != NULL, "gv_tiered_create(NULL) should succeed");
@@ -38,7 +36,6 @@ static int test_create_destroy(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 static int test_add_and_get_info(void) {
     GV_TieredManager *mgr = gv_tiered_create(NULL);
     ASSERT(mgr != NULL, "create");
@@ -58,7 +55,6 @@ static int test_add_and_get_info(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 static int test_remove_tenant(void) {
     GV_TieredManager *mgr = gv_tiered_create(NULL);
     ASSERT(mgr != NULL, "create");
@@ -76,7 +72,6 @@ static int test_remove_tenant(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 static int test_promote(void) {
     GV_TieredManager *mgr = gv_tiered_create(NULL);
     ASSERT(mgr != NULL, "create");
@@ -97,7 +92,6 @@ static int test_promote(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 static int test_record_usage_and_auto_promote(void) {
     GV_TieredTenantConfig cfg;
     gv_tiered_config_init(&cfg);
@@ -125,7 +119,6 @@ static int test_record_usage_and_auto_promote(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 static int test_list_tenants(void) {
     GV_TieredManager *mgr = gv_tiered_create(NULL);
     ASSERT(mgr != NULL, "create");
@@ -148,7 +141,6 @@ static int test_list_tenants(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 static int test_save_load(void) {
     const char *path = "tmp_tiered_test.bin";
     remove(path);
@@ -173,7 +165,6 @@ static int test_save_load(void) {
     return 0;
 }
 
-/* ================================================================== */
 typedef int (*test_fn)(void);
 typedef struct { const char *name; test_fn fn; } TestCase;
 
@@ -191,10 +182,7 @@ int main(void) {
     int n = sizeof(tests) / sizeof(tests[0]);
     int passed = 0;
     for (int i = 0; i < n; i++) {
-        printf("%s", tests[i].name);
-        if (tests[i].fn() == 0) { printf(" [OK]\n"); passed++; }
-        else { printf(" [FAIL]\n"); }
+        if (tests[i].fn() == 0) { passed++; }
     }
-    printf("\n%d/%d tests passed\n", passed, n);
     return passed == n ? 0 : 1;
 }

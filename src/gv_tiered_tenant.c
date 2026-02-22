@@ -18,9 +18,7 @@
 #include <pthread.h>
 #include <time.h>
 
-/* ============================================================================
- * Constants
- * ============================================================================ */
+/*  Constants  */
 
 #define TENANT_ID_MAX_LEN   128
 #define HASH_BUCKETS        1024
@@ -35,9 +33,7 @@
 #define TIERED_MAGIC_LEN    6
 #define TIERED_VERSION      1
 
-/* ============================================================================
- * Internal Structures
- * ============================================================================ */
+/*  Internal Structures  */
 
 /**
  * @brief Sliding window QPS tracker.
@@ -75,9 +71,7 @@ struct GV_TieredManager {
     pthread_rwlock_t      rwlock;
 };
 
-/* ============================================================================
- * Helpers
- * ============================================================================ */
+/*  Helpers  */
 
 /**
  * @brief Return current wall-clock time in epoch seconds.
@@ -116,9 +110,7 @@ static TenantEntry *find_tenant(const GV_TieredManager *mgr, const char *tenant_
     return NULL;
 }
 
-/* ============================================================================
- * QPS Tracker
- * ============================================================================ */
+/*  QPS Tracker  */
 
 static void qps_tracker_init(QPSTracker *q) {
     memset(q, 0, sizeof(*q));
@@ -173,9 +165,7 @@ static double qps_tracker_average(QPSTracker *q) {
     return (double)q->total / (double)QPS_SLOTS;
 }
 
-/* ============================================================================
- * Configuration
- * ============================================================================ */
+/*  Configuration  */
 
 void gv_tiered_config_init(GV_TieredTenantConfig *config) {
     if (!config) return;
@@ -190,9 +180,7 @@ void gv_tiered_config_init(GV_TieredTenantConfig *config) {
     config->max_total_tenants  = 10000;
 }
 
-/* ============================================================================
- * Lifecycle
- * ============================================================================ */
+/*  Lifecycle  */
 
 GV_TieredManager *gv_tiered_create(const GV_TieredTenantConfig *config) {
     GV_TieredManager *mgr = calloc(1, sizeof(GV_TieredManager));
@@ -229,9 +217,7 @@ void gv_tiered_destroy(GV_TieredManager *mgr) {
     free(mgr);
 }
 
-/* ============================================================================
- * Tenant Operations
- * ============================================================================ */
+/*  Tenant Operations  */
 
 int gv_tiered_add_tenant(GV_TieredManager *mgr, const char *tenant_id,
                           GV_TenantTier initial_tier) {
@@ -364,9 +350,7 @@ int gv_tiered_get_info(const GV_TieredManager *mgr, const char *tenant_id,
     return 0;
 }
 
-/* ============================================================================
- * Usage Tracking
- * ============================================================================ */
+/*  Usage Tracking  */
 
 int gv_tiered_record_usage(GV_TieredManager *mgr, const char *tenant_id,
                             size_t vectors_delta, size_t memory_delta) {
@@ -391,9 +375,7 @@ int gv_tiered_record_usage(GV_TieredManager *mgr, const char *tenant_id,
     return 0;
 }
 
-/* ============================================================================
- * Auto-Promotion / Demotion
- * ============================================================================ */
+/*  Auto-Promotion / Demotion  */
 
 int gv_tiered_check_promote(GV_TieredManager *mgr) {
     if (!mgr) return -1;
@@ -473,9 +455,7 @@ int gv_tiered_check_promote(GV_TieredManager *mgr) {
     return promoted;
 }
 
-/* ============================================================================
- * Enumeration
- * ============================================================================ */
+/*  Enumeration  */
 
 int gv_tiered_list_tenants(const GV_TieredManager *mgr, GV_TenantTier tier,
                             GV_TenantInfo *out, size_t max_count) {
@@ -514,9 +494,7 @@ size_t gv_tiered_tenant_count(const GV_TieredManager *mgr) {
     return count;
 }
 
-/* ============================================================================
- * Binary Persistence
- * ============================================================================ */
+/*  Binary Persistence  */
 
 /**
  * @brief On-disk header for the tiered tenant file.

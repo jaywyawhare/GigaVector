@@ -21,9 +21,7 @@ extern "C" {
  * retrieval.
  */
 
-/* ============================================================================
- * Configuration
- * ============================================================================ */
+/* Configuration */
 
 /**
  * @brief Configuration for a learned sparse index.
@@ -35,9 +33,7 @@ typedef struct {
     size_t wand_block_size;     /**< Block size for WAND upper-bound tracking (default: 128). */
 } GV_LearnedSparseConfig;
 
-/* ============================================================================
- * Core Types
- * ============================================================================ */
+/* Core Types */
 
 /**
  * @brief Opaque learned sparse index handle.
@@ -70,9 +66,7 @@ typedef struct {
     size_t vocab_used;          /**< Number of distinct tokens with postings. */
 } GV_LearnedSparseStats;
 
-/* ============================================================================
- * Configuration
- * ============================================================================ */
+/* Configuration */
 
 /**
  * @brief Initialize configuration with defaults.
@@ -87,9 +81,7 @@ typedef struct {
  */
 void gv_ls_config_init(GV_LearnedSparseConfig *config);
 
-/* ============================================================================
- * Index Lifecycle
- * ============================================================================ */
+/* Index Lifecycle */
 
 /**
  * @brief Create a learned sparse index.
@@ -106,9 +98,7 @@ GV_LearnedSparseIndex *gv_ls_create(const GV_LearnedSparseConfig *config);
  */
 void gv_ls_destroy(GV_LearnedSparseIndex *idx);
 
-/* ============================================================================
- * Indexing Operations
- * ============================================================================ */
+/* Indexing Operations */
 
 /**
  * @brief Insert a learned sparse vector into the index.
@@ -134,9 +124,7 @@ int gv_ls_insert(GV_LearnedSparseIndex *idx, const GV_SparseEntry *entries,
  */
 int gv_ls_delete(GV_LearnedSparseIndex *idx, size_t doc_id);
 
-/* ============================================================================
- * Search Operations
- * ============================================================================ */
+/* Search Operations */
 
 /**
  * @brief Search for top-k documents by dot-product score.
@@ -172,9 +160,7 @@ int gv_ls_search_with_threshold(const GV_LearnedSparseIndex *idx,
                                 float min_score, size_t k,
                                 GV_LearnedSparseResult *results);
 
-/* ============================================================================
- * Index Information
- * ============================================================================ */
+/* Index Information */
 
 /**
  * @brief Get index statistics.
@@ -193,9 +179,7 @@ int gv_ls_get_stats(const GV_LearnedSparseIndex *idx, GV_LearnedSparseStats *sta
  */
 size_t gv_ls_count(const GV_LearnedSparseIndex *idx);
 
-/* ============================================================================
- * Persistence
- * ============================================================================ */
+/* Persistence */
 
 /**
  * @brief Save index to file.

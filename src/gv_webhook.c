@@ -23,9 +23,7 @@
 #include <time.h>
 #include <unistd.h>
 
-/* ============================================================================
- * Internal Constants
- * ============================================================================ */
+/*  Internal Constants  */
 
 #define MAX_WEBHOOKS       64
 #define MAX_SUBSCRIBERS    32
@@ -34,9 +32,7 @@
 #define DEFAULT_MAX_RETRIES 3
 #define DEFAULT_TIMEOUT_MS  5000
 
-/* ============================================================================
- * Internal Structures
- * ============================================================================ */
+/*  Internal Structures  */
 
 typedef struct {
     char *id;
@@ -88,9 +84,7 @@ struct GV_WebhookManager {
     pthread_cond_t queue_cond;
 };
 
-/* ============================================================================
- * Forward Declarations
- * ============================================================================ */
+/*  Forward Declarations  */
 
 static void *delivery_thread_func(void *arg);
 static int  enqueue_delivery(GV_WebhookManager *mgr, DeliveryWork *work);
@@ -100,9 +94,7 @@ static int  compute_signature(const char *secret, const char *body,
                                char *out_hex, size_t out_len);
 static int  deliver_webhook(const DeliveryWork *work);
 
-/* ============================================================================
- * Lifecycle
- * ============================================================================ */
+/*  Lifecycle  */
 
 GV_WebhookManager *gv_webhook_create(void) {
     GV_WebhookManager *mgr = calloc(1, sizeof(GV_WebhookManager));
@@ -180,9 +172,7 @@ void gv_webhook_destroy(GV_WebhookManager *mgr) {
     free(mgr);
 }
 
-/* ============================================================================
- * Register / Unregister
- * ============================================================================ */
+/*  Register / Unregister  */
 
 int gv_webhook_register(GV_WebhookManager *mgr, const char *webhook_id,
                          const GV_WebhookConfig *config) {
@@ -298,9 +288,7 @@ int gv_webhook_resume(GV_WebhookManager *mgr, const char *webhook_id) {
     return -1;
 }
 
-/* ============================================================================
- * List Webhooks
- * ============================================================================ */
+/*  List Webhooks  */
 
 int gv_webhook_list(const GV_WebhookManager *mgr, char ***out_ids, size_t *out_count) {
     if (!mgr || !out_ids || !out_count) return -1;
@@ -354,9 +342,7 @@ void gv_webhook_free_list(char **ids, size_t count) {
     free(ids);
 }
 
-/* ============================================================================
- * Change Stream Subscribe / Unsubscribe
- * ============================================================================ */
+/*  Change Stream Subscribe / Unsubscribe  */
 
 int gv_webhook_subscribe(GV_WebhookManager *mgr, GV_EventType mask,
                           GV_ChangeCallback cb, void *user_data) {
@@ -406,9 +392,7 @@ int gv_webhook_unsubscribe(GV_WebhookManager *mgr, GV_ChangeCallback cb) {
     return -1; /* not found */
 }
 
-/* ============================================================================
- * Fire Event
- * ============================================================================ */
+/*  Fire Event  */
 
 int gv_webhook_fire(GV_WebhookManager *mgr, const GV_Event *event) {
     if (!mgr || !event) return -1;
@@ -468,9 +452,7 @@ int gv_webhook_fire(GV_WebhookManager *mgr, const GV_Event *event) {
     return 0;
 }
 
-/* ============================================================================
- * Stats
- * ============================================================================ */
+/*  Stats  */
 
 int gv_webhook_get_stats(const GV_WebhookManager *mgr, GV_WebhookStats *stats) {
     if (!mgr || !stats) return -1;
@@ -484,9 +466,7 @@ int gv_webhook_get_stats(const GV_WebhookManager *mgr, GV_WebhookStats *stats) {
     return 0;
 }
 
-/* ============================================================================
- * JSON Payload Builder
- * ============================================================================ */
+/*  JSON Payload Builder  */
 
 static const char *event_type_string(GV_EventType type) {
     switch (type) {
@@ -518,9 +498,7 @@ static char *build_json_payload(const GV_Event *event) {
     return buf;
 }
 
-/* ============================================================================
- * HMAC Signature
- * ============================================================================ */
+/*  HMAC Signature  */
 
 static int compute_signature(const char *secret, const char *body,
                               char *out_hex, size_t out_len) {
@@ -545,9 +523,7 @@ static int compute_signature(const char *secret, const char *body,
     return 0;
 }
 
-/* ============================================================================
- * HTTP Delivery (libcurl or stub)
- * ============================================================================ */
+/*  HTTP Delivery (libcurl or stub)  */
 
 #ifdef GV_HAVE_CURL
 #include <curl/curl.h>
@@ -647,9 +623,7 @@ static int deliver_webhook(const DeliveryWork *work) {
 
 #endif /* GV_HAVE_CURL */
 
-/* ============================================================================
- * Work Queue Helpers
- * ============================================================================ */
+/*  Work Queue Helpers  */
 
 /**
  * Enqueue a delivery work item.  Caller must hold mgr->mutex.
@@ -676,9 +650,7 @@ static void free_delivery_work(DeliveryWork *work) {
     work->secret = NULL;
 }
 
-/* ============================================================================
- * Background Delivery Thread
- * ============================================================================ */
+/*  Background Delivery Thread  */
 
 static void *delivery_thread_func(void *arg) {
     GV_WebhookManager *mgr = (GV_WebhookManager *)arg;

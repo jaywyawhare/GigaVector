@@ -25,16 +25,12 @@
 
 #include "gigavector/gv_importance.h"
 
-/* ============================================================================
- * BM25 Parameters (Okapi BM25 defaults from mem0)
- * ============================================================================ */
+/*  BM25 Parameters (Okapi BM25 defaults from mem0)  */
 
 #define BM25_K1 1.5    /* Term frequency saturation parameter */
 #define BM25_B  0.75   /* Length normalization parameter */
 
-/* ============================================================================
- * Helper Functions - Pure Statistical (No Keyword Lists)
- * ============================================================================ */
+/*  Helper Functions - Pure Statistical (No Keyword Lists)  */
 
 static size_t count_words(const char *text, size_t len) {
     size_t count = 0;
@@ -162,9 +158,7 @@ static double clamp(double value, double min_val, double max_val) {
     return value;
 }
 
-/* ============================================================================
- * Configuration Functions
- * ============================================================================ */
+/*  Configuration Functions  */
 
 GV_ImportanceConfig gv_importance_config_default(void) {
     GV_ImportanceConfig config;
@@ -203,9 +197,7 @@ GV_ImportanceConfig gv_importance_config_default(void) {
     return config;
 }
 
-/* ============================================================================
- * Content Analysis Functions - Pure Statistical (No Keywords)
- * ============================================================================ */
+/*  Content Analysis Functions - Pure Statistical (No Keywords)  */
 
 /**
  * @brief Calculate informativeness using Type-Token Ratio (TTR).
@@ -608,9 +600,7 @@ double gv_importance_score_extracted(const char *content, size_t len) {
     return clamp(final_score, floor, 1.0);
 }
 
-/* ============================================================================
- * Temporal Decay Functions - Ebbinghaus Forgetting Curve
- * ============================================================================ */
+/*  Temporal Decay Functions - Ebbinghaus Forgetting Curve  */
 
 /**
  * @brief Calculate temporal decay using Ebbinghaus forgetting curve.
@@ -651,9 +641,7 @@ double gv_importance_temporal_decay(const GV_TemporalDecayConfig *config,
     return decay;
 }
 
-/* ============================================================================
- * Access Pattern Functions - Spaced Repetition Inspired
- * ============================================================================ */
+/*  Access Pattern Functions - Spaced Repetition Inspired  */
 
 /**
  * @brief Calculate access pattern score based on retrieval history.
@@ -764,9 +752,7 @@ int gv_importance_record_access(GV_AccessHistory *history,
     return 0;
 }
 
-/* ============================================================================
- * Access History Management
- * ============================================================================ */
+/*  Access History Management  */
 
 int gv_access_history_init(GV_AccessHistory *history, size_t initial_capacity) {
     if (history == NULL) {
@@ -893,9 +879,7 @@ int gv_access_history_deserialize(const char *json, GV_AccessHistory *history) {
     return 0;
 }
 
-/* ============================================================================
- * Main Scoring Functions
- * ============================================================================ */
+/*  Main Scoring Functions  */
 
 int gv_importance_calculate(const GV_ImportanceConfig *config,
                             const GV_ImportanceContext *context,
@@ -1037,9 +1021,7 @@ int gv_importance_calculate(const GV_ImportanceConfig *config,
     return 0;
 }
 
-/* ============================================================================
- * Batch Operations
- * ============================================================================ */
+/*  Batch Operations  */
 
 int gv_importance_calculate_batch(const GV_ImportanceConfig *config,
                                    const GV_ImportanceContext *contexts,

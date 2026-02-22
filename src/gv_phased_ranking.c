@@ -33,16 +33,12 @@
 #include <time.h>
 #include <pthread.h>
 
-/* ============================================================================
- * Internal Constants
- * ============================================================================ */
+/*  Internal Constants  */
 
 /** Maximum number of phases in a single pipeline. */
 #define GV_PIPELINE_MAX_PHASES 8
 
-/* ============================================================================
- * Internal Types
- * ============================================================================ */
+/*  Internal Types  */
 
 /**
  * @brief Internal per-phase statistics recorded during execution.
@@ -77,9 +73,7 @@ typedef struct {
     int    phase_id;    /**< Last phase that touched this candidate. */
 } Candidate;
 
-/* ============================================================================
- * Timing Helpers
- * ============================================================================ */
+/*  Timing Helpers  */
 
 static double timespec_to_ms(const struct timespec *ts) {
     return (double)ts->tv_sec * 1000.0 + (double)ts->tv_nsec / 1.0e6;
@@ -89,9 +83,7 @@ static double elapsed_ms(const struct timespec *start, const struct timespec *en
     return timespec_to_ms(end) - timespec_to_ms(start);
 }
 
-/* ============================================================================
- * Sorting Helpers
- * ============================================================================ */
+/*  Sorting Helpers  */
 
 static int compare_candidates_desc(const void *a, const void *b) {
     const Candidate *ca = (const Candidate *)a;
@@ -101,9 +93,7 @@ static int compare_candidates_desc(const void *a, const void *b) {
     return 0;
 }
 
-/* ============================================================================
- * SoA Index Recovery
- * ============================================================================ */
+/*  SoA Index Recovery  */
 
 /**
  * @brief Recover the SoA storage index from a GV_SearchResult.
@@ -129,9 +119,7 @@ static size_t result_to_soa_index(const GV_Database *db, const GV_SearchResult *
     return idx;
 }
 
-/* ============================================================================
- * Pipeline Lifecycle
- * ============================================================================ */
+/*  Pipeline Lifecycle  */
 
 GV_Pipeline *gv_pipeline_create(const void *db) {
     if (!db) return NULL;
@@ -157,9 +145,7 @@ void gv_pipeline_destroy(GV_Pipeline *pipe) {
     free(pipe);
 }
 
-/* ============================================================================
- * Phase Management
- * ============================================================================ */
+/*  Phase Management  */
 
 int gv_pipeline_add_phase(GV_Pipeline *pipe, const GV_PhaseConfig *config) {
     if (!pipe || !config) return -1;
@@ -200,9 +186,7 @@ size_t gv_pipeline_phase_count(const GV_Pipeline *pipe) {
     return pipe->phase_count;
 }
 
-/* ============================================================================
- * Phase Executors (Internal)
- * ============================================================================ */
+/*  Phase Executors (Internal)  */
 
 /**
  * @brief Execute the ANN phase: retrieve candidates from the database.
@@ -459,9 +443,7 @@ static int execute_filter_phase(const GV_Database *db,
     return 0;
 }
 
-/* ============================================================================
- * Pipeline Execution
- * ============================================================================ */
+/*  Pipeline Execution  */
 
 int gv_pipeline_execute(GV_Pipeline *pipe, const float *query,
                         size_t dimension, size_t final_k,
@@ -604,9 +586,7 @@ int gv_pipeline_execute(GV_Pipeline *pipe, const float *query,
     return (rc < 0) ? -1 : result_count;
 }
 
-/* ============================================================================
- * Statistics
- * ============================================================================ */
+/*  Statistics  */
 
 int gv_pipeline_get_stats(const GV_Pipeline *pipe, GV_PipelineStats *stats) {
     if (!pipe || !stats) return -1;

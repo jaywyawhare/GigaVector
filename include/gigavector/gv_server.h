@@ -120,9 +120,7 @@ typedef struct {
  */
 typedef struct GV_Server GV_Server;
 
-/* ============================================================================
- * Server Lifecycle
- * ============================================================================ */
+/* Server Lifecycle */
 
 /**
  * @brief Create a new HTTP server instance.
@@ -174,9 +172,7 @@ void gv_server_destroy(GV_Server *server);
  */
 int gv_server_is_running(const GV_Server *server);
 
-/* ============================================================================
- * Server Information
- * ============================================================================ */
+/* Server Information */
 
 /**
  * @brief Get server statistics.
@@ -203,9 +199,7 @@ uint16_t gv_server_get_port(const GV_Server *server);
  */
 const char *gv_server_error_string(int error);
 
-/* ============================================================================
- * Configuration Helpers
- * ============================================================================ */
+/* Configuration Helpers */
 
 /**
  * @brief Initialize a server configuration with default values.
@@ -226,9 +220,7 @@ const char *gv_server_error_string(int error);
  */
 void gv_server_config_init(GV_ServerConfig *config);
 
-/* ============================================================================
- * REST API Endpoints (handled internally)
- *
+/* REST API Endpoints (handled internally):
  * GET    /health              - Health check
  * GET    /stats               - Database statistics
  * POST   /vectors             - Add vector(s)
@@ -239,8 +231,7 @@ void gv_server_config_init(GV_ServerConfig *config);
  * POST   /search/range        - Range search
  * POST   /search/batch        - Batch search
  * POST   /compact             - Trigger compaction
- * POST   /save                - Save database to disk
- * ============================================================================ */
+ * POST   /save                - Save database to disk */
 
 #ifdef __cplusplus
 }

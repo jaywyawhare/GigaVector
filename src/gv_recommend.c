@@ -12,9 +12,7 @@
 #include <math.h>
 #include <float.h>
 
-/* ============================================================================
- * Configuration Defaults
- * ============================================================================ */
+/*  Configuration Defaults  */
 
 static const GV_RecommendConfig DEFAULT_CONFIG = {
     .positive_weight = 1.0f,
@@ -29,9 +27,7 @@ void gv_recommend_config_init(GV_RecommendConfig *config) {
     *config = DEFAULT_CONFIG;
 }
 
-/* ============================================================================
- * Internal Helpers
- * ============================================================================ */
+/*  Internal Helpers  */
 
 /**
  * @brief L2-normalize a vector in place.
@@ -119,9 +115,7 @@ static int convert_results(const GV_Database *db,
     return (int)written;
 }
 
-/* ============================================================================
- * gv_recommend_by_vector
- * ============================================================================ */
+/*  gv_recommend_by_vector  */
 
 int gv_recommend_by_vector(const GV_Database *db,
                             const float *positive_vectors, size_t positive_count,
@@ -205,9 +199,7 @@ int gv_recommend_by_vector(const GV_Database *db,
     return result_count;
 }
 
-/* ============================================================================
- * gv_recommend_by_id
- * ============================================================================ */
+/*  gv_recommend_by_id  */
 
 int gv_recommend_by_id(const GV_Database *db,
                         const size_t *positive_ids, size_t positive_count,
@@ -359,9 +351,7 @@ int gv_recommend_by_id(const GV_Database *db,
     return result_count;
 }
 
-/* ============================================================================
- * gv_recommend_discover
- * ============================================================================ */
+/*  gv_recommend_discover  */
 
 int gv_recommend_discover(const GV_Database *db,
                            const float *target, const float *context,

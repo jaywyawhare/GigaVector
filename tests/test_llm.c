@@ -79,11 +79,8 @@ static const char *get_env_api_key(const char *env_var) {
 
 // Test LLM creation with valid config
 void test_llm_create_valid(void) {
-    printf("Testing LLM creation with valid config...\n");
-    
     const char *api_key = get_env_api_key("OPENAI_API_KEY");
     if (!api_key) {
-        printf("  [SKIP] Skipping: OPENAI_API_KEY not set (using test key for validation only)\n");
         api_key = "sk-test123456789012345678901234567890";
     }
     
@@ -101,29 +98,20 @@ void test_llm_create_valid(void) {
     GV_LLM *llm = gv_llm_create(&config);
     
     if (llm == NULL) {
-        printf("  [WARN]  LLM creation returned NULL (may be expected if libcurl not available)\n");
         return;
     }
-    
-    printf("  [OK] LLM created successfully\n");
-    
+
     // Test error string function
     const char *error_str = gv_llm_error_string(GV_LLM_SUCCESS);
     assert(error_str != NULL);
-    printf("  [OK] Error string function works: %s\n", error_str);
     
     gv_llm_destroy(llm);
-    printf("  [OK] LLM destroyed successfully\n");
 }
 
 // Test actual API call with OpenAI
 void test_llm_api_call_openai(void) {
-    printf("Testing OpenAI API call...\n");
-    
     const char *api_key = get_env_api_key("OPENAI_API_KEY");
     if (!api_key) {
-        printf("  [SKIP] Skipping: OPENAI_API_KEY environment variable not set\n");
-        printf("  Set OPENAI_API_KEY to run this test\n");
         return;
     }
     
@@ -140,7 +128,6 @@ void test_llm_api_call_openai(void) {
     
     GV_LLM *llm = gv_llm_create(&config);
     if (llm == NULL) {
-        printf("  [FAIL] Failed to create LLM instance\n");
         return;
     }
     
@@ -152,19 +139,14 @@ void test_llm_api_call_openai(void) {
     GV_LLMResponse response;
     memset(&response, 0, sizeof(response));
     
-    printf("  [INFO] Making API call to OpenAI...\n");
     int result = gv_llm_generate_response(llm, messages, 1, NULL, &response);
     
     if (result == GV_LLM_SUCCESS && response.content != NULL) {
-        printf("  [OK] API call succeeded!\n");
-        printf("  [RESPONSE] Response: %s\n", response.content);
-        printf("  [TOKENS] Tokens: %d\n", response.token_count);
         gv_llm_response_free(&response);
     } else {
-        printf("  [FAIL] API call failed: %s\n", gv_llm_error_string(result));
         const char *error = gv_llm_get_last_error(llm);
         if (error) {
-            printf("  Error details: %s\n", error);
+            (void)error;
         }
     }
     
@@ -173,8 +155,6 @@ void test_llm_api_call_openai(void) {
 
 // Test LLM creation with invalid API key
 void test_llm_create_invalid_api_key(void) {
-    printf("Testing LLM creation with invalid API key...\n");
-    
     GV_LLMConfig config = {
         .provider = GV_LLM_PROVIDER_OPENAI,
         .api_key = "invalid-key",  // Too short and wrong format
@@ -189,17 +169,13 @@ void test_llm_create_invalid_api_key(void) {
     GV_LLM *llm = gv_llm_create(&config);
     
     if (llm == NULL) {
-        printf("  [OK] Correctly rejected invalid API key\n");
     } else {
-        printf("  [FAIL] Should have rejected invalid API key\n");
         gv_llm_destroy(llm);
     }
 }
 
 // Test LLM creation with invalid URL
 void test_llm_create_invalid_url(void) {
-    printf("Testing LLM creation with invalid URL...\n");
-    
     GV_LLMConfig config = {
         .provider = GV_LLM_PROVIDER_OPENAI,
         .api_key = "sk-test123456789012345678901234567890",
@@ -214,17 +190,13 @@ void test_llm_create_invalid_url(void) {
     GV_LLM *llm = gv_llm_create(&config);
     
     if (llm == NULL) {
-        printf("  [OK] Correctly rejected invalid URL\n");
     } else {
-        printf("  [FAIL] Should have rejected invalid URL\n");
         gv_llm_destroy(llm);
     }
 }
 
 // Test Custom provider requires base_url
 void test_custom_requires_base_url(void) {
-    printf("Testing Custom provider requires base_url...\n");
-
     GV_LLMConfig config = {
         .provider = GV_LLM_PROVIDER_CUSTOM,
         .api_key = "test123456789012345678901234567890123456",  // 32+ chars
@@ -239,17 +211,13 @@ void test_custom_requires_base_url(void) {
     GV_LLM *llm = gv_llm_create(&config);
 
     if (llm == NULL) {
-        printf("  [OK] Correctly rejected Custom provider config without base_url\n");
     } else {
-        printf("  [FAIL] Should have rejected Custom provider config without base_url\n");
         gv_llm_destroy(llm);
     }
 }
 
 // Test error code strings
 void test_error_strings(void) {
-    printf("Testing error code strings...\n");
-    
     const char *errors[] = {
         gv_llm_error_string(GV_LLM_SUCCESS),
         gv_llm_error_string(GV_LLM_ERROR_NULL_POINTER),
@@ -263,20 +231,16 @@ void test_error_strings(void) {
     
     for (int i = 0; i < 8; i++) {
         if (errors[i] != NULL && strlen(errors[i]) > 0) {
-            printf("  [OK] Error %d: %s\n", i, errors[i]);
         } else {
-            printf("  [FAIL] Error %d returned NULL or empty\n", i);
+            return;
         }
     }
 }
 
 // Test Anthropic API key validation
 void test_anthropic_api_key(void) {
-    printf("Testing Anthropic API key validation...\n");
-    
     const char *api_key = get_env_api_key("ANTHROPIC_API_KEY");
     if (!api_key) {
-        printf("  [SKIP] Skipping: ANTHROPIC_API_KEY not set (using test key for validation only)\n");
         api_key = "sk-ant-test123456789012345678901234567890";
     }
     
@@ -294,9 +258,7 @@ void test_anthropic_api_key(void) {
     GV_LLM *llm = gv_llm_create(&config);
     
     if (llm == NULL) {
-        printf("  [WARN] LLM creation returned NULL (may be expected if libcurl not available)\n");
     } else {
-        printf("  [OK] Anthropic API key format accepted\n");
         gv_llm_destroy(llm);
     }
     
@@ -304,21 +266,15 @@ void test_anthropic_api_key(void) {
     config.api_key = "sk-test123";  // Wrong prefix
     llm = gv_llm_create(&config);
     if (llm == NULL) {
-        printf("  [OK] Correctly rejected invalid Anthropic API key format\n");
     } else {
-        printf("  [FAIL] Should have rejected invalid Anthropic API key\n");
         gv_llm_destroy(llm);
     }
 }
 
 // Test actual API call with Anthropic
 void test_llm_api_call_anthropic(void) {
-    printf("Testing Anthropic API call...\n");
-    
     const char *api_key = get_env_api_key("ANTHROPIC_API_KEY");
     if (!api_key) {
-        printf("  [SKIP] Skipping: ANTHROPIC_API_KEY environment variable not set\n");
-        printf("  Set ANTHROPIC_API_KEY to run this test\n");
         return;
     }
     
@@ -335,7 +291,6 @@ void test_llm_api_call_anthropic(void) {
     
     GV_LLM *llm = gv_llm_create(&config);
     if (llm == NULL) {
-        printf("  [FAIL] Failed to create LLM instance\n");
         return;
     }
     
@@ -347,19 +302,14 @@ void test_llm_api_call_anthropic(void) {
     GV_LLMResponse response;
     memset(&response, 0, sizeof(response));
     
-    printf("  [INFO] Making API call to Anthropic...\n");
     int result = gv_llm_generate_response(llm, messages, 1, NULL, &response);
     
     if (result == GV_LLM_SUCCESS && response.content != NULL) {
-        printf("  [OK] API call succeeded!\n");
-        printf("  [RESPONSE] Response: %s\n", response.content);
-        printf("  [TOKENS] Tokens: %d\n", response.token_count);
         gv_llm_response_free(&response);
     } else {
-        printf("  [FAIL] API call failed: %s\n", gv_llm_error_string(result));
         const char *error = gv_llm_get_last_error(llm);
         if (error) {
-            printf("  Error details: %s\n", error);
+            (void)error;
         }
     }
     
@@ -368,12 +318,8 @@ void test_llm_api_call_anthropic(void) {
 
 // Test actual API call with Google Gemini
 void test_llm_api_call_gemini(void) {
-    printf("Testing Google Gemini API call...\n");
-    
     const char *api_key = get_env_api_key("GEMINI_API_KEY");
     if (!api_key) {
-        printf("  [SKIP] Skipping: GEMINI_API_KEY environment variable not set\n");
-        printf("  Set GEMINI_API_KEY to run this test\n");
         return;
     }
     
@@ -391,7 +337,6 @@ void test_llm_api_call_gemini(void) {
     
     GV_LLM *llm = gv_llm_create(&config);
     if (llm == NULL) {
-        printf("  [FAIL] Failed to create LLM instance\n");
         return;
     }
     
@@ -402,20 +347,14 @@ void test_llm_api_call_gemini(void) {
     GV_LLMResponse response;
     memset(&response, 0, sizeof(response));
     
-    printf("  [INFO] Making API call to Google Gemini...\n");
-    
     int result = gv_llm_generate_response(llm, messages, 1, NULL, &response);
     
     if (result == GV_LLM_SUCCESS && response.content != NULL) {
-        printf("  [OK] API call succeeded!\n");
-        printf("  [RESPONSE] Response: %s\n", response.content);
-        printf("  [TOKENS] Tokens: %d\n", response.token_count);
         gv_llm_response_free(&response);
     } else {
-        printf("  [FAIL] API call failed: %s\n", gv_llm_error_string(result));
         const char *error = gv_llm_get_last_error(llm);
         if (error) {
-            printf("  Error details: %s\n", error);
+            (void)error;
         }
     }
     
@@ -423,43 +362,15 @@ void test_llm_api_call_gemini(void) {
 }
 
 int main(void) {
-    printf("=== LLM Integration Tests ===\n\n");
-    
-    printf("Note: Set API keys in .env file or environment variables to enable real API call tests.\n");
-    printf("      Create a .env file with:\n");
-    printf("        OPENAI_API_KEY=sk-your-key\n");
-    printf("        ANTHROPIC_API_KEY=sk-ant-your-key\n");
-    printf("        GEMINI_API_KEY=your-gemini-key\n\n");
-    
     test_llm_create_valid();
-    printf("\n");
-    
     test_llm_create_invalid_api_key();
-    printf("\n");
-    
     test_llm_create_invalid_url();
-    printf("\n");
-    
     test_custom_requires_base_url();
-    printf("\n");
-    
     test_error_strings();
-    printf("\n");
-    
     test_anthropic_api_key();
-    printf("\n");
-    
-    printf("--- Real API Call Tests ---\n\n");
     test_llm_api_call_openai();
-    printf("\n");
-    
     test_llm_api_call_anthropic();
-    printf("\n");
-    
     test_llm_api_call_gemini();
-    printf("\n");
-    
-    printf("=== Tests Complete ===\n");
     return 0;
 }
 

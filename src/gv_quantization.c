@@ -11,18 +11,14 @@
 #include <popcntintrin.h>
 #endif
 
-/* ------------------------------------------------------------------ */
 /*  File format constants                                              */
-/* ------------------------------------------------------------------ */
 #define GV_QUANT_MAGIC_0 'G'
 #define GV_QUANT_MAGIC_1 'V'
 #define GV_QUANT_MAGIC_2 'Q'
 #define GV_QUANT_MAGIC_3 'T'
 #define GV_QUANT_FILE_VERSION 1
 
-/* ------------------------------------------------------------------ */
 /*  Internal codebook structure                                        */
-/* ------------------------------------------------------------------ */
 struct GV_QuantCodebook {
     GV_QuantType type;
     GV_QuantMode mode;
@@ -46,9 +42,7 @@ struct GV_QuantCodebook {
     uint64_t rabitq_seed;
 };
 
-/* ------------------------------------------------------------------ */
 /*  Small I/O helpers (matching gv_codebook.c style)                   */
-/* ------------------------------------------------------------------ */
 static int write_u8(FILE *f, uint8_t v) {
     return fwrite(&v, sizeof(uint8_t), 1, f) == 1 ? 0 : -1;
 }
@@ -81,9 +75,7 @@ static int read_f32(FILE *f, float *v) {
     return (v && fread(v, sizeof(float), 1, f) == 1) ? 0 : -1;
 }
 
-/* ------------------------------------------------------------------ */
 /*  Popcount helper                                                    */
-/* ------------------------------------------------------------------ */
 static size_t gv_popcount64(uint64_t x) {
 #ifdef __POPCNT__
     return (size_t)_mm_popcnt_u64(x);
@@ -97,9 +89,7 @@ static size_t gv_popcount64(uint64_t x) {
 #endif
 }
 
-/* ------------------------------------------------------------------ */
 /*  Simple xorshift64 PRNG (deterministic, no global state)            */
-/* ------------------------------------------------------------------ */
 static uint64_t xorshift64(uint64_t *state) {
     uint64_t x = *state;
     x ^= x << 13;
@@ -109,10 +99,8 @@ static uint64_t xorshift64(uint64_t *state) {
     return x;
 }
 
-/* ------------------------------------------------------------------ */
 /*  RaBitQ: generate a random orthogonal matrix via Householder        */
 /*  reflections.  Produces a dimension x dimension rotation matrix.    */
-/* ------------------------------------------------------------------ */
 static float *rabitq_generate_rotation(size_t dimension, uint64_t seed) {
     float *R = (float *)malloc(dimension * dimension * sizeof(float));
     if (!R) return NULL;
@@ -179,9 +167,7 @@ static float *rabitq_generate_rotation(size_t dimension, uint64_t seed) {
     return R;
 }
 
-/* ------------------------------------------------------------------ */
 /*  Helper: apply rotation matrix to a vector (out = R * in).          */
-/* ------------------------------------------------------------------ */
 static void apply_rotation(const float *R, const float *in, float *out,
                            size_t dimension) {
     for (size_t i = 0; i < dimension; i++) {
@@ -193,9 +179,7 @@ static void apply_rotation(const float *R, const float *in, float *out,
     }
 }
 
-/* ------------------------------------------------------------------ */
 /*  Helper: apply transpose of rotation matrix (out = R^T * in).       */
-/* ------------------------------------------------------------------ */
 static void apply_rotation_transpose(const float *R, const float *in,
                                      float *out, size_t dimension) {
     for (size_t i = 0; i < dimension; i++) {
@@ -207,9 +191,7 @@ static void apply_rotation_transpose(const float *R, const float *in,
     }
 }
 
-/* ------------------------------------------------------------------ */
 /*  Bits-per-value for each quantization type                          */
-/* ------------------------------------------------------------------ */
 static size_t bits_per_value(GV_QuantType type) {
     switch (type) {
         case GV_QUANT_BINARY:  return 1;
@@ -221,9 +203,7 @@ static size_t bits_per_value(GV_QuantType type) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 /*  Number of quantization levels for scalar types                     */
-/* ------------------------------------------------------------------ */
 static size_t quant_levels(GV_QuantType type) {
     switch (type) {
         case GV_QUANT_BINARY:  return 2;
@@ -235,13 +215,9 @@ static size_t quant_levels(GV_QuantType type) {
     return 0;
 }
 
-/* ================================================================== */
 /*  Public API                                                         */
-/* ================================================================== */
 
-/* ------------------------------------------------------------------ */
 /*  Config init                                                        */
-/* ------------------------------------------------------------------ */
 
 void gv_quant_config_init(GV_QuantConfig *config) {
     if (!config) return;
@@ -251,9 +227,7 @@ void gv_quant_config_init(GV_QuantConfig *config) {
     config->rabitq_seed = 0;
 }
 
-/* ------------------------------------------------------------------ */
 /*  Code size                                                          */
-/* ------------------------------------------------------------------ */
 
 size_t gv_quant_code_size(const GV_QuantCodebook *cb, size_t dimension) {
     if (!cb || dimension == 0) return 0;
@@ -262,9 +236,7 @@ size_t gv_quant_code_size(const GV_QuantCodebook *cb, size_t dimension) {
     return (dimension * bpv + 7) / 8;
 }
 
-/* ------------------------------------------------------------------ */
 /*  Memory ratio                                                       */
-/* ------------------------------------------------------------------ */
 
 float gv_quant_memory_ratio(const GV_QuantCodebook *cb, size_t dimension) {
     if (!cb || dimension == 0) return 0.0f;
@@ -273,9 +245,7 @@ float gv_quant_memory_ratio(const GV_QuantCodebook *cb, size_t dimension) {
     return (float)(dimension * sizeof(float)) / (float)code_bytes;
 }
 
-/* ------------------------------------------------------------------ */
 /*  Training                                                           */
-/* ------------------------------------------------------------------ */
 
 GV_QuantCodebook *gv_quant_train(const float *vectors, size_t count,
                                  size_t dimension,
@@ -359,9 +329,7 @@ GV_QuantCodebook *gv_quant_train(const float *vectors, size_t count,
     return cb;
 }
 
-/* ------------------------------------------------------------------ */
 /*  Encoding helpers                                                   */
-/* ------------------------------------------------------------------ */
 
 /**
  * Quantise a single scalar value to an integer code [0, levels-1]
@@ -403,9 +371,7 @@ static void get_quant_range(const GV_QuantCodebook *cb, size_t d,
     }
 }
 
-/* ------------------------------------------------------------------ */
 /*  Encode                                                             */
-/* ------------------------------------------------------------------ */
 
 int gv_quant_encode(const GV_QuantCodebook *cb, const float *vector,
                     size_t dimension, uint8_t *codes) {
@@ -508,9 +474,7 @@ int gv_quant_encode(const GV_QuantCodebook *cb, const float *vector,
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 /*  Decode                                                             */
-/* ------------------------------------------------------------------ */
 
 int gv_quant_decode(const GV_QuantCodebook *cb, const uint8_t *codes,
                     size_t dimension, float *output) {
@@ -598,9 +562,7 @@ int gv_quant_decode(const GV_QuantCodebook *cb, const uint8_t *codes,
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 /*  Asymmetric distance (float query vs quantized codes)               */
-/* ------------------------------------------------------------------ */
 
 float gv_quant_distance(const GV_QuantCodebook *cb, const float *query,
                         size_t dimension, const uint8_t *codes) {
@@ -717,9 +679,7 @@ float gv_quant_distance(const GV_QuantCodebook *cb, const float *query,
     return dist_sq;
 }
 
-/* ------------------------------------------------------------------ */
 /*  Symmetric distance (both quantized)                                */
-/* ------------------------------------------------------------------ */
 
 float gv_quant_distance_qq(const GV_QuantCodebook *cb,
                            const uint8_t *codes_a, const uint8_t *codes_b,
@@ -780,9 +740,7 @@ float gv_quant_distance_qq(const GV_QuantCodebook *cb,
     return dist_sq;
 }
 
-/* ------------------------------------------------------------------ */
 /*  Serialisation                                                      */
-/* ------------------------------------------------------------------ */
 
 int gv_quant_codebook_save(const GV_QuantCodebook *cb, const char *path) {
     if (!cb || !path) return -1;
@@ -908,9 +866,7 @@ fail:
     return NULL;
 }
 
-/* ------------------------------------------------------------------ */
 /*  Destroy                                                            */
-/* ------------------------------------------------------------------ */
 
 void gv_quant_codebook_destroy(GV_QuantCodebook *cb) {
     if (!cb) return;

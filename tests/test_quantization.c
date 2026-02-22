@@ -17,9 +17,7 @@ static void generate_data(float *data, size_t count, size_t dim) {
     }
 }
 
-/* ------------------------------------------------------------------ */
 /* 1. test_quant_config_init                                           */
-/* ------------------------------------------------------------------ */
 static int test_quant_config_init(void) {
     GV_QuantConfig config;
     memset(&config, 0xFF, sizeof(config)); /* fill with garbage */
@@ -34,9 +32,7 @@ static int test_quant_config_init(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 /* 2. test_quant_train_8bit                                            */
-/* ------------------------------------------------------------------ */
 static int test_quant_train_8bit(void) {
     float data[TRAIN_COUNT * DIM];
     generate_data(data, TRAIN_COUNT, DIM);
@@ -52,9 +48,7 @@ static int test_quant_train_8bit(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 /* 3. test_quant_encode_decode_roundtrip                               */
-/* ------------------------------------------------------------------ */
 static int test_quant_encode_decode_roundtrip(void) {
     float data[TRAIN_COUNT * DIM];
     generate_data(data, TRAIN_COUNT, DIM);
@@ -92,9 +86,7 @@ static int test_quant_encode_decode_roundtrip(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 /* 4. test_quant_distance_asymmetric                                   */
-/* ------------------------------------------------------------------ */
 static int test_quant_distance_asymmetric(void) {
     float data[TRAIN_COUNT * DIM];
     generate_data(data, TRAIN_COUNT, DIM);
@@ -124,9 +116,7 @@ static int test_quant_distance_asymmetric(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 /* 5. test_quant_distance_symmetric                                    */
-/* ------------------------------------------------------------------ */
 static int test_quant_distance_symmetric(void) {
     float data[TRAIN_COUNT * DIM];
     generate_data(data, TRAIN_COUNT, DIM);
@@ -160,9 +150,7 @@ static int test_quant_distance_symmetric(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 /* 6. test_quant_binary_mode                                           */
-/* ------------------------------------------------------------------ */
 static int test_quant_binary_mode(void) {
     float data[TRAIN_COUNT * DIM];
     generate_data(data, TRAIN_COUNT, DIM);
@@ -189,9 +177,7 @@ static int test_quant_binary_mode(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 /* 7. test_quant_memory_ratio                                          */
-/* ------------------------------------------------------------------ */
 static int test_quant_memory_ratio(void) {
     float data[TRAIN_COUNT * DIM];
     generate_data(data, TRAIN_COUNT, DIM);
@@ -211,18 +197,14 @@ static int test_quant_memory_ratio(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 /* 8. test_quant_codebook_destroy_null                                 */
-/* ------------------------------------------------------------------ */
 static int test_quant_codebook_destroy_null(void) {
     /* Should be safe to call with NULL */
     gv_quant_codebook_destroy(NULL);
     return 0;
 }
 
-/* ================================================================== */
-/* main                                                                */
-/* ================================================================== */
+/* main */
 typedef int (*test_fn)(void);
 typedef struct { const char *name; test_fn fn; } TestCase;
 
@@ -240,10 +222,7 @@ int main(void) {
     int n = sizeof(tests) / sizeof(tests[0]);
     int passed = 0;
     for (int i = 0; i < n; i++) {
-        printf("%s", tests[i].name);
-        if (tests[i].fn() == 0) { printf(" [OK]\n"); passed++; }
-        else { printf(" [FAIL]\n"); }
+        if (tests[i].fn() == 0) { passed++; }
     }
-    printf("\n%d/%d tests passed\n", passed, n);
     return passed == n ? 0 : 1;
 }

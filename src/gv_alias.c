@@ -11,9 +11,7 @@
 #include <time.h>
 #include <pthread.h>
 
-/* ============================================================================
- * Internal Structures
- * ============================================================================ */
+/*  Internal Structures  */
 
 #define MAX_ALIASES       256
 #define ALIAS_NAME_MAX    128
@@ -45,9 +43,7 @@ struct GV_AliasManager {
     pthread_rwlock_t rwlock;
 };
 
-/* ============================================================================
- * Hash Function (FNV-1a)
- * ============================================================================ */
+/*  Hash Function (FNV-1a)  */
 
 static uint32_t fnv1a(const char *str) {
     uint32_t hash = FNV_OFFSET_BASIS;
@@ -58,9 +54,7 @@ static uint32_t fnv1a(const char *str) {
     return hash;
 }
 
-/* ============================================================================
- * Internal Helpers
- * ============================================================================ */
+/*  Internal Helpers  */
 
 /**
  * @brief Locate the slot index for a given alias name using open addressing
@@ -103,9 +97,7 @@ static uint64_t current_time_unix(void) {
     return (uint64_t)time(NULL);
 }
 
-/* ============================================================================
- * Lifecycle
- * ============================================================================ */
+/*  Lifecycle  */
 
 GV_AliasManager *gv_alias_manager_create(void) {
     GV_AliasManager *mgr = calloc(1, sizeof(GV_AliasManager));
@@ -126,9 +118,7 @@ void gv_alias_manager_destroy(GV_AliasManager *mgr) {
     free(mgr);
 }
 
-/* ============================================================================
- * Alias Operations
- * ============================================================================ */
+/*  Alias Operations  */
 
 int gv_alias_create(GV_AliasManager *mgr, const char *alias_name,
                     const char *collection_name) {
@@ -242,9 +232,7 @@ int gv_alias_exists(const GV_AliasManager *mgr, const char *alias_name) {
     return exists;
 }
 
-/* ============================================================================
- * Atomic Swap
- * ============================================================================ */
+/*  Atomic Swap  */
 
 int gv_alias_swap(GV_AliasManager *mgr, const char *alias_a, const char *alias_b) {
     if (!mgr || !alias_a || !alias_b) return -1;
@@ -274,9 +262,7 @@ int gv_alias_swap(GV_AliasManager *mgr, const char *alias_a, const char *alias_b
     return 0;
 }
 
-/* ============================================================================
- * Resolve
- * ============================================================================ */
+/*  Resolve  */
 
 const char *gv_alias_resolve(const GV_AliasManager *mgr, const char *alias_name) {
     if (!mgr || !alias_name) return NULL;
@@ -293,9 +279,7 @@ const char *gv_alias_resolve(const GV_AliasManager *mgr, const char *alias_name)
     return result;
 }
 
-/* ============================================================================
- * List / Info / Count
- * ============================================================================ */
+/*  List / Info / Count  */
 
 int gv_alias_list(const GV_AliasManager *mgr, GV_AliasInfo **out_list,
                   size_t *out_count) {
@@ -373,9 +357,7 @@ size_t gv_alias_count(const GV_AliasManager *mgr) {
     return c;
 }
 
-/* ============================================================================
- * Persistence
- * ============================================================================ */
+/*  Persistence  */
 
 /**
  * Binary format:

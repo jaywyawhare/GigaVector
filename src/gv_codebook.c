@@ -7,18 +7,14 @@
 
 #include "gigavector/gv_codebook.h"
 
-/* ------------------------------------------------------------------ */
 /*  File format constants                                              */
-/* ------------------------------------------------------------------ */
 #define GV_CODEBOOK_MAGIC_0 'G'
 #define GV_CODEBOOK_MAGIC_1 'V'
 #define GV_CODEBOOK_MAGIC_2 'C'
 #define GV_CODEBOOK_MAGIC_3 'B'
 #define GV_CODEBOOK_VERSION  1
 
-/* ------------------------------------------------------------------ */
 /*  Small I/O helpers                                                  */
-/* ------------------------------------------------------------------ */
 static int write_u8(FILE *f, uint8_t v) {
     return fwrite(&v, sizeof(uint8_t), 1, f) == 1 ? 0 : -1;
 }
@@ -35,9 +31,7 @@ static int read_u32(FILE *f, uint32_t *v) {
     return (v && fread(v, sizeof(uint32_t), 1, f) == 1) ? 0 : -1;
 }
 
-/* ------------------------------------------------------------------ */
 /*  Squared Euclidean distance between two sub-vectors                 */
-/* ------------------------------------------------------------------ */
 static float subvec_dist_sq(const float *a, const float *b, size_t len) {
     float sum = 0.0f;
     for (size_t i = 0; i < len; i++) {
@@ -47,9 +41,7 @@ static float subvec_dist_sq(const float *a, const float *b, size_t len) {
     return sum;
 }
 
-/* ------------------------------------------------------------------ */
 /*  Simple xorshift32 PRNG (deterministic, no global state)            */
-/* ------------------------------------------------------------------ */
 static uint32_t xorshift32(uint32_t *state) {
     uint32_t x = *state;
     x ^= x << 13;
@@ -59,9 +51,7 @@ static uint32_t xorshift32(uint32_t *state) {
     return x;
 }
 
-/* ------------------------------------------------------------------ */
 /*  K-means for a single subspace                                      */
-/* ------------------------------------------------------------------ */
 
 /**
  * Train one sub-quantizer codebook in-place.
@@ -80,9 +70,7 @@ static void kmeans_subspace(float *codebook, const float *subvecs,
                             size_t iters, uint32_t *rng_state) {
     if (count == 0 || ksub == 0 || dsub == 0) return;
 
-    /* -------------------------------------------------------------- */
     /*  Initialise centroids by picking random training vectors        */
-    /* -------------------------------------------------------------- */
     size_t init_k = ksub < count ? ksub : count;
 
     /* Fisher-Yates partial shuffle to pick init_k unique indices. */
@@ -105,9 +93,7 @@ static void kmeans_subspace(float *codebook, const float *subvecs,
         memset(&codebook[k * dsub], 0, dsub * sizeof(float));
     }
 
-    /* -------------------------------------------------------------- */
     /*  Allocate working buffers for Lloyd iterations                   */
-    /* -------------------------------------------------------------- */
     uint32_t *assignments = (uint32_t *)malloc(count * sizeof(uint32_t));
     float    *accum       = (float *)malloc(ksub * dsub * sizeof(float));
     uint32_t *counts      = (uint32_t *)malloc(ksub * sizeof(uint32_t));
@@ -118,9 +104,7 @@ static void kmeans_subspace(float *codebook, const float *subvecs,
         return;
     }
 
-    /* -------------------------------------------------------------- */
     /*  Lloyd iterations                                               */
-    /* -------------------------------------------------------------- */
     for (size_t it = 0; it < iters; it++) {
 
         /* ---- Assignment step ------------------------------------ */
@@ -172,9 +156,7 @@ static void kmeans_subspace(float *codebook, const float *subvecs,
     free(counts);
 }
 
-/* ================================================================== */
 /*  Public API                                                         */
-/* ================================================================== */
 
 GV_Codebook *gv_codebook_create(size_t dimension, size_t m, uint8_t nbits) {
     if (dimension == 0 || m == 0 || nbits == 0 || nbits > 8) return NULL;
@@ -206,9 +188,7 @@ void gv_codebook_destroy(GV_Codebook *cb) {
     free(cb);
 }
 
-/* ------------------------------------------------------------------ */
 /*  Training                                                           */
-/* ------------------------------------------------------------------ */
 
 int gv_codebook_train(GV_Codebook *cb, const float *data, size_t count,
                       size_t train_iters) {
@@ -239,9 +219,7 @@ int gv_codebook_train(GV_Codebook *cb, const float *data, size_t count,
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 /*  Encode                                                             */
-/* ------------------------------------------------------------------ */
 
 int gv_codebook_encode(const GV_Codebook *cb, const float *vector,
                        uint8_t *codes) {
@@ -268,9 +246,7 @@ int gv_codebook_encode(const GV_Codebook *cb, const float *vector,
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 /*  Decode                                                             */
-/* ------------------------------------------------------------------ */
 
 int gv_codebook_decode(const GV_Codebook *cb, const uint8_t *codes,
                        float *output) {
@@ -285,9 +261,7 @@ int gv_codebook_decode(const GV_Codebook *cb, const uint8_t *codes,
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 /*  Asymmetric Distance Computation (ADC)                              */
-/* ------------------------------------------------------------------ */
 
 float gv_codebook_distance_adc(const GV_Codebook *cb, const float *query,
                                const uint8_t *codes) {
@@ -321,9 +295,7 @@ float gv_codebook_distance_adc(const GV_Codebook *cb, const float *query,
     return sqrtf(dist_sq);
 }
 
-/* ------------------------------------------------------------------ */
 /*  Serialisation: FILE* variants                                      */
-/* ------------------------------------------------------------------ */
 
 int gv_codebook_save_fp(const GV_Codebook *cb, FILE *out) {
     if (!cb || !out) return -1;
@@ -394,9 +366,7 @@ GV_Codebook *gv_codebook_load_fp(FILE *in) {
     return cb;
 }
 
-/* ------------------------------------------------------------------ */
 /*  Serialisation: path-based convenience wrappers                     */
-/* ------------------------------------------------------------------ */
 
 int gv_codebook_save(const GV_Codebook *cb, const char *filepath) {
     if (!cb || !filepath) return -1;
@@ -420,9 +390,7 @@ GV_Codebook *gv_codebook_load(const char *filepath) {
     return cb;
 }
 
-/* ------------------------------------------------------------------ */
 /*  Deep copy                                                          */
-/* ------------------------------------------------------------------ */
 
 GV_Codebook *gv_codebook_copy(const GV_Codebook *cb) {
     if (!cb) return NULL;

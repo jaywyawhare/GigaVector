@@ -21,9 +21,7 @@ extern "C" {
  * response parsing.  All operations are thread-safe.
  */
 
-/* ============================================================================
- * Agent Type Enumeration
- * ============================================================================ */
+/* Agent Type Enumeration */
 
 /**
  * @brief Agent type enumeration.
@@ -34,9 +32,7 @@ typedef enum {
     GV_AGENT_PERSONALIZE = 2    /**< Natural language + user profile -> re-ranked results. */
 } GV_AgentType;
 
-/* ============================================================================
- * Agent Configuration
- * ============================================================================ */
+/* Agent Configuration */
 
 /**
  * @brief Agent configuration structure.
@@ -57,18 +53,14 @@ typedef struct {
     const char *system_prompt_override; /**< Custom system prompt; NULL for built-in default. */
 } GV_AgentConfig;
 
-/* ============================================================================
- * Agent Handle (Opaque)
- * ============================================================================ */
+/* Agent Handle (Opaque) */
 
 /**
  * @brief Opaque agent handle.
  */
 typedef struct GV_Agent GV_Agent;
 
-/* ============================================================================
- * Agent Result
- * ============================================================================ */
+/* Agent Result */
 
 /**
  * @brief Result structure returned by agent operations.
@@ -87,9 +79,7 @@ typedef struct {
     char *error_message;        /**< Error description on failure; NULL on success. */
 } GV_AgentResult;
 
-/* ============================================================================
- * Lifecycle
- * ============================================================================ */
+/* Lifecycle */
 
 /**
  * @brief Create an agent bound to a database.
@@ -113,9 +103,7 @@ GV_Agent *gv_agent_create(const void *db, const GV_AgentConfig *config);
  */
 void gv_agent_destroy(GV_Agent *agent);
 
-/* ============================================================================
- * Agent Operations
- * ============================================================================ */
+/* Agent Operations */
 
 /**
  * @brief Execute a natural-language query.
@@ -170,9 +158,7 @@ GV_AgentResult *gv_agent_transform(GV_Agent *agent, const char *natural_language
 GV_AgentResult *gv_agent_personalize(GV_Agent *agent, const char *query,
                                      const char *user_profile_json, size_t k);
 
-/* ============================================================================
- * Result Cleanup
- * ============================================================================ */
+/* Result Cleanup */
 
 /**
  * @brief Free an agent result and all owned memory.
@@ -183,9 +169,7 @@ GV_AgentResult *gv_agent_personalize(GV_Agent *agent, const char *query,
  */
 void gv_agent_free_result(GV_AgentResult *result);
 
-/* ============================================================================
- * Schema Hints
- * ============================================================================ */
+/* Schema Hints */
 
 /**
  * @brief Provide a schema hint to the agent.

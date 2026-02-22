@@ -11,9 +11,7 @@
 #include <pthread.h>
 #include <stdint.h>
 
-/* ============================================================================
- * Internal Structures
- * ============================================================================ */
+/*  Internal Structures  */
 
 /**
  * @brief Linked-list node tracking active transaction IDs.
@@ -72,9 +70,7 @@ struct GV_Transaction {
     uint64_t snapshot_txn_id;
 };
 
-/* ============================================================================
- * Internal Helpers
- * ============================================================================ */
+/*  Internal Helpers  */
 
 /**
  * @brief Check whether a given txn_id is present in the active transaction list.
@@ -234,9 +230,7 @@ static int mvcc_version_visible(const GV_MVCCManager *mgr,
     return 0;
 }
 
-/* ============================================================================
- * Manager Lifecycle
- * ============================================================================ */
+/*  Manager Lifecycle  */
 
 GV_MVCCManager *gv_mvcc_create(size_t dimension)
 {
@@ -282,9 +276,7 @@ void gv_mvcc_destroy(GV_MVCCManager *mgr)
     free(mgr);
 }
 
-/* ============================================================================
- * Transaction Lifecycle
- * ============================================================================ */
+/*  Transaction Lifecycle  */
 
 GV_Transaction *gv_txn_begin(GV_MVCCManager *mgr)
 {
@@ -398,9 +390,7 @@ GV_TxnStatus gv_txn_status(const GV_Transaction *txn)
     return txn->status;
 }
 
-/* ============================================================================
- * Transaction Operations
- * ============================================================================ */
+/*  Transaction Operations  */
 
 int gv_txn_add_vector(GV_Transaction *txn, const float *data, size_t dimension)
 {
@@ -551,9 +541,7 @@ size_t gv_txn_count(const GV_Transaction *txn)
     return count;
 }
 
-/* ============================================================================
- * Visibility (public API)
- * ============================================================================ */
+/*  Visibility (public API)  */
 
 int gv_mvcc_is_visible(const GV_MVCCManager *mgr, const GV_MVCCVersion *ver,
                        uint64_t txn_id)
@@ -573,9 +561,7 @@ int gv_mvcc_is_visible(const GV_MVCCManager *mgr, const GV_MVCCVersion *ver,
     return result;
 }
 
-/* ============================================================================
- * Garbage Collection
- * ============================================================================ */
+/*  Garbage Collection  */
 
 int gv_mvcc_gc(GV_MVCCManager *mgr)
 {

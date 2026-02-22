@@ -27,9 +27,7 @@ extern "C" {
  * 5. Structural features (relationships to other memories)
  */
 
-/* ============================================================================
- * Configuration and Weight Structures
- * ============================================================================ */
+/* Configuration and Weight Structures */
 
 /**
  * @brief Weights for different scoring components.
@@ -95,9 +93,7 @@ typedef struct {
     double base_score;              /**< Starting score for new memories (default: 0.5) */
 } GV_ImportanceConfig;
 
-/* ============================================================================
- * Access Event Tracking
- * ============================================================================ */
+/* Access Event Tracking */
 
 /**
  * @brief Single access event for a memory.
@@ -120,9 +116,7 @@ typedef struct {
     double avg_relevance;           /**< Running average relevance when accessed */
 } GV_AccessHistory;
 
-/* ============================================================================
- * Scoring Context and Results
- * ============================================================================ */
+/* Scoring Context and Results */
 
 /**
  * @brief Input context for importance scoring.
@@ -190,9 +184,7 @@ typedef struct {
 #define GV_FACTOR_STRUCTURAL  (1 << 4)
 #define GV_FACTOR_QUERY       (1 << 5)
 
-/* ============================================================================
- * Core API Functions
- * ============================================================================ */
+/* Core API Functions */
 
 /**
  * @brief Create default importance configuration.
@@ -288,9 +280,7 @@ int gv_importance_record_access(GV_AccessHistory *history,
                                  double relevance,
                                  int access_type);
 
-/* ============================================================================
- * Content Analysis Functions
- * ============================================================================ */
+/* Content Analysis Functions */
 
 /**
  * @brief Calculate content informativeness score.
@@ -350,9 +340,7 @@ double gv_importance_salience(const char *content, size_t len);
  */
 double gv_importance_entity_density(const char *content, size_t len);
 
-/* ============================================================================
- * Access History Management
- * ============================================================================ */
+/* Access History Management */
 
 /**
  * @brief Initialize access history structure.
@@ -387,9 +375,7 @@ char *gv_access_history_serialize(const GV_AccessHistory *history);
  */
 int gv_access_history_deserialize(const char *json, GV_AccessHistory *history);
 
-/* ============================================================================
- * Batch Operations
- * ============================================================================ */
+/* Batch Operations */
 
 /**
  * @brief Calculate importance scores for multiple memories.

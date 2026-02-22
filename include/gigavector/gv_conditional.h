@@ -20,9 +20,7 @@ extern "C" {
 /* Forward declaration */
 struct GV_Database;
 
-/* ============================================================================
- * Condition Types
- * ============================================================================ */
+/* Condition Types */
 
 /**
  * @brief Type of condition to evaluate before applying a mutation.
@@ -46,9 +44,7 @@ typedef struct {
     uint64_t version;             /**< Expected version (for VERSION_EQ / VERSION_LT). */
 } GV_Condition;
 
-/* ============================================================================
- * Result Codes
- * ============================================================================ */
+/* Result Codes */
 
 /**
  * @brief Result of a conditional mutation.
@@ -60,9 +56,7 @@ typedef enum {
     GV_COND_CONFLICT  = -3       /**< Version conflict detected (concurrent modification). */
 } GV_ConditionalResult;
 
-/* ============================================================================
- * Versioned Vector Info
- * ============================================================================ */
+/* Versioned Vector Info */
 
 /**
  * @brief Tracked version information for a single vector.
@@ -73,18 +67,14 @@ typedef struct {
     uint64_t updated_at;          /**< Timestamp of last update (microseconds since epoch). */
 } GV_VersionedVector;
 
-/* ============================================================================
- * Opaque Manager Handle
- * ============================================================================ */
+/* Opaque Manager Handle */
 
 /**
  * @brief Opaque conditional-update manager handle.
  */
 typedef struct GV_CondManager GV_CondManager;
 
-/* ============================================================================
- * Lifecycle
- * ============================================================================ */
+/* Lifecycle */
 
 /**
  * @brief Create a conditional-update manager bound to a database.
@@ -101,9 +91,7 @@ GV_CondManager *gv_cond_create(void *db);
  */
 void gv_cond_destroy(GV_CondManager *mgr);
 
-/* ============================================================================
- * Conditional Mutations
- * ============================================================================ */
+/* Conditional Mutations */
 
 /**
  * @brief Conditionally update vector data.
@@ -160,9 +148,7 @@ GV_ConditionalResult gv_cond_delete(GV_CondManager *mgr, size_t index,
                                      const GV_Condition *conditions,
                                      size_t condition_count);
 
-/* ============================================================================
- * Version Queries
- * ============================================================================ */
+/* Version Queries */
 
 /**
  * @brief Get the current tracked version of a vector.
@@ -173,9 +159,7 @@ GV_ConditionalResult gv_cond_delete(GV_CondManager *mgr, size_t index,
  */
 uint64_t gv_cond_get_version(const GV_CondManager *mgr, size_t index);
 
-/* ============================================================================
- * Batch Operations
- * ============================================================================ */
+/* Batch Operations */
 
 /**
  * @brief Conditionally update multiple vectors in a single pass.
@@ -200,9 +184,7 @@ int gv_cond_batch_update(GV_CondManager *mgr,
                           size_t batch_size,
                           GV_ConditionalResult *results);
 
-/* ============================================================================
- * Convenience Wrappers
- * ============================================================================ */
+/* Convenience Wrappers */
 
 /**
  * @brief Conditionally migrate a vector's embedding to a new model output.

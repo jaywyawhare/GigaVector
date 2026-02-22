@@ -13,9 +13,7 @@
 #include <pthread.h>
 #include <sys/time.h>
 
-/* ============================================================================
- * Internal Structures
- * ============================================================================ */
+/*  Internal Structures  */
 
 struct GV_HybridSearcher {
     GV_Database *db;
@@ -24,9 +22,7 @@ struct GV_HybridSearcher {
     pthread_mutex_t mutex;
 };
 
-/* ============================================================================
- * Time Helpers
- * ============================================================================ */
+/*  Time Helpers  */
 
 static double get_time_ms(void) {
     struct timeval tv;
@@ -34,9 +30,7 @@ static double get_time_ms(void) {
     return tv.tv_sec * 1000.0 + tv.tv_usec / 1000.0;
 }
 
-/* ============================================================================
- * Configuration
- * ============================================================================ */
+/*  Configuration  */
 
 static const GV_HybridConfig DEFAULT_CONFIG = {
     .fusion_type = GV_FUSION_LINEAR,
@@ -52,9 +46,7 @@ void gv_hybrid_config_init(GV_HybridConfig *config) {
     *config = DEFAULT_CONFIG;
 }
 
-/* ============================================================================
- * Lifecycle
- * ============================================================================ */
+/*  Lifecycle  */
 
 GV_HybridSearcher *gv_hybrid_create(GV_Database *db, GV_BM25Index *bm25,
                                      const GV_HybridConfig *config) {
@@ -81,9 +73,7 @@ void gv_hybrid_destroy(GV_HybridSearcher *searcher) {
     free(searcher);
 }
 
-/* ============================================================================
- * Fusion Functions
- * ============================================================================ */
+/*  Fusion Functions  */
 
 double gv_hybrid_linear_fusion(double vector_score, double text_score,
                                 double vector_weight, double text_weight) {
@@ -106,9 +96,7 @@ double gv_hybrid_normalize_score(double score, double min_score, double max_scor
     return (score - min_score) / (max_score - min_score);
 }
 
-/* ============================================================================
- * Internal Search Helpers
- * ============================================================================ */
+/*  Internal Search Helpers  */
 
 typedef struct {
     size_t id;
@@ -146,9 +134,7 @@ static CandidateEntry *find_or_add_candidate(CandidateEntry *candidates, size_t 
     return entry;
 }
 
-/* ============================================================================
- * Search Operations
- * ============================================================================ */
+/*  Search Operations  */
 
 int gv_hybrid_search(GV_HybridSearcher *searcher, const float *query_vector,
                      const char *query_text, size_t k, GV_HybridResult *results) {
@@ -317,9 +303,7 @@ int gv_hybrid_search_text_only(GV_HybridSearcher *searcher, const char *query_te
     return gv_hybrid_search(searcher, NULL, query_text, k, results);
 }
 
-/* ============================================================================
- * Configuration Updates
- * ============================================================================ */
+/*  Configuration Updates  */
 
 int gv_hybrid_set_config(GV_HybridSearcher *searcher, const GV_HybridConfig *config) {
     if (!searcher || !config) return -1;

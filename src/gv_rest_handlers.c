@@ -14,9 +14,7 @@
 #include <time.h>
 #include <ctype.h>
 
-/* ============================================================================
- * Response Helpers
- * ============================================================================ */
+/*  Response Helpers  */
 
 GV_HttpResponse *gv_rest_response_json(GV_JsonValue *data) {
     if (!data) {
@@ -78,9 +76,7 @@ void gv_rest_response_free(GV_HttpResponse *response) {
     free(response);
 }
 
-/* ============================================================================
- * Request Parsing Helpers
- * ============================================================================ */
+/*  Request Parsing Helpers  */
 
 int gv_rest_parse_path_param(const char *url, const char *prefix,
                               char *param_out, size_t param_size) {
@@ -158,9 +154,7 @@ GV_JsonValue *gv_rest_parse_body(const GV_HttpRequest *request, GV_JsonError *er
     return gv_json_parse(request->body, error);
 }
 
-/* ============================================================================
- * Distance Type Parsing
- * ============================================================================ */
+/*  Distance Type Parsing  */
 
 static GV_DistanceType parse_distance_type(const char *str) {
     if (!str) return GV_DISTANCE_EUCLIDEAN;
@@ -171,9 +165,7 @@ static GV_DistanceType parse_distance_type(const char *str) {
     return GV_DISTANCE_EUCLIDEAN;
 }
 
-/* ============================================================================
- * Endpoint Handlers
- * ============================================================================ */
+/*  Endpoint Handlers  */
 
 GV_HttpResponse *gv_rest_handle_health(const GV_HandlerContext *ctx,
                                         const GV_HttpRequest *request) {
@@ -934,9 +926,7 @@ GV_HttpResponse *gv_rest_handle_save(const GV_HandlerContext *ctx,
     return gv_rest_response_json(obj);
 }
 
-/* ============================================================================
- * Router
- * ============================================================================ */
+/*  Router  */
 
 GV_HttpResponse *gv_rest_route(const GV_HandlerContext *ctx,
                                 const GV_HttpRequest *request) {

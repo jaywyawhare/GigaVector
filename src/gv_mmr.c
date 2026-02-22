@@ -21,9 +21,7 @@
 #include <math.h>
 #include <float.h>
 
-/* ============================================================================
- * Configuration Defaults
- * ============================================================================ */
+/*  Configuration Defaults  */
 
 static const GV_MMRConfig DEFAULT_CONFIG = {
     .lambda        = 0.7f,
@@ -35,9 +33,7 @@ void gv_mmr_config_init(GV_MMRConfig *config) {
     *config = DEFAULT_CONFIG;
 }
 
-/* ============================================================================
- * Internal Helpers
- * ============================================================================ */
+/*  Internal Helpers  */
 
 /**
  * @brief Compute distance between two raw float vectors using gv_distance().
@@ -137,9 +133,7 @@ static size_t result_to_soa_index(const GV_Database *db, const GV_SearchResult *
     return idx;
 }
 
-/* ============================================================================
- * gv_mmr_rerank
- * ============================================================================ */
+/*  gv_mmr_rerank  */
 
 int gv_mmr_rerank(const float *query, size_t dimension,
                   const float *candidates, const size_t *candidate_indices,
@@ -269,9 +263,7 @@ int gv_mmr_rerank(const float *query, size_t dimension,
     return (int)selected_count;
 }
 
-/* ============================================================================
- * gv_mmr_search
- * ============================================================================ */
+/*  gv_mmr_search  */
 
 int gv_mmr_search(const void *db_ptr, const float *query, size_t dimension,
                   size_t k, size_t oversample, const GV_MMRConfig *config,

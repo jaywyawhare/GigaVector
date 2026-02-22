@@ -261,7 +261,6 @@ static int test_wal_in_database(void) {
 
 int main(void) {
     int rc = 0;
-    printf("Running WAL tests...\n");
     rc |= test_wal_open_close();
     rc |= test_wal_append_insert();
     rc |= test_wal_append_insert_rich();
@@ -273,9 +272,6 @@ int main(void) {
     rc |= test_wal_replay();
     rc |= test_wal_replay_rich();
     rc |= test_wal_in_database();
-    if (rc == 0) {
-        printf("All WAL tests passed\n");
-    }
     return rc;
 }
 

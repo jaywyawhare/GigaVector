@@ -5,7 +5,6 @@
 
 #define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while(0)
 
-/* ------------------------------------------------------------------ */
 static int test_config_init(void) {
     GV_TTLConfig cfg;
     memset(&cfg, 0xFF, sizeof(cfg));
@@ -17,7 +16,6 @@ static int test_config_init(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 static int test_create_destroy(void) {
     /* NULL config => defaults */
     GV_TTLManager *mgr = gv_ttl_create(NULL);
@@ -37,7 +35,6 @@ static int test_create_destroy(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 static int test_set_and_get(void) {
     GV_TTLManager *mgr = gv_ttl_create(NULL);
     ASSERT(mgr != NULL, "create");
@@ -58,7 +55,6 @@ static int test_set_and_get(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 static int test_set_absolute(void) {
     GV_TTLManager *mgr = gv_ttl_create(NULL);
     ASSERT(mgr != NULL, "create");
@@ -79,7 +75,6 @@ static int test_set_absolute(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 static int test_remove(void) {
     GV_TTLManager *mgr = gv_ttl_create(NULL);
     ASSERT(mgr != NULL, "create");
@@ -95,7 +90,6 @@ static int test_remove(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 static int test_is_expired(void) {
     GV_TTLManager *mgr = gv_ttl_create(NULL);
     ASSERT(mgr != NULL, "create");
@@ -118,7 +112,6 @@ static int test_is_expired(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 static int test_get_remaining(void) {
     GV_TTLManager *mgr = gv_ttl_create(NULL);
     ASSERT(mgr != NULL, "create");
@@ -138,7 +131,6 @@ static int test_get_remaining(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 static int test_bulk_and_stats(void) {
     GV_TTLManager *mgr = gv_ttl_create(NULL);
     ASSERT(mgr != NULL, "create");
@@ -156,7 +148,7 @@ static int test_bulk_and_stats(void) {
     return 0;
 }
 
-/* ================================================================== */
+/* main */
 typedef int (*test_fn)(void);
 typedef struct { const char *name; test_fn fn; } TestCase;
 
@@ -174,10 +166,7 @@ int main(void) {
     int n = sizeof(tests) / sizeof(tests[0]);
     int passed = 0;
     for (int i = 0; i < n; i++) {
-        printf("%s", tests[i].name);
-        if (tests[i].fn() == 0) { printf(" [OK]\n"); passed++; }
-        else { printf(" [FAIL]\n"); }
+        if (tests[i].fn() == 0) { passed++; }
     }
-    printf("\n%d/%d tests passed\n", passed, n);
     return passed == n ? 0 : 1;
 }

@@ -37,9 +37,7 @@ if TYPE_CHECKING:
 
 ffi: FFIType = FFI()
 
-# =============================================================================
 # C Type Definitions
-# =============================================================================
 # Keep this cdef in sync with the C headers (include/gigavector.h).
 # The definitions below map directly to the C structures and functions
 # exposed by libGigaVector.so.
@@ -502,16 +500,12 @@ int gv_memory_delete(GV_MemoryLayer *layer, const char *memory_id);
 void gv_memory_result_free(GV_MemoryResult *result);
 void gv_memory_metadata_free(GV_MemoryMetadata *metadata);
 
-// ============================================================================
 // Database Accessor Functions
-// ============================================================================
 size_t gv_database_count(const GV_Database *db);
 size_t gv_database_dimension(const GV_Database *db);
 const float *gv_database_get_vector(const GV_Database *db, size_t index);
 
-// ============================================================================
 // Upsert, Batch Delete, Scroll, Search Params, JSON Import/Export
-// ============================================================================
 int gv_db_upsert(GV_Database *db, size_t vector_index, const float *data, size_t dimension);
 int gv_db_upsert_with_metadata(GV_Database *db, size_t vector_index,
                                 const float *data, size_t dimension,
@@ -543,9 +537,7 @@ int gv_db_search_with_params(const GV_Database *db, const float *query_data, siz
 int gv_db_export_json(const GV_Database *db, const char *filepath);
 int gv_db_import_json(GV_Database *db, const char *filepath);
 
-// ============================================================================
 // GPU Acceleration
-// ============================================================================
 typedef struct {
     int device_id;
     char name[256];
@@ -622,9 +614,7 @@ int gv_gpu_get_stats(GV_GPUContext *ctx, GV_GPUStats *stats);
 int gv_gpu_reset_stats(GV_GPUContext *ctx);
 const char *gv_gpu_get_error(GV_GPUContext *ctx);
 
-// ============================================================================
 // HTTP Server & REST API
-// ============================================================================
 typedef enum { GV_SERVER_OK = 0, GV_SERVER_ERROR_NULL_POINTER = -1, GV_SERVER_ERROR_INVALID_CONFIG = -2, GV_SERVER_ERROR_ALREADY_RUNNING = -3, GV_SERVER_ERROR_NOT_RUNNING = -4, GV_SERVER_ERROR_START_FAILED = -5, GV_SERVER_ERROR_MEMORY = -6, GV_SERVER_ERROR_BIND_FAILED = -7 } GV_ServerError;
 
 typedef struct {
@@ -663,9 +653,7 @@ int gv_server_get_stats(const GV_Server *server, GV_ServerStats *stats);
 uint16_t gv_server_get_port(const GV_Server *server);
 const char *gv_server_error_string(int error);
 
-// ============================================================================
 // Backup & Restore
-// ============================================================================
 typedef enum { GV_BACKUP_COMPRESS_NONE = 0, GV_BACKUP_COMPRESS_ZLIB = 1, GV_BACKUP_COMPRESS_LZ4 = 2 } GV_BackupCompression;
 
 typedef struct {
@@ -719,9 +707,7 @@ GV_BackupResult *gv_backup_merge(const char *base_backup_path, const char **incr
 int gv_backup_compute_checksum(const char *backup_path, char *checksum_out);
 const char *gv_backup_compression_string(GV_BackupCompression compression);
 
-// ============================================================================
 // Shard Management
-// ============================================================================
 typedef enum { GV_SHARD_ACTIVE = 0, GV_SHARD_READONLY = 1, GV_SHARD_MIGRATING = 2, GV_SHARD_OFFLINE = 3 } GV_ShardState;
 typedef enum { GV_SHARD_HASH = 0, GV_SHARD_RANGE = 1, GV_SHARD_CONSISTENT = 2 } GV_ShardStrategy;
 
@@ -761,9 +747,7 @@ int gv_shard_rebalance_cancel(GV_ShardManager *mgr);
 int gv_shard_attach_local(GV_ShardManager *mgr, uint32_t shard_id, GV_Database *db);
 GV_Database *gv_shard_get_local_db(GV_ShardManager *mgr, uint32_t shard_id);
 
-// ============================================================================
 // Replication
-// ============================================================================
 typedef enum { GV_REPL_LEADER = 0, GV_REPL_FOLLOWER = 1, GV_REPL_CANDIDATE = 2 } GV_ReplicationRole;
 typedef enum { GV_REPL_SYNCING = 0, GV_REPL_STREAMING = 1, GV_REPL_LAGGING = 2, GV_REPL_DISCONNECTED = 3 } GV_ReplicationState;
 
@@ -818,9 +802,7 @@ int gv_replication_get_stats(GV_ReplicationManager *mgr, GV_ReplicationStats *st
 void gv_replication_free_stats(GV_ReplicationStats *stats);
 int gv_replication_is_healthy(GV_ReplicationManager *mgr);
 
-// ============================================================================
 // Cluster Management
-// ============================================================================
 typedef enum { GV_NODE_COORDINATOR = 0, GV_NODE_DATA = 1, GV_NODE_QUERY = 2 } GV_NodeRole;
 typedef enum { GV_NODE_JOINING = 0, GV_NODE_ACTIVE = 1, GV_NODE_LEAVING = 2, GV_NODE_DEAD = 3 } GV_NodeState;
 
@@ -869,9 +851,7 @@ GV_ShardManager *gv_cluster_get_shard_manager(GV_Cluster *cluster);
 int gv_cluster_is_healthy(GV_Cluster *cluster);
 int gv_cluster_wait_ready(GV_Cluster *cluster, uint32_t timeout_ms);
 
-// ============================================================================
 // Namespace / Multi-tenancy
-// ============================================================================
 typedef enum { GV_NS_INDEX_KDTREE = 0, GV_NS_INDEX_HNSW = 1, GV_NS_INDEX_IVFPQ = 2, GV_NS_INDEX_SPARSE = 3 } GV_NSIndexType;
 
 typedef struct {
@@ -916,9 +896,7 @@ int gv_namespace_manager_save_all(GV_NamespaceManager *mgr);
 int gv_namespace_manager_load_all(GV_NamespaceManager *mgr);
 GV_Database *gv_namespace_get_db(GV_Namespace *ns);
 
-// ============================================================================
 // TTL (Time-to-Live)
-// ============================================================================
 typedef struct {
     uint64_t default_ttl_seconds;
     uint64_t cleanup_interval_seconds;
@@ -952,9 +930,7 @@ int gv_ttl_get_stats(const GV_TTLManager *mgr, GV_TTLStats *stats);
 int gv_ttl_set_bulk(GV_TTLManager *mgr, const size_t *indices, size_t count, uint64_t ttl_seconds);
 int gv_ttl_get_expiring_before(const GV_TTLManager *mgr, uint64_t before_unix, size_t *indices, size_t max_indices);
 
-// ============================================================================
 // BM25 Full-text Search
-// ============================================================================
 typedef struct {
     int type;
     int lowercase;
@@ -1002,9 +978,7 @@ int gv_bm25_has_document(const GV_BM25Index *index, size_t doc_id);
 int gv_bm25_save(const GV_BM25Index *index, const char *filepath);
 GV_BM25Index *gv_bm25_load(const char *filepath);
 
-// ============================================================================
 // Hybrid Search
-// ============================================================================
 typedef enum { GV_FUSION_LINEAR = 0, GV_FUSION_RRF = 1, GV_FUSION_WEIGHTED_RRF = 2 } GV_FusionType;
 
 typedef struct {
@@ -1051,9 +1025,7 @@ double gv_hybrid_linear_fusion(double vector_score, double text_score, double ve
 double gv_hybrid_rrf_fusion(size_t vector_rank, size_t text_rank, double k);
 double gv_hybrid_normalize_score(double score, double min_score, double max_score);
 
-// ============================================================================
 // Authentication
-// ============================================================================
 typedef enum { GV_AUTH_NONE = 0, GV_AUTH_API_KEY = 1, GV_AUTH_JWT = 2 } GV_AuthType;
 typedef enum { GV_AUTH_SUCCESS = 0, GV_AUTH_INVALID_KEY = 1, GV_AUTH_EXPIRED = 2, GV_AUTH_INVALID_SIGNATURE = 3, GV_AUTH_INVALID_FORMAT = 4, GV_AUTH_MISSING = 5 } GV_AuthResult;
 
@@ -1106,9 +1078,7 @@ const char *gv_auth_result_string(GV_AuthResult result);
 int gv_auth_sha256(const void *data, size_t len, unsigned char *hash_out);
 void gv_auth_to_hex(const unsigned char *hash, size_t hash_len, char *hex_out);
 
-// ============================================================================
 // Multi-Vector / Chunked Documents
-// ============================================================================
 typedef enum { GV_DOC_AGG_MAX_SIM = 0, GV_DOC_AGG_AVG_SIM = 1, GV_DOC_AGG_SUM_SIM = 2 } GV_DocAggregation;
 
 typedef struct {
@@ -1131,9 +1101,7 @@ int gv_multivec_search(void *index, const float *query, size_t k, GV_DocSearchRe
 size_t gv_multivec_count_documents(const void *index);
 size_t gv_multivec_count_chunks(const void *index);
 
-// ============================================================================
 // Point-in-Time Snapshots
-// ============================================================================
 typedef struct {
     uint64_t snapshot_id;
     uint64_t timestamp_us;
@@ -1155,9 +1123,7 @@ size_t gv_snapshot_dimension(const GV_Snapshot *snap);
 int gv_snapshot_list(const GV_SnapshotManager *mgr, GV_SnapshotInfo *infos, size_t max_infos);
 int gv_snapshot_delete(GV_SnapshotManager *mgr, uint64_t snapshot_id);
 
-// ============================================================================
 // MVCC Transactions
-// ============================================================================
 typedef enum { GV_TXN_ACTIVE = 0, GV_TXN_COMMITTED = 1, GV_TXN_ABORTED = 2 } GV_TxnStatus;
 
 typedef struct GV_MVCCManager GV_MVCCManager;
@@ -1186,9 +1152,7 @@ int gv_mvcc_gc(GV_MVCCManager *mgr);
 size_t gv_mvcc_version_count(const GV_MVCCManager *mgr);
 size_t gv_mvcc_active_txn_count(const GV_MVCCManager *mgr);
 
-// ============================================================================
 // Query Optimizer
-// ============================================================================
 typedef enum { GV_PLAN_EXACT_SCAN = 0, GV_PLAN_INDEX_SEARCH = 1, GV_PLAN_OVERSAMPLE_FILTER = 2 } GV_PlanStrategy;
 
 typedef struct {
@@ -1222,9 +1186,7 @@ void gv_optimizer_record_result(GV_QueryOptimizer *opt, const GV_QueryPlan *plan
 size_t gv_optimizer_recommend_ef_search(const GV_QueryOptimizer *opt, size_t k);
 size_t gv_optimizer_recommend_nprobe(const GV_QueryOptimizer *opt, size_t k);
 
-// ============================================================================
 // Payload Indexing
-// ============================================================================
 typedef enum { GV_FIELD_INT = 0, GV_FIELD_FLOAT = 1, GV_FIELD_STRING = 2, GV_FIELD_BOOL = 3 } GV_FieldType;
 typedef enum { GV_PAYLOAD_OP_EQ = 0, GV_PAYLOAD_OP_NE = 1, GV_PAYLOAD_OP_GT = 2, GV_PAYLOAD_OP_GE = 3, GV_PAYLOAD_OP_LT = 4, GV_PAYLOAD_OP_LE = 5, GV_PAYLOAD_OP_CONTAINS = 6, GV_PAYLOAD_OP_PREFIX = 7 } GV_PayloadOp;
 
@@ -1254,9 +1216,7 @@ int gv_payload_index_query(const GV_PayloadIndex *idx, const GV_PayloadQuery *qu
 int gv_payload_index_query_multi(const GV_PayloadIndex *idx, const GV_PayloadQuery *queries, size_t query_count, size_t *result_ids, size_t max_results);
 size_t gv_payload_index_total_entries(const GV_PayloadIndex *idx);
 
-// ============================================================================
 // Vector Deduplication
-// ============================================================================
 typedef struct {
     float epsilon;
     size_t num_hash_tables;
@@ -1280,9 +1240,7 @@ int gv_dedup_scan(GV_DedupIndex *dedup, GV_DedupResult *results, size_t max_resu
 size_t gv_dedup_count(const GV_DedupIndex *dedup);
 void gv_dedup_clear(GV_DedupIndex *dedup);
 
-// ============================================================================
 // Auto Index Migration
-// ============================================================================
 typedef enum { GV_MIGRATION_PENDING = 0, GV_MIGRATION_RUNNING = 1, GV_MIGRATION_COMPLETED = 2, GV_MIGRATION_FAILED = 3, GV_MIGRATION_CANCELLED = 4 } GV_MigrationStatus;
 
 typedef struct {
@@ -1304,9 +1262,7 @@ int gv_migration_cancel(GV_Migration *mig);
 void *gv_migration_take_index(GV_Migration *mig);
 void gv_migration_destroy(GV_Migration *mig);
 
-// ============================================================================
 // Collection Versioning
-// ============================================================================
 typedef struct {
     uint64_t version_id;
     uint64_t timestamp_us;
@@ -1328,9 +1284,7 @@ float *gv_version_get_data(const GV_VersionManager *mgr, uint64_t version_id, si
 int gv_version_delete(GV_VersionManager *mgr, uint64_t version_id);
 int gv_version_compare(const GV_VersionManager *mgr, uint64_t v1, uint64_t v2, size_t *added, size_t *removed, size_t *modified);
 
-// ============================================================================
 // Read Replica Load Balancing
-// ============================================================================
 typedef enum { GV_READ_LEADER_ONLY = 0, GV_READ_ROUND_ROBIN = 1, GV_READ_LEAST_LAG = 2, GV_READ_RANDOM = 3 } GV_ReadPolicy;
 
 int gv_replication_set_read_policy(GV_ReplicationManager *mgr, GV_ReadPolicy policy);
@@ -1339,9 +1293,7 @@ GV_Database *gv_replication_route_read(GV_ReplicationManager *mgr);
 int gv_replication_set_max_read_lag(GV_ReplicationManager *mgr, uint64_t max_lag);
 int gv_replication_register_follower_db(GV_ReplicationManager *mgr, const char *node_id, GV_Database *db);
 
-// ============================================================================
 // Bloom Filter
-// ============================================================================
 typedef struct GV_BloomFilter GV_BloomFilter;
 
 GV_BloomFilter *gv_bloom_create(size_t expected_items, double fp_rate);
@@ -1354,9 +1306,7 @@ size_t gv_bloom_count(const GV_BloomFilter *bf);
 double gv_bloom_fp_rate(const GV_BloomFilter *bf);
 void gv_bloom_clear(GV_BloomFilter *bf);
 
-// ============================================================================
 // Query Tracing
-// ============================================================================
 typedef struct {
     const char *name;
     uint64_t start_us;
@@ -1383,9 +1333,7 @@ void gv_trace_set_metadata(GV_QueryTrace *trace, const char *metadata);
 char *gv_trace_to_json(const GV_QueryTrace *trace);
 uint64_t gv_trace_get_time_us(void);
 
-// ============================================================================
 // Client-Side Caching
-// ============================================================================
 typedef enum { GV_CACHE_LRU = 0, GV_CACHE_LFU = 1 } GV_CachePolicy;
 
 typedef struct {
@@ -1425,9 +1373,7 @@ void gv_cache_free_result(GV_CachedResult *result);
 int gv_cache_get_stats(const GV_Cache *cache, GV_CacheStats *stats);
 void gv_cache_reset_stats(GV_Cache *cache);
 
-// ============================================================================
 // Schema Evolution
-// ============================================================================
 typedef enum { GV_SCHEMA_STRING = 0, GV_SCHEMA_INT = 1, GV_SCHEMA_FLOAT = 2, GV_SCHEMA_BOOL = 3 } GV_SchemaFieldType;
 
 typedef struct {
@@ -1466,9 +1412,7 @@ int gv_schema_diff(const GV_Schema *old_schema, const GV_Schema *new_schema, GV_
 int gv_schema_is_compatible(const GV_Schema *old_schema, const GV_Schema *new_schema);
 char *gv_schema_to_json(const GV_Schema *schema);
 
-// ============================================================================
 // Codebook Sharing
-// ============================================================================
 typedef struct {
     size_t dimension;
     size_t m;
@@ -2256,7 +2200,7 @@ int gv_rbac_init_defaults(GV_RBACManager *mgr);
 int gv_rbac_save(const GV_RBACManager *mgr, const char *filepath);
 GV_RBACManager *gv_rbac_load(const char *filepath);
 
-/* ===== MMR Reranking ===== */
+/* MMR Reranking */
 
 typedef struct {
     float lambda;
@@ -2274,7 +2218,7 @@ void gv_mmr_config_init(GV_MMRConfig *config);
 int gv_mmr_rerank(const float *query, size_t dimension, const float *candidates, const size_t *candidate_indices, const float *candidate_distances, size_t candidate_count, size_t k, const GV_MMRConfig *config, GV_MMRResult *results);
 int gv_mmr_search(const void *db, const float *query, size_t dimension, size_t k, size_t oversample, const GV_MMRConfig *config, GV_MMRResult *results);
 
-/* ===== Custom Ranking ===== */
+/* Custom Ranking */
 
 typedef struct GV_RankExpr GV_RankExpr;
 
@@ -2295,7 +2239,7 @@ double gv_rank_expr_eval(const GV_RankExpr *expr, float vector_score, const GV_R
 void gv_rank_expr_destroy(GV_RankExpr *expr);
 int gv_rank_search(const void *db, const float *query, size_t dimension, size_t k, size_t oversample, int distance_type, const GV_RankExpr *expr, const GV_RankSignal *per_vector_signals, size_t signal_stride, GV_RankedResult *results);
 
-/* ===== Advanced Quantization ===== */
+/* Advanced Quantization */
 
 typedef enum { GV_QUANT_BINARY = 0, GV_QUANT_TERNARY = 1, GV_QUANT_2BIT = 2, GV_QUANT_4BIT = 3, GV_QUANT_8BIT = 4 } GV_QuantType;
 typedef enum { GV_QUANT_SYMMETRIC = 0, GV_QUANT_ASYMMETRIC = 1 } GV_QuantMode;
@@ -2321,7 +2265,7 @@ GV_QuantCodebook *gv_quant_codebook_load(const char *path);
 void gv_quant_codebook_destroy(GV_QuantCodebook *cb);
 float gv_quant_memory_ratio(const GV_QuantCodebook *cb, size_t dimension);
 
-/* ===== Full-Text Search ===== */
+/* Full-Text Search */
 
 typedef enum { GV_FT_ENGLISH = 0, GV_FT_GERMAN = 1, GV_FT_FRENCH = 2, GV_FT_SPANISH = 3, GV_FT_ITALIAN = 4, GV_FT_PORTUGUESE = 5, GV_FT_AUTO = 6 } GV_FTLanguage;
 
@@ -2355,7 +2299,7 @@ size_t gv_ft_doc_count(const GV_FTIndex *idx);
 int gv_ft_save(const GV_FTIndex *idx, const char *path);
 GV_FTIndex *gv_ft_load(const char *path);
 
-/* ===== Optimized HNSW ===== */
+/* Optimized HNSW */
 
 typedef struct {
     int quant_bits;
@@ -2389,7 +2333,7 @@ size_t gv_hnsw_inline_count(const GV_HNSWInlineIndex *idx);
 int gv_hnsw_inline_save(const GV_HNSWInlineIndex *idx, const char *path);
 GV_HNSWInlineIndex *gv_hnsw_inline_load(const char *path);
 
-/* ===== ONNX Model Serving ===== */
+/* ONNX Model Serving */
 
 typedef struct {
     const char *model_path;
@@ -2419,7 +2363,7 @@ void gv_onnx_tensor_destroy(GV_ONNXTensor *tensor);
 int gv_onnx_get_input_info(const GV_ONNXModel *model, size_t *input_count, char ***input_names);
 int gv_onnx_get_output_info(const GV_ONNXModel *model, size_t *output_count, char ***output_names);
 
-/* ===== Agentic Interfaces ===== */
+/* Agentic Interfaces */
 
 typedef enum { GV_AGENT_QUERY = 0, GV_AGENT_TRANSFORM = 1, GV_AGENT_PERSONALIZE = 2 } GV_AgentType;
 
@@ -2453,7 +2397,7 @@ GV_AgentResult *gv_agent_personalize(GV_Agent *agent, const char *query, const c
 void gv_agent_free_result(GV_AgentResult *result);
 void gv_agent_set_schema_hint(GV_Agent *agent, const char *schema_json);
 
-/* ===== MUVERA Encoder ===== */
+/* MUVERA Encoder */
 
 typedef struct {
     size_t token_dimension;
@@ -2474,7 +2418,7 @@ int gv_muvera_encode_batch(const GV_MuveraEncoder *enc, const float **token_sets
 int gv_muvera_save(const GV_MuveraEncoder *enc, const char *path);
 GV_MuveraEncoder *gv_muvera_load(const char *path);
 
-/* ===== Enterprise SSO ===== */
+/* Enterprise SSO */
 
 typedef enum { GV_SSO_OIDC = 0, GV_SSO_SAML = 1 } GV_SSOProvider;
 
@@ -2515,7 +2459,7 @@ GV_SSOToken *gv_sso_refresh_token(GV_SSOManager *mgr, const char *refresh_token)
 void gv_sso_free_token(GV_SSOToken *token);
 int gv_sso_has_group(const GV_SSOToken *token, const char *group);
 
-/* ===== Tiered Multitenancy ===== */
+/* Tiered Multitenancy */
 
 typedef enum { GV_TIER_SHARED = 0, GV_TIER_DEDICATED = 1, GV_TIER_PREMIUM = 2 } GV_TenantTier;
 
@@ -2560,7 +2504,7 @@ size_t gv_tiered_tenant_count(const GV_TieredManager *mgr);
 int gv_tiered_save(const GV_TieredManager *mgr, const char *path);
 GV_TieredManager *gv_tiered_load(const char *path);
 
-/* ===== Integrated Inference ===== */
+/* Integrated Inference */
 
 typedef struct {
     int embed_provider;
@@ -2590,7 +2534,7 @@ int gv_inference_search_filtered(GV_InferenceEngine *eng, const char *query_text
 int gv_inference_upsert(GV_InferenceEngine *eng, size_t index, const char *text, const char *metadata_json);
 void gv_inference_free_results(GV_InferenceResult *results, size_t count);
 
-/* ===== JSON Path Indexing ===== */
+/* JSON Path Indexing */
 
 typedef enum { GV_JSON_PATH_STRING = 0, GV_JSON_PATH_INT = 1, GV_JSON_PATH_FLOAT = 2, GV_JSON_PATH_BOOL = 3 } GV_JSONPathType;
 
@@ -2614,7 +2558,7 @@ size_t gv_json_index_count(const GV_JSONPathIndex *idx, const char *path);
 int gv_json_index_save(const GV_JSONPathIndex *idx, const char *path_file);
 GV_JSONPathIndex *gv_json_index_load(const char *path_file);
 
-/* ===== Change Data Capture ===== */
+/* Change Data Capture */
 
 typedef enum { GV_CDC_INSERT = 1, GV_CDC_UPDATE = 2, GV_CDC_DELETE = 4, GV_CDC_SNAPSHOT = 8, GV_CDC_ALL = 15 } GV_CDCEventType;
 
@@ -2653,7 +2597,7 @@ GV_CDCCursor gv_cdc_get_cursor(const GV_CDCStream *stream);
 GV_CDCCursor gv_cdc_cursor_from_sequence(uint64_t seq);
 size_t gv_cdc_pending_count(const GV_CDCStream *stream, const GV_CDCCursor *cursor);
 
-/* ===== Embedded/Edge Mode ===== */
+/* Embedded/Edge Mode */
 
 typedef enum { GV_EMBEDDED_FLAT = 0, GV_EMBEDDED_HNSW = 1, GV_EMBEDDED_LSH = 2 } GV_EmbeddedIndexType;
 
@@ -2688,7 +2632,7 @@ int gv_embedded_save(const GV_EmbeddedDB *db, const char *path);
 GV_EmbeddedDB *gv_embedded_load(const char *path);
 int gv_embedded_compact(GV_EmbeddedDB *db);
 
-/* ===== Conditional Updates ===== */
+/* Conditional Updates */
 
 typedef enum { GV_COND_VERSION_EQ = 0, GV_COND_VERSION_LT = 1, GV_COND_METADATA_EQ = 2, GV_COND_METADATA_EXISTS = 3, GV_COND_METADATA_NOT_EXISTS = 4, GV_COND_NOT_DELETED = 5 } GV_ConditionType;
 
@@ -2716,7 +2660,7 @@ uint64_t gv_cond_get_version(const GV_CondManager *mgr, size_t index);
 int gv_cond_batch_update(GV_CondManager *mgr, const size_t *indices, const float **vectors, const GV_Condition **conditions, const size_t *condition_counts, size_t batch_size, int *results);
 int gv_cond_migrate_embedding(GV_CondManager *mgr, size_t index, const float *new_embedding, size_t dimension, uint64_t expected_version);
 
-/* ===== Time Travel ===== */
+/* Time Travel */
 
 typedef struct {
     size_t max_versions;
@@ -2749,7 +2693,7 @@ int gv_tt_gc(GV_TimeTravelManager *mgr);
 int gv_tt_save(const GV_TimeTravelManager *mgr, const char *path);
 GV_TimeTravelManager *gv_tt_load(const char *path);
 
-/* ===== Multimodal Storage ===== */
+/* Multimodal Storage */
 
 typedef enum { GV_MEDIA_IMAGE = 0, GV_MEDIA_AUDIO = 1, GV_MEDIA_VIDEO = 2, GV_MEDIA_DOCUMENT = 3, GV_MEDIA_BLOB = 4 } GV_MediaType;
 
@@ -2787,7 +2731,7 @@ size_t gv_media_total_size(const GV_MediaStore *store);
 int gv_media_save_index(const GV_MediaStore *store, const char *path);
 GV_MediaStore *gv_media_load_index(const char *index_path, const char *storage_dir);
 
-/* ===== SQL Interface ===== */
+/* SQL Interface */
 
 typedef struct {
     size_t *indices;
@@ -2807,7 +2751,7 @@ void gv_sql_free_result(GV_SQLResult *result);
 const char *gv_sql_last_error(const GV_SQLEngine *eng);
 int gv_sql_explain(GV_SQLEngine *eng, const char *query, char *plan, size_t plan_size);
 
-/* ===== Phased Ranking Pipeline ===== */
+/* Phased Ranking Pipeline */
 
 typedef enum { GV_PHASE_ANN = 0, GV_PHASE_RERANK_EXPR = 1, GV_PHASE_RERANK_MMR = 2, GV_PHASE_RERANK_CALLBACK = 3, GV_PHASE_FILTER = 4 } GV_PhaseType;
 
@@ -2836,7 +2780,7 @@ int gv_pipeline_execute(GV_Pipeline *pipe, const float *query, size_t dimension,
 int gv_pipeline_get_stats(const GV_Pipeline *pipe, GV_PipelineStats *stats);
 void gv_pipeline_free_stats(GV_PipelineStats *stats);
 
-/* ===== Learned Sparse Index ===== */
+/* Learned Sparse Index */
 
 typedef struct {
     uint32_t vocab_size;
@@ -2871,7 +2815,7 @@ size_t gv_ls_count(const GV_LearnedSparseIndex *idx);
 int gv_ls_save(const GV_LearnedSparseIndex *idx, const char *path);
 GV_LearnedSparseIndex *gv_ls_load(const char *path);
 
-/* ===== Graph Database ===== */
+/* Graph Database */
 
 typedef struct GV_GraphProp {
     char *key;
@@ -2961,7 +2905,7 @@ size_t gv_graph_edge_count(const GV_GraphDB *g);
 int gv_graph_save(const GV_GraphDB *g, const char *path);
 GV_GraphDB *gv_graph_load(const char *path);
 
-/* ===== Knowledge Graph ===== */
+/* Knowledge Graph */
 
 typedef struct GV_KnowledgeGraph GV_KnowledgeGraph;
 

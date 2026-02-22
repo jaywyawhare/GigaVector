@@ -9,17 +9,13 @@
 #include <string.h>
 #include <ctype.h>
 
-/* ============================================================================
- * Internal Structures
- * ============================================================================ */
+/*  Internal Structures  */
 
 struct GV_Tokenizer {
     GV_TokenizerConfig config;
 };
 
-/* ============================================================================
- * Stopwords List
- * ============================================================================ */
+/*  Stopwords List  */
 
 static const char *STOPWORDS[] = {
     "a", "an", "and", "are", "as", "at", "be", "by", "for", "from",
@@ -30,9 +26,7 @@ static const char *STOPWORDS[] = {
 
 #define STOPWORDS_COUNT (sizeof(STOPWORDS) / sizeof(STOPWORDS[0]) - 1)
 
-/* ============================================================================
- * Configuration
- * ============================================================================ */
+/*  Configuration  */
 
 static const GV_TokenizerConfig DEFAULT_CONFIG = {
     .type = GV_TOKENIZER_SIMPLE,
@@ -47,9 +41,7 @@ void gv_tokenizer_config_init(GV_TokenizerConfig *config) {
     *config = DEFAULT_CONFIG;
 }
 
-/* ============================================================================
- * Lifecycle
- * ============================================================================ */
+/*  Lifecycle  */
 
 GV_Tokenizer *gv_tokenizer_create(const GV_TokenizerConfig *config) {
     GV_Tokenizer *tokenizer = calloc(1, sizeof(GV_Tokenizer));
@@ -64,9 +56,7 @@ void gv_tokenizer_destroy(GV_Tokenizer *tokenizer) {
     free(tokenizer);
 }
 
-/* ============================================================================
- * Internal Helpers
- * ============================================================================ */
+/*  Internal Helpers  */
 
 static int is_token_char_whitespace(char c) {
     return !isspace((unsigned char)c);
@@ -128,9 +118,7 @@ static int add_token(GV_TokenList *list, const char *start, size_t len,
     return 0;
 }
 
-/* ============================================================================
- * Tokenization
- * ============================================================================ */
+/*  Tokenization  */
 
 int gv_tokenizer_tokenize(GV_Tokenizer *tokenizer, const char *text,
                           size_t text_len, GV_TokenList *result) {
@@ -199,9 +187,7 @@ void gv_token_list_free(GV_TokenList *list) {
     memset(list, 0, sizeof(*list));
 }
 
-/* ============================================================================
- * Utility Functions
- * ============================================================================ */
+/*  Utility Functions  */
 
 int gv_tokenize_simple(const char *text, GV_TokenList *result) {
     GV_Tokenizer *tokenizer = gv_tokenizer_create(NULL);

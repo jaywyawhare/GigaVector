@@ -20,9 +20,7 @@
 #include <stdint.h>
 #include <pthread.h>
 
-/* ================================================================== */
 /*  Internal constants                                                 */
-/* ================================================================== */
 
 #define GV_NV_MAX_FIELDS         32
 #define GV_NV_FIELD_HASH_BUCKETS 64
@@ -30,9 +28,7 @@
 #define GV_NV_MAGIC              0x47564E56U  /* "GVNV" */
 #define GV_NV_VERSION            1U
 
-/* ================================================================== */
 /*  Internal structures                                                */
-/* ================================================================== */
 
 /**
  * @brief Per-field storage for a single named vector field.
@@ -68,9 +64,7 @@ struct GV_NamedVectorStore {
     pthread_rwlock_t rwlock;
 };
 
-/* ================================================================== */
 /*  Max-heap helpers for top-k selection                               */
-/* ================================================================== */
 
 typedef struct {
     float   dist;
@@ -118,9 +112,7 @@ static void gv_nv_heap_push(GV_NVHeapItem *heap, size_t *size, size_t capacity,
     }
 }
 
-/* ================================================================== */
 /*  Hash helpers                                                       */
-/* ================================================================== */
 
 static size_t gv_nv_hash_name(const char *name) {
     size_t h = 5381;
@@ -141,9 +133,7 @@ static GV_NVField *gv_nv_find_field(const GV_NamedVectorStore *store, const char
     return NULL;
 }
 
-/* ================================================================== */
 /*  I/O helpers                                                        */
-/* ================================================================== */
 
 static int gv_nv_write_u32(FILE *fp, uint32_t v) {
     return fwrite(&v, sizeof(uint32_t), 1, fp) == 1 ? 0 : -1;
@@ -182,9 +172,7 @@ static int gv_nv_read_str(FILE *fp, char **out) {
     return 0;
 }
 
-/* ================================================================== */
 /*  Capacity management                                                */
-/* ================================================================== */
 
 /**
  * @brief Ensure all per-field arrays and the global alive bitmap can hold
@@ -231,9 +219,7 @@ static int gv_nv_ensure_capacity(GV_NamedVectorStore *store, size_t required) {
     return 0;
 }
 
-/* ================================================================== */
 /*  Distance computation (raw float arrays)                            */
-/* ================================================================== */
 
 /**
  * @brief Compute distance between two raw float vectors using the
@@ -252,9 +238,7 @@ static float gv_nv_compute_distance(const float *a, const float *b,
     return gv_distance(&va, &vb, (GV_DistanceType)distance_type);
 }
 
-/* ================================================================== */
 /*  Lifecycle                                                          */
-/* ================================================================== */
 
 GV_NamedVectorStore *gv_named_vectors_create(void) {
     GV_NamedVectorStore *store = (GV_NamedVectorStore *)calloc(1, sizeof(GV_NamedVectorStore));
@@ -289,9 +273,7 @@ void gv_named_vectors_destroy(GV_NamedVectorStore *store) {
     free(store);
 }
 
-/* ================================================================== */
 /*  Field management                                                   */
-/* ================================================================== */
 
 int gv_named_vectors_add_field(GV_NamedVectorStore *store, const GV_VectorFieldConfig *config) {
     if (!store || !config || !config->name || config->dimension == 0) return -1;
@@ -414,9 +396,7 @@ int gv_named_vectors_get_field(const GV_NamedVectorStore *store, const char *nam
     return 0;
 }
 
-/* ================================================================== */
 /*  Point operations                                                   */
-/* ================================================================== */
 
 int gv_named_vectors_insert(GV_NamedVectorStore *store, size_t point_id,
                              const GV_NamedVector *vectors, size_t vector_count) {
@@ -540,9 +520,7 @@ int gv_named_vectors_delete(GV_NamedVectorStore *store, size_t point_id) {
     return 0;
 }
 
-/* ================================================================== */
 /*  Search                                                             */
-/* ================================================================== */
 
 int gv_named_vectors_search(const GV_NamedVectorStore *store, const char *field_name,
                              const float *query, size_t k, GV_NamedSearchResult *results) {
@@ -595,9 +573,7 @@ int gv_named_vectors_search(const GV_NamedVectorStore *store, const char *field_
     return n;
 }
 
-/* ================================================================== */
 /*  Accessors                                                          */
-/* ================================================================== */
 
 const float *gv_named_vectors_get(const GV_NamedVectorStore *store, size_t point_id,
                                    const char *field_name) {
@@ -636,9 +612,7 @@ size_t gv_named_vectors_count(const GV_NamedVectorStore *store) {
     return count;
 }
 
-/* ================================================================== */
 /*  Save / Load                                                        */
-/* ================================================================== */
 
 int gv_named_vectors_save(const GV_NamedVectorStore *store, const char *filepath) {
     if (!store || !filepath) return -1;

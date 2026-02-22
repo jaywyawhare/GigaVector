@@ -6,25 +6,19 @@
 
 #include "gigavector/gv_dedup.h"
 
-/* ------------------------------------------------------------------ */
 /*  Linked-list node for hash bucket chaining                         */
-/* ------------------------------------------------------------------ */
 typedef struct GV_DedupBucketNode {
     size_t index;                    /**< Index into the flat vectors array. */
     struct GV_DedupBucketNode *next; /**< Next node in the chain. */
 } GV_DedupBucketNode;
 
-/* ------------------------------------------------------------------ */
 /*  One LSH hash table: array of bucket heads                         */
-/* ------------------------------------------------------------------ */
 typedef struct {
     GV_DedupBucketNode **buckets;  /**< Array of bucket head pointers. */
     size_t num_buckets;            /**< Number of buckets (1 << hash_bits). */
 } GV_DedupHashTable;
 
-/* ------------------------------------------------------------------ */
 /*  Internal (full) definition of the opaque GV_DedupIndex            */
-/* ------------------------------------------------------------------ */
 struct GV_DedupIndex {
     size_t dimension;              /**< Dimensionality of stored vectors. */
     GV_DedupConfig config;         /**< Copy of the caller's configuration. */
@@ -43,9 +37,7 @@ struct GV_DedupIndex {
     GV_DedupHashTable *tables;     /**< Array of num_hash_tables tables. */
 };
 
-/* ------------------------------------------------------------------ */
 /*  PRNG helpers (xorshift64)                                         */
-/* ------------------------------------------------------------------ */
 static uint64_t dedup_xorshift64(uint64_t *state) {
     uint64_t x = *state;
     x ^= x << 13;
@@ -66,9 +58,7 @@ static float dedup_gaussian_random(uint64_t *state) {
     return sqrtf(-2.0f * logf(u1)) * cosf(2.0f * 3.14159265358979323846f * u2);
 }
 
-/* ------------------------------------------------------------------ */
 /*  Hyperplane generation                                             */
-/* ------------------------------------------------------------------ */
 static void dedup_generate_hyperplanes(float *hyperplanes,
                                        size_t num_tables,
                                        size_t hash_bits,
@@ -81,9 +71,7 @@ static void dedup_generate_hyperplanes(float *hyperplanes,
     }
 }
 
-/* ------------------------------------------------------------------ */
 /*  Hash a single vector for one table                                */
-/* ------------------------------------------------------------------ */
 static uint32_t dedup_hash_vector(const float *data,
                                   size_t dimension,
                                   const float *hyperplanes,
@@ -105,9 +93,7 @@ static uint32_t dedup_hash_vector(const float *data,
     return hash;
 }
 
-/* ------------------------------------------------------------------ */
 /*  Bucket helpers                                                    */
-/* ------------------------------------------------------------------ */
 static int dedup_bucket_add(GV_DedupHashTable *table, uint32_t bucket_idx, size_t vec_index) {
     GV_DedupBucketNode *node = (GV_DedupBucketNode *)malloc(sizeof(GV_DedupBucketNode));
     if (node == NULL) {
@@ -127,9 +113,7 @@ static void dedup_bucket_free_chain(GV_DedupBucketNode *head) {
     }
 }
 
-/* ------------------------------------------------------------------ */
 /*  L2 squared distance                                               */
-/* ------------------------------------------------------------------ */
 static float dedup_l2_distance_sq(const float *a, const float *b, size_t dimension) {
     float sum = 0.0f;
     for (size_t d = 0; d < dimension; ++d) {
@@ -139,9 +123,7 @@ static float dedup_l2_distance_sq(const float *a, const float *b, size_t dimensi
     return sum;
 }
 
-/* ------------------------------------------------------------------ */
 /*  Insert a vector index into all hash tables                        */
-/* ------------------------------------------------------------------ */
 static int dedup_insert_into_tables(GV_DedupIndex *dedup, size_t vec_index) {
     const float *data = dedup->vectors + vec_index * dedup->dimension;
     for (size_t t = 0; t < dedup->config.num_hash_tables; ++t) {
@@ -155,9 +137,7 @@ static int dedup_insert_into_tables(GV_DedupIndex *dedup, size_t vec_index) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 /*  Public API                                                        */
-/* ------------------------------------------------------------------ */
 
 GV_DedupIndex *gv_dedup_create(size_t dimension, const GV_DedupConfig *config) {
     if (dimension == 0) {

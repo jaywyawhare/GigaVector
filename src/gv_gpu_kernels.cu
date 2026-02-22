@@ -17,9 +17,7 @@ extern "C" {
 #include "gigavector/gv_gpu.h"
 }
 
-/* ============================================================================
- * CUDA Error Handling
- * ============================================================================ */
+/* CUDA Error Handling */
 
 #define CUDA_CHECK(call) do { \
     cudaError_t err = call; \
@@ -38,17 +36,13 @@ extern "C" {
     } \
 } while(0)
 
-/* ============================================================================
- * Constants
- * ============================================================================ */
+/* Constants */
 
 #define BLOCK_SIZE 256
 #define TILE_SIZE 32
 #define WARP_SIZE 32
 
-/* ============================================================================
- * Distance Computation Kernels
- * ============================================================================ */
+/* Distance Computation Kernels */
 
 /**
  * @brief Euclidean distance kernel (L2).
@@ -167,9 +161,7 @@ __global__ void manhattan_distance_kernel(
     distances[q * num_vectors + v] = sum;
 }
 
-/* ============================================================================
- * L2 Norm Computation
- * ============================================================================ */
+/* L2 Norm Computation */
 
 __global__ void compute_norms_kernel(
     const float* __restrict__ vectors,
@@ -188,9 +180,7 @@ __global__ void compute_norms_kernel(
     norms[v] = sqrtf(sum);
 }
 
-/* ============================================================================
- * k-NN Search Kernel (Bitonic Sort)
- * ============================================================================ */
+/* k-NN Search Kernel (Bitonic Sort) */
 
 /**
  * @brief Bitonic sort step for top-k selection.
@@ -271,9 +261,7 @@ __global__ void topk_kernel(
     }
 }
 
-/* ============================================================================
- * C Interface Functions
- * ============================================================================ */
+/* C Interface Functions */
 
 extern "C" {
 

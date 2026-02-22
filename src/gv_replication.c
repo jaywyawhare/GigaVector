@@ -12,9 +12,7 @@
 #include <time.h>
 #include <unistd.h>
 
-/* ============================================================================
- * Internal Structures
- * ============================================================================ */
+/*  Internal Structures  */
 
 #define MAX_REPLICAS 16
 
@@ -63,9 +61,7 @@ struct GV_ReplicationManager {
     pthread_cond_t sync_cond;
 };
 
-/* ============================================================================
- * Configuration
- * ============================================================================ */
+/*  Configuration  */
 
 static const GV_ReplicationConfig DEFAULT_CONFIG = {
     .node_id = NULL,
@@ -82,9 +78,7 @@ void gv_replication_config_init(GV_ReplicationConfig *config) {
     *config = DEFAULT_CONFIG;
 }
 
-/* ============================================================================
- * Internal Helpers
- * ============================================================================ */
+/*  Internal Helpers  */
 
 static char *generate_node_id(void) {
     char id[64];
@@ -166,9 +160,7 @@ static void *replication_thread_func(void *arg) {
     return NULL;
 }
 
-/* ============================================================================
- * Lifecycle
- * ============================================================================ */
+/*  Lifecycle  */
 
 GV_ReplicationManager *gv_replication_create(GV_Database *db, const GV_ReplicationConfig *config) {
     if (!db) return NULL;
@@ -290,9 +282,7 @@ int gv_replication_stop(GV_ReplicationManager *mgr) {
     return 0;
 }
 
-/* ============================================================================
- * Role Management
- * ============================================================================ */
+/*  Role Management  */
 
 GV_ReplicationRole gv_replication_get_role(GV_ReplicationManager *mgr) {
     if (!mgr) return (GV_ReplicationRole)-1;
@@ -353,9 +343,7 @@ int gv_replication_request_leadership(GV_ReplicationManager *mgr) {
     return mgr->role == GV_REPL_LEADER ? 0 : -1;
 }
 
-/* ============================================================================
- * Replica Management
- * ============================================================================ */
+/*  Replica Management  */
 
 int gv_replication_add_follower(GV_ReplicationManager *mgr, const char *node_id,
                                  const char *address) {
@@ -454,9 +442,7 @@ void gv_replication_free_replicas(GV_ReplicaInfo *replicas, size_t count) {
     free(replicas);
 }
 
-/* ============================================================================
- * Synchronization
- * ============================================================================ */
+/*  Synchronization  */
 
 int gv_replication_sync_commit(GV_ReplicationManager *mgr, uint32_t timeout_ms) {
     if (!mgr) return -1;
@@ -571,9 +557,7 @@ int gv_replication_wait_sync(GV_ReplicationManager *mgr, size_t max_lag, uint32_
     return -1;  /* Timeout - not all replicas synced */
 }
 
-/* ============================================================================
- * Statistics
- * ============================================================================ */
+/*  Statistics  */
 
 int gv_replication_get_stats(GV_ReplicationManager *mgr, GV_ReplicationStats *stats) {
     if (!mgr || !stats) return -1;
@@ -629,9 +613,7 @@ int gv_replication_is_healthy(GV_ReplicationManager *mgr) {
     return healthy;
 }
 
-/* ============================================================================
- * Read Replica Load Balancing
- * ============================================================================ */
+/*  Read Replica Load Balancing  */
 
 int gv_replication_set_read_policy(GV_ReplicationManager *mgr, GV_ReadPolicy policy) {
     if (!mgr) return -1;

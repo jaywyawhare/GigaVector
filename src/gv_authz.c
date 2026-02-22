@@ -9,9 +9,7 @@
 #include <string.h>
 #include <pthread.h>
 
-/* ============================================================================
- * Internal Structures
- * ============================================================================ */
+/*  Internal Structures  */
 
 #define MAX_ROLES 64
 #define MAX_USERS 256
@@ -50,9 +48,7 @@ struct GV_AuthzManager {
     pthread_rwlock_t rwlock;
 };
 
-/* ============================================================================
- * Lifecycle
- * ============================================================================ */
+/*  Lifecycle  */
 
 GV_AuthzManager *gv_authz_create(void) {
     GV_AuthzManager *authz = calloc(1, sizeof(GV_AuthzManager));
@@ -89,9 +85,7 @@ void gv_authz_destroy(GV_AuthzManager *authz) {
     free(authz);
 }
 
-/* ============================================================================
- * Internal Helpers
- * ============================================================================ */
+/*  Internal Helpers  */
 
 static RoleEntry *find_role(GV_AuthzManager *authz, const char *name) {
     for (size_t i = 0; i < authz->role_count; i++) {
@@ -133,9 +127,7 @@ static int namespace_allowed(RoleEntry *role, const char *namespace_name) {
     return 0;
 }
 
-/* ============================================================================
- * Role Management
- * ============================================================================ */
+/*  Role Management  */
 
 int gv_authz_define_role(GV_AuthzManager *authz, const char *name,
                           uint32_t permissions, const char **namespaces,
@@ -301,9 +293,7 @@ void gv_authz_free_roles(GV_Role *roles, size_t count) {
     free(roles);
 }
 
-/* ============================================================================
- * User-Role Assignment
- * ============================================================================ */
+/*  User-Role Assignment  */
 
 int gv_authz_assign_role(GV_AuthzManager *authz, const char *subject,
                           const char *role_name) {
@@ -415,9 +405,7 @@ void gv_authz_free_user_roles(char **roles, size_t count) {
     free(roles);
 }
 
-/* ============================================================================
- * Authorization Checks
- * ============================================================================ */
+/*  Authorization Checks  */
 
 int gv_authz_check(GV_AuthzManager *authz, const GV_Identity *identity,
                     GV_Permission permission, GV_ResourceType resource_type,
@@ -507,9 +495,7 @@ int gv_authz_is_admin(GV_AuthzManager *authz, const GV_Identity *identity) {
     return result.allowed;
 }
 
-/* ============================================================================
- * Built-in Roles
- * ============================================================================ */
+/*  Built-in Roles  */
 
 int gv_authz_init_builtin_roles(GV_AuthzManager *authz) {
     if (!authz) return -1;

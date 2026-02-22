@@ -1187,11 +1187,7 @@ class Database:
             # Avoid raising during interpreter shutdown
             pass
 
-
-# ============================================================================
 # LLM Module
-# ============================================================================
-
 class LLMError(IntEnum):
     SUCCESS = 0
     NULL_POINTER = -1
@@ -1374,11 +1370,7 @@ class LLM:
             return "Unknown error"
         return ffi.string(error_str).decode("utf-8")
 
-
-# ============================================================================
 # Embedding Service Module
-# ============================================================================
-
 class EmbeddingProvider(IntEnum):
     OPENAI = 0
     HUGGINGFACE = 1
@@ -1640,11 +1632,7 @@ class EmbeddingCache:
             'misses': misses_ptr[0]
         }
 
-
-# ============================================================================
 # Memory Layer Module
-# ============================================================================
-
 class MemoryType(IntEnum):
     FACT = 0
     PREFERENCE = 1
@@ -1987,11 +1975,7 @@ class MemoryLayer:
         result = lib.gv_memory_delete(self._layer, memory_id.encode())
         return result == 0
 
-
-# ============================================================================
 # Context Graph Module
-# ============================================================================
-
 class EntityType(IntEnum):
     PERSON = 0
     ORGANIZATION = 1
@@ -2465,11 +2449,7 @@ class ContextGraph:
 
         return results
 
-
-# ============================================================================
 # GPU Acceleration Module
-# ============================================================================
-
 class GPUDistanceMetric(IntEnum):
     EUCLIDEAN = 0
     COSINE = 1
@@ -2683,11 +2663,7 @@ class GPUIndex:
             raise RuntimeError("Failed to get GPU index info")
         return (int(count[0]), int(dimension[0]), int(memory[0]))
 
-
-# ============================================================================
 # HTTP Server Module
-# ============================================================================
-
 class ServerError(IntEnum):
     OK = 0
     NULL_POINTER = -1
@@ -2808,11 +2784,7 @@ class Server:
             return "Unknown error"
         return ffi.string(s).decode("utf-8")
 
-
-# ============================================================================
 # Backup & Restore Module
-# ============================================================================
-
 class BackupCompression(IntEnum):
     NONE = 0
     ZLIB = 1
@@ -2959,11 +2931,7 @@ def backup_verify(backup_path: str, decryption_key: str | None = None) -> Backup
     lib.gv_backup_result_free(result)
     return br
 
-
-# ============================================================================
 # Shard Management Module
-# ============================================================================
-
 class ShardState(IntEnum):
     ACTIVE = 0
     READONLY = 1
@@ -3093,11 +3061,7 @@ class ShardManager:
         if lib.gv_shard_attach_local(self._mgr, shard_id, db._db) != 0:
             raise RuntimeError("Failed to attach local database")
 
-
-# ============================================================================
 # Replication Module
-# ============================================================================
-
 class ReplicationRole(IntEnum):
     LEADER = 0
     FOLLOWER = 1
@@ -3262,11 +3226,7 @@ class ReplicationManager:
     def is_healthy(self) -> bool:
         return lib.gv_replication_is_healthy(self._mgr) == 1
 
-
-# ============================================================================
 # Cluster Management Module
-# ============================================================================
-
 class NodeRole(IntEnum):
     COORDINATOR = 0
     DATA = 1
@@ -3411,11 +3371,7 @@ class Cluster:
         if lib.gv_cluster_wait_ready(self._cluster, timeout_ms) != 0:
             raise RuntimeError("Cluster not ready within timeout")
 
-
-# ============================================================================
 # Namespace / Multi-tenancy Module
-# ============================================================================
-
 class NSIndexType(IntEnum):
     KDTREE = 0
     HNSW = 1
@@ -3589,11 +3545,7 @@ class NamespaceManager:
             raise RuntimeError("Failed to load namespaces")
         return n
 
-
-# ============================================================================
 # TTL (Time-to-Live) Module
-# ============================================================================
-
 @dataclass(frozen=True)
 class TTLStats:
     total_vectors_with_ttl: int
@@ -3695,11 +3647,7 @@ class TTLManager:
             last_cleanup_time=stats.last_cleanup_time,
         )
 
-
-# ============================================================================
 # BM25 Full-text Search Module
-# ============================================================================
-
 @dataclass(frozen=True)
 class BM25Result:
     doc_id: int
@@ -3807,11 +3755,7 @@ class BM25Index:
         obj._closed = False
         return obj
 
-
-# ============================================================================
 # Hybrid Search Module
-# ============================================================================
-
 class FusionType(IntEnum):
     LINEAR = 0
     RRF = 1
@@ -3958,11 +3902,7 @@ class HybridSearcher:
         if lib.gv_hybrid_set_weights(self._searcher, vector_weight, text_weight) != 0:
             raise RuntimeError("Failed to set weights")
 
-
-# ============================================================================
 # Authentication Module
-# ============================================================================
-
 class AuthType(IntEnum):
     NONE = 0
     API_KEY = 1
@@ -4146,11 +4086,7 @@ class AuthManager:
             return "Unknown"
         return ffi.string(s).decode("utf-8")
 
-
-# =============================================================================
 # Multi-Vector / Chunked Document Storage
-# =============================================================================
-
 
 class DocAggregation(IntEnum):
     MAX_SIM = 0
@@ -4221,11 +4157,7 @@ class MultiVecIndex:
     def chunk_count(self) -> int:
         return lib.gv_multivec_count_chunks(self._index)
 
-
-# =============================================================================
 # Point-in-Time Snapshots
-# =============================================================================
-
 
 @dataclass(frozen=True)
 class SnapshotInfo:
@@ -4271,11 +4203,7 @@ class SnapshotManager:
         if lib.gv_snapshot_delete(self._mgr, snapshot_id) != 0:
             raise RuntimeError("Failed to delete snapshot")
 
-
-# =============================================================================
 # MVCC Transactions
-# =============================================================================
-
 
 class TxnStatus(IntEnum):
     ACTIVE = 0
@@ -4367,11 +4295,7 @@ class MVCCManager:
     def active_txn_count(self) -> int:
         return lib.gv_mvcc_active_txn_count(self._mgr)
 
-
-# =============================================================================
 # Query Optimizer
-# =============================================================================
-
 
 class PlanStrategy(IntEnum):
     EXACT_SCAN = 0
@@ -4445,11 +4369,7 @@ class QueryOptimizer:
     def recommend_nprobe(self, k: int) -> int:
         return lib.gv_optimizer_recommend_nprobe(self._opt, k)
 
-
-# =============================================================================
 # Payload Indexing
-# =============================================================================
-
 
 class FieldType(IntEnum):
     INT = 0
@@ -4510,11 +4430,7 @@ class PayloadIndex:
     def total_entries(self) -> int:
         return lib.gv_payload_index_total_entries(self._idx)
 
-
-# =============================================================================
 # Vector Deduplication
-# =============================================================================
-
 
 @dataclass
 class DedupConfig:
@@ -4574,11 +4490,7 @@ class DedupIndex:
     def clear(self) -> None:
         lib.gv_dedup_clear(self._dedup)
 
-
-# =============================================================================
 # Auto Index Migration
-# =============================================================================
-
 
 class MigrationStatus(IntEnum):
     PENDING = 0
@@ -4636,11 +4548,7 @@ class Migration:
     def __del__(self):
         self.close()
 
-
-# =============================================================================
 # Collection Versioning
-# =============================================================================
-
 
 @dataclass(frozen=True)
 class VersionInfo:
@@ -4693,11 +4601,7 @@ class VersionManager:
         if lib.gv_version_delete(self._mgr, version_id) != 0:
             raise RuntimeError("Failed to delete version")
 
-
-# =============================================================================
 # Read Policy (Load Balancing)
-# =============================================================================
-
 
 class ReadPolicy(IntEnum):
     LEADER_ONLY = 0
@@ -4705,11 +4609,7 @@ class ReadPolicy(IntEnum):
     LEAST_LAG = 2
     RANDOM = 3
 
-
-# =============================================================================
 # Bloom Filter
-# =============================================================================
-
 
 class BloomFilter:
     def __init__(self, expected_items: int = 1000, fp_rate: float = 0.01):
@@ -4753,11 +4653,7 @@ class BloomFilter:
     def clear(self) -> None:
         lib.gv_bloom_clear(self._bf)
 
-
-# =============================================================================
 # Query Tracing
-# =============================================================================
-
 
 @dataclass(frozen=True)
 class TraceSpan:
@@ -4805,11 +4701,7 @@ class QueryTrace:
         self.end()
         return False
 
-
-# =============================================================================
 # Client-Side Caching
-# =============================================================================
-
 
 class CachePolicy(IntEnum):
     LRU = 0
@@ -4875,11 +4767,7 @@ class Cache:
     def reset_stats(self) -> None:
         lib.gv_cache_reset_stats(self._cache)
 
-
-# =============================================================================
 # Schema Evolution
-# =============================================================================
-
 
 class SchemaFieldType(IntEnum):
     STRING = 0
@@ -4961,11 +4849,7 @@ class Schema:
     def is_compatible(self, other: "Schema") -> bool:
         return lib.gv_schema_is_compatible(self._schema, other._schema) == 0
 
-
-# =============================================================================
 # Codebook Sharing
-# =============================================================================
-
 
 class Codebook:
     def __init__(self, dimension: int = 0, m: int = 0, nbits: int = 8, *, _ptr=None):
@@ -5025,11 +4909,7 @@ class Codebook:
             raise RuntimeError("Failed to copy codebook")
         return Codebook(_ptr=cb)
 
-
-# =============================================================================
 # Point ID Mapping (String/UUID IDs)
-# =============================================================================
-
 class PointIDMap:
     def __init__(self, initial_capacity: int = 1024):
         self._map = lib.gv_point_id_create(initial_capacity)
@@ -5088,11 +4968,7 @@ class PointIDMap:
         obj._map = m
         return obj
 
-
-# =============================================================================
 # TLS/HTTPS
-# =============================================================================
-
 class TLSVersion(IntEnum):
     TLS_1_2 = 0
     TLS_1_3 = 1
@@ -5134,11 +5010,7 @@ class TLSContext:
     def cert_days_remaining(self) -> int:
         return lib.gv_tls_cert_days_remaining(self._ctx)
 
-
-# =============================================================================
 # Score Threshold Filtering
-# =============================================================================
-
 @dataclass(frozen=True)
 class ThresholdResult:
     index: int
@@ -5155,11 +5027,7 @@ def search_with_threshold(db_ptr: CData, query: list[float], k: int,
         raise RuntimeError("Threshold search failed")
     return [ThresholdResult(index=c_results[i].index, distance=c_results[i].distance) for i in range(count)]
 
-
-# =============================================================================
 # Named Vectors
-# =============================================================================
-
 @dataclass
 class VectorFieldConfig:
     name: str
@@ -5196,11 +5064,7 @@ class NamedVectorStore:
     def count(self) -> int:
         return lib.gv_named_vectors_count(self._store)
 
-
-# =============================================================================
 # Filter Operations (Delete/Update by Filter)
-# =============================================================================
-
 def delete_by_filter(db_ptr: CData, filter_expr: str) -> int:
     result = lib.gv_db_delete_by_filter(db_ptr, filter_expr.encode())
     if result < 0:
@@ -5227,11 +5091,7 @@ def count_by_filter(db_ptr: CData, filter_expr: str) -> int:
         raise RuntimeError("Count by filter failed")
     return result
 
-
-# =============================================================================
 # gRPC Server
-# =============================================================================
-
 @dataclass
 class GrpcConfig:
     port: int = 50051
@@ -5291,11 +5151,7 @@ class GrpcServer:
                          bytes_sent=s.bytes_sent, bytes_received=s.bytes_received,
                          errors=s.errors, avg_latency_us=s.avg_latency_us)
 
-
-# =============================================================================
 # Auto-Embedding (Server-Side)
-# =============================================================================
-
 class AutoEmbedProvider(IntEnum):
     OPENAI = 0
     GOOGLE = 1
@@ -5368,11 +5224,7 @@ class AutoEmbedder:
                               cache_misses=s.cache_misses, api_calls=s.api_calls,
                               api_errors=s.api_errors, avg_latency_ms=s.avg_latency_ms)
 
-
-# =============================================================================
 # DiskANN On-Disk Index
-# =============================================================================
-
 @dataclass
 class DiskANNConfig:
     max_degree: int = 64
@@ -5451,11 +5303,7 @@ class DiskANNIndex:
                             disk_reads=s.disk_reads, avg_search_latency_us=s.avg_search_latency_us,
                             memory_usage_bytes=s.memory_usage_bytes, disk_usage_bytes=s.disk_usage_bytes)
 
-
-# =============================================================================
 # Search Result Grouping
-# =============================================================================
-
 @dataclass(frozen=True)
 class GroupHit:
     index: int
@@ -5507,11 +5355,7 @@ class GroupedSearch:
         lib.gv_group_search_free_result(c_result)
         return groups
 
-
-# =============================================================================
 # Geo-Spatial Filtering
-# =============================================================================
-
 @dataclass(frozen=True)
 class GeoPoint:
     lat: float
@@ -5560,11 +5404,7 @@ class GeoIndex:
     def distance_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
         return lib.gv_geo_distance_km(lat1, lng1, lat2, lng2)
 
-
-# =============================================================================
 # Late Interaction / ColBERT MaxSim
-# =============================================================================
-
 @dataclass
 class LateInteractionConfig:
     token_dimension: int = 128
@@ -5619,11 +5459,7 @@ class LateInteractionIndex:
     def count(self) -> int:
         return lib.gv_late_interaction_count(self._index)
 
-
-# =============================================================================
 # Recommendation API
-# =============================================================================
-
 @dataclass
 class RecommendConfig:
     positive_weight: float = 1.0
@@ -5664,11 +5500,7 @@ class Recommender:
         return [RecommendResult(index=c_results[i].index, score=c_results[i].score)
                 for i in range(count)]
 
-
-# =============================================================================
 # Collection Aliases
-# =============================================================================
-
 @dataclass(frozen=True)
 class AliasInfo:
     alias_name: str
@@ -5718,11 +5550,7 @@ class AliasManager:
     def exists(self, alias_name: str) -> bool:
         return lib.gv_alias_exists(self._mgr, alias_name.encode()) == 1
 
-
-# =============================================================================
 # Vacuum / Async Compaction
-# =============================================================================
-
 class VacuumState(IntEnum):
     IDLE = 0
     RUNNING = 1
@@ -5793,11 +5621,7 @@ class VacuumManager:
                            fragmentation_after=s.fragmentation_after, duration_ms=s.duration_ms,
                            total_runs=s.total_runs)
 
-
-# =============================================================================
 # Consistency Levels
-# =============================================================================
-
 class ConsistencyLevel(IntEnum):
     STRONG = 0
     EVENTUAL = 1
@@ -5828,11 +5652,7 @@ class ConsistencyManager:
     def new_session(self) -> int:
         return lib.gv_consistency_new_session(self._mgr)
 
-
-# =============================================================================
 # Tenant Quotas
-# =============================================================================
-
 @dataclass
 class QuotaConfig:
     max_vectors: int = 0
@@ -5898,11 +5718,7 @@ class QuotaManager:
                           current_qps=u.current_qps, current_ips=u.current_ips,
                           total_throttled=u.total_throttled, total_rejected=u.total_rejected)
 
-
-# =============================================================================
 # Payload Compression
-# =============================================================================
-
 class CompressionType(IntEnum):
     NONE = 0
     LZ4 = 1
@@ -5969,11 +5785,7 @@ class Compressor:
         return CompressionStats(total_compressed=s.total_compressed, total_decompressed=s.total_decompressed,
                                 bytes_in=s.bytes_in, bytes_out=s.bytes_out, avg_ratio=s.avg_ratio)
 
-
-# =============================================================================
 # Webhooks / Change Streams
-# =============================================================================
-
 class EventType(IntEnum):
     INSERT = 1
     UPDATE = 2
@@ -6043,11 +5855,7 @@ class WebhookManager:
         return WebhookStats(events_fired=s.events_fired, webhooks_delivered=s.webhooks_delivered,
                             webhooks_failed=s.webhooks_failed, callbacks_invoked=s.callbacks_invoked)
 
-
-# =============================================================================
 # RBAC (Role-Based Access Control)
-# =============================================================================
-
 class Permission(IntEnum):
     READ = 1
     WRITE = 2
@@ -6108,11 +5916,7 @@ class RBACManager:
         obj._mgr = mgr
         return obj
 
-
-# ===========================================================================
 # MMR Reranking
-# ===========================================================================
-
 
 @dataclass(frozen=True)
 class MMRConfig:
@@ -6156,11 +5960,7 @@ def mmr_rerank(
         raise RuntimeError("MMR rerank failed")
     return [MMRResult(results[i].index, results[i].score, results[i].relevance, results[i].diversity) for i in range(rc)]
 
-
-# ===========================================================================
 # Custom Ranking Expressions
-# ===========================================================================
-
 
 @dataclass(frozen=True)
 class RankSignal:
@@ -6212,11 +6012,7 @@ class RankExpr:
     def __del__(self) -> None:
         self.close()
 
-
-# ===========================================================================
 # Advanced Quantization
-# ===========================================================================
-
 
 class QuantType(IntEnum):
     BINARY = 0
@@ -6300,11 +6096,7 @@ class QuantCodebook:
     def __del__(self) -> None:
         self.close()
 
-
-# ===========================================================================
 # Full-Text Search
-# ===========================================================================
-
 
 class FTLanguage(IntEnum):
     ENGLISH = 0
@@ -6404,11 +6196,7 @@ def ft_stem(word: str, language: FTLanguage = FTLanguage.ENGLISH) -> str:
         return word
     return ffi.string(out).decode()
 
-
-# ===========================================================================
 # Optimized HNSW with Inline Quantization
-# ===========================================================================
-
 
 @dataclass(frozen=True)
 class HNSWInlineConfig:
@@ -6495,11 +6283,7 @@ class HNSWInlineIndex:
         obj._idx = idx
         return obj
 
-
-# ===========================================================================
 # ONNX Model Serving
-# ===========================================================================
-
 
 @dataclass(frozen=True)
 class ONNXConfig:
@@ -6551,11 +6335,7 @@ class ONNXModel:
     def available() -> bool:
         return lib.gv_onnx_available() == 1
 
-
-# ===========================================================================
 # Agentic Interfaces
-# ===========================================================================
-
 
 class AgentType(IntEnum):
     QUERY = 0
@@ -6636,11 +6416,7 @@ class Agent:
         lib.gv_agent_free_result(r)
         return res
 
-
-# ===========================================================================
 # MUVERA Encoder
-# ===========================================================================
-
 
 @dataclass(frozen=True)
 class MuveraConfig:
@@ -6703,11 +6479,7 @@ class MuveraEncoder:
         obj._enc = enc
         return obj
 
-
-# ===========================================================================
 # Enterprise SSO / OIDC / SAML
-# ===========================================================================
-
 
 class SSOProvider(IntEnum):
     OIDC = 0
@@ -6803,11 +6575,7 @@ class SSOManager:
         lib.gv_sso_free_token(tok)
         return result
 
-
-# ===========================================================================
 # Tiered Multitenancy
-# ===========================================================================
-
 
 class TenantTier(IntEnum):
     SHARED = 0
@@ -6913,11 +6681,7 @@ class TieredManager:
         obj._mgr = mgr
         return obj
 
-
-# ===========================================================================
 # Integrated Inference
-# ===========================================================================
-
 
 @dataclass(frozen=True)
 class InferenceConfig:
@@ -6979,13 +6743,6 @@ class InferenceEngine:
             ))
         lib.gv_inference_free_results(results, rc)
         return out
-
-
-# ===========================================================================
-# JSON Path Indexing
-# ===========================================================================
-
-
 class JSONPathType(IntEnum):
     STRING = 0
     INT = 1
@@ -7066,9 +6823,7 @@ class JSONPathIndex:
         return obj
 
 
-# ===========================================================================
 # Change Data Capture Stream
-# ===========================================================================
 
 
 class CDCEventType(IntEnum):
@@ -7152,9 +6907,7 @@ class CDCStream:
         return lib.gv_cdc_pending_count(self._stream, c_cursor)
 
 
-# ===========================================================================
 # Embedded / Edge Mode
-# ===========================================================================
 
 
 class EmbeddedIndexType(IntEnum):
@@ -7249,9 +7002,7 @@ class EmbeddedDB:
         return obj
 
 
-# ===========================================================================
 # Conditional Updates (CAS-style)
-# ===========================================================================
 
 
 class ConditionType(IntEnum):
@@ -7340,9 +7091,7 @@ class CondManager:
         return ConditionalResult(lib.gv_cond_migrate_embedding(self._mgr, index, c_data, len(new_embedding), expected_version))
 
 
-# ===========================================================================
 # Time-Travel / Auto Versioning
-# ===========================================================================
 
 
 @dataclass(frozen=True)
@@ -7436,9 +7185,7 @@ class TimeTravelManager:
         return obj
 
 
-# ===========================================================================
 # Multimodal Media Storage
-# ===========================================================================
 
 
 class MediaType(IntEnum):
@@ -7547,9 +7294,7 @@ class MediaStore:
         return obj
 
 
-# ===========================================================================
 # SQL Query Interface
-# ===========================================================================
 
 
 @dataclass
@@ -7611,9 +7356,7 @@ class SQLEngine:
         return ffi.string(err).decode() if err != ffi.NULL else ""
 
 
-# ===========================================================================
 # Phased Ranking Pipeline
-# ===========================================================================
 
 
 class PhaseType(IntEnum):
@@ -7677,9 +7420,7 @@ class Pipeline:
         return result
 
 
-# ===========================================================================
 # Learned Sparse Vector Index
-# ===========================================================================
 
 
 @dataclass(frozen=True)
@@ -7787,7 +7528,7 @@ class LearnedSparseIndex:
         return obj
 
 
-# ===== Graph Database =====
+# Graph Database
 
 
 @dataclass
@@ -7994,7 +7735,7 @@ class GraphDB:
         return obj
 
 
-# ===== Knowledge Graph =====
+# Knowledge Graph
 
 
 @dataclass

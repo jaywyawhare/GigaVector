@@ -20,9 +20,7 @@
 #include <float.h>
 #include <pthread.h>
 
-/* ============================================================================
- * SIMD headers (compile-time detection)
- * ============================================================================ */
+/*  SIMD headers (compile-time detection)  */
 
 #ifdef __AVX2__
 #include <immintrin.h>
@@ -33,9 +31,7 @@
 #include <emmintrin.h>
 #endif
 
-/* ============================================================================
- * Internal Constants
- * ============================================================================ */
+/*  Internal Constants  */
 
 #define GV_LI_MAGIC       "GV_LINT"
 #define GV_LI_MAGIC_LEN   7
@@ -43,9 +39,7 @@
 #define GV_LI_INITIAL_DOC_CAPACITY   64
 #define GV_LI_INITIAL_POOL_CAPACITY  (64 * 128)  /* tokens */
 
-/* ============================================================================
- * Internal Structures
- * ============================================================================ */
+/*  Internal Structures  */
 
 /**
  * @brief Per-document metadata stored in a dense array.
@@ -80,9 +74,7 @@ struct GV_LateInteractionIndex {
     pthread_rwlock_t rwlock;
 };
 
-/* ============================================================================
- * Dot-product helpers (scalar + SIMD)
- * ============================================================================ */
+/*  Dot-product helpers (scalar + SIMD)  */
 
 /**
  * @brief Scalar dot product fallback.
@@ -136,13 +128,12 @@ static float gv_li_dot(const float *a, const float *b, size_t dim) {
 #endif
 }
 
-/* ============================================================================
- * Max-heap helpers for top-k selection (max-heap on score, keeps lowest k)
+/* Max-heap helpers for top-k selection (max-heap on score, keeps lowest k)
  *
  * For MaxSim scoring, higher is better.  We use a min-heap so the root is
  * the *smallest* score in the current top-k set.  When a new candidate has
  * a score greater than the root it replaces it.
- * ============================================================================ */
+ */
 
 typedef struct {
     float  score;
@@ -190,9 +181,7 @@ static void gv_li_heap_push(GV_LIHeapItem *heap, size_t *size, size_t capacity,
     }
 }
 
-/* ============================================================================
- * Internal: compute average embedding for a document
- * ============================================================================ */
+/*  Internal: compute average embedding for a document  */
 
 static float *gv_li_compute_avg(const float *tokens, size_t num_tokens, size_t dim) {
     float *avg = (float *)calloc(dim, sizeof(float));
@@ -215,11 +204,10 @@ static float *gv_li_compute_avg(const float *tokens, size_t num_tokens, size_t d
     return avg;
 }
 
-/* ============================================================================
- * Internal: compute MaxSim score between query tokens and a document
+/* Internal: compute MaxSim score between query tokens and a document
  *
  * MaxSim(Q, D) = sum_{q in Q} max_{d in D} dot(q, d)
- * ============================================================================ */
+ */
 
 static float gv_li_maxsim(const float *query_tokens, size_t num_query,
                            const float *doc_tokens, size_t num_doc,
@@ -244,9 +232,7 @@ static float gv_li_maxsim(const float *query_tokens, size_t num_query,
     return total;
 }
 
-/* ============================================================================
- * Internal: grow the token pool
- * ============================================================================ */
+/*  Internal: grow the token pool  */
 
 static int gv_li_grow_pool(GV_LateInteractionIndex *idx, size_t needed_tokens) {
     if (idx->pool_used + needed_tokens <= idx->pool_capacity) return 0;
@@ -265,9 +251,7 @@ static int gv_li_grow_pool(GV_LateInteractionIndex *idx, size_t needed_tokens) {
     return 0;
 }
 
-/* ============================================================================
- * Internal: grow the document metadata array
- * ============================================================================ */
+/*  Internal: grow the document metadata array  */
 
 static int gv_li_grow_docs(GV_LateInteractionIndex *idx) {
     if (idx->doc_count < idx->doc_capacity) return 0;
@@ -282,9 +266,7 @@ static int gv_li_grow_docs(GV_LateInteractionIndex *idx) {
     return 0;
 }
 
-/* ============================================================================
- * Configuration
- * ============================================================================ */
+/*  Configuration  */
 
 static const GV_LateInteractionConfig DEFAULT_CONFIG = {
     .token_dimension = 128,
@@ -298,9 +280,7 @@ void gv_late_interaction_config_init(GV_LateInteractionConfig *config) {
     *config = DEFAULT_CONFIG;
 }
 
-/* ============================================================================
- * Lifecycle
- * ============================================================================ */
+/*  Lifecycle  */
 
 GV_LateInteractionIndex *gv_late_interaction_create(const GV_LateInteractionConfig *config) {
     GV_LateInteractionConfig cfg = config ? *config : DEFAULT_CONFIG;
@@ -363,9 +343,7 @@ void gv_late_interaction_destroy(GV_LateInteractionIndex *index) {
     free(index);
 }
 
-/* ============================================================================
- * Add Document
- * ============================================================================ */
+/*  Add Document  */
 
 int gv_late_interaction_add_doc(GV_LateInteractionIndex *index,
                                  const float *token_embeddings, size_t num_tokens) {
@@ -416,9 +394,7 @@ int gv_late_interaction_add_doc(GV_LateInteractionIndex *index,
     return 0;
 }
 
-/* ============================================================================
- * Delete Document
- * ============================================================================ */
+/*  Delete Document  */
 
 int gv_late_interaction_delete(GV_LateInteractionIndex *index, size_t doc_index) {
     if (!index) return -1;
@@ -442,9 +418,7 @@ int gv_late_interaction_delete(GV_LateInteractionIndex *index, size_t doc_index)
     return 0;
 }
 
-/* ============================================================================
- * Search (two-stage: avg-dot candidate selection, then full MaxSim)
- * ============================================================================ */
+/*  Search (two-stage: avg-dot candidate selection, then full MaxSim)  */
 
 int gv_late_interaction_search(const GV_LateInteractionIndex *index,
                                 const float *query_tokens, size_t num_query_tokens,
@@ -570,9 +544,7 @@ int gv_late_interaction_search(const GV_LateInteractionIndex *index,
     return n;
 }
 
-/* ============================================================================
- * Stats & Count
- * ============================================================================ */
+/*  Stats & Count  */
 
 int gv_late_interaction_get_stats(const GV_LateInteractionIndex *index,
                                    GV_LateInteractionStats *stats) {
@@ -610,9 +582,7 @@ size_t gv_late_interaction_count(const GV_LateInteractionIndex *index) {
     return count;
 }
 
-/* ============================================================================
- * Serialization helpers
- * ============================================================================ */
+/*  Serialization helpers  */
 
 static int gv_li_write_u32(FILE *f, uint32_t v) {
     return fwrite(&v, sizeof(uint32_t), 1, f) == 1 ? 0 : -1;
@@ -630,9 +600,7 @@ static int gv_li_read_u64(FILE *f, uint64_t *v) {
     return (v && fread(v, sizeof(uint64_t), 1, f) == 1) ? 0 : -1;
 }
 
-/* ============================================================================
- * Save
- * ============================================================================ */
+/*  Save  */
 
 int gv_late_interaction_save(const GV_LateInteractionIndex *index,
                               const char *filepath) {
@@ -683,9 +651,7 @@ fail:
     return -1;
 }
 
-/* ============================================================================
- * Load
- * ============================================================================ */
+/*  Load  */
 
 GV_LateInteractionIndex *gv_late_interaction_load(const char *filepath) {
     if (!filepath) return NULL;

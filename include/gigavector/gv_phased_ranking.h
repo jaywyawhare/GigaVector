@@ -40,9 +40,7 @@
 extern "C" {
 #endif
 
-/* ============================================================================
- * Enumerations
- * ============================================================================ */
+/* Enumerations */
 
 /**
  * @brief Phase types for the ranking pipeline.
@@ -55,9 +53,7 @@ typedef enum {
     GV_PHASE_FILTER           = 4   /**< Filter candidates by metadata expression. */
 } GV_PhaseType;
 
-/* ============================================================================
- * Callback Type
- * ============================================================================ */
+/* Callback Type */
 
 /**
  * @brief User-supplied reranking callback.
@@ -72,9 +68,7 @@ typedef enum {
 typedef float (*GV_RerankCallback)(size_t index, float current_score,
                                    const void *user_data);
 
-/* ============================================================================
- * Data Structures
- * ============================================================================ */
+/* Data Structures */
 
 /**
  * @brief Configuration for a single pipeline phase.
@@ -139,9 +133,7 @@ typedef struct {
     double  total_latency_ms;       /**< Sum of all phase latencies. */
 } GV_PipelineStats;
 
-/* ============================================================================
- * Pipeline Lifecycle
- * ============================================================================ */
+/* Pipeline Lifecycle */
 
 /**
  * @brief Create a new phased ranking pipeline.
@@ -160,9 +152,7 @@ GV_Pipeline *gv_pipeline_create(const void *db);
  */
 void gv_pipeline_destroy(GV_Pipeline *pipe);
 
-/* ============================================================================
- * Phase Management
- * ============================================================================ */
+/* Phase Management */
 
 /**
  * @brief Append a phase to the pipeline.
@@ -190,9 +180,7 @@ void gv_pipeline_clear_phases(GV_Pipeline *pipe);
  */
 size_t gv_pipeline_phase_count(const GV_Pipeline *pipe);
 
-/* ============================================================================
- * Execution
- * ============================================================================ */
+/* Execution */
 
 /**
  * @brief Execute the full ranking pipeline against a query vector.
@@ -212,9 +200,7 @@ int gv_pipeline_execute(GV_Pipeline *pipe, const float *query,
                         size_t dimension, size_t final_k,
                         GV_PhasedResult *results);
 
-/* ============================================================================
- * Statistics
- * ============================================================================ */
+/* Statistics */
 
 /**
  * @brief Retrieve statistics from the most recent pipeline execution.

@@ -305,7 +305,6 @@ static int test_flat_metadata_filter(void) {
 
 int main(void) {
     int rc = 0;
-    printf("Running Flat index tests...\n");
     rc |= test_flat_create_destroy();
     rc |= test_flat_insert_search();
     rc |= test_flat_exact_results();
@@ -314,8 +313,5 @@ int main(void) {
     rc |= test_flat_update();
     rc |= test_flat_save_load();
     rc |= test_flat_metadata_filter();
-    if (rc == 0) {
-        printf("All Flat index tests passed\n");
-    }
     return rc;
 }

@@ -44,9 +44,7 @@ typedef struct {
  */
 typedef struct GV_TTLManager GV_TTLManager;
 
-/* ============================================================================
- * TTL Manager Lifecycle
- * ============================================================================ */
+/* TTL Manager Lifecycle */
 
 /**
  * @brief Create a TTL manager.
@@ -76,9 +74,7 @@ void gv_ttl_destroy(GV_TTLManager *mgr);
  */
 void gv_ttl_config_init(GV_TTLConfig *config);
 
-/* ============================================================================
- * TTL Operations
- * ============================================================================ */
+/* TTL Operations */
 
 /**
  * @brief Set TTL for a vector.
@@ -138,9 +134,7 @@ int gv_ttl_is_expired(const GV_TTLManager *mgr, size_t vector_index);
  */
 int gv_ttl_get_remaining(const GV_TTLManager *mgr, size_t vector_index, uint64_t *remaining_seconds);
 
-/* ============================================================================
- * Cleanup Operations
- * ============================================================================ */
+/* Cleanup Operations */
 
 /**
  * @brief Cleanup expired vectors (synchronous).
@@ -179,9 +173,7 @@ void gv_ttl_stop_background_cleanup(GV_TTLManager *mgr);
  */
 int gv_ttl_is_background_cleanup_running(const GV_TTLManager *mgr);
 
-/* ============================================================================
- * Statistics
- * ============================================================================ */
+/* Statistics */
 
 /**
  * @brief Get TTL statistics.
@@ -192,9 +184,7 @@ int gv_ttl_is_background_cleanup_running(const GV_TTLManager *mgr);
  */
 int gv_ttl_get_stats(const GV_TTLManager *mgr, GV_TTLStats *stats);
 
-/* ============================================================================
- * Bulk Operations
- * ============================================================================ */
+/* Bulk Operations */
 
 /**
  * @brief Set TTL for multiple vectors.

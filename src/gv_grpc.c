@@ -24,9 +24,7 @@
 #include <time.h>
 #include <signal.h>
 
-/* ============================================================================
- * Platform Helpers
- * ============================================================================ */
+/*  Platform Helpers  */
 
 #if defined(__STDC_NO_ATOMICS__)
 #define GV_ATOMIC_INC(ptr)   do { __sync_fetch_and_add((ptr), 1); } while (0)
@@ -47,9 +45,7 @@ static uint64_t gv_grpc_now_us(void) {
     return (uint64_t)ts.tv_sec * 1000000ULL + (uint64_t)ts.tv_nsec / 1000ULL;
 }
 
-/* ============================================================================
- * Big-Endian Encoding/Decoding
- * ============================================================================ */
+/*  Big-Endian Encoding/Decoding  */
 
 static void write_u32_be(uint8_t *buf, uint32_t val) {
     buf[0] = (uint8_t)(val >> 24);
@@ -78,9 +74,7 @@ static float read_float_be(const uint8_t *buf) {
     return val;
 }
 
-/* ============================================================================
- * Thread Pool
- * ============================================================================ */
+/*  Thread Pool  */
 
 typedef struct GV_GrpcTask {
     int client_fd;
@@ -103,9 +97,7 @@ typedef struct {
     struct GV_GrpcServer *server;
 } GV_ThreadPool;
 
-/* ============================================================================
- * Internal Server Structure
- * ============================================================================ */
+/*  Internal Server Structure  */
 
 struct GV_GrpcServer {
     GV_Database *db;
@@ -133,9 +125,7 @@ struct GV_GrpcServer {
     pthread_mutex_t stats_mutex;
 };
 
-/* ============================================================================
- * Default Configuration
- * ============================================================================ */
+/*  Default Configuration  */
 
 static const GV_GrpcConfig DEFAULT_GRPC_CONFIG = {
     .port = 50051,
@@ -151,9 +141,7 @@ void gv_grpc_config_init(GV_GrpcConfig *config) {
     *config = DEFAULT_GRPC_CONFIG;
 }
 
-/* ============================================================================
- * Error Strings
- * ============================================================================ */
+/*  Error Strings  */
 
 const char *gv_grpc_error_string(int error) {
     switch (error) {
@@ -169,9 +157,7 @@ const char *gv_grpc_error_string(int error) {
     }
 }
 
-/* ============================================================================
- * Socket I/O Helpers
- * ============================================================================ */
+/*  Socket I/O Helpers  */
 
 /**
  * @brief Read exactly @p len bytes from @p fd into @p buf.
@@ -281,9 +267,7 @@ static int send_error_response(int fd, uint32_t request_id, int32_t error_code,
     return rc;
 }
 
-/* ============================================================================
- * Request Handlers
- * ============================================================================ */
+/*  Request Handlers  */
 
 /**
  * @brief Handle GV_MSG_ADD_VECTOR.
@@ -747,9 +731,7 @@ static void handle_save(GV_GrpcServer *server, int fd,
     }
 }
 
-/* ============================================================================
- * Connection Handler
- * ============================================================================ */
+/*  Connection Handler  */
 
 /**
  * @brief Process one client connection: read messages in a loop until
@@ -823,9 +805,7 @@ static void handle_connection(GV_GrpcServer *server, int client_fd) {
     GV_ATOMIC_DEC(&server->active_connections);
 }
 
-/* ============================================================================
- * Thread Pool Implementation
- * ============================================================================ */
+/*  Thread Pool Implementation  */
 
 static void *worker_thread_func(void *arg) {
     GV_ThreadPool *pool = (GV_ThreadPool *)arg;
@@ -953,9 +933,7 @@ static void thread_pool_destroy(GV_ThreadPool *pool) {
     pthread_mutex_destroy(&pool->mutex);
 }
 
-/* ============================================================================
- * Accept Loop
- * ============================================================================ */
+/*  Accept Loop  */
 
 static void *accept_thread_func(void *arg) {
     GV_GrpcServer *server = (GV_GrpcServer *)arg;
@@ -987,9 +965,7 @@ static void *accept_thread_func(void *arg) {
     return NULL;
 }
 
-/* ============================================================================
- * Server Lifecycle
- * ============================================================================ */
+/*  Server Lifecycle  */
 
 GV_GrpcServer *gv_grpc_create(GV_Database *db, const GV_GrpcConfig *config) {
     if (!db) return NULL;
@@ -1136,9 +1112,7 @@ int gv_grpc_is_running(const GV_GrpcServer *server) {
     return server->running;
 }
 
-/* ============================================================================
- * Statistics
- * ============================================================================ */
+/*  Statistics  */
 
 int gv_grpc_get_stats(const GV_GrpcServer *server, GV_GrpcStats *stats) {
     if (!server || !stats) return GV_GRPC_ERROR_NULL;
@@ -1160,9 +1134,7 @@ int gv_grpc_get_stats(const GV_GrpcServer *server, GV_GrpcStats *stats) {
     return GV_GRPC_OK;
 }
 
-/* ============================================================================
- * Message Serialization Helpers
- * ============================================================================ */
+/*  Message Serialization Helpers  */
 
 int gv_grpc_encode_search_request(const float *query, size_t dimension, size_t k,
                                    int distance_type, uint8_t *buf, size_t buf_size,

@@ -28,9 +28,7 @@
 #include "gigavector/gv_embedding.h"
 #include "gigavector/gv_soa_storage.h"
 
-/* ============================================================================
- * Constants
- * ============================================================================ */
+/*  Constants  */
 
 #define AGENT_MAX_PROMPT_SIZE      (16 * 1024)
 #define AGENT_MAX_USER_MSG_SIZE    (8 * 1024)
@@ -41,9 +39,7 @@
 #define AGENT_DEFAULT_MAX_RETRIES  2
 #define AGENT_OVERSAMPLE_FACTOR    4
 
-/* ============================================================================
- * Internal Agent Structure
- * ============================================================================ */
+/*  Internal Agent Structure  */
 
 struct GV_Agent {
     GV_AgentType type;
@@ -57,9 +53,7 @@ struct GV_Agent {
     pthread_mutex_t mutex;
 };
 
-/* ============================================================================
- * Prompt Templates
- * ============================================================================ */
+/*  Prompt Templates  */
 
 static const char *QUERY_AGENT_SYSTEM_PROMPT =
     "You are a vector database query assistant for GigaVector. "
@@ -110,9 +104,7 @@ static const char *PERSONALIZE_AGENT_SYSTEM_PROMPT =
     "A boost > 1.0 promotes matching results; boost < 1.0 demotes them.\n"
     "Always respond with valid JSON only, no markdown fences.";
 
-/* ============================================================================
- * Internal Helpers
- * ============================================================================ */
+/*  Internal Helpers  */
 
 /**
  * @brief Map provider string to GV_LLMProvider enum.
@@ -302,9 +294,7 @@ static const char *json_get_string_or_null(const GV_JsonValue *obj, const char *
     return gv_json_get_string(val);
 }
 
-/* ============================================================================
- * Lifecycle
- * ============================================================================ */
+/*  Lifecycle  */
 
 GV_Agent *gv_agent_create(const void *db, const GV_AgentConfig *config) {
     if (db == NULL || config == NULL) return NULL;
@@ -380,9 +370,7 @@ void gv_agent_destroy(GV_Agent *agent) {
     free(agent);
 }
 
-/* ============================================================================
- * Schema Hints
- * ============================================================================ */
+/*  Schema Hints  */
 
 void gv_agent_set_schema_hint(GV_Agent *agent, const char *schema_json) {
     if (agent == NULL || schema_json == NULL) return;
@@ -400,9 +388,7 @@ void gv_agent_set_schema_hint(GV_Agent *agent, const char *schema_json) {
     pthread_mutex_unlock(&agent->mutex);
 }
 
-/* ============================================================================
- * Query Agent
- * ============================================================================ */
+/*  Query Agent  */
 
 GV_AgentResult *gv_agent_query(GV_Agent *agent, const char *natural_language_query, size_t k) {
     GV_AgentResult *result = alloc_result();
@@ -563,9 +549,7 @@ GV_AgentResult *gv_agent_query(GV_Agent *agent, const char *natural_language_que
     return result;
 }
 
-/* ============================================================================
- * Transformation Agent
- * ============================================================================ */
+/*  Transformation Agent  */
 
 GV_AgentResult *gv_agent_transform(GV_Agent *agent, const char *natural_language_instruction) {
     GV_AgentResult *result = alloc_result();
@@ -752,9 +736,7 @@ GV_AgentResult *gv_agent_transform(GV_Agent *agent, const char *natural_language
     return result;
 }
 
-/* ============================================================================
- * Personalization Agent
- * ============================================================================ */
+/*  Personalization Agent  */
 
 /**
  * @brief Compare helper for qsort: sort by adjusted distance ascending.
@@ -995,9 +977,7 @@ GV_AgentResult *gv_agent_personalize(GV_Agent *agent, const char *query,
     return result;
 }
 
-/* ============================================================================
- * Result Cleanup
- * ============================================================================ */
+/*  Result Cleanup  */
 
 void gv_agent_free_result(GV_AgentResult *result) {
     if (result == NULL) return;

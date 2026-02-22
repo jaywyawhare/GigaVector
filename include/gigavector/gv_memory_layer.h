@@ -342,9 +342,7 @@ void gv_memory_metadata_free(GV_MemoryMetadata *metadata);
  */
 GV_MemoryLayerConfig gv_memory_layer_config_default(void);
 
-/* ============================================================================
- * Memory Link Management API
- * ============================================================================ */
+/* Memory Link Management API */
 
 /**
  * @brief Create a link between two memories.

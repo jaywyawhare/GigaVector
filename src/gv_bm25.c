@@ -11,17 +11,13 @@
 #include <math.h>
 #include <pthread.h>
 
-/* ============================================================================
- * Internal Constants
- * ============================================================================ */
+/*  Internal Constants  */
 
 #define TERM_HASH_BUCKETS 4096
 #define DOC_HASH_BUCKETS 1024
 #define INITIAL_POSTING_CAPACITY 16
 
-/* ============================================================================
- * Internal Structures
- * ============================================================================ */
+/*  Internal Structures  */
 
 /**
  * @brief Posting entry (term occurrence in a document).
@@ -70,9 +66,7 @@ struct GV_BM25Index {
     pthread_rwlock_t rwlock;
 };
 
-/* ============================================================================
- * Hash Functions
- * ============================================================================ */
+/*  Hash Functions  */
 
 static size_t hash_string(const char *str) {
     size_t hash = 5381;
@@ -87,9 +81,7 @@ static size_t hash_size(size_t val) {
     return val;
 }
 
-/* ============================================================================
- * Configuration
- * ============================================================================ */
+/*  Configuration  */
 
 static const GV_BM25Config DEFAULT_CONFIG = {
     .k1 = 1.2,
@@ -108,9 +100,7 @@ void gv_bm25_config_init(GV_BM25Config *config) {
     *config = DEFAULT_CONFIG;
 }
 
-/* ============================================================================
- * Lifecycle
- * ============================================================================ */
+/*  Lifecycle  */
 
 GV_BM25Index *gv_bm25_create(const GV_BM25Config *config) {
     GV_BM25Index *index = calloc(1, sizeof(GV_BM25Index));
@@ -163,9 +153,7 @@ void gv_bm25_destroy(GV_BM25Index *index) {
     free(index);
 }
 
-/* ============================================================================
- * Internal Helpers
- * ============================================================================ */
+/*  Internal Helpers  */
 
 static GV_PostingList *find_posting_list(GV_BM25Index *index, const char *term) {
     size_t bucket = hash_string(term) % TERM_HASH_BUCKETS;
@@ -291,9 +279,7 @@ static void remove_doc_from_posting_list(GV_PostingList *pl, size_t doc_id) {
     }
 }
 
-/* ============================================================================
- * Indexing Operations
- * ============================================================================ */
+/*  Indexing Operations  */
 
 int gv_bm25_add_document(GV_BM25Index *index, size_t doc_id, const char *text) {
     if (!index || !text) return -1;
@@ -424,9 +410,7 @@ int gv_bm25_update_document(GV_BM25Index *index, size_t doc_id, const char *text
     return gv_bm25_add_document(index, doc_id, text);
 }
 
-/* ============================================================================
- * BM25 Scoring
- * ============================================================================ */
+/*  BM25 Scoring  */
 
 static double compute_idf(GV_BM25Index *index, size_t doc_freq) {
     double N = (double)index->total_documents;
@@ -449,9 +433,7 @@ static double compute_bm25_term_score(GV_BM25Index *index, size_t term_freq,
     return idf * tf_component;
 }
 
-/* ============================================================================
- * Search Operations
- * ============================================================================ */
+/*  Search Operations  */
 
 typedef struct {
     size_t doc_id;
@@ -618,9 +600,7 @@ int gv_bm25_score_document(GV_BM25Index *index, size_t doc_id, const char *query
     return 0;
 }
 
-/* ============================================================================
- * Index Information
- * ============================================================================ */
+/*  Index Information  */
 
 int gv_bm25_get_stats(const GV_BM25Index *index, GV_BM25Stats *stats) {
     if (!index || !stats) return -1;
@@ -681,9 +661,7 @@ int gv_bm25_has_document(const GV_BM25Index *index, size_t doc_id) {
     return exists;
 }
 
-/* ============================================================================
- * Persistence
- * ============================================================================ */
+/*  Persistence  */
 
 int gv_bm25_save(const GV_BM25Index *index, const char *filepath) {
     if (!index || !filepath) return -1;

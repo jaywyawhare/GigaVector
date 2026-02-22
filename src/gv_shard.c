@@ -12,9 +12,7 @@
 #include <pthread.h>
 #include <time.h>
 
-/* ============================================================================
- * Internal Structures
- * ============================================================================ */
+/*  Internal Structures  */
 
 #define MAX_SHARDS 256
 #define VIRTUAL_NODES_DEFAULT 150
@@ -51,9 +49,7 @@ struct GV_ShardManager {
     pthread_rwlock_t rwlock;
 };
 
-/* ============================================================================
- * Configuration
- * ============================================================================ */
+/*  Configuration  */
 
 static const GV_ShardConfig DEFAULT_CONFIG = {
     .shard_count = 8,
@@ -67,9 +63,7 @@ void gv_shard_config_init(GV_ShardConfig *config) {
     *config = DEFAULT_CONFIG;
 }
 
-/* ============================================================================
- * Hash Functions
- * ============================================================================ */
+/*  Hash Functions  */
 
 static uint32_t hash_key(const void *key, size_t len) {
     /* FNV-1a hash */
@@ -87,9 +81,7 @@ static uint32_t hash_shard_vnode(uint32_t shard_id, uint32_t vnode) {
     return hash_key(&val, sizeof(val));
 }
 
-/* ============================================================================
- * Ring Management
- * ============================================================================ */
+/*  Ring Management  */
 
 static int compare_vnodes(const void *a, const void *b) {
     const VirtualNode *va = (const VirtualNode *)a;
@@ -145,9 +137,7 @@ static uint32_t find_shard_in_ring(GV_ShardManager *mgr, uint32_t hash) {
     return mgr->ring[lo].shard_id;
 }
 
-/* ============================================================================
- * Lifecycle
- * ============================================================================ */
+/*  Lifecycle  */
 
 GV_ShardManager *gv_shard_manager_create(const GV_ShardConfig *config) {
     GV_ShardManager *mgr = calloc(1, sizeof(GV_ShardManager));
@@ -175,9 +165,7 @@ void gv_shard_manager_destroy(GV_ShardManager *mgr) {
     free(mgr);
 }
 
-/* ============================================================================
- * Shard Operations
- * ============================================================================ */
+/*  Shard Operations  */
 
 int gv_shard_add(GV_ShardManager *mgr, uint32_t shard_id, const char *node_address) {
     if (!mgr || !node_address) return -1;
@@ -357,9 +345,7 @@ int gv_shard_set_state(GV_ShardManager *mgr, uint32_t shard_id, GV_ShardState st
     return -1;
 }
 
-/* ============================================================================
- * Rebalancing
- * ============================================================================ */
+/*  Rebalancing  */
 
 /**
  * @brief Internal structure for tracking rebalance moves.
@@ -566,9 +552,7 @@ int gv_shard_rebalance_cancel(GV_ShardManager *mgr) {
     return 0;
 }
 
-/* ============================================================================
- * Local Shard
- * ============================================================================ */
+/*  Local Shard  */
 
 int gv_shard_attach_local(GV_ShardManager *mgr, uint32_t shard_id, GV_Database *db) {
     if (!mgr || !db) return -1;

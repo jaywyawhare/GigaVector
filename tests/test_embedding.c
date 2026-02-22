@@ -50,11 +50,8 @@ static const char *get_env_api_key(const char *key) {
 }
 
 void test_google_embedding(void) {
-    printf("Testing Google Embedding API...\n");
-    
     const char *api_key = get_env_api_key("GEMINI_API_KEY");
     if (!api_key) {
-        printf("[SKIP] Skipping: GEMINI_API_KEY environment variable not set\n");
         return;
     }
     
@@ -71,66 +68,24 @@ void test_google_embedding(void) {
     
     GV_EmbeddingService *service = gv_embedding_service_create(&config);
     if (service == NULL) {
-        printf("[FAIL] Failed to create embedding service\n");
         return;
     }
-    
-    printf("[OK] Embedding service created\n");
-    
+
     const char *text = "Hello, GigaVector! This is a test of the embedding service.";
     size_t embedding_dim = 0;
     float *embedding = NULL;
-    
-    printf("[INFO] Generating embedding for: \"%s\"\n", text);
     int result = gv_embedding_generate(service, text, &embedding_dim, &embedding);
     
     if (result == 0 && embedding != NULL) {
-        printf("[OK] Embedding generated successfully!\n");
-        printf("[DIM] Dimension: %zu\n", embedding_dim);
-        printf("[EMBEDDING] First 10 values: ");
-        size_t print_count = embedding_dim < 10 ? embedding_dim : 10;
-        for (size_t i = 0; i < print_count; i++) {
-            printf("%.6f", embedding[i]);
-            if (i < print_count - 1) printf(", ");
-        }
-        printf("\n");
-        
-        if (embedding_dim > 10) {
-            printf("[EMBEDDING] Last 10 values: ");
-            for (size_t i = embedding_dim - 10; i < embedding_dim; i++) {
-                printf("%.6f", embedding[i]);
-                if (i < embedding_dim - 1) printf(", ");
-            }
-            printf("\n");
-        }
-        
-        
-        float min_val = embedding[0];
-        float max_val = embedding[0];
-        float sum = 0.0f;
-        for (size_t i = 0; i < embedding_dim; i++) {
-            if (embedding[i] < min_val) min_val = embedding[i];
-            if (embedding[i] > max_val) max_val = embedding[i];
-            sum += embedding[i];
-        }
-        float mean = sum / embedding_dim;
-        
-        printf("[STATS] Min: %.6f, Max: %.6f, Mean: %.6f\n", min_val, max_val, mean);
-        
         free(embedding);
-    } else {
-        printf("[FAIL] Failed to generate embedding\n");
     }
     
     gv_embedding_service_destroy(service);
 }
 
 void test_google_embedding_batch(void) {
-    printf("\nTesting Google Embedding Batch API...\n");
-    
     const char *api_key = get_env_api_key("GEMINI_API_KEY");
     if (!api_key) {
-        printf("[SKIP] Skipping: GEMINI_API_KEY environment variable not set\n");
         return;
     }
     
@@ -147,7 +102,6 @@ void test_google_embedding_batch(void) {
     
     GV_EmbeddingService *service = gv_embedding_service_create(&config);
     if (service == NULL) {
-        printf("[FAIL] Failed to create embedding service\n");
         return;
     }
     
@@ -158,35 +112,20 @@ void test_google_embedding_batch(void) {
     };
     size_t text_count = 3;
     
-    size_t *embedding_dims = (size_t *)malloc(text_count * sizeof(size_t));
-    float **embeddings = (float **)malloc(text_count * sizeof(float *));
-    
-    printf("[INFO] Generating embeddings for %zu texts...\n", text_count);
+    size_t *embedding_dims = NULL;
+    float **embeddings = NULL;
     int result = gv_embedding_generate_batch(service, texts, text_count, 
                                              &embedding_dims, &embeddings);
-    
-    printf("[DEBUG] Batch result: %d (expected >= 0 for success)\n", result);
-    
+
     if (result >= 0 && result == (int)text_count) {
-        printf("[OK] Batch embedding generated successfully!\n");
         for (size_t i = 0; i < text_count; i++) {
-            printf("[TEXT %zu] \"%s\"\n", i + 1, texts[i]);
-            printf("    Dimension: %zu\n", embedding_dims[i]);
             if (embeddings[i] != NULL) {
-                printf("    First 5 values: ");
-                size_t print_count = embedding_dims[i] < 5 ? embedding_dims[i] : 5;
-                for (size_t j = 0; j < print_count; j++) {
-                    printf("%.6f", embeddings[i][j]);
-                    if (j < print_count - 1) printf(", ");
-                }
-                printf("\n");
                 free(embeddings[i]);
             }
         }
         free(embedding_dims);
         free(embeddings);
     } else {
-        printf("[FAIL] Failed to generate batch embeddings\n");
         free(embedding_dims);
         free(embeddings);
     }
@@ -195,11 +134,8 @@ void test_google_embedding_batch(void) {
 }
 
 void test_openai_embedding(void) {
-    printf("\nTesting OpenAI Embedding API\n");
-    
     const char *api_key = get_env_api_key("OPENAI_API_KEY");
     if (!api_key) {
-        printf("[SKIP] Skipping: OPENAI_API_KEY environment variable not set\n");
         return;
     }
     
@@ -216,66 +152,24 @@ void test_openai_embedding(void) {
     
     GV_EmbeddingService *service = gv_embedding_service_create(&config);
     if (service == NULL) {
-        printf("[FAIL] Failed to create embedding service\n");
         return;
     }
-    
-    printf("[OK] Embedding service created\n");
-    
+
     const char *text = "hello world";
     size_t embedding_dim = 0;
     float *embedding = NULL;
-    
-    printf("[INFO] Generating embedding for: \"%s\"\n", text);
     int result = gv_embedding_generate(service, text, &embedding_dim, &embedding);
     
     if (result == 0 && embedding != NULL) {
-        printf("[OK] Embedding generated successfully!\n");
-        printf("[DIM] Dimension: %zu\n", embedding_dim);
-        printf("[EMBEDDING] First 10 values: ");
-        size_t print_count = embedding_dim < 10 ? embedding_dim : 10;
-        for (size_t i = 0; i < print_count; i++) {
-            printf("%.6f", embedding[i]);
-            if (i < print_count - 1) printf(", ");
-        }
-        printf("\n");
-        
-        if (embedding_dim > 10) {
-            printf("[EMBEDDING] Last 10 values: ");
-            for (size_t i = embedding_dim - 10; i < embedding_dim; i++) {
-                printf("%.6f", embedding[i]);
-                if (i < embedding_dim - 1) printf(", ");
-            }
-            printf("\n");
-        }
-        
-        
-        float min_val = embedding[0];
-        float max_val = embedding[0];
-        float sum = 0.0f;
-        for (size_t i = 0; i < embedding_dim; i++) {
-            if (embedding[i] < min_val) min_val = embedding[i];
-            if (embedding[i] > max_val) max_val = embedding[i];
-            sum += embedding[i];
-        }
-        float mean = sum / embedding_dim;
-        
-        printf("[STATS] Min: %.6f, Max: %.6f, Mean: %.6f\n", min_val, max_val, mean);
-        
         free(embedding);
-    } else {
-        printf("[FAIL] Failed to generate embedding (result: %d)\n", result);
     }
     
     gv_embedding_service_destroy(service);
 }
 
 void test_openai_embedding_batch(void) {
-    printf("\nTesting OpenAI Embedding Batch API\n");
-    
     const char *api_key = get_env_api_key("OPENAI_API_KEY");
     if (!api_key) {
-        printf("[SKIP] Skipping: OPENAI_API_KEY environment variable not set\n");
         return;
     }
     
@@ -292,7 +186,6 @@ void test_openai_embedding_batch(void) {
     
     GV_EmbeddingService *service = gv_embedding_service_create(&config);
     if (service == NULL) {
-        printf("[FAIL] Failed to create embedding service\n");
         return;
     }
     
@@ -306,32 +199,18 @@ void test_openai_embedding_batch(void) {
     size_t *embedding_dims = NULL;
     float **embeddings = NULL;
     
-    printf("[INFO] Generating embeddings for %zu texts...\n", text_count);
     int result = gv_embedding_generate_batch(service, texts, text_count, 
                                              &embedding_dims, &embeddings);
-    
-    printf("[DEBUG] Batch result: %d (expected >= 0 for success)\n", result);
-    
+
     if (result >= 0 && result == (int)text_count) {
-        printf("[OK] Batch embedding generated successfully!\n");
         for (size_t i = 0; i < text_count; i++) {
-            printf("[TEXT %zu] \"%s\"\n", i + 1, texts[i]);
-            printf("    Dimension: %zu\n", embedding_dims[i]);
             if (embeddings[i] != NULL) {
-                printf("    First 5 values: ");
-                size_t print_count = embedding_dims[i] < 5 ? embedding_dims[i] : 5;
-                for (size_t j = 0; j < print_count; j++) {
-                    printf("%.6f", embeddings[i][j]);
-                    if (j < print_count - 1) printf(", ");
-                }
-                printf("\n");
                 free(embeddings[i]);
             }
         }
         free(embedding_dims);
         free(embeddings);
     } else {
-        printf("[FAIL] Failed to generate batch embeddings (result: %d)\n", result);
         free(embedding_dims);
         free(embeddings);
     }

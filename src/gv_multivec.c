@@ -9,9 +9,7 @@
 #include "gigavector/gv_vector.h"
 #include "gigavector/gv_distance.h"
 
-/* ------------------------------------------------------------------ */
 /*  Internal data structures                                          */
-/* ------------------------------------------------------------------ */
 
 /**
  * @brief A single document entry holding its chunk vectors.
@@ -35,9 +33,7 @@ typedef struct {
     size_t             total_chunks;
 } GV_MultiVecIndex;
 
-/* ------------------------------------------------------------------ */
 /*  Max-heap helpers for top-k document selection                     */
-/* ------------------------------------------------------------------ */
 
 typedef struct {
     float    dist;
@@ -85,18 +81,14 @@ static void gv_mv_heap_push(GV_MVHeapItem *heap, size_t *size, size_t capacity,
     }
 }
 
-/* ------------------------------------------------------------------ */
 /*  Default configuration                                             */
-/* ------------------------------------------------------------------ */
 
 static const GV_MultiVecConfig gv_multivec_default_config = {
     .max_chunks_per_doc = 256,
     .aggregation        = GV_DOC_AGG_MAX_SIM
 };
 
-/* ------------------------------------------------------------------ */
 /*  Lifecycle                                                         */
-/* ------------------------------------------------------------------ */
 
 void *gv_multivec_create(size_t dimension, const GV_MultiVecConfig *config) {
     if (dimension == 0) return NULL;
@@ -135,9 +127,7 @@ void gv_multivec_destroy(void *index) {
     free(idx);
 }
 
-/* ------------------------------------------------------------------ */
 /*  Document management                                               */
-/* ------------------------------------------------------------------ */
 
 int gv_multivec_add_document(void *index, uint64_t doc_id,
                              const float *chunks, size_t num_chunks,
@@ -202,9 +192,7 @@ int gv_multivec_delete_document(void *index, uint64_t doc_id) {
     return -1; /* not found */
 }
 
-/* ------------------------------------------------------------------ */
 /*  Search                                                            */
-/* ------------------------------------------------------------------ */
 
 /**
  * @brief Compute the aggregated distance from a query to all chunks of a
@@ -313,9 +301,7 @@ int gv_multivec_search(void *index, const float *query, size_t k,
     return n;
 }
 
-/* ------------------------------------------------------------------ */
 /*  Statistics                                                        */
-/* ------------------------------------------------------------------ */
 
 size_t gv_multivec_count_documents(const void *index) {
     if (!index) return 0;
@@ -334,9 +320,7 @@ size_t gv_multivec_count_chunks(const void *index) {
     return idx->total_chunks;
 }
 
-/* ------------------------------------------------------------------ */
 /*  Serialization helpers                                             */
-/* ------------------------------------------------------------------ */
 
 static int gv_mv_write_u64(FILE *f, uint64_t v) {
     return fwrite(&v, sizeof(uint64_t), 1, f) == 1 ? 0 : -1;
@@ -354,9 +338,7 @@ static int gv_mv_read_u32(FILE *f, uint32_t *v) {
     return (v && fread(v, sizeof(uint32_t), 1, f) == 1) ? 0 : -1;
 }
 
-/* ------------------------------------------------------------------ */
 /*  Save / Load                                                       */
-/* ------------------------------------------------------------------ */
 
 int gv_multivec_save(const void *index, FILE *out) {
     if (!index || !out) return -1;

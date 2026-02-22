@@ -27,7 +27,6 @@ static int test_lsh_create_destroy(void) {
     gv_lsh_destroy(index);
     gv_soa_storage_destroy(storage);
 
-    printf("  PASS: test_lsh_create_destroy\n");
     return 0;
 }
 
@@ -81,7 +80,6 @@ static int test_lsh_insert_search(void) {
     gv_lsh_destroy(index);
     gv_soa_storage_destroy(storage);
 
-    printf("  PASS: test_lsh_insert_search\n");
     return 0;
 }
 
@@ -134,7 +132,6 @@ static int test_lsh_range_search(void) {
     gv_lsh_destroy(index);
     gv_soa_storage_destroy(storage);
 
-    printf("  PASS: test_lsh_range_search\n");
     return 0;
 }
 
@@ -176,7 +173,6 @@ static int test_lsh_delete(void) {
     gv_lsh_destroy(index);
     gv_soa_storage_destroy(storage);
 
-    printf("  PASS: test_lsh_delete\n");
     return 0;
 }
 
@@ -214,7 +210,6 @@ static int test_lsh_update(void) {
     gv_lsh_destroy(index);
     gv_soa_storage_destroy(storage);
 
-    printf("  PASS: test_lsh_update\n");
     return 0;
 }
 
@@ -227,7 +222,6 @@ static int test_lsh_db_integration(void) {
 
     GV_Database *db = gv_db_open(NULL, dim, GV_INDEX_TYPE_LSH);
     if (db == NULL) {
-        printf("  SKIP: test_lsh_db_integration (LSH not available)\n");
         return 0;
     }
 
@@ -254,7 +248,6 @@ static int test_lsh_db_integration(void) {
 
     gv_db_close(db);
 
-    printf("  PASS: test_lsh_db_integration\n");
     return 0;
 }
 
@@ -271,7 +264,6 @@ static int test_lsh_save_load(void) {
 
     GV_Database *db = gv_db_open(NULL, dim, GV_INDEX_TYPE_LSH);
     if (db == NULL) {
-        printf("  SKIP: test_lsh_save_load (LSH not available)\n");
         return 0;
     }
 
@@ -304,7 +296,6 @@ static int test_lsh_save_load(void) {
     /* Clean up the test file. */
     unlink(filepath);
 
-    printf("  PASS: test_lsh_save_load\n");
     return 0;
 }
 
@@ -317,7 +308,6 @@ static int test_lsh_metadata_filter(void) {
 
     GV_Database *db = gv_db_open(NULL, dim, GV_INDEX_TYPE_LSH);
     if (db == NULL) {
-        printf("  SKIP: test_lsh_metadata_filter (LSH not available)\n");
         return 0;
     }
 
@@ -358,17 +348,12 @@ static int test_lsh_metadata_filter(void) {
 
     gv_db_close(db);
 
-    printf("  PASS: test_lsh_metadata_filter\n");
     return 0;
 }
 
-/* ---------------------------------------------------------------------------
- * main
- * --------------------------------------------------------------------------- */
+/*  main  */
 int main(void) {
     int rc = 0;
-
-    printf("Running LSH tests...\n");
 
     rc |= test_lsh_create_destroy();
     rc |= test_lsh_insert_search();
@@ -378,12 +363,6 @@ int main(void) {
     rc |= test_lsh_db_integration();
     rc |= test_lsh_save_load();
     rc |= test_lsh_metadata_filter();
-
-    if (rc == 0) {
-        printf("All LSH tests passed.\n");
-    } else {
-        printf("Some LSH tests FAILED.\n");
-    }
 
     return rc != 0;
 }

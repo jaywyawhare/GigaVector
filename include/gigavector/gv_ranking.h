@@ -23,9 +23,7 @@ extern "C" {
  * @endcode
  */
 
-/* ============================================================================
- * Enumerations
- * ============================================================================ */
+/* Enumerations */
 
 /**
  * @brief Ranking operation types used in the expression tree.
@@ -45,9 +43,7 @@ typedef enum {
     GV_RANK_DECAY_LINEAR = 11   /**< Linear decay:      max(0, 1 - |val-origin|/scale). */
 } GV_RankOp;
 
-/* ============================================================================
- * Data Structures
- * ============================================================================ */
+/* Data Structures */
 
 /**
  * @brief A named signal value supplied per-document at scoring time.
@@ -111,9 +107,7 @@ typedef struct {
     float  vector_score;    /**< Raw vector distance / similarity score. */
 } GV_RankedResult;
 
-/* ============================================================================
- * Expression Construction
- * ============================================================================ */
+/* Expression Construction */
 
 /**
  * @brief Parse a human-readable ranking expression string.
@@ -150,9 +144,7 @@ GV_RankExpr *gv_rank_expr_parse(const char *expression);
 GV_RankExpr *gv_rank_expr_create_weighted(size_t n, const char **signal_names,
                                           const double *weights);
 
-/* ============================================================================
- * Expression Evaluation
- * ============================================================================ */
+/* Expression Evaluation */
 
 /**
  * @brief Evaluate a ranking expression for one document.
@@ -167,9 +159,7 @@ GV_RankExpr *gv_rank_expr_create_weighted(size_t n, const char **signal_names,
 double gv_rank_expr_eval(const GV_RankExpr *expr, float vector_score,
                          const GV_RankSignal *signals, size_t signal_count);
 
-/* ============================================================================
- * Expression Lifecycle
- * ============================================================================ */
+/* Expression Lifecycle */
 
 /**
  * @brief Destroy a ranking expression and free all associated memory.
@@ -180,9 +170,7 @@ double gv_rank_expr_eval(const GV_RankExpr *expr, float vector_score,
  */
 void gv_rank_expr_destroy(GV_RankExpr *expr);
 
-/* ============================================================================
- * Ranked Search
- * ============================================================================ */
+/* Ranked Search */
 
 /**
  * @brief Perform a vector search and re-rank results with a custom expression.

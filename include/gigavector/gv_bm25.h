@@ -50,9 +50,7 @@ typedef struct {
  */
 typedef struct GV_BM25Index GV_BM25Index;
 
-/* ============================================================================
- * Configuration
- * ============================================================================ */
+/* Configuration */
 
 /**
  * @brief Initialize BM25 configuration with defaults.
@@ -66,9 +64,7 @@ typedef struct GV_BM25Index GV_BM25Index;
  */
 void gv_bm25_config_init(GV_BM25Config *config);
 
-/* ============================================================================
- * Index Lifecycle
- * ============================================================================ */
+/* Index Lifecycle */
 
 /**
  * @brief Create a BM25 index.
@@ -85,9 +81,7 @@ GV_BM25Index *gv_bm25_create(const GV_BM25Config *config);
  */
 void gv_bm25_destroy(GV_BM25Index *index);
 
-/* ============================================================================
- * Indexing Operations
- * ============================================================================ */
+/* Indexing Operations */
 
 /**
  * @brief Add a document to the index.
@@ -132,9 +126,7 @@ int gv_bm25_remove_document(GV_BM25Index *index, size_t doc_id);
  */
 int gv_bm25_update_document(GV_BM25Index *index, size_t doc_id, const char *text);
 
-/* ============================================================================
- * Search Operations
- * ============================================================================ */
+/* Search Operations */
 
 /**
  * @brief Search the index with a text query.
@@ -173,9 +165,7 @@ int gv_bm25_search_terms(GV_BM25Index *index, const char **terms, size_t term_co
 int gv_bm25_score_document(GV_BM25Index *index, size_t doc_id, const char *query,
                             double *score);
 
-/* ============================================================================
- * Index Information
- * ============================================================================ */
+/* Index Information */
 
 /**
  * @brief Get index statistics.
@@ -204,9 +194,7 @@ size_t gv_bm25_get_doc_freq(const GV_BM25Index *index, const char *term);
  */
 int gv_bm25_has_document(const GV_BM25Index *index, size_t doc_id);
 
-/* ============================================================================
- * Persistence
- * ============================================================================ */
+/* Persistence */
 
 /**
  * @brief Save index to file.

@@ -66,9 +66,7 @@ typedef struct {
  */
 typedef struct GV_ShardManager GV_ShardManager;
 
-/* ============================================================================
- * Configuration
- * ============================================================================ */
+/* Configuration */
 
 /**
  * @brief Initialize shard configuration with defaults.
@@ -77,9 +75,7 @@ typedef struct GV_ShardManager GV_ShardManager;
  */
 void gv_shard_config_init(GV_ShardConfig *config);
 
-/* ============================================================================
- * Shard Manager Lifecycle
- * ============================================================================ */
+/* Shard Manager Lifecycle */
 
 /**
  * @brief Create a shard manager.
@@ -96,9 +92,7 @@ GV_ShardManager *gv_shard_manager_create(const GV_ShardConfig *config);
  */
 void gv_shard_manager_destroy(GV_ShardManager *mgr);
 
-/* ============================================================================
- * Shard Operations
- * ============================================================================ */
+/* Shard Operations */
 
 /**
  * @brief Add a shard.
@@ -176,9 +170,7 @@ void gv_shard_free_list(GV_ShardInfo *shards, size_t count);
  */
 int gv_shard_set_state(GV_ShardManager *mgr, uint32_t shard_id, GV_ShardState state);
 
-/* ============================================================================
- * Rebalancing
- * ============================================================================ */
+/* Rebalancing */
 
 /**
  * @brief Start shard rebalancing.
@@ -205,9 +197,7 @@ int gv_shard_rebalance_status(GV_ShardManager *mgr, double *progress);
  */
 int gv_shard_rebalance_cancel(GV_ShardManager *mgr);
 
-/* ============================================================================
- * Local Shard
- * ============================================================================ */
+/* Local Shard */
 
 /**
  * @brief Attach a local database as a shard.

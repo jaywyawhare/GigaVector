@@ -39,9 +39,7 @@ typedef struct {
     int active;                 /**< 1 if trace is active, 0 if finalized. */
 } GV_QueryTrace;
 
-/* ============================================================================
- * Trace Lifecycle
- * ============================================================================ */
+/* Trace Lifecycle */
 
 /**
  * @brief Begin a new query trace.
@@ -69,9 +67,7 @@ void gv_trace_end(GV_QueryTrace *trace);
  */
 void gv_trace_destroy(GV_QueryTrace *trace);
 
-/* ============================================================================
- * Span Operations
- * ============================================================================ */
+/* Span Operations */
 
 /**
  * @brief Start a new named span within a trace.
@@ -110,9 +106,7 @@ void gv_trace_span_add(GV_QueryTrace *trace, const char *name, uint64_t duration
  */
 void gv_trace_set_metadata(GV_QueryTrace *trace, const char *metadata);
 
-/* ============================================================================
- * Serialization and Output
- * ============================================================================ */
+/* Serialization and Output */
 
 /**
  * @brief Serialize a trace to a JSON string.
@@ -132,9 +126,7 @@ char *gv_trace_to_json(const GV_QueryTrace *trace);
  */
 void gv_trace_print(const GV_QueryTrace *trace, FILE *out);
 
-/* ============================================================================
- * Utility
- * ============================================================================ */
+/* Utility */
 
 /**
  * @brief Get the current time in microseconds using CLOCK_MONOTONIC.

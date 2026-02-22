@@ -1150,9 +1150,7 @@ int gv_memory_update(GV_MemoryLayer *layer, const char *memory_id,
     return 0;
 }
 
-/* ============================================================================
- * Search Options and Advanced Search
- * ============================================================================ */
+/*  Search Options and Advanced Search  */
 
 GV_MemorySearchOptions gv_memory_search_options_default(void) {
     GV_MemorySearchOptions options;
@@ -1409,9 +1407,7 @@ int gv_memory_search_advanced(GV_MemoryLayer *layer, const float *query_embeddin
     return (int)out_count;
 }
 
-/* ============================================================================
- * Memory Link Management
- * ============================================================================ */
+/*  Memory Link Management  */
 
 /** Reciprocal strength multiplier (Cortex uses 0.9) */
 #define RECIPROCAL_STRENGTH_FACTOR 0.9f

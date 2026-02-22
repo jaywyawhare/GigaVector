@@ -17,17 +17,13 @@
 #include <pthread.h>
 #include <time.h>
 
-/* ============================================================================
- * Internal Constants
- * ============================================================================ */
+/*  Internal Constants  */
 
 #define MAX_SUBSCRIBERS         32
 #define DEFAULT_RING_SIZE       65536
 #define DEFAULT_MAX_LOG_SIZE_MB 256
 
-/* ============================================================================
- * Internal Structures
- * ============================================================================ */
+/*  Internal Structures  */
 
 /**
  * @brief Deep-copied event stored in the ring buffer.
@@ -75,18 +71,14 @@ struct GV_CDCStream {
     pthread_mutex_t mutex;
 };
 
-/* ============================================================================
- * Forward Declarations
- * ============================================================================ */
+/*  Forward Declarations  */
 
 static void  free_ring_entry(CDCRingEntry *entry);
 static int   deep_copy_event(CDCRingEntry *dst, const GV_CDCEvent *src,
                              uint64_t seq, int include_vector_data);
 static void  persist_event(GV_CDCStream *stream, const CDCRingEntry *entry);
 
-/* ============================================================================
- * Configuration
- * ============================================================================ */
+/*  Configuration  */
 
 static const GV_CDCConfig DEFAULT_CONFIG = {
     .ring_buffer_size    = DEFAULT_RING_SIZE,
@@ -101,9 +93,7 @@ void gv_cdc_config_init(GV_CDCConfig *config) {
     *config = DEFAULT_CONFIG;
 }
 
-/* ============================================================================
- * Lifecycle
- * ============================================================================ */
+/*  Lifecycle  */
 
 GV_CDCStream *gv_cdc_create(const GV_CDCConfig *config) {
     GV_CDCConfig cfg = config ? *config : DEFAULT_CONFIG;
@@ -173,9 +163,7 @@ void gv_cdc_destroy(GV_CDCStream *stream) {
     free(stream);
 }
 
-/* ============================================================================
- * Publishing
- * ============================================================================ */
+/*  Publishing  */
 
 int gv_cdc_publish(GV_CDCStream *stream, const GV_CDCEvent *event) {
     if (!stream || !event) return -1;
@@ -234,9 +222,7 @@ int gv_cdc_publish(GV_CDCStream *stream, const GV_CDCEvent *event) {
     return 0;
 }
 
-/* ============================================================================
- * Subscription (push interface)
- * ============================================================================ */
+/*  Subscription (push interface)  */
 
 int gv_cdc_subscribe(GV_CDCStream *stream, uint32_t event_mask,
                      GV_CDCCallback callback, void *user_data) {
@@ -284,9 +270,7 @@ int gv_cdc_unsubscribe(GV_CDCStream *stream, int subscriber_id) {
     return 0;
 }
 
-/* ============================================================================
- * Polling (pull interface)
- * ============================================================================ */
+/*  Polling (pull interface)  */
 
 int gv_cdc_poll(GV_CDCStream *stream, GV_CDCCursor *cursor,
                 GV_CDCEvent *events, size_t max_events) {
@@ -403,9 +387,7 @@ size_t gv_cdc_pending_count(const GV_CDCStream *stream, const GV_CDCCursor *curs
     return pending;
 }
 
-/* ============================================================================
- * Ring Buffer Helpers
- * ============================================================================ */
+/*  Ring Buffer Helpers  */
 
 static void free_ring_entry(CDCRingEntry *entry) {
     if (!entry || !entry->valid) return;
@@ -453,9 +435,7 @@ static int deep_copy_event(CDCRingEntry *dst, const GV_CDCEvent *src,
     return 0;
 }
 
-/* ============================================================================
- * File Persistence
- * ============================================================================ */
+/*  File Persistence  */
 
 /**
  * Binary record format (all fields little-endian / native):

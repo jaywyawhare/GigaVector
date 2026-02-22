@@ -395,9 +395,7 @@ static void *migration_thread_func(void *arg)
     return NULL;
 }
 
-/* ================================================================
- *  Public API
- * ================================================================ */
+/*  Public API  */
 
 GV_Migration *gv_migration_start(const float *source_data, size_t count,
                                   size_t dimension, int new_index_type,

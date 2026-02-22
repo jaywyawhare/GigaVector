@@ -27,18 +27,14 @@
 
 #include "gigavector/gv_hnsw_opt.h"
 
-/* ============================================================================
- * Constants
- * ============================================================================ */
+/*  Constants  */
 
 #define HNSW_OPT_MAGIC           0x484E5357  /* "HNSW" */
 #define HNSW_OPT_VERSION         1
 #define HNSW_OPT_INITIAL_CAP     1024
 #define HNSW_OPT_MAX_LEVEL       32
 
-/* ============================================================================
- * Inline quantized vector
- * ============================================================================ */
+/*  Inline quantized vector  */
 
 /**
  * Per-dimension quantization parameters stored once in the index header.
@@ -52,9 +48,7 @@ typedef struct {
     size_t bytes_per_vec; /**< Packed quantized bytes per vector */
 } QuantParams;
 
-/* ============================================================================
- * Graph node with inline storage
- * ============================================================================ */
+/*  Graph node with inline storage  */
 
 typedef struct {
     uint8_t *quant_vec;        /**< Quantized vector (bytes_per_vec bytes) */
@@ -66,9 +60,7 @@ typedef struct {
     size_t flat_index;         /**< Index into full-precision flat array */
 } InlineNode;
 
-/* ============================================================================
- * Index structure (opaque)
- * ============================================================================ */
+/*  Index structure (opaque)  */
 
 struct GV_HNSWInlineIndex {
     /* Parameters */
@@ -109,9 +101,7 @@ struct GV_HNSWInlineIndex {
     pthread_rwlock_t rwlock;
 };
 
-/* ============================================================================
- * Internal helpers: quantization
- * ============================================================================ */
+/*  Internal helpers: quantization  */
 
 static size_t quant_bytes_needed(size_t dimension, int bits) {
     return (dimension * (size_t)bits + 7) / 8;
@@ -228,9 +218,7 @@ static float distance_l2(const float *a, const float *b, size_t dimension) {
     return dist;
 }
 
-/* ============================================================================
- * Internal helpers: level assignment
- * ============================================================================ */
+/*  Internal helpers: level assignment  */
 
 static size_t assign_level(double level_mult) {
     double r = (double)rand() / ((double)RAND_MAX + 1.0);
@@ -240,9 +228,7 @@ static size_t assign_level(double level_mult) {
     return level;
 }
 
-/* ============================================================================
- * Internal helpers: node management
- * ============================================================================ */
+/*  Internal helpers: node management  */
 
 static int node_init(InlineNode *node, size_t level, size_t label,
                      size_t flat_index, size_t M, size_t M0,
@@ -305,9 +291,7 @@ static void node_destroy(InlineNode *node) {
     node->neighbor_caps = NULL;
 }
 
-/* ============================================================================
- * Internal helpers: min-heap for candidate list
- * ============================================================================ */
+/*  Internal helpers: min-heap for candidate list  */
 
 typedef struct {
     size_t node_idx;
@@ -322,9 +306,7 @@ static int candidate_cmp_asc(const void *a, const void *b) {
     return 0;
 }
 
-/* ============================================================================
- * Internal helpers: search layer (greedy with ef candidates)
- * ============================================================================ */
+/*  Internal helpers: search layer (greedy with ef candidates)  */
 
 /**
  * Search a single layer starting from entry_id, collecting up to ef
@@ -429,9 +411,7 @@ static size_t search_layer(const GV_HNSWInlineIndex *idx,
     return out_count;
 }
 
-/* ============================================================================
- * Internal helpers: neighbor selection heuristic
- * ============================================================================ */
+/*  Internal helpers: neighbor selection heuristic  */
 
 /**
  * Standard HNSW neighbor selection: from a candidate list, greedily pick
@@ -480,9 +460,7 @@ static size_t select_neighbors(const GV_HNSWInlineIndex *idx,
     return sel_count;
 }
 
-/* ============================================================================
- * Internal helpers: connect a new node at a given level
- * ============================================================================ */
+/*  Internal helpers: connect a new node at a given level  */
 
 static void connect_node(GV_HNSWInlineIndex *idx, size_t new_id,
                          const Candidate *candidates, size_t cand_count,
@@ -555,9 +533,7 @@ static void connect_node(GV_HNSWInlineIndex *idx, size_t new_id,
     free(selected);
 }
 
-/* ============================================================================
- * Internal helpers: time measurement
- * ============================================================================ */
+/*  Internal helpers: time measurement  */
 
 static double time_ms(void) {
     struct timespec ts;
@@ -565,9 +541,7 @@ static double time_ms(void) {
     return (double)ts.tv_sec * 1000.0 + (double)ts.tv_nsec / 1e6;
 }
 
-/* ============================================================================
- * Public API: lifecycle
- * ============================================================================ */
+/*  Public API: lifecycle  */
 
 GV_HNSWInlineIndex *gv_hnsw_inline_create(size_t dimension, size_t max_elements,
                                            size_t M, size_t ef_construction,
@@ -667,9 +641,7 @@ void gv_hnsw_inline_destroy(GV_HNSWInlineIndex *idx) {
     free(idx);
 }
 
-/* ============================================================================
- * Public API: insert
- * ============================================================================ */
+/*  Public API: insert  */
 
 int gv_hnsw_inline_insert(GV_HNSWInlineIndex *idx, const float *vector,
                            size_t label) {
@@ -811,9 +783,7 @@ int gv_hnsw_inline_insert(GV_HNSWInlineIndex *idx, const float *vector,
     return 0;
 }
 
-/* ============================================================================
- * Public API: search
- * ============================================================================ */
+/*  Public API: search  */
 
 int gv_hnsw_inline_search(const GV_HNSWInlineIndex *idx, const float *query,
                            size_t k, size_t ef_search,
@@ -907,9 +877,7 @@ int gv_hnsw_inline_search(const GV_HNSWInlineIndex *idx, const float *query,
     return (int)out_count;
 }
 
-/* ============================================================================
- * Internal: incremental rebuild worker
- * ============================================================================ */
+/*  Internal: incremental rebuild worker  */
 
 typedef struct {
     GV_HNSWInlineIndex *idx;
@@ -1033,9 +1001,7 @@ static void *rebuild_worker(void *arg) {
     return NULL;
 }
 
-/* ============================================================================
- * Public API: incremental rebuild
- * ============================================================================ */
+/*  Public API: incremental rebuild  */
 
 int gv_hnsw_inline_rebuild(GV_HNSWInlineIndex *idx,
                             const GV_HNSWRebuildConfig *config) {
@@ -1110,18 +1076,14 @@ int gv_hnsw_inline_rebuild_status(const GV_HNSWInlineIndex *idx,
     return 0;
 }
 
-/* ============================================================================
- * Public API: utility
- * ============================================================================ */
+/*  Public API: utility  */
 
 size_t gv_hnsw_inline_count(const GV_HNSWInlineIndex *idx) {
     if (idx == NULL) return 0;
     return idx->count;
 }
 
-/* ============================================================================
- * Internal helpers: file I/O
- * ============================================================================ */
+/*  Internal helpers: file I/O  */
 
 static int write_u32(FILE *f, uint32_t v) {
     return (fwrite(&v, sizeof(uint32_t), 1, f) == 1) ? 0 : -1;
@@ -1155,9 +1117,7 @@ static int read_bytes(FILE *f, uint8_t *data, size_t count) {
     return (fread(data, 1, count, f) == count) ? 0 : -1;
 }
 
-/* ============================================================================
- * Public API: save / load
- * ============================================================================ */
+/*  Public API: save / load  */
 
 int gv_hnsw_inline_save(const GV_HNSWInlineIndex *idx, const char *path) {
     if (idx == NULL || path == NULL) return -1;
