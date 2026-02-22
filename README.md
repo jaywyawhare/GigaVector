@@ -156,7 +156,7 @@ Euclidean, Cosine, Dot Product, Manhattan, Hamming -- all with SIMD-optimized im
 ### Make (default)
 ```bash
 make lib        # static + shared libraries -> build/lib/
-make c-test     # run all C tests (21 test suites)
+make c-test     # run all C tests
 make python-test # run Python test suite
 ```
 
@@ -206,7 +206,7 @@ with Database.open("example.db", dimension=128, index=IndexType.HNSW) as db:
     # Search
     results = db.search([0.1] * 128, k=10, distance=DistanceType.COSINE)
     for hit in results:
-        print(f"  index={hit.index}, distance={hit.distance:.4f}")
+        print(f"  distance={hit.distance:.4f}")
 
     # Save to disk
     db.save("example.db")
@@ -220,7 +220,7 @@ db = Database.open(None, dimension=128, index=IndexType.FLAT)
 # HNSW with custom config
 from gigavector import HNSWConfig
 db = Database.open(None, dimension=128, index=IndexType.HNSW,
-                   hnsw_config=HNSWConfig(M=32, efConstruction=200, efSearch=100))
+                   hnsw_config=HNSWConfig(M=32, ef_construction=200, ef_search=100))
 
 # IVF-PQ (requires training)
 db = Database.open(None, dimension=128, index=IndexType.IVFPQ)
@@ -343,8 +343,8 @@ count = count_by_filter(db, 'status == "active"')
 
 # Geo-spatial search
 geo = GeoIndex()
-geo.add(0, GeoPoint(lat=40.7128, lon=-74.0060))
-nearby = geo.search_radius(GeoPoint(lat=40.71, lon=-74.01), radius_km=1.0, limit=10)
+geo.insert(0, 40.7128, -74.0060)
+nearby = geo.radius_search(40.71, -74.01, radius_km=1.0, max_results=10)
 
 # Grouped search
 gs = GroupedSearch(db)
@@ -355,9 +355,8 @@ groups = gs.search([0.1]*128, group_by="category",
 disk_idx = DiskANNIndex(DiskANNConfig(dimension=128, max_degree=64, search_list_size=128))
 
 # Recommendation
-rec = Recommender(db)
-results = rec.recommend(positive_ids=[0, 1], negative_ids=[5],
-                        config=RecommendConfig(limit=10))
+results = Recommender.recommend_by_id(db._db, positive_ids=[0, 1],
+                                      negative_ids=[5], k=10)
 
 # Collection aliases
 aliases = AliasManager()
