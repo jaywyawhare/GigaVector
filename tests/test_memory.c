@@ -59,8 +59,6 @@ int test_memory_layer_basic(void) {
     free(memory_id);
     gv_memory_layer_destroy(layer);
     gv_db_close(db);
-    
-    printf("test_memory_layer_basic: PASSED\n");
     return 0;
 }
 
@@ -102,8 +100,6 @@ int test_memory_search(void) {
     
     gv_memory_layer_destroy(layer);
     gv_db_close(db);
-    
-    printf("test_memory_search: PASSED\n");
     return 0;
 }
 
@@ -112,13 +108,6 @@ int main(void) {
     
     failures += test_memory_layer_basic();
     failures += test_memory_search();
-    
-    if (failures == 0) {
-        printf("All memory layer tests passed!\n");
-        return 0;
-    } else {
-        printf("%d test(s) failed\n", failures);
-        return 1;
-    }
+    return failures == 0 ? 0 : 1;
 }
 

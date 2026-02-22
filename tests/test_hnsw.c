@@ -16,7 +16,6 @@
 static int test_hnsw_basic_insert_search(void) {
     GV_Database *db = gv_db_open(NULL, 3, GV_INDEX_TYPE_HNSW);
     if (db == NULL) {
-        printf("Skipping HNSW test (HNSW not available)\n");
         return 0;
     }
     
@@ -49,7 +48,6 @@ static int test_hnsw_config(void) {
     
     GV_Database *db = gv_db_open_with_hnsw_config(NULL, 4, GV_INDEX_TYPE_HNSW, &config);
     if (db == NULL) {
-        printf("Skipping HNSW config test (HNSW not available)\n");
         return 0;
     }
     
@@ -68,7 +66,6 @@ static int test_hnsw_config(void) {
 static int test_hnsw_large_dataset(void) {
     GV_Database *db = gv_db_open(NULL, 8, GV_INDEX_TYPE_HNSW);
     if (db == NULL) {
-        printf("Skipping HNSW large dataset test (HNSW not available)\n");
         return 0;
     }
     
@@ -92,7 +89,6 @@ static int test_hnsw_large_dataset(void) {
 static int test_hnsw_filtered_search(void) {
     GV_Database *db = gv_db_open(NULL, 2, GV_INDEX_TYPE_HNSW);
     if (db == NULL) {
-        printf("Skipping HNSW filtered search test (HNSW not available)\n");
         return 0;
     }
     
@@ -116,7 +112,6 @@ static int test_hnsw_filtered_search(void) {
 static int test_hnsw_range_search(void) {
     GV_Database *db = gv_db_open(NULL, 2, GV_INDEX_TYPE_HNSW);
     if (db == NULL) {
-        printf("Skipping HNSW range search test (HNSW not available)\n");
         return 0;
     }
     
@@ -145,7 +140,6 @@ static int test_hnsw_persistence(void) {
     
     GV_Database *db = gv_db_open(path, 3, GV_INDEX_TYPE_HNSW);
     if (db == NULL) {
-        printf("Skipping HNSW persistence test (HNSW not available)\n");
         return 0;
     }
     
@@ -170,7 +164,6 @@ static int test_hnsw_persistence(void) {
 static int test_hnsw_all_distances(void) {
     GV_Database *db = gv_db_open(NULL, 3, GV_INDEX_TYPE_HNSW);
     if (db == NULL) {
-        printf("Skipping HNSW distance tests (HNSW not available)\n");
         return 0;
     }
     
@@ -195,7 +188,6 @@ static int test_hnsw_all_distances(void) {
 
 int main(void) {
     int rc = 0;
-    printf("Running HNSW tests...\n");
     rc |= test_hnsw_basic_insert_search();
     rc |= test_hnsw_config();
     rc |= test_hnsw_large_dataset();
@@ -203,9 +195,6 @@ int main(void) {
     rc |= test_hnsw_range_search();
     rc |= test_hnsw_persistence();
     rc |= test_hnsw_all_distances();
-    if (rc == 0) {
-        printf("All HNSW tests passed\n");
-    }
     return rc;
 }
 

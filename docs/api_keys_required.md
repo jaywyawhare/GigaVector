@@ -95,10 +95,6 @@ This document lists all API keys used in GigaVector, categorized by requirement 
 Create a `.env` file in the project root with:
 
 ```bash
-# ============================================
-# REQUIRED for Real API Call Tests
-# ============================================
-
 # OpenAI API Key (Required for LLM and embedding tests)
 # Get from: https://platform.openai.com/api-keys
 OPENAI_API_KEY=sk-your-openai-api-key-here
@@ -107,19 +103,13 @@ OPENAI_API_KEY=sk-your-openai-api-key-here
 # Get from: https://console.anthropic.com/settings/keys
 ANTHROPIC_API_KEY=sk-ant-your-anthropic-api-key-here
 
-# ============================================
-# OPTIONAL - Feature-Specific
-# ============================================
-
 # Google API Key (Optional - for Google embeddings)
 # Get from: https://aistudio.google.com
 GOOGLE_API_KEY=your-google-api-key-here
 
-# ============================================
 # Note: Azure OpenAI and Custom providers
 # require base_url + api_key in code/config,
 # not environment variables
-# ============================================
 ```
 
 ---

@@ -75,9 +75,7 @@ typedef struct {
  */
 typedef struct GV_HybridSearcher GV_HybridSearcher;
 
-/* ============================================================================
- * Configuration
- * ============================================================================ */
+/* Configuration */
 
 /**
  * @brief Initialize hybrid configuration with defaults.
@@ -94,9 +92,7 @@ typedef struct GV_HybridSearcher GV_HybridSearcher;
  */
 void gv_hybrid_config_init(GV_HybridConfig *config);
 
-/* ============================================================================
- * Hybrid Searcher Lifecycle
- * ============================================================================ */
+/* Hybrid Searcher Lifecycle */
 
 /**
  * @brief Create a hybrid searcher.
@@ -118,9 +114,7 @@ GV_HybridSearcher *gv_hybrid_create(GV_Database *db, GV_BM25Index *bm25,
  */
 void gv_hybrid_destroy(GV_HybridSearcher *searcher);
 
-/* ============================================================================
- * Search Operations
- * ============================================================================ */
+/* Search Operations */
 
 /**
  * @brief Perform hybrid search with vector and text query.
@@ -174,9 +168,7 @@ int gv_hybrid_search_vector_only(GV_HybridSearcher *searcher, const float *query
 int gv_hybrid_search_text_only(GV_HybridSearcher *searcher, const char *query_text,
                                 size_t k, GV_HybridResult *results);
 
-/* ============================================================================
- * Configuration Updates
- * ============================================================================ */
+/* Configuration Updates */
 
 /**
  * @brief Update hybrid configuration.
@@ -210,9 +202,7 @@ int gv_hybrid_get_config(const GV_HybridSearcher *searcher, GV_HybridConfig *con
 int gv_hybrid_set_weights(GV_HybridSearcher *searcher, double vector_weight,
                            double text_weight);
 
-/* ============================================================================
- * Utility Functions
- * ============================================================================ */
+/* Utility Functions */
 
 /**
  * @brief Compute linear fusion score.

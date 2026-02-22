@@ -67,9 +67,7 @@ typedef struct GV_Namespace GV_Namespace;
  */
 typedef struct GV_NamespaceManager GV_NamespaceManager;
 
-/* ============================================================================
- * Namespace Manager Lifecycle
- * ============================================================================ */
+/* Namespace Manager Lifecycle */
 
 /**
  * @brief Create a namespace manager.
@@ -86,9 +84,7 @@ GV_NamespaceManager *gv_namespace_manager_create(const char *base_path);
  */
 void gv_namespace_manager_destroy(GV_NamespaceManager *mgr);
 
-/* ============================================================================
- * Namespace Operations
- * ============================================================================ */
+/* Namespace Operations */
 
 /**
  * @brief Create a new namespace.
@@ -152,9 +148,7 @@ void gv_namespace_free_info(GV_NamespaceInfo *info);
  */
 int gv_namespace_exists(GV_NamespaceManager *mgr, const char *name);
 
-/* ============================================================================
- * Vector Operations within Namespace
- * ============================================================================ */
+/* Vector Operations within Namespace */
 
 /**
  * @brief Add a vector to a namespace.
@@ -227,9 +221,7 @@ int gv_namespace_delete_vector(GV_Namespace *ns, size_t vector_index);
  */
 size_t gv_namespace_count(const GV_Namespace *ns);
 
-/* ============================================================================
- * Persistence
- * ============================================================================ */
+/* Persistence */
 
 /**
  * @brief Save a namespace to disk.
@@ -255,9 +247,7 @@ int gv_namespace_manager_save_all(GV_NamespaceManager *mgr);
  */
 int gv_namespace_manager_load_all(GV_NamespaceManager *mgr);
 
-/* ============================================================================
- * Utility
- * ============================================================================ */
+/* Utility */
 
 /**
  * @brief Get the underlying database handle for a namespace.

@@ -15,9 +15,7 @@
 #include <pthread.h>
 #include <stdatomic.h>
 
-/* ============================================================================
- * Internal Structures
- * ============================================================================ */
+/*  Internal Structures  */
 
 /**
  * @brief Maximum number of concurrent sessions tracked by the manager.
@@ -51,9 +49,7 @@ struct GV_ConsistencyManager {
     pthread_mutex_t mutex;
 };
 
-/* ============================================================================
- * Lifecycle
- * ============================================================================ */
+/*  Lifecycle  */
 
 GV_ConsistencyManager *gv_consistency_create(GV_ConsistencyLevel default_level)
 {
@@ -83,9 +79,7 @@ void gv_consistency_destroy(GV_ConsistencyManager *mgr)
     free(mgr);
 }
 
-/* ============================================================================
- * Default Level
- * ============================================================================ */
+/*  Default Level  */
 
 int gv_consistency_set_default(GV_ConsistencyManager *mgr, GV_ConsistencyLevel level)
 {
@@ -114,9 +108,7 @@ GV_ConsistencyLevel gv_consistency_get_default(const GV_ConsistencyManager *mgr)
     return mgr->default_level;
 }
 
-/* ============================================================================
- * Consistency Check
- * ============================================================================ */
+/*  Consistency Check  */
 
 /**
  * @brief Look up the write position recorded for a session token.
@@ -193,9 +185,7 @@ int gv_consistency_check(const GV_ConsistencyManager *mgr,
     }
 }
 
-/* ============================================================================
- * Session Token Management
- * ============================================================================ */
+/*  Session Token Management  */
 
 uint64_t gv_consistency_new_session(GV_ConsistencyManager *mgr)
 {
@@ -268,9 +258,7 @@ uint64_t gv_consistency_get_session_position(const GV_ConsistencyManager *mgr,
     return pos;
 }
 
-/* ============================================================================
- * Config Helpers
- * ============================================================================ */
+/*  Config Helpers  */
 
 void gv_consistency_config_init(GV_ConsistencyConfig *config)
 {

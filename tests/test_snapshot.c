@@ -151,7 +151,7 @@ static int test_snapshot_empty(void) {
     return 0;
 }
 
-/* ---------- harness ---------- */
+/* harness */
 
 typedef int (*test_fn)(void);
 typedef struct { const char *name; test_fn fn; } TestCase;
@@ -169,10 +169,7 @@ int main(void) {
     int n = sizeof(tests) / sizeof(tests[0]);
     int passed = 0;
     for (int i = 0; i < n; i++) {
-        printf("%s", tests[i].name);
-        if (tests[i].fn() == 0) { printf(" [OK]\n"); passed++; }
-        else { printf(" [FAIL]\n"); }
+        if (tests[i].fn() == 0) { passed++; }
     }
-    printf("\n%d/%d tests passed\n", passed, n);
     return passed == n ? 0 : 1;
 }

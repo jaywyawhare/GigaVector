@@ -15,18 +15,14 @@
 
 #include "gigavector/gv_json.h"
 
-/* ============================================================================
- * Internal Constants
- * ============================================================================ */
+/*  Internal Constants  */
 
 #define MAX_NESTING_DEPTH 128
 #define INITIAL_ARRAY_CAPACITY 8
 #define INITIAL_OBJECT_CAPACITY 8
 #define STRING_BUFFER_INITIAL 256
 
-/* ============================================================================
- * Parser State
- * ============================================================================ */
+/*  Parser State  */
 
 typedef struct {
     const char *input;
@@ -35,16 +31,12 @@ typedef struct {
     GV_JsonError error;
 } ParserState;
 
-/* ============================================================================
- * Forward Declarations
- * ============================================================================ */
+/*  Forward Declarations  */
 
 static GV_JsonValue *parse_value(ParserState *state);
 static void skip_whitespace(ParserState *state);
 
-/* ============================================================================
- * Error Handling
- * ============================================================================ */
+/*  Error Handling  */
 
 const char *gv_json_error_string(GV_JsonError error) {
     switch (error) {
@@ -77,9 +69,7 @@ const char *gv_json_error_string(GV_JsonError error) {
     }
 }
 
-/* ============================================================================
- * Value Creation
- * ============================================================================ */
+/*  Value Creation  */
 
 GV_JsonValue *gv_json_null(void) {
     GV_JsonValue *val = (GV_JsonValue *)calloc(1, sizeof(GV_JsonValue));
@@ -145,9 +135,7 @@ GV_JsonValue *gv_json_object(void) {
     return val;
 }
 
-/* ============================================================================
- * Memory Management
- * ============================================================================ */
+/*  Memory Management  */
 
 void gv_json_free(GV_JsonValue *value) {
     if (value == NULL) {
@@ -230,9 +218,7 @@ GV_JsonValue *gv_json_copy(const GV_JsonValue *value) {
     return copy;
 }
 
-/* ============================================================================
- * Type Checking
- * ============================================================================ */
+/*  Type Checking  */
 
 bool gv_json_is_null(const GV_JsonValue *value) {
     return value != NULL && value->type == GV_JSON_NULL;
@@ -258,9 +244,7 @@ bool gv_json_is_object(const GV_JsonValue *value) {
     return value != NULL && value->type == GV_JSON_OBJECT;
 }
 
-/* ============================================================================
- * Value Extraction
- * ============================================================================ */
+/*  Value Extraction  */
 
 GV_JsonError gv_json_get_bool(const GV_JsonValue *value, bool *out) {
     if (value == NULL || out == NULL) {
@@ -291,9 +275,7 @@ const char *gv_json_get_string(const GV_JsonValue *value) {
     return value->data.string;
 }
 
-/* ============================================================================
- * Array Operations
- * ============================================================================ */
+/*  Array Operations  */
 
 GV_JsonError gv_json_array_push(GV_JsonValue *array, GV_JsonValue *value) {
     if (array == NULL || value == NULL) {
@@ -339,9 +321,7 @@ size_t gv_json_array_length(const GV_JsonValue *array) {
     return array->data.array.count;
 }
 
-/* ============================================================================
- * Object Operations
- * ============================================================================ */
+/*  Object Operations  */
 
 GV_JsonError gv_json_object_set(GV_JsonValue *object, const char *key, GV_JsonValue *value) {
     if (object == NULL || key == NULL || value == NULL) {
@@ -413,9 +393,7 @@ size_t gv_json_object_length(const GV_JsonValue *object) {
     return object->data.object.count;
 }
 
-/* ============================================================================
- * Path-based Access
- * ============================================================================ */
+/*  Path-based Access  */
 
 GV_JsonValue *gv_json_get_path(const GV_JsonValue *root, const char *path) {
     if (root == NULL || path == NULL) {
@@ -456,9 +434,7 @@ const char *gv_json_get_string_path(const GV_JsonValue *root, const char *path) 
     return gv_json_get_string(value);
 }
 
-/* ============================================================================
- * Parser Implementation
- * ============================================================================ */
+/*  Parser Implementation  */
 
 static void skip_whitespace(ParserState *state) {
     while (*state->pos && isspace((unsigned char)*state->pos)) {
@@ -924,9 +900,7 @@ GV_JsonValue *gv_json_parse(const char *json_str, GV_JsonError *error) {
     return result;
 }
 
-/* ============================================================================
- * Serialization Implementation
- * ============================================================================ */
+/*  Serialization Implementation  */
 
 typedef struct {
     char *buffer;

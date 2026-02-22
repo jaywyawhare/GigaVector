@@ -12,22 +12,22 @@
 
 #include "gigavector/gv_importance.h"
 
-#define TEST_PASS() printf("  ✓ %s passed\n", __func__)
-#define TEST_FAIL(msg) do { printf("  ✗ %s failed: %s\n", __func__, msg); return 1; } while(0)
+#define TEST_PASS() do { } while(0)
+#define TEST_FAIL(msg) do { (void)(msg); return 1; } while(0)
 #define ASSERT_RANGE(val, min, max, name) \
     if ((val) < (min) || (val) > (max)) { \
-        printf("    %s = %.4f, expected [%.4f, %.4f]\n", name, val, min, max); \
+        (void)(name); \
         TEST_FAIL("value out of range"); \
     }
 #define ASSERT_GT(a, b, name) \
     if ((a) <= (b)) { \
-        printf("    %s: %.4f should be > %.4f\n", name, a, b); \
+        (void)(name); \
         TEST_FAIL("comparison failed"); \
     }
 
-/* ============================================================================
+/*
  * Content Analysis Tests
- * ============================================================================ */
+ */
 
 int test_informativeness_empty(void) {
     double score = gv_importance_informativeness(NULL, 0);
@@ -196,9 +196,9 @@ int test_content_score_combined(void) {
     return 0;
 }
 
-/* ============================================================================
+/*
  * Temporal Decay Tests
- * ============================================================================ */
+ */
 
 int test_temporal_decay_immediate(void) {
     double decay = gv_importance_temporal_decay(NULL, 0);
@@ -282,9 +282,9 @@ int test_temporal_custom_config(void) {
     return 0;
 }
 
-/* ============================================================================
+/*
  * Access Pattern Tests
- * ============================================================================ */
+ */
 
 int test_access_history_init(void) {
     GV_AccessHistory history;
@@ -426,9 +426,9 @@ int test_access_history_serialization(void) {
     return 0;
 }
 
-/* ============================================================================
+/*
  * Full Importance Calculation Tests
- * ============================================================================ */
+ */
 
 int test_importance_calculate_basic(void) {
     GV_ImportanceContext ctx = {
@@ -565,9 +565,9 @@ int test_importance_old_vs_new(void) {
     return 0;
 }
 
-/* ============================================================================
+/*
  * Batch and Rerank Tests
- * ============================================================================ */
+ */
 
 int test_importance_batch(void) {
     time_t now = time(NULL);
@@ -648,11 +648,6 @@ int test_importance_rerank(void) {
     if (ret != 0) TEST_FAIL("rerank failed");
 
     /* The high-quality, recent memory should rank well even with lower similarity */
-    printf("    Rerank order: ");
-    for (int i = 0; i < 4; i++) {
-        printf("%zu ", indices[i]);
-    }
-    printf("\n");
 
     /* Verify ordering is valid */
     for (int i = 0; i < 4; i++) {
@@ -663,9 +658,9 @@ int test_importance_rerank(void) {
     return 0;
 }
 
-/* ============================================================================
+/*
  * Configuration Tests
- * ============================================================================ */
+ */
 
 int test_config_default(void) {
     GV_ImportanceConfig config = gv_importance_config_default();
@@ -678,7 +673,6 @@ int test_config_default(void) {
                         config.weights.structural_weight;
 
     if (fabs(weight_sum - 1.0) > 0.01) {
-        printf("    Weight sum: %.4f\n", weight_sum);
         TEST_FAIL("weights don't sum to 1.0");
     }
 
@@ -717,16 +711,13 @@ int test_config_custom_weights(void) {
     return 0;
 }
 
-/* ============================================================================
+/*
  * Main Test Runner
- * ============================================================================ */
+ */
 
 int main(void) {
-    printf("=== Importance Scoring Tests ===\n\n");
-
     int failures = 0;
 
-    printf("Content Analysis Tests:\n");
     failures += test_informativeness_empty();
     failures += test_informativeness_simple();
     failures += test_informativeness_complex();
@@ -739,7 +730,6 @@ int main(void) {
     failures += test_entity_density();
     failures += test_content_score_combined();
 
-    printf("\nTemporal Decay Tests:\n");
     failures += test_temporal_decay_immediate();
     failures += test_temporal_decay_one_hour();
     failures += test_temporal_decay_one_day();
@@ -749,7 +739,6 @@ int main(void) {
     failures += test_temporal_recency_boost();
     failures += test_temporal_custom_config();
 
-    printf("\nAccess Pattern Tests:\n");
     failures += test_access_history_init();
     failures += test_access_record();
     failures += test_access_multiple_records();
@@ -758,26 +747,20 @@ int main(void) {
     failures += test_access_score_frequent_better();
     failures += test_access_history_serialization();
 
-    printf("\nFull Importance Calculation Tests:\n");
     failures += test_importance_calculate_basic();
     failures += test_importance_calculate_with_access();
     failures += test_importance_calculate_with_query();
     failures += test_importance_old_vs_new();
 
-    printf("\nBatch and Rerank Tests:\n");
     failures += test_importance_batch();
     failures += test_importance_rerank();
 
-    printf("\nConfiguration Tests:\n");
     failures += test_config_default();
     failures += test_config_custom_weights();
 
-    printf("\n=== Results ===\n");
     if (failures == 0) {
-        printf("All tests passed!\n");
         return 0;
     } else {
-        printf("%d test(s) failed.\n", failures);
         return 1;
     }
 }

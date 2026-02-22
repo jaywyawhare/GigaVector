@@ -26,9 +26,7 @@
 
 #include "gigavector/gv_diskann.h"
 
-/* ============================================================================
- * Constants
- * ============================================================================ */
+/*  Constants  */
 
 #define DISKANN_MAGIC           0x44414E4E  /* "DANN" */
 #define DISKANN_VERSION         1
@@ -42,9 +40,7 @@
 #define DISKANN_PQ_KSUB           256  /* 2^8 */
 #define DISKANN_INITIAL_CAPACITY  1024
 
-/* ============================================================================
- * PQ Codebook (in-memory compressed navigation)
- * ============================================================================ */
+/*  PQ Codebook (in-memory compressed navigation)  */
 
 typedef struct {
     size_t m;            /* Number of sub-quantizers */
@@ -54,9 +50,7 @@ typedef struct {
     int trained;
 } DiskANN_PQ;
 
-/* ============================================================================
- * LRU Disk Page Cache
- * ============================================================================ */
+/*  LRU Disk Page Cache  */
 
 typedef struct DiskANN_CachePage {
     size_t page_id;                     /* Which vector page this caches */
@@ -80,9 +74,7 @@ typedef struct {
     size_t misses;
 } DiskANN_Cache;
 
-/* ============================================================================
- * Graph Node
- * ============================================================================ */
+/*  Graph Node  */
 
 typedef struct {
     size_t *neighbors;       /* Adjacency list (indices into nodes array) */
@@ -91,9 +83,7 @@ typedef struct {
     int deleted;             /* Tombstone flag */
 } DiskANN_Node;
 
-/* ============================================================================
- * Index Structure
- * ============================================================================ */
+/*  Index Structure  */
 
 struct GV_DiskANNIndex {
     /* Configuration */
@@ -127,9 +117,7 @@ struct GV_DiskANNIndex {
     size_t total_searches;
 };
 
-/* ============================================================================
- * Forward Declarations
- * ============================================================================ */
+/*  Forward Declarations  */
 
 static float diskann_l2_distance(const float *a, const float *b, size_t dim);
 static void diskann_pq_init(DiskANN_PQ *pq);
@@ -155,9 +143,7 @@ static int diskann_greedy_search(const GV_DiskANNIndex *index, const float *quer
 static void diskann_robust_prune(GV_DiskANNIndex *index, size_t node_id,
                                   size_t *candidates, float *distances, size_t cand_count);
 
-/* ============================================================================
- * Utility: L2 Squared Distance
- * ============================================================================ */
+/*  Utility: L2 Squared Distance  */
 
 static float diskann_l2_distance(const float *a, const float *b, size_t dim) {
     float sum = 0.0f;
@@ -168,9 +154,7 @@ static float diskann_l2_distance(const float *a, const float *b, size_t dim) {
     return sum;
 }
 
-/* ============================================================================
- * Min-Heap for Beam Search
- * ============================================================================ */
+/*  Min-Heap for Beam Search  */
 
 typedef struct {
     size_t index;
@@ -185,9 +169,7 @@ static int diskann_cand_compare(const void *a, const void *b) {
     return 0;
 }
 
-/* ============================================================================
- * PQ Codebook Implementation
- * ============================================================================ */
+/*  PQ Codebook Implementation  */
 
 static void diskann_pq_init(DiskANN_PQ *pq) {
     memset(pq, 0, sizeof(DiskANN_PQ));
@@ -357,9 +339,7 @@ static void diskann_pq_destroy(DiskANN_PQ *pq) {
     pq->trained = 0;
 }
 
-/* ============================================================================
- * LRU Disk Page Cache Implementation
- * ============================================================================ */
+/*  LRU Disk Page Cache Implementation  */
 
 static void diskann_cache_init(DiskANN_Cache *cache, size_t max_mb,
                                 size_t vectors_per_page, size_t dimension) {
@@ -499,9 +479,7 @@ static void diskann_cache_destroy(DiskANN_Cache *cache) {
     cache->count = 0;
 }
 
-/* ============================================================================
- * Disk Storage (Sector-Aligned Pages via pread/pwrite)
- * ============================================================================ */
+/*  Disk Storage (Sector-Aligned Pages via pread/pwrite)  */
 
 static int diskann_disk_open(GV_DiskANNIndex *index) {
     if (!index->data_path) return -1;
@@ -613,9 +591,7 @@ static void diskann_disk_close(GV_DiskANNIndex *index) {
     }
 }
 
-/* ============================================================================
- * Medoid Computation
- * ============================================================================ */
+/*  Medoid Computation  */
 
 static size_t diskann_compute_medoid(const float *data, size_t count, size_t dimension) {
     if (count == 0) return 0;
@@ -648,9 +624,7 @@ static size_t diskann_compute_medoid(const float *data, size_t count, size_t dim
     return best;
 }
 
-/* ============================================================================
- * Greedy Search on Vamana Graph
- * ============================================================================ */
+/*  Greedy Search on Vamana Graph  */
 
 /**
  * Beam search starting from medoid. Returns indices of visited nodes sorted by
@@ -776,9 +750,7 @@ static int diskann_greedy_search(const GV_DiskANNIndex *index, const float *quer
     return 0;
 }
 
-/* ============================================================================
- * Robust Pruning (Vamana Algorithm)
- * ============================================================================ */
+/*  Robust Pruning (Vamana Algorithm)  */
 
 /**
  * Prune the neighbor list of node_id using the alpha-based robust pruning rule.
@@ -885,9 +857,7 @@ static void diskann_robust_prune(GV_DiskANNIndex *index, size_t node_id,
     node->neighbor_count = pruned_count;
 }
 
-/* ============================================================================
- * Configuration
- * ============================================================================ */
+/*  Configuration  */
 
 void gv_diskann_config_init(GV_DiskANNConfig *config) {
     if (!config) return;
@@ -901,9 +871,7 @@ void gv_diskann_config_init(GV_DiskANNConfig *config) {
     config->sector_size = DISKANN_DEFAULT_SECTOR;
 }
 
-/* ============================================================================
- * Lifecycle
- * ============================================================================ */
+/*  Lifecycle  */
 
 GV_DiskANNIndex *gv_diskann_create(size_t dimension, const GV_DiskANNConfig *config) {
     if (dimension == 0) return NULL;
@@ -1007,9 +975,7 @@ void gv_diskann_destroy(GV_DiskANNIndex *index) {
     free(index);
 }
 
-/* ============================================================================
- * Build (Batch Construction with Vamana Algorithm)
- * ============================================================================ */
+/*  Build (Batch Construction with Vamana Algorithm)  */
 
 int gv_diskann_build(GV_DiskANNIndex *index, const float *data, size_t count, size_t dimension) {
     if (!index || !data || count == 0) return -1;
@@ -1193,9 +1159,7 @@ int gv_diskann_build(GV_DiskANNIndex *index, const float *data, size_t count, si
     return 0;
 }
 
-/* ============================================================================
- * Incremental Insert
- * ============================================================================ */
+/*  Incremental Insert  */
 
 int gv_diskann_insert(GV_DiskANNIndex *index, const float *data, size_t dimension) {
     if (!index || !data) return -1;
@@ -1323,9 +1287,7 @@ int gv_diskann_insert(GV_DiskANNIndex *index, const float *data, size_t dimensio
     return 0;
 }
 
-/* ============================================================================
- * Search
- * ============================================================================ */
+/*  Search  */
 
 int gv_diskann_search(const GV_DiskANNIndex *index, const float *query, size_t dimension,
                        size_t k, GV_DiskANNResult *results) {
@@ -1405,9 +1367,7 @@ int gv_diskann_search(const GV_DiskANNIndex *index, const float *query, size_t d
     return (int)result_count;
 }
 
-/* ============================================================================
- * Delete (Lazy Tombstone)
- * ============================================================================ */
+/*  Delete (Lazy Tombstone)  */
 
 int gv_diskann_delete(GV_DiskANNIndex *index, size_t vector_index) {
     if (!index) return -1;
@@ -1429,9 +1389,7 @@ int gv_diskann_delete(GV_DiskANNIndex *index, size_t vector_index) {
     return 0;
 }
 
-/* ============================================================================
- * Statistics
- * ============================================================================ */
+/*  Statistics  */
 
 int gv_diskann_get_stats(const GV_DiskANNIndex *index, GV_DiskANNStats *stats) {
     if (!index || !stats) return -1;
@@ -1479,9 +1437,7 @@ int gv_diskann_get_stats(const GV_DiskANNIndex *index, GV_DiskANNStats *stats) {
     return 0;
 }
 
-/* ============================================================================
- * Count
- * ============================================================================ */
+/*  Count  */
 
 size_t gv_diskann_count(const GV_DiskANNIndex *index) {
     if (!index) return 0;
@@ -1492,9 +1448,7 @@ size_t gv_diskann_count(const GV_DiskANNIndex *index) {
     return active;
 }
 
-/* ============================================================================
- * Persistence: Save
- * ============================================================================ */
+/*  Persistence: Save  */
 
 static int diskann_write_u32(FILE *f, uint32_t v) {
     return fwrite(&v, sizeof(uint32_t), 1, f) == 1 ? 0 : -1;
@@ -1582,9 +1536,7 @@ fail:
     return -1;
 }
 
-/* ============================================================================
- * Persistence: Load
- * ============================================================================ */
+/*  Persistence: Load  */
 
 static int diskann_read_u32(FILE *f, uint32_t *v) {
     return (v && fread(v, sizeof(uint32_t), 1, f) == 1) ? 0 : -1;

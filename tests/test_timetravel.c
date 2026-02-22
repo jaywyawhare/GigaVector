@@ -5,7 +5,6 @@
 
 #define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while(0)
 
-/* ------------------------------------------------------------------ */
 static int test_config_init(void) {
     GV_TimeTravelConfig cfg;
     memset(&cfg, 0xFF, sizeof(cfg));
@@ -17,7 +16,6 @@ static int test_config_init(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 static int test_create_destroy(void) {
     GV_TimeTravelManager *mgr = gv_tt_create(NULL);
     ASSERT(mgr != NULL, "gv_tt_create(NULL) should succeed");
@@ -35,7 +33,6 @@ static int test_create_destroy(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 static int test_record_insert(void) {
     GV_TimeTravelManager *mgr = gv_tt_create(NULL);
     ASSERT(mgr != NULL, "create");
@@ -54,7 +51,6 @@ static int test_record_insert(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 static int test_record_update(void) {
     GV_TimeTravelManager *mgr = gv_tt_create(NULL);
     ASSERT(mgr != NULL, "create");
@@ -73,7 +69,6 @@ static int test_record_update(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 static int test_record_delete(void) {
     GV_TimeTravelManager *mgr = gv_tt_create(NULL);
     ASSERT(mgr != NULL, "create");
@@ -89,7 +84,6 @@ static int test_record_delete(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 static int test_query_at_version(void) {
     GV_TimeTravelManager *mgr = gv_tt_create(NULL);
     ASSERT(mgr != NULL, "create");
@@ -118,7 +112,6 @@ static int test_query_at_version(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 static int test_list_versions(void) {
     GV_TimeTravelManager *mgr = gv_tt_create(NULL);
     ASSERT(mgr != NULL, "create");
@@ -141,7 +134,6 @@ static int test_list_versions(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 static int test_gc(void) {
     GV_TimeTravelConfig cfg;
     gv_tt_config_init(&cfg);
@@ -171,7 +163,6 @@ static int test_gc(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 static int test_save_load(void) {
     const char *path = "tmp_timetravel_test.bin";
     remove(path);
@@ -201,7 +192,7 @@ static int test_save_load(void) {
     return 0;
 }
 
-/* ================================================================== */
+/* main */
 typedef int (*test_fn)(void);
 typedef struct { const char *name; test_fn fn; } TestCase;
 
@@ -220,10 +211,7 @@ int main(void) {
     int n = sizeof(tests) / sizeof(tests[0]);
     int passed = 0;
     for (int i = 0; i < n; i++) {
-        printf("%s", tests[i].name);
-        if (tests[i].fn() == 0) { printf(" [OK]\n"); passed++; }
-        else { printf(" [FAIL]\n"); }
+        if (tests[i].fn() == 0) { passed++; }
     }
-    printf("\n%d/%d tests passed\n", passed, n);
     return passed == n ? 0 : 1;
 }

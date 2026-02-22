@@ -34,9 +34,7 @@ extern int gv_cuda_knn_search(GV_GPUContext *ctx, const float *queries,
                                size_t *indices, float *distances);
 #endif
 
-/* ============================================================================
- * Internal Structures
- * ============================================================================ */
+/*  Internal Structures  */
 
 struct GV_GPUContext {
     GV_GPUConfig config;
@@ -63,9 +61,7 @@ struct GV_GPUIndex {
     size_t memory_usage;
 };
 
-/* ============================================================================
- * Configuration
- * ============================================================================ */
+/*  Configuration  */
 
 static const GV_GPUConfig DEFAULT_CONFIG = {
     .device_id = -1,
@@ -86,9 +82,7 @@ void gv_gpu_config_init(GV_GPUConfig *config) {
     *config = DEFAULT_CONFIG;
 }
 
-/* ============================================================================
- * Device Query
- * ============================================================================ */
+/*  Device Query  */
 
 int gv_gpu_available(void) {
 #ifdef HAVE_CUDA
@@ -121,9 +115,7 @@ int gv_gpu_get_device_info(int device_id, GV_GPUDeviceInfo *info) {
 #endif
 }
 
-/* ============================================================================
- * Context Management
- * ============================================================================ */
+/*  Context Management  */
 
 GV_GPUContext *gv_gpu_create(const GV_GPUConfig *config) {
     GV_GPUContext *ctx = calloc(1, sizeof(GV_GPUContext));
@@ -178,9 +170,7 @@ int gv_gpu_synchronize(GV_GPUContext *ctx) {
     return 0;  /* CPU is always synchronized */
 }
 
-/* ============================================================================
- * GPU Index Management
- * ============================================================================ */
+/*  GPU Index Management  */
 
 GV_GPUIndex *gv_gpu_index_create(GV_GPUContext *ctx, const float *vectors,
                                   size_t count, size_t dimension) {
@@ -374,9 +364,7 @@ void gv_gpu_index_destroy(GV_GPUIndex *index) {
     free(index);
 }
 
-/* ============================================================================
- * CPU Distance Computation (Fallback)
- * ============================================================================ */
+/*  CPU Distance Computation (Fallback)  */
 
 static float cpu_euclidean_distance(const float *a, const float *b, size_t dim) {
     float sum = 0;
@@ -415,9 +403,7 @@ static float cpu_manhattan_distance(const float *a, const float *b, size_t dim) 
     return sum;
 }
 
-/* ============================================================================
- * Distance Computation
- * ============================================================================ */
+/*  Distance Computation  */
 
 int gv_gpu_compute_distances(GV_GPUContext *ctx, const float *queries,
                               size_t num_queries, const float *database,
@@ -493,9 +479,7 @@ int gv_gpu_index_compute_distances(GV_GPUIndex *index, const float *queries,
                                      index->dimension, metric, distances);
 }
 
-/* ============================================================================
- * k-NN Search
- * ============================================================================ */
+/*  k-NN Search  */
 
 /* Simple insertion sort for maintaining top-k */
 static void insert_result(size_t *indices, float *distances, size_t k,
@@ -636,9 +620,7 @@ int gv_gpu_index_search(GV_GPUIndex *index, const float *query,
     return count;
 }
 
-/* ============================================================================
- * Batch Operations
- * ============================================================================ */
+/*  Batch Operations  */
 
 int gv_gpu_batch_add(GV_GPUContext *ctx, GV_Database *db,
                       const float *vectors, size_t count) {
@@ -692,9 +674,7 @@ int gv_gpu_batch_search(GV_GPUContext *ctx, GV_Database *db,
     return result;
 }
 
-/* ============================================================================
- * IVF-PQ GPU Support
- * ============================================================================ */
+/*  IVF-PQ GPU Support  */
 
 int gv_gpu_train_ivfpq(GV_GPUContext *ctx, const float *vectors,
                         size_t num_vectors, size_t dimension,
@@ -796,9 +776,7 @@ int gv_gpu_train_ivfpq(GV_GPUContext *ctx, const float *vectors,
     return 0;
 }
 
-/* ============================================================================
- * Statistics
- * ============================================================================ */
+/*  Statistics  */
 
 int gv_gpu_get_stats(GV_GPUContext *ctx, GV_GPUStats *stats) {
     if (!ctx || !stats) return -1;

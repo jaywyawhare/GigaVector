@@ -16,7 +16,6 @@
 static int test_ivfpq_basic(void) {
     GV_Database *db = gv_db_open(NULL, 8, GV_INDEX_TYPE_IVFPQ);
     if (db == NULL) {
-        printf("Skipping IVFPQ test (IVFPQ not available)\n");
         return 0;
     }
     
@@ -57,7 +56,6 @@ static int test_ivfpq_config(void) {
     
     GV_Database *db = gv_db_open_with_ivfpq_config(NULL, 8, GV_INDEX_TYPE_IVFPQ, &config);
     if (db == NULL) {
-        printf("Skipping IVFPQ config test (IVFPQ not available)\n");
         return 0;
     }
     
@@ -86,7 +84,6 @@ static int test_ivfpq_config(void) {
 static int test_ivfpq_large_dataset(void) {
     GV_Database *db = gv_db_open(NULL, 16, GV_INDEX_TYPE_IVFPQ);
     if (db == NULL) {
-        printf("Skipping IVFPQ large dataset test (IVFPQ not available)\n");
         return 0;
     }
     
@@ -122,7 +119,6 @@ static int test_ivfpq_large_dataset(void) {
 static int test_ivfpq_range_search(void) {
     GV_Database *db = gv_db_open(NULL, 8, GV_INDEX_TYPE_IVFPQ);
     if (db == NULL) {
-        printf("Skipping IVFPQ range search test (IVFPQ not available)\n");
         return 0;
     }
     
@@ -158,7 +154,6 @@ static int test_ivfpq_persistence(void) {
     
     GV_Database *db = gv_db_open(path, 8, GV_INDEX_TYPE_IVFPQ);
     if (db == NULL) {
-        printf("Skipping IVFPQ persistence test (IVFPQ not available)\n");
         return 0;
     }
     
@@ -207,7 +202,6 @@ static int test_ivfpq_persistence(void) {
 static int test_ivfpq_untrained_error(void) {
     GV_Database *db = gv_db_open(NULL, 8, GV_INDEX_TYPE_IVFPQ);
     if (db == NULL) {
-        printf("Skipping IVFPQ untrained test (IVFPQ not available)\n");
         return 0;
     }
     
@@ -221,16 +215,12 @@ static int test_ivfpq_untrained_error(void) {
 
 int main(void) {
     int rc = 0;
-    printf("Running IVFPQ tests...\n");
     rc |= test_ivfpq_basic();
     rc |= test_ivfpq_config();
     rc |= test_ivfpq_large_dataset();
     rc |= test_ivfpq_range_search();
     rc |= test_ivfpq_persistence();
     rc |= test_ivfpq_untrained_error();
-    if (rc == 0) {
-        printf("All IVFPQ tests passed\n");
-    }
     return rc;
 }
 

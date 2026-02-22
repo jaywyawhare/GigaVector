@@ -101,9 +101,7 @@ typedef struct GV_GPUContext GV_GPUContext;
  */
 typedef struct GV_GPUIndex GV_GPUIndex;
 
-/* ============================================================================
- * Device Query
- * ============================================================================ */
+/* Device Query */
 
 /**
  * @brief Check if CUDA is available.
@@ -128,9 +126,7 @@ int gv_gpu_device_count(void);
  */
 int gv_gpu_get_device_info(int device_id, GV_GPUDeviceInfo *info);
 
-/* ============================================================================
- * Context Management
- * ============================================================================ */
+/* Context Management */
 
 /**
  * @brief Initialize default GPU configuration.
@@ -162,9 +158,7 @@ void gv_gpu_destroy(GV_GPUContext *ctx);
  */
 int gv_gpu_synchronize(GV_GPUContext *ctx);
 
-/* ============================================================================
- * GPU Index Management
- * ============================================================================ */
+/* GPU Index Management */
 
 /**
  * @brief Create a GPU index from vectors.
@@ -238,9 +232,7 @@ int gv_gpu_index_info(GV_GPUIndex *index, size_t *count, size_t *dimension,
  */
 void gv_gpu_index_destroy(GV_GPUIndex *index);
 
-/* ============================================================================
- * Distance Computation
- * ============================================================================ */
+/* Distance Computation */
 
 /**
  * @brief Compute distances between query and database vectors.
@@ -275,9 +267,7 @@ int gv_gpu_index_compute_distances(GV_GPUIndex *index, const float *queries,
                                     GV_GPUDistanceMetric metric,
                                     float *distances);
 
-/* ============================================================================
- * k-NN Search
- * ============================================================================ */
+/* k-NN Search */
 
 /**
  * @brief Perform k-NN search on GPU.
@@ -328,9 +318,7 @@ int gv_gpu_index_search(GV_GPUIndex *index, const float *query,
                          const GV_GPUSearchParams *params,
                          size_t *indices, float *distances);
 
-/* ============================================================================
- * Batch Operations
- * ============================================================================ */
+/* Batch Operations */
 
 /**
  * @brief Batch add vectors with automatic GPU upload.
@@ -360,9 +348,7 @@ int gv_gpu_batch_search(GV_GPUContext *ctx, GV_Database *db,
                          const float *queries, size_t num_queries, size_t k,
                          size_t *indices, float *distances);
 
-/* ============================================================================
- * IVF-PQ GPU Support
- * ============================================================================ */
+/* IVF-PQ GPU Support */
 
 /**
  * @brief Train IVF-PQ codebook on GPU.
@@ -384,9 +370,7 @@ int gv_gpu_train_ivfpq(GV_GPUContext *ctx, const float *vectors,
                         size_t bits_per_subquantizer,
                         float *centroids, float *codebooks);
 
-/* ============================================================================
- * Statistics
- * ============================================================================ */
+/* Statistics */
 
 /**
  * @brief Get GPU statistics.

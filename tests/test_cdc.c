@@ -15,7 +15,6 @@ static void test_callback(const GV_CDCEvent *event, void *user_data) {
     g_last_event_type = event->type;
 }
 
-/* ------------------------------------------------------------------ */
 static int test_config_init(void) {
     GV_CDCConfig cfg;
     memset(&cfg, 0xFF, sizeof(cfg));
@@ -27,7 +26,6 @@ static int test_config_init(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 static int test_create_destroy(void) {
     GV_CDCStream *stream = gv_cdc_create(NULL);
     ASSERT(stream != NULL, "gv_cdc_create(NULL) should succeed");
@@ -44,7 +42,6 @@ static int test_create_destroy(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 static int test_publish_and_poll(void) {
     GV_CDCStream *stream = gv_cdc_create(NULL);
     ASSERT(stream != NULL, "create");
@@ -73,7 +70,6 @@ static int test_publish_and_poll(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 static int test_subscribe_and_callback(void) {
     GV_CDCStream *stream = gv_cdc_create(NULL);
     ASSERT(stream != NULL, "create");
@@ -109,7 +105,6 @@ static int test_subscribe_and_callback(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 static int test_cursor_from_sequence(void) {
     GV_CDCCursor c = gv_cdc_cursor_from_sequence(100);
     ASSERT(c.sequence_number == 100, "cursor sequence_number should be 100");
@@ -119,7 +114,6 @@ static int test_cursor_from_sequence(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 static int test_pending_count(void) {
     GV_CDCStream *stream = gv_cdc_create(NULL);
     ASSERT(stream != NULL, "create");
@@ -156,7 +150,7 @@ static int test_pending_count(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
+/* multiple event types */
 static int test_multiple_event_types(void) {
     GV_CDCStream *stream = gv_cdc_create(NULL);
     ASSERT(stream != NULL, "create");
@@ -193,7 +187,6 @@ static int test_multiple_event_types(void) {
     return 0;
 }
 
-/* ================================================================== */
 typedef int (*test_fn)(void);
 typedef struct { const char *name; test_fn fn; } TestCase;
 
@@ -210,10 +203,7 @@ int main(void) {
     int n = sizeof(tests) / sizeof(tests[0]);
     int passed = 0;
     for (int i = 0; i < n; i++) {
-        printf("%s", tests[i].name);
-        if (tests[i].fn() == 0) { printf(" [OK]\n"); passed++; }
-        else { printf(" [FAIL]\n"); }
+        if (tests[i].fn() == 0) { passed++; }
     }
-    printf("\n%d/%d tests passed\n", passed, n);
     return passed == n ? 0 : 1;
 }

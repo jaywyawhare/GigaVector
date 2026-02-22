@@ -150,16 +150,12 @@ static int test_distance_mismatched_dimensions(void) {
 
 int main(void) {
     int rc = 0;
-    printf("Running distance metric tests...\n");
     rc |= test_euclidean_distance();
     rc |= test_cosine_distance();
     rc |= test_dot_product_distance();
     rc |= test_manhattan_distance();
     rc |= test_distance_null_vectors();
     rc |= test_distance_mismatched_dimensions();
-    if (rc == 0) {
-        printf("All distance tests passed\n");
-    }
     return rc;
 }
 

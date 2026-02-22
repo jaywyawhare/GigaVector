@@ -441,13 +441,9 @@ int main(void) {
     int passed = 0;
 
     for (int i = 0; i < total; i++) {
-        printf("Testing %s... ", tests[i].name);
         if (tests[i].fn() == 0) {
-            printf("[OK]\n");
             passed++;
         }
     }
-
-    printf("\n%d/%d tests passed\n", passed, total);
     return (passed == total) ? 0 : 1;
 }

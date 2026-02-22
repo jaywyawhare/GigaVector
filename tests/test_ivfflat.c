@@ -7,12 +7,8 @@
 
 #define ASSERT(cond) do { if (!(cond)) { fprintf(stderr, "FAIL: %s:%d: %s\n", __FILE__, __LINE__, #cond); return -1; } } while (0)
 
-/* ---------------------------------------------------------------------------
- * 1. test_ivfflat_create_destroy
- * --------------------------------------------------------------------------- */
+/*  1. test_ivfflat_create_destroy  */
 static int test_ivfflat_create_destroy(void) {
-    printf("  test_ivfflat_create_destroy...\n");
-
     GV_IVFFlatConfig config = {
         .nlist      = 4,
         .nprobe     = 2,
@@ -30,16 +26,11 @@ static int test_ivfflat_create_destroy(void) {
     ASSERT(index2 != NULL);
     gv_ivfflat_destroy(index2);
 
-    printf("    PASSED\n");
     return 0;
 }
 
-/* ---------------------------------------------------------------------------
- * 2. test_ivfflat_train_insert_search
- * --------------------------------------------------------------------------- */
+/*  2. test_ivfflat_train_insert_search  */
 static int test_ivfflat_train_insert_search(void) {
-    printf("  test_ivfflat_train_insert_search...\n");
-
     const size_t dim = 8;
     const size_t ntrain = 100;
     const size_t ninsert = 50;
@@ -101,16 +92,11 @@ static int test_ivfflat_train_insert_search(void) {
 
     gv_vector_destroy(query);
     gv_ivfflat_destroy(index);
-    printf("    PASSED\n");
     return 0;
 }
 
-/* ---------------------------------------------------------------------------
- * 3. test_ivfflat_is_trained
- * --------------------------------------------------------------------------- */
+/*  3. test_ivfflat_is_trained  */
 static int test_ivfflat_is_trained(void) {
-    printf("  test_ivfflat_is_trained...\n");
-
     const size_t dim = 8;
     GV_IVFFlatConfig config = {
         .nlist      = 4,
@@ -139,16 +125,11 @@ static int test_ivfflat_is_trained(void) {
     ASSERT(gv_ivfflat_is_trained(index) == 1);
 
     gv_ivfflat_destroy(index);
-    printf("    PASSED\n");
     return 0;
 }
 
-/* ---------------------------------------------------------------------------
- * 4. test_ivfflat_range_search
- * --------------------------------------------------------------------------- */
+/*  4. test_ivfflat_range_search  */
 static int test_ivfflat_range_search(void) {
-    printf("  test_ivfflat_range_search...\n");
-
     const size_t dim = 8;
     const size_t ntrain = 100;
     const size_t ninsert = 50;
@@ -202,16 +183,11 @@ static int test_ivfflat_range_search(void) {
 
     gv_vector_destroy(query);
     gv_ivfflat_destroy(index);
-    printf("    PASSED\n");
     return 0;
 }
 
-/* ---------------------------------------------------------------------------
- * 5. test_ivfflat_delete_update
- * --------------------------------------------------------------------------- */
+/*  5. test_ivfflat_delete_update  */
 static int test_ivfflat_delete_update(void) {
-    printf("  test_ivfflat_delete_update...\n");
-
     const size_t dim = 8;
     const size_t ntrain = 100;
     const size_t ninsert = 20;
@@ -260,16 +236,11 @@ static int test_ivfflat_delete_update(void) {
     ASSERT(gv_ivfflat_count(index) == ninsert - 1);
 
     gv_ivfflat_destroy(index);
-    printf("    PASSED\n");
     return 0;
 }
 
-/* ---------------------------------------------------------------------------
- * 6. test_ivfflat_db_integration
- * --------------------------------------------------------------------------- */
+/*  6. test_ivfflat_db_integration  */
 static int test_ivfflat_db_integration(void) {
-    printf("  test_ivfflat_db_integration...\n");
-
     const size_t dim = 8;
     const size_t ntrain = 100;
     const size_t ninsert = 30;
@@ -314,16 +285,11 @@ static int test_ivfflat_db_integration(void) {
     }
 
     gv_db_close(db);
-    printf("    PASSED\n");
     return 0;
 }
 
-/* ---------------------------------------------------------------------------
- * 7. test_ivfflat_save_load
- * --------------------------------------------------------------------------- */
+/*  7. test_ivfflat_save_load  */
 static int test_ivfflat_save_load(void) {
-    printf("  test_ivfflat_save_load...\n");
-
     const char *filepath = "test_ivfflat_save.db";
     const size_t dim = 8;
     const size_t ntrain = 100;
@@ -386,17 +352,12 @@ static int test_ivfflat_save_load(void) {
     /* Clean up */
     unlink(filepath);
 
-    printf("    PASSED\n");
     return 0;
 }
 
-/* ---------------------------------------------------------------------------
- * main
- * --------------------------------------------------------------------------- */
+/*  main  */
 int main(void) {
     int rc = 0;
-    printf("Running IVF-Flat tests...\n");
-
     rc |= test_ivfflat_create_destroy();
     rc |= test_ivfflat_train_insert_search();
     rc |= test_ivfflat_is_trained();
@@ -404,11 +365,5 @@ int main(void) {
     rc |= test_ivfflat_delete_update();
     rc |= test_ivfflat_db_integration();
     rc |= test_ivfflat_save_load();
-
-    if (rc == 0) {
-        printf("All IVF-Flat tests passed\n");
-    } else {
-        printf("Some IVF-Flat tests FAILED\n");
-    }
     return rc;
 }

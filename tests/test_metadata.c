@@ -140,7 +140,6 @@ static int test_metadata_in_database(void) {
 
 int main(void) {
     int rc = 0;
-    printf("Running metadata tests...\n");
     rc |= test_metadata_set_get();
     rc |= test_metadata_multiple_keys();
     rc |= test_metadata_update();
@@ -149,9 +148,6 @@ int main(void) {
     rc |= test_metadata_nonexistent_key();
     rc |= test_metadata_null_handling();
     rc |= test_metadata_in_database();
-    if (rc == 0) {
-        printf("All metadata tests passed\n");
-    }
     return rc;
 }
 

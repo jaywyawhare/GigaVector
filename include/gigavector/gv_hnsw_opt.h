@@ -22,9 +22,7 @@ extern "C" {
  *      thread.
  */
 
-/* ============================================================================
- * Configuration Structures
- * ============================================================================ */
+/* Configuration Structures */
 
 /**
  * @brief Configuration for inline quantized vector storage and prefetch.
@@ -60,9 +58,7 @@ typedef struct {
     int completed;              /**< 1 when rebuild has finished, 0 while running */
 } GV_HNSWRebuildStats;
 
-/* ============================================================================
- * Lifecycle
- * ============================================================================ */
+/* Lifecycle */
 
 /**
  * @brief Create a new optimized HNSW index with inline quantized storage.
@@ -86,9 +82,7 @@ GV_HNSWInlineIndex *gv_hnsw_inline_create(size_t dimension, size_t max_elements,
  */
 void gv_hnsw_inline_destroy(GV_HNSWInlineIndex *idx);
 
-/* ============================================================================
- * Insert / Search
- * ============================================================================ */
+/* Insert / Search */
 
 /**
  * @brief Insert a vector into the index.
@@ -122,9 +116,7 @@ int gv_hnsw_inline_search(const GV_HNSWInlineIndex *idx, const float *query,
                            size_t k, size_t ef_search,
                            size_t *labels, float *distances);
 
-/* ============================================================================
- * Incremental Rebuild
- * ============================================================================ */
+/* Incremental Rebuild */
 
 /**
  * @brief Start an incremental graph rebuild.
@@ -151,9 +143,7 @@ int gv_hnsw_inline_rebuild(GV_HNSWInlineIndex *idx,
 int gv_hnsw_inline_rebuild_status(const GV_HNSWInlineIndex *idx,
                                    GV_HNSWRebuildStats *stats);
 
-/* ============================================================================
- * Utility
- * ============================================================================ */
+/* Utility */
 
 /**
  * @brief Get the number of vectors currently stored in the index.

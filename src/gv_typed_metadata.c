@@ -10,9 +10,7 @@
 #include <stdio.h>
 #include <math.h>
 
-/* ============================================================================
- * Value Creation Functions
- * ============================================================================ */
+/*  Value Creation Functions  */
 
 GV_TypedValue gv_typed_null(void) {
     GV_TypedValue val;
@@ -77,9 +75,7 @@ GV_TypedValue gv_typed_object(void) {
     return val;
 }
 
-/* ============================================================================
- * Array Operations
- * ============================================================================ */
+/*  Array Operations  */
 
 int gv_typed_array_push(GV_TypedValue *array, const GV_TypedValue *item) {
     if (!array || array->type != GV_META_TYPE_ARRAY || !item) {
@@ -121,9 +117,7 @@ size_t gv_typed_array_length(const GV_TypedValue *array) {
     return array->data.array_val.count;
 }
 
-/* ============================================================================
- * Object Operations
- * ============================================================================ */
+/*  Object Operations  */
 
 int gv_typed_object_set(GV_TypedValue *object, const char *key, const GV_TypedValue *value) {
     if (!object || object->type != GV_META_TYPE_OBJECT || !key || !value) {
@@ -186,9 +180,7 @@ size_t gv_typed_object_length(const GV_TypedValue *object) {
     return object->data.object_val.count;
 }
 
-/* ============================================================================
- * Value Extraction
- * ============================================================================ */
+/*  Value Extraction  */
 
 const char *gv_typed_get_string(const GV_TypedValue *value) {
     if (!value || value->type != GV_META_TYPE_STRING) {
@@ -230,9 +222,7 @@ int gv_typed_get_bool(const GV_TypedValue *value, bool *out) {
     return 0;
 }
 
-/* ============================================================================
- * Comparison Operations
- * ============================================================================ */
+/*  Comparison Operations  */
 
 static double get_numeric_value(const GV_TypedValue *value) {
     if (value->type == GV_META_TYPE_INT64) {
@@ -356,9 +346,7 @@ bool gv_typed_array_contains(const GV_TypedValue *array, const GV_TypedValue *it
     return false;
 }
 
-/* ============================================================================
- * Memory Management
- * ============================================================================ */
+/*  Memory Management  */
 
 void gv_typed_value_free(GV_TypedValue *value) {
     if (!value) return;
@@ -464,8 +452,7 @@ void gv_typed_metadata_free_all(GV_TypedMetadata *head) {
     }
 }
 
-/* ============================================================================
- * Serialization (Binary Format)
+/* Serialization (Binary Format)
  *
  * Format:
  *   [type: 1 byte]
@@ -477,7 +464,7 @@ void gv_typed_metadata_free_all(GV_TypedMetadata *head) {
  * Bool: [value: 1 byte]
  * Array: [count: 4 bytes][element_type: 1 byte][items...]
  * Object: [count: 4 bytes][{key_length: 4, key: key_length, value}...]
- * ============================================================================ */
+ */
 
 static int serialize_value(const GV_TypedValue *value, uint8_t **buf, size_t *len, size_t *cap);
 
@@ -740,9 +727,7 @@ GV_TypedMetadata *gv_typed_metadata_deserialize(const uint8_t *buf, size_t len) 
     return meta;
 }
 
-/* ============================================================================
- * Conversion Functions
- * ============================================================================ */
+/*  Conversion Functions  */
 
 char *gv_typed_to_string(const GV_TypedValue *value) {
     if (!value) return strdup("null");

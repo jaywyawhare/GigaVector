@@ -63,9 +63,7 @@ typedef struct {
  */
 typedef struct GV_Cache GV_Cache;
 
-/* ============================================================================
- * Configuration
- * ============================================================================ */
+/* Configuration */
 
 /**
  * @brief Initialize cache configuration with defaults.
@@ -74,9 +72,7 @@ typedef struct GV_Cache GV_Cache;
  */
 void gv_cache_config_init(GV_CacheConfig *config);
 
-/* ============================================================================
- * Lifecycle
- * ============================================================================ */
+/* Lifecycle */
 
 /**
  * @brief Create a cache instance.
@@ -93,9 +89,7 @@ GV_Cache *gv_cache_create(const GV_CacheConfig *config);
  */
 void gv_cache_destroy(GV_Cache *cache);
 
-/* ============================================================================
- * Cache Operations
- * ============================================================================ */
+/* Cache Operations */
 
 /**
  * @brief Look up a cached search result.
@@ -152,9 +146,7 @@ void gv_cache_invalidate_all(GV_Cache *cache);
  */
 void gv_cache_free_result(GV_CachedResult *result);
 
-/* ============================================================================
- * Statistics
- * ============================================================================ */
+/* Statistics */
 
 /**
  * @brief Get cache statistics.

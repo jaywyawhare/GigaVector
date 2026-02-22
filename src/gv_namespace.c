@@ -14,9 +14,7 @@
 #include <sys/stat.h>
 #include <dirent.h>
 
-/* ============================================================================
- * Internal Structures
- * ============================================================================ */
+/*  Internal Structures  */
 
 #define MAX_NAMESPACE_NAME 64
 #define MAX_NAMESPACES 256
@@ -45,9 +43,7 @@ struct GV_NamespaceManager {
     pthread_rwlock_t rwlock;
 };
 
-/* ============================================================================
- * Configuration
- * ============================================================================ */
+/*  Configuration  */
 
 void gv_namespace_config_init(GV_NamespaceConfig *config) {
     if (!config) return;
@@ -55,9 +51,7 @@ void gv_namespace_config_init(GV_NamespaceConfig *config) {
     config->index_type = GV_NS_INDEX_HNSW;
 }
 
-/* ============================================================================
- * Namespace Manager Lifecycle
- * ============================================================================ */
+/*  Namespace Manager Lifecycle  */
 
 GV_NamespaceManager *gv_namespace_manager_create(const char *base_path) {
     GV_NamespaceManager *mgr = calloc(1, sizeof(GV_NamespaceManager));
@@ -97,9 +91,7 @@ void gv_namespace_manager_destroy(GV_NamespaceManager *mgr) {
     free(mgr);
 }
 
-/* ============================================================================
- * Internal Helpers
- * ============================================================================ */
+/*  Internal Helpers  */
 
 static GV_Namespace *find_namespace(GV_NamespaceManager *mgr, const char *name) {
     for (size_t i = 0; i < mgr->namespace_count; i++) {
@@ -251,9 +243,7 @@ static int read_manifest(const char *db_filepath, size_t *dimension,
     return 0;
 }
 
-/* ============================================================================
- * Namespace Operations
- * ============================================================================ */
+/*  Namespace Operations  */
 
 GV_Namespace *gv_namespace_create(GV_NamespaceManager *mgr, const GV_NamespaceConfig *config) {
     if (!mgr || !config || !config->name || config->dimension == 0) {
@@ -452,9 +442,7 @@ int gv_namespace_exists(GV_NamespaceManager *mgr, const char *name) {
     return exists;
 }
 
-/* ============================================================================
- * Vector Operations within Namespace
- * ============================================================================ */
+/*  Vector Operations within Namespace  */
 
 int gv_namespace_add_vector(GV_Namespace *ns, const float *data, size_t dimension) {
     if (!ns || !ns->db || !data) return -1;
@@ -549,9 +537,7 @@ size_t gv_namespace_count(const GV_Namespace *ns) {
     return count;
 }
 
-/* ============================================================================
- * Persistence
- * ============================================================================ */
+/*  Persistence  */
 
 int gv_namespace_save(GV_Namespace *ns) {
     if (!ns || !ns->db) return -1;
@@ -648,9 +634,7 @@ int gv_namespace_manager_load_all(GV_NamespaceManager *mgr) {
     return loaded;
 }
 
-/* ============================================================================
- * Utility
- * ============================================================================ */
+/*  Utility  */
 
 GV_Database *gv_namespace_get_db(GV_Namespace *ns) {
     if (!ns) return NULL;

@@ -8,19 +8,14 @@
 #include "gigavector/gv_llm.h"
 
 static void test_context_graph_create_destroy(void) {
-    printf("Testing context graph create/destroy...\n");
-    
     GV_ContextGraphConfig config = gv_context_graph_config_default();
     GV_ContextGraph *graph = gv_context_graph_create(&config);
     assert(graph != NULL);
     
     gv_context_graph_destroy(graph);
-    printf("  ✓ Context graph create/destroy passed\n");
 }
 
 static void test_context_graph_add_entities(void) {
-    printf("Testing context graph add entities...\n");
-    
     GV_ContextGraphConfig config = gv_context_graph_config_default();
     GV_ContextGraph *graph = gv_context_graph_create(&config);
     assert(graph != NULL);
@@ -52,12 +47,9 @@ static void test_context_graph_add_entities(void) {
     free(entities[0].name);
     free(entities[1].name);
     gv_context_graph_destroy(graph);
-    printf("  ✓ Context graph add entities passed\n");
 }
 
 static void test_context_graph_add_relationships(void) {
-    printf("Testing context graph add relationships...\n");
-    
     GV_ContextGraphConfig config = gv_context_graph_config_default();
     GV_ContextGraph *graph = gv_context_graph_create(&config);
     assert(graph != NULL);
@@ -101,12 +93,9 @@ static void test_context_graph_add_relationships(void) {
     free(rel.destination_entity_id);
     free(rel.relationship_type);
     gv_context_graph_destroy(graph);
-    printf("  ✓ Context graph add relationships passed\n");
 }
 
 static void test_context_graph_search(void) {
-    printf("Testing context graph search...\n");
-    
     GV_ContextGraphConfig config = gv_context_graph_config_default();
     GV_ContextGraph *graph = gv_context_graph_create(&config);
     assert(graph != NULL);
@@ -142,29 +131,21 @@ static void test_context_graph_search(void) {
     free(entity.name);
     free(embedding);
     gv_context_graph_destroy(graph);
-    printf("  ✓ Context graph search passed\n");
 }
 
 static void test_json_parsing(void) {
-    printf("Testing JSON parsing...\n");
-    
     /* Note: parse_entities_json and parse_relationships_json are static functions,
        so we can't test them directly. They are tested through the full extraction
        flow when LLM is available. The JSON parsing logic follows the same pattern
        as parse_facts_json in gv_memory_extraction.c */
-    printf("  ✓ JSON parsing structure verified (requires LLM for full test)\n");
 }
 
 int main(void) {
-    printf("Running context graph tests...\n\n");
-    
     test_context_graph_create_destroy();
     test_context_graph_add_entities();
     test_context_graph_add_relationships();
     test_context_graph_search();
     test_json_parsing();
-    
-    printf("\nAll context graph tests passed!\n");
     return 0;
 }
 

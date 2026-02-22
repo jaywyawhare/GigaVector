@@ -15,9 +15,7 @@
 #include <string.h>
 #include <float.h>
 
-/* ============================================================================
- * Internal helpers
- * ============================================================================ */
+/*  Internal helpers  */
 
 /**
  * Walk a GV_Metadata linked list and return the value for @p key, or NULL.
@@ -172,9 +170,7 @@ static void free_search_result_vector(GV_SearchResult *r) {
     r->vector = NULL;
 }
 
-/* ============================================================================
- * Public API
- * ============================================================================ */
+/*  Public API  */
 
 void gv_group_search_config_init(GV_GroupSearchConfig *config) {
     if (!config) return;

@@ -23,9 +23,7 @@
 #include "gigavector/gv_database.h"
 #include "gigavector/gv_json.h"
 
-/* ========================================================================== */
 /*  Constants                                                                  */
-/* ========================================================================== */
 
 #define AE_DEFAULT_DIMENSION         1536
 #define AE_DEFAULT_MAX_CACHE         10000
@@ -37,9 +35,7 @@
 #define AE_URL_BUFSIZE               2048
 #define AE_AUTH_BUFSIZE              1024
 
-/* ========================================================================== */
 /*  LRU cache internals                                                        */
-/* ========================================================================== */
 
 typedef struct AE_CacheEntry {
     char                   *text;       /* Key: original text                */
@@ -60,9 +56,7 @@ typedef struct {
     pthread_mutex_t mutex;
 } AE_Cache;
 
-/* ========================================================================== */
 /*  Auto-embedder structure                                                    */
-/* ========================================================================== */
 
 struct GV_AutoEmbedder {
     /* Configuration (owned copies of strings) */
@@ -94,9 +88,7 @@ struct GV_AutoEmbedder {
     pthread_mutex_t      mutex;
 };
 
-/* ========================================================================== */
 /*  CURL response buffer                                                       */
-/* ========================================================================== */
 
 #ifdef HAVE_CURL
 typedef struct {
@@ -153,9 +145,7 @@ static void ae_response_buf_free(AE_ResponseBuf *buf) {
 }
 #endif /* HAVE_CURL */
 
-/* ========================================================================== */
 /*  Hash helper (djb2)                                                         */
-/* ========================================================================== */
 
 static size_t ae_hash_string(const char *str, size_t bucket_count) {
     size_t h = 5381;
@@ -166,9 +156,7 @@ static size_t ae_hash_string(const char *str, size_t bucket_count) {
     return h % bucket_count;
 }
 
-/* ========================================================================== */
 /*  LRU cache implementation                                                   */
-/* ========================================================================== */
 
 static AE_Cache *ae_cache_create(size_t max_entries) {
     AE_Cache *c = (AE_Cache *)calloc(1, sizeof(AE_Cache));
@@ -372,9 +360,7 @@ static void ae_cache_destroy(AE_Cache *c) {
     free(c);
 }
 
-/* ========================================================================== */
 /*  JSON request builders                                                      */
-/* ========================================================================== */
 
 /**
  * Escape a string for inclusion in a JSON string literal.
@@ -587,9 +573,7 @@ static char *ae_build_hf_batch_request(const char *const *texts, size_t count) {
     return json;
 }
 
-/* ========================================================================== */
 /*  JSON response parsers (using project gv_json utilities)                    */
-/* ========================================================================== */
 
 /**
  * Parse an OpenAI /v1/embeddings response to extract the first embedding
@@ -766,9 +750,7 @@ static int ae_parse_google_batch(const char *body, size_t count,
     return success;
 }
 
-/* ========================================================================== */
 /*  HTTP call helpers (libcurl)                                                */
-/* ========================================================================== */
 
 #ifdef HAVE_CURL
 
@@ -890,9 +872,7 @@ static int ae_http_post(GV_AutoEmbedder *em, const char *url,
 
 #endif /* HAVE_CURL */
 
-/* ========================================================================== */
 /*  Timing helper                                                              */
-/* ========================================================================== */
 
 static double ae_time_ms(void) {
     struct timespec ts;
@@ -900,9 +880,7 @@ static double ae_time_ms(void) {
     return (double)ts.tv_sec * 1000.0 + (double)ts.tv_nsec / 1e6;
 }
 
-/* ========================================================================== */
 /*  Core: single-text embedding via HTTP                                       */
-/* ========================================================================== */
 
 /**
  * Internal: perform a single-text embedding API call.
@@ -1017,9 +995,7 @@ static int ae_embed_batch_http(GV_AutoEmbedder *em, const char *const *texts,
 #endif
 }
 
-/* ========================================================================== */
 /*  Public API                                                                 */
-/* ========================================================================== */
 
 void gv_auto_embed_config_init(GV_AutoEmbedConfig *config) {
     if (!config) return;
@@ -1096,9 +1072,7 @@ void gv_auto_embed_destroy(GV_AutoEmbedder *embedder) {
     free(embedder);
 }
 
-/* ------------------------------------------------------------------------ */
 /*  gv_auto_embed_text -- raw embedding                                      */
-/* ------------------------------------------------------------------------ */
 
 float *gv_auto_embed_text(GV_AutoEmbedder *embedder, const char *text,
                           size_t *out_dimension) {
@@ -1164,9 +1138,7 @@ float *gv_auto_embed_text(GV_AutoEmbedder *embedder, const char *text,
     return vec;
 }
 
-/* ------------------------------------------------------------------------ */
 /*  gv_auto_embed_add_text                                                   */
-/* ------------------------------------------------------------------------ */
 
 int gv_auto_embed_add_text(GV_AutoEmbedder *embedder, GV_Database *db,
                            const char *text,
@@ -1189,9 +1161,7 @@ int gv_auto_embed_add_text(GV_AutoEmbedder *embedder, GV_Database *db,
     return rc;
 }
 
-/* ------------------------------------------------------------------------ */
 /*  gv_auto_embed_search_text                                                */
-/* ------------------------------------------------------------------------ */
 
 int gv_auto_embed_search_text(GV_AutoEmbedder *embedder, const GV_Database *db,
                               const char *text, size_t k, int distance_type,
@@ -1250,9 +1220,7 @@ int gv_auto_embed_search_text(GV_AutoEmbedder *embedder, const GV_Database *db,
     return 0;
 }
 
-/* ------------------------------------------------------------------------ */
 /*  gv_auto_embed_add_texts (batch)                                          */
-/* ------------------------------------------------------------------------ */
 
 int gv_auto_embed_add_texts(GV_AutoEmbedder *embedder, GV_Database *db,
                             const char *const *texts, size_t count,
@@ -1394,9 +1362,7 @@ int gv_auto_embed_add_texts(GV_AutoEmbedder *embedder, GV_Database *db,
     return total_added;
 }
 
-/* ------------------------------------------------------------------------ */
 /*  Statistics                                                               */
-/* ------------------------------------------------------------------------ */
 
 int gv_auto_embed_get_stats(const GV_AutoEmbedder *embedder,
                             GV_AutoEmbedStats *stats) {

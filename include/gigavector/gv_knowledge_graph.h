@@ -25,18 +25,14 @@
 extern "C" {
 #endif
 
-/* ============================================================================
- * Forward / Opaque Types
- * ============================================================================ */
+/* Forward / Opaque Types */
 
 /**
  * @brief Opaque knowledge-graph handle.
  */
 typedef struct GV_KnowledgeGraph GV_KnowledgeGraph;
 
-/* ============================================================================
- * Property (key-value linked list)
- * ============================================================================ */
+/* Property (key-value linked list) */
 
 /**
  * @brief Key-value property node (singly-linked list).
@@ -47,9 +43,7 @@ typedef struct GV_KGProp {
     struct GV_KGProp *next;         /**< Next property in the list. */
 } GV_KGProp;
 
-/* ============================================================================
- * Entity
- * ============================================================================ */
+/* Entity */
 
 /**
  * @brief Knowledge-graph entity.
@@ -66,9 +60,7 @@ typedef struct {
     float confidence;               /**< Extraction confidence (0.0 - 1.0). */
 } GV_KGEntity;
 
-/* ============================================================================
- * Relation
- * ============================================================================ */
+/* Relation */
 
 /**
  * @brief Directed relation between two entities (triple edge).
@@ -83,9 +75,7 @@ typedef struct {
     uint64_t created_at;            /**< Creation timestamp (epoch seconds). */
 } GV_KGRelation;
 
-/* ============================================================================
- * Triple (query result)
- * ============================================================================ */
+/* Triple (query result) */
 
 /**
  * @brief Materialised triple returned by SPO queries.
@@ -99,9 +89,7 @@ typedef struct {
     float score;                    /**< Relevance / confidence score. */
 } GV_KGTriple;
 
-/* ============================================================================
- * Configuration
- * ============================================================================ */
+/* Configuration */
 
 /**
  * @brief Knowledge-graph configuration.
@@ -115,9 +103,7 @@ typedef struct {
     size_t max_entities;            /**< Hard cap on entity count (default 1000000). */
 } GV_KGConfig;
 
-/* ============================================================================
- * Subgraph
- * ============================================================================ */
+/* Subgraph */
 
 /**
  * @brief Extracted subgraph (entity + relation ID sets).
@@ -129,9 +115,7 @@ typedef struct {
     size_t relation_count;          /**< Number of relations. */
 } GV_KGSubgraph;
 
-/* ============================================================================
- * Search Result
- * ============================================================================ */
+/* Search Result */
 
 /**
  * @brief Result of a semantic entity search.
@@ -143,9 +127,7 @@ typedef struct {
     float similarity;               /**< Cosine similarity to query. */
 } GV_KGSearchResult;
 
-/* ============================================================================
- * Link Prediction Result
- * ============================================================================ */
+/* Link Prediction Result */
 
 /**
  * @brief Predicted (or duplicate-candidate) link between two entities.
@@ -157,9 +139,7 @@ typedef struct {
     float confidence;               /**< Prediction confidence. */
 } GV_KGLinkPrediction;
 
-/* ============================================================================
- * Statistics
- * ============================================================================ */
+/* Statistics */
 
 /**
  * @brief Aggregate statistics for the knowledge graph.
@@ -173,9 +153,7 @@ typedef struct {
     size_t embedding_count;         /**< Entities that carry embeddings. */
 } GV_KGStats;
 
-/* ============================================================================
- * Lifecycle
- * ============================================================================ */
+/* Lifecycle */
 
 /**
  * @brief Initialise a configuration struct with default values.
@@ -199,9 +177,7 @@ GV_KnowledgeGraph *gv_kg_create(const GV_KGConfig *config);
  */
 void gv_kg_destroy(GV_KnowledgeGraph *kg);
 
-/* ============================================================================
- * Entity Operations
- * ============================================================================ */
+/* Entity Operations */
 
 /**
  * @brief Add an entity to the knowledge graph.
@@ -283,9 +259,7 @@ int gv_kg_find_entities_by_type(const GV_KnowledgeGraph *kg, const char *type,
 int gv_kg_find_entities_by_name(const GV_KnowledgeGraph *kg, const char *name,
                                  uint64_t *out_ids, size_t max_count);
 
-/* ============================================================================
- * Relation (Triple) Operations
- * ============================================================================ */
+/* Relation (Triple) Operations */
 
 /**
  * @brief Add a directed relation (triple) between two entities.
@@ -332,9 +306,7 @@ const GV_KGRelation *gv_kg_get_relation(const GV_KnowledgeGraph *kg,
 int gv_kg_set_relation_prop(GV_KnowledgeGraph *kg, uint64_t relation_id,
                              const char *key, const char *value);
 
-/* ============================================================================
- * Triple Store Queries (SPO pattern matching)
- * ============================================================================ */
+/* Triple Store Queries (SPO pattern matching) */
 
 /**
  * @brief Query triples using an SPO pattern.  Pass NULL for any parameter to
@@ -360,9 +332,7 @@ int gv_kg_query_triples(const GV_KnowledgeGraph *kg, const uint64_t *subject,
  */
 void gv_kg_free_triples(GV_KGTriple *triples, size_t count);
 
-/* ============================================================================
- * Semantic Search (vector-based)
- * ============================================================================ */
+/* Semantic Search (vector-based) */
 
 /**
  * @brief Find the k most similar entities by cosine similarity.
@@ -401,9 +371,7 @@ int gv_kg_search_by_text(const GV_KnowledgeGraph *kg, const char *text,
  */
 void gv_kg_free_search_results(GV_KGSearchResult *results, size_t count);
 
-/* ============================================================================
- * Entity Resolution / Deduplication
- * ============================================================================ */
+/* Entity Resolution / Deduplication */
 
 /**
  * @brief Resolve an entity: find an existing match or create a new one.
@@ -442,9 +410,7 @@ int gv_kg_find_duplicates(const GV_KnowledgeGraph *kg, float threshold,
 int gv_kg_merge_entities(GV_KnowledgeGraph *kg, uint64_t keep_id,
                           uint64_t merge_id);
 
-/* ============================================================================
- * Link Prediction
- * ============================================================================ */
+/* Link Prediction */
 
 /**
  * @brief Predict missing links for an entity.
@@ -458,9 +424,7 @@ int gv_kg_merge_entities(GV_KnowledgeGraph *kg, uint64_t keep_id,
 int gv_kg_predict_links(const GV_KnowledgeGraph *kg, uint64_t entity_id,
                          size_t k, GV_KGLinkPrediction *results);
 
-/* ============================================================================
- * Graph Traversal
- * ============================================================================ */
+/* Graph Traversal */
 
 /**
  * @brief Get immediate neighbours of an entity (outgoing + incoming).
@@ -500,9 +464,7 @@ int gv_kg_traverse(const GV_KnowledgeGraph *kg, uint64_t start,
 int gv_kg_shortest_path(const GV_KnowledgeGraph *kg, uint64_t from,
                          uint64_t to, uint64_t *path_ids, size_t max_len);
 
-/* ============================================================================
- * Subgraph Extraction
- * ============================================================================ */
+/* Subgraph Extraction */
 
 /**
  * @brief Extract a subgraph within a given radius of a centre entity.
@@ -523,9 +485,7 @@ int gv_kg_extract_subgraph(const GV_KnowledgeGraph *kg, uint64_t center,
  */
 void gv_kg_free_subgraph(GV_KGSubgraph *subgraph);
 
-/* ============================================================================
- * Hybrid Queries (vector + graph)
- * ============================================================================ */
+/* Hybrid Queries (vector + graph) */
 
 /**
  * @brief Hybrid search: embedding similarity filtered by entity type and predicate.
@@ -544,9 +504,7 @@ int gv_kg_hybrid_search(const GV_KnowledgeGraph *kg,
                          const char *entity_type, const char *predicate_filter,
                          size_t k, GV_KGSearchResult *results);
 
-/* ============================================================================
- * Analytics
- * ============================================================================ */
+/* Analytics */
 
 /**
  * @brief Compute aggregate statistics.
@@ -590,9 +548,7 @@ int gv_kg_get_entity_types(const GV_KnowledgeGraph *kg, char **out_types,
 int gv_kg_get_predicates(const GV_KnowledgeGraph *kg, char **out_predicates,
                           size_t max_count);
 
-/* ============================================================================
- * Persistence
- * ============================================================================ */
+/* Persistence */
 
 /**
  * @brief Save the knowledge graph to a binary file (magic "GVKG").

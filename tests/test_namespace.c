@@ -5,7 +5,6 @@
 
 #define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while(0)
 
-/* ------------------------------------------------------------------ */
 static int test_config_init(void) {
     GV_NamespaceConfig cfg;
     memset(&cfg, 0xFF, sizeof(cfg));
@@ -18,7 +17,6 @@ static int test_config_init(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 static int test_manager_create_destroy(void) {
     GV_NamespaceManager *mgr = gv_namespace_manager_create(NULL);
     ASSERT(mgr != NULL, "manager_create(NULL) should succeed");
@@ -29,7 +27,6 @@ static int test_manager_create_destroy(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 static int test_create_and_get(void) {
     GV_NamespaceManager *mgr = gv_namespace_manager_create(NULL);
     ASSERT(mgr != NULL, "create manager");
@@ -52,7 +49,6 @@ static int test_create_and_get(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 static int test_exists_and_delete(void) {
     GV_NamespaceManager *mgr = gv_namespace_manager_create(NULL);
     ASSERT(mgr != NULL, "create manager");
@@ -73,7 +69,6 @@ static int test_exists_and_delete(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 static int test_list_namespaces(void) {
     GV_NamespaceManager *mgr = gv_namespace_manager_create(NULL);
     ASSERT(mgr != NULL, "create manager");
@@ -102,7 +97,6 @@ static int test_list_namespaces(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 static int test_add_vector_and_count(void) {
     GV_NamespaceManager *mgr = gv_namespace_manager_create(NULL);
     ASSERT(mgr != NULL, "create manager");
@@ -124,7 +118,6 @@ static int test_add_vector_and_count(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 static int test_get_info(void) {
     GV_NamespaceManager *mgr = gv_namespace_manager_create(NULL);
     ASSERT(mgr != NULL, "create manager");
@@ -148,7 +141,6 @@ static int test_get_info(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 static int test_get_db(void) {
     GV_NamespaceManager *mgr = gv_namespace_manager_create(NULL);
     ASSERT(mgr != NULL, "create manager");
@@ -167,7 +159,6 @@ static int test_get_db(void) {
     return 0;
 }
 
-/* ================================================================== */
 typedef int (*test_fn)(void);
 typedef struct { const char *name; test_fn fn; } TestCase;
 
@@ -185,10 +176,7 @@ int main(void) {
     int n = sizeof(tests) / sizeof(tests[0]);
     int passed = 0;
     for (int i = 0; i < n; i++) {
-        printf("%s", tests[i].name);
-        if (tests[i].fn() == 0) { printf(" [OK]\n"); passed++; }
-        else { printf(" [FAIL]\n"); }
+        if (tests[i].fn() == 0) { passed++; }
     }
-    printf("\n%d/%d tests passed\n", passed, n);
     return passed == n ? 0 : 1;
 }

@@ -18,9 +18,7 @@ extern "C" {
  * Auto-promotes tenants between tiers based on usage.
  */
 
-/* ============================================================================
- * Enums
- * ============================================================================ */
+/* Enums */
 
 /**
  * @brief Tenant tier classification.
@@ -31,9 +29,7 @@ typedef enum {
     GV_TIER_PREMIUM   = 2    /**< Dedicated resources (large tenants). */
 } GV_TenantTier;
 
-/* ============================================================================
- * Configuration Structures
- * ============================================================================ */
+/* Configuration Structures */
 
 /**
  * @brief Thresholds governing automatic tier promotion/demotion.
@@ -56,9 +52,7 @@ typedef struct {
     size_t max_total_tenants;       /**< Max total tenants across all tiers (default 10000). */
 } GV_TieredTenantConfig;
 
-/* ============================================================================
- * Tenant Information
- * ============================================================================ */
+/* Tenant Information */
 
 /**
  * @brief Per-tenant information snapshot.
@@ -73,18 +67,14 @@ typedef struct {
     double        qps_avg;     /**< Average queries per second (sliding window). */
 } GV_TenantInfo;
 
-/* ============================================================================
- * Opaque Manager Handle
- * ============================================================================ */
+/* Opaque Manager Handle */
 
 /**
  * @brief Opaque tiered tenant manager handle.
  */
 typedef struct GV_TieredManager GV_TieredManager;
 
-/* ============================================================================
- * Configuration
- * ============================================================================ */
+/* Configuration */
 
 /**
  * @brief Initialize tiered tenant configuration with defaults.
@@ -103,9 +93,7 @@ typedef struct GV_TieredManager GV_TieredManager;
  */
 void gv_tiered_config_init(GV_TieredTenantConfig *config);
 
-/* ============================================================================
- * Lifecycle
- * ============================================================================ */
+/* Lifecycle */
 
 /**
  * @brief Create a tiered tenant manager.
@@ -122,9 +110,7 @@ GV_TieredManager *gv_tiered_create(const GV_TieredTenantConfig *config);
  */
 void gv_tiered_destroy(GV_TieredManager *mgr);
 
-/* ============================================================================
- * Tenant Operations
- * ============================================================================ */
+/* Tenant Operations */
 
 /**
  * @brief Add a new tenant.
@@ -168,9 +154,7 @@ int gv_tiered_promote(GV_TieredManager *mgr, const char *tenant_id,
 int gv_tiered_get_info(const GV_TieredManager *mgr, const char *tenant_id,
                         GV_TenantInfo *info);
 
-/* ============================================================================
- * Usage Tracking
- * ============================================================================ */
+/* Usage Tracking */
 
 /**
  * @brief Record usage delta for a tenant.
@@ -198,9 +182,7 @@ int gv_tiered_record_usage(GV_TieredManager *mgr, const char *tenant_id,
  */
 int gv_tiered_check_promote(GV_TieredManager *mgr);
 
-/* ============================================================================
- * Enumeration
- * ============================================================================ */
+/* Enumeration */
 
 /**
  * @brief List tenants in a specific tier.
@@ -222,9 +204,7 @@ int gv_tiered_list_tenants(const GV_TieredManager *mgr, GV_TenantTier tier,
  */
 size_t gv_tiered_tenant_count(const GV_TieredManager *mgr);
 
-/* ============================================================================
- * Persistence
- * ============================================================================ */
+/* Persistence */
 
 /**
  * @brief Save manager state to a binary file.

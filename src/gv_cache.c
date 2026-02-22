@@ -10,9 +10,7 @@
 #include <pthread.h>
 #include <time.h>
 
-/* ============================================================================
- * Internal Structures
- * ============================================================================ */
+/*  Internal Structures  */
 
 typedef struct CacheEntry {
     uint64_t key_hash;          /* Hash of query vector + params */
@@ -62,9 +60,7 @@ struct GV_Cache {
     pthread_mutex_t lock;
 };
 
-/* ============================================================================
- * Hash Functions
- * ============================================================================ */
+/*  Hash Functions  */
 
 static uint64_t fnv1a_64(const void *data, size_t len) {
     const uint8_t *bytes = (const uint8_t *)data;
@@ -88,9 +84,7 @@ static size_t bucket_idx(uint64_t hash) {
     return hash % CACHE_BUCKETS;
 }
 
-/* ============================================================================
- * Internal Helpers
- * ============================================================================ */
+/*  Internal Helpers  */
 
 static uint64_t current_time_seconds(void) {
     return (uint64_t)time(NULL);
@@ -197,9 +191,7 @@ static int is_expired(const GV_Cache *cache, const CacheEntry *entry) {
     return (current_time_seconds() - entry->created_at) > cache->config.ttl_seconds;
 }
 
-/* ============================================================================
- * Configuration
- * ============================================================================ */
+/*  Configuration  */
 
 static const GV_CacheConfig DEFAULT_CONFIG = {
     .max_entries = 1024,
@@ -214,9 +206,7 @@ void gv_cache_config_init(GV_CacheConfig *config) {
     *config = DEFAULT_CONFIG;
 }
 
-/* ============================================================================
- * Lifecycle
- * ============================================================================ */
+/*  Lifecycle  */
 
 GV_Cache *gv_cache_create(const GV_CacheConfig *config) {
     GV_Cache *cache = calloc(1, sizeof(GV_Cache));
@@ -249,9 +239,7 @@ void gv_cache_destroy(GV_Cache *cache) {
     free(cache);
 }
 
-/* ============================================================================
- * Cache Operations
- * ============================================================================ */
+/*  Cache Operations  */
 
 int gv_cache_lookup(GV_Cache *cache, const float *query_data, size_t dimension,
                     size_t k, int distance_type, GV_CachedResult *result) {
@@ -478,9 +466,7 @@ void gv_cache_free_result(GV_CachedResult *result) {
     result->count = 0;
 }
 
-/* ============================================================================
- * Statistics
- * ============================================================================ */
+/*  Statistics  */
 
 int gv_cache_get_stats(const GV_Cache *cache, GV_CacheStats *stats) {
     if (!cache || !stats) return -1;

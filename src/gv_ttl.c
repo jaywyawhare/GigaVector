@@ -11,9 +11,7 @@
 #include <time.h>
 #include <pthread.h>
 
-/* ============================================================================
- * Internal Structures
- * ============================================================================ */
+/*  Internal Structures  */
 
 /**
  * @brief TTL entry for a vector.
@@ -52,17 +50,13 @@ struct GV_TTLManager {
     GV_Database *cleanup_db;
 };
 
-/* ============================================================================
- * Hash Function
- * ============================================================================ */
+/*  Hash Function  */
 
 static size_t hash_index(size_t vector_index) {
     return vector_index % TTL_HASH_BUCKETS;
 }
 
-/* ============================================================================
- * Configuration
- * ============================================================================ */
+/*  Configuration  */
 
 static const GV_TTLConfig DEFAULT_CONFIG = {
     .default_ttl_seconds = 0,
@@ -76,9 +70,7 @@ void gv_ttl_config_init(GV_TTLConfig *config) {
     *config = DEFAULT_CONFIG;
 }
 
-/* ============================================================================
- * Lifecycle
- * ============================================================================ */
+/*  Lifecycle  */
 
 GV_TTLManager *gv_ttl_create(const GV_TTLConfig *config) {
     GV_TTLManager *mgr = calloc(1, sizeof(GV_TTLManager));
@@ -121,9 +113,7 @@ void gv_ttl_destroy(GV_TTLManager *mgr) {
     free(mgr);
 }
 
-/* ============================================================================
- * Internal Helpers
- * ============================================================================ */
+/*  Internal Helpers  */
 
 static GV_TTLEntry *find_entry(GV_TTLManager *mgr, size_t vector_index) {
     size_t bucket = hash_index(vector_index);
@@ -158,9 +148,7 @@ static uint64_t current_time_unix(void) {
     return (uint64_t)time(NULL);
 }
 
-/* ============================================================================
- * TTL Operations
- * ============================================================================ */
+/*  TTL Operations  */
 
 int gv_ttl_set(GV_TTLManager *mgr, size_t vector_index, uint64_t ttl_seconds) {
     if (!mgr) return -1;
@@ -272,9 +260,7 @@ int gv_ttl_get_remaining(const GV_TTLManager *mgr, size_t vector_index, uint64_t
     return 0;
 }
 
-/* ============================================================================
- * Cleanup Operations
- * ============================================================================ */
+/*  Cleanup Operations  */
 
 int gv_ttl_cleanup_expired(GV_TTLManager *mgr, GV_Database *db) {
     if (!mgr || !db) return -1;
@@ -324,9 +310,7 @@ int gv_ttl_cleanup_expired(GV_TTLManager *mgr, GV_Database *db) {
     return (int)expired_count;
 }
 
-/* ============================================================================
- * Background Cleanup Thread
- * ============================================================================ */
+/*  Background Cleanup Thread  */
 
 static void *cleanup_thread_func(void *arg) {
     GV_TTLManager *mgr = (GV_TTLManager *)arg;
@@ -416,9 +400,7 @@ int gv_ttl_is_background_cleanup_running(const GV_TTLManager *mgr) {
     return running;
 }
 
-/* ============================================================================
- * Statistics
- * ============================================================================ */
+/*  Statistics  */
 
 int gv_ttl_get_stats(const GV_TTLManager *mgr, GV_TTLStats *stats) {
     if (!mgr || !stats) return -1;
@@ -446,9 +428,7 @@ int gv_ttl_get_stats(const GV_TTLManager *mgr, GV_TTLStats *stats) {
     return 0;
 }
 
-/* ============================================================================
- * Bulk Operations
- * ============================================================================ */
+/*  Bulk Operations  */
 
 int gv_ttl_set_bulk(GV_TTLManager *mgr, const size_t *indices, size_t count, uint64_t ttl_seconds) {
     if (!mgr || !indices || count == 0) return -1;

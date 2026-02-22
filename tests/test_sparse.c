@@ -16,7 +16,6 @@
 static int test_sparse_basic_insert_search(void) {
     GV_Database *db = gv_db_open(NULL, 100, GV_INDEX_TYPE_SPARSE);
     if (db == NULL) {
-        printf("Skipping sparse test (sparse index not available)\n");
         return 0;
     }
     
@@ -50,7 +49,6 @@ static int test_sparse_basic_insert_search(void) {
 static int test_sparse_cosine_distance(void) {
     GV_Database *db = gv_db_open(NULL, 100, GV_INDEX_TYPE_SPARSE);
     if (db == NULL) {
-        printf("Skipping sparse cosine test (sparse index not available)\n");
         return 0;
     }
     
@@ -71,7 +69,6 @@ static int test_sparse_cosine_distance(void) {
 static int test_sparse_metadata(void) {
     GV_Database *db = gv_db_open(NULL, 100, GV_INDEX_TYPE_SPARSE);
     if (db == NULL) {
-        printf("Skipping sparse metadata test (sparse index not available)\n");
         return 0;
     }
     
@@ -95,7 +92,6 @@ static int test_sparse_metadata(void) {
 static int test_sparse_large_dataset(void) {
     GV_Database *db = gv_db_open(NULL, 1000, GV_INDEX_TYPE_SPARSE);
     if (db == NULL) {
-        printf("Skipping sparse large dataset test (sparse index not available)\n");
         return 0;
     }
     
@@ -125,7 +121,6 @@ static int test_sparse_large_dataset(void) {
 static int test_sparse_empty_query(void) {
     GV_Database *db = gv_db_open(NULL, 100, GV_INDEX_TYPE_SPARSE);
     if (db == NULL) {
-        printf("Skipping sparse empty query test (sparse index not available)\n");
         return 0;
     }
     
@@ -155,7 +150,6 @@ static int test_sparse_persistence(void) {
     
     GV_Database *db = gv_db_open(path, 100, GV_INDEX_TYPE_SPARSE);
     if (db == NULL) {
-        printf("Skipping sparse persistence test (sparse index not available)\n");
         return 0;
     }
     
@@ -192,16 +186,12 @@ static int test_sparse_persistence(void) {
 
 int main(void) {
     int rc = 0;
-    printf("Running sparse index tests...\n");
     rc |= test_sparse_basic_insert_search();
     rc |= test_sparse_cosine_distance();
     rc |= test_sparse_metadata();
     rc |= test_sparse_large_dataset();
     rc |= test_sparse_empty_query();
     rc |= test_sparse_persistence();
-    if (rc == 0) {
-        printf("All sparse index tests passed\n");
-    }
     return rc;
 }
 

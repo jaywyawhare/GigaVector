@@ -17,9 +17,9 @@
 #include <time.h>
 #include <pthread.h>
 
-/* ============================================================================
+/*
  * Internal Structures
- * ============================================================================ */
+ */
 
 /**
  * @brief Per-vector version tracking entry.
@@ -43,9 +43,9 @@ struct GV_CondManager {
     size_t slot_count;             /**< Number of allocated slots. */
 };
 
-/* ============================================================================
+/*
  * Helpers
- * ============================================================================ */
+ */
 
 /**
  * @brief Get current time in microseconds since epoch.
@@ -206,9 +206,9 @@ static void bump_version(GV_CondManager *mgr, size_t index)
     mgr->slots[index].updated_at = now_microseconds();
 }
 
-/* ============================================================================
+/*
  * Lifecycle
- * ============================================================================ */
+ */
 
 GV_CondManager *gv_cond_create(void *db)
 {
@@ -231,9 +231,9 @@ void gv_cond_destroy(GV_CondManager *mgr)
     free(mgr);
 }
 
-/* ============================================================================
+/*
  * Conditional Vector Update
- * ============================================================================ */
+ */
 
 GV_ConditionalResult gv_cond_update_vector(GV_CondManager *mgr, size_t index,
                                             const float *new_data, size_t dimension,
@@ -282,9 +282,9 @@ GV_ConditionalResult gv_cond_update_vector(GV_CondManager *mgr, size_t index,
     return GV_COND_OK;
 }
 
-/* ============================================================================
+/*
  * Conditional Metadata Update
- * ============================================================================ */
+ */
 
 GV_ConditionalResult gv_cond_update_metadata(GV_CondManager *mgr, size_t index,
                                               const char *key, const char *value,
@@ -397,9 +397,9 @@ GV_ConditionalResult gv_cond_update_metadata(GV_CondManager *mgr, size_t index,
     return GV_COND_OK;
 }
 
-/* ============================================================================
+/*
  * Conditional Delete
- * ============================================================================ */
+ */
 
 GV_ConditionalResult gv_cond_delete(GV_CondManager *mgr, size_t index,
                                      const GV_Condition *conditions,
@@ -444,9 +444,9 @@ GV_ConditionalResult gv_cond_delete(GV_CondManager *mgr, size_t index,
     return GV_COND_OK;
 }
 
-/* ============================================================================
+/*
  * Version Queries
- * ============================================================================ */
+ */
 
 uint64_t gv_cond_get_version(const GV_CondManager *mgr, size_t index)
 {
@@ -464,9 +464,9 @@ uint64_t gv_cond_get_version(const GV_CondManager *mgr, size_t index)
     return ver;
 }
 
-/* ============================================================================
+/*
  * Batch Operations
- * ============================================================================ */
+ */
 
 int gv_cond_batch_update(GV_CondManager *mgr,
                           const size_t *indices,
@@ -533,9 +533,9 @@ int gv_cond_batch_update(GV_CondManager *mgr,
     return success_count;
 }
 
-/* ============================================================================
+/*
  * Convenience Wrappers
- * ============================================================================ */
+ */
 
 GV_ConditionalResult gv_cond_migrate_embedding(GV_CondManager *mgr, size_t index,
                                                 const float *new_embedding,

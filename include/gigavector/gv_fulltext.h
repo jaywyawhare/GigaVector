@@ -18,9 +18,7 @@ extern "C" {
  * and BlockMax WAND query evaluation for efficient top-k retrieval.
  */
 
-/* ============================================================================
- * Language Enumeration
- * ============================================================================ */
+/* Language Enumeration */
 
 /**
  * @brief Supported languages for stemming and stopword removal.
@@ -35,9 +33,7 @@ typedef enum {
     GV_LANG_AUTO       = 6          /**< Auto-detect language. */
 } GV_FTLanguage;
 
-/* ============================================================================
- * Configuration
- * ============================================================================ */
+/* Configuration */
 
 /**
  * @brief Full-text index configuration.
@@ -50,18 +46,14 @@ typedef struct {
     size_t block_size;              /**< Posting list block size for BlockMax WAND (default: 128). */
 } GV_FTConfig;
 
-/* ============================================================================
- * Opaque Index Handle
- * ============================================================================ */
+/* Opaque Index Handle */
 
 /**
  * @brief Opaque full-text index handle.
  */
 typedef struct GV_FTIndex GV_FTIndex;
 
-/* ============================================================================
- * Result Structure
- * ============================================================================ */
+/* Result Structure */
 
 /**
  * @brief Full-text search result entry.
@@ -73,9 +65,7 @@ typedef struct {
     size_t match_count;             /**< Number of match positions. */
 } GV_FTResult;
 
-/* ============================================================================
- * Configuration Initialization
- * ============================================================================ */
+/* Configuration Initialization */
 
 /**
  * @brief Initialize full-text configuration with defaults.
@@ -91,9 +81,7 @@ typedef struct {
  */
 void gv_ft_config_init(GV_FTConfig *config);
 
-/* ============================================================================
- * Index Lifecycle
- * ============================================================================ */
+/* Index Lifecycle */
 
 /**
  * @brief Create a full-text index.
@@ -110,9 +98,7 @@ GV_FTIndex *gv_ft_create(const GV_FTConfig *config);
  */
 void gv_ft_destroy(GV_FTIndex *idx);
 
-/* ============================================================================
- * Indexing Operations
- * ============================================================================ */
+/* Indexing Operations */
 
 /**
  * @brief Add a document to the full-text index.
@@ -137,9 +123,7 @@ int gv_ft_add_document(GV_FTIndex *idx, size_t doc_id, const char *text);
  */
 int gv_ft_remove_document(GV_FTIndex *idx, size_t doc_id);
 
-/* ============================================================================
- * Search Operations
- * ============================================================================ */
+/* Search Operations */
 
 /**
  * @brief Search the index with a text query using BM25 scoring.
@@ -171,9 +155,7 @@ int gv_ft_search(const GV_FTIndex *idx, const char *query, size_t limit,
 int gv_ft_search_phrase(const GV_FTIndex *idx, const char *phrase, size_t limit,
                         GV_FTResult *results);
 
-/* ============================================================================
- * Stemming
- * ============================================================================ */
+/* Stemming */
 
 /**
  * @brief Stem a single word using the specified language rules.
@@ -189,9 +171,7 @@ int gv_ft_search_phrase(const GV_FTIndex *idx, const char *phrase, size_t limit,
  */
 int gv_ft_stem(const char *word, GV_FTLanguage lang, char *output, size_t output_size);
 
-/* ============================================================================
- * Result Cleanup
- * ============================================================================ */
+/* Result Cleanup */
 
 /**
  * @brief Free match_positions arrays in search results.
@@ -204,9 +184,7 @@ int gv_ft_stem(const char *word, GV_FTLanguage lang, char *output, size_t output
  */
 void gv_ft_free_results(GV_FTResult *results, size_t count);
 
-/* ============================================================================
- * Index Information
- * ============================================================================ */
+/* Index Information */
 
 /**
  * @brief Get the number of documents in the index.
@@ -216,9 +194,7 @@ void gv_ft_free_results(GV_FTResult *results, size_t count);
  */
 size_t gv_ft_doc_count(const GV_FTIndex *idx);
 
-/* ============================================================================
- * Persistence
- * ============================================================================ */
+/* Persistence */
 
 /**
  * @brief Save the full-text index to a file.

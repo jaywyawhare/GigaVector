@@ -13,17 +13,13 @@
 #include "gigavector/gv_metadata.h"
 #include "gigavector/gv_soa_storage.h"
 
-/* ===========================================================================
- * Constants
- * =========================================================================== */
+/*  Constants  */
 
 #define GV_SQL_ERROR_SIZE      512
 #define GV_SQL_MAX_QUERY_DIMS  16384
 #define GV_SQL_MAX_TOKENS      4096
 
-/* ===========================================================================
- * Token types
- * =========================================================================== */
+/*  Token types  */
 
 typedef enum {
     GV_SQL_TOK_EOF = 0,
@@ -69,9 +65,7 @@ typedef struct {
     double num_value;
 } GV_SQLToken;
 
-/* ===========================================================================
- * Tokeniser
- * =========================================================================== */
+/*  Tokeniser  */
 
 typedef struct {
     const char *input;
@@ -256,9 +250,7 @@ static GV_SQLToken gv_sql_lexer_next(GV_SQLLexer *lx)
     return tok;
 }
 
-/* ===========================================================================
- * Token buffer (pre-tokenise the full query)
- * =========================================================================== */
+/*  Token buffer (pre-tokenise the full query)  */
 
 typedef struct {
     GV_SQLToken *tokens;
@@ -331,9 +323,7 @@ static int gv_sql_expect(GV_SQLTokenBuf *buf, GV_SQLTokenType type)
     return 1;
 }
 
-/* ===========================================================================
- * Parsed AST types
- * =========================================================================== */
+/*  Parsed AST types  */
 
 typedef enum {
     GV_SQL_STMT_SELECT,
@@ -410,9 +400,7 @@ typedef struct {
     size_t set_count;
 } GV_SQLStmt;
 
-/* ===========================================================================
- * AST cleanup
- * =========================================================================== */
+/*  AST cleanup  */
 
 static void gv_sql_where_free(GV_SQLWhere *w)
 {
@@ -442,9 +430,7 @@ static void gv_sql_stmt_free(GV_SQLStmt *s)
     free(s);
 }
 
-/* ===========================================================================
- * Recursive descent parser
- * =========================================================================== */
+/*  Recursive descent parser  */
 
 static char *gv_sql_strdup(const char *s)
 {
@@ -867,9 +853,7 @@ static GV_SQLStmt *gv_sql_parse(GV_SQLTokenBuf *buf)
     }
 }
 
-/* ===========================================================================
- * WHERE clause evaluator (against vector metadata)
- * =========================================================================== */
+/*  WHERE clause evaluator (against vector metadata)  */
 
 static int gv_sql_eval_where(const GV_SQLWhere *w, const GV_Vector *vec)
 {
@@ -956,9 +940,7 @@ static int gv_sql_eval_where(const GV_SQLWhere *w, const GV_Vector *vec)
     return 0;
 }
 
-/* ===========================================================================
- * Metadata-to-JSON serialiser (lightweight, no dependency on gv_json.h)
- * =========================================================================== */
+/*  Metadata-to-JSON serialiser (lightweight, no dependency on gv_json.h)  */
 
 static char *gv_sql_metadata_to_json(const GV_Metadata *meta)
 {
@@ -1004,9 +986,7 @@ static char *gv_sql_metadata_to_json(const GV_Metadata *meta)
     return buf;
 }
 
-/* ===========================================================================
- * Engine internals
- * =========================================================================== */
+/*  Engine internals  */
 
 struct GV_SQLEngine {
     GV_Database *db;
@@ -1022,9 +1002,7 @@ static void gv_sql_set_error(GV_SQLEngine *eng, const char *fmt, ...)
     va_end(ap);
 }
 
-/* ===========================================================================
- * Executor: SELECT with ANN
- * =========================================================================== */
+/*  Executor: SELECT with ANN  */
 
 static int gv_sql_exec_ann(GV_SQLEngine *eng, const GV_SQLStmt *stmt, GV_SQLResult *result)
 {
@@ -1126,9 +1104,7 @@ static int gv_sql_exec_ann(GV_SQLEngine *eng, const GV_SQLStmt *stmt, GV_SQLResu
     return 0;
 }
 
-/* ===========================================================================
- * Executor: SELECT with WHERE (metadata scan, no ANN)
- * =========================================================================== */
+/*  Executor: SELECT with WHERE (metadata scan, no ANN)  */
 
 static int gv_sql_exec_where_scan(GV_SQLEngine *eng, const GV_SQLStmt *stmt, GV_SQLResult *result)
 {
@@ -1192,9 +1168,7 @@ static int gv_sql_exec_where_scan(GV_SQLEngine *eng, const GV_SQLStmt *stmt, GV_
     return 0;
 }
 
-/* ===========================================================================
- * Executor: SELECT COUNT(*)
- * =========================================================================== */
+/*  Executor: SELECT COUNT(*)  */
 
 static int gv_sql_exec_count(GV_SQLEngine *eng, const GV_SQLStmt *stmt, GV_SQLResult *result)
 {
@@ -1237,9 +1211,7 @@ static int gv_sql_exec_count(GV_SQLEngine *eng, const GV_SQLStmt *stmt, GV_SQLRe
     return 0;
 }
 
-/* ===========================================================================
- * Executor: DELETE
- * =========================================================================== */
+/*  Executor: DELETE  */
 
 static int gv_sql_exec_delete(GV_SQLEngine *eng, const GV_SQLStmt *stmt, GV_SQLResult *result)
 {
@@ -1296,9 +1268,7 @@ static int gv_sql_exec_delete(GV_SQLEngine *eng, const GV_SQLStmt *stmt, GV_SQLR
     return 0;
 }
 
-/* ===========================================================================
- * Executor: UPDATE
- * =========================================================================== */
+/*  Executor: UPDATE  */
 
 static int gv_sql_exec_update(GV_SQLEngine *eng, const GV_SQLStmt *stmt, GV_SQLResult *result)
 {
@@ -1354,9 +1324,7 @@ static int gv_sql_exec_update(GV_SQLEngine *eng, const GV_SQLStmt *stmt, GV_SQLR
     return 0;
 }
 
-/* ===========================================================================
- * Public API
- * =========================================================================== */
+/*  Public API  */
 
 GV_SQLEngine *gv_sql_create(void *db)
 {

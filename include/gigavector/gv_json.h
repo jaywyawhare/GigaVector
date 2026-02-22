@@ -81,9 +81,7 @@ struct GV_JsonValue {
     } data;
 };
 
-/* ============================================================================
- * Parsing Functions
- * ============================================================================ */
+/* Parsing Functions */
 
 /**
  * @brief Parse a JSON string into a JSON value tree.
@@ -102,9 +100,7 @@ GV_JsonValue *gv_json_parse(const char *json_str, GV_JsonError *error);
  */
 const char *gv_json_error_string(GV_JsonError error);
 
-/* ============================================================================
- * Serialization Functions
- * ============================================================================ */
+/* Serialization Functions */
 
 /**
  * @brief Serialize a JSON value to a string.
@@ -115,9 +111,7 @@ const char *gv_json_error_string(GV_JsonError error);
  */
 char *gv_json_stringify(const GV_JsonValue *value, bool pretty);
 
-/* ============================================================================
- * Value Creation Functions
- * ============================================================================ */
+/* Value Creation Functions */
 
 /**
  * @brief Create a null JSON value.
@@ -158,9 +152,7 @@ GV_JsonValue *gv_json_array(void);
  */
 GV_JsonValue *gv_json_object(void);
 
-/* ============================================================================
- * Array Operations
- * ============================================================================ */
+/* Array Operations */
 
 /**
  * @brief Append a value to a JSON array.
@@ -188,9 +180,7 @@ GV_JsonValue *gv_json_array_get(const GV_JsonValue *array, size_t index);
  */
 size_t gv_json_array_length(const GV_JsonValue *array);
 
-/* ============================================================================
- * Object Operations
- * ============================================================================ */
+/* Object Operations */
 
 /**
  * @brief Set a key-value pair in a JSON object.
@@ -228,9 +218,7 @@ bool gv_json_object_has(const GV_JsonValue *object, const char *key);
  */
 size_t gv_json_object_length(const GV_JsonValue *object);
 
-/* ============================================================================
- * Type Checking and Value Extraction
- * ============================================================================ */
+/* Type Checking and Value Extraction */
 
 /**
  * @brief Check if value is null.
@@ -288,9 +276,7 @@ GV_JsonError gv_json_get_number(const GV_JsonValue *value, double *out);
  */
 const char *gv_json_get_string(const GV_JsonValue *value);
 
-/* ============================================================================
- * Path-based Access (convenience)
- * ============================================================================ */
+/* Path-based Access (convenience) */
 
 /**
  * @brief Get value at a path (e.g., "choices.0.message.content").
@@ -312,9 +298,7 @@ GV_JsonValue *gv_json_get_path(const GV_JsonValue *root, const char *path);
  */
 const char *gv_json_get_string_path(const GV_JsonValue *root, const char *path);
 
-/* ============================================================================
- * Memory Management
- * ============================================================================ */
+/* Memory Management */
 
 /**
  * @brief Free a JSON value and all its children.

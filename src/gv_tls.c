@@ -14,9 +14,7 @@
 #include <string.h>
 #include <stdio.h>
 
-/* ============================================================================
- * OpenSSL Implementation
- * ============================================================================ */
+/*  OpenSSL Implementation  */
 
 #ifdef GV_HAVE_OPENSSL
 
@@ -269,9 +267,7 @@ int gv_tls_cert_days_remaining(const GV_TLSContext *ctx) {
     return day_diff;
 }
 
-/* ============================================================================
- * Stub Implementation (no OpenSSL)
- * ============================================================================ */
+/*  Stub Implementation (no OpenSSL)  */
 
 #else /* !GV_HAVE_OPENSSL */
 

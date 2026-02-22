@@ -55,9 +55,7 @@ typedef struct {
  */
 typedef struct GV_CryptoContext GV_CryptoContext;
 
-/* ============================================================================
- * Configuration
- * ============================================================================ */
+/* Configuration */
 
 /**
  * @brief Initialize crypto configuration with defaults.
@@ -71,9 +69,7 @@ typedef struct GV_CryptoContext GV_CryptoContext;
  */
 void gv_crypto_config_init(GV_CryptoConfig *config);
 
-/* ============================================================================
- * Context Lifecycle
- * ============================================================================ */
+/* Context Lifecycle */
 
 /**
  * @brief Create a crypto context.
@@ -92,9 +88,7 @@ GV_CryptoContext *gv_crypto_create(const GV_CryptoConfig *config);
  */
 void gv_crypto_destroy(GV_CryptoContext *ctx);
 
-/* ============================================================================
- * Key Management
- * ============================================================================ */
+/* Key Management */
 
 /**
  * @brief Derive a key from a password.
@@ -143,9 +137,7 @@ int gv_crypto_generate_salt(unsigned char *salt, size_t salt_len);
  */
 void gv_crypto_wipe_key(GV_CryptoKey *key);
 
-/* ============================================================================
- * Encryption/Decryption
- * ============================================================================ */
+/* Encryption/Decryption */
 
 /**
  * @brief Encrypt data.
@@ -177,9 +169,7 @@ int gv_crypto_decrypt(GV_CryptoContext *ctx, const GV_CryptoKey *key,
                        const unsigned char *ciphertext, size_t ciphertext_len,
                        unsigned char *plaintext, size_t *plaintext_len);
 
-/* ============================================================================
- * File Encryption
- * ============================================================================ */
+/* File Encryption */
 
 /**
  * @brief Encrypt a file.
@@ -205,9 +195,7 @@ int gv_crypto_encrypt_file(GV_CryptoContext *ctx, const GV_CryptoKey *key,
 int gv_crypto_decrypt_file(GV_CryptoContext *ctx, const GV_CryptoKey *key,
                             const char *input_path, const char *output_path);
 
-/* ============================================================================
- * Stream Encryption
- * ============================================================================ */
+/* Stream Encryption */
 
 /**
  * @brief Opaque encryption stream handle.
@@ -258,9 +246,7 @@ int gv_crypto_stream_final(GV_CryptoStream *stream,
  */
 void gv_crypto_stream_destroy(GV_CryptoStream *stream);
 
-/* ============================================================================
- * Utility Functions
- * ============================================================================ */
+/* Utility Functions */
 
 /**
  * @brief Compute HMAC-SHA256.

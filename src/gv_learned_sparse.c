@@ -18,9 +18,7 @@
 #include <float.h>
 #include <pthread.h>
 
-/* ============================================================================
- * Internal Constants
- * ============================================================================ */
+/*  Internal Constants  */
 
 #define GV_LS_MAGIC       "GV_LSPA"
 #define GV_LS_MAGIC_LEN   7
@@ -30,9 +28,7 @@
 #define GV_LS_INITIAL_POSTING_CAPACITY  16
 #define GV_LS_SCORE_MAP_BUCKETS         4096
 
-/* ============================================================================
- * Internal Structures
- * ============================================================================ */
+/*  Internal Structures  */
 
 /**
  * @brief A single entry in a posting list: (doc_id, weight).
@@ -91,9 +87,7 @@ struct GV_LearnedSparseIndex {
     pthread_rwlock_t rwlock;
 };
 
-/* ============================================================================
- * Internal: posting list helpers
- * ============================================================================ */
+/*  Internal: posting list helpers  */
 
 /**
  * @brief Append a posting to a posting list, maintaining doc_id sort order.
@@ -167,9 +161,7 @@ static void gv_ls_posting_list_free(GV_LSPostingList *pl) {
     pl->block_maxw_capacity = 0;
 }
 
-/* ============================================================================
- * Internal: min-heap for top-k selection (root = smallest score)
- * ============================================================================ */
+/*  Internal: min-heap for top-k selection (root = smallest score)  */
 
 typedef struct {
     float  score;
@@ -217,9 +209,7 @@ static void gv_ls_heap_push(GV_LSHeapItem *heap, size_t *size, size_t capacity,
     }
 }
 
-/* ============================================================================
- * Internal: simple hash map (doc_id -> float score) for non-WAND accumulation
- * ============================================================================ */
+/*  Internal: simple hash map (doc_id -> float score) for non-WAND accumulation  */
 
 typedef struct GV_LSScoreEntry {
     size_t doc_id;
@@ -281,9 +271,7 @@ static float *gv_ls_score_map_get_or_insert(GV_LSScoreMap *map, size_t doc_id) {
     return &e->score;
 }
 
-/* ============================================================================
- * Internal: WAND term cursor
- * ============================================================================ */
+/*  Internal: WAND term cursor  */
 
 typedef struct {
     uint32_t token_id;
@@ -345,9 +333,7 @@ static int gv_ls_cursor_cmp(const void *a, const void *b) {
     return 0;
 }
 
-/* ============================================================================
- * Internal: compute global max weight per posting list
- * ============================================================================ */
+/*  Internal: compute global max weight per posting list  */
 
 static float gv_ls_posting_list_max_weight(const GV_LSPostingList *pl) {
     float mx = 0.0f;
@@ -359,9 +345,7 @@ static float gv_ls_posting_list_max_weight(const GV_LSPostingList *pl) {
     return mx;
 }
 
-/* ============================================================================
- * Internal: WAND search
- * ============================================================================ */
+/*  Internal: WAND search  */
 
 static int gv_ls_search_wand(const GV_LearnedSparseIndex *idx,
                               const GV_SparseEntry *query, size_t query_count,
@@ -492,9 +476,7 @@ static int gv_ls_search_wand(const GV_LearnedSparseIndex *idx,
     return n;
 }
 
-/* ============================================================================
- * Internal: non-WAND (accumulator) search
- * ============================================================================ */
+/*  Internal: non-WAND (accumulator) search  */
 
 static int gv_ls_search_accumulate(const GV_LearnedSparseIndex *idx,
                                     const GV_SparseEntry *query,
@@ -563,9 +545,7 @@ static int gv_ls_search_accumulate(const GV_LearnedSparseIndex *idx,
     return n;
 }
 
-/* ============================================================================
- * Internal: serialization helpers
- * ============================================================================ */
+/*  Internal: serialization helpers  */
 
 static int gv_ls_write_u32(FILE *f, uint32_t v) {
     return fwrite(&v, sizeof(uint32_t), 1, f) == 1 ? 0 : -1;
@@ -591,9 +571,7 @@ static int gv_ls_read_float(FILE *f, float *v) {
     return (v && fread(v, sizeof(float), 1, f) == 1) ? 0 : -1;
 }
 
-/* ============================================================================
- * Configuration
- * ============================================================================ */
+/*  Configuration  */
 
 static const GV_LearnedSparseConfig DEFAULT_CONFIG = {
     .vocab_size      = 30522,
@@ -607,9 +585,7 @@ void gv_ls_config_init(GV_LearnedSparseConfig *config) {
     *config = DEFAULT_CONFIG;
 }
 
-/* ============================================================================
- * Lifecycle
- * ============================================================================ */
+/*  Lifecycle  */
 
 GV_LearnedSparseIndex *gv_ls_create(const GV_LearnedSparseConfig *config) {
     GV_LearnedSparseConfig cfg = config ? *config : DEFAULT_CONFIG;
@@ -673,9 +649,7 @@ void gv_ls_destroy(GV_LearnedSparseIndex *idx) {
     free(idx);
 }
 
-/* ============================================================================
- * Indexing Operations
- * ============================================================================ */
+/*  Indexing Operations  */
 
 int gv_ls_insert(GV_LearnedSparseIndex *idx, const GV_SparseEntry *entries,
                  size_t count) {
@@ -750,9 +724,7 @@ int gv_ls_delete(GV_LearnedSparseIndex *idx, size_t doc_id) {
     return 0;
 }
 
-/* ============================================================================
- * Search Operations
- * ============================================================================ */
+/*  Search Operations  */
 
 int gv_ls_search(const GV_LearnedSparseIndex *idx, const GV_SparseEntry *query,
                  size_t query_count, size_t k, GV_LearnedSparseResult *results) {
@@ -801,9 +773,7 @@ int gv_ls_search_with_threshold(const GV_LearnedSparseIndex *idx,
     return n;
 }
 
-/* ============================================================================
- * Index Information
- * ============================================================================ */
+/*  Index Information  */
 
 int gv_ls_get_stats(const GV_LearnedSparseIndex *idx,
                     GV_LearnedSparseStats *stats) {
@@ -840,9 +810,7 @@ size_t gv_ls_count(const GV_LearnedSparseIndex *idx) {
     return count;
 }
 
-/* ============================================================================
- * Persistence: Save
- * ============================================================================ */
+/*  Persistence: Save  */
 
 int gv_ls_save(const GV_LearnedSparseIndex *idx, const char *path) {
     if (!idx || !path) return -1;
@@ -905,9 +873,7 @@ fail:
     return -1;
 }
 
-/* ============================================================================
- * Persistence: Load
- * ============================================================================ */
+/*  Persistence: Load  */
 
 GV_LearnedSparseIndex *gv_ls_load(const char *path) {
     if (!path) return NULL;

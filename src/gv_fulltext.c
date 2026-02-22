@@ -13,9 +13,7 @@
 #include <ctype.h>
 #include <pthread.h>
 
-/* ============================================================================
- * Internal Constants
- * ============================================================================ */
+/*  Internal Constants  */
 
 #define FT_TERM_HASH_BUCKETS  4096
 #define FT_DOC_HASH_BUCKETS   1024
@@ -25,9 +23,7 @@
 #define FT_BM25_K1            1.2f
 #define FT_BM25_B             0.75f
 
-/* ============================================================================
- * Stopword Lists
- * ============================================================================ */
+/*  Stopword Lists  */
 
 static const char *STOPWORDS_EN[] = {
     "a", "an", "and", "are", "as", "at", "be", "but", "by", "for",
@@ -86,9 +82,7 @@ static const char *STOPWORDS_PT[] = {
     "vou", NULL
 };
 
-/* ============================================================================
- * Internal Structures
- * ============================================================================ */
+/*  Internal Structures  */
 
 /**
  * @brief Position list for a term within a single document.
@@ -155,9 +149,7 @@ struct GV_FTIndex {
     pthread_rwlock_t rwlock;
 };
 
-/* ============================================================================
- * Hash Functions
- * ============================================================================ */
+/*  Hash Functions  */
 
 static size_t ft_hash_string(const char *str) {
     size_t hash = 5381;
@@ -172,9 +164,7 @@ static size_t ft_hash_size(size_t val) {
     return val;
 }
 
-/* ============================================================================
- * Stopword Helpers
- * ============================================================================ */
+/*  Stopword Helpers  */
 
 static const char **ft_stopwords_for_lang(GV_FTLanguage lang) {
     switch (lang) {
@@ -197,9 +187,7 @@ static int ft_is_stopword(const char *word, GV_FTLanguage lang) {
     return 0;
 }
 
-/* ============================================================================
- * Porter Stemmer (English)
- * ============================================================================ */
+/*  Porter Stemmer (English)  */
 
 /**
  * Measure: the number of consonant-vowel sequences in word[0..k].
@@ -444,9 +432,7 @@ static void porter_stem_english(char *w, int len) {
     porter_step5b(w, &k);
 }
 
-/* ============================================================================
- * Simplified Suffix Stripping (Non-English)
- * ============================================================================ */
+/*  Simplified Suffix Stripping (Non-English)  */
 
 static void stem_strip_suffix(char *w, int *len, const char *suffix) {
     int slen = (int)strlen(suffix);
@@ -531,9 +517,7 @@ static void stem_portuguese(char *w, int len) {
     }
 }
 
-/* ============================================================================
- * Public Stemming API
- * ============================================================================ */
+/*  Public Stemming API  */
 
 int gv_ft_stem(const char *word, GV_FTLanguage lang, char *output, size_t output_size) {
     if (!word || !output || output_size == 0) return -1;
@@ -583,9 +567,7 @@ int gv_ft_stem(const char *word, GV_FTLanguage lang, char *output, size_t output
     return 0;
 }
 
-/* ============================================================================
- * Tokenizer
- * ============================================================================ */
+/*  Tokenizer  */
 
 /**
  * Internal token produced during tokenization.
@@ -689,9 +671,7 @@ static int ft_tokenize(const char *text, GV_FTLanguage lang,
     return 0;
 }
 
-/* ============================================================================
- * Configuration
- * ============================================================================ */
+/*  Configuration  */
 
 static const GV_FTConfig DEFAULT_FT_CONFIG = {
     .language           = GV_LANG_ENGLISH,
@@ -706,9 +686,7 @@ void gv_ft_config_init(GV_FTConfig *config) {
     *config = DEFAULT_FT_CONFIG;
 }
 
-/* ============================================================================
- * Posting List Helpers
- * ============================================================================ */
+/*  Posting List Helpers  */
 
 static FT_PostingList *ft_find_posting_list(const GV_FTIndex *idx, const char *term) {
     size_t bucket = ft_hash_string(term) % FT_TERM_HASH_BUCKETS;
@@ -743,9 +721,7 @@ static FT_PostingList *ft_get_or_create_posting_list(GV_FTIndex *idx, const char
     return pl;
 }
 
-/* ============================================================================
- * Document Info Helpers
- * ============================================================================ */
+/*  Document Info Helpers  */
 
 static FT_DocInfo *ft_find_doc_info(const GV_FTIndex *idx, size_t doc_id) {
     size_t bucket = ft_hash_size(doc_id) % FT_DOC_HASH_BUCKETS;
@@ -774,9 +750,7 @@ static FT_DocInfo *ft_get_or_create_doc_info(GV_FTIndex *idx, size_t doc_id) {
     return di;
 }
 
-/* ============================================================================
- * Posting Insertion with Positions
- * ============================================================================ */
+/*  Posting Insertion with Positions  */
 
 static int ft_add_posting(FT_PostingList *pl, size_t doc_id, size_t position,
                            int store_positions) {
@@ -838,9 +812,7 @@ static void ft_remove_doc_from_posting_list(FT_PostingList *pl, size_t doc_id) {
     }
 }
 
-/* ============================================================================
- * BlockMax WAND Precomputation
- * ============================================================================ */
+/*  BlockMax WAND Precomputation  */
 
 static void ft_invalidate_block_maxes(FT_PostingList *pl) {
     free(pl->bmax.block_maxes);
@@ -888,9 +860,7 @@ static void ft_build_block_maxes(FT_PostingList *pl, size_t block_size,
     }
 }
 
-/* ============================================================================
- * BM25 Scoring
- * ============================================================================ */
+/*  BM25 Scoring  */
 
 static float ft_compute_idf(size_t total_docs, size_t doc_freq) {
     double N = (double)total_docs;
@@ -910,9 +880,7 @@ static float ft_compute_bm25_term(size_t term_freq, size_t doc_length,
     return (float)(idf * tf_comp);
 }
 
-/* ============================================================================
- * Index Lifecycle
- * ============================================================================ */
+/*  Index Lifecycle  */
 
 GV_FTIndex *gv_ft_create(const GV_FTConfig *config) {
     GV_FTIndex *idx = calloc(1, sizeof(GV_FTIndex));
@@ -961,9 +929,7 @@ void gv_ft_destroy(GV_FTIndex *idx) {
     free(idx);
 }
 
-/* ============================================================================
- * Indexing Operations
- * ============================================================================ */
+/*  Indexing Operations  */
 
 int gv_ft_add_document(GV_FTIndex *idx, size_t doc_id, const char *text) {
     if (!idx || !text) return -1;
@@ -1043,9 +1009,7 @@ int gv_ft_remove_document(GV_FTIndex *idx, size_t doc_id) {
     return 0;
 }
 
-/* ============================================================================
- * Priority Queue for BlockMax WAND
- * ============================================================================ */
+/*  Priority Queue for BlockMax WAND  */
 
 /**
  * @brief Min-heap entry for top-k result collection.
@@ -1122,9 +1086,7 @@ static float ft_heap_threshold(const FT_MinHeap *h) {
     return h->entries[0].score;
 }
 
-/* ============================================================================
- * BlockMax WAND Search
- * ============================================================================ */
+/*  BlockMax WAND Search  */
 
 /**
  * @brief Cursor over a posting list for WAND evaluation.
@@ -1314,9 +1276,7 @@ static int ft_search_blockmax_wand(const GV_FTIndex *idx, FT_TermCursor *cursors
     return 0;
 }
 
-/* ============================================================================
- * Naive Search (fallback when BlockMax WAND disabled)
- * ============================================================================ */
+/*  Naive Search (fallback when BlockMax WAND disabled)  */
 
 typedef struct {
     size_t doc_id;
@@ -1401,9 +1361,7 @@ static int ft_search_naive(const GV_FTIndex *idx, const FT_TokenList *query_toke
     return 0;
 }
 
-/* ============================================================================
- * Search Operations
- * ============================================================================ */
+/*  Search Operations  */
 
 int gv_ft_search(const GV_FTIndex *idx, const char *query, size_t limit,
                  GV_FTResult *results) {
@@ -1511,9 +1469,7 @@ int gv_ft_search(const GV_FTIndex *idx, const char *query, size_t limit,
     return count;
 }
 
-/* ============================================================================
- * Phrase Search
- * ============================================================================ */
+/*  Phrase Search  */
 
 /**
  * Check if a document contains all phrase terms at consecutive positions.
@@ -1710,9 +1666,7 @@ int gv_ft_search_phrase(const GV_FTIndex *idx, const char *phrase, size_t limit,
     return (int)result_count;
 }
 
-/* ============================================================================
- * Result Cleanup
- * ============================================================================ */
+/*  Result Cleanup  */
 
 void gv_ft_free_results(GV_FTResult *results, size_t count) {
     if (!results) return;
@@ -1723,9 +1677,7 @@ void gv_ft_free_results(GV_FTResult *results, size_t count) {
     }
 }
 
-/* ============================================================================
- * Index Information
- * ============================================================================ */
+/*  Index Information  */
 
 size_t gv_ft_doc_count(const GV_FTIndex *idx) {
     if (!idx) return 0;
@@ -1735,9 +1687,7 @@ size_t gv_ft_doc_count(const GV_FTIndex *idx) {
     return count;
 }
 
-/* ============================================================================
- * Persistence
- * ============================================================================ */
+/*  Persistence  */
 
 int gv_ft_save(const GV_FTIndex *idx, const char *path) {
     if (!idx || !path) return -1;

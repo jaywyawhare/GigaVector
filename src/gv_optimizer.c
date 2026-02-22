@@ -6,9 +6,7 @@
 
 #include "gigavector/gv_optimizer.h"
 
-/* ---------------------------------------------------------------------------
- * Internal structure
- * --------------------------------------------------------------------------- */
+/*  Internal structure  */
 struct GV_QueryOptimizer {
     GV_CollectionStats stats;
 
@@ -25,9 +23,7 @@ struct GV_QueryOptimizer {
     size_t nprobe_cap;                 /* Hard cap on nprobe                   */
 };
 
-/* ---------------------------------------------------------------------------
- * Helpers
- * --------------------------------------------------------------------------- */
+/*  Helpers  */
 
 static double log2_safe(double x)
 {
@@ -46,9 +42,7 @@ static size_t size_min(size_t a, size_t b)
     return a < b ? a : b;
 }
 
-/* ---------------------------------------------------------------------------
- * ef_search recommendation (used internally and in public API)
- * --------------------------------------------------------------------------- */
+/*  ef_search recommendation (used internally and in public API)  */
 static size_t compute_ef_search(const GV_QueryOptimizer *opt, size_t k)
 {
     /* Base ef = max(k * 2, 50) */
@@ -70,9 +64,7 @@ static size_t compute_ef_search(const GV_QueryOptimizer *opt, size_t k)
     return ef;
 }
 
-/* ---------------------------------------------------------------------------
- * nprobe recommendation (used internally and in public API)
- * --------------------------------------------------------------------------- */
+/*  nprobe recommendation (used internally and in public API)  */
 static size_t compute_nprobe(const GV_QueryOptimizer *opt)
 {
     size_t n = opt->stats.total_vectors;
@@ -92,9 +84,7 @@ static size_t compute_nprobe(const GV_QueryOptimizer *opt)
     return nprobe;
 }
 
-/* ---------------------------------------------------------------------------
- * Cost estimation helpers
- * --------------------------------------------------------------------------- */
+/*  Cost estimation helpers  */
 static double estimate_exact_scan_cost(const GV_CollectionStats *st)
 {
     return (double)st->total_vectors * (double)st->dimension;
@@ -106,9 +96,7 @@ static double estimate_index_cost(const GV_CollectionStats *st, size_t k, size_t
     return (double)k * (double)ef * (double)st->dimension * log_n;
 }
 
-/* ---------------------------------------------------------------------------
- * Public API
- * --------------------------------------------------------------------------- */
+/*  Public API  */
 
 GV_QueryOptimizer *gv_optimizer_create(void)
 {

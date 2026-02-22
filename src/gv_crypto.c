@@ -13,9 +13,7 @@
 #include <string.h>
 #include <stdio.h>
 
-/* ============================================================================
- * Internal Structures
- * ============================================================================ */
+/*  Internal Structures  */
 
 struct GV_CryptoContext {
     GV_CryptoConfig config;
@@ -29,9 +27,7 @@ struct GV_CryptoStream {
     size_t buffer_len;
 };
 
-/* ============================================================================
- * AES Implementation (Minimal, for portability)
- * ============================================================================ */
+/*  AES Implementation (Minimal, for portability)  */
 
 /* AES S-box */
 static const unsigned char sbox[256] = {
@@ -243,9 +239,7 @@ static void aes256_decrypt_block(const unsigned char in[16], unsigned char out[1
     memcpy(out, state, 16);
 }
 
-/* ============================================================================
- * Random Generation
- * ============================================================================ */
+/*  Random Generation  */
 
 static void generate_random_bytes(unsigned char *buf, size_t len) {
     FILE *fp = fopen("/dev/urandom", "rb");
@@ -260,9 +254,7 @@ static void generate_random_bytes(unsigned char *buf, size_t len) {
     }
 }
 
-/* ============================================================================
- * Configuration
- * ============================================================================ */
+/*  Configuration  */
 
 static const GV_CryptoConfig DEFAULT_CONFIG = {
     .algorithm = GV_CRYPTO_AES_256_CBC,
@@ -275,9 +267,7 @@ void gv_crypto_config_init(GV_CryptoConfig *config) {
     *config = DEFAULT_CONFIG;
 }
 
-/* ============================================================================
- * Lifecycle
- * ============================================================================ */
+/*  Lifecycle  */
 
 GV_CryptoContext *gv_crypto_create(const GV_CryptoConfig *config) {
     GV_CryptoContext *ctx = calloc(1, sizeof(GV_CryptoContext));
@@ -292,9 +282,7 @@ void gv_crypto_destroy(GV_CryptoContext *ctx) {
     free(ctx);
 }
 
-/* ============================================================================
- * Key Management
- * ============================================================================ */
+/*  Key Management  */
 
 int gv_crypto_derive_key(GV_CryptoContext *ctx, const char *password,
                           size_t password_len, const unsigned char *salt,
@@ -372,9 +360,7 @@ void gv_crypto_wipe_key(GV_CryptoKey *key) {
     }
 }
 
-/* ============================================================================
- * Encryption/Decryption
- * ============================================================================ */
+/*  Encryption/Decryption  */
 
 int gv_crypto_encrypt(GV_CryptoContext *ctx, const GV_CryptoKey *key,
                        const unsigned char *plaintext, size_t plaintext_len,
@@ -462,9 +448,7 @@ int gv_crypto_decrypt(GV_CryptoContext *ctx, const GV_CryptoKey *key,
     return 0;
 }
 
-/* ============================================================================
- * File Encryption
- * ============================================================================ */
+/*  File Encryption  */
 
 #define FILE_BUFFER_SIZE (64 * 1024)
 
@@ -582,9 +566,7 @@ int gv_crypto_decrypt_file(GV_CryptoContext *ctx, const GV_CryptoKey *key,
     return 0;
 }
 
-/* ============================================================================
- * Stream Encryption
- * ============================================================================ */
+/*  Stream Encryption  */
 
 GV_CryptoStream *gv_crypto_stream_create(GV_CryptoContext *ctx,
                                           const GV_CryptoKey *key,
@@ -689,9 +671,7 @@ void gv_crypto_stream_destroy(GV_CryptoStream *stream) {
     free(stream);
 }
 
-/* ============================================================================
- * HMAC-SHA256
- * ============================================================================ */
+/*  HMAC-SHA256  */
 
 int gv_crypto_hmac_sha256(const unsigned char *key, size_t key_len,
                            const unsigned char *data, size_t data_len,

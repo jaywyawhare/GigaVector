@@ -24,9 +24,7 @@
 #include "gigavector/gv_metadata.h"
 #include "gigavector/gv_soa_storage.h"
 
-/* ========================================================================== */
 /*  Constants                                                                  */
-/* ========================================================================== */
 
 #define INF_DEFAULT_DIMENSION     1536
 #define INF_DEFAULT_CACHE_SIZE    10000
@@ -37,9 +35,7 @@
 /** Reserved metadata key for user-supplied JSON metadata. */
 #define INF_META_KEY_META          "_meta"
 
-/* ========================================================================== */
 /*  Engine structure                                                           */
-/* ========================================================================== */
 
 struct GV_InferenceEngine {
     GV_Database       *db;            /**< Backing vector database (not owned). */
@@ -49,9 +45,7 @@ struct GV_InferenceEngine {
     pthread_mutex_t    mutex;          /**< Serializes all public operations. */
 };
 
-/* ========================================================================== */
 /*  Provider string to enum mapping                                            */
-/* ========================================================================== */
 
 /**
  * Map a provider name string to the corresponding GV_AutoEmbedProvider
@@ -67,9 +61,7 @@ static GV_AutoEmbedProvider inf_resolve_provider(const char *name) {
     return GV_EMBED_PROVIDER_OPENAI;
 }
 
-/* ========================================================================== */
 /*  Metadata helpers                                                           */
-/* ========================================================================== */
 
 /**
  * Build a metadata key/value array that stores the original text and
@@ -166,9 +158,7 @@ static int inf_populate_result(const GV_Database *db,
     return 0;
 }
 
-/* ========================================================================== */
 /*  Lifecycle                                                                  */
-/* ========================================================================== */
 
 void gv_inference_config_init(GV_InferenceConfig *config) {
     if (!config) return;
@@ -229,9 +219,7 @@ void gv_inference_destroy(GV_InferenceEngine *eng) {
     free(eng);
 }
 
-/* ========================================================================== */
 /*  Insert -- single                                                           */
-/* ========================================================================== */
 
 int gv_inference_add(GV_InferenceEngine *eng, const char *text,
                      const char *metadata_json) {
@@ -265,9 +253,7 @@ int gv_inference_add(GV_InferenceEngine *eng, const char *text,
     return rc == 0 ? (int)new_index : -1;
 }
 
-/* ========================================================================== */
 /*  Insert -- batch                                                            */
-/* ========================================================================== */
 
 int gv_inference_add_batch(GV_InferenceEngine *eng, const char **texts,
                            const char **metadata_jsons, size_t count) {
@@ -312,9 +298,7 @@ int gv_inference_add_batch(GV_InferenceEngine *eng, const char **texts,
     return failures == 0 ? 0 : -1;
 }
 
-/* ========================================================================== */
 /*  Search -- unfiltered                                                       */
-/* ========================================================================== */
 
 int gv_inference_search(GV_InferenceEngine *eng, const char *query_text,
                         size_t k, GV_InferenceResult *results) {
@@ -360,9 +344,7 @@ int gv_inference_search(GV_InferenceEngine *eng, const char *query_text,
     return count;
 }
 
-/* ========================================================================== */
 /*  Search -- filtered                                                         */
-/* ========================================================================== */
 
 int gv_inference_search_filtered(GV_InferenceEngine *eng,
                                  const char *query_text, size_t k,
@@ -411,9 +393,7 @@ int gv_inference_search_filtered(GV_InferenceEngine *eng,
     return count;
 }
 
-/* ========================================================================== */
 /*  Upsert                                                                     */
-/* ========================================================================== */
 
 int gv_inference_upsert(GV_InferenceEngine *eng, size_t index,
                         const char *text, const char *metadata_json) {
@@ -443,9 +423,7 @@ int gv_inference_upsert(GV_InferenceEngine *eng, size_t index,
     return rc;
 }
 
-/* ========================================================================== */
 /*  Result cleanup                                                             */
-/* ========================================================================== */
 
 void gv_inference_free_results(GV_InferenceResult *results, size_t count) {
     if (!results) return;

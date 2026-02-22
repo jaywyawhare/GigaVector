@@ -16,9 +16,7 @@
 #include <ctype.h>
 #include <float.h>
 
-/* ============================================================================
- * Internal Constants
- * ============================================================================ */
+/*  Internal Constants  */
 
 /** Default oversample multiplier when caller passes oversample == 0. */
 #define GV_RANK_DEFAULT_OVERSAMPLE_FACTOR 4
@@ -26,17 +24,13 @@
 /** Maximum identifier / signal name length in parsed expressions. */
 #define GV_RANK_MAX_IDENT 128
 
-/* ============================================================================
- * Opaque Expression Type
- * ============================================================================ */
+/*  Opaque Expression Type  */
 
 struct GV_RankExpr {
     GV_RankNode *root;  /**< Root of the expression tree. */
 };
 
-/* ============================================================================
- * Node Helpers (Internal)
- * ============================================================================ */
+/*  Node Helpers (Internal)  */
 
 /** Sentinel op value used for leaf nodes that hold a signal reference. */
 #define GV_RANK_OP_SIGNAL  ((GV_RankOp)100)
@@ -106,9 +100,7 @@ static void node_free(GV_RankNode *n) {
     free(n);
 }
 
-/* ============================================================================
- * Lexer (Internal)
- * ============================================================================ */
+/*  Lexer (Internal)  */
 
 typedef enum {
     TOK_NUM,        /**< Numeric literal. */
@@ -197,9 +189,7 @@ static void next_token(Parser *p) {
     p->has_error = 1;
 }
 
-/* ============================================================================
- * Recursive-Descent Parser (Internal)
- * ============================================================================ */
+/*  Recursive-Descent Parser (Internal)  */
 
 /* Forward declarations for mutual recursion. */
 static GV_RankNode *parse_expr(Parser *p);
@@ -498,9 +488,7 @@ static GV_RankNode *parse_expr(Parser *p) {
     return left;
 }
 
-/* ============================================================================
- * Expression Construction (Public API)
- * ============================================================================ */
+/*  Expression Construction (Public API)  */
 
 GV_RankExpr *gv_rank_expr_parse(const char *expression) {
     if (!expression) return NULL;
@@ -581,9 +569,7 @@ GV_RankExpr *gv_rank_expr_create_weighted(size_t n, const char **signal_names,
     return expr;
 }
 
-/* ============================================================================
- * Expression Lifecycle
- * ============================================================================ */
+/*  Expression Lifecycle  */
 
 void gv_rank_expr_destroy(GV_RankExpr *expr) {
     if (!expr) return;
@@ -591,9 +577,7 @@ void gv_rank_expr_destroy(GV_RankExpr *expr) {
     free(expr);
 }
 
-/* ============================================================================
- * Signal Lookup (Internal)
- * ============================================================================ */
+/*  Signal Lookup (Internal)  */
 
 /**
  * @brief Look up a signal value by name from the signal array.
@@ -618,9 +602,7 @@ static double lookup_signal(const char *name, float vector_score,
     return 0.0;
 }
 
-/* ============================================================================
- * Decay Functions (Internal)
- * ============================================================================ */
+/*  Decay Functions (Internal)  */
 
 /**
  * @brief Exponential decay: exp(-|val - origin| / scale).
@@ -648,9 +630,7 @@ static double decay_linear(double val, double origin, double scale) {
     return d >= 1.0 ? 0.0 : 1.0 - d;
 }
 
-/* ============================================================================
- * Expression Tree Evaluation (Internal)
- * ============================================================================ */
+/*  Expression Tree Evaluation (Internal)  */
 
 static double eval_node(const GV_RankNode *n, float vector_score,
                         const GV_RankSignal *signals, size_t signal_count) {
@@ -749,9 +729,7 @@ static double eval_node(const GV_RankNode *n, float vector_score,
     return 0.0;
 }
 
-/* ============================================================================
- * Expression Evaluation (Public API)
- * ============================================================================ */
+/*  Expression Evaluation (Public API)  */
 
 double gv_rank_expr_eval(const GV_RankExpr *expr, float vector_score,
                          const GV_RankSignal *signals, size_t signal_count) {
@@ -759,9 +737,7 @@ double gv_rank_expr_eval(const GV_RankExpr *expr, float vector_score,
     return eval_node(expr->root, vector_score, signals, signal_count);
 }
 
-/* ============================================================================
- * Ranked Search
- * ============================================================================ */
+/*  Ranked Search  */
 
 /** Internal candidate used during re-ranking. */
 typedef struct {

@@ -7,18 +7,14 @@
 
 #include "gigavector/gv_geo.h"
 
-/* ------------------------------------------------------------------ */
 /*  Constants                                                          */
-/* ------------------------------------------------------------------ */
 
 #define GV_GEO_EARTH_RADIUS_KM  6371.0
 #define GV_GEO_DEG_TO_RAD       (M_PI / 180.0)
 #define GV_GEO_HASH_BUCKETS     65536
 #define GV_GEO_GRID_SCALE       100   /* ~1 km granularity at equator */
 
-/* ------------------------------------------------------------------ */
 /*  Internal data structures                                           */
-/* ------------------------------------------------------------------ */
 
 typedef struct GV_GeoEntry {
     size_t              point_index;
@@ -37,9 +33,7 @@ struct GV_GeoIndex {
     pthread_rwlock_t rwlock;
 };
 
-/* ------------------------------------------------------------------ */
 /*  Grid hashing                                                       */
-/* ------------------------------------------------------------------ */
 
 /**
  * @brief Compute a bucket index from a (lat, lng) pair.
@@ -69,9 +63,7 @@ static void geo_cell(double lat, double lng, int *out_ilat, int *out_ilng)
     *out_ilng = (int)(lng * GV_GEO_GRID_SCALE);
 }
 
-/* ------------------------------------------------------------------ */
 /*  Haversine distance                                                 */
-/* ------------------------------------------------------------------ */
 
 double gv_geo_distance_km(double lat1, double lng1, double lat2, double lng2)
 {
@@ -89,9 +81,7 @@ double gv_geo_distance_km(double lat1, double lng1, double lat2, double lng2)
     return GV_GEO_EARTH_RADIUS_KM * c;
 }
 
-/* ------------------------------------------------------------------ */
 /*  Lifecycle                                                          */
-/* ------------------------------------------------------------------ */
 
 GV_GeoIndex *gv_geo_create(void)
 {
@@ -127,9 +117,7 @@ void gv_geo_destroy(GV_GeoIndex *index)
     free(index);
 }
 
-/* ------------------------------------------------------------------ */
 /*  Insert / Update / Remove                                           */
-/* ------------------------------------------------------------------ */
 
 int gv_geo_insert(GV_GeoIndex *index, size_t point_index, double lat, double lng)
 {
@@ -234,9 +222,7 @@ int gv_geo_remove(GV_GeoIndex *index, size_t point_index)
     return -1; /* not found */
 }
 
-/* ------------------------------------------------------------------ */
 /*  Radius search                                                      */
-/* ------------------------------------------------------------------ */
 
 /**
  * @brief Compute the approximate lat/lng bounding box for a circle
@@ -345,9 +331,7 @@ int gv_geo_radius_search(const GV_GeoIndex *index, double lat, double lng,
     return n;
 }
 
-/* ------------------------------------------------------------------ */
 /*  Bounding box search                                                */
-/* ------------------------------------------------------------------ */
 
 int gv_geo_bbox_search(const GV_GeoIndex *index, const GV_GeoBBox *bbox,
                         GV_GeoResult *results, size_t max_results)
@@ -406,9 +390,7 @@ int gv_geo_bbox_search(const GV_GeoIndex *index, const GV_GeoBBox *bbox,
     return (int)found;
 }
 
-/* ------------------------------------------------------------------ */
 /*  Candidate pre-filter for vector search                             */
-/* ------------------------------------------------------------------ */
 
 int gv_geo_get_candidates(const GV_GeoIndex *index, double lat, double lng,
                            double radius_km, size_t *out_indices, size_t max_count)
@@ -424,9 +406,7 @@ int gv_geo_get_candidates(const GV_GeoIndex *index, double lat, double lng,
     return n;
 }
 
-/* ------------------------------------------------------------------ */
 /*  Count                                                              */
-/* ------------------------------------------------------------------ */
 
 size_t gv_geo_count(const GV_GeoIndex *index)
 {
@@ -441,9 +421,7 @@ size_t gv_geo_count(const GV_GeoIndex *index)
     return c;
 }
 
-/* ------------------------------------------------------------------ */
 /*  Save / Load                                                        */
-/* ------------------------------------------------------------------ */
 
 /**
  * @brief Persist the geo index to a binary file.

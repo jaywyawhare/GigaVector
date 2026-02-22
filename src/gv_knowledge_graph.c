@@ -16,18 +16,18 @@
 #include <time.h>
 #include <pthread.h>
 
-/* ============================================================================
+/*
  * Internal Constants
- * ============================================================================ */
+ */
 
 #define KG_MAGIC         "GVKG"
 #define KG_MAGIC_LEN     4
 #define KG_VERSION       1
 #define KG_INITIAL_IDX   64   /* initial capacity for index lists */
 
-/* ============================================================================
+/*
  * Internal: Index List (dynamic array of relation IDs)
- * ============================================================================ */
+ */
 
 typedef struct {
     uint64_t *ids;
@@ -73,27 +73,27 @@ static void kg_idlist_free(KG_IdList *list) {
     list->capacity = 0;
 }
 
-/* ============================================================================
+/*
  * Internal: Entity Hash Table Node
- * ============================================================================ */
+ */
 
 typedef struct KG_EntityNode {
     GV_KGEntity             entity;
     struct KG_EntityNode   *next;
 } KG_EntityNode;
 
-/* ============================================================================
+/*
  * Internal: Relation Hash Table Node
- * ============================================================================ */
+ */
 
 typedef struct KG_RelationNode {
     GV_KGRelation             relation;
     struct KG_RelationNode   *next;
 } KG_RelationNode;
 
-/* ============================================================================
+/*
  * Internal: SPO Index Entry (hash on key -> list of relation IDs)
- * ============================================================================ */
+ */
 
 typedef struct KG_IndexEntry {
     uint64_t               key;     /* entity_id or hash(predicate) */
@@ -101,9 +101,9 @@ typedef struct KG_IndexEntry {
     struct KG_IndexEntry  *next;
 } KG_IndexEntry;
 
-/* ============================================================================
+/*
  * Internal: Knowledge Graph Structure
- * ============================================================================ */
+ */
 
 struct GV_KnowledgeGraph {
     /* Configuration */
@@ -139,9 +139,9 @@ struct GV_KnowledgeGraph {
     pthread_rwlock_t rwlock;
 };
 
-/* ============================================================================
+/*
  * Internal: Utility Helpers
- * ============================================================================ */
+ */
 
 static char *kg_strdup(const char *s) {
     if (!s) return NULL;
@@ -174,9 +174,9 @@ static uint64_t kg_now_epoch(void) {
     return (uint64_t)time(NULL);
 }
 
-/* ============================================================================
+/*
  * Internal: Property Helpers
- * ============================================================================ */
+ */
 
 static GV_KGProp *kg_prop_clone_list(const GV_KGProp *src) {
     GV_KGProp *head = NULL;
@@ -237,9 +237,9 @@ static int kg_prop_set(GV_KGProp **head, size_t *count,
     return 0;
 }
 
-/* ============================================================================
+/*
  * Internal: Cosine Similarity
- * ============================================================================ */
+ */
 
 static float kg_cosine_similarity(const float *a, const float *b, size_t dim) {
     float dot = 0.0f, na = 0.0f, nb = 0.0f;
@@ -252,9 +252,9 @@ static float kg_cosine_similarity(const float *a, const float *b, size_t dim) {
     return dot / (sqrtf(na) * sqrtf(nb));
 }
 
-/* ============================================================================
+/*
  * Internal: Entity Lookup
- * ============================================================================ */
+ */
 
 static KG_EntityNode *kg_find_entity_node(const GV_KnowledgeGraph *kg,
                                            uint64_t entity_id) {
@@ -265,9 +265,9 @@ static KG_EntityNode *kg_find_entity_node(const GV_KnowledgeGraph *kg,
     return NULL;
 }
 
-/* ============================================================================
+/*
  * Internal: Relation Lookup
- * ============================================================================ */
+ */
 
 static KG_RelationNode *kg_find_relation_node(const GV_KnowledgeGraph *kg,
                                                uint64_t relation_id) {
@@ -279,9 +279,9 @@ static KG_RelationNode *kg_find_relation_node(const GV_KnowledgeGraph *kg,
     return NULL;
 }
 
-/* ============================================================================
+/*
  * Internal: SPO Index Helpers
- * ============================================================================ */
+ */
 
 static KG_IndexEntry *kg_index_find(KG_IndexEntry **table,
                                      size_t buckets, uint64_t key) {
@@ -330,9 +330,9 @@ static void kg_index_free_table(KG_IndexEntry **table, size_t buckets) {
     free(table);
 }
 
-/* ============================================================================
+/*
  * Internal: Embedding Store Helpers
- * ============================================================================ */
+ */
 
 static int kg_embedding_add(GV_KnowledgeGraph *kg, uint64_t entity_id,
                              const float *emb, size_t dim) {
@@ -390,9 +390,9 @@ static const float *kg_embedding_get(const GV_KnowledgeGraph *kg,
     return NULL;
 }
 
-/* ============================================================================
+/*
  * Internal: Free a single entity node's heap data (NOT the node itself)
- * ============================================================================ */
+ */
 
 static void kg_entity_data_free(GV_KGEntity *e) {
     free(e->name);
@@ -405,9 +405,9 @@ static void kg_entity_data_free(GV_KGEntity *e) {
     e->properties = NULL;
 }
 
-/* ============================================================================
+/*
  * Internal: Free a single relation node's heap data
- * ============================================================================ */
+ */
 
 static void kg_relation_data_free(GV_KGRelation *r) {
     free(r->predicate);
@@ -416,9 +416,9 @@ static void kg_relation_data_free(GV_KGRelation *r) {
     r->properties = NULL;
 }
 
-/* ============================================================================
+/*
  * Internal: Collect all relation IDs for an entity (subject or object)
- * ============================================================================ */
+ */
 
 static size_t kg_collect_relations_for_entity(const GV_KnowledgeGraph *kg,
                                                uint64_t entity_id,
@@ -470,9 +470,9 @@ static size_t kg_collect_relations_for_entity(const GV_KnowledgeGraph *kg,
     return total;
 }
 
-/* ============================================================================
+/*
  * Internal: Remove a single relation (no lock)
- * ============================================================================ */
+ */
 
 static int kg_remove_relation_internal(GV_KnowledgeGraph *kg,
                                         uint64_t relation_id) {
@@ -503,9 +503,9 @@ static int kg_remove_relation_internal(GV_KnowledgeGraph *kg,
     return -1;
 }
 
-/* ============================================================================
+/*
  * Internal: Check if two entities are directly connected
- * ============================================================================ */
+ */
 
 static int kg_are_connected(const GV_KnowledgeGraph *kg,
                              uint64_t a, uint64_t b) {
@@ -528,9 +528,9 @@ static int kg_are_connected(const GV_KnowledgeGraph *kg,
     return 0;
 }
 
-/* ============================================================================
+/*
  * Internal: Count shared neighbours between two entities
- * ============================================================================ */
+ */
 
 static size_t kg_shared_neighbors(const GV_KnowledgeGraph *kg,
                                    uint64_t a, uint64_t b) {
@@ -592,13 +592,13 @@ static size_t kg_shared_neighbors(const GV_KnowledgeGraph *kg,
     return shared;
 }
 
-/* ============================================================================
+/*
  * Internal: BFS helper (used by traverse, shortest_path, subgraph)
  *
  * Returns number of entities discovered.  visited[] holds discovered IDs,
  * depths[] holds their BFS depth.  parent[] holds predecessor entity_id
  * (0 = root / no parent).
- * ============================================================================ */
+ */
 
 typedef struct {
     uint64_t *visited;
@@ -710,10 +710,10 @@ static void kg_bfs_run(const GV_KnowledgeGraph *kg, uint64_t start,
     }
 }
 
-/* ============================================================================
+/*
  * Internal: entity_has_predicate - check if entity participates in
  *           at least one relation with the given predicate
- * ============================================================================ */
+ */
 
 static int kg_entity_has_predicate(const GV_KnowledgeGraph *kg,
                                     uint64_t entity_id,
@@ -739,9 +739,9 @@ static int kg_entity_has_predicate(const GV_KnowledgeGraph *kg,
     return 0;
 }
 
-/* ============================================================================
+/*
  * Internal: helper for sorting search results by similarity descending
- * ============================================================================ */
+ */
 
 typedef struct {
     uint64_t id;
@@ -756,9 +756,9 @@ static int kg_score_cmp_desc(const void *a, const void *b) {
     return 0;
 }
 
-/* ============================================================================
+/*
  * Lifecycle
- * ============================================================================ */
+ */
 
 void gv_kg_config_init(GV_KGConfig *config) {
     if (!config) return;
@@ -864,9 +864,9 @@ void gv_kg_destroy(GV_KnowledgeGraph *kg) {
     free(kg);
 }
 
-/* ============================================================================
+/*
  * Entity Operations
- * ============================================================================ */
+ */
 
 uint64_t gv_kg_add_entity(GV_KnowledgeGraph *kg, const char *name,
                            const char *type, const float *embedding,
@@ -1037,9 +1037,9 @@ int gv_kg_find_entities_by_name(const GV_KnowledgeGraph *kg, const char *name,
     return (int)found;
 }
 
-/* ============================================================================
+/*
  * Relation (Triple) Operations
- * ============================================================================ */
+ */
 
 uint64_t gv_kg_add_relation(GV_KnowledgeGraph *kg, uint64_t subject,
                              const char *predicate, uint64_t object,
@@ -1141,9 +1141,9 @@ int gv_kg_set_relation_prop(GV_KnowledgeGraph *kg, uint64_t relation_id,
     return rc;
 }
 
-/* ============================================================================
+/*
  * Triple Store Queries (SPO Pattern Matching)
- * ============================================================================ */
+ */
 
 /**
  * @brief Internal helper: fill a GV_KGTriple from a relation.
@@ -1254,9 +1254,9 @@ void gv_kg_free_triples(GV_KGTriple *triples, size_t count) {
     }
 }
 
-/* ============================================================================
+/*
  * Semantic Search (Vector-Based)
- * ============================================================================ */
+ */
 
 int gv_kg_search_similar(const GV_KnowledgeGraph *kg,
                           const float *query_embedding, size_t dimension,
@@ -1381,9 +1381,9 @@ void gv_kg_free_search_results(GV_KGSearchResult *results, size_t count) {
     }
 }
 
-/* ============================================================================
+/*
  * Entity Resolution / Deduplication
- * ============================================================================ */
+ */
 
 int gv_kg_resolve_entity(GV_KnowledgeGraph *kg, const char *name,
                           const char *type, const float *embedding,
@@ -1544,9 +1544,9 @@ int gv_kg_merge_entities(GV_KnowledgeGraph *kg, uint64_t keep_id,
     return 0;
 }
 
-/* ============================================================================
+/*
  * Link Prediction
- * ============================================================================ */
+ */
 
 int gv_kg_predict_links(const GV_KnowledgeGraph *kg, uint64_t entity_id,
                          size_t k, GV_KGLinkPrediction *results) {
@@ -1616,9 +1616,9 @@ int gv_kg_predict_links(const GV_KnowledgeGraph *kg, uint64_t entity_id,
     return (int)result_count;
 }
 
-/* ============================================================================
+/*
  * Graph Traversal
- * ============================================================================ */
+ */
 
 int gv_kg_get_neighbors(const GV_KnowledgeGraph *kg, uint64_t entity_id,
                          uint64_t *out_ids, size_t max_count) {
@@ -1812,9 +1812,9 @@ int gv_kg_shortest_path(const GV_KnowledgeGraph *kg, uint64_t from,
     return (int)out_len;
 }
 
-/* ============================================================================
+/*
  * Subgraph Extraction
- * ============================================================================ */
+ */
 
 int gv_kg_extract_subgraph(const GV_KnowledgeGraph *kg, uint64_t center,
                             size_t radius, GV_KGSubgraph *subgraph) {
@@ -1907,9 +1907,9 @@ void gv_kg_free_subgraph(GV_KGSubgraph *subgraph) {
     subgraph->relation_count = 0;
 }
 
-/* ============================================================================
+/*
  * Hybrid Queries (Vector + Graph)
- * ============================================================================ */
+ */
 
 int gv_kg_hybrid_search(const GV_KnowledgeGraph *kg,
                          const float *query_embedding, size_t dimension,
@@ -1980,9 +1980,9 @@ int gv_kg_hybrid_search(const GV_KnowledgeGraph *kg,
     return (int)result_count;
 }
 
-/* ============================================================================
+/*
  * Analytics
- * ============================================================================ */
+ */
 
 int gv_kg_get_stats(const GV_KnowledgeGraph *kg, GV_KGStats *stats) {
     if (!kg || !stats) return -1;
@@ -2154,9 +2154,9 @@ int gv_kg_get_predicates(const GV_KnowledgeGraph *kg, char **out_predicates,
     return (int)found;
 }
 
-/* ============================================================================
+/*
  * Persistence: Save
- * ============================================================================ */
+ */
 
 /**
  * @brief Internal: write raw bytes to file.
@@ -2275,9 +2275,9 @@ fail:
     return -1;
 }
 
-/* ============================================================================
+/*
  * Persistence: Load
- * ============================================================================ */
+ */
 
 static int kg_read_bytes(FILE *fp, void *buf, size_t len) {
     return (fread(buf, 1, len, fp) == len) ? 0 : -1;

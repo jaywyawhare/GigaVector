@@ -69,9 +69,7 @@ typedef struct GV_TypedMetadata {
     struct GV_TypedMetadata *next;    /**< Next entry in linked list. */
 } GV_TypedMetadata;
 
-/* ============================================================================
- * Value Creation Functions
- * ============================================================================ */
+/* Value Creation Functions */
 
 /**
  * @brief Create a null value.
@@ -120,9 +118,7 @@ GV_TypedValue gv_typed_array(GV_MetaType element_type);
  */
 GV_TypedValue gv_typed_object(void);
 
-/* ============================================================================
- * Array Operations
- * ============================================================================ */
+/* Array Operations */
 
 /**
  * @brief Append a value to an array.
@@ -147,9 +143,7 @@ GV_TypedValue *gv_typed_array_get(const GV_TypedValue *array, size_t index);
  */
 size_t gv_typed_array_length(const GV_TypedValue *array);
 
-/* ============================================================================
- * Object Operations
- * ============================================================================ */
+/* Object Operations */
 
 /**
  * @brief Set a key-value pair in an object.
@@ -183,9 +177,7 @@ bool gv_typed_object_has(const GV_TypedValue *object, const char *key);
  */
 size_t gv_typed_object_length(const GV_TypedValue *object);
 
-/* ============================================================================
- * Value Extraction
- * ============================================================================ */
+/* Value Extraction */
 
 /**
  * @brief Get string value.
@@ -218,9 +210,7 @@ int gv_typed_get_float(const GV_TypedValue *value, double *out);
  */
 int gv_typed_get_bool(const GV_TypedValue *value, bool *out);
 
-/* ============================================================================
- * Comparison Operations
- * ============================================================================ */
+/* Comparison Operations */
 
 /**
  * @brief Compare two typed values.
@@ -272,9 +262,7 @@ bool gv_typed_string_starts_with(const GV_TypedValue *value, const char *prefix)
  */
 bool gv_typed_array_contains(const GV_TypedValue *array, const GV_TypedValue *item);
 
-/* ============================================================================
- * Memory Management
- * ============================================================================ */
+/* Memory Management */
 
 /**
  * @brief Free a typed value and its contents.
@@ -301,9 +289,7 @@ void gv_typed_metadata_free(GV_TypedMetadata *meta);
  */
 void gv_typed_metadata_free_all(GV_TypedMetadata *head);
 
-/* ============================================================================
- * Serialization
- * ============================================================================ */
+/* Serialization */
 
 /**
  * @brief Serialize a typed value to binary format.
@@ -340,9 +326,7 @@ int gv_typed_metadata_serialize(const GV_TypedMetadata *meta, uint8_t **buf, siz
  */
 GV_TypedMetadata *gv_typed_metadata_deserialize(const uint8_t *buf, size_t len);
 
-/* ============================================================================
- * Conversion Functions
- * ============================================================================ */
+/* Conversion Functions */
 
 /**
  * @brief Convert a typed value to string representation.

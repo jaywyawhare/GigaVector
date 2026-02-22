@@ -20,11 +20,9 @@
 #include "gigavector/gv_vector.h"
 #include "gigavector/gv_soa_storage.h"
 
-/* ------------------------------------------------------------------ */
 /* Internal helper: collect all non-deleted indices that match a       */
 /* compiled filter.  Returns match count, or -1 on error.  When       */
 /* out_indices is NULL the function just counts.                       */
-/* ------------------------------------------------------------------ */
 static int gv_filter_ops_collect_matches(const GV_Database *db,
                                          const GV_Filter *filter,
                                          size_t *out_indices,
@@ -66,9 +64,7 @@ static int gv_filter_ops_collect_matches(const GV_Database *db,
     return matched;
 }
 
-/* ------------------------------------------------------------------ */
 /* Public API                                                         */
-/* ------------------------------------------------------------------ */
 
 int gv_db_delete_by_filter(GV_Database *db, const char *filter_expr)
 {

@@ -12,9 +12,7 @@
 #include <time.h>
 #include <unistd.h>
 
-/* ============================================================================
- * Internal Structures
- * ============================================================================ */
+/*  Internal Structures  */
 
 #define MAX_NODES 64
 
@@ -48,9 +46,7 @@ struct GV_Cluster {
     int is_ready;
 };
 
-/* ============================================================================
- * Configuration
- * ============================================================================ */
+/*  Configuration  */
 
 static const GV_ClusterConfig DEFAULT_CONFIG = {
     .node_id = NULL,
@@ -66,9 +62,7 @@ void gv_cluster_config_init(GV_ClusterConfig *config) {
     *config = DEFAULT_CONFIG;
 }
 
-/* ============================================================================
- * Internal Helpers
- * ============================================================================ */
+/*  Internal Helpers  */
 
 static char *generate_node_id(void) {
     char id[64];
@@ -123,9 +117,7 @@ static void *heartbeat_thread_func(void *arg) {
     return NULL;
 }
 
-/* ============================================================================
- * Lifecycle
- * ============================================================================ */
+/*  Lifecycle  */
 
 GV_Cluster *gv_cluster_create(const GV_ClusterConfig *config) {
     GV_Cluster *cluster = calloc(1, sizeof(GV_Cluster));
@@ -277,9 +269,7 @@ int gv_cluster_stop(GV_Cluster *cluster) {
     return 0;
 }
 
-/* ============================================================================
- * Node Management
- * ============================================================================ */
+/*  Node Management  */
 
 static void copy_node_info(const NodeEntry *entry, GV_NodeInfo *info) {
     info->node_id = entry->node_id ? strdup(entry->node_id) : NULL;
@@ -361,9 +351,7 @@ void gv_cluster_free_node_list(GV_NodeInfo *nodes, size_t count) {
     free(nodes);
 }
 
-/* ============================================================================
- * Cluster Operations
- * ============================================================================ */
+/*  Cluster Operations  */
 
 int gv_cluster_get_stats(GV_Cluster *cluster, GV_ClusterStats *stats) {
     if (!cluster || !stats) return -1;

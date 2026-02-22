@@ -160,7 +160,6 @@ static int test_filter_destroy_null(void) {
 
 int main(void) {
     int rc = 0;
-    printf("Running filter tests...\n");
     rc |= test_filter_parse_simple();
     rc |= test_filter_parse_and();
     rc |= test_filter_parse_or();
@@ -174,9 +173,6 @@ int main(void) {
     rc |= test_filter_eval_numeric();
     rc |= test_filter_in_database();
     rc |= test_filter_destroy_null();
-    if (rc == 0) {
-        printf("All filter tests passed\n");
-    }
     return rc;
 }
 

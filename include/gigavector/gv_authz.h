@@ -71,9 +71,7 @@ typedef struct {
  */
 typedef struct GV_AuthzManager GV_AuthzManager;
 
-/* ============================================================================
- * Authorization Manager Lifecycle
- * ============================================================================ */
+/* Authorization Manager Lifecycle */
 
 /**
  * @brief Create an authorization manager.
@@ -89,9 +87,7 @@ GV_AuthzManager *gv_authz_create(void);
  */
 void gv_authz_destroy(GV_AuthzManager *authz);
 
-/* ============================================================================
- * Role Management
- * ============================================================================ */
+/* Role Management */
 
 /**
  * @brief Define a new role.
@@ -151,9 +147,7 @@ void gv_authz_free_role(GV_Role *role);
  */
 void gv_authz_free_roles(GV_Role *roles, size_t count);
 
-/* ============================================================================
- * User-Role Assignment
- * ============================================================================ */
+/* User-Role Assignment */
 
 /**
  * @brief Assign a role to a user.
@@ -197,9 +191,7 @@ int gv_authz_get_user_roles(GV_AuthzManager *authz, const char *subject,
  */
 void gv_authz_free_user_roles(char **roles, size_t count);
 
-/* ============================================================================
- * Authorization Checks
- * ============================================================================ */
+/* Authorization Checks */
 
 /**
  * @brief Check if identity has permission on a resource.
@@ -260,9 +252,7 @@ int gv_authz_can_delete(GV_AuthzManager *authz, const GV_Identity *identity,
  */
 int gv_authz_is_admin(GV_AuthzManager *authz, const GV_Identity *identity);
 
-/* ============================================================================
- * Built-in Roles
- * ============================================================================ */
+/* Built-in Roles */
 
 /**
  * @brief Initialize built-in roles.

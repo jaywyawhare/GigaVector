@@ -14,9 +14,7 @@
 #include <time.h>
 #include <sys/stat.h>
 
-/* ============================================================================
- * Constants
- * ============================================================================ */
+/*  Constants  */
 
 #define BACKUP_MAGIC "GVBAK"
 #define BACKUP_MAGIC_LEN 5
@@ -27,9 +25,7 @@
 #define BACKUP_FLAG_ENCRYPTED  0x02
 #define BACKUP_FLAG_INCREMENTAL 0x04
 
-/* ============================================================================
- * Configuration
- * ============================================================================ */
+/*  Configuration  */
 
 static const GV_BackupOptions DEFAULT_BACKUP_OPTIONS = {
     .compression = GV_BACKUP_COMPRESS_NONE,
@@ -55,9 +51,7 @@ void gv_restore_options_init(GV_RestoreOptions *options) {
     *options = DEFAULT_RESTORE_OPTIONS;
 }
 
-/* ============================================================================
- * Internal Helpers
- * ============================================================================ */
+/*  Internal Helpers  */
 
 static GV_BackupResult *create_result(int success, const char *error) {
     GV_BackupResult *result = calloc(1, sizeof(GV_BackupResult));
@@ -75,9 +69,7 @@ static double get_time_seconds(void) {
     return ts.tv_sec + ts.tv_nsec / 1e9;
 }
 
-/* ============================================================================
- * Backup Operations
- * ============================================================================ */
+/*  Backup Operations  */
 
 GV_BackupResult *gv_backup_create(GV_Database *db, const char *backup_path,
                                    const GV_BackupOptions *options,
@@ -225,9 +217,7 @@ void gv_backup_result_free(GV_BackupResult *result) {
     free(result);
 }
 
-/* ============================================================================
- * Restore Operations
- * ============================================================================ */
+/*  Restore Operations  */
 
 GV_BackupResult *gv_backup_restore(const char *backup_path, const char *db_path,
                                     const GV_RestoreOptions *options,
@@ -408,9 +398,7 @@ GV_BackupResult *gv_backup_restore_to_db(const char *backup_path,
     return result;
 }
 
-/* ============================================================================
- * Inspection Operations
- * ============================================================================ */
+/*  Inspection Operations  */
 
 int gv_backup_read_header(const char *backup_path, GV_BackupHeader *header) {
     if (!backup_path || !header) return -1;
@@ -535,9 +523,7 @@ int gv_backup_get_info(const char *backup_path, char *info_buf, size_t buf_size)
     return 0;
 }
 
-/* ============================================================================
- * Incremental Backup
- * ============================================================================ */
+/*  Incremental Backup  */
 
 /**
  * @brief Read header from backup file.
@@ -764,9 +750,7 @@ GV_BackupResult *gv_backup_merge(const char *base_backup_path,
     return result;
 }
 
-/* ============================================================================
- * Utility Functions
- * ============================================================================ */
+/*  Utility Functions  */
 
 int gv_backup_compute_checksum(const char *backup_path, char *checksum_out) {
     if (!backup_path || !checksum_out) return -1;

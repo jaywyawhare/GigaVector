@@ -14,22 +14,16 @@
 #include <stdint.h>
 #include <inttypes.h>
 
-/* ============================================================================
- * Constants
- * ============================================================================ */
+/*  Constants  */
 
 #define GV_TRACE_INITIAL_CAPACITY 16
 
-/* ============================================================================
- * Internal State
- * ============================================================================ */
+/*  Internal State  */
 
 /** Global trace ID counter. */
 static uint64_t gv_trace_id_counter = 0;
 
-/* ============================================================================
- * Utility
- * ============================================================================ */
+/*  Utility  */
 
 uint64_t gv_trace_get_time_us(void) {
     struct timespec ts;
@@ -37,9 +31,7 @@ uint64_t gv_trace_get_time_us(void) {
     return (uint64_t)ts.tv_sec * 1000000ULL + (uint64_t)ts.tv_nsec / 1000ULL;
 }
 
-/* ============================================================================
- * Internal Helpers
- * ============================================================================ */
+/*  Internal Helpers  */
 
 /**
  * @brief Ensure the spans array has room for at least one more span.
@@ -87,9 +79,7 @@ static GV_TraceSpan *gv_trace_find_last_open_span(GV_QueryTrace *trace) {
     return NULL;
 }
 
-/* ============================================================================
- * Trace Lifecycle
- * ============================================================================ */
+/*  Trace Lifecycle  */
 
 GV_QueryTrace *gv_trace_begin(void) {
     GV_QueryTrace *trace = calloc(1, sizeof(GV_QueryTrace));
@@ -141,9 +131,7 @@ void gv_trace_destroy(GV_QueryTrace *trace) {
     free(trace);
 }
 
-/* ============================================================================
- * Span Operations
- * ============================================================================ */
+/*  Span Operations  */
 
 void gv_trace_span_start(GV_QueryTrace *trace, const char *name) {
     if (!trace || !trace->active || !name) {
@@ -218,9 +206,7 @@ void gv_trace_set_metadata(GV_QueryTrace *trace, const char *metadata) {
     span->metadata = metadata ? strdup(metadata) : NULL;
 }
 
-/* ============================================================================
- * Serialization
- * ============================================================================ */
+/*  Serialization  */
 
 /**
  * @brief Escape a string for JSON output.
@@ -355,9 +341,7 @@ char *gv_trace_to_json(const GV_QueryTrace *trace) {
     return result ? result : buf;
 }
 
-/* ============================================================================
- * Pretty Print
- * ============================================================================ */
+/*  Pretty Print  */
 
 void gv_trace_print(const GV_QueryTrace *trace, FILE *out) {
     if (!trace || !out) {

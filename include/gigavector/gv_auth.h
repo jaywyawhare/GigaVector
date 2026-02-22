@@ -83,9 +83,7 @@ typedef struct {
  */
 typedef struct GV_AuthManager GV_AuthManager;
 
-/* ============================================================================
- * Configuration
- * ============================================================================ */
+/* Configuration */
 
 /**
  * @brief Initialize authentication configuration with defaults.
@@ -94,9 +92,7 @@ typedef struct GV_AuthManager GV_AuthManager;
  */
 void gv_auth_config_init(GV_AuthConfig *config);
 
-/* ============================================================================
- * Auth Manager Lifecycle
- * ============================================================================ */
+/* Auth Manager Lifecycle */
 
 /**
  * @brief Create an authentication manager.
@@ -113,9 +109,7 @@ GV_AuthManager *gv_auth_create(const GV_AuthConfig *config);
  */
 void gv_auth_destroy(GV_AuthManager *auth);
 
-/* ============================================================================
- * API Key Management
- * ============================================================================ */
+/* API Key Management */
 
 /**
  * @brief Generate a new API key.
@@ -171,9 +165,7 @@ int gv_auth_list_api_keys(GV_AuthManager *auth, GV_APIKey **keys, size_t *count)
  */
 void gv_auth_free_api_keys(GV_APIKey *keys, size_t count);
 
-/* ============================================================================
- * Authentication
- * ============================================================================ */
+/* Authentication */
 
 /**
  * @brief Authenticate with an API key.
@@ -217,9 +209,7 @@ GV_AuthResult gv_auth_authenticate(GV_AuthManager *auth, const char *credential,
  */
 void gv_auth_free_identity(GV_Identity *identity);
 
-/* ============================================================================
- * JWT Utilities
- * ============================================================================ */
+/* JWT Utilities */
 
 /**
  * @brief Generate a JWT token.
@@ -242,9 +232,7 @@ int gv_auth_generate_jwt(GV_AuthManager *auth, const char *subject,
  */
 const char *gv_auth_result_string(GV_AuthResult result);
 
-/* ============================================================================
- * Hashing Utilities
- * ============================================================================ */
+/* Hashing Utilities */
 
 /**
  * @brief Compute SHA-256 hash.

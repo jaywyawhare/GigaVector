@@ -74,7 +74,6 @@ static int test_all_index_types(void) {
     for (int t = 0; t < 3; t++) {
         GV_Database *db = gv_db_open(NULL, 8, types[t]);
         if (db == NULL) {
-            printf("Skipping %s test (not available)\n", type_names[t]);
             continue;
         }
         
@@ -371,7 +370,6 @@ static int test_exact_search_threshold(void) {
 
 int main(void) {
     int rc = 0;
-    printf("Running comprehensive database tests...\n");
     rc |= test_open_close();
     rc |= test_add_and_search();
     rc |= test_save_load_and_wal();
@@ -388,9 +386,6 @@ int main(void) {
     rc |= test_error_handling();
     rc |= test_wal_operations();
     rc |= test_exact_search_threshold();
-    if (rc == 0) {
-        printf("All database tests passed\n");
-    }
     return rc;
 }
 

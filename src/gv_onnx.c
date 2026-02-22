@@ -20,9 +20,7 @@
 #include <onnxruntime_c_api.h>
 #endif
 
-/* ============================================================================
- * Constants
- * ============================================================================ */
+/*  Constants  */
 
 #define GV_ONNX_MAX_TOKEN_LEN   256
 #define GV_ONNX_MAX_SEQ_LEN     512
@@ -32,9 +30,7 @@
 #define GV_ONNX_CLS_TOKEN_ID    2
 #define GV_ONNX_SEP_TOKEN_ID    3
 
-/* ============================================================================
- * Internal Structures
- * ============================================================================ */
+/*  Internal Structures  */
 
 /** Vocabulary hash-table entry for whitespace tokenizer. */
 typedef struct GV_VocabEntry {
@@ -70,9 +66,7 @@ struct GV_ONNXModel {
     char                last_error[512];
 };
 
-/* ============================================================================
- * Vocabulary Helpers (shared by both compile paths)
- * ============================================================================ */
+/*  Vocabulary Helpers (shared by both compile paths)  */
 
 static size_t vocab_hash(const char *str, size_t bucket_count) {
     size_t h = 5381;
@@ -176,9 +170,7 @@ static GV_Vocab *vocab_load(const char *model_path) {
     return v;
 }
 
-/* ============================================================================
- * Whitespace Tokenizer
- * ============================================================================ */
+/*  Whitespace Tokenizer  */
 
 /**
  * Tokenize @p text into integer IDs using a whitespace split and vocabulary
@@ -215,9 +207,7 @@ static size_t tokenize_text(const GV_Vocab *vocab, const char *text,
     return pos;
 }
 
-/* ============================================================================
- * Tensor Helpers
- * ============================================================================ */
+/*  Tensor Helpers  */
 
 GV_ONNXTensor gv_onnx_tensor_create(const size_t *shape, size_t ndim) {
     GV_ONNXTensor t;
@@ -260,9 +250,7 @@ void gv_onnx_tensor_destroy(GV_ONNXTensor *tensor) {
 
 #ifdef GV_HAVE_ONNX
 
-/* ============================================================================
- * Internal Helpers (ONNX)
- * ============================================================================ */
+/*  Internal Helpers (ONNX)  */
 
 static void set_error(GV_ONNXModel *m, const char *msg) {
     if (!m) return;
@@ -278,17 +266,13 @@ static int check_status(GV_ONNXModel *m, OrtStatus *status) {
     return -1;
 }
 
-/* ============================================================================
- * Runtime Query
- * ============================================================================ */
+/*  Runtime Query  */
 
 int gv_onnx_available(void) {
     return 1;
 }
 
-/* ============================================================================
- * Model Lifecycle
- * ============================================================================ */
+/*  Model Lifecycle  */
 
 GV_ONNXModel *gv_onnx_load(const GV_ONNXConfig *config) {
     if (!config || !config->model_path) {
@@ -416,9 +400,7 @@ void gv_onnx_destroy(GV_ONNXModel *model) {
     free(model);
 }
 
-/* ============================================================================
- * Inference
- * ============================================================================ */
+/*  Inference  */
 
 int gv_onnx_infer(GV_ONNXModel *model, const GV_ONNXTensor *inputs,
                    size_t input_count, GV_ONNXTensor *outputs,
@@ -497,9 +479,7 @@ unlock:
     return rc;
 }
 
-/* ============================================================================
- * Cross-Encoder Re-ranking
- * ============================================================================ */
+/*  Cross-Encoder Re-ranking  */
 
 int gv_onnx_rerank(GV_ONNXModel *model, const char *query_text,
                     const char **doc_texts, size_t doc_count, float *scores) {
@@ -605,9 +585,7 @@ int gv_onnx_rerank(GV_ONNXModel *model, const char *query_text,
     return rc;
 }
 
-/* ============================================================================
- * Bi-Encoder Embedding
- * ============================================================================ */
+/*  Bi-Encoder Embedding  */
 
 int gv_onnx_embed(GV_ONNXModel *model, const char **texts,
                    size_t text_count, float *embeddings, size_t dimension) {
@@ -679,9 +657,7 @@ int gv_onnx_embed(GV_ONNXModel *model, const char **texts,
     return rc;
 }
 
-/* ============================================================================
- * Model Introspection
- * ============================================================================ */
+/*  Model Introspection  */
 
 int gv_onnx_get_input_info(const GV_ONNXModel *model, size_t *input_count,
                             char ***input_names) {

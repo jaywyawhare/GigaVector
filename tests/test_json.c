@@ -13,17 +13,15 @@ static int tests_run = 0;
 static int tests_passed = 0;
 
 #define TEST(name) do { \
-    printf("Testing %s... ", name); \
     tests_run++; \
 } while(0)
 
 #define PASS() do { \
-    printf("[OK]\n"); \
     tests_passed++; \
 } while(0)
 
 #define FAIL(msg) do { \
-    printf("[FAIL] %s\n", msg); \
+    (void)(msg); \
 } while(0)
 
 void test_parse_null(void) {
@@ -155,7 +153,6 @@ void test_parse_strings(void) {
     }
     s = gv_json_get_string(val);
     if (strcmp(s, "hello\nworld\t\"quoted\"") != 0) {
-        printf("Got: %s\n", s);
         FAIL("Wrong value for escaped string");
         gv_json_free(val);
         return;
@@ -347,7 +344,6 @@ void test_parse_openai_response(void) {
 
     // Verify escaped characters are unescaped
     if (strstr(content, "\"quotes\"") == NULL || strstr(content, "\n") == NULL) {
-        printf("Content: %s\n", content);
         FAIL("Escaped characters not properly unescaped");
         gv_json_free(val);
         return;
@@ -437,7 +433,6 @@ void test_stringify(void) {
     GV_JsonError err;
     GV_JsonValue *parsed = gv_json_parse(str, &err);
     if (parsed == NULL) {
-        printf("Stringify result: %s\n", str);
         FAIL("Failed to parse stringified JSON");
         free(str);
         gv_json_free(obj);
@@ -525,8 +520,6 @@ void test_error_handling(void) {
 }
 
 int main(void) {
-    printf("Running JSON parser tests...\n\n");
-
     test_parse_null();
     test_parse_bool();
     test_parse_numbers();
@@ -539,8 +532,6 @@ int main(void) {
     test_stringify();
     test_copy();
     test_error_handling();
-
-    printf("\n%d/%d tests passed\n", tests_passed, tests_run);
 
     return tests_passed == tests_run ? 0 : 1;
 }

@@ -16,9 +16,7 @@ static void fill_tokens(float *tokens, size_t num_tokens, size_t dim, float seed
     }
 }
 
-/* ------------------------------------------------------------------ */
 /* 1. test_muvera_config_init                                          */
-/* ------------------------------------------------------------------ */
 static int test_muvera_config_init(void) {
     GV_MuveraConfig config;
     memset(&config, 0xFF, sizeof(config));
@@ -34,9 +32,7 @@ static int test_muvera_config_init(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 /* 2. test_muvera_create_destroy                                       */
-/* ------------------------------------------------------------------ */
 static int test_muvera_create_destroy(void) {
     GV_MuveraConfig config;
     gv_muvera_config_init(&config);
@@ -54,9 +50,7 @@ static int test_muvera_create_destroy(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 /* 3. test_muvera_create_defaults                                      */
-/* ------------------------------------------------------------------ */
 static int test_muvera_create_defaults(void) {
     /* NULL config should use defaults */
     GV_MuveraEncoder *enc = gv_muvera_create(NULL);
@@ -69,9 +63,7 @@ static int test_muvera_create_defaults(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 /* 4. test_muvera_encode                                               */
-/* ------------------------------------------------------------------ */
 static int test_muvera_encode(void) {
     GV_MuveraConfig config;
     gv_muvera_config_init(&config);
@@ -106,9 +98,7 @@ static int test_muvera_encode(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 /* 5. test_muvera_encode_deterministic                                 */
-/* ------------------------------------------------------------------ */
 static int test_muvera_encode_deterministic(void) {
     GV_MuveraConfig config;
     gv_muvera_config_init(&config);
@@ -145,9 +135,7 @@ static int test_muvera_encode_deterministic(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
-/* 6. test_muvera_encode_batch                                         */
-/* ------------------------------------------------------------------ */
+/* 6. test_muvera_encode_batch */
 static int test_muvera_encode_batch(void) {
     GV_MuveraConfig config;
     gv_muvera_config_init(&config);
@@ -186,9 +174,7 @@ static int test_muvera_encode_batch(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 /* 7. test_muvera_output_dimension                                     */
-/* ------------------------------------------------------------------ */
 static int test_muvera_output_dimension(void) {
     GV_MuveraConfig config;
     gv_muvera_config_init(&config);
@@ -206,9 +192,7 @@ static int test_muvera_output_dimension(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 /* 8. test_muvera_destroy_null                                         */
-/* ------------------------------------------------------------------ */
 static int test_muvera_destroy_null(void) {
     /* Should be safe to call with NULL */
     gv_muvera_destroy(NULL);
@@ -220,9 +204,7 @@ static int test_muvera_destroy_null(void) {
     return 0;
 }
 
-/* ================================================================== */
-/* main                                                                */
-/* ================================================================== */
+/* main */
 typedef int (*test_fn)(void);
 typedef struct { const char *name; test_fn fn; } TestCase;
 
@@ -240,10 +222,7 @@ int main(void) {
     int n = sizeof(tests) / sizeof(tests[0]);
     int passed = 0;
     for (int i = 0; i < n; i++) {
-        printf("%s", tests[i].name);
-        if (tests[i].fn() == 0) { printf(" [OK]\n"); passed++; }
-        else { printf(" [FAIL]\n"); }
+        if (tests[i].fn() == 0) { passed++; }
     }
-    printf("\n%d/%d tests passed\n", passed, n);
     return passed == n ? 0 : 1;
 }

@@ -11,9 +11,7 @@
 #include <time.h>
 #include <pthread.h>
 
-/* ============================================================================
- * Internal Structures
- * ============================================================================ */
+/*  Internal Structures  */
 
 #define MAX_API_KEYS 256
 #define KEY_ID_LEN 16
@@ -42,9 +40,7 @@ struct GV_AuthManager {
     pthread_rwlock_t rwlock;
 };
 
-/* ============================================================================
- * Simple SHA-256 Implementation (for portability)
- * ============================================================================ */
+/*  Simple SHA-256 Implementation (for portability)  */
 
 /* Minimal SHA-256 - in production, use OpenSSL or similar */
 
@@ -161,9 +157,7 @@ static void sha256_final(SHA256_CTX *ctx, uint8_t hash[]) {
     }
 }
 
-/* ============================================================================
- * Hashing Utilities
- * ============================================================================ */
+/*  Hashing Utilities  */
 
 int gv_auth_sha256(const void *data, size_t len, unsigned char *hash_out) {
     if (!data || !hash_out) return -1;
@@ -185,9 +179,7 @@ void gv_auth_to_hex(const unsigned char *hash, size_t hash_len, char *hex_out) {
     hex_out[hash_len * 2] = '\0';
 }
 
-/* ============================================================================
- * Random Generation
- * ============================================================================ */
+/*  Random Generation  */
 
 static void generate_random_bytes(unsigned char *buf, size_t len) {
     FILE *fp = fopen("/dev/urandom", "rb");
@@ -202,9 +194,7 @@ static void generate_random_bytes(unsigned char *buf, size_t len) {
     }
 }
 
-/* ============================================================================
- * Configuration
- * ============================================================================ */
+/*  Configuration  */
 
 static const GV_AuthConfig DEFAULT_CONFIG = {
     .type = GV_AUTH_NONE,
@@ -222,9 +212,7 @@ void gv_auth_config_init(GV_AuthConfig *config) {
     *config = DEFAULT_CONFIG;
 }
 
-/* ============================================================================
- * Lifecycle
- * ============================================================================ */
+/*  Lifecycle  */
 
 GV_AuthManager *gv_auth_create(const GV_AuthConfig *config) {
     GV_AuthManager *auth = calloc(1, sizeof(GV_AuthManager));
@@ -251,9 +239,7 @@ void gv_auth_destroy(GV_AuthManager *auth) {
     free(auth);
 }
 
-/* ============================================================================
- * API Key Management
- * ============================================================================ */
+/*  API Key Management  */
 
 int gv_auth_generate_api_key(GV_AuthManager *auth, const char *description,
                               uint64_t expires_at, char *key_out, char *key_id_out) {
@@ -379,9 +365,7 @@ void gv_auth_free_api_keys(GV_APIKey *keys, size_t count) {
     free(keys);
 }
 
-/* ============================================================================
- * Authentication
- * ============================================================================ */
+/*  Authentication  */
 
 GV_AuthResult gv_auth_verify_api_key(GV_AuthManager *auth, const char *api_key,
                                       GV_Identity *identity) {
@@ -495,9 +479,7 @@ void gv_auth_free_identity(GV_Identity *identity) {
     memset(identity, 0, sizeof(*identity));
 }
 
-/* ============================================================================
- * JWT Generation
- * ============================================================================ */
+/*  JWT Generation  */
 
 /* Base64url encoding */
 static const char base64url_chars[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
@@ -578,9 +560,7 @@ int gv_auth_generate_jwt(GV_AuthManager *auth, const char *subject,
     return 0;
 }
 
-/* ============================================================================
- * Utility
- * ============================================================================ */
+/*  Utility  */
 
 const char *gv_auth_result_string(GV_AuthResult result) {
     switch (result) {

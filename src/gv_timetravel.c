@@ -17,18 +17,14 @@
 #include <time.h>
 #include <pthread.h>
 
-/* ============================================================================
- * Constants
- * ============================================================================ */
+/*  Constants  */
 
 #define TT_MAGIC        "GVTT"
 #define TT_MAGIC_LEN    4
 #define TT_FILE_VERSION 1
 #define TT_INIT_CAP     64
 
-/* ============================================================================
- * Internal Types
- * ============================================================================ */
+/*  Internal Types  */
 
 /**
  * @brief Type of mutation stored in a change record.
@@ -79,9 +75,7 @@ struct GV_TimeTravelManager {
     pthread_rwlock_t rwlock;
 };
 
-/* ============================================================================
- * Internal Helpers
- * ============================================================================ */
+/*  Internal Helpers  */
 
 /**
  * @brief Get current time in microseconds since epoch.
@@ -286,9 +280,7 @@ static uint64_t version_at_timestamp(const GV_TimeTravelManager *mgr, uint64_t t
     return best;
 }
 
-/* ============================================================================
- * Lifecycle
- * ============================================================================ */
+/*  Lifecycle  */
 
 void gv_tt_config_init(GV_TimeTravelConfig *config)
 {
@@ -340,9 +332,7 @@ void gv_tt_destroy(GV_TimeTravelManager *mgr)
     free(mgr);
 }
 
-/* ============================================================================
- * Mutation Recording
- * ============================================================================ */
+/*  Mutation Recording  */
 
 uint64_t gv_tt_record_insert(GV_TimeTravelManager *mgr, size_t index,
                               const float *vector, size_t dimension)
@@ -400,9 +390,7 @@ uint64_t gv_tt_record_delete(GV_TimeTravelManager *mgr, size_t index,
     return ver;
 }
 
-/* ============================================================================
- * Point-in-Time Queries
- * ============================================================================ */
+/*  Point-in-Time Queries  */
 
 int gv_tt_query_at_version(const GV_TimeTravelManager *mgr, uint64_t version_id,
                             size_t index, float *output, size_t dimension)
@@ -521,9 +509,7 @@ int gv_tt_query_at_timestamp(const GV_TimeTravelManager *mgr, uint64_t timestamp
     return gv_tt_query_at_version(mgr, ver, index, output, dimension);
 }
 
-/* ============================================================================
- * Version Inspection
- * ============================================================================ */
+/*  Version Inspection  */
 
 size_t gv_tt_count_at_version(const GV_TimeTravelManager *mgr, uint64_t version_id)
 {
@@ -593,9 +579,7 @@ int gv_tt_list_versions(const GV_TimeTravelManager *mgr, GV_VersionEntry *out,
     return (int)to_write;
 }
 
-/* ============================================================================
- * Garbage Collection
- * ============================================================================ */
+/*  Garbage Collection  */
 
 int gv_tt_gc(GV_TimeTravelManager *mgr)
 {
@@ -609,9 +593,7 @@ int gv_tt_gc(GV_TimeTravelManager *mgr)
     return removed;
 }
 
-/* ============================================================================
- * Persistence Helpers
- * ============================================================================ */
+/*  Persistence Helpers  */
 
 static int write_uint64(FILE *f, uint64_t v)
 {
@@ -653,9 +635,7 @@ static int read_int(FILE *f, int *v)
     return 0;
 }
 
-/* ============================================================================
- * Persistence
- * ============================================================================ */
+/*  Persistence  */
 
 int gv_tt_save(const GV_TimeTravelManager *mgr, const char *path)
 {

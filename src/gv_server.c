@@ -19,9 +19,7 @@
 #include <microhttpd.h>
 #endif
 
-/* ============================================================================
- * Rate Limiter
- * ============================================================================ */
+/*  Rate Limiter  */
 
 /**
  * @brief Token-bucket rate limiter state.
@@ -79,9 +77,7 @@ static int gv_rate_limiter_allow(GV_RateLimiter *rl) {
     return 0;
 }
 
-/* ============================================================================
- * Internal Structures
- * ============================================================================ */
+/*  Internal Structures  */
 
 /**
  * @brief Connection info for POST data accumulation.
@@ -124,9 +120,7 @@ struct GV_Server {
     int rate_limit_enabled;
 };
 
-/* ============================================================================
- * Default Configuration
- * ============================================================================ */
+/*  Default Configuration  */
 
 static const GV_ServerConfig DEFAULT_CONFIG = {
     .port = 8080,
@@ -148,9 +142,7 @@ void gv_server_config_init(GV_ServerConfig *config) {
     *config = DEFAULT_CONFIG;
 }
 
-/* ============================================================================
- * Error Strings
- * ============================================================================ */
+/*  Error Strings  */
 
 const char *gv_server_error_string(int error) {
     switch (error) {
@@ -177,9 +169,7 @@ const char *gv_server_error_string(int error) {
 
 #ifdef HAVE_MICROHTTPD
 
-/* ============================================================================
- * HTTP Method Parsing
- * ============================================================================ */
+/*  HTTP Method Parsing  */
 
 static GV_HttpMethod parse_method(const char *method) {
     if (!method) return GV_HTTP_GET;
@@ -192,9 +182,7 @@ static GV_HttpMethod parse_method(const char *method) {
     return GV_HTTP_GET;
 }
 
-/* ============================================================================
- * libmicrohttpd Callbacks
- * ============================================================================ */
+/*  libmicrohttpd Callbacks  */
 
 /**
  * @brief Callback to free connection info.
@@ -428,9 +416,7 @@ static enum MHD_Result answer_to_connection(void *cls,
 
 #endif /* HAVE_MICROHTTPD */
 
-/* ============================================================================
- * Server Lifecycle
- * ============================================================================ */
+/*  Server Lifecycle  */
 
 GV_Server *gv_server_create(GV_Database *db, const GV_ServerConfig *config) {
     if (!db) {
@@ -566,9 +552,7 @@ int gv_server_is_running(const GV_Server *server) {
     return server->running;
 }
 
-/* ============================================================================
- * Server Information
- * ============================================================================ */
+/*  Server Information  */
 
 int gv_server_get_stats(const GV_Server *server, GV_ServerStats *stats) {
     if (!server || !stats) {

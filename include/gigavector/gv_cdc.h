@@ -17,9 +17,7 @@ extern "C" {
  * event-driven architectures, and audit logging.
  */
 
-/* ============================================================================
- * Types and Enumerations
- * ============================================================================ */
+/* Types and Enumerations */
 
 /**
  * @brief CDC event types (bitmask).
@@ -76,9 +74,7 @@ typedef struct {
     uint64_t sequence_number;       /**< Position in the stream. */
 } GV_CDCCursor;
 
-/* ============================================================================
- * Configuration
- * ============================================================================ */
+/* Configuration */
 
 /**
  * @brief Initialize a CDC configuration with sensible defaults.
@@ -87,9 +83,7 @@ typedef struct {
  */
 void gv_cdc_config_init(GV_CDCConfig *config);
 
-/* ============================================================================
- * Lifecycle
- * ============================================================================ */
+/* Lifecycle */
 
 /**
  * @brief Create a CDC stream.
@@ -106,9 +100,7 @@ GV_CDCStream *gv_cdc_create(const GV_CDCConfig *config);
  */
 void gv_cdc_destroy(GV_CDCStream *stream);
 
-/* ============================================================================
- * Publishing
- * ============================================================================ */
+/* Publishing */
 
 /**
  * @brief Publish an event to the CDC stream.
@@ -123,9 +115,7 @@ void gv_cdc_destroy(GV_CDCStream *stream);
  */
 int gv_cdc_publish(GV_CDCStream *stream, const GV_CDCEvent *event);
 
-/* ============================================================================
- * Subscription (push interface)
- * ============================================================================ */
+/* Subscription (push interface) */
 
 /**
  * @brief Subscribe to CDC events matching a type mask.
@@ -150,9 +140,7 @@ int gv_cdc_subscribe(GV_CDCStream *stream, uint32_t event_mask,
  */
 int gv_cdc_unsubscribe(GV_CDCStream *stream, int subscriber_id);
 
-/* ============================================================================
- * Polling (pull interface)
- * ============================================================================ */
+/* Polling (pull interface) */
 
 /**
  * @brief Poll for events starting from a cursor position.

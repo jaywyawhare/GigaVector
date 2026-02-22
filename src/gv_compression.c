@@ -19,9 +19,7 @@
 #include <string.h>
 #include <stdatomic.h>
 
-/* ============================================================================
- * Constants
- * ============================================================================ */
+/*  Constants  */
 
 #define GV_HASH_BITS      14
 #define GV_HASH_SIZE      (1 << GV_HASH_BITS)   /* 16384 entries */
@@ -36,9 +34,7 @@
 
 #define GV_END_MARGIN     5      /* Stop searching this many bytes before end */
 
-/* ============================================================================
- * Internal Structures
- * ============================================================================ */
+/*  Internal Structures  */
 
 struct GV_Compressor {
     GV_CompressionConfig config;
@@ -57,9 +53,7 @@ struct GV_Compressor {
     _Atomic uint64_t bytes_out;
 };
 
-/* ============================================================================
- * Hash Function
- * ============================================================================ */
+/*  Hash Function  */
 
 /**
  * @brief Fast 4-byte hash for match finding.
@@ -73,9 +67,7 @@ static inline uint32_t gv_hash4(const uint8_t *p)
     return (v * 2654435761U) >> (32 - GV_HASH_BITS);
 }
 
-/* ============================================================================
- * Variable-Length Integer Encoding
- * ============================================================================ */
+/*  Variable-Length Integer Encoding  */
 
 /**
  * @brief Encode a length value using a variable-length scheme.
@@ -122,9 +114,7 @@ static size_t decode_varint(const uint8_t *src, size_t src_len, size_t *value_ou
     return 0;
 }
 
-/* ============================================================================
- * Compression
- * ============================================================================ */
+/*  Compression  */
 
 /**
  * @brief Find the length of the match between two positions.
@@ -290,9 +280,7 @@ static size_t compress_core(GV_Compressor *comp,
     return op;
 }
 
-/* ============================================================================
- * Decompression
- * ============================================================================ */
+/*  Decompression  */
 
 /**
  * @brief Core decompression: sequential decode of compressed blocks.
@@ -361,9 +349,7 @@ static size_t decompress_core(const uint8_t *src, size_t src_len,
     return op;
 }
 
-/* ============================================================================
- * Configuration
- * ============================================================================ */
+/*  Configuration  */
 
 static const GV_CompressionConfig DEFAULT_CONFIG = {
     .type     = GV_COMPRESS_LZ4,
@@ -377,9 +363,7 @@ void gv_compression_config_init(GV_CompressionConfig *config)
     *config = DEFAULT_CONFIG;
 }
 
-/* ============================================================================
- * Lifecycle
- * ============================================================================ */
+/*  Lifecycle  */
 
 GV_Compressor *gv_compression_create(const GV_CompressionConfig *config)
 {
@@ -406,9 +390,7 @@ void gv_compression_destroy(GV_Compressor *comp)
     free(comp);
 }
 
-/* ============================================================================
- * Public API
- * ============================================================================ */
+/*  Public API  */
 
 size_t gv_compress(GV_Compressor *comp, const void *input, size_t input_len,
                    void *output, size_t output_capacity)

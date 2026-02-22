@@ -21,9 +21,7 @@ static void generate_batch(float *data, size_t count, size_t dim) {
     }
 }
 
-/* ------------------------------------------------------------------ */
 /* 1. test_diskann_config_init                                         */
-/* ------------------------------------------------------------------ */
 static int test_diskann_config_init(void) {
     GV_DiskANNConfig config;
     memset(&config, 0xFF, sizeof(config));
@@ -40,9 +38,7 @@ static int test_diskann_config_init(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 /* 2. test_diskann_create_destroy                                      */
-/* ------------------------------------------------------------------ */
 static int test_diskann_create_destroy(void) {
     GV_DiskANNConfig config;
     gv_diskann_config_init(&config);
@@ -55,9 +51,7 @@ static int test_diskann_create_destroy(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 /* 3. test_diskann_build_and_count                                     */
-/* ------------------------------------------------------------------ */
 static int test_diskann_build_and_count(void) {
     GV_DiskANNConfig config;
     gv_diskann_config_init(&config);
@@ -79,9 +73,7 @@ static int test_diskann_build_and_count(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 /* 4. test_diskann_search                                              */
-/* ------------------------------------------------------------------ */
 static int test_diskann_search(void) {
     GV_DiskANNConfig config;
     gv_diskann_config_init(&config);
@@ -111,9 +103,7 @@ static int test_diskann_search(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 /* 5. test_diskann_search_ordering                                     */
-/* ------------------------------------------------------------------ */
 static int test_diskann_search_ordering(void) {
     GV_DiskANNConfig config;
     gv_diskann_config_init(&config);
@@ -143,9 +133,7 @@ static int test_diskann_search_ordering(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 /* 6. test_diskann_incremental_insert                                  */
-/* ------------------------------------------------------------------ */
 static int test_diskann_incremental_insert(void) {
     GV_DiskANNConfig config;
     gv_diskann_config_init(&config);
@@ -172,9 +160,7 @@ static int test_diskann_incremental_insert(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 /* 7. test_diskann_delete                                              */
-/* ------------------------------------------------------------------ */
 static int test_diskann_delete(void) {
     GV_DiskANNConfig config;
     gv_diskann_config_init(&config);
@@ -195,9 +181,7 @@ static int test_diskann_delete(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 /* 8. test_diskann_stats                                               */
-/* ------------------------------------------------------------------ */
 static int test_diskann_stats(void) {
     GV_DiskANNConfig config;
     gv_diskann_config_init(&config);
@@ -221,9 +205,7 @@ static int test_diskann_stats(void) {
     return 0;
 }
 
-/* ================================================================== */
-/* main                                                                */
-/* ================================================================== */
+/* main */
 typedef int (*test_fn)(void);
 typedef struct { const char *name; test_fn fn; } TestCase;
 
@@ -241,10 +223,7 @@ int main(void) {
     int n = sizeof(tests) / sizeof(tests[0]);
     int passed = 0;
     for (int i = 0; i < n; i++) {
-        printf("%s", tests[i].name);
-        if (tests[i].fn() == 0) { printf(" [OK]\n"); passed++; }
-        else { printf(" [FAIL]\n"); }
+        if (tests[i].fn() == 0) { passed++; }
     }
-    printf("\n%d/%d tests passed\n", passed, n);
     return passed == n ? 0 : 1;
 }

@@ -16,16 +16,12 @@
 #include <pthread.h>
 #include <time.h>
 
-/* ============================================================================
- * Constants
- * ============================================================================ */
+/*  Constants  */
 
 #define QUOTA_MAX_TENANTS   256
 #define TENANT_ID_MAX_LEN   128
 
-/* ============================================================================
- * Token Bucket Rate Limiter
- * ============================================================================ */
+/*  Token Bucket Rate Limiter  */
 
 /**
  * @brief Token bucket state for rate limiting.
@@ -114,9 +110,7 @@ static double token_bucket_current_rate(const TokenBucket *tb) {
     return used;
 }
 
-/* ============================================================================
- * Per-Tenant Entry
- * ============================================================================ */
+/*  Per-Tenant Entry  */
 
 typedef struct {
     char tenant_id[TENANT_ID_MAX_LEN];
@@ -129,9 +123,7 @@ typedef struct {
     TokenBucket ips_bucket;              /**< Insert rate limiter. */
 } QuotaTenantEntry;
 
-/* ============================================================================
- * Quota Manager
- * ============================================================================ */
+/*  Quota Manager  */
 
 struct GV_QuotaManager {
     QuotaTenantEntry tenants[QUOTA_MAX_TENANTS];
@@ -139,9 +131,7 @@ struct GV_QuotaManager {
     pthread_mutex_t  mutex;
 };
 
-/* ============================================================================
- * Internal Helpers
- * ============================================================================ */
+/*  Internal Helpers  */
 
 /**
  * @brief Find the slot index for a given tenant_id.
@@ -172,9 +162,7 @@ static int find_free_slot(const GV_QuotaManager *mgr) {
     return -1;
 }
 
-/* ============================================================================
- * Configuration
- * ============================================================================ */
+/*  Configuration  */
 
 void gv_quota_config_init(GV_QuotaConfig *config) {
     if (!config) return;
@@ -182,9 +170,7 @@ void gv_quota_config_init(GV_QuotaConfig *config) {
     /* All zeros means "unlimited" for every field */
 }
 
-/* ============================================================================
- * Lifecycle
- * ============================================================================ */
+/*  Lifecycle  */
 
 GV_QuotaManager *gv_quota_create(void) {
     GV_QuotaManager *mgr = calloc(1, sizeof(GV_QuotaManager));
@@ -204,9 +190,7 @@ void gv_quota_destroy(GV_QuotaManager *mgr) {
     free(mgr);
 }
 
-/* ============================================================================
- * Tenant Quota CRUD
- * ============================================================================ */
+/*  Tenant Quota CRUD  */
 
 int gv_quota_set(GV_QuotaManager *mgr, const char *tenant_id,
                  const GV_QuotaConfig *config) {
@@ -285,9 +269,7 @@ int gv_quota_remove(GV_QuotaManager *mgr, const char *tenant_id) {
     return 0;
 }
 
-/* ============================================================================
- * Quota Checks
- * ============================================================================ */
+/*  Quota Checks  */
 
 GV_QuotaResult gv_quota_check_insert(GV_QuotaManager *mgr, const char *tenant_id,
                                      size_t vector_count) {
@@ -369,9 +351,7 @@ GV_QuotaResult gv_quota_check_query(GV_QuotaManager *mgr, const char *tenant_id)
     return GV_QUOTA_OK;
 }
 
-/* ============================================================================
- * Usage Recording
- * ============================================================================ */
+/*  Usage Recording  */
 
 int gv_quota_record_insert(GV_QuotaManager *mgr, const char *tenant_id,
                            size_t count, size_t bytes) {
@@ -454,9 +434,7 @@ int gv_quota_record_delete(GV_QuotaManager *mgr, const char *tenant_id,
     return 0;
 }
 
-/* ============================================================================
- * Usage Retrieval and Reset
- * ============================================================================ */
+/*  Usage Retrieval and Reset  */
 
 int gv_quota_get_usage(const GV_QuotaManager *mgr, const char *tenant_id,
                        GV_QuotaUsage *usage) {

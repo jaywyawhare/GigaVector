@@ -18,9 +18,7 @@
 #include <sys/stat.h>
 #include <pthread.h>
 
-/* ============================================================================
- * Constants
- * ============================================================================ */
+/*  Constants  */
 
 #define MEDIA_INDEX_MAGIC "GVMED"
 #define MEDIA_INDEX_MAGIC_LEN 5
@@ -29,9 +27,7 @@
 #define HASH_TABLE_INITIAL_CAPACITY 256
 #define FILE_BUFFER_SIZE (64 * 1024)
 
-/* ============================================================================
- * Internal Structures
- * ============================================================================ */
+/*  Internal Structures  */
 
 /**
  * @brief Internal entry stored in the hash table.
@@ -56,9 +52,7 @@ struct GV_MediaStore {
     pthread_rwlock_t lock;          /**< Read-write lock for thread safety. */
 };
 
-/* ============================================================================
- * Configuration
- * ============================================================================ */
+/*  Configuration  */
 
 static const GV_MediaConfig DEFAULT_CONFIG = {
     .storage_dir = NULL,
@@ -72,9 +66,7 @@ void gv_media_config_init(GV_MediaConfig *config) {
     *config = DEFAULT_CONFIG;
 }
 
-/* ============================================================================
- * Internal Helpers
- * ============================================================================ */
+/*  Internal Helpers  */
 
 /**
  * @brief Compute bucket index from vector_index.
@@ -231,9 +223,7 @@ static void *read_entire_file(const char *path, size_t *out_size) {
     return buf;
 }
 
-/* ============================================================================
- * Store Lifecycle
- * ============================================================================ */
+/*  Store Lifecycle  */
 
 GV_MediaStore *gv_media_create(const GV_MediaConfig *config) {
     if (!config || !config->storage_dir) return NULL;
@@ -296,9 +286,7 @@ void gv_media_destroy(GV_MediaStore *store) {
     free(store);
 }
 
-/* ============================================================================
- * Store Operations
- * ============================================================================ */
+/*  Store Operations  */
 
 int gv_media_store_blob(GV_MediaStore *store, size_t vector_index,
                          GV_MediaType type, const void *data, size_t data_size,
@@ -500,9 +488,7 @@ int gv_media_delete(GV_MediaStore *store, size_t vector_index) {
     return -1;
 }
 
-/* ============================================================================
- * Query Operations
- * ============================================================================ */
+/*  Query Operations  */
 
 int gv_media_exists(const GV_MediaStore *store, size_t vector_index) {
     if (!store) return -1;
@@ -544,9 +530,7 @@ size_t gv_media_total_size(const GV_MediaStore *store) {
     return total;
 }
 
-/* ============================================================================
- * Index Persistence
- * ============================================================================ */
+/*  Index Persistence  */
 
 int gv_media_save_index(const GV_MediaStore *store, const char *path) {
     if (!store || !path) return -1;

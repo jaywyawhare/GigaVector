@@ -108,7 +108,6 @@ static int test_index_suggest(void) {
 static int test_ivfpq_opts(void) {
     GV_Database *db = gv_db_open(NULL, 8, GV_INDEX_TYPE_IVFPQ);
     if (db == NULL) {
-        printf("Skipping IVFPQ opts test (IVFPQ not available)\n");
         return 0;
     }
     
@@ -281,7 +280,6 @@ static int test_add_vectors_with_metadata(void) {
 
 int main(void) {
     int rc = 0;
-    printf("Running advanced database tests...\n");
     rc |= test_open_from_memory();
     rc |= test_open_mmap();
     rc |= test_cosine_normalized();
@@ -295,9 +293,6 @@ int main(void) {
     rc |= test_record_latency_recall();
     rc |= test_range_search_filtered();
     rc |= test_add_vectors_with_metadata();
-    if (rc == 0) {
-        printf("All advanced database tests passed\n");
-    }
     return rc;
 }
 

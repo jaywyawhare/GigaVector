@@ -5,7 +5,6 @@
 
 #define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while(0)
 
-/* ------------------------------------------------------------------ */
 static int test_config_init(void) {
     GV_QuotaConfig cfg;
     memset(&cfg, 0xFF, sizeof(cfg));
@@ -19,7 +18,6 @@ static int test_config_init(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 static int test_create_destroy(void) {
     GV_QuotaManager *mgr = gv_quota_create();
     ASSERT(mgr != NULL, "gv_quota_create should succeed");
@@ -29,7 +27,6 @@ static int test_create_destroy(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 static int test_set_get_remove(void) {
     GV_QuotaManager *mgr = gv_quota_create();
     ASSERT(mgr != NULL, "create");
@@ -54,7 +51,6 @@ static int test_set_get_remove(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 static int test_check_insert_under_limit(void) {
     GV_QuotaManager *mgr = gv_quota_create();
     ASSERT(mgr != NULL, "create");
@@ -71,7 +67,6 @@ static int test_check_insert_under_limit(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 static int test_check_insert_over_limit(void) {
     GV_QuotaManager *mgr = gv_quota_create();
     ASSERT(mgr != NULL, "create");
@@ -92,7 +87,6 @@ static int test_check_insert_over_limit(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 static int test_record_and_usage(void) {
     GV_QuotaManager *mgr = gv_quota_create();
     ASSERT(mgr != NULL, "create");
@@ -120,7 +114,6 @@ static int test_record_and_usage(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 static int test_reset_usage(void) {
     GV_QuotaManager *mgr = gv_quota_create();
     ASSERT(mgr != NULL, "create");
@@ -142,7 +135,6 @@ static int test_reset_usage(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
 static int test_check_query(void) {
     GV_QuotaManager *mgr = gv_quota_create();
     ASSERT(mgr != NULL, "create");
@@ -159,7 +151,6 @@ static int test_check_query(void) {
     return 0;
 }
 
-/* ================================================================== */
 typedef int (*test_fn)(void);
 typedef struct { const char *name; test_fn fn; } TestCase;
 
@@ -177,10 +168,7 @@ int main(void) {
     int n = sizeof(tests) / sizeof(tests[0]);
     int passed = 0;
     for (int i = 0; i < n; i++) {
-        printf("%s", tests[i].name);
-        if (tests[i].fn() == 0) { printf(" [OK]\n"); passed++; }
-        else { printf(" [FAIL]\n"); }
+        if (tests[i].fn() == 0) { passed++; }
     }
-    printf("\n%d/%d tests passed\n", passed, n);
     return passed == n ? 0 : 1;
 }

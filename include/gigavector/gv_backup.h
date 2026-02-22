@@ -84,9 +84,7 @@ typedef struct {
     double elapsed_seconds;         /**< Time elapsed. */
 } GV_BackupResult;
 
-/* ============================================================================
- * Configuration
- * ============================================================================ */
+/* Configuration */
 
 /**
  * @brief Initialize backup options with defaults.
@@ -102,9 +100,7 @@ void gv_backup_options_init(GV_BackupOptions *options);
  */
 void gv_restore_options_init(GV_RestoreOptions *options);
 
-/* ============================================================================
- * Backup Operations
- * ============================================================================ */
+/* Backup Operations */
 
 /**
  * @brief Create a backup of a database.
@@ -143,9 +139,7 @@ GV_BackupResult *gv_backup_create_from_file(const char *db_path, const char *bac
  */
 void gv_backup_result_free(GV_BackupResult *result);
 
-/* ============================================================================
- * Restore Operations
- * ============================================================================ */
+/* Restore Operations */
 
 /**
  * @brief Restore a database from backup.
@@ -174,9 +168,7 @@ GV_BackupResult *gv_backup_restore_to_db(const char *backup_path,
                                           const GV_RestoreOptions *options,
                                           GV_Database **db);
 
-/* ============================================================================
- * Inspection Operations
- * ============================================================================ */
+/* Inspection Operations */
 
 /**
  * @brief Read backup header without full restore.
@@ -206,9 +198,7 @@ GV_BackupResult *gv_backup_verify(const char *backup_path, const char *decryptio
  */
 int gv_backup_get_info(const char *backup_path, char *info_buf, size_t buf_size);
 
-/* ============================================================================
- * Incremental Backup
- * ============================================================================ */
+/* Incremental Backup */
 
 /**
  * @brief Create an incremental backup.
@@ -238,9 +228,7 @@ GV_BackupResult *gv_backup_merge(const char *base_backup_path,
                                   const char **incremental_paths, size_t incremental_count,
                                   const char *output_path);
 
-/* ============================================================================
- * Utility Functions
- * ============================================================================ */
+/* Utility Functions */
 
 /**
  * @brief Compute checksum of a backup file.

@@ -78,9 +78,7 @@ typedef struct {
  */
 typedef struct GV_Cluster GV_Cluster;
 
-/* ============================================================================
- * Configuration
- * ============================================================================ */
+/* Configuration */
 
 /**
  * @brief Initialize cluster configuration with defaults.
@@ -89,9 +87,7 @@ typedef struct GV_Cluster GV_Cluster;
  */
 void gv_cluster_config_init(GV_ClusterConfig *config);
 
-/* ============================================================================
- * Cluster Lifecycle
- * ============================================================================ */
+/* Cluster Lifecycle */
 
 /**
  * @brief Create a cluster instance.
@@ -124,9 +120,7 @@ int gv_cluster_start(GV_Cluster *cluster);
  */
 int gv_cluster_stop(GV_Cluster *cluster);
 
-/* ============================================================================
- * Node Management
- * ============================================================================ */
+/* Node Management */
 
 /**
  * @brief Get this node's information.
@@ -172,9 +166,7 @@ void gv_cluster_free_node_info(GV_NodeInfo *info);
  */
 void gv_cluster_free_node_list(GV_NodeInfo *nodes, size_t count);
 
-/* ============================================================================
- * Cluster Operations
- * ============================================================================ */
+/* Cluster Operations */
 
 /**
  * @brief Get cluster statistics.
