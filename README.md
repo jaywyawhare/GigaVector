@@ -29,6 +29,21 @@
 | **LSH** | Approximate | No | Fast hash-based approximate search |
 | **Sparse** | Exact | No | Sparse vectors (NLP, BoW) |
 
+#### Index Selection Guide
+
+| Scenario | Recommended Index |
+|----------|------------------|
+| < 10k vectors, any dimension | Flat |
+| < 20k vectors, dimension ≤ 64 | KD-Tree |
+| General purpose, high recall | HNSW |
+| > 500k vectors, memory-constrained | IVF-PQ |
+| > 500k vectors, higher accuracy | IVF-Flat |
+| Compressed-domain search | PQ |
+| Fast approximate, no training | LSH |
+| Sparse/NLP data | Sparse |
+
+Or use `suggest_index()` / `gv_index_suggest()` for automatic selection.
+
 ### Distance Metrics (5 types)
 Euclidean, Cosine, Dot Product, Manhattan, Hamming -- all with SIMD-optimized implementations (SSE4.2, AVX2, AVX-512F, FMA).
 
@@ -52,6 +67,10 @@ Euclidean, Cosine, Dot Product, Manhattan, Hamming -- all with SIMD-optimized im
 - **Phased ranking pipeline** -- multi-stage ANN → rerank → filter pipeline with per-phase stats
 - **Learned sparse index** -- SPLADE-style token-weighted inverted index with WAND acceleration
 - **Full-text search** -- Porter stemming, multilingual (6 languages), BlockMax WAND, phrase matching
+- **IVF-PQ per-query tuning** -- nprobe and rerank overrides on individual search calls
+- **Exact search control** -- configurable threshold to fall back to brute-force; force exact search mode
+- **Cosine normalization** -- automatic L2 normalization of stored vectors for cosine distance optimization
+- **Index suggestion** -- heuristic-based `gv_index_suggest()` recommends optimal index for your workload
 
 ### Storage and Persistence
 - **Write-Ahead Logging (WAL)** -- crash-safe durability with automatic replay
@@ -60,10 +79,15 @@ Euclidean, Cosine, Dot Product, Manhattan, Hamming -- all with SIMD-optimized im
 - **Collection versioning** -- version datasets with diff/compare/rollback
 - **Memory-mapped I/O** -- efficient file-backed storage
 - **Incremental backup** -- full and incremental backup with compression and CRC verification
+- **Memory-mapped loading** -- read-only mmap-based database loading for fast startup and shared memory
+- **Background compaction** -- configurable interval, WAL size threshold, and deleted-ratio triggers
 - **JSON import/export** -- NDJSON format for interoperability
 
 ### Data Management
 - **Rich metadata** -- key-value pairs per vector with typed metadata support
+- **Typed metadata values** -- null, int64, float64, bool, arrays, and nested objects with serialization
+- **Metadata inverted index** -- accelerated filtered search via key-value inverted index lookups
+- **Bulk metadata update** -- `update_metadata_by_filter()` for updating metadata on matching vectors
 - **Payload indexing** -- sorted indexes for int/float/string/bool fields with range queries
 - **Schema evolution** -- versioned schemas with validation, diff, and compatibility checking
 - **Upsert operations** -- insert-or-update semantics
@@ -107,12 +131,14 @@ Euclidean, Cosine, Dot Product, Manhattan, Hamming -- all with SIMD-optimized im
 - **Tenant quotas** -- per-tenant limits on vector count, memory, and QPS
 - **Tiered multitenancy** -- shared/dedicated/premium tiers with auto-promote/demote and QPS tracking
 - **Embedded / edge mode** -- lightweight in-process database with memory budget, mmap, and quantization
+- **Streaming ingestion** -- consume from Kafka, Pulsar, or Redis Streams with configurable batching and offset management
 
 ### Security
 - **Authentication** -- API key and JWT-based auth
 - **RBAC** -- fine-grained role-based access control with per-collection permissions
 - **Cryptographic primitives** -- SHA-256, HMAC for secure token handling
 - **Enterprise SSO** -- OIDC discovery, JWT validation, SAML XML parsing for enterprise identity providers
+- **Fine-grained authorization** -- permission flags (READ/WRITE/DELETE/ADMIN), resource-level access control, role definitions with namespace scoping
 
 ### Graph and Knowledge Graph
 - **Property graph database** -- nodes with labels/properties, directed weighted edges, hash table storage
@@ -147,6 +173,9 @@ Euclidean, Cosine, Dot Product, Manhattan, Hamming -- all with SIMD-optimized im
 - **Async vacuum** -- background compaction with configurable thresholds and scheduling
 - **Webhooks** -- event-driven notifications for insert/delete/update operations
 - **GPU acceleration** -- CUDA-based distance computation and batch search (optional)
+- **Health checks** -- database integrity monitoring (healthy/degraded/unhealthy)
+- **Detailed statistics** -- latency histograms, QPS/IPS tracking, memory breakdown, recall metrics
+- **Resource limits** -- configurable max memory, max vectors, and max concurrent operations
 - **Database statistics** -- insert/query counts, latency tracking
 
 ---
@@ -309,6 +338,46 @@ with QueryTrace() as trace:
     trace.span_start("search")
     results = db.search([0.1]*128, k=10)
     trace.span_end()
+```
+
+### Resource Management and Tuning
+```python
+from gigavector import suggest_index, update_metadata_by_filter
+
+# Resource limits
+db.set_resource_limits(max_memory_bytes=1_000_000_000, max_vectors=500_000)
+
+# Health check
+status = db.health_check()  # 0=healthy, -1=degraded, -2=unhealthy
+
+# Detailed stats
+stats = db.get_detailed_stats()
+
+# Memory-mapped read-only loading
+db = Database.open_mmap("snapshot.db", dimension=128, index=IndexType.HNSW)
+
+# Compaction control
+db.compact()
+db.set_compaction_interval(300)
+db.set_deleted_ratio_threshold(0.2)
+
+# Exact search control
+db.set_exact_search_threshold(1000)
+db.set_force_exact_search(True)
+
+# Cosine normalization
+db.set_cosine_normalized(True)
+
+# Index suggestion
+best = suggest_index(dimension=128, expected_count=1_000_000)
+
+# IVF-PQ per-query tuning
+hits = db.search_ivfpq_opts(query, k=10, distance=DistanceType.COSINE,
+                            nprobe_override=32, rerank_top=100)
+
+# Bulk metadata update by filter
+updated = update_metadata_by_filter(db._db, 'status == "pending"',
+                                    ["status"], ["processed"])
 ```
 
 ### New Features (v0.8)
