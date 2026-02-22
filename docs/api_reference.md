@@ -33,7 +33,7 @@ Creates or opens a vector database.
 **Parameters:**
 - `filepath`: Path to database file (NULL for in-memory only)
 - `dimension`: Vector dimensionality (must be consistent)
-- `index_type`: Index algorithm (`GV_INDEX_TYPE_KDTREE`, `GV_INDEX_TYPE_HNSW`, `GV_INDEX_TYPE_IVFPQ`, `GV_INDEX_TYPE_SPARSE`)
+- `index_type`: Index algorithm (`GV_INDEX_TYPE_KDTREE`, `GV_INDEX_TYPE_HNSW`, `GV_INDEX_TYPE_IVFPQ`, `GV_INDEX_TYPE_SPARSE`, `GV_INDEX_TYPE_FLAT`, `GV_INDEX_TYPE_IVFFLAT`, `GV_INDEX_TYPE_PQ`, `GV_INDEX_TYPE_LSH`)
 
 **Returns:** Database handle or NULL on error
 
@@ -93,6 +93,21 @@ void gv_db_close(GV_Database *db);
 ```
 
 Closes database and releases all resources. Safe to call with NULL.
+
+#### `gv_free`
+
+```c
+void gv_free(void *ptr);
+```
+
+Frees memory allocated by GigaVector (e.g. strings returned by `gv_schema_to_json`, `gv_json_export`, etc.). Safe to call with NULL.
+
+**Example:**
+```c
+char *json = gv_schema_to_json(schema);
+// ... use json ...
+gv_free(json);
+```
 
 ---
 
