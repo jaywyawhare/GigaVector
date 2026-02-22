@@ -421,19 +421,17 @@ Other approaches you've thought about.
 
 ### Branch Strategy
 
-- `master`: Stable, production-ready code
-- `develop`: Integration branch for features
+- `master`: Main branch, production-ready code
 - `feature/*`: New features
 - `bugfix/*`: Bug fixes
 - `docs/*`: Documentation updates
 
 ### Release Process
 
-1. Feature branches merged to `develop`
+1. Feature branches merged to `master`
 2. Testing and validation
-3. Merge `develop` to `master`
-4. Tag release version
-5. Create release notes
+3. Tag release version
+4. Create release notes
 
 ---
 
