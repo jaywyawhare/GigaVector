@@ -10,7 +10,7 @@
   </a>
 </p>
 
-**GigaVector** is a high-performance, production-ready vector database library written in C with Python bindings. 78,000+ lines of C across 101 modules covering indexing, search, storage, graph, networking, security, and AI integration.
+**GigaVector** is a high-performance, production-ready vector database library written in C with Python bindings, covering indexing, search, storage, graph, networking, security, and AI integration.
 
 ---
 
@@ -480,21 +480,6 @@ cp .env.example .env   # copy and edit with your keys
 | `ANTHROPIC_API_KEY` | For Anthropic tests | Anthropic/Claude API key |
 | `GOOGLE_API_KEY` | Optional | Google Gemini/embeddings |
 | `GV_WAL_DIR` | Optional | Override WAL directory |
-
----
-
-## Project Structure
-
-```
-GigaVector/
-├── include/gigavector/   # 83 public C headers
-├── src/                  # 78,000+ lines of C implementation
-├── tests/                # 21 C test suites
-├── python/               # Python CFFI bindings (11,000+ lines)
-├── benchmarks/           # SIMD and index benchmarks
-├── docs/                 # Documentation
-└── scripts/              # Build and utility scripts
-```
 
 ---
 
