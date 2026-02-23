@@ -774,11 +774,17 @@ void gv_memory_result_free(GV_MemoryResult *result) {
     
     free(result->memory_id);
     free(result->content);
-    gv_memory_metadata_free(result->metadata);
-    
+    if (result->metadata != NULL) {
+        gv_memory_metadata_free(result->metadata);
+        free(result->metadata);
+    }
+
     if (result->related != NULL) {
         for (size_t i = 0; i < result->related_count; i++) {
-            gv_memory_metadata_free(result->related[i]);
+            if (result->related[i] != NULL) {
+                gv_memory_metadata_free(result->related[i]);
+                free(result->related[i]);
+            }
         }
         free(result->related);
     }
@@ -807,8 +813,6 @@ void gv_memory_metadata_free(GV_MemoryMetadata *metadata) {
         }
         free(metadata->links);
     }
-
-    free(metadata);
 }
 
 char **gv_memory_extract_from_conversation(GV_MemoryLayer *layer,

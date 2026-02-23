@@ -56,7 +56,11 @@ int gv_memory_find_similar(GV_MemoryLayer *layer, double threshold,
         GV_Metadata *meta = gv_soa_storage_get_metadata(layer->db->soa_storage, i);
         const char *mem_id_1 = NULL;
         if (meta != NULL) {
-            mem_id_1 = gv_vector_get_metadata((GV_Vector *)&meta, "memory_id");
+            GV_Vector tmp_vec;
+            tmp_vec.dimension = 0;
+            tmp_vec.data = NULL;
+            tmp_vec.metadata = meta;
+            mem_id_1 = gv_vector_get_metadata(&tmp_vec, "memory_id");
         }
         if (mem_id_1 == NULL) {
             continue;
