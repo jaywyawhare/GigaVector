@@ -325,9 +325,13 @@ int gv_ivfflat_search(void *index, const GV_Vector *query, size_t k,
     if (!idx->trained) return -1;
     if (query->dimension != idx->dimension) return -1;
 
+    /* Cap nprobe to nlist */
+    size_t nprobe = idx->config.nprobe;
+    if (nprobe > idx->config.nlist) nprobe = idx->config.nlist;
+
     /* Find nprobe closest centroids */
     GV_IVFFlatHeapItem *centroid_heap = (GV_IVFFlatHeapItem *)malloc(
-        idx->config.nprobe * sizeof(GV_IVFFlatHeapItem));
+        nprobe * sizeof(GV_IVFFlatHeapItem));
     if (!centroid_heap) return -1;
 
     size_t heap_size = 0;
@@ -340,17 +344,17 @@ int gv_ivfflat_search(void *index, const GV_Vector *query, size_t k,
             dist += diff * diff;
         }
 
-        gv_ivfflat_heap_push(centroid_heap, &heap_size, idx->config.nprobe, dist, i, NULL);
+        gv_ivfflat_heap_push(centroid_heap, &heap_size, nprobe, dist, i, NULL);
     }
 
     /* Extract probe lists */
-    size_t *probe_lists = (size_t *)malloc(idx->config.nprobe * sizeof(size_t));
+    size_t *probe_lists = (size_t *)malloc(nprobe * sizeof(size_t));
     if (!probe_lists) {
         free(centroid_heap);
         return -1;
     }
 
-    for (size_t i = idx->config.nprobe; i > 0; i--) {
+    for (size_t i = nprobe; i > 0; i--) {
         probe_lists[i - 1] = centroid_heap[0].id;
         centroid_heap[0] = centroid_heap[heap_size - 1];
         heap_size--;
@@ -370,7 +374,7 @@ int gv_ivfflat_search(void *index, const GV_Vector *query, size_t k,
     heap_size = 0;
 
     /* Scan entries in selected lists */
-    for (size_t i = 0; i < idx->config.nprobe; i++) {
+    for (size_t i = 0; i < nprobe; i++) {
         size_t list_idx = probe_lists[i];
         GV_IVFFlatEntry *entry = idx->lists[list_idx];
 
@@ -418,6 +422,7 @@ int gv_ivfflat_search(void *index, const GV_Vector *query, size_t k,
         results[i].distance = dist;
         results[i].is_sparse = 0;
         results[i].sparse_vector = NULL;
+        results[i].id = entry->id;
 
         /* Remove from heap */
         heap[0] = heap[heap_size - 1];
@@ -442,9 +447,13 @@ int gv_ivfflat_range_search(void *index, const GV_Vector *query, float radius,
     if (!idx->trained) return -1;
     if (query->dimension != idx->dimension) return -1;
 
+    /* Cap nprobe to nlist */
+    size_t nprobe = idx->config.nprobe;
+    if (nprobe > idx->config.nlist) nprobe = idx->config.nlist;
+
     /* Find nprobe closest centroids */
     GV_IVFFlatHeapItem *centroid_heap = (GV_IVFFlatHeapItem *)malloc(
-        idx->config.nprobe * sizeof(GV_IVFFlatHeapItem));
+        nprobe * sizeof(GV_IVFFlatHeapItem));
     if (!centroid_heap) return -1;
 
     size_t heap_size = 0;
@@ -457,17 +466,17 @@ int gv_ivfflat_range_search(void *index, const GV_Vector *query, float radius,
             dist += diff * diff;
         }
 
-        gv_ivfflat_heap_push(centroid_heap, &heap_size, idx->config.nprobe, dist, i, NULL);
+        gv_ivfflat_heap_push(centroid_heap, &heap_size, nprobe, dist, i, NULL);
     }
 
     /* Extract probe lists */
-    size_t *probe_lists = (size_t *)malloc(idx->config.nprobe * sizeof(size_t));
+    size_t *probe_lists = (size_t *)malloc(nprobe * sizeof(size_t));
     if (!probe_lists) {
         free(centroid_heap);
         return -1;
     }
 
-    for (size_t i = idx->config.nprobe; i > 0; i--) {
+    for (size_t i = nprobe; i > 0; i--) {
         probe_lists[i - 1] = centroid_heap[0].id;
         centroid_heap[0] = centroid_heap[heap_size - 1];
         heap_size--;
@@ -510,6 +519,7 @@ int gv_ivfflat_range_search(void *index, const GV_Vector *query, float radius,
                         results[found].distance = dist;
                         results[found].is_sparse = 0;
                         results[found].sparse_vector = NULL;
+                        results[found].id = entry->id;
                         found++;
                     }
                 }
