@@ -120,6 +120,7 @@ Euclidean, Cosine, Dot Product, Manhattan, Hamming -- all with SIMD-optimized im
 
 ### Distributed Architecture
 - **HTTP REST server** -- embedded server with rate limiting, CORS, and API key auth
+- **Web dashboard** -- built-in Qdrant-style dark-theme SPA at `/dashboard` with overview, vector browser, search, and API console
 - **gRPC API** -- binary protocol server with connection pooling and streaming support
 - **TLS/HTTPS** -- TLS 1.2/1.3 transport encryption with certificate management
 - **Sharding** -- hash/range-based data partitioning
@@ -512,7 +513,7 @@ GigaVector includes an embedded HTTP server for remote access.
 ```python
 from gigavector import Server, ServerConfig
 
-config = ServerConfig(port=8080, thread_pool_size=4, enable_cors=True,
+config = ServerConfig(port=6969, thread_pool_size=4, enable_cors=True,
                       max_requests_per_second=100.0)
 server = Server(db, config)
 server.start()
@@ -533,6 +534,27 @@ server.start()
 | `POST` | `/search/batch` | Batch search |
 | `POST` | `/compact` | Trigger compaction |
 | `POST` | `/save` | Save database to disk |
+### Web Dashboard
+
+GigaVector ships a built-in web dashboard (dark theme, pure Python — no libmicrohttpd required). Launch it with one line:
+
+```python
+from gigavector import Database, IndexType, serve_with_dashboard
+
+db = Database.open(None, dimension=128, index=IndexType.HNSW)
+server = serve_with_dashboard(db, port=6969)
+# Open http://localhost:6969/dashboard
+server.stop()
+```
+
+The dashboard provides four views:
+
+- **Overview** -- live vector count, dimension, index type, QPS, health status (auto-refreshes every 2 s)
+- **Vectors** -- browse by ID, add new vectors with metadata, delete
+- **Search** -- k-NN search form with distance metric dropdown and results table
+- **Console** -- raw REST API console (method, URL, body, syntax-highlighted response)
+
+The dashboard server also exposes JSON API endpoints (`/api/dashboard/info`, `/health`, `/stats`, `/vectors`, `/search`).
 
 ---
 
