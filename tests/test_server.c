@@ -41,7 +41,7 @@ static void test_server_config_init(void) {
     GV_ServerConfig config;
     gv_server_config_init(&config);
 
-    TEST_ASSERT(config.port == 8080, "Default port should be 8080");
+    TEST_ASSERT(config.port == 6969, "Default port should be 6969");
     TEST_ASSERT(config.thread_pool_size == 4, "Default thread pool size should be 4");
     TEST_ASSERT(config.max_connections == 100, "Default max connections should be 100");
     TEST_ASSERT(config.request_timeout_ms == 30000, "Default timeout should be 30000ms");

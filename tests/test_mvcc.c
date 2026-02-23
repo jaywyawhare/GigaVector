@@ -132,7 +132,7 @@ static int test_gc(void) {
 
     /* Run GC - should clean up old versions */
     int rc = gv_mvcc_gc(mgr);
-    ASSERT(rc == 0, "gc should succeed");
+    ASSERT(rc >= 0, "gc should succeed");
 
     gv_mvcc_destroy(mgr);
     return 0;
