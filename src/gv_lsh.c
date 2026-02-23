@@ -30,6 +30,7 @@ typedef struct GV_LSHIndex {
 typedef struct {
     const GV_Vector *vector;
     float distance;
+    size_t vec_idx;
 } GV_LSHCandidate;
 
 static const char *gv_metadata_get_direct(GV_Metadata *metadata, const char *key) {
@@ -280,10 +281,12 @@ int gv_lsh_insert(void *index, GV_Vector *vector) {
         uint32_t bucket_idx = hash % lsh->num_buckets;
 
         if (bucket_add(&lsh->tables[t][bucket_idx], vector_index) != 0) {
+            gv_vector_destroy(vector);
             return -1;
         }
     }
 
+    gv_vector_destroy(vector);
     return 0;
 }
 
@@ -316,10 +319,11 @@ static void heap_sift_down(GV_LSHCandidate *heap, size_t size, size_t idx) {
 }
 
 static void heap_push(GV_LSHCandidate *heap, size_t *heap_size, size_t k,
-                     const GV_Vector *vector, float distance) {
+                     const GV_Vector *vector, float distance, size_t vec_idx) {
     if (*heap_size < k) {
         heap[*heap_size].vector = vector;
         heap[*heap_size].distance = distance;
+        heap[*heap_size].vec_idx = vec_idx;
         (*heap_size)++;
 
         for (int i = (int)*heap_size / 2 - 1; i >= 0; --i) {
@@ -328,6 +332,7 @@ static void heap_push(GV_LSHCandidate *heap, size_t *heap_size, size_t k,
     } else if (distance < heap[0].distance) {
         heap[0].vector = vector;
         heap[0].distance = distance;
+        heap[0].vec_idx = vec_idx;
         heap_sift_down(heap, *heap_size, 0);
     }
 }
@@ -415,7 +420,7 @@ int gv_lsh_search(void *index, const GV_Vector *query, size_t k,
         float dist = gv_distance(&temp_vec, query, distance_type);
         if (dist < 0.0f) continue;
 
-        heap_push(heap, &heap_size, k, &temp_vec, dist);
+        heap_push(heap, &heap_size, k, &temp_vec, dist, vec_idx);
     }
 
     free(candidates);
@@ -431,7 +436,11 @@ int gv_lsh_search(void *index, const GV_Vector *query, size_t k,
     qsort(sorted, heap_size, sizeof(GV_LSHCandidate), compare_candidates);
 
     for (size_t i = 0; i < heap_size; ++i) {
-        GV_Vector *result_vec = gv_vector_create_from_data(lsh->dimension, sorted[i].vector->data);
+        size_t sidx = sorted[i].vec_idx;
+        const float *sdata = gv_soa_storage_get_data(lsh->storage, sidx);
+        if (sdata == NULL) continue;
+
+        GV_Vector *result_vec = gv_vector_create_from_data(lsh->dimension, sdata);
         if (result_vec == NULL) {
             for (size_t j = 0; j < i; ++j) {
                 if (results[j].vector != NULL) {
@@ -442,14 +451,14 @@ int gv_lsh_search(void *index, const GV_Vector *query, size_t k,
             return -1;
         }
 
-        size_t vec_idx = (sorted[i].vector->data - lsh->storage->data) / lsh->dimension;
-        GV_Metadata *orig_metadata = gv_soa_storage_get_metadata(lsh->storage, vec_idx);
+        GV_Metadata *orig_metadata = gv_soa_storage_get_metadata(lsh->storage, sidx);
         result_vec->metadata = gv_metadata_copy(orig_metadata);
 
         results[i].vector = result_vec;
         results[i].sparse_vector = NULL;
         results[i].is_sparse = 0;
         results[i].distance = sorted[i].distance;
+        results[i].id = sidx;
     }
 
     free(sorted);
@@ -551,13 +560,24 @@ int gv_lsh_range_search(void *index, const GV_Vector *query, float radius,
         results[result_count].sparse_vector = NULL;
         results[result_count].is_sparse = 0;
         results[result_count].distance = dist;
+        results[result_count].id = vec_idx;
         result_count++;
     }
 
     free(candidates);
 
-    qsort(results, result_count, sizeof(GV_SearchResult),
-          (int (*)(const void *, const void *))compare_candidates);
+    /* Sort GV_SearchResult by distance (not using compare_candidates which is for GV_LSHCandidate) */
+    for (size_t i = 0; i + 1 < (size_t)result_count; ++i) {
+        size_t minj = i;
+        for (size_t j = i + 1; j < (size_t)result_count; ++j) {
+            if (results[j].distance < results[minj].distance) minj = j;
+        }
+        if (minj != i) {
+            GV_SearchResult tmp = results[i];
+            results[i] = results[minj];
+            results[minj] = tmp;
+        }
+    }
 
     return (int)result_count;
 }
