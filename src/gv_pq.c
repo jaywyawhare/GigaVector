@@ -443,11 +443,13 @@ int gv_pq_search(void *index, const GV_Vector *query, size_t k,
             results[i].distance = exact_dist;
             results[i].is_sparse = 0;
             results[i].sparse_vector = NULL;
+            results[i].id = entry_idx;
         } else {
             results[i].vector = NULL;
             results[i].distance = approx_dist;
             results[i].is_sparse = 0;
             results[i].sparse_vector = NULL;
+            results[i].id = entry_idx;
         }
 
         /* Remove from heap */
@@ -544,6 +546,7 @@ int gv_pq_range_search(void *index, const GV_Vector *query, float radius,
                 results[found].distance = exact_dist;
                 results[found].is_sparse = 0;
                 results[found].sparse_vector = NULL;
+                results[found].id = i;
                 found++;
             } else {
                 gv_vector_destroy(result_vec);
