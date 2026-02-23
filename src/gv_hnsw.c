@@ -218,6 +218,7 @@ int gv_hnsw_insert(void *index_ptr, GV_Vector *vector) {
     size_t level = calculate_level(index->maxLevel);
     GV_HNSWNode *new_node = (GV_HNSWNode *)malloc(sizeof(GV_HNSWNode));
     if (new_node == NULL) {
+        gv_soa_storage_mark_deleted(index->soa_storage, vector_index);
         return -1;
     }
 
@@ -231,6 +232,7 @@ int gv_hnsw_insert(void *index_ptr, GV_Vector *vector) {
         free(new_node->neighbors);
         free(new_node->neighbor_counts);
         free(new_node);
+        gv_soa_storage_mark_deleted(index->soa_storage, vector_index);
         return -1;
     }
 
@@ -271,6 +273,7 @@ int gv_hnsw_insert(void *index_ptr, GV_Vector *vector) {
         new_node->neighbor_counts[l] = 0;
     }
 
+    GV_HNSWNode *old_entry = index->entryPoint;
     if (index->entryPoint == NULL) {
         index->entryPoint = new_node;
     } else if (level > index->entryPoint->level) {
@@ -301,7 +304,9 @@ int gv_hnsw_insert(void *index_ptr, GV_Vector *vector) {
         return -1;
     }
 
-    GV_HNSWNode *current = index->entryPoint;
+    /* Use old entry point for greedy descent so the new entry (if changed)
+       doesn't start from itself with an empty neighbor list. */
+    GV_HNSWNode *current = old_entry;
     if (current == NULL) {
         return 0;
     }
@@ -313,37 +318,46 @@ int gv_hnsw_insert(void *index_ptr, GV_Vector *vector) {
 
     for (int lc = (int)currentLevel; lc > (int)level; --lc) {
         if (current == NULL || (size_t)lc > current->level) continue;
-        
-        float minDist = FLT_MAX;
-        GV_HNSWNode *closest = current;
-        
-        if (current->neighbor_counts != NULL && current->neighbors != NULL &&
-            (size_t)lc <= current->level && current->neighbor_counts[lc] > 0 && 
-            current->neighbors[lc] != NULL) {
+
+        /* Greedy walk at this layer until no closer neighbor found */
+        const float *cur_data = gv_soa_storage_get_data(index->soa_storage, current->vector_index);
+        float cur_dist = FLT_MAX;
+        if (cur_data != NULL) {
+            cur_dist = 0.0f;
+            for (size_t d = 0; d < index->dimension; ++d) {
+                float diff = new_vector_data[d] - cur_data[d];
+                cur_dist += diff * diff;
+            }
+        }
+
+        int improved = 1;
+        while (improved) {
+            improved = 0;
+            if (current->neighbor_counts == NULL || current->neighbors == NULL ||
+                (size_t)lc > current->level || current->neighbor_counts[lc] == 0 ||
+                current->neighbors[lc] == NULL) {
+                break;
+            }
             for (size_t i = 0; i < current->neighbor_counts[lc]; ++i) {
-                if (current->neighbors[lc][i] != NULL && 
-                    current->neighbors[lc][i]->deleted == 0) {
-                    const float *neighbor_data = gv_soa_storage_get_data(index->soa_storage, current->neighbors[lc][i]->vector_index);
-                    if (neighbor_data != NULL) {
-                        float dist = 0.0f;
-                        for (size_t d = 0; d < index->dimension; ++d) {
-                            float diff = new_vector_data[d] - neighbor_data[d];
-                            dist += diff * diff;
-                        }
-                    if (dist < minDist) {
-                        minDist = dist;
-                        closest = current->neighbors[lc][i];
-                    }
+                GV_HNSWNode *nb = current->neighbors[lc][i];
+                if (nb == NULL || nb->deleted != 0) continue;
+                const float *nb_data = gv_soa_storage_get_data(index->soa_storage, nb->vector_index);
+                if (nb_data == NULL) continue;
+                float dist = 0.0f;
+                for (size_t d = 0; d < index->dimension; ++d) {
+                    float diff = new_vector_data[d] - nb_data[d];
+                    dist += diff * diff;
+                }
+                if (dist < cur_dist) {
+                    cur_dist = dist;
+                    current = nb;
+                    improved = 1;
                 }
             }
         }
-        }
-        if (closest != NULL && closest != current && closest->deleted == 0) {
-            current = closest;
-            currentLevel = current->level;
-            if (currentLevel > index->maxLevel) {
-                currentLevel = index->maxLevel;
-            }
+        currentLevel = current->level;
+        if (currentLevel > index->maxLevel) {
+            currentLevel = index->maxLevel;
         }
     }
     
@@ -360,13 +374,21 @@ int gv_hnsw_insert(void *index_ptr, GV_Vector *vector) {
     }
     
     for (int lc = (int)searchLevel; lc >= 0; --lc) {
-        if (current == NULL || new_node == NULL || 
+        if (current == NULL || new_node == NULL ||
             (size_t)lc > current->level || (size_t)lc > new_node->level) {
             continue;
         }
-        
+
         GV_HNSWCandidate *candidates = (GV_HNSWCandidate *)malloc(index->efConstruction * sizeof(GV_HNSWCandidate));
         if (candidates == NULL) continue;
+
+        int *insert_visited = (int *)calloc(index->count, sizeof(int));
+        if (insert_visited == NULL) {
+            free(candidates);
+            continue;
+        }
+        /* Mark the new node as visited so it won't be added as candidate */
+        insert_visited[new_node->index] = 1;
 
         size_t candidate_count = 0;
         const float *current_data = gv_soa_storage_get_data(index->soa_storage, current->vector_index);
@@ -378,49 +400,157 @@ int gv_hnsw_insert(void *index_ptr, GV_Vector *vector) {
                 dist += diff * diff;
             }
             candidates[candidate_count++].distance = dist;
+            insert_visited[current->index] = 1;
         }
 
-        if (current->neighbor_counts != NULL && current->neighbors != NULL &&
-            (size_t)lc <= current->level && current->neighbor_counts[lc] > 0 && 
-            current->neighbors[lc] != NULL) {
-            for (size_t i = 0; i < current->neighbor_counts[lc] && candidate_count < index->efConstruction; ++i) {
-                if (current->neighbors[lc][i] != NULL && 
-                    current->neighbors[lc][i]->deleted == 0) {
-                    const float *neighbor_data = gv_soa_storage_get_data(index->soa_storage, current->neighbors[lc][i]->vector_index);
-                    if (neighbor_data != NULL) {
-                    candidates[candidate_count].node = current->neighbors[lc][i];
-                        float dist = 0.0f;
-                        for (size_t d = 0; d < index->dimension; ++d) {
-                            float diff = new_vector_data[d] - neighbor_data[d];
-                            dist += diff * diff;
-                        }
-                        candidates[candidate_count++].distance = dist;
+        /* Greedy expansion using efConstruction.
+           Use a processed-flag approach so newly inserted closer
+           candidates are always explored next. */
+        int *processed = (int *)calloc(index->efConstruction, sizeof(int));
+        if (processed == NULL) {
+            free(insert_visited);
+            free(candidates);
+            continue;
+        }
+
+        for (;;) {
+            /* Find closest unprocessed candidate */
+            size_t best = (size_t)-1;
+            for (size_t ci = 0; ci < candidate_count; ++ci) {
+                if (!processed[ci]) {
+                    best = ci;
+                    break;  /* list is sorted, first unprocessed is closest */
+                }
+            }
+            if (best == (size_t)-1) break;
+
+            GV_HNSWNode *cand = candidates[best].node;
+            float cand_dist = candidates[best].distance;
+            processed[best] = 1;
+
+            if (cand == NULL || cand->neighbor_counts == NULL || cand->neighbors == NULL ||
+                (size_t)lc > cand->level || cand->neighbor_counts[lc] == 0 ||
+                cand->neighbors[lc] == NULL) {
+                continue;
+            }
+
+            /* Terminate if this candidate is worse than the worst in a full list */
+            if (candidate_count >= index->efConstruction &&
+                cand_dist > candidates[candidate_count - 1].distance) {
+                break;
+            }
+
+            for (size_t i = 0; i < cand->neighbor_counts[lc]; ++i) {
+                GV_HNSWNode *nb = cand->neighbors[lc][i];
+                if (nb == NULL || nb->deleted != 0) continue;
+                if (nb->index >= index->count || insert_visited[nb->index]) continue;
+                insert_visited[nb->index] = 1;
+
+                const float *nb_data = gv_soa_storage_get_data(index->soa_storage, nb->vector_index);
+                if (nb_data == NULL) continue;
+                float dist = 0.0f;
+                for (size_t d = 0; d < index->dimension; ++d) {
+                    float diff = new_vector_data[d] - nb_data[d];
+                    dist += diff * diff;
+                }
+
+                if (candidate_count < index->efConstruction) {
+                    size_t pos = candidate_count++;
+                    candidates[pos].node = nb;
+                    candidates[pos].distance = dist;
+                    /* Insertion sort into sorted position */
+                    while (pos > 0 && candidates[pos].distance < candidates[pos - 1].distance) {
+                        GV_HNSWCandidate tmp = candidates[pos];
+                        int ptmp = processed[pos];
+                        candidates[pos] = candidates[pos - 1];
+                        processed[pos] = processed[pos - 1];
+                        candidates[pos - 1] = tmp;
+                        processed[pos - 1] = ptmp;
+                        pos--;
+                    }
+                } else if (dist < candidates[candidate_count - 1].distance) {
+                    size_t pos = candidate_count - 1;
+                    candidates[pos].node = nb;
+                    candidates[pos].distance = dist;
+                    processed[pos] = 0;
+                    while (pos > 0 && candidates[pos].distance < candidates[pos - 1].distance) {
+                        GV_HNSWCandidate tmp = candidates[pos];
+                        int ptmp = processed[pos];
+                        candidates[pos] = candidates[pos - 1];
+                        processed[pos] = processed[pos - 1];
+                        candidates[pos - 1] = tmp;
+                        processed[pos - 1] = ptmp;
+                        pos--;
                     }
                 }
             }
         }
+        free(processed);
+
+        free(insert_visited);
 
         if (candidate_count == 0) {
             free(candidates);
             continue;
         }
 
-        qsort(candidates, candidate_count, sizeof(GV_HNSWCandidate), compare_candidates);
-
         size_t selected_count = (candidate_count < index->M) ? candidate_count : index->M;
         for (size_t i = 0; i < selected_count; ++i) {
             if (candidates[i].node == NULL || candidates[i].node == new_node || candidates[i].node->deleted != 0) continue;
             if (candidates[i].node->neighbors == NULL || candidates[i].node->neighbor_counts == NULL) continue;
-            
+
+            /* Connect new_node -> candidate */
             if ((size_t)lc <= new_node->level && new_node->neighbor_counts != NULL &&
                 new_node->neighbors != NULL && new_node->neighbor_counts[lc] < index->M &&
                 new_node->neighbors[lc] != NULL) {
                 new_node->neighbors[lc][new_node->neighbor_counts[lc]++] = candidates[i].node;
             }
-            if ((size_t)lc <= candidates[i].node->level && 
-                candidates[i].node->neighbor_counts[lc] < index->M &&
+
+            /* Connect candidate -> new_node (with pruning if full) */
+            if ((size_t)lc <= candidates[i].node->level &&
                 candidates[i].node->neighbors[lc] != NULL) {
-                candidates[i].node->neighbors[lc][candidates[i].node->neighbor_counts[lc]++] = new_node;
+                GV_HNSWNode *cnode = candidates[i].node;
+                if (cnode->neighbor_counts[lc] < index->M) {
+                    cnode->neighbors[lc][cnode->neighbor_counts[lc]++] = new_node;
+                } else {
+                    /* Neighbor list full — replace worst neighbor if new_node is closer */
+                    const float *cnode_data = gv_soa_storage_get_data(index->soa_storage, cnode->vector_index);
+                    if (cnode_data != NULL) {
+                        float new_dist = 0.0f;
+                        for (size_t d = 0; d < index->dimension; ++d) {
+                            float diff = new_vector_data[d] - cnode_data[d];
+                            new_dist += diff * diff;
+                        }
+                        /* Find worst (farthest) neighbor */
+                        size_t worst_idx = 0;
+                        float worst_dist = 0.0f;
+                        for (size_t ni = 0; ni < cnode->neighbor_counts[lc]; ++ni) {
+                            if (cnode->neighbors[lc][ni] == NULL || cnode->neighbors[lc][ni]->deleted) {
+                                worst_idx = ni;
+                                worst_dist = FLT_MAX;
+                                break;
+                            }
+                            const float *nb_data = gv_soa_storage_get_data(index->soa_storage, cnode->neighbors[lc][ni]->vector_index);
+                            if (nb_data == NULL) {
+                                worst_idx = ni;
+                                worst_dist = FLT_MAX;
+                                break;
+                            }
+                            float nb_dist = 0.0f;
+                            for (size_t d = 0; d < index->dimension; ++d) {
+                                float diff = cnode_data[d] - nb_data[d];
+                                nb_dist += diff * diff;
+                            }
+                            if (nb_dist > worst_dist) {
+                                worst_dist = nb_dist;
+                                worst_idx = ni;
+                            }
+                        }
+                        if (new_dist < worst_dist) {
+                            cnode->neighbors[lc][worst_idx] = new_node;
+                        }
+                    }
+                }
             }
         }
 
@@ -457,42 +587,48 @@ int gv_hnsw_search(void *index_ptr, const GV_Vector *query, size_t k,
 
     for (int lc = (int)currentLevel; lc > 0; --lc) {
         if (current == NULL || (size_t)lc > current->level) continue;
-        
-        float minDist = FLT_MAX;
-        GV_HNSWNode *closest = current;
-        
-        if (current->neighbor_counts != NULL && current->neighbors != NULL &&
-            (size_t)lc <= current->level && current->neighbor_counts[lc] > 0 && 
-            current->neighbors[lc] != NULL) {
+
+        /* Compute initial distance to current node */
+        float cur_dist = FLT_MAX;
+        {
+            const float *cur_data = gv_soa_storage_get_data(index->soa_storage, current->vector_index);
+            if (cur_data != NULL) {
+                GV_Vector temp_cur = {.data = (float *)cur_data, .dimension = query->dimension, .metadata = NULL};
+                cur_dist = gv_distance(&temp_cur, query, distance_type);
+            }
+        }
+
+        /* Greedy walk at this layer until no closer neighbor found */
+        int improved = 1;
+        while (improved) {
+            improved = 0;
+            if (current->neighbor_counts == NULL || current->neighbors == NULL ||
+                (size_t)lc > current->level || current->neighbor_counts[lc] == 0 ||
+                current->neighbors[lc] == NULL) {
+                break;
+            }
             for (size_t i = 0; i < current->neighbor_counts[lc]; ++i) {
-                if (current->neighbors[lc][i] != NULL && 
-                    current->neighbors[lc][i]->deleted == 0) {
-                    float dist;
-                    if (index->use_binary_quant && query_binary != NULL && 
-                        current->neighbors[lc][i]->binary_vector != NULL) {
-                        size_t hamming = gv_binary_hamming_distance_fast(
-                            query_binary, current->neighbors[lc][i]->binary_vector);
-                        dist = (float)hamming;
-                    } else {
-                        const float *neighbor_data = gv_soa_storage_get_data(index->soa_storage, current->neighbors[lc][i]->vector_index);
-                        if (neighbor_data != NULL) {
-                            GV_Vector temp_neighbor = {.data = (float *)neighbor_data, .dimension = query->dimension, .metadata = NULL};
-                            dist = gv_distance(&temp_neighbor, query, distance_type);
-                        } else {
-                            continue;
-                        }
-                    }
-                    if (dist < minDist) {
-                        minDist = dist;
-                        closest = current->neighbors[lc][i];
-                    }
+                GV_HNSWNode *nb = current->neighbors[lc][i];
+                if (nb == NULL || nb->deleted != 0) continue;
+                float dist;
+                if (index->use_binary_quant && query_binary != NULL &&
+                    nb->binary_vector != NULL) {
+                    size_t hamming = gv_binary_hamming_distance_fast(query_binary, nb->binary_vector);
+                    dist = (float)hamming;
+                } else {
+                    const float *nb_data = gv_soa_storage_get_data(index->soa_storage, nb->vector_index);
+                    if (nb_data == NULL) continue;
+                    GV_Vector temp_nb = {.data = (float *)nb_data, .dimension = query->dimension, .metadata = NULL};
+                    dist = gv_distance(&temp_nb, query, distance_type);
+                }
+                if (dist < cur_dist) {
+                    cur_dist = dist;
+                    current = nb;
+                    improved = 1;
                 }
             }
         }
-        if (closest != NULL && closest != current && closest->deleted == 0) {
-            current = closest;
-            currentLevel = current->level;
-        }
+        currentLevel = current->level;
     }
     
     if (current == NULL) {
@@ -544,20 +680,36 @@ int gv_hnsw_search(void *index_ptr, const GV_Vector *query, size_t k,
     
     visited[current->index] = 1;
 
-    size_t visited_count = 1;
-    size_t candidate_idx = 0;
+    int *search_processed = (int *)calloc(ef, sizeof(int));
+    if (search_processed == NULL) {
+        free(candidates);
+        free(visited);
+        if (query_binary != NULL) gv_binary_vector_destroy(query_binary);
+        return -1;
+    }
 
-    while (candidate_idx < candidate_count) {
-        GV_HNSWNode *candidate_node = candidates[candidate_idx].node;
-        candidate_idx++;
+    for (;;) {
+        /* Find closest unprocessed candidate */
+        size_t best = (size_t)-1;
+        for (size_t ci = 0; ci < candidate_count; ++ci) {
+            if (!search_processed[ci]) {
+                best = ci;
+                break;  /* sorted list — first unprocessed is closest */
+            }
+        }
+        if (best == (size_t)-1) break;
 
-        if (candidate_node == NULL || candidate_node->neighbor_counts == NULL || 
-            candidate_node->neighbors == NULL || candidate_node->neighbor_counts[0] == 0 || 
+        GV_HNSWNode *candidate_node = candidates[best].node;
+        float candidate_dist = candidates[best].distance;
+        search_processed[best] = 1;
+
+        if (candidate_node == NULL || candidate_node->neighbor_counts == NULL ||
+            candidate_node->neighbors == NULL || candidate_node->neighbor_counts[0] == 0 ||
             candidate_node->neighbors[0] == NULL) {
             continue;
         }
-        
-        if (candidate_count >= ef) {
+
+        if (candidate_count >= ef && candidate_dist > candidates[candidate_count - 1].distance) {
             break;
         }
 
@@ -569,7 +721,6 @@ int gv_hnsw_search(void *index_ptr, const GV_Vector *query, size_t k,
             if (node_idx >= index->count || visited[node_idx]) continue;
 
             visited[node_idx] = 1;
-            visited_count++;
 
             float dist;
             if (index->use_binary_quant && query_binary != NULL && neighbor->binary_vector != NULL) {
@@ -583,19 +734,37 @@ int gv_hnsw_search(void *index_ptr, const GV_Vector *query, size_t k,
             }
 
             if (candidate_count < ef) {
-                candidates[candidate_count].node = neighbor;
-                candidates[candidate_count++].distance = dist;
-                qsort(candidates, candidate_count, sizeof(GV_HNSWCandidate), compare_candidates);
-            } else {
-                float worst_dist = candidates[candidate_count - 1].distance;
-                if (dist < worst_dist) {
-                    candidates[candidate_count - 1].node = neighbor;
-                    candidates[candidate_count - 1].distance = dist;
-                    qsort(candidates, candidate_count, sizeof(GV_HNSWCandidate), compare_candidates);
+                size_t pos = candidate_count++;
+                candidates[pos].node = neighbor;
+                candidates[pos].distance = dist;
+                search_processed[pos] = 0;
+                while (pos > 0 && candidates[pos].distance < candidates[pos - 1].distance) {
+                    GV_HNSWCandidate tmp = candidates[pos];
+                    int ptmp = search_processed[pos];
+                    candidates[pos] = candidates[pos - 1];
+                    search_processed[pos] = search_processed[pos - 1];
+                    candidates[pos - 1] = tmp;
+                    search_processed[pos - 1] = ptmp;
+                    pos--;
+                }
+            } else if (dist < candidates[candidate_count - 1].distance) {
+                size_t pos = candidate_count - 1;
+                candidates[pos].node = neighbor;
+                candidates[pos].distance = dist;
+                search_processed[pos] = 0;
+                while (pos > 0 && candidates[pos].distance < candidates[pos - 1].distance) {
+                    GV_HNSWCandidate tmp = candidates[pos];
+                    int ptmp = search_processed[pos];
+                    candidates[pos] = candidates[pos - 1];
+                    search_processed[pos] = search_processed[pos - 1];
+                    candidates[pos - 1] = tmp;
+                    search_processed[pos - 1] = ptmp;
+                    pos--;
                 }
             }
         }
     }
+    free(search_processed);
 
     free(visited);
 
@@ -646,6 +815,7 @@ int gv_hnsw_search(void *index_ptr, const GV_Vector *query, size_t k,
                 result_vec->metadata = gv_metadata_copy(node_metadata);
                 results[result_count].vector = result_vec;
                 results[result_count].distance = candidates[i].distance;
+                results[result_count].id = candidates[i].node->vector_index;
                 if (distance_type == GV_DISTANCE_COSINE) {
                     results[result_count].distance = 1.0f - results[result_count].distance;
                 }
@@ -1168,9 +1338,14 @@ int gv_hnsw_range_search(void *index_ptr, const GV_Vector *query, float radius,
     }
 
     size_t out = 0;
-    for (int i = 0; i < n && out < max_results; ++i) {
-        if (tmp[i].distance <= radius) {
+    for (int i = 0; i < n; ++i) {
+        if (tmp[i].distance <= radius && out < max_results) {
             results[out++] = tmp[i];
+        } else {
+            /* Free vectors that won't be returned to caller */
+            if (tmp[i].vector != NULL) {
+                gv_vector_destroy((GV_Vector *)tmp[i].vector);
+            }
         }
     }
 
