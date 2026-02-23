@@ -393,6 +393,7 @@ static void gv_knn_insert_result(GV_KNNContext *ctx, GV_KNNStorageContext *stora
     if (ctx->count < ctx->capacity) {
         ctx->results[ctx->count].vector = vector;
         ctx->results[ctx->count].distance = distance;
+        ctx->results[ctx->count].id = vector_index;
         ctx->count++;
 
         for (size_t i = ctx->count - 1; i > 0; --i) {
@@ -411,6 +412,7 @@ static void gv_knn_insert_result(GV_KNNContext *ctx, GV_KNNStorageContext *stora
     } else if (distance < ctx->worst_distance) {
         ctx->results[ctx->count - 1].vector = vector;
         ctx->results[ctx->count - 1].distance = distance;
+        ctx->results[ctx->count - 1].id = vector_index;
 
         for (size_t i = ctx->count - 1; i > 0; --i) {
             if (ctx->results[i].distance < ctx->results[i - 1].distance) {
@@ -455,37 +457,49 @@ static void gv_knn_search_recursive(const GV_KDNode *node, const GV_SoAStorage *
     }
 
     if (gv_soa_storage_is_deleted(storage, node->vector_index) == 1) {
-        return;
+        /* Deleted node: skip this node but still recurse into children */
+        goto recurse_children;
     }
 
-    if (!gv_knn_check_metadata_filter(storage, node->vector_index, ctx->filter_key, ctx->filter_value)) {
-        return;
-    }
+    int metadata_match = gv_knn_check_metadata_filter(storage, node->vector_index, ctx->filter_key, ctx->filter_value);
 
     const float *node_data = gv_soa_storage_get_data(storage, node->vector_index);
     if (node_data == NULL) {
         return;
     }
 
-    GV_Vector node_vec;
-    node_vec.dimension = storage->dimension;
-    node_vec.data = (float *)node_data;
-    node_vec.metadata = gv_soa_storage_get_metadata(storage, node->vector_index);
+    if (metadata_match) {
+        GV_Vector node_vec;
+        node_vec.dimension = storage->dimension;
+        node_vec.data = (float *)node_data;
+        node_vec.metadata = gv_soa_storage_get_metadata(storage, node->vector_index);
 
-    float dist = gv_distance(&node_vec, query, ctx->distance_type);
-    if (dist < 0.0f && ctx->distance_type != GV_DISTANCE_DOT_PRODUCT) {
+        float dist = gv_distance(&node_vec, query, ctx->distance_type);
+        if (!(dist < 0.0f && ctx->distance_type != GV_DISTANCE_DOT_PRODUCT)) {
+            if (ctx->distance_type == GV_DISTANCE_COSINE) {
+                dist = 1.0f - dist;
+            }
+            gv_knn_insert_result(ctx, storage_ctx, node->vector_index, dist);
+        }
+    }
+
+recurse_children:
+    ;
+    const float *node_data_for_split = gv_soa_storage_get_data(storage, node->vector_index);
+    if (node_data_for_split == NULL) {
+        /* Can't determine split, recurse both */
+        if (node->left != NULL) {
+            gv_knn_search_recursive(node->left, storage, query, ctx, storage_ctx);
+        }
+        if (node->right != NULL) {
+            gv_knn_search_recursive(node->right, storage, query, ctx, storage_ctx);
+        }
         return;
     }
 
-    if (ctx->distance_type == GV_DISTANCE_COSINE) {
-        dist = 1.0f - dist;
-    }
-
-    gv_knn_insert_result(ctx, storage_ctx, node->vector_index, dist);
-
     size_t axis = node->axis;
     float query_value = query->data[axis];
-    float node_value = node_data[axis];
+    float node_value = node_data_for_split[axis];
     float diff = query_value - node_value;
     float axis_distance = diff * diff;
 
@@ -676,6 +690,7 @@ static void gv_range_insert_result(GV_RangeContext *ctx, GV_KNNStorageContext *s
 
     ctx->results[ctx->count].vector = vector;
     ctx->results[ctx->count].distance = distance;
+    ctx->results[ctx->count].id = vector_index;
     ctx->count++;
 }
 
