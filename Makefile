@@ -99,7 +99,19 @@ test-corrupt-snapshot: $(BIN_DIR)/main
 bench-ivfpq-suite: $(BENCH_DIR)/benchmark_ivfpq $(BENCH_DIR)/benchmark_ivfpq_recall
 	@BIN_DIR=$(BENCH_DIR) bash $(TEST_DIR)/ivfpq_suite.sh
 
-TEST_FILES := test_db test_distance test_metadata test_hnsw test_ivfpq test_sparse test_wal test_filter test_advanced test_llm test_memory_llm test_embedding test_context_graph test_memory test_json test_graph_db test_knowledge_graph
+TEST_FILES := test_db test_distance test_metadata test_hnsw test_ivfpq test_sparse test_wal test_filter test_advanced test_llm test_memory_llm test_embedding test_context_graph test_memory test_json test_graph_db test_knowledge_graph \
+	test_alias test_auth test_authz test_backup test_binary_quant test_bloom test_bm25 test_cache test_cdc \
+	test_codebook test_compression test_conditional test_consistency test_crypto test_dedup test_diskann \
+	test_embedded test_filter_ops test_flat test_fulltext test_geo test_group_search test_hnsw_opt \
+	test_hybrid_search test_importance test_ivfflat test_json_index test_late_interaction test_learned_sparse \
+	test_lsh test_metadata_index test_migration test_mmr test_multimodal test_multivec test_muvera test_mvcc \
+	test_named_vectors test_namespace test_optimizer test_payload_index test_phased_ranking test_point_id \
+	test_pq test_quantization test_quota test_ranking test_rbac test_recommend test_scalar_quant test_schema \
+	test_score_threshold test_server test_snapshot test_sql test_tiered_tenant test_timetravel test_tokenizer \
+	test_tracing test_ttl test_typed_metadata test_vacuum test_versioning test_webhook \
+	test_gpu test_shard test_replication test_tls test_grpc test_sso test_onnx test_mmap test_streaming \
+	test_cluster test_agent test_memory_consolidation test_memory_extraction test_auto_embed test_inference \
+	test_rest_handlers
 TEST_SRCS := $(patsubst %,tests/%.c,$(TEST_FILES))
 TEST_BINS := $(patsubst %,$(BUILD_DIR)/test_%,$(TEST_FILES))
 
