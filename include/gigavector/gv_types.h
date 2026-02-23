@@ -54,6 +54,7 @@ typedef struct {
     const GV_SparseVector *sparse_vector;
     int is_sparse;
     float distance;
+    size_t id;
 } GV_SearchResult;
 
 #endif
