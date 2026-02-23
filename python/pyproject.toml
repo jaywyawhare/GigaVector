@@ -28,10 +28,10 @@ Repository = "https://github.com/jaywyawhare/GigaVector"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
-packages = ["gigavector"]
+packages = ["gigavector", "gigavector.dashboard"]
 include-package-data = true
 
 [tool.setuptools.package-data]
-gigavector = ["libGigaVector.so"]
+gigavector = ["libGigaVector.so", "dashboard/static/*"]
 
 
