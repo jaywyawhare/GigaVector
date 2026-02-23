@@ -944,7 +944,7 @@ gv_db_close(db);
 
 ```c
 typedef struct {
-    int port;                    // Default: 8080
+    int port;                    // Default: 6969
     int thread_pool_size;        // Default: 4
     int max_connections;         // Default: 100
     int request_timeout_ms;      // Default: 30000
@@ -952,6 +952,8 @@ typedef struct {
     int enable_cors;             // Default: 0
     int enable_logging;          // Default: 1
     const char *api_key;         // Optional API key auth
+    double max_requests_per_second; // Rate limit (0 = unlimited)
+    size_t rate_limit_burst;     // Burst size (default: 10)
 } GV_ServerConfig;
 ```
 
@@ -980,9 +982,28 @@ gv_server_destroy(server);
 | `/stats` | GET | Database statistics |
 | `/vectors` | POST | Add vector |
 | `/vectors/:id` | GET | Get vector by ID |
+| `/vectors/:id` | PUT | Update vector |
 | `/vectors/:id` | DELETE | Delete vector |
 | `/search` | POST | Vector search |
+| `/search/range` | POST | Range search |
+| `/search/batch` | POST | Batch search |
+| `/compact` | POST | Trigger compaction |
+| `/save` | POST | Save database to disk |
 | `/namespaces` | GET/POST | Manage namespaces |
+
+### Web Dashboard
+
+The web dashboard is a pure-Python feature — no C HTTP library (libmicrohttpd) required.
+Use the Python `serve_with_dashboard()` function:
+
+```python
+from gigavector import serve_with_dashboard
+server = serve_with_dashboard(db, port=6969)
+# Dashboard at http://localhost:6969/dashboard
+server.stop()
+```
+
+The dashboard server also exposes `/api/dashboard/info`, `/health`, `/stats`, and all vector/search endpoints.
 
 ---
 
