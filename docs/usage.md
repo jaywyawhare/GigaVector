@@ -393,7 +393,7 @@ GV_Database *db = gv_db_open("vectors.db", 128, GV_INDEX_TYPE_HNSW);
 
 GV_ServerConfig config;
 gv_server_config_init(&config);
-config.port = 8080;
+config.port = 6969;
 config.enable_cors = 1;
 
 GV_Server *server = gv_server_create(db, &config);
@@ -405,31 +405,61 @@ gv_server_destroy(server);
 gv_db_close(db);
 ```
 
+**Python (with dashboard):**
+```python
+from gigavector import Database, IndexType, serve_with_dashboard
+
+db = Database.open(None, dimension=128, index=IndexType.HNSW)
+server = serve_with_dashboard(db, port=6969)
+# Dashboard at http://localhost:6969/dashboard
+# Press Ctrl+C to stop
+server.stop()
+db.close()
+```
+
 ### API Examples
 
 **Health check:**
 ```bash
-curl http://localhost:8080/health
+curl http://localhost:6969/health
 ```
 
 **Add vector:**
 ```bash
-curl -X POST http://localhost:8080/vectors \
+curl -X POST http://localhost:6969/vectors \
   -H "Content-Type: application/json" \
   -d '{"vector": [0.1, 0.2, ...], "metadata": {"id": "1"}}'
 ```
 
 **Search:**
 ```bash
-curl -X POST http://localhost:8080/search \
+curl -X POST http://localhost:6969/search \
   -H "Content-Type: application/json" \
   -d '{"vector": [0.1, 0.2, ...], "k": 10}'
 ```
 
 **Get stats:**
 ```bash
-curl http://localhost:8080/stats
+curl http://localhost:6969/stats
 ```
+
+**Dashboard info:**
+```bash
+curl http://localhost:6969/api/dashboard/info
+```
+
+### Web Dashboard
+
+GigaVector ships a built-in web dashboard with a dark theme. It is a pure-Python
+feature — no libmicrohttpd or other C HTTP library is needed.
+
+**Dashboard views:**
+- **Overview** -- live metrics: vector count, dimension, index type, QPS, health status (auto-refreshes every 2 s)
+- **Vectors** -- browse vectors by ID, add new vectors with metadata, delete
+- **Search** -- k-NN search form with distance metric selector and results table
+- **Console** -- raw REST API console with method dropdown, URL, body, and syntax-highlighted JSON response
+
+Use `serve_with_dashboard()` (shown above) or the `DashboardServer` class directly.
 
 ---
 
