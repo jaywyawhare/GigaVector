@@ -58,7 +58,7 @@ static int test_lsh_insert_search(void) {
         ASSERT(vec != NULL);
         int rc = gv_lsh_insert(index, vec);
         ASSERT(rc == 0);
-        gv_vector_destroy(vec);
+        /* gv_lsh_insert takes ownership — do NOT destroy vec */
     }
 
     ASSERT(gv_lsh_count(index) == (size_t)num_vectors);
@@ -109,7 +109,7 @@ static int test_lsh_range_search(void) {
         GV_Vector *vec = gv_vector_create_from_data(dim, data);
         ASSERT(vec != NULL);
         ASSERT(gv_lsh_insert(index, vec) == 0);
-        gv_vector_destroy(vec);
+        /* gv_lsh_insert takes ownership — do NOT destroy vec */
     }
 
     /* Range search with radius=50.0f from the origin-ish query. */
@@ -161,7 +161,7 @@ static int test_lsh_delete(void) {
         GV_Vector *vec = gv_vector_create_from_data(dim, data);
         ASSERT(vec != NULL);
         ASSERT(gv_lsh_insert(index, vec) == 0);
-        gv_vector_destroy(vec);
+        /* gv_lsh_insert takes ownership — do NOT destroy vec */
     }
 
     ASSERT(gv_lsh_count(index) == 5);
@@ -198,7 +198,7 @@ static int test_lsh_update(void) {
     GV_Vector *vec = gv_vector_create_from_data(dim, data);
     ASSERT(vec != NULL);
     ASSERT(gv_lsh_insert(index, vec) == 0);
-    gv_vector_destroy(vec);
+    /* gv_lsh_insert takes ownership — do NOT destroy vec */
 
     ASSERT(gv_lsh_count(index) == 1);
 

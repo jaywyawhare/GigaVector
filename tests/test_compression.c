@@ -19,7 +19,7 @@ static int test_compression_config_init(void) {
 
     gv_compression_config_init(&config);
 
-    ASSERT(config.type == GV_COMPRESS_NONE, "default type should be GV_COMPRESS_NONE");
+    ASSERT(config.type == GV_COMPRESS_LZ4, "default type should be GV_COMPRESS_LZ4");
     ASSERT(config.level == 1, "default level should be 1");
     ASSERT(config.min_size == 64, "default min_size should be 64");
 
