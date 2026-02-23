@@ -378,12 +378,28 @@ GV_Database *gv_db_open(const char *filepath, size_t dimension, GV_IndexType ind
     if (filepath != NULL) {
         db->filepath = gv_db_strdup(filepath);
         if (db->filepath == NULL) {
+            gv_metadata_index_destroy(db->metadata_index);
+            pthread_mutex_destroy(&db->compaction_mutex);
+            pthread_cond_destroy(&db->compaction_cond);
+            pthread_mutex_destroy(&db->resource_mutex);
+            pthread_mutex_destroy(&db->observability_mutex);
+            pthread_rwlock_destroy(&db->rwlock);
+            pthread_mutex_destroy(&db->wal_mutex);
+            if (db->soa_storage) gv_soa_storage_destroy(db->soa_storage);
             free(db);
             return NULL;
         }
 
         db->wal_path = gv_db_build_wal_path(filepath);
         if (db->wal_path == NULL) {
+            gv_metadata_index_destroy(db->metadata_index);
+            pthread_mutex_destroy(&db->compaction_mutex);
+            pthread_cond_destroy(&db->compaction_cond);
+            pthread_mutex_destroy(&db->resource_mutex);
+            pthread_mutex_destroy(&db->observability_mutex);
+            pthread_rwlock_destroy(&db->rwlock);
+            pthread_mutex_destroy(&db->wal_mutex);
+            if (db->soa_storage) gv_soa_storage_destroy(db->soa_storage);
             free(db->filepath);
             free(db);
             return NULL;
@@ -437,6 +453,15 @@ GV_Database *gv_db_open(const char *filepath, size_t dimension, GV_IndexType ind
             } else if (index_type == GV_INDEX_TYPE_LSH) {
                 GV_LSHConfig cfg = {.num_tables = 8, .num_hash_bits = 16, .seed = 42};
                 db->hnsw_index = gv_lsh_create(dimension, &cfg, db->soa_storage);
+                if (db->hnsw_index == NULL) {
+                    free(db->filepath);
+                    free(db->wal_path);
+                    free(db);
+                    return NULL;
+                }
+            } else if (index_type == GV_INDEX_TYPE_IVFPQ) {
+                GV_IVFPQConfig cfg = {.nlist = 64, .m = 8, .nbits = 8, .nprobe = 4, .train_iters = 15};
+                db->hnsw_index = gv_ivfpq_create(dimension, &cfg);
                 if (db->hnsw_index == NULL) {
                     free(db->filepath);
                     free(db->wal_path);
@@ -721,7 +746,25 @@ load_fail:
         gv_kdtree_destroy_recursive(db->root);
     } else if (db->index_type == GV_INDEX_TYPE_HNSW) {
         if (db->hnsw_index) gv_hnsw_destroy(db->hnsw_index);
+    } else if (db->index_type == GV_INDEX_TYPE_IVFPQ) {
+        if (db->hnsw_index) gv_ivfpq_destroy(db->hnsw_index);
+    } else if (db->index_type == GV_INDEX_TYPE_FLAT) {
+        if (db->hnsw_index) gv_flat_destroy(db->hnsw_index);
+    } else if (db->index_type == GV_INDEX_TYPE_IVFFLAT) {
+        if (db->hnsw_index) gv_ivfflat_destroy(db->hnsw_index);
+    } else if (db->index_type == GV_INDEX_TYPE_PQ) {
+        if (db->hnsw_index) gv_pq_destroy(db->hnsw_index);
+    } else if (db->index_type == GV_INDEX_TYPE_LSH) {
+        if (db->hnsw_index) gv_lsh_destroy(db->hnsw_index);
     }
+    if (db->metadata_index) gv_metadata_index_destroy(db->metadata_index);
+    if (db->soa_storage) gv_soa_storage_destroy(db->soa_storage);
+    pthread_rwlock_destroy(&db->rwlock);
+    pthread_mutex_destroy(&db->wal_mutex);
+    pthread_mutex_destroy(&db->compaction_mutex);
+    pthread_cond_destroy(&db->compaction_cond);
+    pthread_mutex_destroy(&db->resource_mutex);
+    pthread_mutex_destroy(&db->observability_mutex);
     free(db->filepath);
     free(db->wal_path);
     free(db);
@@ -1295,7 +1338,7 @@ GV_Database *gv_db_open_with_hnsw_config(const char *filepath, size_t dimension,
 
 GV_Database *gv_db_open_with_ivfpq_config(const char *filepath, size_t dimension, 
                                           GV_IndexType index_type, const GV_IVFPQConfig *ivfpq_config) {
-    if (index_type != GV_INDEX_TYPE_IVFPQ || filepath != NULL) {
+    if (index_type != GV_INDEX_TYPE_IVFPQ) {
         return gv_db_open(filepath, dimension, index_type);
     }
 
@@ -1316,6 +1359,20 @@ GV_Database *gv_db_open_with_ivfpq_config(const char *filepath, size_t dimension
     db->sparse_index = NULL;
     db->filepath = NULL;
     db->wal_path = NULL;
+
+    if (filepath != NULL) {
+        db->filepath = gv_db_strdup(filepath);
+        if (db->filepath == NULL) {
+            free(db);
+            return NULL;
+        }
+        db->wal_path = gv_db_build_wal_path(filepath);
+        if (db->wal_path == NULL) {
+            free(db->filepath);
+            free(db);
+            return NULL;
+        }
+    }
     db->wal = NULL;
     db->wal_replaying = 0;
     pthread_rwlock_init(&db->rwlock, NULL);
@@ -1349,8 +1406,16 @@ GV_Database *gv_db_open_with_ivfpq_config(const char *filepath, size_t dimension
     db->current_memory_bytes = 0;
     db->current_concurrent_ops = 0;
     pthread_mutex_init(&db->resource_mutex, NULL);
-    memset(&db->insert_latency_hist, 0, sizeof(db->insert_latency_hist));
-    memset(&db->search_latency_hist, 0, sizeof(db->search_latency_hist));
+    memset(&db->insert_latency_hist, 0, sizeof(GV_LatencyHistogram));
+    memset(&db->search_latency_hist, 0, sizeof(GV_LatencyHistogram));
+    db->last_qps_update_time_us = 0;
+    db->last_ips_update_time_us = 0;
+    db->first_insert_time_us = 0;
+    db->query_count_since_update = 0;
+    db->insert_count_since_update = 0;
+    db->current_qps = 0.0;
+    db->current_ips = 0.0;
+    memset(&db->recall_metrics, 0, sizeof(GV_RecallMetrics));
     pthread_mutex_init(&db->observability_mutex, NULL);
 
     if (ivfpq_config != NULL) {
@@ -1381,7 +1446,7 @@ GV_Database *gv_db_open_with_ivfpq_config(const char *filepath, size_t dimension
 
 GV_Database *gv_db_open_with_ivfflat_config(const char *filepath, size_t dimension,
                                              GV_IndexType index_type, const GV_IVFFlatConfig *config) {
-    if (index_type != GV_INDEX_TYPE_IVFFLAT || filepath != NULL) {
+    if (index_type != GV_INDEX_TYPE_IVFFLAT) {
         return gv_db_open(filepath, dimension, index_type);
     }
     if (dimension == 0) {
@@ -1401,6 +1466,19 @@ GV_Database *gv_db_open_with_ivfflat_config(const char *filepath, size_t dimensi
     db->soa_storage = NULL;
     db->filepath = NULL;
     db->wal_path = NULL;
+    if (filepath != NULL) {
+        db->filepath = gv_db_strdup(filepath);
+        if (db->filepath == NULL) {
+            free(db);
+            return NULL;
+        }
+        db->wal_path = gv_db_build_wal_path(filepath);
+        if (db->wal_path == NULL) {
+            free(db->filepath);
+            free(db);
+            return NULL;
+        }
+    }
     db->wal = NULL;
     db->wal_replaying = 0;
     pthread_rwlock_init(&db->rwlock, NULL);
@@ -1468,7 +1546,7 @@ GV_Database *gv_db_open_with_ivfflat_config(const char *filepath, size_t dimensi
 
 GV_Database *gv_db_open_with_pq_config(const char *filepath, size_t dimension,
                                         GV_IndexType index_type, const GV_PQConfig *config) {
-    if (index_type != GV_INDEX_TYPE_PQ || filepath != NULL) {
+    if (index_type != GV_INDEX_TYPE_PQ) {
         return gv_db_open(filepath, dimension, index_type);
     }
     if (dimension == 0) {
@@ -1488,6 +1566,19 @@ GV_Database *gv_db_open_with_pq_config(const char *filepath, size_t dimension,
     db->soa_storage = NULL;
     db->filepath = NULL;
     db->wal_path = NULL;
+    if (filepath != NULL) {
+        db->filepath = gv_db_strdup(filepath);
+        if (db->filepath == NULL) {
+            free(db);
+            return NULL;
+        }
+        db->wal_path = gv_db_build_wal_path(filepath);
+        if (db->wal_path == NULL) {
+            free(db->filepath);
+            free(db);
+            return NULL;
+        }
+    }
     db->wal = NULL;
     db->wal_replaying = 0;
     pthread_rwlock_init(&db->rwlock, NULL);
@@ -1555,7 +1646,7 @@ GV_Database *gv_db_open_with_pq_config(const char *filepath, size_t dimension,
 
 GV_Database *gv_db_open_with_lsh_config(const char *filepath, size_t dimension,
                                          GV_IndexType index_type, const GV_LSHConfig *config) {
-    if (index_type != GV_INDEX_TYPE_LSH || filepath != NULL) {
+    if (index_type != GV_INDEX_TYPE_LSH) {
         return gv_db_open(filepath, dimension, index_type);
     }
     if (dimension == 0) {
@@ -1575,6 +1666,19 @@ GV_Database *gv_db_open_with_lsh_config(const char *filepath, size_t dimension,
     db->soa_storage = NULL;
     db->filepath = NULL;
     db->wal_path = NULL;
+    if (filepath != NULL) {
+        db->filepath = gv_db_strdup(filepath);
+        if (db->filepath == NULL) {
+            free(db);
+            return NULL;
+        }
+        db->wal_path = gv_db_build_wal_path(filepath);
+        if (db->wal_path == NULL) {
+            free(db->filepath);
+            free(db);
+            return NULL;
+        }
+    }
     db->wal = NULL;
     db->wal_replaying = 0;
     pthread_rwlock_init(&db->rwlock, NULL);
@@ -1883,6 +1987,7 @@ int gv_db_add_vector_with_metadata(GV_Database *db, const float *data, size_t di
     /* Increment concurrent operations */
     gv_db_increment_concurrent_ops(db);
     if (db == NULL || data == NULL || dimension == 0 || dimension != db->dimension) {
+        gv_db_decrement_concurrent_ops(db);
         return -1;
     }
 
@@ -1891,6 +1996,7 @@ int gv_db_add_vector_with_metadata(GV_Database *db, const float *data, size_t di
         int wal_res = gv_wal_append_insert(db->wal, data, dimension, metadata_key, metadata_value);
         pthread_mutex_unlock(&db->wal_mutex);
         if (wal_res != 0) {
+            gv_db_decrement_concurrent_ops(db);
             return -1;
         }
         db->total_wal_records += 1;
@@ -1971,11 +2077,14 @@ int gv_db_add_vector_with_metadata(GV_Database *db, const float *data, size_t di
                 return -1;
             }
         }
+        /* Save metadata pointer before insert — gv_hnsw_insert transfers ownership and NULLs it */
+        GV_Metadata *saved_meta = vector->metadata;
         status = gv_hnsw_insert(db->hnsw_index, vector);
-        if (status == 0 && vector->metadata != NULL && db->metadata_index != NULL) {
+        if (status == 0 && saved_meta != NULL && db->metadata_index != NULL) {
             /* Update metadata index - use db->count as vector index */
             size_t vector_index = db->count;
-            GV_Metadata *current = vector->metadata;
+            /* Walk the metadata via SoA storage since insert transferred ownership */
+            GV_Metadata *current = saved_meta;
             while (current != NULL) {
                 gv_metadata_index_add(db->metadata_index, current->key, current->value, vector_index);
                 current = current->next;
@@ -2568,10 +2677,19 @@ int gv_db_search(const GV_Database *db, const float *query_data, size_t k,
 int gv_db_search_ivfpq_opts(const GV_Database *db, const float *query_data, size_t k,
                             GV_SearchResult *results, GV_DistanceType distance_type,
                             size_t nprobe_override, size_t rerank_top) {
-    (void)nprobe_override;
-    (void)rerank_top;
-    // For now, delegate to regular search
-    return gv_db_search(db, query_data, k, results, distance_type);
+    if (db == NULL || query_data == NULL || results == NULL || k == 0) return -1;
+    if (db->index_type != GV_INDEX_TYPE_IVFPQ || db->hnsw_index == NULL) {
+        return gv_db_search(db, query_data, k, results, distance_type);
+    }
+    pthread_rwlock_rdlock((pthread_rwlock_t *)&db->rwlock);
+    ((GV_Database *)db)->total_queries += 1;
+    GV_Vector query_vec;
+    query_vec.data = (float *)query_data;
+    query_vec.dimension = db->dimension;
+    int r = gv_ivfpq_search(db->hnsw_index, &query_vec, k, results, distance_type,
+                            nprobe_override, rerank_top);
+    pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
+    return r;
 }
 
 int gv_db_search_batch(const GV_Database *db, const float *queries, size_t qcount, size_t k,
