@@ -540,7 +540,7 @@ db = Database.open(None, dimension=128, index=IndexType.HNSW)
 
 # Configure server
 config = ServerConfig(
-    port=8080,
+    port=6969,
     bind_address="0.0.0.0",
     thread_pool_size=4,
     max_connections=100,
@@ -558,6 +558,32 @@ stats = server.get_stats()
 print(f"Total requests: {stats.total_requests}")
 
 # Stop server
+server.stop()
+```
+
+### Web Dashboard
+
+Launch the built-in web dashboard with a single call.  The dashboard is a
+pure-Python HTTP server (uses `http.server` from stdlib) — no libmicrohttpd
+or any other C dependency is needed:
+
+```python
+from gigavector import Database, IndexType, serve_with_dashboard
+
+db = Database.open(None, dimension=128, index=IndexType.HNSW)
+server = serve_with_dashboard(db, port=6969)
+# Open http://localhost:6969/dashboard
+server.stop()
+```
+
+Or use the `DashboardServer` class directly:
+
+```python
+from gigavector.dashboard.server import DashboardServer
+
+server = DashboardServer(db, port=6969)
+server.start()
+# ...
 server.stop()
 ```
 
@@ -945,7 +971,7 @@ kg2 = KnowledgeGraph.load("knowledge.gvkg")
 - LLM Integration: LLM, LLMConfig, EmbeddingService
 - Memory: MemoryLayer, ContextGraph
 - GPU: GPUContext, GPUIndex, GPUConfig
-- Server: Server, ServerConfig
+- Server: Server, ServerConfig, serve_with_dashboard
 - Search: BM25Index, HybridSearcher
 - Storage: NamespaceManager, TTLManager, ShardManager
 - High Availability: ReplicationManager, Cluster
