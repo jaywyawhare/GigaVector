@@ -3,14 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import IntEnum
 from types import TracebackType
-from typing import Any, Callable, Iterable, List, Optional, Sequence, TypeAlias
+from typing import Any, Callable, Iterable, List, Optional, Sequence
 
 from ._ffi import ffi, lib
 
 # Type alias for CFFI pointer types.
 # At runtime, this is Any to allow cffi's dynamic CData objects.
 # For type checking, this documents that the value is a CFFI pointer.
-CData: TypeAlias = Any
+CData = Any
 
 
 def _cstr(s: str | bytes | None, keepalive: list) -> CData:
@@ -56,6 +56,7 @@ class Vector:
 class SearchHit:
     distance: float
     vector: Vector
+    id: int = -1
 
 
 @dataclass(frozen=True)
@@ -199,10 +200,10 @@ def _copy_vector(vec_ptr: CData) -> Vector:
         if vec_ptr == ffi.NULL:
             return Vector(data=[], metadata={})
         dim = int(vec_ptr.dimension)
-        if dim <= 0 or dim > 100000:
-            raise ValueError(f"Invalid vector dimension: {dim}")
         if dim == 0:
             return Vector(data=[], metadata={})
+        if dim < 0 or dim > 100000:
+            raise ValueError(f"Invalid vector dimension: {dim}")
         if vec_ptr.data == ffi.NULL:
             return Vector(data=[], metadata={})
         data = [vec_ptr.data[i] for i in range(dim)]
@@ -404,9 +405,6 @@ class Database:
         rc = lib.gv_db_save(self._db, c_path)
         if rc != 0:
             raise RuntimeError("gv_db_save failed")
-        # Truncate WAL to avoid replaying already-saved inserts
-        if self._db.wal != ffi.NULL:
-            lib.gv_wal_truncate(self._db.wal)
         # Truncate WAL to avoid replaying already-saved inserts
         if self._db.wal != ffi.NULL:
             lib.gv_wal_truncate(self._db.wal)
@@ -861,11 +859,11 @@ class Database:
                 if res.is_sparse:
                     if res.sparse_vector != ffi.NULL:
                         vec = _copy_sparse_vector(res.sparse_vector, self.dimension)
-                        out.append(SearchHit(distance=float(res.distance), vector=vec))
+                        out.append(SearchHit(distance=float(res.distance), vector=vec, id=int(res.id)))
                 else:
                     if res.vector != ffi.NULL:
                         vec = _copy_vector(res.vector)
-                        out.append(SearchHit(distance=float(res.distance), vector=vec))
+                        out.append(SearchHit(distance=float(res.distance), vector=vec, id=int(res.id)))
             except (AttributeError, TypeError, ValueError, RuntimeError, OSError):
                 continue
         return out
@@ -901,9 +899,9 @@ class Database:
             res = results[i]
             if res.is_sparse and res.sparse_vector != ffi.NULL:
                 out.append(SearchHit(distance=float(res.distance),
-                                     vector=_copy_sparse_vector(res.sparse_vector, self.dimension)))
-            else:
-                out.append(SearchHit(distance=float(res.distance), vector=_copy_vector(res.vector)))
+                                     vector=_copy_sparse_vector(res.sparse_vector, self.dimension), id=int(res.id)))
+            elif not res.is_sparse and res.vector != ffi.NULL:
+                out.append(SearchHit(distance=float(res.distance), vector=_copy_vector(res.vector), id=int(res.id)))
         return out
 
     def add_sparse_vector(self, indices: Sequence[int], values: Sequence[float],
@@ -943,7 +941,7 @@ class Database:
             res = results[i]
             if res.sparse_vector != ffi.NULL:
                 out.append(SearchHit(distance=float(res.distance),
-                                     vector=_copy_sparse_vector(res.sparse_vector, self.dimension)))
+                                     vector=_copy_sparse_vector(res.sparse_vector, self.dimension), id=int(res.id)))
         return out
 
     def range_search(self, query: Sequence[float], radius: float, max_results: int = 1000,
@@ -978,7 +976,15 @@ class Database:
             n = lib.gv_db_range_search(self._db, qbuf, radius, results, max_results, int(distance))
         if n < 0:
             raise RuntimeError("gv_db_range_search failed")
-        return [SearchHit(distance=float(results[i].distance), vector=_copy_vector(results[i].vector)) for i in range(n)]
+        out: list[SearchHit] = []
+        for i in range(n):
+            res = results[i]
+            if res.is_sparse and res.sparse_vector != ffi.NULL:
+                out.append(SearchHit(distance=float(res.distance),
+                                     vector=_copy_sparse_vector(res.sparse_vector, self.dimension), id=int(res.id)))
+            elif not res.is_sparse and res.vector != ffi.NULL:
+                out.append(SearchHit(distance=float(res.distance), vector=_copy_vector(res.vector), id=int(res.id)))
+        return out
 
     def search_batch(self, queries: Iterable[Sequence[float]], k: int,
                      distance: DistanceType = DistanceType.EUCLIDEAN) -> list[list[SearchHit]]:
@@ -997,8 +1003,12 @@ class Database:
         for qi in range(len(queries_list)):
             hits = []
             for hi in range(k):
-                res = results[qi * k + hi]
-                hits.append(SearchHit(distance=float(res.distance), vector=_copy_vector(res.vector)))
+                idx = qi * k + hi
+                if idx >= n:
+                    break
+                res = results[idx]
+                if res.vector != ffi.NULL:
+                    hits.append(SearchHit(distance=float(res.distance), vector=_copy_vector(res.vector), id=int(res.id)))
             out.append(hits)
         return out
 
@@ -1018,7 +1028,7 @@ class Database:
             res = results[i]
             if res.vector != ffi.NULL:
                 vec = _copy_vector(res.vector)
-                out.append(SearchHit(distance=float(res.distance), vector=vec))
+                out.append(SearchHit(distance=float(res.distance), vector=vec, id=int(res.id)))
         return out
 
     def record_latency(self, latency_us: int, is_insert: bool) -> None:
@@ -1149,7 +1159,7 @@ class Database:
         for i in range(n):
             res = results[i]
             if res.vector != ffi.NULL:
-                out.append(SearchHit(distance=float(res.distance), vector=_copy_vector(res.vector)))
+                out.append(SearchHit(distance=float(res.distance), vector=_copy_vector(res.vector), id=int(res.id)))
         return out
 
     def export_json(self, filepath: str) -> int:
@@ -1237,18 +1247,30 @@ class LLMConfig:
         """Convert to C configuration structure.
 
         Returns:
-            CFFI pointer to GV_LLMConfig structure.
+            Tuple of (CFFI pointer to GV_LLMConfig, list of refs to keep alive).
         """
         c_config = ffi.new("GV_LLMConfig *")
+        # Keep references to prevent GC of char[] buffers
+        _refs: list = []
         c_config.provider = int(self.provider)
-        c_config.api_key = ffi.new("char[]", self.api_key.encode())
-        c_config.model = ffi.new("char[]", self.model.encode())
-        c_config.base_url = ffi.new("char[]", self.base_url.encode()) if self.base_url else ffi.NULL
+        _api_key = ffi.new("char[]", self.api_key.encode()); _refs.append(_api_key)
+        c_config.api_key = _api_key
+        _model = ffi.new("char[]", self.model.encode()); _refs.append(_model)
+        c_config.model = _model
+        if self.base_url:
+            _base_url = ffi.new("char[]", self.base_url.encode()); _refs.append(_base_url)
+            c_config.base_url = _base_url
+        else:
+            c_config.base_url = ffi.NULL
         c_config.temperature = self.temperature
         c_config.max_tokens = self.max_tokens
         c_config.timeout_seconds = self.timeout_seconds
-        c_config.custom_prompt = ffi.new("char[]", self.custom_prompt.encode()) if self.custom_prompt else ffi.NULL
-        return c_config
+        if self.custom_prompt:
+            _prompt = ffi.new("char[]", self.custom_prompt.encode()); _refs.append(_prompt)
+            c_config.custom_prompt = _prompt
+        else:
+            c_config.custom_prompt = ffi.NULL
+        return c_config, _refs  # Caller must keep _refs alive until C call completes
 
 
 @dataclass
@@ -1284,7 +1306,7 @@ class LLM:
     _closed: bool
 
     def __init__(self, config: LLMConfig) -> None:
-        c_config = config._to_c_config()
+        c_config, _refs = config._to_c_config()
         self._llm = lib.gv_llm_create(c_config)
         if self._llm == ffi.NULL:
             raise RuntimeError("Failed to create LLM instance. Make sure libcurl is installed and API key is valid.")
@@ -1391,24 +1413,28 @@ class EmbeddingConfig:
     timeout_seconds: int = 30
     huggingface_model_path: Optional[str] = None
 
-    def _to_c_config(self) -> CData:
+    def _to_c_config(self) -> tuple:
         """Convert to C configuration structure.
 
         Returns:
-            CFFI pointer to GV_EmbeddingConfig structure.
+            Tuple of (CFFI pointer to GV_EmbeddingConfig, list of refs to keep alive).
         """
         c_config = ffi.new("GV_EmbeddingConfig *")
+        _refs: list = []
         c_config.provider = int(self.provider)
         if self.api_key:
-            c_config.api_key = ffi.new("char[]", self.api_key.encode())
+            _buf = ffi.new("char[]", self.api_key.encode()); _refs.append(_buf)
+            c_config.api_key = _buf
         else:
             c_config.api_key = ffi.NULL
         if self.model:
-            c_config.model = ffi.new("char[]", self.model.encode())
+            _buf = ffi.new("char[]", self.model.encode()); _refs.append(_buf)
+            c_config.model = _buf
         else:
             c_config.model = ffi.NULL
         if self.base_url:
-            c_config.base_url = ffi.new("char[]", self.base_url.encode())
+            _buf = ffi.new("char[]", self.base_url.encode()); _refs.append(_buf)
+            c_config.base_url = _buf
         else:
             c_config.base_url = ffi.NULL
         c_config.embedding_dimension = self.embedding_dimension
@@ -1417,10 +1443,11 @@ class EmbeddingConfig:
         c_config.cache_size = self.cache_size
         c_config.timeout_seconds = self.timeout_seconds
         if self.huggingface_model_path:
-            c_config.huggingface_model_path = ffi.new("char[]", self.huggingface_model_path.encode())
+            _buf = ffi.new("char[]", self.huggingface_model_path.encode()); _refs.append(_buf)
+            c_config.huggingface_model_path = _buf
         else:
             c_config.huggingface_model_path = ffi.NULL
-        return c_config
+        return c_config, _refs
 
 
 class EmbeddingService:
@@ -1430,7 +1457,7 @@ class EmbeddingService:
     _closed: bool
 
     def __init__(self, config: EmbeddingConfig) -> None:
-        c_config = config._to_c_config()
+        c_config, _refs = config._to_c_config()
         self._service = lib.gv_embedding_service_create(c_config)
         if self._service == ffi.NULL:
             raise RuntimeError("Failed to create embedding service")
@@ -1480,7 +1507,7 @@ class EmbeddingService:
             return None
         
         embedding = [embedding_ptr[0][i] for i in range(embedding_dim_ptr[0])]
-        lib.free(embedding_ptr[0])
+        lib.gv_free(embedding_ptr[0])
         
         return embedding
     
@@ -1517,12 +1544,12 @@ class EmbeddingService:
             for i in range(len(texts)):
                 if embeddings_ptr[0][i] != ffi.NULL and embedding_dims_ptr[0][i] > 0:
                     emb: list[float] = [embeddings_ptr[0][i][j] for j in range(embedding_dims_ptr[0][i])]
-                    lib.free(embeddings_ptr[0][i])
+                    lib.gv_free(embeddings_ptr[0][i])
                     embeddings.append(emb)
                 else:
                     embeddings.append(None)
-            lib.free(embeddings_ptr[0])
-            lib.free(embedding_dims_ptr[0])
+            lib.gv_free(embeddings_ptr[0])
+            lib.gv_free(embedding_dims_ptr[0])
 
         return embeddings
 
@@ -1813,7 +1840,7 @@ class MemoryLayer:
         
         # Set LLM config if provided
         if config.llm_config:
-            c_llm_config = config.llm_config._to_c_config()
+            c_llm_config, _llm_refs = config.llm_config._to_c_config()
             c_config.llm_config = c_llm_config
         else:
             c_config.llm_config = ffi.NULL
@@ -1858,7 +1885,7 @@ class MemoryLayer:
             raise RuntimeError("Failed to add memory")
         
         memory_id = ffi.string(memory_id_ptr).decode("utf-8")
-        lib.free(memory_id_ptr)
+        lib.gv_free(memory_id_ptr)
         
         return memory_id
     
@@ -1882,11 +1909,11 @@ class MemoryLayer:
         for i in range(count):
             if memory_ids_ptr[i] != ffi.NULL:
                 memory_ids.append(ffi.string(memory_ids_ptr[i]).decode("utf-8"))
-                lib.free(memory_ids_ptr[i])
+                lib.gv_free(memory_ids_ptr[i])
         
-        lib.free(memory_ids_ptr)
+        lib.gv_free(memory_ids_ptr)
         if embeddings_ptr[0] != ffi.NULL:
-            lib.free(embeddings_ptr[0])
+            lib.gv_free(embeddings_ptr[0])
         
         return memory_ids
     
@@ -1910,11 +1937,11 @@ class MemoryLayer:
         for i in range(count):
             if memory_ids_ptr[i] != ffi.NULL:
                 memory_ids.append(ffi.string(memory_ids_ptr[i]).decode("utf-8"))
-                lib.free(memory_ids_ptr[i])
+                lib.gv_free(memory_ids_ptr[i])
         
-        lib.free(memory_ids_ptr)
+        lib.gv_free(memory_ids_ptr)
         if embeddings_ptr[0] != ffi.NULL:
-            lib.free(embeddings_ptr[0])
+            lib.gv_free(embeddings_ptr[0])
         
         return memory_ids
     
@@ -2271,7 +2298,7 @@ class ContextGraph:
                 )
                 entities.append(entity)
                 lib.gv_graph_entity_free(c_entity)
-            lib.free(entities_ptr[0])
+            lib.gv_free(entities_ptr[0])
         
         relationships = []
         if relationships_ptr[0] != ffi.NULL:
@@ -2288,7 +2315,7 @@ class ContextGraph:
                 )
                 relationships.append(rel)
                 lib.gv_graph_relationship_free(c_rel)
-            lib.free(relationships_ptr[0])
+            lib.gv_free(relationships_ptr[0])
         
         return entities, relationships
     
@@ -2687,7 +2714,7 @@ class ServerStats:
 
 @dataclass
 class ServerConfig:
-    port: int = 8080
+    port: int = 6969
     bind_address: str = "0.0.0.0"
     thread_pool_size: int = 4
     max_connections: int = 100
@@ -2697,6 +2724,7 @@ class ServerConfig:
     cors_origins: str = "*"
     enable_logging: bool = True
     api_key: str | None = None
+    enable_dashboard: bool = False
 
 
 class Server:
@@ -2783,6 +2811,21 @@ class Server:
         if s == ffi.NULL:
             return "Unknown error"
         return ffi.string(s).decode("utf-8")
+
+
+def serve_with_dashboard(db: Database, port: int = 6969, **kwargs: Any) -> "DashboardServer":
+    """Start a pure-Python dashboard server for the given database.
+
+    Returns a running :class:`~gigavector.dashboard.server.DashboardServer`.
+    Call ``server.stop()`` when done.
+
+    No C HTTP library (libmicrohttpd) is required.
+    """
+    from gigavector.dashboard.server import DashboardServer
+    server = DashboardServer(db, port=port, **kwargs)
+    server.start()
+    return server
+
 
 # Backup & Restore Module
 class BackupCompression(IntEnum):
@@ -3435,7 +3478,7 @@ class Namespace:
         n = lib.gv_namespace_search(self._ns, query_buf, k, results, int(distance))
         if n < 0:
             raise RuntimeError("Namespace search failed")
-        return [SearchHit(distance=float(results[i].distance), vector=_copy_vector(results[i].vector)) for i in range(n)]
+        return [SearchHit(distance=float(results[i].distance), vector=_copy_vector(results[i].vector), id=int(results[i].id)) for i in range(n)]
 
     def delete_vector(self, index: int) -> None:
         if lib.gv_namespace_delete_vector(self._ns, index) != 0:
@@ -3509,7 +3552,7 @@ class NamespaceManager:
         ns = lib.gv_namespace_get(self._mgr, name.encode())
         if ns == ffi.NULL:
             return None
-        dim = int(lib.gv_namespace_count(ns))  # Get dimension from namespace
+        dim = 0  # Will be set from namespace info below
         info = ffi.new("GV_NamespaceInfo *")
         if lib.gv_namespace_get_info(ns, info) == 0:
             dim = info.dimension
@@ -4699,6 +4742,7 @@ class QueryTrace:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.end()
+        self.close()
         return False
 
 # Client-Side Caching
@@ -5214,7 +5258,7 @@ class AutoEmbedder:
             raise RuntimeError("Failed to embed text")
         dim = out_dim[0]
         vec = [result[i] for i in range(dim)]
-        lib.free(result)
+        lib.gv_free(result)
         return vec
 
     def get_stats(self) -> AutoEmbedStats:
@@ -7261,9 +7305,11 @@ class MediaStore:
             raise RuntimeError("Media entry not found")
         return MediaEntry(
             entry.vector_index, MediaType(entry.type),
-            ffi.string(entry.filename).decode(), entry.file_size,
-            ffi.string(entry.hash).decode(), entry.created_at,
-            ffi.string(entry.mime_type).decode(),
+            ffi.string(entry.filename).decode() if entry.filename != ffi.NULL else "",
+            entry.file_size,
+            ffi.string(entry.hash).decode() if entry.hash != ffi.NULL else "",
+            entry.created_at,
+            ffi.string(entry.mime_type).decode() if entry.mime_type != ffi.NULL else "",
         )
 
     def delete(self, vector_index: int) -> None:

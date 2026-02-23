@@ -154,6 +154,7 @@ typedef struct {
     const GV_SparseVector *sparse_vector;
     int is_sparse;
     float distance;
+    size_t id;
 } GV_SearchResult;
 
 GV_Database *gv_db_open(const char *filepath, size_t dimension, GV_IndexType index_type);
@@ -409,6 +410,7 @@ typedef float *(*GV_EmbeddingCallback)(const char *text, size_t *embedding_dim, 
 
 typedef struct {
     void *llm;
+    void *embedding_service;
     double similarity_threshold;
     int enable_entity_extraction;
     int enable_relationship_extraction;

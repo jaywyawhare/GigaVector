@@ -77,6 +77,7 @@ from ._core import (
     ServerConfig,
     ServerError,
     ServerStats,
+    serve_with_dashboard,
     # Backup & Restore
     BackupCompression,
     BackupHeader,
@@ -369,6 +370,7 @@ from ._core import (
     KGStats,
     KnowledgeGraph,
 )
+from .dashboard.server import DashboardServer
 
 __all__ = [
     # Database core
@@ -429,6 +431,9 @@ __all__ = [
     "ServerConfig",
     "ServerError",
     "ServerStats",
+    "serve_with_dashboard",
+    # Dashboard
+    "DashboardServer",
     # Backup & Restore
     "BackupCompression",
     "BackupHeader",
