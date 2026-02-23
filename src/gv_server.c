@@ -123,7 +123,7 @@ struct GV_Server {
 /*  Default Configuration  */
 
 static const GV_ServerConfig DEFAULT_CONFIG = {
-    .port = 8080,
+    .port = 6969,
     .bind_address = "0.0.0.0",
     .thread_pool_size = 4,
     .max_connections = 100,

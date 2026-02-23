@@ -205,7 +205,7 @@ const char *gv_server_error_string(int error);
  * @brief Initialize a server configuration with default values.
  *
  * Default values:
- * - port: 8080
+ * - port: 6969
  * - bind_address: "0.0.0.0"
  * - thread_pool_size: 4
  * - max_connections: 100
