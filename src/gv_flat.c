@@ -196,6 +196,7 @@ int gv_flat_search(void *index, const GV_Vector *query, size_t k,
         results[i].distance = dist;
         results[i].is_sparse = 0;
         results[i].sparse_vector = NULL;
+        results[i].id = vi;
 
         /* Copy vector so result outlives storage */
         GV_Vector *copy = gv_vector_create_from_data(view.dimension, view.data);
@@ -275,6 +276,7 @@ int gv_flat_range_search(void *index, const GV_Vector *query, float radius,
             results[found].distance = dist;
             results[found].is_sparse = 0;
             results[found].sparse_vector = NULL;
+            results[found].id = i;
             found++;
         }
     }
