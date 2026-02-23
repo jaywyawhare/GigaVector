@@ -1,0 +1,695 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GigaVector Dashboard</title>
+<style>
+:root {
+  --bg-primary: #0f1117;
+  --bg-secondary: #1a1d27;
+  --bg-card: #222533;
+  --bg-input: #2a2d3a;
+  --bg-hover: #2e3142;
+  --border: #363a4d;
+  --text-primary: #e4e6f0;
+  --text-secondary: #9ca0b3;
+  --text-muted: #6b7089;
+  --accent: #6c63ff;
+  --accent-hover: #7e77ff;
+  --accent-dim: rgba(108,99,255,0.15);
+  --green: #4caf50;
+  --yellow: #ffc107;
+  --red: #f44336;
+  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --mono: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  --radius: 8px;
+  --sidebar-w: 220px;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family: var(--font); background: var(--bg-primary); color: var(--text-primary); display:flex; min-height:100vh; }
+
+/* Sidebar */
+.sidebar {
+  width: var(--sidebar-w); background: var(--bg-secondary); border-right:1px solid var(--border);
+  display:flex; flex-direction:column; position:fixed; top:0; left:0; bottom:0; z-index:10;
+}
+.sidebar-brand { padding:20px; font-size:18px; font-weight:700; color:var(--accent); border-bottom:1px solid var(--border); display:flex; align-items:center; gap:10px; }
+.sidebar-brand svg { width:24px; height:24px; }
+.sidebar-nav { flex:1; padding:12px 0; }
+.sidebar-nav a {
+  display:flex; align-items:center; gap:10px; padding:10px 20px; color:var(--text-secondary);
+  text-decoration:none; font-size:14px; transition: all 0.15s;
+}
+.sidebar-nav a:hover { color:var(--text-primary); background:var(--bg-hover); }
+.sidebar-nav a.active { color:var(--accent); background:var(--accent-dim); border-right:3px solid var(--accent); }
+.sidebar-nav a svg { width:18px; height:18px; opacity:0.7; flex-shrink:0; }
+.sidebar-nav a.active svg { opacity:1; }
+.sidebar-footer {
+  padding:14px 20px; border-top:1px solid var(--border);
+  font-size:11px; color:var(--text-muted); line-height:1.5;
+}
+.sidebar-footer span { color:var(--text-secondary); }
+
+/* Main */
+.main { margin-left: var(--sidebar-w); flex:1; display:flex; flex-direction:column; }
+.header {
+  height:56px; background:var(--bg-secondary); border-bottom:1px solid var(--border);
+  display:flex; align-items:center; justify-content:space-between; padding:0 24px; flex-shrink:0;
+}
+.header-title { font-size:16px; font-weight:600; }
+.header-right { display:flex; align-items:center; gap:16px; }
+.status-badge { display:flex; align-items:center; gap:6px; font-size:13px; color:var(--text-secondary); }
+.status-dot { width:8px; height:8px; border-radius:50%; }
+.status-dot.healthy { background:var(--green); box-shadow:0 0 6px var(--green); }
+.status-dot.degraded { background:var(--yellow); box-shadow:0 0 6px var(--yellow); }
+.status-dot.unhealthy { background:var(--red); box-shadow:0 0 6px var(--red); }
+.uptime-badge { font-size:12px; color:var(--text-muted); }
+.content { padding:24px; flex:1; overflow-y:auto; }
+
+/* Cards */
+.cards { display:grid; grid-template-columns:repeat(auto-fill, minmax(200px,1fr)); gap:16px; margin-bottom:24px; }
+.card {
+  background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius);
+  padding:20px; display:flex; flex-direction:column; gap:4px;
+}
+.card-label { font-size:12px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px; }
+.card-value { font-size:26px; font-weight:700; }
+.card-value.accent { color:var(--accent); }
+.card-sub { font-size:11px; color:var(--text-muted); margin-top:2px; }
+
+/* Forms & Inputs */
+input, textarea, select {
+  background:var(--bg-input); border:1px solid var(--border); color:var(--text-primary);
+  border-radius:var(--radius); padding:8px 12px; font-size:14px; font-family:var(--font);
+  outline:none; transition: border-color 0.15s;
+}
+input:focus, textarea:focus, select:focus { border-color:var(--accent); }
+textarea { font-family:var(--mono); resize:vertical; }
+.btn {
+  background:var(--accent); color:#fff; border:none; border-radius:var(--radius);
+  padding:8px 18px; font-size:14px; font-weight:500; cursor:pointer; transition: background 0.15s;
+  white-space:nowrap;
+}
+.btn:hover { background:var(--accent-hover); }
+.btn:disabled { opacity:0.5; cursor:not-allowed; }
+.btn-outline {
+  background:transparent; border:1px solid var(--border); color:var(--text-primary);
+}
+.btn-outline:hover { background:var(--bg-hover); }
+.btn-danger { background:var(--red); }
+.btn-danger:hover { background:#e53935; }
+.btn-sm { padding:5px 12px; font-size:13px; }
+.form-group { margin-bottom:14px; }
+.form-group label { display:block; margin-bottom:4px; font-size:13px; color:var(--text-secondary); }
+.form-row { display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap; }
+
+/* Table */
+table { width:100%; border-collapse:collapse; font-size:14px; }
+th { text-align:left; padding:10px 12px; color:var(--text-muted); font-weight:500; font-size:12px; text-transform:uppercase; letter-spacing:0.5px; border-bottom:1px solid var(--border); }
+td { padding:10px 12px; border-bottom:1px solid var(--border); color:var(--text-secondary); }
+tr:hover td { background:var(--bg-hover); }
+td.mono { font-family:var(--mono); font-size:12px; }
+
+/* JSON viewer */
+.json-view {
+  background:var(--bg-input); border:1px solid var(--border); border-radius:var(--radius);
+  padding:16px; font-family:var(--mono); font-size:13px; white-space:pre-wrap;
+  word-break:break-all; max-height:400px; overflow-y:auto; color:var(--text-secondary);
+}
+.json-key { color:#7ec8e3; }
+.json-str { color:#98c379; }
+.json-num { color:#d19a66; }
+.json-bool { color:#c678dd; }
+.json-null { color:#e06c75; }
+
+/* Views */
+.view { display:none; }
+.view.active { display:block; }
+.section { background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius); padding:20px; margin-bottom:20px; }
+.section-title { font-size:14px; font-weight:600; margin-bottom:14px; color:var(--text-primary); }
+.section-desc { font-size:13px; color:var(--text-muted); margin-bottom:14px; }
+
+/* Console */
+.console-bar { display:flex; gap:8px; margin-bottom:12px; }
+.console-bar select { width:110px; }
+.console-bar input { flex:1; }
+.console-response { margin-top:12px; }
+.console-meta { font-size:12px; color:var(--text-muted); margin-bottom:6px; display:flex; gap:12px; }
+.console-meta .status-ok { color:var(--green); }
+.console-meta .status-err { color:var(--red); }
+
+/* Toast */
+.toast {
+  position:fixed; bottom:24px; right:24px; background:var(--bg-card); border:1px solid var(--border);
+  border-radius:var(--radius); padding:12px 20px; font-size:13px; color:var(--text-primary);
+  box-shadow:0 4px 24px rgba(0,0,0,0.4); z-index:100; opacity:0; transform:translateY(10px);
+  transition: opacity 0.2s, transform 0.2s;
+}
+.toast.show { opacity:1; transform:translateY(0); }
+.toast.success { border-left:3px solid var(--green); }
+.toast.error { border-left:3px solid var(--red); }
+
+/* Tabs */
+.tabs { display:flex; gap:4px; margin-bottom:16px; border-bottom:1px solid var(--border); }
+.tab {
+  padding:8px 16px; font-size:13px; color:var(--text-muted); cursor:pointer;
+  border-bottom:2px solid transparent; transition:all 0.15s; background:none; border-top:none; border-left:none; border-right:none;
+}
+.tab:hover { color:var(--text-secondary); }
+.tab.active { color:var(--accent); border-bottom-color:var(--accent); }
+
+/* Responsive */
+@media (max-width: 768px) {
+  .sidebar { width:60px; }
+  .sidebar-brand span, .sidebar-nav a span, .sidebar-footer { display:none; }
+  .sidebar-brand { justify-content:center; padding:16px; }
+  .sidebar-nav a { justify-content:center; padding:12px; }
+  .main { margin-left:60px; }
+  .cards { grid-template-columns:repeat(auto-fill, minmax(160px,1fr)); }
+}
+</style>
+</head>
+<body>
+
+<!-- Sidebar -->
+<div class="sidebar">
+  <div class="sidebar-brand">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5"/><line x1="12" y1="22" x2="12" y2="15.5"/><polyline points="22 8.5 12 15.5 2 8.5"/></svg>
+    <span>GigaVector</span>
+  </div>
+  <nav class="sidebar-nav">
+    <a href="#overview" class="active" data-view="overview">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+      <span>Overview</span>
+    </a>
+    <a href="#vectors" data-view="vectors">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+      <span>Vectors</span>
+    </a>
+    <a href="#search" data-view="search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <span>Search</span>
+    </a>
+    <a href="#console" data-view="console">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+      <span>Console</span>
+    </a>
+  </nav>
+  <div class="sidebar-footer">
+    <span id="footer-version">GigaVector</span><br>
+    <span id="footer-index"></span>
+  </div>
+</div>
+
+<!-- Main Content -->
+<div class="main">
+  <div class="header">
+    <div class="header-title" id="viewTitle">Overview</div>
+    <div class="header-right">
+      <div class="uptime-badge" id="uptimeBadge"></div>
+      <div class="status-badge">
+        <span class="status-dot" id="statusDot"></span>
+        <span id="statusText">Connecting...</span>
+      </div>
+    </div>
+  </div>
+  <div class="content">
+
+    <!-- Overview View -->
+    <div class="view active" id="view-overview">
+      <div class="cards">
+        <div class="card">
+          <div class="card-label">Vectors</div>
+          <div class="card-value accent" id="ov-count">&mdash;</div>
+        </div>
+        <div class="card">
+          <div class="card-label">Dimension</div>
+          <div class="card-value" id="ov-dim">&mdash;</div>
+        </div>
+        <div class="card">
+          <div class="card-label">Index Type</div>
+          <div class="card-value" id="ov-index">&mdash;</div>
+        </div>
+        <div class="card">
+          <div class="card-label">Version</div>
+          <div class="card-value" id="ov-version">&mdash;</div>
+        </div>
+      </div>
+      <div class="cards">
+        <div class="card">
+          <div class="card-label">Total Requests</div>
+          <div class="card-value" id="ov-reqs">&mdash;</div>
+        </div>
+        <div class="card">
+          <div class="card-label">Queries/sec</div>
+          <div class="card-value" id="ov-qps">&mdash;</div>
+        </div>
+        <div class="card">
+          <div class="card-label">Errors</div>
+          <div class="card-value" id="ov-errors">&mdash;</div>
+        </div>
+        <div class="card">
+          <div class="card-label">Data Sent</div>
+          <div class="card-value" id="ov-sent">&mdash;</div>
+          <div class="card-sub" id="ov-recv"></div>
+        </div>
+      </div>
+      <div class="section">
+        <div class="section-title">Health</div>
+        <div class="json-view" id="ov-health-json" style="min-height:60px;">&mdash;</div>
+      </div>
+    </div>
+
+    <!-- Vectors View -->
+    <div class="view" id="view-vectors">
+      <div class="tabs">
+        <button class="tab active" data-tab="vec-browse">Browse</button>
+        <button class="tab" data-tab="vec-add">Add</button>
+      </div>
+
+      <div id="vec-browse" class="tab-content">
+        <div class="section">
+          <div class="section-title">Browse Vectors</div>
+          <div class="form-row" style="margin-bottom:14px;">
+            <div class="form-group" style="margin-bottom:0">
+              <label>Vector ID</label>
+              <input type="number" id="vec-id" value="0" min="0" style="width:120px;">
+            </div>
+            <button class="btn btn-sm" onclick="fetchVector()">Get</button>
+            <button class="btn btn-sm btn-outline" onclick="vecPrev()">&larr; Prev</button>
+            <button class="btn btn-sm btn-outline" onclick="vecNext()">Next &rarr;</button>
+            <button class="btn btn-sm btn-danger" onclick="deleteVector()">Delete</button>
+          </div>
+          <div class="json-view" id="vec-result" style="min-height:80px;">Select a vector ID and click "Get".</div>
+        </div>
+      </div>
+
+      <div id="vec-add" class="tab-content" style="display:none;">
+        <div class="section">
+          <div class="section-title">Add Vector</div>
+          <div class="section-desc">Provide vector components as a JSON array. Dimension must match the database.</div>
+          <div class="form-group">
+            <label>Vector Data (JSON array)</label>
+            <textarea id="vec-add-data" rows="3" style="width:100%;" placeholder="[0.1, 0.2, 0.3, 0.4]"></textarea>
+          </div>
+          <div class="form-group">
+            <label>Metadata (JSON object, optional)</label>
+            <textarea id="vec-add-meta" rows="2" style="width:100%;" placeholder='{"label": "example"}'></textarea>
+          </div>
+          <button class="btn" onclick="addVector()">Add Vector</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Search View -->
+    <div class="view" id="view-search">
+      <div class="tabs">
+        <button class="tab active" data-tab="search-knn">k-NN Search</button>
+        <button class="tab" data-tab="search-range">Range Search</button>
+      </div>
+
+      <div id="search-knn" class="tab-content">
+        <div class="section">
+          <div class="section-title">k-NN Search</div>
+          <div class="form-group">
+            <label>Query Vector (JSON array)</label>
+            <textarea id="search-query" rows="2" style="width:100%;" placeholder="[0.1, 0.2, 0.3, 0.4]"></textarea>
+          </div>
+          <div class="form-row" style="margin-bottom:14px;">
+            <div class="form-group" style="margin-bottom:0">
+              <label>k</label>
+              <input type="number" id="search-k" value="5" min="1" style="width:80px;">
+            </div>
+            <div class="form-group" style="margin-bottom:0">
+              <label>Distance</label>
+              <select id="search-dist">
+                <option value="euclidean">Euclidean</option>
+                <option value="cosine">Cosine</option>
+                <option value="dot_product">Dot Product</option>
+                <option value="manhattan">Manhattan</option>
+              </select>
+            </div>
+            <button class="btn" onclick="doSearch()">Search</button>
+          </div>
+          <div id="search-meta" style="font-size:12px; color:var(--text-muted); margin-bottom:8px;"></div>
+          <table id="search-results" style="display:none;">
+            <thead><tr><th>#</th><th>Index</th><th>Distance</th><th>Data (truncated)</th></tr></thead>
+            <tbody id="search-tbody"></tbody>
+          </table>
+          <div id="search-empty" style="color:var(--text-muted); font-size:13px;">Enter a query vector and click Search.</div>
+        </div>
+      </div>
+
+      <div id="search-range" class="tab-content" style="display:none;">
+        <div class="section">
+          <div class="section-title">Range Search</div>
+          <div class="form-group">
+            <label>Query Vector (JSON array)</label>
+            <textarea id="range-query" rows="2" style="width:100%;" placeholder="[0.1, 0.2, 0.3, 0.4]"></textarea>
+          </div>
+          <div class="form-row" style="margin-bottom:14px;">
+            <div class="form-group" style="margin-bottom:0">
+              <label>Radius</label>
+              <input type="number" id="range-radius" value="1.0" step="0.1" min="0" style="width:100px;">
+            </div>
+            <div class="form-group" style="margin-bottom:0">
+              <label>Max Results</label>
+              <input type="number" id="range-max" value="100" min="1" style="width:100px;">
+            </div>
+            <div class="form-group" style="margin-bottom:0">
+              <label>Distance</label>
+              <select id="range-dist">
+                <option value="euclidean">Euclidean</option>
+                <option value="cosine">Cosine</option>
+                <option value="dot_product">Dot Product</option>
+                <option value="manhattan">Manhattan</option>
+              </select>
+            </div>
+            <button class="btn" onclick="doRangeSearch()">Search</button>
+          </div>
+          <div id="range-meta" style="font-size:12px; color:var(--text-muted); margin-bottom:8px;"></div>
+          <table id="range-results" style="display:none;">
+            <thead><tr><th>#</th><th>Index</th><th>Distance</th><th>Data (truncated)</th></tr></thead>
+            <tbody id="range-tbody"></tbody>
+          </table>
+          <div id="range-empty" style="color:var(--text-muted); font-size:13px;">Enter a query vector and radius, then click Search.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Console View -->
+    <div class="view" id="view-console">
+      <div class="section">
+        <div class="section-title">REST API Console</div>
+        <div class="section-desc">Send raw HTTP requests to the GigaVector server.</div>
+        <div class="console-bar">
+          <select id="con-method">
+            <option>GET</option><option>POST</option><option>PUT</option><option>DELETE</option>
+          </select>
+          <input type="text" id="con-url" value="/health" placeholder="/endpoint">
+          <button class="btn" onclick="consoleSend()">Send</button>
+        </div>
+        <div class="form-group">
+          <label>Request Body (JSON)</label>
+          <textarea id="con-body" rows="5" style="width:100%;" placeholder="{}"></textarea>
+        </div>
+        <div class="console-response">
+          <div class="console-meta" id="con-meta"></div>
+          <div class="json-view" id="con-result" style="min-height:120px;"></div>
+        </div>
+      </div>
+      <div class="section">
+        <div class="section-title">Quick Actions</div>
+        <div class="form-row">
+          <button class="btn btn-sm btn-outline" onclick="quickReq('GET','/health')">Health</button>
+          <button class="btn btn-sm btn-outline" onclick="quickReq('GET','/stats')">Stats</button>
+          <button class="btn btn-sm btn-outline" onclick="quickReq('GET','/api/dashboard/info')">Info</button>
+          <button class="btn btn-sm btn-outline" onclick="quickReq('POST','/compact')">Compact</button>
+          <button class="btn btn-sm btn-outline" onclick="quickReq('POST','/save')">Save</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+/* ---- Helpers ---- */
+const API = window.location.origin;
+
+function jsonHighlight(obj) {
+  if (obj == null) return '<span class="json-null">null</span>';
+  const s = typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2);
+  return s.replace(/("(\\u[a-fA-F0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+-]?\d+)?)/g, m => {
+    let cls = 'json-num';
+    if (/^"/.test(m)) { cls = /:$/.test(m) ? 'json-key' : 'json-str'; }
+    else if (/true|false/.test(m)) cls = 'json-bool';
+    else if (/null/.test(m)) cls = 'json-null';
+    return '<span class="' + cls + '">' + m + '</span>';
+  });
+}
+
+async function api(path, opts) {
+  try {
+    const r = await fetch(API + path, opts);
+    const text = await r.text();
+    let data;
+    try { data = JSON.parse(text); } catch { data = text; }
+    return { status: r.status, data, ok: r.ok };
+  } catch (e) {
+    return { status: 0, data: { error: e.message }, ok: false };
+  }
+}
+
+function formatBytes(b) {
+  if (b == null) return '—';
+  if (b < 1024) return b + ' B';
+  if (b < 1024*1024) return (b/1024).toFixed(1) + ' KB';
+  if (b < 1024*1024*1024) return (b/(1024*1024)).toFixed(1) + ' MB';
+  return (b/(1024*1024*1024)).toFixed(2) + ' GB';
+}
+
+function formatUptime(sec) {
+  if (sec == null || sec < 0) return '';
+  if (sec < 60) return sec + 's';
+  if (sec < 3600) return Math.floor(sec/60) + 'm ' + (sec%60) + 's';
+  const h = Math.floor(sec/3600);
+  const m = Math.floor((sec%3600)/60);
+  return h + 'h ' + m + 'm';
+}
+
+function showToast(msg, type) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show ' + (type || '');
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => t.className = 'toast', 3000);
+}
+
+/* ---- Tab switching ---- */
+document.querySelectorAll('.tabs').forEach(tabs => {
+  tabs.querySelectorAll('.tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      const target = tab.dataset.tab;
+      tabs.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      const parent = tabs.parentElement;
+      parent.querySelectorAll('.tab-content').forEach(c => c.style.display = 'none');
+      document.getElementById(target).style.display = 'block';
+    });
+  });
+});
+
+/* ---- Navigation ---- */
+document.querySelectorAll('.sidebar-nav a').forEach(a => {
+  a.addEventListener('click', e => {
+    e.preventDefault();
+    const view = a.dataset.view;
+    document.querySelectorAll('.sidebar-nav a').forEach(x => x.classList.remove('active'));
+    a.classList.add('active');
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    document.getElementById('view-' + view).classList.add('active');
+    document.getElementById('viewTitle').textContent = a.querySelector('span').textContent;
+  });
+});
+
+/* ---- Overview ---- */
+let refreshTimer = null;
+
+async function refreshOverview() {
+  const [info, stats, health] = await Promise.all([
+    api('/api/dashboard/info'),
+    api('/stats'),
+    api('/health')
+  ]);
+
+  const dot = document.getElementById('statusDot');
+  const txt = document.getElementById('statusText');
+
+  if (health.ok && health.data) {
+    const s = health.data.status || 'unknown';
+    dot.className = 'status-dot ' + s;
+    txt.textContent = s.charAt(0).toUpperCase() + s.slice(1);
+    document.getElementById('ov-health-json').innerHTML = jsonHighlight(health.data);
+    const up = health.data.uptime_seconds;
+    document.getElementById('uptimeBadge').textContent = up != null ? 'Uptime: ' + formatUptime(up) : '';
+  } else {
+    dot.className = 'status-dot unhealthy';
+    txt.textContent = 'Unreachable';
+    document.getElementById('ov-health-json').innerHTML = '<span class="json-null">Server unreachable</span>';
+    document.getElementById('uptimeBadge').textContent = '';
+  }
+
+  if (info.ok && info.data) {
+    document.getElementById('ov-count').textContent = (info.data.vector_count ?? 0).toLocaleString();
+    document.getElementById('ov-dim').textContent = info.data.dimension ?? '—';
+    document.getElementById('ov-index').textContent = info.data.index_type ?? '—';
+    document.getElementById('ov-version').textContent = info.data.version ?? '—';
+    document.getElementById('footer-version').textContent = 'GigaVector v' + (info.data.version || '?');
+    document.getElementById('footer-index').textContent = (info.data.index_type || '') + ' / dim=' + (info.data.dimension || '?');
+  }
+
+  if (stats.ok && stats.data) {
+    document.getElementById('ov-reqs').textContent = (stats.data.total_requests ?? 0).toLocaleString();
+    document.getElementById('ov-qps').textContent = stats.data.queries_per_second ?? 0;
+    document.getElementById('ov-errors').textContent = (stats.data.error_count ?? 0).toLocaleString();
+    document.getElementById('ov-sent').textContent = formatBytes(stats.data.total_bytes_sent);
+    document.getElementById('ov-recv').textContent = 'Received: ' + formatBytes(stats.data.total_bytes_received);
+  }
+}
+
+function startRefresh() { refreshOverview(); refreshTimer = setInterval(refreshOverview, 2000); }
+function stopRefresh() { if (refreshTimer) clearInterval(refreshTimer); }
+startRefresh();
+
+/* ---- Vectors ---- */
+async function fetchVector() {
+  const id = document.getElementById('vec-id').value;
+  const r = await api('/vectors/' + id);
+  document.getElementById('vec-result').innerHTML = jsonHighlight(r.data);
+}
+function vecPrev() { const el = document.getElementById('vec-id'); el.value = Math.max(0, parseInt(el.value) - 1); fetchVector(); }
+function vecNext() { const el = document.getElementById('vec-id'); el.value = parseInt(el.value) + 1; fetchVector(); }
+
+async function deleteVector() {
+  const id = document.getElementById('vec-id').value;
+  if (!confirm('Delete vector ' + id + '?')) return;
+  const r = await api('/vectors/' + id, { method: 'DELETE' });
+  document.getElementById('vec-result').innerHTML = jsonHighlight(r.data);
+  showToast(r.ok ? 'Vector ' + id + ' deleted' : 'Delete failed', r.ok ? 'success' : 'error');
+}
+
+async function addVector() {
+  const dataStr = document.getElementById('vec-add-data').value.trim();
+  const metaStr = document.getElementById('vec-add-meta').value.trim();
+  try {
+    const body = { data: JSON.parse(dataStr) };
+    if (metaStr) body.metadata = JSON.parse(metaStr);
+    const r = await api('/vectors', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    showToast(r.ok ? 'Vector added' : 'Failed: ' + JSON.stringify(r.data), r.ok ? 'success' : 'error');
+  } catch (e) {
+    showToast('Invalid JSON: ' + e.message, 'error');
+  }
+}
+
+/* ---- Search ---- */
+function renderSearchResults(r, tbodyId, metaId, tableId, emptyId) {
+  const tbody = document.getElementById(tbodyId);
+  const meta = document.getElementById(metaId);
+  const tbl = document.getElementById(tableId);
+  const empty = document.getElementById(emptyId);
+
+  if (r.ok && r.data && r.data.results) {
+    const results = r.data.results;
+    meta.textContent = results.length + ' results in ' + (r.data.latency_ms || '?') + ' ms';
+    tbody.innerHTML = '';
+    results.forEach((hit, i) => {
+      const dataPreview = hit.data ? JSON.stringify(hit.data).slice(0, 60) + (JSON.stringify(hit.data).length > 60 ? '...' : '') : '—';
+      const tr = document.createElement('tr');
+      tr.innerHTML = '<td>' + (i+1) + '</td><td>' + hit.index + '</td><td>' + (hit.distance != null ? hit.distance.toFixed(6) : '—') + '</td><td class="mono">' + dataPreview + '</td>';
+      tbody.appendChild(tr);
+    });
+    tbl.style.display = 'table';
+    empty.style.display = 'none';
+  } else {
+    meta.textContent = '';
+    tbody.innerHTML = '';
+    tbl.style.display = 'none';
+    empty.textContent = 'Error: ' + JSON.stringify(r.data);
+    empty.style.display = 'block';
+  }
+}
+
+async function doSearch() {
+  const queryStr = document.getElementById('search-query').value.trim();
+  const k = parseInt(document.getElementById('search-k').value);
+  const dist = document.getElementById('search-dist').value;
+  try {
+    const query = JSON.parse(queryStr);
+    const r = await api('/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, k, distance: dist })
+    });
+    renderSearchResults(r, 'search-tbody', 'search-meta', 'search-results', 'search-empty');
+  } catch (e) {
+    document.getElementById('search-meta').textContent = '';
+    document.getElementById('search-empty').textContent = 'Invalid JSON: ' + e.message;
+    document.getElementById('search-empty').style.display = 'block';
+    document.getElementById('search-results').style.display = 'none';
+  }
+}
+
+async function doRangeSearch() {
+  const queryStr = document.getElementById('range-query').value.trim();
+  const radius = parseFloat(document.getElementById('range-radius').value);
+  const maxResults = parseInt(document.getElementById('range-max').value);
+  const dist = document.getElementById('range-dist').value;
+  try {
+    const query = JSON.parse(queryStr);
+    const r = await api('/search/range', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, radius, max_results: maxResults, distance: dist })
+    });
+    renderSearchResults(r, 'range-tbody', 'range-meta', 'range-results', 'range-empty');
+  } catch (e) {
+    document.getElementById('range-meta').textContent = '';
+    document.getElementById('range-empty').textContent = 'Invalid JSON: ' + e.message;
+    document.getElementById('range-empty').style.display = 'block';
+    document.getElementById('range-results').style.display = 'none';
+  }
+}
+
+/* ---- Console ---- */
+async function consoleSend() {
+  const method = document.getElementById('con-method').value;
+  const url = document.getElementById('con-url').value;
+  const bodyStr = document.getElementById('con-body').value.trim();
+  const metaEl = document.getElementById('con-meta');
+  const resultEl = document.getElementById('con-result');
+
+  const opts = { method };
+  if (method !== 'GET' && bodyStr) {
+    opts.headers = { 'Content-Type': 'application/json' };
+    opts.body = bodyStr;
+  }
+
+  const t0 = performance.now();
+  const r = await api(url, opts);
+  const ms = (performance.now() - t0).toFixed(1);
+
+  const statusCls = r.status >= 200 && r.status < 400 ? 'status-ok' : 'status-err';
+  metaEl.innerHTML = '<span class="' + statusCls + '">HTTP ' + r.status + '</span><span>' + ms + ' ms</span>';
+  resultEl.innerHTML = jsonHighlight(r.data);
+}
+
+function quickReq(method, url) {
+  document.getElementById('con-method').value = method;
+  document.getElementById('con-url').value = url;
+  document.getElementById('con-body').value = '';
+  /* Switch to console view */
+  document.querySelectorAll('.sidebar-nav a').forEach(a => {
+    a.classList.toggle('active', a.dataset.view === 'console');
+  });
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  document.getElementById('view-console').classList.add('active');
+  document.getElementById('viewTitle').textContent = 'Console';
+  consoleSend();
+}
+
+/* Handle Enter key in console URL input */
+document.getElementById('con-url').addEventListener('keydown', e => {
+  if (e.key === 'Enter') consoleSend();
+});
+</script>
+</body>
+</html>
