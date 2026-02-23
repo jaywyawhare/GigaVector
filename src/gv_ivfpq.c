@@ -240,6 +240,7 @@ typedef struct GV_IVFPQEntry {
     GV_Vector *vector;     /* original vector for output */
     GV_ScalarQuantVector *scalar_quant; /* scalar quantized version if enabled */
     int deleted;           /* Deletion flag: 1 if deleted, 0 if active */
+    size_t vector_index;   /* insertion-order index */
 } GV_IVFPQEntry;
 
 typedef struct {
@@ -300,8 +301,11 @@ static int gv_ivfpq_argmin(const float *queries, size_t qcount, size_t dim, cons
 
 static int gv_ivfpq_kmeans(float *data, size_t n, size_t dim, size_t k, size_t iters, float *out_centroids) {
     if (n < k) return -1;
-    /* init: pick first k vectors */
-    memcpy(out_centroids, data, k * dim * sizeof(float));
+    /* init: k-means++ style — pick k vectors evenly spaced through data */
+    for (size_t i = 0; i < k; ++i) {
+        size_t idx = (i * n) / k;
+        memcpy(out_centroids + i * dim, data + idx * dim, dim * sizeof(float));
+    }
     int *assign = (int *)malloc(n * sizeof(int));
     if (!assign) return -1;
     float *newc = (float *)calloc(k * dim, sizeof(float));
@@ -431,9 +435,35 @@ int gv_ivfpq_train(void *index_ptr, const float *data, size_t count) {
         pthread_rwlock_unlock(&idx->rwlock);
         return -1;
     }
-    /* train each subquantizer */
+    /* Compute residuals: for each training vector, subtract its nearest coarse centroid.
+     * PQ codebooks must be trained on residuals since insert encodes residuals. */
+    for (size_t i = 0; i < count; ++i) {
+        const float *vec = train_buf + i * idx->dimension;
+        /* find nearest coarse centroid */
+        float best_dist = INFINITY;
+        size_t best_c = 0;
+        for (size_t c = 0; c < idx->nlist; ++c) {
+            float d = gv_ivfpq_l2_runtime(vec, idx->coarse + c * idx->dimension, idx->dimension);
+            if (d < best_dist) {
+                best_dist = d;
+                best_c = c;
+            }
+        }
+        /* subtract centroid to get residual (in-place) */
+        float *v = train_buf + i * idx->dimension;
+        const float *centroid = idx->coarse + best_c * idx->dimension;
+        for (size_t j = 0; j < idx->dimension; ++j) {
+            v[j] -= centroid[j];
+        }
+    }
+
+    /* train each subquantizer on residual subvectors */
     float *subbuf = (float *)malloc(count * idx->subdim * sizeof(float));
-    if (!subbuf) return -1;
+    if (!subbuf) {
+        free(train_buf);
+        pthread_rwlock_unlock(&idx->rwlock);
+        return -1;
+    }
     for (size_t m = 0; m < idx->m; ++m) {
         for (size_t i = 0; i < count; ++i) {
             memcpy(subbuf + i * idx->subdim, train_buf + i * idx->dimension + m * idx->subdim, idx->subdim * sizeof(float));
@@ -522,7 +552,10 @@ int gv_ivfpq_insert(void *index_ptr, GV_Vector *vector) {
         }
     }
     uint8_t *codes = (uint8_t *)malloc(idx->m);
-    if (!codes) return -1;
+    if (!codes) {
+        pthread_rwlock_unlock(&idx->rwlock);
+        return -1;
+    }
     int list_id = gv_ivfpq_encode(idx, vector->data, codes);
     if (list_id < 0) {
         free(codes);
@@ -555,6 +588,7 @@ int gv_ivfpq_insert(void *index_ptr, GV_Vector *vector) {
     list->entries[list->count].vector = vector;
     list->entries[list->count].scalar_quant = NULL;
     list->entries[list->count].deleted = 0;
+    list->entries[list->count].vector_index = idx->count;
     
     if (idx->use_scalar_quant && idx->scalar_quant_template != NULL) {
         GV_ScalarQuantVector *sqv = (GV_ScalarQuantVector *)malloc(sizeof(GV_ScalarQuantVector));
@@ -563,8 +597,19 @@ int gv_ivfpq_insert(void *index_ptr, GV_Vector *vector) {
             sqv->bits = idx->scalar_quant_config.bits;
             sqv->per_dimension = idx->scalar_quant_config.per_dimension;
             sqv->bytes_per_vector = idx->scalar_quant_template->bytes_per_vector;
-            sqv->min_vals = idx->scalar_quant_template->min_vals;
-            sqv->max_vals = idx->scalar_quant_template->max_vals;
+            /* Deep copy min/max to avoid aliasing the template pointers */
+            size_t nvals = sqv->per_dimension ? idx->dimension : 1;
+            sqv->min_vals = (float *)malloc(nvals * sizeof(float));
+            sqv->max_vals = (float *)malloc(nvals * sizeof(float));
+            if (sqv->min_vals == NULL || sqv->max_vals == NULL) {
+                free(sqv->min_vals);
+                free(sqv->max_vals);
+                free(sqv);
+                sqv = NULL;
+            } else {
+                memcpy(sqv->min_vals, idx->scalar_quant_template->min_vals, nvals * sizeof(float));
+                memcpy(sqv->max_vals, idx->scalar_quant_template->max_vals, nvals * sizeof(float));
+            }
             sqv->quantized = (uint8_t *)calloc(sqv->bytes_per_vector, sizeof(uint8_t));
             if (sqv->quantized != NULL) {
                 size_t max_quant = (1ULL << sqv->bits) - 1;
@@ -663,19 +708,23 @@ int gv_ivfpq_search(void *index_ptr, const GV_Vector *query, size_t k,
     }
     free(cheap);
 
-    /* precompute LUT */
+    /* allocate thread-local LUT buffer (not shared idx->lut_buf, which races under rdlock) */
     size_t lut_need = idx->m * idx->codebook_size;
-    if (idx->lut_buf_size < lut_need) {
-        float *nbuf = (float *)realloc(idx->lut_buf, lut_need * sizeof(float));
-        if (!nbuf) {
-            free(probe_ids);
-            pthread_rwlock_unlock(&idx->rwlock);
-            return -1;
-        }
-        idx->lut_buf = nbuf;
-        idx->lut_buf_size = lut_need;
+    float *lut = (float *)malloc(lut_need * sizeof(float));
+    if (!lut) {
+        free(probe_ids);
+        pthread_rwlock_unlock(&idx->rwlock);
+        return -1;
     }
-    float *lut = idx->lut_buf;
+
+    /* Allocate residual buffer for ADC: query_residual = query - coarse_centroid */
+    float *qres = (float *)malloc(idx->dimension * sizeof(float));
+    if (!qres) {
+        free(probe_ids);
+        pthread_rwlock_unlock(&idx->rwlock);
+        return -1;
+    }
+
     /* cosine: normalize query once */
     float *qbuf = NULL;
     const float *qdata = query->data;
@@ -686,6 +735,7 @@ int gv_ivfpq_search(void *index_ptr, const GV_Vector *query, size_t k,
             norm = 1.0f / sqrtf(norm);
             qbuf = (float *)malloc(idx->dimension * sizeof(float));
             if (!qbuf) {
+                free(qres);
                 free(probe_ids);
                 pthread_rwlock_unlock(&idx->rwlock);
                 return -1;
@@ -695,35 +745,17 @@ int gv_ivfpq_search(void *index_ptr, const GV_Vector *query, size_t k,
         }
     }
 
-    for (size_t m = 0; m < idx->m; ++m) {
-        const float *cb = idx->pq + m * idx->codebook_size * idx->subdim;
-        const float *subq = qdata + m * idx->subdim;
-        float *lut_row = lut + m * idx->codebook_size;
-        for (size_t c = 0; c < idx->codebook_size; ++c) {
-            const float *code = cb + c * idx->subdim;
-            float d;
-            if (cosine) {
-                float dot = gv_ivfpq_dot_runtime(subq, code, idx->subdim);
-                float cq = gv_ivfpq_dot_runtime(code, code, idx->subdim);
-                float denom = sqrtf(cq);
-                d = (denom > 0.0f) ? (1.0f - dot / denom) : 1.0f;
-            } else {
-                d = gv_ivfpq_l2_runtime(subq, code, idx->subdim);
-            }
-            lut_row[c] = d;
-        }
-    }
-
     /* Calculate oversampled candidate count */
     size_t oversampled_k = (size_t)(k * idx->oversampling_factor + 0.5f);
     if (oversampled_k < k) oversampled_k = k;
-    
+
     /* bounded max-heap for top-k (or oversampled-k) */
     GV_IVFPQHeapItem *heap = (GV_IVFPQHeapItem *)malloc(oversampled_k * sizeof(GV_IVFPQHeapItem));
     size_t hsize = 0;
     if (!heap) {
+        free(qres);
+        free(qbuf);
         free(probe_ids);
-        free(lut);
         pthread_rwlock_unlock(&idx->rwlock);
         return -1;
     }
@@ -731,6 +763,32 @@ int gv_ivfpq_search(void *index_ptr, const GV_Vector *query, size_t k,
     for (size_t pi = 0; pi < nprobe; ++pi) {
         int lid = probe_ids[pi];
         if (lid < 0) continue;
+
+        /* Compute query residual for this probe: qres = query - coarse_centroid[lid] */
+        const float *centroid = idx->coarse + lid * idx->dimension;
+        for (size_t j = 0; j < idx->dimension; ++j) {
+            qres[j] = qdata[j] - centroid[j];
+        }
+
+        /* Compute LUT from query residual (ADC) */
+        for (size_t m = 0; m < idx->m; ++m) {
+            const float *cb = idx->pq + m * idx->codebook_size * idx->subdim;
+            const float *subq = qres + m * idx->subdim;
+            float *lut_row = lut + m * idx->codebook_size;
+            for (size_t c = 0; c < idx->codebook_size; ++c) {
+                const float *code = cb + c * idx->subdim;
+                float d;
+                if (cosine) {
+                    float dot = gv_ivfpq_dot_runtime(subq, code, idx->subdim);
+                    float cq = gv_ivfpq_dot_runtime(code, code, idx->subdim);
+                    float denom = sqrtf(cq);
+                    d = (denom > 0.0f) ? (1.0f - dot / denom) : 1.0f;
+                } else {
+                    d = gv_ivfpq_l2_runtime(subq, code, idx->subdim);
+                }
+                lut_row[c] = d;
+            }
+        }
             GV_IVFPQList *list = &idx->lists[lid];
             const uint8_t *codes_soa = list->codes_soa;
             size_t lcount = list->count;
@@ -807,8 +865,10 @@ int gv_ivfpq_search(void *index_ptr, const GV_Vector *query, size_t k,
     GV_IVFPQEntry **beste = (GV_IVFPQEntry **)malloc(found * sizeof(GV_IVFPQEntry *));
     if (!bestd || !beste) {
         free(heap);
-        free(probe_ids);
         free(lut);
+        free(qres);
+        free(qbuf);
+        free(probe_ids);
         free(bestd);
         free(beste);
         pthread_rwlock_unlock(&idx->rwlock);
@@ -870,12 +930,14 @@ int gv_ivfpq_search(void *index_ptr, const GV_Vector *query, size_t k,
     for (size_t i = 0; i < result_count; ++i) {
         results[i].distance = bestd[i];
         results[i].vector = beste[i] ? beste[i]->vector : NULL;
+        results[i].id = beste[i] ? beste[i]->vector_index : 0;
     }
 
     free(probe_ids);
-    /* lut is cached in idx->lut_buf; do not free */
+    free(lut);
     free(bestd);
     free(beste);
+    free(qres);
     free(qbuf);
     pthread_rwlock_unlock(&idx->rwlock);
     return (int)result_count;
@@ -896,8 +958,8 @@ void gv_ivfpq_destroy(void *index_ptr) {
                         if (sqv->quantized != NULL) {
                             free(sqv->quantized);
                         }
-                        sqv->min_vals = NULL;
-                        sqv->max_vals = NULL;
+                        free(sqv->min_vals);
+                        free(sqv->max_vals);
                         free(sqv);
                     }
                     gv_vector_destroy(list->entries[e].vector);
@@ -1154,6 +1216,7 @@ int gv_ivfpq_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version
             }
             ent->vector = vec;
             ent->deleted = 0;
+            ent->scalar_quant = NULL;
         }
         list->count = lcount;
         loaded_total += lcount;
@@ -1206,14 +1269,19 @@ int gv_ivfpq_range_search(void *index_ptr, const GV_Vector *query, float radius,
         }
     }
 
-    int *probe_ids = (int *)malloc(idx->nprobe * sizeof(int));
-    if (!probe_ids) {
+    size_t nprobe = idx->nprobe;
+    if (nprobe > idx->nlist) nprobe = idx->nlist;
+    int *probe_ids = (int *)malloc(nprobe * sizeof(int));
+    float *probe_dists = (float *)malloc(nprobe * sizeof(float));
+    if (!probe_ids || !probe_dists) {
+        free(probe_ids);
+        free(probe_dists);
         free(qbuf);
         pthread_rwlock_unlock(&idx->rwlock);
         return -1;
     }
 
-    for (size_t i = 0; i < idx->nprobe; ++i) probe_ids[i] = -1;
+    for (size_t i = 0; i < nprobe; ++i) { probe_ids[i] = -1; probe_dists[i] = INFINITY; }
 
     for (size_t i = 0; i < idx->nlist; ++i) {
         float d = 0.0f;
@@ -1221,43 +1289,38 @@ int gv_ivfpq_range_search(void *index_ptr, const GV_Vector *query, float radius,
             float diff = qbuf[j] - idx->coarse[i * idx->dimension + j];
             d += diff * diff;
         }
-        for (size_t p = 0; p < idx->nprobe; ++p) {
-            if (probe_ids[p] < 0 || d < probe_ids[p]) {
-                for (size_t q = idx->nprobe - 1; q > p; --q) {
+        for (size_t p = 0; p < nprobe; ++p) {
+            if (probe_ids[p] < 0 || d < probe_dists[p]) {
+                for (size_t q = nprobe - 1; q > p; --q) {
                     probe_ids[q] = probe_ids[q - 1];
+                    probe_dists[q] = probe_dists[q - 1];
                 }
                 probe_ids[p] = (int)i;
+                probe_dists[p] = d;
                 break;
             }
         }
     }
+    free(probe_dists);
 
     size_t codebook_size = idx->codebook_size;
-    float *lut = idx->lut_buf;
+    /* allocate thread-local LUT buffer (not shared idx->lut_buf, which races under rdlock) */
     size_t lut_needed = idx->m * codebook_size;
-    if (lut == NULL || idx->lut_buf_size < lut_needed) {
-        lut = (float *)realloc(lut, lut_needed * sizeof(float));
-        if (!lut) {
-            free(probe_ids);
-            free(qbuf);
-            pthread_rwlock_unlock(&idx->rwlock);
-            return -1;
-        }
-        idx->lut_buf = lut;
-        idx->lut_buf_size = lut_needed;
+    float *lut = (float *)malloc(lut_needed * sizeof(float));
+    if (!lut) {
+        free(probe_ids);
+        free(qbuf);
+        pthread_rwlock_unlock(&idx->rwlock);
+        return -1;
     }
 
-    for (size_t m = 0; m < idx->m; ++m) {
-        float *lut_row = lut + m * codebook_size;
-        float *pq_row = idx->pq + m * codebook_size * idx->subdim;
-        for (size_t c = 0; c < codebook_size; ++c) {
-            float d = 0.0f;
-            for (size_t s = 0; s < idx->subdim; ++s) {
-                float diff = qbuf[m * idx->subdim + s] - pq_row[c * idx->subdim + s];
-                d += diff * diff;
-            }
-            lut_row[c] = d;
-        }
+    /* Allocate residual buffer for ADC */
+    float *qres = (float *)malloc(idx->dimension * sizeof(float));
+    if (!qres) {
+        free(probe_ids);
+        free(qbuf);
+        pthread_rwlock_unlock(&idx->rwlock);
+        return -1;
     }
 
     typedef struct {
@@ -1265,9 +1328,10 @@ int gv_ivfpq_range_search(void *index_ptr, const GV_Vector *query, float radius,
         GV_IVFPQEntry *entry;
         float pq_distance;
     } RangeCandidate;
-    
+
     RangeCandidate *candidates = (RangeCandidate *)malloc(max_results * 2 * sizeof(RangeCandidate));
     if (!candidates) {
+        free(qres);
         free(probe_ids);
         free(qbuf);
         pthread_rwlock_unlock(&idx->rwlock);
@@ -1275,9 +1339,29 @@ int gv_ivfpq_range_search(void *index_ptr, const GV_Vector *query, float radius,
     }
     size_t found = 0;
 
-    for (size_t pi = 0; pi < idx->nprobe; ++pi) {
+    for (size_t pi = 0; pi < nprobe; ++pi) {
         int lid = probe_ids[pi];
         if (lid < 0) continue;
+
+        /* Compute query residual for this probe */
+        const float *centroid = idx->coarse + lid * idx->dimension;
+        for (size_t j = 0; j < idx->dimension; ++j) {
+            qres[j] = qbuf[j] - centroid[j];
+        }
+
+        /* Compute LUT from query residual */
+        for (size_t m = 0; m < idx->m; ++m) {
+            float *lut_row = lut + m * codebook_size;
+            float *pq_row = idx->pq + m * codebook_size * idx->subdim;
+            for (size_t c = 0; c < codebook_size; ++c) {
+                float d = 0.0f;
+                for (size_t s = 0; s < idx->subdim; ++s) {
+                    float diff = qres[m * idx->subdim + s] - pq_row[c * idx->subdim + s];
+                    d += diff * diff;
+                }
+                lut_row[c] = d;
+            }
+        }
         GV_IVFPQList *list = &idx->lists[lid];
         const uint8_t *codes_soa = list->codes_soa;
         size_t lcount = list->count;
@@ -1291,7 +1375,7 @@ int gv_ivfpq_range_search(void *index_ptr, const GV_Vector *query, float radius,
                 }
                 if (d <= radius) {
                     GV_IVFPQEntry *ent = &list->entries[e];
-                    if (ent->vector != NULL) {
+                    if (ent->vector != NULL && ent->deleted == 0) {
                         candidates[found].vector = ent->vector;
                         candidates[found].entry = ent;
                         candidates[found].pq_distance = d;
@@ -1338,12 +1422,15 @@ int gv_ivfpq_range_search(void *index_ptr, const GV_Vector *query, float radius,
             if (dist <= radius) {
                 results[result_count].vector = candidates[i].vector;
                 results[result_count].distance = dist;
+                results[result_count].id = candidates[i].entry ? candidates[i].entry->vector_index : 0;
                 result_count++;
             }
         }
     }
 
     free(candidates);
+    free(lut);
+    free(qres);
     free(probe_ids);
     free(qbuf);
     pthread_rwlock_unlock(&idx->rwlock);
