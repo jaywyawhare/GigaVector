@@ -403,6 +403,7 @@ int gv_sparse_index_search(const GV_SparseIndex *index, const GV_SparseVector *q
             results[filled].vector = NULL;
             results[filled].is_sparse = 1;
             results[filled].distance = dist;
+            results[filled].id = vid;
             filled++;
             for (size_t j = filled; j > 0 && j > 1; --j) {
                 if (results[j - 1].distance < results[j - 2].distance) {
@@ -418,6 +419,7 @@ int gv_sparse_index_search(const GV_SparseIndex *index, const GV_SparseVector *q
             results[k - 1].vector = NULL;
             results[k - 1].is_sparse = 1;
             results[k - 1].distance = dist;
+            results[k - 1].id = vid;
             for (size_t j = k; j > 0 && j > 1; --j) {
                 if (results[j - 1].distance < results[j - 2].distance) {
                     GV_SearchResult tmp = results[j - 1];
