@@ -84,6 +84,8 @@ class _Handler(BaseHTTPRequestHandler):
             return self._handle_stats()
         if path == "/api/dashboard/info":
             return self._handle_dashboard_info()
+        if path == "/vectors/scroll":
+            return self._handle_vectors_scroll()
         m = re.match(r"^/vectors/(\d+)$", path)
         if m:
             return self._handle_vector_get(int(m.group(1)))
@@ -101,8 +103,15 @@ class _Handler(BaseHTTPRequestHandler):
             return self._handle_search()
         if path == "/search/range":
             return self._handle_search_range()
+        if path == "/compact":
+            return self._handle_compact()
+        if path == "/save":
+            return self._handle_save()
 
         self._send_error_json(404, "not_found", "Endpoint not found")
+
+    def do_PUT(self) -> None:  # noqa: N802
+        self.do_POST()
 
     def do_DELETE(self) -> None:  # noqa: N802
         path = self.path.split("?")[0]
@@ -138,6 +147,31 @@ class _Handler(BaseHTTPRequestHandler):
             "index_type": idx_name,
             "dimension": self._db.dimension,
             "vector_count": self._db.count,
+        })
+
+    def _handle_vectors_scroll(self) -> None:
+        """Return a batch of vectors for visualization."""
+        from urllib.parse import parse_qs, urlparse
+        qs = parse_qs(urlparse(self.path).query)
+        offset = int(qs.get("offset", ["0"])[0])
+        limit = int(qs.get("limit", ["200"])[0])
+        limit = min(limit, 500)  # cap at 500
+
+        total = self._db.count
+        vectors = []
+        end = min(offset + limit, total)
+        for i in range(offset, end):
+            try:
+                vec = self._db.get_vector(i)
+                if vec is not None:
+                    vectors.append({"index": i, "data": vec})
+            except Exception:
+                pass
+        self._send_json({
+            "vectors": vectors,
+            "total": total,
+            "offset": offset,
+            "limit": limit,
         })
 
     def _handle_vector_get(self, vid: int) -> None:
@@ -223,6 +257,20 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_json({"results": results, "count": len(results)})
         except Exception as e:
             self._send_error_json(500, "search_failed", str(e))
+
+    def _handle_compact(self) -> None:
+        try:
+            self._db.compact()
+            self._send_json({"success": True, "message": "Compaction completed"})
+        except Exception as e:
+            self._send_error_json(500, "compact_failed", str(e))
+
+    def _handle_save(self) -> None:
+        try:
+            self._db.save()
+            self._send_json({"success": True, "message": "Database saved"})
+        except Exception as e:
+            self._send_error_json(500, "save_failed", str(e))
 
     # ── static file serving ──────────────────────────────────────────
 
