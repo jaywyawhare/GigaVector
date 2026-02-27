@@ -498,7 +498,7 @@ gvinspect mydb.db
 
 # Output:
 # Database: mydb.db
-# Version: 0.7.0
+# Version: 0.8.0
 # Vectors: 1,234,567
 # Dimension: 128
 # Index: HNSW (M=16, ef=200)
