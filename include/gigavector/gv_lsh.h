@@ -18,8 +18,9 @@ extern "C" {
  */
 typedef struct {
     size_t num_tables;    /**< Number of hash tables (default: 8). */
-    size_t num_hash_bits; /**< Number of hash bits per table (default: 16). */
+    size_t num_hash_bits; /**< Number of hash functions per table (K in E2LSH). */
     uint64_t seed;        /**< Random seed for hash function generation. */
+    float bucket_width;   /**< w parameter for E2LSH (default: 4.0). */
 } GV_LSHConfig;
 
 /**

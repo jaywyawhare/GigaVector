@@ -20,9 +20,11 @@ typedef struct GV_LSHBucket {
 typedef struct GV_LSHIndex {
     size_t dimension;
     GV_LSHConfig config;
+    float effective_bucket_width; /* bucket_width * sqrt(dim) for dimension-aware scaling */
     GV_SoAStorage *storage;
     int owns_storage;
     float **hyperplanes;
+    float *offsets;        /* E2LSH random offsets b_i, one per hash function */
     GV_LSHBucket **tables;
     size_t num_buckets;
 } GV_LSHIndex;
@@ -117,8 +119,9 @@ static float gaussian_random(uint64_t *state) {
     return sqrtf(-2.0f * logf(u1)) * cosf(2.0f * 3.14159265358979323846f * u2);
 }
 
-static void generate_hyperplanes(float **hyperplanes, size_t num_tables, size_t num_hash_bits,
-                                 size_t dimension, uint64_t seed) {
+static void generate_hyperplanes(float **hyperplanes, float *offsets,
+                                 size_t num_tables, size_t num_hash_bits,
+                                 size_t dimension, uint64_t seed, float effective_bucket_width) {
     uint64_t state = seed;
     size_t total_planes = num_tables * num_hash_bits;
 
@@ -129,10 +132,12 @@ static void generate_hyperplanes(float **hyperplanes, size_t num_tables, size_t 
                 hyperplanes[i][d] = gaussian_random(&state);
             }
         }
+        offsets[i] = uniform_random(&state) * effective_bucket_width;
     }
 }
 
 static uint32_t hash_vector(const float *data, size_t dimension, float **hyperplanes,
+                            const float *offsets, float effective_bucket_width,
                             size_t table_idx, size_t num_hash_bits) {
     uint32_t hash = 0;
     size_t base_idx = table_idx * num_hash_bits;
@@ -146,9 +151,9 @@ static uint32_t hash_vector(const float *data, size_t dimension, float **hyperpl
             dot += data[d] * plane[d];
         }
 
-        if (dot >= 0.0f) {
-            hash |= (1U << b);
-        }
+        /* E2LSH: h(v) = floor((a·v + b) / w) */
+        int32_t h = (int32_t)floorf((dot + offsets[base_idx + b]) / effective_bucket_width);
+        hash = hash * 2654435761U + (uint32_t)h;
     }
 
     return hash;
@@ -180,13 +185,13 @@ void *gv_lsh_create(size_t dimension, const GV_LSHConfig *config, GV_SoAStorage 
 
     index->dimension = dimension;
     index->config.num_tables = (config && config->num_tables > 0) ? config->num_tables : 8;
-    index->config.num_hash_bits = (config && config->num_hash_bits > 0) ? config->num_hash_bits : 16;
+    index->config.num_hash_bits = (config && config->num_hash_bits > 0) ? config->num_hash_bits : 4;
     index->config.seed = (config && config->seed != 0) ? config->seed : 42;
+    index->config.bucket_width = (config && config->bucket_width > 0.0f) ? config->bucket_width : 4.0f;
+    index->effective_bucket_width = index->config.bucket_width * sqrtf((float)dimension);
 
-    size_t num_buckets = 1ULL << index->config.num_hash_bits;
-    if (num_buckets > 65536) {
-        num_buckets = 65536;
-    }
+    /* E2LSH uses modular hashing, not power-of-2 buckets */
+    size_t num_buckets = 65536;
     index->num_buckets = num_buckets;
 
     if (soa_storage != NULL) {
@@ -211,8 +216,20 @@ void *gv_lsh_create(size_t dimension, const GV_LSHConfig *config, GV_SoAStorage 
         return NULL;
     }
 
-    generate_hyperplanes(index->hyperplanes, index->config.num_tables,
-                        index->config.num_hash_bits, dimension, index->config.seed);
+    index->offsets = (float *)malloc(total_planes * sizeof(float));
+    if (index->offsets == NULL) {
+        free(index->hyperplanes);
+        if (index->owns_storage) {
+            gv_soa_storage_destroy(index->storage);
+        }
+        free(index);
+        return NULL;
+    }
+
+    generate_hyperplanes(index->hyperplanes, index->offsets,
+                        index->config.num_tables,
+                        index->config.num_hash_bits, dimension,
+                        index->config.seed, index->effective_bucket_width);
 
     index->tables = (GV_LSHBucket **)calloc(index->config.num_tables, sizeof(GV_LSHBucket *));
     if (index->tables == NULL) {
@@ -277,6 +294,7 @@ int gv_lsh_insert(void *index, GV_Vector *vector) {
 
     for (size_t t = 0; t < lsh->config.num_tables; ++t) {
         uint32_t hash = hash_vector(data, lsh->dimension, lsh->hyperplanes,
+                                     lsh->offsets, lsh->effective_bucket_width,
                                      t, lsh->config.num_hash_bits);
         uint32_t bucket_idx = hash % lsh->num_buckets;
 
@@ -368,6 +386,7 @@ int gv_lsh_search(void *index, const GV_Vector *query, size_t k,
 
     for (size_t t = 0; t < lsh->config.num_tables; ++t) {
         uint32_t hash = hash_vector(query->data, lsh->dimension, lsh->hyperplanes,
+                                     lsh->offsets, lsh->effective_bucket_width,
                                      t, lsh->config.num_hash_bits);
         uint32_t bucket_idx = hash % lsh->num_buckets;
 
@@ -497,6 +516,7 @@ int gv_lsh_range_search(void *index, const GV_Vector *query, float radius,
 
     for (size_t t = 0; t < lsh->config.num_tables; ++t) {
         uint32_t hash = hash_vector(query->data, lsh->dimension, lsh->hyperplanes,
+                                     lsh->offsets, lsh->effective_bucket_width,
                                      t, lsh->config.num_hash_bits);
         uint32_t bucket_idx = hash % lsh->num_buckets;
 
@@ -609,6 +629,8 @@ void gv_lsh_destroy(void *index) {
         free(lsh->hyperplanes);
     }
 
+    free(lsh->offsets);
+
     if (lsh->storage != NULL && lsh->owns_storage) {
         gv_soa_storage_destroy(lsh->storage);
     }
@@ -660,6 +682,7 @@ int gv_lsh_update(void *index, size_t vector_index, const float *new_data, size_
 
     for (size_t t = 0; t < lsh->config.num_tables; ++t) {
         uint32_t old_hash = hash_vector(old_data, lsh->dimension, lsh->hyperplanes,
+                                        lsh->offsets, lsh->effective_bucket_width,
                                         t, lsh->config.num_hash_bits);
         uint32_t old_bucket_idx = old_hash % lsh->num_buckets;
 
@@ -679,6 +702,7 @@ int gv_lsh_update(void *index, size_t vector_index, const float *new_data, size_
 
     for (size_t t = 0; t < lsh->config.num_tables; ++t) {
         uint32_t new_hash = hash_vector(new_data, lsh->dimension, lsh->hyperplanes,
+                                        lsh->offsets, lsh->effective_bucket_width,
                                         t, lsh->config.num_hash_bits);
         uint32_t new_bucket_idx = new_hash % lsh->num_buckets;
 
@@ -871,8 +895,20 @@ int gv_lsh_save(const void *index, FILE *out, uint32_t version) {
     if (gv_lsh_write_uint64(out, lsh->config.seed) != 0) {
         return -1;
     }
+    if (gv_lsh_write_floats(out, &lsh->config.bucket_width, 1) != 0) {
+        return -1;
+    }
+    if (gv_lsh_write_floats(out, &lsh->effective_bucket_width, 1) != 0) {
+        return -1;
+    }
 
     size_t total_planes = lsh->config.num_tables * lsh->config.num_hash_bits;
+
+    /* Write offsets array */
+    if (gv_lsh_write_floats(out, lsh->offsets, total_planes) != 0) {
+        return -1;
+    }
+
     for (size_t i = 0; i < total_planes; ++i) {
         if (lsh->hyperplanes[i] == NULL) {
             return -1;
@@ -927,13 +963,29 @@ int gv_lsh_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version) 
     if (gv_lsh_read_uint64(in, &config.seed) != 0) {
         return -1;
     }
+    if (gv_lsh_read_floats(in, &config.bucket_width, 1) != 0) {
+        return -1;
+    }
 
     GV_LSHIndex *lsh = (GV_LSHIndex *)gv_lsh_create(dimension, &config, NULL);
     if (lsh == NULL) {
         return -1;
     }
 
+    /* Read saved effective_bucket_width and override the computed one */
+    if (gv_lsh_read_floats(in, &lsh->effective_bucket_width, 1) != 0) {
+        gv_lsh_destroy(lsh);
+        return -1;
+    }
+
     size_t total_planes = config.num_tables * config.num_hash_bits;
+
+    /* Read offsets (overwrite generated ones) */
+    if (gv_lsh_read_floats(in, lsh->offsets, total_planes) != 0) {
+        gv_lsh_destroy(lsh);
+        return -1;
+    }
+
     for (size_t i = 0; i < total_planes; ++i) {
         if (lsh->hyperplanes[i] == NULL) {
             lsh->hyperplanes[i] = (float *)malloc(dimension * sizeof(float));
@@ -997,6 +1049,7 @@ int gv_lsh_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version) 
             if (stored_data != NULL) {
                 for (size_t t = 0; t < lsh->config.num_tables; ++t) {
                     uint32_t hash = hash_vector(stored_data, dimension, lsh->hyperplanes,
+                                               lsh->offsets, lsh->effective_bucket_width,
                                                t, lsh->config.num_hash_bits);
                     uint32_t bucket_idx = hash % lsh->num_buckets;
                     bucket_add(&lsh->tables[t][bucket_idx], vec_idx);
