@@ -1166,9 +1166,6 @@ int gv_hnsw_search(void *index_ptr, const GV_Vector *query, size_t k,
         results[result_count].vector = result_vec;
         results[result_count].distance = sorted_cands[i].distance;
         results[result_count].id = index->nodes[cn].vector_index;
-        if (distance_type == GV_DISTANCE_COSINE) {
-            results[result_count].distance = 1.0f - results[result_count].distance;
-        }
         result_count++;
     }
 
