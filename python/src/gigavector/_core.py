@@ -78,6 +78,7 @@ class HNSWConfig:
     quant_rerank: int = 0
     use_acorn: bool = False
     acorn_hops: int = 1
+    distance_type: DistanceType = DistanceType.EUCLIDEAN
 
 
 @dataclass
@@ -282,6 +283,7 @@ class Database:
                 "quant_rerank": hnsw_config.quant_rerank,
                 "use_acorn": 1 if hnsw_config.use_acorn else 0,
                 "acorn_hops": hnsw_config.acorn_hops,
+                "distance_type": int(hnsw_config.distance_type),
             })
             db = lib.gv_db_open_with_hnsw_config(c_path, dimension, int(index), config)
         elif ivfpq_config is not None and index == IndexType.IVFPQ:
@@ -1217,20 +1219,9 @@ class LLMError(IntEnum):
 
 
 class LLMProvider(IntEnum):
-    """LLM provider enumeration.
-
-    Supported providers:
-    - OPENAI: OpenAI GPT models (tested, recommended)
-    - GOOGLE: Google Gemini models (tested)
-    - CUSTOM: Custom OpenAI-compatible endpoints
-
-    Internal/experimental (not exposed to end users):
-    - ANTHROPIC: Claude models (not yet tested due to API key unavailability)
-    """
     OPENAI = 0
-    ANTHROPIC = 1      # Internal: not yet tested, API keys unavailable
+    ANTHROPIC = 1
     GOOGLE = 2
-    # AZURE_OPENAI removed - use CUSTOM with Azure endpoint instead
     CUSTOM = 3
 
 
@@ -1728,9 +1719,13 @@ def _create_c_metadata(meta: Optional[MemoryMetadata]) -> CData:
     c_meta.memory_type = int(meta.memory_type)
     c_meta.source = ffi.new("char[]", meta.source.encode()) if meta.source else ffi.NULL
     c_meta.timestamp = meta.timestamp if meta.timestamp else 0
+    c_meta.last_accessed = 0
+    c_meta.access_count = 0
     c_meta.importance_score = meta.importance_score
     c_meta.extraction_metadata = ffi.new("char[]", meta.extraction_metadata.encode()) if meta.extraction_metadata else ffi.NULL
     c_meta.related_count = len(meta.related_memory_ids) if meta.related_memory_ids else 0
+    c_meta.links = ffi.NULL
+    c_meta.link_count = 0
     c_meta.consolidated = 1 if meta.consolidated else 0
 
     if meta.related_memory_ids:
@@ -1839,7 +1834,9 @@ class MemoryLayer:
         c_config.max_related_memories = config.max_related_memories
         c_config.use_llm_extraction = 1 if config.use_llm_extraction else 0
         c_config.use_llm_consolidation = 1 if config.use_llm_consolidation else 0
-        
+        c_config.context_graph_config = ffi.NULL
+        c_config.enable_context_graph = 0
+
         # Set LLM config if provided
         if config.llm_config:
             c_llm_config, _llm_refs = config.llm_config._to_c_config()

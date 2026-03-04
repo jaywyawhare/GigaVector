@@ -68,6 +68,7 @@ typedef struct {
     size_t quant_rerank;
     int use_acorn;
     size_t acorn_hops;
+    GV_DistanceType distance_type;
 } GV_HNSWConfig;
 
 typedef struct {
@@ -441,15 +442,38 @@ GV_ContextGraphConfig gv_context_graph_config_default(void);
 typedef enum { GV_MEMORY_TYPE_FACT = 0, GV_MEMORY_TYPE_PREFERENCE = 1, GV_MEMORY_TYPE_RELATIONSHIP = 2, GV_MEMORY_TYPE_EVENT = 3 } GV_MemoryType;
 typedef enum { GV_CONSOLIDATION_MERGE = 0, GV_CONSOLIDATION_UPDATE = 1, GV_CONSOLIDATION_LINK = 2, GV_CONSOLIDATION_ARCHIVE = 3 } GV_ConsolidationStrategy;
 
+typedef enum {
+    GV_LINK_SIMILAR = 0,
+    GV_LINK_SUPPORTS = 1,
+    GV_LINK_CONTRADICTS = 2,
+    GV_LINK_EXTENDS = 3,
+    GV_LINK_CAUSAL = 4,
+    GV_LINK_EXAMPLE = 5,
+    GV_LINK_PREREQUISITE = 6,
+    GV_LINK_TEMPORAL = 7
+} GV_MemoryLinkType;
+
+typedef struct {
+    char *target_memory_id;
+    GV_MemoryLinkType link_type;
+    float strength;
+    time_t created_at;
+    char *reason;
+} GV_MemoryLink;
+
 typedef struct {
     char *memory_id;
     GV_MemoryType memory_type;
     char *source;
     time_t timestamp;
+    time_t last_accessed;
+    uint32_t access_count;
     double importance_score;
     char *extraction_metadata;
     char **related_memory_ids;
     size_t related_count;
+    GV_MemoryLink *links;
+    size_t link_count;
     int consolidated;
 } GV_MemoryMetadata;
 
@@ -473,6 +497,8 @@ typedef struct {
     void *llm_config;
     int use_llm_extraction;
     int use_llm_consolidation;
+    void *context_graph_config;
+    int enable_context_graph;
 } GV_MemoryLayerConfig;
 
 typedef struct GV_MemoryLayer {
