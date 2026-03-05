@@ -143,7 +143,7 @@ class _Handler(BaseHTTPRequestHandler):
         except ValueError:
             idx_name = "UNKNOWN"
         self._send_json({
-            "version": "0.8.1",
+            "version": "0.8.2",
             "index_type": idx_name,
             "dimension": self._db.dimension,
             "vector_count": self._db.count,
