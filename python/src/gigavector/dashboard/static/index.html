@@ -217,10 +217,57 @@ td.mono{font-family:var(--mono);font-size:12px}
 .point-data{font-family:var(--mono);font-size:11px;color:var(--text-secondary);line-height:1.5;word-break:break-all;flex:1}
 .point-badge{font-family:var(--mono);font-size:10px;color:var(--text-muted);background:var(--bg-input);padding:2px 6px;border-radius:4px}
 
+/* ── Nav sections ── */
+.nav-section{
+  font-family:var(--mono);font-size:10px;font-weight:600;color:var(--text-muted);
+  text-transform:uppercase;letter-spacing:1px;padding:14px 12px 4px;margin-top:2px;
+}
+.nav-section:first-child{padding-top:4px;margin-top:0}
+
+/* ── Wizard / Playground ── */
+.wizard-steps{display:flex;gap:0;margin-bottom:20px;counter-reset:step}
+.wizard-step{
+  flex:1;padding:10px 14px;font-size:12px;font-weight:600;color:var(--text-muted);
+  background:var(--bg-input);border:1px solid var(--border);position:relative;text-align:center;
+}
+.wizard-step:first-child{border-radius:var(--radius) 0 0 var(--radius)}
+.wizard-step:last-child{border-radius:0 var(--radius) var(--radius) 0}
+.wizard-step.active{background:var(--bg-card);color:var(--text);border-color:var(--accent);z-index:1}
+.wizard-step.done{background:var(--green-bg);color:var(--green)}
+
+/* ── Import ── */
+.drop-zone{
+  border:2px dashed var(--border);border-radius:var(--radius);padding:40px;text-align:center;
+  color:var(--text-muted);font-size:14px;cursor:pointer;transition:all 0.15s;margin-bottom:16px;
+}
+.drop-zone.dragover{border-color:var(--accent);background:var(--accent-light);color:var(--accent-text)}
+.mapping-row{display:flex;gap:10px;align-items:center;padding:6px 0;font-size:13px}
+.mapping-row select{min-width:120px}
+.progress-bar{height:6px;background:var(--bg-input);border-radius:3px;overflow:hidden;margin:10px 0}
+.progress-bar-fill{height:100%;background:var(--accent);border-radius:3px;transition:width 0.3s}
+
+/* ── Monitoring ── */
+.monitor-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}
+.monitor-chart{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:16px}
+.monitor-chart canvas{width:100%;display:block}
+.monitor-chart-title{font-size:12px;font-weight:700;color:var(--text-secondary);margin-bottom:10px}
+
+/* ── Filter rows ── */
+.filter-row{display:flex;gap:8px;align-items:center;margin-bottom:6px}
+.filter-row input,.filter-row select{font-size:12px;padding:6px 8px}
+.filter-row .btn-sm{padding:4px 8px}
+
+/* ── SQL ── */
+.sql-editor{
+  width:100%;min-height:120px;font-family:var(--mono);font-size:13px;
+  background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius);
+  padding:14px;color:var(--text);resize:vertical;tab-size:2;
+}
+
 /* ── Responsive ── */
 @media(max-width:768px){
   .sidebar{width:56px}
-  .brand-name,.sidebar-nav a span,.sidebar-footer{display:none}
+  .brand-name,.sidebar-nav a span,.sidebar-footer,.nav-section{display:none}
   .sidebar-brand{padding:14px;justify-content:center}
   .sidebar-nav a{justify-content:center;padding:10px}
   .main{margin-left:56px}
@@ -239,6 +286,7 @@ td.mono{font-family:var(--mono);font-size:12px}
     <div class="brand-name">GigaVector</div>
   </div>
   <nav class="sidebar-nav">
+    <div class="nav-section">CORE</div>
     <a href="#overview" class="active" data-view="overview">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>
       <span>Overview</span>
@@ -258,6 +306,50 @@ td.mono{font-family:var(--mono);font-size:12px}
     <a href="#console" data-view="console">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
       <span>Console</span>
+    </a>
+    <div class="nav-section">DATA</div>
+    <a href="#import" data-view="import">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      <span>Import</span>
+    </a>
+    <a href="#namespaces" data-view="namespaces">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
+      <span>Namespaces</span>
+    </a>
+    <a href="#sql" data-view="sql">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+      <span>SQL</span>
+    </a>
+    <div class="nav-section">SEARCH</div>
+    <a href="#semantic" data-view="semantic">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 00-3 3v7a3 3 0 006 0V5a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/></svg>
+      <span>Semantic Search</span>
+    </a>
+    <a href="#playground" data-view="playground">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+      <span>Playground</span>
+    </a>
+    <div class="nav-section">ANALYTICS</div>
+    <a href="#monitoring" data-view="monitoring">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+      <span>Monitoring</span>
+    </a>
+    <a href="#benchmarks" data-view="benchmarks">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+      <span>Benchmarks</span>
+    </a>
+    <a href="#graph" data-view="graph">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="3"/><circle cx="18" cy="18" r="3"/><circle cx="18" cy="6" r="3"/><line x1="8.5" y1="7.5" x2="15.5" y2="16.5"/><line x1="15.5" y1="7.5" x2="8.5" y2="16.5"/></svg>
+      <span>Graph Explorer</span>
+    </a>
+    <div class="nav-section">ADMIN</div>
+    <a href="#tenants" data-view="tenants">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
+      <span>Tenants</span>
+    </a>
+    <a href="#backups" data-view="backups">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+      <span>Backups</span>
     </a>
   </nav>
   <div class="sidebar-footer">
@@ -408,6 +500,14 @@ td.mono{font-family:var(--mono);font-size:12px}
             <div class="form-group" style="margin-bottom:0"><label>Distance</label><select id="search-dist"><option value="euclidean">Euclidean</option><option value="cosine">Cosine</option><option value="dot_product">Dot Product</option><option value="manhattan">Manhattan</option></select></div>
             <button class="btn" onclick="doSearch()">Search</button>
           </div>
+          <div style="margin-bottom:14px">
+            <div style="font-size:12px;font-weight:600;color:var(--text-secondary);margin-bottom:6px">Metadata Filter (optional)</div>
+            <div class="filter-row">
+              <input type="text" id="filter-key" placeholder="key" style="width:120px">
+              <input type="text" id="filter-value" placeholder="value" style="width:180px">
+              <span style="font-size:11px;color:var(--text-muted)">Filters results where metadata[key] == value</span>
+            </div>
+          </div>
           <div id="search-meta" style="font-family:var(--mono);font-size:11px;color:var(--text-muted);margin-bottom:8px"></div>
           <table id="search-results" style="display:none"><thead><tr><th>#</th><th>Index</th><th>Distance</th><th>Data</th></tr></thead><tbody id="search-tbody"></tbody></table>
           <div id="search-empty" style="color:var(--text-muted);font-size:13px">Enter a query vector and click Search.</div>
@@ -454,6 +554,299 @@ td.mono{font-family:var(--mono);font-size:12px}
           <button class="btn btn-sm btn-outline" onclick="quickReq('GET','/api/dashboard/info')">Info</button>
           <button class="btn btn-sm btn-outline" onclick="quickReq('POST','/compact')">Compact</button>
           <button class="btn btn-sm btn-outline" onclick="quickReq('POST','/save')">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- IMPORT -->
+    <div class="view" id="view-import">
+      <div class="section">
+        <div class="section-title">Data Import Wizard</div>
+        <div class="section-desc">Import vectors from CSV or JSON files. Data is parsed client-side.</div>
+        <div class="drop-zone" id="import-drop">
+          Drop a CSV or JSON file here, or click to browse<br>
+          <input type="file" id="import-file" accept=".csv,.json,.jsonl" style="display:none">
+          <div style="font-size:12px;color:var(--text-muted);margin-top:8px">Supported: .csv, .json, .jsonl</div>
+        </div>
+        <div id="import-preview" style="display:none">
+          <div class="section-title">Column Mapping</div>
+          <div id="import-mappings"></div>
+          <div style="margin-top:12px;display:flex;gap:8px;align-items:center">
+            <button class="btn" onclick="runImport()">Import</button>
+            <button class="btn btn-outline" onclick="resetImport()">Reset</button>
+            <span id="import-status" style="font-family:var(--mono);font-size:12px;color:var(--text-muted)"></span>
+          </div>
+          <div class="progress-bar" id="import-progress-bar" style="display:none"><div class="progress-bar-fill" id="import-progress-fill"></div></div>
+        </div>
+        <div id="import-result" style="display:none;margin-top:14px" class="json-view"></div>
+      </div>
+    </div>
+
+    <!-- NAMESPACES -->
+    <div class="view" id="view-namespaces">
+      <div class="section">
+        <div class="section-title">Namespace Browser</div>
+        <div class="form-row" style="margin-bottom:14px">
+          <div class="form-group" style="margin-bottom:0"><label>Name</label><input type="text" id="ns-name" placeholder="my-namespace" style="width:180px"></div>
+          <div class="form-group" style="margin-bottom:0"><label>Dimension</label><input type="number" id="ns-dim" value="128" min="1" style="width:80px"></div>
+          <div class="form-group" style="margin-bottom:0"><label>Index</label><select id="ns-index"><option value="HNSW">HNSW</option><option value="KDTREE">KDTree</option><option value="IVFPQ">IVFPQ</option></select></div>
+          <button class="btn" onclick="createNamespace()">Create</button>
+          <button class="btn btn-outline" onclick="loadNamespaces()">Refresh</button>
+        </div>
+        <table id="ns-table"><thead><tr><th>Name</th><th>Actions</th></tr></thead><tbody id="ns-tbody"></tbody></table>
+        <div id="ns-empty" style="color:var(--text-muted);font-size:13px;padding:10px 0">Loading...</div>
+        <div id="ns-info" style="margin-top:14px;display:none" class="json-view"></div>
+      </div>
+    </div>
+
+    <!-- SQL -->
+    <div class="view" id="view-sql">
+      <div class="section">
+        <div class="section-title">SQL Query</div>
+        <div class="section-desc">Query vectors using SQL syntax. Example: <code>SELECT * FROM vectors LIMIT 10</code></div>
+        <textarea class="sql-editor" id="sql-input" placeholder="SELECT * FROM vectors LIMIT 10"></textarea>
+        <div style="margin-top:10px;display:flex;gap:8px">
+          <button class="btn" onclick="runSQL()">Execute</button>
+          <button class="btn btn-outline" onclick="explainSQL()">Explain</button>
+        </div>
+        <div id="sql-meta" style="font-family:var(--mono);font-size:11px;color:var(--text-muted);margin-top:10px"></div>
+        <div id="sql-result" style="margin-top:10px;display:none;overflow-x:auto">
+          <table id="sql-table"><thead id="sql-thead"></thead><tbody id="sql-tbody"></tbody></table>
+        </div>
+        <div id="sql-explain" style="margin-top:10px;display:none" class="json-view"></div>
+      </div>
+    </div>
+
+    <!-- SEMANTIC SEARCH -->
+    <div class="view" id="view-semantic">
+      <div class="section">
+        <div class="section-title">Semantic Search</div>
+        <div class="section-desc">Search by natural language text. Requires an embedding API key.</div>
+        <div class="form-group"><label>Search Text</label><textarea id="sem-text" rows="3" style="width:100%" placeholder="Enter natural language query..."></textarea></div>
+        <div class="form-row" style="margin-bottom:14px">
+          <div class="form-group" style="margin-bottom:0"><label>Provider</label><select id="sem-provider"><option value="openai">OpenAI</option><option value="google">Google</option><option value="huggingface">HuggingFace</option></select></div>
+          <div class="form-group" style="margin-bottom:0"><label>API Key</label><input type="password" id="sem-apikey" placeholder="sk-..." style="width:240px"></div>
+          <div class="form-group" style="margin-bottom:0"><label>k</label><input type="number" id="sem-k" value="10" min="1" style="width:60px"></div>
+          <button class="btn" onclick="doSemanticSearch()">Search</button>
+        </div>
+        <div id="sem-meta" style="font-family:var(--mono);font-size:11px;color:var(--text-muted);margin-bottom:8px"></div>
+        <table id="sem-results" style="display:none"><thead><tr><th>#</th><th>Distance</th><th>Data</th><th>Metadata</th></tr></thead><tbody id="sem-tbody"></tbody></table>
+        <div id="sem-empty" style="color:var(--text-muted);font-size:13px">Enter text and click Search.</div>
+      </div>
+    </div>
+
+    <!-- PLAYGROUND -->
+    <div class="view" id="view-playground">
+      <div class="wizard-steps">
+        <div class="wizard-step active" id="pg-step-0">1. Welcome</div>
+        <div class="wizard-step" id="pg-step-1">2. Add Data</div>
+        <div class="wizard-step" id="pg-step-2">3. Search</div>
+        <div class="wizard-step" id="pg-step-3">4. Results</div>
+      </div>
+      <div class="section" id="pg-panel-0">
+        <div class="section-title">Welcome to GigaVector</div>
+        <div class="section-desc">This interactive playground walks you through the core workflow: adding vectors and searching them. No prior setup needed.</div>
+        <button class="btn" onclick="pgNext()">Get Started</button>
+      </div>
+      <div class="section" id="pg-panel-1" style="display:none">
+        <div class="section-title">Add Sample Vectors</div>
+        <div class="section-desc">We'll insert some random vectors to get you started.</div>
+        <div class="form-group"><label>Number of vectors</label><input type="number" id="pg-count" value="20" min="1" max="100" style="width:80px"></div>
+        <button class="btn" onclick="pgAddSampleData()">Insert Sample Data</button>
+        <div id="pg-add-status" style="font-family:var(--mono);font-size:12px;color:var(--text-muted);margin-top:8px"></div>
+      </div>
+      <div class="section" id="pg-panel-2" style="display:none">
+        <div class="section-title">Search Your Data</div>
+        <div class="section-desc">Now let's search for the nearest neighbors of a random query vector.</div>
+        <div class="form-row" style="margin-bottom:14px">
+          <div class="form-group" style="margin-bottom:0"><label>k</label><input type="number" id="pg-k" value="5" min="1" style="width:60px"></div>
+          <button class="btn" onclick="pgSearch()">Search Random Query</button>
+        </div>
+      </div>
+      <div class="section" id="pg-panel-3" style="display:none">
+        <div class="section-title">Search Results</div>
+        <div id="pg-query-info" style="font-family:var(--mono);font-size:12px;color:var(--text-muted);margin-bottom:10px"></div>
+        <table id="pg-results"><thead><tr><th>#</th><th>Distance</th><th>Data</th></tr></thead><tbody id="pg-tbody"></tbody></table>
+        <div style="margin-top:14px;display:flex;gap:8px">
+          <button class="btn btn-outline" onclick="pgSearch()">Search Again</button>
+          <button class="btn btn-outline" onclick="pgReset()">Start Over</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- MONITORING -->
+    <div class="view" id="view-monitoring">
+      <div class="cards" id="mon-cards">
+        <div class="card"><div class="card-label">QPS</div><div class="card-value" id="mon-qps">&mdash;</div></div>
+        <div class="card"><div class="card-label">Vectors</div><div class="card-value" id="mon-vecs">&mdash;</div></div>
+        <div class="card"><div class="card-label">Memory</div><div class="card-value" id="mon-mem">&mdash;</div></div>
+        <div class="card"><div class="card-label">Health</div><div class="card-value" id="mon-health">&mdash;</div></div>
+      </div>
+      <div class="monitor-grid">
+        <div class="monitor-chart">
+          <div class="monitor-chart-title">Queries Per Second</div>
+          <canvas id="mon-qps-chart" height="180"></canvas>
+        </div>
+        <div class="monitor-chart">
+          <div class="monitor-chart-title">Latency (ms)</div>
+          <canvas id="mon-latency-chart" height="180"></canvas>
+        </div>
+      </div>
+      <div class="monitor-grid">
+        <div class="monitor-chart">
+          <div class="monitor-chart-title">Memory Usage</div>
+          <canvas id="mon-mem-chart" height="180"></canvas>
+        </div>
+        <div class="monitor-chart">
+          <div class="monitor-chart-title">Detailed Stats</div>
+          <div class="json-view" id="mon-detail-json" style="max-height:180px;min-height:160px;font-size:11px">&mdash;</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- BENCHMARKS -->
+    <div class="view" id="view-benchmarks">
+      <div class="section">
+        <div class="section-title">Benchmark Comparison</div>
+        <div class="section-desc">GigaVector HNSW vs FAISS HNSW — ANN Benchmarks (SIFT-1M, 128D, Euclidean)</div>
+      </div>
+      <div class="monitor-grid">
+        <div class="monitor-chart">
+          <div class="monitor-chart-title">Recall@10</div>
+          <canvas id="bench-recall" height="200"></canvas>
+        </div>
+        <div class="monitor-chart">
+          <div class="monitor-chart-title">Queries Per Second</div>
+          <canvas id="bench-qps" height="200"></canvas>
+        </div>
+      </div>
+      <div class="monitor-grid">
+        <div class="monitor-chart">
+          <div class="monitor-chart-title">Build Time (seconds)</div>
+          <canvas id="bench-build" height="200"></canvas>
+        </div>
+        <div class="monitor-chart">
+          <div class="monitor-chart-title">Memory (MB)</div>
+          <canvas id="bench-memory" height="200"></canvas>
+        </div>
+      </div>
+      <div class="section">
+        <div class="section-title">Raw Data</div>
+        <table><thead><tr><th>Metric</th><th>GigaVector</th><th>FAISS</th></tr></thead><tbody>
+          <tr><td>Recall@10 (ef=200)</td><td class="mono">0.977</td><td class="mono">0.975</td></tr>
+          <tr><td>QPS (ef=10)</td><td class="mono">5,149</td><td class="mono">7,096</td></tr>
+          <tr><td>QPS (ef=200)</td><td class="mono">1,024</td><td class="mono">1,180</td></tr>
+          <tr><td>Build Time</td><td class="mono">7.5s</td><td class="mono">1.5s</td></tr>
+          <tr><td>Index Memory</td><td class="mono">~180 MB</td><td class="mono">~210 MB</td></tr>
+        </tbody></table>
+      </div>
+    </div>
+
+    <!-- GRAPH EXPLORER -->
+    <div class="view" id="view-graph">
+      <div class="section">
+        <div class="section-title">Graph Explorer</div>
+        <div class="form-row" style="margin-bottom:14px">
+          <div class="form-group" style="margin-bottom:0"><label>Node Label</label><input type="text" id="ge-label" placeholder="Person" style="width:120px"></div>
+          <button class="btn btn-sm" onclick="geAddNode()">Add Node</button>
+          <div class="form-group" style="margin-bottom:0;margin-left:12px"><label>Source</label><input type="number" id="ge-src" min="0" style="width:60px"></div>
+          <div class="form-group" style="margin-bottom:0"><label>Target</label><input type="number" id="ge-tgt" min="0" style="width:60px"></div>
+          <div class="form-group" style="margin-bottom:0"><label>Label</label><input type="text" id="ge-elabel" placeholder="knows" style="width:80px"></div>
+          <button class="btn btn-sm" onclick="geAddEdge()">Add Edge</button>
+          <button class="btn btn-sm btn-outline" style="margin-left:auto" onclick="geRefresh()">Refresh</button>
+        </div>
+        <div class="form-row" style="margin-bottom:14px">
+          <div class="form-group" style="margin-bottom:0"><label>BFS Start</label><input type="number" id="ge-bfs-start" value="0" min="0" style="width:60px"></div>
+          <div class="form-group" style="margin-bottom:0"><label>Depth</label><input type="number" id="ge-bfs-depth" value="3" min="1" max="10" style="width:50px"></div>
+          <button class="btn btn-sm" onclick="geBFS()">Run BFS</button>
+          <div class="form-group" style="margin-bottom:0;margin-left:12px"><label>From</label><input type="number" id="ge-sp-from" min="0" style="width:60px"></div>
+          <div class="form-group" style="margin-bottom:0"><label>To</label><input type="number" id="ge-sp-to" min="0" style="width:60px"></div>
+          <button class="btn btn-sm" onclick="geShortestPath()">Shortest Path</button>
+        </div>
+        <div id="ge-status" style="font-family:var(--mono);font-size:11px;color:var(--text-muted);margin-bottom:8px"></div>
+      </div>
+      <div class="viz-container">
+        <canvas class="viz-canvas" id="ge-canvas" width="900" height="460"></canvas>
+        <div class="viz-info" id="ge-info">Add nodes and edges, then click Refresh to visualize the graph.</div>
+      </div>
+    </div>
+
+    <!-- TENANTS -->
+    <div class="view" id="view-tenants">
+      <div class="section">
+        <div class="section-title">Multi-Tenant Administration</div>
+        <div class="tabs">
+          <button class="tab active" data-tab="tenant-manage">Tenants</button>
+          <button class="tab" data-tab="tenant-rbac">RBAC</button>
+          <button class="tab" data-tab="tenant-quotas">Quotas</button>
+        </div>
+        <div id="tenant-manage" class="tab-content">
+          <div class="form-row" style="margin-bottom:14px">
+            <div class="form-group" style="margin-bottom:0"><label>Tenant ID</label><input type="text" id="t-id" placeholder="acme-corp" style="width:160px"></div>
+            <div class="form-group" style="margin-bottom:0"><label>Tier</label><select id="t-tier"><option value="SHARED">Shared</option><option value="DEDICATED">Dedicated</option><option value="PREMIUM">Premium</option></select></div>
+            <button class="btn" onclick="createTenant()">Add Tenant</button>
+          </div>
+          <div id="t-status" style="font-family:var(--mono);font-size:12px;color:var(--text-muted);margin-bottom:8px"></div>
+          <div id="t-info" style="display:none" class="json-view"></div>
+        </div>
+        <div id="tenant-rbac" class="tab-content" style="display:none">
+          <div class="section-desc">Manage roles, rules, and assignments.</div>
+          <div class="form-row" style="margin-bottom:10px">
+            <div class="form-group" style="margin-bottom:0"><label>Role Name</label><input type="text" id="rbac-role" placeholder="editor" style="width:120px"></div>
+            <button class="btn btn-sm" onclick="createRole()">Create Role</button>
+          </div>
+          <div class="form-row" style="margin-bottom:10px">
+            <div class="form-group" style="margin-bottom:0"><label>Role</label><input type="text" id="rbac-rule-role" placeholder="editor" style="width:100px"></div>
+            <div class="form-group" style="margin-bottom:0"><label>Resource</label><input type="text" id="rbac-resource" placeholder="vectors" style="width:100px"></div>
+            <div class="form-group" style="margin-bottom:0"><label>Perms (bitmask)</label><input type="number" id="rbac-perms" value="3" min="0" max="15" style="width:60px"></div>
+            <button class="btn btn-sm" onclick="addRule()">Add Rule</button>
+          </div>
+          <div class="form-row" style="margin-bottom:10px">
+            <div class="form-group" style="margin-bottom:0"><label>User ID</label><input type="text" id="rbac-user" placeholder="user@example.com" style="width:160px"></div>
+            <div class="form-group" style="margin-bottom:0"><label>Role</label><input type="text" id="rbac-assign-role" placeholder="editor" style="width:100px"></div>
+            <button class="btn btn-sm" onclick="assignRole()">Assign</button>
+          </div>
+          <div id="rbac-status" style="font-family:var(--mono);font-size:12px;color:var(--text-muted)"></div>
+        </div>
+        <div id="tenant-quotas" class="tab-content" style="display:none">
+          <div class="section-desc">Set resource quotas per tenant.</div>
+          <div class="form-row" style="margin-bottom:10px">
+            <div class="form-group" style="margin-bottom:0"><label>Tenant ID</label><input type="text" id="q-tenant" placeholder="acme-corp" style="width:140px"></div>
+            <div class="form-group" style="margin-bottom:0"><label>Max Vectors</label><input type="number" id="q-maxvec" value="100000" min="0" style="width:100px"></div>
+            <div class="form-group" style="margin-bottom:0"><label>Max QPS</label><input type="number" id="q-maxqps" value="1000" step="100" min="0" style="width:80px"></div>
+            <button class="btn btn-sm" onclick="setQuota()">Set Quota</button>
+          </div>
+          <div id="q-status" style="font-family:var(--mono);font-size:12px;color:var(--text-muted)"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- BACKUPS -->
+    <div class="view" id="view-backups">
+      <div class="section">
+        <div class="section-title">Backup &amp; Restore</div>
+        <div class="tabs">
+          <button class="tab active" data-tab="bk-create">Create Backup</button>
+          <button class="tab" data-tab="bk-restore">Restore</button>
+          <button class="tab" data-tab="bk-header">Inspect</button>
+        </div>
+        <div id="bk-create" class="tab-content">
+          <div class="section-desc">Create a snapshot backup of the current database.</div>
+          <div class="form-group"><label>Backup Path (optional)</label><input type="text" id="bk-path" placeholder="/tmp/gv_backup.gvb" style="width:100%"></div>
+          <button class="btn" onclick="createBackup()">Create Backup</button>
+          <div id="bk-create-result" style="margin-top:10px;display:none" class="json-view"></div>
+        </div>
+        <div id="bk-restore" class="tab-content" style="display:none">
+          <div class="section-desc">Restore database from a backup file. This replaces the current database.</div>
+          <div class="form-group"><label>Backup Path</label><input type="text" id="bk-restore-path" placeholder="/tmp/gv_backup.gvb" style="width:100%"></div>
+          <button class="btn btn-danger" onclick="restoreBackup()">Restore</button>
+          <div id="bk-restore-result" style="margin-top:10px;display:none" class="json-view"></div>
+        </div>
+        <div id="bk-header" class="tab-content" style="display:none">
+          <div class="section-desc">Read backup file header without restoring.</div>
+          <div class="form-group"><label>Backup Path</label><input type="text" id="bk-header-path" placeholder="/tmp/gv_backup.gvb" style="width:100%"></div>
+          <button class="btn btn-outline" onclick="readBackupHeader()">Read Header</button>
+          <div id="bk-header-result" style="margin-top:10px;display:none" class="json-view"></div>
         </div>
       </div>
     </div>
@@ -517,20 +910,6 @@ document.querySelectorAll('.tabs').forEach(tabs => {
       tabs.parentElement.querySelectorAll('.tab-content').forEach(c => c.style.display = 'none');
       document.getElementById(target).style.display = 'block';
     });
-  });
-});
-
-/* Nav */
-document.querySelectorAll('.sidebar-nav a').forEach(a => {
-  a.addEventListener('click', e => {
-    e.preventDefault();
-    const view = a.dataset.view;
-    document.querySelectorAll('.sidebar-nav a').forEach(x => x.classList.remove('active'));
-    a.classList.add('active');
-    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-    document.getElementById('view-' + view).classList.add('active');
-    document.getElementById('viewTitle').textContent = a.querySelector('span').textContent;
-    if (view === 'vectors') loadPoints();
   });
 });
 
@@ -1064,7 +1443,10 @@ function renderSearchResults(r, tbodyId, metaId, tableId, emptyId) {
 async function doSearch() {
   try {
     const q=JSON.parse(document.getElementById('search-query').value.trim());
-    const r=await apiCall('/search',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:q,k:parseInt(document.getElementById('search-k').value),distance:document.getElementById('search-dist').value})});
+    const body={query:q,k:parseInt(document.getElementById('search-k').value),distance:document.getElementById('search-dist').value};
+    const fk=document.getElementById('filter-key').value.trim(), fv=document.getElementById('filter-value').value.trim();
+    if(fk&&fv) body.filter={key:fk,value:fv};
+    const r=await apiCall('/search',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     renderSearchResults(r,'search-tbody','search-meta','search-results','search-empty');
   } catch(e){ document.getElementById('search-meta').textContent=''; document.getElementById('search-empty').textContent='Invalid JSON: '+e.message; document.getElementById('search-empty').style.display='block'; document.getElementById('search-results').style.display='none'; }
 }
@@ -1092,6 +1474,543 @@ function quickReq(method,url){
   document.getElementById('view-console').classList.add('active');document.getElementById('viewTitle').textContent='Console';consoleSend();
 }
 document.getElementById('con-url').addEventListener('keydown',e=>{if(e.key==='Enter')consoleSend()});
+
+
+function drawLineChart(canvas, data, opts={}) {
+  const w=canvas.parentElement.clientWidth-32, h=opts.height||160, dpr=window.devicePixelRatio||1;
+  canvas.width=w*dpr; canvas.height=h*dpr; canvas.style.width=w+'px'; canvas.style.height=h+'px';
+  const ctx=canvas.getContext('2d'); ctx.scale(dpr,dpr);
+  const pad={t:10,r:10,b:24,l:50}, pw=w-pad.l-pad.r, ph=h-pad.t-pad.b;
+  if(!data.length){ctx.fillStyle='#999';ctx.font='12px sans-serif';ctx.fillText('No data',w/2-20,h/2);return;}
+  let mn=Infinity,mx=-Infinity;
+  for(const v of data){if(v<mn)mn=v;if(v>mx)mx=v;}
+  if(mn===mx){mn-=1;mx+=1;}
+  ctx.fillStyle='#f5f5f0';ctx.fillRect(0,0,w,h);
+  ctx.strokeStyle='#e0dfd8';ctx.lineWidth=0.5;
+  for(let i=0;i<=4;i++){const y=pad.t+ph*i/4;ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(pad.l+pw,y);ctx.stroke();
+    ctx.fillStyle='#999';ctx.font='10px "IBM Plex Mono"';ctx.textAlign='right';ctx.fillText((mx-(mx-mn)*i/4).toFixed(1),pad.l-4,y+3);}
+  ctx.beginPath();ctx.moveTo(pad.l,pad.t+ph-(data[0]-mn)/(mx-mn)*ph);
+  for(let i=1;i<data.length;i++){const x=pad.l+pw*i/(data.length-1),y=pad.t+ph-(data[i]-mn)/(mx-mn)*ph;ctx.lineTo(x,y);}
+  ctx.strokeStyle=opts.color||'#e11d48';ctx.lineWidth=2;ctx.stroke();
+  if(opts.fill){ctx.lineTo(pad.l+pw,pad.t+ph);ctx.lineTo(pad.l,pad.t+ph);ctx.closePath();ctx.fillStyle=opts.fillColor||'rgba(225,29,72,0.08)';ctx.fill();}
+  if(opts.label){ctx.fillStyle='#999';ctx.font='10px "IBM Plex Mono"';ctx.textAlign='center';ctx.fillText(opts.label,w/2,h-4);}
+}
+
+function drawBarChart(canvas, labels, values, opts={}) {
+  const w=canvas.parentElement.clientWidth-32, h=opts.height||180, dpr=window.devicePixelRatio||1;
+  canvas.width=w*dpr; canvas.height=h*dpr; canvas.style.width=w+'px'; canvas.style.height=h+'px';
+  const ctx=canvas.getContext('2d'); ctx.scale(dpr,dpr);
+  const pad={t:14,r:10,b:36,l:50}, pw=w-pad.l-pad.r, ph=h-pad.t-pad.b;
+  const mx=Math.max(...values)*1.15||1;
+  ctx.fillStyle='#f5f5f0';ctx.fillRect(0,0,w,h);
+  ctx.strokeStyle='#e0dfd8';ctx.lineWidth=0.5;
+  for(let i=0;i<=4;i++){const y=pad.t+ph*i/4;ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(pad.l+pw,y);ctx.stroke();
+    ctx.fillStyle='#999';ctx.font='10px "IBM Plex Mono"';ctx.textAlign='right';ctx.fillText((mx-mx*i/4).toFixed(opts.decimals??1),pad.l-4,y+3);}
+  const colors=opts.colors||['#e11d48','#18181b','#0369a1','#16a34a'];
+  const gap=pw/(labels.length*2+1), bw=gap*1.5;
+  for(let i=0;i<labels.length;i++){
+    const x=pad.l+gap+i*(bw+gap), bh=values[i]/mx*ph;
+    ctx.fillStyle=colors[i%colors.length];ctx.fillRect(x,pad.t+ph-bh,bw,bh);
+    ctx.fillStyle='#1a1a1a';ctx.font='bold 11px "IBM Plex Mono"';ctx.textAlign='center';
+    ctx.fillText(values[i].toFixed(opts.decimals??1),x+bw/2,pad.t+ph-bh-4);
+    ctx.fillStyle='#5c5c5c';ctx.font='10px "IBM Plex Mono"';ctx.fillText(labels[i],x+bw/2,h-8);
+  }
+}
+
+function drawGauge(canvas, value, max, opts={}) {
+  const w=canvas.parentElement.clientWidth-32, h=opts.height||160, dpr=window.devicePixelRatio||1;
+  canvas.width=w*dpr; canvas.height=h*dpr; canvas.style.width=w+'px'; canvas.style.height=h+'px';
+  const ctx=canvas.getContext('2d'); ctx.scale(dpr,dpr);
+  ctx.fillStyle='#f5f5f0';ctx.fillRect(0,0,w,h);
+  const cx=w/2, cy=h*0.6, r=Math.min(w,h)*0.38;
+  const pct=Math.min(value/(max||1),1);
+  ctx.beginPath();ctx.arc(cx,cy,r,Math.PI,2*Math.PI);ctx.strokeStyle='#e0dfd8';ctx.lineWidth=12;ctx.lineCap='round';ctx.stroke();
+  ctx.beginPath();ctx.arc(cx,cy,r,Math.PI,Math.PI+Math.PI*pct);
+  ctx.strokeStyle=pct>0.85?'#dc2626':pct>0.6?'#eab308':'#16a34a';ctx.lineWidth=12;ctx.lineCap='round';ctx.stroke();
+  ctx.fillStyle='#1a1a1a';ctx.font='bold 20px "IBM Plex Mono"';ctx.textAlign='center';ctx.fillText((pct*100).toFixed(0)+'%',cx,cy+6);
+  if(opts.label){ctx.fillStyle='#999';ctx.font='10px "IBM Plex Mono"';ctx.fillText(opts.label,cx,cy+22);}
+}
+
+
+const monRing={qps:[],latency:[],mem:[]};
+let monTimer=null;
+
+async function refreshMonitoring() {
+  const r=await apiCall('/api/detailed-stats');
+  if(!r.ok)return;
+  const d=r.data;
+  const qps=d.queries_per_second||0;
+  const lat=d.search_latency||0;
+  const mem=d.memory||0;
+  monRing.qps.push(qps);if(monRing.qps.length>60)monRing.qps.shift();
+  monRing.latency.push(lat);if(monRing.latency.length>60)monRing.latency.shift();
+  monRing.mem.push(mem);if(monRing.mem.length>60)monRing.mem.shift();
+  document.getElementById('mon-qps').textContent=qps.toFixed(1);
+  document.getElementById('mon-vecs').textContent=(d.basic_stats?.total_vectors||0).toLocaleString();
+  document.getElementById('mon-mem').textContent=formatBytes(mem);
+  document.getElementById('mon-health').textContent=d.health_status||'ok';
+  drawLineChart(document.getElementById('mon-qps-chart'),monRing.qps,{color:'#e11d48',fill:true,label:'Last 60 samples'});
+  drawLineChart(document.getElementById('mon-latency-chart'),monRing.latency,{color:'#0369a1',fill:true,label:'Search latency (ms)'});
+  drawGauge(document.getElementById('mon-mem-chart'),mem,1073741824,{label:formatBytes(mem)+' / 1 GB'});
+  document.getElementById('mon-detail-json').innerHTML=jsonHighlight(d);
+}
+
+
+function drawBenchmarks() {
+  drawBarChart(document.getElementById('bench-recall'),['GigaVector','FAISS'],[0.977,0.975],{decimals:3,colors:['#e11d48','#18181b']});
+  drawBarChart(document.getElementById('bench-qps'),['GV ef=10','FAISS ef=10','GV ef=200','FAISS ef=200'],[5149,7096,1024,1180],{decimals:0,colors:['#e11d48','#18181b','#e11d48','#18181b']});
+  drawBarChart(document.getElementById('bench-build'),['GigaVector','FAISS'],[7.5,1.5],{decimals:1,colors:['#e11d48','#18181b']});
+  drawBarChart(document.getElementById('bench-memory'),['GigaVector','FAISS'],[180,210],{decimals:0,colors:['#e11d48','#18181b']});
+}
+
+
+let pgStep=0, pgDim=0;
+function pgSetStep(s) {
+  pgStep=s;
+  for(let i=0;i<4;i++){
+    document.getElementById('pg-step-'+i).className='wizard-step'+(i<s?' done':'')+(i===s?' active':'');
+    document.getElementById('pg-panel-'+i).style.display=i===s?'block':'none';
+  }
+}
+function pgNext(){pgSetStep(pgStep+1);}
+function pgReset(){pgStep=0;pgSetStep(0);}
+
+async function pgAddSampleData() {
+  const info=await apiCall('/api/dashboard/info');
+  pgDim=info.ok?info.data.dimension:4;
+  const n=parseInt(document.getElementById('pg-count').value)||20;
+  let ok=0;
+  for(let i=0;i<n;i++){
+    const data=Array.from({length:pgDim},()=>Math.random());
+    const r=await apiCall('/vectors',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({data,metadata:{source:'playground',idx:''+i}})});
+    if(r.ok) ok++;
+  }
+  document.getElementById('pg-add-status').textContent='Inserted '+ok+'/'+n+' vectors (dim='+pgDim+')';
+  showToast('Inserted '+ok+' vectors','success');
+  pgNext();
+}
+
+async function pgSearch() {
+  if(!pgDim){const info=await apiCall('/api/dashboard/info');pgDim=info.ok?info.data.dimension:4;}
+  const k=parseInt(document.getElementById('pg-k').value)||5;
+  const query=Array.from({length:pgDim},()=>Math.random());
+  const r=await apiCall('/search',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query,k,distance:'euclidean'})});
+  pgSetStep(3);
+  document.getElementById('pg-query-info').textContent='Query: ['+query.slice(0,4).map(v=>v.toFixed(3)).join(', ')+(pgDim>4?', ...':'')+'] ('+pgDim+'D)';
+  const tbody=document.getElementById('pg-tbody');tbody.innerHTML='';
+  if(r.ok&&r.data.results){
+    r.data.results.forEach((h,i)=>{
+      const dp=h.data?'['+h.data.slice(0,3).map(v=>v.toFixed(3)).join(', ')+(h.data.length>3?', ...':'')+']':'—';
+      const tr=document.createElement('tr');
+      tr.innerHTML='<td>'+(i+1)+'</td><td class="mono">'+(h.distance!=null?h.distance.toFixed(6):'—')+'</td><td class="mono">'+dp+'</td>';
+      tbody.appendChild(tr);
+    });
+  }
+}
+
+
+async function runSQL() {
+  const query=document.getElementById('sql-input').value.trim();
+  if(!query)return;
+  document.getElementById('sql-explain').style.display='none';
+  const t0=performance.now();
+  const r=await apiCall('/api/sql/execute',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query})});
+  const ms=(performance.now()-t0).toFixed(1);
+  document.getElementById('sql-meta').textContent=r.ok?(r.data.row_count+' rows in '+ms+'ms'):('Error: '+(r.data.message||JSON.stringify(r.data)));
+  if(r.ok&&r.data.columns){
+    const thead=document.getElementById('sql-thead');
+    thead.innerHTML='<tr>'+r.data.columns.map(c=>'<th>'+c+'</th>').join('')+'</tr>';
+    const tbody=document.getElementById('sql-tbody');tbody.innerHTML='';
+    (r.data.rows||[]).forEach(row=>{
+      const tr=document.createElement('tr');
+      tr.innerHTML='<td class="mono">'+(row.index??'—')+'</td><td class="mono">'+(row.distance!=null?row.distance.toFixed(6):'—')+'</td><td class="mono">'+(row.metadata||'—')+'</td>';
+      tbody.appendChild(tr);
+    });
+    document.getElementById('sql-result').style.display='block';
+  } else {
+    document.getElementById('sql-result').style.display='none';
+  }
+}
+
+async function explainSQL() {
+  const query=document.getElementById('sql-input').value.trim();
+  if(!query)return;
+  document.getElementById('sql-result').style.display='none';
+  const r=await apiCall('/api/sql/explain',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query})});
+  const el=document.getElementById('sql-explain');
+  el.style.display='block';
+  el.innerHTML=r.ok?jsonHighlight(r.data):'<span class="json-null">Error: '+(r.data.message||'')+'</span>';
+  document.getElementById('sql-meta').textContent=r.ok?'Query plan':'Error';
+}
+
+document.getElementById('sql-input').addEventListener('keydown',e=>{if(e.key==='Enter'&&(e.ctrlKey||e.metaKey))runSQL();});
+
+
+async function createBackup() {
+  const path=document.getElementById('bk-path').value.trim();
+  const body=path?{path}:{};
+  const r=await apiCall('/api/backups',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const el=document.getElementById('bk-create-result');el.style.display='block';
+  el.innerHTML=jsonHighlight(r.data);
+  showToast(r.ok?'Backup created':'Backup failed',r.ok?'success':'error');
+}
+
+async function restoreBackup() {
+  const path=document.getElementById('bk-restore-path').value.trim();
+  if(!path){showToast('Enter backup path','error');return;}
+  if(!confirm('This will replace the current database. Continue?'))return;
+  const r=await apiCall('/api/backups/restore',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path})});
+  const el=document.getElementById('bk-restore-result');el.style.display='block';
+  el.innerHTML=jsonHighlight(r.data);
+  showToast(r.ok?'Restore complete':'Restore failed',r.ok?'success':'error');
+}
+
+async function readBackupHeader() {
+  const path=document.getElementById('bk-header-path').value.trim();
+  if(!path){showToast('Enter backup path','error');return;}
+  const r=await apiCall('/api/backups/header?path='+encodeURIComponent(path));
+  const el=document.getElementById('bk-header-result');el.style.display='block';
+  el.innerHTML=jsonHighlight(r.data);
+}
+
+
+let importData=null, importCols=[];
+const dropZone=document.getElementById('import-drop');
+const fileInput=document.getElementById('import-file');
+
+dropZone.addEventListener('click',()=>fileInput.click());
+dropZone.addEventListener('dragover',e=>{e.preventDefault();dropZone.classList.add('dragover');});
+dropZone.addEventListener('dragleave',()=>dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop',e=>{e.preventDefault();dropZone.classList.remove('dragover');if(e.dataTransfer.files.length)handleImportFile(e.dataTransfer.files[0]);});
+fileInput.addEventListener('change',()=>{if(fileInput.files.length)handleImportFile(fileInput.files[0]);});
+
+function handleImportFile(file) {
+  const reader=new FileReader();
+  reader.onload=function(e){
+    const text=e.target.result;
+    try {
+      if(file.name.endsWith('.json')){
+        const parsed=JSON.parse(text);
+        importData=Array.isArray(parsed)?parsed:[parsed];
+      } else if(file.name.endsWith('.jsonl')){
+        importData=text.trim().split('\n').map(l=>JSON.parse(l));
+      } else {
+        const lines=text.trim().split('\n');
+        const header=lines[0].split(',').map(h=>h.trim().replace(/^"|"$/g,''));
+        importCols=header;
+        importData=lines.slice(1).map(line=>{
+          const vals=line.split(',').map(v=>v.trim().replace(/^"|"$/g,''));
+          const obj={};header.forEach((h,i)=>obj[h]=vals[i]);return obj;
+        });
+      }
+      dropZone.innerHTML='<b>'+file.name+'</b> — '+importData.length+' records';
+      showImportPreview();
+    } catch(err){showToast('Parse error: '+err.message,'error');}
+  };
+  reader.readAsText(file);
+}
+
+function showImportPreview() {
+  document.getElementById('import-preview').style.display='block';
+  const sample=importData[0]||{};
+  const keys=Object.keys(sample);
+  const mappings=document.getElementById('import-mappings');
+  mappings.innerHTML='<div class="section-desc">Map file columns to vector fields:</div>';
+  const dataOpts=keys.map(k=>'<option value="'+k+'">'+k+'</option>').join('');
+  mappings.innerHTML+=
+    '<div class="mapping-row"><span style="min-width:100px;font-weight:600">Vector Data</span>'+
+    '<select id="import-map-data"><option value="__auto__">Auto-detect</option>'+dataOpts+'</select></div>'+
+    '<div class="mapping-row"><span style="min-width:100px;font-weight:600">Metadata</span>'+
+    '<select id="import-map-meta"><option value="__none__">None</option><option value="__all__">All remaining</option>'+dataOpts+'</select></div>';
+}
+
+async function runImport() {
+  if(!importData||!importData.length){showToast('No data to import','error');return;}
+  const dataCol=document.getElementById('import-map-data').value;
+  const metaCol=document.getElementById('import-map-meta').value;
+  const bar=document.getElementById('import-progress-bar');bar.style.display='block';
+  const fill=document.getElementById('import-progress-fill');
+  const status=document.getElementById('import-status');
+  const batchSize=50;
+  let inserted=0, errors=0;
+  for(let i=0;i<importData.length;i+=batchSize){
+    const batch=importData.slice(i,i+batchSize).map(row=>{
+      let data;
+      if(dataCol==='__auto__'){
+        const vals=Object.values(row);
+        data=Array.isArray(vals[0])?vals[0]:vals.map(Number).filter(v=>!isNaN(v));
+      } else {
+        const v=row[dataCol]; data=Array.isArray(v)?v:typeof v==='string'?JSON.parse(v):[Number(v)];
+      }
+      let metadata=null;
+      if(metaCol==='__all__'){metadata={};for(const[k,v]of Object.entries(row)){if(k!==dataCol)metadata[k]=String(v);}}
+      else if(metaCol!=='__none__'){metadata={[metaCol]:String(row[metaCol])};}
+      return {data,metadata};
+    });
+    const r=await apiCall('/api/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({vectors:batch})});
+    if(r.ok){inserted+=r.data.inserted;errors+=r.data.errors;}
+    fill.style.width=Math.min(100,((i+batchSize)/importData.length*100)).toFixed(0)+'%';
+    status.textContent=inserted+' inserted, '+errors+' errors';
+  }
+  fill.style.width='100%';
+  const el=document.getElementById('import-result');el.style.display='block';
+  el.innerHTML=jsonHighlight({inserted,errors,total:importData.length});
+  showToast('Import complete: '+inserted+' vectors','success');
+}
+
+function resetImport() {
+  importData=null;importCols=[];
+  dropZone.innerHTML='Drop a CSV or JSON file here, or click to browse<br><div style="font-size:12px;color:var(--text-muted);margin-top:8px">Supported: .csv, .json, .jsonl</div>';
+  document.getElementById('import-preview').style.display='none';
+  document.getElementById('import-result').style.display='none';
+  document.getElementById('import-progress-bar').style.display='none';
+  fileInput.value='';
+}
+
+
+async function doSemanticSearch() {
+  const text=document.getElementById('sem-text').value.trim();
+  if(!text){showToast('Enter search text','error');return;}
+  const apiKey=document.getElementById('sem-apikey').value.trim();
+  if(!apiKey){showToast('Enter API key','error');return;}
+  document.getElementById('sem-meta').textContent='Searching...';
+  const r=await apiCall('/api/semantic-search',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+    text, api_key:apiKey, k:parseInt(document.getElementById('sem-k').value),
+    provider:document.getElementById('sem-provider').value
+  })});
+  if(r.ok&&r.data.results){
+    document.getElementById('sem-meta').textContent=r.data.count+' results (embedding dim: '+r.data.embedding_dim+')';
+    const tbody=document.getElementById('sem-tbody');tbody.innerHTML='';
+    r.data.results.forEach((h,i)=>{
+      const dp=h.data?JSON.stringify(h.data).slice(0,40)+'…':'—';
+      const mp=h.metadata?JSON.stringify(h.metadata).slice(0,40):'—';
+      const tr=document.createElement('tr');
+      tr.innerHTML='<td>'+(i+1)+'</td><td class="mono">'+(h.distance!=null?h.distance.toFixed(6):'—')+'</td><td class="mono">'+dp+'</td><td class="mono">'+mp+'</td>';
+      tbody.appendChild(tr);
+    });
+    document.getElementById('sem-results').style.display='table';document.getElementById('sem-empty').style.display='none';
+  } else {
+    document.getElementById('sem-meta').textContent='';
+    document.getElementById('sem-empty').textContent='Error: '+(r.data.message||JSON.stringify(r.data));
+    document.getElementById('sem-empty').style.display='block';document.getElementById('sem-results').style.display='none';
+  }
+}
+
+
+async function loadNamespaces() {
+  const r=await apiCall('/api/namespaces');
+  const tbody=document.getElementById('ns-tbody');
+  const empty=document.getElementById('ns-empty');
+  if(r.ok&&r.data.namespaces){
+    if(!r.data.namespaces.length){tbody.innerHTML='';empty.textContent='No namespaces yet.';empty.style.display='block';return;}
+    empty.style.display='none';
+    tbody.innerHTML=r.data.namespaces.map(ns=>
+      '<tr><td>'+ns+'</td><td><button class="btn btn-sm btn-outline" onclick="nsInfo(\''+ns+'\')">Info</button> '+
+      '<button class="btn btn-sm btn-danger" onclick="deleteNamespace(\''+ns+'\')">Delete</button></td></tr>'
+    ).join('');
+  }
+}
+
+async function createNamespace() {
+  const name=document.getElementById('ns-name').value.trim();
+  if(!name){showToast('Enter namespace name','error');return;}
+  const r=await apiCall('/api/namespaces',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+    name, dimension:parseInt(document.getElementById('ns-dim').value),
+    index_type:document.getElementById('ns-index').value
+  })});
+  showToast(r.ok?'Namespace created':'Error: '+(r.data.message||''),r.ok?'success':'error');
+  if(r.ok)loadNamespaces();
+}
+
+async function deleteNamespace(name) {
+  if(!confirm('Delete namespace "'+name+'"?'))return;
+  const r=await apiCall('/api/namespaces/'+encodeURIComponent(name),{method:'DELETE'});
+  showToast(r.ok?'Deleted':'Error',r.ok?'success':'error');
+  loadNamespaces();
+}
+
+async function nsInfo(name) {
+  const r=await apiCall('/api/namespaces/'+encodeURIComponent(name)+'/info');
+  const el=document.getElementById('ns-info');el.style.display='block';
+  el.innerHTML=jsonHighlight(r.data);
+}
+
+async function createTenant() {
+  const tid=document.getElementById('t-id').value.trim();
+  if(!tid){showToast('Enter tenant ID','error');return;}
+  const r=await apiCall('/api/tenants',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+    tenant_id:tid, tier:document.getElementById('t-tier').value
+  })});
+  document.getElementById('t-status').textContent=r.ok?'Tenant "'+tid+'" created':'Error: '+(r.data.message||'');
+  if(r.ok)showToast('Tenant created','success');
+}
+
+async function createRole() {
+  const name=document.getElementById('rbac-role').value.trim();
+  if(!name)return;
+  const r=await apiCall('/api/rbac/roles',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});
+  document.getElementById('rbac-status').textContent=r.ok?'Role "'+name+'" created':'Error: '+(r.data.message||'');
+}
+
+async function addRule() {
+  const role=document.getElementById('rbac-rule-role').value.trim();
+  const resource=document.getElementById('rbac-resource').value.trim();
+  const perms=parseInt(document.getElementById('rbac-perms').value);
+  if(!role||!resource)return;
+  const r=await apiCall('/api/rbac/rules',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({role,resource,permissions:perms})});
+  document.getElementById('rbac-status').textContent=r.ok?'Rule added':'Error: '+(r.data.message||'');
+}
+
+async function assignRole() {
+  const uid=document.getElementById('rbac-user').value.trim();
+  const role=document.getElementById('rbac-assign-role').value.trim();
+  if(!uid||!role)return;
+  const r=await apiCall('/api/rbac/assign',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:uid,role})});
+  document.getElementById('rbac-status').textContent=r.ok?'Role assigned':'Error: '+(r.data.message||'');
+}
+
+async function setQuota() {
+  const tid=document.getElementById('q-tenant').value.trim();
+  if(!tid)return;
+  const r=await apiCall('/api/quotas',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+    tenant_id:tid, max_vectors:parseInt(document.getElementById('q-maxvec').value),
+    max_qps:parseFloat(document.getElementById('q-maxqps').value)
+  })});
+  document.getElementById('q-status').textContent=r.ok?'Quota set for '+tid:'Error: '+(r.data.message||'');
+}
+
+
+let geNodes=[], geEdges=[], geAnim=null;
+
+async function geAddNode() {
+  const label=document.getElementById('ge-label').value.trim()||'Node';
+  const r=await apiCall('/api/graph/node',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({label})});
+  document.getElementById('ge-status').textContent=r.ok?'Node #'+r.data.id+' added':'Error: '+(r.data.message||'');
+  if(r.ok)showToast('Node #'+r.data.id+' created','success');
+}
+
+async function geAddEdge() {
+  const src=parseInt(document.getElementById('ge-src').value);
+  const tgt=parseInt(document.getElementById('ge-tgt').value);
+  const label=document.getElementById('ge-elabel').value.trim()||'';
+  const r=await apiCall('/api/graph/edge',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:src,target:tgt,label})});
+  document.getElementById('ge-status').textContent=r.ok?'Edge #'+r.data.id+' added':'Error: '+(r.data.message||'');
+}
+
+async function geBFS() {
+  const start=parseInt(document.getElementById('ge-bfs-start').value)||0;
+  const depth=parseInt(document.getElementById('ge-bfs-depth').value)||3;
+  const r=await apiCall('/api/graph/bfs?start='+start+'&max_depth='+depth);
+  if(!r.ok){document.getElementById('ge-status').textContent='Error: '+(r.data.message||'');return;}
+  geNodes=r.data.nodes.map((n,i)=>({...n,x:450+(Math.random()-0.5)*300,y:230+(Math.random()-0.5)*300,vx:0,vy:0}));
+  geEdges=r.data.edges||[];
+  document.getElementById('ge-status').textContent=geNodes.length+' nodes, '+geEdges.length+' edges';
+  if(geAnim)cancelAnimationFrame(geAnim);
+  simGraphExplorer();
+}
+
+async function geShortestPath() {
+  const from=parseInt(document.getElementById('ge-sp-from').value);
+  const to=parseInt(document.getElementById('ge-sp-to').value);
+  const r=await apiCall('/api/graph/shortest-path?from='+from+'&to='+to);
+  if(r.ok&&r.data.path!==null){
+    document.getElementById('ge-status').textContent='Path: '+r.data.node_ids.join(' → ')+' (weight: '+r.data.total_weight.toFixed(2)+')';
+    showToast('Path found: '+r.data.node_ids.length+' nodes','success');
+  } else {
+    document.getElementById('ge-status').textContent=r.data.message||'No path found';
+  }
+}
+
+async function geRefresh() {
+  const r=await apiCall('/api/graph/bfs?start=0&max_depth=10');
+  if(!r.ok){document.getElementById('ge-status').textContent='Graph empty or error';return;}
+  geNodes=r.data.nodes.map(n=>({...n,x:450+(Math.random()-0.5)*300,y:230+(Math.random()-0.5)*300,vx:0,vy:0}));
+  geEdges=r.data.edges||[];
+  document.getElementById('ge-status').textContent=geNodes.length+' nodes, '+geEdges.length+' edges';
+  if(geAnim)cancelAnimationFrame(geAnim);
+  simGraphExplorer();
+}
+
+function simGraphExplorer() {
+  const canvas=document.getElementById('ge-canvas');
+  const w=canvas.parentElement.clientWidth, h=460, dpr=window.devicePixelRatio||1;
+  canvas.width=w*dpr; canvas.height=h*dpr;
+  canvas.style.width=w+'px'; canvas.style.height=h+'px';
+  let iter=0;
+  const idMap=new Map(); geNodes.forEach((n,i)=>idMap.set(n.id,i));
+
+  function draw() {
+    const ctx=canvas.getContext('2d'); ctx.setTransform(dpr,0,0,dpr,0,0);
+    ctx.fillStyle='#fafafa';ctx.fillRect(0,0,w,h);
+    for(const e of geEdges){
+      const ai=idMap.get(e.source), bi=idMap.get(e.target);
+      if(ai==null||bi==null)continue;
+      const a=geNodes[ai],b=geNodes[bi];
+      ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);
+      ctx.strokeStyle='#d5d4cc';ctx.lineWidth=1.5;ctx.stroke();
+    }
+    for(const n of geNodes){
+      ctx.beginPath();ctx.arc(n.x,n.y,6,0,Math.PI*2);
+      ctx.fillStyle='#e11d48';ctx.fill();ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.stroke();
+      ctx.fillStyle='#5c5c5c';ctx.font='10px "IBM Plex Mono"';ctx.textAlign='center';
+      ctx.fillText(n.label||('#'+n.id),n.x,n.y-10);
+    }
+    ctx.setTransform(1,0,0,1,0,0);
+  }
+
+  function tick() {
+    const alpha=Math.max(0.001,0.3*Math.pow(0.99,iter));
+    for(let i=0;i<geNodes.length;i++) for(let j=i+1;j<geNodes.length;j++){
+      const dx=geNodes[j].x-geNodes[i].x, dy=geNodes[j].y-geNodes[i].y;
+      const dist=Math.hypot(dx,dy)||1, f=3000/(dist*dist)*alpha;
+      geNodes[i].vx-=dx/dist*f;geNodes[i].vy-=dy/dist*f;
+      geNodes[j].vx+=dx/dist*f;geNodes[j].vy+=dy/dist*f;
+    }
+    for(const e of geEdges){
+      const ai=idMap.get(e.source),bi=idMap.get(e.target);
+      if(ai==null||bi==null)continue;
+      const a=geNodes[ai],b=geNodes[bi];
+      const dx=b.x-a.x,dy=b.y-a.y,dist=Math.hypot(dx,dy)||1,f=(dist-80)*0.04*alpha;
+      a.vx+=dx/dist*f;a.vy+=dy/dist*f;b.vx-=dx/dist*f;b.vy-=dy/dist*f;
+    }
+    for(const n of geNodes){
+      n.vx+=(w/2-n.x)*0.001*alpha;n.vy+=(h/2-n.y)*0.001*alpha;
+      n.vx*=0.85;n.vy*=0.85;n.x+=n.vx;n.y+=n.vy;
+      n.x=Math.max(24,Math.min(w-24,n.x));n.y=Math.max(24,Math.min(h-24,n.y));
+    }
+    draw();iter++;
+    if(iter<200)geAnim=requestAnimationFrame(tick);
+  }
+  tick();
+  document.getElementById('ge-info').innerHTML='<b>'+geNodes.length+'</b> nodes, <b>'+geEdges.length+'</b> edges';
+}
+
+
+const viewHooks={
+  monitoring:()=>{refreshMonitoring();if(!monTimer)monTimer=setInterval(refreshMonitoring,1000);},
+  benchmarks:drawBenchmarks,
+  namespaces:loadNamespaces,
+};
+const viewLeaveHooks={
+  monitoring:()=>{if(monTimer){clearInterval(monTimer);monTimer=null;}},
+};
+let currentView='overview';
+
+document.querySelectorAll('.sidebar-nav a').forEach(a=>{
+  a.addEventListener('click',e=>{
+    e.preventDefault();
+    const view=a.dataset.view;
+    if(viewLeaveHooks[currentView])viewLeaveHooks[currentView]();
+    currentView=view;
+    document.querySelectorAll('.sidebar-nav a').forEach(x=>x.classList.remove('active'));
+    a.classList.add('active');
+    document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
+    document.getElementById('view-'+view).classList.add('active');
+    document.getElementById('viewTitle').textContent=a.querySelector('span').textContent;
+    if(view==='vectors')loadPoints();
+    if(viewHooks[view])viewHooks[view]();
+  });
+});
 </script>
 </body>
 </html>
