@@ -424,13 +424,18 @@ static int generate_google_embedding_batch(GV_EmbeddingService *service,
 
 /* Parse OpenAI embedding response */
 static int parse_openai_embedding_response(const char *json, float **embedding, size_t *dim) {
-    
-    const char *embedding_start = strstr(json, "\"embedding\":[");
+
+    const char *embedding_start = strstr(json, "\"embedding\":");
     if (embedding_start == NULL) {
         return -1;
     }
-    
-    embedding_start += 13;
+    embedding_start += 12;
+    while (*embedding_start == ' ' || *embedding_start == '\t' ||
+           *embedding_start == '\n' || *embedding_start == '\r') embedding_start++;
+    if (*embedding_start != '[') {
+        return -1;
+    }
+    embedding_start++;
     
     size_t count = 0;
     const char *p = embedding_start;
@@ -466,6 +471,22 @@ static int parse_openai_embedding_response(const char *json, float **embedding, 
     return 0;
 }
 
+static size_t json_escape_into(char *dst, size_t dst_size, const char *src) {
+    size_t w = 0;
+    for (; *src && w + 6 < dst_size; src++) {
+        switch (*src) {
+            case '"':  dst[w++] = '\\'; dst[w++] = '"'; break;
+            case '\\': dst[w++] = '\\'; dst[w++] = '\\'; break;
+            case '\n': dst[w++] = '\\'; dst[w++] = 'n'; break;
+            case '\r': dst[w++] = '\\'; dst[w++] = 'r'; break;
+            case '\t': dst[w++] = '\\'; dst[w++] = 't'; break;
+            default:   dst[w++] = *src; break;
+        }
+    }
+    dst[w] = '\0';
+    return w;
+}
+
 /* Generate embedding using OpenAI API */
 static int generate_openai_embedding(GV_EmbeddingService *service,
                                      const char *text,
@@ -475,20 +496,23 @@ static int generate_openai_embedding(GV_EmbeddingService *service,
     if (curl == NULL) {
         return -1;
     }
-    
-    /* Build request JSON */
+
+    /* Build request JSON with escaped text */
+    char escaped_text[3072];
+    json_escape_into(escaped_text, sizeof(escaped_text), text);
+
     char request_json[4096];
     const char *model = service->config.model ? service->config.model : "text-embedding-3-small";
     int dim = service->config.embedding_dimension > 0 ? (int)service->config.embedding_dimension : 0;
-    
+
     if (dim > 0) {
         snprintf(request_json, sizeof(request_json),
                 "{\"input\":\"%s\",\"model\":\"%s\",\"dimensions\":%d}",
-                text, model, dim);
+                escaped_text, model, dim);
     } else {
         snprintf(request_json, sizeof(request_json),
                 "{\"input\":\"%s\",\"model\":\"%s\"}",
-                text, model);
+                escaped_text, model);
     }
     
     const char *url = service->config.base_url ? service->config.base_url : "https://api.openai.com/v1/embeddings";
