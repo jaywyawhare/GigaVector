@@ -779,8 +779,7 @@ if (rc != 0) {
 ### Getting Help
 
 - Check the [Performance Tuning Guide](performance.md) for optimization tips
-- Review [Basic Usage Examples](examples/basic_usage.md) for common patterns
-- See [Advanced Features](examples/advanced_features.md) for complex scenarios
+- See [Advanced Features](examples/advanced_features.md) for examples and common patterns
 - Check API documentation for detailed function signatures
 
 ### Debugging Tips
