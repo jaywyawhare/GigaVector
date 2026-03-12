@@ -218,7 +218,7 @@ export default function DocsPage() {
     }
 
     setLoading(true)
-    fetch(`/docs/${item.file}`)
+    fetch(`${import.meta.env.BASE_URL}docs/${item.file}`)
       .then(r => {
         if (!r.ok) throw new Error('Not found')
         return r.text()
