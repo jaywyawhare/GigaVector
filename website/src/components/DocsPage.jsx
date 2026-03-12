@@ -338,6 +338,27 @@ export default function DocsPage() {
                   const id = text.toLowerCase().replace(/[^\w\s-]/g, '').replace(/\s+/g, '-')
                   return <h3 id={id} {...props}>{children}</h3>
                 },
+                a({ href, children, ...props }) {
+                  if (!href) return <a {...props}>{children}</a>
+                  // Handle .md links -> SPA routes
+                  if (href.endsWith('.md')) {
+                    const slug = href.replace(/^(\.\.\/)*/, '').replace(/^examples\//, '').replace(/\.md$/, '')
+                    if (allItems.some(i => i.slug === slug)) {
+                      return <Link to={`/docs/${slug}`} {...props}>{children}</Link>
+                    }
+                  }
+                  // Handle /docs/slug links (from index.md)
+                  if (href.startsWith('/docs/')) {
+                    const slug = href.replace(/^\/docs\//, '')
+                    if (allItems.some(i => i.slug === slug)) {
+                      return <Link to={href} {...props}>{children}</Link>
+                    }
+                  }
+                  // Anchor links stay as-is, external links open in new tab
+                  if (href.startsWith('#')) return <a href={href} {...props}>{children}</a>
+                  if (href.startsWith('http')) return <a href={href} target="_blank" rel="noopener noreferrer" {...props}>{children}</a>
+                  return <a href={href} {...props}>{children}</a>
+                },
                 table({ children, ...props }) {
                   return (
                     <div className="docs-table-wrap">
