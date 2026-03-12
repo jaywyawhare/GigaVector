@@ -1,0 +1,81 @@
+site_name: GigaVector
+site_description: High-performance vector database library written in C with Python bindings
+site_url: https://jaywyawhare.github.io/GigaVector
+repo_name: jaywyawhare/GigaVector
+repo_url: https://github.com/jaywyawhare/GigaVector
+
+theme:
+  name: material
+  logo: gigavector-logo.png
+  favicon: gigavector-logo.png
+  custom_dir: docs/overrides
+  palette:
+    - scheme: slate
+      primary: black
+      accent: cyan
+      toggle:
+        icon: material/weather-night
+        name: Switch to light mode
+    - scheme: default
+      primary: white
+      accent: cyan
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to dark mode
+  font:
+    text: Inter
+    code: JetBrains Mono
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+
+extra_css:
+  - stylesheets/extra.css
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+  - toc:
+      permalink: true
+  - tables
+  - attr_list
+  - md_in_html
+  - def_list
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Usage Guide: usage.md
+      - Build & Test: build_and_test.md
+      - API Keys: api_keys_required.md
+  - Guides:
+      - Python Bindings: python_bindings.md
+      - C API Guide: c_api_guide.md
+      - Examples:
+          - Basic Usage: examples/basic_usage.md
+          - Advanced Features: examples/advanced_features.md
+  - Reference:
+      - C API Reference: api_reference.md
+      - Architecture: architecture.md
+      - Performance Tuning: performance.md
+  - Operations:
+      - Deployment: deployment.md
+      - Security: security.md
+      - Troubleshooting: troubleshooting.md
+  - Contributing: contributing.md
