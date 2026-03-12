@@ -369,6 +369,42 @@ from ._core import (
     KGSubgraph,
     KGStats,
     KnowledgeGraph,
+    # Filter Builder
+    FilterExpr,
+    Field,
+    # Scroll Iterator
+    ScrollIterator,
+    # Discovery API
+    DiscoveryAPI,
+    DiscoveryConfig,
+    DiscoveryResult,
+    # Collection Management
+    CollectionConfig,
+    CollectionInfo,
+    CollectionManager,
+    # Temporal Knowledge Graph
+    TemporalEdge,
+    TemporalKnowledgeGraph,
+    # Graph-Augmented Search
+    GraphAugmentedHit,
+    GraphSearchConfig,
+    search_with_graph_expansion,
+    # Retention Scoring
+    RetentionConfig,
+    RetentionRecord,
+    RetentionScorer,
+    # Multi-Field Memory Store
+    MemoryStoreConfig,
+    MemoryRecord,
+    MemorySearchHit,
+    MemoryStore,
+    # Multi-Query Expansion
+    MultiQueryHit,
+    search_multi_query,
+    # Entity Linker
+    LinkedChunk,
+    ExpandedSearchHit,
+    EntityLinker,
 )
 from .dashboard.server import DashboardServer
 
@@ -725,6 +761,42 @@ __all__ = [
     "KGSubgraph",
     "KGStats",
     "KnowledgeGraph",
+    # Filter Builder
+    "FilterExpr",
+    "Field",
+    # Scroll Iterator
+    "ScrollIterator",
+    # Discovery API
+    "DiscoveryAPI",
+    "DiscoveryConfig",
+    "DiscoveryResult",
+    # Collection Management
+    "CollectionConfig",
+    "CollectionInfo",
+    "CollectionManager",
+    # Temporal Knowledge Graph
+    "TemporalEdge",
+    "TemporalKnowledgeGraph",
+    # Graph-Augmented Search
+    "GraphAugmentedHit",
+    "GraphSearchConfig",
+    "search_with_graph_expansion",
+    # Retention Scoring
+    "RetentionConfig",
+    "RetentionRecord",
+    "RetentionScorer",
+    # Multi-Field Memory Store
+    "MemoryStoreConfig",
+    "MemoryRecord",
+    "MemorySearchHit",
+    "MemoryStore",
+    # Multi-Query Expansion
+    "MultiQueryHit",
+    "search_multi_query",
+    # Entity Linker
+    "LinkedChunk",
+    "ExpandedSearchHit",
+    "EntityLinker",
 ]
 
 __version__ = "0.8.2"
