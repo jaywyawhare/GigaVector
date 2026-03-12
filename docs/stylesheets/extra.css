@@ -1,0 +1,237 @@
+/* ── Landing page: hide title ── */
+.md-typeset .landing h1:first-child { display: none; }
+
+/* ── Hero ── */
+.gv-hero {
+  text-align: center;
+  padding: 3.5rem 1.5rem 2.5rem;
+  background: linear-gradient(160deg, rgba(0,188,212,0.06) 0%, transparent 50%);
+  border-radius: 16px;
+  margin-bottom: 2rem;
+}
+
+.gv-hero img { border-radius: 14px; }
+
+.gv-hero-title {
+  font-size: 3rem;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  margin: 0.6rem 0 0.3rem;
+  line-height: 1.1;
+}
+
+.gv-hero-sub {
+  font-size: 1.1rem;
+  opacity: 0.65;
+  max-width: 520px;
+  margin: 0 auto 2rem;
+  line-height: 1.6;
+}
+
+.gv-buttons {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-bottom: 2rem;
+}
+
+.gv-buttons a {
+  display: inline-block;
+  padding: 0.65rem 1.8rem;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 0.9rem;
+  text-decoration: none !important;
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+
+.gv-buttons a:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(0,0,0,0.12);
+}
+
+.gv-btn-primary {
+  background: #00bcd4;
+  color: #000 !important;
+}
+
+.gv-btn-outline {
+  border: 1.5px solid var(--md-default-fg-color--lighter);
+  color: var(--md-default-fg-color) !important;
+}
+
+.gv-install {
+  max-width: 380px;
+  margin: 0 auto;
+}
+
+.gv-install code {
+  font-size: 0.95rem;
+}
+
+/* ── Stats ── */
+.gv-stats {
+  display: flex;
+  justify-content: center;
+  gap: 3.5rem;
+  flex-wrap: wrap;
+  padding: 1.8rem 0;
+  border-top: 1px solid var(--md-default-fg-color--lightest);
+  border-bottom: 1px solid var(--md-default-fg-color--lightest);
+  margin-bottom: 2.5rem;
+}
+
+.gv-stat { text-align: center; }
+
+.gv-stat-val {
+  display: block;
+  font-size: 2rem;
+  font-weight: 800;
+  color: #00bcd4;
+  line-height: 1.2;
+}
+
+.gv-stat-lbl {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  opacity: 0.5;
+}
+
+/* ── Section headers ── */
+.gv-section-title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin: 0 0 1.2rem;
+  letter-spacing: -0.01em;
+}
+
+/* ── Cards ── */
+.gv-cards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1rem;
+  margin-bottom: 2.5rem;
+}
+
+.gv-card {
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 10px;
+  padding: 1.3rem 1.4rem;
+  transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s;
+}
+
+.gv-card:hover {
+  border-color: #00bcd4;
+  box-shadow: 0 4px 16px rgba(0,188,212,0.10);
+  transform: translateY(-2px);
+}
+
+.gv-card-title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  margin: 0 0 0.4rem;
+  color: var(--md-default-fg-color);
+}
+
+.gv-card-text {
+  font-size: 0.82rem;
+  opacity: 0.7;
+  line-height: 1.55;
+  margin: 0;
+}
+
+/* ── Index table ── */
+.gv-table { margin-bottom: 2.5rem; }
+.gv-table table { font-size: 0.85rem; }
+.gv-table th { font-weight: 600; }
+
+/* ── Doc links ── */
+.gv-links {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.75rem;
+  margin-bottom: 2.5rem;
+}
+
+.gv-link {
+  display: block;
+  padding: 1rem 1.2rem;
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 8px;
+  text-decoration: none !important;
+  color: var(--md-default-fg-color) !important;
+  transition: border-color 0.2s, background 0.2s, transform 0.15s;
+}
+
+.gv-link:hover {
+  border-color: #00bcd4;
+  background: rgba(0,188,212,0.04);
+  transform: translateY(-1px);
+}
+
+.gv-link-title {
+  font-weight: 600;
+  font-size: 0.9rem;
+  display: block;
+}
+
+.gv-link-desc {
+  font-size: 0.78rem;
+  opacity: 0.55;
+  display: block;
+  margin-top: 0.15rem;
+}
+
+/* ── Separator ── */
+.gv-sep {
+  border: none;
+  border-top: 1px solid var(--md-default-fg-color--lightest);
+  margin: 2.5rem 0;
+}
+
+/* ── Footer ── */
+.gv-footer {
+  text-align: center;
+  opacity: 0.45;
+  font-size: 0.82rem;
+  padding: 1rem 0;
+}
+
+.gv-footer a {
+  color: var(--md-default-fg-color) !important;
+  text-decoration: underline;
+}
+
+/* ── Light mode ── */
+[data-md-color-scheme="default"] .gv-hero {
+  background: linear-gradient(160deg, rgba(0,188,212,0.08) 0%, rgba(0,188,212,0.02) 40%, transparent 70%);
+}
+
+[data-md-color-scheme="default"] .md-header {
+  background: #fff;
+  color: #1a1a1a;
+  box-shadow: 0 1px 0 rgba(0,0,0,0.06);
+}
+
+[data-md-color-scheme="default"] .gv-btn-outline {
+  border-color: #ccc;
+}
+
+/* ── Responsive ── */
+@media (max-width: 900px) {
+  .gv-cards, .gv-links {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .gv-hero-title { font-size: 2.2rem; }
+  .gv-stats { gap: 2rem; }
+}
+
+@media (max-width: 580px) {
+  .gv-cards, .gv-links {
+    grid-template-columns: 1fr;
+  }
+  .gv-hero-title { font-size: 1.8rem; }
+  .gv-hero { padding: 2rem 1rem 1.5rem; }
+}
