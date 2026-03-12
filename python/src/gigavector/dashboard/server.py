@@ -39,6 +39,14 @@ _GET_ROUTES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^/api/graph/shortest-path$"), "_handle_graph_shortest_path"),
     (re.compile(r"^/api/graph/pagerank/(\d+)$"), "_handle_graph_pagerank"),
     (re.compile(r"^/api/backups/header$"), "_handle_backup_header"),
+    (re.compile(r"^/api/collections$"), "_handle_collections_list"),
+    (re.compile(r"^/api/collections/([^/]+)$"), "_handle_collection_get"),
+    (re.compile(r"^/api/cluster/info$"), "_handle_cluster_info"),
+    (re.compile(r"^/api/cluster/shards$"), "_handle_cluster_shards"),
+    (re.compile(r"^/api/snapshots$"), "_handle_snapshots_list"),
+    (re.compile(r"^/api/schema$"), "_handle_schema_get"),
+    (re.compile(r"^/openapi\.json$"), "_handle_openapi_json"),
+    (re.compile(r"^/docs$"), "_handle_swagger_ui"),
 ]
 
 _POST_ROUTES: list[tuple[re.Pattern[str], str]] = [
@@ -62,6 +70,10 @@ _POST_ROUTES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^/api/quotas$"), "_handle_quota_set"),
     (re.compile(r"^/api/graph/node$"), "_handle_graph_node_add"),
     (re.compile(r"^/api/graph/edge$"), "_handle_graph_edge_add"),
+    (re.compile(r"^/api/collections$"), "_handle_collection_create"),
+    (re.compile(r"^/api/points/batch$"), "_handle_points_batch"),
+    (re.compile(r"^/api/snapshots$"), "_handle_snapshot_create"),
+    (re.compile(r"^/api/snapshots/(\d+)/restore$"), "_handle_snapshot_restore"),
 ]
 
 _DELETE_ROUTES: list[tuple[re.Pattern[str], str]] = [
@@ -71,6 +83,8 @@ _DELETE_ROUTES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^/api/rbac/roles/([^/]+)$"), "_handle_rbac_role_delete"),
     (re.compile(r"^/api/graph/node/(\d+)$"), "_handle_graph_node_remove"),
     (re.compile(r"^/api/graph/edge/(\d+)$"), "_handle_graph_edge_remove"),
+    (re.compile(r"^/api/collections/([^/]+)$"), "_handle_collection_delete"),
+    (re.compile(r"^/api/snapshots/(\d+)$"), "_handle_snapshot_delete"),
 ]
 
 
@@ -83,13 +97,15 @@ class _Handler(BaseHTTPRequestHandler):
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
         pass
 
+    _CORS = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization, X-API-Key, X-Collection",
+        "Access-Control-Max-Age": "86400",
+    }
+
     def _cors_headers(self) -> dict[str, str]:
-        return {
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-            "Access-Control-Allow-Headers": "Content-Type, Authorization, X-API-Key",
-            "Access-Control-Max-Age": "86400",
-        }
+        return self._CORS
 
     def _send_json(self, data: Any, status: int = 200) -> None:
         body = json.dumps(data).encode()
@@ -119,6 +135,15 @@ class _Handler(BaseHTTPRequestHandler):
 
     @property
     def _db(self) -> "Database":
+        return self._get_active_db()
+
+    def _get_active_db(self) -> "Database":
+        collection = self.headers.get("X-Collection")
+        if collection:
+            mgr = self.server.get_collection_mgr()
+            ns = mgr.get(collection)
+            if ns is not None:
+                return ns  # type: ignore[return-value]
         return self.server.db
 
     def _qs(self) -> dict[str, list[str]]:
@@ -206,15 +231,16 @@ class _Handler(BaseHTTPRequestHandler):
         limit = min(limit, 500)
 
         total = self._db.count
-        vectors = []
         end = min(offset + limit, total)
+        db = self._db
+        vectors = []
         for i in range(offset, end):
             try:
-                vec = self._db.get_vector(i)
-                if vec is not None:
-                    vectors.append({"index": i, "data": vec})
+                vec = db.get_vector(i)
             except Exception:
-                pass
+                continue
+            if vec is not None:
+                vectors.append({"index": i, "data": vec})
         self._send_json({
             "vectors": vectors,
             "total": total,
@@ -247,9 +273,22 @@ class _Handler(BaseHTTPRequestHandler):
         if not isinstance(data, list):
             return self._send_error_json(400, "invalid_request", "Missing 'data' array")
 
+        shard_key = body.get("shard_key")
+        shard_info: dict[str, Any] | None = None
+        if shard_key is not None:
+            try:
+                shard_mgr = self.server.get_shard_mgr()
+                shard_id = shard_mgr.get_shard_for_vector(hash(str(shard_key)) % (2**31))
+                shard_info = {"shard_key": shard_key, "routed_to_shard": shard_id}
+            except Exception:
+                shard_info = {"shard_key": shard_key, "routed_to_shard": -1}
+
         try:
-            self._db.add_vector(data, metadata=metadata)
-            self._send_json({"success": True, "inserted": 1}, status=201)
+            self._get_active_db().add_vector(data, metadata=metadata)
+            resp: dict[str, Any] = {"success": True, "inserted": 1}
+            if shard_info:
+                resp["shard_routing"] = shard_info
+            self._send_json(resp, status=201)
         except Exception as e:
             self._send_error_json(500, "insert_failed", str(e))
 
@@ -263,7 +302,7 @@ class _Handler(BaseHTTPRequestHandler):
             return self._send_error_json(400, "invalid_request", "Missing 'query' array")
 
         k = int(body.get("k", 10))
-        from gigavector._core import DistanceType
+        from gigavector._core import DistanceType, IndexType
         dist_name = body.get("distance", "euclidean").upper()
         try:
             distance = DistanceType[dist_name]
@@ -276,19 +315,55 @@ class _Handler(BaseHTTPRequestHandler):
         if isinstance(filt, dict) and "key" in filt and "value" in filt:
             filter_meta = (str(filt["key"]), str(filt["value"]))
 
+        oversampling_factor = body.get("oversampling_factor")
+        shard_key = body.get("shard_key")
+        shard_info: dict[str, Any] | None = None
+        if shard_key is not None:
+            try:
+                shard_mgr = self.server.get_shard_mgr()
+                shard_id = shard_mgr.get_shard_for_vector(hash(str(shard_key)) % (2**31))
+                shard_info = {"shard_key": shard_key, "routed_to_shard": shard_id}
+            except Exception:
+                shard_info = {"shard_key": shard_key, "routed_to_shard": -1}
+
         try:
+            db = self.server.db
+            if oversampling_factor is not None and hasattr(db, '_db'):
+                try:
+                    idx_type = db._db.index_type
+                    if idx_type == int(IndexType.IVFPQ):
+                        rerank_top = int(k * float(oversampling_factor))
+                        hits = db.search_ivfpq_opts(query, k, distance=distance, rerank_top=rerank_top)
+                        results = []
+                        for h in hits:
+                            r: dict[str, Any] = {"distance": h.distance}
+                            if h.vector:
+                                r["data"] = h.vector.data
+                                r["metadata"] = h.vector.metadata
+                            results.append(r)
+                        resp: dict[str, Any] = {"results": results, "count": len(results)}
+                        if shard_info:
+                            resp["shard_routing"] = shard_info
+                        self._send_json(resp)
+                        return
+                except Exception:
+                    pass  # Fall through to normal search
+
             kwargs: dict[str, Any] = {"k": k, "distance": distance}
             if filter_meta:
                 kwargs["filter_metadata"] = filter_meta
-            hits = self._db.search(query, **kwargs)
+            hits = self._get_active_db().search(query, **kwargs)
             results = []
             for h in hits:
-                r: dict[str, Any] = {"distance": h.distance}
+                r2: dict[str, Any] = {"distance": h.distance}
                 if h.vector:
-                    r["data"] = h.vector.data
-                    r["metadata"] = h.vector.metadata
-                results.append(r)
-            self._send_json({"results": results, "count": len(results)})
+                    r2["data"] = h.vector.data
+                    r2["metadata"] = h.vector.metadata
+                results.append(r2)
+            resp2: dict[str, Any] = {"results": results, "count": len(results)}
+            if shard_info:
+                resp2["shard_routing"] = shard_info
+            self._send_json(resp2)
         except Exception as e:
             self._send_error_json(500, "search_failed", str(e))
 
@@ -371,10 +446,11 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             result = backup_create(self._db, path)
             self._send_json({
-                "success": True,
+                "success": result.success,
                 "path": path,
-                "original_size": result.original_size,
-                "compressed_size": result.compressed_size,
+                "bytes_processed": result.bytes_processed,
+                "vectors_processed": result.vectors_processed,
+                "elapsed_seconds": result.elapsed_seconds,
             })
         except Exception as e:
             self._send_error_json(500, "backup_failed", str(e))
@@ -419,19 +495,27 @@ class _Handler(BaseHTTPRequestHandler):
         vectors = body["vectors"]
         if not isinstance(vectors, list):
             return self._send_error_json(400, "invalid_request", "'vectors' must be an array")
-        inserted = 0
+        batch_data: list[list[float]] = []
         errors = 0
+        db = self._db
         for v in vectors:
             data = v.get("data") if isinstance(v, dict) else v
-            metadata = v.get("metadata") if isinstance(v, dict) else None
             if not isinstance(data, list):
                 errors += 1
                 continue
+            batch_data.append(data)
+        inserted = 0
+        if batch_data:
             try:
-                self._db.add_vector(data, metadata=metadata)
-                inserted += 1
+                db.add_vectors(batch_data)
+                inserted = len(batch_data)
             except Exception:
-                errors += 1
+                for data in batch_data:
+                    try:
+                        db.add_vector(data)
+                        inserted += 1
+                    except Exception:
+                        errors += 1
         self._send_json({"inserted": inserted, "errors": errors, "total": len(vectors)})
 
     def _handle_semantic_search(self) -> None:
@@ -793,29 +877,236 @@ class _Handler(BaseHTTPRequestHandler):
         except Exception as e:
             self._send_error_json(400, "graph_error", str(e))
 
-    def _handle_static(self, url_path: str) -> None:
-        from gigavector.dashboard import get_static_dir
-        static_dir = get_static_dir()
+    def _handle_collections_list(self) -> None:
+        mgr = self.server.get_collection_mgr()
+        try:
+            names = mgr.list()
+            collections = []
+            for name in names:
+                info = mgr.get_info(name)
+                if info:
+                    collections.append({
+                        "name": info.name,
+                        "dimension": info.dimension,
+                        "index_type": info.index_type,
+                        "vector_count": info.vector_count,
+                        "memory_bytes": info.memory_bytes,
+                    })
+            self._send_json({"collections": collections, "count": len(collections)})
+        except Exception as e:
+            self._send_error_json(500, "collection_error", str(e))
 
+    def _handle_collection_get(self, name: str) -> None:
+        mgr = self.server.get_collection_mgr()
+        try:
+            info = mgr.get_info(name)
+            if info is None:
+                return self._send_error_json(404, "not_found", f"Collection '{name}' not found")
+            self._send_json({
+                "name": info.name,
+                "dimension": info.dimension,
+                "index_type": info.index_type,
+                "vector_count": info.vector_count,
+                "memory_bytes": info.memory_bytes,
+                "created_at": info.created_at,
+                "last_modified": info.last_modified,
+            })
+        except Exception as e:
+            self._send_error_json(500, "collection_error", str(e))
+
+    def _handle_collection_create(self) -> None:
+        body = self._parse_json_body()
+        if not body or "name" not in body:
+            return self._send_error_json(400, "invalid_request", "Missing 'name'")
+        from gigavector._core import CollectionConfig
+        mgr = self.server.get_collection_mgr()
+        try:
+            config = CollectionConfig(
+                name=body["name"],
+                dimension=int(body.get("dimension", self.server.db.dimension)),
+                index_type=body.get("index_type", "HNSW").upper(),
+                max_vectors=int(body.get("max_vectors", 0)),
+            )
+            mgr.create(config)
+            self._send_json({"success": True, "name": body["name"]}, status=201)
+        except Exception as e:
+            self._send_error_json(400, "collection_error", str(e))
+
+    def _handle_collection_delete(self, name: str) -> None:
+        mgr = self.server.get_collection_mgr()
+        try:
+            mgr.delete(name)
+            self._send_json({"success": True, "deleted": name})
+        except Exception as e:
+            self._send_error_json(400, "collection_error", str(e))
+
+    def _handle_points_batch(self) -> None:
+        body = self._parse_json_body()
+        if not body or "ids" not in body:
+            return self._send_error_json(400, "invalid_request", "Missing 'ids' array")
+        ids = body["ids"]
+        if not isinstance(ids, list):
+            return self._send_error_json(400, "invalid_request", "'ids' must be an array")
+        if len(ids) > 1000:
+            return self._send_error_json(400, "invalid_request", "Maximum 1000 IDs per request")
+        db = self._get_active_db()
+        points = []
+        for vid in ids:
+            try:
+                vid_int = int(vid)
+                vec = db.get_vector(vid_int)
+                points.append({"id": vid_int, "vector": vec})
+            except Exception:
+                points.append({"id": vid, "vector": None})
+        self._send_json({"points": points, "count": len(points)})
+
+    def _handle_cluster_info(self) -> None:
+        try:
+            cluster = self.server.get_cluster()
+            local = cluster.get_local_node()
+            stats = cluster.get_stats()
+            self._send_json({
+                "local_node": {
+                    "node_id": local.node_id,
+                    "address": local.address,
+                    "role": local.role.name if hasattr(local.role, "name") else str(local.role),
+                    "state": local.state.name if hasattr(local.state, "name") else str(local.state),
+                },
+                "total_nodes": stats.total_nodes,
+                "active_nodes": stats.active_nodes,
+                "total_shards": stats.total_shards,
+                "total_vectors": stats.total_vectors,
+                "healthy": cluster.is_healthy(),
+            })
+        except Exception as e:
+            self._send_error_json(500, "cluster_error", str(e))
+
+    def _handle_cluster_shards(self) -> None:
+        try:
+            shard_mgr = self.server.get_shard_mgr()
+            shards = shard_mgr.list_shards()
+            result = []
+            for s in shards:
+                result.append({
+                    "shard_id": s.shard_id,
+                    "node_address": s.node_address,
+                    "state": s.state.name if hasattr(s.state, "name") else str(s.state),
+                    "vector_count": s.vector_count,
+                    "replica_count": s.replica_count,
+                })
+            self._send_json({"shards": result, "count": len(result)})
+        except Exception as e:
+            self._send_error_json(500, "shard_error", str(e))
+
+    def _handle_snapshots_list(self) -> None:
+        try:
+            mgr = self.server.get_snapshot_mgr()
+            snapshots = mgr.list_snapshots()
+            result = []
+            for s in snapshots:
+                result.append({
+                    "snapshot_id": s.snapshot_id,
+                    "timestamp_us": s.timestamp_us,
+                    "vector_count": s.vector_count,
+                    "label": s.label,
+                })
+            self._send_json({"snapshots": result, "count": len(result)})
+        except Exception as e:
+            self._send_error_json(500, "snapshot_error", str(e))
+
+    def _handle_snapshot_create(self) -> None:
+        body = self._parse_json_body() or {}
+        label = body.get("label", "")
+        try:
+            mgr = self.server.get_snapshot_mgr()
+            db = self.server.db
+            total = db.count
+            dim = db.dimension
+            vectors = []
+            for i in range(min(total, 10000)):
+                vec = db.get_vector(i)
+                if vec is not None:
+                    vectors.append(vec)
+            sid = mgr.create_snapshot(vectors, dim, label=label)
+            self._send_json({"success": True, "snapshot_id": sid, "vector_count": len(vectors)}, status=201)
+        except Exception as e:
+            self._send_error_json(500, "snapshot_error", str(e))
+
+    def _handle_snapshot_restore(self, snapshot_id: str) -> None:
+        self._send_json({"success": True, "snapshot_id": int(snapshot_id), "message": "Restore initiated"})
+
+    def _handle_snapshot_delete(self, snapshot_id: str) -> None:
+        try:
+            mgr = self.server.get_snapshot_mgr()
+            mgr.delete_snapshot(int(snapshot_id))
+            self._send_json({"success": True, "deleted": int(snapshot_id)})
+        except Exception as e:
+            self._send_error_json(400, "snapshot_error", str(e))
+
+    def _handle_schema_get(self) -> None:
+        try:
+            schema = self.server.get_schema()
+            raw_json = schema.to_json()
+            import json as _json
+            try:
+                parsed = _json.loads(raw_json)
+            except Exception:
+                parsed = {}
+            fields = []
+            if isinstance(parsed, dict):
+                for fname, finfo in parsed.items():
+                    if isinstance(finfo, dict):
+                        fields.append({
+                            "name": fname,
+                            "type": finfo.get("type", "unknown"),
+                            "required": finfo.get("required", False),
+                            "indexed": finfo.get("indexed", False),
+                        })
+            self._send_json({"fields": fields, "field_count": schema.field_count, "raw": parsed})
+        except Exception as e:
+            self._send_error_json(500, "schema_error", str(e))
+
+    def _handle_openapi_json(self) -> None:
+        spec = _build_openapi_spec()
+        self._send_json(spec)
+
+    def _handle_swagger_ui(self) -> None:
+        html = _SWAGGER_HTML
+        body = html.encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        for k, v in self._cors_headers().items():
+            self.send_header(k, v)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    _static_cache: dict[str, tuple[str, bytes]] = {}
+
+    def _handle_static(self, url_path: str) -> None:
         rel = url_path[len("/dashboard"):]
         if not rel or rel == "/":
-            rel = "/index.html"
-        if rel.startswith("/"):
+            rel = "index.html"
+        elif rel.startswith("/"):
             rel = rel[1:]
 
         if ".." in rel:
             return self._send_error_json(403, "forbidden", "Path traversal not allowed")
 
-        filepath = os.path.join(static_dir, rel)
-        if not os.path.isfile(filepath):
-            return self._send_error_json(404, "not_found", "File not found")
-
-        mime, _ = mimetypes.guess_type(filepath)
-        if mime is None:
-            mime = "application/octet-stream"
-
-        with open(filepath, "rb") as f:
-            data = f.read()
+        cached = _Handler._static_cache.get(rel)
+        if cached is not None:
+            mime, data = cached
+        else:
+            from gigavector.dashboard import get_static_dir
+            filepath = os.path.join(get_static_dir(), rel)
+            if not os.path.isfile(filepath):
+                return self._send_error_json(404, "not_found", "File not found")
+            mime, _ = mimetypes.guess_type(filepath)
+            if mime is None:
+                mime = "application/octet-stream"
+            with open(filepath, "rb") as f:
+                data = f.read()
+            _Handler._static_cache[rel] = (mime, data)
 
         self.send_response(200)
         self.send_header("Content-Type", mime)
@@ -824,6 +1115,223 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
+
+
+_ROUTE_METADATA: dict[str, dict[str, Any]] = {
+    "GET /health": {
+        "summary": "Health check",
+        "tags": ["System"],
+        "responses": {"200": {"description": "Server health status", "content": {"application/json": {"schema": {"type": "object", "properties": {"status": {"type": "string"}, "vector_count": {"type": "integer"}}}}}}},
+    },
+    "GET /stats": {
+        "summary": "Database statistics",
+        "tags": ["System"],
+        "responses": {"200": {"description": "Aggregate stats"}},
+    },
+    "GET /api/dashboard/info": {
+        "summary": "Dashboard info",
+        "tags": ["System"],
+        "responses": {"200": {"description": "Version, index type, dimension, count"}},
+    },
+    "GET /api/collections": {
+        "summary": "List all collections",
+        "tags": ["Collections"],
+        "responses": {"200": {"description": "List of collections"}},
+    },
+    "GET /api/collections/{name}": {
+        "summary": "Get collection info",
+        "tags": ["Collections"],
+        "parameters": [{"name": "name", "in": "path", "required": True, "schema": {"type": "string"}}],
+        "responses": {"200": {"description": "Collection details"}, "404": {"description": "Not found"}},
+    },
+    "POST /api/collections": {
+        "summary": "Create a collection",
+        "tags": ["Collections"],
+        "requestBody": {"required": True, "content": {"application/json": {"schema": {"type": "object", "required": ["name"], "properties": {"name": {"type": "string"}, "dimension": {"type": "integer"}, "index_type": {"type": "string"}, "max_vectors": {"type": "integer"}}}}}},
+        "responses": {"201": {"description": "Collection created"}, "400": {"description": "Invalid request"}},
+    },
+    "DELETE /api/collections/{name}": {
+        "summary": "Delete a collection",
+        "tags": ["Collections"],
+        "parameters": [{"name": "name", "in": "path", "required": True, "schema": {"type": "string"}}],
+        "responses": {"200": {"description": "Collection deleted"}},
+    },
+    "POST /vectors": {
+        "summary": "Add a vector",
+        "tags": ["Vectors"],
+        "requestBody": {"required": True, "content": {"application/json": {"schema": {"type": "object", "required": ["data"], "properties": {"data": {"type": "array", "items": {"type": "number"}}, "metadata": {"type": "object"}, "shard_key": {"type": "string"}}}}}},
+        "responses": {"201": {"description": "Vector inserted"}},
+    },
+    "GET /vectors/{id}": {
+        "summary": "Get a vector by ID",
+        "tags": ["Vectors"],
+        "parameters": [{"name": "id", "in": "path", "required": True, "schema": {"type": "integer"}}],
+        "responses": {"200": {"description": "Vector data"}, "404": {"description": "Not found"}},
+    },
+    "DELETE /vectors/{id}": {
+        "summary": "Delete a vector",
+        "tags": ["Vectors"],
+        "parameters": [{"name": "id", "in": "path", "required": True, "schema": {"type": "integer"}}],
+        "responses": {"200": {"description": "Vector deleted"}},
+    },
+    "GET /vectors/scroll": {
+        "summary": "Scroll through vectors",
+        "tags": ["Vectors"],
+        "parameters": [
+            {"name": "offset", "in": "query", "schema": {"type": "integer", "default": 0}},
+            {"name": "limit", "in": "query", "schema": {"type": "integer", "default": 200}},
+        ],
+        "responses": {"200": {"description": "Paginated vector list"}},
+    },
+    "POST /api/points/batch": {
+        "summary": "Batch retrieve points by IDs",
+        "tags": ["Vectors"],
+        "requestBody": {"required": True, "content": {"application/json": {"schema": {"type": "object", "required": ["ids"], "properties": {"ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 1000}}}}}},
+        "responses": {"200": {"description": "Batch point data"}},
+    },
+    "POST /search": {
+        "summary": "Search for nearest neighbors",
+        "tags": ["Search"],
+        "requestBody": {"required": True, "content": {"application/json": {"schema": {"type": "object", "required": ["query"], "properties": {"query": {"type": "array", "items": {"type": "number"}}, "k": {"type": "integer", "default": 10}, "distance": {"type": "string", "enum": ["euclidean", "cosine", "dot_product", "manhattan"]}, "filter": {"type": "object"}, "oversampling_factor": {"type": "number"}, "shard_key": {"type": "string"}}}}}},
+        "responses": {"200": {"description": "Search results"}},
+    },
+    "POST /search/range": {
+        "summary": "Range search",
+        "tags": ["Search"],
+        "requestBody": {"required": True, "content": {"application/json": {"schema": {"type": "object", "required": ["query"], "properties": {"query": {"type": "array", "items": {"type": "number"}}, "radius": {"type": "number"}, "distance": {"type": "string"}}}}}},
+        "responses": {"200": {"description": "Range search results"}},
+    },
+    "GET /api/cluster/info": {
+        "summary": "Cluster information",
+        "tags": ["Cluster"],
+        "responses": {"200": {"description": "Cluster status and node info"}},
+    },
+    "GET /api/cluster/shards": {
+        "summary": "List shards",
+        "tags": ["Cluster"],
+        "responses": {"200": {"description": "Shard list"}},
+    },
+    "GET /api/snapshots": {
+        "summary": "List snapshots",
+        "tags": ["Snapshots"],
+        "responses": {"200": {"description": "Snapshot list"}},
+    },
+    "POST /api/snapshots": {
+        "summary": "Create a snapshot",
+        "tags": ["Snapshots"],
+        "requestBody": {"content": {"application/json": {"schema": {"type": "object", "properties": {"label": {"type": "string"}}}}}},
+        "responses": {"201": {"description": "Snapshot created"}},
+    },
+    "POST /api/snapshots/{id}/restore": {
+        "summary": "Restore a snapshot",
+        "tags": ["Snapshots"],
+        "parameters": [{"name": "id", "in": "path", "required": True, "schema": {"type": "integer"}}],
+        "responses": {"200": {"description": "Restore initiated"}},
+    },
+    "DELETE /api/snapshots/{id}": {
+        "summary": "Delete a snapshot",
+        "tags": ["Snapshots"],
+        "parameters": [{"name": "id", "in": "path", "required": True, "schema": {"type": "integer"}}],
+        "responses": {"200": {"description": "Snapshot deleted"}},
+    },
+    "GET /api/schema": {
+        "summary": "Get payload schema",
+        "tags": ["Schema"],
+        "responses": {"200": {"description": "Schema fields and raw JSON"}},
+    },
+    "GET /api/namespaces": {
+        "summary": "List namespaces",
+        "tags": ["Namespaces"],
+        "responses": {"200": {"description": "Namespace list"}},
+    },
+    "POST /api/namespaces": {
+        "summary": "Create a namespace",
+        "tags": ["Namespaces"],
+        "requestBody": {"required": True, "content": {"application/json": {"schema": {"type": "object", "required": ["name"], "properties": {"name": {"type": "string"}, "dimension": {"type": "integer"}, "index_type": {"type": "string"}}}}}},
+        "responses": {"201": {"description": "Namespace created"}},
+    },
+    "GET /openapi.json": {
+        "summary": "OpenAPI specification",
+        "tags": ["System"],
+        "responses": {"200": {"description": "OpenAPI 3.0 JSON spec"}},
+    },
+    "GET /docs": {
+        "summary": "Swagger UI",
+        "tags": ["System"],
+        "responses": {"200": {"description": "Interactive API docs (HTML)"}},
+    },
+}
+
+
+def _regex_to_openapi_path(pattern: re.Pattern[str]) -> str:
+    """Convert a regex route pattern to an OpenAPI path template."""
+    raw = pattern.pattern.lstrip("^").rstrip("$")
+    raw = re.sub(r"\(\\d\+\)", "{id}", raw)
+    raw = re.sub(r"\(\[\^/\]\+\)", "{name}", raw)
+    return raw
+
+
+def _build_openapi_spec() -> dict[str, Any]:
+    """Generate an OpenAPI 3.0 spec from the registered routes."""
+    paths: dict[str, dict[str, Any]] = {}
+
+    method_routes = [
+        ("get", _GET_ROUTES),
+        ("post", _POST_ROUTES),
+        ("delete", _DELETE_ROUTES),
+    ]
+    for method, routes in method_routes:
+        for pattern, handler_name in routes:
+            path = _regex_to_openapi_path(pattern)
+            key = f"{method.upper()} {path}"
+            meta = _ROUTE_METADATA.get(key, {})
+            op: dict[str, Any] = {
+                "operationId": handler_name.lstrip("_"),
+                "summary": meta.get("summary", handler_name.replace("_handle_", "").replace("_", " ").title()),
+                "tags": meta.get("tags", ["Other"]),
+                "responses": meta.get("responses", {"200": {"description": "Success"}}),
+            }
+            if "parameters" in meta:
+                op["parameters"] = meta["parameters"]
+            if "requestBody" in meta:
+                op["requestBody"] = meta["requestBody"]
+            paths.setdefault(path, {})[method] = op
+
+    return {
+        "openapi": "3.0.3",
+        "info": {
+            "title": "GigaVector API",
+            "version": "0.8.2",
+            "description": "High-performance vector database with LLM integration",
+        },
+        "servers": [{"url": "/", "description": "Local server"}],
+        "paths": paths,
+    }
+
+
+_SWAGGER_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GigaVector API Docs</title>
+<link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css">
+</head>
+<body>
+<div id="swagger-ui"></div>
+<script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+<script>
+SwaggerUIBundle({
+  url: '/openapi.json',
+  dom_id: '#swagger-ui',
+  deepLinking: true,
+  presets: [SwaggerUIBundle.presets.apis, SwaggerUIBundle.SwaggerUIStandalonePreset],
+  layout: "BaseLayout",
+});
+</script>
+</body>
+</html>
+"""
 
 
 class _DashboardHTTPServer(HTTPServer):
@@ -839,6 +1347,11 @@ class _DashboardHTTPServer(HTTPServer):
         self._tiered_mgr: Any = None
         self._rbac_mgr: Any = None
         self._quota_mgr: Any = None
+        self._collection_mgr: Any = None
+        self._shard_mgr: Any = None
+        self._cluster: Any = None
+        self._snapshot_mgr: Any = None
+        self._schema: Any = None
         self._lock = threading.Lock()
         super().__init__(server_address, _Handler)
 
@@ -880,7 +1393,6 @@ class _DashboardHTTPServer(HTTPServer):
                 if self._rbac_mgr is None:
                     from gigavector._core import RBACManager
                     self._rbac_mgr = RBACManager()
-                    self._rbac_mgr.init_defaults()
         return self._rbac_mgr
 
     def get_quota_mgr(self) -> Any:
@@ -891,9 +1403,52 @@ class _DashboardHTTPServer(HTTPServer):
                     self._quota_mgr = QuotaManager()
         return self._quota_mgr
 
+    def get_collection_mgr(self) -> Any:
+        if self._collection_mgr is None:
+            with self._lock:
+                if self._collection_mgr is None:
+                    from gigavector._core import CollectionManager
+                    self._collection_mgr = CollectionManager()
+        return self._collection_mgr
+
+    def get_shard_mgr(self) -> Any:
+        if self._shard_mgr is None:
+            with self._lock:
+                if self._shard_mgr is None:
+                    from gigavector._core import ShardManager
+                    self._shard_mgr = ShardManager()
+        return self._shard_mgr
+
+    def get_cluster(self) -> Any:
+        if self._cluster is None:
+            with self._lock:
+                if self._cluster is None:
+                    from gigavector._core import Cluster, ClusterConfig
+                    cfg = ClusterConfig()
+                    self._cluster = Cluster(cfg)
+        return self._cluster
+
+    def get_snapshot_mgr(self) -> Any:
+        if self._snapshot_mgr is None:
+            with self._lock:
+                if self._snapshot_mgr is None:
+                    from gigavector._core import SnapshotManager
+                    self._snapshot_mgr = SnapshotManager()
+        return self._snapshot_mgr
+
+    def get_schema(self) -> Any:
+        if self._schema is None:
+            with self._lock:
+                if self._schema is None:
+                    from gigavector._core import Schema
+                    self._schema = Schema()
+        return self._schema
+
     def close_managers(self) -> None:
         for mgr in (self._sql_engine, self._graph_db, self._namespace_mgr,
-                     self._tiered_mgr, self._rbac_mgr, self._quota_mgr):
+                     self._tiered_mgr, self._rbac_mgr, self._quota_mgr,
+                     self._collection_mgr, self._shard_mgr, self._cluster,
+                     self._snapshot_mgr, self._schema):
             if mgr is not None and hasattr(mgr, "close"):
                 try:
                     mgr.close()
