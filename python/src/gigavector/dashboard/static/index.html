@@ -285,6 +285,12 @@ td.mono{font-family:var(--mono);font-size:12px}
     <div class="brand-mark"><img src="/dashboard/logo.png" alt="GigaVector"></div>
     <div class="brand-name">GigaVector</div>
   </div>
+  <div style="padding:10px 12px;border-bottom:1px solid var(--border)">
+    <label style="display:block;font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px">Collection</label>
+    <select id="collectionPicker" style="width:100%;font-size:13px;padding:6px 8px">
+      <option value="">Default (primary)</option>
+    </select>
+  </div>
   <nav class="sidebar-nav">
     <div class="nav-section">CORE</div>
     <a href="#overview" class="active" data-view="overview">
@@ -320,6 +326,10 @@ td.mono{font-family:var(--mono);font-size:12px}
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
       <span>SQL</span>
     </a>
+    <a href="#schema" data-view="schema">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+      <span>Schema</span>
+    </a>
     <div class="nav-section">SEARCH</div>
     <a href="#semantic" data-view="semantic">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 00-3 3v7a3 3 0 006 0V5a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/></svg>
@@ -350,6 +360,14 @@ td.mono{font-family:var(--mono);font-size:12px}
     <a href="#backups" data-view="backups">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
       <span>Backups</span>
+    </a>
+    <a href="#cluster" data-view="cluster">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+      <span>Cluster</span>
+    </a>
+    <a href="#snapshots" data-view="snapshots">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 4h14a2 2 0 012 2v12a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z"/><line x1="12" y1="9" x2="12" y2="15"/><line x1="9" y1="12" x2="15" y2="12"/></svg>
+      <span>Snapshots</span>
     </a>
   </nav>
   <div class="sidebar-footer">
@@ -498,6 +516,7 @@ td.mono{font-family:var(--mono);font-size:12px}
           <div class="form-row" style="margin-bottom:14px">
             <div class="form-group" style="margin-bottom:0"><label>k</label><input type="number" id="search-k" value="5" min="1" style="width:70px"></div>
             <div class="form-group" style="margin-bottom:0"><label>Distance</label><select id="search-dist"><option value="euclidean">Euclidean</option><option value="cosine">Cosine</option><option value="dot_product">Dot Product</option><option value="manhattan">Manhattan</option></select></div>
+            <div class="form-group" style="margin-bottom:0"><label>Oversampling</label><input type="number" id="search-oversampling" value="" min="1" step="0.5" style="width:80px" placeholder="auto" title="Oversampling factor for IVFPQ index (optional)"></div>
             <button class="btn" onclick="doSearch()">Search</button>
           </div>
           <div style="margin-bottom:14px">
@@ -821,6 +840,50 @@ td.mono{font-family:var(--mono);font-size:12px}
       </div>
     </div>
 
+    <div class="view" id="view-schema">
+      <div class="section">
+        <div class="section-title">Payload Schema</div>
+        <div class="section-desc">View the metadata schema for this collection.</div>
+        <button class="btn btn-outline btn-sm" onclick="loadSchema()" style="margin-bottom:14px">Refresh Schema</button>
+        <table id="schema-table" style="display:none"><thead><tr><th>Field Name</th><th>Type</th><th>Required</th><th>Indexed</th></tr></thead><tbody id="schema-tbody"></tbody></table>
+        <div id="schema-empty" style="color:var(--text-muted);font-size:13px;margin-bottom:14px">Click Refresh to load schema.</div>
+        <div class="section-title" style="margin-top:16px">Raw JSON</div>
+        <div id="schema-raw" class="json-view" style="min-height:80px"></div>
+      </div>
+    </div>
+
+    <div class="view" id="view-cluster">
+      <div class="section">
+        <div class="section-title">Cluster Overview</div>
+        <button class="btn btn-outline btn-sm" onclick="loadCluster()" style="margin-bottom:14px">Refresh</button>
+        <div class="cards" id="cluster-cards">
+          <div class="card"><div class="card-label">Total Nodes</div><div class="card-value" id="cl-nodes">—</div></div>
+          <div class="card"><div class="card-label">Active Nodes</div><div class="card-value" id="cl-active">—</div></div>
+          <div class="card"><div class="card-label">Total Shards</div><div class="card-value" id="cl-shards">—</div></div>
+          <div class="card"><div class="card-label">Total Vectors</div><div class="card-value" id="cl-vectors">—</div></div>
+          <div class="card"><div class="card-label">Health</div><div class="card-value" id="cl-health">—</div></div>
+        </div>
+      </div>
+      <div class="section">
+        <div class="section-title">Shards</div>
+        <table id="cluster-shard-table" style="display:none"><thead><tr><th>Shard ID</th><th>Node Address</th><th>State</th><th>Vectors</th><th>Replicas</th></tr></thead><tbody id="cluster-shard-tbody"></tbody></table>
+        <div id="cluster-shard-empty" style="color:var(--text-muted);font-size:13px">Click Refresh to load shard info.</div>
+      </div>
+    </div>
+
+    <div class="view" id="view-snapshots">
+      <div class="section">
+        <div class="section-title">Snapshot Management</div>
+        <div class="form-row" style="margin-bottom:14px;align-items:flex-end">
+          <div class="form-group" style="margin-bottom:0"><label>Label (optional)</label><input type="text" id="snap-label" placeholder="my-snapshot" style="width:200px"></div>
+          <button class="btn" onclick="createSnapshot()">Create Snapshot</button>
+          <button class="btn btn-outline" onclick="loadSnapshots()">Refresh</button>
+        </div>
+        <table id="snap-table" style="display:none"><thead><tr><th>ID</th><th>Timestamp</th><th>Vectors</th><th>Label</th><th>Actions</th></tr></thead><tbody id="snap-tbody"></tbody></table>
+        <div id="snap-empty" style="color:var(--text-muted);font-size:13px">No snapshots yet. Create one above.</div>
+      </div>
+    </div>
+
     <!-- BACKUPS -->
     <div class="view" id="view-backups">
       <div class="section">
@@ -872,8 +935,13 @@ function jsonHighlight(obj) {
   });
 }
 
+let activeCollection = '';
+
 async function apiCall(path, opts) {
   try {
+    if (!opts) opts = {};
+    if (!opts.headers) opts.headers = {};
+    if (activeCollection) opts.headers['X-Collection'] = activeCollection;
     const r = await fetch(API + path, opts);
     const text = await r.text();
     let data; try { data = JSON.parse(text); } catch { data = text; }
@@ -1446,6 +1514,8 @@ async function doSearch() {
     const body={query:q,k:parseInt(document.getElementById('search-k').value),distance:document.getElementById('search-dist').value};
     const fk=document.getElementById('filter-key').value.trim(), fv=document.getElementById('filter-value').value.trim();
     if(fk&&fv) body.filter={key:fk,value:fv};
+    const os=document.getElementById('search-oversampling').value.trim();
+    if(os) body.oversampling_factor=parseFloat(os);
     const r=await apiCall('/search',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     renderSearchResults(r,'search-tbody','search-meta','search-results','search-empty');
   } catch(e){ document.getElementById('search-meta').textContent=''; document.getElementById('search-empty').textContent='Invalid JSON: '+e.message; document.getElementById('search-empty').style.display='block'; document.getElementById('search-results').style.display='none'; }
@@ -1986,10 +2056,122 @@ function simGraphExplorer() {
 }
 
 
+async function loadCollections() {
+  const r = await apiCall('/api/collections');
+  const picker = document.getElementById('collectionPicker');
+  // keep first option (Default)
+  while (picker.options.length > 1) picker.remove(1);
+  if (r.ok && r.data.collections) {
+    r.data.collections.forEach(c => {
+      const opt = document.createElement('option');
+      opt.value = c.name;
+      opt.textContent = c.name + ' (' + c.vector_count + ' vectors)';
+      picker.appendChild(opt);
+    });
+  }
+}
+document.getElementById('collectionPicker').addEventListener('change', function() {
+  activeCollection = this.value;
+});
+loadCollections();
+
+async function loadCluster() {
+  const r = await apiCall('/api/cluster/info');
+  if (r.ok) {
+    document.getElementById('cl-nodes').textContent = r.data.total_nodes;
+    document.getElementById('cl-active').textContent = r.data.active_nodes;
+    document.getElementById('cl-shards').textContent = r.data.total_shards;
+    document.getElementById('cl-vectors').textContent = r.data.total_vectors;
+    document.getElementById('cl-health').textContent = r.data.healthy ? 'Healthy' : 'Degraded';
+    document.getElementById('cl-health').style.color = r.data.healthy ? 'var(--green)' : 'var(--red)';
+  }
+  const sr = await apiCall('/api/cluster/shards');
+  if (sr.ok && sr.data.shards && sr.data.shards.length > 0) {
+    const tbody = document.getElementById('cluster-shard-tbody');
+    tbody.innerHTML = '';
+    sr.data.shards.forEach(s => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = '<td class="mono">' + s.shard_id + '</td><td class="mono">' + s.node_address +
+        '</td><td>' + s.state + '</td><td class="mono">' + s.vector_count + '</td><td class="mono">' + s.replica_count + '</td>';
+      tbody.appendChild(tr);
+    });
+    document.getElementById('cluster-shard-table').style.display = '';
+    document.getElementById('cluster-shard-empty').style.display = 'none';
+  }
+}
+
+async function loadSnapshots() {
+  const r = await apiCall('/api/snapshots');
+  if (r.ok && r.data.snapshots) {
+    const tbody = document.getElementById('snap-tbody');
+    tbody.innerHTML = '';
+    if (r.data.snapshots.length === 0) {
+      document.getElementById('snap-table').style.display = 'none';
+      document.getElementById('snap-empty').style.display = 'block';
+      document.getElementById('snap-empty').textContent = 'No snapshots found.';
+      return;
+    }
+    r.data.snapshots.forEach(s => {
+      const tr = document.createElement('tr');
+      const ts = new Date(s.timestamp_us / 1000).toLocaleString();
+      tr.innerHTML = '<td class="mono">' + s.snapshot_id + '</td><td class="mono">' + ts +
+        '</td><td class="mono">' + s.vector_count + '</td><td>' + (s.label || '—') +
+        '</td><td><button class="btn btn-outline btn-sm" onclick="restoreSnapshot(' + s.snapshot_id +
+        ')">Restore</button> <button class="btn btn-danger btn-sm" onclick="deleteSnapshot(' + s.snapshot_id +
+        ')">Delete</button></td>';
+      tbody.appendChild(tr);
+    });
+    document.getElementById('snap-table').style.display = '';
+    document.getElementById('snap-empty').style.display = 'none';
+  }
+}
+async function createSnapshot() {
+  const label = document.getElementById('snap-label').value.trim();
+  const r = await apiCall('/api/snapshots', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({label})});
+  if (r.ok) { showToast('Snapshot created (ID: ' + r.data.snapshot_id + ')', 'success'); loadSnapshots(); }
+  else showToast('Failed: ' + (r.data.message || r.data.error), 'error');
+}
+async function restoreSnapshot(id) {
+  const r = await apiCall('/api/snapshots/' + id + '/restore', {method:'POST'});
+  if (r.ok) showToast('Restore initiated for snapshot ' + id, 'success');
+  else showToast('Restore failed', 'error');
+}
+async function deleteSnapshot(id) {
+  const r = await apiCall('/api/snapshots/' + id, {method:'DELETE'});
+  if (r.ok) { showToast('Snapshot deleted', 'success'); loadSnapshots(); }
+  else showToast('Delete failed', 'error');
+}
+
+async function loadSchema() {
+  const r = await apiCall('/api/schema');
+  if (r.ok) {
+    const tbody = document.getElementById('schema-tbody');
+    tbody.innerHTML = '';
+    if (r.data.fields && r.data.fields.length > 0) {
+      r.data.fields.forEach(f => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = '<td class="mono">' + f.name + '</td><td>' + f.type +
+          '</td><td>' + (f.required ? 'Yes' : 'No') + '</td><td>' + (f.indexed ? 'Yes' : 'No') + '</td>';
+        tbody.appendChild(tr);
+      });
+      document.getElementById('schema-table').style.display = '';
+      document.getElementById('schema-empty').style.display = 'none';
+    } else {
+      document.getElementById('schema-table').style.display = 'none';
+      document.getElementById('schema-empty').style.display = 'block';
+      document.getElementById('schema-empty').textContent = 'No schema fields defined (' + r.data.field_count + ' fields).';
+    }
+    document.getElementById('schema-raw').innerHTML = jsonHighlight(r.data.raw || {});
+  }
+}
+
 const viewHooks={
   monitoring:()=>{refreshMonitoring();if(!monTimer)monTimer=setInterval(refreshMonitoring,1000);},
   benchmarks:drawBenchmarks,
   namespaces:loadNamespaces,
+  cluster:loadCluster,
+  snapshots:loadSnapshots,
+  schema:loadSchema,
 };
 const viewLeaveHooks={
   monitoring:()=>{if(monTimer){clearInterval(monTimer);monTimer=null;}},
