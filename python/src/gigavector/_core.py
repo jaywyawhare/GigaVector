@@ -8119,3 +8119,964 @@ class KnowledgeGraph:
         obj._kg = kg
         return obj
 
+
+class FilterExpr:
+    """Base class for composable search filter expressions.
+
+    Subclasses override ``to_expr()`` to produce a filter string compatible
+    with :meth:`Database.search_with_filter_expr`.
+
+    Expressions can be combined with ``&`` (AND), ``|`` (OR), and ``~`` (NOT).
+    """
+
+    def to_expr(self) -> str:
+        raise NotImplementedError
+
+    def __and__(self, other: "FilterExpr") -> "FilterExpr":
+        return _AndFilter(self, other)
+
+    def __or__(self, other: "FilterExpr") -> "FilterExpr":
+        return _OrFilter(self, other)
+
+    def __invert__(self) -> "FilterExpr":
+        return _NotFilter(self)
+
+    def __repr__(self) -> str:
+        return f"FilterExpr({self.to_expr()!r})"
+
+
+class _CompareFilter(FilterExpr):
+    """Comparison filter: field <op> value."""
+
+    __slots__ = ("_field", "_op", "_value")
+
+    def __init__(self, field: str, op: str, value: Any) -> None:
+        self._field = field
+        self._op = op
+        self._value = value
+
+    def to_expr(self) -> str:
+        if isinstance(self._value, str):
+            escaped = self._value.replace('"', '\\"')
+            return f'{self._field} {self._op} "{escaped}"'
+        return f"{self._field} {self._op} {self._value}"
+
+
+class _StringMatchFilter(FilterExpr):
+    """String match filter: CONTAINS or PREFIX."""
+
+    __slots__ = ("_field", "_kind", "_value")
+
+    def __init__(self, field: str, kind: str, value: str) -> None:
+        self._field = field
+        self._kind = kind
+        self._value = value
+
+    def to_expr(self) -> str:
+        escaped = self._value.replace('"', '\\"')
+        return f'{self._field} {self._kind} "{escaped}"'
+
+
+class _InFilter(FilterExpr):
+    """IN filter: field IN (val1, val2, ...)."""
+
+    __slots__ = ("_field", "_values")
+
+    def __init__(self, field: str, values: Sequence[Any]) -> None:
+        self._field = field
+        self._values = list(values)
+
+    def to_expr(self) -> str:
+        parts = []
+        for v in self._values:
+            if isinstance(v, str):
+                escaped = v.replace('"', '\\"')
+                parts.append(f'"{escaped}"')
+            else:
+                parts.append(str(v))
+        return f'{self._field} IN ({", ".join(parts)})'
+
+
+class _AndFilter(FilterExpr):
+    """Logical AND of two filters."""
+
+    __slots__ = ("_left", "_right")
+
+    def __init__(self, left: FilterExpr, right: FilterExpr) -> None:
+        self._left = left
+        self._right = right
+
+    def to_expr(self) -> str:
+        return f"({self._left.to_expr()} AND {self._right.to_expr()})"
+
+
+class _OrFilter(FilterExpr):
+    """Logical OR of two filters."""
+
+    __slots__ = ("_left", "_right")
+
+    def __init__(self, left: FilterExpr, right: FilterExpr) -> None:
+        self._left = left
+        self._right = right
+
+    def to_expr(self) -> str:
+        return f"({self._left.to_expr()} OR {self._right.to_expr()})"
+
+
+class _NotFilter(FilterExpr):
+    """Logical NOT of a filter."""
+
+    __slots__ = ("_inner",)
+
+    def __init__(self, inner: FilterExpr) -> None:
+        self._inner = inner
+
+    def to_expr(self) -> str:
+        return f"NOT ({self._inner.to_expr()})"
+
+
+class Field:
+    """Fluent filter builder for a metadata field.
+
+    Example::
+
+        f = Field("category")
+        expr = (f == "A") & (Field("score") >= 0.5)
+        hits = db.search_filtered(query, k=10, filter=expr)
+    """
+
+    __slots__ = ("_name",)
+
+    def __init__(self, name: str) -> None:
+        self._name = name
+
+    def __eq__(self, value: Any) -> FilterExpr:  # type: ignore[override]
+        return _CompareFilter(self._name, "==", value)
+
+    def __ne__(self, value: Any) -> FilterExpr:  # type: ignore[override]
+        return _CompareFilter(self._name, "!=", value)
+
+    def __gt__(self, value: Any) -> FilterExpr:
+        return _CompareFilter(self._name, ">", value)
+
+    def __ge__(self, value: Any) -> FilterExpr:
+        return _CompareFilter(self._name, ">=", value)
+
+    def __lt__(self, value: Any) -> FilterExpr:
+        return _CompareFilter(self._name, "<", value)
+
+    def __le__(self, value: Any) -> FilterExpr:
+        return _CompareFilter(self._name, "<=", value)
+
+    def contains(self, value: str) -> FilterExpr:
+        return _StringMatchFilter(self._name, "CONTAINS", value)
+
+    def prefix(self, value: str) -> FilterExpr:
+        return _StringMatchFilter(self._name, "PREFIX", value)
+
+    def is_in(self, values: Sequence[Any]) -> FilterExpr:
+        return _InFilter(self._name, values)
+
+    def __repr__(self) -> str:
+        return f"Field({self._name!r})"
+
+
+class ScrollIterator:
+    """Lazy iterator over all vectors in a database using batched scroll calls.
+
+    Example::
+
+        for entry in db.iter_scroll(batch_size=100):
+            print(entry.index, entry.metadata)
+    """
+
+    __slots__ = ("_db", "_batch_size", "_offset", "_buffer", "_buf_idx", "_exhausted")
+
+    def __init__(self, db: "Database", batch_size: int = 200) -> None:
+        self._db = db
+        self._batch_size = batch_size
+        self._offset = 0
+        self._buffer: list[ScrollEntry] = []
+        self._buf_idx = 0
+        self._exhausted = False
+
+    def __iter__(self) -> "ScrollIterator":
+        return self
+
+    def __next__(self) -> ScrollEntry:
+        if self._buf_idx >= len(self._buffer):
+            if self._exhausted:
+                raise StopIteration
+            self._buffer = self._db.scroll(offset=self._offset, limit=self._batch_size)
+            self._buf_idx = 0
+            if not self._buffer:
+                self._exhausted = True
+                raise StopIteration
+            self._offset += len(self._buffer)
+        entry = self._buffer[self._buf_idx]
+        self._buf_idx += 1
+        return entry
+
+
+@dataclass
+class DiscoveryConfig:
+    """Configuration for discovery search."""
+    positive_weight: float = 1.0
+    negative_weight: float = 0.5
+    distance_type: int = 1  # COSINE
+    oversample: int = 2
+
+
+@dataclass(frozen=True)
+class DiscoveryResult:
+    """A single discovery search result."""
+    index: int
+    score: float
+
+
+class DiscoveryAPI:
+    """Discovery / context-based search API.
+
+    Provides discovery search that finds vectors similar to positive examples
+    and dissimilar to negative examples, leveraging the C recommend engine.
+    """
+
+    @staticmethod
+    def discover_by_ids(
+        db: Database,
+        positive_ids: list[int],
+        negative_ids: list[int] | None = None,
+        k: int = 10,
+        config: DiscoveryConfig | None = None,
+    ) -> list[DiscoveryResult]:
+        if not positive_ids:
+            raise ValueError("positive_ids must not be empty")
+        cfg = config or DiscoveryConfig()
+        c_cfg = ffi.new("GV_RecommendConfig *")
+        lib.gv_recommend_config_init(c_cfg)
+        c_cfg.positive_weight = cfg.positive_weight
+        c_cfg.negative_weight = cfg.negative_weight
+        c_cfg.distance_type = cfg.distance_type
+        c_cfg.oversample = cfg.oversample
+        c_cfg.exclude_input = 1
+
+        c_pos = ffi.new("size_t[]", positive_ids)
+        neg_ids = negative_ids or []
+        c_neg = ffi.new("size_t[]", neg_ids) if neg_ids else ffi.NULL
+        c_results = ffi.new("GV_RecommendResult[]", k)
+
+        count = lib.gv_recommend_by_id(
+            db._db, c_pos, len(positive_ids),
+            c_neg, len(neg_ids), k, c_cfg, c_results,
+        )
+        if count < 0:
+            raise RuntimeError("Discovery search failed")
+        return [
+            DiscoveryResult(index=int(c_results[i].index), score=float(c_results[i].score))
+            for i in range(count)
+        ]
+
+    @staticmethod
+    def discover_by_vectors(
+        db: Database,
+        target: Sequence[float],
+        context: list[tuple[Sequence[float], float]] | None = None,
+        k: int = 10,
+        config: DiscoveryConfig | None = None,
+    ) -> list[DiscoveryResult]:
+        """Search near *target* biased by context pairs (vector, weight)."""
+        if len(target) != db.dimension:
+            raise ValueError(f"target dimension mismatch: expected {db.dimension}")
+        cfg = config or DiscoveryConfig()
+
+        dim = db.dimension
+        centroid = list(target)
+        total_weight = 1.0
+        if context:
+            for vec, weight in context:
+                if len(vec) != dim:
+                    raise ValueError(f"context vector dimension mismatch: expected {dim}")
+                for d in range(dim):
+                    centroid[d] += vec[d] * weight
+                total_weight += abs(weight)
+        if total_weight > 0:
+            centroid = [c / total_weight for c in centroid]
+
+        qbuf = ffi.new("float[]", centroid)
+        results = ffi.new("GV_SearchResult[]", k * cfg.oversample)
+        n = lib.gv_db_search(db._db, qbuf, k * cfg.oversample, results, cfg.distance_type)
+        if n < 0:
+            raise RuntimeError("Discovery vector search failed")
+        out: list[DiscoveryResult] = []
+        for i in range(min(n, k)):
+            res = results[i]
+            out.append(DiscoveryResult(index=int(res.id), score=float(res.distance)))
+        return out
+
+
+def _get_vectors_batch(self: Database, indices: Sequence[int]) -> dict[int, list[float] | None]:
+    result: dict[int, list[float] | None] = {}
+    for idx in indices:
+        result[idx] = self.get_vector(idx)
+    return result
+
+
+Database.get_vectors_batch = _get_vectors_batch  # type: ignore[attr-defined]
+
+
+def _search_filtered(
+    self: Database,
+    query: Sequence[float],
+    k: int,
+    filter: FilterExpr,
+    distance: DistanceType = DistanceType.EUCLIDEAN,
+) -> list[SearchHit]:
+    return self.search_with_filter_expr(query, k, distance=distance, filter_expr=filter.to_expr())
+
+
+Database.search_filtered = _search_filtered  # type: ignore[attr-defined]
+
+
+def _iter_scroll(self: Database, batch_size: int = 200) -> ScrollIterator:
+    return ScrollIterator(self, batch_size=batch_size)
+
+
+Database.iter_scroll = _iter_scroll  # type: ignore[attr-defined]
+
+
+@dataclass
+class CollectionConfig:
+    """Configuration for creating a collection."""
+    name: str
+    dimension: int
+    index_type: str = "HNSW"
+    max_vectors: int = 0
+
+
+@dataclass(frozen=True)
+class CollectionInfo:
+    """Information about an existing collection."""
+    name: str
+    dimension: int
+    index_type: str
+    vector_count: int
+    memory_bytes: int
+    created_at: int
+    last_modified: int
+
+
+class CollectionManager:
+    """High-level collection management wrapping NamespaceManager.
+
+    Provides a Qdrant/Milvus-style ``collections`` API on top of GigaVector's
+    namespace system.
+    """
+
+    def __init__(self, namespace_mgr: NamespaceManager | None = None) -> None:
+        self._ns_mgr = namespace_mgr or NamespaceManager()
+        self._owns_mgr = namespace_mgr is None
+
+    def close(self) -> None:
+        if self._owns_mgr:
+            self._ns_mgr.close()
+
+    def create(self, config: CollectionConfig) -> None:
+        idx_map = {
+            "HNSW": NSIndexType.HNSW,
+            "FLAT": NSIndexType.FLAT,
+            "KDTREE": NSIndexType.KDTREE,
+        }
+        idx_type = idx_map.get(config.index_type.upper(), NSIndexType.HNSW)
+        ns_config = NamespaceConfig(
+            name=config.name,
+            dimension=config.dimension,
+            index_type=idx_type,
+            max_vectors=config.max_vectors,
+        )
+        self._ns_mgr.create(ns_config)
+
+    def get(self, name: str) -> Namespace | None:
+        return self._ns_mgr.get(name)
+
+    def delete(self, name: str) -> None:
+        self._ns_mgr.delete(name)
+
+    def list(self) -> list[str]:
+        return self._ns_mgr.list()
+
+    def exists(self, name: str) -> bool:
+        return self._ns_mgr.exists(name)
+
+    def get_info(self, name: str) -> CollectionInfo | None:
+        ns = self._ns_mgr.get(name)
+        if ns is None:
+            return None
+        info = ns.get_info()
+        return CollectionInfo(
+            name=info.name,
+            dimension=info.dimension,
+            index_type=info.index_type.name if hasattr(info.index_type, "name") else str(info.index_type),
+            vector_count=info.vector_count,
+            memory_bytes=info.memory_bytes,
+            created_at=info.created_at,
+            last_modified=info.last_modified,
+        )
+
+
+# Temporal Knowledge Graph
+@dataclass
+class TemporalEdge:
+    relation_id: int
+    subject_id: int
+    predicate: str
+    object_id: int
+    weight: float
+    t_commit: float
+    t_valid_from: Optional[float] = None
+    t_valid_to: Optional[float] = None
+    context: str = ""
+
+
+class TemporalKnowledgeGraph:
+    """Append-only temporal wrapper over KnowledgeGraph.
+
+    Edges are never overwritten — each mutation appends a new edge with
+    (t_valid_from, t_valid_to) metadata, enabling point-in-time queries
+    and full state-transition history.
+    """
+
+    def __init__(self, kg: KnowledgeGraph) -> None:
+        self._kg = kg
+        self._temporal_edges: dict[int, TemporalEdge] = {}
+        self._entity_edges: dict[tuple[int, str, int], list[int]] = {}
+
+    @property
+    def kg(self) -> KnowledgeGraph:
+        return self._kg
+
+    def add_temporal_relation(
+        self,
+        subject: int,
+        predicate: str,
+        object_: int,
+        weight: float = 1.0,
+        t_valid_from: Optional[float] = None,
+        t_valid_to: Optional[float] = None,
+        context: str = "",
+    ) -> int:
+        import time
+        rid = self._kg.add_relation(subject, predicate, object_, weight)
+        edge = TemporalEdge(
+            relation_id=rid,
+            subject_id=subject,
+            predicate=predicate,
+            object_id=object_,
+            weight=weight,
+            t_commit=time.time(),
+            t_valid_from=t_valid_from,
+            t_valid_to=t_valid_to,
+            context=context,
+        )
+        self._temporal_edges[rid] = edge
+        key = (subject, predicate, object_)
+        self._entity_edges.setdefault(key, []).append(rid)
+        if context:
+            self._kg.set_relation_prop(rid, "_ctx", context)
+        if t_valid_from is not None:
+            self._kg.set_relation_prop(rid, "_t_valid_from", str(t_valid_from))
+        if t_valid_to is not None:
+            self._kg.set_relation_prop(rid, "_t_valid_to", str(t_valid_to))
+        return rid
+
+    def get_edge_history(
+        self, subject: int, predicate: str, object_: int
+    ) -> list[TemporalEdge]:
+        key = (subject, predicate, object_)
+        rids = self._entity_edges.get(key, [])
+        edges = [self._temporal_edges[r] for r in rids if r in self._temporal_edges]
+        edges.sort(key=lambda e: e.t_commit)
+        return edges
+
+    def get_current_state(
+        self, subject: int, predicate: str, object_: int
+    ) -> Optional[TemporalEdge]:
+        history = self.get_edge_history(subject, predicate, object_)
+        return history[-1] if history else None
+
+    def get_state_at(
+        self, subject: int, predicate: str, object_: int, t: float
+    ) -> Optional[TemporalEdge]:
+        for edge in reversed(self.get_edge_history(subject, predicate, object_)):
+            if edge.t_valid_from is not None and t < edge.t_valid_from:
+                continue
+            if edge.t_valid_to is not None and t > edge.t_valid_to:
+                continue
+            return edge
+        return None
+
+    def query_temporal(
+        self,
+        subject: Optional[int] = None,
+        predicate: Optional[str] = None,
+        t_min: Optional[float] = None,
+        t_max: Optional[float] = None,
+    ) -> list[TemporalEdge]:
+        results: list[TemporalEdge] = []
+        for edge in self._temporal_edges.values():
+            if subject is not None and edge.subject_id != subject:
+                continue
+            if predicate is not None and edge.predicate != predicate:
+                continue
+            if t_min is not None:
+                if edge.t_valid_to is not None and edge.t_valid_to < t_min:
+                    continue
+            if t_max is not None:
+                if edge.t_valid_from is not None and edge.t_valid_from > t_max:
+                    continue
+            results.append(edge)
+        results.sort(key=lambda e: e.t_commit)
+        return results
+
+    def diff(
+        self, subject: int, predicate: str, object_: int
+    ) -> list[tuple[TemporalEdge, Optional[TemporalEdge]]]:
+        history = self.get_edge_history(subject, predicate, object_)
+        return [(edge, history[i - 1] if i > 0 else None)
+                for i, edge in enumerate(history)]
+
+
+# Graph-Augmented Vector Search
+@dataclass
+class GraphAugmentedHit:
+    vector_index: int
+    distance: float
+    vector: Optional[Vector] = None
+    graph_context: Optional[list[KGTriple]] = None
+    expanded_entities: Optional[list[dict]] = None
+    combined_score: float = 0.0
+
+
+@dataclass
+class GraphSearchConfig:
+    expansion_hops: int = 2
+    max_graph_results: int = 10
+    graph_weight: float = 0.3
+    vector_weight: float = 0.7
+    expand_entity_types: Optional[list[str]] = None
+
+
+def search_with_graph_expansion(
+    db: Database,
+    kg: KnowledgeGraph,
+    query: Sequence[float],
+    k: int,
+    entity_ids: Optional[list[int]] = None,
+    config: Optional[GraphSearchConfig] = None,
+    distance: DistanceType = DistanceType.COSINE,
+) -> list[GraphAugmentedHit]:
+    """Vector search with per-hit KG entity expansion and score fusion."""
+    cfg = config or GraphSearchConfig()
+    hits = db.search(query, k=k * 2, distance=distance)
+
+    results: list[GraphAugmentedHit] = []
+    for hit in hits:
+        linked_eids: list[int] = []
+        eid_str = hit.vector.metadata.get("_entity_ids", "")
+        if eid_str:
+            linked_eids = [int(x) for x in eid_str.split(",") if x.strip()]
+        if entity_ids:
+            linked_eids.extend(entity_ids)
+
+        graph_context: list[KGTriple] = []
+        expanded: list[dict] = []
+        for eid in linked_eids:
+            graph_context.extend(kg.query_triples(subject=eid))
+            for nid in kg.traverse(eid, max_depth=cfg.expansion_hops,
+                                   max_count=cfg.max_graph_results):
+                ent = kg.get_entity(nid)
+                if ent:
+                    if cfg.expand_entity_types and ent.get("type") not in cfg.expand_entity_types:
+                        continue
+                    expanded.append(ent)
+
+        graph_score = min(len(graph_context) / max(cfg.max_graph_results, 1), 1.0)
+        max_dist = max((h.distance for h in hits), default=1.0) or 1.0
+        vector_score = 1.0 - (hit.distance / max_dist)
+        combined = cfg.vector_weight * vector_score + cfg.graph_weight * graph_score
+
+        results.append(GraphAugmentedHit(
+            vector_index=hit.id,
+            distance=hit.distance,
+            vector=hit.vector,
+            graph_context=graph_context or None,
+            expanded_entities=expanded or None,
+            combined_score=combined,
+        ))
+
+    results.sort(key=lambda r: r.combined_score, reverse=True)
+    return results[:k]
+
+
+# Retention Scoring
+@dataclass
+class RetentionConfig:
+    decay_lambda: float = 0.01
+    reinforcement_sigma: float = 0.1
+    default_salience: float = 1.0
+    eviction_threshold: float = 0.1
+
+
+@dataclass
+class RetentionRecord:
+    vector_index: int
+    salience: float
+    created_at: float
+    access_times: list[float]
+
+
+class RetentionScorer:
+    """Ebbinghaus-curve retention scoring with access-frequency reinforcement.
+
+    R(t) = salience * e^(-lambda * dt) + sigma * sum(1 / (t - t_access_i))
+    """
+
+    def __init__(self, config: Optional[RetentionConfig] = None) -> None:
+        self._config = config or RetentionConfig()
+        self._records: dict[int, RetentionRecord] = {}
+
+    @property
+    def config(self) -> RetentionConfig:
+        return self._config
+
+    @property
+    def tracked_count(self) -> int:
+        return len(self._records)
+
+    def register(self, vector_index: int, salience: Optional[float] = None) -> None:
+        import time
+        self._records[vector_index] = RetentionRecord(
+            vector_index=vector_index,
+            salience=salience if salience is not None else self._config.default_salience,
+            created_at=time.time(),
+            access_times=[],
+        )
+
+    def record_access(self, vector_index: int) -> None:
+        import time
+        rec = self._records.get(vector_index)
+        if rec is None:
+            self.register(vector_index)
+            rec = self._records[vector_index]
+        rec.access_times.append(time.time())
+
+    def score(self, vector_index: int, t: Optional[float] = None) -> float:
+        import math
+        import time
+        t = t or time.time()
+        rec = self._records.get(vector_index)
+        if rec is None:
+            return 0.0
+        decay = rec.salience * math.exp(-self._config.decay_lambda * (t - rec.created_at))
+        reinforcement = sum(1.0 / (t - ta) for ta in rec.access_times if t > ta)
+        return decay + self._config.reinforcement_sigma * reinforcement
+
+    def get_eviction_candidates(self, t: Optional[float] = None) -> list[int]:
+        return [idx for idx in self._records
+                if self.score(idx, t) < self._config.eviction_threshold]
+
+    def bulk_score(self, t: Optional[float] = None) -> list[tuple[int, float]]:
+        import time
+        t = t or time.time()
+        scored = [(idx, self.score(idx, t)) for idx in self._records]
+        scored.sort(key=lambda x: x[1])
+        return scored
+
+    def set_salience(self, vector_index: int, salience: float) -> None:
+        rec = self._records.get(vector_index)
+        if rec:
+            rec.salience = salience
+
+    def remove(self, vector_index: int) -> None:
+        self._records.pop(vector_index, None)
+
+
+# Multi-Field Memory Store
+@dataclass
+class MemoryStoreConfig:
+    content_dimension: int = 128
+    context_dimension: int = 128
+    content_weight: float = 0.4
+    context_weight: float = 0.4
+    sparse_weight: float = 0.2
+    distance_type: DistanceType = DistanceType.COSINE
+    rrf_k: float = 60.0
+
+
+@dataclass(frozen=True)
+class MemoryRecord:
+    record_id: int
+    content_vector: list[float]
+    context_vector: Optional[list[float]] = None
+    sparse_terms: Optional[dict[str, float]] = None
+    metadata: Optional[dict[str, str]] = None
+
+
+@dataclass(frozen=True)
+class MemorySearchHit:
+    record_id: int
+    content_score: float
+    context_score: float
+    sparse_score: float
+    combined_score: float
+    metadata: Optional[dict[str, str]] = None
+
+
+class MemoryStore:
+    """Stores content + context + sparse per record, fuses via RRF on search."""
+
+    def __init__(self, db: Database, bm25: Optional[BM25Index] = None,
+                 config: Optional[MemoryStoreConfig] = None) -> None:
+        self._db = db
+        self._bm25 = bm25
+        self._config = config or MemoryStoreConfig()
+        self._context_vectors: dict[int, list[float]] = {}
+        self._metadata: dict[int, dict[str, str]] = {}
+        self._next_id = 0
+
+    @property
+    def config(self) -> MemoryStoreConfig:
+        return self._config
+
+    @property
+    def count(self) -> int:
+        return self._next_id
+
+    def insert(
+        self,
+        content_vector: Sequence[float],
+        context_vector: Optional[Sequence[float]] = None,
+        sparse_text: Optional[str] = None,
+        metadata: Optional[dict[str, str]] = None,
+    ) -> int:
+        meta = dict(metadata) if metadata else {}
+        record_id = self._next_id
+        meta["_memory_id"] = str(record_id)
+        self._db.add_vector(list(content_vector), metadata=meta)
+        if context_vector is not None:
+            self._context_vectors[record_id] = list(context_vector)
+        if sparse_text and self._bm25:
+            self._bm25.add_document(record_id, sparse_text)
+        self._metadata[record_id] = meta
+        self._next_id += 1
+        return record_id
+
+    def search(
+        self,
+        query_vector: Sequence[float],
+        query_text: Optional[str] = None,
+        k: int = 10,
+    ) -> list[MemorySearchHit]:
+        cfg = self._config
+        rrf_k = cfg.rrf_k
+
+        # Content stream
+        content_hits = self._db.search(query_vector, k=k * 3, distance=cfg.distance_type)
+        content_ranks: dict[int, int] = {}
+        content_scores: dict[int, float] = {}
+        for rank, hit in enumerate(content_hits):
+            mid_str = hit.vector.metadata.get("_memory_id", "")
+            if mid_str:
+                mid = int(mid_str)
+                content_ranks[mid] = rank + 1
+                content_scores[mid] = hit.distance
+
+        # Context stream (cosine over stored context vectors)
+        context_ranks: dict[int, int] = {}
+        context_scores: dict[int, float] = {}
+        if self._context_vectors:
+            import math
+            q = list(query_vector)
+            q_norm = math.sqrt(sum(x * x for x in q)) or 1.0
+            scored = []
+            for mid, cvec in self._context_vectors.items():
+                c_norm = math.sqrt(sum(x * x for x in cvec)) or 1.0
+                sim = sum(a * b for a, b in zip(q, cvec)) / (q_norm * c_norm)
+                scored.append((mid, 1.0 - sim))
+            scored.sort(key=lambda x: x[1])
+            for rank, (mid, dist) in enumerate(scored[:k * 3]):
+                context_ranks[mid] = rank + 1
+                context_scores[mid] = dist
+
+        # Sparse stream
+        sparse_ranks: dict[int, int] = {}
+        sparse_scores: dict[int, float] = {}
+        if query_text and self._bm25:
+            for rank, hit in enumerate(self._bm25.search(query_text, k=k * 3)):
+                sparse_ranks[hit.doc_id] = rank + 1
+                sparse_scores[hit.doc_id] = hit.score
+
+        # RRF fusion
+        all_ids = set(content_ranks) | set(context_ranks) | set(sparse_ranks)
+        fused: list[MemorySearchHit] = []
+        for mid in all_ids:
+            cr = content_ranks.get(mid)
+            xr = context_ranks.get(mid)
+            sr = sparse_ranks.get(mid)
+            combined = (
+                (cfg.content_weight / (rrf_k + cr) if cr else 0.0) +
+                (cfg.context_weight / (rrf_k + xr) if xr else 0.0) +
+                (cfg.sparse_weight / (rrf_k + sr) if sr else 0.0)
+            )
+            fused.append(MemorySearchHit(
+                record_id=mid,
+                content_score=content_scores.get(mid, 0.0),
+                context_score=context_scores.get(mid, 0.0),
+                sparse_score=sparse_scores.get(mid, 0.0),
+                combined_score=combined,
+                metadata=self._metadata.get(mid),
+            ))
+        fused.sort(key=lambda h: h.combined_score, reverse=True)
+        return fused[:k]
+
+
+# Multi-Query Expansion Search
+@dataclass(frozen=True)
+class MultiQueryHit:
+    vector_index: int
+    distance: float
+    rrf_score: float
+    source_queries: int
+    vector: Optional[Vector] = None
+
+
+def search_multi_query(
+    db: Database,
+    queries: list[Sequence[float]],
+    k: int = 10,
+    distance: DistanceType = DistanceType.COSINE,
+    rrf_k: float = 60.0,
+) -> list[MultiQueryHit]:
+    """Run N query variants, deduplicate results, rank-fuse via RRF."""
+    all_ranks: dict[int, list[int]] = {}
+    best_distance: dict[int, float] = {}
+    best_vector: dict[int, Vector] = {}
+    source_count: dict[int, int] = {}
+
+    for _qi, q in enumerate(queries):
+        for rank, hit in enumerate(db.search(q, k=k * 2, distance=distance)):
+            vid = hit.id
+            all_ranks.setdefault(vid, []).append(rank + 1)
+            source_count[vid] = source_count.get(vid, 0) + 1
+            if vid not in best_distance or hit.distance < best_distance[vid]:
+                best_distance[vid] = hit.distance
+                best_vector[vid] = hit.vector
+
+    results = [
+        MultiQueryHit(
+            vector_index=vid,
+            distance=best_distance[vid],
+            rrf_score=sum(1.0 / (rrf_k + r) for r in ranks),
+            source_queries=source_count[vid],
+            vector=best_vector.get(vid),
+        )
+        for vid, ranks in all_ranks.items()
+    ]
+    results.sort(key=lambda h: h.rrf_score, reverse=True)
+    return results[:k]
+
+
+# Chunk-Entity Pre-Linking
+@dataclass(frozen=True)
+class LinkedChunk:
+    vector_index: int
+    entity_ids: list[int]
+
+
+@dataclass(frozen=True)
+class ExpandedSearchHit:
+    vector_index: int
+    distance: float
+    vector: Optional[Vector] = None
+    linked_entities: Optional[list[dict]] = None
+    related_triples: Optional[list[KGTriple]] = None
+
+
+class EntityLinker:
+    """Links vector chunks to KG entities at insert time; expands them on search."""
+
+    def __init__(self, db: Database, kg: KnowledgeGraph) -> None:
+        self._db = db
+        self._kg = kg
+        self._links: dict[int, list[int]] = {}
+
+    @property
+    def link_count(self) -> int:
+        return len(self._links)
+
+    def insert_linked(
+        self,
+        vector: Sequence[float],
+        entity_ids: list[int],
+        metadata: Optional[dict[str, str]] = None,
+    ) -> int:
+        meta = dict(metadata) if metadata else {}
+        meta["_entity_ids"] = ",".join(str(e) for e in entity_ids)
+        self._db.add_vector(list(vector), metadata=meta)
+        cnt = self._db.count
+        vid = cnt() - 1 if callable(cnt) else cnt - 1
+        self._links[vid] = list(entity_ids)
+        return vid
+
+    def link(self, vector_index: int, entity_ids: list[int]) -> None:
+        self._links[vector_index] = list(entity_ids)
+
+    def get_links(self, vector_index: int) -> list[int]:
+        return self._links.get(vector_index, [])
+
+    def search_and_expand(
+        self,
+        query: Sequence[float],
+        k: int = 10,
+        expansion_depth: int = 1,
+        max_triples: int = 20,
+        distance: DistanceType = DistanceType.COSINE,
+    ) -> list[ExpandedSearchHit]:
+        hits = self._db.search(query, k=k, distance=distance)
+        results: list[ExpandedSearchHit] = []
+        for hit in hits:
+            eids: list[int] = []
+            eid_str = hit.vector.metadata.get("_entity_ids", "")
+            if eid_str:
+                eids = [int(x) for x in eid_str.split(",") if x.strip()]
+            if not eids:
+                eids = self._links.get(hit.id, [])
+
+            entities: list[dict] = []
+            triples: list[KGTriple] = []
+            for eid in eids:
+                ent = self._kg.get_entity(eid)
+                if ent:
+                    entities.append(ent)
+                triples.extend(self._kg.query_triples(subject=eid, max_count=max_triples))
+                if expansion_depth > 1:
+                    for nid in self._kg.traverse(eid, max_depth=expansion_depth, max_count=50):
+                        if nid != eid:
+                            triples.extend(self._kg.query_triples(subject=nid, max_count=5))
+
+            seen: set[tuple] = set()
+            unique_triples: list[KGTriple] = []
+            for tr in triples:
+                key = (tr.subject_id, tr.predicate, tr.object_id)
+                if key not in seen:
+                    seen.add(key)
+                    unique_triples.append(tr)
+
+            results.append(ExpandedSearchHit(
+                vector_index=hit.id,
+                distance=hit.distance,
+                vector=hit.vector,
+                linked_entities=entities or None,
+                related_triples=unique_triples[:max_triples] or None,
+            ))
+        return results
+
