@@ -263,6 +263,16 @@ class _Handler(BaseHTTPRequestHandler):
         except (RuntimeError, IndexError):
             self._send_error_json(404, "not_found", "Vector not found or already deleted")
 
+    def _compute_shard_routing(self, shard_key: Any) -> dict[str, Any] | None:
+        if shard_key is None:
+            return None
+        try:
+            shard_mgr = self.server.get_shard_mgr()
+            shard_id = shard_mgr.get_shard_for_vector(hash(str(shard_key)) % (2**31))
+            return {"shard_key": shard_key, "routed_to_shard": shard_id}
+        except Exception:
+            return {"shard_key": shard_key, "routed_to_shard": -1}
+
     def _handle_vectors_post(self) -> None:
         body = self._parse_json_body()
         if body is None:
@@ -273,15 +283,7 @@ class _Handler(BaseHTTPRequestHandler):
         if not isinstance(data, list):
             return self._send_error_json(400, "invalid_request", "Missing 'data' array")
 
-        shard_key = body.get("shard_key")
-        shard_info: dict[str, Any] | None = None
-        if shard_key is not None:
-            try:
-                shard_mgr = self.server.get_shard_mgr()
-                shard_id = shard_mgr.get_shard_for_vector(hash(str(shard_key)) % (2**31))
-                shard_info = {"shard_key": shard_key, "routed_to_shard": shard_id}
-            except Exception:
-                shard_info = {"shard_key": shard_key, "routed_to_shard": -1}
+        shard_info = self._compute_shard_routing(body.get("shard_key"))
 
         try:
             self._get_active_db().add_vector(data, metadata=metadata)
@@ -309,22 +311,13 @@ class _Handler(BaseHTTPRequestHandler):
         except KeyError:
             distance = DistanceType.EUCLIDEAN
 
-        # Metadata filter support
         filter_meta = None
         filt = body.get("filter")
         if isinstance(filt, dict) and "key" in filt and "value" in filt:
             filter_meta = (str(filt["key"]), str(filt["value"]))
 
         oversampling_factor = body.get("oversampling_factor")
-        shard_key = body.get("shard_key")
-        shard_info: dict[str, Any] | None = None
-        if shard_key is not None:
-            try:
-                shard_mgr = self.server.get_shard_mgr()
-                shard_id = shard_mgr.get_shard_for_vector(hash(str(shard_key)) % (2**31))
-                shard_info = {"shard_key": shard_key, "routed_to_shard": shard_id}
-            except Exception:
-                shard_info = {"shard_key": shard_key, "routed_to_shard": -1}
+        shard_info = self._compute_shard_routing(body.get("shard_key"))
 
         try:
             db = self.server.db
@@ -1033,7 +1026,7 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_error_json(500, "snapshot_error", str(e))
 
     def _handle_snapshot_restore(self, snapshot_id: str) -> None:
-        self._send_json({"success": True, "snapshot_id": int(snapshot_id), "message": "Restore initiated"})
+        self._send_error_json(501, "not_implemented", "Snapshot restore not yet implemented")
 
     def _handle_snapshot_delete(self, snapshot_id: str) -> None:
         try:
@@ -1090,15 +1083,16 @@ class _Handler(BaseHTTPRequestHandler):
         elif rel.startswith("/"):
             rel = rel[1:]
 
-        if ".." in rel:
+        from gigavector.dashboard import get_static_dir
+        static_dir = os.path.realpath(get_static_dir())
+        filepath = os.path.realpath(os.path.join(static_dir, rel))
+        if not filepath.startswith(static_dir + os.sep) and filepath != static_dir:
             return self._send_error_json(403, "forbidden", "Path traversal not allowed")
 
         cached = _Handler._static_cache.get(rel)
         if cached is not None:
             mime, data = cached
         else:
-            from gigavector.dashboard import get_static_dir
-            filepath = os.path.join(get_static_dir(), rel)
             if not os.path.isfile(filepath):
                 return self._send_error_json(404, "not_found", "File not found")
             mime, _ = mimetypes.guess_type(filepath)
