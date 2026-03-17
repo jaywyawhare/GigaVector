@@ -7,10 +7,7 @@ from typing import Any, Callable, Iterable, List, Optional, Sequence
 
 from ._ffi import ffi, lib
 
-# Type alias for CFFI pointer types.
-# At runtime, this is Any to allow cffi's dynamic CData objects.
-# For type checking, this documents that the value is a CFFI pointer.
-CData = Any
+CData = Any  # CFFI pointer type alias
 
 
 def _cstr(s: str | bytes | None, keepalive: list) -> CData:
@@ -69,7 +66,6 @@ class DBStats:
 
 @dataclass
 class HNSWConfig:
-    """Configuration for HNSW index."""
     M: int = 16
     ef_construction: int = 200
     ef_search: int = 50
@@ -83,14 +79,12 @@ class HNSWConfig:
 
 @dataclass
 class ScalarQuantConfig:
-    """Configuration for scalar quantization."""
     bits: int = 8
     per_dimension: bool = False
 
 
 @dataclass
 class IVFPQConfig:
-    """Configuration for IVFPQ index."""
     nlist: int = 64
     m: int = 8
     nbits: int = 8
@@ -109,7 +103,6 @@ class IVFPQConfig:
 
 @dataclass
 class IVFFlatConfig:
-    """Configuration for IVF-Flat index."""
     nlist: int = 64
     nprobe: int = 4
     train_iters: int = 15
@@ -118,7 +111,6 @@ class IVFFlatConfig:
 
 @dataclass
 class PQConfig:
-    """Configuration for standalone PQ index."""
     m: int = 8
     nbits: int = 8
     train_iters: int = 15
@@ -126,7 +118,6 @@ class PQConfig:
 
 @dataclass
 class LSHConfig:
-    """Configuration for LSH index."""
     num_tables: int = 8
     num_hash_bits: int = 4
     seed: int = 42
@@ -135,7 +126,6 @@ class LSHConfig:
 
 @dataclass
 class SearchParams:
-    """Per-query parameter overrides for search."""
     ef_search: int = 0
     nprobe: int = 0
     rerank_top: int = 0
@@ -143,7 +133,6 @@ class SearchParams:
 
 @dataclass(frozen=True)
 class ScrollEntry:
-    """A single entry returned by scroll/pagination."""
     index: int
     data: list[float]
     metadata: dict[str, str]
@@ -165,14 +154,7 @@ def _choose_index_type(dimension: int, expected_count: int | None) -> IndexType:
 
 
 def _metadata_to_dict(meta_ptr: CData) -> dict[str, str]:
-    """Convert C metadata linked list to Python dict.
-
-    Args:
-        meta_ptr: CFFI pointer to GV_Metadata structure (linked list).
-
-    Returns:
-        Dictionary of key-value metadata pairs.
-    """
+    """Convert a C GV_Metadata linked list to a Python dict."""
     if meta_ptr == ffi.NULL:
         return {}
     out: dict[str, str] = {}
@@ -190,14 +172,7 @@ def _metadata_to_dict(meta_ptr: CData) -> dict[str, str]:
 
 
 def _copy_vector(vec_ptr: CData) -> Vector:
-    """Copy a C vector structure to a Python Vector object.
-
-    Args:
-        vec_ptr: CFFI pointer to GV_Vector structure.
-
-    Returns:
-        Python Vector object with copied data and metadata.
-    """
+    """Copy a C GV_Vector into a Python Vector."""
     try:
         if vec_ptr == ffi.NULL:
             return Vector(data=[], metadata={})
@@ -216,15 +191,7 @@ def _copy_vector(vec_ptr: CData) -> Vector:
 
 
 def _copy_sparse_vector(sv_ptr: CData, dim: int) -> Vector:
-    """Copy a C sparse vector structure to a dense Python Vector object.
-
-    Args:
-        sv_ptr: CFFI pointer to GV_SparseVector structure.
-        dim: Target dimension for the dense vector.
-
-    Returns:
-        Python Vector object with sparse values expanded to dense representation.
-    """
+    """Expand a C GV_SparseVector into a dense Python Vector."""
     if sv_ptr == ffi.NULL:
         return Vector(data=[], metadata={})
     nnz = int(sv_ptr.nnz)
@@ -441,6 +408,20 @@ class Database:
         """
         lib.gv_db_set_cosine_normalized(self._db, 1 if enabled else 0)
 
+    def _train_index(self, data: Sequence[Sequence[float]], c_func: Any) -> None:
+        flat = [item for vec in data for item in vec]
+        count = len(data)
+        if count == 0:
+            raise ValueError("training data empty")
+        if len(flat) % count != 0:
+            raise ValueError("inconsistent training data")
+        if (len(flat) // count) != self.dimension:
+            raise ValueError("training vectors must match db dimension")
+        buf = ffi.new("float[]", flat)
+        rc = c_func(self._db, buf, count, self.dimension)
+        if rc != 0:
+            raise RuntimeError(f"{c_func.__name__} failed")
+
     def train_ivfpq(self, data: Sequence[Sequence[float]]) -> None:
         """Train IVF-PQ index with provided vectors (only for IVFPQ index).
 
@@ -451,48 +432,15 @@ class Database:
             ValueError: If training data is empty or has inconsistent dimensions.
             RuntimeError: If training fails.
         """
-        flat = [item for vec in data for item in vec]
-        count = len(data)
-        if count == 0:
-            raise ValueError("training data empty")
-        if len(flat) % count != 0:
-            raise ValueError("inconsistent training data")
-        if (len(flat) // count) != self.dimension:
-            raise ValueError("training vectors must match db dimension")
-        buf = ffi.new("float[]", flat)
-        rc = lib.gv_db_ivfpq_train(self._db, buf, count, self.dimension)
-        if rc != 0:
-            raise RuntimeError("gv_db_ivfpq_train failed")
+        self._train_index(data, lib.gv_db_ivfpq_train)
 
     def train_ivfflat(self, data: Sequence[Sequence[float]]) -> None:
         """Train IVF-Flat index with provided vectors (only for IVFFLAT index)."""
-        flat = [item for vec in data for item in vec]
-        count = len(data)
-        if count == 0:
-            raise ValueError("training data empty")
-        if len(flat) % count != 0:
-            raise ValueError("inconsistent training data")
-        if (len(flat) // count) != self.dimension:
-            raise ValueError("training vectors must match db dimension")
-        buf = ffi.new("float[]", flat)
-        rc = lib.gv_db_ivfflat_train(self._db, buf, count, self.dimension)
-        if rc != 0:
-            raise RuntimeError("gv_db_ivfflat_train failed")
+        self._train_index(data, lib.gv_db_ivfflat_train)
 
     def train_pq(self, data: Sequence[Sequence[float]]) -> None:
         """Train PQ index with provided vectors (only for PQ index)."""
-        flat = [item for vec in data for item in vec]
-        count = len(data)
-        if count == 0:
-            raise ValueError("training data empty")
-        if len(flat) % count != 0:
-            raise ValueError("inconsistent training data")
-        if (len(flat) // count) != self.dimension:
-            raise ValueError("training vectors must match db dimension")
-        buf = ffi.new("float[]", flat)
-        rc = lib.gv_db_pq_train(self._db, buf, count, self.dimension)
-        if rc != 0:
-            raise RuntimeError("gv_db_pq_train failed")
+        self._train_index(data, lib.gv_db_pq_train)
 
     def start_background_compaction(self) -> None:
         """
@@ -664,7 +612,6 @@ class Database:
             "deleted_ratio": stats.deleted_ratio,
         }
 
-        # Add latency histograms if available
         if stats.insert_latency.buckets != ffi.NULL and stats.insert_latency.bucket_count > 0:
             buckets = []
             for i in range(stats.insert_latency.bucket_count):
@@ -745,7 +692,6 @@ class Database:
         buf = ffi.new("float[]", list(vector))
         
         if not metadata:
-            # No metadata - use simple add
             rc = lib.gv_db_add_vector(self._db, buf, self.dimension)
             if rc != 0:
                 raise RuntimeError("gv_db_add_vector failed")
@@ -753,14 +699,12 @@ class Database:
         
         metadata_items = list(metadata.items())
         if len(metadata_items) == 1:
-            # Single entry - use optimized path (handles WAL and locking properly)
             k, v = metadata_items[0]
             rc = lib.gv_db_add_vector_with_metadata(self._db, buf, self.dimension, k.encode(), v.encode())
             if rc != 0:
                 raise RuntimeError("gv_db_add_vector_with_metadata failed")
             return
         
-        # Multiple metadata entries: use the rich C API (handles WAL + locking)
         key_cdatas = [ffi.new("char[]", k.encode()) for k, _ in metadata_items]
         val_cdatas = [ffi.new("char[]", v.encode()) for _, v in metadata_items]
         keys_c = ffi.new("const char * []", key_cdatas)
@@ -1201,7 +1145,7 @@ class Database:
             # Avoid raising during interpreter shutdown
             pass
 
-# LLM Module
+
 class LLMError(IntEnum):
     SUCCESS = 0
     NULL_POINTER = -1
@@ -1237,11 +1181,6 @@ class LLMConfig:
     custom_prompt: Optional[str] = None
 
     def _to_c_config(self) -> CData:
-        """Convert to C configuration structure.
-
-        Returns:
-            Tuple of (CFFI pointer to GV_LLMConfig, list of refs to keep alive).
-        """
         c_config = ffi.new("GV_LLMConfig *")
         # Keep references to prevent GC of char[] buffers
         _refs: list = []
@@ -1272,11 +1211,6 @@ class LLMMessage:
     content: str
 
     def _to_c_message(self) -> tuple[CData, bytes, bytes]:
-        """Convert to C message structure.
-
-        Returns:
-            Tuple of (c_msg, role_bytes, content_bytes) to keep references alive.
-        """
         role_bytes = self.role.encode()
         content_bytes = self.content.encode()
         c_msg = ffi.new("GV_LLMMessage *")
@@ -1331,7 +1265,6 @@ class LLM:
         if self._closed:
             raise ValueError("LLM instance is closed")
 
-        # Allocate array of messages
         c_messages = ffi.new("GV_LLMMessage[]", len(messages))
         message_refs = []  # Keep references alive
         
@@ -1347,7 +1280,6 @@ class LLM:
             self._llm, c_messages, len(messages), response_format_bytes, c_response
         )
 
-        # Free message copies
         for c_msg, _, _ in message_refs:
             lib.gv_llm_message_free(c_msg)
 
@@ -1385,7 +1317,7 @@ class LLM:
             return "Unknown error"
         return ffi.string(error_str).decode("utf-8")
 
-# Embedding Service Module
+
 class EmbeddingProvider(IntEnum):
     OPENAI = 0
     HUGGINGFACE = 1
@@ -1652,7 +1584,7 @@ class EmbeddingCache:
             'misses': misses_ptr[0]
         }
 
-# Memory Layer Module
+
 class MemoryType(IntEnum):
     FACT = 0
     PREFERENCE = 1
@@ -1837,7 +1769,6 @@ class MemoryLayer:
         c_config.context_graph_config = ffi.NULL
         c_config.enable_context_graph = 0
 
-        # Set LLM config if provided
         if config.llm_config:
             c_llm_config, _llm_refs = config.llm_config._to_c_config()
             c_config.llm_config = c_llm_config
@@ -2001,7 +1932,7 @@ class MemoryLayer:
         result = lib.gv_memory_delete(self._layer, memory_id.encode())
         return result == 0
 
-# Context Graph Module
+
 class EntityType(IntEnum):
     PERSON = 0
     ORGANIZATION = 1
@@ -2120,7 +2051,6 @@ class ContextGraphConfig:
         """
         c_config = ffi.new("GV_ContextGraphConfig *")
         if self.llm is not None:
-            # Access internal C pointer from LLM object
             if hasattr(self.llm, '_llm'):
                 c_config.llm = self.llm._llm
             else:
@@ -2128,7 +2058,6 @@ class ContextGraphConfig:
         else:
             c_config.llm = ffi.NULL
 
-        # Set embedding service if provided
         if self.embedding_service is not None:
             if hasattr(self.embedding_service, '_service'):
                 c_config.embedding_service = self.embedding_service._service
@@ -2143,9 +2072,6 @@ class ContextGraphConfig:
         c_config.max_traversal_depth = self.max_traversal_depth
         c_config.max_results = self.max_results
 
-        # Embedding callback setup
-        # Note: C callbacks from Python are complex, so we'll handle this differently
-        # For now, embeddings should be provided when adding entities
         c_config.embedding_callback = ffi.NULL
         c_config.embedding_user_data = ffi.NULL
         c_config.embedding_dimension = self.embedding_dimension
@@ -2232,7 +2158,6 @@ class ContextGraph:
         
         entities = []
         if entities_ptr[0] != ffi.NULL:
-            # Collect all entity names for batch embedding generation
             entity_names = []
             entity_indices = []
             for i in range(entity_count_ptr[0]):
@@ -2242,7 +2167,6 @@ class ContextGraph:
                     entity_names.append(name)
                     entity_indices.append(i)
             
-            # Generate embeddings in batch if service is available
             embeddings_map: dict[str, Sequence[float]] = {}
             if use_batch_embeddings and self._config.embedding_service and entity_names:
                 try:
@@ -2251,12 +2175,10 @@ class ContextGraph:
                 except Exception:
                     pass
 
-            # Process entities
             for i in range(entity_count_ptr[0]):
                 c_entity = entities_ptr[0] + i
                 name = ffi.string(c_entity.name).decode("utf-8") if c_entity.name else ""
 
-                # Get embedding from C entity, batch service, or callback
                 embedding: Optional[Sequence[float]] = None
                 embedding_dim = 0
                 if c_entity.embedding != ffi.NULL and c_entity.embedding_dim > 0:
@@ -2334,13 +2256,11 @@ class ContextGraph:
         if not entities:
             return
         
-        # Collect entities that need embeddings
         entities_needing_embeddings = [
             (i, entity) for i, entity in enumerate(entities)
             if entity.embedding is None and entity.name
         ]
         
-        # Generate embeddings in batch if service is available
         if use_batch_embeddings and self._config.embedding_service and entities_needing_embeddings:
             try:
                 entity_names = [entity.name for _, entity in entities_needing_embeddings]
@@ -2352,7 +2272,6 @@ class ContextGraph:
             except Exception:
                 pass
         
-        # Generate embeddings individually if callback provided or service available
         if generate_embeddings or (self._config.embedding_service and not use_batch_embeddings):
             for i, entity in entities_needing_embeddings:
                 if entity.embedding is None and entity.name:
@@ -2475,7 +2394,7 @@ class ContextGraph:
 
         return results
 
-# GPU Acceleration Module
+
 class GPUDistanceMetric(IntEnum):
     EUCLIDEAN = 0
     COSINE = 1
@@ -2689,7 +2608,7 @@ class GPUIndex:
             raise RuntimeError("Failed to get GPU index info")
         return (int(count[0]), int(dimension[0]), int(memory[0]))
 
-# HTTP Server Module
+
 class ServerError(IntEnum):
     OK = 0
     NULL_POINTER = -1
@@ -2826,7 +2745,6 @@ def serve_with_dashboard(db: Database, port: int = 6969, **kwargs: Any) -> "Dash
     return server
 
 
-# Backup & Restore Module
 class BackupCompression(IntEnum):
     NONE = 0
     ZLIB = 1
@@ -2973,7 +2891,7 @@ def backup_verify(backup_path: str, decryption_key: str | None = None) -> Backup
     lib.gv_backup_result_free(result)
     return br
 
-# Shard Management Module
+
 class ShardState(IntEnum):
     ACTIVE = 0
     READONLY = 1
@@ -3103,7 +3021,7 @@ class ShardManager:
         if lib.gv_shard_attach_local(self._mgr, shard_id, db._db) != 0:
             raise RuntimeError("Failed to attach local database")
 
-# Replication Module
+
 class ReplicationRole(IntEnum):
     LEADER = 0
     FOLLOWER = 1
@@ -3268,7 +3186,7 @@ class ReplicationManager:
     def is_healthy(self) -> bool:
         return lib.gv_replication_is_healthy(self._mgr) == 1
 
-# Cluster Management Module
+
 class NodeRole(IntEnum):
     COORDINATOR = 0
     DATA = 1
@@ -3413,7 +3331,7 @@ class Cluster:
         if lib.gv_cluster_wait_ready(self._cluster, timeout_ms) != 0:
             raise RuntimeError("Cluster not ready within timeout")
 
-# Namespace / Multi-tenancy Module
+
 class NSIndexType(IntEnum):
     KDTREE = 0
     HNSW = 1
@@ -3587,7 +3505,7 @@ class NamespaceManager:
             raise RuntimeError("Failed to load namespaces")
         return n
 
-# TTL (Time-to-Live) Module
+
 @dataclass(frozen=True)
 class TTLStats:
     total_vectors_with_ttl: int
@@ -3689,7 +3607,7 @@ class TTLManager:
             last_cleanup_time=stats.last_cleanup_time,
         )
 
-# BM25 Full-text Search Module
+
 @dataclass(frozen=True)
 class BM25Result:
     doc_id: int
@@ -3797,7 +3715,7 @@ class BM25Index:
         obj._closed = False
         return obj
 
-# Hybrid Search Module
+
 class FusionType(IntEnum):
     LINEAR = 0
     RRF = 1
@@ -3944,7 +3862,7 @@ class HybridSearcher:
         if lib.gv_hybrid_set_weights(self._searcher, vector_weight, text_weight) != 0:
             raise RuntimeError("Failed to set weights")
 
-# Authentication Module
+
 class AuthType(IntEnum):
     NONE = 0
     API_KEY = 1
@@ -4128,7 +4046,6 @@ class AuthManager:
             return "Unknown"
         return ffi.string(s).decode("utf-8")
 
-# Multi-Vector / Chunked Document Storage
 
 class DocAggregation(IntEnum):
     MAX_SIM = 0
@@ -4164,12 +4081,12 @@ class MultiVecIndex:
             raise RuntimeError("Failed to create multi-vector index")
         self._dimension = dimension
 
-    def close(self):
-        if self._index and self._index != ffi.NULL:
+    def close(self) -> None:
+        if self._index != ffi.NULL:
             lib.gv_multivec_destroy(self._index)
             self._index = ffi.NULL
 
-    def __del__(self):
+    def __del__(self) -> None:
         self.close()
 
     def add_document(self, doc_id: int, chunks: list[list[float]]) -> None:
@@ -4199,7 +4116,6 @@ class MultiVecIndex:
     def chunk_count(self) -> int:
         return lib.gv_multivec_count_chunks(self._index)
 
-# Point-in-Time Snapshots
 
 @dataclass(frozen=True)
 class SnapshotInfo:
@@ -4215,12 +4131,12 @@ class SnapshotManager:
         if self._mgr == ffi.NULL:
             raise RuntimeError("Failed to create snapshot manager")
 
-    def close(self):
-        if self._mgr and self._mgr != ffi.NULL:
+    def close(self) -> None:
+        if self._mgr != ffi.NULL:
             lib.gv_snapshot_manager_destroy(self._mgr)
             self._mgr = ffi.NULL
 
-    def __del__(self):
+    def __del__(self) -> None:
         self.close()
 
     def create_snapshot(self, vectors: list[list[float]], dimension: int, label: str = "") -> int:
@@ -4245,7 +4161,6 @@ class SnapshotManager:
         if lib.gv_snapshot_delete(self._mgr, snapshot_id) != 0:
             raise RuntimeError("Failed to delete snapshot")
 
-# MVCC Transactions
 
 class TxnStatus(IntEnum):
     ACTIVE = 0
@@ -4312,12 +4227,12 @@ class MVCCManager:
         if self._mgr == ffi.NULL:
             raise RuntimeError("Failed to create MVCC manager")
 
-    def close(self):
-        if self._mgr and self._mgr != ffi.NULL:
+    def close(self) -> None:
+        if self._mgr != ffi.NULL:
             lib.gv_mvcc_destroy(self._mgr)
             self._mgr = ffi.NULL
 
-    def __del__(self):
+    def __del__(self) -> None:
         self.close()
 
     def begin(self) -> Transaction:
@@ -4337,7 +4252,6 @@ class MVCCManager:
     def active_txn_count(self) -> int:
         return lib.gv_mvcc_active_txn_count(self._mgr)
 
-# Query Optimizer
 
 class PlanStrategy(IntEnum):
     EXACT_SCAN = 0
@@ -4374,12 +4288,12 @@ class QueryOptimizer:
         if self._opt == ffi.NULL:
             raise RuntimeError("Failed to create query optimizer")
 
-    def close(self):
-        if self._opt and self._opt != ffi.NULL:
+    def close(self) -> None:
+        if self._opt != ffi.NULL:
             lib.gv_optimizer_destroy(self._opt)
             self._opt = ffi.NULL
 
-    def __del__(self):
+    def __del__(self) -> None:
         self.close()
 
     def update_stats(self, stats: CollectionStats) -> None:
@@ -4411,7 +4325,6 @@ class QueryOptimizer:
     def recommend_nprobe(self, k: int) -> int:
         return lib.gv_optimizer_recommend_nprobe(self._opt, k)
 
-# Payload Indexing
 
 class FieldType(IntEnum):
     INT = 0
@@ -4437,12 +4350,12 @@ class PayloadIndex:
         if self._idx == ffi.NULL:
             raise RuntimeError("Failed to create payload index")
 
-    def close(self):
-        if self._idx and self._idx != ffi.NULL:
+    def close(self) -> None:
+        if self._idx != ffi.NULL:
             lib.gv_payload_index_destroy(self._idx)
             self._idx = ffi.NULL
 
-    def __del__(self):
+    def __del__(self) -> None:
         self.close()
 
     def add_field(self, name: str, field_type: FieldType) -> None:
@@ -4472,7 +4385,6 @@ class PayloadIndex:
     def total_entries(self) -> int:
         return lib.gv_payload_index_total_entries(self._idx)
 
-# Vector Deduplication
 
 @dataclass
 class DedupConfig:
@@ -4501,12 +4413,12 @@ class DedupIndex:
         if self._dedup == ffi.NULL:
             raise RuntimeError("Failed to create dedup index")
 
-    def close(self):
-        if self._dedup and self._dedup != ffi.NULL:
+    def close(self) -> None:
+        if self._dedup != ffi.NULL:
             lib.gv_dedup_destroy(self._dedup)
             self._dedup = ffi.NULL
 
-    def __del__(self):
+    def __del__(self) -> None:
         self.close()
 
     def check(self, data: list[float]) -> bool:
@@ -4532,7 +4444,6 @@ class DedupIndex:
     def clear(self) -> None:
         lib.gv_dedup_clear(self._dedup)
 
-# Auto Index Migration
 
 class MigrationStatus(IntEnum):
     PENDING = 0
@@ -4582,15 +4493,14 @@ class Migration:
     def cancel(self) -> None:
         lib.gv_migration_cancel(self._mig)
 
-    def close(self):
-        if self._mig and self._mig != ffi.NULL:
+    def close(self) -> None:
+        if self._mig != ffi.NULL:
             lib.gv_migration_destroy(self._mig)
             self._mig = ffi.NULL
 
-    def __del__(self):
+    def __del__(self) -> None:
         self.close()
 
-# Collection Versioning
 
 @dataclass(frozen=True)
 class VersionInfo:
@@ -4608,12 +4518,12 @@ class VersionManager:
         if self._mgr == ffi.NULL:
             raise RuntimeError("Failed to create version manager")
 
-    def close(self):
-        if self._mgr and self._mgr != ffi.NULL:
+    def close(self) -> None:
+        if self._mgr != ffi.NULL:
             lib.gv_version_manager_destroy(self._mgr)
             self._mgr = ffi.NULL
 
-    def __del__(self):
+    def __del__(self) -> None:
         self.close()
 
     def create_version(self, vectors: list[list[float]], dimension: int, label: str = "") -> int:
@@ -4643,7 +4553,6 @@ class VersionManager:
         if lib.gv_version_delete(self._mgr, version_id) != 0:
             raise RuntimeError("Failed to delete version")
 
-# Read Policy (Load Balancing)
 
 class ReadPolicy(IntEnum):
     LEADER_ONLY = 0
@@ -4651,7 +4560,6 @@ class ReadPolicy(IntEnum):
     LEAST_LAG = 2
     RANDOM = 3
 
-# Bloom Filter
 
 class BloomFilter:
     def __init__(self, expected_items: int = 1000, fp_rate: float = 0.01):
@@ -4659,12 +4567,12 @@ class BloomFilter:
         if self._bf == ffi.NULL:
             raise RuntimeError("Failed to create Bloom filter")
 
-    def close(self):
-        if self._bf and self._bf != ffi.NULL:
+    def close(self) -> None:
+        if self._bf != ffi.NULL:
             lib.gv_bloom_destroy(self._bf)
             self._bf = ffi.NULL
 
-    def __del__(self):
+    def __del__(self) -> None:
         self.close()
 
     def add(self, data: bytes) -> None:
@@ -4695,7 +4603,6 @@ class BloomFilter:
     def clear(self) -> None:
         lib.gv_bloom_clear(self._bf)
 
-# Query Tracing
 
 @dataclass(frozen=True)
 class TraceSpan:
@@ -4714,12 +4621,12 @@ class QueryTrace:
     def end(self) -> None:
         lib.gv_trace_end(self._trace)
 
-    def close(self):
-        if self._trace and self._trace != ffi.NULL:
+    def close(self) -> None:
+        if self._trace != ffi.NULL:
             lib.gv_trace_destroy(self._trace)
             self._trace = ffi.NULL
 
-    def __del__(self):
+    def __del__(self) -> None:
         self.close()
 
     def span_start(self, name: str) -> None:
@@ -4744,7 +4651,6 @@ class QueryTrace:
         self.close()
         return False
 
-# Client-Side Caching
 
 class CachePolicy(IntEnum):
     LRU = 0
@@ -4785,12 +4691,12 @@ class Cache:
         if self._cache == ffi.NULL:
             raise RuntimeError("Failed to create cache")
 
-    def close(self):
-        if self._cache and self._cache != ffi.NULL:
+    def close(self) -> None:
+        if self._cache != ffi.NULL:
             lib.gv_cache_destroy(self._cache)
             self._cache = ffi.NULL
 
-    def __del__(self):
+    def __del__(self) -> None:
         self.close()
 
     def notify_mutation(self) -> None:
@@ -4810,7 +4716,6 @@ class Cache:
     def reset_stats(self) -> None:
         lib.gv_cache_reset_stats(self._cache)
 
-# Schema Evolution
 
 class SchemaFieldType(IntEnum):
     STRING = 0
@@ -4843,12 +4748,12 @@ class Schema:
         if self._schema == ffi.NULL:
             raise RuntimeError("Failed to create schema")
 
-    def close(self):
-        if self._schema and self._schema != ffi.NULL:
+    def close(self) -> None:
+        if self._schema != ffi.NULL:
             lib.gv_schema_destroy(self._schema)
             self._schema = ffi.NULL
 
-    def __del__(self):
+    def __del__(self) -> None:
         self.close()
 
     def add_field(self, name: str, field_type: SchemaFieldType,
@@ -4892,7 +4797,6 @@ class Schema:
     def is_compatible(self, other: "Schema") -> bool:
         return lib.gv_schema_is_compatible(self._schema, other._schema) == 0
 
-# Codebook Sharing
 
 class Codebook:
     def __init__(self, dimension: int = 0, m: int = 0, nbits: int = 8, *, _ptr=None):
@@ -4903,12 +4807,12 @@ class Codebook:
             if self._cb == ffi.NULL:
                 raise RuntimeError("Failed to create codebook")
 
-    def close(self):
-        if self._cb and self._cb != ffi.NULL:
+    def close(self) -> None:
+        if self._cb != ffi.NULL:
             lib.gv_codebook_destroy(self._cb)
             self._cb = ffi.NULL
 
-    def __del__(self):
+    def __del__(self) -> None:
         self.close()
 
     def train(self, data: list[list[float]], train_iters: int = 25) -> None:
@@ -4952,7 +4856,7 @@ class Codebook:
             raise RuntimeError("Failed to copy codebook")
         return Codebook(_ptr=cb)
 
-# Point ID Mapping (String/UUID IDs)
+
 class PointIDMap:
     def __init__(self, initial_capacity: int = 1024):
         self._map = lib.gv_point_id_create(initial_capacity)
@@ -4960,7 +4864,7 @@ class PointIDMap:
             raise MemoryError("Failed to create PointIDMap")
 
     def close(self) -> None:
-        if self._map and self._map != ffi.NULL:
+        if self._map != ffi.NULL:
             lib.gv_point_id_destroy(self._map)
             self._map = ffi.NULL
 
@@ -5011,7 +4915,7 @@ class PointIDMap:
         obj._map = m
         return obj
 
-# TLS/HTTPS
+
 class TLSVersion(IntEnum):
     TLS_1_2 = 0
     TLS_1_3 = 1
@@ -5039,7 +4943,7 @@ class TLSContext:
         self._ctx = lib.gv_tls_create(c_cfg)
 
     def close(self) -> None:
-        if self._ctx and self._ctx != ffi.NULL:
+        if self._ctx != ffi.NULL:
             lib.gv_tls_destroy(self._ctx)
             self._ctx = ffi.NULL
 
@@ -5053,7 +4957,7 @@ class TLSContext:
     def cert_days_remaining(self) -> int:
         return lib.gv_tls_cert_days_remaining(self._ctx)
 
-# Score Threshold Filtering
+
 @dataclass(frozen=True)
 class ThresholdResult:
     index: int
@@ -5070,7 +4974,7 @@ def search_with_threshold(db_ptr: CData, query: list[float], k: int,
         raise RuntimeError("Threshold search failed")
     return [ThresholdResult(index=c_results[i].index, distance=c_results[i].distance) for i in range(count)]
 
-# Named Vectors
+
 @dataclass
 class VectorFieldConfig:
     name: str
@@ -5085,7 +4989,7 @@ class NamedVectorStore:
             raise MemoryError("Failed to create NamedVectorStore")
 
     def close(self) -> None:
-        if self._store and self._store != ffi.NULL:
+        if self._store != ffi.NULL:
             lib.gv_named_vectors_destroy(self._store)
             self._store = ffi.NULL
 
@@ -5107,7 +5011,7 @@ class NamedVectorStore:
     def count(self) -> int:
         return lib.gv_named_vectors_count(self._store)
 
-# Filter Operations (Delete/Update by Filter)
+
 def delete_by_filter(db_ptr: CData, filter_expr: str) -> int:
     result = lib.gv_db_delete_by_filter(db_ptr, filter_expr.encode())
     if result < 0:
@@ -5134,7 +5038,7 @@ def count_by_filter(db_ptr: CData, filter_expr: str) -> int:
         raise RuntimeError("Count by filter failed")
     return result
 
-# gRPC Server
+
 @dataclass
 class GrpcConfig:
     port: int = 50051
@@ -5177,7 +5081,7 @@ class GrpcServer:
         lib.gv_grpc_stop(self._server)
 
     def close(self) -> None:
-        if self._server and self._server != ffi.NULL:
+        if self._server != ffi.NULL:
             lib.gv_grpc_destroy(self._server)
             self._server = ffi.NULL
 
@@ -5194,7 +5098,7 @@ class GrpcServer:
                          bytes_sent=s.bytes_sent, bytes_received=s.bytes_received,
                          errors=s.errors, avg_latency_us=s.avg_latency_us)
 
-# Auto-Embedding (Server-Side)
+
 class AutoEmbedProvider(IntEnum):
     OPENAI = 0
     GOOGLE = 1
@@ -5243,7 +5147,7 @@ class AutoEmbedder:
             raise RuntimeError("Failed to create AutoEmbedder")
 
     def close(self) -> None:
-        if self._embedder and self._embedder != ffi.NULL:
+        if self._embedder != ffi.NULL:
             lib.gv_auto_embed_destroy(self._embedder)
             self._embedder = ffi.NULL
 
@@ -5267,7 +5171,7 @@ class AutoEmbedder:
                               cache_misses=s.cache_misses, api_calls=s.api_calls,
                               api_errors=s.api_errors, avg_latency_ms=s.avg_latency_ms)
 
-# DiskANN On-Disk Index
+
 @dataclass
 class DiskANNConfig:
     max_degree: int = 64
@@ -5309,7 +5213,7 @@ class DiskANNIndex:
         self._dim = dimension
 
     def close(self) -> None:
-        if self._index and self._index != ffi.NULL:
+        if self._index != ffi.NULL:
             lib.gv_diskann_destroy(self._index)
             self._index = ffi.NULL
 
@@ -5346,7 +5250,7 @@ class DiskANNIndex:
                             disk_reads=s.disk_reads, avg_search_latency_us=s.avg_search_latency_us,
                             memory_usage_bytes=s.memory_usage_bytes, disk_usage_bytes=s.disk_usage_bytes)
 
-# Search Result Grouping
+
 @dataclass(frozen=True)
 class GroupHit:
     index: int
@@ -5398,7 +5302,7 @@ class GroupedSearch:
         lib.gv_group_search_free_result(c_result)
         return groups
 
-# Geo-Spatial Filtering
+
 @dataclass(frozen=True)
 class GeoPoint:
     lat: float
@@ -5420,7 +5324,7 @@ class GeoIndex:
             raise MemoryError("Failed to create GeoIndex")
 
     def close(self) -> None:
-        if self._index and self._index != ffi.NULL:
+        if self._index != ffi.NULL:
             lib.gv_geo_destroy(self._index)
             self._index = ffi.NULL
 
@@ -5447,7 +5351,7 @@ class GeoIndex:
     def distance_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
         return lib.gv_geo_distance_km(lat1, lng1, lat2, lng2)
 
-# Late Interaction / ColBERT MaxSim
+
 @dataclass
 class LateInteractionConfig:
     token_dimension: int = 128
@@ -5476,7 +5380,7 @@ class LateInteractionIndex:
             raise MemoryError("Failed to create LateInteractionIndex")
 
     def close(self) -> None:
-        if self._index and self._index != ffi.NULL:
+        if self._index != ffi.NULL:
             lib.gv_late_interaction_destroy(self._index)
             self._index = ffi.NULL
 
@@ -5502,7 +5406,7 @@ class LateInteractionIndex:
     def count(self) -> int:
         return lib.gv_late_interaction_count(self._index)
 
-# Recommendation API
+
 @dataclass
 class RecommendConfig:
     positive_weight: float = 1.0
@@ -5543,7 +5447,7 @@ class Recommender:
         return [RecommendResult(index=c_results[i].index, score=c_results[i].score)
                 for i in range(count)]
 
-# Collection Aliases
+
 @dataclass(frozen=True)
 class AliasInfo:
     alias_name: str
@@ -5559,7 +5463,7 @@ class AliasManager:
             raise MemoryError("Failed to create AliasManager")
 
     def close(self) -> None:
-        if self._mgr and self._mgr != ffi.NULL:
+        if self._mgr != ffi.NULL:
             lib.gv_alias_manager_destroy(self._mgr)
             self._mgr = ffi.NULL
 
@@ -5593,7 +5497,7 @@ class AliasManager:
     def exists(self, alias_name: str) -> bool:
         return lib.gv_alias_exists(self._mgr, alias_name.encode()) == 1
 
-# Vacuum / Async Compaction
+
 class VacuumState(IntEnum):
     IDLE = 0
     RUNNING = 1
@@ -5636,7 +5540,7 @@ class VacuumManager:
             raise RuntimeError("Failed to create VacuumManager")
 
     def close(self) -> None:
-        if self._mgr and self._mgr != ffi.NULL:
+        if self._mgr != ffi.NULL:
             lib.gv_vacuum_destroy(self._mgr)
             self._mgr = ffi.NULL
 
@@ -5664,7 +5568,7 @@ class VacuumManager:
                            fragmentation_after=s.fragmentation_after, duration_ms=s.duration_ms,
                            total_runs=s.total_runs)
 
-# Consistency Levels
+
 class ConsistencyLevel(IntEnum):
     STRONG = 0
     EVENTUAL = 1
@@ -5679,7 +5583,7 @@ class ConsistencyManager:
             raise MemoryError("Failed to create ConsistencyManager")
 
     def close(self) -> None:
-        if self._mgr and self._mgr != ffi.NULL:
+        if self._mgr != ffi.NULL:
             lib.gv_consistency_destroy(self._mgr)
             self._mgr = ffi.NULL
 
@@ -5695,7 +5599,7 @@ class ConsistencyManager:
     def new_session(self) -> int:
         return lib.gv_consistency_new_session(self._mgr)
 
-# Tenant Quotas
+
 @dataclass
 class QuotaConfig:
     max_vectors: int = 0
@@ -5729,7 +5633,7 @@ class QuotaManager:
             raise MemoryError("Failed to create QuotaManager")
 
     def close(self) -> None:
-        if self._mgr and self._mgr != ffi.NULL:
+        if self._mgr != ffi.NULL:
             lib.gv_quota_destroy(self._mgr)
             self._mgr = ffi.NULL
 
@@ -5761,7 +5665,7 @@ class QuotaManager:
                           current_qps=u.current_qps, current_ips=u.current_ips,
                           total_throttled=u.total_throttled, total_rejected=u.total_rejected)
 
-# Payload Compression
+
 class CompressionType(IntEnum):
     NONE = 0
     LZ4 = 1
@@ -5798,7 +5702,7 @@ class Compressor:
             raise RuntimeError("Failed to create Compressor")
 
     def close(self) -> None:
-        if self._comp and self._comp != ffi.NULL:
+        if self._comp != ffi.NULL:
             lib.gv_compression_destroy(self._comp)
             self._comp = ffi.NULL
 
@@ -5828,7 +5732,7 @@ class Compressor:
         return CompressionStats(total_compressed=s.total_compressed, total_decompressed=s.total_decompressed,
                                 bytes_in=s.bytes_in, bytes_out=s.bytes_out, avg_ratio=s.avg_ratio)
 
-# Webhooks / Change Streams
+
 class EventType(IntEnum):
     INSERT = 1
     UPDATE = 2
@@ -5860,7 +5764,7 @@ class WebhookManager:
             raise MemoryError("Failed to create WebhookManager")
 
     def close(self) -> None:
-        if self._mgr and self._mgr != ffi.NULL:
+        if self._mgr != ffi.NULL:
             lib.gv_webhook_destroy(self._mgr)
             self._mgr = ffi.NULL
 
@@ -5898,7 +5802,7 @@ class WebhookManager:
         return WebhookStats(events_fired=s.events_fired, webhooks_delivered=s.webhooks_delivered,
                             webhooks_failed=s.webhooks_failed, callbacks_invoked=s.callbacks_invoked)
 
-# RBAC (Role-Based Access Control)
+
 class Permission(IntEnum):
     READ = 1
     WRITE = 2
@@ -5914,7 +5818,7 @@ class RBACManager:
             raise MemoryError("Failed to create RBACManager")
 
     def close(self) -> None:
-        if self._mgr and self._mgr != ffi.NULL:
+        if self._mgr != ffi.NULL:
             lib.gv_rbac_destroy(self._mgr)
             self._mgr = ffi.NULL
 
@@ -5959,7 +5863,6 @@ class RBACManager:
         obj._mgr = mgr
         return obj
 
-# MMR Reranking
 
 @dataclass(frozen=True)
 class MMRConfig:
@@ -6003,7 +5906,6 @@ def mmr_rerank(
         raise RuntimeError("MMR rerank failed")
     return [MMRResult(results[i].index, results[i].score, results[i].relevance, results[i].diversity) for i in range(rc)]
 
-# Custom Ranking Expressions
 
 @dataclass(frozen=True)
 class RankSignal:
@@ -6048,14 +5950,13 @@ class RankExpr:
         return lib.gv_rank_expr_eval(self._expr, vector_score, c_sigs, len(signals))
 
     def close(self) -> None:
-        if self._expr and self._expr != ffi.NULL:
+        if self._expr != ffi.NULL:
             lib.gv_rank_expr_destroy(self._expr)
             self._expr = ffi.NULL
 
     def __del__(self) -> None:
         self.close()
 
-# Advanced Quantization
 
 class QuantType(IntEnum):
     BINARY = 0
@@ -6132,14 +6033,13 @@ class QuantCodebook:
         return cls(cb)
 
     def close(self) -> None:
-        if self._cb and self._cb != ffi.NULL:
+        if self._cb != ffi.NULL:
             lib.gv_quant_codebook_destroy(self._cb)
             self._cb = ffi.NULL
 
     def __del__(self) -> None:
         self.close()
 
-# Full-Text Search
 
 class FTLanguage(IntEnum):
     ENGLISH = 0
@@ -6183,7 +6083,7 @@ class FTIndex:
             raise RuntimeError("Failed to create full-text index")
 
     def close(self) -> None:
-        if self._idx and self._idx != ffi.NULL:
+        if self._idx != ffi.NULL:
             lib.gv_ft_destroy(self._idx)
             self._idx = ffi.NULL
 
@@ -6239,7 +6139,6 @@ def ft_stem(word: str, language: FTLanguage = FTLanguage.ENGLISH) -> str:
         return word
     return ffi.string(out).decode()
 
-# Optimized HNSW with Inline Quantization
 
 @dataclass(frozen=True)
 class HNSWInlineConfig:
@@ -6276,7 +6175,7 @@ class HNSWInlineIndex:
             raise RuntimeError("Failed to create HNSW inline index")
 
     def close(self) -> None:
-        if self._idx and self._idx != ffi.NULL:
+        if self._idx != ffi.NULL:
             lib.gv_hnsw_inline_destroy(self._idx)
             self._idx = ffi.NULL
 
@@ -6326,7 +6225,6 @@ class HNSWInlineIndex:
         obj._idx = idx
         return obj
 
-# ONNX Model Serving
 
 @dataclass(frozen=True)
 class ONNXConfig:
@@ -6351,7 +6249,7 @@ class ONNXModel:
             raise RuntimeError("Failed to load ONNX model")
 
     def close(self) -> None:
-        if self._model and self._model != ffi.NULL:
+        if self._model != ffi.NULL:
             lib.gv_onnx_destroy(self._model)
             self._model = ffi.NULL
 
@@ -6378,7 +6276,6 @@ class ONNXModel:
     def available() -> bool:
         return lib.gv_onnx_available() == 1
 
-# Agentic Interfaces
 
 class AgentType(IntEnum):
     QUERY = 0
@@ -6423,7 +6320,7 @@ class Agent:
             raise RuntimeError("Failed to create agent")
 
     def close(self) -> None:
-        if self._agent and self._agent != ffi.NULL:
+        if self._agent != ffi.NULL:
             lib.gv_agent_destroy(self._agent)
             self._agent = ffi.NULL
 
@@ -6459,7 +6356,6 @@ class Agent:
         lib.gv_agent_free_result(r)
         return res
 
-# MUVERA Encoder
 
 @dataclass(frozen=True)
 class MuveraConfig:
@@ -6485,7 +6381,7 @@ class MuveraEncoder:
             raise RuntimeError("Failed to create MUVERA encoder")
 
     def close(self) -> None:
-        if self._enc and self._enc != ffi.NULL:
+        if self._enc != ffi.NULL:
             lib.gv_muvera_destroy(self._enc)
             self._enc = ffi.NULL
 
@@ -6522,7 +6418,6 @@ class MuveraEncoder:
         obj._enc = enc
         return obj
 
-# Enterprise SSO / OIDC / SAML
 
 class SSOProvider(IntEnum):
     OIDC = 0
@@ -6575,7 +6470,7 @@ class SSOManager:
             raise RuntimeError("Failed to create SSO manager")
 
     def close(self) -> None:
-        if self._mgr and self._mgr != ffi.NULL:
+        if self._mgr != ffi.NULL:
             lib.gv_sso_destroy(self._mgr)
             self._mgr = ffi.NULL
 
@@ -6599,7 +6494,6 @@ class SSOManager:
         return self._parse_token(tok)
 
     def has_group(self, token: SSOToken, group: str) -> bool:
-        # Use direct string comparison
         return group in token.groups
 
     def _parse_token(self, tok: CData) -> SSOToken:
@@ -6618,7 +6512,6 @@ class SSOManager:
         lib.gv_sso_free_token(tok)
         return result
 
-# Tiered Multitenancy
 
 class TenantTier(IntEnum):
     SHARED = 0
@@ -6672,7 +6565,7 @@ class TieredManager:
             raise RuntimeError("Failed to create tiered manager")
 
     def close(self) -> None:
-        if self._mgr and self._mgr != ffi.NULL:
+        if self._mgr != ffi.NULL:
             lib.gv_tiered_destroy(self._mgr)
             self._mgr = ffi.NULL
 
@@ -6724,7 +6617,6 @@ class TieredManager:
         obj._mgr = mgr
         return obj
 
-# Integrated Inference
 
 @dataclass(frozen=True)
 class InferenceConfig:
@@ -6761,7 +6653,7 @@ class InferenceEngine:
             raise RuntimeError("Failed to create inference engine")
 
     def close(self) -> None:
-        if self._eng and self._eng != ffi.NULL:
+        if self._eng != ffi.NULL:
             lib.gv_inference_destroy(self._eng)
             self._eng = ffi.NULL
 
@@ -6806,7 +6698,7 @@ class JSONPathIndex:
             raise RuntimeError("Failed to create JSON path index")
 
     def close(self) -> None:
-        if self._idx and self._idx != ffi.NULL:
+        if self._idx != ffi.NULL:
             lib.gv_json_index_destroy(self._idx)
             self._idx = ffi.NULL
 
@@ -6866,9 +6758,6 @@ class JSONPathIndex:
         return obj
 
 
-# Change Data Capture Stream
-
-
 class CDCEventType(IntEnum):
     INSERT = 0
     UPDATE = 1
@@ -6917,7 +6806,7 @@ class CDCStream:
             raise RuntimeError("Failed to create CDC stream")
 
     def close(self) -> None:
-        if self._stream and self._stream != ffi.NULL:
+        if self._stream != ffi.NULL:
             lib.gv_cdc_destroy(self._stream)
             self._stream = ffi.NULL
 
@@ -6948,9 +6837,6 @@ class CDCStream:
         c_cursor = ffi.new("GV_CDCCursor *")
         c_cursor.sequence_number = cursor.sequence_number
         return lib.gv_cdc_pending_count(self._stream, c_cursor)
-
-
-# Embedded / Edge Mode
 
 
 class EmbeddedIndexType(IntEnum):
@@ -6995,7 +6881,7 @@ class EmbeddedDB:
             raise RuntimeError("Failed to open embedded database")
 
     def close(self) -> None:
-        if self._db and self._db != ffi.NULL:
+        if self._db != ffi.NULL:
             lib.gv_embedded_close(self._db)
             self._db = ffi.NULL
 
@@ -7045,9 +6931,6 @@ class EmbeddedDB:
         return obj
 
 
-# Conditional Updates (CAS-style)
-
-
 class ConditionType(IntEnum):
     VERSION_EQ = 0
     VERSION_LT = 1
@@ -7079,7 +6962,7 @@ class CondManager:
             raise RuntimeError("Failed to create conditional manager")
 
     def close(self) -> None:
-        if self._mgr and self._mgr != ffi.NULL:
+        if self._mgr != ffi.NULL:
             lib.gv_cond_destroy(self._mgr)
             self._mgr = ffi.NULL
 
@@ -7134,9 +7017,6 @@ class CondManager:
         return ConditionalResult(lib.gv_cond_migrate_embedding(self._mgr, index, c_data, len(new_embedding), expected_version))
 
 
-# Time-Travel / Auto Versioning
-
-
 @dataclass(frozen=True)
 class TimeTravelConfig:
     max_versions: int = 1000
@@ -7167,7 +7047,7 @@ class TimeTravelManager:
             raise RuntimeError("Failed to create time-travel manager")
 
     def close(self) -> None:
-        if self._mgr and self._mgr != ffi.NULL:
+        if self._mgr != ffi.NULL:
             lib.gv_tt_destroy(self._mgr)
             self._mgr = ffi.NULL
 
@@ -7228,9 +7108,6 @@ class TimeTravelManager:
         return obj
 
 
-# Multimodal Media Storage
-
-
 class MediaType(IntEnum):
     IMAGE = 0
     AUDIO = 1
@@ -7274,7 +7151,7 @@ class MediaStore:
             raise RuntimeError("Failed to create media store")
 
     def close(self) -> None:
-        if self._store and self._store != ffi.NULL:
+        if self._store != ffi.NULL:
             lib.gv_media_destroy(self._store)
             self._store = ffi.NULL
 
@@ -7339,9 +7216,6 @@ class MediaStore:
         return obj
 
 
-# SQL Query Interface
-
-
 @dataclass
 class SQLResult:
     indices: list[int]
@@ -7358,7 +7232,7 @@ class SQLEngine:
             raise RuntimeError("Failed to create SQL engine")
 
     def close(self) -> None:
-        if self._eng and self._eng != ffi.NULL:
+        if self._eng != ffi.NULL:
             lib.gv_sql_destroy(self._eng)
             self._eng = ffi.NULL
 
@@ -7401,9 +7275,6 @@ class SQLEngine:
         return ffi.string(err).decode() if err != ffi.NULL else ""
 
 
-# Phased Ranking Pipeline
-
-
 class PhaseType(IntEnum):
     ANN = 0
     RERANK_EXPR = 1
@@ -7432,7 +7303,7 @@ class Pipeline:
             raise RuntimeError("Failed to create pipeline")
 
     def close(self) -> None:
-        if self._pipe and self._pipe != ffi.NULL:
+        if self._pipe != ffi.NULL:
             lib.gv_pipeline_destroy(self._pipe)
             self._pipe = ffi.NULL
 
@@ -7463,9 +7334,6 @@ class Pipeline:
         result = PipelineStats(stats.phase_count, stats.total_latency_ms)
         lib.gv_pipeline_free_stats(stats)
         return result
-
-
-# Learned Sparse Vector Index
 
 
 @dataclass(frozen=True)
@@ -7510,7 +7378,7 @@ class LearnedSparseIndex:
             raise RuntimeError("Failed to create learned sparse index")
 
     def close(self) -> None:
-        if self._idx and self._idx != ffi.NULL:
+        if self._idx != ffi.NULL:
             lib.gv_ls_destroy(self._idx)
             self._idx = ffi.NULL
 
@@ -7573,9 +7441,6 @@ class LearnedSparseIndex:
         return obj
 
 
-# Graph Database
-
-
 @dataclass
 class GraphDBConfig:
     node_bucket_count: int = 4096
@@ -7604,7 +7469,7 @@ class GraphDB:
         if self._g == ffi.NULL:
             raise RuntimeError("Failed to create graph database")
 
-    def __del__(self):
+    def __del__(self) -> None:
         if hasattr(self, "_g") and self._g != ffi.NULL:
             lib.gv_graph_destroy(self._g)
 
@@ -7780,9 +7645,6 @@ class GraphDB:
         return obj
 
 
-# Knowledge Graph
-
-
 @dataclass
 class KGConfig:
     entity_bucket_count: int = 4096
@@ -7852,7 +7714,7 @@ class KnowledgeGraph:
         if self._kg == ffi.NULL:
             raise RuntimeError("Failed to create knowledge graph")
 
-    def __del__(self):
+    def __del__(self) -> None:
         if hasattr(self, "_kg") and self._kg != ffi.NULL:
             lib.gv_kg_destroy(self._kg)
 
@@ -8320,7 +8182,6 @@ class ScrollIterator:
 
 @dataclass
 class DiscoveryConfig:
-    """Configuration for discovery search."""
     positive_weight: float = 1.0
     negative_weight: float = 0.5
     distance_type: int = 1  # COSINE
@@ -8446,7 +8307,6 @@ Database.iter_scroll = _iter_scroll  # type: ignore[attr-defined]
 
 @dataclass
 class CollectionConfig:
-    """Configuration for creating a collection."""
     name: str
     dimension: int
     index_type: str = "HNSW"
@@ -8523,7 +8383,6 @@ class CollectionManager:
         )
 
 
-# Temporal Knowledge Graph
 @dataclass
 class TemporalEdge:
     relation_id: int
@@ -8645,7 +8504,6 @@ class TemporalKnowledgeGraph:
                 for i, edge in enumerate(history)]
 
 
-# Graph-Augmented Vector Search
 @dataclass
 class GraphAugmentedHit:
     vector_index: int
@@ -8717,7 +8575,6 @@ def search_with_graph_expansion(
     return results[:k]
 
 
-# Retention Scoring
 @dataclass
 class RetentionConfig:
     decay_lambda: float = 0.01
@@ -8800,7 +8657,6 @@ class RetentionScorer:
         self._records.pop(vector_index, None)
 
 
-# Multi-Field Memory Store
 @dataclass
 class MemoryStoreConfig:
     content_dimension: int = 128
@@ -8939,7 +8795,6 @@ class MemoryStore:
         return fused[:k]
 
 
-# Multi-Query Expansion Search
 @dataclass(frozen=True)
 class MultiQueryHit:
     vector_index: int
@@ -8985,7 +8840,6 @@ def search_multi_query(
     return results[:k]
 
 
-# Chunk-Entity Pre-Linking
 @dataclass(frozen=True)
 class LinkedChunk:
     vector_index: int
