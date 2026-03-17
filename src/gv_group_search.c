@@ -10,6 +10,7 @@
 #include "gigavector/gv_group_search.h"
 #include "gigavector/gv_database.h"
 #include "gigavector/gv_types.h"
+#include "gigavector/gv_utils.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -29,14 +30,6 @@ static const char *metadata_lookup(const GV_Metadata *meta, const char *key) {
         cur = cur->next;
     }
     return NULL;
-}
-
-static char *safe_strdup(const char *s) {
-    if (!s) return NULL;
-    size_t len = strlen(s) + 1;
-    char *copy = (char *)malloc(len);
-    if (copy) memcpy(copy, s, len);
-    return copy;
 }
 
 /* ---- Lightweight open-addressed hash map (group_value -> bucket index) ---- */
@@ -108,7 +101,7 @@ static GroupBucket *group_map_get_or_create(GroupMap *map, const char *key) {
 
     GroupBucket *b = &map->buckets[map->bucket_count];
     memset(b, 0, sizeof(*b));
-    b->key = safe_strdup(key);
+    b->key = gv_strdup(key);
     if (!b->key) return NULL;
     b->best_distance = FLT_MAX;
     map->bucket_count++;
@@ -280,7 +273,7 @@ int gv_group_search(const GV_Database *db, const float *query, size_t dimension,
     for (size_t g = 0; g < out_groups; g++) {
         GroupBucket *b = &map.buckets[g];
 
-        result->groups[g].group_value = safe_strdup(b->key);
+        result->groups[g].group_value = gv_strdup(b->key);
         if (!result->groups[g].group_value) {
             /* Partial failure -- clean up what we built so far and bail */
             gv_group_search_free_result(result);

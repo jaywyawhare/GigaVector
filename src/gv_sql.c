@@ -12,6 +12,7 @@
 #include "gigavector/gv_filter.h"
 #include "gigavector/gv_metadata.h"
 #include "gigavector/gv_soa_storage.h"
+#include "gigavector/gv_utils.h"
 
 /*  Constants  */
 
@@ -432,16 +433,6 @@ static void gv_sql_stmt_free(GV_SQLStmt *s)
 
 /*  Recursive descent parser  */
 
-static char *gv_sql_strdup(const char *s)
-{
-    if (!s) return NULL;
-    size_t len = strlen(s) + 1;
-    char *p = (char *)malloc(len);
-    if (!p) return NULL;
-    memcpy(p, s, len);
-    return p;
-}
-
 /* Forward declarations */
 static GV_SQLWhere *gv_sql_parse_where_expr(GV_SQLTokenBuf *buf);
 
@@ -553,7 +544,7 @@ static GV_SQLWhere *gv_sql_parse_where_primary(GV_SQLTokenBuf *buf)
 
     /* field CMP value */
     if (tok->type != GV_SQL_TOK_IDENT) return NULL;
-    char *field = gv_sql_strdup(tok->text);
+    char *field = gv_strdup(tok->text);
     if (!field) return NULL;
     gv_sql_advance(buf);
 
@@ -590,11 +581,11 @@ static GV_SQLWhere *gv_sql_parse_where_primary(GV_SQLTokenBuf *buf)
     node->op = op;
 
     if (tok->type == GV_SQL_TOK_NUMBER) {
-        node->value = gv_sql_strdup(tok->text);
+        node->value = gv_strdup(tok->text);
         node->num_value = tok->num_value;
         node->is_numeric = 1;
     } else {
-        node->value = gv_sql_strdup(tok->text ? tok->text : "");
+        node->value = gv_strdup(tok->text ? tok->text : "");
         node->is_numeric = 0;
     }
     gv_sql_advance(buf);
@@ -678,7 +669,7 @@ static GV_SQLStmt *gv_sql_parse_select(GV_SQLTokenBuf *buf)
     if (!gv_sql_expect(buf, GV_SQL_TOK_FROM)) { gv_sql_stmt_free(stmt); return NULL; }
     tok = gv_sql_peek(buf);
     if (!tok || tok->type != GV_SQL_TOK_IDENT) { gv_sql_stmt_free(stmt); return NULL; }
-    stmt->table = gv_sql_strdup(tok->text);
+    stmt->table = gv_strdup(tok->text);
     gv_sql_advance(buf);
     if (!stmt->table) { gv_sql_stmt_free(stmt); return NULL; }
 
@@ -708,7 +699,7 @@ static GV_SQLStmt *gv_sql_parse_select(GV_SQLTokenBuf *buf)
         if (!gv_sql_expect(buf, GV_SQL_TOK_BY)) { gv_sql_stmt_free(stmt); return NULL; }
         tok = gv_sql_peek(buf);
         if (!tok || tok->type != GV_SQL_TOK_IDENT) { gv_sql_stmt_free(stmt); return NULL; }
-        stmt->order_field = gv_sql_strdup(tok->text);
+        stmt->order_field = gv_strdup(tok->text);
         gv_sql_advance(buf);
         if (!stmt->order_field) { gv_sql_stmt_free(stmt); return NULL; }
 
@@ -747,7 +738,7 @@ static GV_SQLStmt *gv_sql_parse_delete(GV_SQLTokenBuf *buf)
     if (!gv_sql_expect(buf, GV_SQL_TOK_FROM)) { gv_sql_stmt_free(stmt); return NULL; }
     GV_SQLToken *tok = gv_sql_peek(buf);
     if (!tok || tok->type != GV_SQL_TOK_IDENT) { gv_sql_stmt_free(stmt); return NULL; }
-    stmt->table = gv_sql_strdup(tok->text);
+    stmt->table = gv_strdup(tok->text);
     gv_sql_advance(buf);
     if (!stmt->table) { gv_sql_stmt_free(stmt); return NULL; }
 
@@ -768,7 +759,7 @@ static GV_SQLStmt *gv_sql_parse_update(GV_SQLTokenBuf *buf)
 
     GV_SQLToken *tok = gv_sql_peek(buf);
     if (!tok || tok->type != GV_SQL_TOK_IDENT) { gv_sql_stmt_free(stmt); return NULL; }
-    stmt->table = gv_sql_strdup(tok->text);
+    stmt->table = gv_strdup(tok->text);
     gv_sql_advance(buf);
     if (!stmt->table) { gv_sql_stmt_free(stmt); return NULL; }
 
@@ -783,7 +774,7 @@ static GV_SQLStmt *gv_sql_parse_update(GV_SQLTokenBuf *buf)
     for (;;) {
         tok = gv_sql_peek(buf);
         if (!tok || tok->type != GV_SQL_TOK_IDENT) break;
-        char *field = gv_sql_strdup(tok->text);
+        char *field = gv_strdup(tok->text);
         gv_sql_advance(buf);
         if (!field) { gv_sql_stmt_free(stmt); return NULL; }
 
@@ -797,7 +788,7 @@ static GV_SQLStmt *gv_sql_parse_update(GV_SQLTokenBuf *buf)
             gv_sql_stmt_free(stmt);
             return NULL;
         }
-        char *value = gv_sql_strdup(tok->text ? tok->text : "");
+        char *value = gv_strdup(tok->text ? tok->text : "");
         gv_sql_advance(buf);
         if (!value) { free(field); gv_sql_stmt_free(stmt); return NULL; }
 
@@ -1069,9 +1060,9 @@ static int gv_sql_exec_ann(GV_SQLEngine *eng, const GV_SQLStmt *stmt, GV_SQLResu
     result->column_count = 3;
     result->column_names = (char **)calloc(3, sizeof(char *));
     if (result->column_names) {
-        result->column_names[0] = gv_sql_strdup("index");
-        result->column_names[1] = gv_sql_strdup("distance");
-        result->column_names[2] = gv_sql_strdup("metadata");
+        result->column_names[0] = gv_strdup("index");
+        result->column_names[1] = gv_strdup("distance");
+        result->column_names[2] = gv_strdup("metadata");
     }
 
     result->indices = (size_t *)calloc(row_count, sizeof(size_t));
@@ -1144,8 +1135,8 @@ static int gv_sql_exec_where_scan(GV_SQLEngine *eng, const GV_SQLStmt *stmt, GV_
     result->column_count = 2;
     result->column_names = (char **)calloc(2, sizeof(char *));
     if (result->column_names) {
-        result->column_names[0] = gv_sql_strdup("index");
-        result->column_names[1] = gv_sql_strdup("metadata");
+        result->column_names[0] = gv_strdup("index");
+        result->column_names[1] = gv_strdup("metadata");
     }
 
     result->indices = (size_t *)calloc(match_count ? match_count : 1, sizeof(size_t));
@@ -1198,7 +1189,7 @@ static int gv_sql_exec_count(GV_SQLEngine *eng, const GV_SQLStmt *stmt, GV_SQLRe
     result->column_count = 1;
     result->column_names = (char **)calloc(1, sizeof(char *));
     if (result->column_names) {
-        result->column_names[0] = gv_sql_strdup("count");
+        result->column_names[0] = gv_strdup("count");
     }
 
     result->indices = (size_t *)calloc(1, sizeof(size_t));
@@ -1256,7 +1247,7 @@ static int gv_sql_exec_delete(GV_SQLEngine *eng, const GV_SQLStmt *stmt, GV_SQLR
     result->column_count = 1;
     result->column_names = (char **)calloc(1, sizeof(char *));
     if (result->column_names) {
-        result->column_names[0] = gv_sql_strdup("deleted_count");
+        result->column_names[0] = gv_strdup("deleted_count");
     }
     result->indices = (size_t *)calloc(1, sizeof(size_t));
     if (!result->indices || !result->column_names) {
@@ -1312,7 +1303,7 @@ static int gv_sql_exec_update(GV_SQLEngine *eng, const GV_SQLStmt *stmt, GV_SQLR
     result->column_count = 1;
     result->column_names = (char **)calloc(1, sizeof(char *));
     if (result->column_names) {
-        result->column_names[0] = gv_sql_strdup("updated_count");
+        result->column_names[0] = gv_strdup("updated_count");
     }
     result->indices = (size_t *)calloc(1, sizeof(size_t));
     if (!result->indices || !result->column_names) {

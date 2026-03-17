@@ -2,19 +2,7 @@
 #include <string.h>
 
 #include "gigavector/gv_metadata.h"
-
-static char *gv_metadata_strdup(const char *src) {
-    if (src == NULL) {
-        return NULL;
-    }
-    size_t len = strlen(src) + 1;
-    char *copy = (char *)malloc(len);
-    if (copy == NULL) {
-        return NULL;
-    }
-    memcpy(copy, src, len);
-    return copy;
-}
+#include "gigavector/gv_utils.h"
 
 int gv_vector_set_metadata(GV_Vector *vector, const char *key, const char *value) {
     if (vector == NULL || key == NULL || value == NULL) {
@@ -24,7 +12,7 @@ int gv_vector_set_metadata(GV_Vector *vector, const char *key, const char *value
     GV_Metadata *current = vector->metadata;
     while (current != NULL) {
         if (strcmp(current->key, key) == 0) {
-            char *new_value = gv_metadata_strdup(value);
+            char *new_value = gv_strdup(value);
             if (new_value == NULL) {
                 return -1;
             }
@@ -40,13 +28,13 @@ int gv_vector_set_metadata(GV_Vector *vector, const char *key, const char *value
         return -1;
     }
 
-    new_meta->key = gv_metadata_strdup(key);
+    new_meta->key = gv_strdup(key);
     if (new_meta->key == NULL) {
         free(new_meta);
         return -1;
     }
 
-    new_meta->value = gv_metadata_strdup(value);
+    new_meta->value = gv_strdup(value);
     if (new_meta->value == NULL) {
         free(new_meta->key);
         free(new_meta);
