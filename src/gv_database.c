@@ -31,6 +31,7 @@
 #include "gigavector/gv_ivfflat.h"
 #include "gigavector/gv_pq.h"
 #include "gigavector/gv_lsh.h"
+#include "gigavector/gv_utils.h"
 
 #include <math.h>
 #include <sys/time.h>
@@ -43,17 +44,30 @@ static void gv_db_increment_concurrent_ops(GV_Database *db);
 static void gv_db_decrement_concurrent_ops(GV_Database *db);
 static uint64_t gv_db_get_time_us(void);
 
-static char *gv_db_strdup(const char *src) {
-    if (src == NULL) {
-        return NULL;
-    }
-    size_t len = strlen(src) + 1;
-    char *copy = (char *)malloc(len);
-    if (copy == NULL) {
-        return NULL;
-    }
-    memcpy(copy, src, len);
-    return copy;
+static void gv_db_init_common_fields(GV_Database *db) {
+    db->compaction_running = 0;
+    pthread_mutex_init(&db->compaction_mutex, NULL);
+    pthread_cond_init(&db->compaction_cond, NULL);
+    db->compaction_interval_sec = 300;  /* Default: 5 minutes */
+    db->wal_compaction_threshold = 10 * 1024 * 1024;  /* Default: 10MB */
+    db->deleted_ratio_threshold = 0.1;  /* Default: 10% */
+    db->resource_limits.max_memory_bytes = 0;  /* Unlimited by default */
+    db->resource_limits.max_vectors = 0;  /* Unlimited by default */
+    db->resource_limits.max_concurrent_operations = 0;  /* Unlimited by default */
+    db->current_memory_bytes = 0;
+    db->current_concurrent_ops = 0;
+    pthread_mutex_init(&db->resource_mutex, NULL);
+    memset(&db->insert_latency_hist, 0, sizeof(GV_LatencyHistogram));
+    memset(&db->search_latency_hist, 0, sizeof(GV_LatencyHistogram));
+    db->last_qps_update_time_us = 0;
+    db->last_ips_update_time_us = 0;
+    db->first_insert_time_us = 0;
+    db->query_count_since_update = 0;
+    db->insert_count_since_update = 0;
+    db->current_qps = 0.0;
+    db->current_ips = 0.0;
+    memset(&db->recall_metrics, 0, sizeof(GV_RecallMetrics));
+    pthread_mutex_init(&db->observability_mutex, NULL);
 }
 
 static int gv_db_write_header(FILE *out, uint32_t dimension, uint64_t count, uint32_t version) {
@@ -140,7 +154,7 @@ static char *gv_db_build_wal_path(const char *filepath) {
         snprintf(buf, sizeof(buf), "%s.wal", filepath);
     }
 
-    return gv_db_strdup(buf);
+    return gv_strdup(buf);
 }
 
 
@@ -263,32 +277,7 @@ GV_Database *gv_db_open(const char *filepath, size_t dimension, GV_IndexType ind
         free(db);
         return NULL;
     }
-    /* Initialize compaction fields */
-    db->compaction_running = 0;
-    pthread_mutex_init(&db->compaction_mutex, NULL);
-    pthread_cond_init(&db->compaction_cond, NULL);
-    db->compaction_interval_sec = 300;  /* Default: 5 minutes */
-    db->wal_compaction_threshold = 10 * 1024 * 1024;  /* Default: 10MB */
-    db->deleted_ratio_threshold = 0.1;  /* Default: 10% */
-    /* Initialize resource limits */
-    db->resource_limits.max_memory_bytes = 0;  /* Unlimited by default */
-    db->resource_limits.max_vectors = 0;  /* Unlimited by default */
-    db->resource_limits.max_concurrent_operations = 0;  /* Unlimited by default */
-    db->current_memory_bytes = 0;
-    db->current_concurrent_ops = 0;
-    pthread_mutex_init(&db->resource_mutex, NULL);
-    /* Initialize observability fields */
-    memset(&db->insert_latency_hist, 0, sizeof(GV_LatencyHistogram));
-    memset(&db->search_latency_hist, 0, sizeof(GV_LatencyHistogram));
-    db->last_qps_update_time_us = 0;
-    db->last_ips_update_time_us = 0;
-    db->first_insert_time_us = 0;
-    db->query_count_since_update = 0;
-    db->insert_count_since_update = 0;
-    db->current_qps = 0.0;
-    db->current_ips = 0.0;
-    memset(&db->recall_metrics, 0, sizeof(GV_RecallMetrics));
-    pthread_mutex_init(&db->observability_mutex, NULL);
+    gv_db_init_common_fields(db);
 
     if (index_type == GV_INDEX_TYPE_KDTREE || index_type == GV_INDEX_TYPE_HNSW ||
         index_type == GV_INDEX_TYPE_FLAT || index_type == GV_INDEX_TYPE_LSH) {
@@ -376,7 +365,7 @@ GV_Database *gv_db_open(const char *filepath, size_t dimension, GV_IndexType ind
     }
 
     if (filepath != NULL) {
-        db->filepath = gv_db_strdup(filepath);
+        db->filepath = gv_strdup(filepath);
         if (db->filepath == NULL) {
             gv_metadata_index_destroy(db->metadata_index);
             pthread_mutex_destroy(&db->compaction_mutex);
@@ -812,14 +801,12 @@ void gv_db_close(GV_Database *db) {
     if (db->metadata_index != NULL) {
         gv_metadata_index_destroy(db->metadata_index);
     }
-    /* Stop background compaction if running */
     if (db->compaction_running) {
         gv_db_stop_background_compaction(db);
     }
     pthread_mutex_destroy(&db->compaction_mutex);
     pthread_cond_destroy(&db->compaction_cond);
     pthread_mutex_destroy(&db->resource_mutex);
-    /* Free observability resources */
     if (db->insert_latency_hist.buckets != NULL) {
         free(db->insert_latency_hist.buckets);
         free(db->insert_latency_hist.bucket_boundaries);
@@ -875,32 +862,7 @@ GV_Database *gv_db_open_from_memory(const void *data, size_t size,
         free(db);
         return NULL;
     }
-    /* Initialize compaction fields */
-    db->compaction_running = 0;
-    pthread_mutex_init(&db->compaction_mutex, NULL);
-    pthread_cond_init(&db->compaction_cond, NULL);
-    db->compaction_interval_sec = 300;  /* Default: 5 minutes */
-    db->wal_compaction_threshold = 10 * 1024 * 1024;  /* Default: 10MB */
-    db->deleted_ratio_threshold = 0.1;  /* Default: 10% */
-    /* Initialize resource limits */
-    db->resource_limits.max_memory_bytes = 0;  /* Unlimited by default */
-    db->resource_limits.max_vectors = 0;  /* Unlimited by default */
-    db->resource_limits.max_concurrent_operations = 0;  /* Unlimited by default */
-    db->current_memory_bytes = 0;
-    db->current_concurrent_ops = 0;
-    pthread_mutex_init(&db->resource_mutex, NULL);
-    /* Initialize observability fields */
-    memset(&db->insert_latency_hist, 0, sizeof(GV_LatencyHistogram));
-    memset(&db->search_latency_hist, 0, sizeof(GV_LatencyHistogram));
-    db->last_qps_update_time_us = 0;
-    db->last_ips_update_time_us = 0;
-    db->first_insert_time_us = 0;
-    db->query_count_since_update = 0;
-    db->insert_count_since_update = 0;
-    db->current_qps = 0.0;
-    db->current_ips = 0.0;
-    memset(&db->recall_metrics, 0, sizeof(GV_RecallMetrics));
-    pthread_mutex_init(&db->observability_mutex, NULL);
+    gv_db_init_common_fields(db);
 
     if (index_type == GV_INDEX_TYPE_KDTREE || index_type == GV_INDEX_TYPE_HNSW ||
         index_type == GV_INDEX_TYPE_FLAT || index_type == GV_INDEX_TYPE_LSH) {
@@ -1280,32 +1242,7 @@ GV_Database *gv_db_open_with_hnsw_config(const char *filepath, size_t dimension,
         free(db);
         return NULL;
     }
-    /* Initialize compaction fields */
-    db->compaction_running = 0;
-    pthread_mutex_init(&db->compaction_mutex, NULL);
-    pthread_cond_init(&db->compaction_cond, NULL);
-    db->compaction_interval_sec = 300;  /* Default: 5 minutes */
-    db->wal_compaction_threshold = 10 * 1024 * 1024;  /* Default: 10MB */
-    db->deleted_ratio_threshold = 0.1;  /* Default: 10% */
-    /* Initialize resource limits */
-    db->resource_limits.max_memory_bytes = 0;  /* Unlimited by default */
-    db->resource_limits.max_vectors = 0;  /* Unlimited by default */
-    db->resource_limits.max_concurrent_operations = 0;  /* Unlimited by default */
-    db->current_memory_bytes = 0;
-    db->current_concurrent_ops = 0;
-    pthread_mutex_init(&db->resource_mutex, NULL);
-    /* Initialize observability fields */
-    memset(&db->insert_latency_hist, 0, sizeof(GV_LatencyHistogram));
-    memset(&db->search_latency_hist, 0, sizeof(GV_LatencyHistogram));
-    db->last_qps_update_time_us = 0;
-    db->last_ips_update_time_us = 0;
-    db->first_insert_time_us = 0;
-    db->query_count_since_update = 0;
-    db->insert_count_since_update = 0;
-    db->current_qps = 0.0;
-    db->current_ips = 0.0;
-    memset(&db->recall_metrics, 0, sizeof(GV_RecallMetrics));
-    pthread_mutex_init(&db->observability_mutex, NULL);
+    gv_db_init_common_fields(db);
 
     if (index_type == GV_INDEX_TYPE_KDTREE || index_type == GV_INDEX_TYPE_HNSW) {
         db->soa_storage = gv_soa_storage_create(dimension, 0);
@@ -1361,7 +1298,7 @@ GV_Database *gv_db_open_with_ivfpq_config(const char *filepath, size_t dimension
     db->wal_path = NULL;
 
     if (filepath != NULL) {
-        db->filepath = gv_db_strdup(filepath);
+        db->filepath = gv_strdup(filepath);
         if (db->filepath == NULL) {
             free(db);
             return NULL;
@@ -1393,30 +1330,7 @@ GV_Database *gv_db_open_with_ivfpq_config(const char *filepath, size_t dimension
         free(db);
         return NULL;
     }
-    /* Initialize compaction and resource fields like in gv_db_open */
-    db->compaction_running = 0;
-    pthread_mutex_init(&db->compaction_mutex, NULL);
-    pthread_cond_init(&db->compaction_cond, NULL);
-    db->compaction_interval_sec = 300;
-    db->wal_compaction_threshold = 10 * 1024 * 1024;
-    db->deleted_ratio_threshold = 0.1;
-    db->resource_limits.max_memory_bytes = 0;
-    db->resource_limits.max_vectors = 0;
-    db->resource_limits.max_concurrent_operations = 0;
-    db->current_memory_bytes = 0;
-    db->current_concurrent_ops = 0;
-    pthread_mutex_init(&db->resource_mutex, NULL);
-    memset(&db->insert_latency_hist, 0, sizeof(GV_LatencyHistogram));
-    memset(&db->search_latency_hist, 0, sizeof(GV_LatencyHistogram));
-    db->last_qps_update_time_us = 0;
-    db->last_ips_update_time_us = 0;
-    db->first_insert_time_us = 0;
-    db->query_count_since_update = 0;
-    db->insert_count_since_update = 0;
-    db->current_qps = 0.0;
-    db->current_ips = 0.0;
-    memset(&db->recall_metrics, 0, sizeof(GV_RecallMetrics));
-    pthread_mutex_init(&db->observability_mutex, NULL);
+    gv_db_init_common_fields(db);
 
     if (ivfpq_config != NULL) {
         db->hnsw_index = gv_ivfpq_create(dimension, ivfpq_config);
@@ -1467,7 +1381,7 @@ GV_Database *gv_db_open_with_ivfflat_config(const char *filepath, size_t dimensi
     db->filepath = NULL;
     db->wal_path = NULL;
     if (filepath != NULL) {
-        db->filepath = gv_db_strdup(filepath);
+        db->filepath = gv_strdup(filepath);
         if (db->filepath == NULL) {
             free(db);
             return NULL;
@@ -1498,29 +1412,7 @@ GV_Database *gv_db_open_with_ivfflat_config(const char *filepath, size_t dimensi
         free(db);
         return NULL;
     }
-    db->compaction_running = 0;
-    pthread_mutex_init(&db->compaction_mutex, NULL);
-    pthread_cond_init(&db->compaction_cond, NULL);
-    db->compaction_interval_sec = 300;
-    db->wal_compaction_threshold = 10 * 1024 * 1024;
-    db->deleted_ratio_threshold = 0.1;
-    db->resource_limits.max_memory_bytes = 0;
-    db->resource_limits.max_vectors = 0;
-    db->resource_limits.max_concurrent_operations = 0;
-    db->current_memory_bytes = 0;
-    db->current_concurrent_ops = 0;
-    pthread_mutex_init(&db->resource_mutex, NULL);
-    memset(&db->insert_latency_hist, 0, sizeof(db->insert_latency_hist));
-    memset(&db->search_latency_hist, 0, sizeof(db->search_latency_hist));
-    db->last_qps_update_time_us = 0;
-    db->last_ips_update_time_us = 0;
-    db->first_insert_time_us = 0;
-    db->query_count_since_update = 0;
-    db->insert_count_since_update = 0;
-    db->current_qps = 0.0;
-    db->current_ips = 0.0;
-    memset(&db->recall_metrics, 0, sizeof(GV_RecallMetrics));
-    pthread_mutex_init(&db->observability_mutex, NULL);
+    gv_db_init_common_fields(db);
 
     if (config != NULL) {
         db->hnsw_index = gv_ivfflat_create(dimension, config);
@@ -1567,7 +1459,7 @@ GV_Database *gv_db_open_with_pq_config(const char *filepath, size_t dimension,
     db->filepath = NULL;
     db->wal_path = NULL;
     if (filepath != NULL) {
-        db->filepath = gv_db_strdup(filepath);
+        db->filepath = gv_strdup(filepath);
         if (db->filepath == NULL) {
             free(db);
             return NULL;
@@ -1598,29 +1490,7 @@ GV_Database *gv_db_open_with_pq_config(const char *filepath, size_t dimension,
         free(db);
         return NULL;
     }
-    db->compaction_running = 0;
-    pthread_mutex_init(&db->compaction_mutex, NULL);
-    pthread_cond_init(&db->compaction_cond, NULL);
-    db->compaction_interval_sec = 300;
-    db->wal_compaction_threshold = 10 * 1024 * 1024;
-    db->deleted_ratio_threshold = 0.1;
-    db->resource_limits.max_memory_bytes = 0;
-    db->resource_limits.max_vectors = 0;
-    db->resource_limits.max_concurrent_operations = 0;
-    db->current_memory_bytes = 0;
-    db->current_concurrent_ops = 0;
-    pthread_mutex_init(&db->resource_mutex, NULL);
-    memset(&db->insert_latency_hist, 0, sizeof(db->insert_latency_hist));
-    memset(&db->search_latency_hist, 0, sizeof(db->search_latency_hist));
-    db->last_qps_update_time_us = 0;
-    db->last_ips_update_time_us = 0;
-    db->first_insert_time_us = 0;
-    db->query_count_since_update = 0;
-    db->insert_count_since_update = 0;
-    db->current_qps = 0.0;
-    db->current_ips = 0.0;
-    memset(&db->recall_metrics, 0, sizeof(GV_RecallMetrics));
-    pthread_mutex_init(&db->observability_mutex, NULL);
+    gv_db_init_common_fields(db);
 
     if (config != NULL) {
         db->hnsw_index = gv_pq_create(dimension, config);
@@ -1667,7 +1537,7 @@ GV_Database *gv_db_open_with_lsh_config(const char *filepath, size_t dimension,
     db->filepath = NULL;
     db->wal_path = NULL;
     if (filepath != NULL) {
-        db->filepath = gv_db_strdup(filepath);
+        db->filepath = gv_strdup(filepath);
         if (db->filepath == NULL) {
             free(db);
             return NULL;
@@ -1698,29 +1568,7 @@ GV_Database *gv_db_open_with_lsh_config(const char *filepath, size_t dimension,
         free(db);
         return NULL;
     }
-    db->compaction_running = 0;
-    pthread_mutex_init(&db->compaction_mutex, NULL);
-    pthread_cond_init(&db->compaction_cond, NULL);
-    db->compaction_interval_sec = 300;
-    db->wal_compaction_threshold = 10 * 1024 * 1024;
-    db->deleted_ratio_threshold = 0.1;
-    db->resource_limits.max_memory_bytes = 0;
-    db->resource_limits.max_vectors = 0;
-    db->resource_limits.max_concurrent_operations = 0;
-    db->current_memory_bytes = 0;
-    db->current_concurrent_ops = 0;
-    pthread_mutex_init(&db->resource_mutex, NULL);
-    memset(&db->insert_latency_hist, 0, sizeof(db->insert_latency_hist));
-    memset(&db->search_latency_hist, 0, sizeof(db->search_latency_hist));
-    db->last_qps_update_time_us = 0;
-    db->last_ips_update_time_us = 0;
-    db->first_insert_time_us = 0;
-    db->query_count_since_update = 0;
-    db->insert_count_since_update = 0;
-    db->current_qps = 0.0;
-    db->current_ips = 0.0;
-    memset(&db->recall_metrics, 0, sizeof(GV_RecallMetrics));
-    pthread_mutex_init(&db->observability_mutex, NULL);
+    gv_db_init_common_fields(db);
 
     db->soa_storage = gv_soa_storage_create(dimension, 0);
     if (db->soa_storage == NULL) {
@@ -1774,7 +1622,7 @@ int gv_db_set_wal(GV_Database *db, const char *wal_path) {
         return 0;
     }
 
-    db->wal_path = gv_db_strdup(wal_path);
+    db->wal_path = gv_strdup(wal_path);
     if (db->wal_path == NULL) {
         return -1;
     }
@@ -1811,16 +1659,13 @@ int gv_db_add_vector(GV_Database *db, const float *data, size_t dimension) {
         return -1;
     }
 
-    /* Start timing */
     uint64_t start_time_us = gv_db_get_time_us();
 
-    /* Check resource limits */
     size_t vector_memory = gv_db_estimate_vector_memory(dimension);
     if (gv_db_check_resource_limits(db, 1, vector_memory) != 0) {
         return -1; /* Resource limit exceeded */
     }
 
-    /* Increment concurrent operations */
     gv_db_increment_concurrent_ops(db);
 
     if (db->wal != NULL && db->wal_replaying == 0) {
@@ -1959,7 +1804,6 @@ int gv_db_add_vector(GV_Database *db, const float *data, size_t dimension) {
     gv_db_update_memory_usage(db);
     pthread_rwlock_unlock(&db->rwlock);
 
-    /* Record latency for insert operation */
     uint64_t end_time_us = gv_db_get_time_us();
     uint64_t latency_us = end_time_us - start_time_us;
     gv_db_record_latency(db, latency_us, 1);
@@ -1975,16 +1819,13 @@ int gv_db_add_vector_with_metadata(GV_Database *db, const float *data, size_t di
         return -1;
     }
 
-    /* Start timing */
     uint64_t start_time_us = gv_db_get_time_us();
 
-    /* Check resource limits */
     size_t vector_memory = gv_db_estimate_vector_memory(dimension);
     if (gv_db_check_resource_limits(db, 1, vector_memory) != 0) {
         return -1; /* Resource limit exceeded */
     }
 
-    /* Increment concurrent operations */
     gv_db_increment_concurrent_ops(db);
     if (db == NULL || data == NULL || dimension == 0 || dimension != db->dimension) {
         gv_db_decrement_concurrent_ops(db);
@@ -2052,7 +1893,6 @@ int gv_db_add_vector_with_metadata(GV_Database *db, const float *data, size_t di
             pthread_rwlock_unlock(&db->rwlock);
             return -1;
         }
-        /* Update metadata index */
         if (metadata != NULL && db->metadata_index != NULL) {
             GV_Metadata *current = metadata;
             while (current != NULL) {
@@ -2171,7 +2011,6 @@ int gv_db_add_vector_with_metadata(GV_Database *db, const float *data, size_t di
     db->total_inserts += 1;
     pthread_rwlock_unlock(&db->rwlock);
 
-    /* Record latency for insert operation */
     uint64_t end_time_us = gv_db_get_time_us();
     uint64_t latency_us = end_time_us - start_time_us;
     gv_db_record_latency(db, latency_us, 1);
@@ -2230,7 +2069,6 @@ int gv_db_add_vector_with_rich_metadata(GV_Database *db, const float *data, size
         return -1;
     }
     
-    /* Record start time for latency measurement */
     uint64_t start_time_us = gv_db_get_time_us();
 
     if (db->wal != NULL && db->wal_replaying == 0) {
@@ -2392,7 +2230,6 @@ int gv_db_add_vector_with_rich_metadata(GV_Database *db, const float *data, size
     gv_db_update_memory_usage(db);
     pthread_rwlock_unlock(&db->rwlock);
 
-    /* Record latency for insert operation */
     uint64_t end_time_us = gv_db_get_time_us();
     uint64_t latency_us = end_time_us - start_time_us;
     gv_db_record_latency(db, latency_us, 1);
@@ -2545,7 +2382,6 @@ int gv_db_save(const GV_Database *db, const char *filepath) {
     }
 
     if (status == 0) {
-        /* Compute checksum over file and append */
         FILE *rf = fopen(out_path, "rb");
         if (rf == NULL) {
             status = -1;
@@ -2593,7 +2429,6 @@ int gv_db_search(const GV_Database *db, const float *query_data, size_t k,
         return -1;
     }
 
-    /* Start timing */
     uint64_t start_time_us = gv_db_get_time_us();
 
     /* ensure result fields start clean */
@@ -2689,7 +2524,6 @@ int gv_db_search(const GV_Database *db, const float *query_data, size_t k,
     }
     pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
 
-    /* Record latency */
     uint64_t end_time_us = gv_db_get_time_us();
     uint64_t latency_us = end_time_us - start_time_us;
     gv_db_record_latency((GV_Database *)db, latency_us, 0);
@@ -3244,11 +3078,9 @@ int gv_db_delete_vector_by_index(GV_Database *db, size_t vector_index) {
     }
 
     if (status == 0) {
-        /* Remove from metadata index */
         if (db->metadata_index != NULL) {
             gv_metadata_index_remove_vector(db->metadata_index, vector_index);
         }
-        /* Update WAL */
         if (db->wal != NULL) {
             if (gv_wal_append_delete(db->wal, vector_index) != 0) {
                 pthread_rwlock_unlock(&db->rwlock);
@@ -3425,12 +3257,10 @@ int gv_db_update_vector_metadata(GV_Database *db, size_t vector_index,
         // Ownership transferred to SOA, prevent double-free
         temp_vec.metadata = NULL;
 
-        /* Update metadata index */
         if (status == 0 && db->metadata_index != NULL) {
             gv_metadata_index_update(db->metadata_index, vector_index, old_metadata_copy, temp_vec.metadata);
         }
         
-        /* Free the copied old metadata */
         while (old_metadata_copy != NULL) {
             GV_Metadata *next = old_metadata_copy->next;
             free(old_metadata_copy->key);
@@ -3464,8 +3294,7 @@ int gv_db_update_vector_metadata(GV_Database *db, size_t vector_index,
     }
 
     if (status == 0 && db->wal != NULL && vector_data != NULL) {
-        /* Write update record to WAL with metadata */
-        if (gv_wal_append_update(db->wal, vector_index, vector_data, db->dimension, 
+        if (gv_wal_append_update(db->wal, vector_index, vector_data, db->dimension,
                                  metadata_keys, metadata_values, metadata_count) != 0) {
             pthread_rwlock_unlock(&db->rwlock);
             return -1;
@@ -3505,7 +3334,6 @@ static int gv_db_compact_soa_storage(GV_Database *db) {
         return 0; /* Nothing to compact */
     }
 
-    /* Create new compacted arrays */
     size_t new_count = storage->count - deleted_count;
     float *new_data = (float *)malloc(new_count * dimension * sizeof(float));
     GV_Metadata **new_metadata = (GV_Metadata **)calloc(new_count, sizeof(GV_Metadata *));
@@ -3540,7 +3368,6 @@ static int gv_db_compact_soa_storage(GV_Database *db) {
             index_map[old_idx] = new_idx;
             new_idx++;
         } else {
-            /* Free metadata for deleted vectors */
             if (storage->metadata[old_idx] != NULL) {
                 GV_Vector temp_vec = {
                     .dimension = dimension,
@@ -3553,12 +3380,10 @@ static int gv_db_compact_soa_storage(GV_Database *db) {
         }
     }
 
-    /* Free old arrays */
     free(storage->data);
     free(storage->metadata);
     free(storage->deleted);
 
-    /* Update storage */
     storage->data = new_data;
     storage->metadata = new_metadata;
     storage->deleted = new_deleted;
@@ -3641,7 +3466,6 @@ static int gv_db_compact_soa_storage(GV_Database *db) {
         }
     }
 
-    /* Update metadata index */
     if (db->metadata_index != NULL) {
         /* Rebuild metadata index with new indices */
         GV_MetadataIndex *old_index = db->metadata_index;
@@ -3673,7 +3497,6 @@ static int gv_db_compact_wal(GV_Database *db) {
         return 0; /* No WAL to compact */
     }
 
-    /* Check WAL file size */
     FILE *wal_file = fopen(db->wal_path, "rb");
     if (wal_file == NULL) {
         return 0; /* WAL doesn't exist or can't be opened */
@@ -3728,7 +3551,6 @@ int gv_db_compact(GV_Database *db) {
 
     pthread_rwlock_wrlock(&db->rwlock);
 
-    /* Check if compaction is needed */
     if (db->soa_storage != NULL) {
         size_t deleted_count = 0;
         for (size_t i = 0; i < db->soa_storage->count; ++i) {
@@ -3958,7 +3780,6 @@ static int gv_db_check_resource_limits(GV_Database *db, size_t additional_vector
 
     pthread_mutex_lock(&db->resource_mutex);
 
-    /* Check vector count limit */
     if (db->resource_limits.max_vectors > 0) {
         if (db->count + additional_vectors > db->resource_limits.max_vectors) {
             pthread_mutex_unlock(&db->resource_mutex);
@@ -3966,7 +3787,6 @@ static int gv_db_check_resource_limits(GV_Database *db, size_t additional_vector
         }
     }
 
-    /* Check memory limit */
     if (db->resource_limits.max_memory_bytes > 0) {
         size_t estimated_new_memory = db->current_memory_bytes + additional_memory;
         if (estimated_new_memory > db->resource_limits.max_memory_bytes) {
@@ -3975,7 +3795,6 @@ static int gv_db_check_resource_limits(GV_Database *db, size_t additional_vector
         }
     }
 
-    /* Check concurrent operations limit */
     if (db->resource_limits.max_concurrent_operations > 0) {
         if (db->current_concurrent_ops >= db->resource_limits.max_concurrent_operations) {
             pthread_mutex_unlock(&db->resource_mutex);
@@ -4027,7 +3846,6 @@ int gv_db_set_resource_limits(GV_Database *db, const GV_ResourceLimits *limits) 
     db->resource_limits.max_concurrent_operations = limits->max_concurrent_operations;
     pthread_mutex_unlock(&db->resource_mutex);
 
-    /* Update memory usage estimate */
     gv_db_update_memory_usage(db);
 
     return 0;
@@ -4160,7 +3978,6 @@ void gv_db_record_latency(GV_Database *db, uint64_t latency_us, int is_insert) {
 
     pthread_mutex_lock(&db->observability_mutex);
 
-    /* Initialize histogram if not already initialized */
     if (is_insert && db->insert_latency_hist.buckets == NULL) {
         gv_db_init_latency_histogram(&db->insert_latency_hist, 8);
     } else if (!is_insert && db->search_latency_hist.buckets == NULL) {
@@ -4244,11 +4061,9 @@ void gv_db_record_recall(GV_Database *db, double recall) {
 
     db->recall_metrics.total_queries++;
     
-    /* Update average recall */
     double total = db->recall_metrics.avg_recall * (double)(db->recall_metrics.total_queries - 1) + recall;
     db->recall_metrics.avg_recall = total / (double)db->recall_metrics.total_queries;
 
-    /* Update min/max */
     if (db->recall_metrics.total_queries == 1) {
         db->recall_metrics.min_recall = recall;
         db->recall_metrics.max_recall = recall;
@@ -4318,7 +4133,6 @@ int gv_db_get_detailed_stats(const GV_Database *db, GV_DetailedStats *out) {
     /* QPS and IPS - calculate on-demand based on current counts and elapsed time */
     uint64_t now_us = gv_db_get_time_us();
     
-    /* Calculate QPS */
     if (db->last_qps_update_time_us == 0) {
         out->queries_per_second = 0.0;
     } else {
@@ -4524,7 +4338,6 @@ int gv_db_health_check(const GV_Database *db) {
 
     int health = 0; /* Healthy by default */
 
-    /* Check deleted vector ratio */
     if (db->soa_storage != NULL) {
         size_t deleted_count = 0;
         for (size_t i = 0; i < db->soa_storage->count; ++i) {
@@ -4542,7 +4355,6 @@ int gv_db_health_check(const GV_Database *db) {
         }
     }
 
-    /* Check resource limits */
     if (db->resource_limits.max_memory_bytes > 0) {
         gv_db_update_memory_usage((GV_Database *)db);
         if (db->current_memory_bytes > db->resource_limits.max_memory_bytes) {
@@ -4571,7 +4383,6 @@ int gv_db_upsert(GV_Database *db, size_t vector_index, const float *data, size_t
     }
 
     if (vector_index < db->count) {
-        /* Update existing vector */
         return gv_db_update_vector(db, vector_index, data, dimension);
     } else if (vector_index == db->count) {
         /* Insert new vector at end */
@@ -4591,10 +4402,8 @@ int gv_db_upsert_with_metadata(GV_Database *db, size_t vector_index,
     }
 
     if (vector_index < db->count) {
-        /* Update existing vector data */
         int status = gv_db_update_vector(db, vector_index, data, dimension);
         if (status != 0) return status;
-        /* Update metadata if provided */
         if (metadata_keys && metadata_values && metadata_count > 0) {
             return gv_db_update_vector_metadata(db, vector_index,
                                                  metadata_keys, metadata_values,
@@ -4770,14 +4579,11 @@ int gv_db_export_json(const GV_Database *db, const char *filepath) {
             const float *data = gv_soa_storage_get_data(db->soa_storage, i);
             if (!data) continue;
 
-            /* Build JSON object */
             GV_JsonValue *obj = gv_json_object();
             if (!obj) continue;
 
-            /* Add index */
             gv_json_object_set(obj, "index", gv_json_number((double)i));
 
-            /* Add vector array */
             GV_JsonValue *vec_arr = gv_json_array();
             if (vec_arr) {
                 for (size_t d = 0; d < db->dimension; d++) {
@@ -4786,7 +4592,6 @@ int gv_db_export_json(const GV_Database *db, const char *filepath) {
                 gv_json_object_set(obj, "vector", vec_arr);
             }
 
-            /* Add metadata if present */
             GV_Metadata *meta = gv_soa_storage_get_metadata(db->soa_storage, i);
             if (meta) {
                 GV_JsonValue *meta_obj = gv_json_object();
