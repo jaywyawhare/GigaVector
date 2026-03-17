@@ -1,17 +1,6 @@
-# Advanced Features Examples
+# Advanced Features
 
-This guide demonstrates advanced features and optimization techniques for GigaVector.
-
-## Table of Contents
-
-1. [Advanced Index Configuration](#advanced-index-configuration)
-2. [Range Search](#range-search)
-3. [Sparse Vectors](#sparse-vectors)
-4. [Performance Optimization](#performance-optimization)
-5. [Concurrent Operations](#concurrent-operations)
-6. [Monitoring and Observability](#monitoring-and-observability)
-
-## Advanced Index Configuration
+## Index Configuration
 
 ### Fine-Tuning HNSW
 

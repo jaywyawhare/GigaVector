@@ -1,21 +1,4 @@
-# GigaVector Troubleshooting Guide
-
-Comprehensive troubleshooting guide for common issues and their solutions.
-
-## Table of Contents
-
-1. [Quick Diagnosis](#quick-diagnosis)
-2. [Build and Installation Issues](#build-and-installation-issues)
-3. [Runtime Errors](#runtime-errors)
-4. [Performance Issues](#performance-issues)
-5. [Memory Issues](#memory-issues)
-6. [Data Integrity Issues](#data-integrity-issues)
-7. [LLM Integration Issues](#llm-integration-issues)
-8. [Network Issues](#network-issues)
-9. [Debugging Tools](#debugging-tools)
-10. [Getting Help](#getting-help)
-
----
+# Troubleshooting
 
 ## Quick Diagnosis
 

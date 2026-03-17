@@ -1,18 +1,5 @@
 # C API Guide
 
-This guide explains how to use GigaVector's C API effectively and correctly.
-
-## Table of Contents
-
-1. [Getting Started](#getting-started)
-2. [Core Concepts](#core-concepts)
-3. [Database Operations](#database-operations)
-4. [Memory Management](#memory-management)
-5. [Error Handling](#error-handling)
-6. [Best Practices](#best-practices)
-7. [Advanced Usage](#advanced-usage)
-8. [Thread Safety](#thread-safety)
-
 ## Getting Started
 
 ### Including Headers

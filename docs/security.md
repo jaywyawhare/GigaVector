@@ -1,22 +1,6 @@
-# GigaVector Security Guide
+# Security
 
-Comprehensive security best practices and guidelines for GigaVector deployments.
-
-## Table of Contents
-
-1. [Security Overview](#security-overview)
-2. [API Key Management](#api-key-management)
-3. [Data Protection](#data-protection)
-4. [Network Security](#network-security)
-5. [Access Control](#access-control)
-6. [Secure Coding Practices](#secure-coding-practices)
-7. [Vulnerability Management](#vulnerability-management)
-8. [Compliance Considerations](#compliance-considerations)
-9. [Security Checklist](#security-checklist)
-
----
-
-## Security Overview
+## Overview
 
 GigaVector handles sensitive data including:
 - User conversations and memories

@@ -1,14 +1,4 @@
-# GigaVector Performance Tuning Guide
-
-This guide provides recommendations for optimizing GigaVector performance based on your use case, data characteristics, and hardware capabilities.
-
-## Table of Contents
-
-1. [Index Selection Guidelines](#index-selection-guidelines)
-2. [Parameter Tuning Recommendations](#parameter-tuning-recommendations)
-3. [SIMD Optimization Notes](#simd-optimization-notes)
-4. [Memory Usage Optimization](#memory-usage-optimization)
-5. [Benchmark Results and Comparisons](#benchmark-results-and-comparisons)
+# Performance Tuning
 
 ## Index Selection Guidelines
 

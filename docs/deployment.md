@@ -1,21 +1,4 @@
-# GigaVector Production Deployment Guide
-
-Comprehensive guide for deploying GigaVector in production environments.
-
-## Table of Contents
-
-1. [System Requirements](#system-requirements)
-2. [Installation](#installation)
-3. [Configuration](#configuration)
-4. [Performance Tuning](#performance-tuning)
-5. [Monitoring and Observability](#monitoring-and-observability)
-6. [Backup and Recovery](#backup-and-recovery)
-7. [Scaling Strategies](#scaling-strategies)
-8. [Security Hardening](#security-hardening)
-9. [Disaster Recovery](#disaster-recovery)
-10. [Troubleshooting](#troubleshooting)
-
----
+# Deployment
 
 ## System Requirements
 

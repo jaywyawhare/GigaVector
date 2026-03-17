@@ -1,6 +1,4 @@
-# Build and Test Guide
-
-This guide explains how to build GigaVector and run all tests, including LLM tests.
+# Build and Test
 
 ## Prerequisites
 
@@ -288,7 +286,7 @@ Testing LLM creation with valid config...
 
 - Read the [Usage Guide](usage.md) for how to use GigaVector
 - Check [API Keys Documentation](api_keys_required.md) for detailed API key information
-- See [Advanced Features](examples/advanced_features.md) for code samples
+- See [Examples](examples/basic_usage.md) for code samples
 
 
 

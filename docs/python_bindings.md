@@ -1,15 +1,4 @@
-# Python Bindings Guide
-
-This guide explains how GigaVector's Python bindings work and how to use them effectively.
-
-## Table of Contents
-
-1. [Overview](#overview)
-2. [How the FFI Works](#how-the-ffi-works)
-3. [Using Python Bindings](#using-python-bindings)
-4. [Best Practices](#best-practices)
-5. [Extending the Bindings](#extending-the-bindings)
-6. [Troubleshooting](#troubleshooting)
+# Python Bindings
 
 ## Overview
 

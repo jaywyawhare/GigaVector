@@ -1,24 +1,4 @@
-# GigaVector API Reference
-
-Complete reference documentation for the GigaVector C API.
-
-## Table of Contents
-
-1. [Database Operations](#database-operations)
-2. [Vector Operations](#vector-operations)
-3. [Search Operations](#search-operations)
-4. [Metadata Management](#metadata-management)
-5. [Memory Layer](#memory-layer)
-6. [LLM Integration](#llm-integration)
-7. [Embedding Services](#embedding-services)
-8. [Context Graph](#context-graph)
-9. [Index Configuration](#index-configuration)
-10. [Statistics and Monitoring](#statistics-and-monitoring)
-11. [Error Handling](#error-handling)
-12. [Resource Management](#resource-management)
-13. [Authentication](#authentication)
-
----
+# API Reference
 
 ## Database Operations
 

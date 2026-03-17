@@ -1,18 +1,4 @@
-# GigaVector Usage Guide
-
-This guide provides comprehensive instructions for using GigaVector in your applications, covering both Python and C APIs.
-
-## Table of Contents
-
-1. [Getting Started](#getting-started)
-2. [Choosing the Right Index](#choosing-the-right-index)
-3. [Python Usage](#python-usage)
-4. [C API Usage](#c-api-usage)
-5. [HTTP REST Server](#http-rest-server)
-6. [CLI Tools](#cli-tools)
-7. [Common Patterns](#common-patterns)
-8. [Best Practices](#best-practices)
-9. [Troubleshooting](#troubleshooting)
+# Usage Guide
 
 ## Getting Started
 

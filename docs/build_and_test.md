@@ -1,6 +1,4 @@
-# Build and Test Guide
-
-This guide explains how to build GigaVector and run all tests, including LLM tests.
+# Build and Test
 
 ## Prerequisites
 

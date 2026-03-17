@@ -1,6 +1,4 @@
-# API Keys Required - Complete Reference
-
-This document lists all API keys used in GigaVector, categorized by requirement level and feature.
+# API Keys
 
 ## Quick Reference
 

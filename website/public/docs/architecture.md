@@ -1,35 +1,4 @@
-# GigaVector Architecture Documentation
-
-> A comprehensive high-performance vector database library with semantic memory capabilities
-
-## Table of Contents
-
-1. [Overview](#overview)
-2. [Vector Database Algorithms](#vector-database-algorithms)
-   - [HNSW (Hierarchical Navigable Small Worlds)](#hnsw-hierarchical-navigable-small-worlds)
-   - [IVF-PQ (Inverted File with Product Quantization)](#ivf-pq-inverted-file-with-product-quantization)
-   - [K-D Tree](#k-d-tree)
-   - [Sparse Index](#sparse-index)
-3. [Distance Metrics](#distance-metrics)
-4. [Memory Layer](#memory-layer)
-   - [Architecture](#memory-layer-architecture)
-   - [Memory Links and Relationships](#memory-links-and-relationships)
-   - [Memory Extraction](#memory-extraction)
-   - [Memory Consolidation](#memory-consolidation)
-5. [Importance Scoring System](#importance-scoring-system)
-6. [LLM Integration](#llm-integration)
-7. [Embedding System](#embedding-system)
-8. [Context Graph](#context-graph)
-9. [Core Data Structures](#core-data-structures)
-10. [Storage and Persistence](#storage-and-persistence)
-11. [Configuration and Optimization](#configuration-and-optimization)
-12. [Integration Patterns](#integration-patterns)
-13. [HTTP REST Server](#http-rest-server)
-14. [Hybrid Search](#hybrid-search)
-15. [Distributed Architecture](#distributed-architecture)
-16. [GPU Acceleration](#gpu-acceleration)
-
----
+# Architecture
 
 ## Overview
 
@@ -112,27 +81,8 @@ IVF-PQ combines coarse quantization with product quantization for memory-efficie
 
 #### How It Works
 
-```
-Step 1: Coarse Quantization (IVF)
-┌─────────────────────────────────────┐
-│  Vectors partitioned into clusters  │
-│  [C1] [C2] [C3] ... [Cn]           │
-│   │    │    │        │              │
-│  [v1] [v4] [v7]    [vN]            │
-│  [v2] [v5] [v8]                    │
-│  [v3] [v6]                         │
-└─────────────────────────────────────┘
-
-Step 2: Product Quantization (PQ)
-┌─────────────────────────────────────┐
-│  Vector: [d1 d2 d3 d4 d5 d6 d7 d8] │
-│           ↓     ↓     ↓     ↓       │
-│  Sub-vectors: [s1] [s2] [s3] [s4]  │
-│           ↓     ↓     ↓     ↓       │
-│  Codes:    3    7    2    9        │
-│  (8 bits each = 4 bytes total)     │
-└─────────────────────────────────────┘
-```
+1. **Coarse quantization (IVF)**: Vectors are partitioned into clusters via k-means. At query time only the nearest `nprobe` clusters are searched.
+2. **Product quantization (PQ)**: Each vector is split into `m` sub-vectors, each encoded as a codebook index (`nbits` bits). A 128-d float32 vector (512 bytes) compresses to 4-8 bytes.
 
 #### Configuration
 
@@ -303,32 +253,7 @@ if (gv_cpu_has_feature(GV_CPU_AVX2)) {
 
 The memory layer provides semantic memory storage with intelligent retrieval, extraction, and consolidation.
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                      Memory Layer                            │
-├─────────────────────────────────────────────────────────────┤
-│  ┌──────────┐  ┌────────────┐  ┌─────────────┐              │
-│  │Extraction│──│ Importance │──│Consolidation│              │
-│  │  (LLM)   │  │  Scoring   │  │   (Merge)   │              │
-│  └──────────┘  └────────────┘  └─────────────┘              │
-│        │              │               │                      │
-│        ▼              ▼               ▼                      │
-│  ┌─────────────────────────────────────────────────────┐    │
-│  │              Vector Database (HNSW/IVF-PQ)          │    │
-│  │  [Memory 1] [Memory 2] [Memory 3] ... [Memory N]    │    │
-│  └─────────────────────────────────────────────────────┘    │
-│        │                                                     │
-│        ▼                                                     │
-│  ┌─────────────────────────────────────────────────────┐    │
-│  │              Context Graph (Entities)                │    │
-│  │  [Person]──knows──[Person]                          │    │
-│  │     │                 │                             │    │
-│  │  works_at          lives_in                         │    │
-│  │     │                 │                             │    │
-│  │  [Org]            [Location]                        │    │
-│  └─────────────────────────────────────────────────────┘    │
-└─────────────────────────────────────────────────────────────┘
-```
+The pipeline is: **Extraction** (LLM parses memories from text) &rarr; **Importance Scoring** (multi-factor ranking) &rarr; **Consolidation** (merge duplicates). Memories are stored in the vector database and linked to entities in the context graph.
 
 ### Memory Types
 
@@ -506,23 +431,12 @@ Multi-factor importance scoring based on cognitive science and ML ranking resear
 
 ### Scoring Components
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    Final Importance Score                    │
-│  ═══════════════════════════════════════════════════════════│
-│                                                              │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐       │
-│  │ Content  │ │ Temporal │ │  Access  │ │Structural│       │
-│  │  (30%)   │ │  (25%)   │ │  (20%)   │ │  (10%)   │       │
-│  └────┬─────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘       │
-│       │            │            │            │              │
-│  ┌────┴────┐  ┌────┴────┐  ┌────┴────┐  ┌────┴────┐        │
-│  │Informtv.│  │Ebbinghaus│  │ SM-2    │  │ Links   │        │
-│  │Specific.│  │ Curve    │  │ Style   │  │ Graph   │        │
-│  │Salience │  │ Recency  │  │ Pattern │  │ Density │        │
-│  └─────────┘  └─────────┘  └─────────┘  └─────────┘        │
-└─────────────────────────────────────────────────────────────┘
-```
+The final score is a weighted sum of four signals:
+
+- **Content (30%)** -- informativeness, specificity, salience
+- **Temporal (25%)** -- Ebbinghaus forgetting curve decay
+- **Access (20%)** -- SM-2 style retrieval pattern analysis
+- **Structural (10%)** -- graph link density and relationship count
 
 ### Component Weights
 
@@ -892,29 +806,7 @@ Node (hash table)          Edge (hash table)
 
 The knowledge graph (`gv_knowledge_graph.h`) adds semantic capabilities on top of graph structure:
 
-```
-┌─────────────────────────────────────────────┐
-│              Knowledge Graph                │
-│                                             │
-│  ┌─────────────┐     ┌──────────────┐       │
-│  │  Entity HT  │     │ Relation HT  │       │
-│  │ (id→entity) │     │ (id→relation)│       │
-│  └──────┬──────┘     └──────┬───────┘       │
-│         │                   │               │
-│  ┌──────┴───────────────────┴───────┐       │
-│  │         SPO Indexes              │       │
-│  │  subject_index (entity→rels)     │       │
-│  │  object_index  (entity→rels)     │       │
-│  │  predicate_index (string→rels)   │       │
-│  └──────────────────────────────────┘       │
-│                                             │
-│  ┌──────────────────────────────────┐       │
-│  │  Embedding Store                 │       │
-│  │  flat array of float vectors     │       │
-│  │  cosine similarity search        │       │
-│  └──────────────────────────────────┘       │
-└─────────────────────────────────────────────┘
-```
+Internally the KG stores entities and relations in hash tables, with three SPO indexes (subject, object, predicate) for fast triple-pattern matching. An embedding store (flat float array with cosine similarity) enables semantic search over entities.
 
 **Key capabilities:**
 - **SPO Triple Store** -- subject/predicate/object indexes for fast pattern matching with wildcard support
@@ -1236,22 +1128,7 @@ gv_db_close(db);
 
 **Files**: `gv_server.h/c`, `gv_rest_handlers.h/c`
 
-Embedded HTTP server using libmicrohttpd for REST API access.
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                     HTTP Server                              │
-├─────────────────────────────────────────────────────────────┤
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐         │
-│  │   Router    │──│  Handlers   │──│    Auth     │         │
-│  └─────────────┘  └─────────────┘  └─────────────┘         │
-│         │                │                │                  │
-│         ▼                ▼                ▼                  │
-│  ┌─────────────────────────────────────────────────────┐    │
-│  │              GigaVector Database                     │    │
-│  └─────────────────────────────────────────────────────┘    │
-└─────────────────────────────────────────────────────────────┘
-```
+Embedded HTTP server using libmicrohttpd for REST API access. Requests are routed through an auth layer, then dispatched to handlers that operate on the database.
 
 ### Endpoints
 
@@ -1267,37 +1144,7 @@ Embedded HTTP server using libmicrohttpd for REST API access.
 
 **Files**: `gv_tokenizer.h/c`, `gv_bm25.h/c`, `gv_hybrid_search.h/c`
 
-Combines BM25 text ranking with vector similarity for improved relevance.
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    Hybrid Search                             │
-├─────────────────────────────────────────────────────────────┤
-│                                                              │
-│  Query: "machine learning papers"                           │
-│         │                                                    │
-│         ├──────────────┬──────────────┐                     │
-│         ▼              ▼              ▼                     │
-│  ┌──────────┐   ┌──────────┐   ┌──────────┐                │
-│  │ Tokenize │   │  Embed   │   │   BM25   │                │
-│  └────┬─────┘   └────┬─────┘   └────┬─────┘                │
-│       │              │              │                       │
-│       ▼              ▼              ▼                       │
-│  ┌──────────┐   ┌──────────┐   ┌──────────┐                │
-│  │BM25 Index│   │Vector DB │   │ Scoring  │                │
-│  └────┬─────┘   └────┬─────┘   └────┬─────┘                │
-│       │              │              │                       │
-│       └──────────────┴──────────────┘                       │
-│                      │                                       │
-│                      ▼                                       │
-│              ┌──────────────┐                                │
-│              │ RRF Fusion   │ (Reciprocal Rank Fusion)      │
-│              └──────────────┘                                │
-│                      │                                       │
-│                      ▼                                       │
-│              Final Ranked Results                            │
-└─────────────────────────────────────────────────────────────┘
-```
+Combines BM25 text ranking with vector similarity for improved relevance. A query is tokenized for BM25 scoring and embedded for vector search in parallel; the two result lists are merged via Reciprocal Rank Fusion (RRF).
 
 ---
 
@@ -1307,26 +1154,7 @@ Combines BM25 text ranking with vector similarity for improved relevance.
 
 ### Sharding
 
-Horizontal partitioning across multiple nodes.
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    Sharded Cluster                           │
-├─────────────────────────────────────────────────────────────┤
-│                                                              │
-│  ┌────────────┐                                             │
-│  │   Router   │  (Hash or Range-based routing)              │
-│  └─────┬──────┘                                             │
-│        │                                                     │
-│   ┌────┴────┬────────┬────────┐                             │
-│   ▼         ▼        ▼        ▼                             │
-│ ┌─────┐  ┌─────┐  ┌─────┐  ┌─────┐                         │
-│ │Shard│  │Shard│  │Shard│  │Shard│                         │
-│ │  0  │  │  1  │  │  2  │  │  3  │                         │
-│ └─────┘  └─────┘  └─────┘  └─────┘                         │
-│                                                              │
-└─────────────────────────────────────────────────────────────┘
-```
+Horizontal partitioning across multiple nodes. A router assigns vectors to shards via hash or range-based routing.
 
 ### Replication
 
@@ -1349,28 +1177,7 @@ CUDA-accelerated distance computation and batch search.
 | Distance matrix | 500ms | ~20x faster |
 | Index build | Variable | ~5x faster |
 
-### Architecture
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    GPU Pipeline                              │
-├─────────────────────────────────────────────────────────────┤
-│                                                              │
-│  Host (CPU)              │  Device (GPU)                    │
-│  ────────────────────────│──────────────────────────        │
-│                          │                                   │
-│  ┌────────────┐         │  ┌────────────────────┐           │
-│  │Query Batch │ ──────────▶│ Distance Kernels   │           │
-│  └────────────┘         │  │ (CUDA)             │           │
-│                          │  └─────────┬──────────┘           │
-│  ┌────────────┐         │            │                       │
-│  │  Results   │ ◀──────────────────────                      │
-│  └────────────┘         │                                    │
-│                          │                                   │
-└─────────────────────────────────────────────────────────────┘
-```
-
-Supported CUDA architectures: 75 (Turing), 80/86 (Ampere), 89/90 (Ada/Hopper)
+Query batches are transferred to the GPU, distance kernels run in CUDA, and results are copied back. Supported CUDA architectures: 75 (Turing), 80/86 (Ampere), 89/90 (Ada/Hopper).
 
 ---
 
