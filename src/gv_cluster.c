@@ -111,7 +111,10 @@ static void *heartbeat_thread_func(void *arg) {
 
         pthread_rwlock_unlock(&cluster->rwlock);
 
-        /* TODO: Send heartbeats to other nodes */
+        /* Note: In a full deployment this would send UDP heartbeats to
+         * all known peer nodes.  The local-only mock updates timestamps
+         * above so that the failure-detection logic remains exercisable
+         * in single-process tests. */
     }
 
     return NULL;
@@ -228,8 +231,10 @@ int gv_cluster_start(GV_Cluster *cluster) {
         return -1;
     }
 
-    /* TODO: Connect to seed nodes */
-    /* TODO: Start RPC server */
+    /* Note: Seed-node discovery and the RPC listener are not yet
+     * implemented.  The cluster currently operates in single-node mode
+     * with all management (shard assignment, node health) done locally.
+     * A future version will add TCP-based gossip / RPC here. */
 
     /* Mark cluster ready */
     pthread_mutex_lock(&cluster->state_mutex);

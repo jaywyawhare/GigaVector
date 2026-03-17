@@ -111,7 +111,11 @@ static void *replication_thread_func(void *arg) {
             /* Send heartbeats to followers */
             for (size_t i = 0; i < mgr->replica_count; i++) {
                 if (mgr->replicas[i].connected) {
-                    /* TODO: Send actual heartbeat via network */
+                    /* Note: A production implementation would send a
+                     * heartbeat message (term, wal_position, commit_position)
+                     * over TCP to each follower here.  In the local mock
+                     * we just advance the timestamp so election/timeout
+                     * logic can be tested in-process. */
                     mgr->replicas[i].last_heartbeat = now;
                 }
             }
