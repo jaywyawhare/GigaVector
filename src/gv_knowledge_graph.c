@@ -8,6 +8,7 @@
  */
 
 #include "gigavector/gv_knowledge_graph.h"
+#include "gigavector/gv_utils.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -139,18 +140,6 @@ struct GV_KnowledgeGraph {
     pthread_rwlock_t rwlock;
 };
 
-/*
- * Internal: Utility Helpers
- */
-
-static char *kg_strdup(const char *s) {
-    if (!s) return NULL;
-    size_t len = strlen(s);
-    char *dup = (char *)malloc(len + 1);
-    if (dup) memcpy(dup, s, len + 1);
-    return dup;
-}
-
 static uint64_t kg_hash_uint64(uint64_t key, size_t buckets) {
     /* Splitmix-style finaliser */
     key ^= key >> 30;
@@ -184,8 +173,8 @@ static GV_KGProp *kg_prop_clone_list(const GV_KGProp *src) {
     for (const GV_KGProp *p = src; p; p = p->next) {
         GV_KGProp *node = (GV_KGProp *)calloc(1, sizeof(GV_KGProp));
         if (!node) return head; /* partial clone on OOM */
-        node->key = kg_strdup(p->key);
-        node->value = kg_strdup(p->value);
+        node->key = gv_strdup(p->key);
+        node->value = gv_strdup(p->value);
         node->next = NULL;
         if (tail) tail->next = node;
         else head = node;
@@ -215,7 +204,7 @@ static int kg_prop_set(GV_KGProp **head, size_t *count,
                        const char *key, const char *value) {
     GV_KGProp *existing = kg_prop_find(*head, key);
     if (existing) {
-        char *dup = kg_strdup(value);
+        char *dup = gv_strdup(value);
         if (!dup) return -1;
         free(existing->value);
         existing->value = dup;
@@ -223,8 +212,8 @@ static int kg_prop_set(GV_KGProp **head, size_t *count,
     }
     GV_KGProp *node = (GV_KGProp *)calloc(1, sizeof(GV_KGProp));
     if (!node) return -1;
-    node->key = kg_strdup(key);
-    node->value = kg_strdup(value);
+    node->key = gv_strdup(key);
+    node->value = gv_strdup(value);
     if (!node->key || !node->value) {
         free(node->key);
         free(node->value);
@@ -889,8 +878,8 @@ uint64_t gv_kg_add_entity(GV_KnowledgeGraph *kg, const char *name,
     uint64_t eid = kg->next_entity_id++;
     GV_KGEntity *e = &node->entity;
     e->entity_id  = eid;
-    e->name       = kg_strdup(name);
-    e->type       = kg_strdup(type);
+    e->name       = gv_strdup(name);
+    e->type       = gv_strdup(type);
     e->properties = NULL;
     e->prop_count = 0;
     e->created_at = kg_now_epoch();
@@ -1067,7 +1056,7 @@ uint64_t gv_kg_add_relation(GV_KnowledgeGraph *kg, uint64_t subject,
     r->relation_id = rid;
     r->subject_id  = subject;
     r->object_id   = object;
-    r->predicate   = kg_strdup(predicate);
+    r->predicate   = gv_strdup(predicate);
     r->weight      = weight;
     r->properties  = NULL;
     r->created_at  = kg_now_epoch();
@@ -1152,14 +1141,14 @@ static void kg_fill_triple(const GV_KnowledgeGraph *kg,
                             const GV_KGRelation *rel, GV_KGTriple *t) {
     t->subject_id = rel->subject_id;
     t->object_id  = rel->object_id;
-    t->predicate  = kg_strdup(rel->predicate);
+    t->predicate  = gv_strdup(rel->predicate);
     t->score      = rel->weight;
 
     KG_EntityNode *sn = kg_find_entity_node(kg, rel->subject_id);
-    t->subject_name = sn ? kg_strdup(sn->entity.name) : kg_strdup("?");
+    t->subject_name = sn ? gv_strdup(sn->entity.name) : gv_strdup("?");
 
     KG_EntityNode *on = kg_find_entity_node(kg, rel->object_id);
-    t->object_name = on ? kg_strdup(on->entity.name) : kg_strdup("?");
+    t->object_name = on ? gv_strdup(on->entity.name) : gv_strdup("?");
 }
 
 static int kg_triple_matches(const GV_KGRelation *r,
@@ -1294,8 +1283,8 @@ int gv_kg_search_similar(const GV_KnowledgeGraph *kg,
     for (size_t i = 0; i < result_count; i++) {
         KG_EntityNode *en = kg_find_entity_node(kg, pairs[i].id);
         results[i].entity_id  = pairs[i].id;
-        results[i].name       = en ? kg_strdup(en->entity.name) : NULL;
-        results[i].type       = en ? kg_strdup(en->entity.type) : NULL;
+        results[i].name       = en ? gv_strdup(en->entity.name) : NULL;
+        results[i].type       = en ? gv_strdup(en->entity.type) : NULL;
         results[i].similarity = pairs[i].score;
     }
 
@@ -1363,8 +1352,8 @@ int gv_kg_search_by_text(const GV_KnowledgeGraph *kg, const char *text,
     for (size_t i = 0; i < result_count; i++) {
         KG_EntityNode *en = kg_find_entity_node(kg, pairs[i].id);
         results[i].entity_id  = pairs[i].id;
-        results[i].name       = en ? kg_strdup(en->entity.name) : NULL;
-        results[i].type       = en ? kg_strdup(en->entity.type) : NULL;
+        results[i].name       = en ? gv_strdup(en->entity.name) : NULL;
+        results[i].type       = en ? gv_strdup(en->entity.type) : NULL;
         results[i].similarity = pairs[i].score;
     }
 
@@ -1457,7 +1446,7 @@ int gv_kg_find_duplicates(const GV_KnowledgeGraph *kg, float threshold,
             if (sim >= threshold) {
                 out[found].entity_a = kg->embedding_entity_ids[i];
                 out[found].entity_b = kg->embedding_entity_ids[j];
-                out[found].predicted_predicate = kg_strdup("duplicate");
+                out[found].predicted_predicate = gv_strdup("duplicate");
                 out[found].confidence = sim;
                 found++;
             }
@@ -1607,7 +1596,7 @@ int gv_kg_predict_links(const GV_KnowledgeGraph *kg, uint64_t entity_id,
     for (size_t i = 0; i < result_count; i++) {
         results[i].entity_a = entity_id;
         results[i].entity_b = candidates[i].id;
-        results[i].predicted_predicate = kg_strdup("related_to");
+        results[i].predicted_predicate = gv_strdup("related_to");
         results[i].confidence = candidates[i].score;
     }
 
@@ -1970,8 +1959,8 @@ int gv_kg_hybrid_search(const GV_KnowledgeGraph *kg,
     for (size_t i = 0; i < result_count; i++) {
         KG_EntityNode *en = kg_find_entity_node(kg, pairs[i].id);
         results[i].entity_id  = pairs[i].id;
-        results[i].name       = en ? kg_strdup(en->entity.name) : NULL;
-        results[i].type       = en ? kg_strdup(en->entity.type) : NULL;
+        results[i].name       = en ? gv_strdup(en->entity.name) : NULL;
+        results[i].type       = en ? gv_strdup(en->entity.type) : NULL;
         results[i].similarity = pairs[i].score;
     }
 
@@ -2116,7 +2105,7 @@ int gv_kg_get_entity_types(const GV_KnowledgeGraph *kg, char **out_types,
                 }
             }
             if (!dup) {
-                out_types[found++] = kg_strdup(n->entity.type);
+                out_types[found++] = gv_strdup(n->entity.type);
             }
         }
     }
@@ -2145,7 +2134,7 @@ int gv_kg_get_predicates(const GV_KnowledgeGraph *kg, char **out_predicates,
                 }
             }
             if (!dup) {
-                out_predicates[found++] = kg_strdup(n->relation.predicate);
+                out_predicates[found++] = gv_strdup(n->relation.predicate);
             }
         }
     }
@@ -2302,7 +2291,7 @@ static int kg_read_u8(FILE *fp, uint8_t *v) {
 static char *kg_read_string(FILE *fp) {
     uint32_t len;
     if (kg_read_u32(fp, &len) != 0) return NULL;
-    if (len == 0) return kg_strdup("");
+    if (len == 0) return gv_strdup("");
     char *s = (char *)malloc(len + 1);
     if (!s) return NULL;
     if (kg_read_bytes(fp, s, len) != 0) { free(s); return NULL; }
