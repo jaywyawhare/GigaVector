@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "gigavector/gv_wal.h"
 
@@ -38,6 +39,12 @@ static uint32_t gv_crc32_update(uint32_t crc, const void *data, size_t len) {
 
 static uint32_t gv_crc32_finish(uint32_t crc) {
     return crc ^ 0xFFFFFFFFu;
+}
+
+static int gv_wal_sync(FILE *f) {
+    if (fflush(f) != 0) return -1;
+    if (fsync(fileno(f)) != 0) return -1;
+    return 0;
 }
 
 static int gv_wal_write_u32(FILE *f, uint32_t v) {
@@ -121,7 +128,7 @@ GV_WAL *gv_wal_open(const char *path, size_t dimension, uint32_t index_type) {
             fclose(f);
             return NULL;
         }
-        fflush(f);
+        gv_wal_sync(f);
     } else {
         uint32_t version = 0;
         uint32_t file_dim = 0;
@@ -212,7 +219,7 @@ int gv_wal_append_insert(GV_WAL *wal, const float *data, size_t dimension,
         crc = gv_crc32_update(crc, metadata_value, vlen);
     }
 
-    if (fflush(wal->file) != 0) {
+    if (gv_wal_sync(wal->file) != 0) {
         return -1;
     }
     return 0;
@@ -265,7 +272,7 @@ int gv_wal_append_insert_rich(GV_WAL *wal, const float *data, size_t dimension,
         if (gv_wal_write_u32(wal->file, crc) != 0) return -1;
     }
 
-    if (fflush(wal->file) != 0) {
+    if (gv_wal_sync(wal->file) != 0) {
         return -1;
     }
     return 0;
@@ -290,7 +297,7 @@ int gv_wal_append_delete(GV_WAL *wal, size_t vector_index) {
         if (gv_wal_write_u32(wal->file, crc) != 0) return -1;
     }
 
-    if (fflush(wal->file) != 0) return -1;
+    if (gv_wal_sync(wal->file) != 0) return -1;
     return 0;
 }
 
@@ -339,7 +346,7 @@ int gv_wal_append_update(GV_WAL *wal, size_t vector_index, const float *data, si
         if (gv_wal_write_u32(wal->file, crc) != 0) return -1;
     }
 
-    if (fflush(wal->file) != 0) return -1;
+    if (gv_wal_sync(wal->file) != 0) return -1;
     return 0;
 }
 
@@ -441,20 +448,6 @@ int gv_wal_replay(const char *path, size_t expected_dimension,
                 return -1;
             }
             
-            /* Read and discard metadata */
-            for (uint32_t i = 0; i < meta_count; ++i) {
-                char *key = NULL, *value = NULL;
-                if (gv_wal_read_string(f, &key) != 0 || gv_wal_read_string(f, &value) != 0) {
-                    free(key);
-                    free(value);
-                    free(buf);
-                    fclose(f);
-                    return -1;
-                }
-                free(key);
-                free(value);
-            }
-
             /* Read metadata for CRC calculation */
             char **keys = NULL;
             char **values = NULL;
@@ -1103,7 +1096,7 @@ void gv_wal_close(GV_WAL *wal) {
         return;
     }
     if (wal->file) {
-        fflush(wal->file);
+        gv_wal_sync(wal->file);
         fclose(wal->file);
     }
     free(wal->path);
@@ -1129,7 +1122,7 @@ int gv_wal_truncate(GV_WAL *wal) {
 
     /* Close the current file handle */
     if (wal->file != NULL) {
-        fflush(wal->file);
+        gv_wal_sync(wal->file);
         fclose(wal->file);
         wal->file = NULL;
     }
@@ -1152,7 +1145,7 @@ int gv_wal_truncate(GV_WAL *wal) {
         return -1;
     }
 
-    if (fflush(f) != 0 || fclose(f) != 0) {
+    if (gv_wal_sync(f) != 0 || fclose(f) != 0) {
         return -1;
     }
 

@@ -73,25 +73,21 @@ size_t gv_soa_storage_add(GV_SoAStorage *storage, const float *data, GV_Metadata
     if (storage->count >= storage->capacity) {
         size_t new_capacity = storage->capacity * 2;
         size_t new_data_size = new_capacity * storage->dimension * sizeof(float);
-        float *new_data = (float *)realloc(storage->data, new_data_size);
-        if (new_data == NULL) {
+        float *tmp_data = (float *)realloc(storage->data, new_data_size);
+        GV_Metadata **tmp_meta = (GV_Metadata **)realloc(storage->metadata, new_capacity * sizeof(GV_Metadata *));
+        int *tmp_del = (int *)realloc(storage->deleted, new_capacity * sizeof(int));
+        if (!tmp_data || !tmp_meta || !tmp_del) {
+            /* Preserve any successful reallocs to avoid leaking the old block */
+            if (tmp_data) storage->data = tmp_data;
+            if (tmp_meta) storage->metadata = tmp_meta;
+            if (tmp_del) storage->deleted = tmp_del;
             return (size_t)-1;
         }
-        storage->data = new_data;
-
-        GV_Metadata **new_metadata = (GV_Metadata **)realloc(storage->metadata, new_capacity * sizeof(GV_Metadata *));
-        if (new_metadata == NULL) {
-            return (size_t)-1;
-        }
-        memset(new_metadata + storage->capacity, 0, (new_capacity - storage->capacity) * sizeof(GV_Metadata *));
-        storage->metadata = new_metadata;
-
-        int *new_deleted = (int *)realloc(storage->deleted, new_capacity * sizeof(int));
-        if (new_deleted == NULL) {
-            return (size_t)-1;
-        }
-        memset(new_deleted + storage->capacity, 0, (new_capacity - storage->capacity) * sizeof(int));
-        storage->deleted = new_deleted;
+        memset(tmp_meta + storage->capacity, 0, (new_capacity - storage->capacity) * sizeof(GV_Metadata *));
+        memset(tmp_del + storage->capacity, 0, (new_capacity - storage->capacity) * sizeof(int));
+        storage->data = tmp_data;
+        storage->metadata = tmp_meta;
+        storage->deleted = tmp_del;
         storage->capacity = new_capacity;
     }
 

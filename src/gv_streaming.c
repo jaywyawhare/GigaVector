@@ -31,6 +31,9 @@ struct GV_StreamConsumer {
     /* Statistics */
     GV_StreamStats stats;
 
+    /* Offset tracking */
+    int64_t committed_offset;
+
     /* Threading */
     pthread_t consumer_thread;
     int thread_running;
@@ -122,11 +125,18 @@ static void *consumer_thread_func(void *arg) {
          * 4. Commit offsets
          */
 
-        /* Simulate processing */
+        /* Simulate processing a batch of messages */
         usleep(consumer->config.batch_timeout_ms * 1000);
 
         pthread_mutex_lock(&consumer->mutex);
-        consumer->stats.messages_received++;
+        consumer->stats.messages_received += consumer->config.batch_size;
+        consumer->stats.messages_processed += consumer->config.batch_size;
+        consumer->stats.current_offset += consumer->config.batch_size;
+
+        /* Auto-commit if enabled */
+        if (consumer->config.auto_commit) {
+            consumer->committed_offset = consumer->stats.current_offset;
+        }
         pthread_mutex_unlock(&consumer->mutex);
     }
 
@@ -322,7 +332,14 @@ int gv_stream_reset_stats(GV_StreamConsumer *consumer) {
 int gv_stream_commit(GV_StreamConsumer *consumer) {
     if (!consumer) return -1;
 
-    /* TODO: Implement actual offset commit for Kafka */
+    pthread_mutex_lock(&consumer->mutex);
+    consumer->committed_offset = consumer->stats.current_offset;
+    pthread_mutex_unlock(&consumer->mutex);
+
+    /* Note: With librdkafka this would call rd_kafka_commit() to persist
+     * the offset to the Kafka broker.  In the mock implementation we just
+     * record the committed position locally so that gv_stream_get_stats()
+     * and gv_stream_seek() remain consistent. */
     return 0;
 }
 
