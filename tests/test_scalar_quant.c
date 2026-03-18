@@ -14,7 +14,7 @@ static void fill_vector(float *data, size_t dim, float base) {
     }
 }
 
-/* 1. test_scalar_quant_8bit                                           */
+/* 1. test_scalar_quant_8bit */
 static int test_scalar_quant_8bit(void) {
     float data[DIM];
     fill_vector(data, DIM, 0.0f);
@@ -32,7 +32,7 @@ static int test_scalar_quant_8bit(void) {
     return 0;
 }
 
-/* 2. test_scalar_quant_4bit                                           */
+/* 2. test_scalar_quant_4bit */
 static int test_scalar_quant_4bit(void) {
     float data[DIM];
     fill_vector(data, DIM, 1.0f);
@@ -49,7 +49,7 @@ static int test_scalar_quant_4bit(void) {
     return 0;
 }
 
-/* 3. test_scalar_dequantize_roundtrip                                 */
+/* 3. test_scalar_dequantize_roundtrip */
 static int test_scalar_dequantize_roundtrip(void) {
     float data[DIM];
     fill_vector(data, DIM, 2.0f);
@@ -75,7 +75,7 @@ static int test_scalar_dequantize_roundtrip(void) {
     return 0;
 }
 
-/* 4. test_scalar_quant_bytes_needed                                   */
+/* 4. test_scalar_quant_bytes_needed */
 static int test_scalar_quant_bytes_needed(void) {
     /* 8-bit: 16 dims -> 16 bytes */
     size_t bytes_8 = gv_scalar_quant_bytes_needed(DIM, 8);
@@ -92,7 +92,7 @@ static int test_scalar_quant_bytes_needed(void) {
     return 0;
 }
 
-/* 5. test_scalar_quant_per_dimension                                  */
+/* 5. test_scalar_quant_per_dimension */
 static int test_scalar_quant_per_dimension(void) {
     float data[DIM];
     fill_vector(data, DIM, 3.0f);
@@ -109,7 +109,7 @@ static int test_scalar_quant_per_dimension(void) {
     return 0;
 }
 
-/* 6. test_scalar_quant_train                                          */
+/* 6. test_scalar_quant_train */
 static int test_scalar_quant_train(void) {
     size_t count = 64;
     float *train_data = (float *)malloc(count * DIM * sizeof(float));
@@ -132,7 +132,7 @@ static int test_scalar_quant_train(void) {
     return 0;
 }
 
-/* 7. test_scalar_quant_distance                                       */
+/* 7. test_scalar_quant_distance */
 static int test_scalar_quant_distance(void) {
     float data[DIM], query[DIM];
     fill_vector(data, DIM, 0.0f);
@@ -154,7 +154,7 @@ static int test_scalar_quant_distance(void) {
     return 0;
 }
 
-/* 8. test_scalar_quant_destroy_null                                   */
+/* 8. test_scalar_quant_destroy_null */
 static int test_scalar_quant_destroy_null(void) {
     /* Should be safe to call with NULL */
     gv_scalar_quant_vector_destroy(NULL);

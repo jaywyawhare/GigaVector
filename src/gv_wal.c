@@ -1161,4 +1161,3 @@ int gv_wal_truncate(GV_WAL *wal) {
     return 0;
 }
 
-

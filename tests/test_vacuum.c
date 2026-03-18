@@ -21,8 +21,7 @@ static GV_Database *create_test_db(void) {
     return db;
 }
 
-/* ---------- test functions ---------- */
-
+/* test functions */
 static int test_config_init(void) {
     GV_VacuumConfig config;
     memset(&config, 0xFF, sizeof(config));
@@ -164,8 +163,7 @@ static int test_vacuum_with_null_config(void) {
     return 0;
 }
 
-/* ---------- harness ---------- */
-
+/* harness */
 typedef int (*test_fn)(void);
 typedef struct { const char *name; test_fn fn; } TestCase;
 

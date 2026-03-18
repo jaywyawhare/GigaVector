@@ -42,8 +42,7 @@ struct GV_Migration {
     char error_message[256];
 };
 
-/* ---------- helper: monotonic time in microseconds ---------- */
-
+/* helper: monotonic time in microseconds */
 static uint64_t now_us(void)
 {
     struct timespec ts;
@@ -51,8 +50,7 @@ static uint64_t now_us(void)
     return (uint64_t)ts.tv_sec * 1000000ULL + (uint64_t)ts.tv_nsec / 1000ULL;
 }
 
-/* ---------- helper: set error message under lock ---------- */
-
+/* helper: set error message under lock */
 static void migration_set_error(GV_Migration *mig, const char *msg)
 {
     pthread_mutex_lock(&mig->mutex);
@@ -62,8 +60,7 @@ static void migration_set_error(GV_Migration *mig, const char *msg)
     pthread_mutex_unlock(&mig->mutex);
 }
 
-/* ---------- helper: check cancel under lock ---------- */
-
+/* helper: check cancel under lock */
 static int migration_is_cancelled(GV_Migration *mig)
 {
     int cancelled;
@@ -73,8 +70,7 @@ static int migration_is_cancelled(GV_Migration *mig)
     return cancelled;
 }
 
-/* ---------- helper: update progress under lock ---------- */
-
+/* helper: update progress under lock */
 static void migration_update_progress(GV_Migration *mig, size_t migrated)
 {
     pthread_mutex_lock(&mig->mutex);
@@ -85,15 +81,51 @@ static void migration_update_progress(GV_Migration *mig, size_t migrated)
     pthread_mutex_unlock(&mig->mutex);
 }
 
-/* ---------- index creation helpers ---------- */
+/* Generic vector insertion loop shared by all index types except KDTREE.
+   Returns index on success, NULL on failure (error already set). */
+typedef int  (*mig_insert_fn)(void *index, GV_Vector *vec);
+typedef void (*mig_destroy_fn)(void *index);
+
+static void *populate_index(GV_Migration *mig, void *index,
+                            mig_insert_fn insert, mig_destroy_fn destroy,
+                            const char *type_name)
+{
+    for (size_t i = 0; i < mig->total_vectors; i++) {
+        if (migration_is_cancelled(mig)) {
+            destroy(index);
+            return NULL;
+        }
+
+        const float *vec_data = mig->source_data + i * mig->dimension;
+        GV_Vector *vec = gv_vector_create_from_data(mig->dimension, vec_data);
+        if (!vec) {
+            destroy(index);
+            char buf[256];
+            snprintf(buf, sizeof(buf), "Failed to create vector during %s migration", type_name);
+            migration_set_error(mig, buf);
+            return NULL;
+        }
+
+        if (insert(index, vec) != 0) {
+            gv_vector_destroy(vec);
+            destroy(index);
+            char buf[256];
+            snprintf(buf, sizeof(buf), "Failed to insert vector into %s index", type_name);
+            migration_set_error(mig, buf);
+            return NULL;
+        }
+
+        if ((i + 1) % MIGRATION_BATCH_SIZE == 0 || i + 1 == mig->total_vectors) {
+            migration_update_progress(mig, i + 1);
+        }
+    }
+
+    return index;
+}
 
 static void *create_kdtree_index(GV_Migration *mig)
 {
-    /* For KDTREE, the "index" is a GV_SoAStorage* since the KD-tree is
-       built by inserting vector indices into a GV_KDNode tree on top of
-       SoA storage.  We create a new SoA storage and populate it.  The
-       caller can use gv_kdtree_insert to build the tree from the storage
-       afterwards. */
+    /* KDTREE uses SoA storage directly; the caller builds the tree afterwards. */
     GV_SoAStorage *storage = gv_soa_storage_create(mig->dimension, mig->total_vectors);
     if (!storage) {
         migration_set_error(mig, "Failed to create SoA storage for KDTREE migration");
@@ -124,90 +156,37 @@ static void *create_kdtree_index(GV_Migration *mig)
 
 static void *create_hnsw_index(GV_Migration *mig)
 {
-    const GV_HNSWConfig *cfg = (const GV_HNSWConfig *)mig->new_index_config;
-    void *index = gv_hnsw_create(mig->dimension, cfg, NULL);
+    void *index = gv_hnsw_create(mig->dimension,
+                                 (const GV_HNSWConfig *)mig->new_index_config, NULL);
     if (!index) {
         migration_set_error(mig, "Failed to create HNSW index");
         return NULL;
     }
-
-    for (size_t i = 0; i < mig->total_vectors; i++) {
-        if (migration_is_cancelled(mig)) {
-            gv_hnsw_destroy(index);
-            return NULL;
-        }
-
-        const float *vec_data = mig->source_data + i * mig->dimension;
-        GV_Vector *vec = gv_vector_create_from_data(mig->dimension, vec_data);
-        if (!vec) {
-            gv_hnsw_destroy(index);
-            migration_set_error(mig, "Failed to create vector during HNSW migration");
-            return NULL;
-        }
-
-        if (gv_hnsw_insert(index, vec) != 0) {
-            gv_vector_destroy(vec);
-            gv_hnsw_destroy(index);
-            migration_set_error(mig, "Failed to insert vector into HNSW index");
-            return NULL;
-        }
-
-        if ((i + 1) % MIGRATION_BATCH_SIZE == 0 || i + 1 == mig->total_vectors) {
-            migration_update_progress(mig, i + 1);
-        }
-    }
-
-    return index;
+    return populate_index(mig, index, (mig_insert_fn)gv_hnsw_insert,
+                          (mig_destroy_fn)gv_hnsw_destroy, "HNSW");
 }
 
 static void *create_flat_index(GV_Migration *mig)
 {
-    const GV_FlatConfig *cfg = (const GV_FlatConfig *)mig->new_index_config;
-    void *index = gv_flat_create(mig->dimension, cfg, NULL);
+    void *index = gv_flat_create(mig->dimension,
+                                 (const GV_FlatConfig *)mig->new_index_config, NULL);
     if (!index) {
         migration_set_error(mig, "Failed to create Flat index");
         return NULL;
     }
-
-    for (size_t i = 0; i < mig->total_vectors; i++) {
-        if (migration_is_cancelled(mig)) {
-            gv_flat_destroy(index);
-            return NULL;
-        }
-
-        const float *vec_data = mig->source_data + i * mig->dimension;
-        GV_Vector *vec = gv_vector_create_from_data(mig->dimension, vec_data);
-        if (!vec) {
-            gv_flat_destroy(index);
-            migration_set_error(mig, "Failed to create vector during Flat migration");
-            return NULL;
-        }
-
-        if (gv_flat_insert(index, vec) != 0) {
-            gv_vector_destroy(vec);
-            gv_flat_destroy(index);
-            migration_set_error(mig, "Failed to insert vector into Flat index");
-            return NULL;
-        }
-
-        if ((i + 1) % MIGRATION_BATCH_SIZE == 0 || i + 1 == mig->total_vectors) {
-            migration_update_progress(mig, i + 1);
-        }
-    }
-
-    return index;
+    return populate_index(mig, index, (mig_insert_fn)gv_flat_insert,
+                          (mig_destroy_fn)gv_flat_destroy, "Flat");
 }
 
 static void *create_ivfflat_index(GV_Migration *mig)
 {
-    const GV_IVFFlatConfig *cfg = (const GV_IVFFlatConfig *)mig->new_index_config;
-    void *index = gv_ivfflat_create(mig->dimension, cfg);
+    void *index = gv_ivfflat_create(mig->dimension,
+                                    (const GV_IVFFlatConfig *)mig->new_index_config);
     if (!index) {
         migration_set_error(mig, "Failed to create IVF-Flat index");
         return NULL;
     }
 
-    /* IVF-Flat requires training before insertion */
     if (gv_ivfflat_train(index, mig->source_data, mig->total_vectors) != 0) {
         gv_ivfflat_destroy(index);
         migration_set_error(mig, "Failed to train IVF-Flat index");
@@ -219,45 +198,19 @@ static void *create_ivfflat_index(GV_Migration *mig)
         return NULL;
     }
 
-    for (size_t i = 0; i < mig->total_vectors; i++) {
-        if (migration_is_cancelled(mig)) {
-            gv_ivfflat_destroy(index);
-            return NULL;
-        }
-
-        const float *vec_data = mig->source_data + i * mig->dimension;
-        GV_Vector *vec = gv_vector_create_from_data(mig->dimension, vec_data);
-        if (!vec) {
-            gv_ivfflat_destroy(index);
-            migration_set_error(mig, "Failed to create vector during IVF-Flat migration");
-            return NULL;
-        }
-
-        if (gv_ivfflat_insert(index, vec) != 0) {
-            gv_vector_destroy(vec);
-            gv_ivfflat_destroy(index);
-            migration_set_error(mig, "Failed to insert vector into IVF-Flat index");
-            return NULL;
-        }
-
-        if ((i + 1) % MIGRATION_BATCH_SIZE == 0 || i + 1 == mig->total_vectors) {
-            migration_update_progress(mig, i + 1);
-        }
-    }
-
-    return index;
+    return populate_index(mig, index, (mig_insert_fn)gv_ivfflat_insert,
+                          (mig_destroy_fn)gv_ivfflat_destroy, "IVF-Flat");
 }
 
 static void *create_pq_index(GV_Migration *mig)
 {
-    const GV_PQConfig *cfg = (const GV_PQConfig *)mig->new_index_config;
-    void *index = gv_pq_create(mig->dimension, cfg);
+    void *index = gv_pq_create(mig->dimension,
+                               (const GV_PQConfig *)mig->new_index_config);
     if (!index) {
         migration_set_error(mig, "Failed to create PQ index");
         return NULL;
     }
 
-    /* PQ requires training before insertion */
     if (gv_pq_train(index, mig->source_data, mig->total_vectors) != 0) {
         gv_pq_destroy(index);
         migration_set_error(mig, "Failed to train PQ index");
@@ -269,75 +222,23 @@ static void *create_pq_index(GV_Migration *mig)
         return NULL;
     }
 
-    for (size_t i = 0; i < mig->total_vectors; i++) {
-        if (migration_is_cancelled(mig)) {
-            gv_pq_destroy(index);
-            return NULL;
-        }
-
-        const float *vec_data = mig->source_data + i * mig->dimension;
-        GV_Vector *vec = gv_vector_create_from_data(mig->dimension, vec_data);
-        if (!vec) {
-            gv_pq_destroy(index);
-            migration_set_error(mig, "Failed to create vector during PQ migration");
-            return NULL;
-        }
-
-        if (gv_pq_insert(index, vec) != 0) {
-            gv_vector_destroy(vec);
-            gv_pq_destroy(index);
-            migration_set_error(mig, "Failed to insert vector into PQ index");
-            return NULL;
-        }
-
-        if ((i + 1) % MIGRATION_BATCH_SIZE == 0 || i + 1 == mig->total_vectors) {
-            migration_update_progress(mig, i + 1);
-        }
-    }
-
-    return index;
+    return populate_index(mig, index, (mig_insert_fn)gv_pq_insert,
+                          (mig_destroy_fn)gv_pq_destroy, "PQ");
 }
 
 static void *create_lsh_index(GV_Migration *mig)
 {
-    const GV_LSHConfig *cfg = (const GV_LSHConfig *)mig->new_index_config;
-    void *index = gv_lsh_create(mig->dimension, cfg, NULL);
+    void *index = gv_lsh_create(mig->dimension,
+                                (const GV_LSHConfig *)mig->new_index_config, NULL);
     if (!index) {
         migration_set_error(mig, "Failed to create LSH index");
         return NULL;
     }
-
-    for (size_t i = 0; i < mig->total_vectors; i++) {
-        if (migration_is_cancelled(mig)) {
-            gv_lsh_destroy(index);
-            return NULL;
-        }
-
-        const float *vec_data = mig->source_data + i * mig->dimension;
-        GV_Vector *vec = gv_vector_create_from_data(mig->dimension, vec_data);
-        if (!vec) {
-            gv_lsh_destroy(index);
-            migration_set_error(mig, "Failed to create vector during LSH migration");
-            return NULL;
-        }
-
-        if (gv_lsh_insert(index, vec) != 0) {
-            gv_vector_destroy(vec);
-            gv_lsh_destroy(index);
-            migration_set_error(mig, "Failed to insert vector into LSH index");
-            return NULL;
-        }
-
-        if ((i + 1) % MIGRATION_BATCH_SIZE == 0 || i + 1 == mig->total_vectors) {
-            migration_update_progress(mig, i + 1);
-        }
-    }
-
-    return index;
+    return populate_index(mig, index, (mig_insert_fn)gv_lsh_insert,
+                          (mig_destroy_fn)gv_lsh_destroy, "LSH");
 }
 
-/* ---------- migration thread entry point ---------- */
-
+/* migration thread entry point */
 static void *migration_thread_func(void *arg)
 {
     GV_Migration *mig = (GV_Migration *)arg;
@@ -395,7 +296,7 @@ static void *migration_thread_func(void *arg)
     return NULL;
 }
 
-/*  Public API  */
+/* Public API */
 
 GV_Migration *gv_migration_start(const float *source_data, size_t count,
                                   size_t dimension, int new_index_type,
@@ -410,18 +311,11 @@ GV_Migration *gv_migration_start(const float *source_data, size_t count,
         return NULL;
     }
 
-    mig->status = GV_MIGRATION_PENDING;
-    mig->progress = 0.0;
-    mig->vectors_migrated = 0;
-    mig->total_vectors = count;
-    mig->start_time_us = 0;
-    mig->dimension = dimension;
-    mig->new_index_type = new_index_type;
-    mig->source_data = source_data;
+    mig->total_vectors    = count;
+    mig->dimension        = dimension;
+    mig->new_index_type   = new_index_type;
+    mig->source_data      = source_data;
     mig->new_index_config = new_index_config;
-    mig->new_index = NULL;
-    mig->cancel_requested = 0;
-    mig->error_message[0] = '\0';
 
     if (pthread_mutex_init(&mig->mutex, NULL) != 0) {
         free(mig);

@@ -5,10 +5,7 @@
 #include "gigavector/gv_tokenizer.h"
 
 #define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while (0)
-
-/* ------------------------------------------------------------------ */
-/* 1. Config defaults                                                  */
-/* ------------------------------------------------------------------ */
+/* 1. Config defaults */
 static int test_config_defaults(void) {
     GV_TokenizerConfig cfg;
     gv_tokenizer_config_init(&cfg);
@@ -20,9 +17,7 @@ static int test_config_defaults(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
-/* 2. Whitespace tokenizer                                            */
-/* ------------------------------------------------------------------ */
+/* 2. Whitespace tokenizer */
 static int test_whitespace_tokenizer(void) {
     GV_TokenizerConfig cfg;
     gv_tokenizer_config_init(&cfg);
@@ -47,9 +42,7 @@ static int test_whitespace_tokenizer(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
-/* 3. Simple tokenizer (lowercase + non-alphanumeric split)           */
-/* ------------------------------------------------------------------ */
+/* 3. Simple tokenizer (lowercase + non-alphanumeric split) */
 static int test_simple_tokenizer(void) {
     GV_TokenizerConfig cfg;
     gv_tokenizer_config_init(&cfg);
@@ -71,9 +64,7 @@ static int test_simple_tokenizer(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
-/* 4. Standard tokenizer with stopword removal                        */
-/* ------------------------------------------------------------------ */
+/* 4. Standard tokenizer with stopword removal */
 static int test_standard_tokenizer_stopwords(void) {
     GV_TokenizerConfig cfg;
     gv_tokenizer_config_init(&cfg);
@@ -107,9 +98,7 @@ static int test_standard_tokenizer_stopwords(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
-/* 5. Token positions and offsets                                     */
-/* ------------------------------------------------------------------ */
+/* 5. Token positions and offsets */
 static int test_token_positions(void) {
     GV_TokenizerConfig cfg;
     gv_tokenizer_config_init(&cfg);
@@ -133,9 +122,7 @@ static int test_token_positions(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
-/* 6. Min/max token length filtering                                  */
-/* ------------------------------------------------------------------ */
+/* 6. Min/max token length filtering */
 static int test_token_length_filter(void) {
     GV_TokenizerConfig cfg;
     gv_tokenizer_config_init(&cfg);
@@ -158,9 +145,7 @@ static int test_token_length_filter(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
-/* 7. Simple convenience function                                     */
-/* ------------------------------------------------------------------ */
+/* 7. Simple convenience function */
 static int test_tokenize_simple(void) {
     GV_TokenList list = {0};
     int rc = gv_tokenize_simple("hello world foo", &list);
@@ -170,9 +155,7 @@ static int test_tokenize_simple(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
-/* 8. Unique tokens                                                   */
-/* ------------------------------------------------------------------ */
+/* 8. Unique tokens */
 static int test_unique_tokens(void) {
     GV_TokenizerConfig cfg;
     gv_tokenizer_config_init(&cfg);
@@ -197,9 +180,7 @@ static int test_unique_tokens(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
-/* 9. Stopword detection                                              */
-/* ------------------------------------------------------------------ */
+/* 9. Stopword detection */
 static int test_is_stopword(void) {
     ASSERT(gv_is_stopword("the") == 1, "'the' is a stopword");
     ASSERT(gv_is_stopword("and") == 1, "'and' is a stopword");
@@ -208,9 +189,7 @@ static int test_is_stopword(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
-/* 10. Empty / edge cases                                             */
-/* ------------------------------------------------------------------ */
+/* 10. Empty / edge cases */
 static int test_empty_input(void) {
     GV_TokenizerConfig cfg;
     gv_tokenizer_config_init(&cfg);

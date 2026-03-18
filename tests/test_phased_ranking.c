@@ -36,7 +36,7 @@ static float test_rerank_callback(size_t index, float current_score,
     return current_score + (*bonus);
 }
 
-/* --- Test: create and destroy pipeline --- */
+/* Test: create and destroy pipeline */
 static int test_create_destroy(void) {
     GV_Database *db = gv_db_open(NULL, DIM, GV_INDEX_TYPE_FLAT);
     ASSERT(db != NULL, "db open should succeed");
@@ -53,7 +53,7 @@ static int test_create_destroy(void) {
     return 0;
 }
 
-/* --- Test: add ANN phase --- */
+/* Test: add ANN phase */
 static int test_add_ann_phase(void) {
     GV_Database *db = gv_db_open(NULL, DIM, GV_INDEX_TYPE_FLAT);
     ASSERT(db != NULL, "db open should succeed");
@@ -77,7 +77,7 @@ static int test_add_ann_phase(void) {
     return 0;
 }
 
-/* --- Test: add multiple phases --- */
+/* Test: add multiple phases */
 static int test_multi_phase(void) {
     GV_Database *db = gv_db_open(NULL, DIM, GV_INDEX_TYPE_FLAT);
     ASSERT(db != NULL, "db open should succeed");
@@ -110,7 +110,7 @@ static int test_multi_phase(void) {
     return 0;
 }
 
-/* --- Test: clear phases --- */
+/* Test: clear phases */
 static int test_clear_phases(void) {
     GV_Database *db = gv_db_open(NULL, DIM, GV_INDEX_TYPE_FLAT);
     ASSERT(db != NULL, "db open should succeed");
@@ -133,7 +133,7 @@ static int test_clear_phases(void) {
     return 0;
 }
 
-/* --- Test: execute pipeline --- */
+/* Test: execute pipeline */
 static int test_execute(void) {
     GV_Database *db = create_test_db();
     ASSERT(db != NULL, "create_test_db should succeed");
@@ -165,7 +165,7 @@ static int test_execute(void) {
     return 0;
 }
 
-/* --- Test: execute with callback rerank --- */
+/* Test: execute with callback rerank */
 static int test_execute_callback(void) {
     GV_Database *db = create_test_db();
     ASSERT(db != NULL, "create_test_db should succeed");
@@ -201,7 +201,7 @@ static int test_execute_callback(void) {
     return 0;
 }
 
-/* --- Test: pipeline stats --- */
+/* Test: pipeline stats */
 static int test_stats(void) {
     GV_Database *db = create_test_db();
     ASSERT(db != NULL, "create_test_db should succeed");
@@ -235,7 +235,7 @@ static int test_stats(void) {
     return 0;
 }
 
-/* --- Test: free_stats with NULL fields --- */
+/* Test: free_stats with NULL fields */
 static int test_free_stats_null(void) {
     GV_PipelineStats stats;
     memset(&stats, 0, sizeof(stats));

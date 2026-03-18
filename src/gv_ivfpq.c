@@ -235,7 +235,6 @@ static void gv_ivfpq_heap_sift_up(GV_IVFPQHeapItem *heap, size_t idx) {
     }
 }
 
-
 typedef struct GV_IVFPQEntry {
     uint8_t *codes;        /* length m */
     GV_Vector *vector;     /* original vector for output */
@@ -690,7 +689,7 @@ int gv_ivfpq_search(void *index_ptr, const GV_Vector *query, size_t k,
     size_t nprobe = (nprobe_override > 0) ? nprobe_override : idx->nprobe;
     if (nprobe > idx->nlist) nprobe = idx->nlist;
 
-    /* --- Stack-allocate small buffers to avoid per-query malloc --- */
+    /* Stack-allocate small buffers to avoid per-query malloc */
     /* Max 256 probes, 256 dim, 64 subquantizers * 256 codebook = 16384 LUT entries */
     #define IVFPQ_MAX_STACK_PROBES 256
     #define IVFPQ_MAX_STACK_DIM    1024
@@ -1295,7 +1294,6 @@ int gv_ivfpq_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version
     *index_ptr = idx_ptr;
     return 0;
 }
-
 
 int gv_ivfpq_range_search(void *index_ptr, const GV_Vector *query, float radius,
                            GV_SearchResult *results, size_t max_results,

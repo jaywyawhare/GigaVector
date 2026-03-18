@@ -5,8 +5,7 @@
 
 #define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while(0)
 
-/* ---------- test functions ---------- */
-
+/* test functions */
 static int test_migration_start_destroy(void) {
     float data[8] = {1.0f, 2.0f, 3.0f, 4.0f,
                       5.0f, 6.0f, 7.0f, 8.0f};

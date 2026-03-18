@@ -15,7 +15,7 @@
 #include <time.h>
 #include <unistd.h>
 
-/*  Internal Structures  */
+/* Internal Structures */
 
 struct GV_StreamConsumer {
     GV_StreamConfig config;
@@ -44,7 +44,7 @@ struct GV_StreamConsumer {
     pthread_cond_t state_cond;
 };
 
-/*  Default Extractor  */
+/* Default Extractor */
 
 static int default_extractor(const GV_StreamMessage *msg, float *vector,
                               size_t dimension, char ***metadata_keys,
@@ -67,7 +67,7 @@ static int default_extractor(const GV_StreamMessage *msg, float *vector,
     return 0;
 }
 
-/*  Configuration  */
+/* Configuration */
 
 static const GV_StreamConfig DEFAULT_CONFIG = {
     .source = GV_STREAM_KAFKA,
@@ -94,7 +94,7 @@ void gv_stream_config_init(GV_StreamConfig *config) {
     *config = DEFAULT_CONFIG;
 }
 
-/*  Consumer Thread  */
+/* Consumer Thread */
 
 static void *consumer_thread_func(void *arg) {
     GV_StreamConsumer *consumer = (GV_StreamConsumer *)arg;
@@ -148,7 +148,7 @@ static void *consumer_thread_func(void *arg) {
     return NULL;
 }
 
-/*  Lifecycle  */
+/* Lifecycle */
 
 GV_StreamConsumer *gv_stream_create(GV_Database *db, const GV_StreamConfig *config) {
     if (!db) return NULL;
@@ -269,7 +269,7 @@ int gv_stream_resume(GV_StreamConsumer *consumer) {
     return 0;
 }
 
-/*  Configuration  */
+/* Configuration */
 
 int gv_stream_set_extractor(GV_StreamConsumer *consumer, GV_VectorExtractor extractor,
                              void *user_data) {
@@ -295,7 +295,7 @@ int gv_stream_set_handler(GV_StreamConsumer *consumer, GV_StreamMessageHandler h
     return 0;
 }
 
-/*  Status and Statistics  */
+/* Status and Statistics */
 
 GV_StreamState gv_stream_get_state(GV_StreamConsumer *consumer) {
     if (!consumer) return (GV_StreamState)-1;
@@ -327,7 +327,7 @@ int gv_stream_reset_stats(GV_StreamConsumer *consumer) {
     return 0;
 }
 
-/*  Offset Management  */
+/* Offset Management */
 
 int gv_stream_commit(GV_StreamConsumer *consumer) {
     if (!consumer) return -1;

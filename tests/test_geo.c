@@ -6,7 +6,7 @@
 
 #define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while(0)
 
-/* --- Test: create and destroy --- */
+/* Test: create and destroy */
 static int test_create_destroy(void) {
     GV_GeoIndex *idx = gv_geo_create();
     ASSERT(idx != NULL, "gv_geo_create should return non-NULL");
@@ -17,7 +17,7 @@ static int test_create_destroy(void) {
     return 0;
 }
 
-/* --- Test: insert and count --- */
+/* Test: insert and count */
 static int test_insert_count(void) {
     GV_GeoIndex *idx = gv_geo_create();
     ASSERT(idx != NULL, "gv_geo_create should return non-NULL");
@@ -38,7 +38,7 @@ static int test_insert_count(void) {
     return 0;
 }
 
-/* --- Test: update a point --- */
+/* Test: update a point */
 static int test_update(void) {
     GV_GeoIndex *idx = gv_geo_create();
     ASSERT(idx != NULL, "gv_geo_create should return non-NULL");
@@ -52,7 +52,7 @@ static int test_update(void) {
     return 0;
 }
 
-/* --- Test: remove a point --- */
+/* Test: remove a point */
 static int test_remove(void) {
     GV_GeoIndex *idx = gv_geo_create();
     ASSERT(idx != NULL, "gv_geo_create should return non-NULL");
@@ -69,7 +69,7 @@ static int test_remove(void) {
     return 0;
 }
 
-/* --- Test: radius search --- */
+/* Test: radius search */
 static int test_radius_search(void) {
     GV_GeoIndex *idx = gv_geo_create();
     ASSERT(idx != NULL, "gv_geo_create should return non-NULL");
@@ -89,7 +89,7 @@ static int test_radius_search(void) {
     return 0;
 }
 
-/* --- Test: bounding box search --- */
+/* Test: bounding box search */
 static int test_bbox_search(void) {
     GV_GeoIndex *idx = gv_geo_create();
     ASSERT(idx != NULL, "gv_geo_create should return non-NULL");
@@ -112,7 +112,7 @@ static int test_bbox_search(void) {
     return 0;
 }
 
-/* --- Test: haversine distance --- */
+/* Test: haversine distance */
 static int test_haversine_distance(void) {
     /* Distance from NYC to London is approximately 5570 km */
     double dist = gv_geo_distance_km(40.7128, -74.0060, 51.5074, -0.1278);
@@ -126,7 +126,7 @@ static int test_haversine_distance(void) {
     return 0;
 }
 
-/* --- Test: get candidates for pre-filtering --- */
+/* Test: get candidates for pre-filtering */
 static int test_get_candidates(void) {
     GV_GeoIndex *idx = gv_geo_create();
     ASSERT(idx != NULL, "gv_geo_create should return non-NULL");

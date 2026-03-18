@@ -7,10 +7,7 @@
 
 #define ASSERT(cond) do { if (!(cond)) { fprintf(stderr, "FAIL: %s:%d: %s\n", __FILE__, __LINE__, #cond); return -1; } } while (0)
 
-/* ---------------------------------------------------------------------------
- * 1. test_lsh_create_destroy
- *    Create an LSH index with dim=8, verify non-NULL, then destroy.
- * --------------------------------------------------------------------------- */
+/* 1. test_lsh_create_destroy Create an LSH index with dim=8, verify non-NULL, then destroy. */
 static int test_lsh_create_destroy(void) {
     const size_t dim = 8;
     GV_LSHConfig config;
@@ -30,10 +27,7 @@ static int test_lsh_create_destroy(void) {
     return 0;
 }
 
-/* ---------------------------------------------------------------------------
- * 2. test_lsh_insert_search
- *    Insert 20 vectors, search for k=5 nearest neighbors.
- * --------------------------------------------------------------------------- */
+/* 2. test_lsh_insert_search Insert 20 vectors, search for k=5 nearest neighbors. */
 static int test_lsh_insert_search(void) {
     const size_t dim = 8;
     const int num_vectors = 20;
@@ -83,10 +77,7 @@ static int test_lsh_insert_search(void) {
     return 0;
 }
 
-/* ---------------------------------------------------------------------------
- * 3. test_lsh_range_search
- *    Insert vectors, perform range search with radius=50.0f.
- * --------------------------------------------------------------------------- */
+/* 3. test_lsh_range_search Insert vectors, perform range search with radius=50.0f. */
 static int test_lsh_range_search(void) {
     const size_t dim = 8;
     const int num_vectors = 20;
@@ -135,10 +126,7 @@ static int test_lsh_range_search(void) {
     return 0;
 }
 
-/* ---------------------------------------------------------------------------
- * 4. test_lsh_delete
- *    Insert vectors, delete one, verify operation succeeds.
- * --------------------------------------------------------------------------- */
+/* 4. test_lsh_delete Insert vectors, delete one, verify operation succeeds. */
 static int test_lsh_delete(void) {
     const size_t dim = 8;
     GV_LSHConfig config;
@@ -176,10 +164,7 @@ static int test_lsh_delete(void) {
     return 0;
 }
 
-/* ---------------------------------------------------------------------------
- * 5. test_lsh_update
- *    Insert a vector, update it, verify operation succeeds.
- * --------------------------------------------------------------------------- */
+/* 5. test_lsh_update Insert a vector, update it, verify operation succeeds. */
 static int test_lsh_update(void) {
     const size_t dim = 8;
     GV_LSHConfig config;
@@ -213,10 +198,7 @@ static int test_lsh_update(void) {
     return 0;
 }
 
-/* ---------------------------------------------------------------------------
- * 6. test_lsh_db_integration
- *    Use the DB-level API with GV_INDEX_TYPE_LSH.
- * --------------------------------------------------------------------------- */
+/* 6. test_lsh_db_integration Use the DB-level API with GV_INDEX_TYPE_LSH. */
 static int test_lsh_db_integration(void) {
     const size_t dim = 8;
 
@@ -251,10 +233,7 @@ static int test_lsh_db_integration(void) {
     return 0;
 }
 
-/* ---------------------------------------------------------------------------
- * 7. test_lsh_save_load
- *    Save an LSH-backed database to disk, reopen, and verify search results.
- * --------------------------------------------------------------------------- */
+/* 7. test_lsh_save_load Save an LSH-backed database to disk, reopen, and verify search results. */
 static int test_lsh_save_load(void) {
     const char *filepath = "test_lsh_save.db";
     const size_t dim = 8;
@@ -299,10 +278,7 @@ static int test_lsh_save_load(void) {
     return 0;
 }
 
-/* ---------------------------------------------------------------------------
- * 8. test_lsh_metadata_filter
- *    Insert vectors with metadata, search with a metadata filter.
- * --------------------------------------------------------------------------- */
+/* 8. test_lsh_metadata_filter Insert vectors with metadata, search with a metadata filter. */
 static int test_lsh_metadata_filter(void) {
     const size_t dim = 8;
 
@@ -351,7 +327,7 @@ static int test_lsh_metadata_filter(void) {
     return 0;
 }
 
-/*  main  */
+/* main */
 int main(void) {
     int rc = 0;
 

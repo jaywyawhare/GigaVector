@@ -7,7 +7,7 @@
 
 #define ASSERT(cond) do { if (!(cond)) { fprintf(stderr, "FAIL: %s:%d: %s\n", __FILE__, __LINE__, #cond); return -1; } } while (0)
 
-/*  1. test_ivfflat_create_destroy  */
+/* 1. test_ivfflat_create_destroy */
 static int test_ivfflat_create_destroy(void) {
     GV_IVFFlatConfig config = {
         .nlist      = 4,
@@ -29,7 +29,7 @@ static int test_ivfflat_create_destroy(void) {
     return 0;
 }
 
-/*  2. test_ivfflat_train_insert_search  */
+/* 2. test_ivfflat_train_insert_search */
 static int test_ivfflat_train_insert_search(void) {
     const size_t dim = 8;
     const size_t ntrain = 100;
@@ -95,7 +95,7 @@ static int test_ivfflat_train_insert_search(void) {
     return 0;
 }
 
-/*  3. test_ivfflat_is_trained  */
+/* 3. test_ivfflat_is_trained */
 static int test_ivfflat_is_trained(void) {
     const size_t dim = 8;
     GV_IVFFlatConfig config = {
@@ -128,7 +128,7 @@ static int test_ivfflat_is_trained(void) {
     return 0;
 }
 
-/*  4. test_ivfflat_range_search  */
+/* 4. test_ivfflat_range_search */
 static int test_ivfflat_range_search(void) {
     const size_t dim = 8;
     const size_t ntrain = 100;
@@ -186,7 +186,7 @@ static int test_ivfflat_range_search(void) {
     return 0;
 }
 
-/*  5. test_ivfflat_delete_update  */
+/* 5. test_ivfflat_delete_update */
 static int test_ivfflat_delete_update(void) {
     const size_t dim = 8;
     const size_t ntrain = 100;
@@ -239,7 +239,7 @@ static int test_ivfflat_delete_update(void) {
     return 0;
 }
 
-/*  6. test_ivfflat_db_integration  */
+/* 6. test_ivfflat_db_integration */
 static int test_ivfflat_db_integration(void) {
     const size_t dim = 8;
     const size_t ntrain = 100;
@@ -288,7 +288,7 @@ static int test_ivfflat_db_integration(void) {
     return 0;
 }
 
-/*  7. test_ivfflat_save_load  */
+/* 7. test_ivfflat_save_load */
 static int test_ivfflat_save_load(void) {
     const char *filepath = "test_ivfflat_save.db";
     const size_t dim = 8;
@@ -298,7 +298,7 @@ static int test_ivfflat_save_load(void) {
     /* Remove any leftover file from a previous run */
     unlink(filepath);
 
-    /* --- Phase 1: create, train, insert, save --- */
+    /* Phase 1: create, train, insert, save */
     GV_Database *db = gv_db_open(NULL, dim, GV_INDEX_TYPE_IVFFLAT);
     ASSERT(db != NULL);
 
@@ -329,7 +329,7 @@ static int test_ivfflat_save_load(void) {
     ASSERT(gv_db_save(db, filepath) == 0);
     gv_db_close(db);
 
-    /* --- Phase 2: reopen and search --- */
+    /* Phase 2: reopen and search */
     GV_Database *db2 = gv_db_open(filepath, dim, GV_INDEX_TYPE_IVFFLAT);
     ASSERT(db2 != NULL);
 
@@ -355,7 +355,7 @@ static int test_ivfflat_save_load(void) {
     return 0;
 }
 
-/*  main  */
+/* main */
 int main(void) {
     int rc = 0;
     rc |= test_ivfflat_create_destroy();

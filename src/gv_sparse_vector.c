@@ -46,5 +46,3 @@ void gv_sparse_vector_destroy(GV_SparseVector *sv) {
     free(sv);
 }
 
-
-

@@ -26,7 +26,7 @@ static GV_Database *create_test_db(void) {
     return db;
 }
 
-/* --- Test: create and destroy engine --- */
+/* Test: create and destroy engine */
 static int test_create_destroy(void) {
     GV_Database *db = gv_db_open(NULL, DIM, GV_INDEX_TYPE_FLAT);
     ASSERT(db != NULL, "db open should succeed");
@@ -42,7 +42,7 @@ static int test_create_destroy(void) {
     return 0;
 }
 
-/* --- Test: execute simple SELECT --- */
+/* Test: execute simple SELECT */
 static int test_select_all(void) {
     GV_Database *db = create_test_db();
     ASSERT(db != NULL, "create_test_db should succeed");
@@ -62,7 +62,7 @@ static int test_select_all(void) {
     return 0;
 }
 
-/* --- Test: ANN query --- */
+/* Test: ANN query */
 static int test_ann_query(void) {
     GV_Database *db = create_test_db();
     ASSERT(db != NULL, "create_test_db should succeed");
@@ -85,7 +85,7 @@ static int test_ann_query(void) {
     return 0;
 }
 
-/* --- Test: explain query plan --- */
+/* Test: explain query plan */
 static int test_explain(void) {
     GV_Database *db = create_test_db();
     ASSERT(db != NULL, "create_test_db should succeed");
@@ -106,7 +106,7 @@ static int test_explain(void) {
     return 0;
 }
 
-/* --- Test: last error on invalid query --- */
+/* Test: last error on invalid query */
 static int test_last_error(void) {
     GV_Database *db = create_test_db();
     ASSERT(db != NULL, "create_test_db should succeed");
@@ -129,7 +129,7 @@ static int test_last_error(void) {
     return 0;
 }
 
-/* --- Test: free_result on zeroed struct --- */
+/* Test: free_result on zeroed struct */
 static int test_free_result_empty(void) {
     GV_SQLResult result;
     memset(&result, 0, sizeof(result));
@@ -139,7 +139,7 @@ static int test_free_result_empty(void) {
     return 0;
 }
 
-/* --- Test: SELECT with WHERE filter --- */
+/* Test: SELECT with WHERE filter */
 static int test_select_where(void) {
     GV_Database *db = create_test_db();
     ASSERT(db != NULL, "create_test_db should succeed");

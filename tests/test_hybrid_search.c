@@ -33,7 +33,7 @@ static GV_BM25Index *make_bm25(void) {
     return bm;
 }
 
-/* ---------- test_config_defaults ---------- */
+/* test_config_defaults */
 static int test_config_defaults(void) {
     GV_HybridConfig cfg;
     gv_hybrid_config_init(&cfg);
@@ -44,7 +44,7 @@ static int test_config_defaults(void) {
     return 0;
 }
 
-/* ---------- test_create_destroy ---------- */
+/* test_create_destroy */
 static int test_create_destroy(void) {
     GV_Database *db = make_db();
     GV_BM25Index *bm = make_bm25();
@@ -60,7 +60,7 @@ static int test_create_destroy(void) {
     return 0;
 }
 
-/* ---------- test_linear_fusion_util ---------- */
+/* test_linear_fusion_util */
 static int test_linear_fusion_util(void) {
     double score = gv_hybrid_linear_fusion(0.8, 0.6, 0.7, 0.3);
     /* 0.7*0.8 + 0.3*0.6 = 0.56 + 0.18 = 0.74 */
@@ -68,7 +68,7 @@ static int test_linear_fusion_util(void) {
     return 0;
 }
 
-/* ---------- test_rrf_fusion_util ---------- */
+/* test_rrf_fusion_util */
 static int test_rrf_fusion_util(void) {
     /* RRF: 1/(k+rank_v) + 1/(k+rank_t) */
     double score = gv_hybrid_rrf_fusion(1, 2, 60.0);
@@ -82,7 +82,7 @@ static int test_rrf_fusion_util(void) {
     return 0;
 }
 
-/* ---------- test_normalize_score ---------- */
+/* test_normalize_score */
 static int test_normalize_score(void) {
     double n = gv_hybrid_normalize_score(5.0, 2.0, 10.0);
     /* (5-2)/(10-2) = 3/8 = 0.375 */
@@ -94,7 +94,7 @@ static int test_normalize_score(void) {
     return 0;
 }
 
-/* ---------- test_set_weights ---------- */
+/* test_set_weights */
 static int test_set_weights(void) {
     GV_Database *db = make_db();
     GV_BM25Index *bm = make_bm25();
@@ -117,7 +117,7 @@ static int test_set_weights(void) {
     return 0;
 }
 
-/* ---------- test_hybrid_search_basic ---------- */
+/* test_hybrid_search_basic */
 static int test_hybrid_search_basic(void) {
     GV_Database *db = make_db();
     GV_BM25Index *bm = make_bm25();
@@ -135,7 +135,7 @@ static int test_hybrid_search_basic(void) {
     return 0;
 }
 
-/* ---------- test_set_config ---------- */
+/* test_set_config */
 static int test_set_config(void) {
     GV_Database *db = make_db();
     GV_BM25Index *bm = make_bm25();

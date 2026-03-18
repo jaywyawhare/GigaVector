@@ -5,8 +5,7 @@
 
 #define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while(0)
 
-/* ---------- test functions ---------- */
-
+/* test functions */
 static int test_create_destroy(void) {
     GV_ConsistencyManager *mgr = gv_consistency_create(GV_CONSISTENCY_STRONG);
     ASSERT(mgr != NULL, "gv_consistency_create returned NULL");
@@ -158,8 +157,7 @@ static int test_check_session_consistency(void) {
     return 0;
 }
 
-/* ---------- harness ---------- */
-
+/* harness */
 typedef int (*test_fn)(void);
 typedef struct { const char *name; test_fn fn; } TestCase;
 

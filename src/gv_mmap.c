@@ -82,4 +82,3 @@ size_t gv_mmap_size(const GV_MMap *mm) {
     return mm->size;
 }
 
-

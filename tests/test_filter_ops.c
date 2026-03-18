@@ -29,7 +29,7 @@ static GV_Database *make_db(void) {
     return db;
 }
 
-/* ---------- test_count_by_filter ---------- */
+/* test_count_by_filter */
 static int test_count_by_filter(void) {
     GV_Database *db = make_db();
     ASSERT(db != NULL, "make_db should succeed");
@@ -50,7 +50,7 @@ static int test_count_by_filter(void) {
     return 0;
 }
 
-/* ---------- test_find_by_filter ---------- */
+/* test_find_by_filter */
 static int test_find_by_filter(void) {
     GV_Database *db = make_db();
     ASSERT(db != NULL, "make_db should succeed");
@@ -70,7 +70,7 @@ static int test_find_by_filter(void) {
     return 0;
 }
 
-/* ---------- test_delete_by_filter ---------- */
+/* test_delete_by_filter */
 static int test_delete_by_filter(void) {
     GV_Database *db = make_db();
     ASSERT(db != NULL, "make_db should succeed");
@@ -85,7 +85,7 @@ static int test_delete_by_filter(void) {
     return 0;
 }
 
-/* ---------- test_update_metadata_by_filter ---------- */
+/* test_update_metadata_by_filter */
 static int test_update_metadata_by_filter(void) {
     GV_Database *db = make_db();
     ASSERT(db != NULL, "make_db should succeed");
@@ -109,7 +109,7 @@ static int test_update_metadata_by_filter(void) {
     return 0;
 }
 
-/* ---------- test_update_by_filter ---------- */
+/* test_update_by_filter */
 static int test_update_by_filter(void) {
     GV_Database *db = make_db();
     ASSERT(db != NULL, "make_db should succeed");
@@ -128,7 +128,7 @@ static int test_update_by_filter(void) {
     return 0;
 }
 
-/* ---------- test_filter_no_match ---------- */
+/* test_filter_no_match */
 static int test_filter_no_match(void) {
     GV_Database *db = make_db();
     ASSERT(db != NULL, "make_db should succeed");
@@ -144,7 +144,7 @@ static int test_filter_no_match(void) {
     return 0;
 }
 
-/* ---------- test_find_max_count ---------- */
+/* test_find_max_count */
 static int test_find_max_count(void) {
     GV_Database *db = make_db();
     ASSERT(db != NULL, "make_db should succeed");

@@ -21,7 +21,7 @@ static void generate_training_data(float *data, size_t count, size_t dim) {
     }
 }
 
-/* 1. test_pq_create_destroy                                          */
+/* 1. test_pq_create_destroy */
 static int test_pq_create_destroy(void) {
     GV_PQConfig config;
     config.m           = M;
@@ -35,7 +35,7 @@ static int test_pq_create_destroy(void) {
     return 0;
 }
 
-/* 2. test_pq_train_insert_search                                     */
+/* 2. test_pq_train_insert_search */
 static int test_pq_train_insert_search(void) {
     GV_PQConfig config;
     config.m           = M;
@@ -77,7 +77,7 @@ static int test_pq_train_insert_search(void) {
     return 0;
 }
 
-/* 3. test_pq_is_trained                                              */
+/* 3. test_pq_is_trained */
 static int test_pq_is_trained(void) {
     GV_PQConfig config;
     config.m           = M;
@@ -102,7 +102,7 @@ static int test_pq_is_trained(void) {
     return 0;
 }
 
-/* 4. test_pq_range_search                                            */
+/* 4. test_pq_range_search */
 static int test_pq_range_search(void) {
     GV_PQConfig config;
     config.m           = M;
@@ -149,7 +149,7 @@ static int test_pq_range_search(void) {
     return 0;
 }
 
-/* 5. test_pq_delete_update                                           */
+/* 5. test_pq_delete_update */
 static int test_pq_delete_update(void) {
     GV_PQConfig config;
     config.m           = M;
@@ -187,7 +187,7 @@ static int test_pq_delete_update(void) {
     return 0;
 }
 
-/* 6. test_pq_db_integration                                          */
+/* 6. test_pq_db_integration */
 static int test_pq_db_integration(void) {
     GV_Database *db = gv_db_open(NULL, DIM, GV_INDEX_TYPE_PQ);
     ASSERT(db != NULL);
@@ -217,7 +217,7 @@ static int test_pq_db_integration(void) {
     return 0;
 }
 
-/* 7. test_pq_save_load                                               */
+/* 7. test_pq_save_load */
 static int test_pq_save_load(void) {
     const char *filepath = "test_pq_save.db";
 
@@ -260,7 +260,7 @@ static int test_pq_save_load(void) {
     return 0;
 }
 
-/* main                                                               */
+/* main */
 int main(void) {
     int rc = 0;
 

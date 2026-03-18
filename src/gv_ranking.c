@@ -16,7 +16,7 @@
 #include <ctype.h>
 #include <float.h>
 
-/*  Internal Constants  */
+/* Internal Constants */
 
 /** Default oversample multiplier when caller passes oversample == 0. */
 #define GV_RANK_DEFAULT_OVERSAMPLE_FACTOR 4
@@ -24,13 +24,13 @@
 /** Maximum identifier / signal name length in parsed expressions. */
 #define GV_RANK_MAX_IDENT 128
 
-/*  Opaque Expression Type  */
+/* Opaque Expression Type */
 
 struct GV_RankExpr {
     GV_RankNode *root;  /**< Root of the expression tree. */
 };
 
-/*  Node Helpers (Internal)  */
+/* Node Helpers (Internal) */
 
 /** Sentinel op value used for leaf nodes that hold a signal reference. */
 #define GV_RANK_OP_SIGNAL  ((GV_RankOp)100)
@@ -100,7 +100,7 @@ static void node_free(GV_RankNode *n) {
     free(n);
 }
 
-/*  Lexer (Internal)  */
+/* Lexer (Internal) */
 
 typedef enum {
     TOK_NUM,        /**< Numeric literal. */
@@ -189,7 +189,7 @@ static void next_token(Parser *p) {
     p->has_error = 1;
 }
 
-/*  Recursive-Descent Parser (Internal)  */
+/* Recursive-Descent Parser (Internal) */
 
 /* Forward declarations for mutual recursion. */
 static GV_RankNode *parse_expr(Parser *p);
@@ -218,7 +218,7 @@ static GV_RankNode *parse_func(Parser *p, const char *name) {
     }
     next_token(p);
 
-    /* ---------- decay functions ---------- */
+    /* decay functions */
     if (strcmp(name, "decay_exp") == 0 ||
         strcmp(name, "decay_gauss") == 0 ||
         strcmp(name, "decay_linear") == 0) {
@@ -264,7 +264,7 @@ static GV_RankNode *parse_func(Parser *p, const char *name) {
         return n;
     }
 
-    /* ---------- log(expr) ---------- */
+    /* log(expr) */
     if (strcmp(name, "log") == 0) {
         GV_RankNode *child = parse_expr(p);
         if (!child || p->has_error) { node_free(child); return NULL; }
@@ -273,7 +273,7 @@ static GV_RankNode *parse_func(Parser *p, const char *name) {
         return node_unary(GV_RANK_LOG, child);
     }
 
-    /* ---------- pow(base, exp) ---------- */
+    /* pow(base, exp) */
     if (strcmp(name, "pow") == 0) {
         GV_RankNode *base = parse_expr(p);
         if (!base || p->has_error) { node_free(base); return NULL; }
@@ -286,7 +286,7 @@ static GV_RankNode *parse_func(Parser *p, const char *name) {
         return node_binary(GV_RANK_POW, base, exponent);
     }
 
-    /* ---------- clamp(expr, lo, hi) ---------- */
+    /* clamp(expr, lo, hi) */
     if (strcmp(name, "clamp") == 0) {
         GV_RankNode *child = parse_expr(p);
         if (!child || p->has_error) { node_free(child); return NULL; }
@@ -310,7 +310,7 @@ static GV_RankNode *parse_func(Parser *p, const char *name) {
         return n;
     }
 
-    /* ---------- max(a, b) ---------- */
+    /* max(a, b) */
     if (strcmp(name, "max") == 0) {
         GV_RankNode *a = parse_expr(p);
         if (!a || p->has_error) { node_free(a); return NULL; }
@@ -323,7 +323,7 @@ static GV_RankNode *parse_func(Parser *p, const char *name) {
         return node_binary(GV_RANK_MAX, a, b);
     }
 
-    /* ---------- min(a, b) ---------- */
+    /* min(a, b) */
     if (strcmp(name, "min") == 0) {
         GV_RankNode *a = parse_expr(p);
         if (!a || p->has_error) { node_free(a); return NULL; }
@@ -336,7 +336,7 @@ static GV_RankNode *parse_func(Parser *p, const char *name) {
         return node_binary(GV_RANK_MIN, a, b);
     }
 
-    /* ---------- linear(expr, a, b) -> a*expr + b ---------- */
+    /* linear(expr, a, b) -> a*expr + b */
     if (strcmp(name, "linear") == 0) {
         GV_RankNode *child = parse_expr(p);
         if (!child || p->has_error) { node_free(child); return NULL; }
@@ -488,7 +488,7 @@ static GV_RankNode *parse_expr(Parser *p) {
     return left;
 }
 
-/*  Expression Construction (Public API)  */
+/* Expression Construction (Public API) */
 
 GV_RankExpr *gv_rank_expr_parse(const char *expression) {
     if (!expression) return NULL;
@@ -569,7 +569,7 @@ GV_RankExpr *gv_rank_expr_create_weighted(size_t n, const char **signal_names,
     return expr;
 }
 
-/*  Expression Lifecycle  */
+/* Expression Lifecycle */
 
 void gv_rank_expr_destroy(GV_RankExpr *expr) {
     if (!expr) return;
@@ -577,7 +577,7 @@ void gv_rank_expr_destroy(GV_RankExpr *expr) {
     free(expr);
 }
 
-/*  Signal Lookup (Internal)  */
+/* Signal Lookup (Internal) */
 
 /**
  * @brief Look up a signal value by name from the signal array.
@@ -602,7 +602,7 @@ static double lookup_signal(const char *name, float vector_score,
     return 0.0;
 }
 
-/*  Decay Functions (Internal)  */
+/* Decay Functions (Internal) */
 
 /**
  * @brief Exponential decay: exp(-|val - origin| / scale).
@@ -630,7 +630,7 @@ static double decay_linear(double val, double origin, double scale) {
     return d >= 1.0 ? 0.0 : 1.0 - d;
 }
 
-/*  Expression Tree Evaluation (Internal)  */
+/* Expression Tree Evaluation (Internal) */
 
 static double eval_node(const GV_RankNode *n, float vector_score,
                         const GV_RankSignal *signals, size_t signal_count) {
@@ -638,16 +638,16 @@ static double eval_node(const GV_RankNode *n, float vector_score,
 
     switch ((int)n->op) {
 
-    /* ---- Leaf: constant ---- */
+    /* Leaf: constant */
     case GV_RANK_OP_CONST:
         return n->operand.constant;
 
-    /* ---- Leaf: signal reference ---- */
+    /* Leaf: signal reference */
     case GV_RANK_OP_SIGNAL:
         return lookup_signal(n->operand.signal_name, vector_score,
                              signals, signal_count);
 
-    /* ---- Binary arithmetic ---- */
+    /* Binary arithmetic */
     case GV_RANK_ADD: {
         double l = eval_node(n->operand.children.left, vector_score, signals, signal_count);
         double r = eval_node(n->operand.children.right, vector_score, signals, signal_count);
@@ -674,7 +674,7 @@ static double eval_node(const GV_RankNode *n, float vector_score,
         return pow(l, r);
     }
 
-    /* ---- Unary ---- */
+    /* Unary */
     case GV_RANK_LOG: {
         double v = eval_node(n->operand.children.left, vector_score, signals, signal_count);
         return v > 0.0 ? log(v) : 0.0;
@@ -684,7 +684,7 @@ static double eval_node(const GV_RankNode *n, float vector_score,
         return -v;
     }
 
-    /* ---- Clamp(child, lo, hi) ---- */
+    /* Clamp(child, lo, hi) */
     case GV_RANK_CLAMP: {
         double v  = eval_node(n->operand.children.left,  vector_score, signals, signal_count);
         double lo = eval_node(n->operand.children.right, vector_score, signals, signal_count);
@@ -694,7 +694,7 @@ static double eval_node(const GV_RankNode *n, float vector_score,
         return v;
     }
 
-    /* ---- Linear: a * child + b ---- */
+    /* Linear: a * child + b */
     case GV_RANK_LINEAR: {
         double v = eval_node(n->operand.children.left,  vector_score, signals, signal_count);
         double a = eval_node(n->operand.children.right, vector_score, signals, signal_count);
@@ -702,7 +702,7 @@ static double eval_node(const GV_RankNode *n, float vector_score,
         return a * v + b;
     }
 
-    /* ---- Decay functions ---- */
+    /* Decay functions */
     case GV_RANK_DECAY_EXP: {
         double val    = eval_node(n->operand.children.left,  vector_score, signals, signal_count);
         double origin = eval_node(n->operand.children.right, vector_score, signals, signal_count);
@@ -729,7 +729,7 @@ static double eval_node(const GV_RankNode *n, float vector_score,
     return 0.0;
 }
 
-/*  Expression Evaluation (Public API)  */
+/* Expression Evaluation (Public API) */
 
 double gv_rank_expr_eval(const GV_RankExpr *expr, float vector_score,
                          const GV_RankSignal *signals, size_t signal_count) {
@@ -737,7 +737,7 @@ double gv_rank_expr_eval(const GV_RankExpr *expr, float vector_score,
     return eval_node(expr->root, vector_score, signals, signal_count);
 }
 
-/*  Ranked Search  */
+/* Ranked Search */
 
 /** Internal candidate used during re-ranking. */
 typedef struct {

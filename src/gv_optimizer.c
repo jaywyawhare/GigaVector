@@ -6,7 +6,7 @@
 
 #include "gigavector/gv_optimizer.h"
 
-/*  Internal structure  */
+/* Internal structure */
 struct GV_QueryOptimizer {
     GV_CollectionStats stats;
 
@@ -15,15 +15,15 @@ struct GV_QueryOptimizer {
     double avg_recall;
     size_t sample_count;
 
-    /* Heuristic thresholds ------------------------------------------------- */
-    size_t exact_scan_threshold;       /* Use exact scan below this count      */
+    /* Heuristic thresholds */
+    size_t exact_scan_threshold;       /* Use exact scan below this count */
     double selective_filter_threshold;  /* Selectivity below this -> oversample */
-    double ema_alpha;                  /* Exponential moving average alpha      */
-    size_t ef_search_cap;              /* Hard cap on ef_search                */
-    size_t nprobe_cap;                 /* Hard cap on nprobe                   */
+    double ema_alpha;                  /* Exponential moving average alpha */
+    size_t ef_search_cap;              /* Hard cap on ef_search */
+    size_t nprobe_cap;                 /* Hard cap on nprobe */
 };
 
-/*  Helpers  */
+/* Helpers */
 
 static double log2_safe(double x)
 {
@@ -42,7 +42,7 @@ static size_t size_min(size_t a, size_t b)
     return a < b ? a : b;
 }
 
-/*  ef_search recommendation (used internally and in public API)  */
+/* ef_search recommendation (used internally and in public API) */
 static size_t compute_ef_search(const GV_QueryOptimizer *opt, size_t k)
 {
     /* Base ef = max(k * 2, 50) */
@@ -64,7 +64,7 @@ static size_t compute_ef_search(const GV_QueryOptimizer *opt, size_t k)
     return ef;
 }
 
-/*  nprobe recommendation (used internally and in public API)  */
+/* nprobe recommendation (used internally and in public API) */
 static size_t compute_nprobe(const GV_QueryOptimizer *opt)
 {
     size_t n = opt->stats.total_vectors;
@@ -84,7 +84,7 @@ static size_t compute_nprobe(const GV_QueryOptimizer *opt)
     return nprobe;
 }
 
-/*  Cost estimation helpers  */
+/* Cost estimation helpers */
 static double estimate_exact_scan_cost(const GV_CollectionStats *st)
 {
     return (double)st->total_vectors * (double)st->dimension;
@@ -96,7 +96,7 @@ static double estimate_index_cost(const GV_CollectionStats *st, size_t k, size_t
     return (double)k * (double)ef * (double)st->dimension * log_n;
 }
 
-/*  Public API  */
+/* Public API */
 
 GV_QueryOptimizer *gv_optimizer_create(void)
 {
@@ -135,7 +135,7 @@ int gv_optimizer_plan(const GV_QueryOptimizer *opt, size_t k,
 
     memset(plan, 0, sizeof(GV_QueryPlan));
 
-    /* ---- Rule 1: small collection -> exact scan ---- */
+    /* Rule 1: small collection -> exact scan */
     if (opt->stats.total_vectors <= opt->exact_scan_threshold) {
         plan->strategy         = GV_PLAN_EXACT_SCAN;
         plan->estimated_recall = 1.0;
@@ -152,7 +152,7 @@ int gv_optimizer_plan(const GV_QueryOptimizer *opt, size_t k,
         return 0;
     }
 
-    /* ---- Rule 2: very selective filter -> oversample + post-filter ---- */
+    /* Rule 2: very selective filter -> oversample + post-filter */
     if (has_filter && filter_selectivity > 0.0 &&
         filter_selectivity < opt->selective_filter_threshold) {
 
@@ -181,7 +181,7 @@ int gv_optimizer_plan(const GV_QueryOptimizer *opt, size_t k,
         return 0;
     }
 
-    /* ---- Rule 3: default index search ---- */
+    /* Rule 3: default index search */
     {
         size_t ef     = compute_ef_search(opt, k);
         size_t nprobe = compute_nprobe(opt);

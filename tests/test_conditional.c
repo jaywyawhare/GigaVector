@@ -20,8 +20,7 @@ static GV_Database *create_test_db(void) {
     return db;
 }
 
-/* ---------- test functions ---------- */
-
+/* test functions */
 static int test_create_destroy(void) {
     GV_Database *db = create_test_db();
     ASSERT(db != NULL, "create test db");
@@ -197,8 +196,7 @@ static int test_migrate_embedding(void) {
     return 0;
 }
 
-/* ---------- harness ---------- */
-
+/* harness */
 typedef int (*test_fn)(void);
 typedef struct { const char *name; test_fn fn; } TestCase;
 

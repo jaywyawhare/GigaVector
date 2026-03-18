@@ -207,5 +207,3 @@ int gv_exact_knn_search_kdtree(const GV_KDNode *root, const GV_SoAStorage *stora
     return r;
 }
 
-
-

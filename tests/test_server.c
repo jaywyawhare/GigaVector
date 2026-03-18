@@ -15,9 +15,7 @@
 
 #define TEST_DIM 4
 
-/*
- * Test Utilities
- */
+/* * Test Utilities */
 
 static int tests_passed = 0;
 static int tests_failed = 0;
@@ -33,9 +31,7 @@ static int tests_failed = 0;
     tests_passed++; \
 } while(0)
 
-/*
- * Test: Server Config Initialization
- */
+/* * Test: Server Config Initialization */
 
 static void test_server_config_init(void) {
     GV_ServerConfig config;
@@ -53,9 +49,7 @@ static void test_server_config_init(void) {
     TEST_PASS();
 }
 
-/*
- * Test: Server Create/Destroy
- */
+/* * Test: Server Create/Destroy */
 
 static void test_server_create_destroy(void) {
     GV_Database *db = gv_db_open(NULL, TEST_DIM, GV_INDEX_TYPE_KDTREE);
@@ -72,9 +66,7 @@ static void test_server_create_destroy(void) {
     TEST_PASS();
 }
 
-/*
- * Test: Server Create with Custom Config
- */
+/* * Test: Server Create with Custom Config */
 
 static void test_server_create_custom_config(void) {
     GV_Database *db = gv_db_open(NULL, TEST_DIM, GV_INDEX_TYPE_KDTREE);
@@ -95,9 +87,7 @@ static void test_server_create_custom_config(void) {
     TEST_PASS();
 }
 
-/*
- * Test: Server Error String
- */
+/* * Test: Server Error String */
 
 static void test_server_error_string(void) {
     const char *str;
@@ -117,9 +107,7 @@ static void test_server_error_string(void) {
     TEST_PASS();
 }
 
-/*
- * Test: REST Response Helpers
- */
+/* * Test: REST Response Helpers */
 
 static void test_rest_response_json(void) {
     GV_JsonValue *data = gv_json_object();
@@ -163,9 +151,7 @@ static void test_rest_response_success(void) {
     TEST_PASS();
 }
 
-/*
- * Test: Path Parameter Parsing
- */
+/* * Test: Path Parameter Parsing */
 
 static void test_parse_path_param(void) {
     char param[32];
@@ -189,9 +175,7 @@ static void test_parse_path_param(void) {
     TEST_PASS();
 }
 
-/*
- * Test: Query Parameter Parsing
- */
+/* * Test: Query Parameter Parsing */
 
 static void test_parse_query_param(void) {
     char value[64];
@@ -211,9 +195,7 @@ static void test_parse_query_param(void) {
     TEST_PASS();
 }
 
-/*
- * Test: Health Handler
- */
+/* * Test: Health Handler */
 
 static void test_handle_health(void) {
     GV_Database *db = gv_db_open(NULL, TEST_DIM, GV_INDEX_TYPE_KDTREE);
@@ -233,9 +215,7 @@ static void test_handle_health(void) {
     TEST_PASS();
 }
 
-/*
- * Test: Stats Handler
- */
+/* * Test: Stats Handler */
 
 static void test_handle_stats(void) {
     GV_Database *db = gv_db_open(NULL, TEST_DIM, GV_INDEX_TYPE_KDTREE);
@@ -262,9 +242,7 @@ static void test_handle_stats(void) {
     TEST_PASS();
 }
 
-/*
- * Test: Router
- */
+/* * Test: Router */
 
 static void test_router_health(void) {
     GV_Database *db = gv_db_open(NULL, TEST_DIM, GV_INDEX_TYPE_KDTREE);
@@ -300,9 +278,7 @@ static void test_router_not_found(void) {
     TEST_PASS();
 }
 
-/*
- * Main
- */
+/* * Main */
 
 int main(void) {
     /* Config tests */

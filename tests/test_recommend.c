@@ -28,7 +28,7 @@ static GV_Database *create_test_db(void) {
     return db;
 }
 
-/* --- Test: config init defaults --- */
+/* Test: config init defaults */
 static int test_config_init(void) {
     GV_RecommendConfig config;
     memset(&config, 0xFF, sizeof(config));
@@ -42,7 +42,7 @@ static int test_config_init(void) {
     return 0;
 }
 
-/* --- Test: recommend by ID with positives only --- */
+/* Test: recommend by ID with positives only */
 static int test_recommend_by_id_positive(void) {
     GV_Database *db = create_test_db();
     ASSERT(db != NULL, "create_test_db should succeed");
@@ -60,7 +60,7 @@ static int test_recommend_by_id_positive(void) {
     return 0;
 }
 
-/* --- Test: recommend by ID with positives and negatives --- */
+/* Test: recommend by ID with positives and negatives */
 static int test_recommend_by_id_pos_neg(void) {
     GV_Database *db = create_test_db();
     ASSERT(db != NULL, "create_test_db should succeed");
@@ -79,7 +79,7 @@ static int test_recommend_by_id_pos_neg(void) {
     return 0;
 }
 
-/* --- Test: recommend by vector --- */
+/* Test: recommend by vector */
 static int test_recommend_by_vector(void) {
     GV_Database *db = create_test_db();
     ASSERT(db != NULL, "create_test_db should succeed");
@@ -97,7 +97,7 @@ static int test_recommend_by_vector(void) {
     return 0;
 }
 
-/* --- Test: recommend by vector with negatives --- */
+/* Test: recommend by vector with negatives */
 static int test_recommend_by_vector_neg(void) {
     GV_Database *db = create_test_db();
     ASSERT(db != NULL, "create_test_db should succeed");
@@ -116,7 +116,7 @@ static int test_recommend_by_vector_neg(void) {
     return 0;
 }
 
-/* --- Test: discover --- */
+/* Test: discover */
 static int test_discover(void) {
     GV_Database *db = create_test_db();
     ASSERT(db != NULL, "create_test_db should succeed");
@@ -134,7 +134,7 @@ static int test_discover(void) {
     return 0;
 }
 
-/* --- Test: recommend with k larger than database --- */
+/* Test: recommend with k larger than database */
 static int test_recommend_k_larger(void) {
     GV_Database *db = create_test_db();
     ASSERT(db != NULL, "create_test_db should succeed");

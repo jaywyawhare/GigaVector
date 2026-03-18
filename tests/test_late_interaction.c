@@ -8,7 +8,7 @@
 /* Helper: token dimension used throughout tests */
 #define TOKEN_DIM 4
 
-/* --- Test: config init defaults --- */
+/* Test: config init defaults */
 static int test_config_init(void) {
     GV_LateInteractionConfig config;
     memset(&config, 0xFF, sizeof(config));  /* dirty memory */
@@ -22,7 +22,7 @@ static int test_config_init(void) {
     return 0;
 }
 
-/* --- Test: create and destroy --- */
+/* Test: create and destroy */
 static int test_create_destroy(void) {
     GV_LateInteractionConfig config;
     gv_late_interaction_config_init(&config);
@@ -38,7 +38,7 @@ static int test_create_destroy(void) {
     return 0;
 }
 
-/* --- Test: add documents and count --- */
+/* Test: add documents and count */
 static int test_add_doc_count(void) {
     GV_LateInteractionConfig config;
     gv_late_interaction_config_init(&config);
@@ -70,7 +70,7 @@ static int test_add_doc_count(void) {
     return 0;
 }
 
-/* --- Test: MaxSim search --- */
+/* Test: MaxSim search */
 static int test_search(void) {
     GV_LateInteractionConfig config;
     gv_late_interaction_config_init(&config);
@@ -103,7 +103,7 @@ static int test_search(void) {
     return 0;
 }
 
-/* --- Test: delete document --- */
+/* Test: delete document */
 static int test_delete(void) {
     GV_LateInteractionConfig config;
     gv_late_interaction_config_init(&config);
@@ -126,7 +126,7 @@ static int test_delete(void) {
     return 0;
 }
 
-/* --- Test: get stats --- */
+/* Test: get stats */
 static int test_stats(void) {
     GV_LateInteractionConfig config;
     gv_late_interaction_config_init(&config);
@@ -149,7 +149,7 @@ static int test_stats(void) {
     return 0;
 }
 
-/* --- Test: search on empty index --- */
+/* Test: search on empty index */
 static int test_search_empty(void) {
     GV_LateInteractionConfig config;
     gv_late_interaction_config_init(&config);

@@ -23,7 +23,7 @@
 #include <curl/curl.h>
 #endif
 
-/*  Internal Constants  */
+/* Internal Constants */
 
 #define MAX_URL_LEN         2048
 #define MAX_ENDPOINT_LEN    1024
@@ -32,7 +32,7 @@
 #define MAX_JWT_SEGMENTS    3
 #define BASE64_DECODE_MAX   8192
 
-/*  Internal Structures  */
+/* Internal Structures */
 
 /**
  * @brief Discovered OIDC endpoints.
@@ -63,7 +63,7 @@ struct GV_SSOManager {
     pthread_mutex_t mutex;
 };
 
-/*  Forward Declarations  */
+/* Forward Declarations */
 
 static GV_SSOToken *alloc_token(void);
 static char **split_csv(const char *csv, size_t *count);
@@ -95,7 +95,7 @@ static int http_get(const char *url, int verify_ssl,
 static int http_post_form(const char *url, const char *post_fields,
                           int verify_ssl, char **response, size_t *response_len);
 
-/*  Lifecycle  */
+/* Lifecycle */
 
 GV_SSOManager *gv_sso_create(const GV_SSOConfig *config) {
     if (!config) return NULL;
@@ -128,7 +128,7 @@ void gv_sso_destroy(GV_SSOManager *mgr) {
     free(mgr);
 }
 
-/*  OIDC Discovery  */
+/* OIDC Discovery */
 
 int gv_sso_discover(GV_SSOManager *mgr) {
     if (!mgr) return -1;
@@ -183,7 +183,7 @@ int gv_sso_discover(GV_SSOManager *mgr) {
     return ok ? 0 : -1;
 }
 
-/*  Authentication Flow  */
+/* Authentication Flow */
 
 int gv_sso_get_auth_url(const GV_SSOManager *mgr, const char *state,
                          char *url, size_t url_size) {
@@ -373,7 +373,7 @@ void gv_sso_free_token(GV_SSOToken *token) {
     free(token);
 }
 
-/*  Group Checking  */
+/* Group Checking */
 
 int gv_sso_has_group(const GV_SSOToken *token, const char *group) {
     if (!token || !group) return 0;
@@ -387,14 +387,14 @@ int gv_sso_has_group(const GV_SSOToken *token, const char *group) {
     return 0;
 }
 
-/*  Token Allocation  */
+/* Token Allocation */
 
 static GV_SSOToken *alloc_token(void) {
     GV_SSOToken *token = calloc(1, sizeof(GV_SSOToken));
     return token;
 }
 
-/*  CSV / Group Utilities  */
+/* CSV / Group Utilities */
 
 /**
  * Split a comma-separated string into an array of trimmed strings.
@@ -486,7 +486,7 @@ static void populate_admin_flag(GV_SSOToken *token, const char *admin_groups) {
     }
 }
 
-/*  Base64 URL Decoding  */
+/* Base64 URL Decoding */
 
 static const unsigned char b64url_table[256] = {
     ['A'] = 0,  ['B'] = 1,  ['C'] = 2,  ['D'] = 3,
@@ -590,7 +590,7 @@ static int base64url_decode(const char *in, size_t in_len,
     return 0;
 }
 
-/*  Minimal JSON Helpers  */
+/* Minimal JSON Helpers */
 
 /**
  * Extract a string value for a given key from a JSON object.
@@ -748,7 +748,7 @@ static int json_extract_string_array(const char *json, const char *key,
     return 0;
 }
 
-/*  JWT Decoding  */
+/* JWT Decoding */
 
 /**
  * Decode a JWT and extract claims into a GV_SSOToken.
@@ -810,7 +810,7 @@ static GV_SSOToken *decode_jwt_claims(const char *jwt) {
     return token;
 }
 
-/*  SAML Assertion Parsing (Stub)  */
+/* SAML Assertion Parsing (Stub) */
 
 /**
  * Extract text content between <tag> and </tag> from XML.
@@ -1035,7 +1035,7 @@ static GV_SSOToken *parse_saml_assertion(const char *b64_assertion) {
     return token;
 }
 
-/*  HTTP Helpers (libcurl or stub)  */
+/* HTTP Helpers (libcurl or stub) */
 
 #ifdef HAVE_CURL
 

@@ -8,7 +8,7 @@
 
 #define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while(0)
 
-/* ---------- test_config_init ---------- */
+/* test_config_init */
 static int test_config_init(void) {
     GV_MMRConfig cfg;
     gv_mmr_config_init(&cfg);
@@ -18,7 +18,7 @@ static int test_config_init(void) {
     return 0;
 }
 
-/* ---------- test_rerank_basic ---------- */
+/* test_rerank_basic */
 static int test_rerank_basic(void) {
     /* Query vector */
     float query[DIM] = {1.0f, 0.0f, 0.0f, 0.0f};
@@ -46,7 +46,7 @@ static int test_rerank_basic(void) {
     return 0;
 }
 
-/* ---------- test_rerank_diversity ---------- */
+/* test_rerank_diversity */
 static int test_rerank_diversity(void) {
     /* With lambda=0 (full diversity), the results should be maximally spread out */
     float query[DIM] = {1.0f, 0.0f, 0.0f, 0.0f};
@@ -82,7 +82,7 @@ static int test_rerank_diversity(void) {
     return 0;
 }
 
-/* ---------- test_rerank_k_larger_than_candidates ---------- */
+/* test_rerank_k_larger_than_candidates */
 static int test_rerank_k_larger_than_candidates(void) {
     float query[DIM] = {1.0f, 0.0f, 0.0f, 0.0f};
     float candidates[2 * DIM] = {
@@ -101,7 +101,7 @@ static int test_rerank_k_larger_than_candidates(void) {
     return 0;
 }
 
-/* ---------- test_rerank_single_candidate ---------- */
+/* test_rerank_single_candidate */
 static int test_rerank_single_candidate(void) {
     float query[DIM] = {1.0f, 0.0f, 0.0f, 0.0f};
     float candidates[DIM] = {0.5f, 0.5f, 0.0f, 0.0f};
@@ -117,7 +117,7 @@ static int test_rerank_single_candidate(void) {
     return 0;
 }
 
-/* ---------- test_rerank_zero_candidates ---------- */
+/* test_rerank_zero_candidates */
 static int test_rerank_zero_candidates(void) {
     float query[DIM] = {1.0f, 0.0f, 0.0f, 0.0f};
 
@@ -128,7 +128,7 @@ static int test_rerank_zero_candidates(void) {
     return 0;
 }
 
-/* ---------- test_result_fields ---------- */
+/* test_result_fields */
 static int test_result_fields(void) {
     float query[DIM] = {1.0f, 0.0f, 0.0f, 0.0f};
     float candidates[2 * DIM] = {

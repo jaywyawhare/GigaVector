@@ -25,9 +25,7 @@
         TEST_FAIL("comparison failed"); \
     }
 
-/*
- * Content Analysis Tests
- */
+/* * Content Analysis Tests */
 
 int test_informativeness_empty(void) {
     double score = gv_importance_informativeness(NULL, 0);
@@ -196,9 +194,7 @@ int test_content_score_combined(void) {
     return 0;
 }
 
-/*
- * Temporal Decay Tests
- */
+/* * Temporal Decay Tests */
 
 int test_temporal_decay_immediate(void) {
     double decay = gv_importance_temporal_decay(NULL, 0);
@@ -282,9 +278,7 @@ int test_temporal_custom_config(void) {
     return 0;
 }
 
-/*
- * Access Pattern Tests
- */
+/* * Access Pattern Tests */
 
 int test_access_history_init(void) {
     GV_AccessHistory history;
@@ -426,9 +420,7 @@ int test_access_history_serialization(void) {
     return 0;
 }
 
-/*
- * Full Importance Calculation Tests
- */
+/* * Full Importance Calculation Tests */
 
 int test_importance_calculate_basic(void) {
     GV_ImportanceContext ctx = {
@@ -565,9 +557,7 @@ int test_importance_old_vs_new(void) {
     return 0;
 }
 
-/*
- * Batch and Rerank Tests
- */
+/* * Batch and Rerank Tests */
 
 int test_importance_batch(void) {
     time_t now = time(NULL);
@@ -658,9 +648,7 @@ int test_importance_rerank(void) {
     return 0;
 }
 
-/*
- * Configuration Tests
- */
+/* * Configuration Tests */
 
 int test_config_default(void) {
     GV_ImportanceConfig config = gv_importance_config_default();
@@ -711,9 +699,7 @@ int test_config_custom_weights(void) {
     return 0;
 }
 
-/*
- * Main Test Runner
- */
+/* * Main Test Runner */
 
 int main(void) {
     int failures = 0;

@@ -8,12 +8,12 @@
 #include "gigavector/gv_embedded.h"
 #include "gigavector/gv_distance.h"
 
-/* Magic header for the binary save format                            */
+/* Magic header for the binary save format */
 #define GV_EMBEDDED_MAGIC "GVEM"
 #define GV_EMBEDDED_MAGIC_LEN 4
 #define GV_EMBEDDED_FILE_VERSION 1
 
-/* Internal: HNSW simplified graph (single-level, no locks)           */
+/* Internal: HNSW simplified graph (single-level, no locks) */
 #define GV_EMBEDDED_HNSW_M_DEFAULT 16
 
 typedef struct {
@@ -28,7 +28,7 @@ typedef struct {
     size_t ef_construction;
 } GV_EmbeddedHNSW;
 
-/* Internal: LSH tables                                               */
+/* Internal: LSH tables */
 #define GV_EMBEDDED_LSH_TABLES_DEFAULT 8
 #define GV_EMBEDDED_LSH_BITS_DEFAULT   12
 
@@ -47,7 +47,7 @@ typedef struct {
     size_t dimension;
 } GV_EmbeddedLSH;
 
-/* Internal: Quantization parameters                                  */
+/* Internal: Quantization parameters */
 typedef struct {
     float *min_vals;   /**< Per-dimension minimum (dimension floats). */
     float *max_vals;   /**< Per-dimension maximum (dimension floats). */
@@ -55,13 +55,13 @@ typedef struct {
     size_t bytes_per_vector;
 } GV_EmbeddedQuant;
 
-/* Internal: Max-heap for top-k selection                             */
+/* Internal: Max-heap for top-k selection */
 typedef struct {
     float dist;
     size_t idx;
 } GV_EmbeddedHeapItem;
 
-/* The main embedded database structure                               */
+/* The main embedded database structure */
 struct GV_EmbeddedDB {
     /* Configuration snapshot */
     size_t dimension;
@@ -90,7 +90,7 @@ struct GV_EmbeddedDB {
     GV_EmbeddedLSH  *lsh;
 };
 
-/* Helper: memory tracking                                            */
+/* Helper: memory tracking */
 
 static void *emb_tracked_malloc(GV_EmbeddedDB *db, size_t size) {
     if (db->memory_limit_mb > 0) {
@@ -150,7 +150,7 @@ static void emb_tracked_free(GV_EmbeddedDB *db, void *ptr, size_t size) {
     }
 }
 
-/* Helper: deleted bitmap                                             */
+/* Helper: deleted bitmap */
 
 static int emb_is_deleted(const GV_EmbeddedDB *db, size_t idx) {
     if (idx >= db->count) return 1;
@@ -165,7 +165,7 @@ static void emb_clear_deleted(GV_EmbeddedDB *db, size_t idx) {
     db->deleted[idx / 8] &= (uint8_t)~(1U << (idx % 8));
 }
 
-/* Helper: distance computation (raw float arrays)                    */
+/* Helper: distance computation (raw float arrays) */
 
 static float emb_distance_euclidean(const float *a, const float *b, size_t dim) {
     float sum = 0.0f;
@@ -216,7 +216,7 @@ static float emb_compute_distance(const float *a, const float *b, size_t dim, in
     }
 }
 
-/* Helper: max-heap for top-k                                         */
+/* Helper: max-heap for top-k */
 
 static void emb_heap_sift_down(GV_EmbeddedHeapItem *heap, size_t size, size_t i) {
     while (1) {
@@ -259,7 +259,7 @@ static void emb_heap_push(GV_EmbeddedHeapItem *heap, size_t *size, size_t cap,
     }
 }
 
-/* Quantization helpers                                               */
+/* Quantization helpers */
 
 static size_t emb_quant_bytes_per_vector(size_t dimension, int bits) {
     return (dimension * (size_t)bits + 7) / 8;
@@ -365,7 +365,7 @@ static void emb_quant_decode(const GV_EmbeddedQuant *q, const uint8_t *encoded,
     }
 }
 
-/* HNSW (simplified single-level) helpers                             */
+/* HNSW (simplified single-level) helpers */
 
 static GV_EmbeddedHNSW *emb_hnsw_create(GV_EmbeddedDB *db, size_t capacity) {
     GV_EmbeddedHNSW *h = (GV_EmbeddedHNSW *)emb_tracked_calloc(db, 1, sizeof(GV_EmbeddedHNSW));
@@ -556,7 +556,7 @@ static int emb_hnsw_search(const GV_EmbeddedDB *db, const float *query, size_t k
     return 0;
 }
 
-/* LSH helpers                                                        */
+/* LSH helpers */
 
 static uint64_t emb_xorshift64(uint64_t *state) {
     uint64_t x = *state;
@@ -747,7 +747,7 @@ static int emb_lsh_search(const GV_EmbeddedDB *db, const float *query, size_t k,
     return 0;
 }
 
-/* Storage growth                                                     */
+/* Storage growth */
 
 static int emb_ensure_capacity(GV_EmbeddedDB *db, size_t needed) {
     if (needed <= db->capacity) return 0;
@@ -793,7 +793,7 @@ static int emb_ensure_capacity(GV_EmbeddedDB *db, size_t needed) {
     return 0;
 }
 
-/* Public API                                                         */
+/* Public API */
 
 void gv_embedded_config_init(GV_EmbeddedConfig *config) {
     if (!config) return;
@@ -1034,7 +1034,7 @@ size_t gv_embedded_memory_usage(const GV_EmbeddedDB *db) {
     return db->memory_used;
 }
 
-/* Save / Load (binary format)                                        */
+/* Save / Load (binary format) */
 
 static int emb_write_u32(FILE *f, uint32_t v) {
     return fwrite(&v, sizeof(uint32_t), 1, f) == 1 ? 0 : -1;
@@ -1308,7 +1308,7 @@ GV_EmbeddedDB *gv_embedded_load(const char *path) {
     return db;
 }
 
-/* Compact                                                            */
+/* Compact */
 
 int gv_embedded_compact(GV_EmbeddedDB *db) {
     if (!db) return -1;

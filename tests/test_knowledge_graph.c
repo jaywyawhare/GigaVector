@@ -21,8 +21,7 @@ static void make_embedding(float *out, float base) {
         out[i] = base + (float)i * 0.1f;
 }
 
-/* ---- Lifecycle ---- */
-
+/* Lifecycle */
 static int test_create_destroy(void) {
     GV_KnowledgeGraph *kg = gv_kg_create(NULL);
     ASSERT(kg != NULL, "create with NULL config");
@@ -43,8 +42,7 @@ static int test_create_destroy(void) {
     return 0;
 }
 
-/* ---- Entity Operations ---- */
-
+/* Entity Operations */
 static int test_add_get_entities(void) {
     GV_KGConfig cfg;
     gv_kg_config_init(&cfg);
@@ -127,8 +125,7 @@ static int test_remove_entity(void) {
     return 0;
 }
 
-/* ---- Relation Operations ---- */
-
+/* Relation Operations */
 static int test_relations(void) {
     GV_KnowledgeGraph *kg = gv_kg_create(NULL);
     uint64_t e1 = gv_kg_add_entity(kg, "Alice", "Person", NULL, 0);
@@ -156,8 +153,7 @@ static int test_relations(void) {
     return 0;
 }
 
-/* ---- Triple Queries ---- */
-
+/* Triple Queries */
 static int test_triple_queries(void) {
     GV_KnowledgeGraph *kg = gv_kg_create(NULL);
     uint64_t alice = gv_kg_add_entity(kg, "Alice", "Person", NULL, 0);
@@ -200,8 +196,7 @@ static int test_triple_queries(void) {
     return 0;
 }
 
-/* ---- Semantic Search ---- */
-
+/* Semantic Search */
 static int test_semantic_search(void) {
     GV_KGConfig cfg;
     gv_kg_config_init(&cfg);
@@ -267,8 +262,7 @@ static int test_hybrid_search(void) {
     return 0;
 }
 
-/* ---- Entity Resolution ---- */
-
+/* Entity Resolution */
 static int test_entity_resolution(void) {
     GV_KGConfig cfg;
     gv_kg_config_init(&cfg);
@@ -314,8 +308,7 @@ static int test_merge_entities(void) {
     return 0;
 }
 
-/* ---- Link Prediction ---- */
-
+/* Link Prediction */
 static int test_link_prediction(void) {
     GV_KGConfig cfg;
     gv_kg_config_init(&cfg);
@@ -342,8 +335,7 @@ static int test_link_prediction(void) {
     return 0;
 }
 
-/* ---- Traversal ---- */
-
+/* Traversal */
 static int test_traversal(void) {
     GV_KnowledgeGraph *kg = gv_kg_create(NULL);
     uint64_t a = gv_kg_add_entity(kg, "A", "Node", NULL, 0);
@@ -401,8 +393,7 @@ static int test_subgraph(void) {
     return 0;
 }
 
-/* ---- Analytics ---- */
-
+/* Analytics */
 static int test_analytics(void) {
     GV_KGConfig cfg;
     gv_kg_config_init(&cfg);
@@ -447,8 +438,7 @@ static int test_analytics(void) {
     return 0;
 }
 
-/* ---- Persistence ---- */
-
+/* Persistence */
 static int test_save_load(void) {
     const char *path = "/tmp/test_gv_kg.gvkg";
 
@@ -493,8 +483,7 @@ static int test_save_load(void) {
     return 0;
 }
 
-/* ---- Main ---- */
-
+/* Main */
 typedef int (*test_fn)(void);
 typedef struct { const char *name; test_fn fn; } TestEntry;
 

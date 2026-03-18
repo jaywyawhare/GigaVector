@@ -16,7 +16,7 @@ static void fill_tokens(float *tokens, size_t num_tokens, size_t dim, float seed
     }
 }
 
-/* 1. test_muvera_config_init                                          */
+/* 1. test_muvera_config_init */
 static int test_muvera_config_init(void) {
     GV_MuveraConfig config;
     memset(&config, 0xFF, sizeof(config));
@@ -32,7 +32,7 @@ static int test_muvera_config_init(void) {
     return 0;
 }
 
-/* 2. test_muvera_create_destroy                                       */
+/* 2. test_muvera_create_destroy */
 static int test_muvera_create_destroy(void) {
     GV_MuveraConfig config;
     gv_muvera_config_init(&config);
@@ -50,7 +50,7 @@ static int test_muvera_create_destroy(void) {
     return 0;
 }
 
-/* 3. test_muvera_create_defaults                                      */
+/* 3. test_muvera_create_defaults */
 static int test_muvera_create_defaults(void) {
     /* NULL config should use defaults */
     GV_MuveraEncoder *enc = gv_muvera_create(NULL);
@@ -63,7 +63,7 @@ static int test_muvera_create_defaults(void) {
     return 0;
 }
 
-/* 4. test_muvera_encode                                               */
+/* 4. test_muvera_encode */
 static int test_muvera_encode(void) {
     GV_MuveraConfig config;
     gv_muvera_config_init(&config);
@@ -98,7 +98,7 @@ static int test_muvera_encode(void) {
     return 0;
 }
 
-/* 5. test_muvera_encode_deterministic                                 */
+/* 5. test_muvera_encode_deterministic */
 static int test_muvera_encode_deterministic(void) {
     GV_MuveraConfig config;
     gv_muvera_config_init(&config);
@@ -174,7 +174,7 @@ static int test_muvera_encode_batch(void) {
     return 0;
 }
 
-/* 7. test_muvera_output_dimension                                     */
+/* 7. test_muvera_output_dimension */
 static int test_muvera_output_dimension(void) {
     GV_MuveraConfig config;
     gv_muvera_config_init(&config);
@@ -192,7 +192,7 @@ static int test_muvera_output_dimension(void) {
     return 0;
 }
 
-/* 8. test_muvera_destroy_null                                         */
+/* 8. test_muvera_destroy_null */
 static int test_muvera_destroy_null(void) {
     /* Should be safe to call with NULL */
     gv_muvera_destroy(NULL);

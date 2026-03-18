@@ -11,7 +11,7 @@
 #include <stdio.h>
 #include <pthread.h>
 
-/*  Internal Constants  */
+/* Internal Constants */
 
 #define MAX_ROLES 64
 #define MAX_RULES_PER_ROLE 32
@@ -19,7 +19,7 @@
 #define MAX_ROLES_PER_USER 16
 #define MAX_INHERITANCE_DEPTH 16
 
-/*  Internal Structures  */
+/* Internal Structures */
 
 /**
  * @brief Internal rule entry for a single resource-permission pair.
@@ -61,7 +61,7 @@ struct GV_RBACManager {
     pthread_rwlock_t rwlock;
 };
 
-/*  Internal Helpers  */
+/* Internal Helpers */
 
 /**
  * @brief Find a role by name (caller must hold at least a read lock).
@@ -145,7 +145,7 @@ static void write_json_string(FILE *fp, const char *s) {
     fputc('"', fp);
 }
 
-/*  Simple JSON-like Text Parser Helpers (for gv_rbac_load)  */
+/* Simple JSON-like Text Parser Helpers (for gv_rbac_load) */
 
 /**
  * @brief Skip whitespace characters.
@@ -250,7 +250,7 @@ static char *parse_key(const char **pp) {
     return key;
 }
 
-/*  Lifecycle  */
+/* Lifecycle */
 
 GV_RBACManager *gv_rbac_create(void) {
     GV_RBACManager *mgr = calloc(1, sizeof(GV_RBACManager));
@@ -287,7 +287,7 @@ void gv_rbac_destroy(GV_RBACManager *mgr) {
     free(mgr);
 }
 
-/*  Role Management  */
+/* Role Management */
 
 int gv_rbac_create_role(GV_RBACManager *mgr, const char *role_name) {
     if (!mgr || !role_name) return -1;
@@ -486,7 +486,7 @@ int gv_rbac_set_inheritance(GV_RBACManager *mgr, const char *role_name,
     return 0;
 }
 
-/*  User-Role Assignment  */
+/* User-Role Assignment */
 
 int gv_rbac_assign_role(GV_RBACManager *mgr, const char *user_id,
                          const char *role_name) {
@@ -601,7 +601,7 @@ int gv_rbac_get_user_roles(const GV_RBACManager *mgr, const char *user_id,
     return 0;
 }
 
-/*  Authorization Check  */
+/* Authorization Check */
 
 int gv_rbac_check(const GV_RBACManager *mgr, const char *user_id,
                    const char *resource, GV_Permission required) {
@@ -630,7 +630,7 @@ int gv_rbac_check(const GV_RBACManager *mgr, const char *user_id,
     return 0;
 }
 
-/*  List Roles / Free Helpers  */
+/* List Roles / Free Helpers */
 
 int gv_rbac_list_roles(const GV_RBACManager *mgr, char ***out_names,
                         size_t *out_count) {
@@ -668,7 +668,7 @@ void gv_rbac_free_string_list(char **list, size_t count) {
     free(list);
 }
 
-/*  Built-in Roles  */
+/* Built-in Roles */
 
 int gv_rbac_init_defaults(GV_RBACManager *mgr) {
     if (!mgr) return -1;
@@ -688,7 +688,7 @@ int gv_rbac_init_defaults(GV_RBACManager *mgr) {
     return 0;
 }
 
-/*  Save (JSON-like text format)  */
+/* Save (JSON-like text format) */
 
 int gv_rbac_save(const GV_RBACManager *mgr, const char *filepath) {
     if (!mgr || !filepath) return -1;
@@ -768,7 +768,7 @@ int gv_rbac_save(const GV_RBACManager *mgr, const char *filepath) {
     return 0;
 }
 
-/*  Load (JSON-like text format)  */
+/* Load (JSON-like text format) */
 
 GV_RBACManager *gv_rbac_load(const char *filepath) {
     if (!filepath) return NULL;

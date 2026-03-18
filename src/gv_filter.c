@@ -544,4 +544,3 @@ void gv_filter_destroy(GV_Filter *filter) {
     free(filter);
 }
 
-

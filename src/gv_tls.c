@@ -14,7 +14,7 @@
 #include <string.h>
 #include <stdio.h>
 
-/*  OpenSSL Implementation  */
+/* OpenSSL Implementation */
 
 #ifdef GV_HAVE_OPENSSL
 
@@ -24,15 +24,13 @@
 #include <openssl/x509v3.h>
 #include <openssl/pem.h>
 
-/* ---- internal context --------------------------------------------------- */
-
+/* internal context */
 struct GV_TLSContext {
     SSL_CTX    *ssl_ctx;
     char       *cert_path;   /* kept for cert_days_remaining */
 };
 
-/* ---- helpers ------------------------------------------------------------ */
-
+/* helpers */
 static void tls_log_errors(const char *prefix) {
     unsigned long err;
     while ((err = ERR_get_error()) != 0) {
@@ -42,8 +40,7 @@ static void tls_log_errors(const char *prefix) {
     }
 }
 
-/* ---- public API --------------------------------------------------------- */
-
+/* public API */
 int gv_tls_is_available(void) {
     return 1;
 }
@@ -79,13 +76,13 @@ GV_TLSContext *gv_tls_create(const GV_TLSConfig *config) {
         return NULL;
     }
 
-    /* --- minimum protocol version ---------------------------------------- */
+    /* minimum protocol version */
     long min_ver = (config->min_version == GV_TLS_1_3)
                        ? TLS1_3_VERSION
                        : TLS1_2_VERSION;
     SSL_CTX_set_min_proto_version(ssl_ctx, min_ver);
 
-    /* --- cipher suites --------------------------------------------------- */
+    /* cipher suites */
     if (config->cipher_list) {
         if (SSL_CTX_set_cipher_list(ssl_ctx, config->cipher_list) != 1) {
             tls_log_errors("SSL_CTX_set_cipher_list");
@@ -94,7 +91,7 @@ GV_TLSContext *gv_tls_create(const GV_TLSConfig *config) {
         }
     }
 
-    /* --- certificate & key ----------------------------------------------- */
+    /* certificate & key */
     if (SSL_CTX_use_certificate_chain_file(ssl_ctx, config->cert_file) != 1) {
         tls_log_errors("SSL_CTX_use_certificate_chain_file");
         SSL_CTX_free(ssl_ctx);
@@ -114,7 +111,7 @@ GV_TLSContext *gv_tls_create(const GV_TLSConfig *config) {
         return NULL;
     }
 
-    /* --- mutual TLS (optional) ------------------------------------------- */
+    /* mutual TLS (optional) */
     if (config->verify_client) {
         SSL_CTX_set_verify(ssl_ctx,
                            SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT,
@@ -129,7 +126,7 @@ GV_TLSContext *gv_tls_create(const GV_TLSConfig *config) {
         }
     }
 
-    /* --- build wrapper --------------------------------------------------- */
+    /* build wrapper */
     GV_TLSContext *ctx = calloc(1, sizeof(GV_TLSContext));
     if (!ctx) {
         SSL_CTX_free(ssl_ctx);
@@ -160,8 +157,7 @@ const char *gv_tls_version_string(const GV_TLSContext *ctx) {
     return ver;
 }
 
-/* ---- connection-level operations ---------------------------------------- */
-
+/* connection-level operations */
 int gv_tls_accept(GV_TLSContext *ctx, int client_fd, void **tls_conn) {
     if (!ctx || !tls_conn || client_fd < 0) return -1;
 
@@ -215,8 +211,7 @@ void gv_tls_close_conn(void *tls_conn) {
     SSL_free(ssl);
 }
 
-/* ---- certificate info --------------------------------------------------- */
-
+/* certificate info */
 int gv_tls_get_peer_cn(void *tls_conn, char *buf, size_t buf_size) {
     if (!tls_conn || !buf || buf_size == 0) return -1;
 
@@ -267,7 +262,7 @@ int gv_tls_cert_days_remaining(const GV_TLSContext *ctx) {
     return day_diff;
 }
 
-/*  Stub Implementation (no OpenSSL)  */
+/* Stub Implementation (no OpenSSL) */
 
 #else /* !GV_HAVE_OPENSSL */
 

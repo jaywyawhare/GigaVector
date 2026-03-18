@@ -6,17 +6,17 @@
 
 #include "gigavector/gv_bloom.h"
 
-/*  Internal Bloom filter structure                                    */
+/* Internal Bloom filter structure */
 
 struct GV_BloomFilter {
     uint8_t *bits;           /* Bit array (packed, 1 bit per position). */
-    size_t   num_bits;       /* Total number of bits (m).               */
-    size_t   num_hashes;     /* Number of hash functions (k).           */
-    size_t   count;          /* Number of items inserted so far.        */
-    double   target_fp_rate; /* Desired false-positive probability.     */
+    size_t   num_bits;       /* Total number of bits (m). */
+    size_t   num_hashes;     /* Number of hash functions (k). */
+    size_t   count;          /* Number of items inserted so far. */
+    double   target_fp_rate; /* Desired false-positive probability. */
 };
 
-/*  FNV-1a 64-bit hash                                                 */
+/* FNV-1a 64-bit hash */
 
 #define FNV_OFFSET_BASIS UINT64_C(14695981039346656037)
 #define FNV_PRIME        UINT64_C(1099511628211)
@@ -35,7 +35,7 @@ static uint64_t fnv1a_64(const void *data, size_t len)
     return hash;
 }
 
-/*  Double-hashing helpers                                             */
+/* Double-hashing helpers */
 
 /**
  * @brief Derive two independent 32-bit hashes from a single FNV-1a
@@ -58,7 +58,7 @@ static size_t bloom_hash_i(uint32_t h1, uint32_t h2, size_t i, size_t m)
     return ((size_t)h1 + i * (size_t)h2) % m;
 }
 
-/*  Bit manipulation helpers                                           */
+/* Bit manipulation helpers */
 
 static void bit_set(uint8_t *bits, size_t pos)
 {
@@ -70,7 +70,7 @@ static int bit_get(const uint8_t *bits, size_t pos)
     return (bits[pos / 8] >> (pos % 8)) & 1;
 }
 
-/*  Optimal sizing helpers                                             */
+/* Optimal sizing helpers */
 
 /**
  * @brief Compute optimal number of bits (m).
@@ -110,7 +110,7 @@ static size_t bloom_optimal_hashes(size_t m, size_t n)
     return (size_t)round(k);
 }
 
-/*  Public API                                                         */
+/* Public API */
 
 GV_BloomFilter *gv_bloom_create(size_t expected_items, double fp_rate)
 {
@@ -230,7 +230,7 @@ void gv_bloom_clear(GV_BloomFilter *bf)
     bf->count = 0;
 }
 
-/*  Serialization helpers                                              */
+/* Serialization helpers */
 
 static int write_size(FILE *out, size_t v)
 {
@@ -252,7 +252,7 @@ static int read_double(FILE *in, double *v)
     return (v != NULL && fread(v, sizeof(double), 1, in) == 1) ? 0 : -1;
 }
 
-/*  Save / Load                                                        */
+/* Save / Load */
 
 int gv_bloom_save(const GV_BloomFilter *bf, FILE *out)
 {
@@ -338,7 +338,7 @@ int gv_bloom_load(GV_BloomFilter **bf_ptr, FILE *in)
     return 0;
 }
 
-/*  Merge                                                              */
+/* Merge */
 
 GV_BloomFilter *gv_bloom_merge(const GV_BloomFilter *a, const GV_BloomFilter *b)
 {

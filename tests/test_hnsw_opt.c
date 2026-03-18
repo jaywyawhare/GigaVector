@@ -18,7 +18,7 @@ static void fill_vector(float *vec, size_t dim, float seed) {
     }
 }
 
-/* 1. test_hnsw_inline_create_destroy                                  */
+/* 1. test_hnsw_inline_create_destroy */
 static int test_hnsw_inline_create_destroy(void) {
     GV_HNSWInlineConfig config;
     config.quant_bits = 8;
@@ -33,7 +33,7 @@ static int test_hnsw_inline_create_destroy(void) {
     return 0;
 }
 
-/* 2. test_hnsw_inline_create_defaults                                 */
+/* 2. test_hnsw_inline_create_defaults */
 static int test_hnsw_inline_create_defaults(void) {
     /* NULL config should use defaults */
     GV_HNSWInlineIndex *idx = gv_hnsw_inline_create(DIM, MAX_ELEMENTS,
@@ -46,7 +46,7 @@ static int test_hnsw_inline_create_defaults(void) {
     return 0;
 }
 
-/* 3. test_hnsw_inline_insert_count                                    */
+/* 3. test_hnsw_inline_insert_count */
 static int test_hnsw_inline_insert_count(void) {
     GV_HNSWInlineIndex *idx = gv_hnsw_inline_create(DIM, MAX_ELEMENTS,
                                                       M_PARAM, EF_CONSTRUCT, NULL);
@@ -66,7 +66,7 @@ static int test_hnsw_inline_insert_count(void) {
     return 0;
 }
 
-/* 4. test_hnsw_inline_search                                          */
+/* 4. test_hnsw_inline_search */
 static int test_hnsw_inline_search(void) {
     GV_HNSWInlineIndex *idx = gv_hnsw_inline_create(DIM, MAX_ELEMENTS,
                                                       M_PARAM, EF_CONSTRUCT, NULL);
@@ -95,7 +95,7 @@ static int test_hnsw_inline_search(void) {
     return 0;
 }
 
-/* 5. test_hnsw_inline_search_ordering                                 */
+/* 5. test_hnsw_inline_search_ordering */
 static int test_hnsw_inline_search_ordering(void) {
     GV_HNSWInlineIndex *idx = gv_hnsw_inline_create(DIM, MAX_ELEMENTS,
                                                       M_PARAM, EF_CONSTRUCT, NULL);
@@ -125,7 +125,7 @@ static int test_hnsw_inline_search_ordering(void) {
     return 0;
 }
 
-/* 6. test_hnsw_inline_rebuild                                         */
+/* 6. test_hnsw_inline_rebuild */
 static int test_hnsw_inline_rebuild(void) {
     GV_HNSWInlineIndex *idx = gv_hnsw_inline_create(DIM, MAX_ELEMENTS,
                                                       M_PARAM, EF_CONSTRUCT, NULL);
@@ -156,7 +156,7 @@ static int test_hnsw_inline_rebuild(void) {
     return 0;
 }
 
-/* 7. test_hnsw_inline_4bit_quant                                      */
+/* 7. test_hnsw_inline_4bit_quant */
 static int test_hnsw_inline_4bit_quant(void) {
     GV_HNSWInlineConfig config;
     config.quant_bits = 4;
@@ -185,7 +185,7 @@ static int test_hnsw_inline_4bit_quant(void) {
     return 0;
 }
 
-/* 8. test_hnsw_inline_destroy_null                                    */
+/* 8. test_hnsw_inline_destroy_null */
 static int test_hnsw_inline_destroy_null(void) {
     /* Should be safe to call with NULL */
     gv_hnsw_inline_destroy(NULL);

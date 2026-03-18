@@ -16,7 +16,7 @@
 #include <string.h>
 #include <float.h>
 
-/*  Internal helpers  */
+/* Internal helpers */
 
 /**
  * Walk a GV_Metadata linked list and return the value for @p key, or NULL.
@@ -32,8 +32,7 @@ static const char *metadata_lookup(const GV_Metadata *meta, const char *key) {
     return NULL;
 }
 
-/* ---- Lightweight open-addressed hash map (group_value -> bucket index) ---- */
-
+/* Lightweight open-addressed hash map (group_value -> bucket index) */
 typedef struct {
     size_t index;      /* candidate position in the oversampled result array */
     float  distance;
@@ -126,8 +125,7 @@ static int bucket_add_hit(GroupBucket *b, size_t index, float distance) {
     return 0;
 }
 
-/* ---- qsort comparators -------------------------------------------------- */
-
+/* qsort comparators */
 static int compare_hits_by_distance(const void *a, const void *b) {
     const GroupHitEntry *ha = (const GroupHitEntry *)a;
     const GroupHitEntry *hb = (const GroupHitEntry *)b;
@@ -144,8 +142,7 @@ static int compare_buckets_by_best_distance(const void *a, const void *b) {
     return 0;
 }
 
-/* ---- Free a GV_SearchResult's owned vector allocation -------------------- */
-
+/* Free a GV_SearchResult's owned vector allocation */
 static void free_search_result_vector(GV_SearchResult *r) {
     if (!r || !r->vector) return;
     GV_Vector *v = (GV_Vector *)r->vector;
@@ -163,7 +160,7 @@ static void free_search_result_vector(GV_SearchResult *r) {
     r->vector = NULL;
 }
 
-/*  Public API  */
+/* Public API */
 
 void gv_group_search_config_init(GV_GroupSearchConfig *config) {
     if (!config) return;

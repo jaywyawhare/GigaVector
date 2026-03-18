@@ -663,7 +663,6 @@ int gv_kdtree_knn_search_filtered(const GV_KDNode *root, const GV_SoAStorage *st
     return (int)ctx.count;
 }
 
-
 typedef struct {
     GV_SearchResult *results;
     size_t count;

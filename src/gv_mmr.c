@@ -21,7 +21,7 @@
 #include <math.h>
 #include <float.h>
 
-/*  Configuration Defaults  */
+/* Configuration Defaults */
 
 static const GV_MMRConfig DEFAULT_CONFIG = {
     .lambda        = 0.7f,
@@ -33,7 +33,7 @@ void gv_mmr_config_init(GV_MMRConfig *config) {
     *config = DEFAULT_CONFIG;
 }
 
-/*  Internal Helpers  */
+/* Internal Helpers */
 
 /**
  * @brief Compute distance between two raw float vectors using gv_distance().
@@ -133,14 +133,14 @@ static size_t result_to_soa_index(const GV_Database *db, const GV_SearchResult *
     return idx;
 }
 
-/*  gv_mmr_rerank  */
+/* gv_mmr_rerank */
 
 int gv_mmr_rerank(const float *query, size_t dimension,
                   const float *candidates, const size_t *candidate_indices,
                   const float *candidate_distances, size_t candidate_count,
                   size_t k, const GV_MMRConfig *config,
                   GV_MMRResult *results) {
-    /* ------ Argument validation ------ */
+    /* Argument validation */
     if (!query || !candidates || !candidate_indices || !candidate_distances || !results) {
         return -1;
     }
@@ -164,7 +164,7 @@ int gv_mmr_rerank(const float *query, size_t dimension,
     /* Limit k to candidate_count */
     if (k > candidate_count) k = candidate_count;
 
-    /* ------ Compute and normalise relevance scores ------ */
+    /* Compute and normalise relevance scores */
     float *relevance = (float *)malloc(candidate_count * sizeof(float));
     if (!relevance) return -1;
 
@@ -173,8 +173,7 @@ int gv_mmr_rerank(const float *query, size_t dimension,
     }
     normalize_scores(relevance, candidate_count);
 
-    /* ------ Greedy iterative MMR selection ------ */
-
+    /* Greedy iterative MMR selection */
     /* Track which candidates have been selected */
     int *selected = (int *)calloc(candidate_count, sizeof(int));
     if (!selected) {
@@ -263,12 +262,12 @@ int gv_mmr_rerank(const float *query, size_t dimension,
     return (int)selected_count;
 }
 
-/*  gv_mmr_search  */
+/* gv_mmr_search */
 
 int gv_mmr_search(const void *db_ptr, const float *query, size_t dimension,
                   size_t k, size_t oversample, const GV_MMRConfig *config,
                   GV_MMRResult *results) {
-    /* ------ Argument validation ------ */
+    /* Argument validation */
     const GV_Database *db = (const GV_Database *)db_ptr;
     if (!db || !query || !results) return -1;
     if (dimension == 0 || k == 0) return -1;
@@ -284,7 +283,7 @@ int gv_mmr_search(const void *db_ptr, const float *query, size_t dimension,
     /* Ensure a sane oversample factor */
     if (oversample < 1) oversample = 1;
 
-    /* ------ Fetch oversampled candidates via gv_db_search ------ */
+    /* Fetch oversampled candidates via gv_db_search */
     size_t fetch_k = k * oversample;
     if (fetch_k < k) fetch_k = k; /* overflow guard */
 
@@ -299,7 +298,7 @@ int gv_mmr_search(const void *db_ptr, const float *query, size_t dimension,
 
     size_t candidate_count = (size_t)found;
 
-    /* ------ Extract candidate data for MMR reranking ------ */
+    /* Extract candidate data for MMR reranking */
     float *cand_vectors   = (float *)malloc(candidate_count * dimension * sizeof(float));
     size_t *cand_indices  = (size_t *)malloc(candidate_count * sizeof(size_t));
     float *cand_distances = (float *)malloc(candidate_count * sizeof(float));
@@ -335,7 +334,7 @@ int gv_mmr_search(const void *db_ptr, const float *query, size_t dimension,
         return 0;
     }
 
-    /* ------ Apply MMR reranking ------ */
+    /* Apply MMR reranking */
     int result_count = gv_mmr_rerank(query, dimension,
                                      cand_vectors, cand_indices,
                                      cand_distances, valid,

@@ -7,7 +7,7 @@
 
 #include "gigavector/gv_payload_index.h"
 
-/*  Internal data structures                                          */
+/* Internal data structures */
 
 #define GV_PAYLOAD_INITIAL_CAP 16
 
@@ -52,7 +52,7 @@ struct GV_PayloadIndex {
     size_t field_capacity;
 };
 
-/*  Helpers: find field by name                                       */
+/* Helpers: find field by name */
 
 static GV_FieldIndex *gv_find_field(const GV_PayloadIndex *idx, const char *name) {
     for (size_t i = 0; i < idx->field_count; i++) {
@@ -63,7 +63,7 @@ static GV_FieldIndex *gv_find_field(const GV_PayloadIndex *idx, const char *name
     return NULL;
 }
 
-/*  Helpers: sorted-insert utilities for int entries                   */
+/* Helpers: sorted-insert utilities for int entries */
 
 /**
  * @brief Binary search for the insertion position in a sorted int array.
@@ -98,7 +98,7 @@ static size_t gv_int_upper_bound(const GV_IntEntry *entries, size_t count, int64
     return lo;
 }
 
-/*  Helpers: sorted-insert utilities for float entries                 */
+/* Helpers: sorted-insert utilities for float entries */
 
 static size_t gv_float_lower_bound(const GV_FloatEntry *entries, size_t count, double value) {
     size_t lo = 0, hi = count;
@@ -126,7 +126,7 @@ static size_t gv_float_upper_bound(const GV_FloatEntry *entries, size_t count, d
     return lo;
 }
 
-/*  Helpers: sorted-insert utilities for string entries                */
+/* Helpers: sorted-insert utilities for string entries */
 
 static size_t gv_string_lower_bound(const GV_StringEntry *entries, size_t count, const char *value) {
     size_t lo = 0, hi = count;
@@ -141,7 +141,7 @@ static size_t gv_string_lower_bound(const GV_StringEntry *entries, size_t count,
     return lo;
 }
 
-/*  Helpers: size_t array sorting and intersection                    */
+/* Helpers: size_t array sorting and intersection */
 
 static int gv_compare_size_t(const void *a, const void *b) {
     size_t va = *(const size_t *)a;
@@ -173,7 +173,7 @@ static size_t gv_intersect_sorted(const size_t *a, size_t a_len,
     return k;
 }
 
-/*  Create / Destroy                                                  */
+/* Create / Destroy */
 
 GV_PayloadIndex *gv_payload_index_create(void) {
     GV_PayloadIndex *idx = (GV_PayloadIndex *)malloc(sizeof(GV_PayloadIndex));
@@ -218,7 +218,7 @@ void gv_payload_index_destroy(GV_PayloadIndex *idx) {
     free(idx);
 }
 
-/*  Schema management                                                 */
+/* Schema management */
 
 int gv_payload_index_add_field(GV_PayloadIndex *idx, const char *name, GV_FieldType type) {
     if (idx == NULL || name == NULL) {
@@ -322,7 +322,7 @@ int gv_payload_index_field_count(const GV_PayloadIndex *idx) {
     return (int)idx->field_count;
 }
 
-/*  Insert operations                                                 */
+/* Insert operations */
 
 int gv_payload_index_insert_int(GV_PayloadIndex *idx, size_t vector_id,
                                  const char *field, int64_t value) {
@@ -532,7 +532,7 @@ int gv_payload_index_remove(GV_PayloadIndex *idx, size_t vector_id) {
     return 0;
 }
 
-/*  Single-condition query helpers                                    */
+/* Single-condition query helpers */
 
 static int gv_query_int(const GV_FieldIndex *fi, const GV_PayloadQuery *q,
                          size_t *result_ids, size_t max_results) {
@@ -772,7 +772,7 @@ static int gv_query_bool(const GV_FieldIndex *fi, const GV_PayloadQuery *q,
     return (int)n;
 }
 
-/*  Query: single condition                                           */
+/* Query: single condition */
 
 int gv_payload_index_query(const GV_PayloadIndex *idx, const GV_PayloadQuery *query,
                             size_t *result_ids, size_t max_results) {
@@ -803,7 +803,7 @@ int gv_payload_index_query(const GV_PayloadIndex *idx, const GV_PayloadQuery *qu
     return -1;
 }
 
-/*  Query: multi-condition (AND of all conditions)                    */
+/* Query: multi-condition (AND of all conditions) */
 
 int gv_payload_index_query_multi(const GV_PayloadIndex *idx, const GV_PayloadQuery *queries,
                                   size_t query_count, size_t *result_ids, size_t max_results) {
@@ -868,7 +868,7 @@ int gv_payload_index_query_multi(const GV_PayloadIndex *idx, const GV_PayloadQue
     return (int)current_count;
 }
 
-/*  Stats                                                             */
+/* Stats */
 
 size_t gv_payload_index_total_entries(const GV_PayloadIndex *idx) {
     if (idx == NULL) {

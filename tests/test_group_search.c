@@ -32,7 +32,7 @@ static GV_Database *make_db(void) {
     return db;
 }
 
-/* ---------- test_config_init ---------- */
+/* test_config_init */
 static int test_config_init(void) {
     GV_GroupSearchConfig cfg;
     gv_group_search_config_init(&cfg);
@@ -42,7 +42,7 @@ static int test_config_init(void) {
     return 0;
 }
 
-/* ---------- test_group_search_basic ---------- */
+/* test_group_search_basic */
 static int test_group_search_basic(void) {
     GV_Database *db = make_db();
     ASSERT(db != NULL, "make_db should succeed");
@@ -77,7 +77,7 @@ static int test_group_search_basic(void) {
     return 0;
 }
 
-/* ---------- test_group_search_free_result ---------- */
+/* test_group_search_free_result */
 static int test_group_search_free_result(void) {
     /* Freeing a zeroed result should not crash */
     GV_GroupedResult result;
@@ -86,7 +86,7 @@ static int test_group_search_free_result(void) {
     return 0;
 }
 
-/* ---------- test_group_search_single_group ---------- */
+/* test_group_search_single_group */
 static int test_group_search_single_group(void) {
     GV_Database *db = gv_db_open(NULL, DIM, GV_INDEX_TYPE_FLAT);
     ASSERT(db != NULL, "db open should succeed");
@@ -126,7 +126,7 @@ static int test_group_search_single_group(void) {
     return 0;
 }
 
-/* ---------- test_group_search_limit ---------- */
+/* test_group_search_limit */
 static int test_group_search_limit(void) {
     GV_Database *db = make_db();
     ASSERT(db != NULL, "make_db should succeed");
@@ -151,7 +151,7 @@ static int test_group_search_limit(void) {
     return 0;
 }
 
-/* ---------- test_group_search_hits_sorted ---------- */
+/* test_group_search_hits_sorted */
 static int test_group_search_hits_sorted(void) {
     GV_Database *db = make_db();
     ASSERT(db != NULL, "make_db should succeed");

@@ -5,7 +5,7 @@
 
 #define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while(0)
 
-/* --- Test: config init defaults --- */
+/* Test: config init defaults */
 static int test_config_init(void) {
     GV_FTConfig config;
     memset(&config, 0xFF, sizeof(config));
@@ -20,7 +20,7 @@ static int test_config_init(void) {
     return 0;
 }
 
-/* --- Test: create and destroy --- */
+/* Test: create and destroy */
 static int test_create_destroy(void) {
     GV_FTConfig config;
     gv_ft_config_init(&config);
@@ -41,7 +41,7 @@ static int test_create_destroy(void) {
     return 0;
 }
 
-/* --- Test: add and search documents --- */
+/* Test: add and search documents */
 static int test_add_and_search(void) {
     GV_FTConfig config;
     gv_ft_config_init(&config);
@@ -75,7 +75,7 @@ static int test_add_and_search(void) {
     return 0;
 }
 
-/* --- Test: phrase search --- */
+/* Test: phrase search */
 static int test_phrase_search(void) {
     GV_FTConfig config;
     gv_ft_config_init(&config);
@@ -100,7 +100,7 @@ static int test_phrase_search(void) {
     return 0;
 }
 
-/* --- Test: remove document --- */
+/* Test: remove document */
 static int test_remove_document(void) {
     GV_FTConfig config;
     gv_ft_config_init(&config);
@@ -124,7 +124,7 @@ static int test_remove_document(void) {
     return 0;
 }
 
-/* --- Test: Porter stemming --- */
+/* Test: Porter stemming */
 static int test_stem(void) {
     char output[128];
 
@@ -144,7 +144,7 @@ static int test_stem(void) {
     return 0;
 }
 
-/* --- Test: search on empty index --- */
+/* Test: search on empty index */
 static int test_search_empty(void) {
     GV_FTIndex *idx = gv_ft_create(NULL);
     ASSERT(idx != NULL, "create should succeed");
@@ -157,7 +157,7 @@ static int test_search_empty(void) {
     return 0;
 }
 
-/* --- Test: multiple languages --- */
+/* Test: multiple languages */
 static int test_language_config(void) {
     GV_FTConfig config;
     gv_ft_config_init(&config);

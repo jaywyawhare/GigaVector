@@ -5,7 +5,7 @@
 
 #define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while(0)
 
-/* ---------- test_config_defaults ---------- */
+/* test_config_defaults */
 static int test_config_defaults(void) {
     GV_BM25Config config;
     gv_bm25_config_init(&config);
@@ -14,7 +14,7 @@ static int test_config_defaults(void) {
     return 0;
 }
 
-/* ---------- test_create_destroy ---------- */
+/* test_create_destroy */
 static int test_create_destroy(void) {
     GV_BM25Index *idx = gv_bm25_create(NULL);
     ASSERT(idx != NULL, "gv_bm25_create(NULL) should succeed");
@@ -24,7 +24,7 @@ static int test_create_destroy(void) {
     return 0;
 }
 
-/* ---------- test_add_and_search ---------- */
+/* test_add_and_search */
 static int test_add_and_search(void) {
     GV_BM25Index *idx = gv_bm25_create(NULL);
     ASSERT(idx != NULL, "create should succeed");
@@ -48,7 +48,7 @@ static int test_add_and_search(void) {
     return 0;
 }
 
-/* ---------- test_remove_document ---------- */
+/* test_remove_document */
 static int test_remove_document(void) {
     GV_BM25Index *idx = gv_bm25_create(NULL);
     ASSERT(idx != NULL, "create should succeed");
@@ -69,7 +69,7 @@ static int test_remove_document(void) {
     return 0;
 }
 
-/* ---------- test_update_document ---------- */
+/* test_update_document */
 static int test_update_document(void) {
     GV_BM25Index *idx = gv_bm25_create(NULL);
     ASSERT(idx != NULL, "create should succeed");
@@ -87,7 +87,7 @@ static int test_update_document(void) {
     return 0;
 }
 
-/* ---------- test_stats ---------- */
+/* test_stats */
 static int test_stats(void) {
     GV_BM25Index *idx = gv_bm25_create(NULL);
     ASSERT(idx != NULL, "create should succeed");
@@ -106,7 +106,7 @@ static int test_stats(void) {
     return 0;
 }
 
-/* ---------- test_doc_freq_and_has_document ---------- */
+/* test_doc_freq_and_has_document */
 static int test_doc_freq_and_has_document(void) {
     GV_BM25Index *idx = gv_bm25_create(NULL);
     ASSERT(idx != NULL, "create should succeed");
@@ -134,7 +134,7 @@ static int test_doc_freq_and_has_document(void) {
     return 0;
 }
 
-/* ---------- test_score_document ---------- */
+/* test_score_document */
 static int test_score_document(void) {
     GV_BM25Index *idx = gv_bm25_create(NULL);
     ASSERT(idx != NULL, "create should succeed");

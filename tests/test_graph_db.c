@@ -13,8 +13,7 @@
         }                         \
     } while (0)
 
-/* ---- Lifecycle ---- */
-
+/* Lifecycle */
 static int test_create_destroy(void) {
     GV_GraphDB *g = gv_graph_create(NULL);
     ASSERT(g != NULL, "create with NULL config");
@@ -39,8 +38,7 @@ static int test_create_destroy(void) {
     return 0;
 }
 
-/* ---- Node Operations ---- */
-
+/* Node Operations */
 static int test_add_get_nodes(void) {
     GV_GraphDB *g = gv_graph_create(NULL);
 
@@ -135,8 +133,7 @@ static int test_remove_node(void) {
     return 0;
 }
 
-/* ---- Edge Operations ---- */
-
+/* Edge Operations */
 static int test_add_get_edges(void) {
     GV_GraphDB *g = gv_graph_create(NULL);
     uint64_t n1 = gv_graph_add_node(g, "A");
@@ -217,8 +214,7 @@ static int test_remove_edge(void) {
     return 0;
 }
 
-/* ---- Traversal ---- */
-
+/* Traversal */
 static int test_bfs_dfs(void) {
     /*  1 -> 2 -> 3 -> 4
      *  |         ^
@@ -289,8 +285,7 @@ static int test_shortest_path(void) {
     return 0;
 }
 
-/* ---- Analytics ---- */
-
+/* Analytics */
 static int test_degree(void) {
     GV_GraphDB *g = gv_graph_create(NULL);
     uint64_t a = gv_graph_add_node(g, "A");
@@ -377,8 +372,7 @@ static int test_clustering_coefficient(void) {
     return 0;
 }
 
-/* ---- Persistence ---- */
-
+/* Persistence */
 static int test_save_load(void) {
     const char *path = "/tmp/test_gv_graph.gvgr";
 
@@ -412,8 +406,7 @@ static int test_save_load(void) {
     return 0;
 }
 
-/* ---- Main ---- */
-
+/* Main */
 typedef int (*test_fn)(void);
 typedef struct { const char *name; test_fn fn; } TestEntry;
 

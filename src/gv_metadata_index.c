@@ -340,4 +340,3 @@ int gv_metadata_index_update(GV_MetadataIndex *index, size_t vector_index,
     return 0;
 }
 
-

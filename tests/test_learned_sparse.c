@@ -5,7 +5,7 @@
 
 #define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while(0)
 
-/* --- Test: config init defaults --- */
+/* Test: config init defaults */
 static int test_config_init(void) {
     GV_LearnedSparseConfig config;
     memset(&config, 0xFF, sizeof(config));
@@ -19,7 +19,7 @@ static int test_config_init(void) {
     return 0;
 }
 
-/* --- Test: create and destroy --- */
+/* Test: create and destroy */
 static int test_create_destroy(void) {
     GV_LearnedSparseConfig config;
     gv_ls_config_init(&config);
@@ -40,7 +40,7 @@ static int test_create_destroy(void) {
     return 0;
 }
 
-/* --- Test: insert and count --- */
+/* Test: insert and count */
 static int test_insert_count(void) {
     GV_LearnedSparseConfig config;
     gv_ls_config_init(&config);
@@ -71,7 +71,7 @@ static int test_insert_count(void) {
     return 0;
 }
 
-/* --- Test: search --- */
+/* Test: search */
 static int test_search(void) {
     GV_LearnedSparseConfig config;
     gv_ls_config_init(&config);
@@ -105,7 +105,7 @@ static int test_search(void) {
     return 0;
 }
 
-/* --- Test: search with threshold --- */
+/* Test: search with threshold */
 static int test_search_threshold(void) {
     GV_LearnedSparseConfig config;
     gv_ls_config_init(&config);
@@ -131,7 +131,7 @@ static int test_search_threshold(void) {
     return 0;
 }
 
-/* --- Test: delete document --- */
+/* Test: delete document */
 static int test_delete(void) {
     GV_LearnedSparseConfig config;
     gv_ls_config_init(&config);
@@ -157,7 +157,7 @@ static int test_delete(void) {
     return 0;
 }
 
-/* --- Test: get stats --- */
+/* Test: get stats */
 static int test_stats(void) {
     GV_LearnedSparseConfig config;
     gv_ls_config_init(&config);
@@ -181,7 +181,7 @@ static int test_stats(void) {
     return 0;
 }
 
-/* --- Test: search on empty index --- */
+/* Test: search on empty index */
 static int test_search_empty(void) {
     GV_LearnedSparseIndex *idx = gv_ls_create(NULL);
     ASSERT(idx != NULL, "create should succeed");

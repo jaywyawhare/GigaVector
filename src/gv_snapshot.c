@@ -11,7 +11,7 @@
 #include <string.h>
 #include <time.h>
 
-/*  Internal structures  */
+/* Internal structures */
 
 typedef struct {
     uint64_t snapshot_id;
@@ -35,14 +35,14 @@ struct GV_Snapshot {
     const GV_SnapshotEntry *entry;
 };
 
-/*  Constants  */
+/* Constants */
 
 #define SNAPSHOT_MAGIC      "GVSNAP"
 #define SNAPSHOT_MAGIC_LEN  6
 #define SNAPSHOT_VERSION    1
 #define INITIAL_CAPACITY    8
 
-/*  Helpers  */
+/* Helpers */
 
 static uint64_t now_microseconds(void)
 {
@@ -79,7 +79,7 @@ static GV_SnapshotEntry *find_entry(const GV_SnapshotManager *mgr,
     return NULL;
 }
 
-/*  Manager lifecycle  */
+/* Manager lifecycle */
 
 GV_SnapshotManager *gv_snapshot_manager_create(size_t max_snapshots)
 {
@@ -104,7 +104,7 @@ void gv_snapshot_manager_destroy(GV_SnapshotManager *mgr)
     free(mgr);
 }
 
-/*  Snapshot creation  */
+/* Snapshot creation */
 
 uint64_t gv_snapshot_create(GV_SnapshotManager *mgr, size_t vector_count,
                             const float *vector_data, size_t dimension,
@@ -157,7 +157,7 @@ uint64_t gv_snapshot_create(GV_SnapshotManager *mgr, size_t vector_count,
     return mgr->next_id++;
 }
 
-/*  Snapshot open / close  */
+/* Snapshot open / close */
 
 GV_Snapshot *gv_snapshot_open(GV_SnapshotManager *mgr, uint64_t snapshot_id)
 {
@@ -183,7 +183,7 @@ void gv_snapshot_close(GV_Snapshot *snap)
     free(snap);
 }
 
-/*  Query snapshot data  */
+/* Query snapshot data */
 
 size_t gv_snapshot_count(const GV_Snapshot *snap)
 {
@@ -212,7 +212,7 @@ size_t gv_snapshot_dimension(const GV_Snapshot *snap)
     return snap->entry->dimension;
 }
 
-/*  Management: list, delete  */
+/* Management: list, delete */
 
 int gv_snapshot_list(const GV_SnapshotManager *mgr, GV_SnapshotInfo *infos,
                      size_t max_infos)
@@ -254,7 +254,7 @@ int gv_snapshot_delete(GV_SnapshotManager *mgr, uint64_t snapshot_id)
     return 0;
 }
 
-/*  Persistence: save / load  */
+/* Persistence: save / load */
 
 int gv_snapshot_save(const GV_SnapshotManager *mgr, FILE *out)
 {

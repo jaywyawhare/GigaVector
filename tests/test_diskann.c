@@ -21,7 +21,7 @@ static void generate_batch(float *data, size_t count, size_t dim) {
     }
 }
 
-/* 1. test_diskann_config_init                                         */
+/* 1. test_diskann_config_init */
 static int test_diskann_config_init(void) {
     GV_DiskANNConfig config;
     memset(&config, 0xFF, sizeof(config));
@@ -38,7 +38,7 @@ static int test_diskann_config_init(void) {
     return 0;
 }
 
-/* 2. test_diskann_create_destroy                                      */
+/* 2. test_diskann_create_destroy */
 static int test_diskann_create_destroy(void) {
     GV_DiskANNConfig config;
     gv_diskann_config_init(&config);
@@ -51,7 +51,7 @@ static int test_diskann_create_destroy(void) {
     return 0;
 }
 
-/* 3. test_diskann_build_and_count                                     */
+/* 3. test_diskann_build_and_count */
 static int test_diskann_build_and_count(void) {
     GV_DiskANNConfig config;
     gv_diskann_config_init(&config);
@@ -73,7 +73,7 @@ static int test_diskann_build_and_count(void) {
     return 0;
 }
 
-/* 4. test_diskann_search                                              */
+/* 4. test_diskann_search */
 static int test_diskann_search(void) {
     GV_DiskANNConfig config;
     gv_diskann_config_init(&config);
@@ -102,7 +102,7 @@ static int test_diskann_search(void) {
     return 0;
 }
 
-/* 5. test_diskann_search_ordering                                     */
+/* 5. test_diskann_search_ordering */
 static int test_diskann_search_ordering(void) {
     GV_DiskANNConfig config;
     gv_diskann_config_init(&config);
@@ -132,7 +132,7 @@ static int test_diskann_search_ordering(void) {
     return 0;
 }
 
-/* 6. test_diskann_incremental_insert                                  */
+/* 6. test_diskann_incremental_insert */
 static int test_diskann_incremental_insert(void) {
     GV_DiskANNConfig config;
     gv_diskann_config_init(&config);
@@ -159,7 +159,7 @@ static int test_diskann_incremental_insert(void) {
     return 0;
 }
 
-/* 7. test_diskann_delete                                              */
+/* 7. test_diskann_delete */
 static int test_diskann_delete(void) {
     GV_DiskANNConfig config;
     gv_diskann_config_init(&config);
@@ -180,7 +180,7 @@ static int test_diskann_delete(void) {
     return 0;
 }
 
-/* 8. test_diskann_stats                                               */
+/* 8. test_diskann_stats */
 static int test_diskann_stats(void) {
     GV_DiskANNConfig config;
     gv_diskann_config_init(&config);

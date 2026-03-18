@@ -24,7 +24,7 @@ static GV_Database *make_db(void) {
     return db;
 }
 
-/* ---------- test_threshold_passes_euclidean ---------- */
+/* test_threshold_passes_euclidean */
 static int test_threshold_passes_euclidean(void) {
     /* For euclidean: distance <= threshold passes */
     ASSERT(gv_threshold_passes(0.5f, 1.0f, GV_DISTANCE_EUCLIDEAN) == 1,
@@ -36,7 +36,7 @@ static int test_threshold_passes_euclidean(void) {
     return 0;
 }
 
-/* ---------- test_threshold_passes_manhattan ---------- */
+/* test_threshold_passes_manhattan */
 static int test_threshold_passes_manhattan(void) {
     ASSERT(gv_threshold_passes(0.3f, 0.5f, GV_DISTANCE_MANHATTAN) == 1,
            "0.3 <= 0.5 should pass for manhattan");
@@ -45,7 +45,7 @@ static int test_threshold_passes_manhattan(void) {
     return 0;
 }
 
-/* ---------- test_threshold_filter_basic ---------- */
+/* test_threshold_filter_basic */
 static int test_threshold_filter_basic(void) {
     GV_ThresholdResult results[] = {
         {0, 0.1f},
@@ -63,7 +63,7 @@ static int test_threshold_filter_basic(void) {
     return 0;
 }
 
-/* ---------- test_threshold_filter_none_pass ---------- */
+/* test_threshold_filter_none_pass */
 static int test_threshold_filter_none_pass(void) {
     GV_ThresholdResult results[] = {
         {0, 5.0f},
@@ -74,7 +74,7 @@ static int test_threshold_filter_none_pass(void) {
     return 0;
 }
 
-/* ---------- test_threshold_filter_all_pass ---------- */
+/* test_threshold_filter_all_pass */
 static int test_threshold_filter_all_pass(void) {
     GV_ThresholdResult results[] = {
         {0, 0.01f},
@@ -86,7 +86,7 @@ static int test_threshold_filter_all_pass(void) {
     return 0;
 }
 
-/* ---------- test_search_with_threshold ---------- */
+/* test_search_with_threshold */
 static int test_search_with_threshold(void) {
     GV_Database *db = make_db();
     ASSERT(db != NULL, "make_db should succeed");
@@ -106,7 +106,7 @@ static int test_search_with_threshold(void) {
     return 0;
 }
 
-/* ---------- test_threshold_filter_empty ---------- */
+/* test_threshold_filter_empty */
 static int test_threshold_filter_empty(void) {
     size_t count = gv_threshold_filter(NULL, 0, 1.0f, GV_DISTANCE_EUCLIDEAN);
     ASSERT(count == 0, "filtering empty set should return 0");

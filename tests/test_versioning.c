@@ -5,8 +5,7 @@
 
 #define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while(0)
 
-/* ---------- test functions ---------- */
-
+/* test functions */
 static int test_manager_create_destroy(void) {
     GV_VersionManager *mgr = gv_version_manager_create(10);
     ASSERT(mgr != NULL, "gv_version_manager_create returned NULL");
@@ -164,8 +163,7 @@ static int test_save_load(void) {
     return 0;
 }
 
-/* ---------- harness ---------- */
-
+/* harness */
 typedef int (*test_fn)(void);
 typedef struct { const char *name; test_fn fn; } TestCase;
 

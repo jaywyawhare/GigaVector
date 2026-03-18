@@ -13,7 +13,6 @@
 
 // Helper function to create metadata
 
-
 #include "gigavector/gv_database.h"
 #include "gigavector/gv_distance.h"
 #include "gigavector/gv_exact_search.h"
@@ -156,7 +155,6 @@ static char *gv_db_build_wal_path(const char *filepath) {
 
     return gv_strdup(buf);
 }
-
 
 static int gv_db_wal_apply_rich(void *ctx, const float *data, size_t dimension,
                                 const char *const *metadata_keys, const char *const *metadata_values,
@@ -2858,7 +2856,6 @@ int gv_db_search_sparse(const GV_Database *db, const uint32_t *indices, const fl
     return r;
 }
 
-
 int gv_db_range_search(const GV_Database *db, const float *query_data, float radius,
                        GV_SearchResult *results, size_t max_results, GV_DistanceType distance_type) {
     if (db == NULL || query_data == NULL || results == NULL || max_results == 0 || radius < 0.0f) {
@@ -3965,9 +3962,6 @@ static void gv_db_add_latency_sample(GV_LatencyHistogram *hist, uint64_t latency
  * @brief Calculate percentile from histogram.
  */
 
-
-
-
 /**
  * @brief Record latency for an operation.
  */
@@ -4373,9 +4367,7 @@ int gv_db_health_check(const GV_Database *db) {
     return health;
 }
 
-/*
- * Upsert Operations
- */
+/* * Upsert Operations */
 
 int gv_db_upsert(GV_Database *db, size_t vector_index, const float *data, size_t dimension) {
     if (db == NULL || data == NULL || dimension != db->dimension) {
@@ -4420,9 +4412,7 @@ int gv_db_upsert_with_metadata(GV_Database *db, size_t vector_index,
     return -1;
 }
 
-/*
- * Batch Delete
- */
+/* * Batch Delete */
 
 int gv_db_delete_vectors(GV_Database *db, const size_t *indices, size_t count) {
     if (db == NULL || indices == NULL || count == 0) {
@@ -4438,9 +4428,7 @@ int gv_db_delete_vectors(GV_Database *db, const size_t *indices, size_t count) {
     return deleted;
 }
 
-/*
- * Scroll / Pagination
- */
+/* * Scroll / Pagination */
 
 int gv_db_scroll(const GV_Database *db, size_t offset, size_t limit,
                  GV_ScrollResult *results) {
@@ -4479,9 +4467,7 @@ int gv_db_scroll(const GV_Database *db, size_t offset, size_t limit,
     return 0;
 }
 
-/*
- * Search with Dynamic Parameters
- */
+/* * Search with Dynamic Parameters */
 
 /* Internal struct layouts for accessing ef_search / nprobe */
 typedef struct {
@@ -4550,9 +4536,7 @@ int gv_db_search_with_params(const GV_Database *db, const float *query_data, siz
     return gv_db_search(db, query_data, k, results, distance_type);
 }
 
-/*
- * JSON Import / Export
- */
+/* * JSON Import / Export */
 
 #include "gigavector/gv_json.h"
 
@@ -4722,9 +4706,7 @@ int gv_db_import_json(GV_Database *db, const char *filepath) {
     return imported;
 }
 
-/*
- * Database Accessor Functions
- */
+/* * Database Accessor Functions */
 
 size_t gv_database_count(const GV_Database *db) {
     if (!db) return 0;

@@ -10,7 +10,7 @@
 #define GV_SCHEMA_MAGIC_LEN 4
 #define GV_SCHEMA_INITIAL_CAPACITY 8
 
-/*  Helpers  */
+/* Helpers */
 
 static const char *gv_schema_type_to_string(GV_SchemaFieldType type) {
     switch (type) {
@@ -89,7 +89,7 @@ static int buf_append_json_string(char **buf, size_t *len, size_t *cap, const ch
     return 0;
 }
 
-/*  Create / Destroy / Copy  */
+/* Create / Destroy / Copy */
 
 GV_Schema *gv_schema_create(uint32_t version) {
     GV_Schema *schema = (GV_Schema *)calloc(1, sizeof(GV_Schema));
@@ -130,7 +130,7 @@ GV_Schema *gv_schema_copy(const GV_Schema *schema) {
     return copy;
 }
 
-/*  Field management  */
+/* Field management */
 
 int gv_schema_add_field(GV_Schema *schema, const char *name, GV_SchemaFieldType type,
                          int required, const char *default_value) {
@@ -195,7 +195,7 @@ size_t gv_schema_field_count(const GV_Schema *schema) {
     return schema->field_count;
 }
 
-/*  Validation  */
+/* Validation */
 
 static int gv_schema_validate_int(const char *value) {
     if (!value || *value == '\0') return 0;
@@ -278,7 +278,7 @@ int gv_schema_validate(const GV_Schema *schema, const char *const *keys,
     return 0;
 }
 
-/*  Schema diff  */
+/* Schema diff */
 
 int gv_schema_diff(const GV_Schema *old_schema, const GV_Schema *new_schema,
                     GV_SchemaDiff *diffs, size_t max_diffs) {
@@ -329,7 +329,7 @@ int gv_schema_diff(const GV_Schema *old_schema, const GV_Schema *new_schema,
     return (int)diff_count;
 }
 
-/*  Compatibility check  */
+/* Compatibility check */
 
 int gv_schema_is_compatible(const GV_Schema *old_schema, const GV_Schema *new_schema) {
     if (!old_schema || !new_schema) return -1;
@@ -354,7 +354,7 @@ int gv_schema_is_compatible(const GV_Schema *old_schema, const GV_Schema *new_sc
     return 0;  /* Compatible */
 }
 
-/*  Persistence -- binary save / load  */
+/* Persistence -- binary save / load */
 
 int gv_schema_save(const GV_Schema *schema, FILE *out) {
     if (!schema || !out) return -1;
@@ -443,7 +443,7 @@ fail:
     return NULL;
 }
 
-/*  JSON serialization  */
+/* JSON serialization */
 
 char *gv_schema_to_json(const GV_Schema *schema) {
     if (!schema) return NULL;

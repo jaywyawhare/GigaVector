@@ -5,8 +5,7 @@
 
 #define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while(0)
 
-/* ---------- test functions ---------- */
-
+/* test functions */
 static int test_manager_create_destroy(void) {
     GV_SnapshotManager *mgr = gv_snapshot_manager_create(10);
     ASSERT(mgr != NULL, "gv_snapshot_manager_create returned NULL");

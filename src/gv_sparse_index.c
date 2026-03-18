@@ -541,9 +541,6 @@ int gv_sparse_index_load(GV_SparseIndex **index_out, FILE *in,
     return 0;
 }
 
-
-
-
 int gv_sparse_index_delete(GV_SparseIndex *index, size_t vector_index) {
     if (index == NULL || vector_index >= index->count) {
         return -1;

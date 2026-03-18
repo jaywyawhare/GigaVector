@@ -14,7 +14,7 @@
 #include <time.h>
 #include <errno.h>
 
-/*  Internal Structures  */
+/* Internal Structures */
 
 struct GV_VacuumManager {
     GV_Database *db;
@@ -28,7 +28,7 @@ struct GV_VacuumManager {
     pthread_cond_t cond;
 };
 
-/*  Time Helpers  */
+/* Time Helpers */
 
 static uint64_t vacuum_get_time_ms(void) {
     struct timespec ts;
@@ -42,7 +42,7 @@ static uint64_t vacuum_get_epoch_ms(void) {
     return (uint64_t)ts.tv_sec * 1000ULL + (uint64_t)ts.tv_nsec / 1000000ULL;
 }
 
-/*  Fragmentation Analysis  */
+/* Fragmentation Analysis */
 
 /**
  * @brief Count deleted vectors in the SoA storage.
@@ -82,7 +82,7 @@ static double vacuum_compute_fragmentation(const GV_Database *db) {
     return (double)deleted / (double)db->soa_storage->count;
 }
 
-/*  Core Vacuum Logic  */
+/* Core Vacuum Logic */
 
 /**
  * @brief Perform a single vacuum pass with batch processing.
@@ -98,7 +98,7 @@ static double vacuum_compute_fragmentation(const GV_Database *db) {
 static int vacuum_run_internal(GV_VacuumManager *mgr) {
     GV_Database *db = mgr->db;
 
-    /* ------- pre-check under read lock ------- */
+    /* pre-check under read lock */
     pthread_rwlock_rdlock(&db->rwlock);
     double frag_before = vacuum_compute_fragmentation(db);
     size_t deleted_count = vacuum_count_deleted(db);
@@ -111,7 +111,7 @@ static int vacuum_run_internal(GV_VacuumManager *mgr) {
         return 0;
     }
 
-    /* ------- update state ------- */
+    /* update state */
     pthread_mutex_lock(&mgr->mutex);
     mgr->stats.state = GV_VACUUM_RUNNING;
     mgr->stats.started_at = vacuum_get_epoch_ms();
@@ -120,7 +120,7 @@ static int vacuum_run_internal(GV_VacuumManager *mgr) {
 
     uint64_t t_start = vacuum_get_time_ms();
 
-    /* ------- acquire write lock and compact ------- */
+    /* acquire write lock and compact */
     pthread_rwlock_wrlock(&db->rwlock);
 
     GV_SoAStorage *storage = db->soa_storage;
@@ -259,7 +259,7 @@ static int vacuum_run_internal(GV_VacuumManager *mgr) {
 
     pthread_rwlock_unlock(&db->rwlock);
 
-    /* ------- update stats ------- */
+    /* update stats */
     uint64_t t_end = vacuum_get_time_ms();
 
     pthread_mutex_lock(&mgr->mutex);
@@ -275,7 +275,7 @@ static int vacuum_run_internal(GV_VacuumManager *mgr) {
     return 0;
 }
 
-/*  Background Thread  */
+/* Background Thread */
 
 static void *vacuum_thread_func(void *arg) {
     GV_VacuumManager *mgr = (GV_VacuumManager *)arg;
@@ -316,7 +316,7 @@ static void *vacuum_thread_func(void *arg) {
     return NULL;
 }
 
-/*  Public API  */
+/* Public API */
 
 void gv_vacuum_config_init(GV_VacuumConfig *config) {
     if (config == NULL) {

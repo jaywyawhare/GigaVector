@@ -8,7 +8,7 @@
 
 #include "gigavector/gv_versioning.h"
 
-/*  Internal types  */
+/* Internal types */
 
 typedef struct {
     uint64_t version_id;
@@ -28,7 +28,7 @@ struct GV_VersionManager {
     uint64_t         next_id;
 };
 
-/*  Helpers  */
+/* Helpers */
 
 static uint64_t now_microseconds(void)
 {
@@ -81,7 +81,7 @@ static int ensure_capacity(GV_VersionManager *mgr)
     return 0;
 }
 
-/*  Public API  */
+/* Public API */
 
 GV_VersionManager *gv_version_manager_create(size_t max_versions)
 {
@@ -240,7 +240,7 @@ int gv_version_compare(const GV_VersionManager *mgr, uint64_t v1, uint64_t v2,
     return total_diff;
 }
 
-/*  Persistence helpers  */
+/* Persistence helpers */
 
 static int write_uint64(FILE *out, uint64_t v)
 {

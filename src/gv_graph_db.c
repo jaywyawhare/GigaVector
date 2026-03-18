@@ -19,9 +19,7 @@
 #include <float.h>
 #include <pthread.h>
 
-/*
- * Constants
- */
+/* * Constants */
 
 #define GV_GRAPH_MAGIC       "GVGR"
 #define GV_GRAPH_MAGIC_LEN   4
@@ -31,9 +29,7 @@
 #define DEFAULT_EDGE_BUCKETS 8192
 #define INITIAL_ADJ_CAP      4
 
-/*
- * Internal Hash Table Entry Types
- */
+/* * Internal Hash Table Entry Types */
 
 /**
  * @brief Hash table entry wrapping a GV_GraphNode (chaining via next pointer).
@@ -51,9 +47,7 @@ typedef struct EdgeEntry {
     struct EdgeEntry *next;
 } EdgeEntry;
 
-/*
- * Opaque GV_GraphDB Definition
- */
+/* * Opaque GV_GraphDB Definition */
 
 struct GV_GraphDB {
     NodeEntry **node_buckets;       /**< Node hash table bucket array. */
@@ -71,9 +65,7 @@ struct GV_GraphDB {
     pthread_rwlock_t rwlock;        /**< Reader-writer lock for thread safety. */
 };
 
-/*
- * Hash Function (djb2 on uint64_t)
- */
+/* * Hash Function (djb2 on uint64_t) */
 
 static size_t hash_u64(uint64_t id, size_t bucket_count)
 {
@@ -86,9 +78,7 @@ static size_t hash_u64(uint64_t id, size_t bucket_count)
     return hash % bucket_count;
 }
 
-/*
- * String Helpers
- */
+/* * String Helpers */
 
 static char *str_dup(const char *s)
 {
@@ -100,9 +90,7 @@ static char *str_dup(const char *s)
     return copy;
 }
 
-/*
- * Property Helpers
- */
+/* * Property Helpers */
 
 static void free_prop_list(GV_GraphProp *head)
 {
@@ -159,9 +147,7 @@ static int set_prop(GV_GraphProp **head, size_t *count,
     return 0;
 }
 
-/*
- * Node Lookup (internal, no locking)
- */
+/* * Node Lookup (internal, no locking) */
 
 static NodeEntry *find_node_entry(const GV_GraphDB *g, uint64_t node_id)
 {
@@ -174,9 +160,7 @@ static NodeEntry *find_node_entry(const GV_GraphDB *g, uint64_t node_id)
     return NULL;
 }
 
-/*
- * Edge Lookup (internal, no locking)
- */
+/* * Edge Lookup (internal, no locking) */
 
 static EdgeEntry *find_edge_entry(const GV_GraphDB *g, uint64_t edge_id)
 {
@@ -189,9 +173,7 @@ static EdgeEntry *find_edge_entry(const GV_GraphDB *g, uint64_t edge_id)
     return NULL;
 }
 
-/*
- * Adjacency List Helpers
- */
+/* * Adjacency List Helpers */
 
 static int adj_add(GV_GraphEdgeRef **arr, size_t *count, size_t *cap,
                    uint64_t edge_id, uint64_t neighbor_id)
@@ -221,9 +203,7 @@ static void adj_remove(GV_GraphEdgeRef *arr, size_t *count, uint64_t edge_id)
     }
 }
 
-/*
- * Node Cleanup Helper
- */
+/* * Node Cleanup Helper */
 
 static void free_node_internals(GV_GraphNode *node)
 {
@@ -233,9 +213,7 @@ static void free_node_internals(GV_GraphNode *node)
     free(node->in_edges);
 }
 
-/*
- * Edge Cleanup Helper
- */
+/* * Edge Cleanup Helper */
 
 static void free_edge_internals(GV_GraphEdge *edge)
 {
@@ -243,9 +221,7 @@ static void free_edge_internals(GV_GraphEdge *edge)
     free_prop_list(edge->properties);
 }
 
-/*
- * Internal: Remove a single edge (no lock, updates adjacency)
- */
+/* * Internal: Remove a single edge (no lock, updates adjacency) */
 
 static int remove_edge_internal(GV_GraphDB *g, uint64_t edge_id)
 {
@@ -284,9 +260,7 @@ static int remove_edge_internal(GV_GraphDB *g, uint64_t edge_id)
     return 0;
 }
 
-/*
- * Visited-Set Helper (simple linear probe hash set for traversal)
- */
+/* * Visited-Set Helper (simple linear probe hash set for traversal) */
 
 typedef struct {
     uint64_t *slots;
@@ -376,9 +350,7 @@ static int visited_insert(VisitedSet *vs, uint64_t id)
     return -1; /* should not happen */
 }
 
-/*
- * Distance Map Helper (open-addressing hash map: uint64_t -> float)
- */
+/* * Distance Map Helper (open-addressing hash map: uint64_t -> float) */
 
 typedef struct {
     uint64_t *keys;
@@ -534,9 +506,7 @@ static uint64_t distmap_get_prev_edge(const DistMap *dm, uint64_t key)
     return 0;
 }
 
-/*
- * Min-Heap for Dijkstra (array-based)
- */
+/* * Min-Heap for Dijkstra (array-based) */
 
 typedef struct {
     uint64_t node_id;
@@ -633,9 +603,7 @@ static int heap_pop(MinHeap *h, HeapEntry *out)
     return 0;
 }
 
-/*
- * ID-to-Index Map Lookup Helper
- */
+/* * ID-to-Index Map Lookup Helper */
 
 /**
  * @brief Look up a node ID in an open-addressing hash map and return its index.
@@ -653,9 +621,7 @@ static size_t idmap_lookup(const uint64_t *keys, const int *occ,
     return (size_t)-1;
 }
 
-/*
- * Collect All Node IDs Helper
- */
+/* * Collect All Node IDs Helper */
 
 /**
  * @brief Collect all node IDs from the hash table into an array.
@@ -687,9 +653,7 @@ static uint64_t *collect_all_node_ids(const GV_GraphDB *g, size_t *out_count)
     return ids;
 }
 
-/*
- * File I/O Helpers
- */
+/* * File I/O Helpers */
 
 static int write_u32(FILE *f, uint32_t v)
 {
@@ -743,9 +707,7 @@ static char *read_str(FILE *f)
     return s;
 }
 
-/*
- * Lifecycle Implementation
- */
+/* * Lifecycle Implementation */
 
 void gv_graph_config_init(GV_GraphDBConfig *config)
 {
@@ -828,9 +790,7 @@ void gv_graph_destroy(GV_GraphDB *g)
     free(g);
 }
 
-/*
- * Node Operations
- */
+/* * Node Operations */
 
 uint64_t gv_graph_add_node(GV_GraphDB *g, const char *label)
 {
@@ -986,9 +946,7 @@ int gv_graph_find_nodes_by_label(const GV_GraphDB *g, const char *label,
     return (count > (int)max_count) ? (int)max_count : count;
 }
 
-/*
- * Edge Operations
- */
+/* * Edge Operations */
 
 uint64_t gv_graph_add_edge(GV_GraphDB *g, uint64_t source, uint64_t target,
                            const char *label, float weight)
@@ -1190,9 +1148,7 @@ int gv_graph_get_neighbors(const GV_GraphDB *g, uint64_t node_id,
     return count;
 }
 
-/*
- * Traversal: BFS
- */
+/* * Traversal: BFS */
 
 int gv_graph_bfs(const GV_GraphDB *g, uint64_t start, size_t max_depth,
                  uint64_t *out_ids, size_t max_count)
@@ -1316,9 +1272,7 @@ bfs_done:
     return (result_count > (int)max_count) ? (int)max_count : result_count;
 }
 
-/*
- * Traversal: DFS
- */
+/* * Traversal: DFS */
 
 /**
  * @brief Recursive DFS helper (internal, no locking).
@@ -1385,9 +1339,7 @@ int gv_graph_dfs(const GV_GraphDB *g, uint64_t start, size_t max_depth,
     return (count > (int)max_count) ? (int)max_count : count;
 }
 
-/*
- * Traversal: Dijkstra Shortest Path
- */
+/* * Traversal: Dijkstra Shortest Path */
 
 int gv_graph_shortest_path(const GV_GraphDB *g, uint64_t from, uint64_t to,
                            GV_GraphPath *path)
@@ -1541,9 +1493,7 @@ int gv_graph_shortest_path(const GV_GraphDB *g, uint64_t from, uint64_t to,
     return 0;
 }
 
-/*
- * Traversal: All Paths (DFS with backtracking)
- */
+/* * Traversal: All Paths (DFS with backtracking) */
 
 /**
  * @brief Build a GV_GraphPath from the current path stack.
@@ -1672,9 +1622,7 @@ void gv_graph_free_path(GV_GraphPath *path)
     path->total_weight = 0.0f;
 }
 
-/*
- * Analytics: PageRank
- */
+/* * Analytics: PageRank */
 
 float gv_graph_pagerank(const GV_GraphDB *g, uint64_t node_id,
                         size_t iterations, float damping)
@@ -1783,9 +1731,7 @@ float gv_graph_pagerank(const GV_GraphDB *g, uint64_t node_id,
     return result;
 }
 
-/*
- * Analytics: Degree Functions
- */
+/* * Analytics: Degree Functions */
 
 size_t gv_graph_degree(const GV_GraphDB *g, uint64_t node_id)
 {
@@ -1817,9 +1763,7 @@ size_t gv_graph_out_degree(const GV_GraphDB *g, uint64_t node_id)
     return deg;
 }
 
-/*
- * Analytics: Connected Components
- */
+/* * Analytics: Connected Components */
 
 int gv_graph_connected_components(const GV_GraphDB *g,
                                   uint64_t *component_ids, size_t max_count)
@@ -1932,9 +1876,7 @@ int gv_graph_connected_components(const GV_GraphDB *g,
     return (int)comp_id;
 }
 
-/*
- * Analytics: Clustering Coefficient
- */
+/* * Analytics: Clustering Coefficient */
 
 float gv_graph_clustering_coefficient(const GV_GraphDB *g, uint64_t node_id)
 {
@@ -2037,9 +1979,7 @@ float gv_graph_clustering_coefficient(const GV_GraphDB *g, uint64_t node_id)
     return cc;
 }
 
-/*
- * Stats
- */
+/* * Stats */
 
 size_t gv_graph_node_count(const GV_GraphDB *g)
 {
@@ -2059,9 +1999,7 @@ size_t gv_graph_edge_count(const GV_GraphDB *g)
     return count;
 }
 
-/*
- * Persistence: Save
- */
+/* * Persistence: Save */
 
 int gv_graph_save(const GV_GraphDB *g, const char *path)
 {
@@ -2142,9 +2080,7 @@ save_fail:
     return -1;
 }
 
-/*
- * Persistence: Load
- */
+/* * Persistence: Load */
 
 GV_GraphDB *gv_graph_load(const char *path)
 {
