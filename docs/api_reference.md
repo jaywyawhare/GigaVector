@@ -889,33 +889,6 @@ Many functions set error messages accessible via:
 const char *error = gv_llm_get_last_error(llm);
 ```
 
-### Best Practices
-
-1. **Always check return values**
-2. **Free resources in reverse order of allocation**
-3. **Use NULL checks before dereferencing**
-4. **Handle errors gracefully**
-
-**Example:**
-```c
-GV_Database *db = gv_db_open("db.gvdb", 128, GV_INDEX_TYPE_HNSW);
-if (db == NULL) {
-    fprintf(stderr, "Failed to open database\n");
-    return 1;
-}
-
-int result = gv_db_add_vector(db, vector, 128);
-if (result != 0) {
-    fprintf(stderr, "Failed to add vector\n");
-    gv_db_close(db);
-    return 1;
-}
-
-// ... use database ...
-
-gv_db_close(db);
-```
-
 ---
 
 ## HTTP REST Server
@@ -973,17 +946,11 @@ gv_server_destroy(server);
 
 ### Web Dashboard
 
-The web dashboard is a pure-Python feature — no C HTTP library (libmicrohttpd) required.
-Use the Python `serve_with_dashboard()` function:
-
 ```python
 from gigavector import serve_with_dashboard
 server = serve_with_dashboard(db, port=6969)
 # Dashboard at http://localhost:6969/dashboard
-server.stop()
 ```
-
-The dashboard server also exposes `/api/dashboard/info`, `/health`, `/stats`, and all vector/search endpoints.
 
 ---
 
@@ -1276,30 +1243,7 @@ gv_replication_add_replica(db, "replica1:8080");
 
 ## Thread Safety
 
-GigaVector databases are thread-safe for concurrent reads. Writes require external synchronization.
-
-**Safe:**
-- Multiple threads reading simultaneously
-- Multiple threads calling `gv_db_search()` concurrently
-
-**Requires Synchronization:**
-- Concurrent writes (`gv_db_add_vector()`)
-- Mixed read/write operations
-
-**Example with Mutex:**
-```c
-pthread_mutex_t db_mutex = PTHREAD_MUTEX_INITIALIZER;
-
-// Thread 1
-pthread_mutex_lock(&db_mutex);
-gv_db_add_vector(db, vector1, 128);
-pthread_mutex_unlock(&db_mutex);
-
-// Thread 2
-pthread_mutex_lock(&db_mutex);
-gv_db_add_vector(db, vector2, 128);
-pthread_mutex_unlock(&db_mutex);
-```
+See [C API Guide](c_api_guide.md) for thread safety guidelines.
 
 ---
 
@@ -1491,11 +1435,7 @@ Saves database snapshot. WAL is automatically replayed on next open.
 
 ## Performance Tips
 
-1. **Choose the right index**: Use `gv_index_suggest()` for guidance
-2. **Enable cosine normalization**: For cosine distance queries
-3. **Batch operations**: Use batch embedding APIs when available
-4. **Monitor statistics**: Use `gv_db_get_detailed_stats()` for optimization
-5. **Tune HNSW parameters**: Adjust M and ef_construction for your workload
+See [Performance Tuning](performance.md) for optimization guidelines.
 
 ---
 

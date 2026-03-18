@@ -35,7 +35,7 @@ from gigavector import Database, DistanceType, IndexType
 with Database.open("my_db.db", dimension=128, index=IndexType.HNSW) as db:
     # Add a vector
     db.add_vector([0.1] * 128, metadata={"id": "1", "category": "A"})
-    
+
     # Search
     results = db.search([0.1] * 128, k=5, distance=DistanceType.EUCLIDEAN)
     for hit in results:
@@ -233,14 +233,8 @@ print(f"QPS: {detailed['queries_per_second']}")
 print(f"Memory: {detailed['memory']['total_bytes'] / 1024 / 1024:.2f} MB")
 print(f"Recall: {detailed['recall']['avg_recall']:.2%}")
 
-# Health check
+# Health check — returns 0 (healthy), -1 (degraded), or positive (unhealthy)
 health = db.health_check()
-if health == 0:
-    print("Database is healthy")
-elif health == -1:
-    print("Database is degraded")
-else:
-    print("Database is unhealthy")
 ```
 
 ## C API Usage
@@ -259,13 +253,13 @@ int main() {
         fprintf(stderr, "Failed to create database\n");
         return 1;
     }
-    
+
     // Add vector
     float data[128];
     for (int i = 0; i < 128; i++) {
         data[i] = (float)rand() / RAND_MAX;
     }
-    
+
     int rc = gv_db_add_vector_with_metadata(
         db, data, 128, "id", "1"
     );
@@ -274,25 +268,25 @@ int main() {
         gv_db_close(db);
         return 1;
     }
-    
+
     // Search
     float query[128];
     for (int i = 0; i < 128; i++) {
         query[i] = (float)rand() / RAND_MAX;
     }
-    
+
     GV_SearchResult results[10];
     int found = gv_db_search(
         db, query, 10, results, GV_DISTANCE_EUCLIDEAN
     );
-    
+
     if (found > 0) {
         printf("Found %d results:\n", found);
         for (int i = 0; i < found; i++) {
             printf("  Distance: %f\n", results[i].distance);
         }
     }
-    
+
     // Save and close
     gv_db_save(db, "example.db");
     gv_db_close(db);
@@ -493,64 +487,6 @@ gvinspect mydb.db
 
 ---
 
-## Common Patterns
-
-### Pattern 1: Building an Index Incrementally
-
-```python
-# Python
-with Database.open("index.db", dimension=128) as db:
-    for batch in data_batches:
-        for vector in batch:
-            db.add_vector(vector)
-        # Periodic saves
-        if batch_num % 100 == 0:
-            db.save("checkpoint.db")
-```
-
-### Pattern 2: Filtered Search
-
-```python
-# Search for products in a specific category
-results = db.search(
-    query_vector, k=20,
-    filter_metadata=("category", "electronics")
-)
-
-# Complex filtering
-results = db.search_with_filter_expr(
-    query_vector, k=20,
-    filter_expr='category == "electronics" AND price >= "100" AND rating >= "4.0"'
-)
-```
-
-### Pattern 3: Batch Processing
-
-```python
-# Process queries in batches
-query_batches = [queries[i:i+100] for i in range(0, len(queries), 100)]
-all_results = []
-
-for batch in query_batches:
-    results = db.search_batch(batch, k=10)
-    all_results.extend(results)
-```
-
-### Pattern 4: Monitoring Performance
-
-```python
-import time
-
-# Measure search latency
-start = time.time()
-results = db.search(query, k=10)
-latency_ms = (time.time() - start) * 1000
-print(f"Search latency: {latency_ms:.2f} ms")
-
-# Record metrics
-db.record_latency(int(latency_ms * 1000), is_insert=False)
-```
-
 ## Graph Database and Knowledge Graph
 
 GigaVector includes a property graph database and a knowledge graph layer that integrates vector embeddings with graph structure.
@@ -615,183 +551,4 @@ gv_graph_destroy(g);
 
 ---
 
-## Best Practices
-
-### 1. Choose the Right Index Type
-
-- Use KD-Tree for small datasets requiring exact search
-- Use HNSW for general-purpose large-scale search
-- Use IVFPQ for very large datasets with memory constraints
-- Use Sparse index for sparse vectors
-
-### 2. Dimension Consistency
-
-**Always ensure vector dimensions match:**
-```python
-# Good
-db = Database.open("db.db", dimension=128)
-db.add_vector([0.1] * 128)  # Correct dimension
-
-# Bad
-db.add_vector([0.1] * 64)  # Wrong dimension - will raise ValueError
-```
-
-### 3. Resource Management
-
-**Always use context managers or try/finally:**
-```python
-# Good
-with Database.open("db.db", 128) as db:
-    # Use database
-    pass
-
-# Also good
-db = Database.open("db.db", 128)
-try:
-    # Use database
-    pass
-finally:
-    db.close()
-```
-
-### 4. Batch Operations
-
-**Use batch operations when possible:**
-```python
-# Good - batch insertion
-db.add_vectors(vectors)
-
-# Good - batch search
-results = db.search_batch(queries, k=10)
-
-# Less efficient - individual operations
-for vec in vectors:
-    db.add_vector(vec)
-```
-
-### 5. Metadata Usage
-
-**Use metadata for filtering and organization:**
-```python
-# Good - structured metadata
-db.add_vector(
-    vector,
-    metadata={
-        "id": "12345",
-        "category": "electronics",
-        "price": "99.99",
-        "rating": "4.5"
-    }
-)
-
-# Then filter efficiently
-results = db.search(
-    query, k=10,
-    filter_metadata=("category", "electronics")
-)
-```
-
-### 6. Persistence Strategy
-
-**Save periodically for large datasets:**
-```python
-with Database.open("db.db", 128) as db:
-    for i, vector in enumerate(vectors):
-        db.add_vector(vector)
-        
-        # Save every 10K vectors
-        if i % 10000 == 0:
-            db.save("db.db")
-            print(f"Saved checkpoint at {i} vectors")
-```
-
-### 7. Error Handling
-
-**Always check return values and handle errors:**
-```python
-# Python
-try:
-    db = Database.open("db.db", 128)
-    db.add_vector(vector)
-except RuntimeError as e:
-    print(f"Error: {e}")
-    # Handle error
-```
-
-```c
-// C
-GV_Database *db = gv_db_open("db.db", 128, GV_INDEX_TYPE_HNSW);
-if (!db) {
-    // Handle error
-    return 1;
-}
-
-int rc = gv_db_add_vector(db, data, 128);
-if (rc != 0) {
-    // Handle error
-    gv_db_close(db);
-    return 1;
-}
-```
-
-## Troubleshooting
-
-### Common Issues
-
-**1. "Vector dimension mismatch" error**
-- **Cause:** Vector dimension doesn't match database dimension
-- **Solution:** Ensure all vectors have the same dimension as specified when creating the database
-
-**2. "Database open failed" error**
-- **Cause:** Invalid path, permissions, or corrupted database
-- **Solution:** Check file permissions, ensure directory exists, verify database file integrity
-
-**3. Low search recall**
-- **Cause:** Index parameters not tuned for your data
-- **Solution:** Increase `efSearch` (HNSW) or `nprobe` (IVFPQ), see [Performance Guide](performance.md)
-
-**4. High memory usage**
-- **Cause:** Large dataset with exact storage
-- **Solution:** Use IVFPQ with scalar quantization, or reduce HNSW `M` parameter
-
-**5. Slow search performance**
-- **Cause:** Index not optimized, too many results, or wrong index type
-- **Solution:** 
-  - Enable binary quantization (HNSW)
-  - Reduce `k` if possible
-  - Consider IVFPQ for very large datasets
-  - Check SIMD optimizations are enabled
-
-### Getting Help
-
-- Check the [Performance Tuning Guide](performance.md) for optimization tips
-- Review [Basic Usage Examples](examples/basic_usage.md) for common patterns
-- See [Advanced Features](examples/advanced_features.md) for complex scenarios
-- Check API documentation for detailed function signatures
-
-### Debugging Tips
-
-**Enable detailed logging:**
-```python
-import logging
-logging.basicConfig(level=logging.DEBUG)
-```
-
-**Monitor database health:**
-```python
-health = db.health_check()
-if health != 0:
-    stats = db.get_detailed_stats()
-    print(f"Health status: {health}")
-    print(f"Memory usage: {stats['memory']['total_bytes']}")
-    print(f"Deleted ratio: {stats['deleted_ratio']}")
-```
-
-**Check resource limits:**
-```python
-limits = db.get_resource_limits()
-print(f"Memory limit: {limits['max_memory_bytes']}")
-print(f"Vector limit: {limits['max_vectors']}")
-```
-
-For more information, see the [Python Bindings Guide](python_bindings.md) and [C API Guide](c_api_guide.md).
+For best practices on resource management, error handling, and batch operations, see the [Python Bindings Guide](python_bindings.md) and [C API Guide](c_api_guide.md). For troubleshooting, see [Troubleshooting](troubleshooting.md).

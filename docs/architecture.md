@@ -815,64 +815,7 @@ Thread safety is provided via `pthread_rwlock_t` -- concurrent reads, exclusive 
 
 ## Core Data Structures
 
-### Vector Types
-
-```c
-// Dense vector
-typedef struct {
-    size_t dimension;
-    float *data;
-    GV_Metadata *metadata;
-} GV_Vector;
-
-// Sparse vector
-typedef struct {
-    size_t dimension;           // Total dimensions
-    size_t nnz;                 // Non-zero count
-    GV_SparseEntry *entries;    // Index-value pairs
-    GV_Metadata *metadata;
-} GV_SparseVector;
-
-typedef struct {
-    uint32_t index;
-    float value;
-} GV_SparseEntry;
-```
-
-### Metadata
-
-```c
-// Linked list of key-value pairs
-typedef struct GV_Metadata {
-    char *key;
-    char *value;
-    struct GV_Metadata *next;
-} GV_Metadata;
-
-// Operations
-gv_vector_set_metadata(vec, "category", "document");
-const char *cat = gv_vector_get_metadata(vec, "category");
-gv_vector_remove_metadata(vec, "category");
-```
-
-### Search Results
-
-```c
-typedef struct {
-    const GV_Vector *vector;    // Pointer to matched vector
-    float distance;             // Distance/similarity
-} GV_SearchResult;
-
-typedef struct {
-    char *memory_id;
-    char *content;
-    float relevance_score;
-    float distance;
-    GV_MemoryMetadata *metadata;
-    GV_MemoryResult *related;   // Related memories
-    size_t related_count;
-} GV_MemoryResult;
-```
+See [API Reference](api_reference.md) for complete type definitions.
 
 ---
 
@@ -949,51 +892,6 @@ GV_IndexType type = gv_index_suggest(dimension, expected_count);
 // - Small (<=20k) + low dim (<=64): KD-Tree
 // - Very large (>=500k) + high dim (>=128): IVF-PQ
 // - Otherwise: HNSW
-```
-
-### Resource Limits
-
-```c
-typedef struct {
-    size_t max_memory_bytes;
-    size_t max_vectors;
-    size_t max_concurrent_operations;
-} GV_ResourceLimits;
-
-gv_db_set_resource_limits(db, &limits);
-```
-
-### Monitoring
-
-```c
-// Basic stats
-GV_Stats stats;
-gv_db_get_stats(db, &stats);
-
-// Detailed stats
-GV_DetailedStats detailed;
-gv_db_get_detailed_stats(db, &detailed);
-printf("QPS: %.2f, Avg latency: %.2fms\n",
-       detailed.qps, detailed.avg_search_latency_ms);
-
-// Health check
-int health = gv_db_health_check(db);  // 0=healthy, -1=degraded, -2=unhealthy
-```
-
-### Background Compaction
-
-```c
-// Configure
-gv_db_set_compaction_interval(db, 300);           // Every 5 minutes
-gv_db_set_wal_compaction_threshold(db, 10485760); // 10MB WAL
-gv_db_set_deleted_ratio_threshold(db, 0.1);       // 10% deleted
-
-// Start/stop
-gv_db_start_background_compaction(db);
-gv_db_stop_background_compaction(db);
-
-// Manual
-gv_db_compact(db);
 ```
 
 ---
@@ -1078,41 +976,9 @@ gv_embedding_service_destroy(embeddings);
 gv_db_close(db);
 ```
 
-### Pure Vector Search (No Memory Layer)
-
-```c
-// Simple HNSW search
-GV_HNSWConfig hnsw_config = gv_hnsw_config_default();
-hnsw_config.M = 32;
-hnsw_config.efSearch = 100;
-
-GV_Database *db = gv_db_open_with_hnsw_config("vectors.db", 128, &hnsw_config);
-
-// Insert vectors
-for (int i = 0; i < num_vectors; i++) {
-    gv_db_add_vector_with_metadata(db, vectors[i],
-        (const char*[]){"id", "category"},
-        (const char*[]){ids[i], categories[i]}, 2);
-}
-
-// Search with filter
-GV_SearchResult results[10];
-int count = gv_db_search_with_filter_expr(
-    db, query, 10, results,
-    GV_DISTANCE_COSINE,
-    "category == \"science\""
-);
-
-gv_db_close(db);
-```
-
 ---
 
 ## HTTP REST Server
-
-**Files**: `gv_server.h/c`, `gv_rest_handlers.h/c`
-
-Embedded HTTP server using libmicrohttpd for REST API access. Requests are routed through an auth layer, then dispatched to handlers that operate on the database.
 
 ### Endpoints
 
@@ -1180,8 +1046,3 @@ Query batches are transferred to the GPU, distance kernels run in CUDA, and resu
 | **SoA** | Structure-of-Arrays - cache-efficient storage layout |
 | **WAL** | Write-Ahead Log - durability through transaction logging |
 
----
-
-## License
-
-GigaVector is released under the MIT License. See LICENSE for details.
