@@ -8,7 +8,6 @@
 #define MAX_ENV_VALUE_LEN 1024
 static char env_buffer[MAX_ENV_VALUE_LEN];
 
-// Helper function to read .env file and return value for a key
 static const char *read_env_file(const char *env_var) {
     FILE *file = fopen(".env", "r");
     if (file == NULL) {
@@ -64,20 +63,15 @@ static const char *read_env_file(const char *env_var) {
     return NULL;
 }
 
-// Helper function to get API key from .env file or environment
 static const char *get_env_api_key(const char *env_var) {
-    // First try .env file
     const char *key = read_env_file(env_var);
     if (key && strlen(key) > 0) {
         return key;
     }
-    
-    // Fall back to environment variable
     key = getenv(env_var);
     return key && strlen(key) > 0 ? key : NULL;
 }
 
-// Test LLM creation with valid config
 void test_llm_create_valid(void) {
     const char *api_key = get_env_api_key("OPENAI_API_KEY");
     if (!api_key) {
@@ -101,14 +95,12 @@ void test_llm_create_valid(void) {
         return;
     }
 
-    // Test error string function
     const char *error_str = gv_llm_error_string(GV_LLM_SUCCESS);
     assert(error_str != NULL);
     
     gv_llm_destroy(llm);
 }
 
-// Test actual API call with OpenAI
 void test_llm_api_call_openai(void) {
     const char *api_key = get_env_api_key("OPENAI_API_KEY");
     if (!api_key) {
@@ -131,16 +123,15 @@ void test_llm_api_call_openai(void) {
         return;
     }
     
-    // Create a simple test message
     GV_LLMMessage messages[1];
     messages[0].role = "user";
     messages[0].content = "Say 'Hello, GigaVector!' in one sentence.";
-    
+
     GV_LLMResponse response;
     memset(&response, 0, sizeof(response));
-    
+
     int result = gv_llm_generate_response(llm, messages, 1, NULL, &response);
-    
+
     if (result == GV_LLM_SUCCESS && response.content != NULL) {
         gv_llm_response_free(&response);
     } else {
@@ -149,11 +140,10 @@ void test_llm_api_call_openai(void) {
             (void)error;
         }
     }
-    
+
     gv_llm_destroy(llm);
 }
 
-// Test LLM creation with invalid API key
 void test_llm_create_invalid_api_key(void) {
     GV_LLMConfig config = {
         .provider = GV_LLM_PROVIDER_OPENAI,
@@ -174,7 +164,6 @@ void test_llm_create_invalid_api_key(void) {
     }
 }
 
-// Test LLM creation with invalid URL
 void test_llm_create_invalid_url(void) {
     GV_LLMConfig config = {
         .provider = GV_LLM_PROVIDER_OPENAI,
@@ -195,7 +184,6 @@ void test_llm_create_invalid_url(void) {
     }
 }
 
-// Test Custom provider requires base_url
 void test_custom_requires_base_url(void) {
     GV_LLMConfig config = {
         .provider = GV_LLM_PROVIDER_CUSTOM,
@@ -216,7 +204,6 @@ void test_custom_requires_base_url(void) {
     }
 }
 
-// Test error code strings
 void test_error_strings(void) {
     const char *errors[] = {
         gv_llm_error_string(GV_LLM_SUCCESS),
@@ -237,7 +224,6 @@ void test_error_strings(void) {
     }
 }
 
-// Test Anthropic API key validation
 void test_anthropic_api_key(void) {
     const char *api_key = get_env_api_key("ANTHROPIC_API_KEY");
     if (!api_key) {
@@ -262,7 +248,6 @@ void test_anthropic_api_key(void) {
         gv_llm_destroy(llm);
     }
     
-    // Test invalid Anthropic key
     config.api_key = "sk-test123";  // Wrong prefix
     llm = gv_llm_create(&config);
     if (llm == NULL) {
@@ -271,7 +256,6 @@ void test_anthropic_api_key(void) {
     }
 }
 
-// Test actual API call with Anthropic
 void test_llm_api_call_anthropic(void) {
     const char *api_key = get_env_api_key("ANTHROPIC_API_KEY");
     if (!api_key) {
@@ -294,16 +278,15 @@ void test_llm_api_call_anthropic(void) {
         return;
     }
     
-    // Create a simple test message
     GV_LLMMessage messages[1];
     messages[0].role = "user";
     messages[0].content = "Say 'Hello, GigaVector!' in one sentence.";
-    
+
     GV_LLMResponse response;
     memset(&response, 0, sizeof(response));
-    
+
     int result = gv_llm_generate_response(llm, messages, 1, NULL, &response);
-    
+
     if (result == GV_LLM_SUCCESS && response.content != NULL) {
         gv_llm_response_free(&response);
     } else {
@@ -312,18 +295,16 @@ void test_llm_api_call_anthropic(void) {
             (void)error;
         }
     }
-    
+
     gv_llm_destroy(llm);
 }
 
-// Test actual API call with Google Gemini
 void test_llm_api_call_gemini(void) {
     const char *api_key = get_env_api_key("GEMINI_API_KEY");
     if (!api_key) {
         return;
     }
     
-    // Use Google provider - it will use Gemini API format
     GV_LLMConfig config = {
         .provider = GV_LLM_PROVIDER_GOOGLE,
         .api_key = (char *)api_key,

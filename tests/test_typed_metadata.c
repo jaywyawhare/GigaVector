@@ -22,11 +22,9 @@ static int test_typed_string(void) {
     ASSERT(s != NULL, "get_string should return non-NULL");
     ASSERT(strcmp(s, "hello world") == 0, "string content should match");
 
-    /* Test string contains */
     ASSERT(gv_typed_string_contains(&val, "world") == true, "should contain 'world'");
     ASSERT(gv_typed_string_contains(&val, "xyz") == false, "should not contain 'xyz'");
 
-    /* Test string starts_with */
     ASSERT(gv_typed_string_starts_with(&val, "hello") == true, "should start with 'hello'");
     ASSERT(gv_typed_string_starts_with(&val, "world") == false, "should not start with 'world'");
 
@@ -101,10 +99,8 @@ static int test_typed_array(void) {
     gv_typed_get_int(got, &val);
     ASSERT(val == 20, "element at index 1 should be 20");
 
-    /* Out of bounds */
     ASSERT(gv_typed_array_get(&arr, 99) == NULL, "out-of-bounds get should return NULL");
 
-    /* Array contains */
     GV_TypedValue search = gv_typed_int(20);
     ASSERT(gv_typed_array_contains(&arr, &search) == true, "array should contain 20");
     GV_TypedValue missing = gv_typed_int(999);
@@ -157,7 +153,6 @@ static int test_typed_compare_equals(void) {
     ASSERT(gv_typed_compare(&a, &c) < 0, "100 should be less than 200");
     ASSERT(gv_typed_compare(&c, &a) > 0, "200 should be greater than 100");
 
-    /* in_range */
     ASSERT(gv_typed_in_range(&a, 50.0, 150.0) == true, "100 should be in range [50,150]");
     ASSERT(gv_typed_in_range(&a, 200.0, 300.0) == false, "100 should not be in range [200,300]");
 
@@ -175,7 +170,6 @@ static int test_typed_copy_and_type_name(void) {
     const char *s = gv_typed_get_string(&copy);
     ASSERT(s != NULL && strcmp(s, "test_copy") == 0, "copy value should match");
 
-    /* Verify type name */
     const char *tn = gv_typed_type_name(GV_META_TYPE_STRING);
     ASSERT(tn != NULL && strlen(tn) > 0, "type name for string should be non-empty");
 

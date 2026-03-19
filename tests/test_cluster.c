@@ -34,7 +34,6 @@ static int test_create_destroy(void) {
 }
 
 static int test_destroy_null(void) {
-    /* Destroying NULL must not crash */
     gv_cluster_destroy(NULL);
     return 0;
 }
@@ -85,12 +84,10 @@ static int test_get_local_node(void) {
     int rc = gv_cluster_get_local_node(cluster, &info);
     ASSERT(rc == 0, "gv_cluster_get_local_node should succeed");
 
-    /* The local node info should have our node ID */
     if (info.node_id != NULL) {
         ASSERT(strcmp(info.node_id, "local-node") == 0, "local node_id should match config");
     }
 
-    /* Role should match what we set */
     ASSERT(info.role == GV_NODE_DATA, "local node role should be DATA");
 
     gv_cluster_free_node_info(&info);
@@ -114,7 +111,6 @@ static int test_get_stats(void) {
     int rc = gv_cluster_get_stats(cluster, &stats);
     ASSERT(rc == 0, "gv_cluster_get_stats should succeed");
 
-    /* With a single-node cluster, we expect at least 1 node */
     ASSERT(stats.total_nodes >= 1, "total_nodes should be at least 1");
     ASSERT(stats.active_nodes >= 0, "active_nodes should be non-negative");
 
@@ -134,7 +130,6 @@ static int test_is_healthy(void) {
     ASSERT(cluster != NULL, "create");
 
     int healthy = gv_cluster_is_healthy(cluster);
-    /* A freshly created single-node cluster should be healthy (1) or not yet ready (0) */
     ASSERT(healthy == 0 || healthy == 1, "is_healthy should return 0 or 1");
 
     gv_cluster_destroy(cluster);
@@ -165,7 +160,6 @@ static int test_list_nodes(void) {
 }
 
 static int test_free_node_list_null(void) {
-    /* Freeing NULL / 0 count should not crash */
     gv_cluster_free_node_list(NULL, 0);
     return 0;
 }
@@ -223,11 +217,9 @@ static int test_get_node_by_id(void) {
     GV_NodeInfo info;
     memset(&info, 0, sizeof(info));
 
-    /* Lookup the local node by its ID */
     int rc = gv_cluster_get_node(cluster, "lookup-node", &info);
     ASSERT(rc == 0, "gv_cluster_get_node for local node should succeed");
 
-    /* Lookup non-existent node should fail */
     GV_NodeInfo info2;
     memset(&info2, 0, sizeof(info2));
     rc = gv_cluster_get_node(cluster, "nonexistent-node-xyz", &info2);

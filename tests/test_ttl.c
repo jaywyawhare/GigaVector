@@ -17,12 +17,10 @@ static int test_config_init(void) {
 }
 
 static int test_create_destroy(void) {
-    /* NULL config => defaults */
     GV_TTLManager *mgr = gv_ttl_create(NULL);
     ASSERT(mgr != NULL, "gv_ttl_create(NULL) should succeed");
     gv_ttl_destroy(mgr);
 
-    /* Explicit config */
     GV_TTLConfig cfg;
     gv_ttl_config_init(&cfg);
     cfg.default_ttl_seconds = 120;
@@ -30,7 +28,6 @@ static int test_create_destroy(void) {
     ASSERT(mgr != NULL, "gv_ttl_create with config should succeed");
     gv_ttl_destroy(mgr);
 
-    /* Destroy NULL is safe */
     gv_ttl_destroy(NULL);
     return 0;
 }
@@ -39,14 +36,12 @@ static int test_set_and_get(void) {
     GV_TTLManager *mgr = gv_ttl_create(NULL);
     ASSERT(mgr != NULL, "create");
 
-    /* Set TTL for index 5 to 3600 seconds */
     ASSERT(gv_ttl_set(mgr, 5, 3600) == 0, "set ttl");
 
     uint64_t expire_at = 0;
     ASSERT(gv_ttl_get(mgr, 5, &expire_at) == 0, "get ttl");
     ASSERT(expire_at > 0, "expire_at should be non-zero after set");
 
-    /* Index without TTL */
     uint64_t no_ttl = 999;
     ASSERT(gv_ttl_get(mgr, 99, &no_ttl) == 0, "get ttl on unset index");
     ASSERT(no_ttl == 0, "expire_at should be 0 for unset index");
@@ -66,7 +61,6 @@ static int test_set_absolute(void) {
     ASSERT(gv_ttl_get(mgr, 0, &expire_at) == 0, "get after set_absolute");
     ASSERT(expire_at == future, "expire_at should match the absolute time");
 
-    /* Remove by setting 0 */
     ASSERT(gv_ttl_set_absolute(mgr, 0, 0) == 0, "set_absolute 0 to remove");
     ASSERT(gv_ttl_get(mgr, 0, &expire_at) == 0, "get after remove");
     ASSERT(expire_at == 0, "expire_at should be 0 after removal");
@@ -104,7 +98,6 @@ static int test_is_expired(void) {
     expired = gv_ttl_is_expired(mgr, 2);
     ASSERT(expired == 0, "vector with future timestamp should not be expired");
 
-    /* No TTL */
     expired = gv_ttl_is_expired(mgr, 42);
     ASSERT(expired == 0, "vector without TTL should not be expired");
 
@@ -148,7 +141,6 @@ static int test_bulk_and_stats(void) {
     return 0;
 }
 
-/* main */
 typedef int (*test_fn)(void);
 typedef struct { const char *name; test_fn fn; } TestCase;
 

@@ -6,15 +6,14 @@
 #define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while(0)
 
 static int test_point_id_create_destroy(void) {
-    GV_PointIDMap *map = gv_point_id_create(0); /* Default capacity */
+    GV_PointIDMap *map = gv_point_id_create(0);
     ASSERT(map != NULL, "point ID map creation with default capacity");
     gv_point_id_destroy(map);
 
-    map = gv_point_id_create(128); /* Explicit capacity */
+    map = gv_point_id_create(128);
     ASSERT(map != NULL, "point ID map creation with capacity=128");
     gv_point_id_destroy(map);
 
-    /* Destroy NULL is safe */
     gv_point_id_destroy(NULL);
     return 0;
 }
@@ -37,7 +36,6 @@ static int test_point_id_set_and_get(void) {
     ASSERT(gv_point_id_get(map, "vec-003", &idx) == 0, "get vec-003");
     ASSERT(idx == 2, "vec-003 maps to 2");
 
-    /* Non-existent key */
     ASSERT(gv_point_id_get(map, "nonexistent", &idx) == -1, "get nonexistent returns -1");
 
     gv_point_id_destroy(map);
@@ -54,12 +52,9 @@ static int test_point_id_update(void) {
     ASSERT(gv_point_id_get(map, "my-id", &idx) == 0, "get my-id");
     ASSERT(idx == 10, "my-id initially maps to 10");
 
-    /* Update the same key to a new index */
     ASSERT(gv_point_id_set(map, "my-id", 42) == 0, "update my-id -> 42");
     ASSERT(gv_point_id_get(map, "my-id", &idx) == 0, "get my-id after update");
     ASSERT(idx == 42, "my-id now maps to 42");
-
-    /* Count should still be 1 (update, not insert) */
     ASSERT(gv_point_id_count(map) == 1, "count is 1 after update");
 
     gv_point_id_destroy(map);
@@ -79,10 +74,8 @@ static int test_point_id_remove(void) {
     ASSERT(gv_point_id_count(map) == 2, "count is 2 after removal");
     ASSERT(gv_point_id_has(map, "beta") == 0, "beta is absent after removal");
 
-    /* Removing nonexistent should return -1 */
     ASSERT(gv_point_id_remove(map, "nonexistent") == -1, "remove nonexistent returns -1");
 
-    /* Remaining entries still accessible */
     ASSERT(gv_point_id_has(map, "alpha") == 1, "alpha still present");
     ASSERT(gv_point_id_has(map, "gamma") == 1, "gamma still present");
 
@@ -121,7 +114,6 @@ static int test_point_id_reverse_lookup(void) {
     ASSERT(str != NULL, "reverse lookup for index 12");
     ASSERT(strcmp(str, "uuid-def-456") == 0, "reverse lookup returns correct string for 12");
 
-    /* Non-existent index */
     str = gv_point_id_reverse_lookup(map, 999);
     ASSERT(str == NULL, "reverse lookup for missing index returns NULL");
 
@@ -133,7 +125,6 @@ static int test_point_id_generate_uuid(void) {
     char buf[37];
     ASSERT(gv_point_id_generate_uuid(buf, sizeof(buf)) == 0, "generate UUID");
 
-    /* UUID v4 format: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx (36 chars + NUL) */
     ASSERT(strlen(buf) == 36, "UUID is 36 characters");
     ASSERT(buf[8] == '-', "dash at position 8");
     ASSERT(buf[13] == '-', "dash at position 13");
@@ -141,21 +132,17 @@ static int test_point_id_generate_uuid(void) {
     ASSERT(buf[18] == '-', "dash at position 18");
     ASSERT(buf[23] == '-', "dash at position 23");
 
-    /* Variant nibble should be 8, 9, a, or b */
     char variant = buf[19];
     ASSERT(variant == '8' || variant == '9' || variant == 'a' || variant == 'b',
            "variant nibble is valid");
 
-    /* Two generated UUIDs should differ */
     char buf2[37];
     gv_point_id_generate_uuid(buf2, sizeof(buf2));
     ASSERT(strcmp(buf, buf2) != 0, "two UUIDs are different");
 
-    /* Insufficient buffer should fail */
     char tiny[10];
     ASSERT(gv_point_id_generate_uuid(tiny, sizeof(tiny)) == -1, "too-small buffer fails");
 
-    /* NULL buffer should fail */
     ASSERT(gv_point_id_generate_uuid(NULL, 37) == -1, "NULL buffer fails");
 
     return 0;

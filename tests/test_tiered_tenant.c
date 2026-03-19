@@ -31,7 +31,6 @@ static int test_create_destroy(void) {
     ASSERT(mgr != NULL, "gv_tiered_create with config should succeed");
     gv_tiered_destroy(mgr);
 
-    /* Destroy NULL is safe */
     gv_tiered_destroy(NULL);
     return 0;
 }
@@ -48,7 +47,6 @@ static int test_add_and_get_info(void) {
     ASSERT(info.tier == GV_TIER_SHARED, "tier should be SHARED");
     ASSERT(info.vector_count == 0, "initial vector count should be 0");
 
-    /* Unknown tenant */
     ASSERT(gv_tiered_get_info(mgr, "ghost", &info) == -1, "get_info for unknown should fail");
 
     gv_tiered_destroy(mgr);
@@ -65,7 +63,6 @@ static int test_remove_tenant(void) {
     ASSERT(gv_tiered_remove_tenant(mgr, "rm_me") == 0, "remove");
     ASSERT(gv_tiered_tenant_count(mgr) == 0, "count should be 0 after remove");
 
-    /* Remove unknown => error */
     ASSERT(gv_tiered_remove_tenant(mgr, "rm_me") == -1, "double remove should fail");
 
     gv_tiered_destroy(mgr);
@@ -107,7 +104,6 @@ static int test_record_usage_and_auto_promote(void) {
     int promoted = gv_tiered_check_promote(mgr);
     ASSERT(promoted >= 0, "check_promote should not error");
 
-    /* Tenant should have been auto-promoted past shared */
     GV_TenantInfo info;
     memset(&info, 0, sizeof(info));
     ASSERT(gv_tiered_get_info(mgr, "burst", &info) == 0, "get_info");

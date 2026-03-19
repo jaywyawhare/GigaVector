@@ -8,7 +8,6 @@
 
 #define DIM 4
 
-/* Helper: create and populate a test database */
 static GV_Database *create_test_db(void) {
     GV_Database *db = gv_db_open(NULL, DIM, GV_INDEX_TYPE_FLAT);
     if (!db) return NULL;
@@ -28,7 +27,6 @@ static GV_Database *create_test_db(void) {
     return db;
 }
 
-/* Custom rerank callback for testing */
 static float test_rerank_callback(size_t index, float current_score,
                                    const void *user_data) {
     (void)index;
@@ -36,7 +34,6 @@ static float test_rerank_callback(size_t index, float current_score,
     return current_score + (*bonus);
 }
 
-/* Test: create and destroy pipeline */
 static int test_create_destroy(void) {
     GV_Database *db = gv_db_open(NULL, DIM, GV_INDEX_TYPE_FLAT);
     ASSERT(db != NULL, "db open should succeed");
@@ -46,14 +43,12 @@ static int test_create_destroy(void) {
     ASSERT(gv_pipeline_phase_count(pipe) == 0, "new pipeline should have 0 phases");
 
     gv_pipeline_destroy(pipe);
-    /* NULL destroy should be safe */
     gv_pipeline_destroy(NULL);
 
     gv_db_close(db);
     return 0;
 }
 
-/* Test: add ANN phase */
 static int test_add_ann_phase(void) {
     GV_Database *db = gv_db_open(NULL, DIM, GV_INDEX_TYPE_FLAT);
     ASSERT(db != NULL, "db open should succeed");
@@ -65,8 +60,8 @@ static int test_add_ann_phase(void) {
     memset(&ann, 0, sizeof(ann));
     ann.type = GV_PHASE_ANN;
     ann.output_k = 100;
-    ann.params.ann.distance_type = 1;  /* GV_DISTANCE_COSINE */
-    ann.params.ann.ef_search = 0;      /* use default */
+    ann.params.ann.distance_type = 1;
+    ann.params.ann.ef_search = 0;
 
     int idx = gv_pipeline_add_phase(pipe, &ann);
     ASSERT(idx >= 0, "add_phase ANN should succeed");
@@ -77,7 +72,6 @@ static int test_add_ann_phase(void) {
     return 0;
 }
 
-/* Test: add multiple phases */
 static int test_multi_phase(void) {
     GV_Database *db = gv_db_open(NULL, DIM, GV_INDEX_TYPE_FLAT);
     ASSERT(db != NULL, "db open should succeed");
@@ -85,7 +79,6 @@ static int test_multi_phase(void) {
     GV_Pipeline *pipe = gv_pipeline_create(db);
     ASSERT(pipe != NULL, "pipeline create should succeed");
 
-    /* Phase 1: ANN */
     GV_PhaseConfig ann;
     memset(&ann, 0, sizeof(ann));
     ann.type = GV_PHASE_ANN;
@@ -94,7 +87,6 @@ static int test_multi_phase(void) {
     int rc = gv_pipeline_add_phase(pipe, &ann);
     ASSERT(rc >= 0, "add ANN phase should succeed");
 
-    /* Phase 2: MMR rerank */
     GV_PhaseConfig mmr;
     memset(&mmr, 0, sizeof(mmr));
     mmr.type = GV_PHASE_RERANK_MMR;
@@ -110,7 +102,6 @@ static int test_multi_phase(void) {
     return 0;
 }
 
-/* Test: clear phases */
 static int test_clear_phases(void) {
     GV_Database *db = gv_db_open(NULL, DIM, GV_INDEX_TYPE_FLAT);
     ASSERT(db != NULL, "db open should succeed");
@@ -133,7 +124,6 @@ static int test_clear_phases(void) {
     return 0;
 }
 
-/* Test: execute pipeline */
 static int test_execute(void) {
     GV_Database *db = create_test_db();
     ASSERT(db != NULL, "create_test_db should succeed");
@@ -145,7 +135,7 @@ static int test_execute(void) {
     memset(&ann, 0, sizeof(ann));
     ann.type = GV_PHASE_ANN;
     ann.output_k = 10;
-    ann.params.ann.distance_type = 0;  /* GV_DISTANCE_EUCLIDEAN */
+    ann.params.ann.distance_type = 0;
     gv_pipeline_add_phase(pipe, &ann);
 
     float query[] = {1.0f, 0.0f, 0.0f, 0.0f};
@@ -154,7 +144,6 @@ static int test_execute(void) {
     ASSERT(n >= 0, "execute should return non-negative result count");
     ASSERT(n <= 5, "execute should return at most 5 results");
 
-    /* Results should have valid indices */
     for (int i = 0; i < n; i++) {
         ASSERT(results[i].index < 5, "result index should be within DB range");
         ASSERT(results[i].phase_reached >= 0, "phase_reached should be >= 0");
@@ -165,7 +154,6 @@ static int test_execute(void) {
     return 0;
 }
 
-/* Test: execute with callback rerank */
 static int test_execute_callback(void) {
     GV_Database *db = create_test_db();
     ASSERT(db != NULL, "create_test_db should succeed");
@@ -173,7 +161,6 @@ static int test_execute_callback(void) {
     GV_Pipeline *pipe = gv_pipeline_create(db);
     ASSERT(pipe != NULL, "pipeline create should succeed");
 
-    /* Phase 1: ANN */
     GV_PhaseConfig ann;
     memset(&ann, 0, sizeof(ann));
     ann.type = GV_PHASE_ANN;
@@ -181,7 +168,6 @@ static int test_execute_callback(void) {
     ann.params.ann.distance_type = 0;
     gv_pipeline_add_phase(pipe, &ann);
 
-    /* Phase 2: Callback rerank */
     float bonus = 100.0f;
     GV_PhaseConfig cb;
     memset(&cb, 0, sizeof(cb));
@@ -201,7 +187,6 @@ static int test_execute_callback(void) {
     return 0;
 }
 
-/* Test: pipeline stats */
 static int test_stats(void) {
     GV_Database *db = create_test_db();
     ASSERT(db != NULL, "create_test_db should succeed");
@@ -216,7 +201,6 @@ static int test_stats(void) {
     ann.params.ann.distance_type = 0;
     gv_pipeline_add_phase(pipe, &ann);
 
-    /* Execute first to populate stats */
     float query[] = {1.0f, 0.0f, 0.0f, 0.0f};
     GV_PhasedResult results[5];
     gv_pipeline_execute(pipe, query, DIM, 5, results);
@@ -235,7 +219,6 @@ static int test_stats(void) {
     return 0;
 }
 
-/* Test: free_stats with NULL fields */
 static int test_free_stats_null(void) {
     GV_PipelineStats stats;
     memset(&stats, 0, sizeof(stats));

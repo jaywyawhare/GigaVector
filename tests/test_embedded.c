@@ -10,7 +10,6 @@
 #define DIM 4
 #define TMP_SAVE_PATH "/tmp/gv_test_embedded.bin"
 
-/* ── Test: config init ─────────────────────────────────────────────────── */
 static int test_config_init(void) {
     GV_EmbeddedConfig cfg;
     memset(&cfg, 0xFF, sizeof(cfg));
@@ -26,7 +25,6 @@ static int test_config_init(void) {
     return 0;
 }
 
-/* ── Test: open and close ──────────────────────────────────────────────── */
 static int test_open_close(void) {
     GV_EmbeddedConfig cfg;
     gv_embedded_config_init(&cfg);
@@ -37,12 +35,10 @@ static int test_open_close(void) {
     ASSERT(gv_embedded_count(db) == 0, "empty db should have count 0");
 
     gv_embedded_close(db);
-    /* NULL safety */
     gv_embedded_close(NULL);
     return 0;
 }
 
-/* ── Test: add and count ───────────────────────────────────────────────── */
 static int test_add_count(void) {
     GV_EmbeddedConfig cfg;
     gv_embedded_config_init(&cfg);
@@ -64,7 +60,6 @@ static int test_add_count(void) {
     return 0;
 }
 
-/* ── Test: add with explicit ID and get ────────────────────────────────── */
 static int test_add_with_id_and_get(void) {
     GV_EmbeddedConfig cfg;
     gv_embedded_config_init(&cfg);
@@ -87,7 +82,6 @@ static int test_add_with_id_and_get(void) {
     return 0;
 }
 
-/* ── Test: search ──────────────────────────────────────────────────────── */
 static int test_search(void) {
     GV_EmbeddedConfig cfg;
     gv_embedded_config_init(&cfg);
@@ -111,9 +105,8 @@ static int test_search(void) {
     GV_EmbeddedResult results[3];
     memset(results, 0, sizeof(results));
 
-    int found = gv_embedded_search(db, query, 3, 0 /* euclidean */, results);
+    int found = gv_embedded_search(db, query, 3, 0, results);
     ASSERT(found > 0, "search should return at least 1 result");
-    /* Closest should be index 0 (exact match) */
     ASSERT(results[0].index == 0, "nearest neighbor should be index 0");
     ASSERT(results[0].distance < 0.01f, "distance to exact match should be near 0");
 
@@ -121,7 +114,6 @@ static int test_search(void) {
     return 0;
 }
 
-/* ── Test: delete and compact ──────────────────────────────────────────── */
 static int test_delete_compact(void) {
     GV_EmbeddedConfig cfg;
     gv_embedded_config_init(&cfg);
@@ -147,7 +139,6 @@ static int test_delete_compact(void) {
     return 0;
 }
 
-/* ── Test: save and load ───────────────────────────────────────────────── */
 static int test_save_load(void) {
     GV_EmbeddedConfig cfg;
     gv_embedded_config_init(&cfg);
@@ -164,7 +155,6 @@ static int test_save_load(void) {
     ASSERT(rc == 0, "save should succeed");
     gv_embedded_close(db);
 
-    /* Load */
     GV_EmbeddedDB *loaded = gv_embedded_load(TMP_SAVE_PATH);
     ASSERT(loaded != NULL, "load should succeed");
     ASSERT(gv_embedded_count(loaded) == 2, "loaded db should have 2 vectors");
@@ -179,7 +169,6 @@ static int test_save_load(void) {
     return 0;
 }
 
-/* ── Test: memory usage ────────────────────────────────────────────────── */
 static int test_memory_usage(void) {
     GV_EmbeddedConfig cfg;
     gv_embedded_config_init(&cfg);
@@ -201,8 +190,6 @@ static int test_memory_usage(void) {
     gv_embedded_close(db);
     return 0;
 }
-
-/* ── Main ──────────────────────────────────────────────────────────────── */
 
 typedef int (*test_fn)(void);
 typedef struct { const char *name; test_fn fn; } TestCase;

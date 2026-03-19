@@ -9,7 +9,6 @@
 
 #define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while(0)
 
-/* Helper: create a flat DB with vectors assigned to groups via metadata */
 static GV_Database *make_db(void) {
     GV_Database *db = gv_db_open(NULL, DIM, GV_INDEX_TYPE_FLAT);
     if (!db) return NULL;
@@ -21,7 +20,6 @@ static GV_Database *make_db(void) {
     float v4[] = {0.0f, 0.0f, 1.0f, 0.0f};
     float v5[] = {0.0f, 0.0f, 0.9f, 0.1f};
 
-    /* Assign group metadata via "category" key */
     gv_db_add_vector_with_metadata(db, v0, DIM, "category", "electronics");
     gv_db_add_vector_with_metadata(db, v1, DIM, "category", "electronics");
     gv_db_add_vector_with_metadata(db, v2, DIM, "category", "books");
@@ -32,7 +30,6 @@ static GV_Database *make_db(void) {
     return db;
 }
 
-/* test_config_init */
 static int test_config_init(void) {
     GV_GroupSearchConfig cfg;
     gv_group_search_config_init(&cfg);
@@ -42,7 +39,6 @@ static int test_config_init(void) {
     return 0;
 }
 
-/* test_group_search_basic */
 static int test_group_search_basic(void) {
     GV_Database *db = make_db();
     ASSERT(db != NULL, "make_db should succeed");
@@ -61,11 +57,9 @@ static int test_group_search_basic(void) {
     int rc = gv_group_search(db, query, DIM, &cfg, &result);
     ASSERT(rc == 0, "group_search should succeed");
 
-    /* We have 3 groups: electronics, books, clothing */
     ASSERT(result.group_count > 0, "should find at least 1 group");
     ASSERT(result.group_count <= 3, "should have at most 3 groups");
 
-    /* Check that groups have valid data */
     for (size_t i = 0; i < result.group_count; i++) {
         ASSERT(result.groups[i].group_value != NULL, "group_value should not be NULL");
         ASSERT(result.groups[i].hit_count > 0, "each group should have at least 1 hit");
@@ -77,7 +71,6 @@ static int test_group_search_basic(void) {
     return 0;
 }
 
-/* test_group_search_free_result */
 static int test_group_search_free_result(void) {
     /* Freeing a zeroed result should not crash */
     GV_GroupedResult result;
@@ -86,7 +79,6 @@ static int test_group_search_free_result(void) {
     return 0;
 }
 
-/* test_group_search_single_group */
 static int test_group_search_single_group(void) {
     GV_Database *db = gv_db_open(NULL, DIM, GV_INDEX_TYPE_FLAT);
     ASSERT(db != NULL, "db open should succeed");
@@ -126,7 +118,6 @@ static int test_group_search_single_group(void) {
     return 0;
 }
 
-/* test_group_search_limit */
 static int test_group_search_limit(void) {
     GV_Database *db = make_db();
     ASSERT(db != NULL, "make_db should succeed");
@@ -136,7 +127,7 @@ static int test_group_search_limit(void) {
     GV_GroupSearchConfig cfg;
     gv_group_search_config_init(&cfg);
     cfg.group_by = "category";
-    cfg.group_limit = 2; /* Only want top 2 groups */
+    cfg.group_limit = 2;
     cfg.hits_per_group = 1;
     cfg.distance_type = GV_DISTANCE_EUCLIDEAN;
 
@@ -151,7 +142,6 @@ static int test_group_search_limit(void) {
     return 0;
 }
 
-/* test_group_search_hits_sorted */
 static int test_group_search_hits_sorted(void) {
     GV_Database *db = make_db();
     ASSERT(db != NULL, "make_db should succeed");
@@ -182,8 +172,6 @@ static int test_group_search_hits_sorted(void) {
     gv_db_close(db);
     return 0;
 }
-
-/* test runner */
 
 typedef int (*test_fn)(void);
 typedef struct { const char *name; test_fn fn; } TestCase;

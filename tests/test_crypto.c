@@ -16,7 +16,6 @@ static void cleanup_temp_files(void) {
     unlink(TMP_DEC_PATH);
 }
 
-/* ── Test: config init ─────────────────────────────────────────────────── */
 static int test_config_init(void) {
     GV_CryptoConfig cfg;
     memset(&cfg, 0xFF, sizeof(cfg));
@@ -27,17 +26,14 @@ static int test_config_init(void) {
     return 0;
 }
 
-/* ── Test: create and destroy ──────────────────────────────────────────── */
 static int test_create_destroy(void) {
     GV_CryptoContext *ctx = gv_crypto_create(NULL);
     ASSERT(ctx != NULL, "crypto context creation with defaults");
     gv_crypto_destroy(ctx);
-    /* NULL safety */
     gv_crypto_destroy(NULL);
     return 0;
 }
 
-/* ── Test: generate key ────────────────────────────────────────────────── */
 static int test_generate_key(void) {
     GV_CryptoKey key;
     memset(&key, 0, sizeof(key));
@@ -45,7 +41,6 @@ static int test_generate_key(void) {
     int rc = gv_crypto_generate_key(&key);
     ASSERT(rc == 0, "generate random key");
 
-    /* Key should not be all zeros */
     int all_zero = 1;
     for (int i = 0; i < 32; i++) {
         if (key.key[i] != 0) { all_zero = 0; break; }
@@ -54,7 +49,6 @@ static int test_generate_key(void) {
 
     gv_crypto_wipe_key(&key);
 
-    /* After wipe, key bytes should be zeroed */
     all_zero = 1;
     for (int i = 0; i < 32; i++) {
         if (key.key[i] != 0) { all_zero = 0; break; }
@@ -64,7 +58,6 @@ static int test_generate_key(void) {
     return 0;
 }
 
-/* ── Test: derive key from password ────────────────────────────────────── */
 static int test_derive_key(void) {
     GV_CryptoContext *ctx = gv_crypto_create(NULL);
     ASSERT(ctx != NULL, "context creation");
@@ -77,7 +70,6 @@ static int test_derive_key(void) {
     rc = gv_crypto_derive_key(ctx, "mypassword", 10, salt, sizeof(salt), &key);
     ASSERT(rc == 0, "derive key from password");
 
-    /* Derive again with same inputs -- should get same key */
     GV_CryptoKey key2;
     rc = gv_crypto_derive_key(ctx, "mypassword", 10, salt, sizeof(salt), &key2);
     ASSERT(rc == 0, "derive key again");
@@ -89,7 +81,6 @@ static int test_derive_key(void) {
     return 0;
 }
 
-/* ── Test: encrypt and decrypt ─────────────────────────────────────────── */
 static int test_encrypt_decrypt(void) {
     GV_CryptoContext *ctx = gv_crypto_create(NULL);
     ASSERT(ctx != NULL, "context creation");
@@ -120,7 +111,6 @@ static int test_encrypt_decrypt(void) {
     return 0;
 }
 
-/* ── Test: constant time compare ───────────────────────────────────────── */
 static int test_constant_time_compare(void) {
     unsigned char a[16] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
     unsigned char b[16] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
@@ -135,7 +125,6 @@ static int test_constant_time_compare(void) {
     return 0;
 }
 
-/* ── Test: HMAC-SHA256 ─────────────────────────────────────────────────── */
 static int test_hmac_sha256(void) {
     const unsigned char key[] = "secret-key";
     const unsigned char data[] = "message to authenticate";
@@ -144,12 +133,10 @@ static int test_hmac_sha256(void) {
     int rc = gv_crypto_hmac_sha256(key, sizeof(key) - 1, data, sizeof(data) - 1, hmac1);
     ASSERT(rc == 0, "compute HMAC-SHA256");
 
-    /* Same inputs should produce same HMAC */
     rc = gv_crypto_hmac_sha256(key, sizeof(key) - 1, data, sizeof(data) - 1, hmac2);
     ASSERT(rc == 0, "compute HMAC-SHA256 again");
     ASSERT(memcmp(hmac1, hmac2, 32) == 0, "same key+data should produce same HMAC");
 
-    /* Different data should produce different HMAC */
     const unsigned char data2[] = "different message";
     unsigned char hmac3[32];
     rc = gv_crypto_hmac_sha256(key, sizeof(key) - 1, data2, sizeof(data2) - 1, hmac3);
@@ -159,7 +146,6 @@ static int test_hmac_sha256(void) {
     return 0;
 }
 
-/* ── Test: algorithm string ────────────────────────────────────────────── */
 static int test_algorithm_string(void) {
     const char *s;
 
@@ -174,8 +160,6 @@ static int test_algorithm_string(void) {
 
     return 0;
 }
-
-/* ── Main ──────────────────────────────────────────────────────────────── */
 
 typedef int (*test_fn)(void);
 typedef struct { const char *name; test_fn fn; } TestCase;

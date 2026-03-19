@@ -8,17 +8,14 @@
 
 #define DIM 4
 
-/* ── Test: create and destroy ──────────────────────────────────────────── */
 static int test_create_destroy(void) {
     void *idx = gv_multivec_create(DIM, NULL);
     ASSERT(idx != NULL, "multivec index creation with defaults");
     gv_multivec_destroy(idx);
-    /* NULL safety */
     gv_multivec_destroy(NULL);
     return 0;
 }
 
-/* ── Test: create with config ──────────────────────────────────────────── */
 static int test_create_with_config(void) {
     GV_MultiVecConfig cfg;
     cfg.max_chunks_per_doc = 32;
@@ -30,12 +27,10 @@ static int test_create_with_config(void) {
     return 0;
 }
 
-/* ── Test: add document and count ──────────────────────────────────────── */
 static int test_add_document(void) {
     void *idx = gv_multivec_create(DIM, NULL);
     ASSERT(idx != NULL, "index creation");
 
-    /* Document with 3 chunks, each of dimension 4 */
     float chunks[3 * DIM] = {
         1.0f, 0.0f, 0.0f, 0.0f,
         0.0f, 1.0f, 0.0f, 0.0f,
@@ -51,7 +46,6 @@ static int test_add_document(void) {
     return 0;
 }
 
-/* ── Test: add multiple documents ──────────────────────────────────────── */
 static int test_add_multiple_documents(void) {
     void *idx = gv_multivec_create(DIM, NULL);
     ASSERT(idx != NULL, "index creation");
@@ -73,7 +67,6 @@ static int test_add_multiple_documents(void) {
     return 0;
 }
 
-/* ── Test: delete document ─────────────────────────────────────────────── */
 static int test_delete_document(void) {
     void *idx = gv_multivec_create(DIM, NULL);
     ASSERT(idx != NULL, "index creation");
@@ -87,7 +80,6 @@ static int test_delete_document(void) {
     ASSERT(rc == 0, "delete document 10");
     ASSERT(gv_multivec_count_documents(idx) == 1, "1 document after delete");
 
-    /* Deleting non-existent should return -1 */
     rc = gv_multivec_delete_document(idx, 999);
     ASSERT(rc == -1, "delete non-existent document should fail");
 
@@ -95,12 +87,10 @@ static int test_delete_document(void) {
     return 0;
 }
 
-/* ── Test: search ──────────────────────────────────────────────────────── */
 static int test_search(void) {
     void *idx = gv_multivec_create(DIM, NULL);
     ASSERT(idx != NULL, "index creation");
 
-    /* Add 3 documents */
     float doc1[2 * DIM] = {
         1.0f, 0.0f, 0.0f, 0.0f,
         0.9f, 0.1f, 0.0f, 0.0f,
@@ -118,14 +108,12 @@ static int test_search(void) {
 
     int found = gv_multivec_search(idx, query, 3, results, GV_DISTANCE_EUCLIDEAN);
     ASSERT(found > 0, "search should return at least one result");
-    /* The closest document should be doc1 (doc_id=1), which has a chunk matching the query */
     ASSERT(results[0].doc_id == 1, "closest document should be doc_id=1");
 
     gv_multivec_destroy(idx);
     return 0;
 }
 
-/* ── Test: save and load ───────────────────────────────────────────────── */
 static int test_save_load(void) {
     const char *tmppath = "/tmp/gv_test_multivec.bin";
     void *idx = gv_multivec_create(DIM, NULL);
@@ -142,7 +130,6 @@ static int test_save_load(void) {
 
     gv_multivec_destroy(idx);
 
-    /* Load it back */
     void *loaded = NULL;
     FILE *fin = fopen(tmppath, "rb");
     ASSERT(fin != NULL, "open file for reading");
@@ -157,12 +144,10 @@ static int test_save_load(void) {
     return 0;
 }
 
-/* ── Test: aggregation modes ───────────────────────────────────────────── */
 static int test_aggregation_modes(void) {
     GV_MultiVecConfig cfg;
     cfg.max_chunks_per_doc = 256;
 
-    /* Test each aggregation mode creates successfully */
     GV_DocAggregation modes[] = {GV_DOC_AGG_MAX_SIM, GV_DOC_AGG_AVG_SIM, GV_DOC_AGG_SUM_SIM};
     for (int i = 0; i < 3; i++) {
         cfg.aggregation = modes[i];
@@ -172,8 +157,6 @@ static int test_aggregation_modes(void) {
     }
     return 0;
 }
-
-/* ── Main ──────────────────────────────────────────────────────────────── */
 
 typedef int (*test_fn)(void);
 typedef struct { const char *name; test_fn fn; } TestCase;

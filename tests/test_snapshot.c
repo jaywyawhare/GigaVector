@@ -5,7 +5,6 @@
 
 #define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while(0)
 
-/* test functions */
 static int test_manager_create_destroy(void) {
     GV_SnapshotManager *mgr = gv_snapshot_manager_create(10);
     ASSERT(mgr != NULL, "gv_snapshot_manager_create returned NULL");
@@ -50,7 +49,6 @@ static int test_snapshot_get_vector(void) {
     ASSERT(v1 != NULL, "get_vector(1) should not be NULL");
     ASSERT(v1[0] == 50.0f && v1[3] == 80.0f, "vector 1 data should match");
 
-    /* Out-of-bounds should return NULL */
     const float *v2 = gv_snapshot_get_vector(snap, 2);
     ASSERT(v2 == NULL, "get_vector out-of-bounds should return NULL");
 
@@ -89,7 +87,6 @@ static int test_snapshot_delete(void) {
     int rc = gv_snapshot_delete(mgr, sid);
     ASSERT(rc == 0, "delete should succeed");
 
-    /* Opening deleted snapshot should return NULL */
     GV_Snapshot *snap = gv_snapshot_open(mgr, sid);
     ASSERT(snap == NULL, "opening deleted snapshot should return NULL");
 
@@ -118,7 +115,6 @@ static int test_snapshot_save_load(void) {
     ASSERT(rc == 0, "load should succeed");
     ASSERT(loaded != NULL, "loaded manager should be non-NULL");
 
-    /* Verify loaded snapshot data */
     GV_Snapshot *snap = gv_snapshot_open(loaded, sid);
     ASSERT(snap != NULL, "open loaded snapshot");
     ASSERT(gv_snapshot_count(snap) == 1, "loaded snapshot count == 1");
@@ -137,7 +133,6 @@ static int test_snapshot_empty(void) {
     GV_SnapshotManager *mgr = gv_snapshot_manager_create(10);
     ASSERT(mgr != NULL, "create manager");
 
-    /* Snapshot with zero vectors */
     uint64_t sid = gv_snapshot_create(mgr, 0, NULL, 4, "empty");
     ASSERT(sid > 0, "empty snapshot should get valid id");
 
@@ -149,8 +144,6 @@ static int test_snapshot_empty(void) {
     gv_snapshot_manager_destroy(mgr);
     return 0;
 }
-
-/* harness */
 
 typedef int (*test_fn)(void);
 typedef struct { const char *name; test_fn fn; } TestCase;

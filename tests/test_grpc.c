@@ -46,7 +46,6 @@ static int test_grpc_create_destroy(void) {
     gv_grpc_destroy(server);
     gv_db_close(db);
 
-    /* Destroy NULL should be safe */
     gv_grpc_destroy(NULL);
     return 0;
 }
@@ -73,7 +72,6 @@ static int test_grpc_is_running_before_start(void) {
     int running = gv_grpc_is_running(server);
     ASSERT(running == 0, "server should not be running before start");
 
-    /* NULL server */
     ASSERT(gv_grpc_is_running(NULL) == 0, "is_running(NULL) should return 0");
 
     gv_grpc_destroy(server);
@@ -82,7 +80,6 @@ static int test_grpc_is_running_before_start(void) {
 }
 
 static int test_grpc_error_string_all_codes(void) {
-    /* Test all defined error codes */
     const char *s;
 
     s = gv_grpc_error_string(GV_GRPC_OK);
@@ -109,14 +106,12 @@ static int test_grpc_error_string_all_codes(void) {
     s = gv_grpc_error_string(GV_GRPC_ERROR_BIND);
     ASSERT(s != NULL, "error_string for ERROR_BIND should not be NULL");
 
-    /* Unknown error code should still return a safe string */
     s = gv_grpc_error_string(-999);
     ASSERT(s != NULL, "error_string for unknown code should not be NULL");
     return 0;
 }
 
 static int test_grpc_error_strings_distinct(void) {
-    /* Different error codes should have different messages */
     const char *ok = gv_grpc_error_string(GV_GRPC_OK);
     const char *null_err = gv_grpc_error_string(GV_GRPC_ERROR_NULL);
     ASSERT(strcmp(ok, null_err) != 0, "OK and ERROR_NULL should have different messages");
@@ -136,7 +131,6 @@ static int test_grpc_encode_search_request(void) {
     ASSERT(rc == 0, "encode_search_request should succeed");
     ASSERT(out_len > 0, "encoded length should be > 0");
 
-    /* Decode and verify round-trip */
     float *decoded_query = NULL;
     size_t decoded_dim = 0, decoded_k = 0;
     int decoded_dist_type = -1;
@@ -149,7 +143,6 @@ static int test_grpc_encode_search_request(void) {
     ASSERT(decoded_dist_type == 0, "decoded distance_type should be 0");
     ASSERT(decoded_query != NULL, "decoded query should not be NULL");
 
-    /* Verify vector values */
     for (size_t i = 0; i < 4; i++) {
         ASSERT(decoded_query[i] == query[i], "decoded query values should match");
     }
@@ -280,31 +273,26 @@ static int test_grpc_start_stop(void) {
 
     GV_GrpcConfig config;
     gv_grpc_config_init(&config);
-    /* Use a high port to avoid conflicts */
     config.port = 59999;
 
     GV_GrpcServer *server = gv_grpc_create(db, &config);
     ASSERT(server != NULL, "gv_grpc_create should succeed");
 
-    /* Start the server */
     int rc = gv_grpc_start(server);
     ASSERT(rc == 0, "gv_grpc_start should succeed");
 
     int running = gv_grpc_is_running(server);
     ASSERT(running == 1, "server should be running after start");
 
-    /* Starting again should fail (already running) */
     rc = gv_grpc_start(server);
     ASSERT(rc != 0, "starting already-running server should fail");
 
-    /* Stop the server */
     rc = gv_grpc_stop(server);
     ASSERT(rc == 0, "gv_grpc_stop should succeed");
 
     running = gv_grpc_is_running(server);
     ASSERT(running == 0, "server should not be running after stop");
 
-    /* Stopping again should fail (not running) */
     rc = gv_grpc_stop(server);
     ASSERT(rc != 0, "stopping already-stopped server should fail");
 

@@ -15,7 +15,6 @@ static int test_replication_config_init(void) {
     ASSERT(config.election_timeout_ms > 0, "default election_timeout_ms should be positive");
     ASSERT(config.heartbeat_interval_ms > 0, "default heartbeat_interval_ms should be positive");
     ASSERT(config.max_lag_entries > 0, "default max_lag_entries should be positive");
-    /* leader_address and node_id may be NULL by default */
     return 0;
 }
 
@@ -46,7 +45,6 @@ static int test_replication_create_destroy(void) {
     gv_replication_destroy(mgr);
     gv_db_close(db);
 
-    /* Destroy NULL should be safe */
     gv_replication_destroy(NULL);
     return 0;
 }
@@ -121,7 +119,6 @@ static int test_replication_add_follower(void) {
     rc = gv_replication_add_follower(mgr, "follower-2", "192.168.1.11:9000");
     ASSERT(rc == 0, "add second follower should succeed");
 
-    /* List replicas */
     GV_ReplicaInfo *replicas = NULL;
     size_t count = 0;
     rc = gv_replication_list_replicas(mgr, &replicas, &count);
@@ -151,7 +148,6 @@ static int test_replication_remove_follower(void) {
     int rc = gv_replication_remove_follower(mgr, "follower-x");
     ASSERT(rc == 0, "remove_follower should succeed");
 
-    /* Removing non-existent follower should fail */
     rc = gv_replication_remove_follower(mgr, "no-such-follower");
     ASSERT(rc == -1, "removing non-existent follower should return -1");
 
@@ -175,7 +171,6 @@ static int test_replication_is_healthy(void) {
     int healthy = gv_replication_is_healthy(mgr);
     ASSERT(healthy == 1 || healthy == 0, "is_healthy should return 0 or 1");
 
-    /* NULL should return -1 */
     ASSERT(gv_replication_is_healthy(NULL) == -1, "is_healthy(NULL) should return -1");
 
     gv_replication_destroy(mgr);
@@ -195,23 +190,19 @@ static int test_replication_read_policy(void) {
     GV_ReplicationManager *mgr = gv_replication_create(db, &config);
     ASSERT(mgr != NULL, "replication_create should succeed");
 
-    /* Default should be LEADER_ONLY */
     GV_ReadPolicy policy = gv_replication_get_read_policy(mgr);
     ASSERT(policy == GV_READ_LEADER_ONLY, "default read policy should be LEADER_ONLY");
 
-    /* Set to ROUND_ROBIN */
     int rc = gv_replication_set_read_policy(mgr, GV_READ_ROUND_ROBIN);
     ASSERT(rc == 0, "set_read_policy to ROUND_ROBIN should succeed");
     policy = gv_replication_get_read_policy(mgr);
     ASSERT(policy == GV_READ_ROUND_ROBIN, "policy should be ROUND_ROBIN after set");
 
-    /* Set to LEAST_LAG */
     rc = gv_replication_set_read_policy(mgr, GV_READ_LEAST_LAG);
     ASSERT(rc == 0, "set_read_policy to LEAST_LAG should succeed");
     policy = gv_replication_get_read_policy(mgr);
     ASSERT(policy == GV_READ_LEAST_LAG, "policy should be LEAST_LAG after set");
 
-    /* Set to RANDOM */
     rc = gv_replication_set_read_policy(mgr, GV_READ_RANDOM);
     ASSERT(rc == 0, "set_read_policy to RANDOM should succeed");
     policy = gv_replication_get_read_policy(mgr);
@@ -234,13 +225,11 @@ static int test_replication_route_read(void) {
     GV_ReplicationManager *mgr = gv_replication_create(db, &config);
     ASSERT(mgr != NULL, "replication_create should succeed");
 
-    /* With LEADER_ONLY policy, route_read should return the leader db */
     gv_replication_set_read_policy(mgr, GV_READ_LEADER_ONLY);
     GV_Database *routed = gv_replication_route_read(mgr);
     ASSERT(routed != NULL, "route_read should return a valid database");
     ASSERT(routed == db, "route_read with LEADER_ONLY should return leader db");
 
-    /* NULL should return NULL */
     ASSERT(gv_replication_route_read(NULL) == NULL, "route_read(NULL) should return NULL");
 
     gv_replication_destroy(mgr);
@@ -263,7 +252,6 @@ static int test_replication_get_lag(void) {
     int64_t lag = gv_replication_get_lag(mgr);
     ASSERT(lag >= 0, "initial lag should be >= 0 (leader has no lag)");
 
-    /* NULL should return -1 */
     ASSERT(gv_replication_get_lag(NULL) == -1, "get_lag(NULL) should return -1");
 
     gv_replication_destroy(mgr);
@@ -283,18 +271,15 @@ static int test_replication_step_down_and_request(void) {
     GV_ReplicationManager *mgr = gv_replication_create(db, &config);
     ASSERT(mgr != NULL, "replication_create should succeed");
 
-    /* Step down from leader */
     int rc = gv_replication_step_down(mgr);
     ASSERT(rc == 0, "step_down should succeed");
 
-    /* Request leadership back */
     rc = gv_replication_request_leadership(mgr);
     ASSERT(rc == 0, "request_leadership should succeed (single node)");
 
     GV_ReplicationRole role = gv_replication_get_role(mgr);
     ASSERT(role == GV_REPL_LEADER, "should be LEADER after requesting leadership");
 
-    /* NULL tests */
     ASSERT(gv_replication_step_down(NULL) == -1, "step_down(NULL) should return -1");
     ASSERT(gv_replication_request_leadership(NULL) == -1,
            "request_leadership(NULL) should return -1");
@@ -319,18 +304,14 @@ static int test_replication_register_follower_db(void) {
     GV_ReplicationManager *mgr = gv_replication_create(leader_db, &config);
     ASSERT(mgr != NULL, "replication_create should succeed");
 
-    /* Add a follower first */
     gv_replication_add_follower(mgr, "follower-reg", "192.168.1.30:9000");
 
-    /* Register follower's db */
     int rc = gv_replication_register_follower_db(mgr, "follower-reg", follower_db);
     ASSERT(rc == 0, "register_follower_db should succeed");
 
-    /* Register for non-existent follower should fail */
     rc = gv_replication_register_follower_db(mgr, "no-such-follower", follower_db);
     ASSERT(rc == -1, "register_follower_db for unknown follower should fail");
 
-    /* NULL tests */
     rc = gv_replication_register_follower_db(NULL, "follower-reg", follower_db);
     ASSERT(rc == -1, "register_follower_db(NULL mgr) should return -1");
 
@@ -367,7 +348,6 @@ static int test_replication_set_max_read_lag(void) {
 }
 
 static int test_replication_free_replicas_null(void) {
-    /* Should not crash */
     gv_replication_free_replicas(NULL, 0);
     return 0;
 }

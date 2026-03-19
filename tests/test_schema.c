@@ -13,7 +13,6 @@ static int test_schema_create_destroy(void) {
 
     gv_schema_destroy(schema);
 
-    /* Destroy NULL should be safe */
     gv_schema_destroy(NULL);
     return 0;
 }
@@ -78,7 +77,6 @@ static int test_schema_remove_field(void) {
     ASSERT(gv_schema_has_field(schema, "a") == 1, "'a' still present");
     ASSERT(gv_schema_has_field(schema, "c") == 1, "'c' still present");
 
-    /* Removing nonexistent field */
     ASSERT(gv_schema_remove_field(schema, "nonexistent") == -1,
            "removing nonexistent returns -1");
 
@@ -93,19 +91,16 @@ static int test_schema_validate(void) {
     gv_schema_add_field(schema, "name", GV_SCHEMA_STRING, 1, "");
     gv_schema_add_field(schema, "age", GV_SCHEMA_INT, 0, "25");
 
-    /* Valid: required field 'name' provided */
     const char *keys1[] = {"name", "age"};
     const char *vals1[] = {"Alice", "30"};
     ASSERT(gv_schema_validate(schema, keys1, vals1, 2) == 0,
            "validation passes with all fields");
 
-    /* Valid: optional field 'age' omitted */
     const char *keys2[] = {"name"};
     const char *vals2[] = {"Bob"};
     ASSERT(gv_schema_validate(schema, keys2, vals2, 1) == 0,
            "validation passes with only required fields");
 
-    /* Invalid: required field 'name' missing */
     const char *keys3[] = {"age"};
     const char *vals3[] = {"42"};
     int result = gv_schema_validate(schema, keys3, vals3, 1);
@@ -129,7 +124,6 @@ static int test_schema_copy(void) {
     ASSERT(gv_schema_has_field(copy, "x") == 1, "copy has field 'x'");
     ASSERT(gv_schema_has_field(copy, "y") == 1, "copy has field 'y'");
 
-    /* Modifying original should not affect copy */
     gv_schema_add_field(schema, "z", GV_SCHEMA_FLOAT, 0, "0");
     ASSERT(gv_schema_field_count(schema) == 3, "original now has 3 fields");
     ASSERT(gv_schema_field_count(copy) == 2, "copy still has 2 fields");
@@ -144,11 +138,9 @@ static int test_schema_diff(void) {
     GV_Schema *new_s = gv_schema_create(2);
     ASSERT(old_s != NULL && new_s != NULL, "schema creation");
 
-    /* old: {a: STRING, b: INT} */
     gv_schema_add_field(old_s, "a", GV_SCHEMA_STRING, 1, "");
     gv_schema_add_field(old_s, "b", GV_SCHEMA_INT, 0, "0");
 
-    /* new: {a: STRING, c: FLOAT} -- b removed, c added */
     gv_schema_add_field(new_s, "a", GV_SCHEMA_STRING, 1, "");
     gv_schema_add_field(new_s, "c", GV_SCHEMA_FLOAT, 0, "0.0");
 
@@ -156,7 +148,6 @@ static int test_schema_diff(void) {
     int ndiff = gv_schema_diff(old_s, new_s, diffs, 10);
     ASSERT(ndiff >= 0, "schema diff did not fail");
 
-    /* We expect at least 'b' removed and 'c' added */
     int found_b_removed = 0, found_c_added = 0;
     for (int i = 0; i < ndiff; i++) {
         if (strcmp(diffs[i].name, "b") == 0 && diffs[i].removed) found_b_removed = 1;
@@ -178,13 +169,11 @@ static int test_schema_save_load_and_json(void) {
     gv_schema_add_field(schema, "name", GV_SCHEMA_STRING, 1, "");
     gv_schema_add_field(schema, "rating", GV_SCHEMA_FLOAT, 0, "0.0");
 
-    /* Save */
     FILE *fout = fopen(path, "wb");
     ASSERT(fout != NULL, "open file for writing");
     ASSERT(gv_schema_save(schema, fout) == 0, "save schema");
     fclose(fout);
 
-    /* Load */
     FILE *fin = fopen(path, "rb");
     ASSERT(fin != NULL, "open file for reading");
     GV_Schema *loaded = gv_schema_load(fin);
@@ -195,11 +184,9 @@ static int test_schema_save_load_and_json(void) {
     ASSERT(gv_schema_has_field(loaded, "name") == 1, "loaded has 'name'");
     ASSERT(gv_schema_has_field(loaded, "rating") == 1, "loaded has 'rating'");
 
-    /* JSON export */
     char *json = gv_schema_to_json(schema);
     ASSERT(json != NULL, "schema to JSON not NULL");
     ASSERT(strlen(json) > 0, "JSON string is non-empty");
-    /* Basic sanity: should contain field names */
     ASSERT(strstr(json, "name") != NULL, "JSON contains 'name'");
     ASSERT(strstr(json, "rating") != NULL, "JSON contains 'rating'");
     free(json);

@@ -11,7 +11,6 @@ static int test_optimizer_create_destroy(void) {
 
     gv_optimizer_destroy(opt);
 
-    /* Destroying NULL should be safe */
     gv_optimizer_destroy(NULL);
     return 0;
 }
@@ -31,7 +30,6 @@ static int test_optimizer_update_stats(void) {
 
     gv_optimizer_update_stats(opt, &stats);
 
-    /* No crash means success; stats are internal state */
     gv_optimizer_destroy(opt);
     return 0;
 }
@@ -165,10 +163,8 @@ static int test_optimizer_record_result(void) {
     int rc = gv_optimizer_plan(opt, 10, 0, 1.0, &plan);
     ASSERT(rc == 0, "plan generation should succeed");
 
-    /* Record a result for learning */
     gv_optimizer_record_result(opt, &plan, 1500, 0.95);
 
-    /* No crash means success; recording is internal */
     gv_optimizer_destroy(opt);
     return 0;
 }

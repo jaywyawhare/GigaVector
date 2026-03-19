@@ -1,10 +1,3 @@
-/**
- * @file test_agent.c
- * @brief Unit tests for the AI agent framework (gv_agent.h).
- * Agent creation requires a real LLM provider, so most tests verify
- * graceful failure when no LLM is available, plus config/struct fields.
- */
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -27,7 +20,6 @@ static GV_Database *create_test_db(void) {
     return gv_db_open(TEST_DB, 4, GV_INDEX_TYPE_FLAT);
 }
 
-/* Test 1: Create agent returns NULL without real LLM (expected) */
 static int test_agent_create_no_llm(void) {
     GV_Database *db = create_test_db();
     ASSERT(db != NULL, "database creation");
@@ -45,20 +37,17 @@ static int test_agent_create_no_llm(void) {
     if (agent != NULL) {
         gv_agent_destroy(agent);
     }
-    /* Either way — no crash is success */
 
     gv_db_close(db);
     remove(TEST_DB);
     return 0;
 }
 
-/* Test 2: Destroy NULL agent (should not crash) */
 static int test_agent_destroy_null(void) {
     gv_agent_destroy(NULL);
     return 0;
 }
 
-/* Test 3: Create agent with NULL db or NULL config */
 static int test_agent_create_null_params(void) {
     GV_AgentConfig config = {0};
     config.agent_type = GV_AGENT_QUERY;
@@ -79,7 +68,6 @@ static int test_agent_create_null_params(void) {
     return 0;
 }
 
-/* Test 4: Create with NULL api_key fails */
 static int test_agent_create_null_api_key(void) {
     GV_Database *db = create_test_db();
     ASSERT(db != NULL, "database creation");
@@ -87,7 +75,7 @@ static int test_agent_create_null_api_key(void) {
     GV_AgentConfig config = {0};
     config.agent_type = GV_AGENT_QUERY;
     config.llm_provider = "openai";
-    config.api_key = NULL; /* NULL key */
+    config.api_key = NULL;
     config.model = "test-model";
 
     GV_Agent *agent = gv_agent_create(db, &config);
@@ -98,13 +86,11 @@ static int test_agent_create_null_api_key(void) {
     return 0;
 }
 
-/* Test 5: Free NULL result (should not crash) */
 static int test_agent_free_result_null(void) {
     gv_agent_free_result(NULL);
     return 0;
 }
 
-/* Test 6: Agent config defaults and fields */
 static int test_agent_config_fields(void) {
     GV_AgentConfig config;
     memset(&config, 0, sizeof(config));
@@ -136,7 +122,6 @@ static int test_agent_config_fields(void) {
     return 0;
 }
 
-/* Test 7: Agent result structure fields */
 static int test_agent_result_structure(void) {
     GV_AgentResult result;
     memset(&result, 0, sizeof(result));
@@ -152,7 +137,6 @@ static int test_agent_result_structure(void) {
     return 0;
 }
 
-/* Test 8: Agent type enum values */
 static int test_agent_type_enums(void) {
     ASSERT(GV_AGENT_QUERY == 0, "GV_AGENT_QUERY == 0");
     ASSERT(GV_AGENT_TRANSFORM == 1, "GV_AGENT_TRANSFORM == 1");
@@ -160,14 +144,12 @@ static int test_agent_type_enums(void) {
     return 0;
 }
 
-/* Test 9: Schema hint on NULL agent (should not crash) */
 static int test_agent_schema_hint_null(void) {
     gv_agent_set_schema_hint(NULL, "{}");
     gv_agent_set_schema_hint(NULL, NULL);
     return 0;
 }
 
-/* Test 10: All agent types with no-real-llm */
 static int test_agent_all_types_no_llm(void) {
     GV_Database *db = create_test_db();
     ASSERT(db != NULL, "database creation");
@@ -183,7 +165,6 @@ static int test_agent_all_types_no_llm(void) {
         config.max_retries = 1;
 
         GV_Agent *agent = gv_agent_create(db, &config);
-        /* May be NULL if LLM not available — that's expected */
         if (agent != NULL) {
             gv_agent_destroy(agent);
         }

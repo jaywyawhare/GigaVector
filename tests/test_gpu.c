@@ -15,7 +15,6 @@ static int test_gpu_device_count(void) {
     int count = gv_gpu_device_count();
     ASSERT(count >= 0, "gv_gpu_device_count should return >= 0");
 
-    /* If no GPU available, count must be 0 */
     if (!gv_gpu_available()) {
         ASSERT(count == 0, "device_count should be 0 when GPU not available");
     }
@@ -41,7 +40,6 @@ static int test_gpu_config_init(void) {
 }
 
 static int test_gpu_config_init_twice(void) {
-    /* Calling config_init twice should produce identical field values */
     GV_GPUConfig c1, c2;
     memset(&c1, 0xAA, sizeof(c1));
     memset(&c2, 0x55, sizeof(c2));
@@ -71,7 +69,6 @@ static int test_gpu_create_no_gpu(void) {
         gv_gpu_destroy(ctx);
     }
 
-    /* Also test with NULL config */
     ctx = gv_gpu_create(NULL);
     if (ctx) {
         gv_gpu_destroy(ctx);
@@ -80,14 +77,12 @@ static int test_gpu_create_no_gpu(void) {
 }
 
 static int test_gpu_destroy_null(void) {
-    /* Destroying NULL should be safe (no crash) */
     gv_gpu_destroy(NULL);
     return 0;
 }
 
 static int test_gpu_get_error_null(void) {
     const char *err = gv_gpu_get_error(NULL);
-    /* Should return a non-NULL safe string or NULL without crashing */
     (void)err; /* Just ensure no crash */
     return 0;
 }
@@ -96,7 +91,6 @@ static int test_gpu_get_device_info_invalid(void) {
     GV_GPUDeviceInfo info;
     memset(&info, 0, sizeof(info));
 
-    /* NULL info pointer should fail */
     int rc = gv_gpu_get_device_info(0, NULL);
     ASSERT(rc == -1, "get_device_info with NULL info should return -1");
 
@@ -135,7 +129,6 @@ static int test_gpu_get_stats_null(void) {
     int rc = gv_gpu_get_stats(NULL, &stats);
     ASSERT(rc == -1, "gv_gpu_get_stats(NULL, ...) should return -1");
 
-    /* Also test NULL stats pointer (if context were valid, but we pass NULL for both) */
     rc = gv_gpu_get_stats(NULL, NULL);
     ASSERT(rc == -1, "gv_gpu_get_stats(NULL, NULL) should return -1");
     return 0;
@@ -155,7 +148,6 @@ static int test_gpu_index_create_null(void) {
 }
 
 static int test_gpu_index_destroy_null(void) {
-    /* Should not crash */
     gv_gpu_index_destroy(NULL);
     return 0;
 }
@@ -192,7 +184,6 @@ static int test_gpu_compute_distances_null(void) {
 }
 
 static int test_gpu_distance_metric_values(void) {
-    /* Verify enum values are distinct and defined */
     ASSERT(GV_GPU_EUCLIDEAN == 0, "GV_GPU_EUCLIDEAN should be 0");
     ASSERT(GV_GPU_COSINE == 1, "GV_GPU_COSINE should be 1");
     ASSERT(GV_GPU_DOT_PRODUCT == 2, "GV_GPU_DOT_PRODUCT should be 2");

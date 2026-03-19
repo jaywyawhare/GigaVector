@@ -12,7 +12,6 @@
 #define TRAIN_COUNT 200
 #define INSERT_COUNT 50
 
-/* Generate deterministic training data using sinf. */
 static void generate_training_data(float *data, size_t count, size_t dim) {
     for (size_t i = 0; i < count; i++) {
         for (size_t j = 0; j < dim; j++) {
@@ -21,7 +20,6 @@ static void generate_training_data(float *data, size_t count, size_t dim) {
     }
 }
 
-/* 1. test_pq_create_destroy */
 static int test_pq_create_destroy(void) {
     GV_PQConfig config;
     config.m           = M;
@@ -35,7 +33,6 @@ static int test_pq_create_destroy(void) {
     return 0;
 }
 
-/* 2. test_pq_train_insert_search */
 static int test_pq_train_insert_search(void) {
     GV_PQConfig config;
     config.m           = M;
@@ -45,12 +42,10 @@ static int test_pq_train_insert_search(void) {
     void *index = gv_pq_create(DIM, &config);
     ASSERT(index != NULL);
 
-    /* Train */
     float train_data[TRAIN_COUNT * DIM];
     generate_training_data(train_data, TRAIN_COUNT, DIM);
     ASSERT(gv_pq_train(index, train_data, TRAIN_COUNT) == 0);
 
-    /* Insert */
     for (size_t i = 0; i < INSERT_COUNT; i++) {
         GV_Vector *vec = gv_vector_create_from_data(DIM, &train_data[i * DIM]);
         ASSERT(vec != NULL);
@@ -59,7 +54,6 @@ static int test_pq_train_insert_search(void) {
     }
     ASSERT(gv_pq_count(index) == INSERT_COUNT);
 
-    /* Search */
     float query[DIM];
     for (size_t j = 0; j < DIM; j++) {
         query[j] = sinf((float)j);
@@ -77,7 +71,6 @@ static int test_pq_train_insert_search(void) {
     return 0;
 }
 
-/* 3. test_pq_is_trained */
 static int test_pq_is_trained(void) {
     GV_PQConfig config;
     config.m           = M;
@@ -87,22 +80,18 @@ static int test_pq_is_trained(void) {
     void *index = gv_pq_create(DIM, &config);
     ASSERT(index != NULL);
 
-    /* Before training */
     ASSERT(gv_pq_is_trained(index) == 0);
 
-    /* Train */
     float train_data[TRAIN_COUNT * DIM];
     generate_training_data(train_data, TRAIN_COUNT, DIM);
     ASSERT(gv_pq_train(index, train_data, TRAIN_COUNT) == 0);
 
-    /* After training */
     ASSERT(gv_pq_is_trained(index) == 1);
 
     gv_pq_destroy(index);
     return 0;
 }
 
-/* 4. test_pq_range_search */
 static int test_pq_range_search(void) {
     GV_PQConfig config;
     config.m           = M;
@@ -112,12 +101,10 @@ static int test_pq_range_search(void) {
     void *index = gv_pq_create(DIM, &config);
     ASSERT(index != NULL);
 
-    /* Train */
     float train_data[TRAIN_COUNT * DIM];
     generate_training_data(train_data, TRAIN_COUNT, DIM);
     ASSERT(gv_pq_train(index, train_data, TRAIN_COUNT) == 0);
 
-    /* Insert */
     for (size_t i = 0; i < INSERT_COUNT; i++) {
         GV_Vector *vec = gv_vector_create_from_data(DIM, &train_data[i * DIM]);
         ASSERT(vec != NULL);
@@ -125,7 +112,6 @@ static int test_pq_range_search(void) {
         /* gv_pq_insert takes ownership of vec */
     }
 
-    /* Range search with a generous radius */
     float query[DIM];
     for (size_t j = 0; j < DIM; j++) {
         query[j] = sinf((float)j);
@@ -139,7 +125,6 @@ static int test_pq_range_search(void) {
                                    GV_DISTANCE_EUCLIDEAN, NULL, NULL);
     ASSERT(count > 0);
 
-    /* Verify all returned results are within the radius */
     for (int i = 0; i < count; i++) {
         ASSERT(results[i].distance <= 100.0f);
     }
@@ -149,7 +134,6 @@ static int test_pq_range_search(void) {
     return 0;
 }
 
-/* 5. test_pq_delete_update */
 static int test_pq_delete_update(void) {
     GV_PQConfig config;
     config.m           = M;
@@ -159,12 +143,10 @@ static int test_pq_delete_update(void) {
     void *index = gv_pq_create(DIM, &config);
     ASSERT(index != NULL);
 
-    /* Train */
     float train_data[TRAIN_COUNT * DIM];
     generate_training_data(train_data, TRAIN_COUNT, DIM);
     ASSERT(gv_pq_train(index, train_data, TRAIN_COUNT) == 0);
 
-    /* Insert */
     for (size_t i = 0; i < INSERT_COUNT; i++) {
         GV_Vector *vec = gv_vector_create_from_data(DIM, &train_data[i * DIM]);
         ASSERT(vec != NULL);
@@ -173,10 +155,8 @@ static int test_pq_delete_update(void) {
     }
     ASSERT(gv_pq_count(index) == INSERT_COUNT);
 
-    /* Delete entry 0 */
     ASSERT(gv_pq_delete(index, 0) == 0);
 
-    /* Update entry 1 with new data */
     float new_data[DIM];
     for (size_t j = 0; j < DIM; j++) {
         new_data[j] = 1.0f;
@@ -187,22 +167,18 @@ static int test_pq_delete_update(void) {
     return 0;
 }
 
-/* 6. test_pq_db_integration */
 static int test_pq_db_integration(void) {
     GV_Database *db = gv_db_open(NULL, DIM, GV_INDEX_TYPE_PQ);
     ASSERT(db != NULL);
 
-    /* Train */
     float train_data[TRAIN_COUNT * DIM];
     generate_training_data(train_data, TRAIN_COUNT, DIM);
     ASSERT(gv_db_pq_train(db, train_data, TRAIN_COUNT, DIM) == 0);
 
-    /* Insert vectors */
     for (size_t i = 0; i < INSERT_COUNT; i++) {
         ASSERT(gv_db_add_vector(db, &train_data[i * DIM], DIM) == 0);
     }
 
-    /* Search */
     float query[DIM];
     for (size_t j = 0; j < DIM; j++) {
         query[j] = sinf((float)j);
@@ -217,14 +193,11 @@ static int test_pq_db_integration(void) {
     return 0;
 }
 
-/* 7. test_pq_save_load */
 static int test_pq_save_load(void) {
     const char *filepath = "test_pq_save.db";
 
-    /* Remove any leftover file from a previous run */
     unlink(filepath);
 
-    /* Open, train, insert, save */
     GV_Database *db = gv_db_open(filepath, DIM, GV_INDEX_TYPE_PQ);
     ASSERT(db != NULL);
 
@@ -239,7 +212,6 @@ static int test_pq_save_load(void) {
     ASSERT(gv_db_save(db, filepath) == 0);
     gv_db_close(db);
 
-    /* Reopen and search */
     GV_Database *db2 = gv_db_open(filepath, DIM, GV_INDEX_TYPE_PQ);
     ASSERT(db2 != NULL);
 
@@ -255,12 +227,10 @@ static int test_pq_save_load(void) {
 
     gv_db_close(db2);
 
-    /* Clean up */
     unlink(filepath);
     return 0;
 }
 
-/* main */
 int main(void) {
     int rc = 0;
 

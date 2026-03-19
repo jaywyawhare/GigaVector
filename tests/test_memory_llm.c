@@ -11,7 +11,6 @@
 #define MAX_ENV_VALUE_LEN 1024
 static char env_buffer[MAX_ENV_VALUE_LEN];
 
-// Helper function to read .env file and return value for a key
 static const char *read_env_file(const char *env_var) {
     FILE *file = fopen(".env", "r");
     if (file == NULL) {
@@ -67,34 +66,26 @@ static const char *read_env_file(const char *env_var) {
     return NULL;
 }
 
-// Helper function to get API key from .env file or environment
 static const char *get_env_api_key(const char *env_var) {
-    // First try .env file
     const char *key = read_env_file(env_var);
     if (key && strlen(key) > 0) {
         return key;
     }
-    
-    // Fall back to environment variable
     key = getenv(env_var);
     return key && strlen(key) > 0 ? key : NULL;
 }
 
-// Test memory extraction with LLM (will fallback if LLM unavailable)
 void test_memory_extraction_llm(void) {
-    // Create database
     GV_Database *db = gv_db_open("test_memory_llm.db", 384, GV_INDEX_TYPE_HNSW);
     if (db == NULL) {
         return;
     }
 
-    // Get API key from environment or use test key
     const char *api_key = get_env_api_key("OPENAI_API_KEY");
     if (!api_key) {
         api_key = "sk-test123456789012345678901234567890";
     }
-    
-    // Create LLM config
+
     GV_LLMConfig llm_config = {
         .provider = GV_LLM_PROVIDER_OPENAI,
         .api_key = (char *)api_key,
@@ -106,19 +97,17 @@ void test_memory_extraction_llm(void) {
         .custom_prompt = NULL
     };
     
-    // Create memory layer config with LLM
     GV_MemoryLayerConfig mem_config = gv_memory_layer_config_default();
     mem_config.llm_config = &llm_config;
     mem_config.use_llm_extraction = 1;
-    
+
     GV_MemoryLayer *layer = gv_memory_layer_create(db, &mem_config);
     if (layer == NULL) {
         gv_db_close(db);
         return;
     }
 
-    // Test conversation
-    const char *conversation = 
+    const char *conversation =
         "User: Hi, my name is John. I'm a software engineer.\n"
         "Assistant: Nice to meet you, John!\n"
         "User: I love pizza, especially margherita.\n"
@@ -127,7 +116,6 @@ void test_memory_extraction_llm(void) {
     GV_MemoryCandidate candidates[10];
     size_t actual_count = 0;
     
-    // Try LLM extraction (will fallback to heuristics if LLM unavailable)
     if (layer->llm != NULL) {
         const char *real_api_key = get_env_api_key("OPENAI_API_KEY");
         (void)real_api_key;
@@ -147,7 +135,6 @@ void test_memory_extraction_llm(void) {
     } else {
     }
     
-    // Test fallback to heuristics
     actual_count = 0;
     int result = gv_memory_extract_candidates_from_conversation(
         conversation, "test_conv_001", 0.5,
@@ -158,18 +145,15 @@ void test_memory_extraction_llm(void) {
     } else {
     }
     
-    // Cleanup
     for (size_t i = 0; i < actual_count; i++) {
         gv_memory_candidate_free(&candidates[i]);
     }
-    
+
     gv_memory_layer_destroy(layer);
     gv_db_close(db);
 }
 
-// Test input validation
 void test_input_validation(void) {
-    // Test conversation length limit
     char long_conversation[100002];
     memset(long_conversation, 'A', 100001);
     long_conversation[100001] = '\0';
@@ -177,13 +161,12 @@ void test_input_validation(void) {
     GV_MemoryCandidate candidates[10];
     size_t actual_count = 0;
     
-    // Get API key from environment or use test key
     const char *api_key = get_env_api_key("OPENAI_API_KEY");
     if (!api_key) {
         api_key = "sk-test123456789012345678901234567890";
     }
-    
-    // This should fail due to length limit
+
+    /* Should fail due to input length limit */
     GV_LLMConfig llm_config = {
         .provider = GV_LLM_PROVIDER_OPENAI,
         .api_key = (char *)api_key,
@@ -203,20 +186,17 @@ void test_input_validation(void) {
     }
 }
 
-// Test real API call for memory extraction
 void test_memory_extraction_real_api(void) {
     const char *api_key = get_env_api_key("OPENAI_API_KEY");
     if (!api_key) {
         return;
     }
     
-    // Create database
     GV_Database *db = gv_db_open("test_memory_llm_real.db", 384, GV_INDEX_TYPE_HNSW);
     if (db == NULL) {
         return;
     }
 
-    // Create LLM config with real API key
     GV_LLMConfig llm_config = {
         .provider = GV_LLM_PROVIDER_OPENAI,
         .api_key = (char *)api_key,
@@ -228,19 +208,17 @@ void test_memory_extraction_real_api(void) {
         .custom_prompt = NULL
     };
     
-    // Create memory layer config with LLM
     GV_MemoryLayerConfig mem_config = gv_memory_layer_config_default();
     mem_config.llm_config = &llm_config;
     mem_config.use_llm_extraction = 1;
-    
+
     GV_MemoryLayer *layer = gv_memory_layer_create(db, &mem_config);
     if (layer == NULL) {
         gv_db_close(db);
         return;
     }
 
-    // Test conversation with real content
-    const char *conversation = 
+    const char *conversation =
         "User: Hi, my name is Alice. I'm a software engineer working at Google.\n"
         "Assistant: Nice to meet you, Alice! That's interesting that you work at Google.\n"
         "User: I love Italian food, especially pasta and pizza. My favorite is margherita pizza.\n"
@@ -263,11 +241,10 @@ void test_memory_extraction_real_api(void) {
     } else {
     }
     
-    // Cleanup
     for (size_t i = 0; i < actual_count; i++) {
         gv_memory_candidate_free(&candidates[i]);
     }
-    
+
     gv_memory_layer_destroy(layer);
     gv_db_close(db);
 }

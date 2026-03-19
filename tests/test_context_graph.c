@@ -20,7 +20,6 @@ static void test_context_graph_add_entities(void) {
     GV_ContextGraph *graph = gv_context_graph_create(&config);
     assert(graph != NULL);
     
-    /* Create test entities */
     GV_GraphEntity entities[2];
     memset(entities, 0, sizeof(entities));
     
@@ -43,7 +42,6 @@ static void test_context_graph_add_entities(void) {
     int result = gv_context_graph_add_entities(graph, entities, 2);
     assert(result == 0);
     
-    /* Cleanup */
     free(entities[0].name);
     free(entities[1].name);
     gv_context_graph_destroy(graph);
@@ -54,7 +52,6 @@ static void test_context_graph_add_relationships(void) {
     GV_ContextGraph *graph = gv_context_graph_create(&config);
     assert(graph != NULL);
     
-    /* Create test entities first */
     GV_GraphEntity entities[2];
     memset(entities, 0, sizeof(entities));
     
@@ -65,7 +62,6 @@ static void test_context_graph_add_relationships(void) {
     
     gv_context_graph_add_entities(graph, entities, 2);
     
-    /* Create relationship */
     GV_GraphRelationship rel;
     memset(&rel, 0, sizeof(rel));
     rel.source_entity_id = strdup("ent_Alice");
@@ -78,12 +74,10 @@ static void test_context_graph_add_relationships(void) {
     int result = gv_context_graph_add_relationships(graph, &rel, 1);
     assert(result == 0);
     
-    /* Test get_related */
     GV_GraphQueryResult results[10];
     int count = gv_context_graph_get_related(graph, "ent_Alice", 1, results, 10);
     assert(count >= 0);
     
-    /* Cleanup */
     for (int i = 0; i < count; i++) {
         gv_graph_query_result_free(&results[i]);
     }
@@ -100,7 +94,6 @@ static void test_context_graph_search(void) {
     GV_ContextGraph *graph = gv_context_graph_create(&config);
     assert(graph != NULL);
     
-    /* Create test entity with embedding */
     GV_GraphEntity entity;
     memset(&entity, 0, sizeof(entity));
     entity.name = strdup("TestEntity");
@@ -114,7 +107,6 @@ static void test_context_graph_search(void) {
     
     gv_context_graph_add_entities(graph, &entity, 1);
     
-    /* Search with query embedding */
     float query[128];
     for (int i = 0; i < 128; i++) {
         query[i] = 0.1f;
@@ -124,7 +116,6 @@ static void test_context_graph_search(void) {
     int count = gv_context_graph_search(graph, query, 128, NULL, NULL, NULL, results, 10);
     assert(count >= 0);
     
-    /* Cleanup */
     for (int i = 0; i < count; i++) {
         gv_graph_query_result_free(&results[i]);
     }

@@ -5,7 +5,6 @@
 
 #define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while(0)
 
-/* Callback tracking for change stream tests */
 static int g_callback_count = 0;
 static GV_EventType g_last_event_type = 0;
 static size_t g_last_vector_index = 0;
@@ -23,7 +22,6 @@ static int test_webhook_create_destroy(void) {
 
     gv_webhook_destroy(mgr);
 
-    /* Destroying NULL should be safe */
     gv_webhook_destroy(NULL);
     return 0;
 }
@@ -157,7 +155,6 @@ static int test_webhook_event_mask_filter(void) {
 
     g_callback_count = 0;
 
-    /* Subscribe only for INSERT events */
     gv_webhook_subscribe(mgr, GV_EVENT_INSERT, test_callback, NULL);
 
     GV_Event event;

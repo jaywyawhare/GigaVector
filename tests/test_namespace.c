@@ -22,7 +22,6 @@ static int test_manager_create_destroy(void) {
     ASSERT(mgr != NULL, "manager_create(NULL) should succeed");
     gv_namespace_manager_destroy(mgr);
 
-    /* Destroy NULL is safe */
     gv_namespace_manager_destroy(NULL);
     return 0;
 }
@@ -87,7 +86,6 @@ static int test_list_namespaces(void) {
     ASSERT(gv_namespace_list(mgr, &names, &count) == 0, "list");
     ASSERT(count == 2, "should have 2 namespaces");
 
-    /* Free returned names */
     if (names) {
         for (size_t i = 0; i < count; i++) free(names[i]);
         free(names);

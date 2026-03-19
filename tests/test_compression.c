@@ -12,7 +12,6 @@ static void fill_test_data(char *buf, size_t len) {
     }
 }
 
-/* 1. test_compression_config_init */
 static int test_compression_config_init(void) {
     GV_CompressionConfig config;
     memset(&config, 0xFF, sizeof(config));
@@ -26,7 +25,6 @@ static int test_compression_config_init(void) {
     return 0;
 }
 
-/* 2. test_compression_create_destroy */
 static int test_compression_create_destroy(void) {
     GV_CompressionConfig config;
     gv_compression_config_init(&config);
@@ -39,7 +37,6 @@ static int test_compression_create_destroy(void) {
     return 0;
 }
 
-/* 3. test_compress_decompress_lz4 */
 static int test_compress_decompress_lz4(void) {
     GV_CompressionConfig config;
     gv_compression_config_init(&config);
@@ -72,7 +69,6 @@ static int test_compress_decompress_lz4(void) {
     return 0;
 }
 
-/* 4. test_compress_decompress_zstd */
 static int test_compress_decompress_zstd(void) {
     GV_CompressionConfig config;
     gv_compression_config_init(&config);
@@ -106,7 +102,6 @@ static int test_compress_decompress_zstd(void) {
     return 0;
 }
 
-/* 5. test_compress_bound */
 static int test_compress_bound(void) {
     GV_CompressionConfig config;
     gv_compression_config_init(&config);
@@ -123,7 +118,6 @@ static int test_compress_bound(void) {
     return 0;
 }
 
-/* 6. test_compression_stats */
 static int test_compression_stats(void) {
     GV_CompressionConfig config;
     gv_compression_config_init(&config);
@@ -132,7 +126,6 @@ static int test_compression_stats(void) {
     GV_Compressor *comp = gv_compression_create(&config);
     ASSERT(comp != NULL, "create failed");
 
-    /* Perform a round of compression to generate stats */
     char input[256];
     fill_test_data(input, sizeof(input));
 
@@ -154,7 +147,6 @@ static int test_compression_stats(void) {
     return 0;
 }
 
-/* 7. test_compress_snappy */
 static int test_compress_snappy(void) {
     GV_CompressionConfig config;
     gv_compression_config_init(&config);
@@ -185,14 +177,11 @@ static int test_compress_snappy(void) {
     return 0;
 }
 
-/* 8. test_compress_destroy_null */
 static int test_compress_destroy_null(void) {
-    /* Should be safe to call with NULL */
     gv_compression_destroy(NULL);
     return 0;
 }
 
-/* main */
 typedef int (*test_fn)(void);
 typedef struct { const char *name; test_fn fn; } TestCase;
 

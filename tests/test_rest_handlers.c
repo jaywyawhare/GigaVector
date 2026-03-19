@@ -31,7 +31,6 @@ static GV_HandlerContext create_test_ctx(GV_Database *db, GV_ServerConfig *scfg)
     return ctx;
 }
 
-/* Test 1: Response success creates valid response */
 static int test_response_success(void) {
     GV_HttpResponse *resp = gv_rest_response_success("Operation completed");
     ASSERT(resp != NULL, "response creation");
@@ -46,7 +45,6 @@ static int test_response_success(void) {
     return 0;
 }
 
-/* Test 2: Response success with different messages */
 static int test_response_success_messages(void) {
     const char *messages[] = {
         "Vector inserted",
@@ -65,7 +63,6 @@ static int test_response_success_messages(void) {
     return 0;
 }
 
-/* Test 3: Response error with various status codes */
 static int test_response_error_codes(void) {
     struct {
         GV_HttpStatus status;
@@ -94,53 +91,43 @@ static int test_response_error_codes(void) {
     return 0;
 }
 
-/* Test 4: Response free with NULL */
 static int test_response_free_null(void) {
     gv_rest_response_free(NULL);
     return 0;
 }
 
-/* Test 5: Parse path parameter from various URLs */
 static int test_parse_path_param(void) {
     char param[64];
     int ret;
 
-    /* Basic path parameter */
     ret = gv_rest_parse_path_param("/vectors/42", "/vectors/", param, sizeof(param));
     ASSERT(ret == 0, "parse /vectors/42");
     ASSERT(strcmp(param, "42") == 0, "param should be '42'");
 
-    /* Path param with trailing path */
     ret = gv_rest_parse_path_param("/vectors/99/details", "/vectors/", param, sizeof(param));
     ASSERT(ret == 0, "parse with trailing path");
     ASSERT(strcmp(param, "99") == 0, "param should be '99'");
 
-    /* Path param with query string */
     ret = gv_rest_parse_path_param("/vectors/7?format=json", "/vectors/", param, sizeof(param));
     ASSERT(ret == 0, "parse with query string");
     ASSERT(strcmp(param, "7") == 0, "param should be '7'");
 
-    /* Wrong prefix */
     ret = gv_rest_parse_path_param("/health", "/vectors/", param, sizeof(param));
     ASSERT(ret == -1, "wrong prefix should return -1");
 
-    /* Empty parameter after prefix */
     ret = gv_rest_parse_path_param("/vectors/", "/vectors/", param, sizeof(param));
-    /* Implementation may return 0 with empty string or -1 */
+    (void)ret;
 
     return 0;
 }
 
-/* Test 6: Parse path param edge cases */
 static int test_parse_path_param_edge(void) {
-    char param[8]; /* Small buffer */
+    char param[8];
     int ret;
 
-    /* Large param that fits */
     ret = gv_rest_parse_path_param("/vectors/1234567", "/vectors/", param, sizeof(param));
     ASSERT(ret == 0, "parse large param");
 
-    /* Numeric string */
     ret = gv_rest_parse_path_param("/vectors/0", "/vectors/", param, sizeof(param));
     ASSERT(ret == 0, "parse zero param");
     ASSERT(strcmp(param, "0") == 0, "param should be '0'");
@@ -148,52 +135,43 @@ static int test_parse_path_param_edge(void) {
     return 0;
 }
 
-/* Test 7: Parse query parameter */
 static int test_parse_query_param(void) {
     char value[64];
     int ret;
 
-    /* Single param */
     ret = gv_rest_parse_query_param("k=10", "k", value, sizeof(value));
     ASSERT(ret == 0, "parse single query param");
     ASSERT(strcmp(value, "10") == 0, "value should be '10'");
 
-    /* Multiple params */
     ret = gv_rest_parse_query_param("k=10&distance=cosine&format=json",
                                      "distance", value, sizeof(value));
     ASSERT(ret == 0, "parse middle query param");
     ASSERT(strcmp(value, "cosine") == 0, "value should be 'cosine'");
 
-    /* Last param */
     ret = gv_rest_parse_query_param("k=10&distance=cosine&format=json",
                                      "format", value, sizeof(value));
     ASSERT(ret == 0, "parse last query param");
     ASSERT(strcmp(value, "json") == 0, "value should be 'json'");
 
-    /* Missing param */
     ret = gv_rest_parse_query_param("k=10&distance=cosine", "missing", value, sizeof(value));
     ASSERT(ret == -1, "missing param should return -1");
 
     return 0;
 }
 
-/* Test 8: Parse query param edge cases */
 static int test_parse_query_param_edge(void) {
     char value[64];
     int ret;
 
-    /* Empty query string */
     ret = gv_rest_parse_query_param("", "k", value, sizeof(value));
     ASSERT(ret == -1, "empty query string should return -1");
 
-    /* Param with empty value */
     ret = gv_rest_parse_query_param("k=&other=5", "k", value, sizeof(value));
-    /* Depends on implementation whether this returns 0 with empty string or -1 */
+    (void)ret;
 
     return 0;
 }
 
-/* Test 9: Health handler with real DB */
 static int test_handle_health(void) {
     remove(TEST_DB);
     GV_Database *db = gv_db_open(TEST_DB, TEST_DIM, GV_INDEX_TYPE_FLAT);
@@ -223,13 +201,11 @@ static int test_handle_health(void) {
     return 0;
 }
 
-/* Test 10: Stats handler with data */
 static int test_handle_stats(void) {
     remove(TEST_DB);
     GV_Database *db = gv_db_open(TEST_DB, TEST_DIM, GV_INDEX_TYPE_FLAT);
     ASSERT(db != NULL, "database creation");
 
-    /* Add some vectors */
     float v1[] = {1.0f, 0.0f, 0.0f, 0.0f};
     float v2[] = {0.0f, 1.0f, 0.0f, 0.0f};
     float v3[] = {0.0f, 0.0f, 1.0f, 0.0f};
@@ -262,7 +238,6 @@ static int test_handle_stats(void) {
     return 0;
 }
 
-/* Test 11: Stats handler with empty DB */
 static int test_handle_stats_empty(void) {
     remove(TEST_DB);
     GV_Database *db = gv_db_open(TEST_DB, TEST_DIM, GV_INDEX_TYPE_FLAT);
@@ -291,7 +266,6 @@ static int test_handle_stats_empty(void) {
     return 0;
 }
 
-/* Test 12: Route GET /health */
 static int test_route_get_health(void) {
     remove(TEST_DB);
     GV_Database *db = gv_db_open(TEST_DB, TEST_DIM, GV_INDEX_TYPE_FLAT);
@@ -319,7 +293,6 @@ static int test_route_get_health(void) {
     return 0;
 }
 
-/* Test 13: Route GET /stats */
 static int test_route_get_stats(void) {
     remove(TEST_DB);
     GV_Database *db = gv_db_open(TEST_DB, TEST_DIM, GV_INDEX_TYPE_FLAT);
@@ -347,7 +320,6 @@ static int test_route_get_stats(void) {
     return 0;
 }
 
-/* Test 14: Route unknown path returns 404 */
 static int test_route_not_found(void) {
     remove(TEST_DB);
     GV_Database *db = gv_db_open(TEST_DB, TEST_DIM, GV_INDEX_TYPE_FLAT);
@@ -375,7 +347,6 @@ static int test_route_not_found(void) {
     return 0;
 }
 
-/* Test 15: Route POST to read-only endpoint */
 static int test_route_method_mismatch(void) {
     remove(TEST_DB);
     GV_Database *db = gv_db_open(TEST_DB, TEST_DIM, GV_INDEX_TYPE_FLAT);

@@ -5,10 +5,8 @@
 
 #define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while(0)
 
-/* Helper: token dimension used throughout tests */
 #define TOKEN_DIM 4
 
-/* Test: config init defaults */
 static int test_config_init(void) {
     GV_LateInteractionConfig config;
     memset(&config, 0xFF, sizeof(config));  /* dirty memory */
@@ -22,7 +20,6 @@ static int test_config_init(void) {
     return 0;
 }
 
-/* Test: create and destroy */
 static int test_create_destroy(void) {
     GV_LateInteractionConfig config;
     gv_late_interaction_config_init(&config);
@@ -33,12 +30,10 @@ static int test_create_destroy(void) {
     ASSERT(gv_late_interaction_count(idx) == 0, "new index should have count 0");
 
     gv_late_interaction_destroy(idx);
-    /* destroying NULL should be safe */
     gv_late_interaction_destroy(NULL);
     return 0;
 }
 
-/* Test: add documents and count */
 static int test_add_doc_count(void) {
     GV_LateInteractionConfig config;
     gv_late_interaction_config_init(&config);
@@ -47,17 +42,15 @@ static int test_add_doc_count(void) {
     GV_LateInteractionIndex *idx = gv_late_interaction_create(&config);
     ASSERT(idx != NULL, "create should succeed");
 
-    /* Document 0: 3 tokens, each of dimension TOKEN_DIM */
     float doc0_tokens[] = {
-        1.0f, 0.0f, 0.0f, 0.0f,  /* token 0 */
-        0.0f, 1.0f, 0.0f, 0.0f,  /* token 1 */
-        0.0f, 0.0f, 1.0f, 0.0f   /* token 2 */
+        1.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 1.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 1.0f, 0.0f
     };
     int rc = gv_late_interaction_add_doc(idx, doc0_tokens, 3);
     ASSERT(rc == 0, "add_doc for document 0 should succeed");
     ASSERT(gv_late_interaction_count(idx) == 1, "count should be 1 after one add");
 
-    /* Document 1: 2 tokens */
     float doc1_tokens[] = {
         0.5f, 0.5f, 0.0f, 0.0f,
         0.0f, 0.5f, 0.5f, 0.0f
@@ -70,7 +63,6 @@ static int test_add_doc_count(void) {
     return 0;
 }
 
-/* Test: MaxSim search */
 static int test_search(void) {
     GV_LateInteractionConfig config;
     gv_late_interaction_config_init(&config);
@@ -79,13 +71,11 @@ static int test_search(void) {
     GV_LateInteractionIndex *idx = gv_late_interaction_create(&config);
     ASSERT(idx != NULL, "create should succeed");
 
-    /* Add two documents */
     float doc0[] = { 1.0f, 0.0f, 0.0f, 0.0f,  0.0f, 1.0f, 0.0f, 0.0f };
     float doc1[] = { 0.0f, 0.0f, 1.0f, 0.0f,  0.0f, 0.0f, 0.0f, 1.0f };
     gv_late_interaction_add_doc(idx, doc0, 2);
     gv_late_interaction_add_doc(idx, doc1, 2);
 
-    /* Query with 2 tokens that should match doc0 better */
     float query[] = { 0.9f, 0.1f, 0.0f, 0.0f,  0.1f, 0.9f, 0.0f, 0.0f };
 
     GV_LateInteractionResult results[2];
@@ -93,7 +83,6 @@ static int test_search(void) {
     ASSERT(n >= 1, "search should return at least 1 result");
     ASSERT(n <= 2, "search should return at most 2 results");
 
-    /* doc0 should rank higher than doc1 for this query */
     if (n == 2) {
         ASSERT(results[0].score >= results[1].score,
                "results should be sorted by score descending");
@@ -103,7 +92,6 @@ static int test_search(void) {
     return 0;
 }
 
-/* Test: delete document */
 static int test_delete(void) {
     GV_LateInteractionConfig config;
     gv_late_interaction_config_init(&config);
@@ -126,7 +114,6 @@ static int test_delete(void) {
     return 0;
 }
 
-/* Test: get stats */
 static int test_stats(void) {
     GV_LateInteractionConfig config;
     gv_late_interaction_config_init(&config);
@@ -149,7 +136,6 @@ static int test_stats(void) {
     return 0;
 }
 
-/* Test: search on empty index */
 static int test_search_empty(void) {
     GV_LateInteractionConfig config;
     gv_late_interaction_config_init(&config);

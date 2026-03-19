@@ -11,7 +11,6 @@ static int test_payload_index_create_destroy(void) {
 
     gv_payload_index_destroy(idx);
 
-    /* Destroying NULL should be safe */
     gv_payload_index_destroy(NULL);
     return 0;
 }

@@ -28,7 +28,6 @@ static int test_create_destroy(void) {
     ASSERT(mgr != NULL, "gv_tt_create with config should succeed");
     gv_tt_destroy(mgr);
 
-    /* Destroy NULL is safe */
     gv_tt_destroy(NULL);
     return 0;
 }
@@ -58,7 +57,6 @@ static int test_record_update(void) {
     float old_vec[] = {1.0f, 0.0f};
     float new_vec[] = {0.0f, 1.0f};
 
-    /* Insert first so the index exists conceptually */
     uint64_t v1 = gv_tt_record_insert(mgr, 0, old_vec, 2);
     ASSERT(v1 > 0, "insert");
 
@@ -96,13 +94,11 @@ static int test_query_at_version(void) {
     uint64_t v2 = gv_tt_record_update(mgr, 0, vec1, vec2, 2);
     ASSERT(v2 > 0, "update to v2");
 
-    /* Query at the latest version should give updated vector */
     float out[2] = {0};
     int found = gv_tt_query_at_version(mgr, v2, 0, out, 2);
     ASSERT(found == 1, "should find vector at v2");
     ASSERT(out[0] == 10.0f && out[1] == 20.0f, "data at v2 should be updated values");
 
-    /* Query at the original version should give original vector */
     float out_old[2] = {0};
     found = gv_tt_query_at_version(mgr, v1, 0, out_old, 2);
     ASSERT(found == 1, "should find vector at v1");
@@ -126,7 +122,6 @@ static int test_list_versions(void) {
     int count = gv_tt_list_versions(mgr, entries, 10);
     ASSERT(count == 3, "should list 3 versions");
 
-    /* Versions should be ordered oldest to newest */
     ASSERT(entries[0].version_id < entries[1].version_id, "v0 < v1");
     ASSERT(entries[1].version_id < entries[2].version_id, "v1 < v2");
 
@@ -192,7 +187,6 @@ static int test_save_load(void) {
     return 0;
 }
 
-/* main */
 typedef int (*test_fn)(void);
 typedef struct { const char *name; test_fn fn; } TestCase;
 

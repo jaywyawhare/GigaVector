@@ -5,7 +5,6 @@
 
 #define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while(0)
 
-/* test functions */
 static int test_manager_create_destroy(void) {
     GV_MVCCManager *mgr = gv_mvcc_create(4);
     ASSERT(mgr != NULL, "gv_mvcc_create returned NULL");
@@ -76,13 +75,11 @@ static int test_txn_delete_vector(void) {
     GV_MVCCManager *mgr = gv_mvcc_create(4);
     ASSERT(mgr != NULL, "create manager");
 
-    /* Add a vector and commit */
     GV_Transaction *txn1 = gv_txn_begin(mgr);
     float vec[4] = {5.0f, 6.0f, 7.0f, 8.0f};
     gv_txn_add_vector(txn1, vec, 4);
     gv_txn_commit(txn1);
 
-    /* Delete that vector in a new txn */
     GV_Transaction *txn2 = gv_txn_begin(mgr);
     ASSERT(txn2 != NULL, "begin txn2");
     int rc = gv_txn_delete_vector(txn2, 0);
@@ -119,7 +116,6 @@ static int test_gc(void) {
     GV_MVCCManager *mgr = gv_mvcc_create(4);
     ASSERT(mgr != NULL, "create manager");
 
-    /* Add and commit a vector, then delete and commit */
     GV_Transaction *t1 = gv_txn_begin(mgr);
     float vec[4] = {1.0f, 2.0f, 3.0f, 4.0f};
     gv_txn_add_vector(t1, vec, 4);
@@ -129,7 +125,6 @@ static int test_gc(void) {
     gv_txn_delete_vector(t2, 0);
     gv_txn_commit(t2);
 
-    /* Run GC - should clean up old versions */
     int rc = gv_mvcc_gc(mgr);
     ASSERT(rc >= 0, "gc should succeed");
 
@@ -144,12 +139,10 @@ static int test_null_safety(void) {
         gv_mvcc_destroy(mgr);
     }
 
-    /* destroy NULL should be safe */
     gv_mvcc_destroy(NULL);
     return 0;
 }
 
-/* harness */
 typedef int (*test_fn)(void);
 typedef struct { const char *name; test_fn fn; } TestCase;
 

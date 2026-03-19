@@ -41,8 +41,6 @@ static int test_tls_create_empty_config(void) {
     /* Creating TLS context with no cert/key files should fail gracefully */
     GV_TLSConfig config;
     gv_tls_config_init(&config);
-    /* cert_file and key_file are NULL */
-
     GV_TLSContext *ctx = gv_tls_create(&config);
     ASSERT(ctx == NULL, "gv_tls_create with no cert/key should return NULL");
     return 0;
@@ -66,7 +64,6 @@ static int test_tls_create_null_config(void) {
 }
 
 static int test_tls_destroy_null(void) {
-    /* Should not crash */
     gv_tls_destroy(NULL);
     return 0;
 }
@@ -107,7 +104,6 @@ static int test_tls_write_null(void) {
 }
 
 static int test_tls_close_conn_null(void) {
-    /* Should not crash */
     gv_tls_close_conn(NULL);
     return 0;
 }
@@ -132,7 +128,6 @@ static int test_tls_config_tls13(void) {
     config.min_version = GV_TLS_1_3;
     ASSERT(config.min_version == GV_TLS_1_3, "should be able to set min_version to TLS 1.3");
 
-    /* Creating without cert files should still fail */
     GV_TLSContext *ctx = gv_tls_create(&config);
     ASSERT(ctx == NULL, "gv_tls_create with TLS 1.3 but no cert should return NULL");
     return 0;
@@ -145,7 +140,6 @@ static int test_tls_config_mutual_tls(void) {
     config.ca_file = "/tmp/nonexistent_ca_98765.pem";
     ASSERT(config.verify_client == 1, "verify_client should be settable to 1");
 
-    /* Without valid cert/key, creation should still fail */
     GV_TLSContext *ctx = gv_tls_create(&config);
     ASSERT(ctx == NULL, "gv_tls_create with mTLS but no cert should return NULL");
     return 0;

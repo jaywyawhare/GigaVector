@@ -5,7 +5,6 @@
 
 #define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while(0)
 
-/* test functions */
 static int test_create_destroy(void) {
     GV_ConsistencyManager *mgr = gv_consistency_create(GV_CONSISTENCY_STRONG);
     ASSERT(mgr != NULL, "gv_consistency_create returned NULL");
@@ -65,7 +64,6 @@ static int test_check_strong(void) {
     int ok = gv_consistency_check(mgr, &config, 0, 100);
     ASSERT(ok == 1 || ok == 0, "check with lag=0 should return valid result");
 
-    /* Replica with lag should fail strong consistency */
     int fail = gv_consistency_check(mgr, &config, 5000, 95);
     (void)fail; /* Result depends on implementation - just ensure no crash */
 
@@ -78,11 +76,9 @@ static int test_check_bounded_staleness(void) {
     ASSERT(mgr != NULL, "create manager");
 
     GV_ConsistencyConfig config = gv_consistency_bounded(1000);
-    /* Replica within bound */
     int ok = gv_consistency_check(mgr, &config, 500, 100);
     ASSERT(ok == 1, "replica within bound should pass");
 
-    /* Replica exceeding bound */
     int fail = gv_consistency_check(mgr, &config, 2000, 100);
     ASSERT(fail == 0, "replica exceeding bound should fail");
 
@@ -97,18 +93,15 @@ static int test_session_token_management(void) {
     uint64_t token = gv_consistency_new_session(mgr);
     ASSERT(token > 0, "new_session should return nonzero token");
 
-    /* Initial session position should be 0 */
     uint64_t pos = gv_consistency_get_session_position(mgr, token);
     ASSERT(pos == 0, "initial session position should be 0");
 
-    /* Update session position */
     int rc = gv_consistency_update_session(mgr, token, 42);
     ASSERT(rc == 0, "update_session should succeed");
 
     pos = gv_consistency_get_session_position(mgr, token);
     ASSERT(pos == 42, "session position should be 42 after update");
 
-    /* Update to a higher position */
     rc = gv_consistency_update_session(mgr, token, 100);
     ASSERT(rc == 0, "update to higher position should succeed");
     pos = gv_consistency_get_session_position(mgr, token);
@@ -149,7 +142,6 @@ static int test_check_session_consistency(void) {
     int ok = gv_consistency_check(mgr, &config, 0, 60);
     ASSERT(ok == 1, "replica ahead of session should pass");
 
-    /* Replica at position 30 < 50 should fail */
     int fail = gv_consistency_check(mgr, &config, 0, 30);
     ASSERT(fail == 0, "replica behind session should fail");
 
@@ -157,7 +149,6 @@ static int test_check_session_consistency(void) {
     return 0;
 }
 
-/* harness */
 typedef int (*test_fn)(void);
 typedef struct { const char *name; test_fn fn; } TestCase;
 

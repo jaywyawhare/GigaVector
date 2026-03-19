@@ -19,7 +19,6 @@ static int test_codebook_create_destroy(void) {
 
     gv_codebook_destroy(cb);
 
-    /* Destroy NULL should be safe */
     gv_codebook_destroy(NULL);
     return 0;
 }
@@ -44,7 +43,6 @@ static int test_codebook_train(void) {
     GV_Codebook *cb = gv_codebook_create(4, 2, 4); /* 16 centroids per subspace */
     ASSERT(cb != NULL, "codebook creation");
 
-    /* Generate training data: 64 random-ish vectors */
     float data[64 * 4];
     for (int i = 0; i < 64; i++) {
         data[i * 4 + 0] = (float)(i % 7) * 0.1f;
@@ -64,7 +62,6 @@ static int test_codebook_encode_decode(void) {
     GV_Codebook *cb = gv_codebook_create(4, 2, 4);
     ASSERT(cb != NULL, "codebook creation");
 
-    /* Train with some data */
     float data[32 * 4];
     for (int i = 0; i < 32; i++) {
         data[i * 4 + 0] = (float)(i % 4);
@@ -74,21 +71,16 @@ static int test_codebook_encode_decode(void) {
     }
     ASSERT(gv_codebook_train(cb, data, 32, 5) == 0, "train codebook");
 
-    /* Encode a vector */
     float vec[4] = {1.0f, 2.0f, 3.0f, 0.0f};
-    uint8_t codes[2]; /* m=2 */
+    uint8_t codes[2];
     ASSERT(gv_codebook_encode(cb, vec, codes) == 0, "encode vector");
 
-    /* Each code should be within [0, ksub) */
     ASSERT(codes[0] < cb->ksub, "code[0] in range");
     ASSERT(codes[1] < cb->ksub, "code[1] in range");
 
-    /* Decode back to an approximate vector */
     float decoded[4];
     ASSERT(gv_codebook_decode(cb, codes, decoded) == 0, "decode codes");
 
-    /* The decoded vector should be an approximation (not necessarily exact) */
-    /* Just check that values are finite */
     for (int i = 0; i < 4; i++) {
         ASSERT(!isnan(decoded[i]) && !isinf(decoded[i]), "decoded value is finite");
     }
@@ -110,16 +102,13 @@ static int test_codebook_distance_adc(void) {
     }
     ASSERT(gv_codebook_train(cb, data, 32, 5) == 0, "train codebook");
 
-    /* Encode a vector */
     float vec[4] = {1.0f, 1.0f, 1.0f, 1.0f};
     uint8_t codes[2];
     gv_codebook_encode(cb, vec, codes);
 
-    /* ADC distance from itself should be small */
     float dist = gv_codebook_distance_adc(cb, vec, codes);
     ASSERT(dist >= 0.0f, "ADC distance is non-negative");
 
-    /* ADC distance from a very different query should be larger */
     float far_query[4] = {100.0f, 100.0f, 100.0f, 100.0f};
     float dist_far = gv_codebook_distance_adc(cb, far_query, codes);
     ASSERT(dist_far > dist, "far query has larger ADC distance");
@@ -150,7 +139,6 @@ static int test_codebook_copy(void) {
     ASSERT(copy->trained == cb->trained, "copy has same trained state");
     ASSERT(copy->centroids != cb->centroids, "copy has separate centroid storage");
 
-    /* Verify centroid data matches */
     size_t num_floats = cb->m * cb->ksub * cb->dsub;
     ASSERT(memcmp(copy->centroids, cb->centroids, num_floats * sizeof(float)) == 0,
            "copy centroid data matches original");
@@ -182,7 +170,6 @@ static int test_codebook_save_load(void) {
     ASSERT(loaded->m == 2, "loaded m is 2");
     ASSERT(loaded->trained != 0, "loaded codebook is trained");
 
-    /* Encode with both and compare */
     float vec[4] = {1.0f, 1.0f, 1.0f, 1.0f};
     uint8_t codes_orig[2], codes_loaded[2];
     gv_codebook_encode(cb, vec, codes_orig);
@@ -209,13 +196,11 @@ static int test_codebook_save_load_fp(void) {
     }
     gv_codebook_train(cb, data, 64, 3);
 
-    /* Save via FILE* */
     FILE *fout = fopen(path, "wb");
     ASSERT(fout != NULL, "open file for writing");
     ASSERT(gv_codebook_save_fp(cb, fout) == 0, "save codebook via FILE*");
     fclose(fout);
 
-    /* Load via FILE* */
     FILE *fin = fopen(path, "rb");
     ASSERT(fin != NULL, "open file for reading");
     GV_Codebook *loaded = gv_codebook_load_fp(fin);

@@ -12,14 +12,12 @@ static void cleanup(void) {
     remove(DB_PATH);
 }
 
-/* Dummy handler for callback tests */
 static int dummy_handler(const GV_StreamMessage *msg, void *user_data) {
     (void)msg;
     (void)user_data;
     return 0;
 }
 
-/* Dummy extractor for callback tests */
 static int dummy_extractor(const GV_StreamMessage *msg, float *vector,
                             size_t dimension, char ***metadata_keys,
                             char ***metadata_values, size_t *metadata_count,
@@ -89,7 +87,6 @@ static int test_create_kafka(void) {
 }
 
 static int test_destroy_null(void) {
-    /* Destroying NULL must not crash */
     gv_stream_destroy(NULL);
     return 0;
 }
@@ -226,7 +223,6 @@ static int test_pause_resume(void) {
     GV_StreamConsumer *consumer = gv_stream_create(db, &cfg);
     ASSERT(consumer != NULL, "create");
 
-    /* Start first */
     int rc = gv_stream_start(consumer);
     ASSERT(rc == 0, "start");
 
@@ -288,18 +284,15 @@ static int test_seek_operations(void) {
     GV_StreamConsumer *consumer = gv_stream_create(db, &cfg);
     ASSERT(consumer != NULL, "create");
 
-    /* Seek to specific offset */
     int rc = gv_stream_seek(consumer, 0);
     ASSERT(rc == 0, "gv_stream_seek to 0 should succeed");
 
     rc = gv_stream_seek(consumer, 100);
     ASSERT(rc == 0, "gv_stream_seek to 100 should succeed");
 
-    /* Seek to beginning */
     rc = gv_stream_seek_beginning(consumer);
     ASSERT(rc == 0, "gv_stream_seek_beginning should succeed");
 
-    /* Seek to end */
     rc = gv_stream_seek_end(consumer);
     ASSERT(rc == 0, "gv_stream_seek_end should succeed");
 
@@ -321,11 +314,9 @@ static int test_reset_stats(void) {
     GV_StreamConsumer *consumer = gv_stream_create(db, &cfg);
     ASSERT(consumer != NULL, "create");
 
-    /* Reset stats */
     int rc = gv_stream_reset_stats(consumer);
     ASSERT(rc == 0, "gv_stream_reset_stats should succeed");
 
-    /* Verify stats are zeroed */
     GV_StreamStats stats;
     rc = gv_stream_get_stats(consumer, &stats);
     ASSERT(rc == 0, "get_stats after reset");

@@ -11,7 +11,6 @@
 
 #define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while(0)
 
-/* Helper: create a database with a few vectors and a BM25 index with matching docs. */
 static GV_Database *make_db(void) {
     GV_Database *db = gv_db_open(NULL, DIM, GV_INDEX_TYPE_FLAT);
     if (!db) return NULL;
@@ -33,7 +32,6 @@ static GV_BM25Index *make_bm25(void) {
     return bm;
 }
 
-/* test_config_defaults */
 static int test_config_defaults(void) {
     GV_HybridConfig cfg;
     gv_hybrid_config_init(&cfg);
@@ -44,7 +42,6 @@ static int test_config_defaults(void) {
     return 0;
 }
 
-/* test_create_destroy */
 static int test_create_destroy(void) {
     GV_Database *db = make_db();
     GV_BM25Index *bm = make_bm25();
@@ -54,13 +51,12 @@ static int test_create_destroy(void) {
     ASSERT(hs != NULL, "gv_hybrid_create should succeed");
 
     gv_hybrid_destroy(hs);
-    gv_hybrid_destroy(NULL); /* NULL should be safe */
+    gv_hybrid_destroy(NULL);
     gv_bm25_destroy(bm);
     gv_db_close(db);
     return 0;
 }
 
-/* test_linear_fusion_util */
 static int test_linear_fusion_util(void) {
     double score = gv_hybrid_linear_fusion(0.8, 0.6, 0.7, 0.3);
     /* 0.7*0.8 + 0.3*0.6 = 0.56 + 0.18 = 0.74 */
@@ -68,7 +64,6 @@ static int test_linear_fusion_util(void) {
     return 0;
 }
 
-/* test_rrf_fusion_util */
 static int test_rrf_fusion_util(void) {
     /* RRF: 1/(k+rank_v) + 1/(k+rank_t) */
     double score = gv_hybrid_rrf_fusion(1, 2, 60.0);
@@ -82,19 +77,16 @@ static int test_rrf_fusion_util(void) {
     return 0;
 }
 
-/* test_normalize_score */
 static int test_normalize_score(void) {
     double n = gv_hybrid_normalize_score(5.0, 2.0, 10.0);
     /* (5-2)/(10-2) = 3/8 = 0.375 */
     ASSERT(fabs(n - 0.375) < 0.001, "normalize should map to [0,1]");
 
-    /* When min==max, should return 0 or handle gracefully */
     double n2 = gv_hybrid_normalize_score(5.0, 5.0, 5.0);
     ASSERT(n2 >= 0.0 && n2 <= 1.0, "normalize with equal min/max should be in [0,1]");
     return 0;
 }
 
-/* test_set_weights */
 static int test_set_weights(void) {
     GV_Database *db = make_db();
     GV_BM25Index *bm = make_bm25();
@@ -107,7 +99,6 @@ static int test_set_weights(void) {
     GV_HybridConfig cfg;
     rc = gv_hybrid_get_config(hs, &cfg);
     ASSERT(rc == 0, "get_config should succeed");
-    /* Weights are normalized, so 0.8/(0.8+0.2) = 0.8, 0.2/(0.8+0.2) = 0.2 */
     ASSERT(fabs(cfg.vector_weight - 0.8) < 0.01, "vector_weight should be 0.8");
     ASSERT(fabs(cfg.text_weight - 0.2) < 0.01, "text_weight should be 0.2");
 
@@ -117,7 +108,6 @@ static int test_set_weights(void) {
     return 0;
 }
 
-/* test_hybrid_search_basic */
 static int test_hybrid_search_basic(void) {
     GV_Database *db = make_db();
     GV_BM25Index *bm = make_bm25();
@@ -135,7 +125,6 @@ static int test_hybrid_search_basic(void) {
     return 0;
 }
 
-/* test_set_config */
 static int test_set_config(void) {
     GV_Database *db = make_db();
     GV_BM25Index *bm = make_bm25();
@@ -159,8 +148,6 @@ static int test_set_config(void) {
     gv_db_close(db);
     return 0;
 }
-
-/* test runner */
 
 typedef int (*test_fn)(void);
 typedef struct { const char *name; test_fn fn; } TestCase;

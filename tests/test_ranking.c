@@ -6,12 +6,10 @@
 
 #define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while(0)
 
-/* test_parse_simple_expression */
 static int test_parse_simple_expression(void) {
     GV_RankExpr *expr = gv_rank_expr_parse("_score");
     ASSERT(expr != NULL, "parsing '_score' should succeed");
 
-    /* Evaluating with vector_score=0.9 should return ~0.9 */
     double result = gv_rank_expr_eval(expr, 0.9f, NULL, 0);
     ASSERT(fabs(result - 0.9) < 0.01, "_score should evaluate to the vector_score");
 
@@ -19,7 +17,6 @@ static int test_parse_simple_expression(void) {
     return 0;
 }
 
-/* test_parse_weighted_expression */
 static int test_parse_weighted_expression(void) {
     GV_RankExpr *expr = gv_rank_expr_parse("0.7 * _score + 0.3 * popularity");
     ASSERT(expr != NULL, "parsing weighted expression should succeed");
@@ -35,18 +32,14 @@ static int test_parse_weighted_expression(void) {
     return 0;
 }
 
-/* test_parse_invalid_expression */
 static int test_parse_invalid_expression(void) {
     GV_RankExpr *expr = gv_rank_expr_parse("((( invalid +++");
-    /* Should return NULL on parse error */
     ASSERT(expr == NULL, "parsing invalid expression should return NULL");
 
-    /* Destroy NULL should be safe */
     gv_rank_expr_destroy(NULL);
     return 0;
 }
 
-/* test_create_weighted */
 static int test_create_weighted(void) {
     const char *names[] = {"_score", "freshness"};
     double weights[] = {0.6, 0.4};
@@ -65,7 +58,6 @@ static int test_create_weighted(void) {
     return 0;
 }
 
-/* test_eval_with_math_ops */
 static int test_eval_with_math_ops(void) {
     GV_RankExpr *expr = gv_rank_expr_parse("max(_score, 0.5)");
     ASSERT(expr != NULL, "parsing max expression should succeed");
@@ -80,7 +72,6 @@ static int test_eval_with_math_ops(void) {
     return 0;
 }
 
-/* test_eval_multiple_signals */
 static int test_eval_multiple_signals(void) {
     GV_RankExpr *expr = gv_rank_expr_parse("_score + price + rating");
     ASSERT(expr != NULL, "parsing expression with multiple signals should succeed");
@@ -97,14 +88,11 @@ static int test_eval_multiple_signals(void) {
     return 0;
 }
 
-/* test_destroy_null */
 static int test_destroy_null(void) {
-    /* Should not crash */
     gv_rank_expr_destroy(NULL);
     return 0;
 }
 
-/* test_parse_constant_expression */
 static int test_parse_constant_expression(void) {
     GV_RankExpr *expr = gv_rank_expr_parse("42.0");
     ASSERT(expr != NULL, "parsing constant should succeed");
@@ -115,8 +103,6 @@ static int test_parse_constant_expression(void) {
     gv_rank_expr_destroy(expr);
     return 0;
 }
-
-/* test runner */
 
 typedef int (*test_fn)(void);
 typedef struct { const char *name; test_fn fn; } TestCase;

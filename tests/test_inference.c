@@ -20,10 +20,9 @@
 
 #define TEST_DB "tmp_test_inference.bin"
 
-/* Test 1: Config init sets defaults */
 static int test_config_init_defaults(void) {
     GV_InferenceConfig config;
-    memset(&config, 0xFF, sizeof(config)); /* Fill with garbage */
+    memset(&config, 0xFF, sizeof(config));
     gv_inference_config_init(&config);
 
     ASSERT(config.embed_provider != NULL, "default embed_provider should not be NULL");
@@ -37,7 +36,6 @@ static int test_config_init_defaults(void) {
     return 0;
 }
 
-/* Test 2: Config init preserves correct defaults after modification */
 static int test_config_modify(void) {
     GV_InferenceConfig config;
     gv_inference_config_init(&config);
@@ -46,7 +44,7 @@ static int test_config_modify(void) {
     config.api_key = "test-google-key";
     config.model = "text-embedding-004";
     config.dimension = 768;
-    config.distance_type = 0; /* euclidean */
+    config.distance_type = 0;
     config.cache_size = 5000;
 
     ASSERT(strcmp(config.embed_provider, "google") == 0, "modified provider");
@@ -58,7 +56,6 @@ static int test_config_modify(void) {
     return 0;
 }
 
-/* Test 3: Create inference engine with database */
 static int test_create_engine(void) {
     remove(TEST_DB);
     GV_Database *db = gv_db_open(TEST_DB, 4, GV_INDEX_TYPE_FLAT);
@@ -78,7 +75,6 @@ static int test_create_engine(void) {
     return 0;
 }
 
-/* Test 4: Create engine with NULL db */
 static int test_create_null_db(void) {
     GV_InferenceConfig config;
     gv_inference_config_init(&config);
@@ -90,7 +86,6 @@ static int test_create_null_db(void) {
     return 0;
 }
 
-/* Test 5: Create engine with NULL config */
 static int test_create_null_config(void) {
     remove(TEST_DB);
     GV_Database *db = gv_db_open(TEST_DB, 4, GV_INDEX_TYPE_FLAT);
@@ -104,13 +99,11 @@ static int test_create_null_config(void) {
     return 0;
 }
 
-/* Test 6: Destroy NULL engine (should not crash) */
 static int test_destroy_null(void) {
     gv_inference_destroy(NULL);
     return 0;
 }
 
-/* Test 7: Add text without real embedding provider */
 static int test_add_no_provider(void) {
     remove(TEST_DB);
     GV_Database *db = gv_db_open(TEST_DB, 4, GV_INDEX_TYPE_FLAT);
@@ -125,8 +118,6 @@ static int test_add_no_provider(void) {
     ASSERT(eng != NULL, "inference engine creation");
 
     int ret = gv_inference_add(eng, "Hello world, this is a test document.", NULL);
-    /* Without real API, should return error (-1) */
-    /* Some implementations might have a fallback, so we accept either */
     (void)ret;
 
     gv_inference_destroy(eng);
@@ -135,7 +126,6 @@ static int test_add_no_provider(void) {
     return 0;
 }
 
-/* Test 8: Search on empty database without real provider */
 static int test_search_empty(void) {
     remove(TEST_DB);
     GV_Database *db = gv_db_open(TEST_DB, 4, GV_INDEX_TYPE_FLAT);
@@ -153,7 +143,6 @@ static int test_search_empty(void) {
     memset(results, 0, sizeof(results));
     int count = gv_inference_search(eng, "find similar documents", 5, results);
 
-    /* Without real API, search should return -1 or 0 results */
     if (count > 0) {
         gv_inference_free_results(results, (size_t)count);
     }
@@ -164,14 +153,13 @@ static int test_search_empty(void) {
     return 0;
 }
 
-/* Test 9: Free results with NULL */
+
 static int test_free_results_null(void) {
     gv_inference_free_results(NULL, 0);
     gv_inference_free_results(NULL, 5);
     return 0;
 }
 
-/* Test 10: Free results with empty array */
 static int test_free_results_empty(void) {
     GV_InferenceResult results[3];
     memset(results, 0, sizeof(results));
@@ -179,7 +167,6 @@ static int test_free_results_empty(void) {
     return 0;
 }
 
-/* Test 11: Result structure zero init */
 static int test_result_structure(void) {
     GV_InferenceResult result;
     memset(&result, 0, sizeof(result));
@@ -192,7 +179,6 @@ static int test_result_structure(void) {
     return 0;
 }
 
-/* Test 12: Create/destroy cycle */
 static int test_create_destroy_cycle(void) {
     remove(TEST_DB);
     GV_Database *db = gv_db_open(TEST_DB, 4, GV_INDEX_TYPE_FLAT);
@@ -214,7 +200,6 @@ static int test_create_destroy_cycle(void) {
     return 0;
 }
 
-/* Test 13: Add with metadata JSON */
 static int test_add_with_metadata(void) {
     remove(TEST_DB);
     GV_Database *db = gv_db_open(TEST_DB, 4, GV_INDEX_TYPE_FLAT);
@@ -230,7 +215,6 @@ static int test_add_with_metadata(void) {
 
     const char *metadata = "{\"category\": \"science\", \"author\": \"John Doe\"}";
     int ret = gv_inference_add(eng, "A research paper about quantum physics", metadata);
-    /* Without real API, should return error; we just verify no crash */
     (void)ret;
 
     gv_inference_destroy(eng);
@@ -239,7 +223,7 @@ static int test_add_with_metadata(void) {
     return 0;
 }
 
-/* Test 14: Add batch without real provider */
+
 static int test_add_batch_no_provider(void) {
     remove(TEST_DB);
     GV_Database *db = gv_db_open(TEST_DB, 4, GV_INDEX_TYPE_FLAT);
@@ -265,7 +249,6 @@ static int test_add_batch_no_provider(void) {
     };
 
     int ret = gv_inference_add_batch(eng, texts, metas, 3);
-    /* Without real API, should return error; we just verify no crash */
     (void)ret;
 
     gv_inference_destroy(eng);
@@ -274,7 +257,6 @@ static int test_add_batch_no_provider(void) {
     return 0;
 }
 
-/* Test 15: Search filtered without real provider */
 static int test_search_filtered_no_provider(void) {
     remove(TEST_DB);
     GV_Database *db = gv_db_open(TEST_DB, 4, GV_INDEX_TYPE_FLAT);
@@ -292,7 +274,6 @@ static int test_search_filtered_no_provider(void) {
     memset(results, 0, sizeof(results));
     int count = gv_inference_search_filtered(eng, "find cats", 5,
                                               "category == \"animals\"", results);
-    /* Without real API, should return error or 0 */
     if (count > 0) {
         gv_inference_free_results(results, (size_t)count);
     }

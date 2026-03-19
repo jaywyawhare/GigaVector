@@ -18,7 +18,6 @@ static void cleanup_temp_files(void) {
     unlink(TMP_MERGED_PATH);
 }
 
-/* ── Test: backup options init ─────────────────────────────────────────── */
 static int test_backup_options_init(void) {
     GV_BackupOptions opts;
     memset(&opts, 0xFF, sizeof(opts));
@@ -31,7 +30,6 @@ static int test_backup_options_init(void) {
     return 0;
 }
 
-/* ── Test: restore options init ────────────────────────────────────────── */
 static int test_restore_options_init(void) {
     GV_RestoreOptions opts;
     memset(&opts, 0xFF, sizeof(opts));
@@ -42,7 +40,6 @@ static int test_restore_options_init(void) {
     return 0;
 }
 
-/* ── Test: compression string ──────────────────────────────────────────── */
 static int test_compression_string(void) {
     const char *s;
 
@@ -58,14 +55,11 @@ static int test_compression_string(void) {
     return 0;
 }
 
-/* ── Test: result free with NULL ───────────────────────────────────────── */
 static int test_result_free_null(void) {
-    /* Should not crash */
     gv_backup_result_free(NULL);
     return 0;
 }
 
-/* ── Test: backup create from file (non-existent source) ───────────────── */
 static int test_backup_create_nonexistent(void) {
     cleanup_temp_files();
     GV_BackupOptions opts;
@@ -82,7 +76,6 @@ static int test_backup_create_nonexistent(void) {
     return 0;
 }
 
-/* ── Test: read header on non-existent backup ──────────────────────────── */
 static int test_read_header_nonexistent(void) {
     GV_BackupHeader header;
     memset(&header, 0, sizeof(header));
@@ -91,7 +84,6 @@ static int test_read_header_nonexistent(void) {
     return 0;
 }
 
-/* ── Test: verify on non-existent backup ───────────────────────────────── */
 static int test_verify_nonexistent(void) {
     GV_BackupResult *result = gv_backup_verify("/tmp/gv_no_such_backup.bak", NULL);
     if (result != NULL) {
@@ -101,7 +93,6 @@ static int test_verify_nonexistent(void) {
     return 0;
 }
 
-/* ── Test: backup header struct sizes ──────────────────────────────────── */
 static int test_header_struct(void) {
     GV_BackupHeader header;
     memset(&header, 0, sizeof(header));
@@ -117,8 +108,6 @@ static int test_header_struct(void) {
 
     return 0;
 }
-
-/* Main */
 
 typedef int (*test_fn)(void);
 typedef struct { const char *name; test_fn fn; } TestCase;

@@ -17,10 +17,9 @@ static void generate_data(float *data, size_t count, size_t dim) {
     }
 }
 
-/* 1. test_quant_config_init */
 static int test_quant_config_init(void) {
     GV_QuantConfig config;
-    memset(&config, 0xFF, sizeof(config)); /* fill with garbage */
+    memset(&config, 0xFF, sizeof(config));
 
     gv_quant_config_init(&config);
 
@@ -32,7 +31,6 @@ static int test_quant_config_init(void) {
     return 0;
 }
 
-/* 2. test_quant_train_8bit */
 static int test_quant_train_8bit(void) {
     float data[TRAIN_COUNT * DIM];
     generate_data(data, TRAIN_COUNT, DIM);
@@ -48,7 +46,6 @@ static int test_quant_train_8bit(void) {
     return 0;
 }
 
-/* 3. test_quant_encode_decode_roundtrip */
 static int test_quant_encode_decode_roundtrip(void) {
     float data[TRAIN_COUNT * DIM];
     generate_data(data, TRAIN_COUNT, DIM);
@@ -66,11 +63,9 @@ static int test_quant_encode_decode_roundtrip(void) {
     uint8_t *codes = (uint8_t *)malloc(code_sz);
     ASSERT(codes != NULL, "malloc failed");
 
-    /* Encode the first training vector */
     int rc = gv_quant_encode(cb, data, DIM, codes);
     ASSERT(rc == 0, "gv_quant_encode failed");
 
-    /* Decode back */
     float decoded[DIM];
     rc = gv_quant_decode(cb, codes, DIM, decoded);
     ASSERT(rc == 0, "gv_quant_decode failed");
@@ -86,7 +81,6 @@ static int test_quant_encode_decode_roundtrip(void) {
     return 0;
 }
 
-/* 4. test_quant_distance_asymmetric */
 static int test_quant_distance_asymmetric(void) {
     float data[TRAIN_COUNT * DIM];
     generate_data(data, TRAIN_COUNT, DIM);
@@ -106,7 +100,6 @@ static int test_quant_distance_asymmetric(void) {
     int rc = gv_quant_encode(cb, data, DIM, codes);
     ASSERT(rc == 0, "encode failed");
 
-    /* Distance of same vector to its quantized form should be small */
     float dist = gv_quant_distance(cb, data, DIM, codes);
     ASSERT(dist >= 0.0f, "distance should be non-negative");
     ASSERT(dist < 10.0f, "distance of same vector should be small");
@@ -116,7 +109,6 @@ static int test_quant_distance_asymmetric(void) {
     return 0;
 }
 
-/* 5. test_quant_distance_symmetric */
 static int test_quant_distance_symmetric(void) {
     float data[TRAIN_COUNT * DIM];
     generate_data(data, TRAIN_COUNT, DIM);
@@ -134,7 +126,6 @@ static int test_quant_distance_symmetric(void) {
     uint8_t *codes_b = (uint8_t *)malloc(code_sz);
     ASSERT(codes_a != NULL && codes_b != NULL, "malloc failed");
 
-    /* Encode same vector twice */
     int rc = gv_quant_encode(cb, data, DIM, codes_a);
     ASSERT(rc == 0, "encode a failed");
     rc = gv_quant_encode(cb, data, DIM, codes_b);
@@ -150,7 +141,6 @@ static int test_quant_distance_symmetric(void) {
     return 0;
 }
 
-/* 6. test_quant_binary_mode */
 static int test_quant_binary_mode(void) {
     float data[TRAIN_COUNT * DIM];
     generate_data(data, TRAIN_COUNT, DIM);
@@ -177,7 +167,6 @@ static int test_quant_binary_mode(void) {
     return 0;
 }
 
-/* 7. test_quant_memory_ratio */
 static int test_quant_memory_ratio(void) {
     float data[TRAIN_COUNT * DIM];
     generate_data(data, TRAIN_COUNT, DIM);
@@ -197,14 +186,11 @@ static int test_quant_memory_ratio(void) {
     return 0;
 }
 
-/* 8. test_quant_codebook_destroy_null */
 static int test_quant_codebook_destroy_null(void) {
-    /* Should be safe to call with NULL */
     gv_quant_codebook_destroy(NULL);
     return 0;
 }
 
-/* main */
 typedef int (*test_fn)(void);
 typedef struct { const char *name; test_fn fn; } TestCase;
 

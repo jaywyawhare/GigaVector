@@ -21,7 +21,6 @@ static void generate_batch(float *data, size_t count, size_t dim) {
     }
 }
 
-/* 1. test_diskann_config_init */
 static int test_diskann_config_init(void) {
     GV_DiskANNConfig config;
     memset(&config, 0xFF, sizeof(config));
@@ -38,7 +37,6 @@ static int test_diskann_config_init(void) {
     return 0;
 }
 
-/* 2. test_diskann_create_destroy */
 static int test_diskann_create_destroy(void) {
     GV_DiskANNConfig config;
     gv_diskann_config_init(&config);
@@ -51,7 +49,6 @@ static int test_diskann_create_destroy(void) {
     return 0;
 }
 
-/* 3. test_diskann_build_and_count */
 static int test_diskann_build_and_count(void) {
     GV_DiskANNConfig config;
     gv_diskann_config_init(&config);
@@ -73,7 +70,6 @@ static int test_diskann_build_and_count(void) {
     return 0;
 }
 
-/* 4. test_diskann_search */
 static int test_diskann_search(void) {
     GV_DiskANNConfig config;
     gv_diskann_config_init(&config);
@@ -86,7 +82,6 @@ static int test_diskann_search(void) {
     generate_batch(data, BUILD_COUNT, DIM);
     ASSERT(gv_diskann_build(idx, data, BUILD_COUNT, DIM) == 0, "build failed");
 
-    /* Query with the first vector */
     float query[DIM];
     fill_vector(query, DIM, 0.0f);
 
@@ -102,7 +97,6 @@ static int test_diskann_search(void) {
     return 0;
 }
 
-/* 5. test_diskann_search_ordering */
 static int test_diskann_search_ordering(void) {
     GV_DiskANNConfig config;
     gv_diskann_config_init(&config);
@@ -132,7 +126,6 @@ static int test_diskann_search_ordering(void) {
     return 0;
 }
 
-/* 6. test_diskann_incremental_insert */
 static int test_diskann_incremental_insert(void) {
     GV_DiskANNConfig config;
     gv_diskann_config_init(&config);
@@ -141,12 +134,10 @@ static int test_diskann_incremental_insert(void) {
     GV_DiskANNIndex *idx = gv_diskann_create(DIM, &config);
     ASSERT(idx != NULL, "create failed");
 
-    /* Build initial index */
     float data[BUILD_COUNT * DIM];
     generate_batch(data, BUILD_COUNT, DIM);
     ASSERT(gv_diskann_build(idx, data, BUILD_COUNT, DIM) == 0, "build failed");
 
-    /* Incrementally insert a new vector */
     float new_vec[DIM];
     fill_vector(new_vec, DIM, 999.0f);
     int rc = gv_diskann_insert(idx, new_vec, DIM);
@@ -159,7 +150,6 @@ static int test_diskann_incremental_insert(void) {
     return 0;
 }
 
-/* 7. test_diskann_delete */
 static int test_diskann_delete(void) {
     GV_DiskANNConfig config;
     gv_diskann_config_init(&config);
@@ -172,7 +162,6 @@ static int test_diskann_delete(void) {
     generate_batch(data, BUILD_COUNT, DIM);
     ASSERT(gv_diskann_build(idx, data, BUILD_COUNT, DIM) == 0, "build failed");
 
-    /* Delete the first vector */
     int rc = gv_diskann_delete(idx, 0);
     ASSERT(rc == 0, "delete failed");
 
@@ -180,7 +169,6 @@ static int test_diskann_delete(void) {
     return 0;
 }
 
-/* 8. test_diskann_stats */
 static int test_diskann_stats(void) {
     GV_DiskANNConfig config;
     gv_diskann_config_init(&config);
@@ -204,7 +192,6 @@ static int test_diskann_stats(void) {
     return 0;
 }
 
-/* main */
 typedef int (*test_fn)(void);
 typedef struct { const char *name; test_fn fn; } TestCase;
 

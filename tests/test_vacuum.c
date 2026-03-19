@@ -6,7 +6,6 @@
 
 #define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while(0)
 
-/* Helper: create a small in-memory database with some vectors */
 static GV_Database *create_test_db(void) {
     GV_Database *db = gv_db_open(NULL, 4, GV_INDEX_TYPE_FLAT);
     if (!db) return NULL;
@@ -21,13 +20,11 @@ static GV_Database *create_test_db(void) {
     return db;
 }
 
-/* test functions */
 static int test_config_init(void) {
     GV_VacuumConfig config;
     memset(&config, 0xFF, sizeof(config));
     gv_vacuum_config_init(&config);
 
-    /* After init, defaults should be set */
     ASSERT(config.min_deleted_count == 100, "default min_deleted_count == 100");
     ASSERT(config.batch_size == 1000, "default batch_size == 1000");
     ASSERT(config.priority == 0, "default priority == 0 (low)");
@@ -56,7 +53,6 @@ static int test_manual_vacuum(void) {
     GV_Database *db = create_test_db();
     ASSERT(db != NULL, "create test db");
 
-    /* Delete some vectors to create fragmentation */
     gv_db_delete_vector_by_index(db, 1);
     gv_db_delete_vector_by_index(db, 3);
 
@@ -84,11 +80,9 @@ static int test_get_fragmentation(void) {
     GV_VacuumManager *mgr = gv_vacuum_create(db, &config);
     ASSERT(mgr != NULL, "create vacuum manager");
 
-    /* No deletions, fragmentation should be 0 or near 0 */
     double frag = gv_vacuum_get_fragmentation(mgr);
     ASSERT(frag >= 0.0, "fragmentation should be >= 0");
 
-    /* Delete a vector and check again */
     gv_db_delete_vector_by_index(db, 0);
     double frag2 = gv_vacuum_get_fragmentation(mgr);
     ASSERT(frag2 >= 0.0, "fragmentation after delete should be >= 0");
@@ -116,7 +110,6 @@ static int test_get_stats(void) {
     ASSERT(stats.state == GV_VACUUM_IDLE, "state should be IDLE before run");
     ASSERT(stats.total_runs == 0, "total_runs should be 0 initially");
 
-    /* Delete and run vacuum, then check stats */
     gv_db_delete_vector_by_index(db, 0);
     gv_vacuum_run(mgr);
 
@@ -154,7 +147,6 @@ static int test_vacuum_with_null_config(void) {
     GV_Database *db = create_test_db();
     ASSERT(db != NULL, "create test db");
 
-    /* Passing NULL config should use defaults */
     GV_VacuumManager *mgr = gv_vacuum_create(db, NULL);
     ASSERT(mgr != NULL, "vacuum_create with NULL config should succeed");
 
@@ -163,7 +155,6 @@ static int test_vacuum_with_null_config(void) {
     return 0;
 }
 
-/* harness */
 typedef int (*test_fn)(void);
 typedef struct { const char *name; test_fn fn; } TestCase;
 
