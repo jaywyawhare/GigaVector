@@ -15,6 +15,7 @@
 #endif
 
 #include "gigavector/gv_embedding.h"
+#include "gigavector/gv_utils.h"
 
 #define MAX_RESPONSE_SIZE (10 * 1024 * 1024)  // 10MB for batch responses
 #define DEFAULT_BATCH_SIZE 100
@@ -55,16 +56,6 @@ struct GV_EmbeddingService {
 #endif
     char *last_error;             /* Last error message */
 };
-
-/* Hash function for cache keys */
-static size_t hash_string(const char *str, size_t bucket_count) {
-    size_t hash = 5381;
-    int c;
-    while ((c = *str++)) {
-        hash = ((hash << 5) + hash) + c;
-    }
-    return hash % bucket_count;
-}
 
 /* Create embedding cache */
 GV_EmbeddingCache *gv_embedding_cache_create(size_t max_size) {
@@ -132,7 +123,7 @@ static void evict_lru(GV_EmbeddingCache *cache) {
     }
     
     CacheEntry *entry = cache->lru_tail;
-    size_t hash = hash_string(entry->key, cache->bucket_count);
+    size_t hash = gv_hash_str(entry->key) % cache->bucket_count;
     
     /* Remove from hash table */
     CacheEntry **prev = &cache->buckets[hash];
@@ -162,7 +153,7 @@ int gv_embedding_cache_get(GV_EmbeddingCache *cache,
     
     pthread_mutex_lock(&cache->mutex);
     
-    size_t hash = hash_string(text, cache->bucket_count);
+    size_t hash = gv_hash_str(text) % cache->bucket_count;
     CacheEntry *entry = cache->buckets[hash];
     
     while (entry != NULL) {
@@ -199,7 +190,7 @@ int gv_embedding_cache_put(GV_EmbeddingCache *cache,
     pthread_mutex_lock(&cache->mutex);
     
     /* Check if entry exists */
-    size_t hash = hash_string(text, cache->bucket_count);
+    size_t hash = gv_hash_str(text) % cache->bucket_count;
     CacheEntry *entry = cache->buckets[hash];
     
     while (entry != NULL) {

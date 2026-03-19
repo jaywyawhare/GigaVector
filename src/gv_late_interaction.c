@@ -12,6 +12,7 @@
  */
 
 #include "gigavector/gv_late_interaction.h"
+#include "gigavector/gv_utils.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -584,14 +585,6 @@ size_t gv_late_interaction_count(const GV_LateInteractionIndex *index) {
 
 /* Serialization helpers */
 
-static int gv_li_write_u32(FILE *f, uint32_t v) {
-    return fwrite(&v, sizeof(uint32_t), 1, f) == 1 ? 0 : -1;
-}
-
-static int gv_li_read_u32(FILE *f, uint32_t *v) {
-    return (v && fread(v, sizeof(uint32_t), 1, f) == 1) ? 0 : -1;
-}
-
 static int gv_li_write_u64(FILE *f, uint64_t v) {
     return fwrite(&v, sizeof(uint64_t), 1, f) == 1 ? 0 : -1;
 }
@@ -613,7 +606,7 @@ int gv_late_interaction_save(const GV_LateInteractionIndex *index,
 
     /* Magic + version. */
     if (fwrite(GV_LI_MAGIC, 1, GV_LI_MAGIC_LEN, fp) != GV_LI_MAGIC_LEN) goto fail;
-    if (gv_li_write_u32(fp, GV_LI_VERSION) != 0) goto fail;
+    if (gv_write_u32(fp, GV_LI_VERSION) != 0) goto fail;
 
     /* Configuration. */
     if (gv_li_write_u64(fp, (uint64_t)index->config.token_dimension) != 0) goto fail;
@@ -623,7 +616,7 @@ int gv_late_interaction_save(const GV_LateInteractionIndex *index,
 
     /* Count non-deleted documents. */
     uint32_t active = (uint32_t)index->active_docs;
-    if (gv_li_write_u32(fp, active) != 0) goto fail;
+    if (gv_write_u32(fp, active) != 0) goto fail;
 
     size_t dim = index->config.token_dimension;
 
@@ -632,7 +625,7 @@ int gv_late_interaction_save(const GV_LateInteractionIndex *index,
         const GV_LIDocMeta *doc = &index->docs[i];
         if (doc->deleted) continue;
 
-        if (gv_li_write_u32(fp, (uint32_t)doc->num_tokens) != 0) goto fail;
+        if (gv_write_u32(fp, (uint32_t)doc->num_tokens) != 0) goto fail;
 
         size_t floats = doc->num_tokens * dim;
         const float *tok_data = index->token_pool + doc->token_offset * dim;
@@ -669,7 +662,7 @@ GV_LateInteractionIndex *gv_late_interaction_load(const char *filepath) {
 
     /* Verify version. */
     uint32_t version = 0;
-    if (gv_li_read_u32(fp, &version) != 0 || version != GV_LI_VERSION) {
+    if (gv_read_u32(fp, &version) != 0 || version != GV_LI_VERSION) {
         fclose(fp);
         return NULL;
     }
@@ -689,7 +682,7 @@ GV_LateInteractionIndex *gv_late_interaction_load(const char *filepath) {
 
     /* Read document count. */
     uint32_t doc_count = 0;
-    if (gv_li_read_u32(fp, &doc_count) != 0) { fclose(fp); return NULL; }
+    if (gv_read_u32(fp, &doc_count) != 0) { fclose(fp); return NULL; }
 
     /* Create the index. */
     GV_LateInteractionIndex *idx = gv_late_interaction_create(&cfg);
@@ -700,7 +693,7 @@ GV_LateInteractionIndex *gv_late_interaction_load(const char *filepath) {
     /* Read documents. */
     for (uint32_t i = 0; i < doc_count; i++) {
         uint32_t num_tokens = 0;
-        if (gv_li_read_u32(fp, &num_tokens) != 0) {
+        if (gv_read_u32(fp, &num_tokens) != 0) {
             gv_late_interaction_destroy(idx);
             fclose(fp);
             return NULL;

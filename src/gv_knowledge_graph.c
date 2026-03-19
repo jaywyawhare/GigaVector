@@ -2092,10 +2092,6 @@ static int kg_write_bytes(FILE *fp, const void *data, size_t len) {
     return (fwrite(data, 1, len, fp) == len) ? 0 : -1;
 }
 
-static int kg_write_u32(FILE *fp, uint32_t v) {
-    return kg_write_bytes(fp, &v, sizeof(v));
-}
-
 static int kg_write_u64(FILE *fp, uint64_t v) {
     return kg_write_bytes(fp, &v, sizeof(v));
 }
@@ -2104,19 +2100,15 @@ static int kg_write_f32(FILE *fp, float v) {
     return kg_write_bytes(fp, &v, sizeof(v));
 }
 
-static int kg_write_u8(FILE *fp, uint8_t v) {
-    return kg_write_bytes(fp, &v, sizeof(v));
-}
-
 static int kg_write_string(FILE *fp, const char *s) {
     uint32_t len = s ? (uint32_t)strlen(s) : 0;
-    if (kg_write_u32(fp, len) != 0) return -1;
+    if (gv_write_u32(fp, len) != 0) return -1;
     if (len > 0 && kg_write_bytes(fp, s, len) != 0) return -1;
     return 0;
 }
 
 static int kg_write_props(FILE *fp, const GV_KGProp *props, size_t count) {
-    if (kg_write_u32(fp, (uint32_t)count) != 0) return -1;
+    if (gv_write_u32(fp, (uint32_t)count) != 0) return -1;
     for (const GV_KGProp *p = props; p; p = p->next) {
         if (kg_write_string(fp, p->key) != 0) return -1;
         if (kg_write_string(fp, p->value) != 0) return -1;
@@ -2137,10 +2129,10 @@ int gv_kg_save(const GV_KnowledgeGraph *kg, const char *path) {
 
     /* Header */
     if (kg_write_bytes(fp, KG_MAGIC, KG_MAGIC_LEN) != 0) goto fail;
-    if (kg_write_u32(fp, KG_VERSION) != 0) goto fail;
+    if (gv_write_u32(fp, KG_VERSION) != 0) goto fail;
 
     /* Config subset */
-    if (kg_write_u32(fp, (uint32_t)kg->config.embedding_dimension) != 0)
+    if (gv_write_u32(fp, (uint32_t)kg->config.embedding_dimension) != 0)
         goto fail;
     if (kg_write_f32(fp, kg->config.similarity_threshold) != 0) goto fail;
     if (kg_write_f32(fp, kg->config.link_prediction_threshold) != 0)
@@ -2161,7 +2153,7 @@ int gv_kg_save(const GV_KnowledgeGraph *kg, const char *path) {
             if (kg_write_string(fp, e->type) != 0) goto fail;
 
             uint8_t has_emb = (e->embedding && e->dimension > 0) ? 1 : 0;
-            if (kg_write_u8(fp, has_emb) != 0) goto fail;
+            if (gv_write_u8(fp, has_emb) != 0) goto fail;
             if (has_emb) {
                 if (kg_write_bytes(fp, e->embedding,
                     e->dimension * sizeof(float)) != 0) goto fail;
@@ -2208,10 +2200,6 @@ static int kg_read_bytes(FILE *fp, void *buf, size_t len) {
     return (fread(buf, 1, len, fp) == len) ? 0 : -1;
 }
 
-static int kg_read_u32(FILE *fp, uint32_t *v) {
-    return kg_read_bytes(fp, v, sizeof(*v));
-}
-
 static int kg_read_u64(FILE *fp, uint64_t *v) {
     return kg_read_bytes(fp, v, sizeof(*v));
 }
@@ -2220,13 +2208,9 @@ static int kg_read_f32(FILE *fp, float *v) {
     return kg_read_bytes(fp, v, sizeof(*v));
 }
 
-static int kg_read_u8(FILE *fp, uint8_t *v) {
-    return kg_read_bytes(fp, v, sizeof(*v));
-}
-
 static char *kg_read_string(FILE *fp) {
     uint32_t len;
-    if (kg_read_u32(fp, &len) != 0) return NULL;
+    if (gv_read_u32(fp, &len) != 0) return NULL;
     if (len == 0) return gv_strdup("");
     char *s = (char *)malloc(len + 1);
     if (!s) return NULL;
@@ -2273,7 +2257,7 @@ GV_KnowledgeGraph *gv_kg_load(const char *path) {
 
     /* Version */
     uint32_t version;
-    if (kg_read_u32(fp, &version) != 0 || version != KG_VERSION) {
+    if (gv_read_u32(fp, &version) != 0 || version != KG_VERSION) {
         fclose(fp);
         return NULL;
     }
@@ -2281,7 +2265,7 @@ GV_KnowledgeGraph *gv_kg_load(const char *path) {
     /* Config */
     uint32_t emb_dim;
     float sim_thresh, lp_thresh;
-    if (kg_read_u32(fp, &emb_dim) != 0) { fclose(fp); return NULL; }
+    if (gv_read_u32(fp, &emb_dim) != 0) { fclose(fp); return NULL; }
     if (kg_read_f32(fp, &sim_thresh) != 0) { fclose(fp); return NULL; }
     if (kg_read_f32(fp, &lp_thresh) != 0) { fclose(fp); return NULL; }
 
@@ -2318,7 +2302,7 @@ GV_KnowledgeGraph *gv_kg_load(const char *path) {
         }
 
         uint8_t has_emb;
-        if (kg_read_u8(fp, &has_emb) != 0) {
+        if (gv_read_u8(fp, &has_emb) != 0) {
             free(name); free(type);
             goto load_fail;
         }
@@ -2342,7 +2326,7 @@ GV_KnowledgeGraph *gv_kg_load(const char *path) {
         }
 
         uint32_t prop_count;
-        if (kg_read_u32(fp, &prop_count) != 0) {
+        if (gv_read_u32(fp, &prop_count) != 0) {
             free(emb_data); free(name); free(type);
             goto load_fail;
         }
@@ -2397,7 +2381,7 @@ GV_KnowledgeGraph *gv_kg_load(const char *path) {
         }
 
         uint32_t prop_count;
-        if (kg_read_u32(fp, &prop_count) != 0) {
+        if (gv_read_u32(fp, &prop_count) != 0) {
             free(predicate);
             goto load_fail;
         }

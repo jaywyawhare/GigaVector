@@ -5,6 +5,7 @@
  */
 
 #include "gigavector/gv_fulltext.h"
+#include "gigavector/gv_utils.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -150,15 +151,6 @@ struct GV_FTIndex {
 };
 
 /* Hash Functions */
-
-static size_t ft_hash_string(const char *str) {
-    size_t hash = 5381;
-    int c;
-    while ((c = (unsigned char)*str++)) {
-        hash = ((hash << 5) + hash) + (size_t)c;
-    }
-    return hash;
-}
 
 static size_t ft_hash_size(size_t val) {
     return val;
@@ -689,7 +681,7 @@ void gv_ft_config_init(GV_FTConfig *config) {
 /* Posting List Helpers */
 
 static FT_PostingList *ft_find_posting_list(const GV_FTIndex *idx, const char *term) {
-    size_t bucket = ft_hash_string(term) % FT_TERM_HASH_BUCKETS;
+    size_t bucket = gv_hash_str(term) % FT_TERM_HASH_BUCKETS;
     FT_PostingList *pl = idx->term_buckets[bucket];
     while (pl) {
         if (strcmp(pl->term, term) == 0) return pl;
@@ -699,7 +691,7 @@ static FT_PostingList *ft_find_posting_list(const GV_FTIndex *idx, const char *t
 }
 
 static FT_PostingList *ft_get_or_create_posting_list(GV_FTIndex *idx, const char *term) {
-    size_t bucket = ft_hash_string(term) % FT_TERM_HASH_BUCKETS;
+    size_t bucket = gv_hash_str(term) % FT_TERM_HASH_BUCKETS;
     FT_PostingList *pl = idx->term_buckets[bucket];
     while (pl) {
         if (strcmp(pl->term, term) == 0) return pl;

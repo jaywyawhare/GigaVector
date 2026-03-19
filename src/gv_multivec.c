@@ -8,6 +8,8 @@
 #include "gigavector/gv_multivec.h"
 #include "gigavector/gv_vector.h"
 #include "gigavector/gv_distance.h"
+#include "gigavector/gv_heap.h"
+#include "gigavector/gv_utils.h"
 
 /* Internal data structures */
 
@@ -40,46 +42,7 @@ typedef struct {
     size_t   doc_idx;
 } GV_MVHeapItem;
 
-static void gv_mv_heap_sift_down(GV_MVHeapItem *heap, size_t size, size_t i) {
-    while (1) {
-        size_t l = 2 * i + 1;
-        size_t r = l + 1;
-        size_t largest = i;
-        if (l < size && heap[l].dist > heap[largest].dist) largest = l;
-        if (r < size && heap[r].dist > heap[largest].dist) largest = r;
-        if (largest == i) break;
-        GV_MVHeapItem tmp = heap[i];
-        heap[i] = heap[largest];
-        heap[largest] = tmp;
-        i = largest;
-    }
-}
-
-static void gv_mv_heap_push(GV_MVHeapItem *heap, size_t *size, size_t capacity,
-                             float dist, size_t doc_idx) {
-    if (*size < capacity) {
-        heap[*size].dist = dist;
-        heap[*size].doc_idx = doc_idx;
-        (*size)++;
-        /* Sift up */
-        size_t i = *size - 1;
-        while (i > 0) {
-            size_t parent = (i - 1) / 2;
-            if (heap[i].dist > heap[parent].dist) {
-                GV_MVHeapItem tmp = heap[i];
-                heap[i] = heap[parent];
-                heap[parent] = tmp;
-                i = parent;
-            } else {
-                break;
-            }
-        }
-    } else if (dist < heap[0].dist) {
-        heap[0].dist = dist;
-        heap[0].doc_idx = doc_idx;
-        gv_mv_heap_sift_down(heap, *size, 0);
-    }
-}
+GV_HEAP_DEFINE(gv_mv_heap, GV_MVHeapItem)
 
 /* Default configuration */
 
@@ -268,7 +231,7 @@ int gv_multivec_search(void *index, const float *query, size_t k,
                                                idx->config.aggregation,
                                                &best_chunk);
 
-        gv_mv_heap_push(heap, &heap_size, k, agg_dist, i);
+        gv_mv_heap_push(heap, &heap_size, k, (GV_MVHeapItem){agg_dist, i});
     }
 
     /* Extract results from the max-heap in ascending distance order. */
@@ -330,14 +293,6 @@ static int gv_mv_read_u64(FILE *f, uint64_t *v) {
     return (v && fread(v, sizeof(uint64_t), 1, f) == 1) ? 0 : -1;
 }
 
-static int gv_mv_write_u32(FILE *f, uint32_t v) {
-    return fwrite(&v, sizeof(uint32_t), 1, f) == 1 ? 0 : -1;
-}
-
-static int gv_mv_read_u32(FILE *f, uint32_t *v) {
-    return (v && fread(v, sizeof(uint32_t), 1, f) == 1) ? 0 : -1;
-}
-
 /* Save / Load */
 
 int gv_multivec_save(const void *index, FILE *out) {
@@ -345,9 +300,9 @@ int gv_multivec_save(const void *index, FILE *out) {
     const GV_MultiVecIndex *idx = (const GV_MultiVecIndex *)index;
 
     /* Write header: dimension, config */
-    if (gv_mv_write_u32(out, (uint32_t)idx->dimension) != 0) return -1;
-    if (gv_mv_write_u32(out, (uint32_t)idx->config.max_chunks_per_doc) != 0) return -1;
-    if (gv_mv_write_u32(out, (uint32_t)idx->config.aggregation) != 0) return -1;
+    if (gv_write_u32(out, (uint32_t)idx->dimension) != 0) return -1;
+    if (gv_write_u32(out, (uint32_t)idx->config.max_chunks_per_doc) != 0) return -1;
+    if (gv_write_u32(out, (uint32_t)idx->config.aggregation) != 0) return -1;
 
     /* Count non-deleted documents */
     uint32_t active_count = 0;
@@ -355,7 +310,7 @@ int gv_multivec_save(const void *index, FILE *out) {
         if (!idx->docs[i].deleted) active_count++;
     }
 
-    if (gv_mv_write_u32(out, active_count) != 0) return -1;
+    if (gv_write_u32(out, active_count) != 0) return -1;
 
     /* Write each non-deleted document */
     for (size_t i = 0; i < idx->doc_count; i++) {
@@ -363,7 +318,7 @@ int gv_multivec_save(const void *index, FILE *out) {
         if (doc->deleted) continue;
 
         if (gv_mv_write_u64(out, doc->doc_id) != 0) return -1;
-        if (gv_mv_write_u32(out, (uint32_t)doc->num_chunks) != 0) return -1;
+        if (gv_write_u32(out, (uint32_t)doc->num_chunks) != 0) return -1;
 
         size_t floats = doc->num_chunks * idx->dimension;
         if (floats > 0) {
@@ -379,10 +334,10 @@ int gv_multivec_load(void **index_ptr, FILE *in, size_t dimension) {
 
     uint32_t file_dim = 0, max_chunks = 0, aggregation = 0, doc_count = 0;
 
-    if (gv_mv_read_u32(in, &file_dim) != 0) return -1;
-    if (gv_mv_read_u32(in, &max_chunks) != 0) return -1;
-    if (gv_mv_read_u32(in, &aggregation) != 0) return -1;
-    if (gv_mv_read_u32(in, &doc_count) != 0) return -1;
+    if (gv_read_u32(in, &file_dim) != 0) return -1;
+    if (gv_read_u32(in, &max_chunks) != 0) return -1;
+    if (gv_read_u32(in, &aggregation) != 0) return -1;
+    if (gv_read_u32(in, &doc_count) != 0) return -1;
 
     if (dimension != 0 && dimension != (size_t)file_dim) return -1;
 
@@ -401,7 +356,7 @@ int gv_multivec_load(void **index_ptr, FILE *in, size_t dimension) {
             gv_multivec_destroy(index);
             return -1;
         }
-        if (gv_mv_read_u32(in, &num_chunks) != 0) {
+        if (gv_read_u32(in, &num_chunks) != 0) {
             gv_multivec_destroy(index);
             return -1;
         }

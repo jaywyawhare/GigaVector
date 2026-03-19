@@ -11,6 +11,7 @@
  */
 
 #include "gigavector/gv_tiered_tenant.h"
+#include "gigavector/gv_utils.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -83,15 +84,10 @@ static uint64_t now_seconds(void) {
 }
 
 /**
- * @brief djb2 hash of a string, reduced to HASH_BUCKETS range.
+ * @brief Hash a tenant ID string, reduced to HASH_BUCKETS range.
  */
 static size_t hash_tenant_id(const char *id) {
-    unsigned long h = 5381;
-    int c;
-    while ((c = (unsigned char)*id++) != 0) {
-        h = ((h << 5) + h) + (unsigned long)c;  /* h * 33 + c */
-    }
-    return h % HASH_BUCKETS;
+    return gv_hash_str(id) % HASH_BUCKETS;
 }
 
 /**

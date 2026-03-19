@@ -11,6 +11,7 @@
 #define _POSIX_C_SOURCE 200112L
 
 #include "gigavector/gv_graph_db.h"
+#include "gigavector/gv_utils.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -65,18 +66,6 @@ struct GV_GraphDB {
     pthread_rwlock_t rwlock;        /**< Reader-writer lock for thread safety. */
 };
 
-/* * Hash Function (djb2 on uint64_t) */
-
-static size_t hash_u64(uint64_t id, size_t bucket_count)
-{
-    /* djb2 applied to the bytes of the id */
-    size_t hash = 5381;
-    const unsigned char *p = (const unsigned char *)&id;
-    for (size_t i = 0; i < sizeof(id); i++) {
-        hash = ((hash << 5) + hash) + p[i];
-    }
-    return hash % bucket_count;
-}
 
 /* * String Helpers */
 
@@ -151,7 +140,7 @@ static int set_prop(GV_GraphProp **head, size_t *count,
 
 static NodeEntry *find_node_entry(const GV_GraphDB *g, uint64_t node_id)
 {
-    size_t idx = hash_u64(node_id, g->node_bucket_count);
+    size_t idx = gv_hash_u64(node_id, g->node_bucket_count);
     NodeEntry *e = g->node_buckets[idx];
     while (e) {
         if (e->node.node_id == node_id) return e;
@@ -164,7 +153,7 @@ static NodeEntry *find_node_entry(const GV_GraphDB *g, uint64_t node_id)
 
 static EdgeEntry *find_edge_entry(const GV_GraphDB *g, uint64_t edge_id)
 {
-    size_t idx = hash_u64(edge_id, g->edge_bucket_count);
+    size_t idx = gv_hash_u64(edge_id, g->edge_bucket_count);
     EdgeEntry *e = g->edge_buckets[idx];
     while (e) {
         if (e->edge.edge_id == edge_id) return e;
@@ -225,7 +214,7 @@ static void free_edge_internals(GV_GraphEdge *edge)
 
 static int remove_edge_internal(GV_GraphDB *g, uint64_t edge_id)
 {
-    size_t idx = hash_u64(edge_id, g->edge_bucket_count);
+    size_t idx = gv_hash_u64(edge_id, g->edge_bucket_count);
     EdgeEntry *prev = NULL;
     EdgeEntry *e = g->edge_buckets[idx];
     while (e) {
@@ -820,7 +809,7 @@ uint64_t gv_graph_add_node(GV_GraphDB *g, const char *label)
     entry->node.in_cap = 0;
 
     /* Insert into hash table */
-    size_t idx = hash_u64(id, g->node_bucket_count);
+    size_t idx = gv_hash_u64(id, g->node_bucket_count);
     entry->next = g->node_buckets[idx];
     g->node_buckets[idx] = entry;
     g->node_count++;
@@ -854,7 +843,7 @@ int gv_graph_remove_node(GV_GraphDB *g, uint64_t node_id)
     }
 
     /* Remove node from bucket chain */
-    size_t idx = hash_u64(node_id, g->node_bucket_count);
+    size_t idx = gv_hash_u64(node_id, g->node_bucket_count);
     NodeEntry *prev = NULL;
     NodeEntry *cur = g->node_buckets[idx];
     while (cur) {
@@ -986,7 +975,7 @@ uint64_t gv_graph_add_edge(GV_GraphDB *g, uint64_t source, uint64_t target,
     entry->edge.prop_count = 0;
 
     /* Insert into edge hash table */
-    size_t idx = hash_u64(id, g->edge_bucket_count);
+    size_t idx = gv_hash_u64(id, g->edge_bucket_count);
     entry->next = g->edge_buckets[idx];
     g->edge_buckets[idx] = entry;
     g->edge_count++;
@@ -2182,7 +2171,7 @@ GV_GraphDB *gv_graph_load(const char *path)
         }
 
         /* Insert into hash table */
-        size_t idx = hash_u64(nid, g->node_bucket_count);
+        size_t idx = gv_hash_u64(nid, g->node_bucket_count);
         entry->next = g->node_buckets[idx];
         g->node_buckets[idx] = entry;
         g->node_count++;
@@ -2246,7 +2235,7 @@ GV_GraphDB *gv_graph_load(const char *path)
         }
 
         /* Insert into edge hash table */
-        size_t idx = hash_u64(eid, g->edge_bucket_count);
+        size_t idx = gv_hash_u64(eid, g->edge_bucket_count);
         entry->next = g->edge_buckets[idx];
         g->edge_buckets[idx] = entry;
         g->edge_count++;
