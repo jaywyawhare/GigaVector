@@ -46,7 +46,7 @@ typedef struct GV_LearnedSparseIndex GV_LearnedSparseIndex;
 typedef struct {
     uint32_t token_id;          /**< Vocabulary token ID. */
     float    weight;            /**< Learned weight for this token. */
-} GV_SparseEntry;
+} GV_LSSparseEntry;
 
 /**
  * @brief Search result from a learned sparse query.
@@ -110,7 +110,7 @@ void gv_ls_destroy(GV_LearnedSparseIndex *idx);
  * @param count   Number of entries (must be <= max_nonzeros).
  * @return Assigned document ID (>= 0) on success, -1 on error.
  */
-int gv_ls_insert(GV_LearnedSparseIndex *idx, const GV_SparseEntry *entries,
+int gv_ls_insert(GV_LearnedSparseIndex *idx, const GV_LSSparseEntry *entries,
                  size_t count);
 
 /**
@@ -139,7 +139,7 @@ int gv_ls_delete(GV_LearnedSparseIndex *idx, size_t doc_id);
  * @param results     Output results array (must be pre-allocated with k elements).
  * @return Number of results found (0..k), or -1 on error.
  */
-int gv_ls_search(const GV_LearnedSparseIndex *idx, const GV_SparseEntry *query,
+int gv_ls_search(const GV_LearnedSparseIndex *idx, const GV_LSSparseEntry *query,
                  size_t query_count, size_t k, GV_LearnedSparseResult *results);
 
 /**
@@ -156,7 +156,7 @@ int gv_ls_search(const GV_LearnedSparseIndex *idx, const GV_SparseEntry *query,
  * @return Number of results found, or -1 on error.
  */
 int gv_ls_search_with_threshold(const GV_LearnedSparseIndex *idx,
-                                const GV_SparseEntry *query, size_t query_count,
+                                const GV_LSSparseEntry *query, size_t query_count,
                                 float min_score, size_t k,
                                 GV_LearnedSparseResult *results);
 
