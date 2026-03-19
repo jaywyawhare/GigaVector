@@ -27,7 +27,7 @@
   --red-bg: rgba(239,68,68,0.08);
   --font: 'Source Sans 3', -apple-system, sans-serif;
   --mono: 'IBM Plex Mono', monospace;
-  --sidebar-w: 200px;
+  --sidebar-w: 260px;
   --radius: 6px;
 }
 *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
@@ -35,7 +35,7 @@
 ::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:#27272a;border-radius:3px}
 ::-webkit-scrollbar-thumb:hover{background:#3f3f46}
-body{font-family:var(--font);background:var(--bg);color:var(--text);display:flex;min-height:100vh;font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased}
+body{font-family:var(--font);background:var(--bg);color:var(--text);display:flex;min-height:100vh;font-size:15px;line-height:1.5;-webkit-font-smoothing:antialiased}
 
 /* Sidebar */
 .sidebar{
@@ -44,23 +44,23 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);display:flex
   overflow-y:auto;overflow-x:hidden;
 }
 .sidebar-brand{
-  height:48px;padding:0 16px;display:flex;align-items:center;gap:10px;
+  height:72px;padding:0 18px;display:flex;align-items:center;gap:14px;
   border-bottom:1px solid var(--border);flex-shrink:0;
 }
-.brand-mark{width:24px;height:24px;border-radius:6px;overflow:hidden;flex-shrink:0}
+.brand-mark{width:36px;height:36px;border-radius:8px;overflow:hidden;flex-shrink:0;background:#fff;padding:2px}
 .brand-mark img{width:100%;height:100%;object-fit:cover;display:block}
-.brand-name{font-size:13px;font-weight:700;color:var(--text);letter-spacing:-0.2px}
-.sidebar-nav{flex:1;padding:8px 6px;overflow-y:auto}
+.brand-name{font-size:18px;font-weight:700;color:var(--text);letter-spacing:-0.3px}
+.sidebar-nav{flex:1;padding:14px 12px;overflow-y:auto}
 .sidebar-nav a{
-  display:flex;align-items:center;gap:8px;padding:6px 10px;
-  border-radius:5px;color:var(--text-muted);text-decoration:none;
-  font-size:13px;font-weight:500;transition:all 0.1s;margin-bottom:1px;
+  display:flex;align-items:center;gap:14px;padding:12px 16px;
+  border-radius:8px;color:var(--text-muted);text-decoration:none;
+  font-size:16px;font-weight:500;transition:all 0.1s;margin-bottom:3px;
 }
 .sidebar-nav a:hover{color:var(--text-secondary);background:var(--bg-input)}
 .sidebar-nav a.active{color:var(--text);background:var(--bg-input)}
-.sidebar-nav a svg{width:14px;height:14px;opacity:0.35;flex-shrink:0}
-.sidebar-nav a:hover svg{opacity:0.55}
-.sidebar-nav a.active svg{opacity:0.7}
+.sidebar-nav a svg{width:22px;height:22px;opacity:0.4;flex-shrink:0}
+.sidebar-nav a:hover svg{opacity:0.6}
+.sidebar-nav a.active svg{opacity:0.75}
 .sidebar-footer{
   padding:10px 16px;border-top:1px solid var(--border);flex-shrink:0;
   font-family:var(--mono);font-size:10px;color:var(--text-muted);line-height:1.5;
@@ -70,41 +70,41 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);display:flex
 /* Main */
 .main{margin-left:var(--sidebar-w);flex:1;display:flex;flex-direction:column;min-height:100vh}
 .header{
-  height:48px;background:var(--bg-sidebar);border-bottom:1px solid var(--border);
-  display:flex;align-items:center;justify-content:space-between;padding:0 24px;flex-shrink:0;
+  height:72px;background:var(--bg-sidebar);border-bottom:1px solid var(--border);
+  display:flex;align-items:center;justify-content:space-between;padding:0 28px;flex-shrink:0;
 }
-.header-title{font-size:13px;font-weight:700;color:var(--text);letter-spacing:-0.2px;text-transform:uppercase;letter-spacing:0.5px}
+.header-title{font-size:16px;font-weight:700;color:var(--text);text-transform:uppercase;letter-spacing:0.5px}
 .header-right{display:flex;align-items:center;gap:12px}
-.status-badge{display:flex;align-items:center;gap:5px;font-family:var(--mono);font-size:11px;color:var(--text-secondary)}
-.status-dot{width:6px;height:6px;border-radius:50%}
+.status-badge{display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:13px;color:var(--text-secondary)}
+.status-dot{width:8px;height:8px;border-radius:50%}
 .status-dot.healthy{background:var(--green)}
 .status-dot.degraded{background:#eab308}
 .status-dot.unhealthy{background:var(--red)}
-.uptime-badge{font-family:var(--mono);font-size:10px;color:var(--text-muted)}
-.content{padding:24px;flex:1;overflow-y:auto;max-width:1200px}
+.uptime-badge{font-family:var(--mono);font-size:12px;color:var(--text-muted)}
+.content{padding:24px;flex:1;overflow-y:auto}
 
 /* Cards */
-.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:16px}
 .card{
   background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);
-  padding:16px 18px;display:flex;flex-direction:column;gap:2px;transition:border-color 0.15s;
+  padding:20px;display:flex;flex-direction:column;gap:4px;transition:border-color 0.15s;
 }
 .card:hover{border-color:#27272a}
-.card-label{font-family:var(--mono);font-size:10px;font-weight:500;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.6px}
-.card-value{font-family:var(--mono);font-size:22px;font-weight:600;font-variant-numeric:tabular-nums;color:var(--text);line-height:1.3}
+.card-label{font-family:var(--mono);font-size:11px;font-weight:500;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.6px}
+.card-value{font-family:var(--mono);font-size:26px;font-weight:600;font-variant-numeric:tabular-nums;color:var(--text);line-height:1.3}
 .card-value.accent{color:var(--accent)}
 .card-sub{font-family:var(--mono);font-size:10px;color:var(--text-muted)}
 
 /* Forms */
 input,textarea,select{
   background:var(--bg-input);border:1px solid var(--border);color:var(--text);
-  border-radius:5px;padding:7px 10px;font-size:13px;font-family:var(--font);outline:none;transition:border-color 0.15s;
+  border-radius:6px;padding:9px 12px;font-size:14px;font-family:var(--font);outline:none;transition:border-color 0.15s;
 }
 input:focus,textarea:focus,select:focus{border-color:#3f3f46}
 textarea{font-family:var(--mono);font-size:12px;resize:vertical}
 .btn{
-  background:var(--text);color:var(--bg);border:none;border-radius:5px;
-  padding:7px 16px;font-size:13px;font-weight:600;font-family:var(--font);
+  background:var(--text);color:var(--bg);border:none;border-radius:6px;
+  padding:9px 18px;font-size:14px;font-weight:600;font-family:var(--font);
   cursor:pointer;transition:opacity 0.12s;
 }
 .btn:hover{opacity:0.85}
@@ -112,15 +112,15 @@ textarea{font-family:var(--mono);font-size:12px;resize:vertical}
 .btn-outline{background:transparent;border:1px solid var(--border);color:var(--text-secondary)}
 .btn-outline:hover{background:var(--bg-input);color:var(--text);opacity:1}
 .btn-danger{background:var(--red);color:#fff}
-.btn-sm{padding:5px 10px;font-size:11px}
+.btn-sm{padding:7px 14px;font-size:13px}
 .form-group{margin-bottom:12px}
 .form-group label{display:block;margin-bottom:4px;font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.3px}
 .form-row{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap}
 
 /* Table */
 table{width:100%;border-collapse:collapse}
-th{text-align:left;padding:6px 12px;font-size:10px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;border-bottom:1px solid var(--border)}
-td{padding:7px 12px;border-bottom:1px solid var(--border-light);color:var(--text-secondary);font-size:13px}
+th{text-align:left;padding:8px 14px;font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;border-bottom:1px solid var(--border)}
+td{padding:10px 14px;border-bottom:1px solid var(--border-light);color:var(--text-secondary);font-size:14px}
 tr:hover td{background:var(--bg-input)}
 td.mono{font-family:var(--mono);font-size:11px}
 
@@ -133,15 +133,16 @@ td.mono{font-family:var(--mono);font-size:11px}
 .json-key{color:#7dd3fc}.json-str{color:#86efac}.json-num{color:#fda4af}.json-bool{color:#c4b5fd}.json-null{color:var(--text-muted)}
 
 /* Views / Sections */
-.view{display:none}.view.active{display:block}
-.section{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:20px;margin-bottom:12px}
-.section-title{font-size:13px;font-weight:700;margin-bottom:12px;color:var(--text);text-transform:uppercase;letter-spacing:0.3px}
-.section-desc{font-size:13px;color:var(--text-muted);margin-bottom:12px}
+.view{display:none !important}.view.active{display:block !important}
+#view-overview.active{display:flex !important;flex-direction:column;height:calc(100vh - 72px - 48px)}
+.section{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:24px;margin-bottom:14px}
+.section-title{font-size:14px;font-weight:700;margin-bottom:14px;color:var(--text);text-transform:uppercase;letter-spacing:0.3px}
+.section-desc{font-size:14px;color:var(--text-muted);margin-bottom:14px}
 
 /* Tabs */
 .tabs{display:flex;gap:0;margin-bottom:16px;border-bottom:1px solid var(--border)}
 .tab{
-  padding:8px 16px;font-size:12px;font-weight:600;color:var(--text-muted);cursor:pointer;
+  padding:10px 20px;font-size:14px;font-weight:600;color:var(--text-muted);cursor:pointer;
   border-bottom:2px solid transparent;transition:all 0.1s;background:none;
   border-top:none;border-left:none;border-right:none;
 }
@@ -218,8 +219,8 @@ td.mono{font-family:var(--mono);font-size:11px}
 
 /* Nav sections */
 .nav-section{
-  font-family:var(--mono);font-size:9px;font-weight:600;color:var(--text-muted);
-  text-transform:uppercase;letter-spacing:1.2px;padding:12px 10px 3px;margin-top:2px;
+  font-family:var(--mono);font-size:11px;font-weight:600;color:var(--text-muted);
+  text-transform:uppercase;letter-spacing:1px;padding:24px 16px 6px;margin-top:4px;
 }
 .nav-section:first-child{padding-top:3px;margin-top:0}
 
@@ -263,6 +264,16 @@ td.mono{font-family:var(--mono);font-size:11px}
   padding:12px;color:var(--text);resize:vertical;tab-size:2;
 }
 
+/* Utility classes */
+.label-sm{font-size:11px;font-weight:600;color:var(--text-muted)}
+.mono-sm{font-family:var(--mono);font-size:12px;color:var(--text-muted)}
+.status-text{font-family:var(--mono);font-size:12px;color:var(--text-muted)}
+.mt-sm{margin-top:10px}
+.mb-sm{margin-bottom:10px}
+.gap-row{display:flex;gap:8px;align-items:center}
+.empty-state{color:var(--text-muted);font-size:14px;padding:40px 0;text-align:center}
+code{font-family:var(--mono);background:var(--bg-input);padding:2px 6px;border-radius:3px;font-size:13px}
+
 /* Responsive */
 @media(max-width:900px){
   .cards{grid-template-columns:repeat(2,1fr)}
@@ -285,7 +296,7 @@ td.mono{font-family:var(--mono);font-size:11px}
 
 <div class="sidebar">
   <div class="sidebar-brand">
-    <div class="brand-mark"><img src="/dashboard/logo.png" alt="GigaVector"></div>
+    <div class="brand-mark"><img src="/dashboard/logo.png" alt="GV"></div>
     <div class="brand-name">GigaVector</div>
   </div>
   <div id="collectionPickerWrap" style="padding:8px 10px;border-bottom:1px solid var(--border);display:none">
@@ -294,7 +305,6 @@ td.mono{font-family:var(--mono);font-size:11px}
     </select>
   </div>
   <nav class="sidebar-nav">
-    <div class="nav-section">CORE</div>
     <a href="#overview" class="active" data-view="overview">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>
       <span>Overview</span>
@@ -303,61 +313,39 @@ td.mono{font-family:var(--mono);font-size:11px}
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
       <span>Vectors</span>
     </a>
-    <a href="#visualize" data-view="visualize">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="7.5" cy="7.5" r="2"/><circle cx="16.5" cy="16.5" r="2"/><circle cx="16.5" cy="7.5" r="2"/><circle cx="7.5" cy="16.5" r="2"/><line x1="9" y1="9" x2="15" y2="15"/><line x1="15" y1="8" x2="9" y2="15"/></svg>
-      <span>Visualize</span>
-    </a>
     <a href="#search" data-view="search">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
       <span>Search</span>
     </a>
-    <a href="#console" data-view="console">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
-      <span>Console</span>
+    <a href="#visualize" data-view="visualize">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="7.5" cy="7.5" r="2"/><circle cx="16.5" cy="16.5" r="2"/><circle cx="16.5" cy="7.5" r="2"/><circle cx="7.5" cy="16.5" r="2"/><line x1="9" y1="9" x2="15" y2="15"/><line x1="15" y1="8" x2="9" y2="15"/></svg>
+      <span>Visualize</span>
+    </a>
+    <a href="#monitoring" data-view="monitoring">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+      <span>Monitoring</span>
     </a>
     <div class="nav-section">DATA</div>
     <a href="#import" data-view="import">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
       <span>Import</span>
     </a>
-    <a href="#namespaces" data-view="namespaces">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
-      <span>Namespaces</span>
-    </a>
     <a href="#sql" data-view="sql">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
       <span>SQL</span>
     </a>
-    <a href="#schema" data-view="schema">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
-      <span>Schema</span>
-    </a>
-    <div class="nav-section">SEARCH</div>
-    <a href="#semantic" data-view="semantic">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 00-3 3v7a3 3 0 006 0V5a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/></svg>
-      <span>Semantic Search</span>
-    </a>
-    <a href="#playground" data-view="playground">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-      <span>Playground</span>
-    </a>
-    <div class="nav-section">ANALYTICS</div>
-    <a href="#monitoring" data-view="monitoring">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-      <span>Monitoring</span>
-    </a>
-    <a href="#benchmarks" data-view="benchmarks">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
-      <span>Benchmarks</span>
+    <a href="#namespaces" data-view="namespaces">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
+      <span>Namespaces</span>
     </a>
     <a href="#graph" data-view="graph">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="3"/><circle cx="18" cy="18" r="3"/><circle cx="18" cy="6" r="3"/><line x1="8.5" y1="7.5" x2="15.5" y2="16.5"/><line x1="15.5" y1="7.5" x2="8.5" y2="16.5"/></svg>
-      <span>Graph Explorer</span>
+      <span>Graph</span>
     </a>
     <div class="nav-section">ADMIN</div>
-    <a href="#tenants" data-view="tenants">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
-      <span>Tenants</span>
+    <a href="#console" data-view="console">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+      <span>Console</span>
     </a>
     <a href="#backups" data-view="backups">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
@@ -366,10 +354,6 @@ td.mono{font-family:var(--mono);font-size:11px}
     <a href="#cluster" data-view="cluster">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
       <span>Cluster</span>
-    </a>
-    <a href="#snapshots" data-view="snapshots">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 4h14a2 2 0 012 2v12a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z"/><line x1="12" y1="9" x2="12" y2="15"/><line x1="9" y1="12" x2="15" y2="12"/></svg>
-      <span>Snapshots</span>
     </a>
   </nav>
   <div class="sidebar-footer">
@@ -390,21 +374,35 @@ td.mono{font-family:var(--mono);font-size:11px}
 
     <!-- OVERVIEW -->
     <div class="view active" id="view-overview">
-      <div class="cards">
+      <div class="cards" style="flex-shrink:0">
         <div class="card"><div class="card-label">Vectors</div><div class="card-value accent" id="ov-count">&mdash;</div></div>
         <div class="card"><div class="card-label">Dimension</div><div class="card-value" id="ov-dim">&mdash;</div></div>
-        <div class="card"><div class="card-label">Index Type</div><div class="card-value" id="ov-index">&mdash;</div></div>
+        <div class="card"><div class="card-label">Index</div><div class="card-value" id="ov-index">&mdash;</div></div>
         <div class="card"><div class="card-label">Version</div><div class="card-value" id="ov-version">&mdash;</div></div>
-      </div>
-      <div class="cards">
-        <div class="card"><div class="card-label">Total Requests</div><div class="card-value" id="ov-reqs">&mdash;</div></div>
-        <div class="card"><div class="card-label">Queries/sec</div><div class="card-value" id="ov-qps">&mdash;</div></div>
+        <div class="card"><div class="card-label">Requests</div><div class="card-value" id="ov-reqs">&mdash;</div></div>
+        <div class="card"><div class="card-label">QPS</div><div class="card-value" id="ov-qps">&mdash;</div></div>
         <div class="card"><div class="card-label">Errors</div><div class="card-value" id="ov-errors">&mdash;</div></div>
-        <div class="card"><div class="card-label">Data Sent</div><div class="card-value" id="ov-sent">&mdash;</div><div class="card-sub" id="ov-recv"></div></div>
+        <div class="card"><div class="card-label">Sent</div><div class="card-value" id="ov-sent">&mdash;</div><div class="card-sub" id="ov-recv"></div></div>
       </div>
-      <div class="section">
-        <div class="section-title">Health</div>
-        <div class="json-view" id="ov-health-json" style="min-height:60px">&mdash;</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;flex:1;min-height:0">
+        <div class="section" style="margin-bottom:0;display:flex;flex-direction:column">
+          <div class="section-title">Health</div>
+          <div class="json-view" id="ov-health-json" style="flex:1;min-height:0">&mdash;</div>
+        </div>
+        <div class="section" style="margin-bottom:0;display:flex;flex-direction:column">
+          <div class="section-title">Server Info</div>
+          <div class="json-view" id="ov-server-info" style="flex:1;min-height:0">&mdash;</div>
+        </div>
+        <div class="section" style="margin-bottom:0;display:flex;flex-direction:column">
+          <div class="section-title">Actions</div>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <button class="btn btn-outline" onclick="quickReq('POST','/compact')">Compact Database</button>
+            <button class="btn btn-outline" onclick="quickBackup()">Save Backup</button>
+            <button class="btn btn-outline" onclick="quickReq('GET','/stats')">Refresh Stats</button>
+            <button class="btn btn-outline" onclick="quickReq('GET','/health')">Run Health Check</button>
+          </div>
+          <div class="json-view mt-sm" id="ov-action-result" style="flex:1;min-height:60px">&mdash;</div>
+        </div>
       </div>
     </div>
 
@@ -419,13 +417,11 @@ td.mono{font-family:var(--mono);font-size:11px}
           <div class="split-panel">
             <div class="split-panel-header">
               Points
-              <span id="points-count" style="font-family:var(--mono);font-weight:400;color:var(--text-muted)"></span>
+              <span id="points-count" class="mono-sm"></span>
             </div>
-            <div style="padding:8px 12px;border-bottom:1px solid var(--border);display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-              <label style="font-size:11px;color:var(--text-muted);font-weight:600">Offset</label>
-              <input type="number" id="points-offset" value="0" min="0" style="width:70px;font-size:12px;padding:5px 8px">
-              <label style="font-size:11px;color:var(--text-muted);font-weight:600">Limit</label>
-              <input type="number" id="points-limit" value="50" min="1" max="200" style="width:60px;font-size:12px;padding:5px 8px">
+            <div class="form-row" style="padding:8px 12px;border-bottom:1px solid var(--border)">
+              <div class="form-group" style="margin-bottom:0"><label>Offset</label><input type="number" id="points-offset" value="0" min="0" style="width:70px"></div>
+              <div class="form-group" style="margin-bottom:0"><label>Limit</label><input type="number" id="points-limit" value="50" min="1" max="200" style="width:60px"></div>
               <button class="btn btn-sm" onclick="loadPoints()">Load</button>
               <button class="btn btn-sm btn-outline" onclick="pointsPrev()">&larr;</button>
               <button class="btn btn-sm btn-outline" onclick="pointsNext()">&rarr;</button>
@@ -435,7 +431,7 @@ td.mono{font-family:var(--mono);font-size:11px}
           <div class="split-panel-sm">
             <div class="split-panel-header">Detail</div>
             <div id="point-detail" style="padding:16px">
-              <div style="font-size:12px;color:var(--text-muted)">Select a point from the list.</div>
+              <div class="empty-state">Select a point from the list.</div>
             </div>
           </div>
         </div>
@@ -461,12 +457,12 @@ td.mono{font-family:var(--mono);font-size:11px}
         <div class="viz-split">
           <div class="viz-main">
             <div class="viz-toolbar">
-              <label style="font-weight:600">Algorithm</label>
+              <label class="label-sm">Algorithm</label>
               <select id="viz-algo"><option value="pca">PCA</option><option value="random">Random Projection</option></select>
-              <label style="font-weight:600">Limit</label>
+              <label class="label-sm">Limit</label>
               <input type="number" id="viz-limit" value="200" min="10" max="500" style="width:70px">
               <button class="btn btn-sm" onclick="runVisualization()">Run</button>
-              <span id="viz-status" style="margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--text-muted)"></span>
+              <span id="viz-status" class="mono-sm" style="margin-left:auto"></span>
             </div>
             <canvas class="viz-canvas" id="scatter-canvas" width="900" height="460"></canvas>
             <div class="viz-info" id="scatter-info">Click <b>Run</b> to project vectors into 2D space. Hover to preview, click to inspect.</div>
@@ -474,7 +470,7 @@ td.mono{font-family:var(--mono);font-size:11px}
           <div class="viz-detail" id="scatter-detail">
             <div class="viz-detail-header">Point Detail</div>
             <div class="viz-detail-body" id="scatter-detail-body">
-              <div style="color:var(--text-muted);font-size:13px">Click a point on the scatter plot to inspect it here.</div>
+              <div class="empty-state">Click a point on the scatter plot to inspect it here.</div>
             </div>
           </div>
         </div>
@@ -483,14 +479,14 @@ td.mono{font-family:var(--mono);font-size:11px}
         <div class="viz-split">
           <div class="viz-main">
             <div class="viz-toolbar">
-              <label style="font-weight:600">Seed</label>
+              <label class="label-sm">Seed</label>
               <input type="number" id="graph-seed" value="0" min="0" style="width:70px">
-              <label style="font-weight:600">k</label>
+              <label class="label-sm">k</label>
               <input type="number" id="graph-k" value="5" min="1" max="20" style="width:50px">
-              <label style="font-weight:600">Depth</label>
+              <label class="label-sm">Depth</label>
               <input type="number" id="graph-depth" value="2" min="1" max="4" style="width:50px">
               <button class="btn btn-sm" onclick="runGraph()">Build</button>
-              <span id="graph-status" style="margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--text-muted)"></span>
+              <span id="graph-status" class="mono-sm" style="margin-left:auto"></span>
             </div>
             <canvas class="viz-canvas" id="graph-canvas" width="900" height="460"></canvas>
             <div class="viz-info" id="graph-info">Build a similarity graph from a seed point. Hover nodes to preview, click to inspect.</div>
@@ -498,7 +494,7 @@ td.mono{font-family:var(--mono);font-size:11px}
           <div class="viz-detail" id="graph-detail">
             <div class="viz-detail-header">Node Detail</div>
             <div class="viz-detail-body" id="graph-detail-body">
-              <div style="color:var(--text-muted);font-size:13px">Click a node on the graph to inspect it here.</div>
+              <div class="empty-state">Click a node on the graph to inspect it here.</div>
             </div>
           </div>
         </div>
@@ -521,17 +517,17 @@ td.mono{font-family:var(--mono);font-size:11px}
             <div class="form-group" style="margin-bottom:0"><label>Oversampling</label><input type="number" id="search-oversampling" value="" min="1" step="0.5" style="width:80px" placeholder="auto" title="Oversampling factor for IVFPQ index (optional)"></div>
             <button class="btn" onclick="doSearch()">Search</button>
           </div>
-          <div style="margin-bottom:14px">
-            <div style="font-size:12px;font-weight:600;color:var(--text-secondary);margin-bottom:6px">Metadata Filter (optional)</div>
+          <div class="form-group">
+            <label>Metadata Filter (optional)</label>
             <div class="filter-row">
               <input type="text" id="filter-key" placeholder="key" style="width:120px">
               <input type="text" id="filter-value" placeholder="value" style="width:180px">
-              <span style="font-size:11px;color:var(--text-muted)">Filters results where metadata[key] == value</span>
+              <span class="label-sm">Filters results where metadata[key] == value</span>
             </div>
           </div>
-          <div id="search-meta" style="font-family:var(--mono);font-size:11px;color:var(--text-muted);margin-bottom:8px"></div>
+          <div id="search-meta" class="mono-sm mb-sm"></div>
           <table id="search-results" style="display:none"><thead><tr><th>#</th><th>Index</th><th>Distance</th><th>Data</th></tr></thead><tbody id="search-tbody"></tbody></table>
-          <div id="search-empty" style="color:var(--text-muted);font-size:13px">Enter a query vector and click Search.</div>
+          <div id="search-empty" class="empty-state">Enter a query vector and click Search.</div>
         </div>
       </div>
       <div id="search-range" class="tab-content" style="display:none">
@@ -544,9 +540,9 @@ td.mono{font-family:var(--mono);font-size:11px}
             <div class="form-group" style="margin-bottom:0"><label>Distance</label><select id="range-dist"><option value="euclidean">Euclidean</option><option value="cosine">Cosine</option><option value="dot_product">Dot Product</option><option value="manhattan">Manhattan</option></select></div>
             <button class="btn" onclick="doRangeSearch()">Search</button>
           </div>
-          <div id="range-meta" style="font-family:var(--mono);font-size:11px;color:var(--text-muted);margin-bottom:8px"></div>
+          <div id="range-meta" class="mono-sm mb-sm"></div>
           <table id="range-results" style="display:none"><thead><tr><th>#</th><th>Index</th><th>Distance</th><th>Data</th></tr></thead><tbody id="range-tbody"></tbody></table>
-          <div id="range-empty" style="color:var(--text-muted);font-size:13px">Enter a query vector and radius, then click Search.</div>
+          <div id="range-empty" class="empty-state">Enter a query vector and radius, then click Search.</div>
         </div>
       </div>
     </div>
@@ -567,16 +563,6 @@ td.mono{font-family:var(--mono);font-size:11px}
           <div class="json-view" id="con-result" style="min-height:100px"></div>
         </div>
       </div>
-      <div class="section">
-        <div class="section-title">Quick Actions</div>
-        <div class="form-row">
-          <button class="btn btn-sm btn-outline" onclick="quickReq('GET','/health')">Health</button>
-          <button class="btn btn-sm btn-outline" onclick="quickReq('GET','/stats')">Stats</button>
-          <button class="btn btn-sm btn-outline" onclick="quickReq('GET','/api/dashboard/info')">Info</button>
-          <button class="btn btn-sm btn-outline" onclick="quickReq('POST','/compact')">Compact</button>
-          <button class="btn btn-sm btn-outline" onclick="quickReq('POST','/save')">Save</button>
-        </div>
-      </div>
     </div>
 
     <!-- IMPORT -->
@@ -587,15 +573,15 @@ td.mono{font-family:var(--mono);font-size:11px}
         <div class="drop-zone" id="import-drop">
           Drop a CSV or JSON file here, or click to browse<br>
           <input type="file" id="import-file" accept=".csv,.json,.jsonl" style="display:none">
-          <div style="font-size:12px;color:var(--text-muted);margin-top:8px">Supported: .csv, .json, .jsonl</div>
+          <div class="label-sm mt-sm">Supported: .csv, .json, .jsonl</div>
         </div>
         <div id="import-preview" style="display:none">
           <div class="section-title">Column Mapping</div>
           <div id="import-mappings"></div>
-          <div style="margin-top:12px;display:flex;gap:8px;align-items:center">
+          <div class="gap-row mt-sm">
             <button class="btn" onclick="runImport()">Import</button>
             <button class="btn btn-outline" onclick="resetImport()">Reset</button>
-            <span id="import-status" style="font-family:var(--mono);font-size:12px;color:var(--text-muted)"></span>
+            <span id="import-status" class="mono-sm"></span>
           </div>
           <div class="progress-bar" id="import-progress-bar" style="display:none"><div class="progress-bar-fill" id="import-progress-fill"></div></div>
         </div>
@@ -615,7 +601,7 @@ td.mono{font-family:var(--mono);font-size:11px}
           <button class="btn btn-outline" onclick="loadNamespaces()">Refresh</button>
         </div>
         <table id="ns-table"><thead><tr><th>Name</th><th>Actions</th></tr></thead><tbody id="ns-tbody"></tbody></table>
-        <div id="ns-empty" style="color:var(--text-muted);font-size:13px;padding:10px 0">Loading...</div>
+        <div id="ns-empty" class="empty-state">Loading...</div>
         <div id="ns-info" style="margin-top:14px;display:none" class="json-view"></div>
       </div>
     </div>
@@ -626,72 +612,15 @@ td.mono{font-family:var(--mono);font-size:11px}
         <div class="section-title">SQL Query</div>
         <div class="section-desc">Query vectors using SQL syntax. Example: <code>SELECT * FROM vectors LIMIT 10</code></div>
         <textarea class="sql-editor" id="sql-input" placeholder="SELECT * FROM vectors LIMIT 10"></textarea>
-        <div style="margin-top:10px;display:flex;gap:8px">
+        <div class="gap-row mt-sm">
           <button class="btn" onclick="runSQL()">Execute</button>
           <button class="btn btn-outline" onclick="explainSQL()">Explain</button>
         </div>
-        <div id="sql-meta" style="font-family:var(--mono);font-size:11px;color:var(--text-muted);margin-top:10px"></div>
+        <div id="sql-meta" class="mono-sm mt-sm"></div>
         <div id="sql-result" style="margin-top:10px;display:none;overflow-x:auto">
           <table id="sql-table"><thead id="sql-thead"></thead><tbody id="sql-tbody"></tbody></table>
         </div>
         <div id="sql-explain" style="margin-top:10px;display:none" class="json-view"></div>
-      </div>
-    </div>
-
-    <!-- SEMANTIC SEARCH -->
-    <div class="view" id="view-semantic">
-      <div class="section">
-        <div class="section-title">Semantic Search</div>
-        <div class="section-desc">Search by natural language text. Requires an embedding API key.</div>
-        <div class="form-group"><label>Search Text</label><textarea id="sem-text" rows="3" style="width:100%" placeholder="Enter natural language query..."></textarea></div>
-        <div class="form-row" style="margin-bottom:14px">
-          <div class="form-group" style="margin-bottom:0"><label>Provider</label><select id="sem-provider"><option value="openai">OpenAI</option><option value="google">Google</option><option value="huggingface">HuggingFace</option></select></div>
-          <div class="form-group" style="margin-bottom:0"><label>API Key</label><input type="password" id="sem-apikey" placeholder="sk-..." style="width:240px"></div>
-          <div class="form-group" style="margin-bottom:0"><label>k</label><input type="number" id="sem-k" value="10" min="1" style="width:60px"></div>
-          <button class="btn" onclick="doSemanticSearch()">Search</button>
-        </div>
-        <div id="sem-meta" style="font-family:var(--mono);font-size:11px;color:var(--text-muted);margin-bottom:8px"></div>
-        <table id="sem-results" style="display:none"><thead><tr><th>#</th><th>Distance</th><th>Data</th><th>Metadata</th></tr></thead><tbody id="sem-tbody"></tbody></table>
-        <div id="sem-empty" style="color:var(--text-muted);font-size:13px">Enter text and click Search.</div>
-      </div>
-    </div>
-
-    <!-- PLAYGROUND -->
-    <div class="view" id="view-playground">
-      <div class="wizard-steps">
-        <div class="wizard-step active" id="pg-step-0">1. Welcome</div>
-        <div class="wizard-step" id="pg-step-1">2. Add Data</div>
-        <div class="wizard-step" id="pg-step-2">3. Search</div>
-        <div class="wizard-step" id="pg-step-3">4. Results</div>
-      </div>
-      <div class="section" id="pg-panel-0">
-        <div class="section-title">Welcome to GigaVector</div>
-        <div class="section-desc">This interactive playground walks you through the core workflow: adding vectors and searching them. No prior setup needed.</div>
-        <button class="btn" onclick="pgNext()">Get Started</button>
-      </div>
-      <div class="section" id="pg-panel-1" style="display:none">
-        <div class="section-title">Add Sample Vectors</div>
-        <div class="section-desc">We'll insert some random vectors to get you started.</div>
-        <div class="form-group"><label>Number of vectors</label><input type="number" id="pg-count" value="20" min="1" max="100" style="width:80px"></div>
-        <button class="btn" onclick="pgAddSampleData()">Insert Sample Data</button>
-        <div id="pg-add-status" style="font-family:var(--mono);font-size:12px;color:var(--text-muted);margin-top:8px"></div>
-      </div>
-      <div class="section" id="pg-panel-2" style="display:none">
-        <div class="section-title">Search Your Data</div>
-        <div class="section-desc">Now let's search for the nearest neighbors of a random query vector.</div>
-        <div class="form-row" style="margin-bottom:14px">
-          <div class="form-group" style="margin-bottom:0"><label>k</label><input type="number" id="pg-k" value="5" min="1" style="width:60px"></div>
-          <button class="btn" onclick="pgSearch()">Search Random Query</button>
-        </div>
-      </div>
-      <div class="section" id="pg-panel-3" style="display:none">
-        <div class="section-title">Search Results</div>
-        <div id="pg-query-info" style="font-family:var(--mono);font-size:12px;color:var(--text-muted);margin-bottom:10px"></div>
-        <table id="pg-results"><thead><tr><th>#</th><th>Distance</th><th>Data</th></tr></thead><tbody id="pg-tbody"></tbody></table>
-        <div style="margin-top:14px;display:flex;gap:8px">
-          <button class="btn btn-outline" onclick="pgSearch()">Search Again</button>
-          <button class="btn btn-outline" onclick="pgReset()">Start Over</button>
-        </div>
       </div>
     </div>
 
@@ -725,66 +654,33 @@ td.mono{font-family:var(--mono);font-size:11px}
       </div>
     </div>
 
-    <!-- BENCHMARKS -->
-    <div class="view" id="view-benchmarks">
-      <div class="section">
-        <div class="section-title">Benchmark Comparison</div>
-        <div class="section-desc">GigaVector HNSW vs FAISS HNSW — ANN Benchmarks (SIFT-1M, 128D, Euclidean)</div>
-      </div>
-      <div class="monitor-grid">
-        <div class="monitor-chart">
-          <div class="monitor-chart-title">Recall@10</div>
-          <canvas id="bench-recall" height="200"></canvas>
-        </div>
-        <div class="monitor-chart">
-          <div class="monitor-chart-title">Queries Per Second</div>
-          <canvas id="bench-qps" height="200"></canvas>
-        </div>
-      </div>
-      <div class="monitor-grid">
-        <div class="monitor-chart">
-          <div class="monitor-chart-title">Build Time (seconds)</div>
-          <canvas id="bench-build" height="200"></canvas>
-        </div>
-        <div class="monitor-chart">
-          <div class="monitor-chart-title">Memory (MB)</div>
-          <canvas id="bench-memory" height="200"></canvas>
-        </div>
-      </div>
-      <div class="section">
-        <div class="section-title">Raw Data</div>
-        <table><thead><tr><th>Metric</th><th>GigaVector</th><th>FAISS</th></tr></thead><tbody>
-          <tr><td>Recall@10 (ef=200)</td><td class="mono">0.977</td><td class="mono">0.975</td></tr>
-          <tr><td>QPS (ef=10)</td><td class="mono">5,149</td><td class="mono">7,096</td></tr>
-          <tr><td>QPS (ef=200)</td><td class="mono">1,024</td><td class="mono">1,180</td></tr>
-          <tr><td>Build Time</td><td class="mono">7.5s</td><td class="mono">1.5s</td></tr>
-          <tr><td>Index Memory</td><td class="mono">~180 MB</td><td class="mono">~210 MB</td></tr>
-        </tbody></table>
-      </div>
-    </div>
 
     <!-- GRAPH EXPLORER -->
     <div class="view" id="view-graph">
       <div class="section">
         <div class="section-title">Graph Explorer</div>
-        <div class="form-row" style="margin-bottom:14px">
+        <div class="form-row" style="margin-bottom:10px">
           <div class="form-group" style="margin-bottom:0"><label>Node Label</label><input type="text" id="ge-label" placeholder="Person" style="width:120px"></div>
           <button class="btn btn-sm" onclick="geAddNode()">Add Node</button>
-          <div class="form-group" style="margin-bottom:0;margin-left:12px"><label>Source</label><input type="number" id="ge-src" min="0" style="width:60px"></div>
+        </div>
+        <div class="form-row" style="margin-bottom:10px">
+          <div class="form-group" style="margin-bottom:0"><label>Source</label><input type="number" id="ge-src" min="0" style="width:60px"></div>
           <div class="form-group" style="margin-bottom:0"><label>Target</label><input type="number" id="ge-tgt" min="0" style="width:60px"></div>
           <div class="form-group" style="margin-bottom:0"><label>Label</label><input type="text" id="ge-elabel" placeholder="knows" style="width:80px"></div>
           <button class="btn btn-sm" onclick="geAddEdge()">Add Edge</button>
           <button class="btn btn-sm btn-outline" style="margin-left:auto" onclick="geRefresh()">Refresh</button>
         </div>
-        <div class="form-row" style="margin-bottom:14px">
+        <div class="form-row" style="margin-bottom:10px">
           <div class="form-group" style="margin-bottom:0"><label>BFS Start</label><input type="number" id="ge-bfs-start" value="0" min="0" style="width:60px"></div>
           <div class="form-group" style="margin-bottom:0"><label>Depth</label><input type="number" id="ge-bfs-depth" value="3" min="1" max="10" style="width:50px"></div>
           <button class="btn btn-sm" onclick="geBFS()">Run BFS</button>
-          <div class="form-group" style="margin-bottom:0;margin-left:12px"><label>From</label><input type="number" id="ge-sp-from" min="0" style="width:60px"></div>
+        </div>
+        <div class="form-row" style="margin-bottom:14px">
+          <div class="form-group" style="margin-bottom:0"><label>From</label><input type="number" id="ge-sp-from" min="0" style="width:60px"></div>
           <div class="form-group" style="margin-bottom:0"><label>To</label><input type="number" id="ge-sp-to" min="0" style="width:60px"></div>
           <button class="btn btn-sm" onclick="geShortestPath()">Shortest Path</button>
         </div>
-        <div id="ge-status" style="font-family:var(--mono);font-size:11px;color:var(--text-muted);margin-bottom:8px"></div>
+        <div id="ge-status" class="mono-sm mb-sm"></div>
       </div>
       <div class="viz-container">
         <canvas class="viz-canvas" id="ge-canvas" width="900" height="460"></canvas>
@@ -792,72 +688,13 @@ td.mono{font-family:var(--mono);font-size:11px}
       </div>
     </div>
 
-    <!-- TENANTS -->
-    <div class="view" id="view-tenants">
-      <div class="section">
-        <div class="section-title">Multi-Tenant Administration</div>
-        <div class="tabs">
-          <button class="tab active" data-tab="tenant-manage">Tenants</button>
-          <button class="tab" data-tab="tenant-rbac">RBAC</button>
-          <button class="tab" data-tab="tenant-quotas">Quotas</button>
-        </div>
-        <div id="tenant-manage" class="tab-content">
-          <div class="form-row" style="margin-bottom:14px">
-            <div class="form-group" style="margin-bottom:0"><label>Tenant ID</label><input type="text" id="t-id" placeholder="acme-corp" style="width:160px"></div>
-            <div class="form-group" style="margin-bottom:0"><label>Tier</label><select id="t-tier"><option value="SHARED">Shared</option><option value="DEDICATED">Dedicated</option><option value="PREMIUM">Premium</option></select></div>
-            <button class="btn" onclick="createTenant()">Add Tenant</button>
-          </div>
-          <div id="t-status" style="font-family:var(--mono);font-size:12px;color:var(--text-muted);margin-bottom:8px"></div>
-          <div id="t-info" style="display:none" class="json-view"></div>
-        </div>
-        <div id="tenant-rbac" class="tab-content" style="display:none">
-          <div class="section-desc">Manage roles, rules, and assignments.</div>
-          <div class="form-row" style="margin-bottom:10px">
-            <div class="form-group" style="margin-bottom:0"><label>Role Name</label><input type="text" id="rbac-role" placeholder="editor" style="width:120px"></div>
-            <button class="btn btn-sm" onclick="createRole()">Create Role</button>
-          </div>
-          <div class="form-row" style="margin-bottom:10px">
-            <div class="form-group" style="margin-bottom:0"><label>Role</label><input type="text" id="rbac-rule-role" placeholder="editor" style="width:100px"></div>
-            <div class="form-group" style="margin-bottom:0"><label>Resource</label><input type="text" id="rbac-resource" placeholder="vectors" style="width:100px"></div>
-            <div class="form-group" style="margin-bottom:0"><label>Perms (bitmask)</label><input type="number" id="rbac-perms" value="3" min="0" max="15" style="width:60px"></div>
-            <button class="btn btn-sm" onclick="addRule()">Add Rule</button>
-          </div>
-          <div class="form-row" style="margin-bottom:10px">
-            <div class="form-group" style="margin-bottom:0"><label>User ID</label><input type="text" id="rbac-user" placeholder="user@example.com" style="width:160px"></div>
-            <div class="form-group" style="margin-bottom:0"><label>Role</label><input type="text" id="rbac-assign-role" placeholder="editor" style="width:100px"></div>
-            <button class="btn btn-sm" onclick="assignRole()">Assign</button>
-          </div>
-          <div id="rbac-status" style="font-family:var(--mono);font-size:12px;color:var(--text-muted)"></div>
-        </div>
-        <div id="tenant-quotas" class="tab-content" style="display:none">
-          <div class="section-desc">Set resource quotas per tenant.</div>
-          <div class="form-row" style="margin-bottom:10px">
-            <div class="form-group" style="margin-bottom:0"><label>Tenant ID</label><input type="text" id="q-tenant" placeholder="acme-corp" style="width:140px"></div>
-            <div class="form-group" style="margin-bottom:0"><label>Max Vectors</label><input type="number" id="q-maxvec" value="100000" min="0" style="width:100px"></div>
-            <div class="form-group" style="margin-bottom:0"><label>Max QPS</label><input type="number" id="q-maxqps" value="1000" step="100" min="0" style="width:80px"></div>
-            <button class="btn btn-sm" onclick="setQuota()">Set Quota</button>
-          </div>
-          <div id="q-status" style="font-family:var(--mono);font-size:12px;color:var(--text-muted)"></div>
-        </div>
-      </div>
-    </div>
-
-    <div class="view" id="view-schema">
-      <div class="section">
-        <div class="section-title">Payload Schema</div>
-        <div class="section-desc">View the metadata schema for this collection.</div>
-        <button class="btn btn-outline btn-sm" onclick="loadSchema()" style="margin-bottom:14px">Refresh Schema</button>
-        <table id="schema-table" style="display:none"><thead><tr><th>Field Name</th><th>Type</th><th>Required</th><th>Indexed</th></tr></thead><tbody id="schema-tbody"></tbody></table>
-        <div id="schema-empty" style="color:var(--text-muted);font-size:13px;margin-bottom:14px">Click Refresh to load schema.</div>
-        <div class="section-title" style="margin-top:16px">Raw JSON</div>
-        <div id="schema-raw" class="json-view" style="min-height:80px"></div>
-      </div>
-    </div>
 
     <div class="view" id="view-cluster">
       <div class="section">
-        <div class="section-title">Cluster Overview</div>
-        <button class="btn btn-outline btn-sm" onclick="loadCluster()" style="margin-bottom:14px">Refresh</button>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+          <div class="section-title" style="margin-bottom:0">Cluster Overview</div>
+          <button class="btn btn-outline btn-sm" onclick="loadCluster()">Refresh</button>
+        </div>
         <div class="cards" id="cluster-cards">
           <div class="card"><div class="card-label">Total Nodes</div><div class="card-value" id="cl-nodes">—</div></div>
           <div class="card"><div class="card-label">Active Nodes</div><div class="card-value" id="cl-active">—</div></div>
@@ -869,22 +706,10 @@ td.mono{font-family:var(--mono);font-size:11px}
       <div class="section">
         <div class="section-title">Shards</div>
         <table id="cluster-shard-table" style="display:none"><thead><tr><th>Shard ID</th><th>Node Address</th><th>State</th><th>Vectors</th><th>Replicas</th></tr></thead><tbody id="cluster-shard-tbody"></tbody></table>
-        <div id="cluster-shard-empty" style="color:var(--text-muted);font-size:13px">Click Refresh to load shard info.</div>
+        <div id="cluster-shard-empty" class="empty-state">Click Refresh to load shard info.</div>
       </div>
     </div>
 
-    <div class="view" id="view-snapshots">
-      <div class="section">
-        <div class="section-title">Snapshot Management</div>
-        <div class="form-row" style="margin-bottom:14px;align-items:flex-end">
-          <div class="form-group" style="margin-bottom:0"><label>Label (optional)</label><input type="text" id="snap-label" placeholder="my-snapshot" style="width:200px"></div>
-          <button class="btn" onclick="createSnapshot()">Create Snapshot</button>
-          <button class="btn btn-outline" onclick="loadSnapshots()">Refresh</button>
-        </div>
-        <table id="snap-table" style="display:none"><thead><tr><th>ID</th><th>Timestamp</th><th>Vectors</th><th>Label</th><th>Actions</th></tr></thead><tbody id="snap-tbody"></tbody></table>
-        <div id="snap-empty" style="color:var(--text-muted);font-size:13px">No snapshots yet. Create one above.</div>
-      </div>
-    </div>
 
     <!-- BACKUPS -->
     <div class="view" id="view-backups">
@@ -899,19 +724,19 @@ td.mono{font-family:var(--mono);font-size:11px}
           <div class="section-desc">Create a snapshot backup of the current database.</div>
           <div class="form-group"><label>Backup Path (optional)</label><input type="text" id="bk-path" placeholder="/tmp/gv_backup.gvb" style="width:100%"></div>
           <button class="btn" onclick="createBackup()">Create Backup</button>
-          <div id="bk-create-result" style="margin-top:10px;display:none" class="json-view"></div>
+          <div id="bk-create-result" class="json-view mt-sm" style="display:none"></div>
         </div>
         <div id="bk-restore" class="tab-content" style="display:none">
           <div class="section-desc">Restore database from a backup file. This replaces the current database.</div>
           <div class="form-group"><label>Backup Path</label><input type="text" id="bk-restore-path" placeholder="/tmp/gv_backup.gvb" style="width:100%"></div>
           <button class="btn btn-danger" onclick="restoreBackup()">Restore</button>
-          <div id="bk-restore-result" style="margin-top:10px;display:none" class="json-view"></div>
+          <div id="bk-restore-result" class="json-view mt-sm" style="display:none"></div>
         </div>
         <div id="bk-header" class="tab-content" style="display:none">
           <div class="section-desc">Read backup file header without restoring.</div>
           <div class="form-group"><label>Backup Path</label><input type="text" id="bk-header-path" placeholder="/tmp/gv_backup.gvb" style="width:100%"></div>
           <button class="btn btn-outline" onclick="readBackupHeader()">Read Header</button>
-          <div id="bk-header-result" style="margin-top:10px;display:none" class="json-view"></div>
+          <div id="bk-header-result" class="json-view mt-sm" style="display:none"></div>
         </div>
       </div>
     </div>
@@ -1007,6 +832,7 @@ async function refreshOverview() {
     document.getElementById('ov-version').textContent = info.data.version ?? '—';
     document.getElementById('footer-version').textContent = 'GigaVector v' + (info.data.version || '?');
     document.getElementById('footer-index').textContent = (info.data.index_type || '') + ' · dim ' + (info.data.dimension || '?');
+    document.getElementById('ov-server-info').innerHTML = jsonHighlight(info.data);
   }
   if (stats.ok && stats.data) {
     document.getElementById('ov-reqs').textContent = ((stats.data.total_inserts || 0) + (stats.data.total_queries || 0)).toLocaleString();
@@ -1539,11 +1365,21 @@ async function consoleSend() {
   document.getElementById('con-meta').innerHTML='<span class="'+(r.status>=200&&r.status<400?'status-ok':'status-err')+'">'+r.status+'</span><span>'+ms+'ms</span>';
   document.getElementById('con-result').innerHTML=jsonHighlight(r.data);
 }
-function quickReq(method,url){
-  document.getElementById('con-method').value=method;document.getElementById('con-url').value=url;document.getElementById('con-body').value='';
-  document.querySelectorAll('.sidebar-nav a').forEach(a=>{a.classList.toggle('active',a.dataset.view==='console')});
-  document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
-  document.getElementById('view-console').classList.add('active');document.getElementById('viewTitle').textContent='Console';consoleSend();
+async function quickReq(method,url){
+  const el=document.getElementById('ov-action-result');
+  if(el)el.innerHTML='<span class="json-null">Loading...</span>';
+  const r=await apiCall(url,{method});
+  if(el)el.innerHTML=jsonHighlight(r.data);
+  showToast(r.ok?method+' '+url+' OK':'Error',r.ok?'success':'error');
+}
+async function quickBackup(){
+  const el=document.getElementById('ov-action-result');
+  if(el)el.innerHTML='<span class="json-null">Backing up...</span>';
+  const ts=new Date().toISOString().replace(/[:.]/g,'-').slice(0,19);
+  const path='/tmp/gigavector_backup_'+ts+'.gvb';
+  const r=await apiCall('/api/backups',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path})});
+  if(el)el.innerHTML=jsonHighlight(r.data);
+  showToast(r.ok?'Backup saved to '+path:'Backup failed',r.ok?'success':'error');
 }
 document.getElementById('con-url').addEventListener('keydown',e=>{if(e.key==='Enter')consoleSend()});
 
@@ -1625,59 +1461,6 @@ async function refreshMonitoring() {
   drawLineChart(document.getElementById('mon-latency-chart'),monRing.latency,{color:'#0369a1',fill:true,label:'Search latency (ms)'});
   drawGauge(document.getElementById('mon-mem-chart'),mem,1073741824,{label:formatBytes(mem)+' / 1 GB'});
   document.getElementById('mon-detail-json').innerHTML=jsonHighlight(d);
-}
-
-
-function drawBenchmarks() {
-  drawBarChart(document.getElementById('bench-recall'),['GigaVector','FAISS'],[0.977,0.975],{decimals:3,colors:['#e11d48','#555']});
-  drawBarChart(document.getElementById('bench-qps'),['GV ef=10','FAISS ef=10','GV ef=200','FAISS ef=200'],[5149,7096,1024,1180],{decimals:0,colors:['#e11d48','#555','#e11d48','#555']});
-  drawBarChart(document.getElementById('bench-build'),['GigaVector','FAISS'],[7.5,1.5],{decimals:1,colors:['#e11d48','#555']});
-  drawBarChart(document.getElementById('bench-memory'),['GigaVector','FAISS'],[180,210],{decimals:0,colors:['#e11d48','#555']});
-}
-
-
-let pgStep=0, pgDim=0;
-function pgSetStep(s) {
-  pgStep=s;
-  for(let i=0;i<4;i++){
-    document.getElementById('pg-step-'+i).className='wizard-step'+(i<s?' done':'')+(i===s?' active':'');
-    document.getElementById('pg-panel-'+i).style.display=i===s?'block':'none';
-  }
-}
-function pgNext(){pgSetStep(pgStep+1);}
-function pgReset(){pgStep=0;pgSetStep(0);}
-
-async function pgAddSampleData() {
-  const info=await apiCall('/api/dashboard/info');
-  pgDim=info.ok?info.data.dimension:4;
-  const n=parseInt(document.getElementById('pg-count').value)||20;
-  let ok=0;
-  for(let i=0;i<n;i++){
-    const data=Array.from({length:pgDim},()=>Math.random());
-    const r=await apiCall('/vectors',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({data,metadata:{source:'playground',idx:''+i}})});
-    if(r.ok) ok++;
-  }
-  document.getElementById('pg-add-status').textContent='Inserted '+ok+'/'+n+' vectors (dim='+pgDim+')';
-  showToast('Inserted '+ok+' vectors','success');
-  pgNext();
-}
-
-async function pgSearch() {
-  if(!pgDim){const info=await apiCall('/api/dashboard/info');pgDim=info.ok?info.data.dimension:4;}
-  const k=parseInt(document.getElementById('pg-k').value)||5;
-  const query=Array.from({length:pgDim},()=>Math.random());
-  const r=await apiCall('/search',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query,k,distance:'euclidean'})});
-  pgSetStep(3);
-  document.getElementById('pg-query-info').textContent='Query: ['+query.slice(0,4).map(v=>v.toFixed(3)).join(', ')+(pgDim>4?', ...':'')+'] ('+pgDim+'D)';
-  const tbody=document.getElementById('pg-tbody');tbody.innerHTML='';
-  if(r.ok&&r.data.results){
-    r.data.results.forEach((h,i)=>{
-      const dp=h.data?'['+h.data.slice(0,3).map(v=>v.toFixed(3)).join(', ')+(h.data.length>3?', ...':'')+']':'—';
-      const tr=document.createElement('tr');
-      tr.innerHTML='<td>'+(i+1)+'</td><td class="mono">'+(h.distance!=null?h.distance.toFixed(6):'—')+'</td><td class="mono">'+dp+'</td>';
-      tbody.appendChild(tr);
-    });
-  }
 }
 
 
@@ -1840,35 +1623,6 @@ function resetImport() {
 }
 
 
-async function doSemanticSearch() {
-  const text=document.getElementById('sem-text').value.trim();
-  if(!text){showToast('Enter search text','error');return;}
-  const apiKey=document.getElementById('sem-apikey').value.trim();
-  if(!apiKey){showToast('Enter API key','error');return;}
-  document.getElementById('sem-meta').textContent='Searching...';
-  const r=await apiCall('/api/semantic-search',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
-    text, api_key:apiKey, k:parseInt(document.getElementById('sem-k').value),
-    provider:document.getElementById('sem-provider').value
-  })});
-  if(r.ok&&r.data.results){
-    document.getElementById('sem-meta').textContent=r.data.count+' results (embedding dim: '+r.data.embedding_dim+')';
-    const tbody=document.getElementById('sem-tbody');tbody.innerHTML='';
-    r.data.results.forEach((h,i)=>{
-      const dp=h.data?JSON.stringify(h.data).slice(0,40)+'…':'—';
-      const mp=h.metadata?JSON.stringify(h.metadata).slice(0,40):'—';
-      const tr=document.createElement('tr');
-      tr.innerHTML='<td>'+(i+1)+'</td><td class="mono">'+(h.distance!=null?h.distance.toFixed(6):'—')+'</td><td class="mono">'+dp+'</td><td class="mono">'+mp+'</td>';
-      tbody.appendChild(tr);
-    });
-    document.getElementById('sem-results').style.display='table';document.getElementById('sem-empty').style.display='none';
-  } else {
-    document.getElementById('sem-meta').textContent='';
-    document.getElementById('sem-empty').textContent='Error: '+(r.data.message||JSON.stringify(r.data));
-    document.getElementById('sem-empty').style.display='block';document.getElementById('sem-results').style.display='none';
-  }
-}
-
-
 async function loadNamespaces() {
   const r=await apiCall('/api/namespaces');
   const tbody=document.getElementById('ns-tbody');
@@ -1906,51 +1660,6 @@ async function nsInfo(name) {
   const el=document.getElementById('ns-info');el.style.display='block';
   el.innerHTML=jsonHighlight(r.data);
 }
-
-async function createTenant() {
-  const tid=document.getElementById('t-id').value.trim();
-  if(!tid){showToast('Enter tenant ID','error');return;}
-  const r=await apiCall('/api/tenants',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
-    tenant_id:tid, tier:document.getElementById('t-tier').value
-  })});
-  document.getElementById('t-status').textContent=r.ok?'Tenant "'+tid+'" created':'Error: '+(r.data.message||'');
-  if(r.ok)showToast('Tenant created','success');
-}
-
-async function createRole() {
-  const name=document.getElementById('rbac-role').value.trim();
-  if(!name)return;
-  const r=await apiCall('/api/rbac/roles',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});
-  document.getElementById('rbac-status').textContent=r.ok?'Role "'+name+'" created':'Error: '+(r.data.message||'');
-}
-
-async function addRule() {
-  const role=document.getElementById('rbac-rule-role').value.trim();
-  const resource=document.getElementById('rbac-resource').value.trim();
-  const perms=parseInt(document.getElementById('rbac-perms').value);
-  if(!role||!resource)return;
-  const r=await apiCall('/api/rbac/rules',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({role,resource,permissions:perms})});
-  document.getElementById('rbac-status').textContent=r.ok?'Rule added':'Error: '+(r.data.message||'');
-}
-
-async function assignRole() {
-  const uid=document.getElementById('rbac-user').value.trim();
-  const role=document.getElementById('rbac-assign-role').value.trim();
-  if(!uid||!role)return;
-  const r=await apiCall('/api/rbac/assign',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:uid,role})});
-  document.getElementById('rbac-status').textContent=r.ok?'Role assigned':'Error: '+(r.data.message||'');
-}
-
-async function setQuota() {
-  const tid=document.getElementById('q-tenant').value.trim();
-  if(!tid)return;
-  const r=await apiCall('/api/quotas',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
-    tenant_id:tid, max_vectors:parseInt(document.getElementById('q-maxvec').value),
-    max_qps:parseFloat(document.getElementById('q-maxqps').value)
-  })});
-  document.getElementById('q-status').textContent=r.ok?'Quota set for '+tid:'Error: '+(r.data.message||'');
-}
-
 
 let geNodes=[], geEdges=[], geAnim=null;
 
@@ -2103,78 +1812,10 @@ async function loadCluster() {
   }
 }
 
-async function loadSnapshots() {
-  const r = await apiCall('/api/snapshots');
-  if (r.ok && r.data.snapshots) {
-    const tbody = document.getElementById('snap-tbody');
-    tbody.innerHTML = '';
-    if (r.data.snapshots.length === 0) {
-      document.getElementById('snap-table').style.display = 'none';
-      document.getElementById('snap-empty').style.display = 'block';
-      document.getElementById('snap-empty').textContent = 'No snapshots found.';
-      return;
-    }
-    r.data.snapshots.forEach(s => {
-      const tr = document.createElement('tr');
-      const ts = new Date(s.timestamp_us / 1000).toLocaleString();
-      tr.innerHTML = '<td class="mono">' + s.snapshot_id + '</td><td class="mono">' + ts +
-        '</td><td class="mono">' + s.vector_count + '</td><td>' + (s.label || '—') +
-        '</td><td><button class="btn btn-outline btn-sm" onclick="restoreSnapshot(' + s.snapshot_id +
-        ')">Restore</button> <button class="btn btn-danger btn-sm" onclick="deleteSnapshot(' + s.snapshot_id +
-        ')">Delete</button></td>';
-      tbody.appendChild(tr);
-    });
-    document.getElementById('snap-table').style.display = '';
-    document.getElementById('snap-empty').style.display = 'none';
-  }
-}
-async function createSnapshot() {
-  const label = document.getElementById('snap-label').value.trim();
-  const r = await apiCall('/api/snapshots', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({label})});
-  if (r.ok) { showToast('Snapshot created (ID: ' + r.data.snapshot_id + ')', 'success'); loadSnapshots(); }
-  else showToast('Failed: ' + (r.data.message || r.data.error), 'error');
-}
-async function restoreSnapshot(id) {
-  const r = await apiCall('/api/snapshots/' + id + '/restore', {method:'POST'});
-  if (r.ok) showToast('Restore initiated for snapshot ' + id, 'success');
-  else showToast('Restore failed', 'error');
-}
-async function deleteSnapshot(id) {
-  const r = await apiCall('/api/snapshots/' + id, {method:'DELETE'});
-  if (r.ok) { showToast('Snapshot deleted', 'success'); loadSnapshots(); }
-  else showToast('Delete failed', 'error');
-}
-
-async function loadSchema() {
-  const r = await apiCall('/api/schema');
-  if (r.ok) {
-    const tbody = document.getElementById('schema-tbody');
-    tbody.innerHTML = '';
-    if (r.data.fields && r.data.fields.length > 0) {
-      r.data.fields.forEach(f => {
-        const tr = document.createElement('tr');
-        tr.innerHTML = '<td class="mono">' + f.name + '</td><td>' + f.type +
-          '</td><td>' + (f.required ? 'Yes' : 'No') + '</td><td>' + (f.indexed ? 'Yes' : 'No') + '</td>';
-        tbody.appendChild(tr);
-      });
-      document.getElementById('schema-table').style.display = '';
-      document.getElementById('schema-empty').style.display = 'none';
-    } else {
-      document.getElementById('schema-table').style.display = 'none';
-      document.getElementById('schema-empty').style.display = 'block';
-      document.getElementById('schema-empty').textContent = 'No schema fields defined (' + r.data.field_count + ' fields).';
-    }
-    document.getElementById('schema-raw').innerHTML = jsonHighlight(r.data.raw || {});
-  }
-}
-
 const viewHooks={
   monitoring:()=>{refreshMonitoring();if(!monTimer)monTimer=setInterval(refreshMonitoring,1000);},
-  benchmarks:drawBenchmarks,
   namespaces:loadNamespaces,
   cluster:loadCluster,
-  snapshots:loadSnapshots,
-  schema:loadSchema,
 };
 const viewLeaveHooks={
   monitoring:()=>{if(monTimer){clearInterval(monTimer);monTimer=null;}},

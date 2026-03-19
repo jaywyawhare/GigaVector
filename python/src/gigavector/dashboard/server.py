@@ -394,10 +394,14 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _handle_save(self) -> None:
         try:
-            self._db.save()
+            body = self._parse_json_body()
+            path = body.get("path") if body else None
+            self._db.save(path)
             self._send_json({"success": True, "message": "Database saved"})
         except Exception as e:
-            self._send_error_json(500, "save_failed", str(e))
+            self._send_error_json(500, "save_failed",
+                "In-memory database requires a path. Send {\"path\":\"/tmp/db.gvdb\"} or use Backup instead."
+                if "failed" in str(e).lower() else str(e))
 
     def _handle_sql_execute(self) -> None:
         body = self._parse_json_body()
