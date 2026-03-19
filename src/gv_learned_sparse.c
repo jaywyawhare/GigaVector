@@ -10,6 +10,7 @@
  */
 
 #include "gigavector/gv_learned_sparse.h"
+#include "gigavector/gv_utils.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -348,7 +349,7 @@ static float gv_ls_posting_list_max_weight(const GV_LSPostingList *pl) {
 /* Internal: WAND search */
 
 static int gv_ls_search_wand(const GV_LearnedSparseIndex *idx,
-                              const GV_SparseEntry *query, size_t query_count,
+                              const GV_LSSparseEntry *query, size_t query_count,
                               float min_score, size_t k,
                               GV_LearnedSparseResult *results) {
     /* Build cursors for query terms that have non-empty posting lists. */
@@ -479,7 +480,7 @@ static int gv_ls_search_wand(const GV_LearnedSparseIndex *idx,
 /* Internal: non-WAND (accumulator) search */
 
 static int gv_ls_search_accumulate(const GV_LearnedSparseIndex *idx,
-                                    const GV_SparseEntry *query,
+                                    const GV_LSSparseEntry *query,
                                     size_t query_count,
                                     float min_score, size_t k,
                                     GV_LearnedSparseResult *results) {
@@ -546,14 +547,6 @@ static int gv_ls_search_accumulate(const GV_LearnedSparseIndex *idx,
 }
 
 /* Internal: serialization helpers */
-
-static int gv_ls_write_u32(FILE *f, uint32_t v) {
-    return fwrite(&v, sizeof(uint32_t), 1, f) == 1 ? 0 : -1;
-}
-
-static int gv_ls_read_u32(FILE *f, uint32_t *v) {
-    return (v && fread(v, sizeof(uint32_t), 1, f) == 1) ? 0 : -1;
-}
 
 static int gv_ls_write_u64(FILE *f, uint64_t v) {
     return fwrite(&v, sizeof(uint64_t), 1, f) == 1 ? 0 : -1;
@@ -651,7 +644,7 @@ void gv_ls_destroy(GV_LearnedSparseIndex *idx) {
 
 /* Indexing Operations */
 
-int gv_ls_insert(GV_LearnedSparseIndex *idx, const GV_SparseEntry *entries,
+int gv_ls_insert(GV_LearnedSparseIndex *idx, const GV_LSSparseEntry *entries,
                  size_t count) {
     if (!idx || !entries || count == 0) return -1;
     if (count > idx->config.max_nonzeros) return -1;
@@ -726,7 +719,7 @@ int gv_ls_delete(GV_LearnedSparseIndex *idx, size_t doc_id) {
 
 /* Search Operations */
 
-int gv_ls_search(const GV_LearnedSparseIndex *idx, const GV_SparseEntry *query,
+int gv_ls_search(const GV_LearnedSparseIndex *idx, const GV_LSSparseEntry *query,
                  size_t query_count, size_t k, GV_LearnedSparseResult *results) {
     if (!idx || !query || query_count == 0 || k == 0 || !results) return -1;
 
@@ -749,7 +742,7 @@ int gv_ls_search(const GV_LearnedSparseIndex *idx, const GV_SparseEntry *query,
 }
 
 int gv_ls_search_with_threshold(const GV_LearnedSparseIndex *idx,
-                                const GV_SparseEntry *query, size_t query_count,
+                                const GV_LSSparseEntry *query, size_t query_count,
                                 float min_score, size_t k,
                                 GV_LearnedSparseResult *results) {
     if (!idx || !query || query_count == 0 || k == 0 || !results) return -1;
@@ -822,12 +815,12 @@ int gv_ls_save(const GV_LearnedSparseIndex *idx, const char *path) {
 
     /* Magic + version. */
     if (fwrite(GV_LS_MAGIC, 1, GV_LS_MAGIC_LEN, fp) != GV_LS_MAGIC_LEN) goto fail;
-    if (gv_ls_write_u32(fp, GV_LS_VERSION) != 0) goto fail;
+    if (gv_write_u32(fp, GV_LS_VERSION) != 0) goto fail;
 
     /* Configuration. */
     if (gv_ls_write_u64(fp, (uint64_t)idx->config.vocab_size) != 0) goto fail;
     if (gv_ls_write_u64(fp, (uint64_t)idx->config.max_nonzeros) != 0) goto fail;
-    if (gv_ls_write_u32(fp, (uint32_t)idx->config.use_wand) != 0) goto fail;
+    if (gv_write_u32(fp, (uint32_t)idx->config.use_wand) != 0) goto fail;
     if (gv_ls_write_u64(fp, (uint64_t)idx->config.wand_block_size) != 0) goto fail;
 
     /* Document count (total, including deleted). */
@@ -836,7 +829,7 @@ int gv_ls_save(const GV_LearnedSparseIndex *idx, const char *path) {
     /* Document metadata. */
     for (size_t i = 0; i < idx->doc_count; i++) {
         if (gv_ls_write_u64(fp, (uint64_t)idx->docs[i].entry_count) != 0) goto fail;
-        if (gv_ls_write_u32(fp, (uint32_t)idx->docs[i].deleted) != 0) goto fail;
+        if (gv_write_u32(fp, (uint32_t)idx->docs[i].deleted) != 0) goto fail;
     }
 
     /* Posting lists: write only non-empty ones. */
@@ -852,7 +845,7 @@ int gv_ls_save(const GV_LearnedSparseIndex *idx, const char *path) {
         if (pl->count == 0) continue;
 
         /* Token ID. */
-        if (gv_ls_write_u32(fp, (uint32_t)i) != 0) goto fail;
+        if (gv_write_u32(fp, (uint32_t)i) != 0) goto fail;
         /* Posting count. */
         if (gv_ls_write_u64(fp, (uint64_t)pl->count) != 0) goto fail;
 
@@ -891,7 +884,7 @@ GV_LearnedSparseIndex *gv_ls_load(const char *path) {
 
     /* Verify version. */
     uint32_t version = 0;
-    if (gv_ls_read_u32(fp, &version) != 0 || version != GV_LS_VERSION) {
+    if (gv_read_u32(fp, &version) != 0 || version != GV_LS_VERSION) {
         fclose(fp);
         return NULL;
     }
@@ -901,7 +894,7 @@ GV_LearnedSparseIndex *gv_ls_load(const char *path) {
     uint32_t use_wand = 0;
     if (gv_ls_read_u64(fp, &vocab_size) != 0)      { fclose(fp); return NULL; }
     if (gv_ls_read_u64(fp, &max_nonzeros) != 0)    { fclose(fp); return NULL; }
-    if (gv_ls_read_u32(fp, &use_wand) != 0)        { fclose(fp); return NULL; }
+    if (gv_read_u32(fp, &use_wand) != 0)        { fclose(fp); return NULL; }
     if (gv_ls_read_u64(fp, &wand_block_size) != 0) { fclose(fp); return NULL; }
 
     GV_LearnedSparseConfig cfg;
@@ -944,7 +937,7 @@ GV_LearnedSparseIndex *gv_ls_load(const char *path) {
     for (size_t i = 0; i < doc_count; i++) {
         uint64_t ec = 0;
         uint32_t del = 0;
-        if (gv_ls_read_u64(fp, &ec) != 0 || gv_ls_read_u32(fp, &del) != 0) {
+        if (gv_ls_read_u64(fp, &ec) != 0 || gv_read_u32(fp, &del) != 0) {
             gv_ls_destroy(idx);
             fclose(fp);
             return NULL;
@@ -971,7 +964,7 @@ GV_LearnedSparseIndex *gv_ls_load(const char *path) {
     for (uint64_t t = 0; t < non_empty_count; t++) {
         uint32_t tid = 0;
         uint64_t pcount = 0;
-        if (gv_ls_read_u32(fp, &tid) != 0 || gv_ls_read_u64(fp, &pcount) != 0) {
+        if (gv_read_u32(fp, &tid) != 0 || gv_ls_read_u64(fp, &pcount) != 0) {
             gv_ls_destroy(idx);
             fclose(fp);
             return NULL;

@@ -49,7 +49,7 @@ static int test_insert_count(void) {
     ASSERT(idx != NULL, "create should succeed");
 
     /* Document 0: token_ids 10, 20, 30 with learned weights */
-    GV_SparseEntry entries0[] = {
+    GV_LSSparseEntry entries0[] = {
         {.token_id = 10, .weight = 0.8f},
         {.token_id = 20, .weight = 0.5f},
         {.token_id = 30, .weight = 0.3f}
@@ -59,7 +59,7 @@ static int test_insert_count(void) {
     ASSERT(gv_ls_count(idx) == 1, "count should be 1 after one insert");
 
     /* Document 1: different tokens */
-    GV_SparseEntry entries1[] = {
+    GV_LSSparseEntry entries1[] = {
         {.token_id = 20, .weight = 0.9f},
         {.token_id = 40, .weight = 0.6f}
     };
@@ -80,16 +80,16 @@ static int test_search(void) {
     ASSERT(idx != NULL, "create should succeed");
 
     /* Insert 3 documents */
-    GV_SparseEntry doc0[] = { {10, 1.0f}, {20, 0.5f} };
-    GV_SparseEntry doc1[] = { {10, 0.2f}, {30, 0.9f} };
-    GV_SparseEntry doc2[] = { {40, 0.7f}, {50, 0.3f} };
+    GV_LSSparseEntry doc0[] = { {10, 1.0f}, {20, 0.5f} };
+    GV_LSSparseEntry doc1[] = { {10, 0.2f}, {30, 0.9f} };
+    GV_LSSparseEntry doc2[] = { {40, 0.7f}, {50, 0.3f} };
 
     gv_ls_insert(idx, doc0, 2);
     gv_ls_insert(idx, doc1, 2);
     gv_ls_insert(idx, doc2, 2);
 
     /* Query overlaps most with doc0 */
-    GV_SparseEntry query[] = { {10, 1.0f}, {20, 1.0f} };
+    GV_LSSparseEntry query[] = { {10, 1.0f}, {20, 1.0f} };
 
     GV_LearnedSparseResult results[3];
     int n = gv_ls_search(idx, query, 2, 3, results);
@@ -113,12 +113,12 @@ static int test_search_threshold(void) {
     GV_LearnedSparseIndex *idx = gv_ls_create(&config);
     ASSERT(idx != NULL, "create should succeed");
 
-    GV_SparseEntry doc0[] = { {10, 1.0f} };
-    GV_SparseEntry doc1[] = { {10, 0.1f} };
+    GV_LSSparseEntry doc0[] = { {10, 1.0f} };
+    GV_LSSparseEntry doc1[] = { {10, 0.1f} };
     gv_ls_insert(idx, doc0, 1);
     gv_ls_insert(idx, doc1, 1);
 
-    GV_SparseEntry query[] = { {10, 1.0f} };
+    GV_LSSparseEntry query[] = { {10, 1.0f} };
 
     /* High threshold should exclude low-scoring doc1 */
     GV_LearnedSparseResult results[2];
@@ -139,8 +139,8 @@ static int test_delete(void) {
     GV_LearnedSparseIndex *idx = gv_ls_create(&config);
     ASSERT(idx != NULL, "create should succeed");
 
-    GV_SparseEntry doc0[] = { {10, 1.0f} };
-    GV_SparseEntry doc1[] = { {20, 1.0f} };
+    GV_LSSparseEntry doc0[] = { {10, 1.0f} };
+    GV_LSSparseEntry doc1[] = { {20, 1.0f} };
     gv_ls_insert(idx, doc0, 1);
     gv_ls_insert(idx, doc1, 1);
     ASSERT(gv_ls_count(idx) == 2, "count should be 2 before delete");
@@ -165,7 +165,7 @@ static int test_stats(void) {
     GV_LearnedSparseIndex *idx = gv_ls_create(&config);
     ASSERT(idx != NULL, "create should succeed");
 
-    GV_SparseEntry doc0[] = { {10, 1.0f}, {20, 0.5f}, {30, 0.3f} };
+    GV_LSSparseEntry doc0[] = { {10, 1.0f}, {20, 0.5f}, {30, 0.3f} };
     gv_ls_insert(idx, doc0, 3);
 
     GV_LearnedSparseStats stats;
@@ -186,7 +186,7 @@ static int test_search_empty(void) {
     GV_LearnedSparseIndex *idx = gv_ls_create(NULL);
     ASSERT(idx != NULL, "create should succeed");
 
-    GV_SparseEntry query[] = { {10, 1.0f} };
+    GV_LSSparseEntry query[] = { {10, 1.0f} };
     GV_LearnedSparseResult results[5];
     int n = gv_ls_search(idx, query, 1, 5, results);
     ASSERT(n == 0, "search on empty index should return 0 results");
