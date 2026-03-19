@@ -8,17 +8,14 @@
 
 #define TMP_INDEX_PATH "/tmp/gv_test_json_index.bin"
 
-/* ── Test: create and destroy ──────────────────────────────────────────── */
 static int test_create_destroy(void) {
     GV_JSONPathIndex *idx = gv_json_index_create();
     ASSERT(idx != NULL, "json index creation");
     gv_json_index_destroy(idx);
-    /* NULL safety */
     gv_json_index_destroy(NULL);
     return 0;
 }
 
-/* ── Test: add and remove path ─────────────────────────────────────────── */
 static int test_add_remove_path(void) {
     GV_JSONPathIndex *idx = gv_json_index_create();
     ASSERT(idx != NULL, "index creation");
@@ -37,7 +34,6 @@ static int test_add_remove_path(void) {
     rc = gv_json_index_remove_path(idx, "name");
     ASSERT(rc == 0, "remove path 'name'");
 
-    /* removing non-existent path should fail */
     rc = gv_json_index_remove_path(idx, "nonexistent");
     ASSERT(rc == -1, "remove non-existent path should return -1");
 
@@ -45,7 +41,6 @@ static int test_add_remove_path(void) {
     return 0;
 }
 
-/* ── Test: insert and lookup string ────────────────────────────────────── */
 static int test_insert_lookup_string(void) {
     GV_JSONPathIndex *idx = gv_json_index_create();
     ASSERT(idx != NULL, "index creation");
@@ -78,7 +73,6 @@ static int test_insert_lookup_string(void) {
     return 0;
 }
 
-/* ── Test: insert and lookup int range ─────────────────────────────────── */
 static int test_insert_lookup_int_range(void) {
     GV_JSONPathIndex *idx = gv_json_index_create();
     ASSERT(idx != NULL, "index creation");
@@ -104,7 +98,6 @@ static int test_insert_lookup_int_range(void) {
     return 0;
 }
 
-/* ── Test: remove entries by vector index ──────────────────────────────── */
 static int test_remove_entries(void) {
     GV_JSONPathIndex *idx = gv_json_index_create();
     ASSERT(idx != NULL, "index creation");
@@ -127,12 +120,10 @@ static int test_remove_entries(void) {
     return 0;
 }
 
-/* ── Test: count ───────────────────────────────────────────────────────── */
 static int test_count(void) {
     GV_JSONPathIndex *idx = gv_json_index_create();
     ASSERT(idx != NULL, "index creation");
 
-    /* Count on unregistered path should be 0 */
     size_t c = gv_json_index_count(idx, "no_such_path");
     ASSERT(c == 0, "count on unregistered path should be 0");
 
@@ -150,7 +141,6 @@ static int test_count(void) {
     return 0;
 }
 
-/* ── Test: save and load ───────────────────────────────────────────────── */
 static int test_save_load(void) {
     GV_JSONPathIndex *idx = gv_json_index_create();
     ASSERT(idx != NULL, "index creation");
@@ -167,7 +157,6 @@ static int test_save_load(void) {
     ASSERT(rc == 0, "save index");
     gv_json_index_destroy(idx);
 
-    /* Load */
     GV_JSONPathIndex *loaded = gv_json_index_load(TMP_INDEX_PATH);
     ASSERT(loaded != NULL, "load index");
     ASSERT(gv_json_index_count(loaded, "name") == 2, "loaded index should have 2 entries");
@@ -181,7 +170,6 @@ static int test_save_load(void) {
     return 0;
 }
 
-/* ── Test: float range lookup ──────────────────────────────────────────── */
 static int test_float_range_lookup(void) {
     GV_JSONPathIndex *idx = gv_json_index_create();
     ASSERT(idx != NULL, "index creation");
@@ -203,8 +191,6 @@ static int test_float_range_lookup(void) {
     gv_json_index_destroy(idx);
     return 0;
 }
-
-/* ── Main ──────────────────────────────────────────────────────────────── */
 
 typedef int (*test_fn)(void);
 typedef struct { const char *name; test_fn fn; } TestCase;

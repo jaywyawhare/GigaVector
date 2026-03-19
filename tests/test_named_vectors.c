@@ -11,7 +11,6 @@ static int test_named_vectors_create_destroy(void) {
 
     gv_named_vectors_destroy(store);
 
-    /* Destroy NULL should be safe */
     gv_named_vectors_destroy(NULL);
     return 0;
 }
@@ -27,7 +26,6 @@ static int test_named_vectors_add_field(void) {
     ASSERT(gv_named_vectors_add_field(store, &cfg2) == 0, "add field 'content'");
     ASSERT(gv_named_vectors_field_count(store) == 2, "field count is 2");
 
-    /* Retrieve field config */
     GV_VectorFieldConfig out;
     ASSERT(gv_named_vectors_get_field(store, "title", &out) == 0, "get field 'title'");
     ASSERT(out.dimension == 4, "title dimension is 4");
@@ -47,7 +45,6 @@ static int test_named_vectors_remove_field(void) {
     ASSERT(gv_named_vectors_remove_field(store, "temp") == 0, "remove field 'temp'");
     ASSERT(gv_named_vectors_field_count(store) == 0, "field count is 0 after removal");
 
-    /* Removing nonexistent field */
     ASSERT(gv_named_vectors_remove_field(store, "nonexistent") == -1,
            "remove nonexistent field returns -1");
 
@@ -75,12 +72,10 @@ static int test_named_vectors_insert_and_get(void) {
     ASSERT(gv_named_vectors_insert(store, 0, vectors, 2) == 0, "insert point 0");
     ASSERT(gv_named_vectors_count(store) == 1, "count is 1 after insert");
 
-    /* Retrieve the title vector for point 0 */
     const float *retrieved = gv_named_vectors_get(store, 0, "title");
     ASSERT(retrieved != NULL, "get title vector for point 0");
     ASSERT(retrieved[0] == 1.0f, "title[0] == 1.0");
 
-    /* Retrieve the body vector for point 0 */
     retrieved = gv_named_vectors_get(store, 0, "body");
     ASSERT(retrieved != NULL, "get body vector for point 0");
     ASSERT(retrieved[1] == 1.0f, "body[1] == 1.0");
@@ -100,7 +95,6 @@ static int test_named_vectors_update(void) {
     GV_NamedVector vec = { .field_name = "embed", .data = data_v1, .dimension = 4 };
     gv_named_vectors_insert(store, 0, &vec, 1);
 
-    /* Update the vector */
     float data_v2[4] = {5.0f, 6.0f, 7.0f, 8.0f};
     GV_NamedVector updated = { .field_name = "embed", .data = data_v2, .dimension = 4 };
     ASSERT(gv_named_vectors_update(store, 0, &updated, 1) == 0, "update point 0");
@@ -132,7 +126,6 @@ static int test_named_vectors_delete(void) {
 
     ASSERT(gv_named_vectors_delete(store, 0) == 0, "delete point 0");
 
-    /* Deleted point should not be retrievable */
     const float *gone = gv_named_vectors_get(store, 0, "data");
     ASSERT(gone == NULL, "deleted point returns NULL");
 
@@ -162,7 +155,6 @@ static int test_named_vectors_search(void) {
     int n = gv_named_vectors_search(store, "embed", query, 2, results);
     ASSERT(n >= 1, "search returned at least 1 result");
 
-    /* The nearest result should be point 0 (exact match) */
     ASSERT(results[0].distance < 1e-5f, "nearest result has near-zero distance");
 
     gv_named_vectors_destroy(store);

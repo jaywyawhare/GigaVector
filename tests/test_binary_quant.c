@@ -8,7 +8,6 @@
 
 #define DIM 16
 
-/* 1. test_binary_quantize_basic */
 static int test_binary_quantize_basic(void) {
     float data[DIM];
     for (size_t i = 0; i < DIM; i++) {
@@ -25,7 +24,6 @@ static int test_binary_quantize_basic(void) {
     return 0;
 }
 
-/* 2. test_binary_bytes_needed */
 static int test_binary_bytes_needed(void) {
     /* 8 dimensions -> 1 byte */
     ASSERT(gv_binary_bytes_needed(8) == 1, "8 dims should need 1 byte");
@@ -41,7 +39,6 @@ static int test_binary_bytes_needed(void) {
     return 0;
 }
 
-/* 3. test_binary_hamming_identical */
 static int test_binary_hamming_identical(void) {
     float data[DIM];
     for (size_t i = 0; i < DIM; i++) {
@@ -60,7 +57,6 @@ static int test_binary_hamming_identical(void) {
     return 0;
 }
 
-/* 4. test_binary_hamming_opposite */
 static int test_binary_hamming_opposite(void) {
     float pos[DIM], neg[DIM];
     for (size_t i = 0; i < DIM; i++) {
@@ -80,7 +76,6 @@ static int test_binary_hamming_opposite(void) {
     return 0;
 }
 
-/* 5. test_binary_hamming_fast_matches_normal */
 static int test_binary_hamming_fast_matches_normal(void) {
     float data_a[DIM], data_b[DIM];
     for (size_t i = 0; i < DIM; i++) {
@@ -102,13 +97,11 @@ static int test_binary_hamming_fast_matches_normal(void) {
     return 0;
 }
 
-/* 6. test_binary_vector_wrap */
 static int test_binary_vector_wrap(void) {
     size_t nbytes = gv_binary_bytes_needed(DIM);
     uint8_t *bits = (uint8_t *)calloc(nbytes, 1);
     ASSERT(bits != NULL, "calloc failed");
 
-    /* Set some bits manually */
     bits[0] = 0xAA; /* 10101010 */
 
     GV_BinaryVector *bv = gv_binary_vector_wrap(bits, DIM);
@@ -121,14 +114,11 @@ static int test_binary_vector_wrap(void) {
     return 0;
 }
 
-/* 7. test_binary_destroy_null */
 static int test_binary_destroy_null(void) {
-    /* Should be safe to call with NULL */
     gv_binary_vector_destroy(NULL);
     return 0;
 }
 
-/* 8. test_binary_quantize_sign_threshold */
 static int test_binary_quantize_sign_threshold(void) {
     /* Test that the sign threshold is exactly 0:
        values >= 0 map to 1, values < 0 map to 0 */
@@ -155,7 +145,6 @@ static int test_binary_quantize_sign_threshold(void) {
     return 0;
 }
 
-/* main */
 typedef int (*test_fn)(void);
 typedef struct { const char *name; test_fn fn; } TestCase;
 

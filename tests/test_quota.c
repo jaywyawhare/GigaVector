@@ -105,7 +105,6 @@ static int test_record_and_usage(void) {
     ASSERT(usage.current_vectors == 10, "vectors should be 10");
     ASSERT(usage.current_memory_bytes == 4096, "memory should be 4096");
 
-    /* Record deletion */
     ASSERT(gv_quota_record_delete(mgr, "t3", 3, 1024) == 0, "record delete");
     ASSERT(gv_quota_get_usage(mgr, "t3", &usage) == 0, "get_usage after delete");
     ASSERT(usage.current_vectors == 7, "vectors should be 7 after delete");
@@ -141,7 +140,7 @@ static int test_check_query(void) {
 
     GV_QuotaConfig cfg;
     gv_quota_config_init(&cfg);
-    cfg.max_qps = 0.0; /* unlimited */
+    cfg.max_qps = 0.0;
     ASSERT(gv_quota_set(mgr, "t5", &cfg) == 0, "set quota");
 
     GV_QuotaResult result = gv_quota_check_query(mgr, "t5");

@@ -5,7 +5,6 @@
 
 #define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while(0)
 
-/* test functions */
 static int test_manager_create_destroy(void) {
     GV_VersionManager *mgr = gv_version_manager_create(10);
     ASSERT(mgr != NULL, "gv_version_manager_create returned NULL");
@@ -81,7 +80,6 @@ static int test_delete_version(void) {
     ASSERT(rc == 0, "delete should succeed");
     ASSERT(gv_version_count(mgr) == 0, "count should be 0 after delete");
 
-    /* Deleting again should fail */
     rc = gv_version_delete(mgr, vid);
     ASSERT(rc != 0, "double delete should fail");
 
@@ -163,7 +161,6 @@ static int test_save_load(void) {
     return 0;
 }
 
-/* harness */
 typedef int (*test_fn)(void);
 typedef struct { const char *name; test_fn fn; } TestCase;
 

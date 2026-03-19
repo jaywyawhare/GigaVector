@@ -5,7 +5,6 @@
 
 #define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while(0)
 
-/* Test: config init defaults */
 static int test_config_init(void) {
     GV_LearnedSparseConfig config;
     memset(&config, 0xFF, sizeof(config));
@@ -19,7 +18,6 @@ static int test_config_init(void) {
     return 0;
 }
 
-/* Test: create and destroy */
 static int test_create_destroy(void) {
     GV_LearnedSparseConfig config;
     gv_ls_config_init(&config);
@@ -29,10 +27,8 @@ static int test_create_destroy(void) {
     ASSERT(gv_ls_count(idx) == 0, "new index should have count 0");
 
     gv_ls_destroy(idx);
-    /* NULL destroy should be safe */
     gv_ls_destroy(NULL);
 
-    /* Create with NULL config (defaults) */
     GV_LearnedSparseIndex *idx2 = gv_ls_create(NULL);
     ASSERT(idx2 != NULL, "gv_ls_create(NULL) should use defaults");
     gv_ls_destroy(idx2);
@@ -40,7 +36,6 @@ static int test_create_destroy(void) {
     return 0;
 }
 
-/* Test: insert and count */
 static int test_insert_count(void) {
     GV_LearnedSparseConfig config;
     gv_ls_config_init(&config);
@@ -48,7 +43,6 @@ static int test_insert_count(void) {
     GV_LearnedSparseIndex *idx = gv_ls_create(&config);
     ASSERT(idx != NULL, "create should succeed");
 
-    /* Document 0: token_ids 10, 20, 30 with learned weights */
     GV_LSSparseEntry entries0[] = {
         {.token_id = 10, .weight = 0.8f},
         {.token_id = 20, .weight = 0.5f},
@@ -58,7 +52,6 @@ static int test_insert_count(void) {
     ASSERT(rc >= 0, "insert doc 0 should succeed and return doc ID >= 0");
     ASSERT(gv_ls_count(idx) == 1, "count should be 1 after one insert");
 
-    /* Document 1: different tokens */
     GV_LSSparseEntry entries1[] = {
         {.token_id = 20, .weight = 0.9f},
         {.token_id = 40, .weight = 0.6f}
@@ -71,7 +64,6 @@ static int test_insert_count(void) {
     return 0;
 }
 
-/* Test: search */
 static int test_search(void) {
     GV_LearnedSparseConfig config;
     gv_ls_config_init(&config);
@@ -79,7 +71,6 @@ static int test_search(void) {
     GV_LearnedSparseIndex *idx = gv_ls_create(&config);
     ASSERT(idx != NULL, "create should succeed");
 
-    /* Insert 3 documents */
     GV_LSSparseEntry doc0[] = { {10, 1.0f}, {20, 0.5f} };
     GV_LSSparseEntry doc1[] = { {10, 0.2f}, {30, 0.9f} };
     GV_LSSparseEntry doc2[] = { {40, 0.7f}, {50, 0.3f} };
@@ -88,7 +79,6 @@ static int test_search(void) {
     gv_ls_insert(idx, doc1, 2);
     gv_ls_insert(idx, doc2, 2);
 
-    /* Query overlaps most with doc0 */
     GV_LSSparseEntry query[] = { {10, 1.0f}, {20, 1.0f} };
 
     GV_LearnedSparseResult results[3];
@@ -96,7 +86,6 @@ static int test_search(void) {
     ASSERT(n >= 1, "search should return at least 1 result");
     ASSERT(n <= 3, "search should return at most 3 results");
 
-    /* Best match should be doc0 (highest dot product) */
     if (n >= 1) {
         ASSERT(results[0].score > 0.0f, "top result should have positive score");
     }
@@ -105,7 +94,6 @@ static int test_search(void) {
     return 0;
 }
 
-/* Test: search with threshold */
 static int test_search_threshold(void) {
     GV_LearnedSparseConfig config;
     gv_ls_config_init(&config);
@@ -120,18 +108,15 @@ static int test_search_threshold(void) {
 
     GV_LSSparseEntry query[] = { {10, 1.0f} };
 
-    /* High threshold should exclude low-scoring doc1 */
     GV_LearnedSparseResult results[2];
     int n = gv_ls_search_with_threshold(idx, query, 1, 0.5f, 2, results);
     ASSERT(n >= 0, "search with threshold should not error");
-    /* Only doc0 has score 1.0 >= 0.5 threshold; doc1 has score 0.1 */
     ASSERT(n <= 2, "should return at most 2 results");
 
     gv_ls_destroy(idx);
     return 0;
 }
 
-/* Test: delete document */
 static int test_delete(void) {
     GV_LearnedSparseConfig config;
     gv_ls_config_init(&config);
@@ -149,7 +134,6 @@ static int test_delete(void) {
     ASSERT(rc == 0, "delete doc 0 should succeed");
     ASSERT(gv_ls_count(idx) == 1, "count should be 1 after delete");
 
-    /* Double delete should fail */
     rc = gv_ls_delete(idx, 0);
     ASSERT(rc == -1, "deleting already-deleted doc should return -1");
 
@@ -157,7 +141,6 @@ static int test_delete(void) {
     return 0;
 }
 
-/* Test: get stats */
 static int test_stats(void) {
     GV_LearnedSparseConfig config;
     gv_ls_config_init(&config);
@@ -181,7 +164,6 @@ static int test_stats(void) {
     return 0;
 }
 
-/* Test: search on empty index */
 static int test_search_empty(void) {
     GV_LearnedSparseIndex *idx = gv_ls_create(NULL);
     ASSERT(idx != NULL, "create should succeed");

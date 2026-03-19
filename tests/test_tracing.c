@@ -14,7 +14,6 @@ static int test_trace_create_destroy(void) {
 
     gv_trace_destroy(trace);
 
-    /* Destroying NULL should be safe */
     gv_trace_destroy(NULL);
     return 0;
 }

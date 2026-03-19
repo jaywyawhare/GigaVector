@@ -9,7 +9,6 @@
 
 #define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while(0)
 
-/* Helper: create a flat DB with vectors and metadata for filter testing */
 static GV_Database *make_db(void) {
     GV_Database *db = gv_db_open(NULL, DIM, GV_INDEX_TYPE_FLAT);
     if (!db) return NULL;
@@ -29,7 +28,6 @@ static GV_Database *make_db(void) {
     return db;
 }
 
-/* test_count_by_filter */
 static int test_count_by_filter(void) {
     GV_Database *db = make_db();
     ASSERT(db != NULL, "make_db should succeed");
@@ -50,7 +48,6 @@ static int test_count_by_filter(void) {
     return 0;
 }
 
-/* test_find_by_filter */
 static int test_find_by_filter(void) {
     GV_Database *db = make_db();
     ASSERT(db != NULL, "make_db should succeed");
@@ -70,7 +67,6 @@ static int test_find_by_filter(void) {
     return 0;
 }
 
-/* test_delete_by_filter */
 static int test_delete_by_filter(void) {
     GV_Database *db = make_db();
     ASSERT(db != NULL, "make_db should succeed");
@@ -85,7 +81,6 @@ static int test_delete_by_filter(void) {
     return 0;
 }
 
-/* test_update_metadata_by_filter */
 static int test_update_metadata_by_filter(void) {
     GV_Database *db = make_db();
     ASSERT(db != NULL, "make_db should succeed");
@@ -109,7 +104,6 @@ static int test_update_metadata_by_filter(void) {
     return 0;
 }
 
-/* test_update_by_filter */
 static int test_update_by_filter(void) {
     GV_Database *db = make_db();
     ASSERT(db != NULL, "make_db should succeed");
@@ -118,7 +112,6 @@ static int test_update_by_filter(void) {
     int updated = gv_db_update_by_filter(db, "color == \"blue\"", new_data, DIM);
     ASSERT(updated == 2, "should update 2 blue vectors");
 
-    /* Verify updated vector data */
     const float *v1 = gv_database_get_vector(db, 1);
     if (v1) {
         ASSERT(v1[0] > 0.2f && v1[0] < 0.3f, "updated vector should have new data");
@@ -128,7 +121,6 @@ static int test_update_by_filter(void) {
     return 0;
 }
 
-/* test_filter_no_match */
 static int test_filter_no_match(void) {
     GV_Database *db = make_db();
     ASSERT(db != NULL, "make_db should succeed");
@@ -144,12 +136,10 @@ static int test_filter_no_match(void) {
     return 0;
 }
 
-/* test_find_max_count */
 static int test_find_max_count(void) {
     GV_Database *db = make_db();
     ASSERT(db != NULL, "make_db should succeed");
 
-    /* Ask for at most 1 result when 2 exist */
     size_t indices[1];
     int n = gv_db_find_by_filter(db, "color == \"red\"", indices, 1);
     ASSERT(n == 1, "should return at most max_count results");
@@ -157,8 +147,6 @@ static int test_find_max_count(void) {
     gv_db_close(db);
     return 0;
 }
-
-/* test runner */
 
 typedef int (*test_fn)(void);
 typedef struct { const char *name; test_fn fn; } TestCase;

@@ -1,8 +1,3 @@
-/**
- * @file test_auto_embed.c
- * @brief Unit tests for auto-embedding (gv_auto_embed.h).
- */
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -20,10 +15,9 @@
 
 #define TEST_DB "tmp_test_auto_embed.bin"
 
-/* Test 1: Config init sets sensible defaults */
 static int test_config_init_defaults(void) {
     GV_AutoEmbedConfig config;
-    memset(&config, 0xFF, sizeof(config)); /* Fill with garbage first */
+    memset(&config, 0xFF, sizeof(config));
     gv_auto_embed_config_init(&config);
 
     ASSERT(config.cache_embeddings == 1, "default cache_embeddings should be 1");
@@ -34,7 +28,6 @@ static int test_config_init_defaults(void) {
     return 0;
 }
 
-/* Test 2: Config init specific values */
 static int test_config_init_values(void) {
     GV_AutoEmbedConfig config;
     gv_auto_embed_config_init(&config);
@@ -46,7 +39,6 @@ static int test_config_init_values(void) {
     return 0;
 }
 
-/* Test 3: Create embedder with CUSTOM provider */
 static int test_create_custom_provider(void) {
     GV_AutoEmbedConfig config;
     gv_auto_embed_config_init(&config);
@@ -63,7 +55,6 @@ static int test_create_custom_provider(void) {
     return 0;
 }
 
-/* Test 4: Create embedder with each provider type */
 static int test_create_all_providers(void) {
     GV_AutoEmbedProvider providers[] = {
         GV_EMBED_PROVIDER_OPENAI,
@@ -91,13 +82,11 @@ static int test_create_all_providers(void) {
     return 0;
 }
 
-/* Test 5: Destroy NULL embedder (should not crash) */
 static int test_destroy_null(void) {
     gv_auto_embed_destroy(NULL);
     return 0;
 }
 
-/* Test 6: Get initial stats (all zeros) */
 static int test_get_stats_initial(void) {
     GV_AutoEmbedConfig config;
     gv_auto_embed_config_init(&config);
@@ -111,7 +100,7 @@ static int test_get_stats_initial(void) {
     ASSERT(embedder != NULL, "embedder creation");
 
     GV_AutoEmbedStats stats;
-    memset(&stats, 0xFF, sizeof(stats)); /* Fill with garbage */
+    memset(&stats, 0xFF, sizeof(stats));
     int ret = gv_auto_embed_get_stats(embedder, &stats);
     ASSERT(ret == 0, "get_stats should succeed");
     ASSERT(stats.total_embeddings == 0, "initial total_embeddings should be 0");
@@ -124,7 +113,6 @@ static int test_get_stats_initial(void) {
     return 0;
 }
 
-/* Test 7: Clear cache on fresh embedder */
 static int test_clear_cache_fresh(void) {
     GV_AutoEmbedConfig config;
     gv_auto_embed_config_init(&config);
@@ -137,10 +125,8 @@ static int test_clear_cache_fresh(void) {
     GV_AutoEmbedder *embedder = gv_auto_embed_create(&config);
     ASSERT(embedder != NULL, "embedder creation");
 
-    /* Clear cache on empty embedder should not crash */
     gv_auto_embed_clear_cache(embedder);
 
-    /* Stats should still be zero after clearing empty cache */
     GV_AutoEmbedStats stats;
     int ret = gv_auto_embed_get_stats(embedder, &stats);
     ASSERT(ret == 0, "get_stats after clear_cache should succeed");
@@ -150,7 +136,6 @@ static int test_clear_cache_fresh(void) {
     return 0;
 }
 
-/* Test 8: Embed text without real API (should return NULL or error) */
 static int test_embed_text_no_api(void) {
     GV_AutoEmbedConfig config;
     gv_auto_embed_config_init(&config);
@@ -177,7 +162,6 @@ static int test_embed_text_no_api(void) {
     return 0;
 }
 
-/* Test 9: Add text to DB without real API */
 static int test_add_text_no_api(void) {
     remove(TEST_DB);
     GV_Database *db = gv_db_open(TEST_DB, 64, GV_INDEX_TYPE_FLAT);
@@ -196,7 +180,6 @@ static int test_add_text_no_api(void) {
 
     int ret = gv_auto_embed_add_text(embedder, db, "Test document about cats",
                                       "category", "animals");
-    /* Without real API, should return error */
     /* ret == -1 is expected, ret == 0 would mean it has a fallback */
     (void)ret;
 
@@ -206,7 +189,6 @@ static int test_add_text_no_api(void) {
     return 0;
 }
 
-/* Test 10: Config with caching disabled */
 static int test_config_cache_disabled(void) {
     GV_AutoEmbedConfig config;
     gv_auto_embed_config_init(&config);
@@ -224,7 +206,6 @@ static int test_config_cache_disabled(void) {
     return 0;
 }
 
-/* Test 11: Stats struct field sizes */
 static int test_stats_structure(void) {
     GV_AutoEmbedStats stats;
     memset(&stats, 0, sizeof(stats));
@@ -239,7 +220,6 @@ static int test_stats_structure(void) {
     return 0;
 }
 
-/* Test 12: Create/destroy cycle to check for leaks */
 static int test_create_destroy_cycle(void) {
     for (int i = 0; i < 10; i++) {
         GV_AutoEmbedConfig config;

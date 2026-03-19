@@ -21,7 +21,6 @@ static void make_embedding(float *out, float base) {
         out[i] = base + (float)i * 0.1f;
 }
 
-/* Lifecycle */
 static int test_create_destroy(void) {
     GV_KnowledgeGraph *kg = gv_kg_create(NULL);
     ASSERT(kg != NULL, "create with NULL config");
@@ -42,7 +41,6 @@ static int test_create_destroy(void) {
     return 0;
 }
 
-/* Entity Operations */
 static int test_add_get_entities(void) {
     GV_KGConfig cfg;
     gv_kg_config_init(&cfg);
@@ -125,7 +123,6 @@ static int test_remove_entity(void) {
     return 0;
 }
 
-/* Relation Operations */
 static int test_relations(void) {
     GV_KnowledgeGraph *kg = gv_kg_create(NULL);
     uint64_t e1 = gv_kg_add_entity(kg, "Alice", "Person", NULL, 0);
@@ -145,7 +142,6 @@ static int test_relations(void) {
     ASSERT(rel->object_id == e3, "relation object");
     ASSERT(strcmp(rel->predicate, "works_at") == 0, "relation predicate");
 
-    /* Remove relation */
     ASSERT(gv_kg_remove_relation(kg, r3) == 0, "remove relation");
     ASSERT(gv_kg_get_relation(kg, r3) == NULL, "removed relation gone");
 
@@ -153,7 +149,6 @@ static int test_relations(void) {
     return 0;
 }
 
-/* Triple Queries */
 static int test_triple_queries(void) {
     GV_KnowledgeGraph *kg = gv_kg_create(NULL);
     uint64_t alice = gv_kg_add_entity(kg, "Alice", "Person", NULL, 0);
@@ -166,28 +161,23 @@ static int test_triple_queries(void) {
 
     GV_KGTriple triples[10];
 
-    /* Query by predicate */
     int n = gv_kg_query_triples(kg, NULL, "works_at", NULL, triples, 10);
     ASSERT(n == 2, "2 works_at triples");
     gv_kg_free_triples(triples, n);
 
-    /* Query by subject */
     n = gv_kg_query_triples(kg, &alice, NULL, NULL, triples, 10);
     ASSERT(n == 2, "Alice has 2 outgoing triples");
     gv_kg_free_triples(triples, n);
 
-    /* Query by object */
     n = gv_kg_query_triples(kg, NULL, NULL, &company, triples, 10);
     ASSERT(n == 2, "Company has 2 incoming triples");
     gv_kg_free_triples(triples, n);
 
-    /* Query with subject + predicate */
     n = gv_kg_query_triples(kg, &alice, "knows", NULL, triples, 10);
     ASSERT(n == 1, "Alice knows 1 entity");
     ASSERT(strcmp(triples[0].object_name, "Bob") == 0, "Alice knows Bob");
     gv_kg_free_triples(triples, n);
 
-    /* Wildcard all */
     n = gv_kg_query_triples(kg, NULL, NULL, NULL, triples, 10);
     ASSERT(n == 3, "3 total triples");
     gv_kg_free_triples(triples, n);
@@ -196,7 +186,6 @@ static int test_triple_queries(void) {
     return 0;
 }
 
-/* Semantic Search */
 static int test_semantic_search(void) {
     GV_KGConfig cfg;
     gv_kg_config_init(&cfg);
@@ -211,13 +200,10 @@ static int test_semantic_search(void) {
     gv_kg_add_entity(kg, "Bob", "Person", emb2, DIM);
     gv_kg_add_entity(kg, "Anthropic", "Company", emb3, DIM);
 
-    /* Search for something close to Alice */
     float query[DIM] = {0.95f, 0.05f, 0.0f, 0.0f};
     GV_KGSearchResult results[3];
     int n = gv_kg_search_similar(kg, query, DIM, 3, results);
     ASSERT(n >= 2, "search returns at least 2 results");
-
-    /* Top result should be Alice or Bob (closest to query) */
     ASSERT(results[0].similarity > 0.9f, "top result high similarity");
     gv_kg_free_search_results(results, n);
 
@@ -245,7 +231,6 @@ static int test_hybrid_search(void) {
     float query[DIM] = {0.95f, 0.05f, 0.0f, 0.0f};
     GV_KGSearchResult results[5];
 
-    /* Filter by type=Person */
     int n = gv_kg_hybrid_search(kg, query, DIM, "Person", NULL, 5, results);
     ASSERT(n == 2, "hybrid: 2 Person results");
     for (int i = 0; i < n; i++) {
@@ -253,7 +238,6 @@ static int test_hybrid_search(void) {
     }
     gv_kg_free_search_results(results, n);
 
-    /* Filter by predicate=works_at */
     n = gv_kg_hybrid_search(kg, query, DIM, NULL, "works_at", 5, results);
     ASSERT(n >= 2, "hybrid: entities with works_at predicate");
     gv_kg_free_search_results(results, n);
@@ -262,7 +246,6 @@ static int test_hybrid_search(void) {
     return 0;
 }
 
-/* Entity Resolution */
 static int test_entity_resolution(void) {
     GV_KGConfig cfg;
     gv_kg_config_init(&cfg);
@@ -273,11 +256,9 @@ static int test_entity_resolution(void) {
     float emb[DIM] = {1.0f, 0.0f, 0.0f, 0.0f};
     uint64_t alice = gv_kg_add_entity(kg, "Alice", "Person", emb, DIM);
 
-    /* Resolve with same name should find existing */
     int resolved = gv_kg_resolve_entity(kg, "Alice", "Person", emb, DIM);
     ASSERT((uint64_t)resolved == alice, "resolved to existing Alice");
 
-    /* Resolve with different name creates new */
     float emb2[DIM] = {0.0f, 1.0f, 0.0f, 0.0f};
     int resolved2 = gv_kg_resolve_entity(kg, "Bob", "Person", emb2, DIM);
     ASSERT(resolved2 > 0 && (uint64_t)resolved2 != alice, "resolved to new entity");
@@ -297,10 +278,8 @@ static int test_merge_entities(void) {
 
     ASSERT(gv_kg_merge_entities(kg, e1, e2) == 0, "merge entities");
 
-    /* e2 should be gone */
     ASSERT(gv_kg_get_entity(kg, e2) == NULL, "merged entity removed");
 
-    /* e1 should have the property */
     const char *email = gv_kg_get_entity_prop(kg, e1, "email");
     ASSERT(email != NULL && strcmp(email, "alice@test.com") == 0, "merged prop transferred");
 
@@ -308,7 +287,6 @@ static int test_merge_entities(void) {
     return 0;
 }
 
-/* Link Prediction */
 static int test_link_prediction(void) {
     GV_KGConfig cfg;
     gv_kg_config_init(&cfg);
@@ -323,19 +301,16 @@ static int test_link_prediction(void) {
     uint64_t e2 = gv_kg_add_entity(kg, "Bob", "Person", emb2, DIM);
     uint64_t e3 = gv_kg_add_entity(kg, "Charlie", "Person", emb3, DIM);
 
-    /* Alice knows Bob, but not Charlie */
     gv_kg_add_relation(kg, e1, "knows", e2, 1.0f);
 
     GV_KGLinkPrediction preds[5];
     int n = gv_kg_predict_links(kg, e1, 5, preds);
-    /* Should predict link to Charlie (unconnected entity with embedding) */
     ASSERT(n >= 0, "link prediction returns >= 0");
 
     gv_kg_destroy(kg);
     return 0;
 }
 
-/* Traversal */
 static int test_traversal(void) {
     GV_KnowledgeGraph *kg = gv_kg_create(NULL);
     uint64_t a = gv_kg_add_entity(kg, "A", "Node", NULL, 0);
@@ -347,17 +322,14 @@ static int test_traversal(void) {
     gv_kg_add_relation(kg, b, "link", c, 1.0f);
     gv_kg_add_relation(kg, c, "link", d, 1.0f);
 
-    /* Neighbors of b */
     uint64_t nbrs[10];
     int n = gv_kg_get_neighbors(kg, b, nbrs, 10);
     ASSERT(n >= 2, "b has >= 2 neighbors (a and c)");
 
-    /* BFS from a */
     uint64_t visited[10];
     n = gv_kg_traverse(kg, a, 10, visited, 10);
     ASSERT(n == 4, "traverse reaches all 4 entities");
 
-    /* Shortest path a -> d */
     uint64_t path[10];
     n = gv_kg_shortest_path(kg, a, d, path, 10);
     ASSERT(n >= 3, "path a->b->c->d has >= 3 nodes");
@@ -393,7 +365,6 @@ static int test_subgraph(void) {
     return 0;
 }
 
-/* Analytics */
 static int test_analytics(void) {
     GV_KGConfig cfg;
     gv_kg_config_init(&cfg);
@@ -409,7 +380,6 @@ static int test_analytics(void) {
     gv_kg_add_relation(kg, a, "pred2", c, 1.0f);
     gv_kg_add_relation(kg, b, "pred1", c, 1.0f);
 
-    /* Stats */
     GV_KGStats stats;
     ASSERT(gv_kg_get_stats(kg, &stats) == 0, "get stats");
     ASSERT(stats.entity_count == 3, "3 entities");
@@ -418,17 +388,14 @@ static int test_analytics(void) {
     ASSERT(stats.predicate_count == 2, "2 distinct predicates");
     ASSERT(stats.embedding_count == 1, "1 entity with embedding");
 
-    /* Centrality */
     float cent = gv_kg_entity_centrality(kg, a);
     ASSERT(cent > 0.0f, "a has positive centrality");
 
-    /* Entity types */
     char *types[5];
     int nt = gv_kg_get_entity_types(kg, types, 5);
     ASSERT(nt == 2, "2 entity types");
     for (int i = 0; i < nt; i++) free(types[i]);
 
-    /* Predicates */
     char *preds[5];
     int np = gv_kg_get_predicates(kg, preds, 5);
     ASSERT(np == 2, "2 predicates");
@@ -438,7 +405,6 @@ static int test_analytics(void) {
     return 0;
 }
 
-/* Persistence */
 static int test_save_load(void) {
     const char *path = "/tmp/test_gv_kg.gvkg";
 
@@ -472,7 +438,6 @@ static int test_save_load(void) {
     const char *email = gv_kg_get_entity_prop(kg2, e1, "email");
     ASSERT(email != NULL && strcmp(email, "alice@test.com") == 0, "loaded entity prop");
 
-    /* Check triple queries still work after load */
     GV_KGTriple triples[5];
     int n = gv_kg_query_triples(kg2, NULL, "knows", NULL, triples, 5);
     ASSERT(n == 1, "loaded triple query works");
@@ -483,7 +448,6 @@ static int test_save_load(void) {
     return 0;
 }
 
-/* Main */
 typedef int (*test_fn)(void);
 typedef struct { const char *name; test_fn fn; } TestEntry;
 

@@ -5,7 +5,6 @@
 
 #define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while(0)
 
-/* Shared state for callback tests */
 static int g_callback_count = 0;
 static GV_CDCEventType g_last_event_type = 0;
 
@@ -37,7 +36,6 @@ static int test_create_destroy(void) {
     ASSERT(stream != NULL, "gv_cdc_create with config should succeed");
     gv_cdc_destroy(stream);
 
-    /* Destroy NULL is safe */
     gv_cdc_destroy(NULL);
     return 0;
 }
@@ -92,10 +90,8 @@ static int test_subscribe_and_callback(void) {
     ASSERT(g_callback_count == 1, "callback should have been invoked once");
     ASSERT(g_last_event_type == GV_CDC_INSERT, "last event type should be INSERT");
 
-    /* Unsubscribe */
     ASSERT(gv_cdc_unsubscribe(stream, sub_id) == 0, "unsubscribe");
 
-    /* Publish again; callback should NOT fire */
     evt.type = GV_CDC_DELETE;
     evt.vector_data = NULL;
     ASSERT(gv_cdc_publish(stream, &evt) == 0, "publish delete");
@@ -120,10 +116,8 @@ static int test_pending_count(void) {
 
     GV_CDCCursor cursor = gv_cdc_get_cursor(stream);
 
-    /* No events yet */
     ASSERT(gv_cdc_pending_count(stream, &cursor) == 0, "no pending initially");
 
-    /* Publish 3 events */
     float vec[] = {0.5f};
     GV_CDCEvent evt;
     memset(&evt, 0, sizeof(evt));
@@ -138,7 +132,6 @@ static int test_pending_count(void) {
     size_t pending = gv_cdc_pending_count(stream, &cursor);
     ASSERT(pending == 3, "should have 3 pending events");
 
-    /* Poll 2, then check pending again */
     GV_CDCEvent buf[2];
     int polled = gv_cdc_poll(stream, &cursor, buf, 2);
     ASSERT(polled == 2, "should poll 2 events");
@@ -150,7 +143,6 @@ static int test_pending_count(void) {
     return 0;
 }
 
-/* multiple event types */
 static int test_multiple_event_types(void) {
     GV_CDCStream *stream = gv_cdc_create(NULL);
     ASSERT(stream != NULL, "create");
@@ -164,7 +156,6 @@ static int test_multiple_event_types(void) {
     evt.dimension = 2;
     evt.vector_index = 0;
 
-    /* Publish INSERT, UPDATE, DELETE */
     evt.type = GV_CDC_INSERT;
     ASSERT(gv_cdc_publish(stream, &evt) == 0, "publish insert");
 

@@ -8,7 +8,6 @@
 
 #define DIM 4
 
-/* Helper: create a database and populate it with test vectors */
 static GV_Database *create_test_db(void) {
     GV_Database *db = gv_db_open(NULL, DIM, GV_INDEX_TYPE_FLAT);
     if (!db) return NULL;
@@ -28,7 +27,6 @@ static GV_Database *create_test_db(void) {
     return db;
 }
 
-/* Test: config init defaults */
 static int test_config_init(void) {
     GV_RecommendConfig config;
     memset(&config, 0xFF, sizeof(config));
@@ -42,7 +40,6 @@ static int test_config_init(void) {
     return 0;
 }
 
-/* Test: recommend by ID with positives only */
 static int test_recommend_by_id_positive(void) {
     GV_Database *db = create_test_db();
     ASSERT(db != NULL, "create_test_db should succeed");
@@ -50,7 +47,6 @@ static int test_recommend_by_id_positive(void) {
     GV_RecommendConfig config;
     gv_recommend_config_init(&config);
 
-    /* Recommend based on v0 (index 0) as positive. Should find v1 similar. */
     size_t positive_ids[] = {0};
     GV_RecommendResult results[3];
     int n = gv_recommend_by_id(db, positive_ids, 1, NULL, 0, 3, &config, results);
@@ -60,7 +56,6 @@ static int test_recommend_by_id_positive(void) {
     return 0;
 }
 
-/* Test: recommend by ID with positives and negatives */
 static int test_recommend_by_id_pos_neg(void) {
     GV_Database *db = create_test_db();
     ASSERT(db != NULL, "create_test_db should succeed");
@@ -68,7 +63,6 @@ static int test_recommend_by_id_pos_neg(void) {
     GV_RecommendConfig config;
     gv_recommend_config_init(&config);
 
-    /* Positive: v0 (index 0), Negative: v2 (index 2) */
     size_t positive_ids[] = {0};
     size_t negative_ids[] = {2};
     GV_RecommendResult results[3];
@@ -79,7 +73,6 @@ static int test_recommend_by_id_pos_neg(void) {
     return 0;
 }
 
-/* Test: recommend by vector */
 static int test_recommend_by_vector(void) {
     GV_Database *db = create_test_db();
     ASSERT(db != NULL, "create_test_db should succeed");
@@ -97,7 +90,6 @@ static int test_recommend_by_vector(void) {
     return 0;
 }
 
-/* Test: recommend by vector with negatives */
 static int test_recommend_by_vector_neg(void) {
     GV_Database *db = create_test_db();
     ASSERT(db != NULL, "create_test_db should succeed");
@@ -116,7 +108,6 @@ static int test_recommend_by_vector_neg(void) {
     return 0;
 }
 
-/* Test: discover */
 static int test_discover(void) {
     GV_Database *db = create_test_db();
     ASSERT(db != NULL, "create_test_db should succeed");
@@ -134,7 +125,6 @@ static int test_discover(void) {
     return 0;
 }
 
-/* Test: recommend with k larger than database */
 static int test_recommend_k_larger(void) {
     GV_Database *db = create_test_db();
     ASSERT(db != NULL, "create_test_db should succeed");

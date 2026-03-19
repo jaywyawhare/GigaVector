@@ -16,7 +16,6 @@ static void fill_tokens(float *tokens, size_t num_tokens, size_t dim, float seed
     }
 }
 
-/* 1. test_muvera_config_init */
 static int test_muvera_config_init(void) {
     GV_MuveraConfig config;
     memset(&config, 0xFF, sizeof(config));
@@ -32,13 +31,12 @@ static int test_muvera_config_init(void) {
     return 0;
 }
 
-/* 2. test_muvera_create_destroy */
 static int test_muvera_create_destroy(void) {
     GV_MuveraConfig config;
     gv_muvera_config_init(&config);
     config.token_dimension = TOKEN_DIM;
     config.num_projections = 8;
-    config.output_dimension = 0; /* auto */
+    config.output_dimension = 0;
 
     GV_MuveraEncoder *enc = gv_muvera_create(&config);
     ASSERT(enc != NULL, "gv_muvera_create returned NULL");
@@ -50,9 +48,7 @@ static int test_muvera_create_destroy(void) {
     return 0;
 }
 
-/* 3. test_muvera_create_defaults */
 static int test_muvera_create_defaults(void) {
-    /* NULL config should use defaults */
     GV_MuveraEncoder *enc = gv_muvera_create(NULL);
     ASSERT(enc != NULL, "create with NULL config returned NULL");
 
@@ -63,7 +59,6 @@ static int test_muvera_create_defaults(void) {
     return 0;
 }
 
-/* 4. test_muvera_encode */
 static int test_muvera_encode(void) {
     GV_MuveraConfig config;
     gv_muvera_config_init(&config);
@@ -85,7 +80,6 @@ static int test_muvera_encode(void) {
     int rc = gv_muvera_encode(enc, tokens, num_tokens, output);
     ASSERT(rc == 0, "gv_muvera_encode failed");
 
-    /* Output should not be all zeros */
     int nonzero = 0;
     for (size_t i = 0; i < out_dim; i++) {
         if (fabsf(output[i]) > 1e-9f) { nonzero = 1; break; }
@@ -98,7 +92,6 @@ static int test_muvera_encode(void) {
     return 0;
 }
 
-/* 5. test_muvera_encode_deterministic */
 static int test_muvera_encode_deterministic(void) {
     GV_MuveraConfig config;
     gv_muvera_config_init(&config);
@@ -123,7 +116,6 @@ static int test_muvera_encode_deterministic(void) {
     ASSERT(gv_muvera_encode(enc1, tokens, num_tokens, out1) == 0, "encode1 failed");
     ASSERT(gv_muvera_encode(enc2, tokens, num_tokens, out2) == 0, "encode2 failed");
 
-    /* Same seed should produce identical output */
     ASSERT(memcmp(out1, out2, out_dim * sizeof(float)) == 0,
            "same seed should produce identical encodings");
 
@@ -135,7 +127,6 @@ static int test_muvera_encode_deterministic(void) {
     return 0;
 }
 
-/* 6. test_muvera_encode_batch */
 static int test_muvera_encode_batch(void) {
     GV_MuveraConfig config;
     gv_muvera_config_init(&config);
@@ -148,7 +139,6 @@ static int test_muvera_encode_batch(void) {
     size_t out_dim = gv_muvera_output_dimension(enc);
     size_t batch_size = 3;
 
-    /* Create 3 token sets of varying lengths */
     size_t counts[3] = { 4, 2, 6 };
     float *set0 = (float *)malloc(counts[0] * TOKEN_DIM * sizeof(float));
     float *set1 = (float *)malloc(counts[1] * TOKEN_DIM * sizeof(float));
@@ -174,13 +164,12 @@ static int test_muvera_encode_batch(void) {
     return 0;
 }
 
-/* 7. test_muvera_output_dimension */
 static int test_muvera_output_dimension(void) {
     GV_MuveraConfig config;
     gv_muvera_config_init(&config);
     config.token_dimension = TOKEN_DIM;
     config.num_projections = 8;
-    config.output_dimension = 64; /* explicitly set */
+    config.output_dimension = 64;
 
     GV_MuveraEncoder *enc = gv_muvera_create(&config);
     ASSERT(enc != NULL, "create failed");
@@ -192,19 +181,15 @@ static int test_muvera_output_dimension(void) {
     return 0;
 }
 
-/* 8. test_muvera_destroy_null */
 static int test_muvera_destroy_null(void) {
-    /* Should be safe to call with NULL */
     gv_muvera_destroy(NULL);
 
-    /* Also test that output_dimension of NULL returns 0 */
     ASSERT(gv_muvera_output_dimension(NULL) == 0,
            "output_dimension of NULL encoder should be 0");
 
     return 0;
 }
 
-/* main */
 typedef int (*test_fn)(void);
 typedef struct { const char *name; test_fn fn; } TestCase;
 

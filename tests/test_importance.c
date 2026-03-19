@@ -1,8 +1,3 @@
-/**
- * @file test_importance.c
- * @brief Tests for the SOTA importance scoring algorithm.
- */
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -24,8 +19,6 @@
         (void)(name); \
         TEST_FAIL("comparison failed"); \
     }
-
-/* * Content Analysis Tests */
 
 int test_informativeness_empty(void) {
     double score = gv_importance_informativeness(NULL, 0);
@@ -54,7 +47,6 @@ int test_informativeness_complex(void) {
     double score = gv_importance_informativeness(complex, strlen(complex));
     ASSERT_RANGE(score, 0.3, 0.9, "complex sentence");
 
-    /* Complex should score higher than simple */
     const char *simple = "I like cats.";
     double simple_score = gv_importance_informativeness(simple, strlen(simple));
     ASSERT_GT(score, simple_score, "complex vs simple");
@@ -194,8 +186,6 @@ int test_content_score_combined(void) {
     return 0;
 }
 
-/* * Temporal Decay Tests */
-
 int test_temporal_decay_immediate(void) {
     double decay = gv_importance_temporal_decay(NULL, 0);
     ASSERT_RANGE(decay, 0.99, 1.0, "zero age");
@@ -277,8 +267,6 @@ int test_temporal_custom_config(void) {
     TEST_PASS();
     return 0;
 }
-
-/* * Access Pattern Tests */
 
 int test_access_history_init(void) {
     GV_AccessHistory history;
@@ -364,10 +352,8 @@ int test_access_score_frequent_better(void) {
 
     time_t now = time(NULL);
 
-    /* History 1: single access */
     gv_importance_record_access(&history1, now, 0.8, 0);
 
-    /* History 2: multiple accesses */
     for (int i = 0; i < 10; i++) {
         gv_importance_record_access(&history2, now - i * 3600, 0.8, 0);
     }
@@ -419,8 +405,6 @@ int test_access_history_serialization(void) {
     TEST_PASS();
     return 0;
 }
-
-/* * Full Importance Calculation Tests */
 
 int test_importance_calculate_basic(void) {
     GV_ImportanceContext ctx = {
@@ -509,7 +493,6 @@ int test_importance_calculate_with_query(void) {
     int ret = gv_importance_calculate(NULL, &ctx, &result);
     if (ret != 0) TEST_FAIL("calculate failed");
 
-    /* High similarity should boost final score */
     ASSERT_RANGE(result.final_score, 0.5, 1.0, "importance with query context");
     if (!(result.factors_used & GV_FACTOR_QUERY)) TEST_FAIL("query factor missing");
 
@@ -556,8 +539,6 @@ int test_importance_old_vs_new(void) {
     TEST_PASS();
     return 0;
 }
-
-/* * Batch and Rerank Tests */
 
 int test_importance_batch(void) {
     time_t now = time(NULL);
@@ -637,9 +618,6 @@ int test_importance_rerank(void) {
     int ret = gv_importance_rerank(NULL, contexts, results, indices, 4, 0.5);
     if (ret != 0) TEST_FAIL("rerank failed");
 
-    /* The high-quality, recent memory should rank well even with lower similarity */
-
-    /* Verify ordering is valid */
     for (int i = 0; i < 4; i++) {
         if (indices[i] >= 4) TEST_FAIL("invalid index in rerank");
     }
@@ -648,12 +626,10 @@ int test_importance_rerank(void) {
     return 0;
 }
 
-/* * Configuration Tests */
-
 int test_config_default(void) {
     GV_ImportanceConfig config = gv_importance_config_default();
 
-    /* Verify weights sum to approximately 1.0 */
+    /* Weights must sum to 1.0 */
     double weight_sum = config.weights.content_weight +
                         config.weights.temporal_weight +
                         config.weights.access_weight +
@@ -674,7 +650,6 @@ int test_config_default(void) {
 int test_config_custom_weights(void) {
     GV_ImportanceConfig config = gv_importance_config_default();
 
-    /* Override weights - focus on content only */
     config.weights.content_weight = 1.0;
     config.weights.temporal_weight = 0.0;
     config.weights.access_weight = 0.0;
@@ -698,8 +673,6 @@ int test_config_custom_weights(void) {
     TEST_PASS();
     return 0;
 }
-
-/* * Main Test Runner */
 
 int main(void) {
     int failures = 0;

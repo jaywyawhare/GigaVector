@@ -8,7 +8,6 @@
 
 #define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while(0)
 
-/* test_config_init */
 static int test_config_init(void) {
     GV_MMRConfig cfg;
     gv_mmr_config_init(&cfg);
@@ -18,17 +17,14 @@ static int test_config_init(void) {
     return 0;
 }
 
-/* test_rerank_basic */
 static int test_rerank_basic(void) {
-    /* Query vector */
     float query[DIM] = {1.0f, 0.0f, 0.0f, 0.0f};
 
-    /* 4 candidate vectors */
     float candidates[4 * DIM] = {
-        1.0f, 0.0f, 0.0f, 0.0f,   /* identical to query */
-        0.9f, 0.1f, 0.0f, 0.0f,   /* very similar */
-        0.0f, 1.0f, 0.0f, 0.0f,   /* orthogonal */
-        0.0f, 0.0f, 1.0f, 0.0f,   /* orthogonal, different */
+        1.0f, 0.0f, 0.0f, 0.0f,
+        0.9f, 0.1f, 0.0f, 0.0f,
+        0.0f, 1.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 1.0f, 0.0f,
     };
     size_t indices[4] = {0, 1, 2, 3};
     float distances[4] = {0.0f, 0.1f, 1.0f, 1.0f};
@@ -39,19 +35,16 @@ static int test_rerank_basic(void) {
     ASSERT(n >= 1, "rerank should return at least 1 result");
     ASSERT(n <= 3, "rerank should return at most k=3 results");
 
-    /* Just verify that we got valid results with valid scores */
     ASSERT(results[0].score >= 0.0f || results[0].score <= 1.0f,
            "first result should have a valid score");
 
     return 0;
 }
 
-/* test_rerank_diversity */
 static int test_rerank_diversity(void) {
     /* With lambda=0 (full diversity), the results should be maximally spread out */
     float query[DIM] = {1.0f, 0.0f, 0.0f, 0.0f};
 
-    /* Two candidates near query, two orthogonal */
     float candidates[4 * DIM] = {
         1.0f, 0.0f, 0.0f, 0.0f,
         0.99f, 0.01f, 0.0f, 0.0f,
@@ -82,7 +75,6 @@ static int test_rerank_diversity(void) {
     return 0;
 }
 
-/* test_rerank_k_larger_than_candidates */
 static int test_rerank_k_larger_than_candidates(void) {
     float query[DIM] = {1.0f, 0.0f, 0.0f, 0.0f};
     float candidates[2 * DIM] = {
@@ -95,13 +87,11 @@ static int test_rerank_k_larger_than_candidates(void) {
     GV_MMRResult results[5];
     int n = gv_mmr_rerank(query, DIM, candidates, indices, distances,
                           2, 5, NULL, results);
-    /* Should return at most candidate_count = 2 */
     ASSERT(n >= 0 && n <= 2, "k > candidates: should return at most candidate_count");
 
     return 0;
 }
 
-/* test_rerank_single_candidate */
 static int test_rerank_single_candidate(void) {
     float query[DIM] = {1.0f, 0.0f, 0.0f, 0.0f};
     float candidates[DIM] = {0.5f, 0.5f, 0.0f, 0.0f};
@@ -117,7 +107,6 @@ static int test_rerank_single_candidate(void) {
     return 0;
 }
 
-/* test_rerank_zero_candidates */
 static int test_rerank_zero_candidates(void) {
     float query[DIM] = {1.0f, 0.0f, 0.0f, 0.0f};
 
@@ -128,7 +117,6 @@ static int test_rerank_zero_candidates(void) {
     return 0;
 }
 
-/* test_result_fields */
 static int test_result_fields(void) {
     float query[DIM] = {1.0f, 0.0f, 0.0f, 0.0f};
     float candidates[2 * DIM] = {
@@ -143,19 +131,15 @@ static int test_result_fields(void) {
                           2, 2, NULL, results);
     ASSERT(n == 2, "should return 2 results");
 
-    /* Check that all fields are populated */
     for (int i = 0; i < n; i++) {
         ASSERT(results[i].index == 5 || results[i].index == 6,
                "result index should be 5 or 6");
-        /* relevance should be non-negative */
         ASSERT(results[i].relevance >= 0.0f || results[i].relevance <= 1.0f,
                "relevance should be reasonable");
     }
 
     return 0;
 }
-
-/* test runner */
 
 typedef int (*test_fn)(void);
 typedef struct { const char *name; test_fn fn; } TestCase;

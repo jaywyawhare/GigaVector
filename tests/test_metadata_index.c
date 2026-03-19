@@ -16,24 +16,20 @@ static int test_add_and_query(void) {
     GV_MetadataIndex *idx = gv_metadata_index_create();
     ASSERT(idx != NULL, "create");
 
-    /* Add multiple vectors with same key-value */
     ASSERT(gv_metadata_index_add(idx, "color", "red", 0) == 0, "add 0 red");
     ASSERT(gv_metadata_index_add(idx, "color", "red", 5) == 0, "add 5 red");
     ASSERT(gv_metadata_index_add(idx, "color", "blue", 1) == 0, "add 1 blue");
     ASSERT(gv_metadata_index_add(idx, "color", "red", 10) == 0, "add 10 red");
     ASSERT(gv_metadata_index_add(idx, "shape", "circle", 0) == 0, "add 0 circle");
 
-    /* Count */
     ASSERT(gv_metadata_index_count(idx, "color", "red") == 3, "3 red vectors");
     ASSERT(gv_metadata_index_count(idx, "color", "blue") == 1, "1 blue vector");
     ASSERT(gv_metadata_index_count(idx, "shape", "circle") == 1, "1 circle vector");
     ASSERT(gv_metadata_index_count(idx, "color", "green") == 0, "0 green");
 
-    /* Query */
     size_t out[10];
     int n = gv_metadata_index_query(idx, "color", "red", out, 10);
     ASSERT(n == 3, "query returns 3");
-    /* Check all expected indices are present */
     int found0 = 0, found5 = 0, found10 = 0;
     for (int i = 0; i < n; i++) {
         if (out[i] == 0) found0 = 1;

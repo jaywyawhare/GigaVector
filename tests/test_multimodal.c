@@ -30,7 +30,6 @@ static int test_media_create_destroy(void) {
 
     gv_media_destroy(store);
 
-    /* Destroying NULL should be safe */
     gv_media_destroy(NULL);
     return 0;
 }
@@ -43,7 +42,6 @@ static int test_media_store_blob(void) {
     GV_MediaStore *store = gv_media_create(&config);
     ASSERT(store != NULL, "media store creation");
 
-    /* Store a small test blob */
     const unsigned char blob_data[] = {0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
                                        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07};
     int rc = gv_media_store_blob(store, 0, GV_MEDIA_IMAGE, blob_data, sizeof(blob_data),

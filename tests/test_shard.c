@@ -34,7 +34,6 @@ static int test_shard_create_destroy(void) {
     ASSERT(mgr != NULL, "shard_manager_create with NULL config should succeed");
     gv_shard_manager_destroy(mgr);
 
-    /* Create with explicit config */
     GV_ShardConfig config;
     gv_shard_config_init(&config);
     config.shard_count = 4;
@@ -42,7 +41,6 @@ static int test_shard_create_destroy(void) {
     ASSERT(mgr != NULL, "shard_manager_create with explicit config should succeed");
     gv_shard_manager_destroy(mgr);
 
-    /* Destroy NULL should be safe */
     gv_shard_manager_destroy(NULL);
     return 0;
 }
@@ -60,7 +58,6 @@ static int test_shard_add_and_list(void) {
     rc = gv_shard_add(mgr, 3, "node3:6000");
     ASSERT(rc == 0, "add shard 3 should succeed");
 
-    /* List shards */
     GV_ShardInfo *shards = NULL;
     size_t count = 0;
     rc = gv_shard_list(mgr, &shards, &count);
@@ -79,7 +76,6 @@ static int test_shard_add_duplicate(void) {
     int rc = gv_shard_add(mgr, 1, "node1:6000");
     ASSERT(rc == 0, "first add should succeed");
 
-    /* Adding the same shard_id again should fail */
     rc = gv_shard_add(mgr, 1, "node1b:6000");
     ASSERT(rc == -1, "duplicate shard_id add should fail");
 
@@ -95,13 +91,11 @@ static int test_shard_for_vector_consistent(void) {
     gv_shard_add(mgr, 1, "node1:6000");
     gv_shard_add(mgr, 2, "node2:6000");
 
-    /* Same vector_id should always map to the same shard */
     int s1 = gv_shard_for_vector(mgr, 42);
     int s2 = gv_shard_for_vector(mgr, 42);
     ASSERT(s1 >= 0, "shard_for_vector should return >= 0");
     ASSERT(s1 == s2, "shard_for_vector should be consistent for same vector_id");
 
-    /* Different vector_ids should return valid shard IDs */
     int s3 = gv_shard_for_vector(mgr, 100);
     ASSERT(s3 >= 0, "shard_for_vector(100) should return >= 0");
 
@@ -125,14 +119,12 @@ static int test_shard_for_key(void) {
     int s1 = gv_shard_for_key(mgr, key1, strlen(key1));
     ASSERT(s1 >= 0, "shard_for_key should return >= 0");
 
-    /* Same key should map to same shard */
     int s1b = gv_shard_for_key(mgr, key1, strlen(key1));
     ASSERT(s1 == s1b, "shard_for_key should be consistent");
 
     int s2 = gv_shard_for_key(mgr, key2, strlen(key2));
     ASSERT(s2 >= 0, "shard_for_key with different key should return >= 0");
 
-    /* NULL manager should return -1 */
     int s_null = gv_shard_for_key(NULL, key1, strlen(key1));
     ASSERT(s_null == -1, "shard_for_key(NULL, ...) should return -1");
 
@@ -153,7 +145,6 @@ static int test_shard_get_info(void) {
     ASSERT(info.shard_id == 5, "shard_id should match");
     ASSERT(info.state == GV_SHARD_ACTIVE, "new shard should be ACTIVE");
 
-    /* Non-existent shard should fail */
     rc = gv_shard_get_info(mgr, 999, &info);
     ASSERT(rc == -1, "get_info for non-existent shard should return -1");
 
@@ -167,7 +158,6 @@ static int test_shard_set_state(void) {
 
     gv_shard_add(mgr, 1, "node1:6000");
 
-    /* Transition to READONLY */
     int rc = gv_shard_set_state(mgr, 1, GV_SHARD_READONLY);
     ASSERT(rc == 0, "set_state to READONLY should succeed");
 
@@ -176,18 +166,15 @@ static int test_shard_set_state(void) {
     gv_shard_get_info(mgr, 1, &info);
     ASSERT(info.state == GV_SHARD_READONLY, "state should be READONLY after set");
 
-    /* Transition to MIGRATING */
     rc = gv_shard_set_state(mgr, 1, GV_SHARD_MIGRATING);
     ASSERT(rc == 0, "set_state to MIGRATING should succeed");
 
     gv_shard_get_info(mgr, 1, &info);
     ASSERT(info.state == GV_SHARD_MIGRATING, "state should be MIGRATING");
 
-    /* Transition to OFFLINE */
     rc = gv_shard_set_state(mgr, 1, GV_SHARD_OFFLINE);
     ASSERT(rc == 0, "set_state to OFFLINE should succeed");
 
-    /* Non-existent shard */
     rc = gv_shard_set_state(mgr, 999, GV_SHARD_ACTIVE);
     ASSERT(rc == -1, "set_state on non-existent shard should fail");
 
@@ -205,18 +192,15 @@ static int test_shard_remove(void) {
     int rc = gv_shard_remove(mgr, 1);
     ASSERT(rc == 0, "remove shard 1 should succeed");
 
-    /* Verify only shard 2 remains */
     GV_ShardInfo *shards = NULL;
     size_t count = 0;
     gv_shard_list(mgr, &shards, &count);
     ASSERT(count == 1, "should have 1 shard after removal");
     gv_shard_free_list(shards, count);
 
-    /* Removing non-existent shard should fail */
     rc = gv_shard_remove(mgr, 1);
     ASSERT(rc == -1, "removing already-removed shard should fail");
 
-    /* get_info on removed shard should fail */
     GV_ShardInfo info;
     rc = gv_shard_get_info(mgr, 1, &info);
     ASSERT(rc == -1, "get_info on removed shard should fail");
@@ -231,14 +215,12 @@ static int test_shard_attach_local(void) {
 
     gv_shard_add(mgr, 0, "local:6000");
 
-    /* Create a real in-memory database */
     GV_Database *db = gv_db_open(NULL, 4, GV_INDEX_TYPE_FLAT);
     ASSERT(db != NULL, "create test database");
 
     int rc = gv_shard_attach_local(mgr, 0, db);
     ASSERT(rc == 0, "attach_local should succeed");
 
-    /* Attaching to non-existent shard should fail */
     rc = gv_shard_attach_local(mgr, 999, db);
     ASSERT(rc == -1, "attach_local to non-existent shard should fail");
 
@@ -261,11 +243,9 @@ static int test_shard_get_local_db(void) {
     GV_Database *retrieved = gv_shard_get_local_db(mgr, 0);
     ASSERT(retrieved == db, "get_local_db should return the attached database");
 
-    /* Non-existent shard should return NULL */
     GV_Database *null_db = gv_shard_get_local_db(mgr, 999);
     ASSERT(null_db == NULL, "get_local_db for non-existent shard should return NULL");
 
-    /* Shard without local db should return NULL */
     gv_shard_add(mgr, 1, "remote:6000");
     GV_Database *no_local = gv_shard_get_local_db(mgr, 1);
     ASSERT(no_local == NULL, "get_local_db for shard without attached db should return NULL");
@@ -282,21 +262,17 @@ static int test_shard_rebalance(void) {
     gv_shard_add(mgr, 0, "node0:6000");
     gv_shard_add(mgr, 1, "node1:6000");
 
-    /* Start rebalance */
     int rc = gv_shard_rebalance_start(mgr);
     ASSERT(rc == 0, "rebalance_start should succeed");
 
-    /* Check status */
     double progress = -1.0;
     int status = gv_shard_rebalance_status(mgr, &progress);
-    /* status: 1 if rebalancing, 0 if not, -1 error */
     ASSERT(status >= 0, "rebalance_status should return >= 0");
     if (status == 1) {
         ASSERT(progress >= 0.0 && progress <= 1.0,
                "progress should be between 0.0 and 1.0");
     }
 
-    /* Cancel rebalance */
     rc = gv_shard_rebalance_cancel(mgr);
     ASSERT(rc == 0, "rebalance_cancel should succeed");
 
@@ -318,7 +294,6 @@ static int test_shard_rebalance_null(void) {
 }
 
 static int test_shard_strategies(void) {
-    /* Test with each strategy */
     GV_ShardStrategy strategies[] = {GV_SHARD_HASH, GV_SHARD_RANGE, GV_SHARD_CONSISTENT};
     const char *names[] = {"HASH", "RANGE", "CONSISTENT"};
 
@@ -358,7 +333,6 @@ static int test_shard_list_empty(void) {
 }
 
 static int test_shard_free_list_null(void) {
-    /* Should not crash */
     gv_shard_free_list(NULL, 0);
     return 0;
 }

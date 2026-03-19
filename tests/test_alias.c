@@ -10,7 +10,6 @@ static int test_create_destroy(void) {
     ASSERT(mgr != NULL, "gv_alias_manager_create should succeed");
     gv_alias_manager_destroy(mgr);
 
-    /* Destroy NULL is safe */
     gv_alias_manager_destroy(NULL);
     return 0;
 }
@@ -25,7 +24,6 @@ static int test_create_and_resolve(void) {
     ASSERT(resolved != NULL, "resolve should succeed");
     ASSERT(strcmp(resolved, "collection_v2") == 0, "resolved should match collection_v2");
 
-    /* Non-existent alias */
     ASSERT(gv_alias_resolve(mgr, "unknown") == NULL, "resolve unknown should return NULL");
 
     gv_alias_manager_destroy(mgr);

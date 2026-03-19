@@ -77,7 +77,6 @@ void test_parse_numbers(void) {
     GV_JsonError err;
     double d;
 
-    // Integer
     GV_JsonValue *val = gv_json_parse("42", &err);
     if (val == NULL || !gv_json_is_number(val)) {
         FAIL("Failed to parse 42");
@@ -92,7 +91,6 @@ void test_parse_numbers(void) {
     }
     gv_json_free(val);
 
-    // Negative
     val = gv_json_parse("-123", &err);
     gv_json_get_number(val, &d);
     if (d != -123.0) {
@@ -102,7 +100,6 @@ void test_parse_numbers(void) {
     }
     gv_json_free(val);
 
-    // Float
     val = gv_json_parse("3.14159", &err);
     gv_json_get_number(val, &d);
     if (fabs(d - 3.14159) > 0.00001) {
@@ -112,7 +109,6 @@ void test_parse_numbers(void) {
     }
     gv_json_free(val);
 
-    // Scientific
     val = gv_json_parse("1.5e10", &err);
     gv_json_get_number(val, &d);
     if (fabs(d - 1.5e10) > 1.0) {
@@ -130,7 +126,6 @@ void test_parse_strings(void) {
 
     GV_JsonError err;
 
-    // Simple string
     GV_JsonValue *val = gv_json_parse("\"hello\"", &err);
     if (val == NULL || !gv_json_is_string(val)) {
         FAIL("Failed to parse simple string");
@@ -145,7 +140,6 @@ void test_parse_strings(void) {
     }
     gv_json_free(val);
 
-    // Escaped characters
     val = gv_json_parse("\"hello\\nworld\\t\\\"quoted\\\"\"", &err);
     if (val == NULL) {
         FAIL("Failed to parse escaped string");
@@ -159,7 +153,6 @@ void test_parse_strings(void) {
     }
     gv_json_free(val);
 
-    // Unicode escape
     val = gv_json_parse("\"hello\\u0041\"", &err);
     if (val == NULL) {
         FAIL("Failed to parse unicode escape");
@@ -181,7 +174,6 @@ void test_parse_arrays(void) {
 
     GV_JsonError err;
 
-    // Empty array
     GV_JsonValue *val = gv_json_parse("[]", &err);
     if (val == NULL || !gv_json_is_array(val) || gv_json_array_length(val) != 0) {
         FAIL("Failed to parse empty array");
@@ -190,7 +182,6 @@ void test_parse_arrays(void) {
     }
     gv_json_free(val);
 
-    // Array with values
     val = gv_json_parse("[1, 2, 3]", &err);
     if (val == NULL || !gv_json_is_array(val) || gv_json_array_length(val) != 3) {
         FAIL("Failed to parse [1,2,3]");
@@ -213,7 +204,6 @@ void test_parse_arrays(void) {
     }
     gv_json_free(val);
 
-    // Mixed types
     val = gv_json_parse("[1, \"hello\", true, null]", &err);
     if (val == NULL || gv_json_array_length(val) != 4) {
         FAIL("Failed to parse mixed array");
@@ -238,7 +228,6 @@ void test_parse_objects(void) {
 
     GV_JsonError err;
 
-    // Empty object
     GV_JsonValue *val = gv_json_parse("{}", &err);
     if (val == NULL || !gv_json_is_object(val) || gv_json_object_length(val) != 0) {
         FAIL("Failed to parse empty object");
@@ -247,7 +236,6 @@ void test_parse_objects(void) {
     }
     gv_json_free(val);
 
-    // Simple object
     val = gv_json_parse("{\"name\": \"John\", \"age\": 30}", &err);
     if (val == NULL || !gv_json_is_object(val) || gv_json_object_length(val) != 2) {
         FAIL("Failed to parse simple object");
@@ -294,7 +282,6 @@ void test_parse_nested(void) {
         return;
     }
 
-    // Test path-based access
     const char *content = gv_json_get_string_path(val, "choices.0.message.content");
     if (content == NULL || strcmp(content, "Hello, world!") != 0) {
         FAIL("Wrong path access result");
@@ -342,14 +329,12 @@ void test_parse_openai_response(void) {
         return;
     }
 
-    // Verify escaped characters are unescaped
     if (strstr(content, "\"quotes\"") == NULL || strstr(content, "\n") == NULL) {
         FAIL("Escaped characters not properly unescaped");
         gv_json_free(val);
         return;
     }
 
-    // Verify usage
     GV_JsonValue *usage = gv_json_object_get(val, "usage");
     if (usage == NULL || !gv_json_is_object(usage)) {
         FAIL("Failed to get usage object");
@@ -410,7 +395,6 @@ void test_parse_facts_response(void) {
 void test_stringify(void) {
     TEST("stringify JSON");
 
-    // Create object
     GV_JsonValue *obj = gv_json_object();
     gv_json_object_set(obj, "name", gv_json_string("John"));
     gv_json_object_set(obj, "age", gv_json_number(30));
@@ -429,7 +413,6 @@ void test_stringify(void) {
         return;
     }
 
-    // Parse it back
     GV_JsonError err;
     GV_JsonValue *parsed = gv_json_parse(str, &err);
     if (parsed == NULL) {
@@ -439,7 +422,6 @@ void test_stringify(void) {
         return;
     }
 
-    // Verify
     const char *name = gv_json_get_string(gv_json_object_get(parsed, "name"));
     if (name == NULL || strcmp(name, "John") != 0) {
         FAIL("Name not preserved");
@@ -473,7 +455,6 @@ void test_copy(void) {
         return;
     }
 
-    // Free original and verify copy still works
     gv_json_free(original);
 
     GV_JsonValue *arr = gv_json_get_path(copy, "nested.array");
@@ -492,7 +473,6 @@ void test_error_handling(void) {
 
     GV_JsonError err;
 
-    // Invalid JSON
     GV_JsonValue *val = gv_json_parse("{invalid}", &err);
     if (val != NULL || err == GV_JSON_OK) {
         FAIL("Should fail on invalid JSON");
@@ -500,7 +480,6 @@ void test_error_handling(void) {
         return;
     }
 
-    // Unclosed string
     val = gv_json_parse("\"unclosed", &err);
     if (val != NULL || err == GV_JSON_OK) {
         FAIL("Should fail on unclosed string");
@@ -508,7 +487,6 @@ void test_error_handling(void) {
         return;
     }
 
-    // Trailing content
     val = gv_json_parse("123 extra", &err);
     if (val != NULL || err == GV_JSON_OK) {
         FAIL("Should fail on trailing content");

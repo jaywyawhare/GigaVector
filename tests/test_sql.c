@@ -8,7 +8,6 @@
 
 #define DIM 4
 
-/* Helper: create and populate a test database */
 static GV_Database *create_test_db(void) {
     GV_Database *db = gv_db_open(NULL, DIM, GV_INDEX_TYPE_FLAT);
     if (!db) return NULL;
@@ -26,7 +25,6 @@ static GV_Database *create_test_db(void) {
     return db;
 }
 
-/* Test: create and destroy engine */
 static int test_create_destroy(void) {
     GV_Database *db = gv_db_open(NULL, DIM, GV_INDEX_TYPE_FLAT);
     ASSERT(db != NULL, "db open should succeed");
@@ -35,14 +33,12 @@ static int test_create_destroy(void) {
     ASSERT(eng != NULL, "gv_sql_create should return non-NULL");
 
     gv_sql_destroy(eng);
-    /* NULL destroy should be safe */
     gv_sql_destroy(NULL);
 
     gv_db_close(db);
     return 0;
 }
 
-/* Test: execute simple SELECT */
 static int test_select_all(void) {
     GV_Database *db = create_test_db();
     ASSERT(db != NULL, "create_test_db should succeed");
@@ -62,7 +58,6 @@ static int test_select_all(void) {
     return 0;
 }
 
-/* Test: ANN query */
 static int test_ann_query(void) {
     GV_Database *db = create_test_db();
     ASSERT(db != NULL, "create_test_db should succeed");
@@ -85,7 +80,6 @@ static int test_ann_query(void) {
     return 0;
 }
 
-/* Test: explain query plan */
 static int test_explain(void) {
     GV_Database *db = create_test_db();
     ASSERT(db != NULL, "create_test_db should succeed");
@@ -106,7 +100,6 @@ static int test_explain(void) {
     return 0;
 }
 
-/* Test: last error on invalid query */
 static int test_last_error(void) {
     GV_Database *db = create_test_db();
     ASSERT(db != NULL, "create_test_db should succeed");
@@ -129,17 +122,14 @@ static int test_last_error(void) {
     return 0;
 }
 
-/* Test: free_result on zeroed struct */
 static int test_free_result_empty(void) {
     GV_SQLResult result;
     memset(&result, 0, sizeof(result));
-    /* Should be safe on an already-zeroed / empty result */
     gv_sql_free_result(&result);
     ASSERT(result.row_count == 0, "freed result should have row_count 0");
     return 0;
 }
 
-/* Test: SELECT with WHERE filter */
 static int test_select_where(void) {
     GV_Database *db = create_test_db();
     ASSERT(db != NULL, "create_test_db should succeed");
@@ -153,7 +143,6 @@ static int test_select_where(void) {
         "SELECT * FROM vectors WHERE category = 'science' LIMIT 10",
         &result);
     ASSERT(rc == 0, "SELECT with WHERE should succeed");
-    /* We inserted 2 science vectors */
     ASSERT(result.row_count <= 10, "should return at most LIMIT results");
 
     gv_sql_free_result(&result);

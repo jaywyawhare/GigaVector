@@ -5,17 +5,14 @@
 
 #define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while(0)
 
-/* ── Test: create and destroy ──────────────────────────────────────────── */
 static int test_create_destroy(void) {
     GV_RBACManager *mgr = gv_rbac_create();
     ASSERT(mgr != NULL, "RBAC manager creation");
     gv_rbac_destroy(mgr);
-    /* NULL safety */
     gv_rbac_destroy(NULL);
     return 0;
 }
 
-/* ── Test: create and delete roles ─────────────────────────────────────── */
 static int test_role_create_delete(void) {
     GV_RBACManager *mgr = gv_rbac_create();
     ASSERT(mgr != NULL, "RBAC manager creation");
@@ -26,7 +23,6 @@ static int test_role_create_delete(void) {
     rc = gv_rbac_create_role(mgr, "viewer");
     ASSERT(rc == 0, "create role 'viewer'");
 
-    /* list roles and verify count */
     char **names = NULL;
     size_t count = 0;
     rc = gv_rbac_list_roles(mgr, &names, &count);
@@ -41,7 +37,6 @@ static int test_role_create_delete(void) {
     return 0;
 }
 
-/* ── Test: add/remove rules ────────────────────────────────────────────── */
 static int test_add_remove_rules(void) {
     GV_RBACManager *mgr = gv_rbac_create();
     ASSERT(mgr != NULL, "RBAC manager creation");
@@ -61,7 +56,6 @@ static int test_add_remove_rules(void) {
     return 0;
 }
 
-/* ── Test: assign/revoke role and check permissions ────────────────────── */
 static int test_assign_check_permissions(void) {
     GV_RBACManager *mgr = gv_rbac_create();
     ASSERT(mgr != NULL, "RBAC manager creation");
@@ -72,14 +66,11 @@ static int test_assign_check_permissions(void) {
     int rc = gv_rbac_assign_role(mgr, "user1", "reader");
     ASSERT(rc == 0, "assign 'reader' to user1");
 
-    /* user1 should have READ on 'docs' */
     rc = gv_rbac_check(mgr, "user1", "docs", GV_PERM_READ);
     ASSERT(rc == 1 || rc == 0, "check should return a permission result");
 
-    /* user1 should NOT have WRITE on 'docs' */
     int has_write = gv_rbac_check(mgr, "user1", "docs", GV_PERM_WRITE);
     int has_read  = gv_rbac_check(mgr, "user1", "docs", GV_PERM_READ);
-    /* At minimum, read != write in terms of granted permission */
     ASSERT(has_read != has_write || has_read == 0,
            "read and write permission results should differ or both be denied");
 
@@ -87,7 +78,6 @@ static int test_assign_check_permissions(void) {
     return 0;
 }
 
-/* ── Test: user role listing ───────────────────────────────────────────── */
 static int test_get_user_roles(void) {
     GV_RBACManager *mgr = gv_rbac_create();
     ASSERT(mgr != NULL, "RBAC manager creation");
@@ -108,7 +98,6 @@ static int test_get_user_roles(void) {
     return 0;
 }
 
-/* ── Test: revoke role ─────────────────────────────────────────────────── */
 static int test_revoke_role(void) {
     GV_RBACManager *mgr = gv_rbac_create();
     ASSERT(mgr != NULL, "RBAC manager creation");
@@ -130,7 +119,6 @@ static int test_revoke_role(void) {
     return 0;
 }
 
-/* ── Test: init defaults ───────────────────────────────────────────────── */
 static int test_init_defaults(void) {
     GV_RBACManager *mgr = gv_rbac_create();
     ASSERT(mgr != NULL, "RBAC manager creation");
@@ -149,7 +137,6 @@ static int test_init_defaults(void) {
     return 0;
 }
 
-/* ── Test: role inheritance ────────────────────────────────────────────── */
 static int test_role_inheritance(void) {
     GV_RBACManager *mgr = gv_rbac_create();
     ASSERT(mgr != NULL, "RBAC manager creation");
@@ -164,8 +151,6 @@ static int test_role_inheritance(void) {
     gv_rbac_destroy(mgr);
     return 0;
 }
-
-/* Main */
 
 typedef int (*test_fn)(void);
 typedef struct { const char *name; test_fn fn; } TestCase;

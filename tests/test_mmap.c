@@ -15,7 +15,6 @@ static void cleanup(void) {
     remove(TMP_FILE_LARGE);
 }
 
-/* Helper: write known data to a file */
 static int write_file(const char *path, const void *data, size_t len) {
     FILE *f = fopen(path, "wb");
     if (!f) return -1;
@@ -47,7 +46,6 @@ static int test_open_readonly(void) {
 
 static int test_mmap_size(void) {
     cleanup();
-    /* Write exactly 256 bytes */
     unsigned char buf[256];
     for (int i = 0; i < 256; i++) buf[i] = (unsigned char)i;
     ASSERT(write_file(TMP_FILE, buf, sizeof(buf)) == 0, "write 256 bytes");
@@ -84,7 +82,6 @@ static int test_mmap_data_contents(void) {
 }
 
 static int test_close_null(void) {
-    /* Closing NULL must not crash */
     gv_mmap_close(NULL);
     return 0;
 }
@@ -98,7 +95,6 @@ static int test_double_close(void) {
     ASSERT(mm != NULL, "open");
 
     gv_mmap_close(mm);
-    /* Second close on the same pointer is undefined, but closing NULL is safe */
     gv_mmap_close(NULL);
 
     cleanup();
@@ -114,14 +110,11 @@ static int test_open_nonexistent(void) {
 
 static int test_open_empty_file(void) {
     cleanup();
-    /* Create an empty file */
     FILE *f = fopen(TMP_FILE, "wb");
     ASSERT(f != NULL, "create empty file");
     fclose(f);
 
     GV_MMap *mm = gv_mmap_open_readonly(TMP_FILE);
-    /* An empty file may return NULL or a valid mapping with size 0;
-     * both are acceptable behaviors. */
     if (mm != NULL) {
         ASSERT(gv_mmap_size(mm) == 0, "empty file size should be 0");
         gv_mmap_close(mm);
@@ -133,7 +126,6 @@ static int test_open_empty_file(void) {
 
 static int test_mmap_large_file(void) {
     cleanup();
-    /* Write 1 MB of data */
     size_t file_size = 1024 * 1024;
     unsigned char *buf = (unsigned char *)malloc(file_size);
     ASSERT(buf != NULL, "allocate 1MB buffer");
@@ -151,13 +143,11 @@ static int test_mmap_large_file(void) {
     const unsigned char *data = (const unsigned char *)gv_mmap_data(mm);
     ASSERT(data != NULL, "large file data not NULL");
 
-    /* Spot-check some values */
     ASSERT(data[0] == 0, "first byte");
     ASSERT(data[250] == 250, "byte at 250");
     ASSERT(data[251] == 0, "byte at 251 wraps");
     ASSERT(data[file_size - 1] == (unsigned char)((file_size - 1) % 251), "last byte");
 
-    /* Verify first 1024 bytes fully */
     for (size_t i = 0; i < 1024; i++) {
         ASSERT(data[i] == (unsigned char)(i % 251), "verify first 1024 bytes");
     }
@@ -176,7 +166,6 @@ static int test_open_null_path(void) {
 
 static int test_binary_data(void) {
     cleanup();
-    /* Write floats as binary */
     float floats[] = {1.0f, 2.5f, -3.14f, 0.0f, 100.0f};
     size_t len = sizeof(floats);
     ASSERT(write_file(TMP_FILE2, floats, len) == 0, "write float data");

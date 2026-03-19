@@ -6,18 +6,15 @@
 
 #define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while(0)
 
-/* Test: create and destroy */
 static int test_create_destroy(void) {
     GV_GeoIndex *idx = gv_geo_create();
     ASSERT(idx != NULL, "gv_geo_create should return non-NULL");
     ASSERT(gv_geo_count(idx) == 0, "newly created index should have count 0");
     gv_geo_destroy(idx);
-    /* destroying NULL should be safe */
     gv_geo_destroy(NULL);
     return 0;
 }
 
-/* Test: insert and count */
 static int test_insert_count(void) {
     GV_GeoIndex *idx = gv_geo_create();
     ASSERT(idx != NULL, "gv_geo_create should return non-NULL");
@@ -38,7 +35,6 @@ static int test_insert_count(void) {
     return 0;
 }
 
-/* Test: update a point */
 static int test_update(void) {
     GV_GeoIndex *idx = gv_geo_create();
     ASSERT(idx != NULL, "gv_geo_create should return non-NULL");
@@ -52,7 +48,6 @@ static int test_update(void) {
     return 0;
 }
 
-/* Test: remove a point */
 static int test_remove(void) {
     GV_GeoIndex *idx = gv_geo_create();
     ASSERT(idx != NULL, "gv_geo_create should return non-NULL");
@@ -69,12 +64,10 @@ static int test_remove(void) {
     return 0;
 }
 
-/* Test: radius search */
 static int test_radius_search(void) {
     GV_GeoIndex *idx = gv_geo_create();
     ASSERT(idx != NULL, "gv_geo_create should return non-NULL");
 
-    /* Insert cities */
     gv_geo_insert(idx, 0, 40.7128, -74.0060);   /* New York */
     gv_geo_insert(idx, 1, 40.7580, -73.9855);   /* Midtown Manhattan (~5km from NYC center) */
     gv_geo_insert(idx, 2, 34.0522, -118.2437);  /* Los Angeles (~3940km away) */
@@ -89,7 +82,6 @@ static int test_radius_search(void) {
     return 0;
 }
 
-/* Test: bounding box search */
 static int test_bbox_search(void) {
     GV_GeoIndex *idx = gv_geo_create();
     ASSERT(idx != NULL, "gv_geo_create should return non-NULL");
@@ -98,7 +90,6 @@ static int test_bbox_search(void) {
     gv_geo_insert(idx, 1, 34.0522, -118.2437);  /* Los Angeles */
     gv_geo_insert(idx, 2, 51.5074, -0.1278);    /* London */
 
-    /* BBox covering northeastern US */
     GV_GeoBBox bbox = {
         .min = { .lat = 39.0, .lng = -76.0 },
         .max = { .lat = 42.0, .lng = -72.0 }
@@ -112,21 +103,18 @@ static int test_bbox_search(void) {
     return 0;
 }
 
-/* Test: haversine distance */
 static int test_haversine_distance(void) {
     /* Distance from NYC to London is approximately 5570 km */
     double dist = gv_geo_distance_km(40.7128, -74.0060, 51.5074, -0.1278);
     ASSERT(dist > 5000.0, "NYC-London distance should be > 5000 km");
     ASSERT(dist < 6000.0, "NYC-London distance should be < 6000 km");
 
-    /* Distance from a point to itself should be 0 */
     double self_dist = gv_geo_distance_km(40.0, -74.0, 40.0, -74.0);
     ASSERT(self_dist < 0.001, "distance from point to itself should be ~0");
 
     return 0;
 }
 
-/* Test: get candidates for pre-filtering */
 static int test_get_candidates(void) {
     GV_GeoIndex *idx = gv_geo_create();
     ASSERT(idx != NULL, "gv_geo_create should return non-NULL");

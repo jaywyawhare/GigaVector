@@ -40,7 +40,6 @@ static int test_load_null_path(void) {
 }
 
 static int test_destroy_null(void) {
-    /* Destroying NULL must not crash */
     gv_onnx_destroy(NULL);
     return 0;
 }
@@ -54,7 +53,6 @@ static int test_tensor_create_1d(void) {
     ASSERT(t.total_elements == 10, "tensor total_elements should be 10");
     ASSERT(t.shape[0] == 10, "tensor shape[0] should be 10");
 
-    /* Data should be zero-initialized */
     for (size_t i = 0; i < t.total_elements; i++) {
         ASSERT(t.data[i] == 0.0f, "tensor data should be zero-initialized");
     }
@@ -99,7 +97,6 @@ static int test_tensor_create_single_element(void) {
     ASSERT(t.data != NULL, "single element tensor data should be allocated");
     ASSERT(t.total_elements == 1, "total_elements should be 1");
 
-    /* Write and read back */
     t.data[0] = 42.0f;
     ASSERT(t.data[0] == 42.0f, "should be able to write to tensor data");
 
@@ -108,7 +105,6 @@ static int test_tensor_create_single_element(void) {
 }
 
 static int test_tensor_destroy_null_data(void) {
-    /* tensor_destroy with NULL data should not crash */
     GV_ONNXTensor t;
     memset(&t, 0, sizeof(t));
     t.data = NULL;
@@ -124,12 +120,10 @@ static int test_tensor_write_read(void) {
     GV_ONNXTensor t = gv_onnx_tensor_create(shape, 2);
     ASSERT(t.data != NULL, "tensor data");
 
-    /* Fill with known values */
     for (size_t i = 0; i < t.total_elements; i++) {
         t.data[i] = (float)i * 1.5f;
     }
 
-    /* Verify values */
     for (size_t i = 0; i < t.total_elements; i++) {
         float expected = (float)i * 1.5f;
         ASSERT(t.data[i] == expected, "tensor data should match written values");
@@ -144,7 +138,6 @@ static int test_infer_null_model(void) {
     GV_ONNXTensor input = gv_onnx_tensor_create(shape, 2);
     GV_ONNXTensor output = gv_onnx_tensor_create(shape, 2);
 
-    /* Infer with NULL model should fail */
     int rc = gv_onnx_infer(NULL, &input, 1, &output, 1);
     ASSERT(rc != 0, "gv_onnx_infer with NULL model should fail");
 

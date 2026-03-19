@@ -5,7 +5,6 @@
 
 #define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while(0)
 
-/* Helper to create a fake identity for testing */
 static GV_Identity make_identity(const char *subject) {
     GV_Identity id;
     memset(&id, 0, sizeof(id));
@@ -28,7 +27,6 @@ static int test_authz_create_destroy(void) {
 
     gv_authz_destroy(authz);
 
-    /* Destroying NULL should be safe */
     gv_authz_destroy(NULL);
     return 0;
 }

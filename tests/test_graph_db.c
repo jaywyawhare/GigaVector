@@ -13,7 +13,6 @@
         }                         \
     } while (0)
 
-/* Lifecycle */
 static int test_create_destroy(void) {
     GV_GraphDB *g = gv_graph_create(NULL);
     ASSERT(g != NULL, "create with NULL config");
@@ -21,7 +20,6 @@ static int test_create_destroy(void) {
     ASSERT(gv_graph_edge_count(g) == 0, "empty graph edge count");
     gv_graph_destroy(g);
 
-    /* Custom config */
     GV_GraphDBConfig cfg;
     gv_graph_config_init(&cfg);
     ASSERT(cfg.node_bucket_count == 4096, "default node buckets");
@@ -33,12 +31,10 @@ static int test_create_destroy(void) {
     ASSERT(g != NULL, "create with custom config");
     gv_graph_destroy(g);
 
-    /* Destroy NULL is safe */
     gv_graph_destroy(NULL);
     return 0;
 }
 
-/* Node Operations */
 static int test_add_get_nodes(void) {
     GV_GraphDB *g = gv_graph_create(NULL);
 
@@ -75,15 +71,12 @@ static int test_node_properties(void) {
     const char *age = gv_graph_get_node_prop(g, n, "age");
     ASSERT(age != NULL && strcmp(age, "30") == 0, "get prop age");
 
-    /* Overwrite */
     ASSERT(gv_graph_set_node_prop(g, n, "name", "Bob") == 0, "overwrite prop");
     name = gv_graph_get_node_prop(g, n, "name");
     ASSERT(name != NULL && strcmp(name, "Bob") == 0, "get overwritten prop");
 
-    /* Missing prop */
     ASSERT(gv_graph_get_node_prop(g, n, "email") == NULL, "get missing prop");
 
-    /* Invalid node */
     ASSERT(gv_graph_set_node_prop(g, 99999, "k", "v") != 0, "set prop on invalid node");
 
     gv_graph_destroy(g);
@@ -126,14 +119,12 @@ static int test_remove_node(void) {
     ASSERT(gv_graph_edge_count(g) == 0, "0 edges after cascade remove");
     ASSERT(gv_graph_get_node(g, n1) == NULL, "removed node gone");
 
-    /* Remove nonexistent */
     ASSERT(gv_graph_remove_node(g, 99999) != 0, "remove nonexistent");
 
     gv_graph_destroy(g);
     return 0;
 }
 
-/* Edge Operations */
 static int test_add_get_edges(void) {
     GV_GraphDB *g = gv_graph_create(NULL);
     uint64_t n1 = gv_graph_add_node(g, "A");
@@ -214,7 +205,6 @@ static int test_remove_edge(void) {
     return 0;
 }
 
-/* Traversal */
 static int test_bfs_dfs(void) {
     /*  1 -> 2 -> 3 -> 4
      *  |         ^
@@ -233,17 +223,14 @@ static int test_bfs_dfs(void) {
     gv_graph_add_edge(g, n1, n5, "E", 1.0f);
     gv_graph_add_edge(g, n5, n3, "E", 1.0f);
 
-    /* BFS from n1 should reach all 5 nodes */
     uint64_t visited[10];
     int n = gv_graph_bfs(g, n1, 10, visited, 10);
     ASSERT(n == 5, "BFS reaches all 5 nodes");
     ASSERT(visited[0] == n1, "BFS starts at n1");
 
-    /* BFS with depth 1 */
     n = gv_graph_bfs(g, n1, 1, visited, 10);
     ASSERT(n == 3, "BFS depth 1: n1, n2, n5");
 
-    /* DFS from n1 */
     n = gv_graph_dfs(g, n1, 10, visited, 10);
     ASSERT(n == 5, "DFS reaches all 5 nodes");
 
@@ -276,7 +263,6 @@ static int test_shortest_path(void) {
     ASSERT(path.node_ids[2] == n4, "path ends at n4");
     gv_graph_free_path(&path);
 
-    /* No path */
     uint64_t isolated = gv_graph_add_node(g, "Isolated");
     rc = gv_graph_shortest_path(g, n1, isolated, &path);
     ASSERT(rc != 0, "no path to isolated node");
@@ -285,7 +271,6 @@ static int test_shortest_path(void) {
     return 0;
 }
 
-/* Analytics */
 static int test_degree(void) {
     GV_GraphDB *g = gv_graph_create(NULL);
     uint64_t a = gv_graph_add_node(g, "A");
@@ -372,7 +357,6 @@ static int test_clustering_coefficient(void) {
     return 0;
 }
 
-/* Persistence */
 static int test_save_load(void) {
     const char *path = "/tmp/test_gv_graph.gvgr";
 
@@ -406,7 +390,6 @@ static int test_save_load(void) {
     return 0;
 }
 
-/* Main */
 typedef int (*test_fn)(void);
 typedef struct { const char *name; test_fn fn; } TestEntry;
 

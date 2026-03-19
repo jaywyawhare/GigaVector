@@ -7,7 +7,7 @@
 
 static int test_cache_config_init(void) {
     GV_CacheConfig config;
-    memset(&config, 0xFF, sizeof(config)); /* Fill with garbage */
+    memset(&config, 0xFF, sizeof(config));
     gv_cache_config_init(&config);
 
     ASSERT(config.max_entries > 0, "default max_entries is positive");
@@ -17,12 +17,10 @@ static int test_cache_config_init(void) {
 }
 
 static int test_cache_create_destroy(void) {
-    /* Create with defaults (NULL config) */
     GV_Cache *cache = gv_cache_create(NULL);
     ASSERT(cache != NULL, "cache creation with NULL config");
     gv_cache_destroy(cache);
 
-    /* Create with explicit config */
     GV_CacheConfig config;
     gv_cache_config_init(&config);
     config.max_entries = 64;
@@ -31,7 +29,6 @@ static int test_cache_create_destroy(void) {
     ASSERT(cache != NULL, "cache creation with explicit config");
     gv_cache_destroy(cache);
 
-    /* Destroy NULL is safe */
     gv_cache_destroy(NULL);
     return 0;
 }
@@ -47,11 +44,9 @@ static int test_cache_store_and_lookup(void) {
     size_t indices[3] = {10, 20, 30};
     float distances[3] = {0.1f, 0.5f, 1.0f};
 
-    /* Store a result */
     ASSERT(gv_cache_store(cache, query, 4, 3, 0, indices, distances, 3) == 0,
            "store cache entry");
 
-    /* Look up the same query */
     GV_CachedResult result;
     memset(&result, 0, sizeof(result));
     int hit = gv_cache_lookup(cache, query, 4, 3, 0, &result);
@@ -75,7 +70,6 @@ static int test_cache_miss(void) {
     GV_CachedResult result;
     memset(&result, 0, sizeof(result));
 
-    /* Lookup in empty cache should miss */
     int hit = gv_cache_lookup(cache, query, 4, 3, 0, &result);
     ASSERT(hit == 0, "cache miss on empty cache");
 
@@ -98,16 +92,13 @@ static int test_cache_invalidate_all(void) {
     gv_cache_store(cache, query1, 4, 1, 0, idx, dist, 1);
     gv_cache_store(cache, query2, 4, 1, 0, idx, dist, 1);
 
-    /* Both should be hits */
     GV_CachedResult result;
     memset(&result, 0, sizeof(result));
     ASSERT(gv_cache_lookup(cache, query1, 4, 1, 0, &result) == 1, "hit before invalidate");
     gv_cache_free_result(&result);
 
-    /* Invalidate everything */
     gv_cache_invalidate_all(cache);
 
-    /* Now both should miss */
     memset(&result, 0, sizeof(result));
     ASSERT(gv_cache_lookup(cache, query1, 4, 1, 0, &result) == 0, "miss after invalidate");
     memset(&result, 0, sizeof(result));
@@ -121,7 +112,7 @@ static int test_cache_mutation_invalidation(void) {
     GV_CacheConfig config;
     gv_cache_config_init(&config);
     config.ttl_seconds = 0;
-    config.invalidate_after_mutations = 3; /* Invalidate after 3 mutations */
+    config.invalidate_after_mutations = 3;
     GV_Cache *cache = gv_cache_create(&config);
     ASSERT(cache != NULL, "cache creation");
 
@@ -130,7 +121,6 @@ static int test_cache_mutation_invalidation(void) {
     float dist[1] = {0.2f};
     gv_cache_store(cache, query, 4, 1, 0, idx, dist, 1);
 
-    /* Two mutations: cache should still be valid */
     gv_cache_notify_mutation(cache);
     gv_cache_notify_mutation(cache);
 
@@ -140,7 +130,6 @@ static int test_cache_mutation_invalidation(void) {
     /* Might still be a hit (threshold not yet reached) */
     if (hit == 1) gv_cache_free_result(&result);
 
-    /* Third mutation should trigger invalidation */
     gv_cache_notify_mutation(cache);
 
     memset(&result, 0, sizeof(result));
@@ -160,7 +149,6 @@ static int test_cache_stats(void) {
     ASSERT(stats.hits == 0, "initial hits is 0");
     ASSERT(stats.misses == 0, "initial misses is 0");
 
-    /* Perform a miss */
     float query[4] = {1.0f, 2.0f, 3.0f, 4.0f};
     GV_CachedResult result;
     memset(&result, 0, sizeof(result));
@@ -169,7 +157,6 @@ static int test_cache_stats(void) {
     ASSERT(gv_cache_get_stats(cache, &stats) == 0, "get stats after miss");
     ASSERT(stats.misses == 1, "misses incremented to 1");
 
-    /* Store and then lookup for a hit */
     size_t idx[1] = {0};
     float dist[1] = {0.0f};
     gv_cache_store(cache, query, 4, 1, 0, idx, dist, 1);
@@ -180,7 +167,6 @@ static int test_cache_stats(void) {
     ASSERT(gv_cache_get_stats(cache, &stats) == 0, "get stats after hit");
     ASSERT(stats.hits == 1, "hits incremented to 1");
 
-    /* Reset stats */
     gv_cache_reset_stats(cache);
     ASSERT(gv_cache_get_stats(cache, &stats) == 0, "get stats after reset");
     ASSERT(stats.hits == 0, "hits reset to 0");
@@ -201,16 +187,13 @@ static int test_cache_different_params_no_hit(void) {
     size_t idx[2] = {0, 1};
     float dist[2] = {0.1f, 0.5f};
 
-    /* Store with k=2, distance_type=0 */
     gv_cache_store(cache, query, 4, 2, 0, idx, dist, 2);
 
-    /* Lookup with different k should miss */
     GV_CachedResult result;
     memset(&result, 0, sizeof(result));
     int hit = gv_cache_lookup(cache, query, 4, 5, 0, &result);
     ASSERT(hit == 0, "different k causes cache miss");
 
-    /* Lookup with different distance_type should miss */
     memset(&result, 0, sizeof(result));
     hit = gv_cache_lookup(cache, query, 4, 2, 1, &result);
     ASSERT(hit == 0, "different distance_type causes cache miss");

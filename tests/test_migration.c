@@ -5,11 +5,9 @@
 
 #define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while(0)
 
-/* test functions */
 static int test_migration_start_destroy(void) {
     float data[8] = {1.0f, 2.0f, 3.0f, 4.0f,
                       5.0f, 6.0f, 7.0f, 8.0f};
-    /* new_index_type=0 (KDTREE), no special config */
     GV_Migration *mig = gv_migration_start(data, 2, 4, 0, NULL);
     ASSERT(mig != NULL, "gv_migration_start returned NULL");
     gv_migration_destroy(mig);
@@ -62,7 +60,6 @@ static int test_migration_take_index(void) {
     gv_migration_wait(mig);
 
     void *idx = gv_migration_take_index(mig);
-    /* After completed migration, index should be non-NULL */
     ASSERT(idx != NULL, "take_index should return non-NULL after completion");
 
     /* Taking again should return NULL (ownership transferred) */
@@ -123,10 +120,8 @@ static int test_migration_progress(void) {
 }
 
 static int test_null_safety(void) {
-    /* Destroy NULL should be safe */
     gv_migration_destroy(NULL);
 
-    /* Start with NULL data and 0 count */
     GV_Migration *mig = gv_migration_start(NULL, 0, 4, 0, NULL);
     if (mig != NULL) {
         gv_migration_wait(mig);
@@ -134,8 +129,6 @@ static int test_null_safety(void) {
     }
     return 0;
 }
-
-/* harness */
 
 typedef int (*test_fn)(void);
 typedef struct { const char *name; test_fn fn; } TestCase;

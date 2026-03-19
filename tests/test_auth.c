@@ -5,7 +5,6 @@
 
 #define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while(0)
 
-/* ── Test: config init ─────────────────────────────────────────────────── */
 static int test_config_init(void) {
     GV_AuthConfig cfg;
     memset(&cfg, 0xFF, sizeof(cfg));
@@ -14,17 +13,14 @@ static int test_config_init(void) {
     return 0;
 }
 
-/* ── Test: create/destroy with NULL config ─────────────────────────────── */
 static int test_create_destroy_null(void) {
     GV_AuthManager *mgr = gv_auth_create(NULL);
     ASSERT(mgr != NULL, "auth manager creation with NULL config");
     gv_auth_destroy(mgr);
-    /* double-free safety */
     gv_auth_destroy(NULL);
     return 0;
 }
 
-/* ── Test: create with API key config ──────────────────────────────────── */
 static int test_create_api_key_config(void) {
     GV_AuthConfig cfg;
     gv_auth_config_init(&cfg);
@@ -36,7 +32,6 @@ static int test_create_api_key_config(void) {
     return 0;
 }
 
-/* ── Test: generate and verify API key ─────────────────────────────────── */
 static int test_generate_verify_api_key(void) {
     GV_AuthConfig cfg;
     gv_auth_config_init(&cfg);
@@ -52,7 +47,6 @@ static int test_generate_verify_api_key(void) {
     ASSERT(strlen(key_out) > 0, "generated key should be non-empty");
     ASSERT(strlen(key_id_out) > 0, "generated key_id should be non-empty");
 
-    /* Verify the generated key */
     GV_Identity identity;
     memset(&identity, 0, sizeof(identity));
     GV_AuthResult result = gv_auth_verify_api_key(mgr, key_out, &identity);
@@ -63,7 +57,6 @@ static int test_generate_verify_api_key(void) {
     return 0;
 }
 
-/* ── Test: revoke API key ──────────────────────────────────────────────── */
 static int test_revoke_api_key(void) {
     GV_AuthConfig cfg;
     gv_auth_config_init(&cfg);
@@ -80,7 +73,6 @@ static int test_revoke_api_key(void) {
     rc = gv_auth_revoke_api_key(mgr, key_id_out);
     ASSERT(rc == 0, "revoke API key");
 
-    /* Verify revoked key is rejected */
     GV_Identity identity;
     memset(&identity, 0, sizeof(identity));
     GV_AuthResult result = gv_auth_verify_api_key(mgr, key_out, &identity);
@@ -91,7 +83,6 @@ static int test_revoke_api_key(void) {
     return 0;
 }
 
-/* ── Test: list API keys ───────────────────────────────────────────────── */
 static int test_list_api_keys(void) {
     GV_AuthConfig cfg;
     gv_auth_config_init(&cfg);
@@ -115,7 +106,6 @@ static int test_list_api_keys(void) {
     return 0;
 }
 
-/* ── Test: SHA-256 and hex conversion ──────────────────────────────────── */
 static int test_sha256_and_hex(void) {
     const char *data = "hello";
     unsigned char hash[32];
@@ -126,14 +116,12 @@ static int test_sha256_and_hex(void) {
     gv_auth_to_hex(hash, 32, hex);
     ASSERT(strlen(hex) == 64, "hex output should be 64 characters");
 
-    /* SHA-256("hello") is well-known */
     ASSERT(strncmp(hex, "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824", 64) == 0,
            "sha256 of 'hello' should match known value");
 
     return 0;
 }
 
-/* ── Test: auth result strings ─────────────────────────────────────────── */
 static int test_auth_result_string(void) {
     const char *s;
 
@@ -151,8 +139,6 @@ static int test_auth_result_string(void) {
 
     return 0;
 }
-
-/* ── Main ──────────────────────────────────────────────────────────────── */
 
 typedef int (*test_fn)(void);
 typedef struct { const char *name; test_fn fn; } TestCase;

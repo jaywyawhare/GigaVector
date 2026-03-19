@@ -6,12 +6,10 @@
 #define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while(0)
 
 static int test_dedup_create_destroy(void) {
-    /* Create with default config */
     GV_DedupIndex *dedup = gv_dedup_create(4, NULL);
     ASSERT(dedup != NULL, "dedup creation with dim=4, default config");
     gv_dedup_destroy(dedup);
 
-    /* Create with explicit config */
     GV_DedupConfig cfg = {
         .epsilon = 0.5f,
         .num_hash_tables = 4,
@@ -22,7 +20,6 @@ static int test_dedup_create_destroy(void) {
     ASSERT(dedup != NULL, "dedup creation with explicit config");
     gv_dedup_destroy(dedup);
 
-    /* Destroy NULL should be safe */
     gv_dedup_destroy(NULL);
     return 0;
 }
@@ -37,7 +34,6 @@ static int test_dedup_insert_unique(void) {
     float v3[4] = {0.0f, 0.0f, 1.0f, 0.0f};
     float v4[4] = {0.0f, 0.0f, 0.0f, 1.0f};
 
-    /* All distinct vectors should be inserted (return 0) */
     ASSERT(gv_dedup_insert(dedup, v1, 4) == 0, "insert v1 (unique)");
     ASSERT(gv_dedup_insert(dedup, v2, 4) == 0, "insert v2 (unique)");
     ASSERT(gv_dedup_insert(dedup, v3, 4) == 0, "insert v3 (unique)");
@@ -57,12 +53,10 @@ static int test_dedup_insert_duplicate(void) {
     float v1[4] = {1.0f, 2.0f, 3.0f, 4.0f};
     ASSERT(gv_dedup_insert(dedup, v1, 4) == 0, "insert v1");
 
-    /* Insert an exact duplicate */
     int result = gv_dedup_insert(dedup, v1, 4);
     ASSERT(result == 1, "inserting exact duplicate returns 1");
     ASSERT(gv_dedup_count(dedup) == 1, "count remains 1 (duplicate not added)");
 
-    /* Insert a near-duplicate (within epsilon=0.5) */
     float v1_near[4] = {1.01f, 2.01f, 3.01f, 4.01f};
     result = gv_dedup_insert(dedup, v1_near, 4);
     /* Should be detected as duplicate since L2 distance is very small */
@@ -82,11 +76,9 @@ static int test_dedup_check(void) {
     gv_dedup_insert(dedup, v1, 4);
     gv_dedup_insert(dedup, v2, 4);
 
-    /* Check for an exact match of v1 */
     int idx = gv_dedup_check(dedup, v1, 4);
     ASSERT(idx >= 0, "check finds existing duplicate of v1");
 
-    /* Check for a vector that is far from everything */
     float far[4] = {100.0f, 100.0f, 100.0f, 100.0f};
     idx = gv_dedup_check(dedup, far, 4);
     ASSERT(idx == -1, "check returns -1 for unique distant vector");
@@ -100,10 +92,9 @@ static int test_dedup_scan(void) {
     GV_DedupIndex *dedup = gv_dedup_create(4, &cfg);
     ASSERT(dedup != NULL, "dedup creation");
 
-    /* Insert vectors: v1 and v3 are very close to each other */
     float v1[4] = {1.0f, 0.0f, 0.0f, 0.0f};
-    float v2[4] = {0.0f, 10.0f, 0.0f, 0.0f};  /* far from v1 */
-    float v3[4] = {1.0f, 0.01f, 0.0f, 0.0f};   /* near v1 */
+    float v2[4] = {0.0f, 10.0f, 0.0f, 0.0f};
+    float v3[4] = {1.0f, 0.01f, 0.0f, 0.0f};
 
     gv_dedup_insert(dedup, v1, 4);
     gv_dedup_insert(dedup, v2, 4);
@@ -114,7 +105,6 @@ static int test_dedup_scan(void) {
     int n = gv_dedup_scan(dedup, results, 10);
     ASSERT(n >= 0, "scan did not return error");
 
-    /* If duplicates found, check fields are reasonable */
     for (int i = 0; i < n; i++) {
         ASSERT(results[i].distance >= 0.0f, "duplicate distance is non-negative");
     }

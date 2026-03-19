@@ -18,7 +18,6 @@ static void fill_vector(float *vec, size_t dim, float seed) {
     }
 }
 
-/* 1. test_hnsw_inline_create_destroy */
 static int test_hnsw_inline_create_destroy(void) {
     GV_HNSWInlineConfig config;
     config.quant_bits = 8;
@@ -33,9 +32,7 @@ static int test_hnsw_inline_create_destroy(void) {
     return 0;
 }
 
-/* 2. test_hnsw_inline_create_defaults */
 static int test_hnsw_inline_create_defaults(void) {
-    /* NULL config should use defaults */
     GV_HNSWInlineIndex *idx = gv_hnsw_inline_create(DIM, MAX_ELEMENTS,
                                                       M_PARAM, EF_CONSTRUCT, NULL);
     ASSERT(idx != NULL, "create with NULL config returned NULL");
@@ -46,7 +43,6 @@ static int test_hnsw_inline_create_defaults(void) {
     return 0;
 }
 
-/* 3. test_hnsw_inline_insert_count */
 static int test_hnsw_inline_insert_count(void) {
     GV_HNSWInlineIndex *idx = gv_hnsw_inline_create(DIM, MAX_ELEMENTS,
                                                       M_PARAM, EF_CONSTRUCT, NULL);
@@ -66,7 +62,6 @@ static int test_hnsw_inline_insert_count(void) {
     return 0;
 }
 
-/* 4. test_hnsw_inline_search */
 static int test_hnsw_inline_search(void) {
     GV_HNSWInlineIndex *idx = gv_hnsw_inline_create(DIM, MAX_ELEMENTS,
                                                       M_PARAM, EF_CONSTRUCT, NULL);
@@ -78,7 +73,6 @@ static int test_hnsw_inline_search(void) {
         ASSERT(gv_hnsw_inline_insert(idx, vec, i) == 0, "insert failed");
     }
 
-    /* Query with the first inserted vector - should find itself */
     float query[DIM];
     fill_vector(query, DIM, 0.0f);
 
@@ -87,7 +81,6 @@ static int test_hnsw_inline_search(void) {
     int found = gv_hnsw_inline_search(idx, query, 5, 32, labels, distances);
     ASSERT(found > 0, "search returned no results");
 
-    /* The nearest neighbor should be the vector itself (label 0) */
     ASSERT(labels[0] == 0, "nearest neighbor should be label 0");
     ASSERT(distances[0] < 0.001f, "distance to self should be near zero");
 
@@ -95,7 +88,6 @@ static int test_hnsw_inline_search(void) {
     return 0;
 }
 
-/* 5. test_hnsw_inline_search_ordering */
 static int test_hnsw_inline_search_ordering(void) {
     GV_HNSWInlineIndex *idx = gv_hnsw_inline_create(DIM, MAX_ELEMENTS,
                                                       M_PARAM, EF_CONSTRUCT, NULL);
@@ -115,7 +107,6 @@ static int test_hnsw_inline_search_ordering(void) {
     int found = gv_hnsw_inline_search(idx, query, 10, 64, labels, distances);
     ASSERT(found > 1, "need at least 2 results for ordering check");
 
-    /* Results should be sorted by ascending distance */
     for (int i = 1; i < found; i++) {
         ASSERT(distances[i] >= distances[i - 1],
                "results should be sorted by ascending distance");
@@ -125,7 +116,6 @@ static int test_hnsw_inline_search_ordering(void) {
     return 0;
 }
 
-/* 6. test_hnsw_inline_rebuild */
 static int test_hnsw_inline_rebuild(void) {
     GV_HNSWInlineIndex *idx = gv_hnsw_inline_create(DIM, MAX_ELEMENTS,
                                                       M_PARAM, EF_CONSTRUCT, NULL);
@@ -137,7 +127,6 @@ static int test_hnsw_inline_rebuild(void) {
         ASSERT(gv_hnsw_inline_insert(idx, vec, i) == 0, "insert failed");
     }
 
-    /* Rebuild synchronously with defaults */
     GV_HNSWRebuildConfig rconfig;
     rconfig.connectivity_ratio = 0.8f;
     rconfig.batch_size = 1000;
@@ -156,7 +145,6 @@ static int test_hnsw_inline_rebuild(void) {
     return 0;
 }
 
-/* 7. test_hnsw_inline_4bit_quant */
 static int test_hnsw_inline_4bit_quant(void) {
     GV_HNSWInlineConfig config;
     config.quant_bits = 4;
@@ -185,14 +173,11 @@ static int test_hnsw_inline_4bit_quant(void) {
     return 0;
 }
 
-/* 8. test_hnsw_inline_destroy_null */
 static int test_hnsw_inline_destroy_null(void) {
-    /* Should be safe to call with NULL */
     gv_hnsw_inline_destroy(NULL);
     return 0;
 }
 
-/* main */
 typedef int (*test_fn)(void);
 typedef struct { const char *name; test_fn fn; } TestCase;
 

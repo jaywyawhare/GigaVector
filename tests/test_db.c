@@ -42,7 +42,6 @@ static int test_save_load_and_wal(void) {
     remove(path);
     remove(wal_path);
 
-    // create with WAL
     GV_Database *db = gv_db_open(path, 2, GV_INDEX_TYPE_KDTREE);
     ASSERT(db != NULL, "open with path");
     ASSERT(gv_db_set_wal(db, wal_path) == 0, "enable wal");
@@ -52,7 +51,6 @@ static int test_save_load_and_wal(void) {
     ASSERT(gv_db_save(db, NULL) == 0, "save");
     gv_db_close(db);
 
-    // reload and replay WAL
     GV_Database *db2 = gv_db_open(path, 2, GV_INDEX_TYPE_KDTREE);
     ASSERT(db2 != NULL, "reopen");
     float q[2] = {0.1f, 0.2f};

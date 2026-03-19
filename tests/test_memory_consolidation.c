@@ -37,7 +37,6 @@ static void cleanup(GV_MemoryLayer *layer, GV_Database *db) {
     gv_db_close(db);
 }
 
-/* Test 1: Find similar with empty layer (0 pairs) */
 static int test_find_similar_empty(void) {
     GV_Database *db;
     GV_MemoryLayer *layer = create_test_layer(&db);
@@ -55,16 +54,13 @@ static int test_find_similar_empty(void) {
     return 0;
 }
 
-/* Test 2: Add memories then find similar pairs */
 static int test_find_similar_with_data(void) {
     GV_Database *db;
     GV_MemoryLayer *layer = create_test_layer(&db);
     ASSERT(layer != NULL, "memory layer creation");
 
-    /* Add two very similar memories */
     float emb1[DIM] = {1.0f, 0.0f, 0.0f, 0.0f};
     float emb2[DIM] = {0.99f, 0.01f, 0.0f, 0.0f};
-    /* Add one dissimilar memory */
     float emb3[DIM] = {0.0f, 0.0f, 0.0f, 1.0f};
 
     GV_MemoryMetadata meta1;
@@ -86,10 +82,8 @@ static int test_find_similar_with_data(void) {
     memset(pairs, 0, sizeof(pairs));
     size_t actual_count = 0;
 
-    /* Low threshold should find at least the similar pair */
     int ret = gv_memory_find_similar(layer, 0.1, pairs, 10, &actual_count);
     ASSERT(ret == 0, "find_similar should succeed");
-    /* Actual count depends on implementation; at minimum check it does not error */
 
     gv_memory_pairs_free(pairs, actual_count);
     free(id1);
@@ -99,7 +93,6 @@ static int test_find_similar_with_data(void) {
     return 0;
 }
 
-/* Test 3: Merge two memories */
 static int test_memory_merge(void) {
     GV_Database *db;
     GV_MemoryLayer *layer = create_test_layer(&db);
@@ -115,9 +108,7 @@ static int test_memory_merge(void) {
     ASSERT(id2 != NULL, "add memory 2");
 
     char *merged_id = gv_memory_merge(layer, id1, id2);
-    /* Merge may return a new ID or NULL depending on implementation */
     if (merged_id != NULL) {
-        /* Verify the merged memory exists */
         GV_MemoryResult result;
         int ret = gv_memory_get(layer, merged_id, &result);
         if (ret == 0) {
@@ -133,21 +124,18 @@ static int test_memory_merge(void) {
     return 0;
 }
 
-/* Test 4: Merge with invalid IDs */
 static int test_memory_merge_invalid(void) {
     GV_Database *db;
     GV_MemoryLayer *layer = create_test_layer(&db);
     ASSERT(layer != NULL, "memory layer creation");
 
     char *result = gv_memory_merge(layer, "nonexistent-1", "nonexistent-2");
-    /* Should return NULL for non-existent IDs */
     ASSERT(result == NULL, "merge with invalid IDs should return NULL");
 
     cleanup(layer, db);
     return 0;
 }
 
-/* Test 5: Link two memories */
 static int test_memory_link(void) {
     GV_Database *db;
     GV_MemoryLayer *layer = create_test_layer(&db);
@@ -171,7 +159,6 @@ static int test_memory_link(void) {
     return 0;
 }
 
-/* Test 6: Link with invalid IDs */
 static int test_memory_link_invalid(void) {
     GV_Database *db;
     GV_MemoryLayer *layer = create_test_layer(&db);
@@ -184,7 +171,6 @@ static int test_memory_link_invalid(void) {
     return 0;
 }
 
-/* Test 7: Archive a memory */
 static int test_memory_archive(void) {
     GV_Database *db;
     GV_MemoryLayer *layer = create_test_layer(&db);
@@ -202,7 +188,6 @@ static int test_memory_archive(void) {
     return 0;
 }
 
-/* Test 8: Archive with invalid ID */
 static int test_memory_archive_invalid(void) {
     GV_Database *db;
     GV_MemoryLayer *layer = create_test_layer(&db);
@@ -215,25 +200,20 @@ static int test_memory_archive_invalid(void) {
     return 0;
 }
 
-/* Test 9: Free pairs with NULL */
 static int test_memory_pairs_free_null(void) {
     gv_memory_pairs_free(NULL, 0);
     gv_memory_pairs_free(NULL, 5);
     gv_memory_pair_free(NULL);
-    /* Should not crash */
     return 0;
 }
 
-/* Test 10: Free pairs with empty array */
 static int test_memory_pairs_free_empty(void) {
     GV_MemoryPair pairs[3];
     memset(pairs, 0, sizeof(pairs));
     gv_memory_pairs_free(pairs, 0);
-    /* Should not crash */
     return 0;
 }
 
-/* Test 11: Consolidate pair with strategy */
 static int test_consolidate_pair(void) {
     GV_Database *db;
     GV_MemoryLayer *layer = create_test_layer(&db);
@@ -249,7 +229,6 @@ static int test_consolidate_pair(void) {
     ASSERT(id2 != NULL, "add memory 2");
 
     char *consolidated = gv_memory_consolidate_pair(layer, id1, id2, GV_CONSOLIDATION_MERGE);
-    /* May return new ID or NULL depending on implementation */
     if (consolidated != NULL) {
         free(consolidated);
     }
@@ -260,7 +239,6 @@ static int test_consolidate_pair(void) {
     return 0;
 }
 
-/* Test 12: Update from new memory */
 static int test_memory_update_from_new(void) {
     GV_Database *db;
     GV_MemoryLayer *layer = create_test_layer(&db);
@@ -276,7 +254,6 @@ static int test_memory_update_from_new(void) {
     ASSERT(id2 != NULL, "add memory 2");
 
     int ret = gv_memory_update_from_new(layer, id1, id2);
-    /* Return code depends on implementation */
     (void)ret;
 
     free(id1);
@@ -285,7 +262,6 @@ static int test_memory_update_from_new(void) {
     return 0;
 }
 
-/* Test 13: Find similar with high threshold (no pairs expected) */
 static int test_find_similar_high_threshold(void) {
     GV_Database *db;
     GV_MemoryLayer *layer = create_test_layer(&db);
@@ -304,11 +280,9 @@ static int test_find_similar_high_threshold(void) {
     memset(pairs, 0, sizeof(pairs));
     size_t actual_count = 0;
 
-    /* Very high threshold should find few or no pairs for orthogonal vectors */
     int ret = gv_memory_find_similar(layer, 0.99, pairs, 10, &actual_count);
     ASSERT(ret == 0, "find_similar with high threshold should succeed");
-    /* actual_count should be small for very dissimilar memories */
-    (void)actual_count; /* implementation-dependent */
+    (void)actual_count;
 
     gv_memory_pairs_free(pairs, actual_count);
     free(id1);
