@@ -6,8 +6,6 @@
 
 #include "gigavector/gv_bloom.h"
 
-/* Internal Bloom filter structure */
-
 struct GV_BloomFilter {
     uint8_t *bits;           /* Bit array (packed, 1 bit per position). */
     size_t   num_bits;       /* Total number of bits (m). */
@@ -15,8 +13,6 @@ struct GV_BloomFilter {
     size_t   count;          /* Number of items inserted so far. */
     double   target_fp_rate; /* Desired false-positive probability. */
 };
-
-/* FNV-1a 64-bit hash */
 
 #define FNV_OFFSET_BASIS UINT64_C(14695981039346656037)
 #define FNV_PRIME        UINT64_C(1099511628211)
@@ -34,8 +30,6 @@ static uint64_t fnv1a_64(const void *data, size_t len)
     }
     return hash;
 }
-
-/* Double-hashing helpers */
 
 /**
  * @brief Derive two independent 32-bit hashes from a single FNV-1a
@@ -58,8 +52,6 @@ static size_t bloom_hash_i(uint32_t h1, uint32_t h2, size_t i, size_t m)
     return ((size_t)h1 + i * (size_t)h2) % m;
 }
 
-/* Bit manipulation helpers */
-
 static void bit_set(uint8_t *bits, size_t pos)
 {
     bits[pos / 8] |= (uint8_t)(1U << (pos % 8));
@@ -69,8 +61,6 @@ static int bit_get(const uint8_t *bits, size_t pos)
 {
     return (bits[pos / 8] >> (pos % 8)) & 1;
 }
-
-/* Optimal sizing helpers */
 
 /**
  * @brief Compute optimal number of bits (m).
@@ -110,8 +100,6 @@ static size_t bloom_optimal_hashes(size_t m, size_t n)
     return (size_t)round(k);
 }
 
-/* Public API */
-
 GV_BloomFilter *gv_bloom_create(size_t expected_items, double fp_rate)
 {
     GV_BloomFilter *bf = (GV_BloomFilter *)calloc(1, sizeof(GV_BloomFilter));
@@ -124,7 +112,6 @@ GV_BloomFilter *gv_bloom_create(size_t expected_items, double fp_rate)
     bf->num_hashes     = bloom_optimal_hashes(bf->num_bits, expected_items);
     bf->count          = 0;
 
-    /* Allocate the byte array (ceil(num_bits / 8)). */
     size_t byte_count = (bf->num_bits + 7) / 8;
     bf->bits = (uint8_t *)calloc(byte_count, 1);
     if (bf->bits == NULL) {
@@ -230,8 +217,6 @@ void gv_bloom_clear(GV_BloomFilter *bf)
     bf->count = 0;
 }
 
-/* Serialization helpers */
-
 static int write_size(FILE *out, size_t v)
 {
     return (fwrite(&v, sizeof(size_t), 1, out) == 1) ? 0 : -1;
@@ -251,8 +236,6 @@ static int read_double(FILE *in, double *v)
 {
     return (v != NULL && fread(v, sizeof(double), 1, in) == 1) ? 0 : -1;
 }
-
-/* Save / Load */
 
 int gv_bloom_save(const GV_BloomFilter *bf, FILE *out)
 {
@@ -337,8 +320,6 @@ int gv_bloom_load(GV_BloomFilter **bf_ptr, FILE *in)
     *bf_ptr = bf;
     return 0;
 }
-
-/* Merge */
 
 GV_BloomFilter *gv_bloom_merge(const GV_BloomFilter *a, const GV_BloomFilter *b)
 {

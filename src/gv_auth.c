@@ -422,29 +422,201 @@ GV_AuthResult gv_auth_verify_api_key(GV_AuthManager *auth, const char *api_key,
     return GV_AUTH_INVALID_KEY;
 }
 
+/* Base64 URL decoding for JWT verification */
+static int b64url_decode_val(char c) {
+    if (c >= 'A' && c <= 'Z') return c - 'A';
+    if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+    if (c >= '0' && c <= '9') return c - '0' + 52;
+    if (c == '-') return 62;
+    if (c == '_') return 63;
+    return -1;
+}
+
+static int base64url_decode(const char *in, size_t in_len,
+                            unsigned char *out, size_t *out_len) {
+    if (!in || !out || !out_len) return -1;
+    /* Strip padding */
+    while (in_len > 0 && in[in_len - 1] == '=') in_len--;
+
+    size_t j = 0, i = 0;
+    while (i < in_len) {
+        int sextet[4] = {0, 0, 0, 0};
+        size_t n = 0;
+        for (n = 0; n < 4 && i < in_len; n++, i++) {
+            sextet[n] = b64url_decode_val(in[i]);
+            if (sextet[n] < 0) return -1;
+        }
+        uint32_t triple = ((uint32_t)sextet[0] << 18) | ((uint32_t)sextet[1] << 12) |
+                          ((uint32_t)sextet[2] << 6) | (uint32_t)sextet[3];
+        if (n >= 2) out[j++] = (unsigned char)((triple >> 16) & 0xFF);
+        if (n >= 3) out[j++] = (unsigned char)((triple >> 8) & 0xFF);
+        if (n >= 4) out[j++] = (unsigned char)(triple & 0xFF);
+    }
+    *out_len = j;
+    return 0;
+}
+
+/* Minimal JSON string extraction for JWT claims */
+static int jwt_extract_string(const char *json, const char *key, char *out, size_t out_size) {
+    char pattern[128];
+    snprintf(pattern, sizeof(pattern), "\"%s\"", key);
+    const char *pos = strstr(json, pattern);
+    if (!pos) return -1;
+    pos += strlen(pattern);
+    while (*pos == ' ' || *pos == ':') pos++;
+    if (*pos != '"') return -1;
+    pos++;
+    size_t i = 0;
+    while (*pos && *pos != '"' && i < out_size - 1) {
+        out[i++] = *pos++;
+    }
+    out[i] = '\0';
+    return 0;
+}
+
+static int jwt_extract_uint64(const char *json, const char *key, uint64_t *out) {
+    char pattern[128];
+    snprintf(pattern, sizeof(pattern), "\"%s\"", key);
+    const char *pos = strstr(json, pattern);
+    if (!pos) return -1;
+    pos += strlen(pattern);
+    while (*pos == ' ' || *pos == ':') pos++;
+    if (*pos < '0' || *pos > '9') return -1;
+    *out = (uint64_t)strtoull(pos, NULL, 10);
+    return 0;
+}
+
 GV_AuthResult gv_auth_verify_jwt(GV_AuthManager *auth, const char *token,
                                   GV_Identity *identity) {
     if (!auth || !token) return GV_AUTH_MISSING;
 
-    /* Minimal JWT validation (header.payload.signature) */
+    /* JWT has three dot-separated segments: header.payload.signature */
     const char *dot1 = strchr(token, '.');
     if (!dot1) return GV_AUTH_INVALID_FORMAT;
 
     const char *dot2 = strchr(dot1 + 1, '.');
     if (!dot2) return GV_AUTH_INVALID_FORMAT;
 
-    /* For now, just check format - full JWT validation requires more code */
-    /* In production, use a proper JWT library */
-
     if (auth->config.jwt.secret == NULL) {
         return GV_AUTH_INVALID_SIGNATURE;
     }
 
-    /* Placeholder: accept any well-formed JWT when secret is set */
+    /* Verify HMAC-SHA256 signature */
+    size_t signed_len = (size_t)(dot2 - token);
+
+    /* Compute expected signature */
+    unsigned char key_ipad[64], key_opad[64];
+    memset(key_ipad, 0x36, 64);
+    memset(key_opad, 0x5c, 64);
+
+    size_t secret_len = auth->config.jwt.secret_len;
+    if (secret_len == 0) secret_len = strlen(auth->config.jwt.secret);
+
+    for (size_t i = 0; i < secret_len && i < 64; i++) {
+        key_ipad[i] ^= ((unsigned char *)auth->config.jwt.secret)[i];
+        key_opad[i] ^= ((unsigned char *)auth->config.jwt.secret)[i];
+    }
+
+    unsigned char inner_hash[32];
+    SHA256_CTX ctx;
+    sha256_init(&ctx);
+    sha256_update(&ctx, key_ipad, 64);
+    sha256_update(&ctx, (const uint8_t *)token, signed_len);
+    sha256_final(&ctx, inner_hash);
+
+    unsigned char expected_sig[32];
+    sha256_init(&ctx);
+    sha256_update(&ctx, key_opad, 64);
+    sha256_update(&ctx, inner_hash, 32);
+    sha256_final(&ctx, expected_sig);
+
+    /* Decode actual signature from token */
+    const char *sig_start = dot2 + 1;
+    size_t sig_b64_len = strlen(sig_start);
+    unsigned char actual_sig[64];
+    size_t actual_sig_len = sizeof(actual_sig);
+
+    if (base64url_decode(sig_start, sig_b64_len, actual_sig, &actual_sig_len) != 0) {
+        return GV_AUTH_INVALID_FORMAT;
+    }
+
+    if (actual_sig_len != 32) {
+        return GV_AUTH_INVALID_SIGNATURE;
+    }
+
+    /* Constant-time comparison */
+    unsigned char diff = 0;
+    for (size_t i = 0; i < 32; i++) {
+        diff |= actual_sig[i] ^ expected_sig[i];
+    }
+    if (diff != 0) {
+        return GV_AUTH_INVALID_SIGNATURE;
+    }
+
+    /* Decode payload to extract claims */
+    const char *payload_start = dot1 + 1;
+    size_t payload_b64_len = (size_t)(dot2 - payload_start);
+
+    unsigned char decoded[4096];
+    size_t decoded_len = sizeof(decoded);
+    if (base64url_decode(payload_start, payload_b64_len, decoded, &decoded_len) != 0) {
+        return GV_AUTH_INVALID_FORMAT;
+    }
+    if (decoded_len >= sizeof(decoded)) decoded_len = sizeof(decoded) - 1;
+    decoded[decoded_len] = '\0';
+
+    const char *payload_json = (const char *)decoded;
+
+    /* Check expiration */
+    uint64_t exp_time = 0;
+    if (jwt_extract_uint64(payload_json, "exp", &exp_time) == 0) {
+        uint64_t now = (uint64_t)time(NULL);
+        uint64_t skew = auth->config.jwt.clock_skew_seconds > 0
+                        ? auth->config.jwt.clock_skew_seconds : 60;
+        if (exp_time + skew < now) {
+            return GV_AUTH_EXPIRED;
+        }
+    }
+
+    /* Check issuer if configured */
+    if (auth->config.jwt.issuer) {
+        char iss[256] = {0};
+        if (jwt_extract_string(payload_json, "iss", iss, sizeof(iss)) == 0) {
+            if (strcmp(iss, auth->config.jwt.issuer) != 0) {
+                return GV_AUTH_INVALID_SIGNATURE;
+            }
+        }
+    }
+
+    /* Check audience if configured */
+    if (auth->config.jwt.audience) {
+        char aud[256] = {0};
+        if (jwt_extract_string(payload_json, "aud", aud, sizeof(aud)) == 0) {
+            if (strcmp(aud, auth->config.jwt.audience) != 0) {
+                return GV_AUTH_INVALID_SIGNATURE;
+            }
+        }
+    }
+
+    /* Populate identity */
     if (identity) {
         memset(identity, 0, sizeof(*identity));
-        identity->subject = strdup("jwt-user");
-        identity->auth_time = (uint64_t)time(NULL);
+
+        char sub[256] = {0};
+        if (jwt_extract_string(payload_json, "sub", sub, sizeof(sub)) == 0) {
+            identity->subject = strdup(sub);
+        } else {
+            identity->subject = strdup("unknown");
+        }
+
+        uint64_t iat = 0;
+        if (jwt_extract_uint64(payload_json, "iat", &iat) == 0) {
+            identity->auth_time = iat;
+        } else {
+            identity->auth_time = (uint64_t)time(NULL);
+        }
+
+        identity->expires_at = exp_time;
     }
 
     return GV_AUTH_SUCCESS;

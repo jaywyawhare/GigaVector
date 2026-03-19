@@ -24,8 +24,6 @@
 #include <time.h>
 #include <signal.h>
 
-/* Platform Helpers */
-
 #if defined(__STDC_NO_ATOMICS__)
 #define GV_ATOMIC_INC(ptr)   do { __sync_fetch_and_add((ptr), 1); } while (0)
 #define GV_ATOMIC_DEC(ptr)   do { __sync_fetch_and_sub((ptr), 1); } while (0)
@@ -44,8 +42,6 @@ static uint64_t gv_grpc_now_us(void) {
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (uint64_t)ts.tv_sec * 1000000ULL + (uint64_t)ts.tv_nsec / 1000ULL;
 }
-
-/* Big-Endian Encoding/Decoding */
 
 static void write_u32_be(uint8_t *buf, uint32_t val) {
     buf[0] = (uint8_t)(val >> 24);
@@ -74,8 +70,6 @@ static float read_float_be(const uint8_t *buf) {
     return val;
 }
 
-/* Thread Pool */
-
 typedef struct GV_GrpcTask {
     int client_fd;
     struct GV_GrpcTask *next;
@@ -96,8 +90,6 @@ typedef struct {
     /* Back-pointer to server for handler access */
     struct GV_GrpcServer *server;
 } GV_ThreadPool;
-
-/* Internal Server Structure */
 
 struct GV_GrpcServer {
     GV_Database *db;
@@ -125,8 +117,6 @@ struct GV_GrpcServer {
     pthread_mutex_t stats_mutex;
 };
 
-/* Default Configuration */
-
 static const GV_GrpcConfig DEFAULT_GRPC_CONFIG = {
     .port = 50051,
     .bind_address = "0.0.0.0",
@@ -141,8 +131,6 @@ void gv_grpc_config_init(GV_GrpcConfig *config) {
     *config = DEFAULT_GRPC_CONFIG;
 }
 
-/* Error Strings */
-
 const char *gv_grpc_error_string(int error) {
     switch (error) {
         case GV_GRPC_OK:            return "Success";
@@ -156,8 +144,6 @@ const char *gv_grpc_error_string(int error) {
         default:                    return "Unknown error";
     }
 }
-
-/* Socket I/O Helpers */
 
 /**
  * @brief Read exactly @p len bytes from @p fd into @p buf.
@@ -256,7 +242,6 @@ static int send_error_response(int fd, uint32_t request_id, int32_t error_code,
     uint8_t *payload = malloc(payload_len);
     if (!payload) return -1;
 
-    /* Store error code as big-endian signed 32 */
     write_u32_be(payload, (uint32_t)error_code);
     if (msg_len > 0) {
         memcpy(payload + 4, error_msg, msg_len);
@@ -266,8 +251,6 @@ static int send_error_response(int fd, uint32_t request_id, int32_t error_code,
     free(payload);
     return rc;
 }
-
-/* Request Handlers */
 
 /**
  * @brief Handle GV_MSG_ADD_VECTOR.
@@ -291,7 +274,6 @@ static void handle_add_vector(GV_GrpcServer *server, int fd,
         return;
     }
 
-    /* Decode floats from big-endian */
     float *vec = malloc(dimension * sizeof(float));
     if (!vec) {
         send_error_response(fd, msg->request_id, -1, "out of memory");
@@ -368,7 +350,6 @@ static void handle_search(GV_GrpcServer *server, int fd,
         return;
     }
 
-    /* Build response: [4-byte count][for each: 4-byte index, 4-byte distance] */
     size_t resp_len = 4 + (size_t)found * 8;
     uint8_t *resp = malloc(resp_len);
     if (!resp) {
@@ -623,8 +604,7 @@ static void handle_batch_search(GV_GrpcServer *server, int fd,
         return;
     }
 
-    /* Response: [4-byte qcount][per query: 4-byte k_found, k_found * (4+4)] */
-    /* For simplicity, each query returns exactly k results (padding with zeros if fewer) */
+    /* Each query returns exactly k results (padding with zeros if fewer) */
     size_t resp_len = 4 + (size_t)qcount * (4 + (size_t)k * 8);
     uint8_t *resp = malloc(resp_len);
     if (!resp) {
@@ -668,16 +648,12 @@ static void handle_stats(GV_GrpcServer *server, int fd,
     size_t dim = gv_database_dimension(server->db);
 
     uint8_t resp[32];
-    /* total_inserts as 2x u32 (high, low) */
     write_u32_be(resp + 0, (uint32_t)(db_stats.total_inserts >> 32));
     write_u32_be(resp + 4, (uint32_t)(db_stats.total_inserts & 0xFFFFFFFF));
-    /* total_queries */
     write_u32_be(resp + 8, (uint32_t)(db_stats.total_queries >> 32));
     write_u32_be(resp + 12, (uint32_t)(db_stats.total_queries & 0xFFFFFFFF));
-    /* count */
     write_u32_be(resp + 16, (uint32_t)((uint64_t)count >> 32));
     write_u32_be(resp + 20, (uint32_t)((uint64_t)count & 0xFFFFFFFF));
-    /* dimension */
     write_u32_be(resp + 24, (uint32_t)((uint64_t)dim >> 32));
     write_u32_be(resp + 28, (uint32_t)((uint64_t)dim & 0xFFFFFFFF));
 
@@ -730,8 +706,6 @@ static void handle_save(GV_GrpcServer *server, int fd,
         GV_ATOMIC_INC(&server->errors);
     }
 }
-
-/* Connection Handler */
 
 /**
  * @brief Process one client connection: read messages in a loop until
@@ -822,7 +796,6 @@ static void *worker_thread_func(void *arg) {
             break;
         }
 
-        /* Dequeue a task */
         GV_GrpcTask *task = pool->queue_head;
         pool->queue_head = task->next;
         if (pool->queue_head == NULL) {
@@ -832,7 +805,6 @@ static void *worker_thread_func(void *arg) {
 
         pthread_mutex_unlock(&pool->mutex);
 
-        /* Process the connection */
         handle_connection(pool->server, task->client_fd);
         free(task);
     }
@@ -863,7 +835,6 @@ static int thread_pool_init(GV_ThreadPool *pool, size_t thread_count,
 
     for (size_t i = 0; i < thread_count; i++) {
         if (pthread_create(&pool->threads[i], NULL, worker_thread_func, pool) != 0) {
-            /* Shut down already-created threads */
             pthread_mutex_lock(&pool->mutex);
             pool->shutdown = 1;
             pthread_cond_broadcast(&pool->cond);
@@ -908,18 +879,15 @@ static void thread_pool_submit(GV_ThreadPool *pool, int client_fd) {
 static void thread_pool_destroy(GV_ThreadPool *pool) {
     if (!pool->threads) return;
 
-    /* Signal shutdown */
     pthread_mutex_lock(&pool->mutex);
     pool->shutdown = 1;
     pthread_cond_broadcast(&pool->cond);
     pthread_mutex_unlock(&pool->mutex);
 
-    /* Join all worker threads */
     for (size_t i = 0; i < pool->thread_count; i++) {
         pthread_join(pool->threads[i], NULL);
     }
 
-    /* Drain remaining tasks */
     GV_GrpcTask *task = pool->queue_head;
     while (task) {
         GV_GrpcTask *next = task->next;
@@ -932,8 +900,6 @@ static void thread_pool_destroy(GV_ThreadPool *pool) {
     pthread_cond_destroy(&pool->cond);
     pthread_mutex_destroy(&pool->mutex);
 }
-
-/* Accept Loop */
 
 static void *accept_thread_func(void *arg) {
     GV_GrpcServer *server = (GV_GrpcServer *)arg;
@@ -951,7 +917,6 @@ static void *accept_thread_func(void *arg) {
             continue;
         }
 
-        /* Check connection limit */
         uint64_t active = GV_ATOMIC_LOAD(&server->active_connections);
         if (active >= (uint64_t)server->config.max_connections) {
             close(client_fd);
@@ -965,8 +930,6 @@ static void *accept_thread_func(void *arg) {
     return NULL;
 }
 
-/* Server Lifecycle */
-
 GV_GrpcServer *gv_grpc_create(GV_Database *db, const GV_GrpcConfig *config) {
     if (!db) return NULL;
 
@@ -979,7 +942,6 @@ GV_GrpcServer *gv_grpc_create(GV_Database *db, const GV_GrpcConfig *config) {
     server->running = 0;
     server->stop_requested = 0;
 
-    /* Validate configuration */
     if (server->config.port == 0) {
         server->config.port = 50051;
     }
@@ -1011,13 +973,11 @@ int gv_grpc_start(GV_GrpcServer *server) {
     /* Ignore SIGPIPE so send() returns EPIPE instead of killing the process */
     signal(SIGPIPE, SIG_IGN);
 
-    /* Create listen socket */
     server->listen_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (server->listen_fd < 0) {
         return GV_GRPC_ERROR_BIND;
     }
 
-    /* Allow address reuse */
     int opt = 1;
     setsockopt(server->listen_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 
@@ -1044,14 +1004,12 @@ int gv_grpc_start(GV_GrpcServer *server) {
         return GV_GRPC_ERROR_BIND;
     }
 
-    /* Initialize thread pool */
     if (thread_pool_init(&server->pool, server->config.thread_pool_size, server) != 0) {
         close(server->listen_fd);
         server->listen_fd = -1;
         return GV_GRPC_ERROR_MEMORY;
     }
 
-    /* Start accept thread */
     server->stop_requested = 0;
     if (pthread_create(&server->accept_thread, NULL, accept_thread_func, server) != 0) {
         thread_pool_destroy(&server->pool);
@@ -1074,20 +1032,17 @@ int gv_grpc_stop(GV_GrpcServer *server) {
 
     server->stop_requested = 1;
 
-    /* Close listen socket to unblock accept() */
     if (server->listen_fd >= 0) {
         shutdown(server->listen_fd, SHUT_RDWR);
         close(server->listen_fd);
         server->listen_fd = -1;
     }
 
-    /* Join accept thread */
     if (server->accept_thread_started) {
         pthread_join(server->accept_thread, NULL);
         server->accept_thread_started = 0;
     }
 
-    /* Destroy thread pool (joins workers, drains queue) */
     thread_pool_destroy(&server->pool);
 
     server->running = 0;
@@ -1112,8 +1067,6 @@ int gv_grpc_is_running(const GV_GrpcServer *server) {
     return server->running;
 }
 
-/* Statistics */
-
 int gv_grpc_get_stats(const GV_GrpcServer *server, GV_GrpcStats *stats) {
     if (!server || !stats) return GV_GRPC_ERROR_NULL;
 
@@ -1134,14 +1087,11 @@ int gv_grpc_get_stats(const GV_GrpcServer *server, GV_GrpcStats *stats) {
     return GV_GRPC_OK;
 }
 
-/* Message Serialization Helpers */
-
 int gv_grpc_encode_search_request(const float *query, size_t dimension, size_t k,
                                    int distance_type, uint8_t *buf, size_t buf_size,
                                    size_t *out_len) {
     if (!query || !buf || !out_len) return GV_GRPC_ERROR_NULL;
 
-    /* Payload: [4-byte dim][4-byte k][4-byte distance_type][dim * 4-byte floats] */
     size_t needed = 12 + dimension * sizeof(float);
     if (buf_size < needed) return GV_GRPC_ERROR_CONFIG;
 
@@ -1185,7 +1135,6 @@ int gv_grpc_encode_add_request(const float *data, size_t dimension,
                                 uint8_t *buf, size_t buf_size, size_t *out_len) {
     if (!data || !buf || !out_len) return GV_GRPC_ERROR_NULL;
 
-    /* Payload: [4-byte dimension][dimension * 4-byte floats] */
     size_t needed = 4 + dimension * sizeof(float);
     if (buf_size < needed) return GV_GRPC_ERROR_CONFIG;
 

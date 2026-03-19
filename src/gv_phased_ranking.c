@@ -33,12 +33,8 @@
 #include <time.h>
 #include <pthread.h>
 
-/* Internal Constants */
-
 /** Maximum number of phases in a single pipeline. */
 #define GV_PIPELINE_MAX_PHASES 8
-
-/* Internal Types */
 
 /**
  * @brief Internal per-phase statistics recorded during execution.
@@ -73,8 +69,6 @@ typedef struct {
     int    phase_id;    /**< Last phase that touched this candidate. */
 } Candidate;
 
-/* Timing Helpers */
-
 static double timespec_to_ms(const struct timespec *ts) {
     return (double)ts->tv_sec * 1000.0 + (double)ts->tv_nsec / 1.0e6;
 }
@@ -83,8 +77,6 @@ static double elapsed_ms(const struct timespec *start, const struct timespec *en
     return timespec_to_ms(end) - timespec_to_ms(start);
 }
 
-/* Sorting Helpers */
-
 static int compare_candidates_desc(const void *a, const void *b) {
     const Candidate *ca = (const Candidate *)a;
     const Candidate *cb = (const Candidate *)b;
@@ -92,8 +84,6 @@ static int compare_candidates_desc(const void *a, const void *b) {
     if (cb->score < ca->score) return -1;
     return 0;
 }
-
-/* SoA Index Recovery */
 
 /**
  * @brief Recover the SoA storage index from a GV_SearchResult.
@@ -119,8 +109,6 @@ static size_t result_to_soa_index(const GV_Database *db, const GV_SearchResult *
     return idx;
 }
 
-/* Pipeline Lifecycle */
-
 GV_Pipeline *gv_pipeline_create(const void *db) {
     if (!db) return NULL;
 
@@ -144,8 +132,6 @@ void gv_pipeline_destroy(GV_Pipeline *pipe) {
     pthread_mutex_destroy(&pipe->mutex);
     free(pipe);
 }
-
-/* Phase Management */
 
 int gv_pipeline_add_phase(GV_Pipeline *pipe, const GV_PhaseConfig *config) {
     if (!pipe || !config) return -1;
@@ -185,8 +171,6 @@ size_t gv_pipeline_phase_count(const GV_Pipeline *pipe) {
     if (!pipe) return 0;
     return pipe->phase_count;
 }
-
-/* Phase Executors (Internal) */
 
 /**
  * @brief Execute the ANN phase: retrieve candidates from the database.
@@ -255,7 +239,6 @@ static int execute_rerank_expr_phase(const GV_PhaseConfig *config,
     GV_RankExpr *expr = gv_rank_expr_parse(config->params.expr.expression);
     if (!expr) return -1;
 
-    /* Evaluate the expression for each candidate. */
     for (size_t i = 0; i < count; i++) {
         float vector_score = candidates[i].score;
         double new_score = gv_rank_expr_eval(expr, vector_score, NULL, 0);
@@ -265,10 +248,8 @@ static int execute_rerank_expr_phase(const GV_PhaseConfig *config,
 
     gv_rank_expr_destroy(expr);
 
-    /* Sort descending by new score. */
     qsort(candidates, count, sizeof(Candidate), compare_candidates_desc);
 
-    /* Truncate to output_k. */
     size_t keep = config->output_k;
     if (keep == 0 || keep > count) keep = count;
     *out_count = keep;
@@ -291,7 +272,6 @@ static int execute_rerank_mmr_phase(const GV_Database *db,
     size_t keep = config->output_k;
     if (keep == 0 || keep > count) keep = count;
 
-    /* Build contiguous candidate vectors and index/distance arrays. */
     float  *cand_vectors   = malloc(count * dimension * sizeof(float));
     size_t *cand_indices   = malloc(count * sizeof(size_t));
     float  *cand_distances = malloc(count * sizeof(float));
@@ -350,7 +330,6 @@ static int execute_rerank_mmr_phase(const GV_Database *db,
         return -1;
     }
 
-    /* Rebuild candidate list from MMR results. */
     Candidate *new_candidates = malloc((size_t)mmr_count * sizeof(Candidate));
     if (!new_candidates) {
         free(mmr_results);
@@ -392,10 +371,8 @@ static int execute_rerank_callback_phase(const GV_PhaseConfig *config,
         candidates[i].phase_id = phase_id;
     }
 
-    /* Sort descending by new score. */
     qsort(candidates, count, sizeof(Candidate), compare_candidates_desc);
 
-    /* Truncate to output_k. */
     size_t keep = config->output_k;
     if (keep == 0 || keep > count) keep = count;
     *out_count = keep;
@@ -421,7 +398,6 @@ static int execute_filter_phase(const GV_Database *db,
 
     size_t write_idx = 0;
     for (size_t i = 0; i < count; i++) {
-        /* Build a lightweight GV_Vector view for the filter evaluator. */
         GV_Vector view;
         memset(&view, 0, sizeof(view));
 
@@ -443,8 +419,6 @@ static int execute_filter_phase(const GV_Database *db,
     return 0;
 }
 
-/* Pipeline Execution */
-
 int gv_pipeline_execute(GV_Pipeline *pipe, const float *query,
                         size_t dimension, size_t final_k,
                         GV_PhasedResult *results) {
@@ -457,19 +431,16 @@ int gv_pipeline_execute(GV_Pipeline *pipe, const float *query,
         return -1;
     }
 
-    /* Validate first phase is ANN. */
     if (pipe->phases[0].type != GV_PHASE_ANN) {
         pthread_mutex_unlock(&pipe->mutex);
         return -1;
     }
 
-    /* Validate dimension matches database. */
     if (dimension != gv_database_dimension(pipe->db)) {
         pthread_mutex_unlock(&pipe->mutex);
         return -1;
     }
 
-    /* Reset stats. */
     memset(pipe->stats, 0, sizeof(pipe->stats));
     pipe->total_latency_ms = 0.0;
 
@@ -487,7 +458,6 @@ int gv_pipeline_execute(GV_Pipeline *pipe, const float *query,
 
         switch (cfg->type) {
         case GV_PHASE_ANN: {
-            /* ANN must be first phase; produces the initial candidate set. */
             Candidate *ann_cands = NULL;
             int ann_count = execute_ann_phase(pipe->db, cfg, query, dimension,
                                               &ann_cands);
@@ -568,7 +538,6 @@ int gv_pipeline_execute(GV_Pipeline *pipe, const float *query,
         if (rc < 0) break;
     }
 
-    /* Copy final candidates to output, truncated to final_k. */
     int result_count = 0;
     if (rc == 0 && candidates && cand_count > 0) {
         size_t copy_count = cand_count < final_k ? cand_count : final_k;
@@ -585,8 +554,6 @@ int gv_pipeline_execute(GV_Pipeline *pipe, const float *query,
 
     return (rc < 0) ? -1 : result_count;
 }
-
-/* Statistics */
 
 int gv_pipeline_get_stats(const GV_Pipeline *pipe, GV_PipelineStats *stats) {
     if (!pipe || !stats) return -1;

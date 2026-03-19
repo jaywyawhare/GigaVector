@@ -11,8 +11,6 @@
 #include <pthread.h>
 #include <stdint.h>
 
-/* Internal Structures */
-
 /**
  * @brief Linked-list node tracking active transaction IDs.
  */
@@ -69,8 +67,6 @@ struct GV_Transaction {
      * Used for visibility decisions. */
     uint64_t snapshot_txn_id;
 };
-
-/* Internal Helpers */
 
 /**
  * @brief Check whether a given txn_id is present in the active transaction list.
@@ -230,8 +226,6 @@ static int mvcc_version_visible(const GV_MVCCManager *mgr,
     return 0;
 }
 
-/* Manager Lifecycle */
-
 GV_MVCCManager *gv_mvcc_create(size_t dimension)
 {
     GV_MVCCManager *mgr = calloc(1, sizeof(GV_MVCCManager));
@@ -242,7 +236,7 @@ GV_MVCCManager *gv_mvcc_create(size_t dimension)
     mgr->versions = NULL;
     mgr->ver_count = 0;
     mgr->ver_capacity = 0;
-    mgr->next_txn_id = 1; /* txn IDs start at 1 */
+    mgr->next_txn_id = 1;
     mgr->active_txns = NULL;
 
     if (pthread_mutex_init(&mgr->mutex, NULL) != 0) {
@@ -258,13 +252,11 @@ void gv_mvcc_destroy(GV_MVCCManager *mgr)
     if (!mgr)
         return;
 
-    /* Free version data */
     for (size_t i = 0; i < mgr->ver_count; i++) {
         free(mgr->versions[i].data);
     }
     free(mgr->versions);
 
-    /* Free active txn list */
     GV_TxnEntry *e = mgr->active_txns;
     while (e) {
         GV_TxnEntry *next = e->next;
@@ -275,8 +267,6 @@ void gv_mvcc_destroy(GV_MVCCManager *mgr)
     pthread_mutex_destroy(&mgr->mutex);
     free(mgr);
 }
-
-/* Transaction Lifecycle */
 
 GV_Transaction *gv_txn_begin(GV_MVCCManager *mgr)
 {
@@ -299,10 +289,8 @@ GV_Transaction *gv_txn_begin(GV_MVCCManager *mgr)
     pthread_mutex_lock(&mgr->mutex);
 
     txn->txn_id = mgr->next_txn_id++;
-    /* Snapshot is everything committed before this txn */
     txn->snapshot_txn_id = txn->txn_id - 1;
 
-    /* Add to active list */
     GV_TxnEntry *entry = malloc(sizeof(GV_TxnEntry));
     if (!entry) {
         pthread_mutex_unlock(&mgr->mutex);
@@ -390,8 +378,6 @@ GV_TxnStatus gv_txn_status(const GV_Transaction *txn)
     return txn->status;
 }
 
-/* Transaction Operations */
-
 int gv_txn_add_vector(GV_Transaction *txn, const float *data, size_t dimension)
 {
     if (!txn || !txn->mgr || !data)
@@ -403,7 +389,6 @@ int gv_txn_add_vector(GV_Transaction *txn, const float *data, size_t dimension)
 
     GV_MVCCManager *mgr = txn->mgr;
 
-    /* Allocate a copy of the vector data */
     float *copy = malloc(dimension * sizeof(float));
     if (!copy)
         return -1;
@@ -428,8 +413,6 @@ int gv_txn_add_vector(GV_Transaction *txn, const float *data, size_t dimension)
 
     pthread_mutex_unlock(&mgr->mutex);
 
-    /* Track in the transaction's local added list (no lock needed -- only
-     * this txn touches its own bookkeeping arrays). */
     if (idx_array_push(&txn->added_indices, &txn->added_count,
                        &txn->added_capacity, ver_idx) != 0) {
         /* Best-effort: version is already in the store; mark it deleted to
@@ -454,7 +437,6 @@ int gv_txn_delete_vector(GV_Transaction *txn, size_t vector_index)
 
     pthread_mutex_lock(&mgr->mutex);
 
-    /* Scan for a visible version at the requested vector_index */
     int found = 0;
     for (size_t i = 0; i < mgr->ver_count; i++) {
         GV_MVCCVersion *ver = &mgr->versions[i];
@@ -474,7 +456,6 @@ int gv_txn_delete_vector(GV_Transaction *txn, size_t vector_index)
         ver->delete_txn = txn->txn_id;
         found = 1;
 
-        /* Track the version index so we can undo on rollback */
         pthread_mutex_unlock(&mgr->mutex);
         if (idx_array_push(&txn->deleted_indices, &txn->deleted_count,
                            &txn->deleted_capacity, i) != 0) {
@@ -541,8 +522,6 @@ size_t gv_txn_count(const GV_Transaction *txn)
     return count;
 }
 
-/* Visibility (public API) */
-
 int gv_mvcc_is_visible(const GV_MVCCManager *mgr, const GV_MVCCVersion *ver,
                        uint64_t txn_id)
 {
@@ -553,15 +532,12 @@ int gv_mvcc_is_visible(const GV_MVCCManager *mgr, const GV_MVCCVersion *ver,
      * txn_id - 1, which matches the convention in gv_txn_begin. */
     uint64_t snapshot = (txn_id > 0) ? txn_id - 1 : 0;
 
-    /* We need the lock to walk the active list safely */
     pthread_mutex_lock((pthread_mutex_t *)&((GV_MVCCManager *)mgr)->mutex);
     int result = mvcc_version_visible(mgr, ver, txn_id, snapshot);
     pthread_mutex_unlock((pthread_mutex_t *)&((GV_MVCCManager *)mgr)->mutex);
 
     return result;
 }
-
-/* Garbage Collection */
 
 int gv_mvcc_gc(GV_MVCCManager *mgr)
 {

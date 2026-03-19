@@ -17,14 +17,10 @@
 #include <time.h>
 #include <pthread.h>
 
-/* * Internal Constants */
-
 #define KG_MAGIC         "GVKG"
 #define KG_MAGIC_LEN     4
 #define KG_VERSION       1
 #define KG_INITIAL_IDX   64   /* initial capacity for index lists */
-
-/* * Internal: Index List (dynamic array of relation IDs) */
 
 typedef struct {
     uint64_t *ids;
@@ -70,21 +66,15 @@ static void kg_idlist_free(KG_IdList *list) {
     list->capacity = 0;
 }
 
-/* * Internal: Entity Hash Table Node */
-
 typedef struct KG_EntityNode {
     GV_KGEntity             entity;
     struct KG_EntityNode   *next;
 } KG_EntityNode;
 
-/* * Internal: Relation Hash Table Node */
-
 typedef struct KG_RelationNode {
     GV_KGRelation             relation;
     struct KG_RelationNode   *next;
 } KG_RelationNode;
-
-/* * Internal: SPO Index Entry (hash on key -> list of relation IDs) */
 
 typedef struct KG_IndexEntry {
     uint64_t               key;     /* entity_id or hash(predicate) */
@@ -92,19 +82,14 @@ typedef struct KG_IndexEntry {
     struct KG_IndexEntry  *next;
 } KG_IndexEntry;
 
-/* * Internal: Knowledge Graph Structure */
-
 struct GV_KnowledgeGraph {
-    /* Configuration */
     GV_KGConfig config;
 
-    /* Entity storage */
     KG_EntityNode  **entity_buckets;
     size_t           entity_bucket_count;
     size_t           entity_count;
     uint64_t         next_entity_id;
 
-    /* Relation storage */
     KG_RelationNode **relation_buckets;
     size_t            relation_bucket_count;
     size_t            relation_count;
@@ -118,13 +103,11 @@ struct GV_KnowledgeGraph {
     KG_IndexEntry **predicate_index;
     size_t          spo_bucket_count;
 
-    /* Embedding flat array for fast similarity scan */
     float     *all_embeddings;       /* dim * embedding_cap floats */
     uint64_t  *embedding_entity_ids;
     size_t     embedding_count;
     size_t     embedding_cap;
 
-    /* Thread safety */
     pthread_rwlock_t rwlock;
 };
 
@@ -150,8 +133,6 @@ static uint64_t kg_hash_string(const char *str) {
 static uint64_t kg_now_epoch(void) {
     return (uint64_t)time(NULL);
 }
-
-/* * Internal: Property Helpers */
 
 static GV_KGProp *kg_prop_clone_list(const GV_KGProp *src) {
     GV_KGProp *head = NULL;
@@ -212,8 +193,6 @@ static int kg_prop_set(GV_KGProp **head, size_t *count,
     return 0;
 }
 
-/* * Internal: Cosine Similarity */
-
 static float kg_cosine_similarity(const float *a, const float *b, size_t dim) {
     float dot = 0.0f, na = 0.0f, nb = 0.0f;
     for (size_t i = 0; i < dim; i++) {
@@ -225,8 +204,6 @@ static float kg_cosine_similarity(const float *a, const float *b, size_t dim) {
     return dot / (sqrtf(na) * sqrtf(nb));
 }
 
-/* * Internal: Entity Lookup */
-
 static KG_EntityNode *kg_find_entity_node(const GV_KnowledgeGraph *kg,
                                            uint64_t entity_id) {
     size_t idx = (size_t)kg_hash_uint64(entity_id, kg->entity_bucket_count);
@@ -235,8 +212,6 @@ static KG_EntityNode *kg_find_entity_node(const GV_KnowledgeGraph *kg,
     }
     return NULL;
 }
-
-/* * Internal: Relation Lookup */
 
 static KG_RelationNode *kg_find_relation_node(const GV_KnowledgeGraph *kg,
                                                uint64_t relation_id) {
@@ -247,8 +222,6 @@ static KG_RelationNode *kg_find_relation_node(const GV_KnowledgeGraph *kg,
     }
     return NULL;
 }
-
-/* * Internal: SPO Index Helpers */
 
 static KG_IndexEntry *kg_index_find(KG_IndexEntry **table,
                                      size_t buckets, uint64_t key) {
@@ -297,8 +270,6 @@ static void kg_index_free_table(KG_IndexEntry **table, size_t buckets) {
     free(table);
 }
 
-/* * Internal: Embedding Store Helpers */
-
 static int kg_embedding_add(GV_KnowledgeGraph *kg, uint64_t entity_id,
                              const float *emb, size_t dim) {
     if (dim != kg->config.embedding_dimension) return -1;
@@ -329,7 +300,6 @@ static void kg_embedding_remove(GV_KnowledgeGraph *kg, uint64_t entity_id) {
     size_t dim = kg->config.embedding_dimension;
     for (size_t i = 0; i < kg->embedding_count; i++) {
         if (kg->embedding_entity_ids[i] == entity_id) {
-            /* Swap with last */
             size_t last = kg->embedding_count - 1;
             if (i != last) {
                 kg->embedding_entity_ids[i] = kg->embedding_entity_ids[last];
@@ -355,8 +325,6 @@ static const float *kg_embedding_get(const GV_KnowledgeGraph *kg,
     return NULL;
 }
 
-/* * Internal: Free a single entity node's heap data (NOT the node itself) */
-
 static void kg_entity_data_free(GV_KGEntity *e) {
     free(e->name);
     free(e->type);
@@ -368,16 +336,12 @@ static void kg_entity_data_free(GV_KGEntity *e) {
     e->properties = NULL;
 }
 
-/* * Internal: Free a single relation node's heap data */
-
 static void kg_relation_data_free(GV_KGRelation *r) {
     free(r->predicate);
     kg_prop_free_list(r->properties);
     r->predicate = NULL;
     r->properties = NULL;
 }
-
-/* * Internal: Collect all relation IDs for an entity (subject or object) */
 
 static size_t kg_collect_relations_for_entity(const GV_KnowledgeGraph *kg,
                                                uint64_t entity_id,
@@ -387,7 +351,6 @@ static size_t kg_collect_relations_for_entity(const GV_KnowledgeGraph *kg,
     uint64_t *ids = (uint64_t *)malloc(cap * sizeof(uint64_t));
     if (!ids) { *out_ids = NULL; return 0; }
 
-    /* From subject index */
     KG_IndexEntry *se = kg_index_find(kg->subject_index,
                                        kg->spo_bucket_count, entity_id);
     if (se) {
@@ -403,12 +366,10 @@ static size_t kg_collect_relations_for_entity(const GV_KnowledgeGraph *kg,
         }
     }
 
-    /* From object index */
     KG_IndexEntry *oe = kg_index_find(kg->object_index,
                                        kg->spo_bucket_count, entity_id);
     if (oe) {
         for (size_t i = 0; i < oe->list.count; i++) {
-            /* Avoid duplicates (self-loops) */
             int dup = 0;
             for (size_t j = 0; j < total; j++) {
                 if (ids[j] == oe->list.ids[i]) { dup = 1; break; }
@@ -429,8 +390,6 @@ static size_t kg_collect_relations_for_entity(const GV_KnowledgeGraph *kg,
     return total;
 }
 
-/* * Internal: Remove a single relation (no lock) */
-
 static int kg_remove_relation_internal(GV_KnowledgeGraph *kg,
                                         uint64_t relation_id) {
     size_t idx = (size_t)kg_hash_uint64(relation_id,
@@ -438,7 +397,6 @@ static int kg_remove_relation_internal(GV_KnowledgeGraph *kg,
     KG_RelationNode *prev = NULL;
     for (KG_RelationNode *n = kg->relation_buckets[idx]; n; n = n->next) {
         if (n->relation.relation_id == relation_id) {
-            /* Remove from SPO indexes */
             kg_index_remove_id(kg->subject_index, kg->spo_bucket_count,
                                n->relation.subject_id, relation_id);
             kg_index_remove_id(kg->object_index, kg->spo_bucket_count,
@@ -447,7 +405,6 @@ static int kg_remove_relation_internal(GV_KnowledgeGraph *kg,
             kg_index_remove_id(kg->predicate_index, kg->spo_bucket_count,
                                pred_hash, relation_id);
 
-            /* Unlink and free */
             if (prev) prev->next = n->next;
             else kg->relation_buckets[idx] = n->next;
             kg_relation_data_free(&n->relation);
@@ -459,8 +416,6 @@ static int kg_remove_relation_internal(GV_KnowledgeGraph *kg,
     }
     return -1;
 }
-
-/* * Internal: Check if two entities are directly connected */
 
 static int kg_are_connected(const GV_KnowledgeGraph *kg,
                              uint64_t a, uint64_t b) {
@@ -483,15 +438,12 @@ static int kg_are_connected(const GV_KnowledgeGraph *kg,
     return 0;
 }
 
-/* * Internal: Count shared neighbours between two entities */
-
 static size_t kg_shared_neighbors(const GV_KnowledgeGraph *kg,
                                    uint64_t a, uint64_t b) {
     uint64_t *na = NULL, *nb = NULL;
     size_t ca = kg_collect_relations_for_entity(kg, a, &na);
     size_t cb = kg_collect_relations_for_entity(kg, b, &nb);
 
-    /* Build neighbor sets from relations */
     size_t na_cap = 64, nb_cap = 64;
     uint64_t *neigh_a = (uint64_t *)malloc(na_cap * sizeof(uint64_t));
     uint64_t *neigh_b = (uint64_t *)malloc(nb_cap * sizeof(uint64_t));
@@ -532,7 +484,6 @@ static size_t kg_shared_neighbors(const GV_KnowledgeGraph *kg,
         neigh_b[neigh_b_count++] = other;
     }
 
-    /* Count intersection */
     size_t shared = 0;
     for (size_t i = 0; i < neigh_a_count; i++) {
         for (size_t j = 0; j < neigh_b_count; j++) {
@@ -631,7 +582,6 @@ static void kg_bfs_run(const GV_KnowledgeGraph *kg, uint64_t start,
 
         if (dep >= max_depth) continue;
 
-        /* Collect neighbour entity IDs from subject index */
         KG_IndexEntry *se = kg_index_find(kg->subject_index,
                                            kg->spo_bucket_count, cur);
         if (se) {
@@ -646,7 +596,6 @@ static void kg_bfs_run(const GV_KnowledgeGraph *kg, uint64_t start,
             }
         }
 
-        /* From object index (incoming edges) */
         KG_IndexEntry *oe = kg_index_find(kg->object_index,
                                            kg->spo_bucket_count, cur);
         if (oe) {
@@ -692,8 +641,6 @@ static int kg_entity_has_predicate(const GV_KnowledgeGraph *kg,
     return 0;
 }
 
-/* * Internal: helper for sorting search results by similarity descending */
-
 typedef struct {
     uint64_t id;
     float    score;
@@ -706,8 +653,6 @@ static int kg_score_cmp_desc(const void *a, const void *b) {
     if (sa < sb) return  1;
     return 0;
 }
-
-/* * Lifecycle */
 
 void gv_kg_config_init(GV_KGConfig *config) {
     if (!config) return;
@@ -738,17 +683,14 @@ GV_KnowledgeGraph *gv_kg_create(const GV_KGConfig *config) {
     kg->next_entity_id = 1;
     kg->next_relation_id = 1;
 
-    /* Allocate entity hash table */
     kg->entity_buckets = (KG_EntityNode **)calloc(kg->entity_bucket_count,
                                                    sizeof(KG_EntityNode *));
     if (!kg->entity_buckets) goto fail;
 
-    /* Allocate relation hash table */
     kg->relation_buckets = (KG_RelationNode **)calloc(
         kg->relation_bucket_count, sizeof(KG_RelationNode *));
     if (!kg->relation_buckets) goto fail;
 
-    /* Allocate SPO indexes */
     kg->subject_index = (KG_IndexEntry **)calloc(kg->spo_bucket_count,
                                                   sizeof(KG_IndexEntry *));
     kg->object_index = (KG_IndexEntry **)calloc(kg->spo_bucket_count,
@@ -758,7 +700,6 @@ GV_KnowledgeGraph *gv_kg_create(const GV_KGConfig *config) {
     if (!kg->subject_index || !kg->object_index || !kg->predicate_index)
         goto fail;
 
-    /* Init rwlock */
     if (pthread_rwlock_init(&kg->rwlock, NULL) != 0) goto fail;
 
     return kg;
@@ -776,7 +717,6 @@ fail:
 void gv_kg_destroy(GV_KnowledgeGraph *kg) {
     if (!kg) return;
 
-    /* Free entity nodes */
     for (size_t i = 0; i < kg->entity_bucket_count; i++) {
         KG_EntityNode *n = kg->entity_buckets[i];
         while (n) {
@@ -788,7 +728,6 @@ void gv_kg_destroy(GV_KnowledgeGraph *kg) {
     }
     free(kg->entity_buckets);
 
-    /* Free relation nodes */
     for (size_t i = 0; i < kg->relation_bucket_count; i++) {
         KG_RelationNode *n = kg->relation_buckets[i];
         while (n) {
@@ -800,20 +739,16 @@ void gv_kg_destroy(GV_KnowledgeGraph *kg) {
     }
     free(kg->relation_buckets);
 
-    /* Free SPO indexes */
     kg_index_free_table(kg->subject_index, kg->spo_bucket_count);
     kg_index_free_table(kg->object_index, kg->spo_bucket_count);
     kg_index_free_table(kg->predicate_index, kg->spo_bucket_count);
 
-    /* Free embedding storage */
     free(kg->all_embeddings);
     free(kg->embedding_entity_ids);
 
     pthread_rwlock_destroy(&kg->rwlock);
     free(kg);
 }
-
-/* * Entity Operations */
 
 uint64_t gv_kg_add_entity(GV_KnowledgeGraph *kg, const char *name,
                            const char *type, const float *embedding,
@@ -851,7 +786,6 @@ uint64_t gv_kg_add_entity(GV_KnowledgeGraph *kg, const char *name,
         return 0;
     }
 
-    /* Copy embedding into entity and into flat array */
     if (embedding && dimension > 0 && kg->config.embedding_dimension > 0) {
         e->embedding = (float *)malloc(dimension * sizeof(float));
         if (e->embedding) {
@@ -861,7 +795,6 @@ uint64_t gv_kg_add_entity(GV_KnowledgeGraph *kg, const char *name,
         }
     }
 
-    /* Insert into hash table */
     size_t bucket = (size_t)kg_hash_uint64(eid, kg->entity_bucket_count);
     node->next = kg->entity_buckets[bucket];
     kg->entity_buckets[bucket] = node;
@@ -876,7 +809,6 @@ int gv_kg_remove_entity(GV_KnowledgeGraph *kg, uint64_t entity_id) {
 
     pthread_rwlock_wrlock(&kg->rwlock);
 
-    /* Cascade-delete all relations involving this entity */
     uint64_t *rel_ids = NULL;
     size_t rel_count = kg_collect_relations_for_entity(kg, entity_id,
                                                         &rel_ids);
@@ -885,10 +817,8 @@ int gv_kg_remove_entity(GV_KnowledgeGraph *kg, uint64_t entity_id) {
     }
     free(rel_ids);
 
-    /* Remove embedding */
     kg_embedding_remove(kg, entity_id);
 
-    /* Remove entity from hash table */
     size_t bucket = (size_t)kg_hash_uint64(entity_id,
                                             kg->entity_bucket_count);
     KG_EntityNode *prev = NULL;
@@ -984,8 +914,6 @@ int gv_kg_find_entities_by_name(const GV_KnowledgeGraph *kg, const char *name,
     return (int)found;
 }
 
-/* * Relation (Triple) Operations */
-
 uint64_t gv_kg_add_relation(GV_KnowledgeGraph *kg, uint64_t subject,
                              const char *predicate, uint64_t object,
                              float weight) {
@@ -993,7 +921,6 @@ uint64_t gv_kg_add_relation(GV_KnowledgeGraph *kg, uint64_t subject,
 
     pthread_rwlock_wrlock(&kg->rwlock);
 
-    /* Validate that both entities exist */
     if (!kg_find_entity_node(kg, subject) ||
         !kg_find_entity_node(kg, object)) {
         pthread_rwlock_unlock(&kg->rwlock);
@@ -1023,13 +950,11 @@ uint64_t gv_kg_add_relation(GV_KnowledgeGraph *kg, uint64_t subject,
         return 0;
     }
 
-    /* Insert into relation hash table */
     size_t bucket = (size_t)kg_hash_uint64(rid, kg->relation_bucket_count);
     node->next = kg->relation_buckets[bucket];
     kg->relation_buckets[bucket] = node;
     kg->relation_count++;
 
-    /* Update SPO indexes */
     KG_IndexEntry *se = kg_index_get_or_create(kg->subject_index,
                                                 kg->spo_bucket_count,
                                                 subject);
@@ -1085,8 +1010,6 @@ int gv_kg_set_relation_prop(GV_KnowledgeGraph *kg, uint64_t relation_id,
     pthread_rwlock_unlock(&kg->rwlock);
     return rc;
 }
-
-/* * Triple Store Queries (SPO Pattern Matching) */
 
 /**
  * @brief Internal helper: fill a GV_KGTriple from a relation.
@@ -1197,8 +1120,6 @@ void gv_kg_free_triples(GV_KGTriple *triples, size_t count) {
     }
 }
 
-/* * Semantic Search (Vector-Based) */
-
 int gv_kg_search_similar(const GV_KnowledgeGraph *kg,
                           const float *query_embedding, size_t dimension,
                           size_t k, GV_KGSearchResult *results) {
@@ -1214,7 +1135,6 @@ int gv_kg_search_similar(const GV_KnowledgeGraph *kg,
         return 0;
     }
 
-    /* Compute similarities */
     KG_ScorePair *pairs = (KG_ScorePair *)malloc(n * sizeof(KG_ScorePair));
     if (!pairs) {
         pthread_rwlock_unlock((pthread_rwlock_t *)&kg->rwlock);
@@ -1252,7 +1172,6 @@ int gv_kg_search_by_text(const GV_KnowledgeGraph *kg, const char *text,
 
     pthread_rwlock_rdlock((pthread_rwlock_t *)&kg->rwlock);
 
-    /* Collect candidates: name substring match + embedding similarity */
     size_t cap = 256;
     KG_ScorePair *pairs = (KG_ScorePair *)malloc(cap * sizeof(KG_ScorePair));
     if (!pairs) {
@@ -1266,7 +1185,6 @@ int gv_kg_search_by_text(const GV_KnowledgeGraph *kg, const char *text,
     for (size_t b = 0; b < kg->entity_bucket_count; b++) {
         for (KG_EntityNode *n = kg->entity_buckets[b]; n; n = n->next) {
             float score = 0.0f;
-            /* Name match component (exact match gets high boost) */
             if (n->entity.name) {
                 if (strcmp(n->entity.name, text) == 0) {
                     score += 1.0f;
@@ -1274,7 +1192,6 @@ int gv_kg_search_by_text(const GV_KnowledgeGraph *kg, const char *text,
                     score += 0.5f;
                 }
             }
-            /* Embedding similarity component */
             if (text_embedding && dim > 0 && dimension == dim) {
                 const float *emb = kg_embedding_get(kg,
                     n->entity.entity_id, NULL);
@@ -1322,8 +1239,6 @@ void gv_kg_free_search_results(GV_KGSearchResult *results, size_t count) {
     }
 }
 
-/* * Entity Resolution / Deduplication */
-
 int gv_kg_resolve_entity(GV_KnowledgeGraph *kg, const char *name,
                           const char *type, const float *embedding,
                           size_t dimension) {
@@ -1331,7 +1246,6 @@ int gv_kg_resolve_entity(GV_KnowledgeGraph *kg, const char *name,
 
     pthread_rwlock_wrlock(&kg->rwlock);
 
-    /* Step 1: exact name match among entities of same type */
     for (size_t b = 0; b < kg->entity_bucket_count; b++) {
         for (KG_EntityNode *n = kg->entity_buckets[b]; n; n = n->next) {
             if (n->entity.name && n->entity.type &&
@@ -1344,7 +1258,6 @@ int gv_kg_resolve_entity(GV_KnowledgeGraph *kg, const char *name,
         }
     }
 
-    /* Step 2: embedding similarity with entities of same type */
     if (embedding && dimension > 0 && kg->config.embedding_dimension > 0 &&
         dimension == kg->config.embedding_dimension) {
         float best_sim = 0.0f;
@@ -1371,7 +1284,6 @@ int gv_kg_resolve_entity(GV_KnowledgeGraph *kg, const char *name,
         }
     }
 
-    /* Step 3: create new entity (unlock first, re-acquire via add) */
     pthread_rwlock_unlock(&kg->rwlock);
     uint64_t new_id = gv_kg_add_entity(kg, name, type, embedding, dimension);
     return (int)new_id;
@@ -1420,7 +1332,6 @@ int gv_kg_merge_entities(GV_KnowledgeGraph *kg, uint64_t keep_id,
         return -1;
     }
 
-    /* Copy properties from merge to keep (don't overwrite existing) */
     for (GV_KGProp *p = merge_node->entity.properties; p; p = p->next) {
         if (!kg_prop_find(keep_node->entity.properties, p->key)) {
             kg_prop_set(&keep_node->entity.properties,
@@ -1428,7 +1339,6 @@ int gv_kg_merge_entities(GV_KnowledgeGraph *kg, uint64_t keep_id,
         }
     }
 
-    /* Re-point all relations from merge_id to keep_id */
     uint64_t *rel_ids = NULL;
     size_t rel_count = kg_collect_relations_for_entity(kg, merge_id,
                                                         &rel_ids);
@@ -1438,7 +1348,6 @@ int gv_kg_merge_entities(GV_KnowledgeGraph *kg, uint64_t keep_id,
 
         uint64_t rid = rn->relation.relation_id;
 
-        /* Update subject index */
         if (rn->relation.subject_id == merge_id) {
             kg_index_remove_id(kg->subject_index, kg->spo_bucket_count,
                                merge_id, rid);
@@ -1448,7 +1357,6 @@ int gv_kg_merge_entities(GV_KnowledgeGraph *kg, uint64_t keep_id,
             if (se) kg_idlist_push(&se->list, rid);
         }
 
-        /* Update object index */
         if (rn->relation.object_id == merge_id) {
             kg_index_remove_id(kg->object_index, kg->spo_bucket_count,
                                merge_id, rid);
@@ -1460,10 +1368,8 @@ int gv_kg_merge_entities(GV_KnowledgeGraph *kg, uint64_t keep_id,
     }
     free(rel_ids);
 
-    /* Remove embedding for merge entity */
     kg_embedding_remove(kg, merge_id);
 
-    /* Remove merge entity from hash table */
     size_t bucket = (size_t)kg_hash_uint64(merge_id,
                                             kg->entity_bucket_count);
     KG_EntityNode *prev = NULL;
@@ -1483,8 +1389,6 @@ int gv_kg_merge_entities(GV_KnowledgeGraph *kg, uint64_t keep_id,
     return 0;
 }
 
-/* * Link Prediction */
-
 int gv_kg_predict_links(const GV_KnowledgeGraph *kg, uint64_t entity_id,
                          size_t k, GV_KGLinkPrediction *results) {
     if (!kg || !results || k == 0) return -1;
@@ -1499,7 +1403,6 @@ int gv_kg_predict_links(const GV_KnowledgeGraph *kg, uint64_t entity_id,
         return 0;
     }
 
-    /* Collect candidates: entities not directly connected, with embeddings */
     size_t cap = 256;
     KG_ScorePair *candidates = (KG_ScorePair *)malloc(
         cap * sizeof(KG_ScorePair));
@@ -1518,7 +1421,6 @@ int gv_kg_predict_links(const GV_KnowledgeGraph *kg, uint64_t entity_id,
             kg->all_embeddings + i * dim, dim);
         if (sim < kg->config.link_prediction_threshold) continue;
 
-        /* Structural boost: shared neighbors */
         size_t shared = kg_shared_neighbors(kg, entity_id, other_id);
         float boost = (shared > 0) ? 0.1f * (float)shared : 0.0f;
         if (boost > 0.2f) boost = 0.2f;
@@ -1553,8 +1455,6 @@ int gv_kg_predict_links(const GV_KnowledgeGraph *kg, uint64_t entity_id,
     return (int)result_count;
 }
 
-/* * Graph Traversal */
-
 int gv_kg_get_neighbors(const GV_KnowledgeGraph *kg, uint64_t entity_id,
                          uint64_t *out_ids, size_t max_count) {
     if (!kg || !out_ids || max_count == 0) return -1;
@@ -1568,7 +1468,6 @@ int gv_kg_get_neighbors(const GV_KnowledgeGraph *kg, uint64_t entity_id,
 
     size_t found = 0;
 
-    /* Outgoing (subject_index) */
     KG_IndexEntry *se = kg_index_find(kg->subject_index,
                                        kg->spo_bucket_count, entity_id);
     if (se) {
@@ -1576,7 +1475,6 @@ int gv_kg_get_neighbors(const GV_KnowledgeGraph *kg, uint64_t entity_id,
             KG_RelationNode *rn = kg_find_relation_node(kg, se->list.ids[i]);
             if (!rn) continue;
             uint64_t nbr = rn->relation.object_id;
-            /* Dedup */
             int dup = 0;
             for (size_t j = 0; j < found; j++) {
                 if (out_ids[j] == nbr) { dup = 1; break; }
@@ -1585,7 +1483,6 @@ int gv_kg_get_neighbors(const GV_KnowledgeGraph *kg, uint64_t entity_id,
         }
     }
 
-    /* Incoming (object_index) */
     KG_IndexEntry *oe = kg_index_find(kg->object_index,
                                        kg->spo_bucket_count, entity_id);
     if (oe) {
@@ -1651,7 +1548,6 @@ int gv_kg_shortest_path(const GV_KnowledgeGraph *kg, uint64_t from,
         return 1;
     }
 
-    /* BFS from 'from' looking for 'to' */
     KG_BFSState bfs;
     size_t bfs_cap = kg->entity_count > 0 ? kg->entity_count + 1 : 256;
     if (kg_bfs_init(&bfs, bfs_cap) != 0) {
@@ -1670,7 +1566,6 @@ int gv_kg_shortest_path(const GV_KnowledgeGraph *kg, uint64_t from,
 
         if (dep >= max_len) continue;
 
-        /* Outgoing */
         KG_IndexEntry *se = kg_index_find(kg->subject_index,
                                            kg->spo_bucket_count, cur);
         if (se) {
@@ -1686,7 +1581,6 @@ int gv_kg_shortest_path(const GV_KnowledgeGraph *kg, uint64_t from,
             }
         }
 
-        /* Incoming */
         if (!found) {
             KG_IndexEntry *oe = kg_index_find(kg->object_index,
                                                kg->spo_bucket_count, cur);
@@ -1711,7 +1605,6 @@ int gv_kg_shortest_path(const GV_KnowledgeGraph *kg, uint64_t from,
         return -1;
     }
 
-    /* Reconstruct path from 'to' back to 'from' using parent[] */
     size_t path_len = 0;
     uint64_t *rev = (uint64_t *)malloc(bfs.count * sizeof(uint64_t));
     if (!rev) {
@@ -1723,7 +1616,6 @@ int gv_kg_shortest_path(const GV_KnowledgeGraph *kg, uint64_t from,
     uint64_t cur = to;
     while (cur != 0 && cur != from) {
         rev[path_len++] = cur;
-        /* Find parent of cur */
         uint64_t par = 0;
         for (size_t i = 0; i < bfs.count; i++) {
             if (bfs.visited[i] == cur) {
@@ -1735,7 +1627,6 @@ int gv_kg_shortest_path(const GV_KnowledgeGraph *kg, uint64_t from,
     }
     rev[path_len++] = from;
 
-    /* Reverse into output */
     size_t out_len = (path_len < max_len) ? path_len : max_len;
     for (size_t i = 0; i < out_len; i++) {
         path_ids[i] = rev[path_len - 1 - i];
@@ -1746,8 +1637,6 @@ int gv_kg_shortest_path(const GV_KnowledgeGraph *kg, uint64_t from,
     pthread_rwlock_unlock((pthread_rwlock_t *)&kg->rwlock);
     return (int)out_len;
 }
-
-/* * Subgraph Extraction */
 
 int gv_kg_extract_subgraph(const GV_KnowledgeGraph *kg, uint64_t center,
                             size_t radius, GV_KGSubgraph *subgraph) {
@@ -1771,7 +1660,6 @@ int gv_kg_extract_subgraph(const GV_KnowledgeGraph *kg, uint64_t center,
 
     kg_bfs_run(kg, center, radius, &bfs);
 
-    /* Entity IDs = all BFS-visited nodes */
     subgraph->entity_ids = (uint64_t *)malloc(bfs.count * sizeof(uint64_t));
     if (!subgraph->entity_ids) {
         kg_bfs_free(&bfs);
@@ -1781,7 +1669,6 @@ int gv_kg_extract_subgraph(const GV_KnowledgeGraph *kg, uint64_t center,
     memcpy(subgraph->entity_ids, bfs.visited, bfs.count * sizeof(uint64_t));
     subgraph->entity_count = bfs.count;
 
-    /* Collect inter-relations among subgraph entities */
     size_t rel_cap = 256;
     size_t rel_count = 0;
     uint64_t *rel_ids = (uint64_t *)malloc(rel_cap * sizeof(uint64_t));
@@ -1803,9 +1690,7 @@ int gv_kg_extract_subgraph(const GV_KnowledgeGraph *kg, uint64_t center,
             uint64_t rid = se->list.ids[r];
             KG_RelationNode *rn = kg_find_relation_node(kg, rid);
             if (!rn) continue;
-            /* Check if object is also in subgraph */
             if (!kg_bfs_seen(&bfs, rn->relation.object_id)) continue;
-            /* Avoid duplicates */
             int dup = 0;
             for (size_t x = 0; x < rel_count; x++) {
                 if (rel_ids[x] == rid) { dup = 1; break; }
@@ -1840,8 +1725,6 @@ void gv_kg_free_subgraph(GV_KGSubgraph *subgraph) {
     subgraph->relation_count = 0;
 }
 
-/* * Hybrid Queries (Vector + Graph) */
-
 int gv_kg_hybrid_search(const GV_KnowledgeGraph *kg,
                          const float *query_embedding, size_t dimension,
                          const char *entity_type, const char *predicate_filter,
@@ -1872,11 +1755,9 @@ int gv_kg_hybrid_search(const GV_KnowledgeGraph *kg,
         KG_EntityNode *en = kg_find_entity_node(kg, eid);
         if (!en) continue;
 
-        /* Type filter */
         if (entity_type && en->entity.type &&
             strcmp(en->entity.type, entity_type) != 0) continue;
 
-        /* Predicate filter */
         if (predicate_filter &&
             !kg_entity_has_predicate(kg, eid, predicate_filter)) continue;
 
@@ -1911,8 +1792,6 @@ int gv_kg_hybrid_search(const GV_KnowledgeGraph *kg,
     return (int)result_count;
 }
 
-/* * Analytics */
-
 int gv_kg_get_stats(const GV_KnowledgeGraph *kg, GV_KGStats *stats) {
     if (!kg || !stats) return -1;
 
@@ -1924,7 +1803,6 @@ int gv_kg_get_stats(const GV_KnowledgeGraph *kg, GV_KGStats *stats) {
     stats->triple_count   = kg->relation_count;
     stats->embedding_count = kg->embedding_count;
 
-    /* Count distinct types */
     size_t type_cap = 128;
     char **types = (char **)calloc(type_cap, sizeof(char *));
     size_t type_count = 0;
@@ -1955,7 +1833,6 @@ int gv_kg_get_stats(const GV_KnowledgeGraph *kg, GV_KGStats *stats) {
         free(types);
     }
 
-    /* Count distinct predicates */
     size_t pred_cap = 128;
     char **preds = (char **)calloc(pred_cap, sizeof(char *));
     size_t pred_count = 0;
@@ -2008,13 +1885,11 @@ float gv_kg_entity_centrality(const GV_KnowledgeGraph *kg,
         return 0.0f;
     }
 
-    /* out_degree from subject_index */
     size_t out_degree = 0;
     KG_IndexEntry *se = kg_index_find(kg->subject_index,
                                        kg->spo_bucket_count, entity_id);
     if (se) out_degree = se->list.count;
 
-    /* in_degree from object_index */
     size_t in_degree = 0;
     KG_IndexEntry *oe = kg_index_find(kg->object_index,
                                        kg->spo_bucket_count, entity_id);
@@ -2083,8 +1958,6 @@ int gv_kg_get_predicates(const GV_KnowledgeGraph *kg, char **out_predicates,
     return (int)found;
 }
 
-/* * Persistence: Save */
-
 /**
  * @brief Internal: write raw bytes to file.
  */
@@ -2127,24 +2000,20 @@ int gv_kg_save(const GV_KnowledgeGraph *kg, const char *path) {
         return -1;
     }
 
-    /* Header */
     if (kg_write_bytes(fp, KG_MAGIC, KG_MAGIC_LEN) != 0) goto fail;
     if (gv_write_u32(fp, KG_VERSION) != 0) goto fail;
 
-    /* Config subset */
     if (gv_write_u32(fp, (uint32_t)kg->config.embedding_dimension) != 0)
         goto fail;
     if (kg_write_f32(fp, kg->config.similarity_threshold) != 0) goto fail;
     if (kg_write_f32(fp, kg->config.link_prediction_threshold) != 0)
         goto fail;
 
-    /* Counts */
     if (kg_write_u64(fp, (uint64_t)kg->entity_count) != 0) goto fail;
     if (kg_write_u64(fp, (uint64_t)kg->relation_count) != 0) goto fail;
     if (kg_write_u64(fp, kg->next_entity_id) != 0) goto fail;
     if (kg_write_u64(fp, kg->next_relation_id) != 0) goto fail;
 
-    /* Entities */
     for (size_t b = 0; b < kg->entity_bucket_count; b++) {
         for (KG_EntityNode *n = kg->entity_buckets[b]; n; n = n->next) {
             const GV_KGEntity *e = &n->entity;
@@ -2166,7 +2035,6 @@ int gv_kg_save(const GV_KnowledgeGraph *kg, const char *path) {
         }
     }
 
-    /* Relations */
     for (size_t b = 0; b < kg->relation_bucket_count; b++) {
         for (KG_RelationNode *n = kg->relation_buckets[b]; n; n = n->next) {
             const GV_KGRelation *r = &n->relation;
@@ -2177,7 +2045,6 @@ int gv_kg_save(const GV_KnowledgeGraph *kg, const char *path) {
             if (kg_write_f32(fp, r->weight) != 0) goto fail;
             if (kg_write_u64(fp, r->created_at) != 0) goto fail;
 
-            /* Count properties */
             size_t pc = 0;
             for (GV_KGProp *p = r->properties; p; p = p->next) pc++;
             if (kg_write_props(fp, r->properties, pc) != 0) goto fail;
@@ -2193,8 +2060,6 @@ fail:
     pthread_rwlock_unlock((pthread_rwlock_t *)&kg->rwlock);
     return -1;
 }
-
-/* * Persistence: Load */
 
 static int kg_read_bytes(FILE *fp, void *buf, size_t len) {
     return (fread(buf, 1, len, fp) == len) ? 0 : -1;
@@ -2247,7 +2112,6 @@ GV_KnowledgeGraph *gv_kg_load(const char *path) {
     FILE *fp = fopen(path, "rb");
     if (!fp) return NULL;
 
-    /* Read and verify magic */
     char magic[KG_MAGIC_LEN];
     if (kg_read_bytes(fp, magic, KG_MAGIC_LEN) != 0 ||
         memcmp(magic, KG_MAGIC, KG_MAGIC_LEN) != 0) {
@@ -2255,14 +2119,12 @@ GV_KnowledgeGraph *gv_kg_load(const char *path) {
         return NULL;
     }
 
-    /* Version */
     uint32_t version;
     if (gv_read_u32(fp, &version) != 0 || version != KG_VERSION) {
         fclose(fp);
         return NULL;
     }
 
-    /* Config */
     uint32_t emb_dim;
     float sim_thresh, lp_thresh;
     if (gv_read_u32(fp, &emb_dim) != 0) { fclose(fp); return NULL; }
@@ -2275,20 +2137,17 @@ GV_KnowledgeGraph *gv_kg_load(const char *path) {
     cfg.similarity_threshold = sim_thresh;
     cfg.link_prediction_threshold = lp_thresh;
 
-    /* Counts */
     uint64_t entity_count, relation_count, next_eid, next_rid;
     if (kg_read_u64(fp, &entity_count) != 0) { fclose(fp); return NULL; }
     if (kg_read_u64(fp, &relation_count) != 0) { fclose(fp); return NULL; }
     if (kg_read_u64(fp, &next_eid) != 0) { fclose(fp); return NULL; }
     if (kg_read_u64(fp, &next_rid) != 0) { fclose(fp); return NULL; }
 
-    /* Create graph */
     GV_KnowledgeGraph *kg = gv_kg_create(&cfg);
     if (!kg) { fclose(fp); return NULL; }
     kg->next_entity_id = next_eid;
     kg->next_relation_id = next_rid;
 
-    /* Read entities */
     for (uint64_t i = 0; i < entity_count; i++) {
         uint64_t eid;
         if (kg_read_u64(fp, &eid) != 0) goto load_fail;
@@ -2332,7 +2191,6 @@ GV_KnowledgeGraph *gv_kg_load(const char *path) {
         }
         GV_KGProp *props = kg_read_props(fp, prop_count);
 
-        /* Insert entity node directly */
         KG_EntityNode *node = (KG_EntityNode *)calloc(1,
                                   sizeof(KG_EntityNode));
         if (!node) {
@@ -2362,7 +2220,6 @@ GV_KnowledgeGraph *gv_kg_load(const char *path) {
         }
     }
 
-    /* Read relations */
     for (uint64_t i = 0; i < relation_count; i++) {
         uint64_t rid, sid, oid;
         if (kg_read_u64(fp, &rid) != 0 ||
@@ -2387,7 +2244,6 @@ GV_KnowledgeGraph *gv_kg_load(const char *path) {
         }
         GV_KGProp *props = kg_read_props(fp, prop_count);
 
-        /* Insert relation node directly */
         KG_RelationNode *node = (KG_RelationNode *)calloc(1,
                                     sizeof(KG_RelationNode));
         if (!node) {
@@ -2410,7 +2266,6 @@ GV_KnowledgeGraph *gv_kg_load(const char *path) {
         kg->relation_buckets[bucket] = node;
         kg->relation_count++;
 
-        /* Update SPO indexes */
         KG_IndexEntry *se = kg_index_get_or_create(kg->subject_index,
                                                     kg->spo_bucket_count, sid);
         if (se) kg_idlist_push(&se->list, rid);

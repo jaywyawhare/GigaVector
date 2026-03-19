@@ -19,7 +19,6 @@ typedef struct {
     int owns_storage;
 } GV_FlatIndex;
 
-/* Max-heap for top-k selection */
 typedef struct { float dist; size_t idx; } GV_FlatHeapItem;
 GV_HEAP_DEFINE(gv_flat_heap, GV_FlatHeapItem)
 
@@ -90,7 +89,6 @@ int gv_flat_search(void *index, const GV_Vector *query, size_t k,
     for (size_t i = 0; i < count; i++) {
         if (gv_soa_storage_is_deleted(idx->storage, i) == 1) continue;
 
-        /* Metadata filter */
         if (filter_key && filter_value) {
             GV_Metadata *meta = gv_soa_storage_get_metadata(idx->storage, i);
             if (!gv_metadata_match(meta, filter_key, filter_value)) continue;
@@ -102,9 +100,7 @@ int gv_flat_search(void *index, const GV_Vector *query, size_t k,
         gv_flat_heap_push(heap, &heap_size, k, (GV_FlatHeapItem){dist, i});
     }
 
-    /* Extract results from heap in sorted order (nearest first) */
     int n = (int)heap_size;
-    /* Sort by extracting from max-heap */
     for (int i = n - 1; i >= 0; i--) {
         size_t vi = heap[0].idx;
         float dist = heap[0].dist;
@@ -120,7 +116,6 @@ int gv_flat_search(void *index, const GV_Vector *query, size_t k,
         /* Copy vector so result outlives storage */
         GV_Vector *copy = gv_vector_create_from_data(view.dimension, view.data);
         if (copy) {
-            /* Copy metadata */
             GV_Metadata *meta = gv_soa_storage_get_metadata(idx->storage, vi);
             if (meta) {
                 GV_Metadata *cur = meta;
@@ -136,7 +131,6 @@ int gv_flat_search(void *index, const GV_Vector *query, size_t k,
             results[i].vector = NULL;
         }
 
-        /* Move last to top and sift down */
         heap[0] = heap[heap_size - 1];
         heap_size--;
         if (heap_size > 0) {
@@ -243,25 +237,19 @@ int gv_flat_save(const void *index, FILE *out, uint32_t version) {
     const GV_FlatIndex *idx = (const GV_FlatIndex *)index;
     (void)version;
 
-    /* Write flat index marker and config */
     if (gv_write_u32(out, (uint32_t)idx->dimension) != 0) return -1;
     if (gv_write_u32(out, (uint32_t)idx->config.use_simd) != 0) return -1;
 
-    /* Write vector count */
     uint32_t count = (uint32_t)idx->storage->count;
     if (gv_write_u32(out, count) != 0) return -1;
 
-    /* Write each vector */
     for (uint32_t i = 0; i < count; i++) {
-        /* Write deleted flag */
         uint32_t deleted = (uint32_t)(gv_soa_storage_is_deleted(idx->storage, i) == 1 ? 1 : 0);
         if (gv_write_u32(out, deleted) != 0) return -1;
 
-        /* Write vector data */
         const float *data = gv_soa_storage_get_data(idx->storage, i);
         if (fwrite(data, sizeof(float), idx->dimension, out) != idx->dimension) return -1;
 
-        /* Write metadata */
         GV_Metadata *meta = gv_soa_storage_get_metadata(idx->storage, i);
         uint32_t meta_count = 0;
         GV_Metadata *cur = meta;
@@ -309,7 +297,6 @@ int gv_flat_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version)
             return -1;
         }
 
-        /* Read metadata */
         uint32_t meta_count = 0;
         if (gv_read_u32(in, &meta_count) != 0) { free(data); gv_flat_destroy(index); return -1; }
 

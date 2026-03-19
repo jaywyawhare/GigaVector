@@ -17,21 +17,18 @@
 #define ENTITY_ID_BUFFER_SIZE 64
 #define RELATIONSHIP_ID_BUFFER_SIZE 64
 
-/* Hash table for entities */
 typedef struct EntityNode {
     char *entity_id;
     GV_GraphEntity entity;
     struct EntityNode *next;
 } EntityNode;
 
-/* Hash table for relationships */
 typedef struct RelationshipNode {
     char *relationship_id;
     GV_GraphRelationship relationship;
     struct RelationshipNode *next;
 } RelationshipNode;
 
-/* Graph structure */
 struct GV_ContextGraph {
     GV_ContextGraphConfig config;
     EntityNode **entity_table;
@@ -43,7 +40,6 @@ struct GV_ContextGraph {
     pthread_mutex_t mutex;
 };
 
-/* Generate entity ID */
 static char *generate_entity_id(uint64_t counter) {
     char *id = (char *)malloc(ENTITY_ID_BUFFER_SIZE);
     if (id == NULL) {
@@ -53,7 +49,6 @@ static char *generate_entity_id(uint64_t counter) {
     return id;
 }
 
-/* Generate relationship ID */
 static char *generate_relationship_id(uint64_t counter) {
     char *id = (char *)malloc(RELATIONSHIP_ID_BUFFER_SIZE);
     if (id == NULL) {
@@ -63,7 +58,6 @@ static char *generate_relationship_id(uint64_t counter) {
     return id;
 }
 
-/* Cosine similarity */
 static float cosine_similarity(const float *a, const float *b, size_t dim) {
     float dot_product = 0.0f;
     float norm_a = 0.0f;
@@ -134,7 +128,6 @@ GV_ContextGraph *gv_context_graph_create(const GV_ContextGraphConfig *config) {
     return graph;
 }
 
-/* Parse entities from JSON response */
 static int parse_entities_json(const char *json_response, GV_GraphEntity **entities, size_t *entity_count) {
     if (json_response == NULL || entities == NULL || entity_count == NULL) {
         return -1;
@@ -143,10 +136,8 @@ static int parse_entities_json(const char *json_response, GV_GraphEntity **entit
     *entities = NULL;
     *entity_count = 0;
     
-    /* Find entities array - look for "entities" or direct array */
     const char *array_start = strstr(json_response, "\"entities\"");
     if (array_start == NULL) {
-        /* Try direct array format */
         array_start = strchr(json_response, '[');
     } else {
         array_start = strchr(array_start, '[');
@@ -156,7 +147,6 @@ static int parse_entities_json(const char *json_response, GV_GraphEntity **entit
         return -1;
     }
     
-    /* Count entities by counting "entity" fields */
     size_t count = 0;
     const char *p = array_start;
     while ((p = strstr(p, "\"entity\"")) != NULL) {
@@ -173,7 +163,6 @@ static int parse_entities_json(const char *json_response, GV_GraphEntity **entit
         return -1;
     }
     
-    /* Parse each entity */
     p = array_start;
     size_t idx = 0;
     while (idx < count && (p = strstr(p, "\"entity\"")) != NULL) {
@@ -198,7 +187,6 @@ static int parse_entities_json(const char *json_response, GV_GraphEntity **entit
         memcpy(ents[idx].name, name_start, name_len);
         ents[idx].name[name_len] = '\0';
         
-        /* Find entity_type */
         const char *type_start = strstr(p, "\"entity_type\"");
         if (type_start != NULL) {
             type_start = strchr(type_start, '"');
@@ -212,7 +200,6 @@ static int parse_entities_json(const char *json_response, GV_GraphEntity **entit
                         memcpy(type_str, type_start, type_len);
                         type_str[type_len] = '\0';
                         
-                        /* Map string to enum */
                         if (strcmp(type_str, "person") == 0) {
                             ents[idx].entity_type = GV_ENTITY_TYPE_PERSON;
                         } else if (strcmp(type_str, "organization") == 0) {
@@ -244,7 +231,6 @@ static int parse_entities_json(const char *json_response, GV_GraphEntity **entit
     return 0;
 }
 
-/* Parse relationships from JSON response */
 static int parse_relationships_json(const char *json_response, GV_GraphRelationship **relationships, size_t *relationship_count) {
     if (json_response == NULL || relationships == NULL || relationship_count == NULL) {
         return -1;
@@ -253,12 +239,10 @@ static int parse_relationships_json(const char *json_response, GV_GraphRelations
     *relationships = NULL;
     *relationship_count = 0;
     
-    /* Find relationships array - look for "entities" or direct array */
     const char *array_start = strstr(json_response, "\"entities\"");
     if (array_start == NULL) {
         array_start = strstr(json_response, "\"relationships\"");
         if (array_start == NULL) {
-            /* Try direct array format */
             array_start = strchr(json_response, '[');
         } else {
             array_start = strchr(array_start, '[');
@@ -271,7 +255,6 @@ static int parse_relationships_json(const char *json_response, GV_GraphRelations
         return -1;
     }
     
-    /* Count relationships by counting "source" fields */
     size_t count = 0;
     const char *p = array_start;
     while ((p = strstr(p, "\"source\"")) != NULL) {
@@ -288,7 +271,6 @@ static int parse_relationships_json(const char *json_response, GV_GraphRelations
         return -1;
     }
     
-    /* Parse each relationship */
     p = array_start;
     size_t idx = 0;
     while (idx < count && (p = strstr(p, "\"source\"")) != NULL) {
@@ -315,7 +297,6 @@ static int parse_relationships_json(const char *json_response, GV_GraphRelations
         memcpy(source, source_start, source_len);
         source[source_len] = '\0';
         
-        /* Find relationship */
         const char *rel_start = strstr(p, "\"relationship\"");
         if (rel_start == NULL) {
             rel_start = strstr(p, "\"relationship_type\"");
@@ -336,7 +317,6 @@ static int parse_relationships_json(const char *json_response, GV_GraphRelations
             }
         }
         
-        /* Find destination */
         const char *dest_start = strstr(p, "\"destination\"");
         if (dest_start != NULL) {
             dest_start = strchr(dest_start, '"');
@@ -350,8 +330,6 @@ static int parse_relationships_json(const char *json_response, GV_GraphRelations
                         memcpy(dest, dest_start, dest_len);
                         dest[dest_len] = '\0';
                         
-                        /* Generate entity IDs from names (simplified - in real implementation, 
-                           would look up actual entity IDs) */
                         char source_id[128];
                         char dest_id[128];
                         snprintf(source_id, sizeof(source_id), "ent_%s", source);
@@ -403,7 +381,6 @@ void gv_context_graph_destroy(GV_ContextGraph *graph) {
     
     pthread_mutex_lock(&graph->mutex);
     
-    /* Free entity table */
     for (size_t i = 0; i < graph->entity_table_size; i++) {
         EntityNode *node = graph->entity_table[i];
         while (node != NULL) {
@@ -416,7 +393,6 @@ void gv_context_graph_destroy(GV_ContextGraph *graph) {
     }
     free(graph->entity_table);
     
-    /* Free relationship table */
     for (size_t i = 0; i < graph->relationship_table_size; i++) {
         RelationshipNode *node = graph->relationship_table[i];
         while (node != NULL) {
@@ -434,14 +410,12 @@ void gv_context_graph_destroy(GV_ContextGraph *graph) {
     free(graph);
 }
 
-/* Extract entities using LLM */
 static int extract_entities_llm(GV_LLM *llm, const char *text, const char *user_id,
                                  GV_GraphEntity **entities, size_t *entity_count) {
     if (llm == NULL || text == NULL || entities == NULL || entity_count == NULL) {
         return -1;
     }
     
-    /* Build prompt for entity extraction */
     char prompt[8192];
     snprintf(prompt, sizeof(prompt),
         "You are an expert at extracting entities from text. Extract all entities mentioned in the following text.\n\n"
@@ -467,14 +441,12 @@ static int extract_entities_llm(GV_LLM *llm, const char *text, const char *user_
         return -1;
     }
     
-    /* Parse JSON response - simple string-based parser */
     int parse_result = parse_entities_json(response.content, entities, entity_count);
     
     free(response.content);
     return parse_result;
 }
 
-/* Extract relationships using LLM */
 static int extract_relationships_llm(GV_LLM *llm, const char *text, const char *user_id,
                                      const GV_GraphEntity *entities, size_t entity_count,
                                      GV_GraphRelationship **relationships, size_t *relationship_count) {
@@ -482,7 +454,6 @@ static int extract_relationships_llm(GV_LLM *llm, const char *text, const char *
         return -1;
     }
     
-    /* Build entity list string */
     char entity_list[4096] = "";
     for (size_t i = 0; i < entity_count && i < 50; i++) {
         if (i > 0) {
@@ -491,7 +462,6 @@ static int extract_relationships_llm(GV_LLM *llm, const char *text, const char *
         strncat(entity_list, entities[i].name, sizeof(entity_list) - strlen(entity_list) - 1);
     }
     
-    /* Build prompt for relationship extraction */
     char prompt[8192];
     snprintf(prompt, sizeof(prompt),
         "You are an expert at extracting relationships between entities from text.\n\n"
@@ -516,7 +486,6 @@ static int extract_relationships_llm(GV_LLM *llm, const char *text, const char *
         return -1;
     }
     
-    /* Parse JSON response - simple string-based parser */
     int parse_result = parse_relationships_json(response.content, relationships, relationship_count);
     
     free(response.content);
@@ -554,13 +523,11 @@ int gv_context_graph_extract(GV_ContextGraph *graph,
         return -1;
     }
     
-    /* Extract entities */
     if (graph->config.enable_entity_extraction) {
         if (extract_entities_llm(llm, text, user_id, entities, entity_count) != 0) {
             return -1;
         }
         
-        /* Set agent_id and run_id on extracted entities */
         if (*entities != NULL && *entity_count > 0) {
             for (size_t i = 0; i < *entity_count; i++) {
                 if (agent_id != NULL) {
@@ -572,11 +539,9 @@ int gv_context_graph_extract(GV_ContextGraph *graph,
             }
         }
         
-        /* Generate embeddings for extracted entities */
         if (*entities != NULL && *entity_count > 0) {
             GV_EmbeddingService *embedding_service = (GV_EmbeddingService *)graph->config.embedding_service;
             if (embedding_service != NULL) {
-                /* Use embedding service - batch generate */
                 const char **texts = (const char **)malloc(*entity_count * sizeof(const char *));
                 if (texts != NULL) {
                     for (size_t i = 0; i < *entity_count; i++) {
@@ -603,10 +568,8 @@ int gv_context_graph_extract(GV_ContextGraph *graph,
                     
                     free(texts);
                     if (embedding_dims) free(embedding_dims);
-                    /* Note: embeddings are owned by entities now */
                 }
             } else if (graph->config.embedding_callback != NULL) {
-                /* Fall back to callback */
                 for (size_t i = 0; i < *entity_count; i++) {
                     if ((*entities)[i].embedding == NULL && (*entities)[i].name != NULL) {
                         size_t dim = graph->config.embedding_dimension;
@@ -624,11 +587,9 @@ int gv_context_graph_extract(GV_ContextGraph *graph,
         }
     }
     
-    /* Extract relationships */
     if (graph->config.enable_relationship_extraction && *entity_count > 0) {
         if (extract_relationships_llm(llm, text, user_id, *entities, *entity_count,
                                       relationships, relationship_count) != 0) {
-            /* Free entities on error */
             for (size_t i = 0; i < *entity_count; i++) {
                 gv_graph_entity_free(&(*entities)[i]);
             }
@@ -654,7 +615,6 @@ int gv_context_graph_add_entities(GV_ContextGraph *graph,
     for (size_t i = 0; i < entity_count; i++) {
         const GV_GraphEntity *ent = &entities[i];
         
-        /* Check if entity already exists */
         size_t hash = gv_hash_str(ent->name) % graph->entity_table_size;
         EntityNode *node = graph->entity_table[hash];
         EntityNode *found = NULL;
@@ -670,7 +630,6 @@ int gv_context_graph_add_entities(GV_ContextGraph *graph,
         }
         
         if (found != NULL) {
-            /* Update existing entity */
             found->entity.updated = time(NULL);
             found->entity.mentions++;
             if (ent->embedding != NULL && ent->embedding_dim > 0) {
@@ -682,7 +641,6 @@ int gv_context_graph_add_entities(GV_ContextGraph *graph,
                 }
             }
         } else {
-            /* Create new entity */
             EntityNode *new_node = (EntityNode *)calloc(1, sizeof(EntityNode));
             if (new_node == NULL) {
                 continue;
@@ -718,7 +676,6 @@ int gv_context_graph_add_entities(GV_ContextGraph *graph,
                     new_node->entity.embedding_dim = ent->embedding_dim;
                 }
             } else {
-                /* Try embedding service first */
                 GV_EmbeddingService *embedding_service = (GV_EmbeddingService *)graph->config.embedding_service;
                 if (embedding_service != NULL) {
                     size_t dim = 0;
@@ -731,7 +688,6 @@ int gv_context_graph_add_entities(GV_ContextGraph *graph,
                         }
                     }
                 } else if (graph->config.embedding_callback != NULL) {
-                    /* Fall back to callback */
                     size_t dim = graph->config.embedding_dimension;
                     float *embedding = graph->config.embedding_callback(new_node->entity.name, &dim, graph->config.embedding_user_data);
                     if (embedding != NULL && dim > 0) {
@@ -744,7 +700,6 @@ int gv_context_graph_add_entities(GV_ContextGraph *graph,
                 }
             }
             
-            /* Insert into hash table */
             new_node->next = graph->entity_table[hash];
             graph->entity_table[hash] = new_node;
         }
@@ -766,7 +721,6 @@ int gv_context_graph_add_relationships(GV_ContextGraph *graph,
     for (size_t i = 0; i < relationship_count; i++) {
         const GV_GraphRelationship *rel = &relationships[i];
         
-        /* Check if relationship already exists */
         size_t hash = gv_hash_str(rel->source_entity_id) % graph->relationship_table_size;
         RelationshipNode *node = graph->relationship_table[hash];
         RelationshipNode *found = NULL;
@@ -782,11 +736,9 @@ int gv_context_graph_add_relationships(GV_ContextGraph *graph,
         }
         
         if (found != NULL) {
-            /* Update existing relationship */
             found->relationship.updated = time(NULL);
             found->relationship.mentions++;
         } else {
-            /* Create new relationship */
             RelationshipNode *new_node = (RelationshipNode *)calloc(1, sizeof(RelationshipNode));
             if (new_node == NULL) {
                 continue;
@@ -806,7 +758,6 @@ int gv_context_graph_add_relationships(GV_ContextGraph *graph,
             new_node->relationship.updated = time(NULL);
             new_node->relationship.mentions = 1;
             
-            /* Insert into hash table */
             new_node->next = graph->relationship_table[hash];
             graph->relationship_table[hash] = new_node;
         }
@@ -832,11 +783,9 @@ int gv_context_graph_search(GV_ContextGraph *graph,
     
     size_t result_count = 0;
     
-    /* Search all entities for similar embeddings */
     for (size_t i = 0; i < graph->entity_table_size && result_count < max_results; i++) {
         EntityNode *node = graph->entity_table[i];
         while (node != NULL && result_count < max_results) {
-            /* Check filters */
             if (user_id != NULL && (node->entity.user_id == NULL || strcmp(node->entity.user_id, user_id) != 0)) {
                 node = node->next;
                 continue;
@@ -850,18 +799,15 @@ int gv_context_graph_search(GV_ContextGraph *graph,
                 continue;
             }
             
-            /* Calculate similarity */
             if (node->entity.embedding != NULL && node->entity.embedding_dim == embedding_dim) {
                 float similarity = cosine_similarity(query_embedding, node->entity.embedding, embedding_dim);
                 
                 if (similarity >= graph->config.similarity_threshold) {
-                    /* Find relationships for this entity */
                     size_t rel_hash = gv_hash_str(node->entity_id) % graph->relationship_table_size;
                     RelationshipNode *rel_node = graph->relationship_table[rel_hash];
                     
                     while (rel_node != NULL && result_count < max_results) {
                         if (strcmp(rel_node->relationship.source_entity_id, node->entity_id) == 0) {
-                            /* Find destination entity */
                             EntityNode *dest_node = NULL;
                             for (size_t j = 0; j < graph->entity_table_size; j++) {
                                 EntityNode *n = graph->entity_table[j];
@@ -898,7 +844,6 @@ int gv_context_graph_search(GV_ContextGraph *graph,
     return (int)result_count;
 }
 
-/* Helper: Find entity by ID */
 static EntityNode *find_entity_by_id(GV_ContextGraph *graph, const char *entity_id) {
     if (graph == NULL || entity_id == NULL) {
         return NULL;
@@ -915,7 +860,6 @@ static EntityNode *find_entity_by_id(GV_ContextGraph *graph, const char *entity_
     return NULL;
 }
 
-/* Helper: Get relationships for an entity */
 static void get_entity_relationships(GV_ContextGraph *graph, const char *entity_id,
                                      RelationshipNode **out_rels, size_t *out_count, size_t max_count) {
     if (graph == NULL || entity_id == NULL || out_rels == NULL || out_count == NULL) {
@@ -934,12 +878,10 @@ static void get_entity_relationships(GV_ContextGraph *graph, const char *entity_
         node = node->next;
     }
     
-    /* Also check reverse relationships */
     for (size_t i = 0; i < graph->relationship_table_size && *out_count < max_count; i++) {
         RelationshipNode *n = graph->relationship_table[i];
         while (n != NULL && *out_count < max_count) {
             if (strcmp(n->relationship.destination_entity_id, entity_id) == 0) {
-                /* Check if already added */
                 int found = 0;
                 for (size_t j = 0; j < *out_count; j++) {
                     if (out_rels[j] == n) {
@@ -970,14 +912,12 @@ int gv_context_graph_get_related(GV_ContextGraph *graph,
     
     size_t result_count = 0;
     
-    /* Find starting entity */
     EntityNode *start_entity = find_entity_by_id(graph, entity_id);
     if (start_entity == NULL) {
         pthread_mutex_unlock(&graph->mutex);
         return 0;
     }
     
-    /* BFS traversal with depth limit */
     typedef struct {
         const char *entity_id;
         size_t depth;
@@ -998,7 +938,6 @@ int gv_context_graph_get_related(GV_ContextGraph *graph,
         return -1;
     }
     
-    /* Add starting entity to queue */
     queue[queue_back].entity_id = entity_id;
     queue[queue_back].depth = 0;
     queue_back++;
@@ -1013,7 +952,6 @@ int gv_context_graph_get_related(GV_ContextGraph *graph,
             continue;
         }
         
-        /* Get relationships for current entity */
         RelationshipNode *rels[100];
         size_t rel_count = 0;
         get_entity_relationships(graph, current.entity_id, rels, &rel_count, 100);
@@ -1034,7 +972,6 @@ int gv_context_graph_get_related(GV_ContextGraph *graph,
                 continue;
             }
             
-            /* Check if already visited */
             int already_visited = 0;
             size_t next_hash = gv_hash_str(next_entity_id) % graph->entity_table_size;
             for (size_t j = 0; j < visited_count; j++) {
@@ -1044,7 +981,6 @@ int gv_context_graph_get_related(GV_ContextGraph *graph,
                 }
             }
             
-            /* Add result */
             EntityNode *source_entity = find_entity_by_id(graph, rel->relationship.source_entity_id);
             EntityNode *dest_entity = find_entity_by_id(graph, rel->relationship.destination_entity_id);
             
@@ -1056,7 +992,6 @@ int gv_context_graph_get_related(GV_ContextGraph *graph,
                 result_count++;
             }
             
-            /* Add to queue if not visited and within depth limit */
             if (!already_visited && current.depth + 1 < max_depth && queue_back < max_results * 2) {
                 queue[queue_back].entity_id = next_entity_id;
                 queue[queue_back].depth = current.depth + 1;
@@ -1114,7 +1049,6 @@ int gv_context_graph_delete_relationships(GV_ContextGraph *graph,
     pthread_mutex_lock(&graph->mutex);
     
     for (size_t i = 0; i < relationship_count; i++) {
-        /* Search all buckets */
         for (size_t j = 0; j < graph->relationship_table_size; j++) {
             RelationshipNode **node_ptr = &graph->relationship_table[j];
             RelationshipNode *node = *node_ptr;

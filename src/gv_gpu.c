@@ -210,9 +210,21 @@ GV_GPUIndex *gv_gpu_index_create(GV_GPUContext *ctx, const float *vectors,
 
 #ifdef HAVE_CUDA
     if (ctx->cuda_available) {
-        /* TODO: Allocate device memory and copy */
-        /* cudaMalloc(&index->d_vectors, data_size); */
-        /* cudaMemcpy(index->d_vectors, vectors, data_size, cudaMemcpyHostToDevice); */
+        size_t norms_size = count * sizeof(float);
+        if (cudaMalloc((void **)&index->d_vectors, data_size) != cudaSuccess) {
+            snprintf(ctx->last_error, sizeof(ctx->last_error),
+                     "cudaMalloc failed for vectors (%zu bytes)", data_size);
+            /* Continue with CPU-only fallback */
+        } else {
+            cudaMemcpy(index->d_vectors, vectors, data_size, cudaMemcpyHostToDevice);
+            if (index->norms) {
+                if (cudaMalloc((void **)&index->d_norms, norms_size) == cudaSuccess) {
+                    cudaMemcpy(index->d_norms, index->norms, norms_size, cudaMemcpyHostToDevice);
+                }
+            }
+            index->memory_usage += data_size + norms_size;
+            ctx->stats.device_memory_used += data_size + norms_size;
+        }
     }
 #endif
 
@@ -284,8 +296,25 @@ int gv_gpu_index_add(GV_GPUIndex *index, const float *vectors, size_t count) {
     index->memory_usage = index->count * (index->dimension * sizeof(float) + sizeof(float));
 
 #ifdef HAVE_CUDA
-    if (index->ctx->cuda_available) {
-        /* TODO: Update device memory */
+    if (index->ctx->cuda_available && index->d_vectors) {
+        /* Reallocate device memory with new size */
+        size_t new_data_size = index->count * index->dimension * sizeof(float);
+        size_t new_norms_size = index->count * sizeof(float);
+        float *new_d_vectors = NULL;
+        if (cudaMalloc((void **)&new_d_vectors, new_data_size) == cudaSuccess) {
+            cudaMemcpy(new_d_vectors, index->vectors, new_data_size, cudaMemcpyHostToDevice);
+            cudaFree(index->d_vectors);
+            index->d_vectors = new_d_vectors;
+        }
+        if (index->d_norms) {
+            float *new_d_norms = NULL;
+            if (cudaMalloc((void **)&new_d_norms, new_norms_size) == cudaSuccess) {
+                cudaMemcpy(new_d_norms, index->norms, new_norms_size, cudaMemcpyHostToDevice);
+                cudaFree(index->d_norms);
+                index->d_norms = new_d_norms;
+            }
+        }
+        index->ctx->stats.device_memory_used = new_data_size + new_norms_size;
     }
 #endif
 
@@ -329,8 +358,23 @@ int gv_gpu_index_update(GV_GPUIndex *index, const size_t *indices,
     }
 
 #ifdef HAVE_CUDA
-    if (index->ctx->cuda_available) {
-        /* TODO: Update device memory */
+    if (index->ctx->cuda_available && index->d_vectors) {
+        /* Update modified vectors on device */
+        for (size_t i = 0; i < count; i++) {
+            if (indices[i] < index->count) {
+                size_t offset = indices[i] * index->dimension;
+                cudaMemcpy(index->d_vectors + offset,
+                           index->vectors + offset,
+                           index->dimension * sizeof(float),
+                           cudaMemcpyHostToDevice);
+                if (index->d_norms) {
+                    cudaMemcpy(index->d_norms + indices[i],
+                               index->norms + indices[i],
+                               sizeof(float),
+                               cudaMemcpyHostToDevice);
+                }
+            }
+        }
     }
 #endif
 
@@ -353,9 +397,14 @@ void gv_gpu_index_destroy(GV_GPUIndex *index) {
 
 #ifdef HAVE_CUDA
     if (index->ctx && index->ctx->cuda_available) {
-        /* TODO: Free device memory */
-        /* cudaFree(index->d_vectors); */
-        /* cudaFree(index->d_norms); */
+        if (index->d_vectors) {
+            cudaFree(index->d_vectors);
+            index->d_vectors = NULL;
+        }
+        if (index->d_norms) {
+            cudaFree(index->d_norms);
+            index->d_norms = NULL;
+        }
     }
 #endif
 
@@ -687,7 +736,104 @@ int gv_gpu_train_ivfpq(GV_GPUContext *ctx, const float *vectors,
 
 #ifdef HAVE_CUDA
     if (ctx->cuda_available) {
-        /* TODO: CUDA k-means for centroid training */
+        /* GPU-accelerated k-means: compute distances on device, assign on host */
+        float *d_vectors = NULL;
+        float *d_centroids = NULL;
+        float *d_distances = NULL;
+        size_t vec_size = num_vectors * dimension * sizeof(float);
+        size_t cent_size = num_centroids * dimension * sizeof(float);
+        size_t dist_size = num_vectors * num_centroids * sizeof(float);
+
+        int gpu_ok = (cudaMalloc((void **)&d_vectors, vec_size) == cudaSuccess &&
+                      cudaMalloc((void **)&d_centroids, cent_size) == cudaSuccess &&
+                      cudaMalloc((void **)&d_distances, dist_size) == cudaSuccess);
+
+        if (gpu_ok) {
+            cudaMemcpy(d_vectors, vectors, vec_size, cudaMemcpyHostToDevice);
+
+            /* Initialize centroids on host first */
+            size_t stride = num_vectors / num_centroids;
+            if (stride == 0) stride = 1;
+            for (size_t i = 0; i < num_centroids && i * stride < num_vectors; i++) {
+                memcpy(centroids + i * dimension,
+                       vectors + (i * stride) * dimension,
+                       dimension * sizeof(float));
+            }
+
+            size_t *assignments = calloc(num_vectors, sizeof(size_t));
+            size_t *counts = calloc(num_centroids, sizeof(size_t));
+            float *new_centroids = calloc(num_centroids * dimension, sizeof(float));
+            float *host_distances = malloc(dist_size);
+
+            if (assignments && counts && new_centroids && host_distances) {
+                for (int iter = 0; iter < 10; iter++) {
+                    cudaMemcpy(d_centroids, centroids, cent_size, cudaMemcpyHostToDevice);
+
+                    /* Use GPU to compute all pairwise distances */
+                    GV_GPUSearchParams params = {0};
+                    params.metric = GV_GPU_METRIC_EUCLIDEAN;
+                    gv_cuda_compute_distances(ctx, d_vectors, num_vectors,
+                                              d_centroids, num_centroids,
+                                              dimension, params.metric, d_distances);
+                    cudaMemcpy(host_distances, d_distances, dist_size, cudaMemcpyDeviceToHost);
+
+                    /* Assign vectors to nearest centroid (host-side) */
+                    memset(counts, 0, num_centroids * sizeof(size_t));
+                    memset(new_centroids, 0, num_centroids * dimension * sizeof(float));
+                    for (size_t v = 0; v < num_vectors; v++) {
+                        float min_dist = FLT_MAX;
+                        size_t best = 0;
+                        for (size_t c = 0; c < num_centroids; c++) {
+                            float dist = host_distances[v * num_centroids + c];
+                            if (dist < min_dist) { min_dist = dist; best = c; }
+                        }
+                        assignments[v] = best;
+                        counts[best]++;
+                        const float *vec = vectors + v * dimension;
+                        float *nc = new_centroids + best * dimension;
+                        for (size_t d = 0; d < dimension; d++) nc[d] += vec[d];
+                    }
+
+                    /* Update centroids */
+                    for (size_t c = 0; c < num_centroids; c++) {
+                        if (counts[c] > 0) {
+                            float *nc = new_centroids + c * dimension;
+                            for (size_t d = 0; d < dimension; d++) {
+                                centroids[c * dimension + d] = nc[d] / (float)counts[c];
+                            }
+                        }
+                    }
+                }
+            }
+
+            free(assignments);
+            free(counts);
+            free(new_centroids);
+            free(host_distances);
+            cudaFree(d_vectors);
+            cudaFree(d_centroids);
+            cudaFree(d_distances);
+
+            /* Train subquantizer codebooks using CPU (codebook training is fast) */
+            size_t sub_dim = dimension / num_subquantizers;
+            size_t codes_per_sub = (size_t)1 << bits_per_subquantizer;
+            for (size_t sq = 0; sq < num_subquantizers; sq++) {
+                size_t sq_stride = num_vectors / codes_per_sub;
+                if (sq_stride == 0) sq_stride = 1;
+                for (size_t c = 0; c < codes_per_sub && c * sq_stride < num_vectors; c++) {
+                    memcpy(codebooks + (sq * codes_per_sub + c) * sub_dim,
+                           vectors + (c * sq_stride) * dimension + sq * sub_dim,
+                           sub_dim * sizeof(float));
+                }
+            }
+
+            return 0;  /* GPU path complete */
+        }
+
+        /* Cleanup on allocation failure, fall through to CPU */
+        if (d_vectors) cudaFree(d_vectors);
+        if (d_centroids) cudaFree(d_centroids);
+        if (d_distances) cudaFree(d_distances);
     }
 #endif
 

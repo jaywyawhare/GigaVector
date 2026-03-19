@@ -7,14 +7,12 @@
 
 #include "gigavector/gv_codebook.h"
 
-/* File format constants */
 #define GV_CODEBOOK_MAGIC_0 'G'
 #define GV_CODEBOOK_MAGIC_1 'V'
 #define GV_CODEBOOK_MAGIC_2 'C'
 #define GV_CODEBOOK_MAGIC_3 'B'
 #define GV_CODEBOOK_VERSION  1
 
-/* Small I/O helpers */
 static int write_u8(FILE *f, uint8_t v) {
     return fwrite(&v, sizeof(uint8_t), 1, f) == 1 ? 0 : -1;
 }
@@ -31,7 +29,6 @@ static int read_u32(FILE *f, uint32_t *v) {
     return (v && fread(v, sizeof(uint32_t), 1, f) == 1) ? 0 : -1;
 }
 
-/* Squared Euclidean distance between two sub-vectors */
 static float subvec_dist_sq(const float *a, const float *b, size_t len) {
     float sum = 0.0f;
     for (size_t i = 0; i < len; i++) {
@@ -51,8 +48,6 @@ static uint32_t xorshift32(uint32_t *state) {
     return x;
 }
 
-/* K-means for a single subspace */
-
 /**
  * Train one sub-quantizer codebook in-place.
  *
@@ -70,7 +65,6 @@ static void kmeans_subspace(float *codebook, const float *subvecs,
                             size_t iters, uint32_t *rng_state) {
     if (count == 0 || ksub == 0 || dsub == 0) return;
 
-    /* Initialise centroids by picking random training vectors */
     size_t init_k = ksub < count ? ksub : count;
 
     /* Fisher-Yates partial shuffle to pick init_k unique indices. */
@@ -93,7 +87,6 @@ static void kmeans_subspace(float *codebook, const float *subvecs,
         memset(&codebook[k * dsub], 0, dsub * sizeof(float));
     }
 
-    /* Allocate working buffers for Lloyd iterations */
     uint32_t *assignments = (uint32_t *)malloc(count * sizeof(uint32_t));
     float    *accum       = (float *)malloc(ksub * dsub * sizeof(float));
     uint32_t *counts      = (uint32_t *)malloc(ksub * sizeof(uint32_t));
@@ -104,10 +97,8 @@ static void kmeans_subspace(float *codebook, const float *subvecs,
         return;
     }
 
-    /* Lloyd iterations */
     for (size_t it = 0; it < iters; it++) {
 
-        /* Assignment step */
         for (size_t i = 0; i < count; i++) {
             float best_d = FLT_MAX;
             uint32_t best_k = 0;
@@ -122,7 +113,6 @@ static void kmeans_subspace(float *codebook, const float *subvecs,
             assignments[i] = best_k;
         }
 
-        /* Update step */
         memset(accum,  0, ksub * dsub * sizeof(float));
         memset(counts, 0, ksub * sizeof(uint32_t));
 
@@ -156,8 +146,6 @@ static void kmeans_subspace(float *codebook, const float *subvecs,
     free(counts);
 }
 
-/* Public API */
-
 GV_Codebook *gv_codebook_create(size_t dimension, size_t m, uint8_t nbits) {
     if (dimension == 0 || m == 0 || nbits == 0 || nbits > 8) return NULL;
     if (dimension % m != 0) return NULL;
@@ -188,13 +176,10 @@ void gv_codebook_destroy(GV_Codebook *cb) {
     free(cb);
 }
 
-/* Training */
-
 int gv_codebook_train(GV_Codebook *cb, const float *data, size_t count,
                       size_t train_iters) {
     if (!cb || !data || count == 0 || train_iters == 0) return -1;
 
-    /* Temporary buffer for extracted sub-vectors (count * dsub). */
     float *subvecs = (float *)malloc(count * cb->dsub * sizeof(float));
     if (!subvecs) return -1;
 
@@ -202,7 +187,6 @@ int gv_codebook_train(GV_Codebook *cb, const float *data, size_t count,
     uint32_t rng_state = (uint32_t)(count * 2654435761u + cb->m * 40503u + 1);
 
     for (size_t mi = 0; mi < cb->m; mi++) {
-        /* Extract the mi-th sub-vector from every training vector. */
         for (size_t i = 0; i < count; i++) {
             memcpy(&subvecs[i * cb->dsub],
                    &data[i * cb->dimension + mi * cb->dsub],
@@ -218,8 +202,6 @@ int gv_codebook_train(GV_Codebook *cb, const float *data, size_t count,
     cb->trained = 1;
     return 0;
 }
-
-/* Encode */
 
 int gv_codebook_encode(const GV_Codebook *cb, const float *vector,
                        uint8_t *codes) {
@@ -246,8 +228,6 @@ int gv_codebook_encode(const GV_Codebook *cb, const float *vector,
     return 0;
 }
 
-/* Decode */
-
 int gv_codebook_decode(const GV_Codebook *cb, const uint8_t *codes,
                        float *output) {
     if (!cb || !codes || !output) return -1;
@@ -260,8 +240,6 @@ int gv_codebook_decode(const GV_Codebook *cb, const uint8_t *codes,
     }
     return 0;
 }
-
-/* Asymmetric Distance Computation (ADC) */
 
 float gv_codebook_distance_adc(const GV_Codebook *cb, const float *query,
                                const uint8_t *codes) {
@@ -295,27 +273,21 @@ float gv_codebook_distance_adc(const GV_Codebook *cb, const float *query,
     return sqrtf(dist_sq);
 }
 
-/* Serialisation: FILE* variants */
-
 int gv_codebook_save_fp(const GV_Codebook *cb, FILE *out) {
     if (!cb || !out) return -1;
 
-    /* Magic bytes "GVCB" */
     if (write_u8(out, GV_CODEBOOK_MAGIC_0) != 0) return -1;
     if (write_u8(out, GV_CODEBOOK_MAGIC_1) != 0) return -1;
     if (write_u8(out, GV_CODEBOOK_MAGIC_2) != 0) return -1;
     if (write_u8(out, GV_CODEBOOK_MAGIC_3) != 0) return -1;
 
-    /* Version */
     if (write_u32(out, GV_CODEBOOK_VERSION) != 0) return -1;
 
-    /* Header fields */
     if (write_u32(out, (uint32_t)cb->dimension) != 0) return -1;
     if (write_u32(out, (uint32_t)cb->m)         != 0) return -1;
     if (write_u8(out, cb->nbits)                 != 0) return -1;
     if (write_u32(out, (uint32_t)cb->trained)    != 0) return -1;
 
-    /* Centroid data */
     size_t n_floats = cb->m * cb->ksub * cb->dsub;
     if (fwrite(cb->centroids, sizeof(float), n_floats, out) != n_floats)
         return -1;
@@ -326,7 +298,6 @@ int gv_codebook_save_fp(const GV_Codebook *cb, FILE *out) {
 GV_Codebook *gv_codebook_load_fp(FILE *in) {
     if (!in) return NULL;
 
-    /* Read and validate magic */
     uint8_t mag[4];
     if (read_u8(in, &mag[0]) != 0) return NULL;
     if (read_u8(in, &mag[1]) != 0) return NULL;
@@ -337,12 +308,10 @@ GV_Codebook *gv_codebook_load_fp(FILE *in) {
         mag[2] != GV_CODEBOOK_MAGIC_2 || mag[3] != GV_CODEBOOK_MAGIC_3)
         return NULL;
 
-    /* Version */
     uint32_t version = 0;
     if (read_u32(in, &version) != 0) return NULL;
     if (version != GV_CODEBOOK_VERSION) return NULL;
 
-    /* Header fields */
     uint32_t dimension = 0, m = 0, trained = 0;
     uint8_t  nbits = 0;
 
@@ -351,11 +320,9 @@ GV_Codebook *gv_codebook_load_fp(FILE *in) {
     if (read_u8(in, &nbits)      != 0) return NULL;
     if (read_u32(in, &trained)   != 0) return NULL;
 
-    /* Allocate the codebook via the normal constructor. */
     GV_Codebook *cb = gv_codebook_create((size_t)dimension, (size_t)m, nbits);
     if (!cb) return NULL;
 
-    /* Read centroid data */
     size_t n_floats = cb->m * cb->ksub * cb->dsub;
     if (fread(cb->centroids, sizeof(float), n_floats, in) != n_floats) {
         gv_codebook_destroy(cb);
@@ -365,8 +332,6 @@ GV_Codebook *gv_codebook_load_fp(FILE *in) {
     cb->trained = (int)trained;
     return cb;
 }
-
-/* Serialisation: path-based convenience wrappers */
 
 int gv_codebook_save(const GV_Codebook *cb, const char *filepath) {
     if (!cb || !filepath) return -1;
@@ -389,8 +354,6 @@ GV_Codebook *gv_codebook_load(const char *filepath) {
     fclose(f);
     return cb;
 }
-
-/* Deep copy */
 
 GV_Codebook *gv_codebook_copy(const GV_Codebook *cb) {
     if (!cb) return NULL;

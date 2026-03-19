@@ -10,7 +10,6 @@
 #include "gigavector/gv_metadata.h"
 #include "gigavector/gv_utils.h"
 
-/* Internal entry structure for IVF-Flat inverted lists */
 typedef struct GV_IVFFlatEntry {
     GV_Vector *vector;               /* Full unquantized vector (owns it) */
     size_t id;                       /* Global insertion order ID */
@@ -18,7 +17,6 @@ typedef struct GV_IVFFlatEntry {
     struct GV_IVFFlatEntry *next;    /* Next entry in linked list */
 } GV_IVFFlatEntry;
 
-/* Internal IVF-Flat index structure */
 typedef struct {
     size_t dimension;                /* Vector dimensionality */
     GV_IVFFlatConfig config;         /* Index configuration */
@@ -30,7 +28,6 @@ typedef struct {
     size_t next_id;                  /* Next ID to assign */
 } GV_IVFFlatIndex;
 
-/* Max-heap for top-k selection */
 typedef struct {
     float dist;
     size_t id;
@@ -59,7 +56,6 @@ static void gv_ivfflat_heap_push(GV_IVFFlatHeapItem *heap, size_t *size, size_t 
         heap[*size].id = id;
         heap[*size].entry = entry;
         (*size)++;
-        /* Sift up */
         size_t i = *size - 1;
         while (i > 0) {
             size_t parent = (i - 1) / 2;
@@ -108,7 +104,6 @@ static int gv_ivfflat_kmeans(const float *data, size_t count, size_t dim,
                               size_t k, size_t iters, float *out_centroids) {
     if (count < k || !data || !out_centroids) return -1;
 
-    /* Initialize: pick first k vectors as initial centroids */
     memcpy(out_centroids, data, k * dim * sizeof(float));
 
     int *assign = (int *)malloc(count * sizeof(int));
@@ -122,12 +117,9 @@ static int gv_ivfflat_kmeans(const float *data, size_t count, size_t dim,
         return -1;
     }
 
-    /* Lloyd's iterations */
     for (size_t iter = 0; iter < iters; iter++) {
-        /* Assignment step */
         gv_ivfflat_argmin(data, count, dim, out_centroids, k, assign);
 
-        /* Update step */
         memset(new_centroids, 0, k * dim * sizeof(float));
         memset(counts, 0, k * sizeof(size_t));
 
@@ -141,7 +133,6 @@ static int gv_ivfflat_kmeans(const float *data, size_t count, size_t dim,
             counts[c]++;
         }
 
-        /* Average to get new centroids */
         for (size_t c = 0; c < k; c++) {
             if (counts[c] > 0) {
                 for (size_t d = 0; d < dim; d++) {
@@ -167,7 +158,6 @@ void *gv_ivfflat_create(size_t dimension, const GV_IVFFlatConfig *config) {
 
     idx->dimension = dimension;
 
-    /* Apply defaults or user config */
     if (config) {
         idx->config = *config;
     } else {
@@ -182,14 +172,12 @@ void *gv_ivfflat_create(size_t dimension, const GV_IVFFlatConfig *config) {
         idx->config.nprobe = idx->config.nlist;
     }
 
-    /* Allocate centroids */
     idx->centroids = (float *)malloc(idx->config.nlist * dimension * sizeof(float));
     if (!idx->centroids) {
         free(idx);
         return NULL;
     }
 
-    /* Allocate inverted lists */
     idx->lists = (GV_IVFFlatEntry **)calloc(idx->config.nlist, sizeof(GV_IVFFlatEntry *));
     idx->list_sizes = (size_t *)calloc(idx->config.nlist, sizeof(size_t));
 
@@ -215,7 +203,6 @@ int gv_ivfflat_train(void *index, const float *data, size_t count) {
 
     if (count < idx->config.nlist) return -1;
 
-    /* Train coarse centroids using K-means */
     if (gv_ivfflat_kmeans(data, count, idx->dimension, idx->config.nlist,
                           idx->config.train_iters, idx->centroids) != 0) {
         return -1;
@@ -233,7 +220,6 @@ int gv_ivfflat_insert(void *index, GV_Vector *vector) {
     if (!idx->trained) return -1;
     if (vector->dimension != idx->dimension) return -1;
 
-    /* Find nearest centroid */
     float best_dist = INFINITY;
     size_t best_list = 0;
 
@@ -250,7 +236,6 @@ int gv_ivfflat_insert(void *index, GV_Vector *vector) {
         }
     }
 
-    /* Create new entry */
     GV_IVFFlatEntry *entry = (GV_IVFFlatEntry *)malloc(sizeof(GV_IVFFlatEntry));
     if (!entry) return -1;
 
@@ -258,8 +243,6 @@ int gv_ivfflat_insert(void *index, GV_Vector *vector) {
     entry->id = idx->next_id++;
     entry->deleted = 0;
     entry->next = idx->lists[best_list];
-
-    /* Prepend to list */
     idx->lists[best_list] = entry;
     idx->list_sizes[best_list]++;
     idx->total_count++;
@@ -278,11 +261,9 @@ int gv_ivfflat_search(void *index, const GV_Vector *query, size_t k,
     if (!idx->trained) return -1;
     if (query->dimension != idx->dimension) return -1;
 
-    /* Cap nprobe to nlist */
     size_t nprobe = idx->config.nprobe;
     if (nprobe > idx->config.nlist) nprobe = idx->config.nlist;
 
-    /* Find nprobe closest centroids */
     GV_IVFFlatHeapItem *centroid_heap = (GV_IVFFlatHeapItem *)malloc(
         nprobe * sizeof(GV_IVFFlatHeapItem));
     if (!centroid_heap) return -1;
@@ -300,7 +281,6 @@ int gv_ivfflat_search(void *index, const GV_Vector *query, size_t k,
         gv_ivfflat_heap_push(centroid_heap, &heap_size, nprobe, dist, i, NULL);
     }
 
-    /* Extract probe lists */
     size_t *probe_lists = (size_t *)malloc(nprobe * sizeof(size_t));
     if (!probe_lists) {
         free(centroid_heap);
@@ -317,7 +297,6 @@ int gv_ivfflat_search(void *index, const GV_Vector *query, size_t k,
     }
     free(centroid_heap);
 
-    /* Max-heap for top-k results */
     GV_IVFFlatHeapItem *heap = (GV_IVFFlatHeapItem *)malloc(k * sizeof(GV_IVFFlatHeapItem));
     if (!heap) {
         free(probe_lists);
@@ -326,16 +305,13 @@ int gv_ivfflat_search(void *index, const GV_Vector *query, size_t k,
 
     heap_size = 0;
 
-    /* Scan entries in selected lists */
     for (size_t i = 0; i < nprobe; i++) {
         size_t list_idx = probe_lists[i];
         GV_IVFFlatEntry *entry = idx->lists[list_idx];
 
         while (entry) {
             if (!entry->deleted) {
-                /* Apply metadata filter */
                 if (gv_metadata_match(entry->vector->metadata, filter_key, filter_value)) {
-                    /* Compute distance */
                     float dist = gv_distance(query, entry->vector, distance_type);
 
                     if (dist >= 0.0f) {
@@ -349,17 +325,14 @@ int gv_ivfflat_search(void *index, const GV_Vector *query, size_t k,
 
     free(probe_lists);
 
-    /* Extract results from heap in sorted order (nearest first) */
     int n = (int)heap_size;
     for (int i = n - 1; i >= 0; i--) {
         GV_IVFFlatEntry *entry = heap[0].entry;
         float dist = heap[0].dist;
 
-        /* Copy vector with metadata */
         GV_Vector *copy = gv_vector_create_from_data(entry->vector->dimension,
                                                       entry->vector->data);
         if (copy) {
-            /* Copy metadata */
             GV_Metadata *meta = entry->vector->metadata;
             while (meta) {
                 if (meta->key && meta->value) {
@@ -377,7 +350,6 @@ int gv_ivfflat_search(void *index, const GV_Vector *query, size_t k,
         results[i].sparse_vector = NULL;
         results[i].id = entry->id;
 
-        /* Remove from heap */
         heap[0] = heap[heap_size - 1];
         heap_size--;
         if (heap_size > 0) {
@@ -400,11 +372,9 @@ int gv_ivfflat_range_search(void *index, const GV_Vector *query, float radius,
     if (!idx->trained) return -1;
     if (query->dimension != idx->dimension) return -1;
 
-    /* Cap nprobe to nlist */
     size_t nprobe = idx->config.nprobe;
     if (nprobe > idx->config.nlist) nprobe = idx->config.nlist;
 
-    /* Find nprobe closest centroids */
     GV_IVFFlatHeapItem *centroid_heap = (GV_IVFFlatHeapItem *)malloc(
         nprobe * sizeof(GV_IVFFlatHeapItem));
     if (!centroid_heap) return -1;
@@ -422,7 +392,6 @@ int gv_ivfflat_range_search(void *index, const GV_Vector *query, float radius,
         gv_ivfflat_heap_push(centroid_heap, &heap_size, nprobe, dist, i, NULL);
     }
 
-    /* Extract probe lists */
     size_t *probe_lists = (size_t *)malloc(nprobe * sizeof(size_t));
     if (!probe_lists) {
         free(centroid_heap);
@@ -439,7 +408,6 @@ int gv_ivfflat_range_search(void *index, const GV_Vector *query, float radius,
     }
     free(centroid_heap);
 
-    /* Scan entries in selected lists and collect within radius */
     size_t found = 0;
 
     for (size_t i = 0; i < idx->config.nprobe && found < max_results; i++) {
@@ -448,17 +416,13 @@ int gv_ivfflat_range_search(void *index, const GV_Vector *query, float radius,
 
         while (entry && found < max_results) {
             if (!entry->deleted) {
-                /* Apply metadata filter */
                 if (gv_metadata_match(entry->vector->metadata, filter_key, filter_value)) {
-                    /* Compute distance */
                     float dist = gv_distance(query, entry->vector, distance_type);
 
                     if (dist >= 0.0f && dist <= radius) {
-                        /* Copy vector with metadata */
                         GV_Vector *copy = gv_vector_create_from_data(entry->vector->dimension,
                                                                       entry->vector->data);
                         if (copy) {
-                            /* Copy metadata */
                             GV_Metadata *meta = entry->vector->metadata;
                             while (meta) {
                                 if (meta->key && meta->value) {
@@ -496,7 +460,6 @@ void gv_ivfflat_destroy(void *index) {
 
     GV_IVFFlatIndex *idx = (GV_IVFFlatIndex *)index;
 
-    /* Free all entries in all lists */
     if (idx->lists) {
         for (size_t i = 0; i < idx->config.nlist; i++) {
             GV_IVFFlatEntry *entry = idx->lists[i];
@@ -539,7 +502,6 @@ int gv_ivfflat_delete(void *index, size_t entry_index) {
 
     GV_IVFFlatIndex *idx = (GV_IVFFlatIndex *)index;
 
-    /* Find entry by global ID */
     for (size_t i = 0; i < idx->config.nlist; i++) {
         GV_IVFFlatEntry *entry = idx->lists[i];
         while (entry) {
@@ -562,14 +524,12 @@ int gv_ivfflat_update(void *index, size_t entry_index, const float *new_data, si
 
     if (dimension != idx->dimension) return -1;
 
-    /* Find entry by global ID */
     for (size_t i = 0; i < idx->config.nlist; i++) {
         GV_IVFFlatEntry *entry = idx->lists[i];
         while (entry) {
             if (entry->id == entry_index) {
                 if (entry->deleted) return -1; /* Cannot update deleted entry */
 
-                /* Update vector data */
                 if (entry->vector && entry->vector->data) {
                     memcpy(entry->vector->data, new_data, dimension * sizeof(float));
                     return 0;
@@ -589,7 +549,6 @@ int gv_ivfflat_save(const void *index, FILE *out, uint32_t version) {
     const GV_IVFFlatIndex *idx = (const GV_IVFFlatIndex *)index;
     (void)version;
 
-    /* Write dimension and config */
     if (gv_write_u32(out, (uint32_t)idx->dimension) != 0) return -1;
     if (gv_write_u32(out, (uint32_t)idx->config.nlist) != 0) return -1;
     if (gv_write_u32(out, (uint32_t)idx->config.nprobe) != 0) return -1;
@@ -598,7 +557,6 @@ int gv_ivfflat_save(const void *index, FILE *out, uint32_t version) {
     if (gv_write_u32(out, (uint32_t)idx->trained) != 0) return -1;
     if (gv_write_u32(out, (uint32_t)idx->next_id) != 0) return -1;
 
-    /* Write centroids if trained */
     if (idx->trained) {
         size_t centroid_floats = idx->config.nlist * idx->dimension;
         if (fwrite(idx->centroids, sizeof(float), centroid_floats, out) != centroid_floats) {
@@ -606,12 +564,9 @@ int gv_ivfflat_save(const void *index, FILE *out, uint32_t version) {
         }
     }
 
-    /* Write number of lists */
     if (gv_write_u32(out, (uint32_t)idx->config.nlist) != 0) return -1;
 
-    /* Write each list */
     for (size_t i = 0; i < idx->config.nlist; i++) {
-        /* Count entries in this list */
         uint32_t list_count = 0;
         GV_IVFFlatEntry *entry = idx->lists[i];
         while (entry) {
@@ -621,19 +576,15 @@ int gv_ivfflat_save(const void *index, FILE *out, uint32_t version) {
 
         if (gv_write_u32(out, list_count) != 0) return -1;
 
-        /* Write each entry */
         entry = idx->lists[i];
         while (entry) {
-            /* Write ID and deleted flag */
             if (gv_write_u32(out, (uint32_t)entry->id) != 0) return -1;
             if (gv_write_u32(out, (uint32_t)entry->deleted) != 0) return -1;
 
-            /* Write vector data */
             if (fwrite(entry->vector->data, sizeof(float), idx->dimension, out) != idx->dimension) {
                 return -1;
             }
 
-            /* Write metadata */
             uint32_t meta_count = 0;
             GV_Metadata *meta = entry->vector->metadata;
             while (meta) {
@@ -678,7 +629,6 @@ int gv_ivfflat_load(void **index_ptr, FILE *in, size_t dimension, uint32_t versi
 
     if (dimension != 0 && dimension != (size_t)file_dim) return -1;
 
-    /* Create index with loaded config */
     GV_IVFFlatConfig config = {
         .nlist = nlist,
         .nprobe = nprobe,
@@ -693,7 +643,6 @@ int gv_ivfflat_load(void **index_ptr, FILE *in, size_t dimension, uint32_t versi
     idx->trained = (int)trained;
     idx->next_id = (size_t)next_id;
 
-    /* Load centroids if trained */
     if (trained) {
         size_t centroid_floats = idx->config.nlist * idx->dimension;
         if (fread(idx->centroids, sizeof(float), centroid_floats, in) != centroid_floats) {
@@ -702,7 +651,6 @@ int gv_ivfflat_load(void **index_ptr, FILE *in, size_t dimension, uint32_t versi
         }
     }
 
-    /* Read number of lists */
     uint32_t num_lists = 0;
     if (gv_read_u32(in, &num_lists) != 0) {
         gv_ivfflat_destroy(index);
@@ -714,7 +662,6 @@ int gv_ivfflat_load(void **index_ptr, FILE *in, size_t dimension, uint32_t versi
         return -1;
     }
 
-    /* Load each list */
     for (size_t i = 0; i < nlist; i++) {
         uint32_t list_count = 0;
         if (gv_read_u32(in, &list_count) != 0) {
@@ -737,7 +684,6 @@ int gv_ivfflat_load(void **index_ptr, FILE *in, size_t dimension, uint32_t versi
                 return -1;
             }
 
-            /* Read vector data */
             float *data = (float *)malloc(idx->dimension * sizeof(float));
             if (!data) {
                 gv_ivfflat_destroy(index);
@@ -750,7 +696,6 @@ int gv_ivfflat_load(void **index_ptr, FILE *in, size_t dimension, uint32_t versi
                 return -1;
             }
 
-            /* Create vector */
             GV_Vector *vec = gv_vector_create_from_data(idx->dimension, data);
             free(data);
 
@@ -759,7 +704,6 @@ int gv_ivfflat_load(void **index_ptr, FILE *in, size_t dimension, uint32_t versi
                 return -1;
             }
 
-            /* Read metadata */
             uint32_t meta_count = 0;
             if (gv_read_u32(in, &meta_count) != 0) {
                 gv_vector_destroy(vec);
@@ -806,7 +750,6 @@ int gv_ivfflat_load(void **index_ptr, FILE *in, size_t dimension, uint32_t versi
                 free(value);
             }
 
-            /* Create entry */
             GV_IVFFlatEntry *entry = (GV_IVFFlatEntry *)malloc(sizeof(GV_IVFFlatEntry));
             if (!entry) {
                 gv_vector_destroy(vec);

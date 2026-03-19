@@ -284,7 +284,7 @@ static char *build_openai_request(const GV_LLMConfig *config, const GV_LLMMessag
 }
 
 static char *build_gemini_request(const GV_LLMConfig *config, const GV_LLMMessage *messages,
-                                  size_t message_count) {
+                                  size_t message_count, const char *response_format) {
     // Gemini API format: {"contents": [{"parts": [{"text": "..."}]}]}
     // Calculate required size
     size_t total_size = 256;  // Base JSON structure
@@ -379,7 +379,17 @@ static char *build_gemini_request(const GV_LLMConfig *config, const GV_LLMMessag
         }
         pos += written;
     }
-    
+
+    if (response_format && strcmp(response_format, "json_object") == 0) {
+        written = snprintf(json + pos, total_size - pos,
+                           ",\"responseMimeType\":\"application/json\"");
+        if (written < 0 || (size_t)written >= total_size - pos) {
+            free(json);
+            return NULL;
+        }
+        pos += written;
+    }
+
     written = snprintf(json + pos, total_size - pos, "}}");
     if (written < 0 || (size_t)written >= total_size - pos) {
         free(json);
@@ -389,7 +399,7 @@ static char *build_gemini_request(const GV_LLMConfig *config, const GV_LLMMessag
 }
 
 static char *build_anthropic_request(const GV_LLMConfig *config, const GV_LLMMessage *messages,
-                                     size_t message_count) {
+                                     size_t message_count, const char *response_format) {
     // Calculate required size
     size_t total_size = 256;  // Base JSON structure
     const char *model = config->model ? config->model : "claude-3-haiku-20240307";
@@ -404,13 +414,32 @@ static char *build_anthropic_request(const GV_LLMConfig *config, const GV_LLMMes
     }
     
     total_size += 64;  // max_tokens
-    
+    total_size += 128; // response_format system prompt
+
     char *json = (char *)malloc(total_size);
     if (json == NULL) return NULL;
-    
+
     size_t pos = 0;
-    int written = snprintf(json + pos, total_size - pos, "{\"model\":\"%s\",\"max_tokens\":%d,\"messages\":[",
+    int written = snprintf(json + pos, total_size - pos, "{\"model\":\"%s\",\"max_tokens\":%d",
                     model, config->max_tokens > 0 ? config->max_tokens : 4096);
+    if (written < 0 || (size_t)written >= total_size - pos) {
+        free(json);
+        return NULL;
+    }
+    pos += written;
+
+    /* Anthropic uses a top-level "system" field for JSON mode instruction */
+    if (response_format && strcmp(response_format, "json_object") == 0) {
+        written = snprintf(json + pos, total_size - pos,
+                           ",\"system\":\"Respond only with valid JSON. No markdown, no explanation.\"");
+        if (written < 0 || (size_t)written >= total_size - pos) {
+            free(json);
+            return NULL;
+        }
+        pos += written;
+    }
+
+    written = snprintf(json + pos, total_size - pos, ",\"messages\":[");
     if (written < 0 || (size_t)written >= total_size - pos) {
         free(json);
         return NULL;
@@ -753,7 +782,7 @@ void gv_llm_destroy(GV_LLM *llm) {
 
 int gv_llm_generate_response(GV_LLM *llm, const GV_LLMMessage *messages, size_t message_count,
                               const char *response_format, GV_LLMResponse *response) {
-    (void)response_format;  // Used for OpenAI/Azure, not yet implemented for other providers
+    /* response_format: "json_object" for JSON mode (supported by all providers) */
     if (llm == NULL) {
         return GV_LLM_ERROR_NULL_POINTER;
     }
@@ -792,7 +821,7 @@ int gv_llm_generate_response(GV_LLM *llm, const GV_LLMMessage *messages, size_t 
             break;
             
         case GV_LLM_PROVIDER_ANTHROPIC:
-            request_json = build_anthropic_request(&llm->config, messages, message_count);
+            request_json = build_anthropic_request(&llm->config, messages, message_count, response_format);
             url = llm->config.base_url ? llm->config.base_url : "https://api.anthropic.com/v1/messages";
             auth_header = "x-api-key: ";
             break;
@@ -809,7 +838,7 @@ int gv_llm_generate_response(GV_LLM *llm, const GV_LLMMessage *messages, size_t 
                         model);
                 url = url_buf;
             }
-            request_json = build_gemini_request(&llm->config, messages, message_count);
+            request_json = build_gemini_request(&llm->config, messages, message_count, response_format);
             auth_header = "x-goog-api-key: ";
             break;
         }

@@ -12,8 +12,6 @@
 #include <time.h>
 #include <unistd.h>
 
-/* Internal Structures */
-
 #define MAX_REPLICAS 16
 
 typedef struct {
@@ -61,8 +59,6 @@ struct GV_ReplicationManager {
     pthread_cond_t sync_cond;
 };
 
-/* Configuration */
-
 static const GV_ReplicationConfig DEFAULT_CONFIG = {
     .node_id = NULL,
     .listen_address = "0.0.0.0:7001",
@@ -77,8 +73,6 @@ void gv_replication_config_init(GV_ReplicationConfig *config) {
     if (!config) return;
     *config = DEFAULT_CONFIG;
 }
-
-/* Internal Helpers */
 
 static char *generate_node_id(void) {
     char id[64];
@@ -108,7 +102,6 @@ static void *replication_thread_func(void *arg) {
         uint64_t now = (uint64_t)time(NULL);
 
         if (mgr->role == GV_REPL_LEADER) {
-            /* Send heartbeats to followers */
             for (size_t i = 0; i < mgr->replica_count; i++) {
                 if (mgr->replicas[i].connected) {
                     /* Note: A production implementation would send a
@@ -120,12 +113,10 @@ static void *replication_thread_func(void *arg) {
                 }
             }
         } else if (mgr->role == GV_REPL_FOLLOWER) {
-            /* Check for leader heartbeat timeout */
             uint64_t timeout_sec = mgr->config.election_timeout_ms / 1000;
             if (timeout_sec == 0) timeout_sec = 3;  /* Default 3 seconds */
 
             if (mgr->leader_id) {
-                /* Find leader in replicas to check last heartbeat */
                 uint64_t leader_last_heartbeat = 0;
                 for (size_t i = 0; i < mgr->replica_count; i++) {
                     if (mgr->replicas[i].node_id &&
@@ -135,11 +126,9 @@ static void *replication_thread_func(void *arg) {
                     }
                 }
 
-                /* Check if leader heartbeat has timed out */
                 if (leader_last_heartbeat > 0 && now > leader_last_heartbeat) {
                     uint64_t elapsed = now - leader_last_heartbeat;
                     if (elapsed > timeout_sec) {
-                        /* Leader has timed out - transition to candidate and start election */
                         mgr->role = GV_REPL_CANDIDATE;
                         mgr->term++;
                         free(mgr->leader_id);
@@ -164,8 +153,6 @@ static void *replication_thread_func(void *arg) {
     return NULL;
 }
 
-/* Lifecycle */
-
 GV_ReplicationManager *gv_replication_create(GV_Database *db, const GV_ReplicationConfig *config) {
     if (!db) return NULL;
 
@@ -175,14 +162,12 @@ GV_ReplicationManager *gv_replication_create(GV_Database *db, const GV_Replicati
     mgr->config = config ? *config : DEFAULT_CONFIG;
     mgr->db = db;
 
-    /* Generate or copy node ID */
     if (mgr->config.node_id) {
         mgr->node_id = strdup(mgr->config.node_id);
     } else {
         mgr->node_id = generate_node_id();
     }
 
-    /* Determine initial role */
     if (mgr->config.leader_address) {
         mgr->role = GV_REPL_FOLLOWER;
     } else {
@@ -286,8 +271,6 @@ int gv_replication_stop(GV_ReplicationManager *mgr) {
     return 0;
 }
 
-/* Role Management */
-
 GV_ReplicationRole gv_replication_get_role(GV_ReplicationManager *mgr) {
     if (!mgr) return (GV_ReplicationRole)-1;
 
@@ -322,7 +305,6 @@ int gv_replication_request_leadership(GV_ReplicationManager *mgr) {
     pthread_mutex_lock(&mgr->election_mutex);
     pthread_rwlock_wrlock(&mgr->rwlock);
 
-    /* Start election */
     mgr->role = GV_REPL_CANDIDATE;
     mgr->term++;
     free(mgr->voted_for);
@@ -334,7 +316,6 @@ int gv_replication_request_leadership(GV_ReplicationManager *mgr) {
      * 3. Become leader if we win
      */
 
-    /* For now, just become leader if we're the only node */
     if (mgr->replica_count == 0) {
         mgr->role = GV_REPL_LEADER;
         free(mgr->leader_id);
@@ -347,8 +328,6 @@ int gv_replication_request_leadership(GV_ReplicationManager *mgr) {
     return mgr->role == GV_REPL_LEADER ? 0 : -1;
 }
 
-/* Replica Management */
-
 int gv_replication_add_follower(GV_ReplicationManager *mgr, const char *node_id,
                                  const char *address) {
     if (!mgr || !node_id || !address) return -1;
@@ -360,7 +339,6 @@ int gv_replication_add_follower(GV_ReplicationManager *mgr, const char *node_id,
         return -1;
     }
 
-    /* Check if already exists */
     if (find_replica(mgr, node_id)) {
         pthread_rwlock_unlock(&mgr->rwlock);
         return -1;
@@ -446,8 +424,6 @@ void gv_replication_free_replicas(GV_ReplicaInfo *replicas, size_t count) {
     free(replicas);
 }
 
-/* Synchronization */
-
 int gv_replication_sync_commit(GV_ReplicationManager *mgr, uint32_t timeout_ms) {
     if (!mgr) return -1;
 
@@ -459,12 +435,10 @@ int gv_replication_sync_commit(GV_ReplicationManager *mgr, uint32_t timeout_ms) 
     }
 
     if (mgr->replica_count == 0) {
-        /* No replicas, consider committed */
         pthread_rwlock_unlock(&mgr->rwlock);
         return 0;
     }
 
-    /* Calculate required acknowledgments (majority) */
     size_t required_acks = (mgr->replica_count / 2) + 1;
     if (required_acks > mgr->replica_count) {
         required_acks = mgr->replica_count;
@@ -473,14 +447,12 @@ int gv_replication_sync_commit(GV_ReplicationManager *mgr, uint32_t timeout_ms) 
     uint64_t current_wal = mgr->wal_position;
     pthread_rwlock_unlock(&mgr->rwlock);
 
-    /* Wait for acknowledgments with timeout */
     uint64_t start_time = (uint64_t)time(NULL) * 1000;
     uint64_t deadline = start_time + timeout_ms;
 
     while ((uint64_t)time(NULL) * 1000 < deadline) {
         pthread_rwlock_rdlock(&mgr->rwlock);
 
-        /* Count replicas that have caught up */
         size_t acks = 0;
         for (size_t i = 0; i < mgr->replica_count; i++) {
             if (mgr->replicas[i].connected &&
@@ -492,7 +464,6 @@ int gv_replication_sync_commit(GV_ReplicationManager *mgr, uint32_t timeout_ms) 
         pthread_rwlock_unlock(&mgr->rwlock);
 
         if (acks >= required_acks) {
-            /* Update commit position */
             pthread_rwlock_wrlock(&mgr->rwlock);
             if (current_wal > mgr->commit_position) {
                 mgr->commit_position = current_wal;
@@ -501,7 +472,6 @@ int gv_replication_sync_commit(GV_ReplicationManager *mgr, uint32_t timeout_ms) 
             return 0;
         }
 
-        /* Sleep briefly before checking again */
         usleep(10000);  /* 10ms */
     }
 
@@ -532,7 +502,6 @@ int gv_replication_wait_sync(GV_ReplicationManager *mgr, size_t max_lag, uint32_
     while ((uint64_t)time(NULL) * 1000 < deadline) {
         pthread_rwlock_rdlock(&mgr->rwlock);
 
-        /* Check if all replicas are within acceptable lag */
         int all_synced = 1;
         for (size_t i = 0; i < mgr->replica_count; i++) {
             if (!mgr->replicas[i].connected) continue;
@@ -554,14 +523,11 @@ int gv_replication_wait_sync(GV_ReplicationManager *mgr, size_t max_lag, uint32_
             return 0;
         }
 
-        /* Sleep briefly before checking again */
         usleep(10000);  /* 10ms */
     }
 
     return -1;  /* Timeout - not all replicas synced */
 }
-
-/* Statistics */
 
 int gv_replication_get_stats(GV_ReplicationManager *mgr, GV_ReplicationStats *stats) {
     if (!mgr || !stats) return -1;
@@ -595,7 +561,6 @@ int gv_replication_is_healthy(GV_ReplicationManager *mgr) {
     int healthy = 1;
 
     if (mgr->role == GV_REPL_LEADER) {
-        /* Check if majority of replicas are connected */
         size_t connected = 0;
         for (size_t i = 0; i < mgr->replica_count; i++) {
             if (mgr->replicas[i].connected &&
@@ -607,7 +572,6 @@ int gv_replication_is_healthy(GV_ReplicationManager *mgr) {
             healthy = 0;
         }
     } else if (mgr->role == GV_REPL_FOLLOWER) {
-        /* Check if we have a leader */
         if (!mgr->leader_id) {
             healthy = 0;
         }
@@ -616,8 +580,6 @@ int gv_replication_is_healthy(GV_ReplicationManager *mgr) {
     pthread_rwlock_unlock(&mgr->rwlock);
     return healthy;
 }
-
-/* Read Replica Load Balancing */
 
 int gv_replication_set_read_policy(GV_ReplicationManager *mgr, GV_ReadPolicy policy) {
     if (!mgr) return -1;
@@ -654,7 +616,6 @@ int gv_replication_register_follower_db(GV_ReplicationManager *mgr,
 
     pthread_rwlock_wrlock(&mgr->rwlock);
 
-    /* Find the replica entry */
     for (size_t i = 0; i < mgr->replica_count; i++) {
         if (strcmp(mgr->replicas[i].node_id, node_id) == 0) {
             mgr->follower_dbs[i] = db;
@@ -689,14 +650,12 @@ GV_Database *gv_replication_route_read(GV_ReplicationManager *mgr) {
 
     pthread_rwlock_wrlock(&mgr->rwlock);
 
-    /* LEADER_ONLY: always return leader DB */
     if (mgr->read_policy == GV_READ_LEADER_ONLY) {
         GV_Database *db = mgr->db;
         pthread_rwlock_unlock(&mgr->rwlock);
         return db;
     }
 
-    /* Build list of eligible replicas */
     size_t eligible[MAX_REPLICAS];
     size_t eligible_count = 0;
 
@@ -706,7 +665,6 @@ GV_Database *gv_replication_route_read(GV_ReplicationManager *mgr) {
         }
     }
 
-    /* Fallback to leader if no eligible replicas */
     if (eligible_count == 0) {
         GV_Database *db = mgr->db;
         pthread_rwlock_unlock(&mgr->rwlock);
@@ -742,7 +700,6 @@ GV_Database *gv_replication_route_read(GV_ReplicationManager *mgr) {
         }
 
         case GV_READ_RANDOM: {
-            /* Simple random selection using time */
             size_t idx = (size_t)(time(NULL) * 2654435761UL) % eligible_count;
             result = mgr->follower_dbs[eligible[idx]];
             break;

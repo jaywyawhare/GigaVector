@@ -11,8 +11,6 @@
 #include "gigavector/gv_heap.h"
 #include "gigavector/gv_utils.h"
 
-/* Internal data structures */
-
 /**
  * @brief A single document entry holding its chunk vectors.
  */
@@ -35,8 +33,6 @@ typedef struct {
     size_t             total_chunks;
 } GV_MultiVecIndex;
 
-/* Max-heap helpers for top-k document selection */
-
 typedef struct {
     float    dist;
     size_t   doc_idx;
@@ -44,14 +40,10 @@ typedef struct {
 
 GV_HEAP_DEFINE(gv_mv_heap, GV_MVHeapItem)
 
-/* Default configuration */
-
 static const GV_MultiVecConfig gv_multivec_default_config = {
     .max_chunks_per_doc = 256,
     .aggregation        = GV_DOC_AGG_MAX_SIM
 };
-
-/* Lifecycle */
 
 void *gv_multivec_create(size_t dimension, const GV_MultiVecConfig *config) {
     if (dimension == 0) return NULL;
@@ -90,8 +82,6 @@ void gv_multivec_destroy(void *index) {
     free(idx);
 }
 
-/* Document management */
-
 int gv_multivec_add_document(void *index, uint64_t doc_id,
                              const float *chunks, size_t num_chunks,
                              size_t dimension) {
@@ -102,14 +92,12 @@ int gv_multivec_add_document(void *index, uint64_t doc_id,
     if (dimension != idx->dimension) return -1;
     if (num_chunks > idx->config.max_chunks_per_doc) return -1;
 
-    /* Check for duplicate doc_id */
     for (size_t i = 0; i < idx->doc_count; i++) {
         if (!idx->docs[i].deleted && idx->docs[i].doc_id == doc_id) {
             return -1;
         }
     }
 
-    /* Grow array if necessary */
     if (idx->doc_count >= idx->doc_capacity) {
         size_t new_cap = idx->doc_capacity * 2;
         GV_DocEntry *new_docs = (GV_DocEntry *)realloc(idx->docs,
@@ -119,7 +107,6 @@ int gv_multivec_add_document(void *index, uint64_t doc_id,
         idx->doc_capacity = new_cap;
     }
 
-    /* Copy chunk data */
     size_t data_size = num_chunks * dimension * sizeof(float);
     float *chunk_copy = (float *)malloc(data_size);
     if (!chunk_copy) return -1;
@@ -155,8 +142,6 @@ int gv_multivec_delete_document(void *index, uint64_t doc_id) {
     return -1; /* not found */
 }
 
-/* Search */
-
 /**
  * @brief Compute the aggregated distance from a query to all chunks of a
  *        document, returning the aggregate score and the index of the
@@ -168,7 +153,6 @@ static float gv_multivec_aggregate(const float *query,
                                    GV_DistanceType distance_type,
                                    GV_DocAggregation aggregation,
                                    size_t *best_chunk_out) {
-    /* Build a temporary GV_Vector for the query so we can reuse gv_distance(). */
     GV_Vector q_vec;
     q_vec.dimension = dimension;
     q_vec.data      = (float *)query;   /* const-cast safe: gv_distance only reads */
@@ -234,14 +218,12 @@ int gv_multivec_search(void *index, const float *query, size_t k,
         gv_mv_heap_push(heap, &heap_size, k, (GV_MVHeapItem){agg_dist, i});
     }
 
-    /* Extract results from the max-heap in ascending distance order. */
     int n = (int)heap_size;
 
     for (int i = n - 1; i >= 0; i--) {
         size_t di = heap[0].doc_idx;
         const GV_DocEntry *doc = &idx->docs[di];
 
-        /* Recompute best chunk for the result record. */
         size_t best_chunk = 0;
         gv_multivec_aggregate(query, doc, idx->dimension,
                               distance_type, idx->config.aggregation,
@@ -252,7 +234,6 @@ int gv_multivec_search(void *index, const float *query, size_t k,
         results[i].num_chunks       = doc->num_chunks;
         results[i].best_chunk_index = best_chunk;
 
-        /* Pop top of heap */
         heap[0] = heap[heap_size - 1];
         heap_size--;
         if (heap_size > 0) {
@@ -263,8 +244,6 @@ int gv_multivec_search(void *index, const float *query, size_t k,
     free(heap);
     return n;
 }
-
-/* Statistics */
 
 size_t gv_multivec_count_documents(const void *index) {
     if (!index) return 0;
@@ -283,8 +262,6 @@ size_t gv_multivec_count_chunks(const void *index) {
     return idx->total_chunks;
 }
 
-/* Serialization helpers */
-
 static int gv_mv_write_u64(FILE *f, uint64_t v) {
     return fwrite(&v, sizeof(uint64_t), 1, f) == 1 ? 0 : -1;
 }
@@ -293,18 +270,14 @@ static int gv_mv_read_u64(FILE *f, uint64_t *v) {
     return (v && fread(v, sizeof(uint64_t), 1, f) == 1) ? 0 : -1;
 }
 
-/* Save / Load */
-
 int gv_multivec_save(const void *index, FILE *out) {
     if (!index || !out) return -1;
     const GV_MultiVecIndex *idx = (const GV_MultiVecIndex *)index;
 
-    /* Write header: dimension, config */
     if (gv_write_u32(out, (uint32_t)idx->dimension) != 0) return -1;
     if (gv_write_u32(out, (uint32_t)idx->config.max_chunks_per_doc) != 0) return -1;
     if (gv_write_u32(out, (uint32_t)idx->config.aggregation) != 0) return -1;
 
-    /* Count non-deleted documents */
     uint32_t active_count = 0;
     for (size_t i = 0; i < idx->doc_count; i++) {
         if (!idx->docs[i].deleted) active_count++;
@@ -312,7 +285,6 @@ int gv_multivec_save(const void *index, FILE *out) {
 
     if (gv_write_u32(out, active_count) != 0) return -1;
 
-    /* Write each non-deleted document */
     for (size_t i = 0; i < idx->doc_count; i++) {
         const GV_DocEntry *doc = &idx->docs[i];
         if (doc->deleted) continue;

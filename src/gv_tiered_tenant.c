@@ -19,8 +19,6 @@
 #include <pthread.h>
 #include <time.h>
 
-/* Constants */
-
 #define TENANT_ID_MAX_LEN   128
 #define HASH_BUCKETS        1024
 #define QPS_WINDOW_SECONDS  60       /**< Sliding window for QPS averaging. */
@@ -29,12 +27,9 @@
 #define DEMOTE_SECONDS      (DEMOTE_DAYS * 86400ULL)
 #define DEMOTE_RATIO        0.5      /**< Must be below 50% of lower threshold. */
 
-/* Binary persistence magic / version */
 #define TIERED_MAGIC        "GVTIER"
 #define TIERED_MAGIC_LEN    6
 #define TIERED_VERSION      1
-
-/* Internal Structures */
 
 /**
  * @brief Sliding window QPS tracker.
@@ -72,8 +67,6 @@ struct GV_TieredManager {
     pthread_rwlock_t      rwlock;
 };
 
-/* Helpers */
-
 /**
  * @brief Return current wall-clock time in epoch seconds.
  */
@@ -106,8 +99,6 @@ static TenantEntry *find_tenant(const GV_TieredManager *mgr, const char *tenant_
     return NULL;
 }
 
-/* QPS Tracker */
-
 static void qps_tracker_init(QPSTracker *q) {
     memset(q, 0, sizeof(*q));
 }
@@ -125,14 +116,12 @@ static void qps_tracker_advance(QPSTracker *q, uint64_t now) {
     if (elapsed == 0) return;
 
     if (elapsed >= QPS_SLOTS) {
-        /* Entire window expired -- reset everything */
         memset(q->counts, 0, sizeof(q->counts));
         q->total     = 0;
         q->base_time = now;
         return;
     }
 
-    /* Shift window: clear slots that have fallen outside the window */
     for (uint64_t i = 0; i < elapsed; i++) {
         size_t slot = (size_t)((q->base_time + i) % QPS_SLOTS);
         q->total -= q->counts[slot];
@@ -161,8 +150,6 @@ static double qps_tracker_average(QPSTracker *q) {
     return (double)q->total / (double)QPS_SLOTS;
 }
 
-/* Configuration */
-
 void gv_tiered_config_init(GV_TieredTenantConfig *config) {
     if (!config) return;
     memset(config, 0, sizeof(*config));
@@ -175,8 +162,6 @@ void gv_tiered_config_init(GV_TieredTenantConfig *config) {
     config->max_shared_tenants = 1000;
     config->max_total_tenants  = 10000;
 }
-
-/* Lifecycle */
 
 GV_TieredManager *gv_tiered_create(const GV_TieredTenantConfig *config) {
     GV_TieredManager *mgr = calloc(1, sizeof(GV_TieredManager));
@@ -199,7 +184,6 @@ GV_TieredManager *gv_tiered_create(const GV_TieredTenantConfig *config) {
 void gv_tiered_destroy(GV_TieredManager *mgr) {
     if (!mgr) return;
 
-    /* Free all hash chain entries */
     for (size_t i = 0; i < HASH_BUCKETS; i++) {
         TenantEntry *e = mgr->buckets[i];
         while (e) {
@@ -213,8 +197,6 @@ void gv_tiered_destroy(GV_TieredManager *mgr) {
     free(mgr);
 }
 
-/* Tenant Operations */
-
 int gv_tiered_add_tenant(GV_TieredManager *mgr, const char *tenant_id,
                           GV_TenantTier initial_tier) {
     if (!mgr || !tenant_id) return -1;
@@ -222,13 +204,11 @@ int gv_tiered_add_tenant(GV_TieredManager *mgr, const char *tenant_id,
 
     pthread_rwlock_wrlock(&mgr->rwlock);
 
-    /* Check capacity */
     if (mgr->tenant_count >= mgr->config.max_total_tenants) {
         pthread_rwlock_unlock(&mgr->rwlock);
         return -1;
     }
 
-    /* Check shared tier capacity */
     if (initial_tier == GV_TIER_SHARED) {
         size_t shared_count = 0;
         for (size_t i = 0; i < HASH_BUCKETS; i++) {
@@ -242,13 +222,11 @@ int gv_tiered_add_tenant(GV_TieredManager *mgr, const char *tenant_id,
         }
     }
 
-    /* Check for duplicate */
     if (find_tenant(mgr, tenant_id)) {
         pthread_rwlock_unlock(&mgr->rwlock);
         return -1;
     }
 
-    /* Allocate new entry */
     TenantEntry *entry = calloc(1, sizeof(TenantEntry));
     if (!entry) {
         pthread_rwlock_unlock(&mgr->rwlock);
@@ -263,7 +241,6 @@ int gv_tiered_add_tenant(GV_TieredManager *mgr, const char *tenant_id,
     entry->last_active = entry->created_at;
     qps_tracker_init(&entry->qps);
 
-    /* Insert at head of hash chain */
     size_t idx = hash_tenant_id(tenant_id);
     entry->next = mgr->buckets[idx];
     mgr->buckets[idx] = entry;
@@ -284,7 +261,6 @@ int gv_tiered_remove_tenant(GV_TieredManager *mgr, const char *tenant_id) {
 
     while (e) {
         if (e->active && strncmp(e->tenant_id, tenant_id, TENANT_ID_MAX_LEN) == 0) {
-            /* Unlink from chain */
             if (prev) {
                 prev->next = e->next;
             } else {
@@ -346,8 +322,6 @@ int gv_tiered_get_info(const GV_TieredManager *mgr, const char *tenant_id,
     return 0;
 }
 
-/* Usage Tracking */
-
 int gv_tiered_record_usage(GV_TieredManager *mgr, const char *tenant_id,
                             size_t vectors_delta, size_t memory_delta) {
     if (!mgr || !tenant_id) return -1;
@@ -364,14 +338,11 @@ int gv_tiered_record_usage(GV_TieredManager *mgr, const char *tenant_id,
     entry->memory_bytes += memory_delta;
     entry->last_active   = now_seconds();
 
-    /* Record a query hit for QPS tracking */
     qps_tracker_record(&entry->qps);
 
     pthread_rwlock_unlock(&mgr->rwlock);
     return 0;
 }
-
-/* Auto-Promotion / Demotion */
 
 int gv_tiered_check_promote(GV_TieredManager *mgr) {
     if (!mgr) return -1;
@@ -389,7 +360,6 @@ int gv_tiered_check_promote(GV_TieredManager *mgr) {
         for (TenantEntry *e = mgr->buckets[i]; e; e = e->next) {
             if (!e->active) continue;
 
-            /* Auto-promotion */
             if (mgr->config.auto_promote) {
                 if (e->tier == GV_TIER_SHARED) {
                     if (e->vector_count > th->shared_max_vectors ||
@@ -411,7 +381,6 @@ int gv_tiered_check_promote(GV_TieredManager *mgr) {
                 }
             }
 
-            /* Auto-demotion */
             if (mgr->config.auto_demote) {
                 uint64_t inactive_duration = (now > e->last_active)
                                              ? (now - e->last_active) : 0;
@@ -451,8 +420,6 @@ int gv_tiered_check_promote(GV_TieredManager *mgr) {
     return promoted;
 }
 
-/* Enumeration */
-
 int gv_tiered_list_tenants(const GV_TieredManager *mgr, GV_TenantTier tier,
                             GV_TenantInfo *out, size_t max_count) {
     if (!mgr || !out || max_count == 0) return -1;
@@ -490,8 +457,6 @@ size_t gv_tiered_tenant_count(const GV_TieredManager *mgr) {
     return count;
 }
 
-/* Binary Persistence */
-
 /**
  * @brief On-disk header for the tiered tenant file.
  */
@@ -525,7 +490,6 @@ int gv_tiered_save(const GV_TieredManager *mgr, const char *path) {
         return -1;
     }
 
-    /* Write header */
     TieredFileHeader hdr;
     memset(&hdr, 0, sizeof(hdr));
     memcpy(hdr.magic, TIERED_MAGIC, TIERED_MAGIC_LEN);
@@ -534,10 +498,8 @@ int gv_tiered_save(const GV_TieredManager *mgr, const char *path) {
 
     if (fwrite(&hdr, sizeof(hdr), 1, fp) != 1) goto fail;
 
-    /* Write config */
     if (fwrite(&mgr->config, sizeof(GV_TieredTenantConfig), 1, fp) != 1) goto fail;
 
-    /* Write each tenant record */
     for (size_t i = 0; i < HASH_BUCKETS; i++) {
         for (TenantEntry *e = mgr->buckets[i]; e; e = e->next) {
             if (!e->active) continue;
@@ -571,23 +533,18 @@ GV_TieredManager *gv_tiered_load(const char *path) {
     FILE *fp = fopen(path, "rb");
     if (!fp) return NULL;
 
-    /* Read header */
     TieredFileHeader hdr;
     if (fread(&hdr, sizeof(hdr), 1, fp) != 1) goto fail;
 
-    /* Validate magic and version */
     if (memcmp(hdr.magic, TIERED_MAGIC, TIERED_MAGIC_LEN) != 0) goto fail;
     if (hdr.version != TIERED_VERSION) goto fail;
 
-    /* Read config */
     GV_TieredTenantConfig config;
     if (fread(&config, sizeof(config), 1, fp) != 1) goto fail;
 
-    /* Create manager with loaded config */
     GV_TieredManager *mgr = gv_tiered_create(&config);
     if (!mgr) goto fail;
 
-    /* Read tenant records */
     for (uint32_t i = 0; i < hdr.tenant_count; i++) {
         TenantRecord rec;
         if (fread(&rec, sizeof(rec), 1, fp) != 1) {
@@ -597,7 +554,6 @@ GV_TieredManager *gv_tiered_load(const char *path) {
 
         rec.tenant_id[TENANT_ID_MAX_LEN - 1] = '\0';
 
-        /* Allocate entry and insert directly (bypass capacity checks for load) */
         TenantEntry *entry = calloc(1, sizeof(TenantEntry));
         if (!entry) {
             gv_tiered_destroy(mgr);

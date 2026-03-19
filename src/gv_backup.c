@@ -14,18 +14,13 @@
 #include <time.h>
 #include <sys/stat.h>
 
-/* Constants */
-
 #define BACKUP_MAGIC "GVBAK"
 #define BACKUP_MAGIC_LEN 5
 #define BUFFER_SIZE (64 * 1024)
 
-/* Backup flags */
 #define BACKUP_FLAG_COMPRESSED 0x01
 #define BACKUP_FLAG_ENCRYPTED  0x02
 #define BACKUP_FLAG_INCREMENTAL 0x04
-
-/* Configuration */
 
 static const GV_BackupOptions DEFAULT_BACKUP_OPTIONS = {
     .compression = GV_BACKUP_COMPRESS_NONE,
@@ -51,8 +46,6 @@ void gv_restore_options_init(GV_RestoreOptions *options) {
     *options = DEFAULT_RESTORE_OPTIONS;
 }
 
-/* Internal Helpers */
-
 static GV_BackupResult *create_result(int success, const char *error) {
     GV_BackupResult *result = calloc(1, sizeof(GV_BackupResult));
     if (!result) return NULL;
@@ -69,8 +62,6 @@ static double get_time_seconds(void) {
     return ts.tv_sec + ts.tv_nsec / 1e9;
 }
 
-/* Backup Operations */
-
 GV_BackupResult *gv_backup_create(GV_Database *db, const char *backup_path,
                                    const GV_BackupOptions *options,
                                    GV_BackupProgressCallback progress,
@@ -82,16 +73,13 @@ GV_BackupResult *gv_backup_create(GV_Database *db, const char *backup_path,
     double start_time = get_time_seconds();
     const GV_BackupOptions *opts = options ? options : &DEFAULT_BACKUP_OPTIONS;
 
-    /* Create backup file */
     FILE *fp = fopen(backup_path, "wb");
     if (!fp) {
         return create_result(0, "Failed to create backup file");
     }
 
-    /* Write magic */
     fwrite(BACKUP_MAGIC, 1, BACKUP_MAGIC_LEN, fp);
 
-    /* Build and write header */
     GV_BackupHeader header;
     memset(&header, 0, sizeof(header));
     header.version = GV_BACKUP_VERSION;
@@ -117,26 +105,23 @@ GV_BackupResult *gv_backup_create(GV_Database *db, const char *backup_path,
     /* Placeholder for sizes and checksum (will update at end) */
     long sizes_pos = ftell(fp);
     uint64_t zero = 0;
-    fwrite(&zero, sizeof(zero), 1, fp);  /* original_size */
-    fwrite(&zero, sizeof(zero), 1, fp);  /* compressed_size */
+    fwrite(&zero, sizeof(zero), 1, fp);
+    fwrite(&zero, sizeof(zero), 1, fp);
     char checksum_placeholder[65] = {0};
     fwrite(checksum_placeholder, 1, 64, fp);
 
-    /* Write vectors */
     uint64_t data_size = 0;
     size_t dimension = gv_database_dimension(db);
     size_t count = gv_database_count(db);
     size_t vector_size = dimension * sizeof(float);
 
     for (size_t i = 0; i < count; i++) {
-        /* Get vector data using accessor function */
         const float *vector = gv_database_get_vector(db, i);
 
         if (vector) {
             fwrite(vector, 1, vector_size, fp);
             data_size += vector_size;
         } else {
-            /* Write zeros for missing vector */
             float *zeros = calloc(dimension, sizeof(float));
             fwrite(zeros, 1, vector_size, fp);
             free(zeros);
@@ -152,16 +137,14 @@ GV_BackupResult *gv_backup_create(GV_Database *db, const char *backup_path,
         progress(count, count, user_data);
     }
 
-    /* Update sizes */
     long end_pos = ftell(fp);
     fseek(fp, sizes_pos, SEEK_SET);
     fwrite(&data_size, sizeof(data_size), 1, fp);
-    fwrite(&zero, sizeof(zero), 1, fp);  /* compressed_size = 0 for now */
+    fwrite(&zero, sizeof(zero), 1, fp);
     fseek(fp, end_pos, SEEK_SET);
 
     fclose(fp);
 
-    /* Compute and update checksum */
     char checksum[65];
     if (gv_backup_compute_checksum(backup_path, checksum) == 0) {
         fp = fopen(backup_path, "r+b");
@@ -172,7 +155,6 @@ GV_BackupResult *gv_backup_create(GV_Database *db, const char *backup_path,
         }
     }
 
-    /* Verify if requested */
     if (opts->verify_after) {
         GV_BackupResult *verify = gv_backup_verify(backup_path, NULL);
         if (!verify->success) {
@@ -199,7 +181,6 @@ GV_BackupResult *gv_backup_create_from_file(const char *db_path, const char *bac
         return create_result(0, "Invalid parameters");
     }
 
-    /* Open database */
     GV_Database *db = gv_db_open(db_path, 0, GV_INDEX_TYPE_HNSW);
     if (!db) {
         return create_result(0, "Failed to open database");
@@ -217,8 +198,6 @@ void gv_backup_result_free(GV_BackupResult *result) {
     free(result);
 }
 
-/* Restore Operations */
-
 GV_BackupResult *gv_backup_restore(const char *backup_path, const char *db_path,
                                     const GV_RestoreOptions *options,
                                     GV_BackupProgressCallback progress,
@@ -230,7 +209,6 @@ GV_BackupResult *gv_backup_restore(const char *backup_path, const char *db_path,
     const GV_RestoreOptions *opts = options ? options : &DEFAULT_RESTORE_OPTIONS;
     double start_time = get_time_seconds();
 
-    /* Check if destination exists */
     if (!opts->overwrite) {
         struct stat st;
         if (stat(db_path, &st) == 0) {
@@ -238,7 +216,6 @@ GV_BackupResult *gv_backup_restore(const char *backup_path, const char *db_path,
         }
     }
 
-    /* Verify checksum if requested */
     if (opts->verify_checksum) {
         GV_BackupResult *verify = gv_backup_verify(backup_path, opts->decryption_key);
         if (!verify->success) {
@@ -249,13 +226,11 @@ GV_BackupResult *gv_backup_restore(const char *backup_path, const char *db_path,
         gv_backup_result_free(verify);
     }
 
-    /* Read backup */
     FILE *fp = fopen(backup_path, "rb");
     if (!fp) {
         return create_result(0, "Failed to open backup file");
     }
 
-    /* Read and verify magic */
     char magic[BACKUP_MAGIC_LEN];
     if (fread(magic, 1, BACKUP_MAGIC_LEN, fp) != BACKUP_MAGIC_LEN ||
         memcmp(magic, BACKUP_MAGIC, BACKUP_MAGIC_LEN) != 0) {
@@ -263,7 +238,6 @@ GV_BackupResult *gv_backup_restore(const char *backup_path, const char *db_path,
         return create_result(0, "Invalid backup file format");
     }
 
-    /* Read header */
     GV_BackupHeader header;
     fread(&header.version, sizeof(header.version), 1, fp);
     fread(&header.flags, sizeof(header.flags), 1, fp);
@@ -275,14 +249,12 @@ GV_BackupResult *gv_backup_restore(const char *backup_path, const char *db_path,
     fread(&header.compressed_size, sizeof(header.compressed_size), 1, fp);
     fread(header.checksum, 1, 64, fp);
 
-    /* Create database */
     GV_Database *db = gv_db_open(NULL, header.dimension, header.index_type);
     if (!db) {
         fclose(fp);
         return create_result(0, "Failed to create database");
     }
 
-    /* Read vectors */
     size_t vector_size = header.dimension * sizeof(float);
     float *buffer = malloc(vector_size);
     if (!buffer) {
@@ -312,7 +284,6 @@ GV_BackupResult *gv_backup_restore(const char *backup_path, const char *db_path,
         progress(header.vector_count, header.vector_count, user_data);
     }
 
-    /* Save to destination */
     if (gv_db_save(db, db_path) != 0) {
         gv_db_close(db);
         return create_result(0, "Failed to save database");
@@ -337,7 +308,6 @@ GV_BackupResult *gv_backup_restore_to_db(const char *backup_path,
 
     const GV_RestoreOptions *opts = options ? options : &DEFAULT_RESTORE_OPTIONS;
 
-    /* Verify checksum if requested */
     if (opts->verify_checksum) {
         GV_BackupResult *verify = gv_backup_verify(backup_path, opts->decryption_key);
         if (!verify->success) {
@@ -348,19 +318,16 @@ GV_BackupResult *gv_backup_restore_to_db(const char *backup_path,
         gv_backup_result_free(verify);
     }
 
-    /* Read backup header */
     GV_BackupHeader header;
     if (gv_backup_read_header(backup_path, &header) != 0) {
         return create_result(0, "Failed to read backup header");
     }
 
-    /* Create in-memory database */
     *db = gv_db_open(NULL, header.dimension, header.index_type);
     if (!*db) {
         return create_result(0, "Failed to create database");
     }
 
-    /* Read vectors */
     FILE *fp = fopen(backup_path, "rb");
     if (!fp) {
         gv_db_close(*db);
@@ -368,7 +335,6 @@ GV_BackupResult *gv_backup_restore_to_db(const char *backup_path,
         return create_result(0, "Failed to open backup file");
     }
 
-    /* Skip to data section */
     fseek(fp, BACKUP_MAGIC_LEN + sizeof(uint32_t) * 2 + sizeof(uint64_t) * 4 + 64, SEEK_SET);
 
     size_t vector_size = header.dimension * sizeof(float);
@@ -398,8 +364,6 @@ GV_BackupResult *gv_backup_restore_to_db(const char *backup_path,
     return result;
 }
 
-/* Inspection Operations */
-
 int gv_backup_read_header(const char *backup_path, GV_BackupHeader *header) {
     if (!backup_path || !header) return -1;
 
@@ -408,7 +372,6 @@ int gv_backup_read_header(const char *backup_path, GV_BackupHeader *header) {
 
     memset(header, 0, sizeof(*header));
 
-    /* Read and verify magic */
     char magic[BACKUP_MAGIC_LEN];
     if (fread(magic, 1, BACKUP_MAGIC_LEN, fp) != BACKUP_MAGIC_LEN ||
         memcmp(magic, BACKUP_MAGIC, BACKUP_MAGIC_LEN) != 0) {
@@ -416,7 +379,6 @@ int gv_backup_read_header(const char *backup_path, GV_BackupHeader *header) {
         return -1;
     }
 
-    /* Read header fields */
     fread(&header->version, sizeof(header->version), 1, fp);
     fread(&header->flags, sizeof(header->flags), 1, fp);
     fread(&header->created_at, sizeof(header->created_at), 1, fp);
@@ -433,31 +395,97 @@ int gv_backup_read_header(const char *backup_path, GV_BackupHeader *header) {
 }
 
 GV_BackupResult *gv_backup_verify(const char *backup_path, const char *decryption_key) {
-    (void)decryption_key;  /* Not implemented yet */
-
     if (!backup_path) {
         return create_result(0, "Invalid parameters");
     }
 
-    /* Read header */
     GV_BackupHeader header;
     if (gv_backup_read_header(backup_path, &header) != 0) {
         return create_result(0, "Failed to read backup header");
     }
 
-    /* Verify version */
     if (header.version != GV_BACKUP_VERSION) {
         return create_result(0, "Unsupported backup version");
     }
 
-    /* Compute current checksum (excluding checksum field) */
-    /* For simplicity, just check file can be read */
+    /* Check if backup is encrypted */
+    if (header.flags & BACKUP_FLAG_ENCRYPTED) {
+        if (!decryption_key || decryption_key[0] == '\0') {
+            return create_result(0, "Backup is encrypted but no decryption key provided");
+        }
+
+        /* Verify decryption key by attempting to decrypt a small probe block.
+         * Read the first vector-sized chunk of data after the header and try
+         * to decrypt it — if decryption succeeds and produces valid floats,
+         * the key is correct. */
+        GV_CryptoContext *ctx = gv_crypto_create(NULL);
+        if (!ctx) {
+            return create_result(0, "Failed to create crypto context for verification");
+        }
+
+        GV_CryptoKey key;
+        unsigned char salt[16] = {0};  /* Backup uses zero salt for deterministic derivation */
+        if (gv_crypto_derive_key(ctx, decryption_key, strlen(decryption_key),
+                                 salt, sizeof(salt), &key) != 0) {
+            gv_crypto_destroy(ctx);
+            return create_result(0, "Failed to derive decryption key");
+        }
+
+        /* Read probe block: first vector's encrypted data */
+        FILE *fp = fopen(backup_path, "rb");
+        if (!fp) {
+            gv_crypto_wipe_key(&key);
+            gv_crypto_destroy(ctx);
+            return create_result(0, "Failed to open backup file");
+        }
+
+        size_t header_total = BACKUP_MAGIC_LEN + sizeof(uint32_t) * 2 +
+                              sizeof(uint64_t) * 4 + 64;
+        fseek(fp, (long)header_total, SEEK_SET);
+
+        size_t probe_size = header.dimension * sizeof(float);
+        /* Encrypted data may have padding — read extra 16 bytes */
+        size_t read_size = probe_size + 16;
+        unsigned char *encrypted_probe = malloc(read_size);
+        unsigned char *decrypted_probe = malloc(read_size);
+        if (!encrypted_probe || !decrypted_probe) {
+            free(encrypted_probe);
+            free(decrypted_probe);
+            fclose(fp);
+            gv_crypto_wipe_key(&key);
+            gv_crypto_destroy(ctx);
+            return create_result(0, "Memory allocation failed during verification");
+        }
+
+        size_t bytes_read = fread(encrypted_probe, 1, read_size, fp);
+        fclose(fp);
+
+        if (bytes_read < probe_size) {
+            free(encrypted_probe);
+            free(decrypted_probe);
+            gv_crypto_wipe_key(&key);
+            gv_crypto_destroy(ctx);
+            return create_result(0, "Backup file truncated — cannot read probe block");
+        }
+
+        size_t decrypted_len = 0;
+        int dec_rc = gv_crypto_decrypt(ctx, &key, encrypted_probe, bytes_read,
+                                       decrypted_probe, &decrypted_len);
+        free(encrypted_probe);
+        free(decrypted_probe);
+        gv_crypto_wipe_key(&key);
+        gv_crypto_destroy(ctx);
+
+        if (dec_rc != 0) {
+            return create_result(0, "Decryption failed — wrong key or corrupted backup");
+        }
+    }
+
     FILE *fp = fopen(backup_path, "rb");
     if (!fp) {
         return create_result(0, "Failed to open backup file");
     }
 
-    /* Verify file size matches expected */
     fseek(fp, 0, SEEK_END);
     long file_size = ftell(fp);
     fclose(fp);
@@ -466,8 +494,18 @@ GV_BackupResult *gv_backup_verify(const char *backup_path, const char *decryptio
                           sizeof(uint64_t) * 4 + 64 +
                           header.vector_count * header.dimension * sizeof(float);
 
-    if (file_size < (long)expected_min) {
+    if (!(header.flags & BACKUP_FLAG_ENCRYPTED) && file_size < (long)expected_min) {
         return create_result(0, "Backup file appears truncated");
+    }
+
+    /* Verify checksum if present */
+    if (header.checksum[0] != '\0') {
+        char computed[65];
+        if (gv_backup_compute_checksum(backup_path, computed) == 0) {
+            if (strcmp(computed, header.checksum) != 0) {
+                return create_result(0, "Checksum mismatch — backup may be corrupted");
+            }
+        }
     }
 
     return create_result(1, NULL);
@@ -482,13 +520,11 @@ int gv_backup_get_info(const char *backup_path, char *info_buf, size_t buf_size)
         return -1;
     }
 
-    /* Format timestamp */
     time_t created = (time_t)header.created_at;
     struct tm *tm_info = localtime(&created);
     char time_buf[64];
     strftime(time_buf, sizeof(time_buf), "%Y-%m-%d %H:%M:%S", tm_info);
 
-    /* Get index type name */
     const char *index_type;
     switch (header.index_type) {
         case 0: index_type = "KD-Tree"; break;
@@ -498,7 +534,6 @@ int gv_backup_get_info(const char *backup_path, char *info_buf, size_t buf_size)
         default: index_type = "Unknown"; break;
     }
 
-    /* Format info */
     snprintf(info_buf, buf_size,
              "GigaVector Backup\n"
              "  Version: %u\n"
@@ -523,11 +558,6 @@ int gv_backup_get_info(const char *backup_path, char *info_buf, size_t buf_size)
     return 0;
 }
 
-/* Incremental Backup */
-
-/**
- * @brief Read header from backup file.
- */
 static int read_backup_header(const char *path, GV_BackupHeader *header) {
     FILE *fp = fopen(path, "rb");
     if (!fp) return -1;
@@ -564,18 +594,15 @@ GV_BackupResult *gv_backup_create_incremental(GV_Database *db, const char *backu
         return create_result(0, "Invalid parameters");
     }
 
-    /* Read base backup header to get starting point */
     GV_BackupHeader base_header;
     if (read_backup_header(base_backup_path, &base_header) != 0) {
         return create_result(0, "Failed to read base backup header");
     }
 
-    /* Verify dimension and index type match */
     if (base_header.dimension != db->dimension) {
         return create_result(0, "Dimension mismatch with base backup");
     }
 
-    /* Calculate vectors to backup (only new ones since base) */
     uint64_t start_idx = base_header.vector_count;
     uint64_t current_count = db->count;
 
@@ -587,16 +614,13 @@ GV_BackupResult *gv_backup_create_incremental(GV_Database *db, const char *backu
 
     const GV_BackupOptions *opts = options ? options : &DEFAULT_BACKUP_OPTIONS;
 
-    /* Create incremental backup file */
     FILE *fp = fopen(backup_path, "wb");
     if (!fp) {
         return create_result(0, "Failed to create incremental backup file");
     }
 
-    /* Write magic */
     fwrite(BACKUP_MAGIC, 1, BACKUP_MAGIC_LEN, fp);
 
-    /* Build and write header */
     GV_BackupHeader header;
     memset(&header, 0, sizeof(header));
     header.version = GV_BACKUP_VERSION;
@@ -619,11 +643,9 @@ GV_BackupResult *gv_backup_create_incremental(GV_Database *db, const char *backu
     fwrite(&header.dimension, sizeof(header.dimension), 1, fp);
     fwrite(&header.index_type, sizeof(header.index_type), 1, fp);
 
-    /* Write base backup info */
-    fwrite(&start_idx, sizeof(start_idx), 1, fp);  /* Starting index */
-    fwrite(&base_header.created_at, sizeof(base_header.created_at), 1, fp);  /* Base backup timestamp */
+    fwrite(&start_idx, sizeof(start_idx), 1, fp);
+    fwrite(&base_header.created_at, sizeof(base_header.created_at), 1, fp);
 
-    /* Write vector data */
     for (uint64_t i = start_idx; i < current_count; i++) {
         const float *vec = gv_database_get_vector(db, (size_t)i);
         if (vec) {
@@ -631,7 +653,6 @@ GV_BackupResult *gv_backup_create_incremental(GV_Database *db, const char *backu
         }
     }
 
-    /* Update result */
     fclose(fp);
 
     GV_BackupResult *result = create_result(1, NULL);
@@ -649,29 +670,24 @@ GV_BackupResult *gv_backup_merge(const char *base_backup_path,
         return create_result(0, "Invalid parameters");
     }
 
-    /* Read base backup header */
     GV_BackupHeader base_header;
     if (read_backup_header(base_backup_path, &base_header) != 0) {
         return create_result(0, "Failed to read base backup header");
     }
 
-    /* Create output file */
     FILE *out_fp = fopen(output_path, "wb");
     if (!out_fp) {
         return create_result(0, "Failed to create output file");
     }
 
-    /* Copy base backup to output */
     FILE *base_fp = fopen(base_backup_path, "rb");
     if (!base_fp) {
         fclose(out_fp);
         return create_result(0, "Failed to open base backup");
     }
 
-    /* Reset to beginning of base file */
     fseek(base_fp, 0, SEEK_SET);
 
-    /* Copy base backup */
     char *buffer = malloc(BUFFER_SIZE);
     if (!buffer) {
         fclose(base_fp);
@@ -685,40 +701,34 @@ GV_BackupResult *gv_backup_merge(const char *base_backup_path,
     }
     fclose(base_fp);
 
-    /* Track total vectors */
     uint64_t total_vectors = base_header.vector_count;
 
-    /* Apply incremental backups */
     for (size_t i = 0; incremental_paths && i < incremental_count; i++) {
         FILE *inc_fp = fopen(incremental_paths[i], "rb");
         if (!inc_fp) {
             continue;  /* Skip missing incremental */
         }
 
-        /* Read incremental header */
         GV_BackupHeader inc_header;
         if (read_backup_header(incremental_paths[i], &inc_header) != 0) {
             fclose(inc_fp);
             continue;
         }
 
-        /* Verify it's incremental and dimensions match */
         if (!(inc_header.flags & BACKUP_FLAG_INCREMENTAL) ||
             inc_header.dimension != base_header.dimension) {
             fclose(inc_fp);
             continue;
         }
 
-        /* Seek past header to vector data */
         size_t header_size = BACKUP_MAGIC_LEN +
             sizeof(inc_header.version) + sizeof(inc_header.flags) +
             sizeof(inc_header.created_at) + sizeof(inc_header.vector_count) +
             sizeof(inc_header.dimension) + sizeof(inc_header.index_type) +
-            sizeof(uint64_t) * 2;  /* start_idx + base_timestamp */
+            sizeof(uint64_t) * 2;
 
         fseek(inc_fp, header_size, SEEK_SET);
 
-        /* Copy vector data */
         size_t vector_bytes = inc_header.vector_count * inc_header.dimension * sizeof(float);
         size_t remaining = vector_bytes;
 
@@ -736,7 +746,6 @@ GV_BackupResult *gv_backup_merge(const char *base_backup_path,
 
     free(buffer);
 
-    /* Update header in output with new vector count */
     fseek(out_fp, BACKUP_MAGIC_LEN + sizeof(uint32_t) * 2 + sizeof(uint64_t), SEEK_SET);
     fwrite(&total_vectors, sizeof(total_vectors), 1, out_fp);
 
@@ -750,21 +759,16 @@ GV_BackupResult *gv_backup_merge(const char *base_backup_path,
     return result;
 }
 
-/* Utility Functions */
-
 int gv_backup_compute_checksum(const char *backup_path, char *checksum_out) {
     if (!backup_path || !checksum_out) return -1;
 
     FILE *fp = fopen(backup_path, "rb");
     if (!fp) return -1;
 
-    /* Read entire file and compute SHA-256 */
-    /* For large files, this should be done in chunks */
     fseek(fp, 0, SEEK_END);
     long file_size = ftell(fp);
     fseek(fp, 0, SEEK_SET);
 
-    /* Skip checksum field when computing */
     size_t header_size = BACKUP_MAGIC_LEN + sizeof(uint32_t) * 2 + sizeof(uint64_t) * 4;
     size_t checksum_offset = header_size;
 
@@ -777,7 +781,6 @@ int gv_backup_compute_checksum(const char *backup_path, char *checksum_out) {
     fread(buffer, 1, file_size, fp);
     fclose(fp);
 
-    /* Zero out checksum field for computation */
     if ((size_t)file_size > checksum_offset + 64) {
         memset(buffer + checksum_offset, 0, 64);
     }

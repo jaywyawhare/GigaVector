@@ -12,13 +12,9 @@
 #include <math.h>
 #include <pthread.h>
 
-/* Internal Constants */
-
 #define TERM_HASH_BUCKETS 4096
 #define DOC_HASH_BUCKETS 1024
 #define INITIAL_POSTING_CAPACITY 16
-
-/* Internal Structures */
 
 /**
  * @brief Posting entry (term occurrence in a document).
@@ -67,13 +63,9 @@ struct GV_BM25Index {
     pthread_rwlock_t rwlock;
 };
 
-/* Hash Functions */
-
 static size_t hash_size(size_t val) {
     return val;
 }
-
-/* Configuration */
 
 static const GV_BM25Config DEFAULT_CONFIG = {
     .k1 = 1.2,
@@ -91,8 +83,6 @@ void gv_bm25_config_init(GV_BM25Config *config) {
     if (!config) return;
     *config = DEFAULT_CONFIG;
 }
-
-/* Lifecycle */
 
 GV_BM25Index *gv_bm25_create(const GV_BM25Config *config) {
     GV_BM25Index *index = calloc(1, sizeof(GV_BM25Index));
@@ -118,7 +108,6 @@ GV_BM25Index *gv_bm25_create(const GV_BM25Config *config) {
 void gv_bm25_destroy(GV_BM25Index *index) {
     if (!index) return;
 
-    /* Free posting lists */
     for (size_t i = 0; i < TERM_HASH_BUCKETS; i++) {
         GV_PostingList *pl = index->term_buckets[i];
         while (pl) {
@@ -130,7 +119,6 @@ void gv_bm25_destroy(GV_BM25Index *index) {
         }
     }
 
-    /* Free document info */
     for (size_t i = 0; i < DOC_HASH_BUCKETS; i++) {
         GV_DocInfo *di = index->doc_buckets[i];
         while (di) {
@@ -144,8 +132,6 @@ void gv_bm25_destroy(GV_BM25Index *index) {
     gv_tokenizer_destroy(index->tokenizer);
     free(index);
 }
-
-/* Internal Helpers */
 
 static GV_PostingList *find_posting_list(GV_BM25Index *index, const char *term) {
     size_t bucket = gv_hash_str(term) % TERM_HASH_BUCKETS;
@@ -162,7 +148,6 @@ static GV_PostingList *find_posting_list(GV_BM25Index *index, const char *term) 
 static GV_PostingList *get_or_create_posting_list(GV_BM25Index *index, const char *term) {
     size_t bucket = gv_hash_str(term) % TERM_HASH_BUCKETS;
 
-    /* Check existing */
     GV_PostingList *pl = index->term_buckets[bucket];
     while (pl) {
         if (strcmp(pl->term, term) == 0) {
@@ -171,7 +156,6 @@ static GV_PostingList *get_or_create_posting_list(GV_BM25Index *index, const cha
         pl = pl->next;
     }
 
-    /* Create new */
     pl = calloc(1, sizeof(GV_PostingList));
     if (!pl) return NULL;
 
@@ -189,7 +173,6 @@ static GV_PostingList *get_or_create_posting_list(GV_BM25Index *index, const cha
     }
     pl->capacity = INITIAL_POSTING_CAPACITY;
 
-    /* Insert at head */
     pl->next = index->term_buckets[bucket];
     index->term_buckets[bucket] = pl;
     index->total_terms++;
@@ -212,7 +195,6 @@ static GV_DocInfo *find_doc_info(GV_BM25Index *index, size_t doc_id) {
 static GV_DocInfo *get_or_create_doc_info(GV_BM25Index *index, size_t doc_id) {
     size_t bucket = hash_size(doc_id) % DOC_HASH_BUCKETS;
 
-    /* Check existing */
     GV_DocInfo *di = index->doc_buckets[bucket];
     while (di) {
         if (di->doc_id == doc_id) {
@@ -221,7 +203,6 @@ static GV_DocInfo *get_or_create_doc_info(GV_BM25Index *index, size_t doc_id) {
         di = di->next;
     }
 
-    /* Create new */
     di = calloc(1, sizeof(GV_DocInfo));
     if (!di) return NULL;
 
@@ -234,7 +215,6 @@ static GV_DocInfo *get_or_create_doc_info(GV_BM25Index *index, size_t doc_id) {
 }
 
 static int add_posting(GV_PostingList *pl, size_t doc_id, size_t term_freq) {
-    /* Check if document already in list */
     for (size_t i = 0; i < pl->count; i++) {
         if (pl->postings[i].doc_id == doc_id) {
             pl->postings[i].term_freq += term_freq;
@@ -242,7 +222,6 @@ static int add_posting(GV_PostingList *pl, size_t doc_id, size_t term_freq) {
         }
     }
 
-    /* Grow if needed */
     if (pl->count >= pl->capacity) {
         size_t new_capacity = pl->capacity * 2;
         GV_Posting *new_postings = realloc(pl->postings, new_capacity * sizeof(GV_Posting));
@@ -261,7 +240,6 @@ static int add_posting(GV_PostingList *pl, size_t doc_id, size_t term_freq) {
 static void remove_doc_from_posting_list(GV_PostingList *pl, size_t doc_id) {
     for (size_t i = 0; i < pl->count; i++) {
         if (pl->postings[i].doc_id == doc_id) {
-            /* Shift remaining */
             for (size_t j = i; j < pl->count - 1; j++) {
                 pl->postings[j] = pl->postings[j + 1];
             }
@@ -271,8 +249,6 @@ static void remove_doc_from_posting_list(GV_PostingList *pl, size_t doc_id) {
     }
 }
 
-/* Indexing Operations */
-
 int gv_bm25_add_document(GV_BM25Index *index, size_t doc_id, const char *text) {
     if (!index || !text) return -1;
 
@@ -281,7 +257,6 @@ int gv_bm25_add_document(GV_BM25Index *index, size_t doc_id, const char *text) {
         return -1;
     }
 
-    /* Get unique terms and their frequencies */
     char **unique_terms;
     size_t unique_count;
     if (gv_token_list_unique(&tokens, &unique_terms, &unique_count) != 0) {
@@ -291,7 +266,6 @@ int gv_bm25_add_document(GV_BM25Index *index, size_t doc_id, const char *text) {
 
     pthread_rwlock_wrlock(&index->rwlock);
 
-    /* Get or create document info */
     GV_DocInfo *di = get_or_create_doc_info(index, doc_id);
     if (!di) {
         pthread_rwlock_unlock(&index->rwlock);
@@ -300,14 +274,11 @@ int gv_bm25_add_document(GV_BM25Index *index, size_t doc_id, const char *text) {
         return -1;
     }
 
-    /* Update document length */
     index->total_doc_length -= di->doc_length;
     di->doc_length = tokens.count;
     index->total_doc_length += di->doc_length;
 
-    /* Add each unique term to posting list */
     for (size_t i = 0; i < unique_count; i++) {
-        /* Count term frequency */
         size_t tf = 0;
         for (size_t j = 0; j < tokens.count; j++) {
             if (strcmp(tokens.tokens[j].text, unique_terms[i]) == 0) {
@@ -361,7 +332,6 @@ int gv_bm25_remove_document(GV_BM25Index *index, size_t doc_id) {
 
     pthread_rwlock_wrlock(&index->rwlock);
 
-    /* Find and remove document info */
     size_t bucket = hash_size(doc_id) % DOC_HASH_BUCKETS;
     GV_DocInfo **pp = &index->doc_buckets[bucket];
     GV_DocInfo *di = NULL;
@@ -384,7 +354,6 @@ int gv_bm25_remove_document(GV_BM25Index *index, size_t doc_id) {
     index->total_documents--;
     free(di);
 
-    /* Remove from all posting lists */
     for (size_t i = 0; i < TERM_HASH_BUCKETS; i++) {
         GV_PostingList *pl = index->term_buckets[i];
         while (pl) {
@@ -401,8 +370,6 @@ int gv_bm25_update_document(GV_BM25Index *index, size_t doc_id, const char *text
     gv_bm25_remove_document(index, doc_id);
     return gv_bm25_add_document(index, doc_id, text);
 }
-
-/* BM25 Scoring */
 
 static double compute_idf(GV_BM25Index *index, size_t doc_freq) {
     double N = (double)index->total_documents;
@@ -424,8 +391,6 @@ static double compute_bm25_term_score(GV_BM25Index *index, size_t term_freq,
 
     return idf * tf_component;
 }
-
-/* Search Operations */
 
 typedef struct {
     size_t doc_id;
@@ -476,14 +441,12 @@ int gv_bm25_search_terms(GV_BM25Index *index, const char **terms, size_t term_co
         return 0;
     }
 
-    /* Accumulate scores for all documents */
     DocScore *scores = calloc(index->total_documents, sizeof(DocScore));
     if (!scores) {
         pthread_rwlock_unlock(&index->rwlock);
         return -1;
     }
 
-    /* Initialize document IDs */
     size_t score_count = 0;
     for (size_t i = 0; i < DOC_HASH_BUCKETS; i++) {
         GV_DocInfo *di = index->doc_buckets[i];
@@ -495,7 +458,6 @@ int gv_bm25_search_terms(GV_BM25Index *index, const char **terms, size_t term_co
         }
     }
 
-    /* Score each query term */
     for (size_t t = 0; t < term_count; t++) {
         GV_PostingList *pl = find_posting_list(index, terms[t]);
         if (!pl) continue;
@@ -506,14 +468,12 @@ int gv_bm25_search_terms(GV_BM25Index *index, const char **terms, size_t term_co
             size_t doc_id = pl->postings[p].doc_id;
             size_t term_freq = pl->postings[p].term_freq;
 
-            /* Find document info */
             GV_DocInfo *di = find_doc_info(index, doc_id);
             if (!di) continue;
 
             double term_score = compute_bm25_term_score(index, term_freq,
                                                          di->doc_length, doc_freq);
 
-            /* Add to document score */
             for (size_t s = 0; s < score_count; s++) {
                 if (scores[s].doc_id == doc_id) {
                     scores[s].score += term_score;
@@ -523,10 +483,8 @@ int gv_bm25_search_terms(GV_BM25Index *index, const char **terms, size_t term_co
         }
     }
 
-    /* Sort by score */
     qsort(scores, score_count, sizeof(DocScore), compare_doc_scores);
 
-    /* Copy top k results */
     size_t result_count = score_count < k ? score_count : k;
     size_t actual_count = 0;
     for (size_t i = 0; i < result_count; i++) {
@@ -575,7 +533,6 @@ int gv_bm25_score_document(GV_BM25Index *index, size_t doc_id, const char *query
         GV_PostingList *pl = find_posting_list(index, unique_terms[t]);
         if (!pl) continue;
 
-        /* Find term frequency in this document */
         for (size_t p = 0; p < pl->count; p++) {
             if (pl->postings[p].doc_id == doc_id) {
                 *score += compute_bm25_term_score(index, pl->postings[p].term_freq,
@@ -592,8 +549,6 @@ int gv_bm25_score_document(GV_BM25Index *index, size_t doc_id, const char *query
     return 0;
 }
 
-/* Index Information */
-
 int gv_bm25_get_stats(const GV_BM25Index *index, GV_BM25Stats *stats) {
     if (!index || !stats) return -1;
 
@@ -602,7 +557,6 @@ int gv_bm25_get_stats(const GV_BM25Index *index, GV_BM25Stats *stats) {
     stats->total_documents = index->total_documents;
     stats->total_terms = index->total_terms;
 
-    /* Count total postings */
     stats->total_postings = 0;
     for (size_t i = 0; i < TERM_HASH_BUCKETS; i++) {
         GV_PostingList *pl = index->term_buckets[i];
@@ -615,7 +569,6 @@ int gv_bm25_get_stats(const GV_BM25Index *index, GV_BM25Stats *stats) {
     stats->avg_document_length = index->total_documents > 0 ?
         (double)index->total_doc_length / (double)index->total_documents : 0.0;
 
-    /* Estimate memory usage */
     stats->memory_bytes = sizeof(GV_BM25Index);
     for (size_t i = 0; i < TERM_HASH_BUCKETS; i++) {
         GV_PostingList *pl = index->term_buckets[i];
@@ -653,8 +606,6 @@ int gv_bm25_has_document(const GV_BM25Index *index, size_t doc_id) {
     return exists;
 }
 
-/* Persistence */
-
 int gv_bm25_save(const GV_BM25Index *index, const char *filepath) {
     if (!index || !filepath) return -1;
 
@@ -663,23 +614,19 @@ int gv_bm25_save(const GV_BM25Index *index, const char *filepath) {
 
     pthread_rwlock_rdlock((pthread_rwlock_t *)&index->rwlock);
 
-    /* Write header */
     const char magic[] = "GV_BM25";
     fwrite(magic, 1, 7, fp);
 
     uint32_t version = 1;
     fwrite(&version, sizeof(version), 1, fp);
 
-    /* Write config */
     fwrite(&index->config.k1, sizeof(index->config.k1), 1, fp);
     fwrite(&index->config.b, sizeof(index->config.b), 1, fp);
 
-    /* Write statistics */
     fwrite(&index->total_documents, sizeof(index->total_documents), 1, fp);
     fwrite(&index->total_terms, sizeof(index->total_terms), 1, fp);
     fwrite(&index->total_doc_length, sizeof(index->total_doc_length), 1, fp);
 
-    /* Write document info */
     for (size_t i = 0; i < DOC_HASH_BUCKETS; i++) {
         GV_DocInfo *di = index->doc_buckets[i];
         while (di) {
@@ -689,11 +636,9 @@ int gv_bm25_save(const GV_BM25Index *index, const char *filepath) {
         }
     }
 
-    /* Write sentinel for end of doc info */
     size_t sentinel = (size_t)-1;
     fwrite(&sentinel, sizeof(sentinel), 1, fp);
 
-    /* Write posting lists */
     for (size_t i = 0; i < TERM_HASH_BUCKETS; i++) {
         GV_PostingList *pl = index->term_buckets[i];
         while (pl) {
@@ -706,7 +651,6 @@ int gv_bm25_save(const GV_BM25Index *index, const char *filepath) {
         }
     }
 
-    /* Write sentinel for end of posting lists */
     size_t zero = 0;
     fwrite(&zero, sizeof(zero), 1, fp);
 
@@ -722,7 +666,6 @@ GV_BM25Index *gv_bm25_load(const char *filepath) {
     FILE *fp = fopen(filepath, "rb");
     if (!fp) return NULL;
 
-    /* Read and verify header */
     char magic[7];
     if (fread(magic, 1, 7, fp) != 7 || memcmp(magic, "GV_BM25", 7) != 0) {
         fclose(fp);
@@ -735,7 +678,6 @@ GV_BM25Index *gv_bm25_load(const char *filepath) {
         return NULL;
     }
 
-    /* Read config */
     GV_BM25Config config;
     gv_bm25_config_init(&config);
     fread(&config.k1, sizeof(config.k1), 1, fp);
@@ -747,18 +689,15 @@ GV_BM25Index *gv_bm25_load(const char *filepath) {
         return NULL;
     }
 
-    /* Read statistics */
     fread(&index->total_documents, sizeof(index->total_documents), 1, fp);
     fread(&index->total_terms, sizeof(index->total_terms), 1, fp);
     fread(&index->total_doc_length, sizeof(index->total_doc_length), 1, fp);
 
-    /* Reset counters (will be rebuilt) */
     size_t expected_docs = index->total_documents;
     size_t expected_terms = index->total_terms;
     index->total_documents = 0;
     index->total_terms = 0;
 
-    /* Read document info */
     while (1) {
         size_t doc_id;
         if (fread(&doc_id, sizeof(doc_id), 1, fp) != 1) break;
@@ -773,7 +712,6 @@ GV_BM25Index *gv_bm25_load(const char *filepath) {
         }
     }
 
-    /* Read posting lists */
     while (1) {
         size_t term_len;
         if (fread(&term_len, sizeof(term_len), 1, fp) != 1) break;
@@ -805,7 +743,6 @@ GV_BM25Index *gv_bm25_load(const char *filepath) {
 
     fclose(fp);
 
-    /* Verify */
     if (index->total_documents != expected_docs) {
         /* Warning: document count mismatch */
     }

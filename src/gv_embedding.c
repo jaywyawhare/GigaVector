@@ -22,7 +22,6 @@
 #define DEFAULT_TIMEOUT 30
 #define MAX_CACHE_KEY_LEN 1024
 
-/* Embedding cache entry */
 typedef struct CacheEntry {
     char *key;                    /* Text key */
     float *embedding;             /* Embedding vector */
@@ -34,7 +33,6 @@ typedef struct CacheEntry {
     struct CacheEntry *next_lru;  /* LRU list */
 } CacheEntry;
 
-/* Embedding cache structure */
 struct GV_EmbeddingCache {
     CacheEntry **buckets;         /* Hash table buckets */
     size_t bucket_count;          /* Number of buckets */
@@ -47,7 +45,6 @@ struct GV_EmbeddingCache {
     pthread_mutex_t mutex;        /* Thread safety */
 };
 
-/* Embedding service structure */
 struct GV_EmbeddingService {
     GV_EmbeddingConfig config;
     GV_EmbeddingCache *cache;
@@ -57,14 +54,13 @@ struct GV_EmbeddingService {
     char *last_error;             /* Last error message */
 };
 
-/* Create embedding cache */
 GV_EmbeddingCache *gv_embedding_cache_create(size_t max_size) {
     GV_EmbeddingCache *cache = (GV_EmbeddingCache *)calloc(1, sizeof(GV_EmbeddingCache));
     if (cache == NULL) {
         return NULL;
     }
     
-    cache->bucket_count = 1024;  /* Fixed bucket count */
+    cache->bucket_count = 1024;
     cache->max_size = max_size;
     cache->current_size = 0;
     cache->hits = 0;
@@ -87,7 +83,6 @@ GV_EmbeddingCache *gv_embedding_cache_create(size_t max_size) {
     return cache;
 }
 
-/* Remove entry from LRU list */
 static void remove_from_lru(GV_EmbeddingCache *cache, CacheEntry *entry) {
     if (entry->prev_lru) {
         entry->prev_lru->next_lru = entry->next_lru;
@@ -103,7 +98,6 @@ static void remove_from_lru(GV_EmbeddingCache *cache, CacheEntry *entry) {
     entry->next_lru = NULL;
 }
 
-/* Add entry to LRU head */
 static void add_to_lru_head(GV_EmbeddingCache *cache, CacheEntry *entry) {
     entry->next_lru = cache->lru_head;
     entry->prev_lru = NULL;
@@ -116,7 +110,6 @@ static void add_to_lru_head(GV_EmbeddingCache *cache, CacheEntry *entry) {
     }
 }
 
-/* Evict least recently used entry */
 static void evict_lru(GV_EmbeddingCache *cache) {
     if (cache->lru_tail == NULL) {
         return;
@@ -125,24 +118,18 @@ static void evict_lru(GV_EmbeddingCache *cache) {
     CacheEntry *entry = cache->lru_tail;
     size_t hash = gv_hash_str(entry->key) % cache->bucket_count;
     
-    /* Remove from hash table */
     CacheEntry **prev = &cache->buckets[hash];
     while (*prev != entry) {
         prev = &(*prev)->next;
     }
     *prev = entry->next;
-    
-    /* Remove from LRU */
     remove_from_lru(cache, entry);
-    
-    /* Free entry */
     free(entry->key);
     free(entry->embedding);
     free(entry);
     cache->current_size--;
 }
 
-/* Get embedding from cache */
 int gv_embedding_cache_get(GV_EmbeddingCache *cache,
                           const char *text,
                           size_t *embedding_dim,
@@ -158,7 +145,6 @@ int gv_embedding_cache_get(GV_EmbeddingCache *cache,
     
     while (entry != NULL) {
         if (strcmp(entry->key, text) == 0) {
-            /* Found - move to head of LRU */
             remove_from_lru(cache, entry);
             add_to_lru_head(cache, entry);
             entry->access_count++;
@@ -178,7 +164,6 @@ int gv_embedding_cache_get(GV_EmbeddingCache *cache,
     return 0;  /* Not found */
 }
 
-/* Store embedding in cache */
 int gv_embedding_cache_put(GV_EmbeddingCache *cache,
                            const char *text,
                            size_t embedding_dim,
@@ -189,13 +174,11 @@ int gv_embedding_cache_put(GV_EmbeddingCache *cache,
     
     pthread_mutex_lock(&cache->mutex);
     
-    /* Check if entry exists */
     size_t hash = gv_hash_str(text) % cache->bucket_count;
     CacheEntry *entry = cache->buckets[hash];
     
     while (entry != NULL) {
         if (strcmp(entry->key, text) == 0) {
-            /* Update existing entry */
             if (entry->embedding_dim != embedding_dim) {
                 free(entry->embedding);
                 entry->embedding = (float *)malloc(embedding_dim * sizeof(float));
@@ -216,12 +199,10 @@ int gv_embedding_cache_put(GV_EmbeddingCache *cache,
         entry = entry->next;
     }
     
-    /* Evict if at capacity */
     if (cache->max_size > 0 && cache->current_size >= cache->max_size) {
         evict_lru(cache);
     }
-    
-    /* Create new entry */
+
     entry = (CacheEntry *)calloc(1, sizeof(CacheEntry));
     if (entry == NULL) {
         pthread_mutex_unlock(&cache->mutex);
@@ -248,11 +229,8 @@ int gv_embedding_cache_put(GV_EmbeddingCache *cache,
     entry->timestamp = time(NULL);
     entry->access_count = 1;
     
-    /* Add to hash table */
     entry->next = cache->buckets[hash];
     cache->buckets[hash] = entry;
-    
-    /* Add to LRU head */
     add_to_lru_head(cache, entry);
     
     cache->current_size++;
@@ -260,7 +238,6 @@ int gv_embedding_cache_put(GV_EmbeddingCache *cache,
     return 0;
 }
 
-/* Clear embedding cache */
 void gv_embedding_cache_clear(GV_EmbeddingCache *cache) {
     if (cache == NULL) {
         return;
@@ -289,7 +266,6 @@ void gv_embedding_cache_clear(GV_EmbeddingCache *cache) {
     pthread_mutex_unlock(&cache->mutex);
 }
 
-/* Get cache statistics */
 void gv_embedding_cache_stats(GV_EmbeddingCache *cache,
                               size_t *size,
                               uint64_t *hits,
@@ -305,7 +281,6 @@ void gv_embedding_cache_stats(GV_EmbeddingCache *cache,
     pthread_mutex_unlock(&cache->mutex);
 }
 
-/* Destroy embedding cache */
 void gv_embedding_cache_destroy(GV_EmbeddingCache *cache) {
     if (cache == NULL) {
         return;
@@ -317,7 +292,6 @@ void gv_embedding_cache_destroy(GV_EmbeddingCache *cache) {
     free(cache);
 }
 
-/* Default embedding configuration */
 GV_EmbeddingConfig gv_embedding_config_default(void) {
     GV_EmbeddingConfig config;
     memset(&config, 0, sizeof(config));
@@ -325,12 +299,11 @@ GV_EmbeddingConfig gv_embedding_config_default(void) {
     config.embedding_dimension = 0;
     config.batch_size = DEFAULT_BATCH_SIZE;
     config.enable_cache = 1;
-    config.cache_size = 1000;  /* Default: 1000 entries */
+    config.cache_size = 1000;
     config.timeout_seconds = DEFAULT_TIMEOUT;
     return config;
 }
 
-/* Free embedding configuration */
 void gv_embedding_config_free(GV_EmbeddingConfig *config) {
     if (config == NULL) {
         return;
@@ -355,7 +328,6 @@ void gv_embedding_config_free(GV_EmbeddingConfig *config) {
 
 #ifdef HAVE_CURL
 
-/* Response buffer for CURL */
 struct ResponseBuffer {
     char *data;
     size_t size;
@@ -393,7 +365,6 @@ static size_t write_callback(void *contents, size_t size, size_t nmemb, void *us
     return realsize;
 }
 
-/* Forward declarations */
 static int generate_huggingface_embedding(GV_EmbeddingService *service,
                                          const char *text,
                                          size_t *embedding_dim,
@@ -413,7 +384,6 @@ static int generate_google_embedding_batch(GV_EmbeddingService *service,
                                           size_t **embedding_dims,
                                           float ***embeddings);
 
-/* Parse OpenAI embedding response */
 static int parse_openai_embedding_response(const char *json, float **embedding, size_t *dim) {
 
     const char *embedding_start = strstr(json, "\"embedding\":");
@@ -478,7 +448,6 @@ static size_t json_escape_into(char *dst, size_t dst_size, const char *src) {
     return w;
 }
 
-/* Generate embedding using OpenAI API */
 static int generate_openai_embedding(GV_EmbeddingService *service,
                                      const char *text,
                                      size_t *embedding_dim,
@@ -488,7 +457,6 @@ static int generate_openai_embedding(GV_EmbeddingService *service,
         return -1;
     }
 
-    /* Build request JSON with escaped text */
     char escaped_text[3072];
     json_escape_into(escaped_text, sizeof(escaped_text), text);
 
@@ -539,49 +507,42 @@ static int generate_openai_embedding(GV_EmbeddingService *service,
         return -1;
     }
     
-    /* Parse response */
     int result = parse_openai_embedding_response(buf.data, embedding, embedding_dim);
     free(buf.data);
-    
+
     return result;
 }
 
-/* Parse Google embedding response */
 static int parse_google_embedding_response(const char *json, float **embedding, size_t *dim) {
-    /* Google API response format: {"embedding": {"values": [0.1, 0.2, ...]}} */
     
     const char *values_start = strstr(json, "\"values\"");
     if (values_start == NULL) {
         return -1;
     }
     
-    /* Find the opening bracket after "values" */
     values_start = strchr(values_start, '[');
     if (values_start == NULL) {
         return -1;
     }
-    values_start++;  /* Skip '[' */
-    
-    /* Count values */
+    values_start++;
     size_t count = 0;
     const char *p = values_start;
     while (*p && *p != ']') {
         if (*p == ',') count++;
         p++;
     }
-    count++;  /* Last value */
-    
+    count++;
+
     if (count == 0) {
         return -1;
     }
-    
+
     *dim = count;
     *embedding = (float *)malloc(count * sizeof(float));
     if (*embedding == NULL) {
         return -1;
     }
-    
-    /* Parse values */
+
     p = values_start;
     size_t idx = 0;
     char *endptr;
@@ -598,7 +559,6 @@ static int parse_google_embedding_response(const char *json, float **embedding, 
     return 0;
 }
 
-/* Generate embedding using Google Generative AI API */
 static int generate_google_embedding(GV_EmbeddingService *service,
                                     const char *text,
                                     size_t *embedding_dim,
@@ -609,14 +569,11 @@ static int generate_google_embedding(GV_EmbeddingService *service,
         return -1;
     }
     
-    /* Clean and escape text for JSON */
     const char *model = service->config.model ? service->config.model : "text-embedding-004";
     int dim = service->config.embedding_dimension > 0 ? (int)service->config.embedding_dimension : 768;
-    
-    /* Build request JSON with proper escaping */
     char request_json[16384];
     size_t json_pos = 0;
-    
+
     /* Google API expects model in format "models/{model}" */
     if (strncmp(model, "models/", 7) != 0) {
         json_pos += snprintf(request_json + json_pos, sizeof(request_json) - json_pos,
@@ -626,7 +583,6 @@ static int generate_google_embedding(GV_EmbeddingService *service,
                             "{\"model\":\"%s\",\"content\":{\"parts\":[{\"text\":\"", model);
     }
     
-    /* Escape text */
     const char *p = text;
     while (*p && json_pos < sizeof(request_json) - 10) {
         if (*p == '"') {
@@ -648,12 +604,10 @@ static int generate_google_embedding(GV_EmbeddingService *service,
     json_pos += snprintf(request_json + json_pos, sizeof(request_json) - json_pos,
                         "\"}]},\"outputDimensionality\":%d}", dim);
     
-    /* Build URL - Google API uses models/{model}:embedContent format */
     char url[2048];
     if (service->config.base_url) {
         snprintf(url, sizeof(url), "%s", service->config.base_url);
     } else {
-        /* If model already starts with "models/", use as-is, otherwise prepend "models/" */
         if (strncmp(model, "models/", 7) == 0) {
             snprintf(url, sizeof(url), 
                     "https://generativelanguage.googleapis.com/v1beta/%s:embedContent",
@@ -676,7 +630,6 @@ static int generate_google_embedding(GV_EmbeddingService *service,
     struct curl_slist *headers = NULL;
     headers = curl_slist_append(headers, "Content-Type: application/json");
     
-    /* Google uses x-goog-api-key header */
     char auth_buf[1024];
     snprintf(auth_buf, sizeof(auth_buf), "x-goog-api-key: %s", service->config.api_key);
     headers = curl_slist_append(headers, auth_buf);
@@ -697,10 +650,9 @@ static int generate_google_embedding(GV_EmbeddingService *service,
         return -1;
     }
     
-    /* Parse response */
     int result = parse_google_embedding_response(buf.data, embedding, embedding_dim);
     free(buf.data);
-    
+
     return result;
 #else
     (void)service;
@@ -711,7 +663,6 @@ static int generate_google_embedding(GV_EmbeddingService *service,
 #endif
 }
 
-/* Generate batch embeddings using Google Generative AI API */
 static int generate_google_embedding_batch(GV_EmbeddingService *service,
                                           const char **texts,
                                           size_t text_count,
@@ -745,11 +696,8 @@ static int generate_google_embedding_batch(GV_EmbeddingService *service,
             request_json[pos++] = ',';
         }
         
-        /* Start request object */
         pos += snprintf(request_json + pos, json_size - pos,
                        "{\"model\":\"%s%s\",\"content\":{\"parts\":[{\"text\":\"", model_prefix, model);
-        
-        /* Escape and append text */
         const char *p = texts[i];
         while (*p && pos < json_size - 50) {
             if (*p == '"') {
@@ -768,7 +716,6 @@ static int generate_google_embedding_batch(GV_EmbeddingService *service,
             p++;
         }
         
-        /* Close request object */
         pos += snprintf(request_json + pos, json_size - pos,
                        "\"}]},\"outputDimensionality\":%d}", dim);
         
@@ -780,12 +727,10 @@ static int generate_google_embedding_batch(GV_EmbeddingService *service,
     
     snprintf(request_json + pos, json_size - pos, "]}");
     
-    /* Build URL - Google API uses models/{model}:batchEmbedContents format */
     char url[2048];
     if (service->config.base_url) {
         snprintf(url, sizeof(url), "%s", service->config.base_url);
     } else {
-        /* If model already starts with "models/", use as-is, otherwise prepend "models/" */
         if (strncmp(model, "models/", 7) == 0) {
             snprintf(url, sizeof(url), 
                     "https://generativelanguage.googleapis.com/v1beta/%s:batchEmbedContents",
@@ -798,7 +743,7 @@ static int generate_google_embedding_batch(GV_EmbeddingService *service,
     }
     
     struct ResponseBuffer buf;
-    buf.data = (char *)malloc(262144);  /* 256KB for batch responses */
+    buf.data = (char *)malloc(262144);
     buf.size = 0;
     buf.capacity = 262144;
     if (buf.data == NULL) {
@@ -837,53 +782,45 @@ static int generate_google_embedding_batch(GV_EmbeddingService *service,
         return -1;
     }
     
-    /* Find the opening bracket after "embeddings" */
     embeddings_start = strchr(embeddings_start, '[');
     if (embeddings_start == NULL) {
         free(buf.data);
         return -1;
     }
-    embeddings_start++;  /* Skip '[' */
-    
-    /* Parse each embedding in the array */
+    embeddings_start++;
+
     size_t success_count = 0;
     const char *p = embeddings_start;
-    
+
     for (size_t i = 0; i < text_count; i++) {
-        /* Find values array for this embedding */
         const char *values_start = strstr(p, "\"values\"");
         if (values_start == NULL) {
-            /* No more embeddings found */
             break;
         }
-        
-        /* Find the opening bracket after "values" */
+
         values_start = strchr(values_start, '[');
         if (values_start == NULL) {
             break;
         }
-        values_start++;  /* Skip '[' */
-        
-        /* Find the closing bracket to count values accurately */
+        values_start++;
+
         const char *values_end = strchr(values_start, ']');
         if (values_end == NULL) {
             break;
         }
-        
-        /* Count values */
+
         size_t count = 0;
         const char *q = values_start;
         while (q < values_end) {
             if (*q == ',') count++;
             q++;
         }
-        count++;  /* Last value */
-        
+        count++;
+
         if (count > 0) {
             (*embedding_dims)[i] = count;
             (*embeddings)[i] = (float *)malloc(count * sizeof(float));
             if ((*embeddings)[i] != NULL) {
-                /* Parse values */
                 q = values_start;
                 size_t idx = 0;
                 char *endptr;
@@ -894,7 +831,6 @@ static int generate_google_embedding_batch(GV_EmbeddingService *service,
                     }
                     (*embeddings)[i][idx++] = strtof(q, &endptr);
                     if (endptr == q) {
-                        /* Failed to parse number */
                         break;
                     }
                     q = endptr;
@@ -906,7 +842,6 @@ static int generate_google_embedding_batch(GV_EmbeddingService *service,
                 if (idx == count) {
                     success_count++;
                 } else {
-                    /* Failed to parse all values */
                     free((*embeddings)[i]);
                     (*embeddings)[i] = NULL;
                     (*embedding_dims)[i] = 0;
@@ -914,23 +849,19 @@ static int generate_google_embedding_batch(GV_EmbeddingService *service,
             }
         }
         
-        /* Move to next embedding object - start from after the closing bracket of values */
-        p = values_end + 1;  /* Skip ']' */
-        /* Skip whitespace and find the closing brace of this embedding object */
+        p = values_end + 1;
         while (*p && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) {
             p++;
         }
         if (*p == '}') {
-            p++;  /* Skip '}' */
-            /* Skip whitespace and comma if present */
+            p++;
             while (*p && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r' || *p == ',')) {
                 p++;
             }
         } else {
-            /* Try to find the closing brace */
             p = strchr(p, '}');
             if (p) {
-                p++;  /* Skip '}' */
+                p++;
                 while (*p && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r' || *p == ',')) {
                     p++;
                 }
@@ -957,7 +888,6 @@ static int generate_google_embedding_batch(GV_EmbeddingService *service,
 #endif
 }
 
-/* Generate embedding using HuggingFace Text Embeddings Inference (TEI) API */
 static int generate_huggingface_embedding(GV_EmbeddingService *service,
                                          const char *text,
                                          size_t *embedding_dim,
@@ -968,17 +898,13 @@ static int generate_huggingface_embedding(GV_EmbeddingService *service,
         return -1;
     }
     
-    /* Use TEI API format (OpenAI-compatible) */
     char request_json[4096];
     snprintf(request_json, sizeof(request_json),
             "{\"input\":\"%s\"}", text);
     
-    /* Default to localhost TEI if base_url not set */
-    const char *url = service->config.base_url ? 
-                     service->config.base_url : 
+    const char *url = service->config.base_url ?
+                     service->config.base_url :
                      "http://localhost:3000/v1/embeddings";
-    
-    /* Build full URL with /embeddings if needed */
     char full_url[2048];
     if (strstr(url, "/embeddings") == NULL) {
         snprintf(full_url, sizeof(full_url), "%s/embeddings", url);
@@ -996,7 +922,6 @@ static int generate_huggingface_embedding(GV_EmbeddingService *service,
     struct curl_slist *headers = NULL;
     headers = curl_slist_append(headers, "Content-Type: application/json");
     
-    /* TEI may not require auth, but support it if provided */
     if (service->config.api_key) {
         char auth_buf[1024];
         snprintf(auth_buf, sizeof(auth_buf), "Authorization: Bearer %s", service->config.api_key);
@@ -1019,10 +944,9 @@ static int generate_huggingface_embedding(GV_EmbeddingService *service,
         return -1;
     }
     
-    /* Parse response (same format as OpenAI) */
     int result = parse_openai_embedding_response(buf.data, embedding, embedding_dim);
     free(buf.data);
-    
+
     return result;
 #else
     (void)service;
@@ -1045,22 +969,20 @@ static int generate_huggingface_embedding_batch(GV_EmbeddingService *service,
         return -1;
     }
     
-    /* Build request JSON with array of inputs */
     size_t json_size = 4096 + text_count * 256;
     char *request_json = (char *)malloc(json_size);
     if (request_json == NULL) {
         return -1;
     }
-    
+
     strcpy(request_json, "{\"input\":[");
     size_t pos = strlen(request_json);
-    
+
     for (size_t i = 0; i < text_count; i++) {
         if (i > 0) {
             request_json[pos++] = ',';
         }
         request_json[pos++] = '"';
-        /* Escape text */
         const char *p = texts[i];
         while (*p && pos < json_size - 10) {
             if (*p == '"' || *p == '\\') {
@@ -1073,11 +995,9 @@ static int generate_huggingface_embedding_batch(GV_EmbeddingService *service,
     
     snprintf(request_json + pos, json_size - pos, "]}");
     
-    /* Default to localhost TEI if base_url not set */
-    const char *url = service->config.base_url ? 
-                     service->config.base_url : 
+    const char *url = service->config.base_url ?
+                     service->config.base_url :
                      "http://localhost:3000/v1/embeddings";
-    
     char full_url[2048];
     if (strstr(url, "/embeddings") == NULL) {
         snprintf(full_url, sizeof(full_url), "%s/embeddings", url);
@@ -1119,43 +1039,37 @@ static int generate_huggingface_embedding_batch(GV_EmbeddingService *service,
         return -1;
     }
     
-    /* Parse batch response - simplified parsing */
-    /* Format: {"data": [{"embedding": [...]}, {"embedding": [...]}, ...]} */
     const char *data_start = strstr(buf.data, "\"data\":[");
     if (data_start == NULL) {
         free(buf.data);
         return -1;
     }
-    
-    data_start += 8;  /* Skip "data":[ */
-    
-    /* Parse each embedding in the array */
+
+    data_start += 8;
+
     size_t success_count = 0;
     const char *p = data_start;
-    
+
     for (size_t i = 0; i < text_count && *p && *p != ']'; i++) {
-        /* Find embedding array */
         const char *emb_start = strstr(p, "\"embedding\":[");
         if (emb_start == NULL) {
             break;
         }
         
-        emb_start += 13;  /* Skip "embedding":[ */
-        
-        /* Count values */
+        emb_start += 13;
+
         size_t count = 0;
         const char *q = emb_start;
         while (*q && *q != ']') {
             if (*q == ',') count++;
             q++;
         }
-        count++;  /* Last value */
-        
+        count++;
+
         if (count > 0) {
             (*embedding_dims)[i] = count;
             (*embeddings)[i] = (float *)malloc(count * sizeof(float));
             if ((*embeddings)[i] != NULL) {
-                /* Parse values */
                 q = emb_start;
                 size_t idx = 0;
                 char *endptr;
@@ -1171,12 +1085,11 @@ static int generate_huggingface_embedding_batch(GV_EmbeddingService *service,
                 success_count++;
             }
         }
-        
-        /* Move to next object */
+
         p = strchr(emb_start, '}');
         if (p) p++;
     }
-    
+
     free(buf.data);
     return (int)success_count;
 #else
@@ -1189,7 +1102,6 @@ static int generate_huggingface_embedding_batch(GV_EmbeddingService *service,
 #endif
 }
 
-/* Generate batch embeddings using OpenAI API */
 static int generate_openai_embedding_batch(GV_EmbeddingService *service,
                                            const char **texts,
                                            size_t text_count,
@@ -1200,25 +1112,23 @@ static int generate_openai_embedding_batch(GV_EmbeddingService *service,
         return -1;
     }
     
-    /* Build request JSON with array of inputs */
-    size_t json_size = 4096 + text_count * 256;  /* Estimate */
+    size_t json_size = 4096 + text_count * 256;
     char *request_json = (char *)malloc(json_size);
     if (request_json == NULL) {
         return -1;
     }
-    
+
     const char *model = service->config.model ? service->config.model : "text-embedding-3-small";
     int dim = service->config.embedding_dimension > 0 ? (int)service->config.embedding_dimension : 0;
-    
+
     strcpy(request_json, "{\"input\":[");
     size_t pos = strlen(request_json);
-    
+
     for (size_t i = 0; i < text_count; i++) {
         if (i > 0) {
             request_json[pos++] = ',';
         }
         request_json[pos++] = '"';
-        /* Escape text */
         const char *p = texts[i];
         while (*p && pos < json_size - 10) {
             if (*p == '"' || *p == '\\') {
@@ -1270,42 +1180,37 @@ static int generate_openai_embedding_batch(GV_EmbeddingService *service,
         return -1;
     }
     
-    /* Parse batch response - OpenAI format: {"data": [{"embedding": [...]}, {"embedding": [...]}, ...]} */
     const char *data_start = strstr(buf.data, "\"data\":[");
     if (data_start == NULL) {
         free(buf.data);
         return -1;
     }
-    
-    data_start += 8;  /* Skip "data":[ */
-    
-    /* Parse each embedding in the array */
+
+    data_start += 8;
+
     size_t success_count = 0;
     const char *p = data_start;
-    
+
     for (size_t i = 0; i < text_count && *p && *p != ']'; i++) {
-        /* Find embedding array */
         const char *emb_start = strstr(p, "\"embedding\":[");
         if (emb_start == NULL) {
             break;
         }
-        
-        emb_start += 13;  /* Skip "embedding":[ */
-        
-        /* Count values */
+
+        emb_start += 13;
+
         size_t count = 0;
         const char *q = emb_start;
         while (*q && *q != ']') {
             if (*q == ',') count++;
             q++;
         }
-        count++;  /* Last value */
-        
+        count++;
+
         if (count > 0) {
             (*embedding_dims)[i] = count;
             (*embeddings)[i] = (float *)malloc(count * sizeof(float));
             if ((*embeddings)[i] != NULL) {
-                /* Parse values */
                 q = emb_start;
                 size_t idx = 0;
                 char *endptr;
@@ -1321,19 +1226,17 @@ static int generate_openai_embedding_batch(GV_EmbeddingService *service,
                 success_count++;
             }
         }
-        
-        /* Move to next object */
+
         p = strchr(emb_start, '}');
         if (p) p++;
     }
-    
+
     free(buf.data);
     return (int)success_count;
 }
 
 #endif /* HAVE_CURL */
 
-/* Create embedding service */
 GV_EmbeddingService *gv_embedding_service_create(const GV_EmbeddingConfig *config) {
     if (config == NULL || config->provider == GV_EMBEDDING_PROVIDER_NONE) {
         return NULL;
@@ -1347,7 +1250,6 @@ GV_EmbeddingService *gv_embedding_service_create(const GV_EmbeddingConfig *confi
     service->config = *config;
     service->last_error = NULL;
     
-    /* Copy strings */
     if (config->api_key) {
         service->config.api_key = strdup(config->api_key);
     }
@@ -1361,7 +1263,6 @@ GV_EmbeddingService *gv_embedding_service_create(const GV_EmbeddingConfig *confi
         service->config.huggingface_model_path = strdup(config->huggingface_model_path);
     }
     
-    /* Create cache if enabled */
     if (config->enable_cache) {
         service->cache = gv_embedding_cache_create(config->cache_size);
     }
@@ -1382,7 +1283,6 @@ GV_EmbeddingService *gv_embedding_service_create(const GV_EmbeddingConfig *confi
     if (config->provider == GV_EMBEDDING_PROVIDER_OPENAI || 
         config->provider == GV_EMBEDDING_PROVIDER_CUSTOM ||
         config->provider == GV_EMBEDDING_PROVIDER_GOOGLE) {
-        /* No CURL support */
         gv_embedding_cache_destroy(service->cache);
         gv_embedding_config_free(&service->config);
         free(service);
@@ -1393,7 +1293,6 @@ GV_EmbeddingService *gv_embedding_service_create(const GV_EmbeddingConfig *confi
     return service;
 }
 
-/* Destroy embedding service */
 void gv_embedding_service_destroy(GV_EmbeddingService *service) {
     if (service == NULL) {
         return;
@@ -1414,7 +1313,6 @@ void gv_embedding_service_destroy(GV_EmbeddingService *service) {
     free(service);
 }
 
-/* Generate embedding */
 int gv_embedding_generate(GV_EmbeddingService *service,
                           const char *text,
                           size_t *embedding_dim,
@@ -1423,12 +1321,10 @@ int gv_embedding_generate(GV_EmbeddingService *service,
         return -1;
     }
     
-    /* Check cache first */
     if (service->cache) {
         const float *cached_embedding = NULL;
         size_t cached_dim = 0;
         if (gv_embedding_cache_get(service->cache, text, &cached_dim, &cached_embedding) == 1) {
-            /* Found in cache - copy it */
             *embedding_dim = cached_dim;
             *embedding = (float *)malloc(cached_dim * sizeof(float));
             if (*embedding == NULL) {
@@ -1454,14 +1350,12 @@ int gv_embedding_generate(GV_EmbeddingService *service,
 #endif
     
     if (result == 0 && service->cache && *embedding != NULL) {
-        /* Store in cache */
         gv_embedding_cache_put(service->cache, text, *embedding_dim, *embedding);
     }
-    
+
     return result;
 }
 
-/* Generate batch embeddings */
 int gv_embedding_generate_batch(GV_EmbeddingService *service,
                                 const char **texts,
                                 size_t text_count,
@@ -1485,13 +1379,11 @@ int gv_embedding_generate_batch(GV_EmbeddingService *service,
 #ifdef HAVE_CURL
     if (service->config.provider == GV_EMBEDDING_PROVIDER_OPENAI ||
         service->config.provider == GV_EMBEDDING_PROVIDER_CUSTOM) {
-        /* Try batch API first */
         int batch_result = generate_openai_embedding_batch(service, texts, text_count,
                                                           embedding_dims, embeddings);
         if (batch_result == 0) {
             success_count = text_count;
         } else {
-            /* Fall back to individual requests */
             for (size_t i = 0; i < text_count; i++) {
                 if (gv_embedding_generate(service, texts[i], &(*embedding_dims)[i],
                                          &(*embeddings)[i]) == 0) {
@@ -1503,13 +1395,11 @@ int gv_embedding_generate_batch(GV_EmbeddingService *service,
             }
         }
     } else if (service->config.provider == GV_EMBEDDING_PROVIDER_GOOGLE) {
-        /* Try batch API first */
         int batch_result = generate_google_embedding_batch(service, texts, text_count,
                                                           embedding_dims, embeddings);
         if (batch_result >= 0) {
             success_count = batch_result;
         } else {
-            /* Fall back to individual requests */
             for (size_t i = 0; i < text_count; i++) {
                 if (gv_embedding_generate(service, texts[i], &(*embedding_dims)[i],
                                          &(*embeddings)[i]) == 0) {
@@ -1525,13 +1415,11 @@ int gv_embedding_generate_batch(GV_EmbeddingService *service,
     
     if (service->config.provider == GV_EMBEDDING_PROVIDER_HUGGINGFACE) {
 #ifdef HAVE_CURL
-        /* Try batch API first, fall back to individual */
         int batch_result = generate_huggingface_embedding_batch(service, texts, text_count,
                                                                 embedding_dims, embeddings);
         if (batch_result >= 0) {
             success_count = batch_result;
         } else {
-            /* Fall back to individual requests */
             for (size_t i = 0; i < text_count; i++) {
                 if (gv_embedding_generate(service, texts[i], &(*embedding_dims)[i],
                                          &(*embeddings)[i]) == 0) {
@@ -1543,7 +1431,6 @@ int gv_embedding_generate_batch(GV_EmbeddingService *service,
             }
         }
 #else
-        /* No CURL support */
         for (size_t i = 0; i < text_count; i++) {
             (*embedding_dims)[i] = 0;
             (*embeddings)[i] = NULL;
@@ -1551,7 +1438,7 @@ int gv_embedding_generate_batch(GV_EmbeddingService *service,
         return -1;
 #endif
     }
-    
+
     return (int)success_count;
 }
 

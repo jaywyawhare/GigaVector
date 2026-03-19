@@ -24,8 +24,6 @@
 #include "gigavector/gv_json.h"
 #include "gigavector/gv_utils.h"
 
-/* Constants */
-
 #define AE_DEFAULT_DIMENSION         1536
 #define AE_DEFAULT_MAX_CACHE         10000
 #define AE_DEFAULT_MAX_TEXT_LENGTH   8192
@@ -35,8 +33,6 @@
 #define AE_MAX_RESPONSE_SIZE         (10 * 1024 * 1024)  /* 10 MB */
 #define AE_URL_BUFSIZE               2048
 #define AE_AUTH_BUFSIZE              1024
-
-/* LRU cache internals */
 
 typedef struct AE_CacheEntry {
     char                   *text;       /* Key: original text */
@@ -57,10 +53,7 @@ typedef struct {
     pthread_mutex_t mutex;
 } AE_Cache;
 
-/* Auto-embedder structure */
-
 struct GV_AutoEmbedder {
-    /* Configuration (owned copies of strings) */
     GV_AutoEmbedProvider provider;
     char                *api_key;
     char                *model_name;
@@ -69,15 +62,12 @@ struct GV_AutoEmbedder {
     size_t               max_text_length;
     int                  batch_size;
 
-    /* Cache (NULL when disabled) */
     AE_Cache            *cache;
 
-    /* libcurl handle (per-embedder, reused across calls) */
 #ifdef HAVE_CURL
     CURL                *curl;
 #endif
 
-    /* Statistics */
     uint64_t             total_embeddings;
     uint64_t             cache_hits;
     uint64_t             cache_misses;
@@ -85,11 +75,8 @@ struct GV_AutoEmbedder {
     uint64_t             api_errors;
     double               total_latency_ms;
 
-    /* Thread safety for stats and curl handle */
     pthread_mutex_t      mutex;
 };
-
-/* CURL response buffer */
 
 #ifdef HAVE_CURL
 typedef struct {
@@ -146,8 +133,6 @@ static void ae_response_buf_free(AE_ResponseBuf *buf) {
 }
 #endif /* HAVE_CURL */
 
-/* LRU cache implementation */
-
 static AE_Cache *ae_cache_create(size_t max_entries) {
     AE_Cache *c = (AE_Cache *)calloc(1, sizeof(AE_Cache));
     if (!c) return NULL;
@@ -198,7 +183,6 @@ static void ae_cache_evict_lru(AE_Cache *c) {
     AE_CacheEntry *victim = c->lru_tail;
     if (!victim) return;
 
-    /* Remove from hash chain */
     size_t h = gv_hash_str(victim->text) % c->bucket_count;
     AE_CacheEntry **pp = &c->buckets[h];
     while (*pp && *pp != victim) {
@@ -229,7 +213,6 @@ static int ae_cache_get(AE_Cache *c, const char *text,
     AE_CacheEntry *e = c->buckets[h];
     while (e) {
         if (strcmp(e->text, text) == 0) {
-            /* Hit -- promote in LRU and copy out */
             ae_lru_remove(c, e);
             ae_lru_push_front(c, e);
 
@@ -261,7 +244,6 @@ static int ae_cache_put(AE_Cache *c, const char *text,
 
     size_t h = gv_hash_str(text) % c->bucket_count;
 
-    /* Check for existing entry and update */
     AE_CacheEntry *e = c->buckets[h];
     while (e) {
         if (strcmp(e->text, text) == 0) {
@@ -283,12 +265,10 @@ static int ae_cache_put(AE_Cache *c, const char *text,
         e = e->hash_next;
     }
 
-    /* Evict if at capacity */
     if (c->max_entries > 0 && c->count >= c->max_entries) {
         ae_cache_evict_lru(c);
     }
 
-    /* Insert new entry */
     e = (AE_CacheEntry *)calloc(1, sizeof(AE_CacheEntry));
     if (!e) {
         pthread_mutex_unlock(&c->mutex);
@@ -310,7 +290,6 @@ static int ae_cache_put(AE_Cache *c, const char *text,
     memcpy(e->embedding, embedding, dim * sizeof(float));
     e->dimension = dim;
 
-    /* Prepend to hash chain */
     e->hash_next  = c->buckets[h];
     c->buckets[h] = e;
 
@@ -349,8 +328,6 @@ static void ae_cache_destroy(AE_Cache *c) {
     pthread_mutex_destroy(&c->mutex);
     free(c);
 }
-
-/* JSON request builders */
 
 /**
  * Escape a string for inclusion in a JSON string literal.
@@ -393,7 +370,6 @@ static char *ae_build_openai_request(const char *text, const char *model,
     char *json = (char *)malloc(alloc);
     if (!json) return NULL;
 
-    /* Escape text */
     char *escaped = (char *)malloc(text_len * 2 + 1);
     if (!escaped) { free(json); return NULL; }
     ae_json_escape(escaped, text_len * 2 + 1, text);
@@ -452,7 +428,6 @@ static char *ae_build_openai_batch_request(const char *const *texts,
                                            size_t count,
                                            const char *model,
                                            size_t dimension) {
-    /* Estimate upper bound for allocation */
     size_t alloc = 512;
     for (size_t i = 0; i < count; i++) {
         alloc += strlen(texts[i]) * 2 + 16;
@@ -563,8 +538,6 @@ static char *ae_build_hf_batch_request(const char *const *texts, size_t count) {
     return json;
 }
 
-/* JSON response parsers (using project gv_json utilities) */
-
 /**
  * Parse an OpenAI /v1/embeddings response to extract the first embedding
  * vector.  Returns 0 on success, -1 on error.  Caller must free *out_vec.
@@ -575,7 +548,6 @@ static int ae_parse_openai_single(const char *body, float **out_vec,
     GV_JsonValue *root = gv_json_parse(body, &err);
     if (!root) return -1;
 
-    /* data.0.embedding */
     GV_JsonValue *embedding_arr = gv_json_get_path(root, "data.0.embedding");
     if (!embedding_arr || !gv_json_is_array(embedding_arr)) {
         gv_json_free(root);
@@ -740,8 +712,6 @@ static int ae_parse_google_batch(const char *body, size_t count,
     return success;
 }
 
-/* HTTP call helpers (libcurl) */
-
 #ifdef HAVE_CURL
 
 /**
@@ -849,7 +819,6 @@ static int ae_http_post(GV_AutoEmbedder *em, const char *url,
         return -1;
     }
 
-    /* Check HTTP status */
     long http_code = 0;
     curl_easy_getinfo(em->curl, CURLINFO_RESPONSE_CODE, &http_code);
     if (http_code < 200 || http_code >= 300) {
@@ -862,15 +831,11 @@ static int ae_http_post(GV_AutoEmbedder *em, const char *url,
 
 #endif /* HAVE_CURL */
 
-/* Timing helper */
-
 static double ae_time_ms(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (double)ts.tv_sec * 1000.0 + (double)ts.tv_nsec / 1e6;
 }
-
-/* Core: single-text embedding via HTTP */
 
 /**
  * Internal: perform a single-text embedding API call.
@@ -907,7 +872,6 @@ static int ae_embed_single_http(GV_AutoEmbedder *em, const char *text,
     free(req_body);
     if (rc != 0) return -1;
 
-    /* Parse provider-specific response */
     int parse_rc = -1;
     switch (em->provider) {
     case GV_EMBED_PROVIDER_OPENAI:
@@ -985,8 +949,6 @@ static int ae_embed_batch_http(GV_AutoEmbedder *em, const char *const *texts,
 #endif
 }
 
-/* Public API */
-
 void gv_auto_embed_config_init(GV_AutoEmbedConfig *config) {
     if (!config) return;
     memset(config, 0, sizeof(*config));
@@ -1062,13 +1024,10 @@ void gv_auto_embed_destroy(GV_AutoEmbedder *embedder) {
     free(embedder);
 }
 
-/* gv_auto_embed_text -- raw embedding */
-
 float *gv_auto_embed_text(GV_AutoEmbedder *embedder, const char *text,
                           size_t *out_dimension) {
     if (!embedder || !text || !out_dimension) return NULL;
 
-    /* Truncate if exceeding configured limit */
     size_t text_len = strlen(text);
     char *truncated  = NULL;
     const char *input = text;
@@ -1080,7 +1039,6 @@ float *gv_auto_embed_text(GV_AutoEmbedder *embedder, const char *text,
         input = truncated;
     }
 
-    /* Cache lookup */
     float *vec  = NULL;
     size_t dim  = 0;
     if (embedder->cache) {
@@ -1096,7 +1054,6 @@ float *gv_auto_embed_text(GV_AutoEmbedder *embedder, const char *text,
         }
     }
 
-    /* API call */
     double t0 = ae_time_ms();
     int rc = ae_embed_single_http(embedder, input, &vec, &dim);
     double elapsed = ae_time_ms() - t0;
@@ -1112,13 +1069,11 @@ float *gv_auto_embed_text(GV_AutoEmbedder *embedder, const char *text,
     }
     embedder->total_embeddings++;
     if (embedder->cache) embedder->cache_misses++;
-    /* Running average latency */
     double n = (double)embedder->api_calls;
     embedder->total_latency_ms += elapsed;
     (void)n; /* total_latency_ms used in get_stats */
     pthread_mutex_unlock(&embedder->mutex);
 
-    /* Store in cache */
     if (embedder->cache) {
         ae_cache_put(embedder->cache, input, vec, dim);
     }
@@ -1127,8 +1082,6 @@ float *gv_auto_embed_text(GV_AutoEmbedder *embedder, const char *text,
     free(truncated);
     return vec;
 }
-
-/* gv_auto_embed_add_text */
 
 int gv_auto_embed_add_text(GV_AutoEmbedder *embedder, GV_Database *db,
                            const char *text,
@@ -1151,8 +1104,6 @@ int gv_auto_embed_add_text(GV_AutoEmbedder *embedder, GV_Database *db,
     return rc;
 }
 
-/* gv_auto_embed_search_text */
-
 int gv_auto_embed_search_text(GV_AutoEmbedder *embedder, const GV_Database *db,
                               const char *text, size_t k, int distance_type,
                               size_t *out_indices, float *out_distances,
@@ -1163,7 +1114,6 @@ int gv_auto_embed_search_text(GV_AutoEmbedder *embedder, const GV_Database *db,
     float *vec = gv_auto_embed_text(embedder, text, &dim);
     if (!vec) return -1;
 
-    /* Allocate result buffer */
     GV_SearchResult *results = (GV_SearchResult *)calloc(k, sizeof(GV_SearchResult));
     if (!results) { free(vec); return -1; }
 
@@ -1191,7 +1141,6 @@ int gv_auto_embed_search_text(GV_AutoEmbedder *embedder, const GV_Database *db,
      * from the vector data pointer offset in the SoA storage.
      */
     for (size_t i = 0; i < n; i++) {
-        /* Search through database vectors to find matching pointer */
         size_t db_count = gv_database_count(db);
         size_t idx = 0;
         for (size_t j = 0; j < db_count; j++) {
@@ -1210,8 +1159,6 @@ int gv_auto_embed_search_text(GV_AutoEmbedder *embedder, const GV_Database *db,
     return 0;
 }
 
-/* gv_auto_embed_add_texts (batch) */
-
 int gv_auto_embed_add_texts(GV_AutoEmbedder *embedder, GV_Database *db,
                             const char *const *texts, size_t count,
                             const char *const *metadata_keys,
@@ -1222,12 +1169,10 @@ int gv_auto_embed_add_texts(GV_AutoEmbedder *embedder, GV_Database *db,
     size_t batch_sz = (size_t)embedder->batch_size;
     if (batch_sz == 0) batch_sz = AE_DEFAULT_BATCH_SIZE;
 
-    /* Process in batches */
     for (size_t offset = 0; offset < count; offset += batch_sz) {
         size_t chunk = count - offset;
         if (chunk > batch_sz) chunk = batch_sz;
 
-        /* Separate texts into cached and uncached */
         float **vecs = (float **)calloc(chunk, sizeof(float *));
         size_t *dims = (size_t *)calloc(chunk, sizeof(size_t));
         if (!vecs || !dims) {
@@ -1235,7 +1180,6 @@ int gv_auto_embed_add_texts(GV_AutoEmbedder *embedder, GV_Database *db,
             return total_added > 0 ? total_added : -1;
         }
 
-        /* Indices of texts that need API calls */
         size_t *need_api = (size_t *)malloc(chunk * sizeof(size_t));
         size_t  need_count = 0;
         if (!need_api) {
@@ -1243,7 +1187,6 @@ int gv_auto_embed_add_texts(GV_AutoEmbedder *embedder, GV_Database *db,
             return total_added > 0 ? total_added : -1;
         }
 
-        /* Try cache first for each text */
         for (size_t i = 0; i < chunk; i++) {
             const char *t = texts[offset + i];
             if (embedder->cache) {
@@ -1259,9 +1202,7 @@ int gv_auto_embed_add_texts(GV_AutoEmbedder *embedder, GV_Database *db,
             need_api[need_count++] = i;
         }
 
-        /* Batch API call for uncached texts */
         if (need_count > 0) {
-            /* Build sub-array of texts to embed */
             const char **sub_texts = (const char **)malloc(need_count * sizeof(char *));
             if (!sub_texts) {
                 for (size_t i = 0; i < chunk; i++) free(vecs[i]);
@@ -1295,14 +1236,12 @@ int gv_auto_embed_add_texts(GV_AutoEmbedder *embedder, GV_Database *db,
             pthread_mutex_unlock(&embedder->mutex);
 
             if (batch_ok < 0) {
-                /* Fallback: embed individually */
                 for (size_t i = 0; i < need_count; i++) {
                     size_t idx = need_api[i];
                     vecs[idx] = gv_auto_embed_text(embedder, texts[offset + idx],
                                                    &dims[idx]);
                 }
             } else {
-                /* Copy batch results into main arrays */
                 for (size_t i = 0; i < need_count; i++) {
                     size_t idx = need_api[i];
                     vecs[idx] = api_vecs[i];
@@ -1313,7 +1252,6 @@ int gv_auto_embed_add_texts(GV_AutoEmbedder *embedder, GV_Database *db,
                     if (embedder->cache) embedder->cache_misses++;
                     pthread_mutex_unlock(&embedder->mutex);
 
-                    /* Cache the result */
                     if (embedder->cache && api_vecs[i]) {
                         ae_cache_put(embedder->cache, texts[offset + idx],
                                      api_vecs[i], api_dims[i]);
@@ -1328,7 +1266,6 @@ int gv_auto_embed_add_texts(GV_AutoEmbedder *embedder, GV_Database *db,
 
         free(need_api);
 
-        /* Insert vectors into the database */
         for (size_t i = 0; i < chunk; i++) {
             if (!vecs[i]) continue;
 
@@ -1351,8 +1288,6 @@ int gv_auto_embed_add_texts(GV_AutoEmbedder *embedder, GV_Database *db,
 
     return total_added;
 }
-
-/* Statistics */
 
 int gv_auto_embed_get_stats(const GV_AutoEmbedder *embedder,
                             GV_AutoEmbedStats *stats) {

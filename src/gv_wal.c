@@ -96,12 +96,10 @@ GV_WAL *gv_wal_open(const char *path, size_t dimension, uint32_t index_type) {
         return NULL;
     }
 
-    /* Ensure we read from start for header validation */
     rewind(f);
 
     char magic[4] = {0};
     if (fread(magic, 1, 4, f) != 4) {
-        /* New file: write header */
         rewind(f);
         if (fwrite(GV_WAL_MAGIC, 1, 4, f) != 4) {
             fclose(f);
@@ -189,7 +187,6 @@ int gv_wal_append_insert(GV_WAL *wal, const float *data, size_t dimension,
     if (gv_wal_write_floats(wal->file, data, dimension) != 0) return -1;
     crc = gv_crc32_update(crc, data, dimension * sizeof(float));
 
-    /* Allow single metadata pair; count=0 or 1 */
     uint32_t meta_count = (metadata_key != NULL && metadata_value != NULL) ? 1u : 0u;
     if (gv_write_u32(wal->file, meta_count) != 0) return -1;
     crc = gv_crc32_update(crc, &meta_count, sizeof(uint32_t));
@@ -233,7 +230,6 @@ int gv_wal_append_insert_rich(GV_WAL *wal, const float *data, size_t dimension,
     if (gv_wal_write_floats(wal->file, data, dimension) != 0) return -1;
     crc = gv_crc32_update(crc, data, dimension * sizeof(float));
 
-    /* Write metadata count and all entries */
     uint32_t meta_count_u32 = (uint32_t)metadata_count;
     if (gv_write_u32(wal->file, meta_count_u32) != 0) return -1;
     crc = gv_crc32_update(crc, &meta_count_u32, sizeof(uint32_t));
@@ -433,7 +429,6 @@ int gv_wal_replay(const char *path, size_t expected_dimension,
                 return -1;
             }
             
-            /* Read metadata for CRC calculation */
             char **keys = NULL;
             char **values = NULL;
             if (meta_count > 0) {
@@ -496,14 +491,13 @@ int gv_wal_replay(const char *path, size_t expected_dimension,
                 }
             }
             
-            /* Free metadata */
             for (uint32_t i = 0; i < meta_count; ++i) {
                 free(keys[i]);
                 free(values[i]);
             }
             free(keys);
             free(values);
-            
+
             free(buf);
             /* Skip update records in replay - they modify already-inserted vectors */
             continue;
@@ -532,7 +526,6 @@ int gv_wal_replay(const char *path, size_t expected_dimension,
                 return -1;
             }
             
-            /* Read all metadata entries */
             char **keys = NULL;
             char **values = NULL;
             if (meta_count > 0) {
@@ -733,7 +726,6 @@ int gv_wal_replay_rich(const char *path, size_t expected_dimension,
                 return -1;
             }
             
-            /* Read metadata for CRC calculation */
             char **keys = NULL;
             char **values = NULL;
             if (meta_count > 0) {
@@ -796,7 +788,6 @@ int gv_wal_replay_rich(const char *path, size_t expected_dimension,
                 }
             }
             
-            /* Free metadata */
             for (uint32_t i = 0; i < meta_count; ++i) {
                 free(keys[i]);
                 free(values[i]);
@@ -985,7 +976,6 @@ int gv_wal_dump(const char *path, size_t expected_dimension, uint32_t expected_i
                 return -1;
             }
             
-            /* Read all metadata entries */
             char **keys = NULL;
             char **values = NULL;
             if (meta_count > 0) {
@@ -1105,20 +1095,17 @@ int gv_wal_truncate(GV_WAL *wal) {
         return -1;
     }
 
-    /* Close the current file handle */
     if (wal->file != NULL) {
         gv_wal_sync(wal->file);
         fclose(wal->file);
         wal->file = NULL;
     }
 
-    /* Truncate the file and rewrite header */
     FILE *f = fopen(wal->path, "wb");
     if (f == NULL) {
         return -1;
     }
 
-    /* Write fresh WAL header */
     if (fwrite(GV_WAL_MAGIC, 1, 4, f) != 4) {
         fclose(f);
         return -1;
@@ -1134,13 +1121,11 @@ int gv_wal_truncate(GV_WAL *wal) {
         return -1;
     }
 
-    /* Reopen in append mode for future writes */
     wal->file = fopen(wal->path, "ab+");
     if (wal->file == NULL) {
         return -1;
     }
 
-    /* Seek to end for appending */
     fseek(wal->file, 0, SEEK_END);
 
     return 0;

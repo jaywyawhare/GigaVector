@@ -12,7 +12,6 @@
 #include "gigavector/gv_utils.h"
 #include "gigavector/gv_heap.h"
 
-/* Internal PQ entry structure */
 typedef struct {
     uint8_t *codes;        /* m bytes for nbits=8 */
     float *raw_data;       /* dimension floats for exact reranking */
@@ -21,7 +20,6 @@ typedef struct {
     size_t id;
 } GV_PQEntry;
 
-/* Internal PQ index structure */
 typedef struct {
     size_t dimension;
     size_t m;              /* Number of sub-quantizers */
@@ -36,7 +34,6 @@ typedef struct {
     size_t train_iters;
 } GV_PQIndex;
 
-/* Max-heap for top-k selection */
 typedef struct { float dist; size_t idx; } GV_PQHeapItem;
 GV_HEAP_DEFINE(gv_pq_heap, GV_PQHeapItem)
 
@@ -52,29 +49,24 @@ static float gv_pq_subvec_distance_sq(const float *a, const float *b, size_t dsu
 
 #define GV_PQ_RERANK_FACTOR 20
 
-/* K-means training for a single sub-quantizer */
 static void gv_pq_train_subquantizer(float *codebook, const float *subvecs,
                                      size_t count, size_t dsub, size_t ksub,
                                      size_t train_iters) {
     if (count == 0 || ksub == 0) return;
 
-    /* Initialize centroids from random sub-vectors */
     for (size_t k = 0; k < ksub && k < count; k++) {
         size_t idx = (k * count) / ksub; /* Spread evenly */
         memcpy(&codebook[k * dsub], &subvecs[idx * dsub], dsub * sizeof(float));
     }
 
-    /* If we have fewer training vectors than centroids, pad with zeros */
     for (size_t k = count; k < ksub; k++) {
         memset(&codebook[k * dsub], 0, dsub * sizeof(float));
     }
 
-    /* Lloyd's algorithm iterations */
     uint32_t *assignments = (uint32_t *)malloc(count * sizeof(uint32_t));
     if (!assignments) return;
 
     for (size_t iter = 0; iter < train_iters; iter++) {
-        /* Assignment step */
         for (size_t i = 0; i < count; i++) {
             float min_dist = FLT_MAX;
             uint32_t best_k = 0;
@@ -88,7 +80,6 @@ static void gv_pq_train_subquantizer(float *codebook, const float *subvecs,
             assignments[i] = best_k;
         }
 
-        /* Update step */
         float *new_centroids = (float *)calloc(ksub * dsub, sizeof(float));
         uint32_t *counts = (uint32_t *)calloc(ksub, sizeof(uint32_t));
         if (!new_centroids || !counts) {
@@ -120,7 +111,6 @@ static void gv_pq_train_subquantizer(float *codebook, const float *subvecs,
     free(assignments);
 }
 
-/* Encode a vector using the trained codebook */
 static void gv_pq_encode(const GV_PQIndex *idx, const float *data, uint8_t *codes) {
     for (size_t m_i = 0; m_i < idx->m; m_i++) {
         const float *subvec = &data[m_i * idx->dsub];
@@ -141,7 +131,6 @@ static void gv_pq_encode(const GV_PQIndex *idx, const float *data, uint8_t *code
     }
 }
 
-/* Create PQ index */
 void *gv_pq_create(size_t dimension, const GV_PQConfig *config) {
     if (dimension == 0) return NULL;
 
@@ -150,7 +139,6 @@ void *gv_pq_create(size_t dimension, const GV_PQConfig *config) {
 
     idx->dimension = dimension;
 
-    /* Set config or use defaults */
     if (config) {
         idx->m = config->m;
         idx->nbits = config->nbits;
@@ -161,7 +149,6 @@ void *gv_pq_create(size_t dimension, const GV_PQConfig *config) {
         idx->train_iters = 15;
     }
 
-    /* Validate configuration */
     if (idx->m == 0 || idx->nbits == 0 || idx->nbits > 8) {
         free(idx);
         return NULL;
@@ -176,14 +163,12 @@ void *gv_pq_create(size_t dimension, const GV_PQConfig *config) {
     idx->dsub = dimension / idx->m;
     idx->trained = 0;
 
-    /* Allocate codebook */
     idx->codebooks = (float *)calloc(idx->m * idx->ksub * idx->dsub, sizeof(float));
     if (!idx->codebooks) {
         free(idx);
         return NULL;
     }
 
-    /* Initialize entry storage */
     idx->entry_capacity = 128;
     idx->entries = (GV_PQEntry *)calloc(idx->entry_capacity, sizeof(GV_PQEntry));
     if (!idx->entries) {
@@ -196,25 +181,20 @@ void *gv_pq_create(size_t dimension, const GV_PQConfig *config) {
     return idx;
 }
 
-/* Train PQ codebooks */
 int gv_pq_train(void *index, const float *data, size_t count) {
     if (!index || !data || count == 0) return -1;
     GV_PQIndex *idx = (GV_PQIndex *)index;
 
-    /* Allocate sub-vector storage */
     float *subvecs = (float *)malloc(count * idx->dsub * sizeof(float));
     if (!subvecs) return -1;
 
-    /* Train each sub-quantizer */
     for (size_t m_i = 0; m_i < idx->m; m_i++) {
-        /* Extract sub-vectors for this sub-quantizer */
         for (size_t i = 0; i < count; i++) {
             memcpy(&subvecs[i * idx->dsub],
                    &data[i * idx->dimension + m_i * idx->dsub],
                    idx->dsub * sizeof(float));
         }
 
-        /* Train codebook for this sub-quantizer */
         float *subcodebook = &idx->codebooks[m_i * idx->ksub * idx->dsub];
         gv_pq_train_subquantizer(subcodebook, subvecs, count, idx->dsub, idx->ksub, idx->train_iters);
     }
@@ -224,7 +204,6 @@ int gv_pq_train(void *index, const float *data, size_t count) {
     return 0;
 }
 
-/* Insert vector into PQ index */
 int gv_pq_insert(void *index, GV_Vector *vector) {
     if (!index || !vector) return -1;
     GV_PQIndex *idx = (GV_PQIndex *)index;
@@ -232,7 +211,6 @@ int gv_pq_insert(void *index, GV_Vector *vector) {
     if (!idx->trained) return -1;
     if (vector->dimension != idx->dimension) return -1;
 
-    /* Expand capacity if needed */
     if (idx->entry_count >= idx->entry_capacity) {
         size_t new_capacity = idx->entry_capacity * 2;
         GV_PQEntry *new_entries = (GV_PQEntry *)realloc(idx->entries, new_capacity * sizeof(GV_PQEntry));
@@ -244,13 +222,11 @@ int gv_pq_insert(void *index, GV_Vector *vector) {
 
     GV_PQEntry *entry = &idx->entries[idx->entry_count];
 
-    /* Allocate and encode */
     entry->codes = (uint8_t *)malloc(idx->m * sizeof(uint8_t));
     if (!entry->codes) return -1;
 
     gv_pq_encode(idx, vector->data, entry->codes);
 
-    /* Store raw data for exact reranking */
     entry->raw_data = (float *)malloc(idx->dimension * sizeof(float));
     if (!entry->raw_data) {
         free(entry->codes);
@@ -258,7 +234,6 @@ int gv_pq_insert(void *index, GV_Vector *vector) {
     }
     memcpy(entry->raw_data, vector->data, idx->dimension * sizeof(float));
 
-    /* Take ownership of metadata */
     entry->metadata = vector->metadata;
     vector->metadata = NULL;
 
@@ -267,12 +242,10 @@ int gv_pq_insert(void *index, GV_Vector *vector) {
 
     idx->entry_count++;
 
-    /* Clean up vector */
     gv_vector_destroy(vector);
     return 0;
 }
 
-/* Search using Asymmetric Distance Computation (ADC) */
 int gv_pq_search(void *index, const GV_Vector *query, size_t k,
                  GV_SearchResult *results, GV_DistanceType distance_type,
                  const char *filter_key, const char *filter_value) {
@@ -282,7 +255,6 @@ int gv_pq_search(void *index, const GV_Vector *query, size_t k,
     if (!idx->trained) return -1;
     if (query->dimension != idx->dimension) return -1;
 
-    /* Build distance lookup table for ADC */
     float *distance_table = (float *)malloc(idx->m * idx->ksub * sizeof(float));
     if (!distance_table) return -1;
 
@@ -296,7 +268,6 @@ int gv_pq_search(void *index, const GV_Vector *query, size_t k,
         }
     }
 
-    /* Use oversampled max-heap for better reranking */
     size_t oversample_k = k * GV_PQ_RERANK_FACTOR;
     if (oversample_k > idx->entry_count) oversample_k = idx->entry_count;
     if (oversample_k < k) oversample_k = k;
@@ -308,18 +279,15 @@ int gv_pq_search(void *index, const GV_Vector *query, size_t k,
     }
     size_t heap_size = 0;
 
-    /* Scan all entries using ADC */
     for (size_t i = 0; i < idx->entry_count; i++) {
         if (idx->entries[i].deleted) continue;
 
-        /* Metadata filter */
         if (filter_key && filter_value) {
             if (!gv_metadata_match(idx->entries[i].metadata, filter_key, filter_value)) {
                 continue;
             }
         }
 
-        /* Compute approximate distance using lookup table */
         float dist_squared = 0.0f;
         for (size_t m_i = 0; m_i < idx->m; m_i++) {
             uint8_t code = idx->entries[i].codes[m_i];
@@ -332,7 +300,6 @@ int gv_pq_search(void *index, const GV_Vector *query, size_t k,
 
     free(distance_table);
 
-    /* Extract all oversampled candidates, rerank with exact distance */
     size_t cand_count = heap_size;
     GV_PQHeapItem *candidates = (GV_PQHeapItem *)malloc(cand_count * sizeof(GV_PQHeapItem));
     if (!candidates) {
@@ -340,7 +307,6 @@ int gv_pq_search(void *index, const GV_Vector *query, size_t k,
         return -1;
     }
 
-    /* Extract from max-heap into array */
     for (size_t i = cand_count; i > 0; --i) {
         candidates[i - 1] = heap[0];
         heap[0] = heap[heap_size - 1];
@@ -351,7 +317,6 @@ int gv_pq_search(void *index, const GV_Vector *query, size_t k,
     }
     free(heap);
 
-    /* Compute exact distances for all candidates */
     for (size_t i = 0; i < cand_count; i++) {
         size_t entry_idx = candidates[i].idx;
         GV_PQEntry *entry = &idx->entries[entry_idx];
@@ -367,7 +332,6 @@ int gv_pq_search(void *index, const GV_Vector *query, size_t k,
         }
     }
 
-    /* Sort by exact distance */
     for (size_t i = 0; i + 1 < cand_count; i++) {
         size_t minj = i;
         for (size_t j = i + 1; j < cand_count; j++) {
@@ -380,7 +344,6 @@ int gv_pq_search(void *index, const GV_Vector *query, size_t k,
         }
     }
 
-    /* Build result array from top-k */
     int n = (int)(cand_count < k ? cand_count : k);
     for (int i = 0; i < n; i++) {
         size_t entry_idx = candidates[i].idx;
@@ -414,7 +377,6 @@ int gv_pq_search(void *index, const GV_Vector *query, size_t k,
     return n;
 }
 
-/* Range search */
 int gv_pq_range_search(void *index, const GV_Vector *query, float radius,
                        GV_SearchResult *results, size_t max_results,
                        GV_DistanceType distance_type,
@@ -425,7 +387,6 @@ int gv_pq_range_search(void *index, const GV_Vector *query, float radius,
     if (!idx->trained) return -1;
     if (query->dimension != idx->dimension) return -1;
 
-    /* Build distance lookup table for ADC */
     float *distance_table = (float *)malloc(idx->m * idx->ksub * sizeof(float));
     if (!distance_table) return -1;
 
@@ -441,18 +402,15 @@ int gv_pq_range_search(void *index, const GV_Vector *query, float radius,
 
     size_t found = 0;
 
-    /* Scan all entries */
     for (size_t i = 0; i < idx->entry_count && found < max_results; i++) {
         if (idx->entries[i].deleted) continue;
 
-        /* Metadata filter */
         if (filter_key && filter_value) {
             if (!gv_metadata_match(idx->entries[i].metadata, filter_key, filter_value)) {
                 continue;
             }
         }
 
-        /* Compute approximate distance */
         float dist_squared = 0.0f;
         for (size_t m_i = 0; m_i < idx->m; m_i++) {
             uint8_t code = idx->entries[i].codes[m_i];
@@ -466,7 +424,6 @@ int gv_pq_range_search(void *index, const GV_Vector *query, float radius,
         GV_PQEntry *entry = &idx->entries[i];
         GV_Vector *result_vec = gv_vector_create_from_data(idx->dimension, entry->raw_data);
         if (result_vec) {
-            /* Copy metadata */
             GV_Metadata *cur = entry->metadata;
             while (cur) {
                 if (cur->key && cur->value) {
@@ -475,7 +432,6 @@ int gv_pq_range_search(void *index, const GV_Vector *query, float radius,
                 cur = cur->next;
             }
 
-            /* Compute exact distance */
             float exact_dist = gv_distance(query, result_vec, distance_type);
 
             if (exact_dist <= radius) {
@@ -495,14 +451,12 @@ int gv_pq_range_search(void *index, const GV_Vector *query, float radius,
     return (int)found;
 }
 
-/* Check if trained */
 int gv_pq_is_trained(const void *index) {
     if (!index) return 0;
     const GV_PQIndex *idx = (const GV_PQIndex *)index;
     return idx->trained;
 }
 
-/* Count vectors */
 size_t gv_pq_count(const void *index) {
     if (!index) return 0;
     const GV_PQIndex *idx = (const GV_PQIndex *)index;
@@ -513,7 +467,6 @@ size_t gv_pq_count(const void *index) {
     return count;
 }
 
-/* Delete vector */
 int gv_pq_delete(void *index, size_t entry_index) {
     if (!index) return -1;
     GV_PQIndex *idx = (GV_PQIndex *)index;
@@ -522,7 +475,6 @@ int gv_pq_delete(void *index, size_t entry_index) {
     return 0;
 }
 
-/* Update vector */
 int gv_pq_update(void *index, size_t entry_index, const float *new_data, size_t dimension) {
     if (!index || !new_data) return -1;
     GV_PQIndex *idx = (GV_PQIndex *)index;
@@ -534,50 +486,38 @@ int gv_pq_update(void *index, size_t entry_index, const float *new_data, size_t 
 
     GV_PQEntry *entry = &idx->entries[entry_index];
 
-    /* Re-encode with new data */
     gv_pq_encode(idx, new_data, entry->codes);
-
-    /* Update raw data */
     memcpy(entry->raw_data, new_data, idx->dimension * sizeof(float));
 
     return 0;
 }
 
-/* Save to file */
 int gv_pq_save(const void *index, FILE *out, uint32_t version) {
     if (!index || !out) return -1;
     const GV_PQIndex *idx = (const GV_PQIndex *)index;
     (void)version;
 
-    /* Write PQ index header */
     if (gv_write_u32(out, (uint32_t)idx->dimension) != 0) return -1;
     if (gv_write_u32(out, (uint32_t)idx->m) != 0) return -1;
     if (gv_write_u8(out, idx->nbits) != 0) return -1;
     if (gv_write_u32(out, (uint32_t)idx->train_iters) != 0) return -1;
     if (gv_write_u32(out, (uint32_t)idx->trained) != 0) return -1;
 
-    /* Write codebooks */
     size_t codebook_size = idx->m * idx->ksub * idx->dsub;
     if (fwrite(idx->codebooks, sizeof(float), codebook_size, out) != codebook_size) return -1;
 
-    /* Write entry count */
     if (gv_write_u32(out, (uint32_t)idx->entry_count) != 0) return -1;
 
-    /* Write entries */
     for (size_t i = 0; i < idx->entry_count; i++) {
         const GV_PQEntry *entry = &idx->entries[i];
 
-        /* Write deleted flag and id */
         if (gv_write_u32(out, (uint32_t)entry->deleted) != 0) return -1;
         if (gv_write_u32(out, (uint32_t)entry->id) != 0) return -1;
 
-        /* Write codes */
         if (fwrite(entry->codes, sizeof(uint8_t), idx->m, out) != idx->m) return -1;
 
-        /* Write raw data */
         if (fwrite(entry->raw_data, sizeof(float), idx->dimension, out) != idx->dimension) return -1;
 
-        /* Write metadata */
         uint32_t meta_count = 0;
         GV_Metadata *cur = entry->metadata;
         while (cur) { meta_count++; cur = cur->next; }
@@ -596,7 +536,6 @@ int gv_pq_save(const void *index, FILE *out, uint32_t version) {
     return 0;
 }
 
-/* Load from file */
 int gv_pq_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version) {
     if (!index_ptr || !in) return -1;
     (void)version;
@@ -612,7 +551,6 @@ int gv_pq_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version) {
 
     if (dimension != 0 && dimension != (size_t)file_dim) return -1;
 
-    /* Create index */
     GV_PQConfig config = {
         .m = (size_t)m,
         .nbits = nbits,
@@ -624,7 +562,6 @@ int gv_pq_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version) {
 
     GV_PQIndex *idx = (GV_PQIndex *)index;
 
-    /* Read codebooks */
     size_t codebook_size = idx->m * idx->ksub * idx->dsub;
     if (fread(idx->codebooks, sizeof(float), codebook_size, in) != codebook_size) {
         gv_pq_destroy(index);
@@ -633,13 +570,11 @@ int gv_pq_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version) {
 
     idx->trained = (int)trained;
 
-    /* Read entry count */
     if (gv_read_u32(in, &entry_count) != 0) {
         gv_pq_destroy(index);
         return -1;
     }
 
-    /* Ensure capacity */
     if (entry_count > idx->entry_capacity) {
         GV_PQEntry *new_entries = (GV_PQEntry *)realloc(idx->entries, entry_count * sizeof(GV_PQEntry));
         if (!new_entries) {
@@ -651,7 +586,6 @@ int gv_pq_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version) {
         idx->entry_capacity = entry_count;
     }
 
-    /* Read entries */
     for (uint32_t i = 0; i < entry_count; i++) {
         GV_PQEntry *entry = &idx->entries[i];
 
@@ -662,7 +596,6 @@ int gv_pq_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version) {
         entry->deleted = (int)deleted;
         entry->id = (size_t)id;
 
-        /* Read codes */
         entry->codes = (uint8_t *)malloc(idx->m * sizeof(uint8_t));
         if (!entry->codes) { gv_pq_destroy(index); return -1; }
         if (fread(entry->codes, sizeof(uint8_t), idx->m, in) != idx->m) {
@@ -670,7 +603,6 @@ int gv_pq_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version) {
             return -1;
         }
 
-        /* Read raw data */
         entry->raw_data = (float *)malloc(idx->dimension * sizeof(float));
         if (!entry->raw_data) { gv_pq_destroy(index); return -1; }
         if (fread(entry->raw_data, sizeof(float), idx->dimension, in) != idx->dimension) {
@@ -678,7 +610,6 @@ int gv_pq_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version) {
             return -1;
         }
 
-        /* Read metadata */
         uint32_t meta_count = 0;
         if (gv_read_u32(in, &meta_count) != 0) { gv_pq_destroy(index); return -1; }
 
@@ -706,15 +637,12 @@ int gv_pq_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version) {
     return 0;
 }
 
-/* Destroy PQ index */
 void gv_pq_destroy(void *index) {
     if (!index) return;
     GV_PQIndex *idx = (GV_PQIndex *)index;
 
-    /* Free codebooks */
     free(idx->codebooks);
 
-    /* Free entries */
     for (size_t i = 0; i < idx->entry_count; i++) {
         free(idx->entries[i].codes);
         free(idx->entries[i].raw_data);

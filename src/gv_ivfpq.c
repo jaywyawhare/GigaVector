@@ -286,7 +286,6 @@ static int gv_ivfpq_kmeans(float *data, size_t n, size_t dim, size_t k, size_t i
     }
 
     for (size_t it = 0; it < iters; ++it) {
-        /* assign */
         gv_ivfpq_argmin(data, n, dim, out_centroids, k, assign);
         memset(newc, 0, k * dim * sizeof(float));
         memset(counts, 0, k * sizeof(size_t));
@@ -407,7 +406,6 @@ int gv_ivfpq_train(void *index_ptr, const float *data, size_t count) {
      * PQ codebooks must be trained on residuals since insert encodes residuals. */
     for (size_t i = 0; i < count; ++i) {
         const float *vec = train_buf + i * idx->dimension;
-        /* find nearest coarse centroid */
         float best_dist = INFINITY;
         size_t best_c = 0;
         for (size_t c = 0; c < idx->nlist; ++c) {
@@ -417,7 +415,6 @@ int gv_ivfpq_train(void *index_ptr, const float *data, size_t count) {
                 best_c = c;
             }
         }
-        /* subtract centroid to get residual (in-place) */
         float *v = train_buf + i * idx->dimension;
         const float *centroid = idx->coarse + best_c * idx->dimension;
         for (size_t j = 0; j < idx->dimension; ++j) {
@@ -465,7 +462,6 @@ int gv_ivfpq_train(void *index_ptr, const float *data, size_t count) {
 }
 
 static int gv_ivfpq_encode(const GV_IVFPQIndex *idx, const float *vec, uint8_t *codes) {
-    /* coarse assign */
     float best = INFINITY;
     int best_id = -1;
     for (size_t c = 0; c < idx->nlist; ++c) {
@@ -620,7 +616,6 @@ int gv_ivfpq_insert(void *index_ptr, GV_Vector *vector) {
         }
     }
     
-    /* copy into SoA */
     for (size_t m = 0; m < idx->m; ++m) {
         list->codes_soa[m * list->capacity + list->count] = codes[m];
     }
@@ -653,7 +648,6 @@ int gv_ivfpq_search(void *index_ptr, const GV_Vector *query, size_t k,
     }
     pthread_rwlock_rdlock(&idx->rwlock);
     int cosine = idx->use_cosine || (distance_type == GV_DISTANCE_COSINE);
-    /* coarse scores + heap-select top nprobe */
     size_t nprobe = (nprobe_override > 0) ? nprobe_override : idx->nprobe;
     if (nprobe > idx->nlist) nprobe = idx->nlist;
 
@@ -719,7 +713,6 @@ int gv_ivfpq_search(void *index_ptr, const GV_Vector *query, size_t k,
         return -1;
     }
 
-    /* cosine: normalize query once */
     float qbuf_stack[IVFPQ_MAX_STACK_DIM];
     float *qbuf = NULL;
     const float *qdata = query->data;
@@ -747,7 +740,6 @@ int gv_ivfpq_search(void *index_ptr, const GV_Vector *query, size_t k,
     size_t rr_target = (rerank_top > 0) ? rerank_top : idx->default_rerank;
     if (rr_target > oversampled_k) oversampled_k = rr_target;
 
-    /* bounded max-heap for top-k (or oversampled-k) */
     GV_IVFPQHeapItem heap_stack[IVFPQ_MAX_STACK_RERANK];
     GV_IVFPQHeapItem *heap = (oversampled_k <= IVFPQ_MAX_STACK_RERANK) ? heap_stack : (GV_IVFPQHeapItem *)malloc(oversampled_k * sizeof(GV_IVFPQHeapItem));
     size_t hsize = 0;
@@ -770,7 +762,6 @@ int gv_ivfpq_search(void *index_ptr, const GV_Vector *query, size_t k,
         int lid = probe_ids[pi];
         if (lid < 0) continue;
 
-        /* Compute query residual for this probe: qres = query - coarse_centroid[lid] */
         const float *centroid = idx->coarse + lid * idx_dim;
         for (size_t j = 0; j < idx_dim; ++j) {
             qres[j] = qdata[j] - centroid[j];
@@ -875,7 +866,6 @@ int gv_ivfpq_search(void *index_ptr, const GV_Vector *query, size_t k,
         }
     }
 
-    /* extract heap into arrays sorted ascending */
     size_t found = hsize;
     float bestd_stack[IVFPQ_MAX_STACK_RERANK];
     GV_IVFPQEntry *beste_stack[IVFPQ_MAX_STACK_RERANK];
@@ -947,7 +937,6 @@ int gv_ivfpq_search(void *index_ptr, const GV_Vector *query, size_t k,
         }
     }
 
-    /* Limit results to k after reranking */
     size_t result_count = (found < k) ? found : k;
     for (size_t i = 0; i < result_count; ++i) {
         results[i].distance = bestd[i];
@@ -1016,7 +1005,6 @@ int gv_ivfpq_save(const void *index_ptr, FILE *out, uint32_t version) {
     const GV_IVFPQIndex *idx = (const GV_IVFPQIndex *)index_ptr;
     if (idx == NULL || out == NULL) return -1;
     uint32_t crc = gv_crc32_init();
-    /* header */
     if (fwrite(&idx->dimension, sizeof(size_t), 1, out) != 1) return -1;
     crc = gv_crc32_update(crc, &idx->dimension, sizeof(size_t));
     if (fwrite(&idx->nlist, sizeof(size_t), 1, out) != 1) return -1;
@@ -1057,7 +1045,6 @@ int gv_ivfpq_save(const void *index_ptr, FILE *out, uint32_t version) {
             crc = gv_crc32_update(crc, ent->codes, idx->m * sizeof(uint8_t));
             if (fwrite(ent->vector->data, sizeof(float), ent->vector->dimension, out) != ent->vector->dimension) return -1;
             crc = gv_crc32_update(crc, ent->vector->data, ent->vector->dimension * sizeof(float));
-            /* metadata persist */
             const GV_Metadata *meta = ent->vector->metadata;
             uint32_t mcount = 0;
             for (const GV_Metadata *c = meta; c != NULL; c = c->next) mcount++;
@@ -1336,7 +1323,6 @@ int gv_ivfpq_range_search(void *index_ptr, const GV_Vector *query, float radius,
         return -1;
     }
 
-    /* Allocate residual buffer for ADC */
     float *qres = (float *)malloc(idx->dimension * sizeof(float));
     if (!qres) {
         free(probe_ids);
@@ -1365,13 +1351,11 @@ int gv_ivfpq_range_search(void *index_ptr, const GV_Vector *query, float radius,
         int lid = probe_ids[pi];
         if (lid < 0) continue;
 
-        /* Compute query residual for this probe */
         const float *centroid = idx->coarse + lid * idx->dimension;
         for (size_t j = 0; j < idx->dimension; ++j) {
             qres[j] = qbuf[j] - centroid[j];
         }
 
-        /* Compute LUT from query residual */
         for (size_t m = 0; m < idx->m; ++m) {
             float *lut_row = lut + m * codebook_size;
             float *pq_row = idx->pq + m * codebook_size * idx->subdim;
@@ -1521,14 +1505,11 @@ int gv_ivfpq_update(void *index_ptr, size_t entry_index, const float *new_data, 
                 
                 GV_IVFPQEntry *ent = &list->entries[e];
                 
-                /* Update vector data */
                 if (ent->vector != NULL) {
                     memcpy(ent->vector->data, new_data, dimension * sizeof(float));
                 }
-                
-                /* Recompute PQ codes */
+
                 if (ent->codes != NULL && idx->pq != NULL && idx->coarse != NULL) {
-                    /* Find closest coarse centroid */
                     float best = INFINITY;
                     int best_coarse_id = -1;
                     for (size_t c = 0; c < idx->nlist; ++c) {
@@ -1577,7 +1558,6 @@ int gv_ivfpq_update(void *index_ptr, size_t entry_index, const float *new_data, 
                     }
                 }
                 
-                /* Update scalar quantization if enabled */
                 if (idx->use_scalar_quant && ent->scalar_quant != NULL && idx->scalar_quant_template != NULL) {
                     GV_ScalarQuantVector *sqv = ent->scalar_quant;
                     size_t max_quant = (1ULL << sqv->bits) - 1;

@@ -11,8 +11,6 @@
 #include <string.h>
 #include <time.h>
 
-/* Internal structures */
-
 typedef struct {
     uint64_t snapshot_id;
     uint64_t timestamp_us;
@@ -35,14 +33,10 @@ struct GV_Snapshot {
     const GV_SnapshotEntry *entry;
 };
 
-/* Constants */
-
 #define SNAPSHOT_MAGIC      "GVSNAP"
 #define SNAPSHOT_MAGIC_LEN  6
 #define SNAPSHOT_VERSION    1
 #define INITIAL_CAPACITY    8
-
-/* Helpers */
 
 static uint64_t now_microseconds(void)
 {
@@ -79,8 +73,6 @@ static GV_SnapshotEntry *find_entry(const GV_SnapshotManager *mgr,
     return NULL;
 }
 
-/* Manager lifecycle */
-
 GV_SnapshotManager *gv_snapshot_manager_create(size_t max_snapshots)
 {
     GV_SnapshotManager *mgr = calloc(1, sizeof(GV_SnapshotManager));
@@ -104,8 +96,6 @@ void gv_snapshot_manager_destroy(GV_SnapshotManager *mgr)
     free(mgr);
 }
 
-/* Snapshot creation */
-
 uint64_t gv_snapshot_create(GV_SnapshotManager *mgr, size_t vector_count,
                             const float *vector_data, size_t dimension,
                             const char *label)
@@ -114,7 +104,6 @@ uint64_t gv_snapshot_create(GV_SnapshotManager *mgr, size_t vector_count,
         return 0;
     }
 
-    /* Count active snapshots to enforce the limit */
     size_t active_count = 0;
     for (size_t i = 0; i < mgr->count; i++) {
         if (mgr->entries[i].active) {
@@ -157,8 +146,6 @@ uint64_t gv_snapshot_create(GV_SnapshotManager *mgr, size_t vector_count,
     return mgr->next_id++;
 }
 
-/* Snapshot open / close */
-
 GV_Snapshot *gv_snapshot_open(GV_SnapshotManager *mgr, uint64_t snapshot_id)
 {
     if (!mgr) {
@@ -182,8 +169,6 @@ void gv_snapshot_close(GV_Snapshot *snap)
 {
     free(snap);
 }
-
-/* Query snapshot data */
 
 size_t gv_snapshot_count(const GV_Snapshot *snap)
 {
@@ -211,8 +196,6 @@ size_t gv_snapshot_dimension(const GV_Snapshot *snap)
     }
     return snap->entry->dimension;
 }
-
-/* Management: list, delete */
 
 int gv_snapshot_list(const GV_SnapshotManager *mgr, GV_SnapshotInfo *infos,
                      size_t max_infos)
@@ -254,15 +237,12 @@ int gv_snapshot_delete(GV_SnapshotManager *mgr, uint64_t snapshot_id)
     return 0;
 }
 
-/* Persistence: save / load */
-
 int gv_snapshot_save(const GV_SnapshotManager *mgr, FILE *out)
 {
     if (!mgr || !out) {
         return -1;
     }
 
-    /* Write magic and version */
     if (fwrite(SNAPSHOT_MAGIC, 1, SNAPSHOT_MAGIC_LEN, out) != SNAPSHOT_MAGIC_LEN) {
         return -1;
     }
@@ -271,7 +251,6 @@ int gv_snapshot_save(const GV_SnapshotManager *mgr, FILE *out)
         return -1;
     }
 
-    /* Count active entries */
     size_t active_count = 0;
     for (size_t i = 0; i < mgr->count; i++) {
         if (mgr->entries[i].active) {
@@ -279,7 +258,6 @@ int gv_snapshot_save(const GV_SnapshotManager *mgr, FILE *out)
         }
     }
 
-    /* Write header: active_count, max_snapshots, next_id */
     if (fwrite(&active_count, sizeof(active_count), 1, out) != 1) {
         return -1;
     }
@@ -290,7 +268,6 @@ int gv_snapshot_save(const GV_SnapshotManager *mgr, FILE *out)
         return -1;
     }
 
-    /* Write each active entry */
     for (size_t i = 0; i < mgr->count; i++) {
         const GV_SnapshotEntry *e = &mgr->entries[i];
         if (!e->active) {
@@ -313,7 +290,6 @@ int gv_snapshot_save(const GV_SnapshotManager *mgr, FILE *out)
             return -1;
         }
 
-        /* Write vector data */
         size_t total_floats = e->vector_count * e->dimension;
         if (total_floats > 0) {
             if (fwrite(e->data, sizeof(float), total_floats, out) != total_floats) {
@@ -331,7 +307,6 @@ int gv_snapshot_load(GV_SnapshotManager **mgr_ptr, FILE *in)
         return -1;
     }
 
-    /* Read and verify magic */
     char magic[SNAPSHOT_MAGIC_LEN];
     if (fread(magic, 1, SNAPSHOT_MAGIC_LEN, in) != SNAPSHOT_MAGIC_LEN) {
         return -1;
@@ -340,7 +315,6 @@ int gv_snapshot_load(GV_SnapshotManager **mgr_ptr, FILE *in)
         return -1;
     }
 
-    /* Read version */
     uint32_t version;
     if (fread(&version, sizeof(version), 1, in) != 1) {
         return -1;
@@ -349,7 +323,6 @@ int gv_snapshot_load(GV_SnapshotManager **mgr_ptr, FILE *in)
         return -1;
     }
 
-    /* Read header */
     size_t active_count;
     size_t max_snapshots;
     uint64_t next_id;
@@ -364,14 +337,12 @@ int gv_snapshot_load(GV_SnapshotManager **mgr_ptr, FILE *in)
         return -1;
     }
 
-    /* Create the manager */
     GV_SnapshotManager *mgr = gv_snapshot_manager_create(max_snapshots);
     if (!mgr) {
         return -1;
     }
     mgr->next_id = next_id;
 
-    /* Read each entry */
     for (size_t i = 0; i < active_count; i++) {
         if (ensure_capacity(mgr) != 0) {
             gv_snapshot_manager_destroy(mgr);
@@ -402,7 +373,6 @@ int gv_snapshot_load(GV_SnapshotManager **mgr_ptr, FILE *in)
             return -1;
         }
 
-        /* Read vector data */
         size_t total_floats = e->vector_count * e->dimension;
         if (total_floats > 0) {
             e->data = malloc(total_floats * sizeof(float));

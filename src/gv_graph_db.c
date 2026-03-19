@@ -20,8 +20,6 @@
 #include <float.h>
 #include <pthread.h>
 
-/* * Constants */
-
 #define GV_GRAPH_MAGIC       "GVGR"
 #define GV_GRAPH_MAGIC_LEN   4
 #define GV_GRAPH_VERSION     1
@@ -30,25 +28,15 @@
 #define DEFAULT_EDGE_BUCKETS 8192
 #define INITIAL_ADJ_CAP      4
 
-/* * Internal Hash Table Entry Types */
-
-/**
- * @brief Hash table entry wrapping a GV_GraphNode (chaining via next pointer).
- */
 typedef struct NodeEntry {
     GV_GraphNode node;
     struct NodeEntry *next;
 } NodeEntry;
 
-/**
- * @brief Hash table entry wrapping a GV_GraphEdge (chaining via next pointer).
- */
 typedef struct EdgeEntry {
     GV_GraphEdge edge;
     struct EdgeEntry *next;
 } EdgeEntry;
-
-/* * Opaque GV_GraphDB Definition */
 
 struct GV_GraphDB {
     NodeEntry **node_buckets;       /**< Node hash table bucket array. */
@@ -67,8 +55,6 @@ struct GV_GraphDB {
 };
 
 
-/* * String Helpers */
-
 static char *str_dup(const char *s)
 {
     if (!s) return NULL;
@@ -78,8 +64,6 @@ static char *str_dup(const char *s)
     memcpy(copy, s, len + 1);
     return copy;
 }
-
-/* * Property Helpers */
 
 static void free_prop_list(GV_GraphProp *head)
 {
@@ -119,7 +103,6 @@ static int set_prop(GV_GraphProp **head, size_t *count,
         existing->value = new_val;
         return 0;
     }
-    /* Create new property node */
     GV_GraphProp *prop = (GV_GraphProp *)calloc(1, sizeof(GV_GraphProp));
     if (!prop) return -1;
     prop->key = str_dup(key);
@@ -136,8 +119,6 @@ static int set_prop(GV_GraphProp **head, size_t *count,
     return 0;
 }
 
-/* * Node Lookup (internal, no locking) */
-
 static NodeEntry *find_node_entry(const GV_GraphDB *g, uint64_t node_id)
 {
     size_t idx = gv_hash_u64(node_id, g->node_bucket_count);
@@ -149,8 +130,6 @@ static NodeEntry *find_node_entry(const GV_GraphDB *g, uint64_t node_id)
     return NULL;
 }
 
-/* * Edge Lookup (internal, no locking) */
-
 static EdgeEntry *find_edge_entry(const GV_GraphDB *g, uint64_t edge_id)
 {
     size_t idx = gv_hash_u64(edge_id, g->edge_bucket_count);
@@ -161,8 +140,6 @@ static EdgeEntry *find_edge_entry(const GV_GraphDB *g, uint64_t edge_id)
     }
     return NULL;
 }
-
-/* * Adjacency List Helpers */
 
 static int adj_add(GV_GraphEdgeRef **arr, size_t *count, size_t *cap,
                    uint64_t edge_id, uint64_t neighbor_id)
@@ -192,8 +169,6 @@ static void adj_remove(GV_GraphEdgeRef *arr, size_t *count, uint64_t edge_id)
     }
 }
 
-/* * Node Cleanup Helper */
-
 static void free_node_internals(GV_GraphNode *node)
 {
     free(node->label);
@@ -202,15 +177,11 @@ static void free_node_internals(GV_GraphNode *node)
     free(node->in_edges);
 }
 
-/* * Edge Cleanup Helper */
-
 static void free_edge_internals(GV_GraphEdge *edge)
 {
     free(edge->label);
     free_prop_list(edge->properties);
 }
-
-/* * Internal: Remove a single edge (no lock, updates adjacency) */
 
 static int remove_edge_internal(GV_GraphDB *g, uint64_t edge_id)
 {
@@ -224,19 +195,16 @@ static int remove_edge_internal(GV_GraphDB *g, uint64_t edge_id)
     }
     if (!e) return -1;
 
-    /* Remove from source out_edges */
     NodeEntry *src = find_node_entry(g, e->edge.source_id);
     if (src) {
         adj_remove(src->node.out_edges, &src->node.out_count, edge_id);
     }
 
-    /* Remove from target in_edges */
     NodeEntry *tgt = find_node_entry(g, e->edge.target_id);
     if (tgt) {
         adj_remove(tgt->node.in_edges, &tgt->node.in_count, edge_id);
     }
 
-    /* Unlink from bucket chain */
     if (prev) {
         prev->next = e->next;
     } else {
@@ -249,8 +217,7 @@ static int remove_edge_internal(GV_GraphDB *g, uint64_t edge_id)
     return 0;
 }
 
-/* * Visited-Set Helper (simple linear probe hash set for traversal) */
-
+/* Linear-probe hash set for traversal visited tracking */
 typedef struct {
     uint64_t *slots;
     int *occupied;
@@ -339,8 +306,7 @@ static int visited_insert(VisitedSet *vs, uint64_t id)
     return -1; /* should not happen */
 }
 
-/* * Distance Map Helper (open-addressing hash map: uint64_t -> float) */
-
+/* Open-addressing hash map (uint64_t -> float) for Dijkstra distances and path reconstruction */
 typedef struct {
     uint64_t *keys;
     float *vals;
@@ -495,8 +461,6 @@ static uint64_t distmap_get_prev_edge(const DistMap *dm, uint64_t key)
     return 0;
 }
 
-/* * Min-Heap for Dijkstra (array-based) */
-
 typedef struct {
     uint64_t node_id;
     float dist;
@@ -592,12 +556,6 @@ static int heap_pop(MinHeap *h, HeapEntry *out)
     return 0;
 }
 
-/* * ID-to-Index Map Lookup Helper */
-
-/**
- * @brief Look up a node ID in an open-addressing hash map and return its index.
- * @return The index associated with the key, or (size_t)-1 if not found.
- */
 static size_t idmap_lookup(const uint64_t *keys, const int *occ,
                            const size_t *idx_arr, size_t cap, uint64_t key)
 {
@@ -610,13 +568,6 @@ static size_t idmap_lookup(const uint64_t *keys, const int *occ,
     return (size_t)-1;
 }
 
-/* * Collect All Node IDs Helper */
-
-/**
- * @brief Collect all node IDs from the hash table into an array.
- * @return Allocated array of node IDs (caller must free), or NULL.
- *         Sets *out_count to the number of IDs.
- */
 static uint64_t *collect_all_node_ids(const GV_GraphDB *g, size_t *out_count)
 {
     if (g->node_count == 0) {
@@ -641,8 +592,6 @@ static uint64_t *collect_all_node_ids(const GV_GraphDB *g, size_t *out_count)
     *out_count = idx;
     return ids;
 }
-
-/* * File I/O Helpers */
 
 static int write_u32(FILE *f, uint32_t v)
 {
@@ -695,8 +644,6 @@ static char *read_str(FILE *f)
     s[len] = '\0';
     return s;
 }
-
-/* * Lifecycle Implementation */
 
 void gv_graph_config_init(GV_GraphDBConfig *config)
 {
@@ -751,7 +698,6 @@ void gv_graph_destroy(GV_GraphDB *g)
 {
     if (!g) return;
 
-    /* Free all nodes */
     for (size_t b = 0; b < g->node_bucket_count; b++) {
         NodeEntry *e = g->node_buckets[b];
         while (e) {
@@ -763,7 +709,6 @@ void gv_graph_destroy(GV_GraphDB *g)
     }
     free(g->node_buckets);
 
-    /* Free all edges */
     for (size_t b = 0; b < g->edge_bucket_count; b++) {
         EdgeEntry *e = g->edge_buckets[b];
         while (e) {
@@ -778,8 +723,6 @@ void gv_graph_destroy(GV_GraphDB *g)
     pthread_rwlock_destroy(&g->rwlock);
     free(g);
 }
-
-/* * Node Operations */
 
 uint64_t gv_graph_add_node(GV_GraphDB *g, const char *label)
 {
@@ -808,7 +751,6 @@ uint64_t gv_graph_add_node(GV_GraphDB *g, const char *label)
     entry->node.in_count = 0;
     entry->node.in_cap = 0;
 
-    /* Insert into hash table */
     size_t idx = gv_hash_u64(id, g->node_bucket_count);
     entry->next = g->node_buckets[idx];
     g->node_buckets[idx] = entry;
@@ -830,19 +772,16 @@ int gv_graph_remove_node(GV_GraphDB *g, uint64_t node_id)
         return -1;
     }
 
-    /* Cascade-delete outgoing edges */
     while (ne->node.out_count > 0) {
         uint64_t eid = ne->node.out_edges[0].edge_id;
         remove_edge_internal(g, eid);
     }
 
-    /* Cascade-delete incoming edges */
     while (ne->node.in_count > 0) {
         uint64_t eid = ne->node.in_edges[0].edge_id;
         remove_edge_internal(g, eid);
     }
 
-    /* Remove node from bucket chain */
     size_t idx = gv_hash_u64(node_id, g->node_bucket_count);
     NodeEntry *prev = NULL;
     NodeEntry *cur = g->node_buckets[idx];
@@ -931,11 +870,8 @@ int gv_graph_find_nodes_by_label(const GV_GraphDB *g, const char *label,
     }
 
     pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
-    /* Return actual count written (capped by max_count) */
     return (count > (int)max_count) ? (int)max_count : count;
 }
-
-/* * Edge Operations */
 
 uint64_t gv_graph_add_edge(GV_GraphDB *g, uint64_t source, uint64_t target,
                            const char *label, float weight)
@@ -974,13 +910,11 @@ uint64_t gv_graph_add_edge(GV_GraphDB *g, uint64_t source, uint64_t target,
     entry->edge.properties = NULL;
     entry->edge.prop_count = 0;
 
-    /* Insert into edge hash table */
     size_t idx = gv_hash_u64(id, g->edge_bucket_count);
     entry->next = g->edge_buckets[idx];
     g->edge_buckets[idx] = entry;
     g->edge_count++;
 
-    /* Update adjacency lists */
     NodeEntry *src_node = find_node_entry(g, source);
     NodeEntry *tgt_node = find_node_entry(g, target);
     if (src_node) {
@@ -1108,7 +1042,6 @@ int gv_graph_get_neighbors(const GV_GraphDB *g, uint64_t node_id,
         return -1;
     }
 
-    /* Use a small visited set for deduplication */
     size_t total_refs = e->node.out_count + e->node.in_count;
     VisitedSet seen;
     if (visited_init(&seen, total_refs > 16 ? total_refs * 2 : 32) != 0) {
@@ -1117,14 +1050,12 @@ int gv_graph_get_neighbors(const GV_GraphDB *g, uint64_t node_id,
     }
 
     int count = 0;
-    /* Outgoing neighbors */
     for (size_t i = 0; i < e->node.out_count && (size_t)count < max_count; i++) {
         uint64_t nid = e->node.out_edges[i].neighbor_id;
         if (visited_insert(&seen, nid) == 1) {
             out_ids[count++] = nid;
         }
     }
-    /* Incoming neighbors */
     for (size_t i = 0; i < e->node.in_count && (size_t)count < max_count; i++) {
         uint64_t nid = e->node.in_edges[i].neighbor_id;
         if (visited_insert(&seen, nid) == 1) {
@@ -1137,8 +1068,6 @@ int gv_graph_get_neighbors(const GV_GraphDB *g, uint64_t node_id,
     return count;
 }
 
-/* * Traversal: BFS */
-
 int gv_graph_bfs(const GV_GraphDB *g, uint64_t start, size_t max_depth,
                  uint64_t *out_ids, size_t max_count)
 {
@@ -1146,13 +1075,11 @@ int gv_graph_bfs(const GV_GraphDB *g, uint64_t start, size_t max_depth,
 
     pthread_rwlock_rdlock((pthread_rwlock_t *)&g->rwlock);
 
-    /* Verify start node exists */
     if (!find_node_entry(g, start)) {
         pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
         return -1;
     }
 
-    /* BFS queue: pairs of (node_id, depth) */
     size_t queue_cap = g->node_count > 64 ? g->node_count : 64;
     uint64_t *q_ids = (uint64_t *)malloc(queue_cap * sizeof(uint64_t));
     size_t *q_depths = (size_t *)malloc(queue_cap * sizeof(size_t));
@@ -1174,7 +1101,6 @@ int gv_graph_bfs(const GV_GraphDB *g, uint64_t start, size_t max_depth,
     size_t q_head = 0, q_tail = 0;
     int result_count = 0;
 
-    /* Enqueue start */
     q_ids[q_tail] = start;
     q_depths[q_tail] = 0;
     q_tail++;
@@ -1185,21 +1111,17 @@ int gv_graph_bfs(const GV_GraphDB *g, uint64_t start, size_t max_depth,
         size_t cur_depth = q_depths[q_head];
         q_head++;
 
-        /* Output this node */
         if ((size_t)result_count < max_count) {
             out_ids[result_count] = cur_id;
         }
         result_count++;
 
-        /* Expand neighbors if within depth limit */
         if (cur_depth < max_depth) {
             NodeEntry *ne = find_node_entry(g, cur_id);
             if (ne) {
-                /* Outgoing neighbors */
                 for (size_t i = 0; i < ne->node.out_count; i++) {
                     uint64_t nid = ne->node.out_edges[i].neighbor_id;
                     if (visited_insert(&visited, nid) == 1) {
-                        /* Grow queue if needed */
                         if (q_tail >= queue_cap) {
                             size_t new_cap = queue_cap * 2;
                             uint64_t *nqi = (uint64_t *)realloc(
@@ -1261,11 +1183,6 @@ bfs_done:
     return (result_count > (int)max_count) ? (int)max_count : result_count;
 }
 
-/* * Traversal: DFS */
-
-/**
- * @brief Recursive DFS helper (internal, no locking).
- */
 static void dfs_recurse(const GV_GraphDB *g, uint64_t node_id,
                         size_t depth, size_t max_depth,
                         VisitedSet *visited,
@@ -1281,7 +1198,6 @@ static void dfs_recurse(const GV_GraphDB *g, uint64_t node_id,
     NodeEntry *ne = find_node_entry(g, node_id);
     if (!ne) return;
 
-    /* Outgoing */
     for (size_t i = 0; i < ne->node.out_count; i++) {
         uint64_t nid = ne->node.out_edges[i].neighbor_id;
         if (visited_insert(visited, nid) == 1) {
@@ -1289,7 +1205,6 @@ static void dfs_recurse(const GV_GraphDB *g, uint64_t node_id,
                         visited, out_ids, max_count, count);
         }
     }
-    /* Incoming (treat as undirected) */
     for (size_t i = 0; i < ne->node.in_count; i++) {
         uint64_t nid = ne->node.in_edges[i].neighbor_id;
         if (visited_insert(visited, nid) == 1) {
@@ -1328,8 +1243,6 @@ int gv_graph_dfs(const GV_GraphDB *g, uint64_t start, size_t max_depth,
     return (count > (int)max_count) ? (int)max_count : count;
 }
 
-/* * Traversal: Dijkstra Shortest Path */
-
 int gv_graph_shortest_path(const GV_GraphDB *g, uint64_t from, uint64_t to,
                            GV_GraphPath *path)
 {
@@ -1344,7 +1257,6 @@ int gv_graph_shortest_path(const GV_GraphDB *g, uint64_t from, uint64_t to,
         return -1;
     }
 
-    /* Trivial case */
     if (from == to) {
         path->node_ids = (uint64_t *)malloc(sizeof(uint64_t));
         if (path->node_ids) {
@@ -1399,7 +1311,6 @@ int gv_graph_shortest_path(const GV_GraphDB *g, uint64_t from, uint64_t to,
         NodeEntry *ne = find_node_entry(g, he.node_id);
         if (!ne) continue;
 
-        /* Relax outgoing edges */
         for (size_t i = 0; i < ne->node.out_count; i++) {
             uint64_t eid = ne->node.out_edges[i].edge_id;
             uint64_t nid = ne->node.out_edges[i].neighbor_id;
@@ -1428,8 +1339,6 @@ int gv_graph_shortest_path(const GV_GraphDB *g, uint64_t from, uint64_t to,
         return -1;
     }
 
-    /* Reconstruct path */
-    /* Count path length by backtracking from 'to' to 'from' */
     size_t path_len = 0;
     {
         uint64_t cur = to;
@@ -1463,7 +1372,6 @@ int gv_graph_shortest_path(const GV_GraphDB *g, uint64_t from, uint64_t to,
         return -1;
     }
 
-    /* Fill in reverse order */
     {
         uint64_t cur = to;
         for (size_t i = path_len; ; ) {
@@ -1482,11 +1390,6 @@ int gv_graph_shortest_path(const GV_GraphDB *g, uint64_t from, uint64_t to,
     return 0;
 }
 
-/* * Traversal: All Paths (DFS with backtracking) */
-
-/**
- * @brief Build a GV_GraphPath from the current path stack.
- */
 static int build_path(const GV_GraphDB *g,
                       const uint64_t *node_stack, const uint64_t *edge_stack,
                       size_t depth, GV_GraphPath *out)
@@ -1506,7 +1409,6 @@ static int build_path(const GV_GraphDB *g,
         memcpy(out->edge_ids, edge_stack, depth * sizeof(uint64_t));
     }
 
-    /* Compute total weight */
     out->total_weight = 0.0f;
     for (size_t i = 0; i < depth; i++) {
         EdgeEntry *ee = find_edge_entry(g, edge_stack[i]);
@@ -1515,9 +1417,6 @@ static int build_path(const GV_GraphDB *g,
     return 0;
 }
 
-/**
- * @brief Simple on-path check using the node_stack directly.
- */
 static int is_on_path(const uint64_t *node_stack, size_t depth, uint64_t id)
 {
     for (size_t i = 0; i <= depth; i++) {
@@ -1576,7 +1475,6 @@ int gv_graph_all_paths(const GV_GraphDB *g, uint64_t from, uint64_t to,
         return -1;
     }
 
-    /* Allocate stacks for DFS */
     uint64_t *node_stack = (uint64_t *)malloc((max_depth + 2) * sizeof(uint64_t));
     uint64_t *edge_stack = (uint64_t *)malloc((max_depth + 1) * sizeof(uint64_t));
     if (!node_stack || !edge_stack) {
@@ -1611,8 +1509,6 @@ void gv_graph_free_path(GV_GraphPath *path)
     path->total_weight = 0.0f;
 }
 
-/* * Analytics: PageRank */
-
 float gv_graph_pagerank(const GV_GraphDB *g, uint64_t node_id,
                         size_t iterations, float damping)
 {
@@ -1626,7 +1522,6 @@ float gv_graph_pagerank(const GV_GraphDB *g, uint64_t node_id,
         return 0.0f;
     }
 
-    /* Collect all node IDs */
     size_t id_count = 0;
     uint64_t *all_ids = collect_all_node_ids(g, &id_count);
     if (!all_ids || id_count == 0) {
@@ -1635,8 +1530,6 @@ float gv_graph_pagerank(const GV_GraphDB *g, uint64_t node_id,
         return 0.0f;
     }
 
-    /* Map node_id -> index for O(1) lookup.
-     * Use a hash map (open addressing). */
     size_t map_cap = id_count * 3;
     uint64_t *map_keys = (uint64_t *)malloc(map_cap * sizeof(uint64_t));
     int *map_occ = (int *)calloc(map_cap, sizeof(int));
@@ -1651,7 +1544,6 @@ float gv_graph_pagerank(const GV_GraphDB *g, uint64_t node_id,
         return 0.0f;
     }
 
-    /* Build ID->index map */
     for (size_t i = 0; i < id_count; i++) {
         size_t h = (size_t)(all_ids[i] * 2654435761ULL) % map_cap;
         for (size_t j = 0; j < map_cap; j++) {
@@ -1666,7 +1558,6 @@ float gv_graph_pagerank(const GV_GraphDB *g, uint64_t node_id,
         scores[i] = 1.0f / (float)N;
     }
 
-    /* Iterative PageRank */
     float base = (1.0f - damping) / (float)N;
     for (size_t iter = 0; iter < iterations; iter++) {
         for (size_t i = 0; i < id_count; i++) {
@@ -1696,13 +1587,11 @@ float gv_graph_pagerank(const GV_GraphDB *g, uint64_t node_id,
             }
         }
 
-        /* Swap scores */
         float *tmp = scores;
         scores = new_scores;
         new_scores = tmp;
     }
 
-    /* Find the target node's score */
     float result = 0.0f;
     size_t target_idx = idmap_lookup(map_keys, map_occ, map_idx,
                                      map_cap, node_id);
@@ -1719,8 +1608,6 @@ float gv_graph_pagerank(const GV_GraphDB *g, uint64_t node_id,
     pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
     return result;
 }
-
-/* * Analytics: Degree Functions */
 
 size_t gv_graph_degree(const GV_GraphDB *g, uint64_t node_id)
 {
@@ -1752,8 +1639,6 @@ size_t gv_graph_out_degree(const GV_GraphDB *g, uint64_t node_id)
     return deg;
 }
 
-/* * Analytics: Connected Components */
-
 int gv_graph_connected_components(const GV_GraphDB *g,
                                   uint64_t *component_ids, size_t max_count)
 {
@@ -1771,7 +1656,6 @@ int gv_graph_connected_components(const GV_GraphDB *g,
         return -1;
     }
 
-    /* Collect all node IDs */
     size_t id_count = 0;
     uint64_t *all_ids = collect_all_node_ids(g, &id_count);
     if (!all_ids) {
@@ -1779,12 +1663,10 @@ int gv_graph_connected_components(const GV_GraphDB *g,
         return -1;
     }
 
-    /* Initialize component IDs to 0 (unassigned) */
     for (size_t i = 0; i < id_count; i++) {
         component_ids[i] = 0;
     }
 
-    /* Build ID->index map */
     size_t map_cap = id_count * 3;
     uint64_t *map_keys = (uint64_t *)malloc(map_cap * sizeof(uint64_t));
     int *map_occ = (int *)calloc(map_cap, sizeof(int));
@@ -1809,8 +1691,6 @@ int gv_graph_connected_components(const GV_GraphDB *g,
         }
     }
 
-    /* Inline index lookup */
-    /* BFS queue */
     uint64_t *queue = (uint64_t *)malloc(id_count * sizeof(uint64_t));
     if (!queue) {
         free(all_ids); free(map_keys); free(map_occ); free(map_idx);
@@ -1821,7 +1701,7 @@ int gv_graph_connected_components(const GV_GraphDB *g,
     uint64_t comp_id = 0;
 
     for (size_t i = 0; i < id_count; i++) {
-        if (component_ids[i] != 0) continue; /* Already assigned */
+        if (component_ids[i] != 0) continue;
 
         comp_id++;
         size_t q_head = 0, q_tail = 0;
@@ -1833,7 +1713,6 @@ int gv_graph_connected_components(const GV_GraphDB *g,
             NodeEntry *ne = find_node_entry(g, cur);
             if (!ne) continue;
 
-            /* Outgoing neighbors */
             for (size_t e = 0; e < ne->node.out_count; e++) {
                 uint64_t nid = ne->node.out_edges[e].neighbor_id;
                 size_t nidx = idmap_lookup(map_keys, map_occ, map_idx,
@@ -1843,7 +1722,6 @@ int gv_graph_connected_components(const GV_GraphDB *g,
                     queue[q_tail++] = nid;
                 }
             }
-            /* Incoming neighbors (undirected treatment) */
             for (size_t e = 0; e < ne->node.in_count; e++) {
                 uint64_t nid = ne->node.in_edges[e].neighbor_id;
                 size_t nidx = idmap_lookup(map_keys, map_occ, map_idx,
@@ -1865,8 +1743,6 @@ int gv_graph_connected_components(const GV_GraphDB *g,
     return (int)comp_id;
 }
 
-/* * Analytics: Clustering Coefficient */
-
 float gv_graph_clustering_coefficient(const GV_GraphDB *g, uint64_t node_id)
 {
     if (!g) return 0.0f;
@@ -1879,14 +1755,12 @@ float gv_graph_clustering_coefficient(const GV_GraphDB *g, uint64_t node_id)
         return 0.0f;
     }
 
-    /* Collect unique neighbors (undirected) */
     size_t total_refs = ne->node.out_count + ne->node.in_count;
     if (total_refs < 2) {
         pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
         return 0.0f;
     }
 
-    /* Gather unique neighbor IDs */
     uint64_t *neighbors = (uint64_t *)malloc(total_refs * sizeof(uint64_t));
     if (!neighbors) {
         pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
@@ -1921,7 +1795,6 @@ float gv_graph_clustering_coefficient(const GV_GraphDB *g, uint64_t node_id)
         return 0.0f;
     }
 
-    /* Build a set of neighbor IDs for fast lookup */
     VisitedSet nbr_set;
     if (visited_init(&nbr_set, k * 3 + 16) != 0) {
         free(neighbors);
@@ -1932,21 +1805,17 @@ float gv_graph_clustering_coefficient(const GV_GraphDB *g, uint64_t node_id)
         visited_insert(&nbr_set, neighbors[i]);
     }
 
-    /* Count edges among neighbors (undirected: check if any edge exists
-     * between each pair, treating directed edges as undirected connections) */
     size_t edge_count_among = 0;
     for (size_t i = 0; i < k; i++) {
         NodeEntry *nne = find_node_entry(g, neighbors[i]);
         if (!nne) continue;
 
-        /* Check outgoing edges to other neighbors */
         for (size_t e = 0; e < nne->node.out_count; e++) {
             uint64_t tgt = nne->node.out_edges[e].neighbor_id;
             if (tgt != node_id && visited_contains(&nbr_set, tgt)) {
                 edge_count_among++;
             }
         }
-        /* Check incoming edges from other neighbors */
         for (size_t e = 0; e < nne->node.in_count; e++) {
             uint64_t src = nne->node.in_edges[e].neighbor_id;
             if (src != node_id && visited_contains(&nbr_set, src)) {
@@ -1968,8 +1837,6 @@ float gv_graph_clustering_coefficient(const GV_GraphDB *g, uint64_t node_id)
     return cc;
 }
 
-/* * Stats */
-
 size_t gv_graph_node_count(const GV_GraphDB *g)
 {
     if (!g) return 0;
@@ -1988,8 +1855,6 @@ size_t gv_graph_edge_count(const GV_GraphDB *g)
     return count;
 }
 
-/* * Persistence: Save */
-
 int gv_graph_save(const GV_GraphDB *g, const char *path)
 {
     if (!g || !path) return -1;
@@ -2002,28 +1867,23 @@ int gv_graph_save(const GV_GraphDB *g, const char *path)
         return -1;
     }
 
-    /* Magic */
     if (fwrite(GV_GRAPH_MAGIC, 1, GV_GRAPH_MAGIC_LEN, f) != GV_GRAPH_MAGIC_LEN)
         goto save_fail;
 
-    /* Version */
     uint32_t version = GV_GRAPH_VERSION;
     if (write_u32(f, version) != 0) goto save_fail;
 
-    /* Counts and ID counters */
     if (write_u64(f, (uint64_t)g->node_count) != 0) goto save_fail;
     if (write_u64(f, (uint64_t)g->edge_count) != 0) goto save_fail;
     if (write_u64(f, g->next_node_id) != 0) goto save_fail;
     if (write_u64(f, g->next_edge_id) != 0) goto save_fail;
 
-    /* Serialize nodes */
     for (size_t b = 0; b < g->node_bucket_count; b++) {
         NodeEntry *e = g->node_buckets[b];
         while (e) {
             if (write_u64(f, e->node.node_id) != 0) goto save_fail;
             if (write_str(f, e->node.label) != 0) goto save_fail;
 
-            /* Properties */
             if (write_u32(f, (uint32_t)e->node.prop_count) != 0) goto save_fail;
             GV_GraphProp *prop = e->node.properties;
             while (prop) {
@@ -2036,7 +1896,6 @@ int gv_graph_save(const GV_GraphDB *g, const char *path)
         }
     }
 
-    /* Serialize edges */
     for (size_t b = 0; b < g->edge_bucket_count; b++) {
         EdgeEntry *e = g->edge_buckets[b];
         while (e) {
@@ -2046,7 +1905,6 @@ int gv_graph_save(const GV_GraphDB *g, const char *path)
             if (write_str(f, e->edge.label) != 0) goto save_fail;
             if (write_float(f, e->edge.weight) != 0) goto save_fail;
 
-            /* Properties */
             if (write_u32(f, (uint32_t)e->edge.prop_count) != 0) goto save_fail;
             GV_GraphProp *prop = e->edge.properties;
             while (prop) {
@@ -2069,8 +1927,6 @@ save_fail:
     return -1;
 }
 
-/* * Persistence: Load */
-
 GV_GraphDB *gv_graph_load(const char *path)
 {
     if (!path) return NULL;
@@ -2078,7 +1934,6 @@ GV_GraphDB *gv_graph_load(const char *path)
     FILE *f = fopen(path, "rb");
     if (!f) return NULL;
 
-    /* Read and verify magic */
     char magic[GV_GRAPH_MAGIC_LEN];
     if (fread(magic, 1, GV_GRAPH_MAGIC_LEN, f) != GV_GRAPH_MAGIC_LEN) {
         fclose(f);
@@ -2089,21 +1944,18 @@ GV_GraphDB *gv_graph_load(const char *path)
         return NULL;
     }
 
-    /* Version */
     uint32_t version;
     if (read_u32(f, &version) != 0 || version != GV_GRAPH_VERSION) {
         fclose(f);
         return NULL;
     }
 
-    /* Counts and ID counters */
     uint64_t node_count, edge_count, next_node_id, next_edge_id;
     if (read_u64(f, &node_count) != 0) { fclose(f); return NULL; }
     if (read_u64(f, &edge_count) != 0) { fclose(f); return NULL; }
     if (read_u64(f, &next_node_id) != 0) { fclose(f); return NULL; }
     if (read_u64(f, &next_edge_id) != 0) { fclose(f); return NULL; }
 
-    /* Create graph with default config */
     GV_GraphDBConfig cfg;
     gv_graph_config_init(&cfg);
     /* Disable referential integrity during load since we add nodes first,
@@ -2118,7 +1970,6 @@ GV_GraphDB *gv_graph_load(const char *path)
         return NULL;
     }
 
-    /* Load nodes */
     for (uint64_t i = 0; i < node_count; i++) {
         uint64_t nid;
         if (read_u64(f, &nid) != 0) goto load_fail;
@@ -2132,7 +1983,6 @@ GV_GraphDB *gv_graph_load(const char *path)
             goto load_fail;
         }
 
-        /* Create node entry directly (bypass auto-increment) */
         NodeEntry *entry = (NodeEntry *)calloc(1, sizeof(NodeEntry));
         if (!entry) {
             free(label);
@@ -2149,7 +1999,6 @@ GV_GraphDB *gv_graph_load(const char *path)
         entry->node.in_count = 0;
         entry->node.in_cap = 0;
 
-        /* Load properties */
         for (uint32_t p = 0; p < prop_count; p++) {
             char *key = read_str(f);
             char *val = read_str(f);
@@ -2170,7 +2019,6 @@ GV_GraphDB *gv_graph_load(const char *path)
             free(val);
         }
 
-        /* Insert into hash table */
         size_t idx = gv_hash_u64(nid, g->node_bucket_count);
         entry->next = g->node_buckets[idx];
         g->node_buckets[idx] = entry;
@@ -2178,7 +2026,6 @@ GV_GraphDB *gv_graph_load(const char *path)
     }
     g->next_node_id = next_node_id;
 
-    /* Load edges */
     for (uint64_t i = 0; i < edge_count; i++) {
         uint64_t eid, src_id, tgt_id;
         if (read_u64(f, &eid) != 0) goto load_fail;
@@ -2213,7 +2060,6 @@ GV_GraphDB *gv_graph_load(const char *path)
         entry->edge.properties = NULL;
         entry->edge.prop_count = 0;
 
-        /* Load properties */
         for (uint32_t p = 0; p < prop_count; p++) {
             char *key = read_str(f);
             char *val = read_str(f);
@@ -2234,13 +2080,11 @@ GV_GraphDB *gv_graph_load(const char *path)
             free(val);
         }
 
-        /* Insert into edge hash table */
         size_t idx = gv_hash_u64(eid, g->edge_bucket_count);
         entry->next = g->edge_buckets[idx];
         g->edge_buckets[idx] = entry;
         g->edge_count++;
 
-        /* Update adjacency lists */
         NodeEntry *src_node = find_node_entry(g, src_id);
         NodeEntry *tgt_node = find_node_entry(g, tgt_id);
         if (src_node) {
@@ -2254,7 +2098,6 @@ GV_GraphDB *gv_graph_load(const char *path)
     }
     g->next_edge_id = next_edge_id;
 
-    /* Re-enable referential integrity (default) */
     g->enforce_referential_integrity = 1;
 
     fclose(f);

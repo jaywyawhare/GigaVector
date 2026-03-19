@@ -9,13 +9,9 @@
 #include <string.h>
 #include <ctype.h>
 
-/* Internal Structures */
-
 struct GV_Tokenizer {
     GV_TokenizerConfig config;
 };
-
-/* Stopwords List */
 
 static const char *STOPWORDS[] = {
     "a", "an", "and", "are", "as", "at", "be", "by", "for", "from",
@@ -25,8 +21,6 @@ static const char *STOPWORDS[] = {
 };
 
 #define STOPWORDS_COUNT (sizeof(STOPWORDS) / sizeof(STOPWORDS[0]) - 1)
-
-/* Configuration */
 
 static const GV_TokenizerConfig DEFAULT_CONFIG = {
     .type = GV_TOKENIZER_SIMPLE,
@@ -41,8 +35,6 @@ void gv_tokenizer_config_init(GV_TokenizerConfig *config) {
     *config = DEFAULT_CONFIG;
 }
 
-/* Lifecycle */
-
 GV_Tokenizer *gv_tokenizer_create(const GV_TokenizerConfig *config) {
     GV_Tokenizer *tokenizer = calloc(1, sizeof(GV_Tokenizer));
     if (!tokenizer) return NULL;
@@ -55,8 +47,6 @@ GV_Tokenizer *gv_tokenizer_create(const GV_TokenizerConfig *config) {
 void gv_tokenizer_destroy(GV_Tokenizer *tokenizer) {
     free(tokenizer);
 }
-
-/* Internal Helpers */
 
 static int is_token_char_whitespace(char c) {
     return !isspace((unsigned char)c);
@@ -78,21 +68,17 @@ static int token_list_grow(GV_TokenList *list) {
 static int add_token(GV_TokenList *list, const char *start, size_t len,
                      size_t position, size_t offset_start, size_t offset_end,
                      const GV_TokenizerConfig *config) {
-    /* Check length constraints */
     if (len < config->min_token_length || len > config->max_token_length) {
         return 0;  /* Skip but not an error */
     }
 
-    /* Grow if needed */
     if (list->count >= list->capacity) {
         if (token_list_grow(list) != 0) return -1;
     }
 
-    /* Allocate token text */
     char *text = malloc(len + 1);
     if (!text) return -1;
 
-    /* Copy and optionally lowercase */
     if (config->lowercase) {
         for (size_t i = 0; i < len; i++) {
             text[i] = (char)tolower((unsigned char)start[i]);
@@ -102,13 +88,11 @@ static int add_token(GV_TokenList *list, const char *start, size_t len,
     }
     text[len] = '\0';
 
-    /* Check stopwords */
     if (config->remove_stopwords && gv_is_stopword(text)) {
         free(text);
         return 0;  /* Skip stopword */
     }
 
-    /* Add to list */
     GV_Token *token = &list->tokens[list->count++];
     token->text = text;
     token->position = position;
@@ -117,8 +101,6 @@ static int add_token(GV_TokenList *list, const char *start, size_t len,
 
     return 0;
 }
-
-/* Tokenization */
 
 int gv_tokenizer_tokenize(GV_Tokenizer *tokenizer, const char *text,
                           size_t text_len, GV_TokenList *result) {
@@ -148,17 +130,14 @@ int gv_tokenizer_tokenize(GV_Tokenizer *tokenizer, const char *text,
     size_t i = 0;
 
     while (i < text_len) {
-        /* Skip non-token characters */
         while (i < text_len && !is_token_char(text[i])) {
             i++;
         }
 
         if (i >= text_len) break;
 
-        /* Start of token */
         size_t start = i;
 
-        /* Find end of token */
         while (i < text_len && is_token_char(text[i])) {
             i++;
         }
@@ -187,8 +166,6 @@ void gv_token_list_free(GV_TokenList *list) {
     memset(list, 0, sizeof(*list));
 }
 
-/* Utility Functions */
-
 int gv_tokenize_simple(const char *text, GV_TokenList *result) {
     GV_Tokenizer *tokenizer = gv_tokenizer_create(NULL);
     if (!tokenizer) return -1;
@@ -208,14 +185,12 @@ int gv_token_list_unique(const GV_TokenList *list, char ***unique_tokens, size_t
         return 0;
     }
 
-    /* Allocate maximum possible size */
     char **tokens = malloc(list->count * sizeof(char *));
     if (!tokens) return -1;
 
     size_t count = 0;
 
     for (size_t i = 0; i < list->count; i++) {
-        /* Check if already in list */
         int found = 0;
         for (size_t j = 0; j < count; j++) {
             if (strcmp(tokens[j], list->tokens[i].text) == 0) {
@@ -234,7 +209,6 @@ int gv_token_list_unique(const GV_TokenList *list, char ***unique_tokens, size_t
         }
     }
 
-    /* Shrink to actual size */
     if (count < list->count) {
         char **shrunk = realloc(tokens, count * sizeof(char *));
         if (shrunk) tokens = shrunk;

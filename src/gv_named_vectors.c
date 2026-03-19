@@ -22,15 +22,11 @@
 #include <stdint.h>
 #include <pthread.h>
 
-/* Internal constants */
-
 #define GV_NV_MAX_FIELDS         32
 #define GV_NV_FIELD_HASH_BUCKETS 64
 #define GV_NV_INITIAL_POINT_CAP  64
 #define GV_NV_MAGIC              0x47564E56U  /* "GVNV" */
 #define GV_NV_VERSION            1U
-
-/* Internal structures */
 
 /**
  * @brief Per-field storage for a single named vector field.
@@ -66,16 +62,12 @@ struct GV_NamedVectorStore {
     pthread_rwlock_t rwlock;
 };
 
-/* Max-heap helpers for top-k selection */
-
 typedef struct {
     float   dist;
     size_t  idx;
 } GV_NVHeapItem;
 
 GV_HEAP_DEFINE(gv_nv_heap, GV_NVHeapItem)
-
-/* Hash helpers */
 
 static size_t gv_nv_hash_name(const char *name) {
     size_t h = 5381;
@@ -95,8 +87,6 @@ static GV_NVField *gv_nv_find_field(const GV_NamedVectorStore *store, const char
     }
     return NULL;
 }
-
-/* I/O helpers (u32/u8/str from gv_utils.h; u64 and convenience wrappers local) */
 
 static int gv_nv_write_u64(FILE *fp, uint64_t v) {
     return fwrite(&v, sizeof(uint64_t), 1, fp) == 1 ? 0 : -1;
@@ -125,8 +115,6 @@ static int gv_nv_read_str(FILE *fp, char **out) {
     return 0;
 }
 
-/* Capacity management */
-
 /**
  * @brief Ensure all per-field arrays and the global alive bitmap can hold
  *        at least @p required point slots.
@@ -140,20 +128,17 @@ static int gv_nv_ensure_capacity(GV_NamedVectorStore *store, size_t required) {
         new_cap *= 2;
     }
 
-    /* Grow the global alive bitmap */
     uint8_t *new_alive = (uint8_t *)realloc(store->point_alive, new_cap * sizeof(uint8_t));
     if (!new_alive) return -1;
     memset(new_alive + store->point_capacity, 0, (new_cap - store->point_capacity) * sizeof(uint8_t));
     store->point_alive = new_alive;
 
-    /* Grow each field's per-point arrays */
     for (size_t b = 0; b < GV_NV_FIELD_HASH_BUCKETS; b++) {
         GV_NVField *f = store->buckets[b];
         while (f) {
             float *new_vecs = (float *)realloc(f->vectors,
                                                new_cap * f->dimension * sizeof(float));
             if (!new_vecs) return -1;
-            /* Zero newly-allocated region */
             memset(new_vecs + f->capacity * f->dimension, 0,
                    (new_cap - f->capacity) * f->dimension * sizeof(float));
             f->vectors = new_vecs;
@@ -172,8 +157,6 @@ static int gv_nv_ensure_capacity(GV_NamedVectorStore *store, size_t required) {
     return 0;
 }
 
-/* Distance computation (raw float arrays) */
-
 /**
  * @brief Compute distance between two raw float vectors using the
  *        GV_DistanceType enum.  Wraps gv_distance() by constructing
@@ -191,8 +174,6 @@ static float gv_nv_compute_distance(const float *a, const float *b,
     return gv_distance(&va, &vb, (GV_DistanceType)distance_type);
 }
 
-/* Lifecycle */
-
 GV_NamedVectorStore *gv_named_vectors_create(void) {
     GV_NamedVectorStore *store = (GV_NamedVectorStore *)calloc(1, sizeof(GV_NamedVectorStore));
     if (!store) return NULL;
@@ -208,7 +189,6 @@ GV_NamedVectorStore *gv_named_vectors_create(void) {
 void gv_named_vectors_destroy(GV_NamedVectorStore *store) {
     if (!store) return;
 
-    /* Free all fields */
     for (size_t b = 0; b < GV_NV_FIELD_HASH_BUCKETS; b++) {
         GV_NVField *f = store->buckets[b];
         while (f) {
@@ -226,26 +206,21 @@ void gv_named_vectors_destroy(GV_NamedVectorStore *store) {
     free(store);
 }
 
-/* Field management */
-
 int gv_named_vectors_add_field(GV_NamedVectorStore *store, const GV_VectorFieldConfig *config) {
     if (!store || !config || !config->name || config->dimension == 0) return -1;
 
     pthread_rwlock_wrlock(&store->rwlock);
 
-    /* Check max fields */
     if (store->field_count >= GV_NV_MAX_FIELDS) {
         pthread_rwlock_unlock(&store->rwlock);
         return -1;
     }
 
-    /* Check for duplicate name */
     if (gv_nv_find_field(store, config->name) != NULL) {
         pthread_rwlock_unlock(&store->rwlock);
         return -1;
     }
 
-    /* Allocate field */
     GV_NVField *f = (GV_NVField *)calloc(1, sizeof(GV_NVField));
     if (!f) {
         pthread_rwlock_unlock(&store->rwlock);
@@ -262,7 +237,6 @@ int gv_named_vectors_add_field(GV_NamedVectorStore *store, const GV_VectorFieldC
     f->dimension     = config->dimension;
     f->distance_type = config->distance_type;
 
-    /* Pre-allocate to match current store capacity */
     if (store->point_capacity > 0) {
         f->vectors = (float *)calloc(store->point_capacity * f->dimension, sizeof(float));
         f->occupied = (uint8_t *)calloc(store->point_capacity, sizeof(uint8_t));
@@ -277,7 +251,6 @@ int gv_named_vectors_add_field(GV_NamedVectorStore *store, const GV_VectorFieldC
         f->capacity = store->point_capacity;
     }
 
-    /* Insert into hash table */
     size_t bucket = gv_nv_hash_name(config->name);
     f->hash_next = store->buckets[bucket];
     store->buckets[bucket] = f;
@@ -349,27 +322,22 @@ int gv_named_vectors_get_field(const GV_NamedVectorStore *store, const char *nam
     return 0;
 }
 
-/* Point operations */
-
 int gv_named_vectors_insert(GV_NamedVectorStore *store, size_t point_id,
                              const GV_NamedVector *vectors, size_t vector_count) {
     if (!store || !vectors || vector_count == 0) return -1;
 
     pthread_rwlock_wrlock(&store->rwlock);
 
-    /* Ensure capacity for this point_id */
     if (gv_nv_ensure_capacity(store, point_id + 1) != 0) {
         pthread_rwlock_unlock(&store->rwlock);
         return -1;
     }
 
-    /* Reject if point already alive */
     if (point_id < store->point_count && store->point_alive[point_id]) {
         pthread_rwlock_unlock(&store->rwlock);
         return -1;
     }
 
-    /* Validate all fields exist and dimensions match before writing */
     for (size_t i = 0; i < vector_count; i++) {
         if (!vectors[i].field_name || !vectors[i].data) {
             pthread_rwlock_unlock(&store->rwlock);
@@ -386,7 +354,6 @@ int gv_named_vectors_insert(GV_NamedVectorStore *store, size_t point_id,
         }
     }
 
-    /* Copy vector data into per-field storage */
     for (size_t i = 0; i < vector_count; i++) {
         GV_NVField *f = gv_nv_find_field(store, vectors[i].field_name);
         memcpy(f->vectors + point_id * f->dimension,
@@ -410,13 +377,11 @@ int gv_named_vectors_update(GV_NamedVectorStore *store, size_t point_id,
 
     pthread_rwlock_wrlock(&store->rwlock);
 
-    /* Point must exist and be alive */
     if (point_id >= store->point_count || !store->point_alive[point_id]) {
         pthread_rwlock_unlock(&store->rwlock);
         return -1;
     }
 
-    /* Validate all fields and dimensions */
     for (size_t i = 0; i < vector_count; i++) {
         if (!vectors[i].field_name || !vectors[i].data) {
             pthread_rwlock_unlock(&store->rwlock);
@@ -433,7 +398,6 @@ int gv_named_vectors_update(GV_NamedVectorStore *store, size_t point_id,
         }
     }
 
-    /* Overwrite vector data */
     for (size_t i = 0; i < vector_count; i++) {
         GV_NVField *f = gv_nv_find_field(store, vectors[i].field_name);
         memcpy(f->vectors + point_id * f->dimension,
@@ -458,7 +422,6 @@ int gv_named_vectors_delete(GV_NamedVectorStore *store, size_t point_id) {
 
     store->point_alive[point_id] = 0;
 
-    /* Clear occupied flag in each field for this point */
     for (size_t b = 0; b < GV_NV_FIELD_HASH_BUCKETS; b++) {
         GV_NVField *f = store->buckets[b];
         while (f) {
@@ -472,8 +435,6 @@ int gv_named_vectors_delete(GV_NamedVectorStore *store, size_t point_id) {
     pthread_rwlock_unlock(&store->rwlock);
     return 0;
 }
-
-/* Search */
 
 int gv_named_vectors_search(const GV_NamedVectorStore *store, const char *field_name,
                              const float *query, size_t k, GV_NamedSearchResult *results) {
@@ -494,7 +455,6 @@ int gv_named_vectors_search(const GV_NamedVectorStore *store, const char *field_
     }
     size_t heap_size = 0;
 
-    /* Brute-force scan over all alive points that have data in this field */
     for (size_t i = 0; i < store->point_count; i++) {
         if (!store->point_alive[i]) continue;
         if (i >= field->capacity || !field->occupied[i]) continue;
@@ -506,14 +466,12 @@ int gv_named_vectors_search(const GV_NamedVectorStore *store, const char *field_
         gv_nv_heap_push(heap, &heap_size, k, (GV_NVHeapItem){dist, i});
     }
 
-    /* Extract results from max-heap in ascending distance order */
     int n = (int)heap_size;
     for (int i = n - 1; i >= 0; i--) {
         results[i].point_index = heap[0].idx;
         results[i].distance    = heap[0].dist;
         results[i].field_name  = field->name;
 
-        /* Pop top of heap */
         heap[0] = heap[heap_size - 1];
         heap_size--;
         if (heap_size > 0) {
@@ -525,8 +483,6 @@ int gv_named_vectors_search(const GV_NamedVectorStore *store, const char *field_
     pthread_rwlock_unlock((pthread_rwlock_t *)&store->rwlock);
     return n;
 }
-
-/* Accessors */
 
 const float *gv_named_vectors_get(const GV_NamedVectorStore *store, size_t point_id,
                                    const char *field_name) {
@@ -565,8 +521,6 @@ size_t gv_named_vectors_count(const GV_NamedVectorStore *store) {
     return count;
 }
 
-/* Save / Load */
-
 int gv_named_vectors_save(const GV_NamedVectorStore *store, const char *filepath) {
     if (!store || !filepath) return -1;
 
@@ -578,38 +532,30 @@ int gv_named_vectors_save(const GV_NamedVectorStore *store, const char *filepath
         return -1;
     }
 
-    /* Header: magic, version */
     if (gv_write_u32(fp, GV_NV_MAGIC) != 0) goto fail;
     if (gv_write_u32(fp, GV_NV_VERSION) != 0) goto fail;
 
-    /* Field count */
     if (gv_write_u32(fp, (uint32_t)store->field_count) != 0) goto fail;
 
-    /* Point count (high-water mark) */
     if (gv_nv_write_u64(fp, (uint64_t)store->point_count) != 0) goto fail;
 
-    /* Write alive bitmap */
     if (store->point_count > 0) {
         if (fwrite(store->point_alive, sizeof(uint8_t), store->point_count, fp)
             != store->point_count) goto fail;
     }
 
-    /* Write each field: config, then per-point vector data */
     for (size_t b = 0; b < GV_NV_FIELD_HASH_BUCKETS; b++) {
         const GV_NVField *f = store->buckets[b];
         while (f) {
-            /* Field config */
             if (gv_nv_write_str(fp, f->name) != 0) goto fail;
             if (gv_nv_write_u64(fp, (uint64_t)f->dimension) != 0) goto fail;
             if (gv_write_u32(fp, (uint32_t)f->distance_type) != 0) goto fail;
 
-            /* Occupied bitmap for this field (point_count entries) */
             if (store->point_count > 0) {
                 if (fwrite(f->occupied, sizeof(uint8_t), store->point_count, fp)
                     != store->point_count) goto fail;
             }
 
-            /* Write only occupied vectors */
             for (size_t p = 0; p < store->point_count; p++) {
                 if (!f->occupied[p]) continue;
                 if (fwrite(f->vectors + p * f->dimension, sizeof(float),
@@ -636,7 +582,6 @@ GV_NamedVectorStore *gv_named_vectors_load(const char *filepath) {
     FILE *fp = fopen(filepath, "rb");
     if (!fp) return NULL;
 
-    /* Read and validate header */
     uint32_t magic = 0, version = 0;
     if (gv_read_u32(fp, &magic) != 0 || magic != GV_NV_MAGIC) goto fail;
     if (gv_read_u32(fp, &version) != 0 || version != GV_NV_VERSION) goto fail;
@@ -652,7 +597,6 @@ GV_NamedVectorStore *gv_named_vectors_load(const char *filepath) {
     GV_NamedVectorStore *store = gv_named_vectors_create();
     if (!store) goto fail;
 
-    /* Allocate capacity for points */
     if (point_count > 0) {
         if (gv_nv_ensure_capacity(store, point_count) != 0) {
             gv_named_vectors_destroy(store);
@@ -660,14 +604,12 @@ GV_NamedVectorStore *gv_named_vectors_load(const char *filepath) {
         }
         store->point_count = point_count;
 
-        /* Read alive bitmap */
         if (fread(store->point_alive, sizeof(uint8_t), point_count, fp) != point_count) {
             gv_named_vectors_destroy(store);
             goto fail;
         }
     }
 
-    /* Read each field */
     for (uint32_t fi = 0; fi < field_count; fi++) {
         char *name = NULL;
         uint64_t dimension_u64 = 0;
@@ -688,7 +630,6 @@ GV_NamedVectorStore *gv_named_vectors_load(const char *filepath) {
             goto fail;
         }
 
-        /* Register the field */
         GV_VectorFieldConfig cfg;
         cfg.name          = name;
         cfg.dimension     = (size_t)dimension_u64;
@@ -708,14 +649,12 @@ GV_NamedVectorStore *gv_named_vectors_load(const char *filepath) {
             goto fail;
         }
 
-        /* Read occupied bitmap */
         if (point_count > 0) {
             if (fread(f->occupied, sizeof(uint8_t), point_count, fp) != point_count) {
                 gv_named_vectors_destroy(store);
                 goto fail;
             }
 
-            /* Read occupied vectors */
             for (size_t p = 0; p < point_count; p++) {
                 if (!f->occupied[p]) continue;
                 if (fread(f->vectors + p * f->dimension, sizeof(float),

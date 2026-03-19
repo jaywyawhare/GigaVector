@@ -27,14 +27,10 @@
 
 #include "gigavector/gv_hnsw_opt.h"
 
-/* Constants */
-
 #define HNSW_OPT_MAGIC           0x484E5357  /* "HNSW" */
 #define HNSW_OPT_VERSION         1
 #define HNSW_OPT_INITIAL_CAP     1024
 #define HNSW_OPT_MAX_LEVEL       32
-
-/* Inline quantized vector */
 
 /**
  * Per-dimension quantization parameters stored once in the index header.
@@ -48,8 +44,6 @@ typedef struct {
     size_t bytes_per_vec; /**< Packed quantized bytes per vector */
 } QuantParams;
 
-/* Graph node with inline storage */
-
 typedef struct {
     uint8_t *quant_vec;        /**< Quantized vector (bytes_per_vec bytes) */
     size_t *neighbors;         /**< Flat neighbor index array per level */
@@ -60,10 +54,7 @@ typedef struct {
     size_t flat_index;         /**< Index into full-precision flat array */
 } InlineNode;
 
-/* Index structure (opaque) */
-
 struct GV_HNSWInlineIndex {
-    /* Parameters */
     size_t dimension;
     size_t max_elements;
     size_t M;                  /**< Connections per node (upper layers) */
@@ -71,15 +62,12 @@ struct GV_HNSWInlineIndex {
     size_t ef_construction;
     double level_mult;         /**< 1.0 / ln(M) */
 
-    /* Inline config */
     int quant_bits;
     int enable_prefetch;
     size_t prefetch_distance;
 
-    /* Quantization */
     QuantParams qparams;
 
-    /* Nodes */
     InlineNode *nodes;
     size_t count;
     size_t capacity;
@@ -88,20 +76,15 @@ struct GV_HNSWInlineIndex {
     float *vectors;
     size_t vectors_cap;
 
-    /* Entry point */
     size_t entry_point;        /**< Index into nodes[], SIZE_MAX when empty */
     size_t max_level_cur;      /**< Current maximum level in the graph */
 
-    /* Rebuild state */
     GV_HNSWRebuildStats rebuild_stats;
     int rebuild_running;
     pthread_t rebuild_thread;
 
-    /* Thread safety */
     pthread_rwlock_t rwlock;
 };
-
-/* Internal helpers: quantization */
 
 static size_t quant_bytes_needed(size_t dimension, int bits) {
     return (dimension * (size_t)bits + 7) / 8;
@@ -218,8 +201,6 @@ static float distance_l2(const float *a, const float *b, size_t dimension) {
     return dist;
 }
 
-/* Internal helpers: level assignment */
-
 static size_t assign_level(double level_mult) {
     double r = (double)rand() / ((double)RAND_MAX + 1.0);
     if (r <= 0.0) r = 1e-12;
@@ -227,8 +208,6 @@ static size_t assign_level(double level_mult) {
     if (level > HNSW_OPT_MAX_LEVEL) level = HNSW_OPT_MAX_LEVEL;
     return level;
 }
-
-/* Internal helpers: node management */
 
 static int node_init(InlineNode *node, size_t level, size_t label,
                      size_t flat_index, size_t M, size_t M0,
@@ -291,8 +270,6 @@ static void node_destroy(InlineNode *node) {
     node->neighbor_caps = NULL;
 }
 
-/* Internal helpers: min-heap for candidate list */
-
 typedef struct {
     size_t node_idx;
     float distance;
@@ -306,8 +283,6 @@ static int candidate_cmp_asc(const void *a, const void *b) {
     return 0;
 }
 
-/* Internal helpers: search layer (greedy with ef candidates) */
-
 /**
  * Search a single layer starting from entry_id, collecting up to ef
  * candidates.  Returns the number of candidates found.
@@ -320,12 +295,10 @@ static size_t search_layer(const GV_HNSWInlineIndex *idx,
                            Candidate *results, size_t results_cap) {
     if (idx->count == 0 || entry_id >= idx->count) return 0;
 
-    /* Visited set (bitmap) */
     size_t visited_bytes = (idx->count + 7) / 8;
     uint8_t *visited = (uint8_t *)calloc(visited_bytes, 1);
     if (visited == NULL) return 0;
 
-    /* Working candidate list (sorted ascending by distance) */
     size_t cand_cap = ef + 1;
     Candidate *cand = (Candidate *)malloc(cand_cap * sizeof(Candidate));
     if (cand == NULL) {
@@ -333,7 +306,6 @@ static size_t search_layer(const GV_HNSWInlineIndex *idx,
         return 0;
     }
 
-    /* Seed with entry */
     const InlineNode *ep = &idx->nodes[entry_id];
     float ep_dist;
     if (use_quant) {
@@ -387,8 +359,6 @@ static size_t search_layer(const GV_HNSWInlineIndex *idx,
                                 idx->dimension);
             }
 
-            /* Insert into candidate list if better than the worst, or list
-             * is not yet full. */
             if (cand_count < ef) {
                 cand[cand_count].node_idx = nbr_id;
                 cand[cand_count].distance = d;
@@ -402,7 +372,6 @@ static size_t search_layer(const GV_HNSWInlineIndex *idx,
         }
     }
 
-    /* Copy out */
     size_t out_count = (cand_count < results_cap) ? cand_count : results_cap;
     memcpy(results, cand, out_count * sizeof(Candidate));
 
@@ -410,8 +379,6 @@ static size_t search_layer(const GV_HNSWInlineIndex *idx,
     free(visited);
     return out_count;
 }
-
-/* Internal helpers: neighbor selection heuristic */
 
 /**
  * Standard HNSW neighbor selection: from a candidate list, greedily pick
@@ -426,7 +393,6 @@ static size_t select_neighbors(const GV_HNSWInlineIndex *idx,
     (void)target_vec; /* dist_to_target comes from the candidate struct */
     if (cand_count == 0 || max_count == 0) return 0;
 
-    /* Work on a sorted copy */
     Candidate *sorted = (Candidate *)malloc(cand_count * sizeof(Candidate));
     if (sorted == NULL) return 0;
     memcpy(sorted, candidates, cand_count * sizeof(Candidate));
@@ -460,14 +426,11 @@ static size_t select_neighbors(const GV_HNSWInlineIndex *idx,
     return sel_count;
 }
 
-/* Internal helpers: connect a new node at a given level */
-
 static void connect_node(GV_HNSWInlineIndex *idx, size_t new_id,
                          const Candidate *candidates, size_t cand_count,
                          size_t level) {
     size_t max_conn = (level == 0) ? idx->M0 : idx->M;
 
-    /* Select best neighbors for the new node */
     const float *new_vec = idx->vectors + idx->nodes[new_id].flat_index * idx->dimension;
     size_t *selected = (size_t *)malloc(max_conn * sizeof(size_t));
     if (selected == NULL) return;
@@ -475,7 +438,6 @@ static void connect_node(GV_HNSWInlineIndex *idx, size_t new_id,
     size_t sel_count = select_neighbors(idx, new_vec, candidates, cand_count,
                                         max_conn, selected);
 
-    /* Set outgoing edges from new node */
     InlineNode *new_node = &idx->nodes[new_id];
     size_t *nbrs = node_neighbors_at(new_node, level);
     new_node->neighbor_counts[level] = sel_count;
@@ -492,7 +454,6 @@ static void connect_node(GV_HNSWInlineIndex *idx, size_t new_id,
         size_t nbr_cap = nbr_node->neighbor_caps[level];
 
         if (nbr_cnt < nbr_cap) {
-            /* Simply append */
             nbr_nbrs[nbr_cnt] = new_id;
             nbr_node->neighbor_counts[level] = nbr_cnt + 1;
         } else {
@@ -533,15 +494,11 @@ static void connect_node(GV_HNSWInlineIndex *idx, size_t new_id,
     free(selected);
 }
 
-/* Internal helpers: time measurement */
-
 static double time_ms(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (double)ts.tv_sec * 1000.0 + (double)ts.tv_nsec / 1e6;
 }
-
-/* Public API: lifecycle */
 
 GV_HNSWInlineIndex *gv_hnsw_inline_create(size_t dimension, size_t max_elements,
                                            size_t M, size_t ef_construction,
@@ -562,7 +519,6 @@ GV_HNSWInlineIndex *gv_hnsw_inline_create(size_t dimension, size_t max_elements,
     idx->ef_construction = (ef_construction > 0) ? ef_construction : 200;
     idx->level_mult = 1.0 / log((double)M);
 
-    /* Inline config */
     idx->quant_bits = 8;
     idx->enable_prefetch = 0;
     idx->prefetch_distance = 2;
@@ -576,13 +532,11 @@ GV_HNSWInlineIndex *gv_hnsw_inline_create(size_t dimension, size_t max_elements,
         }
     }
 
-    /* Quantization params */
     if (qparams_init(&idx->qparams, dimension, idx->quant_bits) != 0) {
         free(idx);
         return NULL;
     }
 
-    /* Node array */
     idx->capacity = (max_elements < HNSW_OPT_INITIAL_CAP)
                         ? max_elements : HNSW_OPT_INITIAL_CAP;
     idx->nodes = (InlineNode *)calloc(idx->capacity, sizeof(InlineNode));
@@ -592,7 +546,6 @@ GV_HNSWInlineIndex *gv_hnsw_inline_create(size_t dimension, size_t max_elements,
         return NULL;
     }
 
-    /* Full-precision vector storage */
     idx->vectors_cap = idx->capacity;
     idx->vectors = (float *)malloc(idx->vectors_cap * dimension * sizeof(float));
     if (idx->vectors == NULL) {
@@ -606,11 +559,9 @@ GV_HNSWInlineIndex *gv_hnsw_inline_create(size_t dimension, size_t max_elements,
     idx->entry_point = SIZE_MAX;
     idx->max_level_cur = 0;
 
-    /* Rebuild state */
     memset(&idx->rebuild_stats, 0, sizeof(GV_HNSWRebuildStats));
     idx->rebuild_running = 0;
 
-    /* Thread safety */
     if (pthread_rwlock_init(&idx->rwlock, NULL) != 0) {
         free(idx->vectors);
         free(idx->nodes);
@@ -641,8 +592,6 @@ void gv_hnsw_inline_destroy(GV_HNSWInlineIndex *idx) {
     free(idx);
 }
 
-/* Public API: insert */
-
 int gv_hnsw_inline_insert(GV_HNSWInlineIndex *idx, const float *vector,
                            size_t label) {
     if (idx == NULL || vector == NULL) return -1;
@@ -654,7 +603,6 @@ int gv_hnsw_inline_insert(GV_HNSWInlineIndex *idx, const float *vector,
         return -1;
     }
 
-    /* Grow node array if needed */
     if (idx->count >= idx->capacity) {
         size_t new_cap = idx->capacity * 2;
         if (new_cap > idx->max_elements) new_cap = idx->max_elements;
@@ -671,7 +619,6 @@ int gv_hnsw_inline_insert(GV_HNSWInlineIndex *idx, const float *vector,
         idx->capacity = new_cap;
     }
 
-    /* Grow vector storage if needed */
     if (idx->count >= idx->vectors_cap) {
         size_t new_vcap = idx->vectors_cap * 2;
         if (new_vcap > idx->max_elements) new_vcap = idx->max_elements;
@@ -686,18 +633,14 @@ int gv_hnsw_inline_insert(GV_HNSWInlineIndex *idx, const float *vector,
         idx->vectors_cap = new_vcap;
     }
 
-    /* Store full-precision vector */
     size_t new_id = idx->count;
     memcpy(idx->vectors + new_id * idx->dimension, vector,
            idx->dimension * sizeof(float));
 
-    /* Update quantization min/max and quantize */
     qparams_update(&idx->qparams, vector, idx->dimension);
 
-    /* Assign level */
     size_t level = assign_level(idx->level_mult);
 
-    /* Initialize node */
     if (node_init(&idx->nodes[new_id], level, label, new_id,
                   idx->M, idx->M0, idx->qparams.bytes_per_vec) != 0) {
         pthread_rwlock_unlock(&idx->rwlock);
@@ -709,7 +652,6 @@ int gv_hnsw_inline_insert(GV_HNSWInlineIndex *idx, const float *vector,
 
     idx->count++;
 
-    /* First node: just set as entry point */
     if (idx->count == 1) {
         idx->entry_point = new_id;
         idx->max_level_cur = level;
@@ -773,7 +715,6 @@ int gv_hnsw_inline_insert(GV_HNSWInlineIndex *idx, const float *vector,
 
     free(cands);
 
-    /* Update entry point if new node has a higher level */
     if (level > idx->max_level_cur) {
         idx->entry_point = new_id;
         idx->max_level_cur = level;
@@ -782,8 +723,6 @@ int gv_hnsw_inline_insert(GV_HNSWInlineIndex *idx, const float *vector,
     pthread_rwlock_unlock(&idx->rwlock);
     return 0;
 }
-
-/* Public API: search */
 
 int gv_hnsw_inline_search(const GV_HNSWInlineIndex *idx, const float *query,
                            size_t k, size_t ef_search,
@@ -823,7 +762,6 @@ int gv_hnsw_inline_search(const GV_HNSWInlineIndex *idx, const float *query,
                 size_t nbr_id = nbrs[i];
                 if (nbr_id >= idx->count) continue;
 
-                /* Prefetch */
                 if (idx->enable_prefetch &&
                     i + idx->prefetch_distance < nbr_cnt) {
                     size_t pf_id = nbrs[i + idx->prefetch_distance];
@@ -865,7 +803,6 @@ int gv_hnsw_inline_search(const GV_HNSWInlineIndex *idx, const float *query,
     }
     qsort(cands, rerank_count, sizeof(Candidate), candidate_cmp_asc);
 
-    /* Output top-k */
     size_t out_count = (rerank_count < k) ? rerank_count : k;
     for (size_t i = 0; i < out_count; ++i) {
         labels[i] = idx->nodes[cands[i].node_idx].label;
@@ -876,8 +813,6 @@ int gv_hnsw_inline_search(const GV_HNSWInlineIndex *idx, const float *query,
     pthread_rwlock_unlock((pthread_rwlock_t *)&idx->rwlock);
     return (int)out_count;
 }
-
-/* Internal: incremental rebuild worker */
 
 typedef struct {
     GV_HNSWInlineIndex *idx;
@@ -897,7 +832,6 @@ static void *rebuild_worker(void *arg) {
     size_t edges_removed = 0;
     size_t nodes_processed = 0;
 
-    /* Process nodes in batches */
     for (size_t batch_start = 0; batch_start < idx->count;
          batch_start += batch_size) {
         size_t batch_end = batch_start + batch_size;
@@ -916,21 +850,17 @@ static void *rebuild_worker(void *arg) {
             size_t old_count = node->neighbor_counts[0];
             size_t max_conn = idx->M0;
 
-            /* Determine how many existing edges to retain */
             size_t retain = (size_t)((float)old_count * conn_ratio + 0.5f);
             if (retain > old_count) retain = old_count;
 
-            /* Search the graph for new candidates */
             size_t search_ef = max_conn * 2;
             if (search_ef < 32) search_ef = 32;
             Candidate *cands = (Candidate *)malloc(search_ef * sizeof(Candidate));
             if (cands == NULL) continue;
 
-            /* Start search from the current entry point */
             size_t found = search_layer(idx, node_vec, idx->entry_point,
                                         search_ef, 0, 1, cands, search_ef);
 
-            /* Remove self from candidates */
             size_t filtered = 0;
             for (size_t c = 0; c < found; ++c) {
                 if (cands[c].node_idx != ni) {
@@ -938,7 +868,6 @@ static void *rebuild_worker(void *arg) {
                 }
             }
 
-            /* Select neighbors using heuristic */
             size_t *selected = (size_t *)malloc(max_conn * sizeof(size_t));
             if (selected == NULL) {
                 free(cands);
@@ -948,7 +877,6 @@ static void *rebuild_worker(void *arg) {
             size_t new_count = select_neighbors(idx, node_vec, cands, filtered,
                                                 max_conn, selected);
 
-            /* Count changes */
             for (size_t j = 0; j < new_count; ++j) {
                 int was_neighbor = 0;
                 for (size_t k = 0; k < old_count; ++k) {
@@ -970,7 +898,6 @@ static void *rebuild_worker(void *arg) {
                 if (!still_neighbor) edges_removed++;
             }
 
-            /* Apply new neighbor list */
             memcpy(nbrs, selected, new_count * sizeof(size_t));
             node->neighbor_counts[0] = new_count;
 
@@ -979,7 +906,6 @@ static void *rebuild_worker(void *arg) {
             nodes_processed++;
         }
 
-        /* Update stats while we hold the lock */
         idx->rebuild_stats.nodes_processed = nodes_processed;
         idx->rebuild_stats.edges_added = edges_added;
         idx->rebuild_stats.edges_removed = edges_removed;
@@ -988,7 +914,6 @@ static void *rebuild_worker(void *arg) {
         pthread_rwlock_unlock(&idx->rwlock);
     }
 
-    /* Final stats */
     pthread_rwlock_wrlock(&idx->rwlock);
     idx->rebuild_stats.nodes_processed = nodes_processed;
     idx->rebuild_stats.edges_added = edges_added;
@@ -1001,8 +926,6 @@ static void *rebuild_worker(void *arg) {
     return NULL;
 }
 
-/* Public API: incremental rebuild */
-
 int gv_hnsw_inline_rebuild(GV_HNSWInlineIndex *idx,
                             const GV_HNSWRebuildConfig *config) {
     if (idx == NULL) return -1;
@@ -1014,7 +937,6 @@ int gv_hnsw_inline_rebuild(GV_HNSWInlineIndex *idx,
         return -1; /* rebuild already in progress */
     }
 
-    /* Parse config */
     float conn_ratio = 0.8f;
     size_t batch_size = 1000;
     int background = 0;
@@ -1028,7 +950,6 @@ int gv_hnsw_inline_rebuild(GV_HNSWInlineIndex *idx,
         background = config->background ? 1 : 0;
     }
 
-    /* Reset stats */
     memset(&idx->rebuild_stats, 0, sizeof(GV_HNSWRebuildStats));
 
     if (idx->count == 0) {
@@ -1076,14 +997,10 @@ int gv_hnsw_inline_rebuild_status(const GV_HNSWInlineIndex *idx,
     return 0;
 }
 
-/* Public API: utility */
-
 size_t gv_hnsw_inline_count(const GV_HNSWInlineIndex *idx) {
     if (idx == NULL) return 0;
     return idx->count;
 }
-
-/* Internal helpers: file I/O */
 
 static int write_u32(FILE *f, uint32_t v) {
     return (fwrite(&v, sizeof(uint32_t), 1, f) == 1) ? 0 : -1;
@@ -1117,8 +1034,6 @@ static int read_bytes(FILE *f, uint8_t *data, size_t count) {
     return (fread(data, 1, count, f) == count) ? 0 : -1;
 }
 
-/* Public API: save / load */
-
 int gv_hnsw_inline_save(const GV_HNSWInlineIndex *idx, const char *path) {
     if (idx == NULL || path == NULL) return -1;
 
@@ -1132,7 +1047,6 @@ int gv_hnsw_inline_save(const GV_HNSWInlineIndex *idx, const char *path) {
 
     int rc = 0;
 
-    /* Header: magic, version, parameters */
     if (write_u32(f, HNSW_OPT_MAGIC) != 0) { rc = -1; goto done; }
     if (write_u32(f, HNSW_OPT_VERSION) != 0) { rc = -1; goto done; }
     if (write_u64(f, (uint64_t)idx->dimension) != 0) { rc = -1; goto done; }
@@ -1144,14 +1058,11 @@ int gv_hnsw_inline_save(const GV_HNSWInlineIndex *idx, const char *path) {
     if (write_u64(f, (uint64_t)idx->entry_point) != 0) { rc = -1; goto done; }
     if (write_u64(f, (uint64_t)idx->max_level_cur) != 0) { rc = -1; goto done; }
 
-    /* Quantization params: min/max per dimension */
     if (write_floats(f, idx->qparams.min_vals, idx->dimension) != 0) { rc = -1; goto done; }
     if (write_floats(f, idx->qparams.max_vals, idx->dimension) != 0) { rc = -1; goto done; }
 
-    /* Full-precision vectors */
     if (write_floats(f, idx->vectors, idx->count * idx->dimension) != 0) { rc = -1; goto done; }
 
-    /* Nodes: level, label, quantized vector, neighbor lists */
     for (size_t i = 0; i < idx->count; ++i) {
         const InlineNode *node = &idx->nodes[i];
         if (write_u64(f, (uint64_t)node->level) != 0) { rc = -1; goto done; }
@@ -1208,7 +1119,6 @@ GV_HNSWInlineIndex *gv_hnsw_inline_load(const char *path) {
         (size_t)ef_construction, &cfg);
     if (idx == NULL) goto fail;
 
-    /* Read quantization params */
     if (read_floats(f, idx->qparams.min_vals, (size_t)dimension) != 0) {
         gv_hnsw_inline_destroy(idx);
         goto fail;
@@ -1218,7 +1128,6 @@ GV_HNSWInlineIndex *gv_hnsw_inline_load(const char *path) {
         goto fail;
     }
 
-    /* Ensure capacity */
     if ((size_t)count > idx->capacity) {
         InlineNode *new_nodes = (InlineNode *)realloc(
             idx->nodes, (size_t)count * sizeof(InlineNode));
@@ -1234,13 +1143,11 @@ GV_HNSWInlineIndex *gv_hnsw_inline_load(const char *path) {
         idx->vectors_cap = (size_t)count;
     }
 
-    /* Read full-precision vectors */
     if (read_floats(f, idx->vectors, (size_t)count * (size_t)dimension) != 0) {
         gv_hnsw_inline_destroy(idx);
         goto fail;
     }
 
-    /* Read nodes */
     for (size_t i = 0; i < (size_t)count; ++i) {
         uint64_t level64 = 0, label64 = 0;
         if (read_u64(f, &level64) != 0) { gv_hnsw_inline_destroy(idx); goto fail; }

@@ -14,8 +14,6 @@
 #include <ctype.h>
 #include <pthread.h>
 
-/* Internal Constants */
-
 #define FT_TERM_HASH_BUCKETS  4096
 #define FT_DOC_HASH_BUCKETS   1024
 #define FT_INITIAL_POSTING_CAP 16
@@ -23,8 +21,6 @@
 #define FT_MAX_WORD_LEN       256
 #define FT_BM25_K1            1.2f
 #define FT_BM25_B             0.75f
-
-/* Stopword Lists */
 
 static const char *STOPWORDS_EN[] = {
     "a", "an", "and", "are", "as", "at", "be", "but", "by", "for",
@@ -83,8 +79,6 @@ static const char *STOPWORDS_PT[] = {
     "vou", NULL
 };
 
-/* Internal Structures */
-
 /**
  * @brief Position list for a term within a single document.
  */
@@ -138,11 +132,9 @@ typedef struct FT_DocInfo {
 struct GV_FTIndex {
     GV_FTConfig config;
 
-    /* Inverted index: term -> posting list */
     FT_PostingList *term_buckets[FT_TERM_HASH_BUCKETS];
     size_t total_terms;
 
-    /* Document metadata */
     FT_DocInfo *doc_buckets[FT_DOC_HASH_BUCKETS];
     size_t total_documents;
     size_t total_doc_length;        /* Sum of all document lengths. */
@@ -150,13 +142,9 @@ struct GV_FTIndex {
     pthread_rwlock_t rwlock;
 };
 
-/* Hash Functions */
-
 static size_t ft_hash_size(size_t val) {
     return val;
 }
-
-/* Stopword Helpers */
 
 static const char **ft_stopwords_for_lang(GV_FTLanguage lang) {
     switch (lang) {
@@ -179,15 +167,12 @@ static int ft_is_stopword(const char *word, GV_FTLanguage lang) {
     return 0;
 }
 
-/* Porter Stemmer (English) */
-
 /**
  * Measure: the number of consonant-vowel sequences in word[0..k].
  */
 static int porter_measure(const char *w, int k) {
     int n = 0;
     int i = 0;
-    /* Skip initial consonants */
     while (i <= k) {
         char c = (char)tolower((unsigned char)w[i]);
         if (c == 'a' || c == 'e' || c == 'i' || c == 'o' || c == 'u')
@@ -195,7 +180,6 @@ static int porter_measure(const char *w, int k) {
         i++;
     }
     while (i <= k) {
-        /* Skip vowels */
         while (i <= k) {
             char c = (char)tolower((unsigned char)w[i]);
             if (!(c == 'a' || c == 'e' || c == 'i' || c == 'o' || c == 'u'))
@@ -204,7 +188,6 @@ static int porter_measure(const char *w, int k) {
         }
         if (i > k) break;
         n++;
-        /* Skip consonants */
         while (i <= k) {
             char c = (char)tolower((unsigned char)w[i]);
             if (c == 'a' || c == 'e' || c == 'i' || c == 'o' || c == 'u')
@@ -424,8 +407,6 @@ static void porter_stem_english(char *w, int len) {
     porter_step5b(w, &k);
 }
 
-/* Simplified Suffix Stripping (Non-English) */
-
 static void stem_strip_suffix(char *w, int *len, const char *suffix) {
     int slen = (int)strlen(suffix);
     if (*len > slen && memcmp(w + *len - slen, suffix, (size_t)slen) == 0) {
@@ -436,7 +417,6 @@ static void stem_strip_suffix(char *w, int *len, const char *suffix) {
 
 static void stem_german(char *w, int len) {
     if (len <= 3) return;
-    /* Order matters: longer suffixes first */
     const char *suffixes[] = {
         "ungen", "keit", "heit", "lich", "isch", "ung", "ige", "ig",
         "en", "er", "em", "es", "st", "nd", NULL
@@ -464,7 +444,6 @@ static void stem_french(char *w, int len) {
 
 static void stem_spanish(char *w, int len) {
     if (len <= 3) return;
-    /* UTF-8 multi-byte suffixes are checked as byte sequences */
     const char *suffixes[] = {
         "amiento", "imiento", "mente", "mente", "cion", "ci\xc3\xb3n",
         "idad", "ando", "endo", "ador", "edor", "idor", "anza", "encia",
@@ -509,8 +488,6 @@ static void stem_portuguese(char *w, int len) {
     }
 }
 
-/* Public Stemming API */
-
 int gv_ft_stem(const char *word, GV_FTLanguage lang, char *output, size_t output_size) {
     if (!word || !output || output_size == 0) return -1;
 
@@ -521,7 +498,6 @@ int gv_ft_stem(const char *word, GV_FTLanguage lang, char *output, size_t output
     }
     if (wlen >= output_size || wlen >= FT_MAX_WORD_LEN) return -1;
 
-    /* Copy and lowercase */
     char buf[FT_MAX_WORD_LEN];
     for (size_t i = 0; i < wlen; i++) {
         buf[i] = (char)tolower((unsigned char)word[i]);
@@ -558,8 +534,6 @@ int gv_ft_stem(const char *word, GV_FTLanguage lang, char *output, size_t output
     memcpy(output, buf, rlen + 1);
     return 0;
 }
-
-/* Tokenizer */
 
 /**
  * Internal token produced during tokenization.
@@ -615,30 +589,25 @@ static int ft_tokenize(const char *text, GV_FTLanguage lang,
     char word[FT_MAX_WORD_LEN];
 
     while (i < tlen) {
-        /* Skip non-alphanumeric */
         while (i < tlen && !isalnum((unsigned char)text[i])) i++;
         if (i >= tlen) break;
 
-        /* Extract word */
         size_t start = i;
         while (i < tlen && isalnum((unsigned char)text[i])) i++;
         size_t wlen = i - start;
         if (wlen == 0) continue;
         if (wlen >= FT_MAX_WORD_LEN) wlen = FT_MAX_WORD_LEN - 1;
 
-        /* Lowercase */
         for (size_t j = 0; j < wlen; j++) {
             word[j] = (char)tolower((unsigned char)text[start + j]);
         }
         word[wlen] = '\0';
 
-        /* Skip stopwords */
         if (ft_is_stopword(word, lang)) {
             position++;
             continue;
         }
 
-        /* Stem */
         if (do_stem) {
             char stemmed[FT_MAX_WORD_LEN];
             if (gv_ft_stem(word, lang, stemmed, sizeof(stemmed)) == 0) {
@@ -663,8 +632,6 @@ static int ft_tokenize(const char *text, GV_FTLanguage lang,
     return 0;
 }
 
-/* Configuration */
-
 static const GV_FTConfig DEFAULT_FT_CONFIG = {
     .language           = GV_LANG_ENGLISH,
     .enable_stemming    = 1,
@@ -677,8 +644,6 @@ void gv_ft_config_init(GV_FTConfig *config) {
     if (!config) return;
     *config = DEFAULT_FT_CONFIG;
 }
-
-/* Posting List Helpers */
 
 static FT_PostingList *ft_find_posting_list(const GV_FTIndex *idx, const char *term) {
     size_t bucket = gv_hash_str(term) % FT_TERM_HASH_BUCKETS;
@@ -713,8 +678,6 @@ static FT_PostingList *ft_get_or_create_posting_list(GV_FTIndex *idx, const char
     return pl;
 }
 
-/* Document Info Helpers */
-
 static FT_DocInfo *ft_find_doc_info(const GV_FTIndex *idx, size_t doc_id) {
     size_t bucket = ft_hash_size(doc_id) % FT_DOC_HASH_BUCKETS;
     FT_DocInfo *di = idx->doc_buckets[bucket];
@@ -742,11 +705,8 @@ static FT_DocInfo *ft_get_or_create_doc_info(GV_FTIndex *idx, size_t doc_id) {
     return di;
 }
 
-/* Posting Insertion with Positions */
-
 static int ft_add_posting(FT_PostingList *pl, size_t doc_id, size_t position,
                            int store_positions) {
-    /* Find existing posting for this doc */
     for (size_t i = 0; i < pl->count; i++) {
         if (pl->postings[i].doc_id == doc_id) {
             pl->postings[i].term_freq++;
@@ -765,7 +725,6 @@ static int ft_add_posting(FT_PostingList *pl, size_t doc_id, size_t position,
         }
     }
 
-    /* New posting */
     if (pl->count >= pl->capacity) {
         size_t new_cap = pl->capacity * 2;
         FT_Posting *buf = realloc(pl->postings, new_cap * sizeof(FT_Posting));
@@ -804,8 +763,6 @@ static void ft_remove_doc_from_posting_list(FT_PostingList *pl, size_t doc_id) {
     }
 }
 
-/* BlockMax WAND Precomputation */
-
 static void ft_invalidate_block_maxes(FT_PostingList *pl) {
     free(pl->bmax.block_maxes);
     pl->bmax.block_maxes = NULL;
@@ -820,7 +777,6 @@ static void ft_build_block_maxes(FT_PostingList *pl, size_t block_size,
                                   const GV_FTIndex *idx) {
     if (!pl || pl->count == 0 || block_size == 0) return;
 
-    /* Free old */
     free(pl->bmax.block_maxes);
     size_t nblocks = (pl->count + block_size - 1) / block_size;
     pl->bmax.block_maxes = malloc(nblocks * sizeof(float));
@@ -852,8 +808,6 @@ static void ft_build_block_maxes(FT_PostingList *pl, size_t block_size,
     }
 }
 
-/* BM25 Scoring */
-
 static float ft_compute_idf(size_t total_docs, size_t doc_freq) {
     double N = (double)total_docs;
     double df = (double)doc_freq;
@@ -872,8 +826,6 @@ static float ft_compute_bm25_term(size_t term_freq, size_t doc_length,
     return (float)(idf * tf_comp);
 }
 
-/* Index Lifecycle */
-
 GV_FTIndex *gv_ft_create(const GV_FTConfig *config) {
     GV_FTIndex *idx = calloc(1, sizeof(GV_FTIndex));
     if (!idx) return NULL;
@@ -891,7 +843,6 @@ GV_FTIndex *gv_ft_create(const GV_FTConfig *config) {
 void gv_ft_destroy(GV_FTIndex *idx) {
     if (!idx) return;
 
-    /* Free posting lists */
     for (size_t i = 0; i < FT_TERM_HASH_BUCKETS; i++) {
         FT_PostingList *pl = idx->term_buckets[i];
         while (pl) {
@@ -907,7 +858,6 @@ void gv_ft_destroy(GV_FTIndex *idx) {
         }
     }
 
-    /* Free document info */
     for (size_t i = 0; i < FT_DOC_HASH_BUCKETS; i++) {
         FT_DocInfo *di = idx->doc_buckets[i];
         while (di) {
@@ -920,8 +870,6 @@ void gv_ft_destroy(GV_FTIndex *idx) {
     pthread_rwlock_destroy(&idx->rwlock);
     free(idx);
 }
-
-/* Indexing Operations */
 
 int gv_ft_add_document(GV_FTIndex *idx, size_t doc_id, const char *text) {
     if (!idx || !text) return -1;
@@ -940,12 +888,10 @@ int gv_ft_add_document(GV_FTIndex *idx, size_t doc_id, const char *text) {
         return -1;
     }
 
-    /* Update document length */
     idx->total_doc_length -= di->doc_length;
     di->doc_length = tokens.count;
     idx->total_doc_length += di->doc_length;
 
-    /* Insert each token into the inverted index */
     int store_pos = idx->config.enable_phrase_match;
     for (size_t i = 0; i < tokens.count; i++) {
         FT_PostingList *pl = ft_get_or_create_posting_list(idx, tokens.tokens[i].text);
@@ -965,7 +911,6 @@ int gv_ft_remove_document(GV_FTIndex *idx, size_t doc_id) {
 
     pthread_rwlock_wrlock(&idx->rwlock);
 
-    /* Remove document info */
     size_t bucket = ft_hash_size(doc_id) % FT_DOC_HASH_BUCKETS;
     FT_DocInfo **pp = &idx->doc_buckets[bucket];
     FT_DocInfo *di = NULL;
@@ -987,7 +932,6 @@ int gv_ft_remove_document(GV_FTIndex *idx, size_t doc_id) {
     idx->total_documents--;
     free(di);
 
-    /* Remove from all posting lists */
     for (size_t i = 0; i < FT_TERM_HASH_BUCKETS; i++) {
         FT_PostingList *pl = idx->term_buckets[i];
         while (pl) {
@@ -1000,8 +944,6 @@ int gv_ft_remove_document(GV_FTIndex *idx, size_t doc_id) {
     pthread_rwlock_unlock(&idx->rwlock);
     return 0;
 }
-
-/* Priority Queue for BlockMax WAND */
 
 /**
  * @brief Min-heap entry for top-k result collection.
@@ -1077,8 +1019,6 @@ static float ft_heap_threshold(const FT_MinHeap *h) {
     if (h->count < h->capacity) return 0.0f;
     return h->entries[0].score;
 }
-
-/* BlockMax WAND Search */
 
 /**
  * @brief Cursor over a posting list for WAND evaluation.
@@ -1158,7 +1098,6 @@ static int ft_search_blockmax_wand(const GV_FTIndex *idx, FT_TermCursor *cursors
                                     FT_MinHeap *heap) {
     size_t block_size = idx->config.block_size;
 
-    /* Ensure block maxes are computed for each posting list */
     for (size_t i = 0; i < ncursors; i++) {
         if (cursors[i].pl->bmax.block_maxes == NULL) {
             ft_build_block_maxes(cursors[i].pl, block_size,
@@ -1167,17 +1106,14 @@ static int ft_search_blockmax_wand(const GV_FTIndex *idx, FT_TermCursor *cursors
     }
 
     while (1) {
-        /* Sort cursors by current doc_id (non-exhausted first) */
         qsort(cursors, ncursors, sizeof(FT_TermCursor), ft_cursor_cmp);
 
-        /* Find the first non-exhausted cursor */
         size_t first_active = 0;
         while (first_active < ncursors && ft_cursor_exhausted(&cursors[first_active])) {
             first_active++;
         }
         if (first_active >= ncursors) break;
 
-        /* Compute upper-bound sum of block maxes for all active cursors */
         float threshold = ft_heap_threshold(heap);
         float upper_bound = 0.0f;
         for (size_t i = first_active; i < ncursors; i++) {
@@ -1186,9 +1122,7 @@ static int ft_search_blockmax_wand(const GV_FTIndex *idx, FT_TermCursor *cursors
             }
         }
 
-        /* If the combined upper bound cannot beat the threshold, try to skip */
         if (upper_bound <= threshold && heap->count >= limit) {
-            /* Advance all cursors: skip blocks that cannot contribute */
             int any_advanced = 0;
             for (size_t i = first_active; i < ncursors; i++) {
                 if (!ft_cursor_exhausted(&cursors[i])) {
@@ -1201,10 +1135,8 @@ static int ft_search_blockmax_wand(const GV_FTIndex *idx, FT_TermCursor *cursors
             continue;
         }
 
-        /* Pivot: find the smallest doc_id that all cursors can reach */
         size_t pivot_doc = ft_cursor_doc_id(&cursors[first_active]);
 
-        /* Accumulate WAND-style: find prefix whose upper bound exceeds threshold */
         float prefix_ub = 0.0f;
         size_t pivot_idx = first_active;
         for (size_t i = first_active; i < ncursors; i++) {
@@ -1215,26 +1147,22 @@ static int ft_search_blockmax_wand(const GV_FTIndex *idx, FT_TermCursor *cursors
         }
 
         if (prefix_ub <= threshold && heap->count >= limit) {
-            /* Cannot beat threshold; advance first cursor */
             if (!ft_cursor_exhausted(&cursors[first_active])) {
                 cursors[first_active].cursor++;
             }
             continue;
         }
 
-        /* Get pivot document */
         if (!ft_cursor_exhausted(&cursors[pivot_idx])) {
             pivot_doc = ft_cursor_doc_id(&cursors[pivot_idx]);
         }
 
-        /* Advance all cursors to pivot_doc */
         for (size_t i = first_active; i < ncursors; i++) {
             if (!ft_cursor_exhausted(&cursors[i])) {
                 ft_cursor_advance_to(&cursors[i], pivot_doc);
             }
         }
 
-        /* Score the pivot document: sum BM25 contributions from all matching cursors */
         float doc_score = 0.0f;
         int any_match = 0;
         FT_DocInfo *di = ft_find_doc_info(idx, pivot_doc);
@@ -1256,7 +1184,6 @@ static int ft_search_blockmax_wand(const GV_FTIndex *idx, FT_TermCursor *cursors
             ft_heap_push(heap, pivot_doc, doc_score);
         }
 
-        /* Advance cursors that were at pivot_doc */
         for (size_t i = first_active; i < ncursors; i++) {
             if (!ft_cursor_exhausted(&cursors[i]) &&
                 ft_cursor_doc_id(&cursors[i]) == pivot_doc) {
@@ -1267,8 +1194,6 @@ static int ft_search_blockmax_wand(const GV_FTIndex *idx, FT_TermCursor *cursors
 
     return 0;
 }
-
-/* Naive Search (fallback when BlockMax WAND disabled) */
 
 typedef struct {
     size_t doc_id;
@@ -1285,7 +1210,6 @@ static int ft_docscore_cmp_desc(const void *a, const void *b) {
 
 static int ft_search_naive(const GV_FTIndex *idx, const FT_TokenList *query_tokens,
                             size_t limit, FT_MinHeap *heap) {
-    /* Collect unique query terms */
     const char *unique_terms[256];
     size_t unique_count = 0;
     for (size_t i = 0; i < query_tokens->count && unique_count < 256; i++) {
@@ -1298,7 +1222,6 @@ static int ft_search_naive(const GV_FTIndex *idx, const FT_TokenList *query_toke
         if (!found) unique_terms[unique_count++] = query_tokens->tokens[i].text;
     }
 
-    /* Accumulate scores */
     size_t score_cap = 256;
     FT_DocScore *scores = calloc(score_cap, sizeof(FT_DocScore));
     if (!scores) return -1;
@@ -1319,7 +1242,6 @@ static int ft_search_naive(const GV_FTIndex *idx, const FT_TokenList *query_toke
                                              idx->total_doc_length,
                                              pl->count);
 
-            /* Find or insert doc in scores array */
             int found = 0;
             for (size_t k = 0; k < score_count; k++) {
                 if (scores[k].doc_id == doc_id) {
@@ -1342,7 +1264,6 @@ static int ft_search_naive(const GV_FTIndex *idx, const FT_TokenList *query_toke
         }
     }
 
-    /* Push to heap */
     for (size_t i = 0; i < score_count; i++) {
         if (scores[i].score > 0.0f) {
             ft_heap_push(heap, scores[i].doc_id, scores[i].score);
@@ -1352,8 +1273,6 @@ static int ft_search_naive(const GV_FTIndex *idx, const FT_TokenList *query_toke
     free(scores);
     return 0;
 }
-
-/* Search Operations */
 
 int gv_ft_search(const GV_FTIndex *idx, const char *query, size_t limit,
                  GV_FTResult *results) {
@@ -1385,7 +1304,6 @@ int gv_ft_search(const GV_FTIndex *idx, const char *query, size_t limit,
     }
 
     if (idx->config.use_blockmax_wand) {
-        /* Collect unique query terms and build cursors */
         const char *unique_terms[256];
         size_t unique_count = 0;
         for (size_t i = 0; i < tokens.count && unique_count < 256; i++) {
@@ -1398,7 +1316,6 @@ int gv_ft_search(const GV_FTIndex *idx, const char *query, size_t limit,
             if (!found) unique_terms[unique_count++] = tokens.tokens[i].text;
         }
 
-        /* Build cursors for terms that exist in index */
         FT_TermCursor *cursors = calloc(unique_count, sizeof(FT_TermCursor));
         size_t ncursors = 0;
         if (cursors) {
@@ -1421,14 +1338,11 @@ int gv_ft_search(const GV_FTIndex *idx, const char *query, size_t limit,
         ft_search_naive(idx, &tokens, limit, &heap);
     }
 
-    /* Extract results from heap (sorted by score descending) */
     int count = (int)heap.count;
 
-    /* Heap is a min-heap; extract into results in descending order */
     FT_HeapEntry *sorted = malloc(heap.count * sizeof(FT_HeapEntry));
     if (sorted) {
         memcpy(sorted, heap.entries, heap.count * sizeof(FT_HeapEntry));
-        /* Sort descending */
         for (size_t i = 0; i < (size_t)count; i++) {
             for (size_t j = i + 1; j < (size_t)count; j++) {
                 if (sorted[j].score > sorted[i].score) {
@@ -1446,7 +1360,6 @@ int gv_ft_search(const GV_FTIndex *idx, const char *query, size_t limit,
         }
         free(sorted);
     } else {
-        /* Fallback: unsorted */
         for (int i = 0; i < count; i++) {
             results[i].doc_id = heap.entries[i].doc_id;
             results[i].score = heap.entries[i].score;
@@ -1461,8 +1374,6 @@ int gv_ft_search(const GV_FTIndex *idx, const char *query, size_t limit,
     return count;
 }
 
-/* Phrase Search */
-
 /**
  * Check if a document contains all phrase terms at consecutive positions.
  * Returns 1 if phrase match found, 0 otherwise.
@@ -1473,7 +1384,6 @@ static int ft_check_phrase(const GV_FTIndex *idx, size_t doc_id,
                             size_t **match_positions_out, size_t *match_count_out) {
     if (nterms == 0) return 0;
 
-    /* Find posting for each term in this document */
     FT_Posting *postings[256];
     if (nterms > 256) return 0;
 
@@ -1490,7 +1400,6 @@ static int ft_check_phrase(const GV_FTIndex *idx, size_t doc_id,
         if (!postings[i] || postings[i]->pos.count == 0) return 0;
     }
 
-    /* For each starting position of the first term, check consecutive positions */
     size_t *match_starts = NULL;
     size_t match_cap = 0;
     size_t match_cnt = 0;
@@ -1553,7 +1462,6 @@ int gv_ft_search_phrase(const GV_FTIndex *idx, const char *phrase, size_t limit,
         return 0;
     }
 
-    /* Collect ordered unique terms (preserving phrase order) */
     const char *terms[256];
     size_t nterms = 0;
     for (size_t i = 0; i < tokens.count && nterms < 256; i++) {
@@ -1568,13 +1476,11 @@ int gv_ft_search_phrase(const GV_FTIndex *idx, const char *phrase, size_t limit,
         return 0;
     }
 
-    /* Find candidate documents: those containing the rarest phrase term */
     FT_PostingList *rarest = NULL;
     size_t rarest_count = (size_t)-1;
     for (size_t i = 0; i < nterms; i++) {
         FT_PostingList *pl = ft_find_posting_list(idx, terms[i]);
         if (!pl || pl->count == 0) {
-            /* Term not in index; no results possible */
             pthread_rwlock_unlock((pthread_rwlock_t *)&idx->rwlock);
             ft_token_list_free(&tokens);
             return 0;
@@ -1585,7 +1491,6 @@ int gv_ft_search_phrase(const GV_FTIndex *idx, const char *phrase, size_t limit,
         }
     }
 
-    /* Check each candidate for phrase match */
     size_t result_count = 0;
     FT_DocScore *candidates = malloc(rarest_count * sizeof(FT_DocScore));
     if (!candidates) {
@@ -1601,7 +1506,6 @@ int gv_ft_search_phrase(const GV_FTIndex *idx, const char *phrase, size_t limit,
         size_t match_cnt = 0;
 
         if (ft_check_phrase(idx, doc_id, terms, nterms, &match_pos, &match_cnt)) {
-            /* Compute BM25 score for the phrase terms */
             float score = 0.0f;
             FT_DocInfo *di = ft_find_doc_info(idx, doc_id);
             for (size_t t = 0; t < nterms; t++) {
@@ -1625,7 +1529,6 @@ int gv_ft_search_phrase(const GV_FTIndex *idx, const char *phrase, size_t limit,
                 cand_count++;
             }
 
-            /* Store result if within limit (we will sort afterwards) */
             if (result_count < limit) {
                 results[result_count].doc_id = doc_id;
                 results[result_count].score = score;
@@ -1638,9 +1541,7 @@ int gv_ft_search_phrase(const GV_FTIndex *idx, const char *phrase, size_t limit,
         }
     }
 
-    /* Sort results by score descending */
     if (result_count > 1) {
-        /* Simple insertion sort for small result sets */
         for (size_t i = 1; i < result_count; i++) {
             GV_FTResult key = results[i];
             size_t j = i;
@@ -1658,8 +1559,6 @@ int gv_ft_search_phrase(const GV_FTIndex *idx, const char *phrase, size_t limit,
     return (int)result_count;
 }
 
-/* Result Cleanup */
-
 void gv_ft_free_results(GV_FTResult *results, size_t count) {
     if (!results) return;
     for (size_t i = 0; i < count; i++) {
@@ -1669,8 +1568,6 @@ void gv_ft_free_results(GV_FTResult *results, size_t count) {
     }
 }
 
-/* Index Information */
-
 size_t gv_ft_doc_count(const GV_FTIndex *idx) {
     if (!idx) return 0;
     pthread_rwlock_rdlock((pthread_rwlock_t *)&idx->rwlock);
@@ -1678,8 +1575,6 @@ size_t gv_ft_doc_count(const GV_FTIndex *idx) {
     pthread_rwlock_unlock((pthread_rwlock_t *)&idx->rwlock);
     return count;
 }
-
-/* Persistence */
 
 int gv_ft_save(const GV_FTIndex *idx, const char *path) {
     if (!idx || !path) return -1;
@@ -1689,11 +1584,9 @@ int gv_ft_save(const GV_FTIndex *idx, const char *path) {
 
     pthread_rwlock_rdlock((pthread_rwlock_t *)&idx->rwlock);
 
-    /* Magic header */
     const char magic[] = "GV_FT01";
     fwrite(magic, 1, 7, fp);
 
-    /* Config */
     uint32_t lang = (uint32_t)idx->config.language;
     uint32_t flags = 0;
     if (idx->config.enable_stemming)    flags |= 0x01;
@@ -1704,7 +1597,6 @@ int gv_ft_save(const GV_FTIndex *idx, const char *path) {
     uint64_t bs = (uint64_t)idx->config.block_size;
     fwrite(&bs, sizeof(bs), 1, fp);
 
-    /* Stats */
     uint64_t td = (uint64_t)idx->total_documents;
     uint64_t tt = (uint64_t)idx->total_terms;
     uint64_t tl = (uint64_t)idx->total_doc_length;
@@ -1712,7 +1604,6 @@ int gv_ft_save(const GV_FTIndex *idx, const char *path) {
     fwrite(&tt, sizeof(tt), 1, fp);
     fwrite(&tl, sizeof(tl), 1, fp);
 
-    /* Document info */
     for (size_t i = 0; i < FT_DOC_HASH_BUCKETS; i++) {
         FT_DocInfo *di = idx->doc_buckets[i];
         while (di) {
@@ -1723,11 +1614,9 @@ int gv_ft_save(const GV_FTIndex *idx, const char *path) {
             di = di->next;
         }
     }
-    /* Sentinel */
     uint64_t sentinel = UINT64_MAX;
     fwrite(&sentinel, sizeof(sentinel), 1, fp);
 
-    /* Posting lists */
     for (size_t i = 0; i < FT_TERM_HASH_BUCKETS; i++) {
         FT_PostingList *pl = idx->term_buckets[i];
         while (pl) {
@@ -1745,7 +1634,6 @@ int gv_ft_save(const GV_FTIndex *idx, const char *path) {
                 fwrite(&did, sizeof(did), 1, fp);
                 fwrite(&tf, sizeof(tf), 1, fp);
 
-                /* Positions */
                 uint64_t pcnt = (uint64_t)p->pos.count;
                 fwrite(&pcnt, sizeof(pcnt), 1, fp);
                 for (size_t k = 0; k < p->pos.count; k++) {
@@ -1756,7 +1644,6 @@ int gv_ft_save(const GV_FTIndex *idx, const char *path) {
             pl = pl->next;
         }
     }
-    /* Sentinel for end of posting lists */
     uint32_t zero = 0;
     fwrite(&zero, sizeof(zero), 1, fp);
 
@@ -1771,14 +1658,12 @@ GV_FTIndex *gv_ft_load(const char *path) {
     FILE *fp = fopen(path, "rb");
     if (!fp) return NULL;
 
-    /* Verify magic */
     char magic[7];
     if (fread(magic, 1, 7, fp) != 7 || memcmp(magic, "GV_FT01", 7) != 0) {
         fclose(fp);
         return NULL;
     }
 
-    /* Read config */
     uint32_t lang, flags;
     uint64_t bs;
     if (fread(&lang, sizeof(lang), 1, fp) != 1 ||
@@ -1799,7 +1684,6 @@ GV_FTIndex *gv_ft_load(const char *path) {
     GV_FTIndex *idx = gv_ft_create(&config);
     if (!idx) { fclose(fp); return NULL; }
 
-    /* Read stats */
     uint64_t td, tt, tl;
     if (fread(&td, sizeof(td), 1, fp) != 1 ||
         fread(&tt, sizeof(tt), 1, fp) != 1 ||
@@ -1809,7 +1693,6 @@ GV_FTIndex *gv_ft_load(const char *path) {
         return NULL;
     }
 
-    /* Read document info */
     while (1) {
         uint64_t did;
         if (fread(&did, sizeof(did), 1, fp) != 1) break;
@@ -1825,7 +1708,6 @@ GV_FTIndex *gv_ft_load(const char *path) {
     }
     idx->total_doc_length = (size_t)tl;
 
-    /* Read posting lists */
     while (1) {
         uint32_t term_len;
         if (fread(&term_len, sizeof(term_len), 1, fp) != 1) break;
@@ -1843,7 +1725,6 @@ GV_FTIndex *gv_ft_load(const char *path) {
         free(term);
         if (!pl) break;
 
-        /* Ensure capacity */
         if ((size_t)pcount > pl->capacity) {
             FT_Posting *buf = realloc(pl->postings, (size_t)pcount * sizeof(FT_Posting));
             if (!buf) break;

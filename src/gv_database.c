@@ -11,8 +11,6 @@
 
 #include "gigavector/gv_types.h"
 
-// Helper function to create metadata
-
 #include "gigavector/gv_database.h"
 #include "gigavector/gv_distance.h"
 #include "gigavector/gv_exact_search.h"
@@ -35,7 +33,6 @@
 #include <math.h>
 #include <sys/time.h>
 
-/* Forward declarations for resource limits */
 static size_t gv_db_estimate_vector_memory(size_t dimension);
 static void gv_db_update_memory_usage(GV_Database *db);
 static int gv_db_check_resource_limits(GV_Database *db, size_t additional_vectors, size_t additional_memory);
@@ -1661,7 +1658,7 @@ int gv_db_add_vector(GV_Database *db, const float *data, size_t dimension) {
 
     size_t vector_memory = gv_db_estimate_vector_memory(dimension);
     if (gv_db_check_resource_limits(db, 1, vector_memory) != 0) {
-        return -1; /* Resource limit exceeded */
+        return -1;
     }
 
     gv_db_increment_concurrent_ops(db);
@@ -1678,7 +1675,7 @@ int gv_db_add_vector(GV_Database *db, const float *data, size_t dimension) {
     }
 
     pthread_rwlock_wrlock(&db->rwlock);
-    
+
     int status = -1;
     if (db->index_type == GV_INDEX_TYPE_KDTREE) {
         if (db->soa_storage == NULL) {
@@ -1821,7 +1818,7 @@ int gv_db_add_vector_with_metadata(GV_Database *db, const float *data, size_t di
 
     size_t vector_memory = gv_db_estimate_vector_memory(dimension);
     if (gv_db_check_resource_limits(db, 1, vector_memory) != 0) {
-        return -1; /* Resource limit exceeded */
+        return -1;
     }
 
     gv_db_increment_concurrent_ops(db);
@@ -2271,7 +2268,6 @@ int gv_db_add_vectors(GV_Database *db, const float *data, size_t count, size_t d
         return -1;
     }
 
-    /* HNSW fast path: bulk insert with single lock */
     if (db->index_type == GV_INDEX_TYPE_HNSW && db->hnsw_index != NULL &&
         db->wal == NULL && !db->cosine_normalized) {
         pthread_rwlock_wrlock(&db->rwlock);
@@ -2324,7 +2320,6 @@ int gv_db_save(const GV_Database *db, const char *filepath) {
         return -1;
     }
 
-    /* Serialize writers while saving */
     pthread_rwlock_rdlock((pthread_rwlock_t *)&db->rwlock);
     const char *out_path = filepath != NULL ? filepath : db->filepath;
     if (out_path == NULL) {
@@ -2374,7 +2369,6 @@ int gv_db_save(const GV_Database *db, const char *filepath) {
         }
     }
 
-    /* Append checksum (version >=3) */
     if (fclose(out) != 0) {
         status = -1;
     }
@@ -2408,7 +2402,6 @@ int gv_db_save(const GV_Database *db, const char *filepath) {
         pthread_mutex_lock((pthread_mutex_t *)&db->wal_mutex);
         int truncate_status = gv_wal_truncate(db->wal);
         if (truncate_status == 0) {
-            /* Reset WAL record count after successful truncation */
             ((GV_Database *)db)->total_wal_records = 0;
         }
         pthread_mutex_unlock((pthread_mutex_t *)&db->wal_mutex);
@@ -2429,7 +2422,6 @@ int gv_db_search(const GV_Database *db, const float *query_data, size_t k,
 
     uint64_t start_time_us = gv_db_get_time_us();
 
-    /* ensure result fields start clean */
     memset(results, 0, k * sizeof(GV_SearchResult));
 
     pthread_rwlock_rdlock((pthread_rwlock_t *)&db->rwlock);
@@ -2506,7 +2498,6 @@ int gv_db_search(const GV_Database *db, const float *query_data, size_t k,
             return -1;
         }
         r = gv_kdtree_knn_search(db->root, db->soa_storage, &query_vec, k, results, distance_type);
-        /* Note: KD-tree search now copies vectors internally, so results are valid after return */
     } else if (db->index_type == GV_INDEX_TYPE_HNSW) {
         r = gv_hnsw_search(db->hnsw_index, &query_vec, k, results, distance_type, NULL, NULL);
     } else if (db->index_type == GV_INDEX_TYPE_IVFPQ) {
@@ -2601,7 +2592,6 @@ int gv_db_search_batch(const GV_Database *db, const float *queries, size_t qcoun
             pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
             return -1;
         }
-        /* If fewer than k, remaining results are unspecified; caller can check r. */
     }
 
     pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
@@ -3153,14 +3143,13 @@ int gv_db_update_vector(GV_Database *db, size_t vector_index, const float *new_d
         status = gv_lsh_update(db->hnsw_index, vector_index, new_data, dimension);
     } else if (db->index_type == GV_INDEX_TYPE_SPARSE) {
         pthread_rwlock_unlock(&db->rwlock);
-        return -1; /* Sparse vectors require special handling - use gv_db_update_sparse_vector */
+        return -1;
     } else {
         pthread_rwlock_unlock(&db->rwlock);
         return -1;
     }
 
     if (status == 0 && db->wal != NULL) {
-        /* Write update record to WAL with empty metadata (data-only update) */
         if (gv_wal_append_update(db->wal, vector_index, new_data, dimension, NULL, NULL, 0) != 0) {
             pthread_rwlock_unlock(&db->rwlock);
             return -1;
@@ -3265,26 +3254,90 @@ int gv_db_update_vector_metadata(GV_Database *db, size_t vector_index,
             free(old_metadata_copy);
             old_metadata_copy = next;
         }
-    } else if (db->index_type == GV_INDEX_TYPE_HNSW) {
-        if (db->hnsw_index == NULL) {
+    } else if (db->index_type == GV_INDEX_TYPE_HNSW ||
+               db->index_type == GV_INDEX_TYPE_IVFPQ ||
+               db->index_type == GV_INDEX_TYPE_FLAT ||
+               db->index_type == GV_INDEX_TYPE_LSH) {
+        /* All these index types use SoA storage for metadata */
+        if (db->soa_storage == NULL || vector_index >= db->soa_storage->count) {
             pthread_rwlock_unlock(&db->rwlock);
             return -1;
         }
-        /* For HNSW, we need to get the vector and update its metadata */
-        /* This is a simplified approach - in practice, HNSW should also use SoA */
-        pthread_rwlock_unlock(&db->rwlock);
-        return -1; /* Not fully implemented for HNSW without SoA */
-    } else if (db->index_type == GV_INDEX_TYPE_IVFPQ) {
-        if (db->hnsw_index == NULL) {
+        if (gv_soa_storage_is_deleted(db->soa_storage, vector_index) == 1) {
             pthread_rwlock_unlock(&db->rwlock);
             return -1;
         }
-        /* Similar to HNSW - would need vector access */
-        pthread_rwlock_unlock(&db->rwlock);
-        return -1; /* Not fully implemented for IVFPQ */
+        vector_data = gv_soa_storage_get_data(db->soa_storage, vector_index);
+        if (vector_data == NULL) {
+            pthread_rwlock_unlock(&db->rwlock);
+            return -1;
+        }
+
+        GV_Vector temp_vec;
+        temp_vec.dimension = db->dimension;
+        temp_vec.data = NULL;
+        temp_vec.metadata = NULL;
+
+        for (size_t i = 0; i < metadata_count; ++i) {
+            if (metadata_keys[i] != NULL && metadata_values[i] != NULL) {
+                if (gv_vector_set_metadata(&temp_vec, metadata_keys[i], metadata_values[i]) != 0) {
+                    gv_vector_clear_metadata(&temp_vec);
+                    pthread_rwlock_unlock(&db->rwlock);
+                    return -1;
+                }
+            }
+        }
+
+        GV_Metadata *old_metadata = gv_soa_storage_get_metadata(db->soa_storage, vector_index);
+        GV_Metadata *old_metadata_copy = NULL;
+        if (old_metadata != NULL && db->metadata_index != NULL) {
+            GV_Metadata *current = old_metadata;
+            GV_Metadata *prev = NULL;
+            while (current != NULL) {
+                GV_Metadata *copy = (GV_Metadata *)malloc(sizeof(GV_Metadata));
+                if (copy == NULL) {
+                    while (old_metadata_copy != NULL) {
+                        GV_Metadata *next = old_metadata_copy->next;
+                        free(old_metadata_copy->key);
+                        free(old_metadata_copy->value);
+                        free(old_metadata_copy);
+                        old_metadata_copy = next;
+                    }
+                    gv_vector_clear_metadata(&temp_vec);
+                    pthread_rwlock_unlock(&db->rwlock);
+                    return -1;
+                }
+                copy->key = current->key ? strdup(current->key) : NULL;
+                copy->value = current->value ? strdup(current->value) : NULL;
+                copy->next = NULL;
+                if (prev == NULL) {
+                    old_metadata_copy = copy;
+                } else {
+                    prev->next = copy;
+                }
+                prev = copy;
+                current = current->next;
+            }
+        }
+
+        status = gv_soa_storage_update_metadata(db->soa_storage, vector_index, temp_vec.metadata);
+        temp_vec.metadata = NULL;
+
+        if (status == 0 && db->metadata_index != NULL) {
+            gv_metadata_index_update(db->metadata_index, vector_index, old_metadata_copy, temp_vec.metadata);
+        }
+
+        while (old_metadata_copy != NULL) {
+            GV_Metadata *next = old_metadata_copy->next;
+            free(old_metadata_copy->key);
+            free(old_metadata_copy->value);
+            free(old_metadata_copy);
+            old_metadata_copy = next;
+        }
     } else if (db->index_type == GV_INDEX_TYPE_SPARSE) {
+        /* Sparse index doesn't use SoA storage — metadata not supported */
         pthread_rwlock_unlock(&db->rwlock);
-        return -1; /* Sparse vectors require special handling */
+        return -1;
     } else {
         pthread_rwlock_unlock(&db->rwlock);
         return -1;
@@ -3319,7 +3372,6 @@ static int gv_db_compact_soa_storage(GV_Database *db) {
     GV_SoAStorage *storage = db->soa_storage;
     size_t dimension = storage->dimension;
     
-    /* Count deleted vectors */
     size_t deleted_count = 0;
     for (size_t i = 0; i < storage->count; ++i) {
         if (storage->deleted[i] != 0) {
@@ -3343,7 +3395,6 @@ static int gv_db_compact_soa_storage(GV_Database *db) {
         return -1;
     }
 
-    /* Build mapping from old index to new index */
     size_t *index_map = (size_t *)malloc(storage->count * sizeof(size_t));
     if (index_map == NULL) {
         free(new_data);
@@ -3355,7 +3406,6 @@ static int gv_db_compact_soa_storage(GV_Database *db) {
     size_t new_idx = 0;
     for (size_t old_idx = 0; old_idx < storage->count; ++old_idx) {
         if (storage->deleted[old_idx] == 0) {
-            /* Copy vector data */
             memcpy(new_data + (new_idx * dimension),
                    storage->data + (old_idx * dimension),
                    dimension * sizeof(float));
@@ -3387,9 +3437,7 @@ static int gv_db_compact_soa_storage(GV_Database *db) {
     storage->count = new_count;
     storage->capacity = new_count; /* Shrink to fit */
 
-    /* Rebuild indexes with new indices */
     if (db->index_type == GV_INDEX_TYPE_KDTREE) {
-        /* Rebuild KD-tree */
         GV_KDNode *old_root = db->root;
         db->root = NULL;
         for (size_t i = 0; i < new_count; ++i) {
@@ -3397,7 +3445,6 @@ static int gv_db_compact_soa_storage(GV_Database *db) {
         }
         gv_kdtree_destroy_recursive(old_root);
     } else if (db->index_type == GV_INDEX_TYPE_HNSW) {
-        /* Full HNSW rebuild: destroy old index and rebuild from compacted storage */
         if (db->hnsw_index != NULL) {
             /* Forward declaration for accessing HNSW index internals */
             typedef struct {
@@ -3418,7 +3465,6 @@ static int gv_db_compact_soa_storage(GV_Database *db) {
                 int soa_storage_owned;
             } GV_HNSWIndex_Internal;
             
-            /* Extract config from existing index before destroying */
             GV_HNSWIndex_Internal *old_index = (GV_HNSWIndex_Internal *)db->hnsw_index;
             GV_HNSWConfig config = {
                 .M = old_index->M,
@@ -3431,17 +3477,14 @@ static int gv_db_compact_soa_storage(GV_Database *db) {
                 .acorn_hops = old_index->acorn_hops
             };
             
-            /* Destroy old index (but SoA storage is shared, so it won't be destroyed) */
             gv_hnsw_destroy(db->hnsw_index);
             db->hnsw_index = NULL;
             
-            /* Create new HNSW index with same config and existing SoA storage */
             db->hnsw_index = gv_hnsw_create(dimension, &config, storage);
             if (db->hnsw_index == NULL) {
                 return -1; /* Failed to create new index */
             }
             
-            /* Re-insert all vectors from compacted storage */
             for (size_t i = 0; i < new_count; ++i) {
                 GV_Vector temp_vec = {
                     .dimension = dimension,
@@ -3449,7 +3492,6 @@ static int gv_db_compact_soa_storage(GV_Database *db) {
                     .metadata = storage->metadata[i]
                 };
                 
-                /* Insert vector (metadata ownership transferred) */
                 if (gv_hnsw_insert(db->hnsw_index, &temp_vec) != 0) {
                     /* On failure, clean up */
                     gv_hnsw_destroy(db->hnsw_index);
@@ -3457,14 +3499,12 @@ static int gv_db_compact_soa_storage(GV_Database *db) {
                     return -1;
                 }
                 
-                /* Clear metadata pointer since ownership was transferred */
                 temp_vec.metadata = NULL;
             }
         }
     }
 
     if (db->metadata_index != NULL) {
-        /* Rebuild metadata index with new indices */
         GV_MetadataIndex *old_index = db->metadata_index;
         db->metadata_index = gv_metadata_index_create();
         if (db->metadata_index != NULL) {
@@ -3486,9 +3526,6 @@ static int gv_db_compact_soa_storage(GV_Database *db) {
     return 0;
 }
 
-/**
- * @brief Compact WAL if it exceeds threshold.
- */
 static int gv_db_compact_wal(GV_Database *db) {
     if (db == NULL || db->wal == NULL || db->filepath == NULL) {
         return 0; /* No WAL to compact */
@@ -3511,8 +3548,6 @@ static int gv_db_compact_wal(GV_Database *db) {
         return 0; /* WAL is below threshold */
     }
 
-    /* Save database to trigger WAL truncation */
-    /* This will create a new snapshot and truncate the WAL */
     char *temp_path = (char *)malloc(strlen(db->filepath) + 10);
     if (temp_path == NULL) {
         return -1;
@@ -3521,9 +3556,7 @@ static int gv_db_compact_wal(GV_Database *db) {
 
     int save_result = gv_db_save(db, temp_path);
     if (save_result == 0) {
-        /* Replace original file */
         if (rename(temp_path, db->filepath) == 0) {
-            /* Truncate WAL */
             if (db->wal != NULL) {
                 gv_wal_truncate(db->wal);
             }
@@ -3538,9 +3571,6 @@ static int gv_db_compact_wal(GV_Database *db) {
     return 0;
 }
 
-/**
- * @brief Main compaction function.
- */
 int gv_db_compact(GV_Database *db) {
     if (db == NULL) {
         return -1;
@@ -3564,16 +3594,12 @@ int gv_db_compact(GV_Database *db) {
         }
     }
 
-    /* Compact WAL if needed */
     gv_db_compact_wal(db);
 
     pthread_rwlock_unlock(&db->rwlock);
     return 0;
 }
 
-/**
- * @brief Background compaction thread function.
- */
 static void *gv_db_compaction_thread(void *arg) {
     GV_Database *db = (GV_Database *)arg;
     if (db == NULL) {
@@ -3592,7 +3618,6 @@ static void *gv_db_compaction_thread(void *arg) {
                                                   &timeout);
 
         if (wait_result == ETIMEDOUT || wait_result == 0) {
-            /* Time to run compaction */
             gv_db_compact(db);
         }
     }
@@ -3601,9 +3626,6 @@ static void *gv_db_compaction_thread(void *arg) {
     return NULL;
 }
 
-/**
- * @brief Start background compaction thread.
- */
 int gv_db_start_background_compaction(GV_Database *db) {
     if (db == NULL) {
         return -1;
@@ -3630,9 +3652,6 @@ int gv_db_start_background_compaction(GV_Database *db) {
     return 0;
 }
 
-/**
- * @brief Stop background compaction thread.
- */
 void gv_db_stop_background_compaction(GV_Database *db) {
     if (db == NULL) {
         return;
@@ -3649,13 +3668,9 @@ void gv_db_stop_background_compaction(GV_Database *db) {
     pthread_cond_signal(&db->compaction_cond);
     pthread_mutex_unlock(&db->compaction_mutex);
 
-    /* Wait for thread to finish */
     pthread_join(db->compaction_thread, NULL);
 }
 
-/**
- * @brief Set compaction interval in seconds.
- */
 void gv_db_set_compaction_interval(GV_Database *db, size_t interval_sec) {
     if (db == NULL) {
         return;
@@ -3666,9 +3681,6 @@ void gv_db_set_compaction_interval(GV_Database *db, size_t interval_sec) {
     pthread_mutex_unlock(&db->compaction_mutex);
 }
 
-/**
- * @brief Set WAL compaction threshold in bytes.
- */
 void gv_db_set_wal_compaction_threshold(GV_Database *db, size_t threshold_bytes) {
     if (db == NULL) {
         return;
@@ -3676,9 +3688,6 @@ void gv_db_set_wal_compaction_threshold(GV_Database *db, size_t threshold_bytes)
     db->wal_compaction_threshold = threshold_bytes;
 }
 
-/**
- * @brief Set deleted vector ratio threshold for triggering compaction.
- */
 void gv_db_set_deleted_ratio_threshold(GV_Database *db, double ratio) {
     if (db == NULL) {
         return;
@@ -3692,24 +3701,13 @@ void gv_db_set_deleted_ratio_threshold(GV_Database *db, double ratio) {
     db->deleted_ratio_threshold = ratio;
 }
 
-/* Resource limits implementation */
-
-/**
- * @brief Estimate memory usage for a vector.
- */
 static size_t gv_db_estimate_vector_memory(size_t dimension) {
-    /* Vector data: dimension * sizeof(float) */
     size_t data_size = dimension * sizeof(float);
-    /* Metadata overhead: assume average 64 bytes per vector */
-    size_t metadata_overhead = 64;
-    /* SoA storage overhead: deleted flag, metadata pointer */
+    size_t metadata_overhead = 64; /* average metadata bytes per vector */
     size_t storage_overhead = sizeof(int) + sizeof(void *);
     return data_size + metadata_overhead + storage_overhead;
 }
 
-/**
- * @brief Update memory usage estimate.
- */
 static void gv_db_update_memory_usage(GV_Database *db) {
     if (db == NULL) {
         return;
@@ -3719,10 +3717,8 @@ static void gv_db_update_memory_usage(GV_Database *db) {
 
     size_t total_memory = 0;
 
-    /* Base database structure */
     total_memory += sizeof(GV_Database);
 
-    /* SoA storage */
     if (db->soa_storage != NULL) {
         size_t vector_memory = gv_db_estimate_vector_memory(db->soa_storage->dimension);
         total_memory += sizeof(GV_SoAStorage);
@@ -3730,25 +3726,18 @@ static void gv_db_update_memory_usage(GV_Database *db) {
         total_memory += db->soa_storage->capacity * (sizeof(GV_Metadata *) + sizeof(int));
     }
 
-    /* Index memory (rough estimate) */
     if (db->index_type == GV_INDEX_TYPE_KDTREE) {
-        /* KD-tree: roughly 3 pointers per node */
         total_memory += db->count * (sizeof(GV_KDNode) + sizeof(size_t));
     } else if (db->index_type == GV_INDEX_TYPE_HNSW) {
-        /* HNSW: estimate based on node count and connections */
-        total_memory += db->count * (sizeof(void *) * 2); /* Rough estimate */
+        total_memory += db->count * (sizeof(void *) * 2); /* rough estimate */
     } else if (db->index_type == GV_INDEX_TYPE_IVFPQ) {
-        /* IVFPQ: estimate based on entries */
-        total_memory += db->count * (sizeof(void *) * 2); /* Rough estimate */
+        total_memory += db->count * (sizeof(void *) * 2); /* rough estimate */
     }
 
-    /* Metadata index */
     if (db->metadata_index != NULL) {
-        /* Rough estimate: 100 bytes per metadata entry */
-        total_memory += db->count * 100;
+        total_memory += db->count * 100; /* rough estimate: 100 bytes per entry */
     }
 
-    /* WAL (if exists) */
     if (db->wal != NULL && db->wal_path != NULL) {
         FILE *wal_file = fopen(db->wal_path, "rb");
         if (wal_file != NULL) {
@@ -3767,9 +3756,6 @@ static void gv_db_update_memory_usage(GV_Database *db) {
     pthread_mutex_unlock(&db->resource_mutex);
 }
 
-/**
- * @brief Check if resource limits would be exceeded.
- */
 static int gv_db_check_resource_limits(GV_Database *db, size_t additional_vectors, size_t additional_memory) {
     if (db == NULL) {
         return -1;
@@ -3780,7 +3766,7 @@ static int gv_db_check_resource_limits(GV_Database *db, size_t additional_vector
     if (db->resource_limits.max_vectors > 0) {
         if (db->count + additional_vectors > db->resource_limits.max_vectors) {
             pthread_mutex_unlock(&db->resource_mutex);
-            return -1; /* Limit exceeded */
+            return -1;
         }
     }
 
@@ -3788,14 +3774,14 @@ static int gv_db_check_resource_limits(GV_Database *db, size_t additional_vector
         size_t estimated_new_memory = db->current_memory_bytes + additional_memory;
         if (estimated_new_memory > db->resource_limits.max_memory_bytes) {
             pthread_mutex_unlock(&db->resource_mutex);
-            return -1; /* Limit exceeded */
+            return -1;
         }
     }
 
     if (db->resource_limits.max_concurrent_operations > 0) {
         if (db->current_concurrent_ops >= db->resource_limits.max_concurrent_operations) {
             pthread_mutex_unlock(&db->resource_mutex);
-            return -1; /* Limit exceeded */
+            return -1;
         }
     }
 
@@ -3803,9 +3789,6 @@ static int gv_db_check_resource_limits(GV_Database *db, size_t additional_vector
     return 0;
 }
 
-/**
- * @brief Increment concurrent operations counter.
- */
 static void gv_db_increment_concurrent_ops(GV_Database *db) {
     if (db == NULL) {
         return;
@@ -3815,9 +3798,6 @@ static void gv_db_increment_concurrent_ops(GV_Database *db) {
     pthread_mutex_unlock(&db->resource_mutex);
 }
 
-/**
- * @brief Decrement concurrent operations counter.
- */
 static void gv_db_decrement_concurrent_ops(GV_Database *db) {
     if (db == NULL) {
         return;
@@ -3829,9 +3809,6 @@ static void gv_db_decrement_concurrent_ops(GV_Database *db) {
     pthread_mutex_unlock(&db->resource_mutex);
 }
 
-/**
- * @brief Set resource limits for the database.
- */
 int gv_db_set_resource_limits(GV_Database *db, const GV_ResourceLimits *limits) {
     if (db == NULL || limits == NULL) {
         return -1;
@@ -3848,9 +3825,6 @@ int gv_db_set_resource_limits(GV_Database *db, const GV_ResourceLimits *limits) 
     return 0;
 }
 
-/**
- * @brief Get current resource limits.
- */
 void gv_db_get_resource_limits(const GV_Database *db, GV_ResourceLimits *limits) {
     if (db == NULL || limits == NULL) {
         return;
@@ -3863,9 +3837,6 @@ void gv_db_get_resource_limits(const GV_Database *db, GV_ResourceLimits *limits)
     pthread_mutex_unlock((pthread_mutex_t *)&db->resource_mutex);
 }
 
-/**
- * @brief Get current estimated memory usage in bytes.
- */
 size_t gv_db_get_memory_usage(const GV_Database *db) {
     if (db == NULL) {
         return 0;
@@ -3880,9 +3851,6 @@ size_t gv_db_get_memory_usage(const GV_Database *db) {
     return usage;
 }
 
-/**
- * @brief Get current number of concurrent operations.
- */
 size_t gv_db_get_concurrent_operations(const GV_Database *db) {
     if (db == NULL) {
         return 0;
@@ -3895,20 +3863,12 @@ size_t gv_db_get_concurrent_operations(const GV_Database *db) {
     return ops;
 }
 
-/* Observability implementation */
-
-/**
- * @brief Get current time in microseconds.
- */
 static uint64_t gv_db_get_time_us(void) {
     struct timeval tv;
     gettimeofday(&tv, NULL);
     return (uint64_t)tv.tv_sec * 1000000ULL + (uint64_t)tv.tv_usec;
 }
 
-/**
- * @brief Initialize latency histogram.
- */
 static int gv_db_init_latency_histogram(GV_LatencyHistogram *hist, size_t bucket_count) {
     if (hist == NULL || bucket_count == 0) {
         return -1;
@@ -3924,7 +3884,7 @@ static int gv_db_init_latency_histogram(GV_LatencyHistogram *hist, size_t bucket
         return -1;
     }
 
-    /* Create logarithmic buckets: 1us, 10us, 100us, 1ms, 10ms, 100ms, 1s, 10s */
+    /* Logarithmic buckets: 1us, 10us, 100us, 1ms, 10ms, 100ms, 1s, 10s */
     for (size_t i = 0; i < bucket_count; ++i) {
         hist->bucket_boundaries[i] = pow(10.0, (double)(i + 1));
     }
@@ -3934,9 +3894,6 @@ static int gv_db_init_latency_histogram(GV_LatencyHistogram *hist, size_t bucket
     return 0;
 }
 
-/**
- * @brief Add sample to latency histogram.
- */
 static void gv_db_add_latency_sample(GV_LatencyHistogram *hist, uint64_t latency_us) {
     if (hist == NULL || hist->buckets == NULL) {
         return;
@@ -3945,26 +3902,17 @@ static void gv_db_add_latency_sample(GV_LatencyHistogram *hist, uint64_t latency
     hist->total_samples++;
     hist->sum_latency_us += latency_us;
 
-    /* Find appropriate bucket */
     for (size_t i = 0; i < hist->bucket_count; ++i) {
         if (latency_us <= (uint64_t)hist->bucket_boundaries[i]) {
             hist->buckets[i]++;
             return;
         }
     }
-    /* If exceeds all buckets, add to last bucket */
     if (hist->bucket_count > 0) {
         hist->buckets[hist->bucket_count - 1]++;
     }
 }
 
-/**
- * @brief Calculate percentile from histogram.
- */
-
-/**
- * @brief Record latency for an operation.
- */
 void gv_db_record_latency(GV_Database *db, uint64_t latency_us, int is_insert) {
     if (db == NULL) {
         return;
@@ -3982,44 +3930,34 @@ void gv_db_record_latency(GV_Database *db, uint64_t latency_us, int is_insert) {
         gv_db_add_latency_sample(&db->insert_latency_hist, latency_us);
         db->insert_count_since_update++;
         
-        /* Calculate IPS immediately for inserts */
         uint64_t now_us = gv_db_get_time_us();
         if (db->first_insert_time_us == 0) {
-            /* Track first insert time for precise calculation - set once and never reset */
+            /* Set once and never reset — needed for precise lifetime IPS */
             db->first_insert_time_us = now_us;
         }
         if (db->last_ips_update_time_us == 0) {
             db->last_ips_update_time_us = now_us;
         }
         
-        /* Always calculate IPS when we have inserts - calculate on every insert */
-        /* This ensures current_ips is always up-to-date with the actual high rate */
         if (db->insert_count_since_update > 0) {
             uint64_t elapsed_us = now_us - db->last_ips_update_time_us;
-            /* Use actual elapsed time, but ensure it's at least 100 microseconds to avoid division issues */
+            /* Clamp to 100us minimum to avoid division issues */
             uint64_t effective_elapsed_us = (elapsed_us > 100) ? elapsed_us : 100;
             double elapsed_sec = (double)effective_elapsed_us / 1000000.0;
             double calculated_ips = (double)db->insert_count_since_update / elapsed_sec;
-            /* Always update current_ips with the actual calculated rate - preserve the high rate */
-            /* This ensures we keep the precise rate even after counts reset */
             db->current_ips = calculated_ips;
         }
         
-        /* Reset insert counts if more than 1 second has elapsed */
         uint64_t elapsed_us = now_us - db->last_ips_update_time_us;
         if (elapsed_us >= 1000000) {
-            /* Preserve current_ips - it represents the last calculated high rate */
-            /* Only reset counts, preserve last_ips_update_time_us for precise fallback calculation */
-            /* CRITICAL: Never reset first_insert_time_us - it's needed for precise IPS calculation */
+            /* Reset window counts but never reset first_insert_time_us or last_ips_update_time_us —
+               they are needed for precise lifetime IPS fallback calculation. */
             db->insert_count_since_update = 0;
-            /* Don't reset last_ips_update_time_us - keep it for precise IPS calculation from total_inserts */
-            /* This allows us to calculate precise IPS using actual elapsed time */
         }
     } else {
         gv_db_add_latency_sample(&db->search_latency_hist, latency_us);
         db->query_count_since_update++;
         
-        /* Update QPS periodically for queries */
         uint64_t now_us = gv_db_get_time_us();
         if (db->last_qps_update_time_us == 0) {
             db->last_qps_update_time_us = now_us;
@@ -4035,7 +3973,6 @@ void gv_db_record_latency(GV_Database *db, uint64_t latency_us, int is_insert) {
                 }
                 db->query_count_since_update = 0;
                 db->last_qps_update_time_us = now_us;
-                /* Don't reset insert counts or IPS timestamp - they're tracked separately */
             }
         }
     }
@@ -4043,9 +3980,6 @@ void gv_db_record_latency(GV_Database *db, uint64_t latency_us, int is_insert) {
     pthread_mutex_unlock(&db->observability_mutex);
 }
 
-/**
- * @brief Record recall for a search operation.
- */
 void gv_db_record_recall(GV_Database *db, double recall) {
     if (db == NULL || recall < 0.0 || recall > 1.0) {
         return;
@@ -4073,9 +4007,6 @@ void gv_db_record_recall(GV_Database *db, double recall) {
     pthread_mutex_unlock(&db->observability_mutex);
 }
 
-/**
- * @brief Get detailed statistics for the database.
- */
 int gv_db_get_detailed_stats(const GV_Database *db, GV_DetailedStats *out) {
     if (db == NULL || out == NULL) {
         return -1;
@@ -4086,13 +4017,11 @@ int gv_db_get_detailed_stats(const GV_Database *db, GV_DetailedStats *out) {
     pthread_rwlock_rdlock((pthread_rwlock_t *)&db->rwlock);
     pthread_mutex_lock((pthread_mutex_t *)&db->observability_mutex);
 
-    /* Basic stats */
     out->basic_stats.total_inserts = db->total_inserts;
     out->basic_stats.total_queries = db->total_queries;
     out->basic_stats.total_range_queries = db->total_range_queries;
     out->basic_stats.total_wal_records = db->total_wal_records;
 
-    /* Copy latency histograms */
     GV_Database *db_nonconst = (GV_Database *)db;
     if (db_nonconst->insert_latency_hist.buckets != NULL && db_nonconst->insert_latency_hist.bucket_count > 0) {
         size_t count = db_nonconst->insert_latency_hist.bucket_count;
@@ -4124,7 +4053,6 @@ int gv_db_get_detailed_stats(const GV_Database *db, GV_DetailedStats *out) {
         }
     }
 
-    /* QPS and IPS - calculate on-demand based on current counts and elapsed time */
     uint64_t now_us = gv_db_get_time_us();
     
     if (db->last_qps_update_time_us == 0) {
@@ -4134,29 +4062,19 @@ int gv_db_get_detailed_stats(const GV_Database *db, GV_DetailedStats *out) {
         if (elapsed_us == 0) elapsed_us = 1; /* Avoid division by zero */
         double elapsed_sec = (double)elapsed_us / 1000000.0;
         
-        /* Always try to calculate from current counts first if available */
         if (db->query_count_since_update > 0 && elapsed_us < 5000000) {
-            /* Calculate instantaneous rate from current counts (within 5 seconds) */
             out->queries_per_second = (double)db->query_count_since_update / elapsed_sec;
-        } else if (elapsed_us < 2000000 && db->current_qps > 0.0) {
-            /* Within 2 seconds, use stored QPS (still recent) */
-            out->queries_per_second = db->current_qps;
         } else {
-            /* Use stored QPS (may decay to 0 if no recent operations) */
             out->queries_per_second = db->current_qps;
         }
     }
     
-    /* Calculate IPS - always use actual data for precise calculation */
-    /* This is independent of QPS, so calculate it separately */
     {
         /* Priority 1: Use first_insert_time_us if available (most accurate) */
         if (db->total_inserts > 0 && db->first_insert_time_us > 0) {
             uint64_t total_elapsed_us = now_us - db->first_insert_time_us;
             if (total_elapsed_us > 0) {
                 double total_elapsed_sec = (double)total_elapsed_us / 1000000.0;
-                /* Use actual elapsed time for precise calculation - no minimum threshold */
-                /* Even if very small, use actual time for accuracy */
                 if (total_elapsed_sec > 0.0) {
                     double precise_ips = (double)db->total_inserts / total_elapsed_sec;
                     out->inserts_per_second = precise_ips;
@@ -4188,18 +4106,15 @@ int gv_db_get_detailed_stats(const GV_Database *db, GV_DetailedStats *out) {
         else if (db->current_ips > 0.0) {
             out->inserts_per_second = db->current_ips;
         }
-        /* Priority 4: Fallback - calculate from total_inserts using last_ips_update_time_us */
-        /* This handles cases where first_insert_time_us wasn't set but last_ips_update_time_us was */
+        /* Priority 4: first_insert_time_us not set; fall back to last_ips_update_time_us */
         else if (db->total_inserts > 0 && db->last_ips_update_time_us > 0) {
             uint64_t total_elapsed_us = now_us - db->last_ips_update_time_us;
             if (total_elapsed_us > 0) {
                 double total_elapsed_sec = (double)total_elapsed_us / 1000000.0;
-                /* Use actual elapsed time for precise calculation */
                 if (total_elapsed_sec > 0.0) {
                     double precise_ips = (double)db->total_inserts / total_elapsed_sec;
                     out->inserts_per_second = precise_ips;
                     ((GV_Database *)db)->current_ips = precise_ips;
-                    /* Also set first_insert_time_us for future use if not already set */
                     if (db->first_insert_time_us == 0) {
                         ((GV_Database *)db)->first_insert_time_us = db->last_ips_update_time_us;
                     }
@@ -4212,21 +4127,15 @@ int gv_db_get_detailed_stats(const GV_Database *db, GV_DetailedStats *out) {
                 out->inserts_per_second = 0.0;
             }
         }
-        /* Priority 5: For reopened databases, if we have inserts but no timing, show 0 */
-        /* (Historical inserts can't be timed accurately after database reopen) */
+        /* Priority 5: inserts exist but no timing data (e.g. after database reopen) — rate unknowable */
         else if (db->total_inserts > 0) {
-            /* Historical inserts - cannot calculate precise rate without timing data */
-            /* Show 0.00 to indicate no recent insert activity */
             out->inserts_per_second = 0.0;
-        }
-        /* No data available */
-        else {
+        } else {
             out->inserts_per_second = 0.0;
         }
     }
     out->last_qps_update_time = db->last_qps_update_time_us;
 
-    /* Memory breakdown */
     gv_db_update_memory_usage((GV_Database *)db);
     out->memory.total_bytes = db->current_memory_bytes;
     
@@ -4238,13 +4147,13 @@ int gv_db_get_detailed_stats(const GV_Database *db, GV_DetailedStats *out) {
     }
 
     if (db->index_type == GV_INDEX_TYPE_KDTREE) {
-        out->memory.index_bytes = db->count * (sizeof(void *) * 3); /* Rough estimate */
+        out->memory.index_bytes = db->count * (sizeof(void *) * 3); /* rough estimate */
     } else if (db->index_type == GV_INDEX_TYPE_HNSW || db->index_type == GV_INDEX_TYPE_IVFPQ) {
-        out->memory.index_bytes = db->count * (sizeof(void *) * 2); /* Rough estimate */
+        out->memory.index_bytes = db->count * (sizeof(void *) * 2); /* rough estimate */
     }
 
     if (db->metadata_index != NULL) {
-        out->memory.metadata_index_bytes = db->count * 100; /* Rough estimate */
+        out->memory.metadata_index_bytes = db->count * 100; /* rough estimate */
     }
 
     if (db->wal_path != NULL) {
@@ -4260,13 +4169,11 @@ int gv_db_get_detailed_stats(const GV_Database *db, GV_DetailedStats *out) {
         }
     }
 
-    /* Recall metrics */
     out->recall.total_queries = db_nonconst->recall_metrics.total_queries;
     out->recall.avg_recall = db_nonconst->recall_metrics.avg_recall;
     out->recall.min_recall = db_nonconst->recall_metrics.min_recall;
     out->recall.max_recall = db_nonconst->recall_metrics.max_recall;
 
-    /* Health indicators */
     if (db->soa_storage != NULL) {
         size_t deleted_count = 0;
         for (size_t i = 0; i < db->soa_storage->count; ++i) {
@@ -4279,7 +4186,6 @@ int gv_db_get_detailed_stats(const GV_Database *db, GV_DetailedStats *out) {
             (double)deleted_count / (double)db->soa_storage->count : 0.0;
     }
 
-    /* Determine health status */
     if (out->deleted_ratio > 0.5) {
         out->health_status = -2; /* Unhealthy */
     } else if (out->deleted_ratio > 0.2) {
@@ -4294,9 +4200,6 @@ int gv_db_get_detailed_stats(const GV_Database *db, GV_DetailedStats *out) {
     return 0;
 }
 
-/**
- * @brief Free resources allocated by gv_db_get_detailed_stats().
- */
 void gv_db_free_detailed_stats(GV_DetailedStats *stats) {
     if (stats == NULL) {
         return;
@@ -4320,9 +4223,6 @@ void gv_db_free_detailed_stats(GV_DetailedStats *stats) {
     }
 }
 
-/**
- * @brief Perform health check on the database.
- */
 int gv_db_health_check(const GV_Database *db) {
     if (db == NULL) {
         return -2; /* Unhealthy */
@@ -4367,8 +4267,6 @@ int gv_db_health_check(const GV_Database *db) {
     return health;
 }
 
-/* * Upsert Operations */
-
 int gv_db_upsert(GV_Database *db, size_t vector_index, const float *data, size_t dimension) {
     if (db == NULL || data == NULL || dimension != db->dimension) {
         return -1;
@@ -4377,7 +4275,6 @@ int gv_db_upsert(GV_Database *db, size_t vector_index, const float *data, size_t
     if (vector_index < db->count) {
         return gv_db_update_vector(db, vector_index, data, dimension);
     } else if (vector_index == db->count) {
-        /* Insert new vector at end */
         return gv_db_add_vector(db, data, dimension);
     }
 
@@ -4403,7 +4300,6 @@ int gv_db_upsert_with_metadata(GV_Database *db, size_t vector_index,
         }
         return 0;
     } else if (vector_index == db->count) {
-        /* Insert with metadata using rich metadata API */
         return gv_db_add_vector_with_rich_metadata(db, data, dimension,
                                                     metadata_keys, metadata_values,
                                                     metadata_count);
@@ -4411,8 +4307,6 @@ int gv_db_upsert_with_metadata(GV_Database *db, size_t vector_index,
 
     return -1;
 }
-
-/* * Batch Delete */
 
 int gv_db_delete_vectors(GV_Database *db, const size_t *indices, size_t count) {
     if (db == NULL || indices == NULL || count == 0) {
@@ -4428,8 +4322,6 @@ int gv_db_delete_vectors(GV_Database *db, const size_t *indices, size_t count) {
     return deleted;
 }
 
-/* * Scroll / Pagination */
-
 int gv_db_scroll(const GV_Database *db, size_t offset, size_t limit,
                  GV_ScrollResult *results) {
     if (db == NULL || results == NULL || limit == 0) {
@@ -4438,7 +4330,6 @@ int gv_db_scroll(const GV_Database *db, size_t offset, size_t limit,
 
     pthread_rwlock_rdlock((pthread_rwlock_t *)&db->rwlock);
 
-    /* For index types using SoA storage (KDTREE, HNSW, FLAT, LSH) */
     if (db->soa_storage != NULL) {
         size_t found = 0;
         size_t skipped = 0;
@@ -4467,8 +4358,6 @@ int gv_db_scroll(const GV_Database *db, size_t offset, size_t limit,
     return 0;
 }
 
-/* * Search with Dynamic Parameters */
-
 /* Internal struct layouts for accessing ef_search / nprobe */
 typedef struct {
     size_t dimension;
@@ -4495,7 +4384,6 @@ int gv_db_search_with_params(const GV_Database *db, const float *query_data, siz
         return -1;
     }
 
-    /* For HNSW: temporarily override efSearch */
     if (db->index_type == GV_INDEX_TYPE_HNSW && params->ef_search > 0 && db->hnsw_index != NULL) {
         GV_HNSWIndexPartial *idx = (GV_HNSWIndexPartial *)db->hnsw_index;
         size_t saved_ef = idx->efSearch;
@@ -4505,7 +4393,6 @@ int gv_db_search_with_params(const GV_Database *db, const float *query_data, siz
         return r;
     }
 
-    /* For IVF-Flat: temporarily override nprobe */
     if (db->index_type == GV_INDEX_TYPE_IVFFLAT && params->nprobe > 0 && db->hnsw_index != NULL) {
         GV_IVFFlatIndexPartial *idx = (GV_IVFFlatIndexPartial *)db->hnsw_index;
         size_t saved_nprobe = idx->config.nprobe;
@@ -4515,7 +4402,6 @@ int gv_db_search_with_params(const GV_Database *db, const float *query_data, siz
         return r;
     }
 
-    /* For IVF-PQ: pass nprobe and rerank_top */
     if (db->index_type == GV_INDEX_TYPE_IVFPQ && db->hnsw_index != NULL) {
         memset(results, 0, k * sizeof(GV_SearchResult));
         pthread_rwlock_rdlock((pthread_rwlock_t *)&db->rwlock);
@@ -4532,11 +4418,8 @@ int gv_db_search_with_params(const GV_Database *db, const float *query_data, siz
         return r;
     }
 
-    /* Default: fall through to regular search */
     return gv_db_search(db, query_data, k, results, distance_type);
 }
-
-/* * JSON Import / Export */
 
 #include "gigavector/gv_json.h"
 
@@ -4589,7 +4472,6 @@ int gv_db_export_json(const GV_Database *db, const char *filepath) {
                 }
             }
 
-            /* Serialize and write line */
             char *line = gv_json_stringify(obj, false);
             gv_json_free(obj);
             if (line) {
@@ -4621,10 +4503,8 @@ int gv_db_import_json(GV_Database *db, const char *filepath) {
     ssize_t line_len;
 
     while ((line_len = getline(&line, &line_cap, fp)) != -1) {
-        /* Skip empty lines */
         if (line_len <= 1) continue;
 
-        /* Parse JSON line */
         GV_JsonError err;
         GV_JsonValue *obj = gv_json_parse(line, &err);
         if (!obj || obj->type != GV_JSON_OBJECT) {
@@ -4632,7 +4512,6 @@ int gv_db_import_json(GV_Database *db, const char *filepath) {
             continue;
         }
 
-        /* Extract vector array */
         GV_JsonValue *vec_arr = gv_json_object_get(obj, "vector");
         if (!vec_arr || vec_arr->type != GV_JSON_ARRAY) {
             gv_json_free(obj);
@@ -4645,7 +4524,6 @@ int gv_db_import_json(GV_Database *db, const char *filepath) {
             continue;
         }
 
-        /* Extract vector data */
         float *data = (float *)malloc(dim * sizeof(float));
         if (!data) {
             gv_json_free(obj);
@@ -4669,7 +4547,6 @@ int gv_db_import_json(GV_Database *db, const char *filepath) {
             continue;
         }
 
-        /* Extract metadata if present */
         GV_JsonValue *meta_obj = gv_json_object_get(obj, "metadata");
         int insert_ok = -1;
 
@@ -4705,8 +4582,6 @@ int gv_db_import_json(GV_Database *db, const char *filepath) {
     fclose(fp);
     return imported;
 }
-
-/* * Database Accessor Functions */
 
 size_t gv_database_count(const GV_Database *db) {
     if (!db) return 0;

@@ -19,8 +19,6 @@
 #include <float.h>
 #include <pthread.h>
 
-/* Internal Constants */
-
 #define GV_LS_MAGIC       "GV_LSPA"
 #define GV_LS_MAGIC_LEN   7
 #define GV_LS_VERSION     1
@@ -28,8 +26,6 @@
 #define GV_LS_INITIAL_DOC_CAPACITY      64
 #define GV_LS_INITIAL_POSTING_CAPACITY  16
 #define GV_LS_SCORE_MAP_BUCKETS         4096
-
-/* Internal Structures */
 
 /**
  * @brief A single entry in a posting list: (doc_id, weight).
@@ -72,23 +68,18 @@ typedef struct {
 struct GV_LearnedSparseIndex {
     GV_LearnedSparseConfig config;
 
-    /* Inverted index: one posting list per token_id (array of vocab_size). */
     GV_LSPostingList *posting_lists;
 
-    /* Document metadata array. */
     GV_LSDocMeta *docs;
     size_t        doc_count;
     size_t        doc_capacity;
 
-    /* Bookkeeping. */
     size_t active_docs;         /**< Non-deleted document count. */
     size_t total_postings;      /**< Sum of all posting list lengths. */
     size_t total_entry_count;   /**< Sum of entry_count across active docs. */
 
     pthread_rwlock_t rwlock;
 };
-
-/* Internal: posting list helpers */
 
 /**
  * @brief Append a posting to a posting list, maintaining doc_id sort order.
@@ -98,7 +89,6 @@ struct GV_LearnedSparseIndex {
  */
 static int gv_ls_posting_append(GV_LSPostingList *pl, size_t doc_id, float weight,
                                 size_t block_size) {
-    /* Grow postings array if needed. */
     if (pl->count >= pl->capacity) {
         size_t new_cap = pl->capacity == 0 ? GV_LS_INITIAL_POSTING_CAPACITY
                                            : pl->capacity * 2;
@@ -113,11 +103,9 @@ static int gv_ls_posting_append(GV_LSPostingList *pl, size_t doc_id, float weigh
     pl->postings[pl->count].weight = weight;
     pl->count++;
 
-    /* Update WAND block max weight. */
     if (block_size > 0) {
         size_t block_idx = (pl->count - 1) / block_size;
 
-        /* Grow block_maxw array if needed. */
         if (block_idx >= pl->block_maxw_capacity) {
             size_t new_cap = pl->block_maxw_capacity == 0
                                  ? 8
@@ -128,7 +116,6 @@ static int gv_ls_posting_append(GV_LSPostingList *pl, size_t doc_id, float weigh
                 pl->block_maxw, new_cap * sizeof(float));
             if (!new_bm) return -1;
 
-            /* Zero-init new entries. */
             for (size_t i = pl->block_maxw_capacity; i < new_cap; i++) {
                 new_bm[i] = 0.0f;
             }
@@ -162,8 +149,6 @@ static void gv_ls_posting_list_free(GV_LSPostingList *pl) {
     pl->block_maxw_capacity = 0;
 }
 
-/* Internal: min-heap for top-k selection (root = smallest score) */
-
 typedef struct {
     float  score;
     size_t doc_id;
@@ -190,7 +175,6 @@ static void gv_ls_heap_push(GV_LSHeapItem *heap, size_t *size, size_t capacity,
         heap[*size].score  = score;
         heap[*size].doc_id = doc_id;
         (*size)++;
-        /* Sift up. */
         size_t i = *size - 1;
         while (i > 0) {
             size_t parent = (i - 1) / 2;
@@ -209,8 +193,6 @@ static void gv_ls_heap_push(GV_LSHeapItem *heap, size_t *size, size_t capacity,
         gv_ls_heap_sift_down(heap, *size, 0);
     }
 }
-
-/* Internal: simple hash map (doc_id -> float score) for non-WAND accumulation */
 
 typedef struct GV_LSScoreEntry {
     size_t doc_id;
@@ -261,7 +243,6 @@ static float *gv_ls_score_map_get_or_insert(GV_LSScoreMap *map, size_t doc_id) {
         e = e->next;
     }
 
-    /* Insert new entry. */
     e = (GV_LSScoreEntry *)calloc(1, sizeof(GV_LSScoreEntry));
     if (!e) return NULL;
     e->doc_id = doc_id;
@@ -271,8 +252,6 @@ static float *gv_ls_score_map_get_or_insert(GV_LSScoreMap *map, size_t doc_id) {
     map->buckets[bucket] = e;
     return &e->score;
 }
-
-/* Internal: WAND term cursor */
 
 typedef struct {
     uint32_t token_id;
@@ -297,7 +276,6 @@ static void gv_ls_cursor_advance_to(GV_LSWandCursor *c, size_t target,
                                      size_t block_size) {
     if (c->cursor >= c->pl->count) return;
 
-    /* Use block-level skip if WAND block info is available. */
     if (block_size > 0 && c->pl->block_maxw != NULL) {
         size_t block_idx = c->cursor / block_size;
         while (block_idx < c->pl->block_maxw_count) {
@@ -305,7 +283,6 @@ static void gv_ls_cursor_advance_to(GV_LSWandCursor *c, size_t target,
             if (block_end_pos > c->pl->count) {
                 block_end_pos = c->pl->count;
             }
-            /* If the last doc in this block is < target, skip the entire block. */
             if (block_end_pos > 0 &&
                 c->pl->postings[block_end_pos - 1].doc_id < target) {
                 c->cursor = block_end_pos;
@@ -316,7 +293,6 @@ static void gv_ls_cursor_advance_to(GV_LSWandCursor *c, size_t target,
         }
     }
 
-    /* Linear scan within the block. */
     while (c->cursor < c->pl->count &&
            c->pl->postings[c->cursor].doc_id < target) {
         c->cursor++;
@@ -334,8 +310,6 @@ static int gv_ls_cursor_cmp(const void *a, const void *b) {
     return 0;
 }
 
-/* Internal: compute global max weight per posting list */
-
 static float gv_ls_posting_list_max_weight(const GV_LSPostingList *pl) {
     float mx = 0.0f;
     for (size_t i = 0; i < pl->count; i++) {
@@ -346,13 +320,10 @@ static float gv_ls_posting_list_max_weight(const GV_LSPostingList *pl) {
     return mx;
 }
 
-/* Internal: WAND search */
-
 static int gv_ls_search_wand(const GV_LearnedSparseIndex *idx,
                               const GV_LSSparseEntry *query, size_t query_count,
                               float min_score, size_t k,
                               GV_LearnedSparseResult *results) {
-    /* Build cursors for query terms that have non-empty posting lists. */
     GV_LSWandCursor *cursors = (GV_LSWandCursor *)calloc(
         query_count, sizeof(GV_LSWandCursor));
     if (!cursors) return -1;
@@ -381,7 +352,6 @@ static int gv_ls_search_wand(const GV_LearnedSparseIndex *idx,
         return 0;
     }
 
-    /* Allocate result min-heap. */
     GV_LSHeapItem *heap = (GV_LSHeapItem *)malloc(k * sizeof(GV_LSHeapItem));
     if (!heap) {
         free(cursors);
@@ -391,19 +361,15 @@ static int gv_ls_search_wand(const GV_LearnedSparseIndex *idx,
 
     size_t block_size = idx->config.wand_block_size;
 
-    /* Main WAND loop. */
     while (1) {
-        /* Sort cursors by current doc_id. */
         qsort(cursors, num_cursors, sizeof(GV_LSWandCursor), gv_ls_cursor_cmp);
 
-        /* Remove exhausted cursors from the end. */
         while (num_cursors > 0 &&
                gv_ls_cursor_doc(&cursors[num_cursors - 1]) == SIZE_MAX) {
             num_cursors--;
         }
         if (num_cursors == 0) break;
 
-        /* Compute the threshold: the current k-th best score. */
         float threshold = min_score;
         if (heap_size >= k && heap[0].score > threshold) {
             threshold = heap[0].score;
@@ -418,17 +384,14 @@ static int gv_ls_search_wand(const GV_LearnedSparseIndex *idx,
             if (upper_bound > threshold) break;
         }
 
-        /* If no pivot found, no more candidates can exceed threshold. */
         if (pivot >= num_cursors) break;
 
         size_t pivot_doc = gv_ls_cursor_doc(&cursors[pivot]);
         if (pivot_doc == SIZE_MAX) break;
 
-        /* Check if all cursors up to pivot point to the same doc. */
         size_t first_doc = gv_ls_cursor_doc(&cursors[0]);
 
         if (first_doc == pivot_doc) {
-            /* All terms up to pivot share the same doc: fully score it. */
             if (!idx->docs[pivot_doc].deleted) {
                 float score = 0.0f;
                 for (size_t c = 0; c < num_cursors; c++) {
@@ -442,14 +405,11 @@ static int gv_ls_search_wand(const GV_LearnedSparseIndex *idx,
                 }
             }
 
-            /* Advance all cursors past pivot_doc. */
             for (size_t c = 0; c < num_cursors; c++) {
                 if (gv_ls_cursor_doc(&cursors[c]) != pivot_doc) break;
                 cursors[c].cursor++;
             }
         } else {
-            /* Not all cursors at pivot_doc: advance cursors before pivot
-             * to at least pivot_doc. */
             for (size_t c = 0; c < pivot; c++) {
                 if (gv_ls_cursor_doc(&cursors[c]) < pivot_doc) {
                     gv_ls_cursor_advance_to(&cursors[c], pivot_doc, block_size);
@@ -458,13 +418,11 @@ static int gv_ls_search_wand(const GV_LearnedSparseIndex *idx,
         }
     }
 
-    /* Extract results from min-heap in descending score order. */
     int n = (int)heap_size;
     for (int i = n - 1; i >= 0; i--) {
         results[i].doc_index = heap[0].doc_id;
         results[i].score     = heap[0].score;
 
-        /* Pop root. */
         heap[0] = heap[heap_size - 1];
         heap_size--;
         if (heap_size > 0) {
@@ -477,8 +435,6 @@ static int gv_ls_search_wand(const GV_LearnedSparseIndex *idx,
     return n;
 }
 
-/* Internal: non-WAND (accumulator) search */
-
 static int gv_ls_search_accumulate(const GV_LearnedSparseIndex *idx,
                                     const GV_LSSparseEntry *query,
                                     size_t query_count,
@@ -487,7 +443,6 @@ static int gv_ls_search_accumulate(const GV_LearnedSparseIndex *idx,
     GV_LSScoreMap *map = gv_ls_score_map_create(GV_LS_SCORE_MAP_BUCKETS);
     if (!map) return -1;
 
-    /* Accumulate scores: for each query term, iterate its posting list. */
     for (size_t q = 0; q < query_count; q++) {
         uint32_t tid = query[q].token_id;
         if (tid >= idx->config.vocab_size) continue;
@@ -498,7 +453,6 @@ static int gv_ls_search_accumulate(const GV_LearnedSparseIndex *idx,
         for (size_t p = 0; p < pl->count; p++) {
             size_t doc_id = pl->postings[p].doc_id;
 
-            /* Skip deleted documents. */
             if (idx->docs[doc_id].deleted) continue;
 
             float *score_ptr = gv_ls_score_map_get_or_insert(map, doc_id);
@@ -510,7 +464,6 @@ static int gv_ls_search_accumulate(const GV_LearnedSparseIndex *idx,
         }
     }
 
-    /* Extract top-k from the score map using a min-heap. */
     GV_LSHeapItem *heap = (GV_LSHeapItem *)malloc(k * sizeof(GV_LSHeapItem));
     if (!heap) {
         gv_ls_score_map_destroy(map);
@@ -528,7 +481,6 @@ static int gv_ls_search_accumulate(const GV_LearnedSparseIndex *idx,
         }
     }
 
-    /* Extract results from min-heap in descending score order. */
     int n = (int)heap_size;
     for (int i = n - 1; i >= 0; i--) {
         results[i].doc_index = heap[0].doc_id;
@@ -546,8 +498,6 @@ static int gv_ls_search_accumulate(const GV_LearnedSparseIndex *idx,
     return n;
 }
 
-/* Internal: serialization helpers */
-
 static int gv_ls_write_u64(FILE *f, uint64_t v) {
     return fwrite(&v, sizeof(uint64_t), 1, f) == 1 ? 0 : -1;
 }
@@ -564,8 +514,6 @@ static int gv_ls_read_float(FILE *f, float *v) {
     return (v && fread(v, sizeof(float), 1, f) == 1) ? 0 : -1;
 }
 
-/* Configuration */
-
 static const GV_LearnedSparseConfig DEFAULT_CONFIG = {
     .vocab_size      = 30522,
     .max_nonzeros    = 256,
@@ -578,12 +526,9 @@ void gv_ls_config_init(GV_LearnedSparseConfig *config) {
     *config = DEFAULT_CONFIG;
 }
 
-/* Lifecycle */
-
 GV_LearnedSparseIndex *gv_ls_create(const GV_LearnedSparseConfig *config) {
     GV_LearnedSparseConfig cfg = config ? *config : DEFAULT_CONFIG;
 
-    /* Apply defaults for zero values. */
     if (cfg.vocab_size == 0)      cfg.vocab_size      = 30522;
     if (cfg.max_nonzeros == 0)    cfg.max_nonzeros    = 256;
     if (cfg.wand_block_size == 0) cfg.wand_block_size = 128;
@@ -594,7 +539,6 @@ GV_LearnedSparseIndex *gv_ls_create(const GV_LearnedSparseConfig *config) {
 
     idx->config = cfg;
 
-    /* Allocate posting lists array (one per vocab token). */
     idx->posting_lists = (GV_LSPostingList *)calloc(
         cfg.vocab_size, sizeof(GV_LSPostingList));
     if (!idx->posting_lists) {
@@ -602,7 +546,6 @@ GV_LearnedSparseIndex *gv_ls_create(const GV_LearnedSparseConfig *config) {
         return NULL;
     }
 
-    /* Allocate document metadata array. */
     idx->doc_capacity = GV_LS_INITIAL_DOC_CAPACITY;
     idx->docs = (GV_LSDocMeta *)calloc(idx->doc_capacity, sizeof(GV_LSDocMeta));
     if (!idx->docs) {
@@ -629,7 +572,6 @@ GV_LearnedSparseIndex *gv_ls_create(const GV_LearnedSparseConfig *config) {
 void gv_ls_destroy(GV_LearnedSparseIndex *idx) {
     if (!idx) return;
 
-    /* Free all posting lists. */
     if (idx->posting_lists) {
         for (size_t i = 0; i < idx->config.vocab_size; i++) {
             gv_ls_posting_list_free(&idx->posting_lists[i]);
@@ -642,8 +584,6 @@ void gv_ls_destroy(GV_LearnedSparseIndex *idx) {
     free(idx);
 }
 
-/* Indexing Operations */
-
 int gv_ls_insert(GV_LearnedSparseIndex *idx, const GV_LSSparseEntry *entries,
                  size_t count) {
     if (!idx || !entries || count == 0) return -1;
@@ -651,7 +591,6 @@ int gv_ls_insert(GV_LearnedSparseIndex *idx, const GV_LSSparseEntry *entries,
 
     pthread_rwlock_wrlock(&idx->rwlock);
 
-    /* Grow document array if needed. */
     if (idx->doc_count >= idx->doc_capacity) {
         size_t new_cap = idx->doc_capacity * 2;
         GV_LSDocMeta *new_docs = (GV_LSDocMeta *)realloc(
@@ -669,7 +608,6 @@ int gv_ls_insert(GV_LearnedSparseIndex *idx, const GV_LSSparseEntry *entries,
     size_t doc_id = idx->doc_count;
     size_t block_size = idx->config.use_wand ? idx->config.wand_block_size : 0;
 
-    /* Append to posting lists for each non-zero entry. */
     for (size_t i = 0; i < count; i++) {
         uint32_t tid = entries[i].token_id;
         if (tid >= idx->config.vocab_size) continue;
@@ -687,7 +625,6 @@ int gv_ls_insert(GV_LearnedSparseIndex *idx, const GV_LSSparseEntry *entries,
         idx->total_postings++;
     }
 
-    /* Record document metadata. */
     idx->docs[doc_id].entry_count = count;
     idx->docs[doc_id].deleted     = 0;
 
@@ -716,8 +653,6 @@ int gv_ls_delete(GV_LearnedSparseIndex *idx, size_t doc_id) {
     pthread_rwlock_unlock(&idx->rwlock);
     return 0;
 }
-
-/* Search Operations */
 
 int gv_ls_search(const GV_LearnedSparseIndex *idx, const GV_LSSparseEntry *query,
                  size_t query_count, size_t k, GV_LearnedSparseResult *results) {
@@ -766,8 +701,6 @@ int gv_ls_search_with_threshold(const GV_LearnedSparseIndex *idx,
     return n;
 }
 
-/* Index Information */
-
 int gv_ls_get_stats(const GV_LearnedSparseIndex *idx,
                     GV_LearnedSparseStats *stats) {
     if (!idx || !stats) return -1;
@@ -780,7 +713,6 @@ int gv_ls_get_stats(const GV_LearnedSparseIndex *idx,
         ? (double)idx->total_entry_count / (double)idx->active_docs
         : 0.0;
 
-    /* Count distinct tokens that have at least one posting. */
     size_t vocab_used = 0;
     for (size_t i = 0; i < idx->config.vocab_size; i++) {
         if (idx->posting_lists[i].count > 0) {
@@ -803,8 +735,6 @@ size_t gv_ls_count(const GV_LearnedSparseIndex *idx) {
     return count;
 }
 
-/* Persistence: Save */
-
 int gv_ls_save(const GV_LearnedSparseIndex *idx, const char *path) {
     if (!idx || !path) return -1;
 
@@ -813,27 +743,21 @@ int gv_ls_save(const GV_LearnedSparseIndex *idx, const char *path) {
 
     pthread_rwlock_rdlock((pthread_rwlock_t *)&idx->rwlock);
 
-    /* Magic + version. */
     if (fwrite(GV_LS_MAGIC, 1, GV_LS_MAGIC_LEN, fp) != GV_LS_MAGIC_LEN) goto fail;
     if (gv_write_u32(fp, GV_LS_VERSION) != 0) goto fail;
 
-    /* Configuration. */
     if (gv_ls_write_u64(fp, (uint64_t)idx->config.vocab_size) != 0) goto fail;
     if (gv_ls_write_u64(fp, (uint64_t)idx->config.max_nonzeros) != 0) goto fail;
     if (gv_write_u32(fp, (uint32_t)idx->config.use_wand) != 0) goto fail;
     if (gv_ls_write_u64(fp, (uint64_t)idx->config.wand_block_size) != 0) goto fail;
 
-    /* Document count (total, including deleted). */
     if (gv_ls_write_u64(fp, (uint64_t)idx->doc_count) != 0) goto fail;
 
-    /* Document metadata. */
     for (size_t i = 0; i < idx->doc_count; i++) {
         if (gv_ls_write_u64(fp, (uint64_t)idx->docs[i].entry_count) != 0) goto fail;
         if (gv_write_u32(fp, (uint32_t)idx->docs[i].deleted) != 0) goto fail;
     }
 
-    /* Posting lists: write only non-empty ones. */
-    /* First, count non-empty posting lists. */
     uint64_t non_empty_count = 0;
     for (size_t i = 0; i < idx->config.vocab_size; i++) {
         if (idx->posting_lists[i].count > 0) non_empty_count++;
@@ -844,12 +768,9 @@ int gv_ls_save(const GV_LearnedSparseIndex *idx, const char *path) {
         const GV_LSPostingList *pl = &idx->posting_lists[i];
         if (pl->count == 0) continue;
 
-        /* Token ID. */
         if (gv_write_u32(fp, (uint32_t)i) != 0) goto fail;
-        /* Posting count. */
         if (gv_ls_write_u64(fp, (uint64_t)pl->count) != 0) goto fail;
 
-        /* Postings. */
         for (size_t j = 0; j < pl->count; j++) {
             if (gv_ls_write_u64(fp, (uint64_t)pl->postings[j].doc_id) != 0) goto fail;
             if (gv_ls_write_float(fp, pl->postings[j].weight) != 0) goto fail;
@@ -866,15 +787,12 @@ fail:
     return -1;
 }
 
-/* Persistence: Load */
-
 GV_LearnedSparseIndex *gv_ls_load(const char *path) {
     if (!path) return NULL;
 
     FILE *fp = fopen(path, "rb");
     if (!fp) return NULL;
 
-    /* Verify magic. */
     char magic[GV_LS_MAGIC_LEN];
     if (fread(magic, 1, GV_LS_MAGIC_LEN, fp) != GV_LS_MAGIC_LEN ||
         memcmp(magic, GV_LS_MAGIC, GV_LS_MAGIC_LEN) != 0) {
@@ -882,14 +800,12 @@ GV_LearnedSparseIndex *gv_ls_load(const char *path) {
         return NULL;
     }
 
-    /* Verify version. */
     uint32_t version = 0;
     if (gv_read_u32(fp, &version) != 0 || version != GV_LS_VERSION) {
         fclose(fp);
         return NULL;
     }
 
-    /* Read configuration. */
     uint64_t vocab_size = 0, max_nonzeros = 0, wand_block_size = 0;
     uint32_t use_wand = 0;
     if (gv_ls_read_u64(fp, &vocab_size) != 0)      { fclose(fp); return NULL; }
@@ -903,15 +819,12 @@ GV_LearnedSparseIndex *gv_ls_load(const char *path) {
     cfg.use_wand        = (int)use_wand;
     cfg.wand_block_size = (size_t)wand_block_size;
 
-    /* Read document count. */
     uint64_t doc_count_raw = 0;
     if (gv_ls_read_u64(fp, &doc_count_raw) != 0) { fclose(fp); return NULL; }
 
-    /* Create the index. */
     GV_LearnedSparseIndex *idx = gv_ls_create(&cfg);
     if (!idx) { fclose(fp); return NULL; }
 
-    /* Grow document array to fit loaded doc count. */
     size_t doc_count = (size_t)doc_count_raw;
     if (doc_count > 0) {
         while (idx->doc_capacity < doc_count) {
@@ -930,7 +843,6 @@ GV_LearnedSparseIndex *gv_ls_load(const char *path) {
         }
     }
 
-    /* Read document metadata. */
     idx->doc_count         = doc_count;
     idx->active_docs       = 0;
     idx->total_entry_count = 0;
@@ -950,7 +862,6 @@ GV_LearnedSparseIndex *gv_ls_load(const char *path) {
         }
     }
 
-    /* Read posting lists. */
     uint64_t non_empty_count = 0;
     if (gv_ls_read_u64(fp, &non_empty_count) != 0) {
         gv_ls_destroy(idx);
