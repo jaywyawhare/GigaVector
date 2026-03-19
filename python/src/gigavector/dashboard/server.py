@@ -1030,7 +1030,21 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_error_json(500, "snapshot_error", str(e))
 
     def _handle_snapshot_restore(self, snapshot_id: str) -> None:
-        self._send_error_json(501, "not_implemented", "Snapshot restore not yet implemented")
+        try:
+            mgr = self.server.get_snapshot_mgr()
+            vectors = mgr.open_snapshot(int(snapshot_id))
+            db = self.server.db
+            inserted = 0
+            for vec in vectors:
+                try:
+                    db.add_vector(vec)
+                    inserted += 1
+                except Exception:
+                    pass
+            self._send_json({"success": True, "snapshot_id": int(snapshot_id),
+                             "vectors_restored": inserted})
+        except Exception as e:
+            self._send_error_json(500, "snapshot_error", str(e))
 
     def _handle_snapshot_delete(self, snapshot_id: str) -> None:
         try:

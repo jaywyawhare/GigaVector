@@ -3337,6 +3337,7 @@ class NSIndexType(IntEnum):
     HNSW = 1
     IVFPQ = 2
     SPARSE = 3
+    FLAT = 4
 
 
 @dataclass(frozen=True)
@@ -4156,6 +4157,23 @@ class SnapshotManager:
                              vector_count=infos[i].vector_count,
                              label=ffi.string(infos[i].label).decode("utf-8"))
                 for i in range(max(0, n))]
+
+    def open_snapshot(self, snapshot_id: int) -> list[list[float]]:
+        """Open a snapshot and return its vectors."""
+        snap = lib.gv_snapshot_open(self._mgr, snapshot_id)
+        if snap == ffi.NULL:
+            raise RuntimeError("Failed to open snapshot")
+        try:
+            count = lib.gv_snapshot_count(snap)
+            dim = lib.gv_snapshot_dimension(snap)
+            vectors = []
+            for i in range(count):
+                ptr = lib.gv_snapshot_get_vector(snap, i)
+                if ptr != ffi.NULL:
+                    vectors.append([ptr[j] for j in range(dim)])
+            return vectors
+        finally:
+            lib.gv_snapshot_close(snap)
 
     def delete_snapshot(self, snapshot_id: int) -> None:
         if lib.gv_snapshot_delete(self._mgr, snapshot_id) != 0:
@@ -5134,8 +5152,8 @@ class AutoEmbedder:
         c_cfg = ffi.new("GV_AutoEmbedConfig *")
         lib.gv_auto_embed_config_init(c_cfg)
         c_cfg.provider = config.provider.value
-        self._api_key = config.api_key.encode()
-        self._model = config.model_name.encode()
+        self._api_key = ffi.new("char[]", config.api_key.encode())
+        self._model = ffi.new("char[]", config.model_name.encode())
         c_cfg.api_key = self._api_key
         c_cfg.model_name = self._model
         c_cfg.dimension = config.dimension
