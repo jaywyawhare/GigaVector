@@ -7,6 +7,7 @@
 
 #include "gigavector/gv_sparse_index.h"
 #include "gigavector/gv_metadata.h"
+#include "gigavector/gv_utils.h"
 
 typedef struct GV_SparsePosting {
     size_t vector_id;
@@ -27,104 +28,13 @@ struct GV_SparseIndex {
     int *deleted;                /* Deletion flags: 1 if deleted, 0 if active */
 };
 
-static int gv_sparse_write_uint32(FILE *out, uint32_t value) {
-    return (fwrite(&value, sizeof(uint32_t), 1, out) == 1) ? 0 : -1;
-}
-
-static int gv_sparse_write_size(FILE *out, size_t value) {
-    return (fwrite(&value, sizeof(size_t), 1, out) == 1) ? 0 : -1;
-}
-
-static int gv_sparse_write_floats(FILE *out, const float *data, size_t count) {
-    return (data != NULL && fwrite(data, sizeof(float), count, out) == count) ? 0 : -1;
-}
-
-static int gv_sparse_write_string(FILE *out, const char *str, uint32_t len) {
-    if (gv_sparse_write_uint32(out, len) != 0) {
-        return -1;
-    }
-    if (len == 0) {
-        return 0;
-    }
-    return (fwrite(str, 1, len, out) == len) ? 0 : -1;
-}
-
-static int gv_sparse_write_metadata(FILE *out, const GV_Metadata *meta_head) {
-    uint32_t count = 0;
-    const GV_Metadata *cursor = meta_head;
-    while (cursor != NULL) {
-        count++;
-        cursor = cursor->next;
-    }
-
-    if (gv_sparse_write_uint32(out, count) != 0) {
-        return -1;
-    }
-
-    cursor = meta_head;
-    while (cursor != NULL) {
-        size_t key_len = strlen(cursor->key);
-        size_t val_len = strlen(cursor->value);
-        if (key_len > UINT32_MAX || val_len > UINT32_MAX) {
-            return -1;
-        }
-        if (gv_sparse_write_string(out, cursor->key, (uint32_t)key_len) != 0) {
-            return -1;
-        }
-        if (gv_sparse_write_string(out, cursor->value, (uint32_t)val_len) != 0) {
-            return -1;
-        }
-        cursor = cursor->next;
-    }
-    return 0;
-}
-
-static int gv_sparse_read_uint32(FILE *in, uint32_t *value) {
-    return (value != NULL && fread(value, sizeof(uint32_t), 1, in) == 1) ? 0 : -1;
-}
-
-static int gv_sparse_read_size(FILE *in, size_t *value) {
-    return (value != NULL && fread(value, sizeof(size_t), 1, in) == 1) ? 0 : -1;
-}
-
-static int gv_sparse_read_floats(FILE *in, float *data, size_t count) {
-    return (data != NULL && fread(data, sizeof(float), count, in) == count) ? 0 : -1;
-}
-
-static int gv_sparse_read_string(FILE *in, char **out_str, uint32_t len) {
-    if (out_str == NULL) {
-        return -1;
-    }
-    *out_str = NULL;
-    if (len == 0) {
-        *out_str = (char *)malloc(1);
-        if (*out_str == NULL) {
-            return -1;
-        }
-        (*out_str)[0] = '\0';
-        return 0;
-    }
-
-    char *buf = (char *)malloc(len + 1);
-    if (buf == NULL) {
-        return -1;
-    }
-    if (fread(buf, 1, len, in) != len) {
-        free(buf);
-        return -1;
-    }
-    buf[len] = '\0';
-    *out_str = buf;
-    return 0;
-}
-
 static int gv_sparse_read_metadata(FILE *in, GV_SparseVector *sv) {
     if (sv == NULL) {
         return -1;
     }
 
     uint32_t count = 0;
-    if (gv_sparse_read_uint32(in, &count) != 0) {
+    if (gv_read_u32(in, &count) != 0) {
         return -1;
     }
 
@@ -134,19 +44,19 @@ static int gv_sparse_read_metadata(FILE *in, GV_SparseVector *sv) {
         char *key = NULL;
         char *value = NULL;
 
-        if (gv_sparse_read_uint32(in, &key_len) != 0) {
+        if (gv_read_u32(in, &key_len) != 0) {
             return -1;
         }
-        if (gv_sparse_read_string(in, &key, key_len) != 0) {
+        if (gv_read_str(in, &key, key_len) != 0) {
             free(key);
             return -1;
         }
 
-        if (gv_sparse_read_uint32(in, &val_len) != 0) {
+        if (gv_read_u32(in, &val_len) != 0) {
             free(key);
             return -1;
         }
-        if (gv_sparse_read_string(in, &value, val_len) != 0) {
+        if (gv_read_str(in, &value, val_len) != 0) {
             free(key);
             return -1;
         }
@@ -449,21 +359,21 @@ int gv_sparse_index_save(const GV_SparseIndex *index, FILE *out, uint32_t versio
             return -1;
         }
 
-        if (gv_sparse_write_size(out, sv->nnz) != 0) {
+        if (gv_write_size(out, sv->nnz) != 0) {
             return -1;
         }
         for (size_t i = 0; i < sv->nnz; ++i) {
             uint32_t idx = sv->entries[i].index;
             float val = sv->entries[i].value;
-            if (gv_sparse_write_uint32(out, idx) != 0) {
+            if (gv_write_u32(out, idx) != 0) {
                 return -1;
             }
-            if (gv_sparse_write_floats(out, &val, 1) != 0) {
+            if (gv_write_floats(out, &val, 1) != 0) {
                 return -1;
             }
         }
 
-        if (gv_sparse_write_metadata(out, sv->metadata) != 0) {
+        if (gv_write_metadata(out, sv->metadata) != 0) {
             return -1;
         }
     }
@@ -484,7 +394,7 @@ int gv_sparse_index_load(GV_SparseIndex **index_out, FILE *in,
 
     for (size_t v = 0; v < count; ++v) {
         size_t nnz = 0;
-        if (gv_sparse_read_size(in, &nnz) != 0) {
+        if (gv_read_size(in, &nnz) != 0) {
             gv_sparse_index_destroy(idx);
             return -1;
         }
@@ -501,13 +411,13 @@ int gv_sparse_index_load(GV_SparseIndex **index_out, FILE *in,
                 return -1;
             }
             for (size_t i = 0; i < nnz; ++i) {
-                if (gv_sparse_read_uint32(in, &indices[i]) != 0) {
+                if (gv_read_u32(in, &indices[i]) != 0) {
                     free(indices);
                     free(values);
                     gv_sparse_index_destroy(idx);
                     return -1;
                 }
-                if (gv_sparse_read_floats(in, &values[i], 1) != 0) {
+                if (gv_read_floats(in, &values[i], 1) != 0) {
                     free(indices);
                     free(values);
                     gv_sparse_index_destroy(idx);

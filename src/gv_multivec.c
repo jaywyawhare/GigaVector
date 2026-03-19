@@ -262,13 +262,6 @@ size_t gv_multivec_count_chunks(const void *index) {
     return idx->total_chunks;
 }
 
-static int gv_mv_write_u64(FILE *f, uint64_t v) {
-    return fwrite(&v, sizeof(uint64_t), 1, f) == 1 ? 0 : -1;
-}
-
-static int gv_mv_read_u64(FILE *f, uint64_t *v) {
-    return (v && fread(v, sizeof(uint64_t), 1, f) == 1) ? 0 : -1;
-}
 
 int gv_multivec_save(const void *index, FILE *out) {
     if (!index || !out) return -1;
@@ -289,7 +282,7 @@ int gv_multivec_save(const void *index, FILE *out) {
         const GV_DocEntry *doc = &idx->docs[i];
         if (doc->deleted) continue;
 
-        if (gv_mv_write_u64(out, doc->doc_id) != 0) return -1;
+        if (gv_write_u64(out, doc->doc_id) != 0) return -1;
         if (gv_write_u32(out, (uint32_t)doc->num_chunks) != 0) return -1;
 
         size_t floats = doc->num_chunks * idx->dimension;
@@ -324,7 +317,7 @@ int gv_multivec_load(void **index_ptr, FILE *in, size_t dimension) {
         uint64_t doc_id = 0;
         uint32_t num_chunks = 0;
 
-        if (gv_mv_read_u64(in, &doc_id) != 0) {
+        if (gv_read_u64(in, &doc_id) != 0) {
             gv_multivec_destroy(index);
             return -1;
         }

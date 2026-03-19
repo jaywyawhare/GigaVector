@@ -12,6 +12,7 @@
  */
 
 #include "gigavector/gv_late_interaction.h"
+#include "gigavector/gv_heap.h"
 #include "gigavector/gv_utils.h"
 
 #include <stdlib.h>
@@ -120,57 +121,19 @@ static float gv_li_dot(const float *a, const float *b, size_t dim) {
 #endif
 }
 
-/* Max-heap helpers for top-k selection (max-heap on score, keeps lowest k)
+/* Max-heap helpers for top-k selection (max-heap on dist, keeps lowest k)
  *
- * For MaxSim scoring, higher is better.  We use a min-heap so the root is
- * the *smallest* score in the current top-k set.  When a new candidate has
- * a score greater than the root it replaces it.
+ * For MaxSim scoring, higher is better.  The macro-generated heap keeps the
+ * largest dist at the root; when a new candidate's dist is smaller than the
+ * root it replaces it, maintaining the top-k highest-scoring entries.
  */
 
 typedef struct {
-    float  score;
+    float  dist;
     size_t doc_idx;
 } GV_LIHeapItem;
 
-static void gv_li_heap_sift_down(GV_LIHeapItem *heap, size_t size, size_t i) {
-    while (1) {
-        size_t l = 2 * i + 1;
-        size_t r = l + 1;
-        size_t smallest = i;
-        if (l < size && heap[l].score < heap[smallest].score) smallest = l;
-        if (r < size && heap[r].score < heap[smallest].score) smallest = r;
-        if (smallest == i) break;
-        GV_LIHeapItem tmp = heap[i];
-        heap[i] = heap[smallest];
-        heap[smallest] = tmp;
-        i = smallest;
-    }
-}
-
-static void gv_li_heap_push(GV_LIHeapItem *heap, size_t *size, size_t capacity,
-                             float score, size_t doc_idx) {
-    if (*size < capacity) {
-        heap[*size].score   = score;
-        heap[*size].doc_idx = doc_idx;
-        (*size)++;
-        size_t i = *size - 1;
-        while (i > 0) {
-            size_t parent = (i - 1) / 2;
-            if (heap[i].score < heap[parent].score) {
-                GV_LIHeapItem tmp = heap[i];
-                heap[i] = heap[parent];
-                heap[parent] = tmp;
-                i = parent;
-            } else {
-                break;
-            }
-        }
-    } else if (score > heap[0].score) {
-        heap[0].score   = score;
-        heap[0].doc_idx = doc_idx;
-        gv_li_heap_sift_down(heap, *size, 0);
-    }
-}
+GV_MIN_HEAP_DEFINE(gv_li_heap, GV_LIHeapItem)
 
 static float *gv_li_compute_avg(const float *tokens, size_t num_tokens, size_t dim) {
     float *avg = (float *)calloc(dim, sizeof(float));
@@ -442,7 +405,7 @@ int gv_late_interaction_search(const GV_LateInteractionIndex *index,
             if (index->docs[i].deleted) continue;
 
             float s = gv_li_dot(avg_query, index->docs[i].avg_embedding, dim);
-            gv_li_heap_push(stage1_heap, &heap_size, pool_size, s, i);
+            gv_li_heap_push(stage1_heap, &heap_size, pool_size, (GV_LIHeapItem){s, i});
         }
 
         num_candidates = heap_size;
@@ -480,7 +443,7 @@ int gv_late_interaction_search(const GV_LateInteractionIndex *index,
         float score = gv_li_maxsim(query_tokens, num_query_tokens,
                                     doc_tokens, doc->num_tokens, dim);
 
-        gv_li_heap_push(result_heap, &result_heap_size, effective_k, score, di);
+        gv_li_heap_push(result_heap, &result_heap_size, effective_k, (GV_LIHeapItem){score, di});
     }
 
     free(candidates);
@@ -488,7 +451,7 @@ int gv_late_interaction_search(const GV_LateInteractionIndex *index,
     int n = (int)result_heap_size;
     for (int i = n - 1; i >= 0; i--) {
         results[i].doc_index = result_heap[0].doc_idx;
-        results[i].score     = result_heap[0].score;
+        results[i].score     = result_heap[0].dist;
 
         result_heap[0] = result_heap[result_heap_size - 1];
         result_heap_size--;
@@ -537,13 +500,6 @@ size_t gv_late_interaction_count(const GV_LateInteractionIndex *index) {
     return count;
 }
 
-static int gv_li_write_u64(FILE *f, uint64_t v) {
-    return fwrite(&v, sizeof(uint64_t), 1, f) == 1 ? 0 : -1;
-}
-
-static int gv_li_read_u64(FILE *f, uint64_t *v) {
-    return (v && fread(v, sizeof(uint64_t), 1, f) == 1) ? 0 : -1;
-}
 
 int gv_late_interaction_save(const GV_LateInteractionIndex *index,
                               const char *filepath) {
@@ -557,10 +513,10 @@ int gv_late_interaction_save(const GV_LateInteractionIndex *index,
     if (fwrite(GV_LI_MAGIC, 1, GV_LI_MAGIC_LEN, fp) != GV_LI_MAGIC_LEN) goto fail;
     if (gv_write_u32(fp, GV_LI_VERSION) != 0) goto fail;
 
-    if (gv_li_write_u64(fp, (uint64_t)index->config.token_dimension) != 0) goto fail;
-    if (gv_li_write_u64(fp, (uint64_t)index->config.max_doc_tokens) != 0) goto fail;
-    if (gv_li_write_u64(fp, (uint64_t)index->config.max_query_tokens) != 0) goto fail;
-    if (gv_li_write_u64(fp, (uint64_t)index->config.candidate_pool) != 0) goto fail;
+    if (gv_write_u64(fp, (uint64_t)index->config.token_dimension) != 0) goto fail;
+    if (gv_write_u64(fp, (uint64_t)index->config.max_doc_tokens) != 0) goto fail;
+    if (gv_write_u64(fp, (uint64_t)index->config.max_query_tokens) != 0) goto fail;
+    if (gv_write_u64(fp, (uint64_t)index->config.candidate_pool) != 0) goto fail;
 
     uint32_t active = (uint32_t)index->active_docs;
     if (gv_write_u32(fp, active) != 0) goto fail;
@@ -610,10 +566,10 @@ GV_LateInteractionIndex *gv_late_interaction_load(const char *filepath) {
     }
 
     uint64_t td = 0, mdt = 0, mqt = 0, cp = 0;
-    if (gv_li_read_u64(fp, &td)  != 0) { fclose(fp); return NULL; }
-    if (gv_li_read_u64(fp, &mdt) != 0) { fclose(fp); return NULL; }
-    if (gv_li_read_u64(fp, &mqt) != 0) { fclose(fp); return NULL; }
-    if (gv_li_read_u64(fp, &cp)  != 0) { fclose(fp); return NULL; }
+    if (gv_read_u64(fp, &td)  != 0) { fclose(fp); return NULL; }
+    if (gv_read_u64(fp, &mdt) != 0) { fclose(fp); return NULL; }
+    if (gv_read_u64(fp, &mqt) != 0) { fclose(fp); return NULL; }
+    if (gv_read_u64(fp, &cp)  != 0) { fclose(fp); return NULL; }
 
     GV_LateInteractionConfig cfg;
     cfg.token_dimension  = (size_t)td;

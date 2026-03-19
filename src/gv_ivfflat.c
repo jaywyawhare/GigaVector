@@ -8,6 +8,7 @@
 #include "gigavector/gv_distance.h"
 #include "gigavector/gv_vector.h"
 #include "gigavector/gv_metadata.h"
+#include "gigavector/gv_heap.h"
 #include "gigavector/gv_utils.h"
 
 typedef struct GV_IVFFlatEntry {
@@ -34,47 +35,7 @@ typedef struct {
     GV_IVFFlatEntry *entry;
 } GV_IVFFlatHeapItem;
 
-static void gv_ivfflat_heap_sift_down(GV_IVFFlatHeapItem *heap, size_t size, size_t i) {
-    while (1) {
-        size_t l = 2 * i + 1;
-        size_t r = l + 1;
-        size_t largest = i;
-        if (l < size && heap[l].dist > heap[largest].dist) largest = l;
-        if (r < size && heap[r].dist > heap[largest].dist) largest = r;
-        if (largest == i) break;
-        GV_IVFFlatHeapItem tmp = heap[i];
-        heap[i] = heap[largest];
-        heap[largest] = tmp;
-        i = largest;
-    }
-}
-
-static void gv_ivfflat_heap_push(GV_IVFFlatHeapItem *heap, size_t *size, size_t capacity,
-                                  float dist, size_t id, GV_IVFFlatEntry *entry) {
-    if (*size < capacity) {
-        heap[*size].dist = dist;
-        heap[*size].id = id;
-        heap[*size].entry = entry;
-        (*size)++;
-        size_t i = *size - 1;
-        while (i > 0) {
-            size_t parent = (i - 1) / 2;
-            if (heap[i].dist > heap[parent].dist) {
-                GV_IVFFlatHeapItem tmp = heap[i];
-                heap[i] = heap[parent];
-                heap[parent] = tmp;
-                i = parent;
-            } else {
-                break;
-            }
-        }
-    } else if (dist < heap[0].dist) {
-        heap[0].dist = dist;
-        heap[0].id = id;
-        heap[0].entry = entry;
-        gv_ivfflat_heap_sift_down(heap, *size, 0);
-    }
-}
+GV_HEAP_DEFINE(gv_ivfflat_heap, GV_IVFFlatHeapItem)
 
 /* K-means helper: assign vectors to nearest centroids */
 static void gv_ivfflat_argmin(const float *data, size_t count, size_t dim,
@@ -278,7 +239,7 @@ int gv_ivfflat_search(void *index, const GV_Vector *query, size_t k,
             dist += diff * diff;
         }
 
-        gv_ivfflat_heap_push(centroid_heap, &heap_size, nprobe, dist, i, NULL);
+        gv_ivfflat_heap_push(centroid_heap, &heap_size, nprobe, (GV_IVFFlatHeapItem){dist, i, NULL});
     }
 
     size_t *probe_lists = (size_t *)malloc(nprobe * sizeof(size_t));
@@ -315,7 +276,7 @@ int gv_ivfflat_search(void *index, const GV_Vector *query, size_t k,
                     float dist = gv_distance(query, entry->vector, distance_type);
 
                     if (dist >= 0.0f) {
-                        gv_ivfflat_heap_push(heap, &heap_size, k, dist, entry->id, entry);
+                        gv_ivfflat_heap_push(heap, &heap_size, k, (GV_IVFFlatHeapItem){dist, entry->id, entry});
                     }
                 }
             }
@@ -389,7 +350,7 @@ int gv_ivfflat_range_search(void *index, const GV_Vector *query, float radius,
             dist += diff * diff;
         }
 
-        gv_ivfflat_heap_push(centroid_heap, &heap_size, nprobe, dist, i, NULL);
+        gv_ivfflat_heap_push(centroid_heap, &heap_size, nprobe, (GV_IVFFlatHeapItem){dist, i, NULL});
     }
 
     size_t *probe_lists = (size_t *)malloc(nprobe * sizeof(size_t));

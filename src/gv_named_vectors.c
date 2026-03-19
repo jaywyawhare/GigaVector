@@ -88,32 +88,8 @@ static GV_NVField *gv_nv_find_field(const GV_NamedVectorStore *store, const char
     return NULL;
 }
 
-static int gv_nv_write_u64(FILE *fp, uint64_t v) {
-    return fwrite(&v, sizeof(uint64_t), 1, fp) == 1 ? 0 : -1;
-}
 
-static int gv_nv_read_u64(FILE *fp, uint64_t *v) {
-    return (v && fread(v, sizeof(uint64_t), 1, fp) == 1) ? 0 : -1;
-}
 
-static int gv_nv_write_str(FILE *fp, const char *s) {
-    uint32_t len = (uint32_t)strlen(s);
-    return gv_write_str(fp, s, len);
-}
-
-static int gv_nv_read_str(FILE *fp, char **out) {
-    uint32_t len = 0;
-    if (gv_read_u32(fp, &len) != 0) return -1;
-    char *buf = (char *)malloc((size_t)len + 1);
-    if (!buf) return -1;
-    if (len > 0 && fread(buf, 1, len, fp) != len) {
-        free(buf);
-        return -1;
-    }
-    buf[len] = '\0';
-    *out = buf;
-    return 0;
-}
 
 /**
  * @brief Ensure all per-field arrays and the global alive bitmap can hold
@@ -537,7 +513,7 @@ int gv_named_vectors_save(const GV_NamedVectorStore *store, const char *filepath
 
     if (gv_write_u32(fp, (uint32_t)store->field_count) != 0) goto fail;
 
-    if (gv_nv_write_u64(fp, (uint64_t)store->point_count) != 0) goto fail;
+    if (gv_write_u64(fp, (uint64_t)store->point_count) != 0) goto fail;
 
     if (store->point_count > 0) {
         if (fwrite(store->point_alive, sizeof(uint8_t), store->point_count, fp)
@@ -547,8 +523,8 @@ int gv_named_vectors_save(const GV_NamedVectorStore *store, const char *filepath
     for (size_t b = 0; b < GV_NV_FIELD_HASH_BUCKETS; b++) {
         const GV_NVField *f = store->buckets[b];
         while (f) {
-            if (gv_nv_write_str(fp, f->name) != 0) goto fail;
-            if (gv_nv_write_u64(fp, (uint64_t)f->dimension) != 0) goto fail;
+            if (gv_write_string(fp, f->name) != 0) goto fail;
+            if (gv_write_u64(fp, (uint64_t)f->dimension) != 0) goto fail;
             if (gv_write_u32(fp, (uint32_t)f->distance_type) != 0) goto fail;
 
             if (store->point_count > 0) {
@@ -591,7 +567,7 @@ GV_NamedVectorStore *gv_named_vectors_load(const char *filepath) {
     if (field_count > GV_NV_MAX_FIELDS) goto fail;
 
     uint64_t point_count_u64 = 0;
-    if (gv_nv_read_u64(fp, &point_count_u64) != 0) goto fail;
+    if (gv_read_u64(fp, &point_count_u64) != 0) goto fail;
     size_t point_count = (size_t)point_count_u64;
 
     GV_NamedVectorStore *store = gv_named_vectors_create();
@@ -615,11 +591,12 @@ GV_NamedVectorStore *gv_named_vectors_load(const char *filepath) {
         uint64_t dimension_u64 = 0;
         uint32_t dist_type = 0;
 
-        if (gv_nv_read_str(fp, &name) != 0) {
+        name = gv_read_string(fp);
+        if (name == NULL) {
             gv_named_vectors_destroy(store);
             goto fail;
         }
-        if (gv_nv_read_u64(fp, &dimension_u64) != 0) {
+        if (gv_read_u64(fp, &dimension_u64) != 0) {
             free(name);
             gv_named_vectors_destroy(store);
             goto fail;

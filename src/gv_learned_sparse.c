@@ -10,6 +10,7 @@
  */
 
 #include "gigavector/gv_learned_sparse.h"
+#include "gigavector/gv_heap.h"
 #include "gigavector/gv_utils.h"
 
 #include <stdlib.h>
@@ -150,49 +151,11 @@ static void gv_ls_posting_list_free(GV_LSPostingList *pl) {
 }
 
 typedef struct {
-    float  score;
-    size_t doc_id;
+    float  dist;
+    size_t idx;
 } GV_LSHeapItem;
 
-static void gv_ls_heap_sift_down(GV_LSHeapItem *heap, size_t size, size_t i) {
-    while (1) {
-        size_t l = 2 * i + 1;
-        size_t r = l + 1;
-        size_t smallest = i;
-        if (l < size && heap[l].score < heap[smallest].score) smallest = l;
-        if (r < size && heap[r].score < heap[smallest].score) smallest = r;
-        if (smallest == i) break;
-        GV_LSHeapItem tmp = heap[i];
-        heap[i] = heap[smallest];
-        heap[smallest] = tmp;
-        i = smallest;
-    }
-}
-
-static void gv_ls_heap_push(GV_LSHeapItem *heap, size_t *size, size_t capacity,
-                             float score, size_t doc_id) {
-    if (*size < capacity) {
-        heap[*size].score  = score;
-        heap[*size].doc_id = doc_id;
-        (*size)++;
-        size_t i = *size - 1;
-        while (i > 0) {
-            size_t parent = (i - 1) / 2;
-            if (heap[i].score < heap[parent].score) {
-                GV_LSHeapItem tmp = heap[i];
-                heap[i] = heap[parent];
-                heap[parent] = tmp;
-                i = parent;
-            } else {
-                break;
-            }
-        }
-    } else if (score > heap[0].score) {
-        heap[0].score  = score;
-        heap[0].doc_id = doc_id;
-        gv_ls_heap_sift_down(heap, *size, 0);
-    }
-}
+GV_MIN_HEAP_DEFINE(gv_ls_heap, GV_LSHeapItem)
 
 typedef struct GV_LSScoreEntry {
     size_t doc_id;
@@ -371,8 +334,8 @@ static int gv_ls_search_wand(const GV_LearnedSparseIndex *idx,
         if (num_cursors == 0) break;
 
         float threshold = min_score;
-        if (heap_size >= k && heap[0].score > threshold) {
-            threshold = heap[0].score;
+        if (heap_size >= k && heap[0].dist > threshold) {
+            threshold = heap[0].dist;
         }
 
         /* Find the pivot: the smallest prefix of sorted cursors whose
@@ -401,7 +364,7 @@ static int gv_ls_search_wand(const GV_LearnedSparseIndex *idx,
                 }
 
                 if (score >= min_score) {
-                    gv_ls_heap_push(heap, &heap_size, k, score, pivot_doc);
+                    gv_ls_heap_push(heap, &heap_size, k, (GV_LSHeapItem){score, pivot_doc});
                 }
             }
 
@@ -420,8 +383,8 @@ static int gv_ls_search_wand(const GV_LearnedSparseIndex *idx,
 
     int n = (int)heap_size;
     for (int i = n - 1; i >= 0; i--) {
-        results[i].doc_index = heap[0].doc_id;
-        results[i].score     = heap[0].score;
+        results[i].doc_index = heap[0].idx;
+        results[i].score     = heap[0].dist;
 
         heap[0] = heap[heap_size - 1];
         heap_size--;
@@ -475,7 +438,7 @@ static int gv_ls_search_accumulate(const GV_LearnedSparseIndex *idx,
         GV_LSScoreEntry *e = map->buckets[b];
         while (e) {
             if (e->used && e->score >= min_score) {
-                gv_ls_heap_push(heap, &heap_size, k, e->score, e->doc_id);
+                gv_ls_heap_push(heap, &heap_size, k, (GV_LSHeapItem){e->score, e->doc_id});
             }
             e = e->next;
         }
@@ -483,8 +446,8 @@ static int gv_ls_search_accumulate(const GV_LearnedSparseIndex *idx,
 
     int n = (int)heap_size;
     for (int i = n - 1; i >= 0; i--) {
-        results[i].doc_index = heap[0].doc_id;
-        results[i].score     = heap[0].score;
+        results[i].doc_index = heap[0].idx;
+        results[i].score     = heap[0].dist;
 
         heap[0] = heap[heap_size - 1];
         heap_size--;
@@ -498,21 +461,6 @@ static int gv_ls_search_accumulate(const GV_LearnedSparseIndex *idx,
     return n;
 }
 
-static int gv_ls_write_u64(FILE *f, uint64_t v) {
-    return fwrite(&v, sizeof(uint64_t), 1, f) == 1 ? 0 : -1;
-}
-
-static int gv_ls_read_u64(FILE *f, uint64_t *v) {
-    return (v && fread(v, sizeof(uint64_t), 1, f) == 1) ? 0 : -1;
-}
-
-static int gv_ls_write_float(FILE *f, float v) {
-    return fwrite(&v, sizeof(float), 1, f) == 1 ? 0 : -1;
-}
-
-static int gv_ls_read_float(FILE *f, float *v) {
-    return (v && fread(v, sizeof(float), 1, f) == 1) ? 0 : -1;
-}
 
 static const GV_LearnedSparseConfig DEFAULT_CONFIG = {
     .vocab_size      = 30522,
@@ -746,15 +694,15 @@ int gv_ls_save(const GV_LearnedSparseIndex *idx, const char *path) {
     if (fwrite(GV_LS_MAGIC, 1, GV_LS_MAGIC_LEN, fp) != GV_LS_MAGIC_LEN) goto fail;
     if (gv_write_u32(fp, GV_LS_VERSION) != 0) goto fail;
 
-    if (gv_ls_write_u64(fp, (uint64_t)idx->config.vocab_size) != 0) goto fail;
-    if (gv_ls_write_u64(fp, (uint64_t)idx->config.max_nonzeros) != 0) goto fail;
+    if (gv_write_u64(fp, (uint64_t)idx->config.vocab_size) != 0) goto fail;
+    if (gv_write_u64(fp, (uint64_t)idx->config.max_nonzeros) != 0) goto fail;
     if (gv_write_u32(fp, (uint32_t)idx->config.use_wand) != 0) goto fail;
-    if (gv_ls_write_u64(fp, (uint64_t)idx->config.wand_block_size) != 0) goto fail;
+    if (gv_write_u64(fp, (uint64_t)idx->config.wand_block_size) != 0) goto fail;
 
-    if (gv_ls_write_u64(fp, (uint64_t)idx->doc_count) != 0) goto fail;
+    if (gv_write_u64(fp, (uint64_t)idx->doc_count) != 0) goto fail;
 
     for (size_t i = 0; i < idx->doc_count; i++) {
-        if (gv_ls_write_u64(fp, (uint64_t)idx->docs[i].entry_count) != 0) goto fail;
+        if (gv_write_u64(fp, (uint64_t)idx->docs[i].entry_count) != 0) goto fail;
         if (gv_write_u32(fp, (uint32_t)idx->docs[i].deleted) != 0) goto fail;
     }
 
@@ -762,18 +710,18 @@ int gv_ls_save(const GV_LearnedSparseIndex *idx, const char *path) {
     for (size_t i = 0; i < idx->config.vocab_size; i++) {
         if (idx->posting_lists[i].count > 0) non_empty_count++;
     }
-    if (gv_ls_write_u64(fp, non_empty_count) != 0) goto fail;
+    if (gv_write_u64(fp, non_empty_count) != 0) goto fail;
 
     for (size_t i = 0; i < idx->config.vocab_size; i++) {
         const GV_LSPostingList *pl = &idx->posting_lists[i];
         if (pl->count == 0) continue;
 
         if (gv_write_u32(fp, (uint32_t)i) != 0) goto fail;
-        if (gv_ls_write_u64(fp, (uint64_t)pl->count) != 0) goto fail;
+        if (gv_write_u64(fp, (uint64_t)pl->count) != 0) goto fail;
 
         for (size_t j = 0; j < pl->count; j++) {
-            if (gv_ls_write_u64(fp, (uint64_t)pl->postings[j].doc_id) != 0) goto fail;
-            if (gv_ls_write_float(fp, pl->postings[j].weight) != 0) goto fail;
+            if (gv_write_u64(fp, (uint64_t)pl->postings[j].doc_id) != 0) goto fail;
+            if (gv_write_f32(fp, pl->postings[j].weight) != 0) goto fail;
         }
     }
 
@@ -808,10 +756,10 @@ GV_LearnedSparseIndex *gv_ls_load(const char *path) {
 
     uint64_t vocab_size = 0, max_nonzeros = 0, wand_block_size = 0;
     uint32_t use_wand = 0;
-    if (gv_ls_read_u64(fp, &vocab_size) != 0)      { fclose(fp); return NULL; }
-    if (gv_ls_read_u64(fp, &max_nonzeros) != 0)    { fclose(fp); return NULL; }
+    if (gv_read_u64(fp, &vocab_size) != 0)      { fclose(fp); return NULL; }
+    if (gv_read_u64(fp, &max_nonzeros) != 0)    { fclose(fp); return NULL; }
     if (gv_read_u32(fp, &use_wand) != 0)        { fclose(fp); return NULL; }
-    if (gv_ls_read_u64(fp, &wand_block_size) != 0) { fclose(fp); return NULL; }
+    if (gv_read_u64(fp, &wand_block_size) != 0) { fclose(fp); return NULL; }
 
     GV_LearnedSparseConfig cfg;
     cfg.vocab_size      = (size_t)vocab_size;
@@ -820,7 +768,7 @@ GV_LearnedSparseIndex *gv_ls_load(const char *path) {
     cfg.wand_block_size = (size_t)wand_block_size;
 
     uint64_t doc_count_raw = 0;
-    if (gv_ls_read_u64(fp, &doc_count_raw) != 0) { fclose(fp); return NULL; }
+    if (gv_read_u64(fp, &doc_count_raw) != 0) { fclose(fp); return NULL; }
 
     GV_LearnedSparseIndex *idx = gv_ls_create(&cfg);
     if (!idx) { fclose(fp); return NULL; }
@@ -849,7 +797,7 @@ GV_LearnedSparseIndex *gv_ls_load(const char *path) {
     for (size_t i = 0; i < doc_count; i++) {
         uint64_t ec = 0;
         uint32_t del = 0;
-        if (gv_ls_read_u64(fp, &ec) != 0 || gv_read_u32(fp, &del) != 0) {
+        if (gv_read_u64(fp, &ec) != 0 || gv_read_u32(fp, &del) != 0) {
             gv_ls_destroy(idx);
             fclose(fp);
             return NULL;
@@ -863,7 +811,7 @@ GV_LearnedSparseIndex *gv_ls_load(const char *path) {
     }
 
     uint64_t non_empty_count = 0;
-    if (gv_ls_read_u64(fp, &non_empty_count) != 0) {
+    if (gv_read_u64(fp, &non_empty_count) != 0) {
         gv_ls_destroy(idx);
         fclose(fp);
         return NULL;
@@ -875,7 +823,7 @@ GV_LearnedSparseIndex *gv_ls_load(const char *path) {
     for (uint64_t t = 0; t < non_empty_count; t++) {
         uint32_t tid = 0;
         uint64_t pcount = 0;
-        if (gv_read_u32(fp, &tid) != 0 || gv_ls_read_u64(fp, &pcount) != 0) {
+        if (gv_read_u32(fp, &tid) != 0 || gv_read_u64(fp, &pcount) != 0) {
             gv_ls_destroy(idx);
             fclose(fp);
             return NULL;
@@ -890,7 +838,7 @@ GV_LearnedSparseIndex *gv_ls_load(const char *path) {
         for (uint64_t p = 0; p < pcount; p++) {
             uint64_t did = 0;
             float    w   = 0.0f;
-            if (gv_ls_read_u64(fp, &did) != 0 || gv_ls_read_float(fp, &w) != 0) {
+            if (gv_read_u64(fp, &did) != 0 || gv_read_f32(fp, &w) != 0) {
                 gv_ls_destroy(idx);
                 fclose(fp);
                 return NULL;

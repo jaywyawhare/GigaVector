@@ -933,13 +933,6 @@ size_t gv_embedded_memory_usage(const GV_EmbeddedDB *db) {
     return db->memory_used;
 }
 
-static int emb_write_u64(FILE *f, uint64_t v) {
-    return fwrite(&v, sizeof(uint64_t), 1, f) == 1 ? 0 : -1;
-}
-
-static int emb_read_u64(FILE *f, uint64_t *v) {
-    return (v && fread(v, sizeof(uint64_t), 1, f) == 1) ? 0 : -1;
-}
 
 int gv_embedded_save(const GV_EmbeddedDB *db, const char *path) {
     if (!db || !path) return -1;
@@ -953,12 +946,12 @@ int gv_embedded_save(const GV_EmbeddedDB *db, const char *path) {
     }
 
     if (gv_write_u32(f, GV_EMBEDDED_FILE_VERSION) != 0) { fclose(f); return -1; }
-    if (emb_write_u64(f, (uint64_t)db->dimension) != 0)  { fclose(f); return -1; }
-    if (emb_write_u64(f, (uint64_t)db->count) != 0)      { fclose(f); return -1; }
+    if (gv_write_u64(f, (uint64_t)db->dimension) != 0)  { fclose(f); return -1; }
+    if (gv_write_u64(f, (uint64_t)db->count) != 0)      { fclose(f); return -1; }
     if (gv_write_u32(f, (uint32_t)db->index_type) != 0)  { fclose(f); return -1; }
     if (gv_write_u32(f, (uint32_t)db->quantize) != 0)    { fclose(f); return -1; }
-    if (emb_write_u64(f, (uint64_t)db->max_vectors) != 0) { fclose(f); return -1; }
-    if (emb_write_u64(f, (uint64_t)db->memory_limit_mb) != 0) { fclose(f); return -1; }
+    if (gv_write_u64(f, (uint64_t)db->max_vectors) != 0) { fclose(f); return -1; }
+    if (gv_write_u64(f, (uint64_t)db->memory_limit_mb) != 0) { fclose(f); return -1; }
 
     size_t del_bytes = (db->count + 7) / 8;
     if (del_bytes > 0) {
@@ -986,23 +979,23 @@ int gv_embedded_save(const GV_EmbeddedDB *db, const char *path) {
     }
 
     if (db->index_type == GV_EMBEDDED_INDEX_HNSW && db->hnsw) {
-        if (emb_write_u64(f, (uint64_t)db->hnsw->M) != 0) { fclose(f); return -1; }
-        if (emb_write_u64(f, (uint64_t)db->hnsw->ef_construction) != 0) { fclose(f); return -1; }
+        if (gv_write_u64(f, (uint64_t)db->hnsw->M) != 0) { fclose(f); return -1; }
+        if (gv_write_u64(f, (uint64_t)db->hnsw->ef_construction) != 0) { fclose(f); return -1; }
 
         for (size_t i = 0; i < db->count; ++i) {
             GV_EmbeddedHNSWNode *node = (i < db->hnsw->capacity) ? &db->hnsw->nodes[i] : NULL;
             uint32_t nc = (node && node->neighbors) ? (uint32_t)node->neighbor_count : 0;
             if (gv_write_u32(f, nc) != 0) { fclose(f); return -1; }
             for (uint32_t n = 0; n < nc; ++n) {
-                if (emb_write_u64(f, (uint64_t)node->neighbors[n]) != 0) { fclose(f); return -1; }
+                if (gv_write_u64(f, (uint64_t)node->neighbors[n]) != 0) { fclose(f); return -1; }
             }
         }
     }
 
     if (db->index_type == GV_EMBEDDED_INDEX_LSH && db->lsh) {
-        if (emb_write_u64(f, (uint64_t)db->lsh->num_tables) != 0) { fclose(f); return -1; }
-        if (emb_write_u64(f, (uint64_t)db->lsh->num_bits) != 0)   { fclose(f); return -1; }
-        if (emb_write_u64(f, (uint64_t)db->lsh->num_buckets) != 0){ fclose(f); return -1; }
+        if (gv_write_u64(f, (uint64_t)db->lsh->num_tables) != 0) { fclose(f); return -1; }
+        if (gv_write_u64(f, (uint64_t)db->lsh->num_bits) != 0)   { fclose(f); return -1; }
+        if (gv_write_u64(f, (uint64_t)db->lsh->num_buckets) != 0){ fclose(f); return -1; }
 
         size_t total_planes = db->lsh->num_tables * db->lsh->num_bits;
         for (size_t i = 0; i < total_planes; ++i) {
@@ -1039,12 +1032,12 @@ GV_EmbeddedDB *gv_embedded_load(const char *path) {
     uint64_t dim64 = 0, count64 = 0, max_vec64 = 0, mem_limit64 = 0;
     uint32_t idx_type = 0, quant = 0;
 
-    if (emb_read_u64(f, &dim64) != 0)       { fclose(f); return NULL; }
-    if (emb_read_u64(f, &count64) != 0)      { fclose(f); return NULL; }
+    if (gv_read_u64(f, &dim64) != 0)       { fclose(f); return NULL; }
+    if (gv_read_u64(f, &count64) != 0)      { fclose(f); return NULL; }
     if (gv_read_u32(f, &idx_type) != 0)     { fclose(f); return NULL; }
     if (gv_read_u32(f, &quant) != 0)        { fclose(f); return NULL; }
-    if (emb_read_u64(f, &max_vec64) != 0)    { fclose(f); return NULL; }
-    if (emb_read_u64(f, &mem_limit64) != 0)  { fclose(f); return NULL; }
+    if (gv_read_u64(f, &max_vec64) != 0)    { fclose(f); return NULL; }
+    if (gv_read_u64(f, &mem_limit64) != 0)  { fclose(f); return NULL; }
 
     GV_EmbeddedConfig config;
     gv_embedded_config_init(&config);
@@ -1108,7 +1101,7 @@ GV_EmbeddedDB *gv_embedded_load(const char *path) {
 
     if (db->index_type == GV_EMBEDDED_INDEX_HNSW && db->hnsw && count > 0) {
         uint64_t M64 = 0, ef64 = 0;
-        if (emb_read_u64(f, &M64) != 0 || emb_read_u64(f, &ef64) != 0) {
+        if (gv_read_u64(f, &M64) != 0 || gv_read_u64(f, &ef64) != 0) {
             gv_embedded_close(db);
             fclose(f);
             return NULL;
@@ -1141,7 +1134,7 @@ GV_EmbeddedDB *gv_embedded_load(const char *path) {
                 node->neighbor_count = nc;
                 for (uint32_t n = 0; n < nc; ++n) {
                     uint64_t nb64 = 0;
-                    if (emb_read_u64(f, &nb64) != 0) {
+                    if (gv_read_u64(f, &nb64) != 0) {
                         gv_embedded_close(db);
                         fclose(f);
                         return NULL;
@@ -1154,8 +1147,8 @@ GV_EmbeddedDB *gv_embedded_load(const char *path) {
 
     if (db->index_type == GV_EMBEDDED_INDEX_LSH && db->lsh && count > 0) {
         uint64_t nt64 = 0, nb64 = 0, nbk64 = 0;
-        if (emb_read_u64(f, &nt64) != 0 || emb_read_u64(f, &nb64) != 0 ||
-            emb_read_u64(f, &nbk64) != 0) {
+        if (gv_read_u64(f, &nt64) != 0 || gv_read_u64(f, &nb64) != 0 ||
+            gv_read_u64(f, &nbk64) != 0) {
             gv_embedded_close(db);
             fclose(f);
             return NULL;

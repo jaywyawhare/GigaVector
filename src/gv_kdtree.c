@@ -7,6 +7,7 @@
 #include "gigavector/gv_kdtree.h"
 #include "gigavector/gv_distance.h"
 #include "gigavector/gv_metadata.h"
+#include "gigavector/gv_utils.h"
 #include "gigavector/gv_vector.h"
 #include "gigavector/gv_soa_storage.h"
 #include <math.h>
@@ -57,60 +58,6 @@ int gv_kdtree_insert(GV_KDNode **root, GV_SoAStorage *storage, size_t vector_ind
     return gv_kdtree_insert(&(current->right), storage, vector_index, depth + 1);
 }
 
-static int gv_write_uint8(FILE *out, uint8_t value) {
-    return (fwrite(&value, sizeof(uint8_t), 1, out) == 1) ? 0 : -1;
-}
-
-static int gv_write_uint32(FILE *out, uint32_t value) {
-    return (fwrite(&value, sizeof(uint32_t), 1, out) == 1) ? 0 : -1;
-}
-
-static int gv_write_floats(FILE *out, const float *data, size_t count) {
-    return (fwrite(data, sizeof(float), count, out) == count) ? 0 : -1;
-}
-
-static int gv_write_string(FILE *out, const char *str, uint32_t len) {
-    if (str == NULL && len > 0) {
-        return -1;
-    }
-    if (gv_write_uint32(out, len) != 0) {
-        return -1;
-    }
-    if (len == 0) {
-        return 0;
-    }
-    return (fwrite(str, 1, len, out) == len) ? 0 : -1;
-}
-
-static int gv_write_metadata(FILE *out, const GV_Metadata *meta_head) {
-    uint32_t count = 0;
-    const GV_Metadata *cursor = meta_head;
-    while (cursor != NULL) {
-        count++;
-        cursor = cursor->next;
-    }
-
-    if (gv_write_uint32(out, count) != 0) {
-        return -1;
-    }
-
-    cursor = meta_head;
-    while (cursor != NULL) {
-        size_t key_len = strlen(cursor->key);
-        size_t val_len = strlen(cursor->value);
-        if (key_len > UINT32_MAX || val_len > UINT32_MAX) {
-            return -1;
-        }
-        if (gv_write_string(out, cursor->key, (uint32_t)key_len) != 0) {
-            return -1;
-        }
-        if (gv_write_string(out, cursor->value, (uint32_t)val_len) != 0) {
-            return -1;
-        }
-        cursor = cursor->next;
-    }
-    return 0;
-}
 
 int gv_kdtree_save_recursive(const GV_KDNode *node, const GV_SoAStorage *storage, FILE *out, uint32_t version) {
     if (out == NULL || storage == NULL) {
@@ -118,10 +65,10 @@ int gv_kdtree_save_recursive(const GV_KDNode *node, const GV_SoAStorage *storage
     }
 
     if (node == NULL) {
-        return gv_write_uint8(out, 0);
+        return gv_write_u8(out, 0);
     }
 
-    if (gv_write_uint8(out, 1) != 0) {
+    if (gv_write_u8(out, 1) != 0) {
         return -1;
     }
 
@@ -138,7 +85,7 @@ int gv_kdtree_save_recursive(const GV_KDNode *node, const GV_SoAStorage *storage
         return -1;
     }
 
-    if (gv_write_uint32(out, (uint32_t)node->axis) != 0) {
+    if (gv_write_u32(out, (uint32_t)node->axis) != 0) {
         return -1;
     }
 
@@ -160,44 +107,6 @@ int gv_kdtree_save_recursive(const GV_KDNode *node, const GV_SoAStorage *storage
     return gv_kdtree_save_recursive(node->right, storage, out, version);
 }
 
-static int gv_read_uint8(FILE *in, uint8_t *value) {
-    return (value != NULL && fread(value, sizeof(uint8_t), 1, in) == 1) ? 0 : -1;
-}
-
-static int gv_read_uint32(FILE *in, uint32_t *value) {
-    return (value != NULL && fread(value, sizeof(uint32_t), 1, in) == 1) ? 0 : -1;
-}
-
-static int gv_read_floats(FILE *in, float *data, size_t count) {
-    return (data != NULL && fread(data, sizeof(float), count, in) == count) ? 0 : -1;
-}
-
-static int gv_read_string(FILE *in, char **out_str, uint32_t len) {
-    if (out_str == NULL) {
-        return -1;
-    }
-    *out_str = NULL;
-    if (len == 0) {
-        *out_str = (char *)malloc(1);
-        if (*out_str == NULL) {
-            return -1;
-        }
-        (*out_str)[0] = '\0';
-        return 0;
-    }
-
-    char *buf = (char *)malloc(len + 1);
-    if (buf == NULL) {
-        return -1;
-    }
-    if (fread(buf, 1, len, in) != len) {
-        free(buf);
-        return -1;
-    }
-    buf[len] = '\0';
-    *out_str = buf;
-    return 0;
-}
 
 static int gv_read_metadata(FILE *in, GV_Vector *vec) {
     if (vec == NULL) {
@@ -205,7 +114,7 @@ static int gv_read_metadata(FILE *in, GV_Vector *vec) {
     }
 
     uint32_t count = 0;
-    if (gv_read_uint32(in, &count) != 0) {
+    if (gv_read_u32(in, &count) != 0) {
         return -1;
     }
 
@@ -215,19 +124,19 @@ static int gv_read_metadata(FILE *in, GV_Vector *vec) {
         char *key = NULL;
         char *value = NULL;
 
-        if (gv_read_uint32(in, &key_len) != 0) {
+        if (gv_read_u32(in, &key_len) != 0) {
             return -1;
         }
-        if (gv_read_string(in, &key, key_len) != 0) {
+        if (gv_read_str(in, &key, key_len) != 0) {
             free(key);
             return -1;
         }
 
-        if (gv_read_uint32(in, &val_len) != 0) {
+        if (gv_read_u32(in, &val_len) != 0) {
             free(key);
             return -1;
         }
-        if (gv_read_string(in, &value, val_len) != 0) {
+        if (gv_read_str(in, &value, val_len) != 0) {
             free(key);
             free(value);
             return -1;
@@ -256,7 +165,7 @@ int gv_kdtree_load_recursive(GV_KDNode **root, GV_SoAStorage *storage, FILE *in,
     }
 
     uint8_t present = 0;
-    if (gv_read_uint8(in, &present) != 0) {
+    if (gv_read_u8(in, &present) != 0) {
         return -1;
     }
 
@@ -270,7 +179,7 @@ int gv_kdtree_load_recursive(GV_KDNode **root, GV_SoAStorage *storage, FILE *in,
     }
 
     uint32_t axis_u32 = 0;
-    if (gv_read_uint32(in, &axis_u32) != 0) {
+    if (gv_read_u32(in, &axis_u32) != 0) {
         return -1;
     }
 

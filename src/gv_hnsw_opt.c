@@ -26,6 +26,7 @@
 #include <errno.h>
 
 #include "gigavector/gv_hnsw_opt.h"
+#include "gigavector/gv_utils.h"
 
 #define HNSW_OPT_MAGIC           0x484E5357  /* "HNSW" */
 #define HNSW_OPT_VERSION         1
@@ -1002,37 +1003,6 @@ size_t gv_hnsw_inline_count(const GV_HNSWInlineIndex *idx) {
     return idx->count;
 }
 
-static int write_u32(FILE *f, uint32_t v) {
-    return (fwrite(&v, sizeof(uint32_t), 1, f) == 1) ? 0 : -1;
-}
-
-static int write_u64(FILE *f, uint64_t v) {
-    return (fwrite(&v, sizeof(uint64_t), 1, f) == 1) ? 0 : -1;
-}
-
-static int write_floats(FILE *f, const float *data, size_t count) {
-    return (fwrite(data, sizeof(float), count, f) == count) ? 0 : -1;
-}
-
-static int write_bytes(FILE *f, const uint8_t *data, size_t count) {
-    return (fwrite(data, 1, count, f) == count) ? 0 : -1;
-}
-
-static int read_u32(FILE *f, uint32_t *v) {
-    return (fread(v, sizeof(uint32_t), 1, f) == 1) ? 0 : -1;
-}
-
-static int read_u64(FILE *f, uint64_t *v) {
-    return (fread(v, sizeof(uint64_t), 1, f) == 1) ? 0 : -1;
-}
-
-static int read_floats(FILE *f, float *data, size_t count) {
-    return (fread(data, sizeof(float), count, f) == count) ? 0 : -1;
-}
-
-static int read_bytes(FILE *f, uint8_t *data, size_t count) {
-    return (fread(data, 1, count, f) == count) ? 0 : -1;
-}
 
 int gv_hnsw_inline_save(const GV_HNSWInlineIndex *idx, const char *path) {
     if (idx == NULL || path == NULL) return -1;
@@ -1047,34 +1017,34 @@ int gv_hnsw_inline_save(const GV_HNSWInlineIndex *idx, const char *path) {
 
     int rc = 0;
 
-    if (write_u32(f, HNSW_OPT_MAGIC) != 0) { rc = -1; goto done; }
-    if (write_u32(f, HNSW_OPT_VERSION) != 0) { rc = -1; goto done; }
-    if (write_u64(f, (uint64_t)idx->dimension) != 0) { rc = -1; goto done; }
-    if (write_u64(f, (uint64_t)idx->max_elements) != 0) { rc = -1; goto done; }
-    if (write_u64(f, (uint64_t)idx->M) != 0) { rc = -1; goto done; }
-    if (write_u64(f, (uint64_t)idx->ef_construction) != 0) { rc = -1; goto done; }
-    if (write_u32(f, (uint32_t)idx->quant_bits) != 0) { rc = -1; goto done; }
-    if (write_u64(f, (uint64_t)idx->count) != 0) { rc = -1; goto done; }
-    if (write_u64(f, (uint64_t)idx->entry_point) != 0) { rc = -1; goto done; }
-    if (write_u64(f, (uint64_t)idx->max_level_cur) != 0) { rc = -1; goto done; }
+    if (gv_write_u32(f, HNSW_OPT_MAGIC) != 0) { rc = -1; goto done; }
+    if (gv_write_u32(f, HNSW_OPT_VERSION) != 0) { rc = -1; goto done; }
+    if (gv_write_u64(f, (uint64_t)idx->dimension) != 0) { rc = -1; goto done; }
+    if (gv_write_u64(f, (uint64_t)idx->max_elements) != 0) { rc = -1; goto done; }
+    if (gv_write_u64(f, (uint64_t)idx->M) != 0) { rc = -1; goto done; }
+    if (gv_write_u64(f, (uint64_t)idx->ef_construction) != 0) { rc = -1; goto done; }
+    if (gv_write_u32(f, (uint32_t)idx->quant_bits) != 0) { rc = -1; goto done; }
+    if (gv_write_u64(f, (uint64_t)idx->count) != 0) { rc = -1; goto done; }
+    if (gv_write_u64(f, (uint64_t)idx->entry_point) != 0) { rc = -1; goto done; }
+    if (gv_write_u64(f, (uint64_t)idx->max_level_cur) != 0) { rc = -1; goto done; }
 
-    if (write_floats(f, idx->qparams.min_vals, idx->dimension) != 0) { rc = -1; goto done; }
-    if (write_floats(f, idx->qparams.max_vals, idx->dimension) != 0) { rc = -1; goto done; }
+    if (gv_write_floats(f, idx->qparams.min_vals, idx->dimension) != 0) { rc = -1; goto done; }
+    if (gv_write_floats(f, idx->qparams.max_vals, idx->dimension) != 0) { rc = -1; goto done; }
 
-    if (write_floats(f, idx->vectors, idx->count * idx->dimension) != 0) { rc = -1; goto done; }
+    if (gv_write_floats(f, idx->vectors, idx->count * idx->dimension) != 0) { rc = -1; goto done; }
 
     for (size_t i = 0; i < idx->count; ++i) {
         const InlineNode *node = &idx->nodes[i];
-        if (write_u64(f, (uint64_t)node->level) != 0) { rc = -1; goto done; }
-        if (write_u64(f, (uint64_t)node->label) != 0) { rc = -1; goto done; }
-        if (write_bytes(f, node->quant_vec, idx->qparams.bytes_per_vec) != 0) { rc = -1; goto done; }
+        if (gv_write_u64(f, (uint64_t)node->level) != 0) { rc = -1; goto done; }
+        if (gv_write_u64(f, (uint64_t)node->label) != 0) { rc = -1; goto done; }
+        if (gv_write_bytes(f, node->quant_vec, idx->qparams.bytes_per_vec) != 0) { rc = -1; goto done; }
 
         for (size_t l = 0; l <= node->level; ++l) {
             size_t cnt = node->neighbor_counts[l];
-            if (write_u64(f, (uint64_t)cnt) != 0) { rc = -1; goto done; }
+            if (gv_write_u64(f, (uint64_t)cnt) != 0) { rc = -1; goto done; }
             size_t *nbrs = node_neighbors_at(node, l);
             for (size_t j = 0; j < cnt; ++j) {
-                if (write_u64(f, (uint64_t)nbrs[j]) != 0) { rc = -1; goto done; }
+                if (gv_write_u64(f, (uint64_t)nbrs[j]) != 0) { rc = -1; goto done; }
             }
         }
     }
@@ -1095,16 +1065,16 @@ GV_HNSWInlineIndex *gv_hnsw_inline_load(const char *path) {
     uint64_t dimension = 0, max_elements = 0, M = 0, ef_construction = 0;
     uint64_t count = 0, entry_point = 0, max_level_cur = 0;
 
-    if (read_u32(f, &magic) != 0 || magic != HNSW_OPT_MAGIC) goto fail;
-    if (read_u32(f, &version) != 0 || version != HNSW_OPT_VERSION) goto fail;
-    if (read_u64(f, &dimension) != 0) goto fail;
-    if (read_u64(f, &max_elements) != 0) goto fail;
-    if (read_u64(f, &M) != 0) goto fail;
-    if (read_u64(f, &ef_construction) != 0) goto fail;
-    if (read_u32(f, &qbits) != 0) goto fail;
-    if (read_u64(f, &count) != 0) goto fail;
-    if (read_u64(f, &entry_point) != 0) goto fail;
-    if (read_u64(f, &max_level_cur) != 0) goto fail;
+    if (gv_read_u32(f, &magic) != 0 || magic != HNSW_OPT_MAGIC) goto fail;
+    if (gv_read_u32(f, &version) != 0 || version != HNSW_OPT_VERSION) goto fail;
+    if (gv_read_u64(f, &dimension) != 0) goto fail;
+    if (gv_read_u64(f, &max_elements) != 0) goto fail;
+    if (gv_read_u64(f, &M) != 0) goto fail;
+    if (gv_read_u64(f, &ef_construction) != 0) goto fail;
+    if (gv_read_u32(f, &qbits) != 0) goto fail;
+    if (gv_read_u64(f, &count) != 0) goto fail;
+    if (gv_read_u64(f, &entry_point) != 0) goto fail;
+    if (gv_read_u64(f, &max_level_cur) != 0) goto fail;
 
     if (qbits != 4 && qbits != 8) goto fail;
 
@@ -1119,11 +1089,11 @@ GV_HNSWInlineIndex *gv_hnsw_inline_load(const char *path) {
         (size_t)ef_construction, &cfg);
     if (idx == NULL) goto fail;
 
-    if (read_floats(f, idx->qparams.min_vals, (size_t)dimension) != 0) {
+    if (gv_read_floats(f, idx->qparams.min_vals, (size_t)dimension) != 0) {
         gv_hnsw_inline_destroy(idx);
         goto fail;
     }
-    if (read_floats(f, idx->qparams.max_vals, (size_t)dimension) != 0) {
+    if (gv_read_floats(f, idx->qparams.max_vals, (size_t)dimension) != 0) {
         gv_hnsw_inline_destroy(idx);
         goto fail;
     }
@@ -1143,15 +1113,15 @@ GV_HNSWInlineIndex *gv_hnsw_inline_load(const char *path) {
         idx->vectors_cap = (size_t)count;
     }
 
-    if (read_floats(f, idx->vectors, (size_t)count * (size_t)dimension) != 0) {
+    if (gv_read_floats(f, idx->vectors, (size_t)count * (size_t)dimension) != 0) {
         gv_hnsw_inline_destroy(idx);
         goto fail;
     }
 
     for (size_t i = 0; i < (size_t)count; ++i) {
         uint64_t level64 = 0, label64 = 0;
-        if (read_u64(f, &level64) != 0) { gv_hnsw_inline_destroy(idx); goto fail; }
-        if (read_u64(f, &label64) != 0) { gv_hnsw_inline_destroy(idx); goto fail; }
+        if (gv_read_u64(f, &level64) != 0) { gv_hnsw_inline_destroy(idx); goto fail; }
+        if (gv_read_u64(f, &label64) != 0) { gv_hnsw_inline_destroy(idx); goto fail; }
 
         size_t level = (size_t)level64;
         if (node_init(&idx->nodes[i], level, (size_t)label64, i,
@@ -1160,7 +1130,7 @@ GV_HNSWInlineIndex *gv_hnsw_inline_load(const char *path) {
             goto fail;
         }
 
-        if (read_bytes(f, idx->nodes[i].quant_vec,
+        if (gv_read_bytes(f, idx->nodes[i].quant_vec,
                        idx->qparams.bytes_per_vec) != 0) {
             gv_hnsw_inline_destroy(idx);
             goto fail;
@@ -1168,7 +1138,7 @@ GV_HNSWInlineIndex *gv_hnsw_inline_load(const char *path) {
 
         for (size_t l = 0; l <= level; ++l) {
             uint64_t cnt64 = 0;
-            if (read_u64(f, &cnt64) != 0) { gv_hnsw_inline_destroy(idx); goto fail; }
+            if (gv_read_u64(f, &cnt64) != 0) { gv_hnsw_inline_destroy(idx); goto fail; }
             size_t cnt = (size_t)cnt64;
             size_t cap = idx->nodes[i].neighbor_caps[l];
 
@@ -1176,7 +1146,7 @@ GV_HNSWInlineIndex *gv_hnsw_inline_load(const char *path) {
             size_t actual = (cnt < cap) ? cnt : cap;
             for (size_t j = 0; j < cnt; ++j) {
                 uint64_t nbr_idx = 0;
-                if (read_u64(f, &nbr_idx) != 0) { gv_hnsw_inline_destroy(idx); goto fail; }
+                if (gv_read_u64(f, &nbr_idx) != 0) { gv_hnsw_inline_destroy(idx); goto fail; }
                 if (j < actual) {
                     nbrs[j] = (size_t)nbr_idx;
                 }

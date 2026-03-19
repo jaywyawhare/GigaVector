@@ -6,6 +6,7 @@
 #include <stdint.h>
 
 #include "gigavector/gv_quantization.h"
+#include "gigavector/gv_utils.h"
 
 #ifdef __POPCNT__
 #include <popcntintrin.h>
@@ -41,39 +42,6 @@ struct GV_QuantCodebook {
     int    use_rabitq;
     uint64_t rabitq_seed;
 };
-
-/* Small I/O helpers (matching gv_codebook.c style) */
-static int write_u8(FILE *f, uint8_t v) {
-    return fwrite(&v, sizeof(uint8_t), 1, f) == 1 ? 0 : -1;
-}
-
-static int read_u8(FILE *f, uint8_t *v) {
-    return (v && fread(v, sizeof(uint8_t), 1, f) == 1) ? 0 : -1;
-}
-
-static int write_u32(FILE *f, uint32_t v) {
-    return fwrite(&v, sizeof(uint32_t), 1, f) == 1 ? 0 : -1;
-}
-
-static int read_u32(FILE *f, uint32_t *v) {
-    return (v && fread(v, sizeof(uint32_t), 1, f) == 1) ? 0 : -1;
-}
-
-static int write_u64(FILE *f, uint64_t v) {
-    return fwrite(&v, sizeof(uint64_t), 1, f) == 1 ? 0 : -1;
-}
-
-static int read_u64(FILE *f, uint64_t *v) {
-    return (v && fread(v, sizeof(uint64_t), 1, f) == 1) ? 0 : -1;
-}
-
-static int write_f32(FILE *f, float v) {
-    return fwrite(&v, sizeof(float), 1, f) == 1 ? 0 : -1;
-}
-
-static int read_f32(FILE *f, float *v) {
-    return (v && fread(v, sizeof(float), 1, f) == 1) ? 0 : -1;
-}
 
 /* Popcount helper */
 static size_t gv_popcount64(uint64_t x) {
@@ -749,21 +717,21 @@ int gv_quant_codebook_save(const GV_QuantCodebook *cb, const char *path) {
     if (!f) return -1;
 
     /* Magic */
-    if (write_u8(f, GV_QUANT_MAGIC_0) != 0) goto fail;
-    if (write_u8(f, GV_QUANT_MAGIC_1) != 0) goto fail;
-    if (write_u8(f, GV_QUANT_MAGIC_2) != 0) goto fail;
-    if (write_u8(f, GV_QUANT_MAGIC_3) != 0) goto fail;
+    if (gv_write_u8(f, GV_QUANT_MAGIC_0) != 0) goto fail;
+    if (gv_write_u8(f, GV_QUANT_MAGIC_1) != 0) goto fail;
+    if (gv_write_u8(f, GV_QUANT_MAGIC_2) != 0) goto fail;
+    if (gv_write_u8(f, GV_QUANT_MAGIC_3) != 0) goto fail;
 
     /* Version */
-    if (write_u32(f, GV_QUANT_FILE_VERSION) != 0) goto fail;
+    if (gv_write_u32(f, GV_QUANT_FILE_VERSION) != 0) goto fail;
 
     /* Header */
-    if (write_u32(f, (uint32_t)cb->type)      != 0) goto fail;
-    if (write_u32(f, (uint32_t)cb->mode)       != 0) goto fail;
-    if (write_u32(f, (uint32_t)cb->dimension)  != 0) goto fail;
-    if (write_u32(f, (uint32_t)cb->use_rabitq) != 0) goto fail;
-    if (write_u64(f, cb->rabitq_seed)          != 0) goto fail;
-    if (write_f32(f, cb->ternary_threshold)    != 0) goto fail;
+    if (gv_write_u32(f, (uint32_t)cb->type)      != 0) goto fail;
+    if (gv_write_u32(f, (uint32_t)cb->mode)       != 0) goto fail;
+    if (gv_write_u32(f, (uint32_t)cb->dimension)  != 0) goto fail;
+    if (gv_write_u32(f, (uint32_t)cb->use_rabitq) != 0) goto fail;
+    if (gv_write_u64(f, cb->rabitq_seed)          != 0) goto fail;
+    if (gv_write_f32(f, cb->ternary_threshold)    != 0) goto fail;
 
     /* Per-dimension arrays */
     size_t dim = cb->dimension;
@@ -794,17 +762,17 @@ GV_QuantCodebook *gv_quant_codebook_load(const char *path) {
 
     /* Magic */
     uint8_t mag[4];
-    if (read_u8(f, &mag[0]) != 0) goto fail;
-    if (read_u8(f, &mag[1]) != 0) goto fail;
-    if (read_u8(f, &mag[2]) != 0) goto fail;
-    if (read_u8(f, &mag[3]) != 0) goto fail;
+    if (gv_read_u8(f, &mag[0]) != 0) goto fail;
+    if (gv_read_u8(f, &mag[1]) != 0) goto fail;
+    if (gv_read_u8(f, &mag[2]) != 0) goto fail;
+    if (gv_read_u8(f, &mag[3]) != 0) goto fail;
     if (mag[0] != GV_QUANT_MAGIC_0 || mag[1] != GV_QUANT_MAGIC_1 ||
         mag[2] != GV_QUANT_MAGIC_2 || mag[3] != GV_QUANT_MAGIC_3)
         goto fail;
 
     /* Version */
     uint32_t version = 0;
-    if (read_u32(f, &version) != 0) goto fail;
+    if (gv_read_u32(f, &version) != 0) goto fail;
     if (version != GV_QUANT_FILE_VERSION) goto fail;
 
     /* Header */
@@ -812,12 +780,12 @@ GV_QuantCodebook *gv_quant_codebook_load(const char *path) {
     uint64_t seed_u64 = 0;
     float    thresh_f = 0.0f;
 
-    if (read_u32(f, &type_u32)   != 0) goto fail;
-    if (read_u32(f, &mode_u32)   != 0) goto fail;
-    if (read_u32(f, &dim_u32)    != 0) goto fail;
-    if (read_u32(f, &rabitq_u32) != 0) goto fail;
-    if (read_u64(f, &seed_u64)   != 0) goto fail;
-    if (read_f32(f, &thresh_f)   != 0) goto fail;
+    if (gv_read_u32(f, &type_u32)   != 0) goto fail;
+    if (gv_read_u32(f, &mode_u32)   != 0) goto fail;
+    if (gv_read_u32(f, &dim_u32)    != 0) goto fail;
+    if (gv_read_u32(f, &rabitq_u32) != 0) goto fail;
+    if (gv_read_u64(f, &seed_u64)   != 0) goto fail;
+    if (gv_read_f32(f, &thresh_f)   != 0) goto fail;
 
     size_t dim = (size_t)dim_u32;
     if (dim == 0) goto fail;
