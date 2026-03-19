@@ -10,7 +10,9 @@
 
 #include "gigavector/gv_named_vectors.h"
 #include "gigavector/gv_distance.h"
+#include "gigavector/gv_heap.h"
 #include "gigavector/gv_types.h"
+#include "gigavector/gv_utils.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -71,46 +73,7 @@ typedef struct {
     size_t  idx;
 } GV_NVHeapItem;
 
-static void gv_nv_heap_sift_down(GV_NVHeapItem *heap, size_t size, size_t i) {
-    while (1) {
-        size_t l = 2 * i + 1;
-        size_t r = l + 1;
-        size_t largest = i;
-        if (l < size && heap[l].dist > heap[largest].dist) largest = l;
-        if (r < size && heap[r].dist > heap[largest].dist) largest = r;
-        if (largest == i) break;
-        GV_NVHeapItem tmp = heap[i];
-        heap[i] = heap[largest];
-        heap[largest] = tmp;
-        i = largest;
-    }
-}
-
-static void gv_nv_heap_push(GV_NVHeapItem *heap, size_t *size, size_t capacity,
-                             float dist, size_t idx) {
-    if (*size < capacity) {
-        heap[*size].dist = dist;
-        heap[*size].idx  = idx;
-        (*size)++;
-        /* Sift up */
-        size_t i = *size - 1;
-        while (i > 0) {
-            size_t parent = (i - 1) / 2;
-            if (heap[i].dist > heap[parent].dist) {
-                GV_NVHeapItem tmp = heap[i];
-                heap[i] = heap[parent];
-                heap[parent] = tmp;
-                i = parent;
-            } else {
-                break;
-            }
-        }
-    } else if (dist < heap[0].dist) {
-        heap[0].dist = dist;
-        heap[0].idx  = idx;
-        gv_nv_heap_sift_down(heap, *size, 0);
-    }
-}
+GV_HEAP_DEFINE(gv_nv_heap, GV_NVHeapItem)
 
 /* Hash helpers */
 
@@ -133,15 +96,7 @@ static GV_NVField *gv_nv_find_field(const GV_NamedVectorStore *store, const char
     return NULL;
 }
 
-/* I/O helpers */
-
-static int gv_nv_write_u32(FILE *fp, uint32_t v) {
-    return fwrite(&v, sizeof(uint32_t), 1, fp) == 1 ? 0 : -1;
-}
-
-static int gv_nv_read_u32(FILE *fp, uint32_t *v) {
-    return (v && fread(v, sizeof(uint32_t), 1, fp) == 1) ? 0 : -1;
-}
+/* I/O helpers (u32/u8/str from gv_utils.h; u64 and convenience wrappers local) */
 
 static int gv_nv_write_u64(FILE *fp, uint64_t v) {
     return fwrite(&v, sizeof(uint64_t), 1, fp) == 1 ? 0 : -1;
@@ -153,14 +108,12 @@ static int gv_nv_read_u64(FILE *fp, uint64_t *v) {
 
 static int gv_nv_write_str(FILE *fp, const char *s) {
     uint32_t len = (uint32_t)strlen(s);
-    if (gv_nv_write_u32(fp, len) != 0) return -1;
-    if (len > 0 && fwrite(s, 1, len, fp) != len) return -1;
-    return 0;
+    return gv_write_str(fp, s, len);
 }
 
 static int gv_nv_read_str(FILE *fp, char **out) {
     uint32_t len = 0;
-    if (gv_nv_read_u32(fp, &len) != 0) return -1;
+    if (gv_read_u32(fp, &len) != 0) return -1;
     char *buf = (char *)malloc((size_t)len + 1);
     if (!buf) return -1;
     if (len > 0 && fread(buf, 1, len, fp) != len) {
@@ -550,7 +503,7 @@ int gv_named_vectors_search(const GV_NamedVectorStore *store, const char *field_
         float dist = gv_nv_compute_distance(query, vec, field->dimension,
                                              field->distance_type);
 
-        gv_nv_heap_push(heap, &heap_size, k, dist, i);
+        gv_nv_heap_push(heap, &heap_size, k, (GV_NVHeapItem){dist, i});
     }
 
     /* Extract results from max-heap in ascending distance order */
@@ -626,11 +579,11 @@ int gv_named_vectors_save(const GV_NamedVectorStore *store, const char *filepath
     }
 
     /* Header: magic, version */
-    if (gv_nv_write_u32(fp, GV_NV_MAGIC) != 0) goto fail;
-    if (gv_nv_write_u32(fp, GV_NV_VERSION) != 0) goto fail;
+    if (gv_write_u32(fp, GV_NV_MAGIC) != 0) goto fail;
+    if (gv_write_u32(fp, GV_NV_VERSION) != 0) goto fail;
 
     /* Field count */
-    if (gv_nv_write_u32(fp, (uint32_t)store->field_count) != 0) goto fail;
+    if (gv_write_u32(fp, (uint32_t)store->field_count) != 0) goto fail;
 
     /* Point count (high-water mark) */
     if (gv_nv_write_u64(fp, (uint64_t)store->point_count) != 0) goto fail;
@@ -648,7 +601,7 @@ int gv_named_vectors_save(const GV_NamedVectorStore *store, const char *filepath
             /* Field config */
             if (gv_nv_write_str(fp, f->name) != 0) goto fail;
             if (gv_nv_write_u64(fp, (uint64_t)f->dimension) != 0) goto fail;
-            if (gv_nv_write_u32(fp, (uint32_t)f->distance_type) != 0) goto fail;
+            if (gv_write_u32(fp, (uint32_t)f->distance_type) != 0) goto fail;
 
             /* Occupied bitmap for this field (point_count entries) */
             if (store->point_count > 0) {
@@ -685,11 +638,11 @@ GV_NamedVectorStore *gv_named_vectors_load(const char *filepath) {
 
     /* Read and validate header */
     uint32_t magic = 0, version = 0;
-    if (gv_nv_read_u32(fp, &magic) != 0 || magic != GV_NV_MAGIC) goto fail;
-    if (gv_nv_read_u32(fp, &version) != 0 || version != GV_NV_VERSION) goto fail;
+    if (gv_read_u32(fp, &magic) != 0 || magic != GV_NV_MAGIC) goto fail;
+    if (gv_read_u32(fp, &version) != 0 || version != GV_NV_VERSION) goto fail;
 
     uint32_t field_count = 0;
-    if (gv_nv_read_u32(fp, &field_count) != 0) goto fail;
+    if (gv_read_u32(fp, &field_count) != 0) goto fail;
     if (field_count > GV_NV_MAX_FIELDS) goto fail;
 
     uint64_t point_count_u64 = 0;
@@ -729,7 +682,7 @@ GV_NamedVectorStore *gv_named_vectors_load(const char *filepath) {
             gv_named_vectors_destroy(store);
             goto fail;
         }
-        if (gv_nv_read_u32(fp, &dist_type) != 0) {
+        if (gv_read_u32(fp, &dist_type) != 0) {
             free(name);
             gv_named_vectors_destroy(store);
             goto fail;

@@ -4,6 +4,7 @@
  */
 
 #include "gigavector/gv_bm25.h"
+#include "gigavector/gv_utils.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -67,15 +68,6 @@ struct GV_BM25Index {
 };
 
 /* Hash Functions */
-
-static size_t hash_string(const char *str) {
-    size_t hash = 5381;
-    int c;
-    while ((c = *str++)) {
-        hash = ((hash << 5) + hash) + c;
-    }
-    return hash;
-}
 
 static size_t hash_size(size_t val) {
     return val;
@@ -156,7 +148,7 @@ void gv_bm25_destroy(GV_BM25Index *index) {
 /* Internal Helpers */
 
 static GV_PostingList *find_posting_list(GV_BM25Index *index, const char *term) {
-    size_t bucket = hash_string(term) % TERM_HASH_BUCKETS;
+    size_t bucket = gv_hash_str(term) % TERM_HASH_BUCKETS;
     GV_PostingList *pl = index->term_buckets[bucket];
     while (pl) {
         if (strcmp(pl->term, term) == 0) {
@@ -168,7 +160,7 @@ static GV_PostingList *find_posting_list(GV_BM25Index *index, const char *term) 
 }
 
 static GV_PostingList *get_or_create_posting_list(GV_BM25Index *index, const char *term) {
-    size_t bucket = hash_string(term) % TERM_HASH_BUCKETS;
+    size_t bucket = gv_hash_str(term) % TERM_HASH_BUCKETS;
 
     /* Check existing */
     GV_PostingList *pl = index->term_buckets[bucket];

@@ -4,6 +4,7 @@
 
 #include "gigavector/gv_metadata_index.h"
 #include "gigavector/gv_metadata.h"
+#include "gigavector/gv_utils.h"
 
 #define GV_METADATA_INDEX_HASH_SIZE 1024
 #define GV_METADATA_INDEX_LOAD_FACTOR 0.75
@@ -37,23 +38,11 @@ struct GV_MetadataIndex {
 };
 
 /**
- * @brief Simple hash function for strings (djb2).
- */
-static uint32_t gv_metadata_index_hash(const char *str) {
-    uint32_t hash = 5381;
-    int c;
-    while ((c = *str++)) {
-        hash = ((hash << 5) + hash) + c; /* hash * 33 + c */
-    }
-    return hash;
-}
-
-/**
  * @brief Combine two strings for hashing.
  */
 static uint32_t gv_metadata_index_hash_pair(const char *key, const char *value) {
-    uint32_t key_hash = gv_metadata_index_hash(key);
-    uint32_t value_hash = gv_metadata_index_hash(value);
+    uint32_t key_hash = gv_hash_str(key);
+    uint32_t value_hash = gv_hash_str(value);
     return key_hash ^ (value_hash << 1);
 }
 

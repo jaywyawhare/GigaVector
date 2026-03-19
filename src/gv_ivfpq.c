@@ -16,6 +16,7 @@
 #include "gigavector/gv_config.h"
 #include "gigavector/gv_vector.h"
 #include "gigavector/gv_metadata.h"
+#include "gigavector/gv_utils.h"
 
 /* Bitwise CRC32 (poly 0xEDB88320) */
 static uint32_t gv_crc32_init(void) { return 0xFFFFFFFFu; }
@@ -30,39 +31,6 @@ static uint32_t gv_crc32_update(uint32_t crc, const void *data, size_t len) {
     return crc;
 }
 static uint32_t gv_crc32_finish(uint32_t crc) { return crc ^ 0xFFFFFFFFu; }
-
-static int gv_ivfpq_write_u32(FILE *f, uint32_t v) {
-    return fwrite(&v, sizeof(uint32_t), 1, f) == 1 ? 0 : -1;
-}
-
-static int gv_ivfpq_write_str(FILE *f, const char *s, uint32_t len) {
-    if (gv_ivfpq_write_u32(f, len) != 0) return -1;
-    if (len == 0) return 0;
-    return fwrite(s, 1, len, f) == len ? 0 : -1;
-}
-
-static int gv_ivfpq_read_u32(FILE *f, uint32_t *v) {
-    return (v && fread(v, sizeof(uint32_t), 1, f) == 1) ? 0 : -1;
-}
-
-static int gv_ivfpq_read_str(FILE *f, char **s, uint32_t len) {
-    *s = NULL;
-    if (len == 0) {
-        *s = (char *)malloc(1);
-        if (!*s) return -1;
-        (*s)[0] = '\0';
-        return 0;
-    }
-    char *buf = (char *)malloc(len + 1);
-    if (!buf) return -1;
-    if (fread(buf, 1, len, f) != len) {
-        free(buf);
-        return -1;
-    }
-    buf[len] = '\0';
-    *s = buf;
-    return 0;
-}
 
 struct GV_IVFPQEntry;
 typedef struct {
@@ -1093,13 +1061,13 @@ int gv_ivfpq_save(const void *index_ptr, FILE *out, uint32_t version) {
             const GV_Metadata *meta = ent->vector->metadata;
             uint32_t mcount = 0;
             for (const GV_Metadata *c = meta; c != NULL; c = c->next) mcount++;
-            if (gv_ivfpq_write_u32(out, mcount) != 0) return -1;
+            if (gv_write_u32(out, mcount) != 0) return -1;
             crc = gv_crc32_update(crc, &mcount, sizeof(uint32_t));
             for (const GV_Metadata *c = meta; c != NULL; c = c->next) {
                 uint32_t klen = (uint32_t)strlen(c->key);
                 uint32_t vlen = (uint32_t)strlen(c->value);
-                if (gv_ivfpq_write_str(out, c->key, klen) != 0) return -1;
-                if (gv_ivfpq_write_str(out, c->value, vlen) != 0) return -1;
+                if (gv_write_str(out, c->key, klen) != 0) return -1;
+                if (gv_write_str(out, c->value, vlen) != 0) return -1;
                 crc = gv_crc32_update(crc, &klen, sizeof(uint32_t));
                 crc = gv_crc32_update(crc, c->key, klen);
                 crc = gv_crc32_update(crc, &vlen, sizeof(uint32_t));
@@ -1223,7 +1191,7 @@ int gv_ivfpq_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version
                 }
             }
             uint32_t mcount = 0;
-            if (gv_ivfpq_read_u32(in, &mcount) != 0) {
+            if (gv_read_u32(in, &mcount) != 0) {
                 gv_vector_destroy(vec);
                 gv_ivfpq_destroy(idx_ptr);
                 return -1;
@@ -1231,25 +1199,25 @@ int gv_ivfpq_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version
             crc = gv_crc32_update(crc, &mcount, sizeof(uint32_t));
             for (uint32_t mi = 0; mi < mcount; ++mi) {
                 uint32_t klen = 0, vlen = 0;
-                if (gv_ivfpq_read_u32(in, &klen) != 0) {
+                if (gv_read_u32(in, &klen) != 0) {
                     gv_vector_destroy(vec);
                     gv_ivfpq_destroy(idx_ptr);
                     return -1;
                 }
                 char *k = NULL;
-                if (gv_ivfpq_read_str(in, &k, klen) != 0) {
+                if (gv_read_str(in, &k, klen) != 0) {
                     gv_vector_destroy(vec);
                     gv_ivfpq_destroy(idx_ptr);
                     return -1;
                 }
-                if (gv_ivfpq_read_u32(in, &vlen) != 0) {
+                if (gv_read_u32(in, &vlen) != 0) {
                     free(k);
                     gv_vector_destroy(vec);
                     gv_ivfpq_destroy(idx_ptr);
                     return -1;
                 }
                 char *v = NULL;
-                if (gv_ivfpq_read_str(in, &v, vlen) != 0) {
+                if (gv_read_str(in, &v, vlen) != 0) {
                     free(k);
                     gv_vector_destroy(vec);
                     gv_ivfpq_destroy(idx_ptr);

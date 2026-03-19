@@ -9,6 +9,8 @@
 #include "gigavector/gv_distance.h"
 #include "gigavector/gv_vector.h"
 #include "gigavector/gv_metadata.h"
+#include "gigavector/gv_utils.h"
+#include "gigavector/gv_heap.h"
 
 /* Internal PQ entry structure */
 typedef struct {
@@ -35,102 +37,8 @@ typedef struct {
 } GV_PQIndex;
 
 /* Max-heap for top-k selection */
-typedef struct {
-    float dist;
-    size_t idx;
-} GV_PQHeapItem;
-
-static void gv_pq_heap_sift_down(GV_PQHeapItem *heap, size_t size, size_t i) {
-    while (1) {
-        size_t l = 2 * i + 1;
-        size_t r = l + 1;
-        size_t largest = i;
-        if (l < size && heap[l].dist > heap[largest].dist) largest = l;
-        if (r < size && heap[r].dist > heap[largest].dist) largest = r;
-        if (largest == i) break;
-        GV_PQHeapItem tmp = heap[i];
-        heap[i] = heap[largest];
-        heap[largest] = tmp;
-        i = largest;
-    }
-}
-
-static void gv_pq_heap_push(GV_PQHeapItem *heap, size_t *size, size_t capacity, float dist, size_t idx) {
-    if (*size < capacity) {
-        heap[*size].dist = dist;
-        heap[*size].idx = idx;
-        (*size)++;
-        /* Sift up */
-        size_t i = *size - 1;
-        while (i > 0) {
-            size_t parent = (i - 1) / 2;
-            if (heap[i].dist > heap[parent].dist) {
-                GV_PQHeapItem tmp = heap[i];
-                heap[i] = heap[parent];
-                heap[parent] = tmp;
-                i = parent;
-            } else {
-                break;
-            }
-        }
-    } else if (dist < heap[0].dist) {
-        heap[0].dist = dist;
-        heap[0].idx = idx;
-        gv_pq_heap_sift_down(heap, *size, 0);
-    }
-}
-
-/* I/O helpers */
-static int gv_pq_write_u32(FILE *f, uint32_t v) {
-    return fwrite(&v, sizeof(uint32_t), 1, f) == 1 ? 0 : -1;
-}
-
-static int gv_pq_read_u32(FILE *f, uint32_t *v) {
-    return (v && fread(v, sizeof(uint32_t), 1, f) == 1) ? 0 : -1;
-}
-
-static int gv_pq_write_u8(FILE *f, uint8_t v) {
-    return fwrite(&v, sizeof(uint8_t), 1, f) == 1 ? 0 : -1;
-}
-
-static int gv_pq_read_u8(FILE *f, uint8_t *v) {
-    return (v && fread(v, sizeof(uint8_t), 1, f) == 1) ? 0 : -1;
-}
-
-static int gv_pq_write_str(FILE *f, const char *s, uint32_t len) {
-    if (gv_pq_write_u32(f, len) != 0) return -1;
-    if (len == 0) return 0;
-    return fwrite(s, 1, len, f) == len ? 0 : -1;
-}
-
-static int gv_pq_read_str(FILE *f, char **s, uint32_t len) {
-    *s = NULL;
-    if (len == 0) {
-        *s = (char *)malloc(1);
-        if (!*s) return -1;
-        (*s)[0] = '\0';
-        return 0;
-    }
-    char *buf = (char *)malloc(len + 1);
-    if (!buf) return -1;
-    if (fread(buf, 1, len, f) != len) { free(buf); return -1; }
-    buf[len] = '\0';
-    *s = buf;
-    return 0;
-}
-
-/* Metadata matching helper */
-static int gv_pq_metadata_match(const GV_Metadata *meta, const char *key, const char *value) {
-    if (!key || !value) return 1; /* No filter = match */
-    const GV_Metadata *cur = meta;
-    while (cur) {
-        if (cur->key && cur->value && strcmp(cur->key, key) == 0 && strcmp(cur->value, value) == 0) {
-            return 1;
-        }
-        cur = cur->next;
-    }
-    return 0;
-}
+typedef struct { float dist; size_t idx; } GV_PQHeapItem;
+GV_HEAP_DEFINE(gv_pq_heap, GV_PQHeapItem)
 
 /* Squared Euclidean distance between sub-vectors */
 static float gv_pq_subvec_distance_sq(const float *a, const float *b, size_t dsub) {
@@ -406,7 +314,7 @@ int gv_pq_search(void *index, const GV_Vector *query, size_t k,
 
         /* Metadata filter */
         if (filter_key && filter_value) {
-            if (!gv_pq_metadata_match(idx->entries[i].metadata, filter_key, filter_value)) {
+            if (!gv_metadata_match(idx->entries[i].metadata, filter_key, filter_value)) {
                 continue;
             }
         }
@@ -419,7 +327,7 @@ int gv_pq_search(void *index, const GV_Vector *query, size_t k,
         }
         float dist = sqrtf(dist_squared);
 
-        gv_pq_heap_push(heap, &heap_size, oversample_k, dist, i);
+        gv_pq_heap_push(heap, &heap_size, oversample_k, (GV_PQHeapItem){dist, i});
     }
 
     free(distance_table);
@@ -539,7 +447,7 @@ int gv_pq_range_search(void *index, const GV_Vector *query, float radius,
 
         /* Metadata filter */
         if (filter_key && filter_value) {
-            if (!gv_pq_metadata_match(idx->entries[i].metadata, filter_key, filter_value)) {
+            if (!gv_metadata_match(idx->entries[i].metadata, filter_key, filter_value)) {
                 continue;
             }
         }
@@ -642,26 +550,26 @@ int gv_pq_save(const void *index, FILE *out, uint32_t version) {
     (void)version;
 
     /* Write PQ index header */
-    if (gv_pq_write_u32(out, (uint32_t)idx->dimension) != 0) return -1;
-    if (gv_pq_write_u32(out, (uint32_t)idx->m) != 0) return -1;
-    if (gv_pq_write_u8(out, idx->nbits) != 0) return -1;
-    if (gv_pq_write_u32(out, (uint32_t)idx->train_iters) != 0) return -1;
-    if (gv_pq_write_u32(out, (uint32_t)idx->trained) != 0) return -1;
+    if (gv_write_u32(out, (uint32_t)idx->dimension) != 0) return -1;
+    if (gv_write_u32(out, (uint32_t)idx->m) != 0) return -1;
+    if (gv_write_u8(out, idx->nbits) != 0) return -1;
+    if (gv_write_u32(out, (uint32_t)idx->train_iters) != 0) return -1;
+    if (gv_write_u32(out, (uint32_t)idx->trained) != 0) return -1;
 
     /* Write codebooks */
     size_t codebook_size = idx->m * idx->ksub * idx->dsub;
     if (fwrite(idx->codebooks, sizeof(float), codebook_size, out) != codebook_size) return -1;
 
     /* Write entry count */
-    if (gv_pq_write_u32(out, (uint32_t)idx->entry_count) != 0) return -1;
+    if (gv_write_u32(out, (uint32_t)idx->entry_count) != 0) return -1;
 
     /* Write entries */
     for (size_t i = 0; i < idx->entry_count; i++) {
         const GV_PQEntry *entry = &idx->entries[i];
 
         /* Write deleted flag and id */
-        if (gv_pq_write_u32(out, (uint32_t)entry->deleted) != 0) return -1;
-        if (gv_pq_write_u32(out, (uint32_t)entry->id) != 0) return -1;
+        if (gv_write_u32(out, (uint32_t)entry->deleted) != 0) return -1;
+        if (gv_write_u32(out, (uint32_t)entry->id) != 0) return -1;
 
         /* Write codes */
         if (fwrite(entry->codes, sizeof(uint8_t), idx->m, out) != idx->m) return -1;
@@ -673,14 +581,14 @@ int gv_pq_save(const void *index, FILE *out, uint32_t version) {
         uint32_t meta_count = 0;
         GV_Metadata *cur = entry->metadata;
         while (cur) { meta_count++; cur = cur->next; }
-        if (gv_pq_write_u32(out, meta_count) != 0) return -1;
+        if (gv_write_u32(out, meta_count) != 0) return -1;
 
         cur = entry->metadata;
         while (cur) {
             uint32_t klen = cur->key ? (uint32_t)strlen(cur->key) : 0;
             uint32_t vlen = cur->value ? (uint32_t)strlen(cur->value) : 0;
-            if (gv_pq_write_str(out, cur->key ? cur->key : "", klen) != 0) return -1;
-            if (gv_pq_write_str(out, cur->value ? cur->value : "", vlen) != 0) return -1;
+            if (gv_write_str(out, cur->key ? cur->key : "", klen) != 0) return -1;
+            if (gv_write_str(out, cur->value ? cur->value : "", vlen) != 0) return -1;
             cur = cur->next;
         }
     }
@@ -696,11 +604,11 @@ int gv_pq_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version) {
     uint32_t file_dim = 0, m = 0, train_iters = 0, trained = 0, entry_count = 0;
     uint8_t nbits = 0;
 
-    if (gv_pq_read_u32(in, &file_dim) != 0) return -1;
-    if (gv_pq_read_u32(in, &m) != 0) return -1;
-    if (gv_pq_read_u8(in, &nbits) != 0) return -1;
-    if (gv_pq_read_u32(in, &train_iters) != 0) return -1;
-    if (gv_pq_read_u32(in, &trained) != 0) return -1;
+    if (gv_read_u32(in, &file_dim) != 0) return -1;
+    if (gv_read_u32(in, &m) != 0) return -1;
+    if (gv_read_u8(in, &nbits) != 0) return -1;
+    if (gv_read_u32(in, &train_iters) != 0) return -1;
+    if (gv_read_u32(in, &trained) != 0) return -1;
 
     if (dimension != 0 && dimension != (size_t)file_dim) return -1;
 
@@ -726,7 +634,7 @@ int gv_pq_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version) {
     idx->trained = (int)trained;
 
     /* Read entry count */
-    if (gv_pq_read_u32(in, &entry_count) != 0) {
+    if (gv_read_u32(in, &entry_count) != 0) {
         gv_pq_destroy(index);
         return -1;
     }
@@ -748,8 +656,8 @@ int gv_pq_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version) {
         GV_PQEntry *entry = &idx->entries[i];
 
         uint32_t deleted = 0, id = 0;
-        if (gv_pq_read_u32(in, &deleted) != 0) { gv_pq_destroy(index); return -1; }
-        if (gv_pq_read_u32(in, &id) != 0) { gv_pq_destroy(index); return -1; }
+        if (gv_read_u32(in, &deleted) != 0) { gv_pq_destroy(index); return -1; }
+        if (gv_read_u32(in, &id) != 0) { gv_pq_destroy(index); return -1; }
 
         entry->deleted = (int)deleted;
         entry->id = (size_t)id;
@@ -772,16 +680,16 @@ int gv_pq_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version) {
 
         /* Read metadata */
         uint32_t meta_count = 0;
-        if (gv_pq_read_u32(in, &meta_count) != 0) { gv_pq_destroy(index); return -1; }
+        if (gv_read_u32(in, &meta_count) != 0) { gv_pq_destroy(index); return -1; }
 
         entry->metadata = NULL;
         for (uint32_t m_idx = 0; m_idx < meta_count; m_idx++) {
             uint32_t klen = 0, vlen = 0;
             char *key = NULL, *value = NULL;
-            if (gv_pq_read_u32(in, &klen) != 0) { gv_pq_destroy(index); return -1; }
-            if (gv_pq_read_str(in, &key, klen) != 0) { gv_pq_destroy(index); return -1; }
-            if (gv_pq_read_u32(in, &vlen) != 0) { free(key); gv_pq_destroy(index); return -1; }
-            if (gv_pq_read_str(in, &value, vlen) != 0) { free(key); gv_pq_destroy(index); return -1; }
+            if (gv_read_u32(in, &klen) != 0) { gv_pq_destroy(index); return -1; }
+            if (gv_read_str(in, &key, klen) != 0) { gv_pq_destroy(index); return -1; }
+            if (gv_read_u32(in, &vlen) != 0) { free(key); gv_pq_destroy(index); return -1; }
+            if (gv_read_str(in, &value, vlen) != 0) { free(key); gv_pq_destroy(index); return -1; }
 
             GV_Metadata *node = (GV_Metadata *)malloc(sizeof(GV_Metadata));
             if (!node) { free(key); free(value); gv_pq_destroy(index); return -1; }

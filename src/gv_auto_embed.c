@@ -22,6 +22,7 @@
 #include "gigavector/gv_auto_embed.h"
 #include "gigavector/gv_database.h"
 #include "gigavector/gv_json.h"
+#include "gigavector/gv_utils.h"
 
 /* Constants */
 
@@ -145,17 +146,6 @@ static void ae_response_buf_free(AE_ResponseBuf *buf) {
 }
 #endif /* HAVE_CURL */
 
-/* Hash helper (djb2) */
-
-static size_t ae_hash_string(const char *str, size_t bucket_count) {
-    size_t h = 5381;
-    int c;
-    while ((c = (unsigned char)*str++)) {
-        h = ((h << 5) + h) + (size_t)c;
-    }
-    return h % bucket_count;
-}
-
 /* LRU cache implementation */
 
 static AE_Cache *ae_cache_create(size_t max_entries) {
@@ -209,7 +199,7 @@ static void ae_cache_evict_lru(AE_Cache *c) {
     if (!victim) return;
 
     /* Remove from hash chain */
-    size_t h = ae_hash_string(victim->text, c->bucket_count);
+    size_t h = gv_hash_str(victim->text) % c->bucket_count;
     AE_CacheEntry **pp = &c->buckets[h];
     while (*pp && *pp != victim) {
         pp = &(*pp)->hash_next;
@@ -235,7 +225,7 @@ static int ae_cache_get(AE_Cache *c, const char *text,
 
     pthread_mutex_lock(&c->mutex);
 
-    size_t h = ae_hash_string(text, c->bucket_count);
+    size_t h = gv_hash_str(text) % c->bucket_count;
     AE_CacheEntry *e = c->buckets[h];
     while (e) {
         if (strcmp(e->text, text) == 0) {
@@ -269,7 +259,7 @@ static int ae_cache_put(AE_Cache *c, const char *text,
 
     pthread_mutex_lock(&c->mutex);
 
-    size_t h = ae_hash_string(text, c->bucket_count);
+    size_t h = gv_hash_str(text) % c->bucket_count;
 
     /* Check for existing entry and update */
     AE_CacheEntry *e = c->buckets[h];

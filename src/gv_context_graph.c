@@ -8,6 +8,7 @@
 
 #include "gigavector/gv_context_graph.h"
 #include "gigavector/gv_llm.h"
+#include "gigavector/gv_utils.h"
 #include "gigavector/gv_embedding.h"
 #include "gigavector/gv_types.h"
 
@@ -41,16 +42,6 @@ struct GV_ContextGraph {
     uint64_t next_relationship_id;
     pthread_mutex_t mutex;
 };
-
-/* Hash function for strings */
-static size_t hash_string(const char *str, size_t table_size) {
-    size_t hash = 5381;
-    int c;
-    while ((c = *str++)) {
-        hash = ((hash << 5) + hash) + c;
-    }
-    return hash % table_size;
-}
 
 /* Generate entity ID */
 static char *generate_entity_id(uint64_t counter) {
@@ -664,7 +655,7 @@ int gv_context_graph_add_entities(GV_ContextGraph *graph,
         const GV_GraphEntity *ent = &entities[i];
         
         /* Check if entity already exists */
-        size_t hash = hash_string(ent->name, graph->entity_table_size);
+        size_t hash = gv_hash_str(ent->name) % graph->entity_table_size;
         EntityNode *node = graph->entity_table[hash];
         EntityNode *found = NULL;
         
@@ -776,7 +767,7 @@ int gv_context_graph_add_relationships(GV_ContextGraph *graph,
         const GV_GraphRelationship *rel = &relationships[i];
         
         /* Check if relationship already exists */
-        size_t hash = hash_string(rel->source_entity_id, graph->relationship_table_size);
+        size_t hash = gv_hash_str(rel->source_entity_id) % graph->relationship_table_size;
         RelationshipNode *node = graph->relationship_table[hash];
         RelationshipNode *found = NULL;
         
@@ -865,7 +856,7 @@ int gv_context_graph_search(GV_ContextGraph *graph,
                 
                 if (similarity >= graph->config.similarity_threshold) {
                     /* Find relationships for this entity */
-                    size_t rel_hash = hash_string(node->entity_id, graph->relationship_table_size);
+                    size_t rel_hash = gv_hash_str(node->entity_id) % graph->relationship_table_size;
                     RelationshipNode *rel_node = graph->relationship_table[rel_hash];
                     
                     while (rel_node != NULL && result_count < max_results) {
@@ -913,7 +904,7 @@ static EntityNode *find_entity_by_id(GV_ContextGraph *graph, const char *entity_
         return NULL;
     }
     
-    size_t hash = hash_string(entity_id, graph->entity_table_size);
+    size_t hash = gv_hash_str(entity_id) % graph->entity_table_size;
     EntityNode *node = graph->entity_table[hash];
     while (node != NULL) {
         if (strcmp(node->entity_id, entity_id) == 0) {
@@ -932,7 +923,7 @@ static void get_entity_relationships(GV_ContextGraph *graph, const char *entity_
     }
     
     *out_count = 0;
-    size_t hash = hash_string(entity_id, graph->relationship_table_size);
+    size_t hash = gv_hash_str(entity_id) % graph->relationship_table_size;
     RelationshipNode *node = graph->relationship_table[hash];
     
     while (node != NULL && *out_count < max_count) {
@@ -1013,7 +1004,7 @@ int gv_context_graph_get_related(GV_ContextGraph *graph,
     queue_back++;
     
     size_t visited_count = 0;
-    visited[visited_count++] = hash_string(entity_id, graph->entity_table_size);
+    visited[visited_count++] = gv_hash_str(entity_id) % graph->entity_table_size;
     
     while (queue_front < queue_back && result_count < max_results) {
         QueueItem current = queue[queue_front++];
@@ -1045,7 +1036,7 @@ int gv_context_graph_get_related(GV_ContextGraph *graph,
             
             /* Check if already visited */
             int already_visited = 0;
-            size_t next_hash = hash_string(next_entity_id, graph->entity_table_size);
+            size_t next_hash = gv_hash_str(next_entity_id) % graph->entity_table_size;
             for (size_t j = 0; j < visited_count; j++) {
                 if (visited[j] == (int)next_hash) {
                     already_visited = 1;
@@ -1092,7 +1083,7 @@ int gv_context_graph_delete_entities(GV_ContextGraph *graph,
     pthread_mutex_lock(&graph->mutex);
     
     for (size_t i = 0; i < entity_count; i++) {
-        size_t hash = hash_string(entity_ids[i], graph->entity_table_size);
+        size_t hash = gv_hash_str(entity_ids[i]) % graph->entity_table_size;
         EntityNode **node_ptr = &graph->entity_table[hash];
         EntityNode *node = *node_ptr;
         

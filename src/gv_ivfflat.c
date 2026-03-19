@@ -8,6 +8,7 @@
 #include "gigavector/gv_distance.h"
 #include "gigavector/gv_vector.h"
 #include "gigavector/gv_metadata.h"
+#include "gigavector/gv_utils.h"
 
 /* Internal entry structure for IVF-Flat inverted lists */
 typedef struct GV_IVFFlatEntry {
@@ -77,40 +78,6 @@ static void gv_ivfflat_heap_push(GV_IVFFlatHeapItem *heap, size_t *size, size_t 
         heap[0].entry = entry;
         gv_ivfflat_heap_sift_down(heap, *size, 0);
     }
-}
-
-/* I/O helpers */
-static int gv_ivfflat_write_u32(FILE *f, uint32_t v) {
-    return fwrite(&v, sizeof(uint32_t), 1, f) == 1 ? 0 : -1;
-}
-
-static int gv_ivfflat_read_u32(FILE *f, uint32_t *v) {
-    return (v && fread(v, sizeof(uint32_t), 1, f) == 1) ? 0 : -1;
-}
-
-static int gv_ivfflat_write_str(FILE *f, const char *s, uint32_t len) {
-    if (gv_ivfflat_write_u32(f, len) != 0) return -1;
-    if (len == 0) return 0;
-    return fwrite(s, 1, len, f) == len ? 0 : -1;
-}
-
-static int gv_ivfflat_read_str(FILE *f, char **s, uint32_t len) {
-    *s = NULL;
-    if (len == 0) {
-        *s = (char *)malloc(1);
-        if (!*s) return -1;
-        (*s)[0] = '\0';
-        return 0;
-    }
-    char *buf = (char *)malloc(len + 1);
-    if (!buf) return -1;
-    if (fread(buf, 1, len, f) != len) {
-        free(buf);
-        return -1;
-    }
-    buf[len] = '\0';
-    *s = buf;
-    return 0;
 }
 
 /* K-means helper: assign vectors to nearest centroids */
@@ -300,20 +267,6 @@ int gv_ivfflat_insert(void *index, GV_Vector *vector) {
     return 0;
 }
 
-/* Metadata filter helper */
-static int gv_ivfflat_metadata_match(const GV_Metadata *meta, const char *key, const char *value) {
-    if (!key || !value) return 1; /* No filter = match all */
-
-    const GV_Metadata *cur = meta;
-    while (cur) {
-        if (cur->key && cur->value &&
-            strcmp(cur->key, key) == 0 && strcmp(cur->value, value) == 0) {
-            return 1;
-        }
-        cur = cur->next;
-    }
-    return 0;
-}
 
 int gv_ivfflat_search(void *index, const GV_Vector *query, size_t k,
                       GV_SearchResult *results, GV_DistanceType distance_type,
@@ -381,7 +334,7 @@ int gv_ivfflat_search(void *index, const GV_Vector *query, size_t k,
         while (entry) {
             if (!entry->deleted) {
                 /* Apply metadata filter */
-                if (gv_ivfflat_metadata_match(entry->vector->metadata, filter_key, filter_value)) {
+                if (gv_metadata_match(entry->vector->metadata, filter_key, filter_value)) {
                     /* Compute distance */
                     float dist = gv_distance(query, entry->vector, distance_type);
 
@@ -496,7 +449,7 @@ int gv_ivfflat_range_search(void *index, const GV_Vector *query, float radius,
         while (entry && found < max_results) {
             if (!entry->deleted) {
                 /* Apply metadata filter */
-                if (gv_ivfflat_metadata_match(entry->vector->metadata, filter_key, filter_value)) {
+                if (gv_metadata_match(entry->vector->metadata, filter_key, filter_value)) {
                     /* Compute distance */
                     float dist = gv_distance(query, entry->vector, distance_type);
 
@@ -637,13 +590,13 @@ int gv_ivfflat_save(const void *index, FILE *out, uint32_t version) {
     (void)version;
 
     /* Write dimension and config */
-    if (gv_ivfflat_write_u32(out, (uint32_t)idx->dimension) != 0) return -1;
-    if (gv_ivfflat_write_u32(out, (uint32_t)idx->config.nlist) != 0) return -1;
-    if (gv_ivfflat_write_u32(out, (uint32_t)idx->config.nprobe) != 0) return -1;
-    if (gv_ivfflat_write_u32(out, (uint32_t)idx->config.train_iters) != 0) return -1;
-    if (gv_ivfflat_write_u32(out, (uint32_t)idx->config.use_cosine) != 0) return -1;
-    if (gv_ivfflat_write_u32(out, (uint32_t)idx->trained) != 0) return -1;
-    if (gv_ivfflat_write_u32(out, (uint32_t)idx->next_id) != 0) return -1;
+    if (gv_write_u32(out, (uint32_t)idx->dimension) != 0) return -1;
+    if (gv_write_u32(out, (uint32_t)idx->config.nlist) != 0) return -1;
+    if (gv_write_u32(out, (uint32_t)idx->config.nprobe) != 0) return -1;
+    if (gv_write_u32(out, (uint32_t)idx->config.train_iters) != 0) return -1;
+    if (gv_write_u32(out, (uint32_t)idx->config.use_cosine) != 0) return -1;
+    if (gv_write_u32(out, (uint32_t)idx->trained) != 0) return -1;
+    if (gv_write_u32(out, (uint32_t)idx->next_id) != 0) return -1;
 
     /* Write centroids if trained */
     if (idx->trained) {
@@ -654,7 +607,7 @@ int gv_ivfflat_save(const void *index, FILE *out, uint32_t version) {
     }
 
     /* Write number of lists */
-    if (gv_ivfflat_write_u32(out, (uint32_t)idx->config.nlist) != 0) return -1;
+    if (gv_write_u32(out, (uint32_t)idx->config.nlist) != 0) return -1;
 
     /* Write each list */
     for (size_t i = 0; i < idx->config.nlist; i++) {
@@ -666,14 +619,14 @@ int gv_ivfflat_save(const void *index, FILE *out, uint32_t version) {
             entry = entry->next;
         }
 
-        if (gv_ivfflat_write_u32(out, list_count) != 0) return -1;
+        if (gv_write_u32(out, list_count) != 0) return -1;
 
         /* Write each entry */
         entry = idx->lists[i];
         while (entry) {
             /* Write ID and deleted flag */
-            if (gv_ivfflat_write_u32(out, (uint32_t)entry->id) != 0) return -1;
-            if (gv_ivfflat_write_u32(out, (uint32_t)entry->deleted) != 0) return -1;
+            if (gv_write_u32(out, (uint32_t)entry->id) != 0) return -1;
+            if (gv_write_u32(out, (uint32_t)entry->deleted) != 0) return -1;
 
             /* Write vector data */
             if (fwrite(entry->vector->data, sizeof(float), idx->dimension, out) != idx->dimension) {
@@ -688,15 +641,15 @@ int gv_ivfflat_save(const void *index, FILE *out, uint32_t version) {
                 meta = meta->next;
             }
 
-            if (gv_ivfflat_write_u32(out, meta_count) != 0) return -1;
+            if (gv_write_u32(out, meta_count) != 0) return -1;
 
             meta = entry->vector->metadata;
             while (meta) {
                 uint32_t klen = meta->key ? (uint32_t)strlen(meta->key) : 0;
                 uint32_t vlen = meta->value ? (uint32_t)strlen(meta->value) : 0;
 
-                if (gv_ivfflat_write_str(out, meta->key ? meta->key : "", klen) != 0) return -1;
-                if (gv_ivfflat_write_str(out, meta->value ? meta->value : "", vlen) != 0) return -1;
+                if (gv_write_str(out, meta->key ? meta->key : "", klen) != 0) return -1;
+                if (gv_write_str(out, meta->value ? meta->value : "", vlen) != 0) return -1;
 
                 meta = meta->next;
             }
@@ -715,13 +668,13 @@ int gv_ivfflat_load(void **index_ptr, FILE *in, size_t dimension, uint32_t versi
     uint32_t file_dim = 0, nlist = 0, nprobe = 0, train_iters = 0, use_cosine = 0;
     uint32_t trained = 0, next_id = 0;
 
-    if (gv_ivfflat_read_u32(in, &file_dim) != 0) return -1;
-    if (gv_ivfflat_read_u32(in, &nlist) != 0) return -1;
-    if (gv_ivfflat_read_u32(in, &nprobe) != 0) return -1;
-    if (gv_ivfflat_read_u32(in, &train_iters) != 0) return -1;
-    if (gv_ivfflat_read_u32(in, &use_cosine) != 0) return -1;
-    if (gv_ivfflat_read_u32(in, &trained) != 0) return -1;
-    if (gv_ivfflat_read_u32(in, &next_id) != 0) return -1;
+    if (gv_read_u32(in, &file_dim) != 0) return -1;
+    if (gv_read_u32(in, &nlist) != 0) return -1;
+    if (gv_read_u32(in, &nprobe) != 0) return -1;
+    if (gv_read_u32(in, &train_iters) != 0) return -1;
+    if (gv_read_u32(in, &use_cosine) != 0) return -1;
+    if (gv_read_u32(in, &trained) != 0) return -1;
+    if (gv_read_u32(in, &next_id) != 0) return -1;
 
     if (dimension != 0 && dimension != (size_t)file_dim) return -1;
 
@@ -751,7 +704,7 @@ int gv_ivfflat_load(void **index_ptr, FILE *in, size_t dimension, uint32_t versi
 
     /* Read number of lists */
     uint32_t num_lists = 0;
-    if (gv_ivfflat_read_u32(in, &num_lists) != 0) {
+    if (gv_read_u32(in, &num_lists) != 0) {
         gv_ivfflat_destroy(index);
         return -1;
     }
@@ -764,7 +717,7 @@ int gv_ivfflat_load(void **index_ptr, FILE *in, size_t dimension, uint32_t versi
     /* Load each list */
     for (size_t i = 0; i < nlist; i++) {
         uint32_t list_count = 0;
-        if (gv_ivfflat_read_u32(in, &list_count) != 0) {
+        if (gv_read_u32(in, &list_count) != 0) {
             gv_ivfflat_destroy(index);
             return -1;
         }
@@ -775,11 +728,11 @@ int gv_ivfflat_load(void **index_ptr, FILE *in, size_t dimension, uint32_t versi
         for (uint32_t j = 0; j < list_count; j++) {
             uint32_t entry_id = 0, deleted = 0;
 
-            if (gv_ivfflat_read_u32(in, &entry_id) != 0) {
+            if (gv_read_u32(in, &entry_id) != 0) {
                 gv_ivfflat_destroy(index);
                 return -1;
             }
-            if (gv_ivfflat_read_u32(in, &deleted) != 0) {
+            if (gv_read_u32(in, &deleted) != 0) {
                 gv_ivfflat_destroy(index);
                 return -1;
             }
@@ -808,7 +761,7 @@ int gv_ivfflat_load(void **index_ptr, FILE *in, size_t dimension, uint32_t versi
 
             /* Read metadata */
             uint32_t meta_count = 0;
-            if (gv_ivfflat_read_u32(in, &meta_count) != 0) {
+            if (gv_read_u32(in, &meta_count) != 0) {
                 gv_vector_destroy(vec);
                 gv_ivfflat_destroy(index);
                 return -1;
@@ -818,23 +771,23 @@ int gv_ivfflat_load(void **index_ptr, FILE *in, size_t dimension, uint32_t versi
                 uint32_t klen = 0, vlen = 0;
                 char *key = NULL, *value = NULL;
 
-                if (gv_ivfflat_read_u32(in, &klen) != 0) {
+                if (gv_read_u32(in, &klen) != 0) {
                     gv_vector_destroy(vec);
                     gv_ivfflat_destroy(index);
                     return -1;
                 }
-                if (gv_ivfflat_read_str(in, &key, klen) != 0) {
+                if (gv_read_str(in, &key, klen) != 0) {
                     gv_vector_destroy(vec);
                     gv_ivfflat_destroy(index);
                     return -1;
                 }
-                if (gv_ivfflat_read_u32(in, &vlen) != 0) {
+                if (gv_read_u32(in, &vlen) != 0) {
                     free(key);
                     gv_vector_destroy(vec);
                     gv_ivfflat_destroy(index);
                     return -1;
                 }
-                if (gv_ivfflat_read_str(in, &value, vlen) != 0) {
+                if (gv_read_str(in, &value, vlen) != 0) {
                     free(key);
                     gv_vector_destroy(vec);
                     gv_ivfflat_destroy(index);

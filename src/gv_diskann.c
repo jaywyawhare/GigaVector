@@ -25,6 +25,7 @@
 #include <time.h>
 
 #include "gigavector/gv_diskann.h"
+#include "gigavector/gv_utils.h"
 
 /* Constants */
 
@@ -1450,10 +1451,6 @@ size_t gv_diskann_count(const GV_DiskANNIndex *index) {
 
 /* Persistence: Save */
 
-static int diskann_write_u32(FILE *f, uint32_t v) {
-    return fwrite(&v, sizeof(uint32_t), 1, f) == 1 ? 0 : -1;
-}
-
 static int diskann_write_u64(FILE *f, uint64_t v) {
     return fwrite(&v, sizeof(uint64_t), 1, f) == 1 ? 0 : -1;
 }
@@ -1477,8 +1474,8 @@ int gv_diskann_save(const GV_DiskANNIndex *index, const char *filepath) {
     if (!f) return -1;
 
     /* Header */
-    if (diskann_write_u32(f, DISKANN_MAGIC) != 0) goto fail;
-    if (diskann_write_u32(f, DISKANN_VERSION) != 0) goto fail;
+    if (gv_write_u32(f, DISKANN_MAGIC) != 0) goto fail;
+    if (gv_write_u32(f, DISKANN_VERSION) != 0) goto fail;
     if (diskann_write_u64(f, (uint64_t)index->dimension) != 0) goto fail;
     if (diskann_write_u64(f, (uint64_t)index->count) != 0) goto fail;
     if (diskann_write_u64(f, (uint64_t)index->max_degree) != 0) goto fail;
@@ -1489,7 +1486,7 @@ int gv_diskann_save(const GV_DiskANNIndex *index, const char *filepath) {
     if (diskann_write_u64(f, (uint64_t)index->medoid) != 0) goto fail;
 
     /* PQ metadata */
-    if (diskann_write_u32(f, (uint32_t)index->pq.trained) != 0) goto fail;
+    if (gv_write_u32(f, (uint32_t)index->pq.trained) != 0) goto fail;
     if (index->pq.trained) {
         if (diskann_write_u64(f, (uint64_t)index->pq.m) != 0) goto fail;
         if (diskann_write_u64(f, (uint64_t)index->pq.dsub) != 0) goto fail;
@@ -1504,7 +1501,7 @@ int gv_diskann_save(const GV_DiskANNIndex *index, const char *filepath) {
     for (size_t i = 0; i < index->count; i++) {
         const DiskANN_Node *node = &index->nodes[i];
 
-        if (diskann_write_u32(f, (uint32_t)node->deleted) != 0) goto fail;
+        if (gv_write_u32(f, (uint32_t)node->deleted) != 0) goto fail;
         if (diskann_write_u64(f, (uint64_t)node->neighbor_count) != 0) goto fail;
 
         for (size_t j = 0; j < node->neighbor_count; j++) {
@@ -1513,7 +1510,7 @@ int gv_diskann_save(const GV_DiskANNIndex *index, const char *filepath) {
 
         /* PQ code */
         uint32_t has_pq = (node->pq_code && index->pq.trained) ? 1 : 0;
-        if (diskann_write_u32(f, has_pq) != 0) goto fail;
+        if (gv_write_u32(f, has_pq) != 0) goto fail;
         if (has_pq) {
             if (diskann_write_bytes(f, node->pq_code, index->pq.m) != 0) goto fail;
         }
@@ -1522,10 +1519,10 @@ int gv_diskann_save(const GV_DiskANNIndex *index, const char *filepath) {
     /* Write data path length and path for reference */
     if (index->data_path) {
         uint32_t path_len = (uint32_t)strlen(index->data_path);
-        if (diskann_write_u32(f, path_len) != 0) goto fail;
+        if (gv_write_u32(f, path_len) != 0) goto fail;
         if (fwrite(index->data_path, 1, path_len, f) != path_len) goto fail;
     } else {
-        if (diskann_write_u32(f, 0) != 0) goto fail;
+        if (gv_write_u32(f, 0) != 0) goto fail;
     }
 
     fclose(f);
@@ -1537,10 +1534,6 @@ fail:
 }
 
 /* Persistence: Load */
-
-static int diskann_read_u32(FILE *f, uint32_t *v) {
-    return (v && fread(v, sizeof(uint32_t), 1, f) == 1) ? 0 : -1;
-}
 
 static int diskann_read_u64(FILE *f, uint64_t *v) {
     return (v && fread(v, sizeof(uint64_t), 1, f) == 1) ? 0 : -1;
@@ -1566,8 +1559,8 @@ GV_DiskANNIndex *gv_diskann_load(const char *filepath, const GV_DiskANNConfig *c
 
     /* Read header */
     uint32_t magic = 0, version = 0;
-    if (diskann_read_u32(f, &magic) != 0 || magic != DISKANN_MAGIC) goto fail;
-    if (diskann_read_u32(f, &version) != 0 || version != DISKANN_VERSION) goto fail;
+    if (gv_read_u32(f, &magic) != 0 || magic != DISKANN_MAGIC) goto fail;
+    if (gv_read_u32(f, &version) != 0 || version != DISKANN_VERSION) goto fail;
 
     uint64_t dimension = 0, count = 0, max_degree = 0;
     uint64_t build_bw = 0, search_bw = 0, sector_size = 0, medoid = 0;
@@ -1602,7 +1595,7 @@ GV_DiskANNIndex *gv_diskann_load(const char *filepath, const GV_DiskANNConfig *c
 
     /* Read PQ metadata */
     uint32_t pq_trained = 0;
-    if (diskann_read_u32(f, &pq_trained) != 0) goto fail;
+    if (gv_read_u32(f, &pq_trained) != 0) goto fail;
 
     uint64_t pq_m = 0, pq_dsub = 0, pq_ksub = 0;
     float *pq_codebooks = NULL;
@@ -1642,7 +1635,7 @@ GV_DiskANNIndex *gv_diskann_load(const char *filepath, const GV_DiskANNConfig *c
     }
 
     for (size_t i = 0; i < (size_t)count; i++) {
-        if (diskann_read_u32(f, &temp_nodes[i].deleted) != 0) goto fail_temp;
+        if (gv_read_u32(f, &temp_nodes[i].deleted) != 0) goto fail_temp;
         if (diskann_read_u64(f, &temp_nodes[i].neighbor_count) != 0) goto fail_temp;
 
         if (temp_nodes[i].neighbor_count > 0) {
@@ -1657,7 +1650,7 @@ GV_DiskANNIndex *gv_diskann_load(const char *filepath, const GV_DiskANNConfig *c
         }
 
         uint32_t has_pq = 0;
-        if (diskann_read_u32(f, &has_pq) != 0) goto fail_temp;
+        if (gv_read_u32(f, &has_pq) != 0) goto fail_temp;
         if (has_pq && pq_trained) {
             temp_nodes[i].pq_code = (uint8_t *)malloc((size_t)pq_m);
             if (!temp_nodes[i].pq_code) goto fail_temp;
@@ -1667,7 +1660,7 @@ GV_DiskANNIndex *gv_diskann_load(const char *filepath, const GV_DiskANNConfig *c
 
     /* Read stored data path */
     uint32_t stored_path_len = 0;
-    if (diskann_read_u32(f, &stored_path_len) != 0) goto fail_temp;
+    if (gv_read_u32(f, &stored_path_len) != 0) goto fail_temp;
 
     char *stored_path = NULL;
     if (stored_path_len > 0) {

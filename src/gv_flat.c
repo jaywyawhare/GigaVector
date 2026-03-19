@@ -9,6 +9,8 @@
 #include "gigavector/gv_vector.h"
 #include "gigavector/gv_metadata.h"
 #include "gigavector/gv_soa_storage.h"
+#include "gigavector/gv_utils.h"
+#include "gigavector/gv_heap.h"
 
 typedef struct {
     size_t dimension;
@@ -18,81 +20,9 @@ typedef struct {
 } GV_FlatIndex;
 
 /* Max-heap for top-k selection */
-typedef struct {
-    float dist;
-    size_t idx;
-} GV_FlatHeapItem;
+typedef struct { float dist; size_t idx; } GV_FlatHeapItem;
+GV_HEAP_DEFINE(gv_flat_heap, GV_FlatHeapItem)
 
-static void gv_flat_heap_sift_down(GV_FlatHeapItem *heap, size_t size, size_t i) {
-    while (1) {
-        size_t l = 2 * i + 1;
-        size_t r = l + 1;
-        size_t largest = i;
-        if (l < size && heap[l].dist > heap[largest].dist) largest = l;
-        if (r < size && heap[r].dist > heap[largest].dist) largest = r;
-        if (largest == i) break;
-        GV_FlatHeapItem tmp = heap[i];
-        heap[i] = heap[largest];
-        heap[largest] = tmp;
-        i = largest;
-    }
-}
-
-static void gv_flat_heap_push(GV_FlatHeapItem *heap, size_t *size, size_t capacity, float dist, size_t idx) {
-    if (*size < capacity) {
-        heap[*size].dist = dist;
-        heap[*size].idx = idx;
-        (*size)++;
-        /* Sift up */
-        size_t i = *size - 1;
-        while (i > 0) {
-            size_t parent = (i - 1) / 2;
-            if (heap[i].dist > heap[parent].dist) {
-                GV_FlatHeapItem tmp = heap[i];
-                heap[i] = heap[parent];
-                heap[parent] = tmp;
-                i = parent;
-            } else {
-                break;
-            }
-        }
-    } else if (dist < heap[0].dist) {
-        heap[0].dist = dist;
-        heap[0].idx = idx;
-        gv_flat_heap_sift_down(heap, *size, 0);
-    }
-}
-
-/* I/O helpers */
-static int gv_flat_write_u32(FILE *f, uint32_t v) {
-    return fwrite(&v, sizeof(uint32_t), 1, f) == 1 ? 0 : -1;
-}
-
-static int gv_flat_read_u32(FILE *f, uint32_t *v) {
-    return (v && fread(v, sizeof(uint32_t), 1, f) == 1) ? 0 : -1;
-}
-
-static int gv_flat_write_str(FILE *f, const char *s, uint32_t len) {
-    if (gv_flat_write_u32(f, len) != 0) return -1;
-    if (len == 0) return 0;
-    return fwrite(s, 1, len, f) == len ? 0 : -1;
-}
-
-static int gv_flat_read_str(FILE *f, char **s, uint32_t len) {
-    *s = NULL;
-    if (len == 0) {
-        *s = (char *)malloc(1);
-        if (!*s) return -1;
-        (*s)[0] = '\0';
-        return 0;
-    }
-    char *buf = (char *)malloc(len + 1);
-    if (!buf) return -1;
-    if (fread(buf, 1, len, f) != len) { free(buf); return -1; }
-    buf[len] = '\0';
-    *s = buf;
-    return 0;
-}
 
 void *gv_flat_create(size_t dimension, const GV_FlatConfig *config, GV_SoAStorage *soa_storage) {
     if (dimension == 0) return NULL;
@@ -137,17 +67,6 @@ int gv_flat_insert(void *index, GV_Vector *vector) {
     return 0;
 }
 
-static int gv_flat_metadata_match(const GV_Metadata *meta, const char *key, const char *value) {
-    if (!key || !value) return 1; /* No filter = match */
-    const GV_Metadata *cur = meta;
-    while (cur) {
-        if (cur->key && cur->value && strcmp(cur->key, key) == 0 && strcmp(cur->value, value) == 0) {
-            return 1;
-        }
-        cur = cur->next;
-    }
-    return 0;
-}
 
 int gv_flat_search(void *index, const GV_Vector *query, size_t k,
                    GV_SearchResult *results, GV_DistanceType distance_type,
@@ -174,13 +93,13 @@ int gv_flat_search(void *index, const GV_Vector *query, size_t k,
         /* Metadata filter */
         if (filter_key && filter_value) {
             GV_Metadata *meta = gv_soa_storage_get_metadata(idx->storage, i);
-            if (!gv_flat_metadata_match(meta, filter_key, filter_value)) continue;
+            if (!gv_metadata_match(meta, filter_key, filter_value)) continue;
         }
 
         tmp_vec.data = (float *)gv_soa_storage_get_data(idx->storage, i);
         float dist = gv_distance(query, &tmp_vec, distance_type);
 
-        gv_flat_heap_push(heap, &heap_size, k, dist, i);
+        gv_flat_heap_push(heap, &heap_size, k, (GV_FlatHeapItem){dist, i});
     }
 
     /* Extract results from heap in sorted order (nearest first) */
@@ -250,7 +169,7 @@ int gv_flat_range_search(void *index, const GV_Vector *query, float radius,
 
         if (filter_key && filter_value) {
             GV_Metadata *meta = gv_soa_storage_get_metadata(idx->storage, i);
-            if (!gv_flat_metadata_match(meta, filter_key, filter_value)) continue;
+            if (!gv_metadata_match(meta, filter_key, filter_value)) continue;
         }
 
         tmp_vec.data = (float *)gv_soa_storage_get_data(idx->storage, i);
@@ -325,18 +244,18 @@ int gv_flat_save(const void *index, FILE *out, uint32_t version) {
     (void)version;
 
     /* Write flat index marker and config */
-    if (gv_flat_write_u32(out, (uint32_t)idx->dimension) != 0) return -1;
-    if (gv_flat_write_u32(out, (uint32_t)idx->config.use_simd) != 0) return -1;
+    if (gv_write_u32(out, (uint32_t)idx->dimension) != 0) return -1;
+    if (gv_write_u32(out, (uint32_t)idx->config.use_simd) != 0) return -1;
 
     /* Write vector count */
     uint32_t count = (uint32_t)idx->storage->count;
-    if (gv_flat_write_u32(out, count) != 0) return -1;
+    if (gv_write_u32(out, count) != 0) return -1;
 
     /* Write each vector */
     for (uint32_t i = 0; i < count; i++) {
         /* Write deleted flag */
         uint32_t deleted = (uint32_t)(gv_soa_storage_is_deleted(idx->storage, i) == 1 ? 1 : 0);
-        if (gv_flat_write_u32(out, deleted) != 0) return -1;
+        if (gv_write_u32(out, deleted) != 0) return -1;
 
         /* Write vector data */
         const float *data = gv_soa_storage_get_data(idx->storage, i);
@@ -347,13 +266,13 @@ int gv_flat_save(const void *index, FILE *out, uint32_t version) {
         uint32_t meta_count = 0;
         GV_Metadata *cur = meta;
         while (cur) { meta_count++; cur = cur->next; }
-        if (gv_flat_write_u32(out, meta_count) != 0) return -1;
+        if (gv_write_u32(out, meta_count) != 0) return -1;
         cur = meta;
         while (cur) {
             uint32_t klen = cur->key ? (uint32_t)strlen(cur->key) : 0;
             uint32_t vlen = cur->value ? (uint32_t)strlen(cur->value) : 0;
-            if (gv_flat_write_str(out, cur->key ? cur->key : "", klen) != 0) return -1;
-            if (gv_flat_write_str(out, cur->value ? cur->value : "", vlen) != 0) return -1;
+            if (gv_write_str(out, cur->key ? cur->key : "", klen) != 0) return -1;
+            if (gv_write_str(out, cur->value ? cur->value : "", vlen) != 0) return -1;
             cur = cur->next;
         }
     }
@@ -366,9 +285,9 @@ int gv_flat_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version)
     (void)version;
 
     uint32_t file_dim = 0, use_simd = 0, count = 0;
-    if (gv_flat_read_u32(in, &file_dim) != 0) return -1;
-    if (gv_flat_read_u32(in, &use_simd) != 0) return -1;
-    if (gv_flat_read_u32(in, &count) != 0) return -1;
+    if (gv_read_u32(in, &file_dim) != 0) return -1;
+    if (gv_read_u32(in, &use_simd) != 0) return -1;
+    if (gv_read_u32(in, &count) != 0) return -1;
 
     if (dimension != 0 && dimension != (size_t)file_dim) return -1;
 
@@ -380,7 +299,7 @@ int gv_flat_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version)
 
     for (uint32_t i = 0; i < count; i++) {
         uint32_t deleted = 0;
-        if (gv_flat_read_u32(in, &deleted) != 0) { gv_flat_destroy(index); return -1; }
+        if (gv_read_u32(in, &deleted) != 0) { gv_flat_destroy(index); return -1; }
 
         float *data = (float *)malloc(file_dim * sizeof(float));
         if (!data) { gv_flat_destroy(index); return -1; }
@@ -392,16 +311,16 @@ int gv_flat_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version)
 
         /* Read metadata */
         uint32_t meta_count = 0;
-        if (gv_flat_read_u32(in, &meta_count) != 0) { free(data); gv_flat_destroy(index); return -1; }
+        if (gv_read_u32(in, &meta_count) != 0) { free(data); gv_flat_destroy(index); return -1; }
 
         GV_Metadata *metadata = NULL;
         for (uint32_t m = 0; m < meta_count; m++) {
             uint32_t klen = 0, vlen = 0;
             char *key = NULL, *value = NULL;
-            if (gv_flat_read_u32(in, &klen) != 0) { free(data); gv_flat_destroy(index); return -1; }
-            if (gv_flat_read_str(in, &key, klen) != 0) { free(data); gv_flat_destroy(index); return -1; }
-            if (gv_flat_read_u32(in, &vlen) != 0) { free(key); free(data); gv_flat_destroy(index); return -1; }
-            if (gv_flat_read_str(in, &value, vlen) != 0) { free(key); free(data); gv_flat_destroy(index); return -1; }
+            if (gv_read_u32(in, &klen) != 0) { free(data); gv_flat_destroy(index); return -1; }
+            if (gv_read_str(in, &key, klen) != 0) { free(data); gv_flat_destroy(index); return -1; }
+            if (gv_read_u32(in, &vlen) != 0) { free(key); free(data); gv_flat_destroy(index); return -1; }
+            if (gv_read_str(in, &value, vlen) != 0) { free(key); free(data); gv_flat_destroy(index); return -1; }
 
             GV_Metadata *node = (GV_Metadata *)malloc(sizeof(GV_Metadata));
             if (!node) { free(key); free(value); free(data); gv_flat_destroy(index); return -1; }
