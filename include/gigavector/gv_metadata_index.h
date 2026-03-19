@@ -7,9 +7,6 @@
 extern "C" {
 #endif
 
-/**
- * @brief Opaque handle for metadata inverted index.
- */
 typedef struct GV_MetadataIndex GV_MetadataIndex;
 
 /**

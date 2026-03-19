@@ -41,17 +41,13 @@ void gv_vacuum_config_init(GV_VacuumConfig *config);
 GV_VacuumManager *gv_vacuum_create(GV_Database *db, const GV_VacuumConfig *config);
 void gv_vacuum_destroy(GV_VacuumManager *mgr);
 
-/* Manual vacuum */
 int gv_vacuum_run(GV_VacuumManager *mgr);
 
-/* Background auto-vacuum */
 int gv_vacuum_start_auto(GV_VacuumManager *mgr);
 int gv_vacuum_stop_auto(GV_VacuumManager *mgr);
 
-/* Analyze fragmentation without vacuuming */
 double gv_vacuum_get_fragmentation(const GV_VacuumManager *mgr);
 
-/* Stats */
 int gv_vacuum_get_stats(const GV_VacuumManager *mgr, GV_VacuumStats *stats);
 GV_VacuumState gv_vacuum_get_state(const GV_VacuumManager *mgr);
 

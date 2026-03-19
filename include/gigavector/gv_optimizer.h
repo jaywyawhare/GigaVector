@@ -39,19 +39,15 @@ typedef struct GV_QueryOptimizer GV_QueryOptimizer;
 GV_QueryOptimizer *gv_optimizer_create(void);
 void gv_optimizer_destroy(GV_QueryOptimizer *opt);
 
-/* Update optimizer with collection statistics */
 void gv_optimizer_update_stats(GV_QueryOptimizer *opt, const GV_CollectionStats *stats);
 
-/* Generate a query plan */
 int gv_optimizer_plan(const GV_QueryOptimizer *opt, size_t k,
                       int has_filter, double filter_selectivity,
                       GV_QueryPlan *plan);
 
-/* Record actual results for learning (optional) */
 void gv_optimizer_record_result(GV_QueryOptimizer *opt, const GV_QueryPlan *plan,
                                  uint64_t actual_latency_us, double actual_recall);
 
-/* Get current recommended defaults */
 size_t gv_optimizer_recommend_ef_search(const GV_QueryOptimizer *opt, size_t k);
 size_t gv_optimizer_recommend_nprobe(const GV_QueryOptimizer *opt, size_t k);
 

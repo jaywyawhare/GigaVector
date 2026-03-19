@@ -8,9 +8,6 @@
 extern "C" {
 #endif
 
-/**
- * @brief Scalar quantization configuration.
- */
 typedef struct {
     uint8_t bits;        /**< Number of bits per dimension (4, 8, or 16) */
     int per_dimension;   /**< 1 to use per-dimension min/max, 0 for global */

@@ -14,9 +14,6 @@
 extern "C" {
 #endif
 
-/**
- * @brief Memory type enumeration.
- */
 typedef enum {
     GV_MEMORY_TYPE_FACT = 0,        /**< Factual information. */
     GV_MEMORY_TYPE_PREFERENCE = 1,  /**< User preference. */
@@ -24,9 +21,6 @@ typedef enum {
     GV_MEMORY_TYPE_EVENT = 3        /**< Event or occurrence. */
 } GV_MemoryType;
 
-/**
- * @brief Consolidation strategy enumeration.
- */
 typedef enum {
     GV_CONSOLIDATION_MERGE = 0,     /**< Merge similar memories into one. */
     GV_CONSOLIDATION_UPDATE = 1,     /**< Update existing memory with new info. */
@@ -66,9 +60,6 @@ typedef struct {
     char *reason;                   /**< Optional: why link was created. */
 } GV_MemoryLink;
 
-/**
- * @brief Memory metadata structure.
- */
 typedef struct {
     char *memory_id;                /**< Unique memory identifier. */
     GV_MemoryType memory_type;       /**< Type of memory. */
@@ -109,9 +100,6 @@ typedef struct {
  */
 GV_MemorySearchOptions gv_memory_search_options_default(void);
 
-/**
- * @brief Memory search result structure.
- */
 typedef struct {
     char *memory_id;                /**< Memory identifier. */
     char *content;                  /**< Memory content text. */
@@ -122,9 +110,6 @@ typedef struct {
     size_t related_count;           /**< Number of related memories. */
 } GV_MemoryResult;
 
-/**
- * @brief Memory layer configuration.
- */
 typedef struct {
     double extraction_threshold;    /**< Minimum importance for extraction (0.0-1.0). */
     double consolidation_threshold; /**< Similarity threshold for consolidation (0.0-1.0). */
@@ -139,9 +124,6 @@ typedef struct {
     int enable_context_graph;        /**< Enable context graph (1) or disable (0). */
 } GV_MemoryLayerConfig;
 
-/**
- * @brief Memory layer structure.
- */
 typedef struct GV_MemoryLayer {
     GV_Database *db;                /**< Underlying vector database. */
     GV_MemoryLayerConfig config;    /**< Configuration. */
@@ -341,8 +323,6 @@ void gv_memory_metadata_free(GV_MemoryMetadata *metadata);
  * @return Default configuration structure.
  */
 GV_MemoryLayerConfig gv_memory_layer_config_default(void);
-
-/* Memory Link Management API */
 
 /**
  * @brief Create a link between two memories.

@@ -17,9 +17,6 @@ extern "C" {
  * Provides role-based access control for namespace and operation permissions.
  */
 
-/**
- * @brief Permission flags.
- */
 typedef enum {
     GV_PERM_NONE = 0,               /**< No permissions. */
     GV_PERM_READ = 1,               /**< Read vectors/search. */
@@ -29,18 +26,12 @@ typedef enum {
     GV_PERM_ALL = 15                /**< All permissions. */
 } GV_Permission;
 
-/**
- * @brief Resource type.
- */
 typedef enum {
     GV_RESOURCE_GLOBAL = 0,         /**< Global/database level. */
     GV_RESOURCE_NAMESPACE = 1,      /**< Specific namespace. */
     GV_RESOURCE_VECTOR = 2          /**< Specific vector. */
 } GV_ResourceType;
 
-/**
- * @brief Role definition.
- */
 typedef struct {
     char *name;                     /**< Role name. */
     uint32_t permissions;           /**< Permission flags (GV_Permission). */
@@ -48,30 +39,19 @@ typedef struct {
     size_t namespace_count;         /**< Number of allowed namespaces. */
 } GV_Role;
 
-/**
- * @brief User-role assignment.
- */
 typedef struct {
     char *subject;                  /**< User/service subject. */
     char **roles;                   /**< Assigned roles. */
     size_t role_count;              /**< Number of roles. */
 } GV_UserRoles;
 
-/**
- * @brief Authorization check result.
- */
 typedef struct {
     int allowed;                    /**< 1 if allowed, 0 if denied. */
     const char *denied_reason;      /**< Reason for denial (if any). */
     const char *matched_role;       /**< Role that granted access (if any). */
 } GV_AuthzResult;
 
-/**
- * @brief Opaque authorization manager handle.
- */
 typedef struct GV_AuthzManager GV_AuthzManager;
-
-/* Authorization Manager Lifecycle */
 
 /**
  * @brief Create an authorization manager.
@@ -86,8 +66,6 @@ GV_AuthzManager *gv_authz_create(void);
  * @param authz Authorization manager instance (safe to call with NULL).
  */
 void gv_authz_destroy(GV_AuthzManager *authz);
-
-/* Role Management */
 
 /**
  * @brief Define a new role.
@@ -147,8 +125,6 @@ void gv_authz_free_role(GV_Role *role);
  */
 void gv_authz_free_roles(GV_Role *roles, size_t count);
 
-/* User-Role Assignment */
-
 /**
  * @brief Assign a role to a user.
  *
@@ -190,8 +166,6 @@ int gv_authz_get_user_roles(GV_AuthzManager *authz, const char *subject,
  * @param count Number of roles.
  */
 void gv_authz_free_user_roles(char **roles, size_t count);
-
-/* Authorization Checks */
 
 /**
  * @brief Check if identity has permission on a resource.
@@ -251,8 +225,6 @@ int gv_authz_can_delete(GV_AuthzManager *authz, const GV_Identity *identity,
  * @return 1 if admin, 0 otherwise.
  */
 int gv_authz_is_admin(GV_AuthzManager *authz, const GV_Identity *identity);
-
-/* Built-in Roles */
 
 /**
  * @brief Initialize built-in roles.

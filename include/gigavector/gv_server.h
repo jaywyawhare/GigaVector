@@ -120,8 +120,6 @@ typedef struct {
  */
 typedef struct GV_Server GV_Server;
 
-/* Server Lifecycle */
-
 /**
  * @brief Create a new HTTP server instance.
  *
@@ -172,8 +170,6 @@ void gv_server_destroy(GV_Server *server);
  */
 int gv_server_is_running(const GV_Server *server);
 
-/* Server Information */
-
 /**
  * @brief Get server statistics.
  *
@@ -198,8 +194,6 @@ uint16_t gv_server_get_port(const GV_Server *server);
  * @return Human-readable error description.
  */
 const char *gv_server_error_string(int error);
-
-/* Configuration Helpers */
 
 /**
  * @brief Initialize a server configuration with default values.

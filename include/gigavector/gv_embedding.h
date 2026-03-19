@@ -16,9 +16,6 @@
 extern "C" {
 #endif
 
-/**
- * @brief Embedding provider types.
- */
 typedef enum {
     GV_EMBEDDING_PROVIDER_OPENAI = 0,        /**< OpenAI embeddings API */
     GV_EMBEDDING_PROVIDER_HUGGINGFACE = 1,   /**< HuggingFace sentence-transformers (local) */
@@ -27,9 +24,6 @@ typedef enum {
     GV_EMBEDDING_PROVIDER_NONE = 3           /**< No provider (disabled) */
 } GV_EmbeddingProvider;
 
-/**
- * @brief Embedding service configuration.
- */
 typedef struct {
     GV_EmbeddingProvider provider;           /**< Provider type */
     char *api_key;                           /**< API key (for OpenAI/Custom) */
@@ -43,14 +37,7 @@ typedef struct {
     char *huggingface_model_path;           /**< Path to local HuggingFace model (for HuggingFace provider, optional - uses TEI API by default) */
 } GV_EmbeddingConfig;
 
-/**
- * @brief Embedding service structure (opaque).
- */
 typedef struct GV_EmbeddingService GV_EmbeddingService;
-
-/**
- * @brief Embedding cache structure (opaque).
- */
 typedef struct GV_EmbeddingCache GV_EmbeddingCache;
 
 /**

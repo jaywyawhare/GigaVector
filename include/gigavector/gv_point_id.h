@@ -23,8 +23,6 @@ extern "C" {
  */
 typedef struct GV_PointIDMap GV_PointIDMap;
 
-/* Create / Destroy */
-
 /**
  * @brief Create a new point-ID map.
  *
@@ -41,8 +39,6 @@ GV_PointIDMap *gv_point_id_create(size_t initial_capacity);
  * @param map  Map to destroy.  NULL is safely ignored.
  */
 void gv_point_id_destroy(GV_PointIDMap *map);
-
-/* Map Operations */
 
 /**
  * @brief Insert or update a mapping from a string ID to an internal index.
@@ -85,8 +81,6 @@ int gv_point_id_remove(GV_PointIDMap *map, const char *string_id);
  */
 int gv_point_id_has(const GV_PointIDMap *map, const char *string_id);
 
-/* Reverse Lookup */
-
 /**
  * @brief Reverse lookup: retrieve the string ID for an internal index.
  *
@@ -98,8 +92,6 @@ int gv_point_id_has(const GV_PointIDMap *map, const char *string_id);
  * @return The string ID, or NULL if no mapping exists for this index.
  */
 const char *gv_point_id_reverse_lookup(const GV_PointIDMap *map, size_t internal_index);
-
-/* UUID Generation */
 
 /**
  * @brief Generate a random UUID v4 string (RFC 4122).
@@ -113,8 +105,6 @@ const char *gv_point_id_reverse_lookup(const GV_PointIDMap *map, size_t internal
  * @return 0 on success, -1 on error (NULL buffer or insufficient size).
  */
 int gv_point_id_generate_uuid(char *buf, size_t buf_size);
-
-/* Iteration */
 
 /**
  * @brief Return the number of entries in the map.
@@ -140,8 +130,6 @@ size_t gv_point_id_count(const GV_PointIDMap *map);
 int gv_point_id_iterate(const GV_PointIDMap *map,
                          int (*callback)(const char *id, size_t index, void *ctx),
                          void *ctx);
-
-/* Persistence */
 
 /**
  * @brief Save the map to a binary file.

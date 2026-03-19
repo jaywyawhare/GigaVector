@@ -10,9 +10,6 @@
 extern "C" {
 #endif
 
-/**
- * @brief Extracted memory candidate structure.
- */
 typedef struct {
     char *content;                  /**< Extracted memory content. */
     double importance_score;        /**< Importance score (0.0-1.0). */

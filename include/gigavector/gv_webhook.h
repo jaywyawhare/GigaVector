@@ -34,28 +34,22 @@ typedef void (*GV_ChangeCallback)(const GV_Event *event, void *user_data);
 
 typedef struct GV_WebhookManager GV_WebhookManager;
 
-/* Lifecycle */
 GV_WebhookManager *gv_webhook_create(void);
 void gv_webhook_destroy(GV_WebhookManager *mgr);
 
-/* Register/unregister webhooks */
 int gv_webhook_register(GV_WebhookManager *mgr, const char *webhook_id, const GV_WebhookConfig *config);
 int gv_webhook_unregister(GV_WebhookManager *mgr, const char *webhook_id);
 int gv_webhook_pause(GV_WebhookManager *mgr, const char *webhook_id);
 int gv_webhook_resume(GV_WebhookManager *mgr, const char *webhook_id);
 
-/* List webhooks */
 int gv_webhook_list(const GV_WebhookManager *mgr, char ***out_ids, size_t *out_count);
 void gv_webhook_free_list(char **ids, size_t count);
 
-/* Fire event (called internally when mutations happen) */
 int gv_webhook_fire(GV_WebhookManager *mgr, const GV_Event *event);
 
-/* Change stream: register callback for real-time events */
 int gv_webhook_subscribe(GV_WebhookManager *mgr, GV_EventType mask, GV_ChangeCallback cb, void *user_data);
 int gv_webhook_unsubscribe(GV_WebhookManager *mgr, GV_ChangeCallback cb);
 
-/* Stats */
 typedef struct {
     uint64_t events_fired;
     uint64_t webhooks_delivered;

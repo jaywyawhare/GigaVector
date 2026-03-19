@@ -22,17 +22,11 @@ typedef enum {
     GV_DOC_AGG_SUM_SIM = 2   /**< Use the sum of chunk similarities. */
 } GV_DocAggregation;
 
-/**
- * @brief Configuration for a multi-vector index.
- */
 typedef struct {
     size_t max_chunks_per_doc;    /**< Maximum number of chunks allowed per document. */
     GV_DocAggregation aggregation; /**< Aggregation strategy for document scoring. */
 } GV_MultiVecConfig;
 
-/**
- * @brief A single document-level search result.
- */
 typedef struct {
     uint64_t doc_id;           /**< Document identifier. */
     float score;               /**< Aggregated document score (lower = closer). */

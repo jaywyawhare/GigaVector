@@ -18,8 +18,6 @@ extern "C" {
  * changes backwards from the current state.
  */
 
-/* Configuration */
-
 /**
  * @brief Time-travel configuration.
  */
@@ -30,14 +28,10 @@ typedef struct {
     size_t gc_keep_count;   /**< Minimum recent versions to keep during GC (default: 100). */
 } GV_TimeTravelConfig;
 
-/* Opaque Types */
-
 /**
  * @brief Opaque time-travel manager handle.
  */
 typedef struct GV_TimeTravelManager GV_TimeTravelManager;
-
-/* Version Entry */
 
 /**
  * @brief Metadata for a single version in the change log.
@@ -48,8 +42,6 @@ typedef struct {
     size_t   vector_count;      /**< Total live vector count at this version. */
     char     description[128];  /**< Human-readable mutation description. */
 } GV_VersionEntry;
-
-/* Lifecycle */
 
 /**
  * @brief Initialize a TimeTravelConfig with default values.
@@ -78,8 +70,6 @@ GV_TimeTravelManager *gv_tt_create(const GV_TimeTravelConfig *config);
  * @param mgr Manager instance (safe to call with NULL).
  */
 void gv_tt_destroy(GV_TimeTravelManager *mgr);
-
-/* Mutation Recording */
 
 /**
  * @brief Record a vector insertion.
@@ -119,8 +109,6 @@ uint64_t gv_tt_record_update(GV_TimeTravelManager *mgr, size_t index,
 uint64_t gv_tt_record_delete(GV_TimeTravelManager *mgr, size_t index,
                               const float *vector, size_t dimension);
 
-/* Point-in-Time Queries */
-
 /**
  * @brief Retrieve the state of a vector at a specific version.
  *
@@ -153,8 +141,6 @@ int gv_tt_query_at_version(const GV_TimeTravelManager *mgr, uint64_t version_id,
 int gv_tt_query_at_timestamp(const GV_TimeTravelManager *mgr, uint64_t timestamp,
                               size_t index, float *output, size_t dimension);
 
-/* Version Inspection */
-
 /**
  * @brief Get the total live vector count at a specific version.
  *
@@ -185,8 +171,6 @@ uint64_t gv_tt_current_version(const GV_TimeTravelManager *mgr);
 int gv_tt_list_versions(const GV_TimeTravelManager *mgr, GV_VersionEntry *out,
                          size_t max_count);
 
-/* Garbage Collection */
-
 /**
  * @brief Run garbage collection on the change log.
  *
@@ -198,8 +182,6 @@ int gv_tt_list_versions(const GV_TimeTravelManager *mgr, GV_VersionEntry *out,
  * @return Number of versions removed, or -1 on error.
  */
 int gv_tt_gc(GV_TimeTravelManager *mgr);
-
-/* Persistence */
 
 /**
  * @brief Save the time-travel state to a binary file.

@@ -17,10 +17,7 @@ extern "C" {
  * migrations.
  */
 
-/* Forward declaration */
 struct GV_Database;
-
-/* Condition Types */
 
 /**
  * @brief Type of condition to evaluate before applying a mutation.
@@ -34,17 +31,12 @@ typedef enum {
     GV_COND_NOT_DELETED           /**< Vector must not be marked as deleted. */
 } GV_ConditionType;
 
-/**
- * @brief A single condition to evaluate against a vector's current state.
- */
 typedef struct {
     GV_ConditionType type;        /**< Type of condition. */
     const char *field_name;       /**< Metadata field name (for METADATA_* conditions). */
     const char *field_value;      /**< Expected metadata value (for METADATA_EQ). */
     uint64_t version;             /**< Expected version (for VERSION_EQ / VERSION_LT). */
 } GV_Condition;
-
-/* Result Codes */
 
 /**
  * @brief Result of a conditional mutation.
@@ -56,8 +48,6 @@ typedef enum {
     GV_COND_CONFLICT  = -3       /**< Version conflict detected (concurrent modification). */
 } GV_ConditionalResult;
 
-/* Versioned Vector Info */
-
 /**
  * @brief Tracked version information for a single vector.
  */
@@ -67,14 +57,7 @@ typedef struct {
     uint64_t updated_at;          /**< Timestamp of last update (microseconds since epoch). */
 } GV_VersionedVector;
 
-/* Opaque Manager Handle */
-
-/**
- * @brief Opaque conditional-update manager handle.
- */
 typedef struct GV_CondManager GV_CondManager;
-
-/* Lifecycle */
 
 /**
  * @brief Create a conditional-update manager bound to a database.
@@ -90,8 +73,6 @@ GV_CondManager *gv_cond_create(void *db);
  * @param mgr Manager instance (safe to call with NULL).
  */
 void gv_cond_destroy(GV_CondManager *mgr);
-
-/* Conditional Mutations */
 
 /**
  * @brief Conditionally update vector data.
@@ -148,8 +129,6 @@ GV_ConditionalResult gv_cond_delete(GV_CondManager *mgr, size_t index,
                                      const GV_Condition *conditions,
                                      size_t condition_count);
 
-/* Version Queries */
-
 /**
  * @brief Get the current tracked version of a vector.
  *
@@ -158,8 +137,6 @@ GV_ConditionalResult gv_cond_delete(GV_CondManager *mgr, size_t index,
  * @return Current version, or 0 if the index is not tracked.
  */
 uint64_t gv_cond_get_version(const GV_CondManager *mgr, size_t index);
-
-/* Batch Operations */
 
 /**
  * @brief Conditionally update multiple vectors in a single pass.
@@ -183,8 +160,6 @@ int gv_cond_batch_update(GV_CondManager *mgr,
                           const size_t *condition_counts,
                           size_t batch_size,
                           GV_ConditionalResult *results);
-
-/* Convenience Wrappers */
 
 /**
  * @brief Conditionally migrate a vector's embedding to a new model output.

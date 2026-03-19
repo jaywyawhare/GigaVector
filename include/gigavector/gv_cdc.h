@@ -17,8 +17,6 @@ extern "C" {
  * event-driven architectures, and audit logging.
  */
 
-/* Types and Enumerations */
-
 /**
  * @brief CDC event types (bitmask).
  */
@@ -30,9 +28,6 @@ typedef enum {
     GV_CDC_ALL      = 15            /**< All event types. */
 } GV_CDCEventType;
 
-/**
- * @brief A single CDC event.
- */
 typedef struct {
     uint64_t sequence_number;       /**< Monotonically increasing sequence. */
     GV_CDCEventType type;           /**< Event type. */
@@ -51,9 +46,6 @@ typedef struct {
  */
 typedef void (*GV_CDCCallback)(const GV_CDCEvent *event, void *user_data);
 
-/**
- * @brief CDC stream configuration.
- */
 typedef struct {
     size_t ring_buffer_size;        /**< Ring buffer capacity in events (default: 65536). */
     int persist_to_file;            /**< Write events to log file (default: 0). */
@@ -62,19 +54,11 @@ typedef struct {
     int include_vector_data;        /**< Include vector data in events (default: 1). */
 } GV_CDCConfig;
 
-/**
- * @brief Opaque CDC stream handle.
- */
 typedef struct GV_CDCStream GV_CDCStream;
 
-/**
- * @brief Cursor into the CDC stream.
- */
 typedef struct {
     uint64_t sequence_number;       /**< Position in the stream. */
 } GV_CDCCursor;
-
-/* Configuration */
 
 /**
  * @brief Initialize a CDC configuration with sensible defaults.
@@ -82,8 +66,6 @@ typedef struct {
  * @param config Configuration to initialize.
  */
 void gv_cdc_config_init(GV_CDCConfig *config);
-
-/* Lifecycle */
 
 /**
  * @brief Create a CDC stream.
@@ -100,8 +82,6 @@ GV_CDCStream *gv_cdc_create(const GV_CDCConfig *config);
  */
 void gv_cdc_destroy(GV_CDCStream *stream);
 
-/* Publishing */
-
 /**
  * @brief Publish an event to the CDC stream.
  *
@@ -114,8 +94,6 @@ void gv_cdc_destroy(GV_CDCStream *stream);
  * @return 0 on success, -1 on error.
  */
 int gv_cdc_publish(GV_CDCStream *stream, const GV_CDCEvent *event);
-
-/* Subscription (push interface) */
 
 /**
  * @brief Subscribe to CDC events matching a type mask.
@@ -139,8 +117,6 @@ int gv_cdc_subscribe(GV_CDCStream *stream, uint32_t event_mask,
  * @return 0 on success, -1 on error.
  */
 int gv_cdc_unsubscribe(GV_CDCStream *stream, int subscriber_id);
-
-/* Polling (pull interface) */
 
 /**
  * @brief Poll for events starting from a cursor position.

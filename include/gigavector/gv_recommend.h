@@ -23,21 +23,18 @@ typedef struct {
 
 void gv_recommend_config_init(GV_RecommendConfig *config);
 
-/* Recommend by vector indices: average positive vectors, subtract negatives, search */
 int gv_recommend_by_id(const GV_Database *db,
                         const size_t *positive_ids, size_t positive_count,
                         const size_t *negative_ids, size_t negative_count,
                         size_t k, const GV_RecommendConfig *config,
                         GV_RecommendResult *results);
 
-/* Recommend by raw vectors */
 int gv_recommend_by_vector(const GV_Database *db,
                             const float *positive_vectors, size_t positive_count,
                             const float *negative_vectors, size_t negative_count,
                             size_t dimension, size_t k, const GV_RecommendConfig *config,
                             GV_RecommendResult *results);
 
-/* Discovery: find vectors similar to target but different from context */
 int gv_recommend_discover(const GV_Database *db,
                            const float *target, const float *context,
                            size_t dimension, size_t k, const GV_RecommendConfig *config,

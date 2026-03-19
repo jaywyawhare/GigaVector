@@ -58,16 +58,12 @@ typedef struct {
  */
 typedef struct GV_Tokenizer GV_Tokenizer;
 
-/* Configuration */
-
 /**
  * @brief Initialize tokenizer configuration with defaults.
  *
  * @param config Configuration to initialize.
  */
 void gv_tokenizer_config_init(GV_TokenizerConfig *config);
-
-/* Tokenizer Lifecycle */
 
 /**
  * @brief Create a tokenizer.
@@ -83,8 +79,6 @@ GV_Tokenizer *gv_tokenizer_create(const GV_TokenizerConfig *config);
  * @param tokenizer Tokenizer instance (safe to call with NULL).
  */
 void gv_tokenizer_destroy(GV_Tokenizer *tokenizer);
-
-/* Tokenization */
 
 /**
  * @brief Tokenize text.
@@ -104,8 +98,6 @@ int gv_tokenizer_tokenize(GV_Tokenizer *tokenizer, const char *text,
  * @param list Token list to free.
  */
 void gv_token_list_free(GV_TokenList *list);
-
-/* Utility Functions */
 
 /**
  * @brief Tokenize text with default settings (simple tokenizer).

@@ -23,15 +23,8 @@ extern "C" {
  * A maximum of 64 indexed paths is supported per index instance.
  */
 
-/* Constants */
-
 #define GV_JSON_INDEX_MAX_PATHS 64
 
-/* Types */
-
-/**
- * @brief Supported value types for an indexed JSON path.
- */
 typedef enum {
     GV_JP_STRING = 0,
     GV_JP_INT,
@@ -39,22 +32,13 @@ typedef enum {
     GV_JP_BOOL
 } GV_JSONPathType;
 
-/**
- * @brief Configuration for a single indexed JSON path.
- */
 typedef struct {
     const char     *path;   /**< Dot-notation path, e.g. "address.city" or "tags[0]" */
     GV_JSONPathType type;   /**< Expected value type at this path */
 } GV_JSONPathConfig;
 
-/**
- * @brief Opaque handle for a JSON path index.
- */
 typedef struct GV_JSONPathIndex GV_JSONPathIndex;
 
-/**
- * @brief Result entry returned by lookup helpers (informational).
- */
 typedef struct {
     size_t vector_index;
     union {
@@ -64,8 +48,6 @@ typedef struct {
         bool        bool_val;
     } value;
 } GV_JSONPathResult;
-
-/* Lifecycle */
 
 /**
  * @brief Create an empty JSON path index.
@@ -80,8 +62,6 @@ GV_JSONPathIndex *gv_json_index_create(void);
  * @param idx Index to destroy; safe to call with NULL.
  */
 void gv_json_index_destroy(GV_JSONPathIndex *idx);
-
-/* Path Registration */
 
 /**
  * @brief Register a new JSON path for indexing.
@@ -100,8 +80,6 @@ int gv_json_index_add_path(GV_JSONPathIndex *idx, const GV_JSONPathConfig *confi
  * @return 0 on success, -1 on error (NULL args, path not found).
  */
 int gv_json_index_remove_path(GV_JSONPathIndex *idx, const char *path);
-
-/* Data Manipulation */
 
 /**
  * @brief Parse a JSON string and insert index entries for all registered paths.
@@ -125,8 +103,6 @@ int gv_json_index_insert(GV_JSONPathIndex *idx, size_t vector_index, const char 
  * @return 0 on success, -1 on error.
  */
 int gv_json_index_remove(GV_JSONPathIndex *idx, size_t vector_index);
-
-/* Lookup */
 
 /**
  * @brief Look up vector indices whose string value at @p path equals @p value.
@@ -171,8 +147,6 @@ int gv_json_index_lookup_float_range(const GV_JSONPathIndex *idx, const char *pa
                                      double min_val, double max_val,
                                      size_t *out_indices, size_t max_count);
 
-/* Statistics */
-
 /**
  * @brief Return the number of indexed entries for a given path.
  *
@@ -181,8 +155,6 @@ int gv_json_index_lookup_float_range(const GV_JSONPathIndex *idx, const char *pa
  * @return Entry count, or 0 if the path is not registered or on error.
  */
 size_t gv_json_index_count(const GV_JSONPathIndex *idx, const char *path);
-
-/* Persistence */
 
 /**
  * @brief Save the entire JSON path index to a binary file.

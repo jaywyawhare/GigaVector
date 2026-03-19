@@ -18,8 +18,6 @@ extern "C" {
  * Auto-promotes tenants between tiers based on usage.
  */
 
-/* Enums */
-
 /**
  * @brief Tenant tier classification.
  */
@@ -28,8 +26,6 @@ typedef enum {
     GV_TIER_DEDICATED = 1,   /**< Isolated indexes (medium tenants). */
     GV_TIER_PREMIUM   = 2    /**< Dedicated resources (large tenants). */
 } GV_TenantTier;
-
-/* Configuration Structures */
 
 /**
  * @brief Thresholds governing automatic tier promotion/demotion.
@@ -52,8 +48,6 @@ typedef struct {
     size_t max_total_tenants;       /**< Max total tenants across all tiers (default 10000). */
 } GV_TieredTenantConfig;
 
-/* Tenant Information */
-
 /**
  * @brief Per-tenant information snapshot.
  */
@@ -67,14 +61,10 @@ typedef struct {
     double        qps_avg;     /**< Average queries per second (sliding window). */
 } GV_TenantInfo;
 
-/* Opaque Manager Handle */
-
 /**
  * @brief Opaque tiered tenant manager handle.
  */
 typedef struct GV_TieredManager GV_TieredManager;
-
-/* Configuration */
 
 /**
  * @brief Initialize tiered tenant configuration with defaults.
@@ -93,8 +83,6 @@ typedef struct GV_TieredManager GV_TieredManager;
  */
 void gv_tiered_config_init(GV_TieredTenantConfig *config);
 
-/* Lifecycle */
-
 /**
  * @brief Create a tiered tenant manager.
  *
@@ -109,8 +97,6 @@ GV_TieredManager *gv_tiered_create(const GV_TieredTenantConfig *config);
  * @param mgr Manager instance (safe to call with NULL).
  */
 void gv_tiered_destroy(GV_TieredManager *mgr);
-
-/* Tenant Operations */
 
 /**
  * @brief Add a new tenant.
@@ -154,8 +140,6 @@ int gv_tiered_promote(GV_TieredManager *mgr, const char *tenant_id,
 int gv_tiered_get_info(const GV_TieredManager *mgr, const char *tenant_id,
                         GV_TenantInfo *info);
 
-/* Usage Tracking */
-
 /**
  * @brief Record usage delta for a tenant.
  *
@@ -182,8 +166,6 @@ int gv_tiered_record_usage(GV_TieredManager *mgr, const char *tenant_id,
  */
 int gv_tiered_check_promote(GV_TieredManager *mgr);
 
-/* Enumeration */
-
 /**
  * @brief List tenants in a specific tier.
  *
@@ -203,8 +185,6 @@ int gv_tiered_list_tenants(const GV_TieredManager *mgr, GV_TenantTier tier,
  * @return Total tenant count.
  */
 size_t gv_tiered_tenant_count(const GV_TieredManager *mgr);
-
-/* Persistence */
 
 /**
  * @brief Save manager state to a binary file.

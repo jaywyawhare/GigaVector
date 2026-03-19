@@ -13,9 +13,6 @@
 extern "C" {
 #endif
 
-/**
- * @brief IVF-Flat index configuration.
- */
 typedef struct {
     size_t nlist;       /**< Number of coarse centroids (inverted lists). */
     size_t nprobe;      /**< Number of lists to probe at search time. */
@@ -67,47 +64,23 @@ int gv_ivfflat_search(void *index, const GV_Vector *query, size_t k,
                       GV_SearchResult *results, GV_DistanceType distance_type,
                       const char *filter_key, const char *filter_value);
 
-/**
- * @brief Range search in IVF-Flat.
- */
 int gv_ivfflat_range_search(void *index, const GV_Vector *query, float radius,
                             GV_SearchResult *results, size_t max_results,
                             GV_DistanceType distance_type,
                             const char *filter_key, const char *filter_value);
 
-/**
- * @brief Check whether the IVF-Flat index has been trained.
- */
 int gv_ivfflat_is_trained(const void *index);
 
-/**
- * @brief Destroy IVF-Flat index.
- */
 void gv_ivfflat_destroy(void *index);
 
-/**
- * @brief Count vectors in IVF-Flat.
- */
 size_t gv_ivfflat_count(const void *index);
 
-/**
- * @brief Delete a vector by its entry index.
- */
 int gv_ivfflat_delete(void *index, size_t entry_index);
 
-/**
- * @brief Update a vector by its entry index.
- */
 int gv_ivfflat_update(void *index, size_t entry_index, const float *new_data, size_t dimension);
 
-/**
- * @brief Save IVF-Flat index to file.
- */
 int gv_ivfflat_save(const void *index, FILE *out, uint32_t version);
 
-/**
- * @brief Load IVF-Flat index from file.
- */
 int gv_ivfflat_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version);
 
 #ifdef __cplusplus

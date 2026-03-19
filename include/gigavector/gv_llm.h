@@ -26,9 +26,6 @@ typedef enum {
     GV_LLM_PROVIDER_CUSTOM = 3
 } GV_LLMProvider;
 
-/**
- * @brief LLM error codes.
- */
 typedef enum {
     GV_LLM_SUCCESS = 0,
     GV_LLM_ERROR_NULL_POINTER = -1,
@@ -45,9 +42,6 @@ typedef enum {
     GV_LLM_ERROR_CUSTOM_URL_REQUIRED = -12
 } GV_LLMError;
 
-/**
- * @brief LLM configuration structure.
- */
 typedef struct {
     GV_LLMProvider provider;          /**< LLM provider type. */
     char *api_key;                    /**< API key for authentication. */
@@ -59,26 +53,17 @@ typedef struct {
     char *custom_prompt;               /**< Custom extraction prompt (NULL for default). */
 } GV_LLMConfig;
 
-/**
- * @brief LLM message structure.
- */
 typedef struct {
     char *role;                       /**< Message role: "system", "user", "assistant". */
     char *content;                    /**< Message content. */
 } GV_LLMMessage;
 
-/**
- * @brief LLM response structure.
- */
 typedef struct {
     char *content;                    /**< Generated text content. */
     int finish_reason;                 /**< Finish reason code. */
     int token_count;                  /**< Number of tokens used. */
 } GV_LLMResponse;
 
-/**
- * @brief LLM handle structure (opaque).
- */
 typedef struct GV_LLM GV_LLM;
 
 /**

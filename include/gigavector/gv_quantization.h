@@ -27,9 +27,6 @@ typedef enum {
     GV_QUANT_ASYMMETRIC = 1  /**< Query stays float32; only stored is quantized.*/
 } GV_QuantMode;
 
-/**
- * @brief Configuration for advanced quantization.
- */
 typedef struct {
     GV_QuantType type;        /**< Quantization bit-width.                      */
     GV_QuantMode mode;        /**< Symmetric or asymmetric distance mode.       */
@@ -37,9 +34,6 @@ typedef struct {
     uint64_t     rabitq_seed; /**< Seed for the RaBitQ random rotation matrix.  */
 } GV_QuantConfig;
 
-/**
- * @brief Opaque codebook trained from data, used for encode/decode/distance.
- */
 typedef struct GV_QuantCodebook GV_QuantCodebook;
 
 /**

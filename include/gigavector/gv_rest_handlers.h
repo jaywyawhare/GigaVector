@@ -17,8 +17,6 @@ extern "C" {
  * for vector database operations.
  */
 
-/* Handler Context */
-
 /**
  * @brief Context passed to all handlers.
  */
@@ -26,8 +24,6 @@ typedef struct {
     GV_Database *db;                   /**< Database instance. */
     const GV_ServerConfig *config;     /**< Server configuration. */
 } GV_HandlerContext;
-
-/* Response Helpers */
 
 /**
  * @brief Create a JSON success response.
@@ -64,8 +60,6 @@ GV_HttpResponse *gv_rest_response_success(const char *message);
  */
 void gv_rest_response_free(GV_HttpResponse *response);
 
-/* Request Parsing Helpers */
-
 /**
  * @brief Parse URL path parameter (e.g., extract "123" from "/vectors/123").
  *
@@ -98,8 +92,6 @@ int gv_rest_parse_query_param(const char *query_string, const char *key,
  * @return Parsed JSON value, or NULL on error.
  */
 GV_JsonValue *gv_rest_parse_body(const GV_HttpRequest *request, GV_JsonError *error);
-
-/* Endpoint Handlers */
 
 /**
  * @brief Handle GET /health endpoint.
@@ -310,8 +302,6 @@ GV_HttpResponse *gv_rest_handle_compact(const GV_HandlerContext *ctx,
  */
 GV_HttpResponse *gv_rest_handle_save(const GV_HandlerContext *ctx,
                                       const GV_HttpRequest *request);
-
-/* Router */
 
 /**
  * @brief Route a request to the appropriate handler.

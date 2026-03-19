@@ -18,8 +18,6 @@
 extern "C" {
 #endif
 
-/* Data Structures */
-
 /**
  * @brief Key-value property stored as a singly-linked list.
  */
@@ -90,8 +88,6 @@ typedef struct {
  */
 typedef struct GV_GraphDB GV_GraphDB;
 
-/* Lifecycle */
-
 /**
  * @brief Initialize a configuration struct with default values.
  *
@@ -113,8 +109,6 @@ GV_GraphDB *gv_graph_create(const GV_GraphDBConfig *config);
  * @param g Graph database to destroy; safe to call with NULL.
  */
 void gv_graph_destroy(GV_GraphDB *g);
-
-/* Node Operations */
 
 /**
  * @brief Add a new node with the given label.
@@ -177,8 +171,6 @@ const char *gv_graph_get_node_prop(const GV_GraphDB *g, uint64_t node_id,
  */
 int gv_graph_find_nodes_by_label(const GV_GraphDB *g, const char *label,
                                  uint64_t *out_ids, size_t max_count);
-
-/* Edge Operations */
 
 /**
  * @brief Add a directed, weighted edge between two nodes.
@@ -270,8 +262,6 @@ int gv_graph_get_edges_in(const GV_GraphDB *g, uint64_t node_id,
 int gv_graph_get_neighbors(const GV_GraphDB *g, uint64_t node_id,
                            uint64_t *out_ids, size_t max_count);
 
-/* Traversal */
-
 /**
  * @brief Breadth-first search from a starting node.
  *
@@ -330,8 +320,6 @@ int gv_graph_all_paths(const GV_GraphDB *g, uint64_t from, uint64_t to,
  * @param path Path to free; safe to call with NULL.
  */
 void gv_graph_free_path(GV_GraphPath *path);
-
-/* Analytics */
 
 /**
  * @brief Compute the PageRank score for a single node.
@@ -403,8 +391,6 @@ int gv_graph_connected_components(const GV_GraphDB *g,
  */
 float gv_graph_clustering_coefficient(const GV_GraphDB *g, uint64_t node_id);
 
-/* Stats */
-
 /**
  * @brief Return the number of nodes in the graph.
  *
@@ -420,8 +406,6 @@ size_t gv_graph_node_count(const GV_GraphDB *g);
  * @return Edge count.
  */
 size_t gv_graph_edge_count(const GV_GraphDB *g);
-
-/* Persistence */
 
 /**
  * @brief Save the graph to a binary file.

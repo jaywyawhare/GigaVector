@@ -16,9 +16,6 @@ extern "C" {
  * supporting all JSON types: objects, arrays, strings, numbers, booleans, and null.
  */
 
-/**
- * @brief JSON value types.
- */
 typedef enum {
     GV_JSON_NULL = 0,
     GV_JSON_BOOL,
@@ -28,9 +25,6 @@ typedef enum {
     GV_JSON_OBJECT
 } GV_JsonType;
 
-/**
- * @brief JSON error codes.
- */
 typedef enum {
     GV_JSON_OK = 0,
     GV_JSON_ERROR_NULL_INPUT = -1,
@@ -46,22 +40,13 @@ typedef enum {
     GV_JSON_ERROR_INDEX_OUT_OF_BOUNDS = -11
 } GV_JsonError;
 
-/**
- * @brief Forward declaration for JSON value.
- */
 typedef struct GV_JsonValue GV_JsonValue;
 
-/**
- * @brief JSON object entry (key-value pair).
- */
 typedef struct {
     char *key;
     GV_JsonValue *value;
 } GV_JsonEntry;
 
-/**
- * @brief JSON value structure.
- */
 struct GV_JsonValue {
     GV_JsonType type;
     union {
@@ -81,8 +66,6 @@ struct GV_JsonValue {
     } data;
 };
 
-/* Parsing Functions */
-
 /**
  * @brief Parse a JSON string into a JSON value tree.
  *
@@ -100,8 +83,6 @@ GV_JsonValue *gv_json_parse(const char *json_str, GV_JsonError *error);
  */
 const char *gv_json_error_string(GV_JsonError error);
 
-/* Serialization Functions */
-
 /**
  * @brief Serialize a JSON value to a string.
  *
@@ -111,48 +92,12 @@ const char *gv_json_error_string(GV_JsonError error);
  */
 char *gv_json_stringify(const GV_JsonValue *value, bool pretty);
 
-/* Value Creation Functions */
-
-/**
- * @brief Create a null JSON value.
- * @return New JSON null value.
- */
 GV_JsonValue *gv_json_null(void);
-
-/**
- * @brief Create a boolean JSON value.
- * @param value Boolean value.
- * @return New JSON boolean value.
- */
 GV_JsonValue *gv_json_bool(bool value);
-
-/**
- * @brief Create a number JSON value.
- * @param value Numeric value.
- * @return New JSON number value.
- */
 GV_JsonValue *gv_json_number(double value);
-
-/**
- * @brief Create a string JSON value.
- * @param value String value (will be copied).
- * @return New JSON string value.
- */
-GV_JsonValue *gv_json_string(const char *value);
-
-/**
- * @brief Create an empty JSON array.
- * @return New JSON array value.
- */
+GV_JsonValue *gv_json_string(const char *value); /**< String value will be copied. */
 GV_JsonValue *gv_json_array(void);
-
-/**
- * @brief Create an empty JSON object.
- * @return New JSON object value.
- */
 GV_JsonValue *gv_json_object(void);
-
-/* Array Operations */
 
 /**
  * @brief Append a value to a JSON array.
@@ -179,8 +124,6 @@ GV_JsonValue *gv_json_array_get(const GV_JsonValue *array, size_t index);
  * @return Number of elements in array.
  */
 size_t gv_json_array_length(const GV_JsonValue *array);
-
-/* Object Operations */
 
 /**
  * @brief Set a key-value pair in a JSON object.
@@ -218,36 +161,11 @@ bool gv_json_object_has(const GV_JsonValue *object, const char *key);
  */
 size_t gv_json_object_length(const GV_JsonValue *object);
 
-/* Type Checking and Value Extraction */
-
-/**
- * @brief Check if value is null.
- */
 bool gv_json_is_null(const GV_JsonValue *value);
-
-/**
- * @brief Check if value is a boolean.
- */
 bool gv_json_is_bool(const GV_JsonValue *value);
-
-/**
- * @brief Check if value is a number.
- */
 bool gv_json_is_number(const GV_JsonValue *value);
-
-/**
- * @brief Check if value is a string.
- */
 bool gv_json_is_string(const GV_JsonValue *value);
-
-/**
- * @brief Check if value is an array.
- */
 bool gv_json_is_array(const GV_JsonValue *value);
-
-/**
- * @brief Check if value is an object.
- */
 bool gv_json_is_object(const GV_JsonValue *value);
 
 /**
@@ -276,8 +194,6 @@ GV_JsonError gv_json_get_number(const GV_JsonValue *value, double *out);
  */
 const char *gv_json_get_string(const GV_JsonValue *value);
 
-/* Path-based Access (convenience) */
-
 /**
  * @brief Get value at a path (e.g., "choices.0.message.content").
  *
@@ -297,8 +213,6 @@ GV_JsonValue *gv_json_get_path(const GV_JsonValue *root, const char *path);
  * @return String value, or NULL if not found or not a string.
  */
 const char *gv_json_get_string_path(const GV_JsonValue *root, const char *path);
-
-/* Memory Management */
 
 /**
  * @brief Free a JSON value and all its children.

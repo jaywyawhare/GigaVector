@@ -9,9 +9,6 @@
 extern "C" {
 #endif
 
-/**
- * @brief Distance metric types.
- */
 typedef enum {
     GV_DISTANCE_EUCLIDEAN = 0,
     GV_DISTANCE_COSINE = 1,

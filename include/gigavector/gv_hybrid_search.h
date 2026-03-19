@@ -20,22 +20,15 @@ extern "C" {
  * text search for improved retrieval quality.
  */
 
-/* Forward declarations */
 struct GV_Database;
 typedef struct GV_Database GV_Database;
 
-/**
- * @brief Score fusion method.
- */
 typedef enum {
     GV_FUSION_LINEAR = 0,           /**< Weighted linear combination. */
     GV_FUSION_RRF = 1,              /**< Reciprocal Rank Fusion. */
     GV_FUSION_WEIGHTED_RRF = 2      /**< RRF with custom weights. */
 } GV_FusionType;
 
-/**
- * @brief Hybrid search configuration.
- */
 typedef struct {
     GV_FusionType fusion_type;      /**< Score fusion method (default: LINEAR). */
     double vector_weight;           /**< Weight for vector scores (default: 0.5). */
@@ -45,9 +38,6 @@ typedef struct {
     size_t prefetch_k;              /**< Results to fetch from each source (default: k*3). */
 } GV_HybridConfig;
 
-/**
- * @brief Hybrid search result.
- */
 typedef struct {
     size_t vector_index;            /**< Vector/Document index. */
     double combined_score;          /**< Combined fusion score. */
@@ -57,9 +47,6 @@ typedef struct {
     size_t text_rank;               /**< Rank from text search (0 if not found). */
 } GV_HybridResult;
 
-/**
- * @brief Hybrid search statistics.
- */
 typedef struct {
     size_t vector_candidates;       /**< Candidates from vector search. */
     size_t text_candidates;         /**< Candidates from text search. */
@@ -70,12 +57,7 @@ typedef struct {
     double total_time_ms;           /**< Total search time. */
 } GV_HybridStats;
 
-/**
- * @brief Opaque hybrid searcher handle.
- */
 typedef struct GV_HybridSearcher GV_HybridSearcher;
-
-/* Configuration */
 
 /**
  * @brief Initialize hybrid configuration with defaults.
@@ -91,8 +73,6 @@ typedef struct GV_HybridSearcher GV_HybridSearcher;
  * @param config Configuration to initialize.
  */
 void gv_hybrid_config_init(GV_HybridConfig *config);
-
-/* Hybrid Searcher Lifecycle */
 
 /**
  * @brief Create a hybrid searcher.
@@ -113,8 +93,6 @@ GV_HybridSearcher *gv_hybrid_create(GV_Database *db, GV_BM25Index *bm25,
  * @param searcher Hybrid searcher instance (safe to call with NULL).
  */
 void gv_hybrid_destroy(GV_HybridSearcher *searcher);
-
-/* Search Operations */
 
 /**
  * @brief Perform hybrid search with vector and text query.
@@ -168,8 +146,6 @@ int gv_hybrid_search_vector_only(GV_HybridSearcher *searcher, const float *query
 int gv_hybrid_search_text_only(GV_HybridSearcher *searcher, const char *query_text,
                                 size_t k, GV_HybridResult *results);
 
-/* Configuration Updates */
-
 /**
  * @brief Update hybrid configuration.
  *
@@ -201,8 +177,6 @@ int gv_hybrid_get_config(const GV_HybridSearcher *searcher, GV_HybridConfig *con
  */
 int gv_hybrid_set_weights(GV_HybridSearcher *searcher, double vector_weight,
                            double text_weight);
-
-/* Utility Functions */
 
 /**
  * @brief Compute linear fusion score.

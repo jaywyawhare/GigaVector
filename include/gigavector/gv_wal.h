@@ -8,9 +8,6 @@
 extern "C" {
 #endif
 
-/**
- * @brief Write-ahead log handle used by the database.
- */
 typedef struct GV_WAL GV_WAL;
 
 /**

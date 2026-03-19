@@ -4,18 +4,12 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/**
- * @brief Represents a key-value metadata pair.
- */
 typedef struct GV_Metadata {
     char *key;
     char *value;
     struct GV_Metadata *next;
 } GV_Metadata;
 
-/**
- * @brief Represents a single floating-point vector with optional metadata.
- */
 typedef struct {
     size_t dimension;
     float *data;
@@ -34,9 +28,6 @@ typedef struct GV_KDNode {
     struct GV_KDNode *right;
 } GV_KDNode;
 
-/**
- * @brief Represents a single search result with distance.
- */
 typedef struct {
     uint32_t index;
     float value;

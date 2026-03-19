@@ -35,28 +35,22 @@ typedef enum {
 
 typedef struct GV_QuotaManager GV_QuotaManager;
 
-/* Lifecycle */
 GV_QuotaManager *gv_quota_create(void);
 void gv_quota_destroy(GV_QuotaManager *mgr);
 
-/* Set quota for a tenant */
 int gv_quota_set(GV_QuotaManager *mgr, const char *tenant_id, const GV_QuotaConfig *config);
 int gv_quota_get(const GV_QuotaManager *mgr, const char *tenant_id, GV_QuotaConfig *config);
 int gv_quota_remove(GV_QuotaManager *mgr, const char *tenant_id);
 
-/* Check if operation is allowed */
 GV_QuotaResult gv_quota_check_insert(GV_QuotaManager *mgr, const char *tenant_id, size_t vector_count);
 GV_QuotaResult gv_quota_check_query(GV_QuotaManager *mgr, const char *tenant_id);
 
-/* Update usage counters */
 int gv_quota_record_insert(GV_QuotaManager *mgr, const char *tenant_id, size_t count, size_t bytes);
 int gv_quota_record_query(GV_QuotaManager *mgr, const char *tenant_id);
 int gv_quota_record_delete(GV_QuotaManager *mgr, const char *tenant_id, size_t count, size_t bytes);
 
-/* Get usage */
 int gv_quota_get_usage(const GV_QuotaManager *mgr, const char *tenant_id, GV_QuotaUsage *usage);
 
-/* Reset usage (e.g., after compaction) */
 int gv_quota_reset_usage(GV_QuotaManager *mgr, const char *tenant_id);
 
 void gv_quota_config_init(GV_QuotaConfig *config);

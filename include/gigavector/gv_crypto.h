@@ -15,47 +15,30 @@ extern "C" {
  * Provides AES-256 encryption for database files and sensitive data.
  */
 
-/**
- * @brief Encryption algorithm.
- */
 typedef enum {
     GV_CRYPTO_NONE = 0,             /**< No encryption. */
     GV_CRYPTO_AES_256_CBC = 1,      /**< AES-256 CBC mode. */
     GV_CRYPTO_AES_256_GCM = 2       /**< AES-256 GCM mode (authenticated). */
 } GV_CryptoAlgorithm;
 
-/**
- * @brief Key derivation function.
- */
 typedef enum {
     GV_KDF_NONE = 0,                /**< Use key directly (must be 32 bytes). */
     GV_KDF_PBKDF2 = 1,              /**< PBKDF2-HMAC-SHA256. */
     GV_KDF_SCRYPT = 2               /**< scrypt (memory-hard). */
 } GV_KDFType;
 
-/**
- * @brief Crypto configuration.
- */
 typedef struct {
     GV_CryptoAlgorithm algorithm;   /**< Encryption algorithm. */
     GV_KDFType kdf;                 /**< Key derivation function. */
     uint32_t kdf_iterations;        /**< KDF iterations (PBKDF2). */
 } GV_CryptoConfig;
 
-/**
- * @brief Encryption key.
- */
 typedef struct {
     unsigned char key[32];          /**< 256-bit key. */
     unsigned char iv[16];           /**< Initialization vector. */
 } GV_CryptoKey;
 
-/**
- * @brief Opaque crypto context handle.
- */
 typedef struct GV_CryptoContext GV_CryptoContext;
-
-/* Configuration */
 
 /**
  * @brief Initialize crypto configuration with defaults.
@@ -68,8 +51,6 @@ typedef struct GV_CryptoContext GV_CryptoContext;
  * @param config Configuration to initialize.
  */
 void gv_crypto_config_init(GV_CryptoConfig *config);
-
-/* Context Lifecycle */
 
 /**
  * @brief Create a crypto context.
@@ -87,8 +68,6 @@ GV_CryptoContext *gv_crypto_create(const GV_CryptoConfig *config);
  * @param ctx Crypto context (safe to call with NULL).
  */
 void gv_crypto_destroy(GV_CryptoContext *ctx);
-
-/* Key Management */
 
 /**
  * @brief Derive a key from a password.
@@ -137,8 +116,6 @@ int gv_crypto_generate_salt(unsigned char *salt, size_t salt_len);
  */
 void gv_crypto_wipe_key(GV_CryptoKey *key);
 
-/* Encryption/Decryption */
-
 /**
  * @brief Encrypt data.
  *
@@ -169,8 +146,6 @@ int gv_crypto_decrypt(GV_CryptoContext *ctx, const GV_CryptoKey *key,
                        const unsigned char *ciphertext, size_t ciphertext_len,
                        unsigned char *plaintext, size_t *plaintext_len);
 
-/* File Encryption */
-
 /**
  * @brief Encrypt a file.
  *
@@ -195,11 +170,6 @@ int gv_crypto_encrypt_file(GV_CryptoContext *ctx, const GV_CryptoKey *key,
 int gv_crypto_decrypt_file(GV_CryptoContext *ctx, const GV_CryptoKey *key,
                             const char *input_path, const char *output_path);
 
-/* Stream Encryption */
-
-/**
- * @brief Opaque encryption stream handle.
- */
 typedef struct GV_CryptoStream GV_CryptoStream;
 
 /**
@@ -245,8 +215,6 @@ int gv_crypto_stream_final(GV_CryptoStream *stream,
  * @param stream Stream handle (safe to call with NULL).
  */
 void gv_crypto_stream_destroy(GV_CryptoStream *stream);
-
-/* Utility Functions */
 
 /**
  * @brief Compute HMAC-SHA256.

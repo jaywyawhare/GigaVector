@@ -20,8 +20,6 @@
 extern "C" {
 #endif
 
-/* Configuration */
-
 /**
  * @brief Configuration for the inference engine.
  *
@@ -38,14 +36,7 @@ typedef struct {
     size_t      cache_size;      /**< Maximum number of cached embeddings (default: 10000). */
 } GV_InferenceConfig;
 
-/* Opaque engine handle */
-
-/**
- * @brief Opaque handle to an inference engine instance.
- */
 typedef struct GV_InferenceEngine GV_InferenceEngine;
-
-/* Result type */
 
 /**
  * @brief A single search result returned by the inference engine.
@@ -60,8 +51,6 @@ typedef struct {
     char   *text;           /**< Original text (if stored), or NULL. */
     char   *metadata_json;  /**< User-supplied metadata as JSON string, or NULL. */
 } GV_InferenceResult;
-
-/* Lifecycle */
 
 /**
  * @brief Initialize an inference configuration with sensible defaults.
@@ -100,8 +89,6 @@ GV_InferenceEngine *gv_inference_create(void *db, const GV_InferenceConfig *conf
  */
 void gv_inference_destroy(GV_InferenceEngine *eng);
 
-/* Insert */
-
 /**
  * @brief Embed a single text and add it to the database.
  *
@@ -133,8 +120,6 @@ int gv_inference_add(GV_InferenceEngine *eng, const char *text,
 int gv_inference_add_batch(GV_InferenceEngine *eng, const char **texts,
                            const char **metadata_jsons, size_t count);
 
-/* Search */
-
 /**
  * @brief Embed a query text and search the database for the k nearest results.
  *
@@ -164,8 +149,6 @@ int gv_inference_search_filtered(GV_InferenceEngine *eng,
                                  const char *filter_expr,
                                  GV_InferenceResult *results);
 
-/* Upsert */
-
 /**
  * @brief Upsert: embed new text and replace the vector at @p index.
  *
@@ -181,8 +164,6 @@ int gv_inference_search_filtered(GV_InferenceEngine *eng,
  */
 int gv_inference_upsert(GV_InferenceEngine *eng, size_t index,
                         const char *text, const char *metadata_json);
-
-/* Result cleanup */
 
 /**
  * @brief Free heap-allocated fields inside an array of inference results.

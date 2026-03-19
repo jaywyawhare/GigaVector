@@ -12,9 +12,6 @@
 extern "C" {
 #endif
 
-/**
- * @brief IVF-PQ configuration.
- */
 typedef struct {
     size_t nlist;      /**< Number of coarse centroids (inverted lists). */
     size_t m;          /**< Number of subquantizers (must divide dimension). */
@@ -115,9 +112,6 @@ int gv_ivfpq_save(const void *index, FILE *out, uint32_t version);
  */
 int gv_ivfpq_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version);
 
-/**
- * @brief Count vectors in IVF-PQ.
- */
 size_t gv_ivfpq_count(const void *index);
 
 /**

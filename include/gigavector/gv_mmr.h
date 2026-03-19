@@ -20,29 +20,17 @@ extern "C" {
 
 typedef struct GV_Database GV_Database;
 
-/* Configuration */
-
-/**
- * @brief Configuration for MMR reranking.
- */
 typedef struct {
     float lambda;       /**< Trade-off: 0.0 = full diversity, 1.0 = full relevance (default: 0.7). */
     int distance_type;  /**< Distance metric (GV_DistanceType value, default: GV_DISTANCE_COSINE). */
 } GV_MMRConfig;
 
-/* Result */
-
-/**
- * @brief A single MMR-reranked result.
- */
 typedef struct {
     size_t index;       /**< Original candidate index (from candidate_indices). */
     float score;        /**< Combined MMR score. */
     float relevance;    /**< Relevance component (similarity to query). */
     float diversity;    /**< Diversity component (dissimilarity to selected set). */
 } GV_MMRResult;
-
-/* API */
 
 /**
  * @brief Initialize an MMR configuration with default values.

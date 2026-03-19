@@ -13,9 +13,6 @@
 extern "C" {
 #endif
 
-/**
- * @brief Flat (brute-force) index configuration.
- */
 typedef struct {
     int use_simd;  /**< Prefer SIMD distance computation (default: 1). */
 } GV_FlatConfig;

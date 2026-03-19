@@ -17,17 +17,11 @@ extern "C" {
  * expire based on configurable TTL or database mutation count.
  */
 
-/**
- * @brief Cache eviction policy.
- */
 typedef enum {
     GV_CACHE_LRU = 0,          /**< Least Recently Used (default). */
     GV_CACHE_LFU = 1           /**< Least Frequently Used. */
 } GV_CachePolicy;
 
-/**
- * @brief Cache configuration.
- */
 typedef struct {
     size_t max_entries;         /**< Maximum cached results (default: 1024). */
     size_t max_memory_bytes;    /**< Maximum memory usage (default: 64MB). */
@@ -36,9 +30,6 @@ typedef struct {
     GV_CachePolicy policy;     /**< Eviction policy (default: LRU). */
 } GV_CacheConfig;
 
-/**
- * @brief Cache statistics.
- */
 typedef struct {
     uint64_t hits;              /**< Cache hits. */
     uint64_t misses;            /**< Cache misses. */
@@ -49,21 +40,13 @@ typedef struct {
     double hit_rate;            /**< Hit rate (hits / (hits + misses)). */
 } GV_CacheStats;
 
-/**
- * @brief Cached search result entry.
- */
 typedef struct {
     size_t *indices;            /**< Result vector indices. */
     float *distances;           /**< Result distances. */
     size_t count;               /**< Number of results. */
 } GV_CachedResult;
 
-/**
- * @brief Opaque cache handle.
- */
 typedef struct GV_Cache GV_Cache;
-
-/* Configuration */
 
 /**
  * @brief Initialize cache configuration with defaults.
@@ -71,8 +54,6 @@ typedef struct GV_Cache GV_Cache;
  * @param config Configuration to initialize.
  */
 void gv_cache_config_init(GV_CacheConfig *config);
-
-/* Lifecycle */
 
 /**
  * @brief Create a cache instance.
@@ -88,8 +69,6 @@ GV_Cache *gv_cache_create(const GV_CacheConfig *config);
  * @param cache Cache instance (safe to call with NULL).
  */
 void gv_cache_destroy(GV_Cache *cache);
-
-/* Cache Operations */
 
 /**
  * @brief Look up a cached search result.
@@ -145,8 +124,6 @@ void gv_cache_invalidate_all(GV_Cache *cache);
  * @param result Result to free.
  */
 void gv_cache_free_result(GV_CachedResult *result);
-
-/* Statistics */
 
 /**
  * @brief Get cache statistics.

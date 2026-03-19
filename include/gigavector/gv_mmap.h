@@ -7,9 +7,6 @@
 extern "C" {
 #endif
 
-/**
- * @brief Opaque handle for a read-only memory-mapped file.
- */
 typedef struct GV_MMap GV_MMap;
 
 /**

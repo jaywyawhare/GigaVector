@@ -24,9 +24,6 @@
 extern "C" {
 #endif
 
-/**
- * @brief Index type enumeration.
- */
 typedef enum {
     GV_INDEX_TYPE_KDTREE  = 0,
     GV_INDEX_TYPE_HNSW    = 1,
@@ -38,18 +35,12 @@ typedef enum {
     GV_INDEX_TYPE_LSH     = 7
 } GV_IndexType;
 
-/**
- * @brief Resource limits configuration for a database.
- */
 typedef struct {
     size_t max_memory_bytes;           /**< Maximum memory usage in bytes (0 = unlimited). */
     size_t max_vectors;                /**< Maximum number of vectors (0 = unlimited). */
     size_t max_concurrent_operations;  /**< Maximum concurrent operations (0 = unlimited). */
 } GV_ResourceLimits;
 
-/**
- * @brief Latency histogram for operation timing.
- */
 typedef struct {
     uint64_t *buckets;             /**< Array of bucket counts. */
     size_t bucket_count;           /**< Number of buckets. */
@@ -58,9 +49,6 @@ typedef struct {
     uint64_t sum_latency_us;       /**< Sum of all latencies in microseconds. */
 } GV_LatencyHistogram;
 
-/**
- * @brief Memory usage breakdown.
- */
 typedef struct {
     size_t soa_storage_bytes;      /**< Memory used by SoA storage. */
     size_t index_bytes;            /**< Memory used by index structures. */
@@ -69,9 +57,6 @@ typedef struct {
     size_t total_bytes;            /**< Total estimated memory usage. */
 } GV_MemoryBreakdown;
 
-/**
- * @brief Recall metrics for approximate search.
- */
 typedef struct {
     uint64_t total_queries;        /**< Total queries used for recall calculation. */
     double avg_recall;             /**< Average recall (0.0 to 1.0). */
@@ -104,7 +89,6 @@ typedef struct GV_Database {
     uint64_t total_wal_records;    /**< Total WAL records appended. */
     int cosine_normalized;         /**< If non-zero, stored dense vectors are L2-normalized. */
     GV_MetadataIndex *metadata_index; /**< Inverted index for fast metadata filtering. */
-    /* Background compaction */
     pthread_t compaction_thread;   /**< Background compaction thread handle. */
     int compaction_running;        /**< 1 if compaction thread is running, 0 otherwise. */
     pthread_mutex_t compaction_mutex; /**< Mutex for compaction thread control. */
@@ -112,12 +96,10 @@ typedef struct GV_Database {
     size_t compaction_interval_sec;    /**< Compaction interval in seconds (default: 300). */
     size_t wal_compaction_threshold;   /**< WAL size threshold for compaction in bytes (default: 10MB). */
     double deleted_ratio_threshold;    /**< Ratio of deleted vectors to trigger compaction (default: 0.1). */
-    /* Resource limits */
     GV_ResourceLimits resource_limits; /**< Resource limits configuration. */
     size_t current_memory_bytes;       /**< Current estimated memory usage in bytes. */
     size_t current_concurrent_ops;     /**< Current number of concurrent operations. */
     pthread_mutex_t resource_mutex;     /**< Mutex for resource tracking. */
-    /* Observability */
     GV_LatencyHistogram insert_latency_hist; /**< Insert operation latency histogram. */
     GV_LatencyHistogram search_latency_hist; /**< Search operation latency histogram. */
     uint64_t last_qps_update_time_us;  /**< Last QPS calculation time (microseconds). */
@@ -131,9 +113,6 @@ typedef struct GV_Database {
     pthread_mutex_t observability_mutex; /**< Mutex for observability data. */
 } GV_Database;
 
-/**
- * @brief Aggregated runtime statistics for a database.
- */
 typedef struct {
     uint64_t total_inserts;        /**< Total successful vector insertions (dense + sparse). */
     uint64_t total_queries;        /**< Total k-NN / filtered / batch queries. */
@@ -141,29 +120,20 @@ typedef struct {
     uint64_t total_wal_records;    /**< Total WAL records appended. */
 } GV_DBStats;
 
-/**
- * @brief Detailed statistics for a database.
- */
 typedef struct {
-    /* Basic stats */
     GV_DBStats basic_stats;        /**< Basic aggregated statistics. */
     
-    /* Latency histograms */
     GV_LatencyHistogram insert_latency;    /**< Insert operation latency histogram. */
     GV_LatencyHistogram search_latency;    /**< Search operation latency histogram. */
     
-    /* QPS tracking */
     double queries_per_second;     /**< Current queries per second. */
     double inserts_per_second;     /**< Current inserts per second. */
     uint64_t last_qps_update_time; /**< Last QPS calculation time (microseconds since epoch). */
     
-    /* Memory breakdown */
     GV_MemoryBreakdown memory;      /**< Memory usage breakdown. */
-    
-    /* Recall metrics */
+
     GV_RecallMetrics recall;       /**< Recall metrics for approximate search. */
-    
-    /* Health indicators */
+
     int health_status;             /**< Health status: 0 = healthy, -1 = degraded, -2 = unhealthy. */
     size_t deleted_vector_count;  /**< Number of deleted vectors. */
     double deleted_ratio;          /**< Ratio of deleted vectors (0.0 to 1.0). */

@@ -15,27 +15,17 @@ extern "C" {
  * Provides functionality for creating, verifying, and restoring database backups.
  */
 
-/* Forward declarations */
 struct GV_Database;
 typedef struct GV_Database GV_Database;
 
-/**
- * @brief Backup format version.
- */
 #define GV_BACKUP_VERSION 1
 
-/**
- * @brief Backup compression type.
- */
 typedef enum {
     GV_BACKUP_COMPRESS_NONE = 0,    /**< No compression. */
     GV_BACKUP_COMPRESS_ZLIB = 1,    /**< zlib compression. */
     GV_BACKUP_COMPRESS_LZ4 = 2      /**< LZ4 compression (fast). */
 } GV_BackupCompression;
 
-/**
- * @brief Backup options.
- */
 typedef struct {
     GV_BackupCompression compression; /**< Compression type (default: NONE). */
     int include_wal;                /**< Include WAL in backup (default: 1). */
@@ -44,9 +34,6 @@ typedef struct {
     const char *encryption_key;     /**< Optional encryption password (NULL = no encryption). */
 } GV_BackupOptions;
 
-/**
- * @brief Backup header information.
- */
 typedef struct {
     uint32_t version;               /**< Backup format version. */
     uint32_t flags;                 /**< Backup flags. */
@@ -59,23 +46,14 @@ typedef struct {
     char checksum[65];              /**< SHA-256 checksum (hex). */
 } GV_BackupHeader;
 
-/**
- * @brief Backup progress callback.
- */
 typedef void (*GV_BackupProgressCallback)(size_t current, size_t total, void *user_data);
 
-/**
- * @brief Restore options.
- */
 typedef struct {
     int overwrite;                  /**< Overwrite existing database (default: 0). */
     int verify_checksum;            /**< Verify checksum before restore (default: 1). */
     const char *decryption_key;     /**< Decryption password (NULL if not encrypted). */
 } GV_RestoreOptions;
 
-/**
- * @brief Backup result/status.
- */
 typedef struct {
     int success;                    /**< 1 if successful, 0 if failed. */
     char *error_message;            /**< Error message if failed (NULL if success). */
@@ -83,8 +61,6 @@ typedef struct {
     uint64_t vectors_processed;     /**< Vectors processed. */
     double elapsed_seconds;         /**< Time elapsed. */
 } GV_BackupResult;
-
-/* Configuration */
 
 /**
  * @brief Initialize backup options with defaults.
@@ -99,8 +75,6 @@ void gv_backup_options_init(GV_BackupOptions *options);
  * @param options Options to initialize.
  */
 void gv_restore_options_init(GV_RestoreOptions *options);
-
-/* Backup Operations */
 
 /**
  * @brief Create a backup of a database.
@@ -139,8 +113,6 @@ GV_BackupResult *gv_backup_create_from_file(const char *db_path, const char *bac
  */
 void gv_backup_result_free(GV_BackupResult *result);
 
-/* Restore Operations */
-
 /**
  * @brief Restore a database from backup.
  *
@@ -167,8 +139,6 @@ GV_BackupResult *gv_backup_restore(const char *backup_path, const char *db_path,
 GV_BackupResult *gv_backup_restore_to_db(const char *backup_path,
                                           const GV_RestoreOptions *options,
                                           GV_Database **db);
-
-/* Inspection Operations */
 
 /**
  * @brief Read backup header without full restore.
@@ -198,8 +168,6 @@ GV_BackupResult *gv_backup_verify(const char *backup_path, const char *decryptio
  */
 int gv_backup_get_info(const char *backup_path, char *info_buf, size_t buf_size);
 
-/* Incremental Backup */
-
 /**
  * @brief Create an incremental backup.
  *
@@ -227,8 +195,6 @@ GV_BackupResult *gv_backup_create_incremental(GV_Database *db, const char *backu
 GV_BackupResult *gv_backup_merge(const char *base_backup_path,
                                   const char **incremental_paths, size_t incremental_count,
                                   const char *output_path);
-
-/* Utility Functions */
 
 /**
  * @brief Compute checksum of a backup file.

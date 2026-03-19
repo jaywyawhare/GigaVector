@@ -17,18 +17,12 @@ extern "C" {
  * Provides cluster coordination, node discovery, and health monitoring.
  */
 
-/**
- * @brief Node role.
- */
 typedef enum {
     GV_NODE_COORDINATOR = 0,        /**< Cluster coordinator. */
     GV_NODE_DATA = 1,               /**< Data node. */
     GV_NODE_QUERY = 2               /**< Query-only node. */
 } GV_NodeRole;
 
-/**
- * @brief Node state.
- */
 typedef enum {
     GV_NODE_JOINING = 0,            /**< Node is joining cluster. */
     GV_NODE_ACTIVE = 1,             /**< Node is active. */
@@ -36,9 +30,6 @@ typedef enum {
     GV_NODE_DEAD = 3                /**< Node is unreachable. */
 } GV_NodeState;
 
-/**
- * @brief Node information.
- */
 typedef struct {
     char *node_id;                  /**< Unique node identifier. */
     char *address;                  /**< Node address (host:port). */
@@ -50,9 +41,6 @@ typedef struct {
     double load;                    /**< Current load (0.0 - 1.0). */
 } GV_NodeInfo;
 
-/**
- * @brief Cluster configuration.
- */
 typedef struct {
     const char *node_id;            /**< This node's ID. */
     const char *listen_address;     /**< Address to listen on. */
@@ -62,9 +50,6 @@ typedef struct {
     uint32_t failure_timeout_ms;    /**< Node failure timeout. */
 } GV_ClusterConfig;
 
-/**
- * @brief Cluster statistics.
- */
 typedef struct {
     size_t total_nodes;             /**< Total nodes in cluster. */
     size_t active_nodes;            /**< Active nodes. */
@@ -73,12 +58,7 @@ typedef struct {
     double avg_load;                /**< Average cluster load. */
 } GV_ClusterStats;
 
-/**
- * @brief Opaque cluster handle.
- */
 typedef struct GV_Cluster GV_Cluster;
-
-/* Configuration */
 
 /**
  * @brief Initialize cluster configuration with defaults.
@@ -86,8 +66,6 @@ typedef struct GV_Cluster GV_Cluster;
  * @param config Configuration to initialize.
  */
 void gv_cluster_config_init(GV_ClusterConfig *config);
-
-/* Cluster Lifecycle */
 
 /**
  * @brief Create a cluster instance.
@@ -119,8 +97,6 @@ int gv_cluster_start(GV_Cluster *cluster);
  * @return 0 on success, -1 on error.
  */
 int gv_cluster_stop(GV_Cluster *cluster);
-
-/* Node Management */
 
 /**
  * @brief Get this node's information.
@@ -165,8 +141,6 @@ void gv_cluster_free_node_info(GV_NodeInfo *info);
  * @param count Number of nodes.
  */
 void gv_cluster_free_node_list(GV_NodeInfo *nodes, size_t count);
-
-/* Cluster Operations */
 
 /**
  * @brief Get cluster statistics.

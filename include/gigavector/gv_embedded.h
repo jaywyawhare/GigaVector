@@ -8,18 +8,12 @@
 extern "C" {
 #endif
 
-/**
- * @brief Index types supported in embedded mode.
- */
 typedef enum {
     GV_EMBEDDED_INDEX_FLAT = 0, /**< Brute-force linear scan. */
     GV_EMBEDDED_INDEX_HNSW = 1, /**< Simplified single-level HNSW graph. */
     GV_EMBEDDED_INDEX_LSH  = 2  /**< Random hyperplane LSH with multiple tables. */
 } GV_EmbeddedIndexType;
 
-/**
- * @brief Configuration for embedded / edge mode database.
- */
 typedef struct {
     size_t dimension;        /**< Vector dimensionality; required, must be > 0. */
     int index_type;          /**< One of GV_EMBEDDED_INDEX_*; default FLAT. */
@@ -30,14 +24,8 @@ typedef struct {
     int quantize;            /**< Quantization bits: 0=none, 4=4bit, 8=8bit; default 0. */
 } GV_EmbeddedConfig;
 
-/**
- * @brief Opaque handle for an embedded vector database instance.
- */
 typedef struct GV_EmbeddedDB GV_EmbeddedDB;
 
-/**
- * @brief Single search result from embedded search.
- */
 typedef struct {
     size_t index;   /**< Index (ID) of the matching vector. */
     float distance; /**< Distance from the query vector. */

@@ -17,26 +17,17 @@ extern "C" {
  * Implements the Okapi BM25 ranking function for text retrieval.
  */
 
-/**
- * @brief BM25 configuration.
- */
 typedef struct {
     double k1;                      /**< Term frequency saturation (default: 1.2). */
     double b;                       /**< Length normalization (default: 0.75). */
     GV_TokenizerConfig tokenizer;   /**< Tokenizer configuration. */
 } GV_BM25Config;
 
-/**
- * @brief BM25 search result.
- */
 typedef struct {
     size_t doc_id;                  /**< Document ID (vector index). */
     double score;                   /**< BM25 score. */
 } GV_BM25Result;
 
-/**
- * @brief BM25 index statistics.
- */
 typedef struct {
     size_t total_documents;         /**< Total number of documents. */
     size_t total_terms;             /**< Total unique terms in index. */
@@ -45,12 +36,7 @@ typedef struct {
     size_t memory_bytes;            /**< Estimated memory usage. */
 } GV_BM25Stats;
 
-/**
- * @brief Opaque BM25 index handle.
- */
 typedef struct GV_BM25Index GV_BM25Index;
-
-/* Configuration */
 
 /**
  * @brief Initialize BM25 configuration with defaults.
@@ -63,8 +49,6 @@ typedef struct GV_BM25Index GV_BM25Index;
  * @param config Configuration to initialize.
  */
 void gv_bm25_config_init(GV_BM25Config *config);
-
-/* Index Lifecycle */
 
 /**
  * @brief Create a BM25 index.
@@ -80,8 +64,6 @@ GV_BM25Index *gv_bm25_create(const GV_BM25Config *config);
  * @param index BM25 index instance (safe to call with NULL).
  */
 void gv_bm25_destroy(GV_BM25Index *index);
-
-/* Indexing Operations */
 
 /**
  * @brief Add a document to the index.
@@ -126,8 +108,6 @@ int gv_bm25_remove_document(GV_BM25Index *index, size_t doc_id);
  */
 int gv_bm25_update_document(GV_BM25Index *index, size_t doc_id, const char *text);
 
-/* Search Operations */
-
 /**
  * @brief Search the index with a text query.
  *
@@ -165,8 +145,6 @@ int gv_bm25_search_terms(GV_BM25Index *index, const char **terms, size_t term_co
 int gv_bm25_score_document(GV_BM25Index *index, size_t doc_id, const char *query,
                             double *score);
 
-/* Index Information */
-
 /**
  * @brief Get index statistics.
  *
@@ -193,8 +171,6 @@ size_t gv_bm25_get_doc_freq(const GV_BM25Index *index, const char *term);
  * @return 1 if exists, 0 if not.
  */
 int gv_bm25_has_document(const GV_BM25Index *index, size_t doc_id);
-
-/* Persistence */
 
 /**
  * @brief Save index to file.

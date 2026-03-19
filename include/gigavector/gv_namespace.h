@@ -19,7 +19,6 @@ extern "C" {
  * vector collections within a single database instance.
  */
 
-/* Forward declarations */
 struct GV_Database;
 typedef struct GV_Database GV_Database;
 
@@ -67,8 +66,6 @@ typedef struct GV_Namespace GV_Namespace;
  */
 typedef struct GV_NamespaceManager GV_NamespaceManager;
 
-/* Namespace Manager Lifecycle */
-
 /**
  * @brief Create a namespace manager.
  *
@@ -83,8 +80,6 @@ GV_NamespaceManager *gv_namespace_manager_create(const char *base_path);
  * @param mgr Namespace manager instance (safe to call with NULL).
  */
 void gv_namespace_manager_destroy(GV_NamespaceManager *mgr);
-
-/* Namespace Operations */
 
 /**
  * @brief Create a new namespace.
@@ -147,8 +142,6 @@ void gv_namespace_free_info(GV_NamespaceInfo *info);
  * @return 1 if exists, 0 if not, -1 on error.
  */
 int gv_namespace_exists(GV_NamespaceManager *mgr, const char *name);
-
-/* Vector Operations within Namespace */
 
 /**
  * @brief Add a vector to a namespace.
@@ -221,8 +214,6 @@ int gv_namespace_delete_vector(GV_Namespace *ns, size_t vector_index);
  */
 size_t gv_namespace_count(const GV_Namespace *ns);
 
-/* Persistence */
-
 /**
  * @brief Save a namespace to disk.
  *
@@ -246,8 +237,6 @@ int gv_namespace_manager_save_all(GV_NamespaceManager *mgr);
  * @return Number of namespaces loaded, or -1 on error.
  */
 int gv_namespace_manager_load_all(GV_NamespaceManager *mgr);
-
-/* Utility */
 
 /**
  * @brief Get the underlying database handle for a namespace.

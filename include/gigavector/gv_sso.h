@@ -60,8 +60,6 @@ typedef struct {
     int is_admin;                   /**< Whether user is in an admin group. */
 } GV_SSOToken;
 
-/* Lifecycle */
-
 /**
  * @brief Create an SSO manager.
  *
@@ -77,8 +75,6 @@ GV_SSOManager *gv_sso_create(const GV_SSOConfig *config);
  */
 void gv_sso_destroy(GV_SSOManager *mgr);
 
-/* OIDC Discovery */
-
 /**
  * @brief Perform OIDC discovery.
  *
@@ -89,8 +85,6 @@ void gv_sso_destroy(GV_SSOManager *mgr);
  * @return 0 on success, -1 on error.
  */
 int gv_sso_discover(GV_SSOManager *mgr);
-
-/* Authentication Flow */
 
 /**
  * @brief Build the authorization URL for OIDC login redirect.
@@ -149,8 +143,6 @@ GV_SSOToken *gv_sso_refresh_token(GV_SSOManager *mgr, const char *refresh_token)
  * @param token Token to free (safe to call with NULL).
  */
 void gv_sso_free_token(GV_SSOToken *token);
-
-/* Group Checking */
 
 /**
  * @brief Check whether a token has a specific group membership.

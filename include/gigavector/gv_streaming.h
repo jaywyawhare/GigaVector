@@ -15,7 +15,6 @@ extern "C" {
  * Provides integration with message queues like Kafka for real-time vector ingestion.
  */
 
-/* Forward declarations */
 struct GV_Database;
 typedef struct GV_Database GV_Database;
 
@@ -127,16 +126,12 @@ typedef struct {
  */
 typedef struct GV_StreamConsumer GV_StreamConsumer;
 
-/* Configuration */
-
 /**
  * @brief Initialize stream configuration with defaults.
  *
  * @param config Configuration to initialize.
  */
 void gv_stream_config_init(GV_StreamConfig *config);
-
-/* Stream Consumer Lifecycle */
 
 /**
  * @brief Create a stream consumer.
@@ -186,8 +181,6 @@ int gv_stream_pause(GV_StreamConsumer *consumer);
  */
 int gv_stream_resume(GV_StreamConsumer *consumer);
 
-/* Configuration */
-
 /**
  * @brief Set vector extractor.
  *
@@ -209,8 +202,6 @@ int gv_stream_set_extractor(GV_StreamConsumer *consumer, GV_VectorExtractor extr
  */
 int gv_stream_set_handler(GV_StreamConsumer *consumer, GV_StreamMessageHandler handler,
                            void *user_data);
-
-/* Status and Statistics */
 
 /**
  * @brief Get consumer state.
@@ -236,8 +227,6 @@ int gv_stream_get_stats(GV_StreamConsumer *consumer, GV_StreamStats *stats);
  * @return 0 on success, -1 on error.
  */
 int gv_stream_reset_stats(GV_StreamConsumer *consumer);
-
-/* Offset Management */
 
 /**
  * @brief Commit current offsets.

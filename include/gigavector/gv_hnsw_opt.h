@@ -22,8 +22,6 @@ extern "C" {
  *      thread.
  */
 
-/* Configuration Structures */
-
 /**
  * @brief Configuration for inline quantized vector storage and prefetch.
  */
@@ -33,9 +31,6 @@ typedef struct {
     size_t prefetch_distance;   /**< Prefetch N hops ahead in neighbor lists (default: 2) */
 } GV_HNSWInlineConfig;
 
-/**
- * @brief Opaque optimized HNSW index with inline quantized storage.
- */
 typedef struct GV_HNSWInlineIndex GV_HNSWInlineIndex;
 
 /**
@@ -47,9 +42,6 @@ typedef struct {
     int background;             /**< Run rebuild in a background thread (default: 0) */
 } GV_HNSWRebuildConfig;
 
-/**
- * @brief Statistics returned by an incremental rebuild.
- */
 typedef struct {
     size_t nodes_processed;     /**< Total nodes visited during rebuild */
     size_t edges_added;         /**< New edges created */
@@ -57,8 +49,6 @@ typedef struct {
     double elapsed_ms;          /**< Wall-clock time in milliseconds */
     int completed;              /**< 1 when rebuild has finished, 0 while running */
 } GV_HNSWRebuildStats;
-
-/* Lifecycle */
 
 /**
  * @brief Create a new optimized HNSW index with inline quantized storage.
@@ -81,8 +71,6 @@ GV_HNSWInlineIndex *gv_hnsw_inline_create(size_t dimension, size_t max_elements,
  * @param idx  Index to destroy; safe to call with NULL.
  */
 void gv_hnsw_inline_destroy(GV_HNSWInlineIndex *idx);
-
-/* Insert / Search */
 
 /**
  * @brief Insert a vector into the index.
@@ -116,8 +104,6 @@ int gv_hnsw_inline_search(const GV_HNSWInlineIndex *idx, const float *query,
                            size_t k, size_t ef_search,
                            size_t *labels, float *distances);
 
-/* Incremental Rebuild */
-
 /**
  * @brief Start an incremental graph rebuild.
  *
@@ -142,8 +128,6 @@ int gv_hnsw_inline_rebuild(GV_HNSWInlineIndex *idx,
  */
 int gv_hnsw_inline_rebuild_status(const GV_HNSWInlineIndex *idx,
                                    GV_HNSWRebuildStats *stats);
-
-/* Utility */
 
 /**
  * @brief Get the number of vectors currently stored in the index.

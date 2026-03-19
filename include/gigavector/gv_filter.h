@@ -9,9 +9,6 @@
 extern "C" {
 #endif
 
-/**
- * @brief Opaque handle for a compiled filter expression.
- */
 typedef struct GV_Filter GV_Filter;
 
 /**

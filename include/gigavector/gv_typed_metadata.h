@@ -69,8 +69,6 @@ typedef struct GV_TypedMetadata {
     struct GV_TypedMetadata *next;    /**< Next entry in linked list. */
 } GV_TypedMetadata;
 
-/* Value Creation Functions */
-
 /**
  * @brief Create a null value.
  * @return Typed null value.
@@ -118,8 +116,6 @@ GV_TypedValue gv_typed_array(GV_MetaType element_type);
  */
 GV_TypedValue gv_typed_object(void);
 
-/* Array Operations */
-
 /**
  * @brief Append a value to an array.
  * @param array Array value (must be GV_META_TYPE_ARRAY).
@@ -142,8 +138,6 @@ GV_TypedValue *gv_typed_array_get(const GV_TypedValue *array, size_t index);
  * @return Number of elements.
  */
 size_t gv_typed_array_length(const GV_TypedValue *array);
-
-/* Object Operations */
 
 /**
  * @brief Set a key-value pair in an object.
@@ -177,8 +171,6 @@ bool gv_typed_object_has(const GV_TypedValue *object, const char *key);
  */
 size_t gv_typed_object_length(const GV_TypedValue *object);
 
-/* Value Extraction */
-
 /**
  * @brief Get string value.
  * @param value Typed value.
@@ -209,8 +201,6 @@ int gv_typed_get_float(const GV_TypedValue *value, double *out);
  * @return 0 on success, -1 if not a boolean.
  */
 int gv_typed_get_bool(const GV_TypedValue *value, bool *out);
-
-/* Comparison Operations */
 
 /**
  * @brief Compare two typed values.
@@ -262,8 +252,6 @@ bool gv_typed_string_starts_with(const GV_TypedValue *value, const char *prefix)
  */
 bool gv_typed_array_contains(const GV_TypedValue *array, const GV_TypedValue *item);
 
-/* Memory Management */
-
 /**
  * @brief Free a typed value and its contents.
  * @param value Value to free (safe to call with stack-allocated values).
@@ -288,8 +276,6 @@ void gv_typed_metadata_free(GV_TypedMetadata *meta);
  * @param head Head of the linked list.
  */
 void gv_typed_metadata_free_all(GV_TypedMetadata *head);
-
-/* Serialization */
 
 /**
  * @brief Serialize a typed value to binary format.
@@ -325,8 +311,6 @@ int gv_typed_metadata_serialize(const GV_TypedMetadata *meta, uint8_t **buf, siz
  * @return Deserialized metadata entry, or NULL on error.
  */
 GV_TypedMetadata *gv_typed_metadata_deserialize(const uint8_t *buf, size_t len);
-
-/* Conversion Functions */
 
 /**
  * @brief Convert a typed value to string representation.

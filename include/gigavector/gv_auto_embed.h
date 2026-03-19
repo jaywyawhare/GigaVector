@@ -40,29 +40,24 @@ typedef struct {
     double avg_latency_ms;
 } GV_AutoEmbedStats;
 
-/* Lifecycle */
 void gv_auto_embed_config_init(GV_AutoEmbedConfig *config);
 GV_AutoEmbedder *gv_auto_embed_create(const GV_AutoEmbedConfig *config);
 void gv_auto_embed_destroy(GV_AutoEmbedder *embedder);
 
-/* Embed text and add to database */
 int gv_auto_embed_add_text(GV_AutoEmbedder *embedder, GV_Database *db,
                             const char *text, const char *metadata_key, const char *metadata_value);
 
-/* Embed text and search database */
 int gv_auto_embed_search_text(GV_AutoEmbedder *embedder, const GV_Database *db,
                                const char *text, size_t k, int distance_type,
                                size_t *out_indices, float *out_distances, size_t *out_count);
 
-/* Batch embed texts */
 int gv_auto_embed_add_texts(GV_AutoEmbedder *embedder, GV_Database *db,
                              const char *const *texts, size_t count,
                              const char *const *metadata_keys, const char *const *metadata_values);
 
-/* Raw embedding (returns float array, caller must free) */
+/* Returns float array, caller must free */
 float *gv_auto_embed_text(GV_AutoEmbedder *embedder, const char *text, size_t *out_dimension);
 
-/* Stats */
 int gv_auto_embed_get_stats(const GV_AutoEmbedder *embedder, GV_AutoEmbedStats *stats);
 void gv_auto_embed_clear_cache(GV_AutoEmbedder *embedder);
 

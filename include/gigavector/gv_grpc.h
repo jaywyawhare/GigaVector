@@ -8,7 +8,6 @@
 extern "C" {
 #endif
 
-/* Forward declaration */
 typedef struct GV_Database GV_Database;
 
 typedef enum {
@@ -66,19 +65,14 @@ typedef struct {
 
 typedef struct GV_GrpcServer GV_GrpcServer;
 
-/* Lifecycle */
 void gv_grpc_config_init(GV_GrpcConfig *config);
 GV_GrpcServer *gv_grpc_create(GV_Database *db, const GV_GrpcConfig *config);
 int gv_grpc_start(GV_GrpcServer *server);
 int gv_grpc_stop(GV_GrpcServer *server);
 void gv_grpc_destroy(GV_GrpcServer *server);
 int gv_grpc_is_running(const GV_GrpcServer *server);
-
-/* Stats */
 int gv_grpc_get_stats(const GV_GrpcServer *server, GV_GrpcStats *stats);
 const char *gv_grpc_error_string(int error);
-
-/* Message serialization helpers */
 int gv_grpc_encode_search_request(const float *query, size_t dimension, size_t k,
                                    int distance_type, uint8_t *buf, size_t buf_size, size_t *out_len);
 int gv_grpc_decode_search_request(const uint8_t *buf, size_t len,

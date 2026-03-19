@@ -26,7 +26,6 @@ static inline uint32_t gv_hash_str(const char *s) {
     return h;
 }
 
-/* DJB2 hash on raw bytes of a uint64_t */
 static inline size_t gv_hash_u64(uint64_t id, size_t bucket_count) {
     size_t hash = 5381;
     const unsigned char *p = (const unsigned char *)&id;
@@ -36,7 +35,6 @@ static inline size_t gv_hash_u64(uint64_t id, size_t bucket_count) {
     return hash % bucket_count;
 }
 
-/* Binary I/O helpers for index serialization */
 static inline int gv_write_u32(FILE *f, uint32_t v) {
     return fwrite(&v, sizeof(uint32_t), 1, f) == 1 ? 0 : -1;
 }
@@ -75,7 +73,6 @@ static inline int gv_read_str(FILE *f, char **s, uint32_t len) {
     return 0;
 }
 
-/* Metadata linked-list key-value match (NULL filter = always matches) */
 static inline int gv_metadata_match(const GV_Metadata *meta,
                                      const char *key, const char *value) {
     if (!key || !value) return 1;

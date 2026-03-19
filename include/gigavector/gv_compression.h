@@ -41,10 +41,8 @@ size_t gv_compress(GV_Compressor *comp, const void *input, size_t input_len,
 size_t gv_decompress(GV_Compressor *comp, const void *input, size_t input_len,
                       void *output, size_t output_capacity);
 
-/* Get max compressed size for a given input size (for buffer allocation) */
 size_t gv_compress_bound(const GV_Compressor *comp, size_t input_len);
 
-/* Stats */
 int gv_compression_get_stats(const GV_Compressor *comp, GV_CompressionStats *stats);
 
 #ifdef __cplusplus

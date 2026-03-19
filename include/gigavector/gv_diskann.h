@@ -39,23 +39,12 @@ void gv_diskann_config_init(GV_DiskANNConfig *config);
 GV_DiskANNIndex *gv_diskann_create(size_t dimension, const GV_DiskANNConfig *config);
 void gv_diskann_destroy(GV_DiskANNIndex *index);
 
-/* Build index from batch of vectors */
 int gv_diskann_build(GV_DiskANNIndex *index, const float *data, size_t count, size_t dimension);
-
-/* Incremental insert */
 int gv_diskann_insert(GV_DiskANNIndex *index, const float *data, size_t dimension);
-
-/* Search */
 int gv_diskann_search(const GV_DiskANNIndex *index, const float *query, size_t dimension,
                        size_t k, GV_DiskANNResult *results);
-
-/* Delete (mark as deleted) */
 int gv_diskann_delete(GV_DiskANNIndex *index, size_t vector_index);
-
-/* Stats */
 int gv_diskann_get_stats(const GV_DiskANNIndex *index, GV_DiskANNStats *stats);
-
-/* Persistence */
 int gv_diskann_save(const GV_DiskANNIndex *index, const char *filepath);
 GV_DiskANNIndex *gv_diskann_load(const char *filepath, const GV_DiskANNConfig *config);
 

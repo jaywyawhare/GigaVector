@@ -15,7 +15,6 @@ extern "C" {
  * Provides leader-follower replication with automatic failover.
  */
 
-/* Forward declarations */
 struct GV_Database;
 typedef struct GV_Database GV_Database;
 
@@ -82,16 +81,12 @@ typedef struct {
  */
 typedef struct GV_ReplicationManager GV_ReplicationManager;
 
-/* Configuration */
-
 /**
  * @brief Initialize replication configuration with defaults.
  *
  * @param config Configuration to initialize.
  */
 void gv_replication_config_init(GV_ReplicationConfig *config);
-
-/* Replication Manager Lifecycle */
 
 /**
  * @brief Create a replication manager.
@@ -125,8 +120,6 @@ int gv_replication_start(GV_ReplicationManager *mgr);
  */
 int gv_replication_stop(GV_ReplicationManager *mgr);
 
-/* Role Management */
-
 /**
  * @brief Get current role.
  *
@@ -150,8 +143,6 @@ int gv_replication_step_down(GV_ReplicationManager *mgr);
  * @return 0 if became leader, -1 on error.
  */
 int gv_replication_request_leadership(GV_ReplicationManager *mgr);
-
-/* Replica Management */
 
 /**
  * @brief Add a follower replica.
@@ -192,8 +183,6 @@ int gv_replication_list_replicas(GV_ReplicationManager *mgr, GV_ReplicaInfo **re
  */
 void gv_replication_free_replicas(GV_ReplicaInfo *replicas, size_t count);
 
-/* Synchronization */
-
 /**
  * @brief Force synchronous commit.
  *
@@ -223,8 +212,6 @@ int64_t gv_replication_get_lag(GV_ReplicationManager *mgr);
  */
 int gv_replication_wait_sync(GV_ReplicationManager *mgr, size_t max_lag, uint32_t timeout_ms);
 
-/* Statistics */
-
 /**
  * @brief Get replication statistics.
  *
@@ -248,8 +235,6 @@ void gv_replication_free_stats(GV_ReplicationStats *stats);
  * @return 1 if healthy, 0 if not, -1 on error.
  */
 int gv_replication_is_healthy(GV_ReplicationManager *mgr);
-
-/* Read Replica Load Balancing */
 
 /**
  * @brief Read routing policy for distributing read queries across replicas.

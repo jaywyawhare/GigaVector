@@ -56,8 +56,6 @@ typedef struct {
     char *mime_type;                /**< MIME type string. */
 } GV_MediaEntry;
 
-/* Configuration */
-
 /**
  * @brief Initialize media configuration with defaults.
  *
@@ -70,8 +68,6 @@ typedef struct {
  * @param config Configuration to initialize.
  */
 void gv_media_config_init(GV_MediaConfig *config);
-
-/* Store Lifecycle */
 
 /**
  * @brief Create a media store.
@@ -91,8 +87,6 @@ GV_MediaStore *gv_media_create(const GV_MediaConfig *config);
  * @param store Media store (safe to call with NULL).
  */
 void gv_media_destroy(GV_MediaStore *store);
-
-/* Store Operations */
 
 /**
  * @brief Store a media blob from memory.
@@ -180,8 +174,6 @@ int gv_media_get_info(const GV_MediaStore *store, size_t vector_index,
  */
 int gv_media_delete(GV_MediaStore *store, size_t vector_index);
 
-/* Query Operations */
-
 /**
  * @brief Check whether a blob exists for a vector index.
  *
@@ -206,8 +198,6 @@ size_t gv_media_count(const GV_MediaStore *store);
  * @return Total bytes on disk.
  */
 size_t gv_media_total_size(const GV_MediaStore *store);
-
-/* Index Persistence */
 
 /**
  * @brief Save the media index to a binary file.

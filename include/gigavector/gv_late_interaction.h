@@ -30,23 +30,17 @@ void gv_late_interaction_config_init(GV_LateInteractionConfig *config);
 GV_LateInteractionIndex *gv_late_interaction_create(const GV_LateInteractionConfig *config);
 void gv_late_interaction_destroy(GV_LateInteractionIndex *index);
 
-/* Add a document as multiple token embeddings */
 int gv_late_interaction_add_doc(GV_LateInteractionIndex *index,
                                  const float *token_embeddings, size_t num_tokens);
 
-/* MaxSim search: for each query token, find max similarity with any doc token, sum across query tokens */
+/* MaxSim search: for each query token, find max similarity with any doc token, then sum across query tokens. */
 int gv_late_interaction_search(const GV_LateInteractionIndex *index,
                                 const float *query_tokens, size_t num_query_tokens,
                                 size_t k, GV_LateInteractionResult *results);
 
-/* Delete document */
 int gv_late_interaction_delete(GV_LateInteractionIndex *index, size_t doc_index);
-
-/* Stats and count */
 int gv_late_interaction_get_stats(const GV_LateInteractionIndex *index, GV_LateInteractionStats *stats);
 size_t gv_late_interaction_count(const GV_LateInteractionIndex *index);
-
-/* Save/load */
 int gv_late_interaction_save(const GV_LateInteractionIndex *index, const char *filepath);
 GV_LateInteractionIndex *gv_late_interaction_load(const char *filepath);
 

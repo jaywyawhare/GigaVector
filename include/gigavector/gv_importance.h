@@ -27,8 +27,6 @@ extern "C" {
  * 5. Structural features (relationships to other memories)
  */
 
-/* Configuration and Weight Structures */
-
 /**
  * @brief Weights for different scoring components.
  *
@@ -93,8 +91,6 @@ typedef struct {
     double base_score;              /**< Starting score for new memories (default: 0.5) */
 } GV_ImportanceConfig;
 
-/* Access Event Tracking */
-
 /**
  * @brief Single access event for a memory.
  */
@@ -116,36 +112,23 @@ typedef struct {
     double avg_relevance;           /**< Running average relevance when accessed */
 } GV_AccessHistory;
 
-/* Scoring Context and Results */
-
 /**
  * @brief Input context for importance scoring.
  *
  * Provides all information needed to compute a comprehensive importance score.
  */
 typedef struct {
-    /* Content features */
     const char *content;            /**< Memory content text */
     size_t content_length;          /**< Length in bytes */
-
-    /* Temporal features */
     time_t creation_time;           /**< When memory was created */
     time_t last_modified;           /**< Last modification time */
     time_t current_time;            /**< Current time (for decay calculation) */
-
-    /* Access pattern features */
     const GV_AccessHistory *access_history; /**< Access history, can be NULL */
-
-    /* Structural features */
     size_t relationship_count;      /**< Number of related memories */
     size_t incoming_links;          /**< Memories that reference this one */
     size_t outgoing_links;          /**< Memories this one references */
-
-    /* Optional: embedding for semantic analysis */
     const float *embedding;         /**< Vector embedding, can be NULL */
     size_t embedding_dim;           /**< Embedding dimension */
-
-    /* Optional: query context for relevance boosting */
     const char *query_context;      /**< Current query if in search context */
     double semantic_similarity;     /**< Pre-computed similarity to query (0.0-1.0) */
 } GV_ImportanceContext;
@@ -155,36 +138,28 @@ typedef struct {
  */
 typedef struct {
     double final_score;             /**< Final combined score (0.0-1.0) */
-
-    /* Component scores (each 0.0-1.0) */
     double content_score;           /**< Content-based score */
     double temporal_score;          /**< Temporal/recency score */
     double access_score;            /**< Access pattern score */
     double salience_score;          /**< Salience/emotional score */
     double structural_score;        /**< Relationship/graph score */
-
-    /* Sub-component details */
     double informativeness;         /**< Content informativeness */
     double specificity;             /**< Content specificity */
     double entity_density;          /**< Named entity density */
     double decay_factor;            /**< Applied temporal decay */
     double retrieval_boost;         /**< Boost from retrievals */
     double recency_bonus;           /**< Bonus for recent memory */
-
-    /* Confidence and metadata */
     double confidence;              /**< Confidence in score (0.0-1.0) */
     int factors_used;               /**< Bitmask of factors that contributed */
 } GV_ImportanceResult;
 
-/* Factor bitmask values */
+/* Factor bitmask for factors_used field. */
 #define GV_FACTOR_CONTENT     (1 << 0)
 #define GV_FACTOR_TEMPORAL    (1 << 1)
 #define GV_FACTOR_ACCESS      (1 << 2)
 #define GV_FACTOR_SALIENCE    (1 << 3)
 #define GV_FACTOR_STRUCTURAL  (1 << 4)
 #define GV_FACTOR_QUERY       (1 << 5)
-
-/* Core API Functions */
 
 /**
  * @brief Create default importance configuration.
@@ -280,8 +255,6 @@ int gv_importance_record_access(GV_AccessHistory *history,
                                  double relevance,
                                  int access_type);
 
-/* Content Analysis Functions */
-
 /**
  * @brief Calculate content informativeness score.
  *
@@ -340,8 +313,6 @@ double gv_importance_salience(const char *content, size_t len);
  */
 double gv_importance_entity_density(const char *content, size_t len);
 
-/* Access History Management */
-
 /**
  * @brief Initialize access history structure.
  *
@@ -374,8 +345,6 @@ char *gv_access_history_serialize(const GV_AccessHistory *history);
  * @return 0 on success, -1 on error.
  */
 int gv_access_history_deserialize(const char *json, GV_AccessHistory *history);
-
-/* Batch Operations */
 
 /**
  * @brief Calculate importance scores for multiple memories.

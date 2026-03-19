@@ -34,9 +34,6 @@ extern "C" {
  *   UPDATE vectors SET status = 'archived' WHERE score < 0.1
  */
 
-/**
- * @brief Result set returned by a SQL query execution.
- */
 typedef struct {
     size_t *indices;          /**< Array of matching vector indices (row_count elements). */
     float *distances;         /**< Array of distances for ANN queries (row_count elements); NULL for non-ANN. */

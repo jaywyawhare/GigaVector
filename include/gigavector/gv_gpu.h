@@ -16,13 +16,9 @@ extern "C" {
  * Falls back to CPU implementations when CUDA is not available.
  */
 
-/* Forward declarations */
 struct GV_Database;
 typedef struct GV_Database GV_Database;
 
-/**
- * @brief GPU device information.
- */
 typedef struct {
     int device_id;                  /**< CUDA device ID. */
     char name[256];                 /**< Device name. */
@@ -35,18 +31,12 @@ typedef struct {
     int warp_size;                  /**< Warp size (typically 32). */
 } GV_GPUDeviceInfo;
 
-/**
- * @brief GPU memory pool configuration.
- */
 typedef struct {
     size_t initial_size;            /**< Initial pool size (default: 256MB). */
     size_t max_size;                /**< Maximum pool size (default: 2GB). */
     int allow_growth;               /**< Allow pool to grow (default: 1). */
 } GV_GPUMemoryConfig;
 
-/**
- * @brief GPU context configuration.
- */
 typedef struct {
     int device_id;                  /**< Device to use (-1 for auto). */
     size_t max_vectors_per_batch;   /**< Max vectors per batch (default: 65536). */
@@ -57,9 +47,6 @@ typedef struct {
     GV_GPUMemoryConfig memory;      /**< Memory pool configuration. */
 } GV_GPUConfig;
 
-/**
- * @brief Distance metric for GPU operations.
- */
 typedef enum {
     GV_GPU_EUCLIDEAN = 0,           /**< Euclidean (L2) distance. */
     GV_GPU_COSINE = 1,              /**< Cosine similarity. */
@@ -67,9 +54,6 @@ typedef enum {
     GV_GPU_MANHATTAN = 3            /**< Manhattan (L1) distance. */
 } GV_GPUDistanceMetric;
 
-/**
- * @brief GPU search parameters.
- */
 typedef struct {
     GV_GPUDistanceMetric metric;    /**< Distance metric. */
     size_t k;                       /**< Number of nearest neighbors. */
@@ -77,9 +61,6 @@ typedef struct {
     int use_precomputed_norms;      /**< Use precomputed L2 norms (default: 1). */
 } GV_GPUSearchParams;
 
-/**
- * @brief GPU operation statistics.
- */
 typedef struct {
     uint64_t total_searches;        /**< Total search operations. */
     uint64_t total_vectors_processed; /**< Total vectors processed. */
@@ -91,17 +72,8 @@ typedef struct {
     size_t current_memory_usage;    /**< Current GPU memory usage. */
 } GV_GPUStats;
 
-/**
- * @brief Opaque GPU context handle.
- */
 typedef struct GV_GPUContext GV_GPUContext;
-
-/**
- * @brief Opaque GPU index handle (vectors stored on GPU).
- */
 typedef struct GV_GPUIndex GV_GPUIndex;
-
-/* Device Query */
 
 /**
  * @brief Check if CUDA is available.
@@ -125,8 +97,6 @@ int gv_gpu_device_count(void);
  * @return 0 on success, -1 on error.
  */
 int gv_gpu_get_device_info(int device_id, GV_GPUDeviceInfo *info);
-
-/* Context Management */
 
 /**
  * @brief Initialize default GPU configuration.
@@ -157,8 +127,6 @@ void gv_gpu_destroy(GV_GPUContext *ctx);
  * @return 0 on success, -1 on error.
  */
 int gv_gpu_synchronize(GV_GPUContext *ctx);
-
-/* GPU Index Management */
 
 /**
  * @brief Create a GPU index from vectors.
@@ -232,8 +200,6 @@ int gv_gpu_index_info(GV_GPUIndex *index, size_t *count, size_t *dimension,
  */
 void gv_gpu_index_destroy(GV_GPUIndex *index);
 
-/* Distance Computation */
-
 /**
  * @brief Compute distances between query and database vectors.
  *
@@ -266,8 +232,6 @@ int gv_gpu_index_compute_distances(GV_GPUIndex *index, const float *queries,
                                     size_t num_queries,
                                     GV_GPUDistanceMetric metric,
                                     float *distances);
-
-/* k-NN Search */
 
 /**
  * @brief Perform k-NN search on GPU.
@@ -318,8 +282,6 @@ int gv_gpu_index_search(GV_GPUIndex *index, const float *query,
                          const GV_GPUSearchParams *params,
                          size_t *indices, float *distances);
 
-/* Batch Operations */
-
 /**
  * @brief Batch add vectors with automatic GPU upload.
  *
@@ -348,8 +310,6 @@ int gv_gpu_batch_search(GV_GPUContext *ctx, GV_Database *db,
                          const float *queries, size_t num_queries, size_t k,
                          size_t *indices, float *distances);
 
-/* IVF-PQ GPU Support */
-
 /**
  * @brief Train IVF-PQ codebook on GPU.
  *
@@ -369,8 +329,6 @@ int gv_gpu_train_ivfpq(GV_GPUContext *ctx, const float *vectors,
                         size_t num_centroids, size_t num_subquantizers,
                         size_t bits_per_subquantizer,
                         float *centroids, float *codebooks);
-
-/* Statistics */
 
 /**
  * @brief Get GPU statistics.

@@ -15,7 +15,6 @@ extern "C" {
  * Provides sharding for horizontal scaling of vector data.
  */
 
-/* Forward declarations */
 struct GV_Database;
 typedef struct GV_Database GV_Database;
 
@@ -66,16 +65,12 @@ typedef struct {
  */
 typedef struct GV_ShardManager GV_ShardManager;
 
-/* Configuration */
-
 /**
  * @brief Initialize shard configuration with defaults.
  *
  * @param config Configuration to initialize.
  */
 void gv_shard_config_init(GV_ShardConfig *config);
-
-/* Shard Manager Lifecycle */
 
 /**
  * @brief Create a shard manager.
@@ -91,8 +86,6 @@ GV_ShardManager *gv_shard_manager_create(const GV_ShardConfig *config);
  * @param mgr Shard manager instance (safe to call with NULL).
  */
 void gv_shard_manager_destroy(GV_ShardManager *mgr);
-
-/* Shard Operations */
 
 /**
  * @brief Add a shard.
@@ -170,8 +163,6 @@ void gv_shard_free_list(GV_ShardInfo *shards, size_t count);
  */
 int gv_shard_set_state(GV_ShardManager *mgr, uint32_t shard_id, GV_ShardState state);
 
-/* Rebalancing */
-
 /**
  * @brief Start shard rebalancing.
  *
@@ -196,8 +187,6 @@ int gv_shard_rebalance_status(GV_ShardManager *mgr, double *progress);
  * @return 0 on success, -1 on error.
  */
 int gv_shard_rebalance_cancel(GV_ShardManager *mgr);
-
-/* Local Shard */
 
 /**
  * @brief Attach a local database as a shard.

@@ -12,9 +12,6 @@
 extern "C" {
 #endif
 
-/**
- * @brief HNSW index configuration parameters.
- */
 typedef struct {
     size_t M;              /**< Number of connections per node (default: 16) */
     size_t efConstruction; /**< Candidate list size during construction (default: 200) */

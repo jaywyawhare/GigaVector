@@ -15,18 +15,12 @@ extern "C" {
  * Provides API key and JWT-based authentication.
  */
 
-/**
- * @brief Authentication type.
- */
 typedef enum {
     GV_AUTH_NONE = 0,               /**< No authentication required. */
     GV_AUTH_API_KEY = 1,            /**< API key authentication. */
     GV_AUTH_JWT = 2                 /**< JWT bearer token. */
 } GV_AuthType;
 
-/**
- * @brief Authentication result.
- */
 typedef enum {
     GV_AUTH_SUCCESS = 0,            /**< Authentication successful. */
     GV_AUTH_INVALID_KEY = 1,        /**< Invalid API key. */
@@ -36,9 +30,6 @@ typedef enum {
     GV_AUTH_MISSING = 5             /**< No credentials provided. */
 } GV_AuthResult;
 
-/**
- * @brief API key configuration.
- */
 typedef struct {
     char *key_id;                   /**< Key identifier. */
     char *key_hash;                 /**< SHA-256 hash of key. */
@@ -48,9 +39,6 @@ typedef struct {
     int enabled;                    /**< Whether key is active. */
 } GV_APIKey;
 
-/**
- * @brief JWT configuration.
- */
 typedef struct {
     const char *secret;             /**< HMAC secret (HS256). */
     size_t secret_len;              /**< Secret length. */
@@ -59,17 +47,11 @@ typedef struct {
     uint64_t clock_skew_seconds;    /**< Allowed clock skew (default: 60). */
 } GV_JWTConfig;
 
-/**
- * @brief Authentication configuration.
- */
 typedef struct {
     GV_AuthType type;               /**< Authentication type. */
     GV_JWTConfig jwt;               /**< JWT configuration (if type == JWT). */
 } GV_AuthConfig;
 
-/**
- * @brief Authenticated identity.
- */
 typedef struct {
     char *subject;                  /**< Subject (user/service ID). */
     char *key_id;                   /**< API key ID (if API key auth). */
@@ -78,12 +60,7 @@ typedef struct {
     void *claims;                   /**< Additional JWT claims (opaque). */
 } GV_Identity;
 
-/**
- * @brief Opaque auth manager handle.
- */
 typedef struct GV_AuthManager GV_AuthManager;
-
-/* Configuration */
 
 /**
  * @brief Initialize authentication configuration with defaults.
@@ -91,8 +68,6 @@ typedef struct GV_AuthManager GV_AuthManager;
  * @param config Configuration to initialize.
  */
 void gv_auth_config_init(GV_AuthConfig *config);
-
-/* Auth Manager Lifecycle */
 
 /**
  * @brief Create an authentication manager.
@@ -108,8 +83,6 @@ GV_AuthManager *gv_auth_create(const GV_AuthConfig *config);
  * @param auth Auth manager instance (safe to call with NULL).
  */
 void gv_auth_destroy(GV_AuthManager *auth);
-
-/* API Key Management */
 
 /**
  * @brief Generate a new API key.
@@ -165,8 +138,6 @@ int gv_auth_list_api_keys(GV_AuthManager *auth, GV_APIKey **keys, size_t *count)
  */
 void gv_auth_free_api_keys(GV_APIKey *keys, size_t count);
 
-/* Authentication */
-
 /**
  * @brief Authenticate with an API key.
  *
@@ -209,8 +180,6 @@ GV_AuthResult gv_auth_authenticate(GV_AuthManager *auth, const char *credential,
  */
 void gv_auth_free_identity(GV_Identity *identity);
 
-/* JWT Utilities */
-
 /**
  * @brief Generate a JWT token.
  *
@@ -231,8 +200,6 @@ int gv_auth_generate_jwt(GV_AuthManager *auth, const char *subject,
  * @return Human-readable description.
  */
 const char *gv_auth_result_string(GV_AuthResult result);
-
-/* Hashing Utilities */
 
 /**
  * @brief Compute SHA-256 hash.

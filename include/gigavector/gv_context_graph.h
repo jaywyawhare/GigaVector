@@ -12,9 +12,6 @@
 extern "C" {
 #endif
 
-/**
- * @brief Entity type enumeration.
- */
 typedef enum {
     GV_ENTITY_TYPE_PERSON = 0,      /**< Person entity. */
     GV_ENTITY_TYPE_ORGANIZATION = 1,/**< Organization entity. */
@@ -25,9 +22,6 @@ typedef enum {
     GV_ENTITY_TYPE_USER = 6         /**< User entity (self-reference). */
 } GV_EntityType;
 
-/**
- * @brief Graph entity structure.
- */
 typedef struct {
     char *entity_id;                /**< Unique entity identifier. */
     char *name;                     /**< Entity name. */
@@ -42,9 +36,6 @@ typedef struct {
     char *run_id;                   /**< Run ID filter (optional). */
 } GV_GraphEntity;
 
-/**
- * @brief Graph relationship structure.
- */
 typedef struct {
     char *relationship_id;          /**< Unique relationship identifier. */
     char *source_entity_id;         /**< Source entity ID. */
@@ -55,9 +46,6 @@ typedef struct {
     uint64_t mentions;              /**< Number of times relationship is mentioned. */
 } GV_GraphRelationship;
 
-/**
- * @brief Graph query result structure.
- */
 typedef struct {
     char *source_name;              /**< Source entity name. */
     char *relationship_type;        /**< Relationship type. */
@@ -65,9 +53,6 @@ typedef struct {
     float similarity;               /**< Similarity score (0.0-1.0). */
 } GV_GraphQueryResult;
 
-/**
- * @brief Context graph structure (opaque).
- */
 typedef struct GV_ContextGraph GV_ContextGraph;
 
 /**
@@ -80,9 +65,6 @@ typedef struct GV_ContextGraph GV_ContextGraph;
  */
 typedef float *(*GV_EmbeddingCallback)(const char *text, size_t *embedding_dim, void *user_data);
 
-/**
- * @brief Context graph configuration.
- */
 typedef struct {
     void *llm;                      /**< LLM instance for entity extraction (GV_LLM*), NULL to disable. */
     void *embedding_service;        /**< Embedding service instance (GV_EmbeddingService*), NULL to disable. */

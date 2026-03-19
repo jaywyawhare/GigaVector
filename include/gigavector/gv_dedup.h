@@ -10,9 +10,6 @@
 extern "C" {
 #endif
 
-/**
- * @brief Configuration for the deduplication index.
- */
 typedef struct {
     float epsilon;           /**< Maximum L2 distance to consider vectors as duplicates. */
     size_t num_hash_tables;  /**< Number of LSH hash tables (default: 8). */
@@ -20,18 +17,12 @@ typedef struct {
     uint64_t seed;           /**< Random seed for hyperplane generation. */
 } GV_DedupConfig;
 
-/**
- * @brief Result describing a pair of duplicate vectors.
- */
 typedef struct {
     size_t original_index;   /**< Index of the first (earlier) vector. */
     size_t duplicate_index;  /**< Index of the second (later) vector. */
     float distance;          /**< L2 distance between the pair. */
 } GV_DedupResult;
 
-/**
- * @brief Opaque deduplication index handle.
- */
 typedef struct GV_DedupIndex GV_DedupIndex;
 
 /**

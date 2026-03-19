@@ -18,8 +18,6 @@ extern "C" {
  * otherwise every function degrades to a safe stub.
  */
 
-/* Opaque Types */
-
 /**
  * @brief Opaque ONNX model handle.
  *
@@ -27,8 +25,6 @@ extern "C" {
  * settings, and an optional vocabulary for text tokenization.
  */
 typedef struct GV_ONNXModel GV_ONNXModel;
-
-/* Configuration */
 
 /**
  * @brief ONNX model configuration.
@@ -42,8 +38,6 @@ typedef struct {
                                          2=extended, 3=all (default: 2). */
 } GV_ONNXConfig;
 
-/* Tensor */
-
 /**
  * @brief Dense tensor exchanged with ONNX Runtime.
  *
@@ -56,16 +50,12 @@ typedef struct {
     size_t  total_elements; /**< Product of all shape dimensions. */
 } GV_ONNXTensor;
 
-/* Runtime Query */
-
 /**
  * @brief Check whether the ONNX Runtime is linked.
  *
  * @return 1 if compiled with GV_HAVE_ONNX, 0 otherwise.
  */
 int gv_onnx_available(void);
-
-/* Model Lifecycle */
 
 /**
  * @brief Load an ONNX model.
@@ -87,8 +77,6 @@ GV_ONNXModel *gv_onnx_load(const GV_ONNXConfig *config);
  */
 void gv_onnx_destroy(GV_ONNXModel *model);
 
-/* Inference */
-
 /**
  * @brief Run raw tensor inference.
  *
@@ -105,8 +93,6 @@ void gv_onnx_destroy(GV_ONNXModel *model);
 int gv_onnx_infer(GV_ONNXModel *model, const GV_ONNXTensor *inputs,
                    size_t input_count, GV_ONNXTensor *outputs,
                    size_t output_count);
-
-/* High-Level Pipelines */
 
 /**
  * @brief Cross-encoder re-ranking.
@@ -140,8 +126,6 @@ int gv_onnx_rerank(GV_ONNXModel *model, const char *query_text,
 int gv_onnx_embed(GV_ONNXModel *model, const char **texts,
                    size_t text_count, float *embeddings, size_t dimension);
 
-/* Tensor Helpers */
-
 /**
  * @brief Create a tensor with the given shape.
  *
@@ -161,8 +145,6 @@ GV_ONNXTensor gv_onnx_tensor_create(const size_t *shape, size_t ndim);
  * @param tensor Tensor to free.
  */
 void gv_onnx_tensor_destroy(GV_ONNXTensor *tensor);
-
-/* Model Introspection */
 
 /**
  * @brief Query input node names and count.

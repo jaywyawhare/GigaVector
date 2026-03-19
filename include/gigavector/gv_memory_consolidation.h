@@ -9,9 +9,6 @@
 extern "C" {
 #endif
 
-/**
- * @brief Memory pair for consolidation.
- */
 typedef struct {
     char *memory_id_1;              /**< First memory ID. */
     char *memory_id_2;              /**< Second memory ID. */
