@@ -5,6 +5,7 @@
  */
 
 #include "gigavector/gv_fulltext.h"
+#include "gigavector/gv_heap.h"
 #include "gigavector/gv_utils.h"
 
 #include <stdlib.h>
@@ -949,9 +950,11 @@ int gv_ft_remove_document(GV_FTIndex *idx, size_t doc_id) {
  * @brief Min-heap entry for top-k result collection.
  */
 typedef struct {
+    float  dist;
     size_t doc_id;
-    float score;
 } FT_HeapEntry;
+
+GV_MIN_HEAP_DEFINE(ft_heap, FT_HeapEntry)
 
 typedef struct {
     FT_HeapEntry *entries;
@@ -971,53 +974,13 @@ static void ft_heap_free(FT_MinHeap *h) {
     h->capacity = 0;
 }
 
-static void ft_heap_sift_up(FT_MinHeap *h, size_t i) {
-    while (i > 0) {
-        size_t parent = (i - 1) / 2;
-        if (h->entries[i].score < h->entries[parent].score) {
-            FT_HeapEntry tmp = h->entries[i];
-            h->entries[i] = h->entries[parent];
-            h->entries[parent] = tmp;
-            i = parent;
-        } else {
-            break;
-        }
-    }
-}
-
-static void ft_heap_sift_down(FT_MinHeap *h, size_t i) {
-    while (1) {
-        size_t smallest = i;
-        size_t left = 2 * i + 1;
-        size_t right = 2 * i + 2;
-        if (left < h->count && h->entries[left].score < h->entries[smallest].score)
-            smallest = left;
-        if (right < h->count && h->entries[right].score < h->entries[smallest].score)
-            smallest = right;
-        if (smallest == i) break;
-        FT_HeapEntry tmp = h->entries[i];
-        h->entries[i] = h->entries[smallest];
-        h->entries[smallest] = tmp;
-        i = smallest;
-    }
-}
-
-static void ft_heap_push(FT_MinHeap *h, size_t doc_id, float score) {
-    if (h->count < h->capacity) {
-        h->entries[h->count].doc_id = doc_id;
-        h->entries[h->count].score = score;
-        ft_heap_sift_up(h, h->count);
-        h->count++;
-    } else if (score > h->entries[0].score) {
-        h->entries[0].doc_id = doc_id;
-        h->entries[0].score = score;
-        ft_heap_sift_down(h, 0);
-    }
+static void ft_minheap_push(FT_MinHeap *h, size_t doc_id, float score) {
+    ft_heap_push(h->entries, &h->count, h->capacity, (FT_HeapEntry){score, doc_id});
 }
 
 static float ft_heap_threshold(const FT_MinHeap *h) {
     if (h->count < h->capacity) return 0.0f;
-    return h->entries[0].score;
+    return h->entries[0].dist;
 }
 
 /**
@@ -1181,7 +1144,7 @@ static int ft_search_blockmax_wand(const GV_FTIndex *idx, FT_TermCursor *cursors
         }
 
         if (any_match) {
-            ft_heap_push(heap, pivot_doc, doc_score);
+            ft_minheap_push(heap, pivot_doc, doc_score);
         }
 
         for (size_t i = first_active; i < ncursors; i++) {
@@ -1266,7 +1229,7 @@ static int ft_search_naive(const GV_FTIndex *idx, const FT_TokenList *query_toke
 
     for (size_t i = 0; i < score_count; i++) {
         if (scores[i].score > 0.0f) {
-            ft_heap_push(heap, scores[i].doc_id, scores[i].score);
+            ft_minheap_push(heap, scores[i].doc_id, scores[i].score);
         }
     }
 
@@ -1345,7 +1308,7 @@ int gv_ft_search(const GV_FTIndex *idx, const char *query, size_t limit,
         memcpy(sorted, heap.entries, heap.count * sizeof(FT_HeapEntry));
         for (size_t i = 0; i < (size_t)count; i++) {
             for (size_t j = i + 1; j < (size_t)count; j++) {
-                if (sorted[j].score > sorted[i].score) {
+                if (sorted[j].dist > sorted[i].dist) {
                     FT_HeapEntry tmp = sorted[i];
                     sorted[i] = sorted[j];
                     sorted[j] = tmp;
@@ -1354,7 +1317,7 @@ int gv_ft_search(const GV_FTIndex *idx, const char *query, size_t limit,
         }
         for (int i = 0; i < count; i++) {
             results[i].doc_id = sorted[i].doc_id;
-            results[i].score = sorted[i].score;
+            results[i].score = sorted[i].dist;
             results[i].match_positions = NULL;
             results[i].match_count = 0;
         }
@@ -1362,7 +1325,7 @@ int gv_ft_search(const GV_FTIndex *idx, const char *query, size_t limit,
     } else {
         for (int i = 0; i < count; i++) {
             results[i].doc_id = heap.entries[i].doc_id;
-            results[i].score = heap.entries[i].score;
+            results[i].score = heap.entries[i].dist;
             results[i].match_positions = NULL;
             results[i].match_count = 0;
         }

@@ -10,6 +10,7 @@
 #include "gigavector/gv_vector.h"
 #include "gigavector/gv_metadata.h"
 #include "gigavector/gv_soa_storage.h"
+#include "gigavector/gv_utils.h"
 
 typedef struct GV_LSHBucket {
     size_t *indices;
@@ -35,69 +36,6 @@ typedef struct {
     size_t vec_idx;
 } GV_LSHCandidate;
 
-static const char *gv_metadata_get_direct(GV_Metadata *metadata, const char *key) {
-    if (metadata == NULL || key == NULL) {
-        return NULL;
-    }
-    GV_Metadata *current = metadata;
-    while (current != NULL) {
-        if (strcmp(current->key, key) == 0) {
-            return current->value;
-        }
-        current = current->next;
-    }
-    return NULL;
-}
-
-static GV_Metadata *gv_metadata_copy(GV_Metadata *src) {
-    if (src == NULL) {
-        return NULL;
-    }
-    GV_Metadata *head = NULL;
-    GV_Metadata *tail = NULL;
-    GV_Metadata *current = src;
-
-    while (current != NULL) {
-        GV_Metadata *new_meta = (GV_Metadata *)malloc(sizeof(GV_Metadata));
-        if (new_meta == NULL) {
-            while (head != NULL) {
-                GV_Metadata *next = head->next;
-                free(head->key);
-                free(head->value);
-                free(head);
-                head = next;
-            }
-            return NULL;
-        }
-        new_meta->key = (char *)malloc(strlen(current->key) + 1);
-        new_meta->value = (char *)malloc(strlen(current->value) + 1);
-        if (new_meta->key == NULL || new_meta->value == NULL) {
-            free(new_meta->key);
-            free(new_meta->value);
-            free(new_meta);
-            while (head != NULL) {
-                GV_Metadata *next = head->next;
-                free(head->key);
-                free(head->value);
-                free(head);
-                head = next;
-            }
-            return NULL;
-        }
-        strcpy(new_meta->key, current->key);
-        strcpy(new_meta->value, current->value);
-        new_meta->next = NULL;
-
-        if (head == NULL) {
-            head = tail = new_meta;
-        } else {
-            tail->next = new_meta;
-            tail = new_meta;
-        }
-        current = current->next;
-    }
-    return head;
-}
 
 static uint64_t xorshift64(uint64_t *state) {
     uint64_t x = *state;
@@ -714,115 +652,13 @@ int gv_lsh_update(void *index, size_t vector_index, const float *new_data, size_
     return 0;
 }
 
-static int gv_lsh_write_uint32(FILE *out, uint32_t value) {
-    return (fwrite(&value, sizeof(uint32_t), 1, out) == 1) ? 0 : -1;
-}
-
-static int gv_lsh_write_uint64(FILE *out, uint64_t value) {
-    return (fwrite(&value, sizeof(uint64_t), 1, out) == 1) ? 0 : -1;
-}
-
-static int gv_lsh_write_size(FILE *out, size_t value) {
-    return (fwrite(&value, sizeof(size_t), 1, out) == 1) ? 0 : -1;
-}
-
-static int gv_lsh_write_floats(FILE *out, const float *data, size_t count) {
-    return (data != NULL && fwrite(data, sizeof(float), count, out) == count) ? 0 : -1;
-}
-
-static int gv_lsh_write_string(FILE *out, const char *str, uint32_t len) {
-    if (str == NULL && len > 0) {
-        return -1;
-    }
-    if (gv_lsh_write_uint32(out, len) != 0) {
-        return -1;
-    }
-    if (len == 0) {
-        return 0;
-    }
-    return (fwrite(str, 1, len, out) == len) ? 0 : -1;
-}
-
-static int gv_lsh_write_metadata(FILE *out, const GV_Metadata *meta_head) {
-    uint32_t count = 0;
-    const GV_Metadata *cursor = meta_head;
-    while (cursor != NULL) {
-        count++;
-        cursor = cursor->next;
-    }
-
-    if (gv_lsh_write_uint32(out, count) != 0) {
-        return -1;
-    }
-
-    cursor = meta_head;
-    while (cursor != NULL) {
-        size_t key_len = strlen(cursor->key);
-        size_t val_len = strlen(cursor->value);
-        if (key_len > UINT32_MAX || val_len > UINT32_MAX) {
-            return -1;
-        }
-        if (gv_lsh_write_string(out, cursor->key, (uint32_t)key_len) != 0) {
-            return -1;
-        }
-        if (gv_lsh_write_string(out, cursor->value, (uint32_t)val_len) != 0) {
-            return -1;
-        }
-        cursor = cursor->next;
-    }
-    return 0;
-}
-
-static int gv_lsh_read_uint32(FILE *in, uint32_t *value) {
-    return (value != NULL && fread(value, sizeof(uint32_t), 1, in) == 1) ? 0 : -1;
-}
-
-static int gv_lsh_read_uint64(FILE *in, uint64_t *value) {
-    return (value != NULL && fread(value, sizeof(uint64_t), 1, in) == 1) ? 0 : -1;
-}
-
-static int gv_lsh_read_size(FILE *in, size_t *value) {
-    return (value != NULL && fread(value, sizeof(size_t), 1, in) == 1) ? 0 : -1;
-}
-
-static int gv_lsh_read_floats(FILE *in, float *data, size_t count) {
-    return (data != NULL && fread(data, sizeof(float), count, in) == count) ? 0 : -1;
-}
-
-static int gv_lsh_read_string(FILE *in, char **out_str, uint32_t len) {
-    if (out_str == NULL) {
-        return -1;
-    }
-    *out_str = NULL;
-    if (len == 0) {
-        *out_str = (char *)malloc(1);
-        if (*out_str == NULL) {
-            return -1;
-        }
-        (*out_str)[0] = '\0';
-        return 0;
-    }
-
-    char *buf = (char *)malloc(len + 1);
-    if (buf == NULL) {
-        return -1;
-    }
-    if (fread(buf, 1, len, in) != len) {
-        free(buf);
-        return -1;
-    }
-    buf[len] = '\0';
-    *out_str = buf;
-    return 0;
-}
-
 static int gv_lsh_read_metadata_into(FILE *in, GV_Metadata **metadata_out) {
     if (metadata_out == NULL) {
         return -1;
     }
 
     uint32_t count = 0;
-    if (gv_lsh_read_uint32(in, &count) != 0) {
+    if (gv_read_u32(in, &count) != 0) {
         return -1;
     }
 
@@ -835,22 +671,22 @@ static int gv_lsh_read_metadata_into(FILE *in, GV_Metadata **metadata_out) {
         char *key = NULL;
         char *value = NULL;
 
-        if (gv_lsh_read_uint32(in, &key_len) != 0) {
+        if (gv_read_u32(in, &key_len) != 0) {
             gv_metadata_free(head);
             return -1;
         }
-        if (gv_lsh_read_string(in, &key, key_len) != 0) {
+        if (gv_read_str(in, &key, key_len) != 0) {
             free(key);
             gv_metadata_free(head);
             return -1;
         }
 
-        if (gv_lsh_read_uint32(in, &val_len) != 0) {
+        if (gv_read_u32(in, &val_len) != 0) {
             free(key);
             gv_metadata_free(head);
             return -1;
         }
-        if (gv_lsh_read_string(in, &value, val_len) != 0) {
+        if (gv_read_str(in, &value, val_len) != 0) {
             free(key);
             gv_metadata_free(head);
             return -1;
@@ -886,26 +722,26 @@ int gv_lsh_save(const void *index, FILE *out, uint32_t version) {
 
     GV_LSHIndex *lsh = (GV_LSHIndex *)index;
 
-    if (gv_lsh_write_size(out, lsh->config.num_tables) != 0) {
+    if (gv_write_size(out, lsh->config.num_tables) != 0) {
         return -1;
     }
-    if (gv_lsh_write_size(out, lsh->config.num_hash_bits) != 0) {
+    if (gv_write_size(out, lsh->config.num_hash_bits) != 0) {
         return -1;
     }
-    if (gv_lsh_write_uint64(out, lsh->config.seed) != 0) {
+    if (gv_write_u64(out, lsh->config.seed) != 0) {
         return -1;
     }
-    if (gv_lsh_write_floats(out, &lsh->config.bucket_width, 1) != 0) {
+    if (gv_write_floats(out, &lsh->config.bucket_width, 1) != 0) {
         return -1;
     }
-    if (gv_lsh_write_floats(out, &lsh->effective_bucket_width, 1) != 0) {
+    if (gv_write_floats(out, &lsh->effective_bucket_width, 1) != 0) {
         return -1;
     }
 
     size_t total_planes = lsh->config.num_tables * lsh->config.num_hash_bits;
 
     /* Write offsets array */
-    if (gv_lsh_write_floats(out, lsh->offsets, total_planes) != 0) {
+    if (gv_write_floats(out, lsh->offsets, total_planes) != 0) {
         return -1;
     }
 
@@ -913,13 +749,13 @@ int gv_lsh_save(const void *index, FILE *out, uint32_t version) {
         if (lsh->hyperplanes[i] == NULL) {
             return -1;
         }
-        if (gv_lsh_write_floats(out, lsh->hyperplanes[i], lsh->dimension) != 0) {
+        if (gv_write_floats(out, lsh->hyperplanes[i], lsh->dimension) != 0) {
             return -1;
         }
     }
 
     size_t storage_count = gv_soa_storage_count(lsh->storage);
-    if (gv_lsh_write_size(out, storage_count) != 0) {
+    if (gv_write_size(out, storage_count) != 0) {
         return -1;
     }
 
@@ -928,18 +764,18 @@ int gv_lsh_save(const void *index, FILE *out, uint32_t version) {
         if (data == NULL) {
             return -1;
         }
-        if (gv_lsh_write_floats(out, data, lsh->dimension) != 0) {
+        if (gv_write_floats(out, data, lsh->dimension) != 0) {
             return -1;
         }
 
         GV_Metadata *metadata = gv_soa_storage_get_metadata(lsh->storage, i);
-        if (gv_lsh_write_metadata(out, metadata) != 0) {
+        if (gv_write_metadata(out, metadata) != 0) {
             return -1;
         }
 
         int deleted = gv_soa_storage_is_deleted(lsh->storage, i);
         uint32_t deleted_flag = (deleted == 1) ? 1 : 0;
-        if (gv_lsh_write_uint32(out, deleted_flag) != 0) {
+        if (gv_write_u32(out, deleted_flag) != 0) {
             return -1;
         }
     }
@@ -954,16 +790,16 @@ int gv_lsh_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version) 
     }
 
     GV_LSHConfig config;
-    if (gv_lsh_read_size(in, &config.num_tables) != 0) {
+    if (gv_read_size(in, &config.num_tables) != 0) {
         return -1;
     }
-    if (gv_lsh_read_size(in, &config.num_hash_bits) != 0) {
+    if (gv_read_size(in, &config.num_hash_bits) != 0) {
         return -1;
     }
-    if (gv_lsh_read_uint64(in, &config.seed) != 0) {
+    if (gv_read_u64(in, &config.seed) != 0) {
         return -1;
     }
-    if (gv_lsh_read_floats(in, &config.bucket_width, 1) != 0) {
+    if (gv_read_floats(in, &config.bucket_width, 1) != 0) {
         return -1;
     }
 
@@ -973,7 +809,7 @@ int gv_lsh_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version) 
     }
 
     /* Read saved effective_bucket_width and override the computed one */
-    if (gv_lsh_read_floats(in, &lsh->effective_bucket_width, 1) != 0) {
+    if (gv_read_floats(in, &lsh->effective_bucket_width, 1) != 0) {
         gv_lsh_destroy(lsh);
         return -1;
     }
@@ -981,7 +817,7 @@ int gv_lsh_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version) 
     size_t total_planes = config.num_tables * config.num_hash_bits;
 
     /* Read offsets (overwrite generated ones) */
-    if (gv_lsh_read_floats(in, lsh->offsets, total_planes) != 0) {
+    if (gv_read_floats(in, lsh->offsets, total_planes) != 0) {
         gv_lsh_destroy(lsh);
         return -1;
     }
@@ -994,14 +830,14 @@ int gv_lsh_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version) 
                 return -1;
             }
         }
-        if (gv_lsh_read_floats(in, lsh->hyperplanes[i], dimension) != 0) {
+        if (gv_read_floats(in, lsh->hyperplanes[i], dimension) != 0) {
             gv_lsh_destroy(lsh);
             return -1;
         }
     }
 
     size_t vector_count = 0;
-    if (gv_lsh_read_size(in, &vector_count) != 0) {
+    if (gv_read_size(in, &vector_count) != 0) {
         gv_lsh_destroy(lsh);
         return -1;
     }
@@ -1013,7 +849,7 @@ int gv_lsh_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version) 
             return -1;
         }
 
-        if (gv_lsh_read_floats(in, data, dimension) != 0) {
+        if (gv_read_floats(in, data, dimension) != 0) {
             free(data);
             gv_lsh_destroy(lsh);
             return -1;
@@ -1027,7 +863,7 @@ int gv_lsh_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version) 
         }
 
         uint32_t deleted_flag = 0;
-        if (gv_lsh_read_uint32(in, &deleted_flag) != 0) {
+        if (gv_read_u32(in, &deleted_flag) != 0) {
             free(data);
             gv_metadata_free(metadata);
             gv_lsh_destroy(lsh);

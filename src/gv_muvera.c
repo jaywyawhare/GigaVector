@@ -210,13 +210,6 @@ static int gv_muvera_encode_single(const GV_MuveraEncoder *enc,
     return 0;
 }
 
-static int gv_muvera_write_u64(FILE *f, uint64_t v) {
-    return fwrite(&v, sizeof(uint64_t), 1, f) == 1 ? 0 : -1;
-}
-
-static int gv_muvera_read_u64(FILE *f, uint64_t *v) {
-    return (v && fread(v, sizeof(uint64_t), 1, f) == 1) ? 0 : -1;
-}
 
 static const GV_MuveraConfig DEFAULT_CONFIG = {
     .token_dimension  = 128,
@@ -345,13 +338,13 @@ int gv_muvera_save(const GV_MuveraEncoder *enc, const char *path) {
     if (fwrite(GV_MUVERA_MAGIC, 1, GV_MUVERA_MAGIC_LEN, fp) != GV_MUVERA_MAGIC_LEN) goto fail;
     if (gv_write_u32(fp, GV_MUVERA_VERSION) != 0) goto fail;
 
-    if (gv_muvera_write_u64(fp, (uint64_t)enc->config.token_dimension) != 0) goto fail;
-    if (gv_muvera_write_u64(fp, (uint64_t)enc->config.num_projections) != 0) goto fail;
-    if (gv_muvera_write_u64(fp, (uint64_t)enc->config.output_dimension) != 0) goto fail;
-    if (gv_muvera_write_u64(fp, enc->config.seed) != 0) goto fail;
+    if (gv_write_u64(fp, (uint64_t)enc->config.token_dimension) != 0) goto fail;
+    if (gv_write_u64(fp, (uint64_t)enc->config.num_projections) != 0) goto fail;
+    if (gv_write_u64(fp, (uint64_t)enc->config.output_dimension) != 0) goto fail;
+    if (gv_write_u64(fp, enc->config.seed) != 0) goto fail;
     if (gv_write_u32(fp, (uint32_t)enc->config.normalize) != 0) goto fail;
 
-    if (gv_muvera_write_u64(fp, (uint64_t)enc->reduced_dim) != 0) goto fail;
+    if (gv_write_u64(fp, (uint64_t)enc->reduced_dim) != 0) goto fail;
 
     {
         size_t count = enc->config.num_projections * enc->config.token_dimension;
@@ -393,14 +386,14 @@ GV_MuveraEncoder *gv_muvera_load(const char *path) {
     uint64_t td = 0, np = 0, od = 0, seed = 0;
     uint32_t norm = 0;
 
-    if (gv_muvera_read_u64(fp, &td) != 0)   { fclose(fp); return NULL; }
-    if (gv_muvera_read_u64(fp, &np) != 0)    { fclose(fp); return NULL; }
-    if (gv_muvera_read_u64(fp, &od) != 0)    { fclose(fp); return NULL; }
-    if (gv_muvera_read_u64(fp, &seed) != 0)  { fclose(fp); return NULL; }
+    if (gv_read_u64(fp, &td) != 0)   { fclose(fp); return NULL; }
+    if (gv_read_u64(fp, &np) != 0)    { fclose(fp); return NULL; }
+    if (gv_read_u64(fp, &od) != 0)    { fclose(fp); return NULL; }
+    if (gv_read_u64(fp, &seed) != 0)  { fclose(fp); return NULL; }
     if (gv_read_u32(fp, &norm) != 0)  { fclose(fp); return NULL; }
 
     uint64_t rd = 0;
-    if (gv_muvera_read_u64(fp, &rd) != 0) { fclose(fp); return NULL; }
+    if (gv_read_u64(fp, &rd) != 0) { fclose(fp); return NULL; }
 
     if (td == 0 || np == 0 || od == 0 || rd == 0) {
         fclose(fp);

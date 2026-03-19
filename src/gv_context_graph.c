@@ -58,23 +58,7 @@ static char *generate_relationship_id(uint64_t counter) {
     return id;
 }
 
-static float cosine_similarity(const float *a, const float *b, size_t dim) {
-    float dot_product = 0.0f;
-    float norm_a = 0.0f;
-    float norm_b = 0.0f;
-    
-    for (size_t i = 0; i < dim; i++) {
-        dot_product += a[i] * b[i];
-        norm_a += a[i] * a[i];
-        norm_b += b[i] * b[i];
-    }
-    
-    if (norm_a == 0.0f || norm_b == 0.0f) {
-        return 0.0f;
-    }
-    
-    return dot_product / (sqrtf(norm_a) * sqrtf(norm_b));
-}
+
 
 GV_ContextGraphConfig gv_context_graph_config_default(void) {
     GV_ContextGraphConfig config;
@@ -800,7 +784,7 @@ int gv_context_graph_search(GV_ContextGraph *graph,
             }
             
             if (node->entity.embedding != NULL && node->entity.embedding_dim == embedding_dim) {
-                float similarity = cosine_similarity(query_embedding, node->entity.embedding, embedding_dim);
+                float similarity = gv_cosine_similarity(query_embedding, node->entity.embedding, embedding_dim);
                 
                 if (similarity >= graph->config.similarity_threshold) {
                     size_t rel_hash = gv_hash_str(node->entity_id) % graph->relationship_table_size;

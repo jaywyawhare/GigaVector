@@ -1311,22 +1311,6 @@ size_t gv_diskann_count(const GV_DiskANNIndex *index) {
     return active;
 }
 
-static int diskann_write_u64(FILE *f, uint64_t v) {
-    return fwrite(&v, sizeof(uint64_t), 1, f) == 1 ? 0 : -1;
-}
-
-static int diskann_write_f32(FILE *f, float v) {
-    return fwrite(&v, sizeof(float), 1, f) == 1 ? 0 : -1;
-}
-
-static int diskann_write_floats(FILE *f, const float *data, size_t count) {
-    return fwrite(data, sizeof(float), count, f) == count ? 0 : -1;
-}
-
-static int diskann_write_bytes(FILE *f, const uint8_t *data, size_t count) {
-    return fwrite(data, sizeof(uint8_t), count, f) == count ? 0 : -1;
-}
-
 int gv_diskann_save(const GV_DiskANNIndex *index, const char *filepath) {
     if (!index || !filepath) return -1;
 
@@ -1335,39 +1319,39 @@ int gv_diskann_save(const GV_DiskANNIndex *index, const char *filepath) {
 
     if (gv_write_u32(f, DISKANN_MAGIC) != 0) goto fail;
     if (gv_write_u32(f, DISKANN_VERSION) != 0) goto fail;
-    if (diskann_write_u64(f, (uint64_t)index->dimension) != 0) goto fail;
-    if (diskann_write_u64(f, (uint64_t)index->count) != 0) goto fail;
-    if (diskann_write_u64(f, (uint64_t)index->max_degree) != 0) goto fail;
-    if (diskann_write_f32(f, index->alpha) != 0) goto fail;
-    if (diskann_write_u64(f, (uint64_t)index->build_beam_width) != 0) goto fail;
-    if (diskann_write_u64(f, (uint64_t)index->search_beam_width) != 0) goto fail;
-    if (diskann_write_u64(f, (uint64_t)index->sector_size) != 0) goto fail;
-    if (diskann_write_u64(f, (uint64_t)index->medoid) != 0) goto fail;
+    if (gv_write_u64(f, (uint64_t)index->dimension) != 0) goto fail;
+    if (gv_write_u64(f, (uint64_t)index->count) != 0) goto fail;
+    if (gv_write_u64(f, (uint64_t)index->max_degree) != 0) goto fail;
+    if (gv_write_f32(f, index->alpha) != 0) goto fail;
+    if (gv_write_u64(f, (uint64_t)index->build_beam_width) != 0) goto fail;
+    if (gv_write_u64(f, (uint64_t)index->search_beam_width) != 0) goto fail;
+    if (gv_write_u64(f, (uint64_t)index->sector_size) != 0) goto fail;
+    if (gv_write_u64(f, (uint64_t)index->medoid) != 0) goto fail;
 
     if (gv_write_u32(f, (uint32_t)index->pq.trained) != 0) goto fail;
     if (index->pq.trained) {
-        if (diskann_write_u64(f, (uint64_t)index->pq.m) != 0) goto fail;
-        if (diskann_write_u64(f, (uint64_t)index->pq.dsub) != 0) goto fail;
-        if (diskann_write_u64(f, (uint64_t)index->pq.ksub) != 0) goto fail;
+        if (gv_write_u64(f, (uint64_t)index->pq.m) != 0) goto fail;
+        if (gv_write_u64(f, (uint64_t)index->pq.dsub) != 0) goto fail;
+        if (gv_write_u64(f, (uint64_t)index->pq.ksub) != 0) goto fail;
 
         size_t cb_size = index->pq.m * index->pq.ksub * index->pq.dsub;
-        if (diskann_write_floats(f, index->pq.codebooks, cb_size) != 0) goto fail;
+        if (gv_write_floats(f, index->pq.codebooks, cb_size) != 0) goto fail;
     }
 
     for (size_t i = 0; i < index->count; i++) {
         const DiskANN_Node *node = &index->nodes[i];
 
         if (gv_write_u32(f, (uint32_t)node->deleted) != 0) goto fail;
-        if (diskann_write_u64(f, (uint64_t)node->neighbor_count) != 0) goto fail;
+        if (gv_write_u64(f, (uint64_t)node->neighbor_count) != 0) goto fail;
 
         for (size_t j = 0; j < node->neighbor_count; j++) {
-            if (diskann_write_u64(f, (uint64_t)node->neighbors[j]) != 0) goto fail;
+            if (gv_write_u64(f, (uint64_t)node->neighbors[j]) != 0) goto fail;
         }
 
         uint32_t has_pq = (node->pq_code && index->pq.trained) ? 1 : 0;
         if (gv_write_u32(f, has_pq) != 0) goto fail;
         if (has_pq) {
-            if (diskann_write_bytes(f, node->pq_code, index->pq.m) != 0) goto fail;
+            if (gv_write_bytes(f, node->pq_code, index->pq.m) != 0) goto fail;
         }
     }
 
@@ -1387,22 +1371,6 @@ fail:
     return -1;
 }
 
-static int diskann_read_u64(FILE *f, uint64_t *v) {
-    return (v && fread(v, sizeof(uint64_t), 1, f) == 1) ? 0 : -1;
-}
-
-static int diskann_read_f32(FILE *f, float *v) {
-    return (v && fread(v, sizeof(float), 1, f) == 1) ? 0 : -1;
-}
-
-static int diskann_read_floats(FILE *f, float *data, size_t count) {
-    return (data && fread(data, sizeof(float), count, f) == count) ? 0 : -1;
-}
-
-static int diskann_read_bytes(FILE *f, uint8_t *data, size_t count) {
-    return (data && fread(data, sizeof(uint8_t), count, f) == count) ? 0 : -1;
-}
-
 GV_DiskANNIndex *gv_diskann_load(const char *filepath, const GV_DiskANNConfig *config) {
     if (!filepath) return NULL;
 
@@ -1417,14 +1385,14 @@ GV_DiskANNIndex *gv_diskann_load(const char *filepath, const GV_DiskANNConfig *c
     uint64_t build_bw = 0, search_bw = 0, sector_size = 0, medoid = 0;
     float alpha = 0.0f;
 
-    if (diskann_read_u64(f, &dimension) != 0) goto fail;
-    if (diskann_read_u64(f, &count) != 0) goto fail;
-    if (diskann_read_u64(f, &max_degree) != 0) goto fail;
-    if (diskann_read_f32(f, &alpha) != 0) goto fail;
-    if (diskann_read_u64(f, &build_bw) != 0) goto fail;
-    if (diskann_read_u64(f, &search_bw) != 0) goto fail;
-    if (diskann_read_u64(f, &sector_size) != 0) goto fail;
-    if (diskann_read_u64(f, &medoid) != 0) goto fail;
+    if (gv_read_u64(f, &dimension) != 0) goto fail;
+    if (gv_read_u64(f, &count) != 0) goto fail;
+    if (gv_read_u64(f, &max_degree) != 0) goto fail;
+    if (gv_read_f32(f, &alpha) != 0) goto fail;
+    if (gv_read_u64(f, &build_bw) != 0) goto fail;
+    if (gv_read_u64(f, &search_bw) != 0) goto fail;
+    if (gv_read_u64(f, &sector_size) != 0) goto fail;
+    if (gv_read_u64(f, &medoid) != 0) goto fail;
 
     if (dimension == 0) goto fail;
 
@@ -1451,14 +1419,14 @@ GV_DiskANNIndex *gv_diskann_load(const char *filepath, const GV_DiskANNConfig *c
     float *pq_codebooks = NULL;
 
     if (pq_trained) {
-        if (diskann_read_u64(f, &pq_m) != 0) goto fail;
-        if (diskann_read_u64(f, &pq_dsub) != 0) goto fail;
-        if (diskann_read_u64(f, &pq_ksub) != 0) goto fail;
+        if (gv_read_u64(f, &pq_m) != 0) goto fail;
+        if (gv_read_u64(f, &pq_dsub) != 0) goto fail;
+        if (gv_read_u64(f, &pq_ksub) != 0) goto fail;
 
         size_t cb_size = (size_t)(pq_m * pq_ksub * pq_dsub);
         pq_codebooks = (float *)malloc(cb_size * sizeof(float));
         if (!pq_codebooks) goto fail;
-        if (diskann_read_floats(f, pq_codebooks, cb_size) != 0) {
+        if (gv_read_floats(f, pq_codebooks, cb_size) != 0) {
             free(pq_codebooks);
             goto fail;
         }
@@ -1485,7 +1453,7 @@ GV_DiskANNIndex *gv_diskann_load(const char *filepath, const GV_DiskANNConfig *c
 
     for (size_t i = 0; i < (size_t)count; i++) {
         if (gv_read_u32(f, &temp_nodes[i].deleted) != 0) goto fail_temp;
-        if (diskann_read_u64(f, &temp_nodes[i].neighbor_count) != 0) goto fail_temp;
+        if (gv_read_u64(f, &temp_nodes[i].neighbor_count) != 0) goto fail_temp;
 
         if (temp_nodes[i].neighbor_count > 0) {
             temp_nodes[i].neighbors = (size_t *)malloc((size_t)temp_nodes[i].neighbor_count * sizeof(size_t));
@@ -1493,7 +1461,7 @@ GV_DiskANNIndex *gv_diskann_load(const char *filepath, const GV_DiskANNConfig *c
 
             for (size_t j = 0; j < (size_t)temp_nodes[i].neighbor_count; j++) {
                 uint64_t nb = 0;
-                if (diskann_read_u64(f, &nb) != 0) goto fail_temp;
+                if (gv_read_u64(f, &nb) != 0) goto fail_temp;
                 temp_nodes[i].neighbors[j] = (size_t)nb;
             }
         }
@@ -1503,7 +1471,7 @@ GV_DiskANNIndex *gv_diskann_load(const char *filepath, const GV_DiskANNConfig *c
         if (has_pq && pq_trained) {
             temp_nodes[i].pq_code = (uint8_t *)malloc((size_t)pq_m);
             if (!temp_nodes[i].pq_code) goto fail_temp;
-            if (diskann_read_bytes(f, temp_nodes[i].pq_code, (size_t)pq_m) != 0) goto fail_temp;
+            if (gv_read_bytes(f, temp_nodes[i].pq_code, (size_t)pq_m) != 0) goto fail_temp;
         }
     }
 

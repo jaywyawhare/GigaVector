@@ -6,28 +6,13 @@
 #include <stdint.h>
 
 #include "gigavector/gv_codebook.h"
+#include "gigavector/gv_utils.h"
 
 #define GV_CODEBOOK_MAGIC_0 'G'
 #define GV_CODEBOOK_MAGIC_1 'V'
 #define GV_CODEBOOK_MAGIC_2 'C'
 #define GV_CODEBOOK_MAGIC_3 'B'
 #define GV_CODEBOOK_VERSION  1
-
-static int write_u8(FILE *f, uint8_t v) {
-    return fwrite(&v, sizeof(uint8_t), 1, f) == 1 ? 0 : -1;
-}
-
-static int read_u8(FILE *f, uint8_t *v) {
-    return (v && fread(v, sizeof(uint8_t), 1, f) == 1) ? 0 : -1;
-}
-
-static int write_u32(FILE *f, uint32_t v) {
-    return fwrite(&v, sizeof(uint32_t), 1, f) == 1 ? 0 : -1;
-}
-
-static int read_u32(FILE *f, uint32_t *v) {
-    return (v && fread(v, sizeof(uint32_t), 1, f) == 1) ? 0 : -1;
-}
 
 static float subvec_dist_sq(const float *a, const float *b, size_t len) {
     float sum = 0.0f;
@@ -276,17 +261,17 @@ float gv_codebook_distance_adc(const GV_Codebook *cb, const float *query,
 int gv_codebook_save_fp(const GV_Codebook *cb, FILE *out) {
     if (!cb || !out) return -1;
 
-    if (write_u8(out, GV_CODEBOOK_MAGIC_0) != 0) return -1;
-    if (write_u8(out, GV_CODEBOOK_MAGIC_1) != 0) return -1;
-    if (write_u8(out, GV_CODEBOOK_MAGIC_2) != 0) return -1;
-    if (write_u8(out, GV_CODEBOOK_MAGIC_3) != 0) return -1;
+    if (gv_write_u8(out, GV_CODEBOOK_MAGIC_0) != 0) return -1;
+    if (gv_write_u8(out, GV_CODEBOOK_MAGIC_1) != 0) return -1;
+    if (gv_write_u8(out, GV_CODEBOOK_MAGIC_2) != 0) return -1;
+    if (gv_write_u8(out, GV_CODEBOOK_MAGIC_3) != 0) return -1;
 
-    if (write_u32(out, GV_CODEBOOK_VERSION) != 0) return -1;
+    if (gv_write_u32(out, GV_CODEBOOK_VERSION) != 0) return -1;
 
-    if (write_u32(out, (uint32_t)cb->dimension) != 0) return -1;
-    if (write_u32(out, (uint32_t)cb->m)         != 0) return -1;
-    if (write_u8(out, cb->nbits)                 != 0) return -1;
-    if (write_u32(out, (uint32_t)cb->trained)    != 0) return -1;
+    if (gv_write_u32(out, (uint32_t)cb->dimension) != 0) return -1;
+    if (gv_write_u32(out, (uint32_t)cb->m)         != 0) return -1;
+    if (gv_write_u8(out, cb->nbits)                 != 0) return -1;
+    if (gv_write_u32(out, (uint32_t)cb->trained)    != 0) return -1;
 
     size_t n_floats = cb->m * cb->ksub * cb->dsub;
     if (fwrite(cb->centroids, sizeof(float), n_floats, out) != n_floats)
@@ -299,26 +284,26 @@ GV_Codebook *gv_codebook_load_fp(FILE *in) {
     if (!in) return NULL;
 
     uint8_t mag[4];
-    if (read_u8(in, &mag[0]) != 0) return NULL;
-    if (read_u8(in, &mag[1]) != 0) return NULL;
-    if (read_u8(in, &mag[2]) != 0) return NULL;
-    if (read_u8(in, &mag[3]) != 0) return NULL;
+    if (gv_read_u8(in, &mag[0]) != 0) return NULL;
+    if (gv_read_u8(in, &mag[1]) != 0) return NULL;
+    if (gv_read_u8(in, &mag[2]) != 0) return NULL;
+    if (gv_read_u8(in, &mag[3]) != 0) return NULL;
 
     if (mag[0] != GV_CODEBOOK_MAGIC_0 || mag[1] != GV_CODEBOOK_MAGIC_1 ||
         mag[2] != GV_CODEBOOK_MAGIC_2 || mag[3] != GV_CODEBOOK_MAGIC_3)
         return NULL;
 
     uint32_t version = 0;
-    if (read_u32(in, &version) != 0) return NULL;
+    if (gv_read_u32(in, &version) != 0) return NULL;
     if (version != GV_CODEBOOK_VERSION) return NULL;
 
     uint32_t dimension = 0, m = 0, trained = 0;
     uint8_t  nbits = 0;
 
-    if (read_u32(in, &dimension) != 0) return NULL;
-    if (read_u32(in, &m)         != 0) return NULL;
-    if (read_u8(in, &nbits)      != 0) return NULL;
-    if (read_u32(in, &trained)   != 0) return NULL;
+    if (gv_read_u32(in, &dimension) != 0) return NULL;
+    if (gv_read_u32(in, &m)         != 0) return NULL;
+    if (gv_read_u8(in, &nbits)      != 0) return NULL;
+    if (gv_read_u32(in, &trained)   != 0) return NULL;
 
     GV_Codebook *cb = gv_codebook_create((size_t)dimension, (size_t)m, nbits);
     if (!cb) return NULL;

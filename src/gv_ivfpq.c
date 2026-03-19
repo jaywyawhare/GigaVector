@@ -16,6 +16,7 @@
 #include "gigavector/gv_config.h"
 #include "gigavector/gv_vector.h"
 #include "gigavector/gv_metadata.h"
+#include "gigavector/gv_heap.h"
 #include "gigavector/gv_utils.h"
 
 /* Bitwise CRC32 (poly 0xEDB88320) */
@@ -38,20 +39,7 @@ typedef struct {
     struct GV_IVFPQEntry *entry;
 } GV_IVFPQHeapItem;
 
-static void gv_ivfpq_heap_sift_down(GV_IVFPQHeapItem *heap, size_t size, size_t idx) {
-    while (1) {
-        size_t l = idx * 2 + 1;
-        size_t r = l + 1;
-        size_t largest = idx;
-        if (l < size && heap[l].dist > heap[largest].dist) largest = l;
-        if (r < size && heap[r].dist > heap[largest].dist) largest = r;
-        if (largest == idx) break;
-        GV_IVFPQHeapItem tmp = heap[idx];
-        heap[idx] = heap[largest];
-        heap[largest] = tmp;
-        idx = largest;
-    }
-}
+GV_HEAP_DEFINE(gv_ivfpq_heap, GV_IVFPQHeapItem)
 
 #if defined(__AVX512F__)
 static inline float gv_ivfpq_l2_avx512(const float *a, const float *b, size_t dim) {
@@ -190,17 +178,6 @@ static inline float gv_ivfpq_dot_runtime(const float *a, const float *b, size_t 
 #endif
     }
     return gv_ivfpq_dot_scalar(a, b, dim);
-}
-
-static void gv_ivfpq_heap_sift_up(GV_IVFPQHeapItem *heap, size_t idx) {
-    while (idx > 0) {
-        size_t parent = (idx - 1) / 2;
-        if (heap[parent].dist >= heap[idx].dist) break;
-        GV_IVFPQHeapItem tmp = heap[parent];
-        heap[parent] = heap[idx];
-        heap[idx] = tmp;
-        idx = parent;
-    }
 }
 
 typedef struct GV_IVFPQEntry {
@@ -667,16 +644,7 @@ int gv_ivfpq_search(void *index_ptr, const GV_Vector *query, size_t k,
     }
     for (size_t c = 0; c < idx->nlist; ++c) {
         float d = gv_ivfpq_l2_runtime(query->data, idx->coarse + c * idx->dimension, idx->dimension);
-        if (chsize < nprobe) {
-            cheap[chsize].dist = d;
-            cheap[chsize].entry = (GV_IVFPQEntry *)(uintptr_t)c;
-            gv_ivfpq_heap_sift_up(cheap, chsize);
-            chsize++;
-        } else if (d < cheap[0].dist) {
-            cheap[0].dist = d;
-            cheap[0].entry = (GV_IVFPQEntry *)(uintptr_t)c;
-            gv_ivfpq_heap_sift_down(cheap, chsize, 0);
-        }
+        gv_ivfpq_heap_push(cheap, &chsize, nprobe, (GV_IVFPQHeapItem){d, (GV_IVFPQEntry *)(uintptr_t)c});
     }
     int probe_ids_stack[IVFPQ_MAX_STACK_PROBES];
     int *probe_ids = (nprobe <= IVFPQ_MAX_STACK_PROBES) ? probe_ids_stack : (int *)malloc(nprobe * sizeof(int));
@@ -691,6 +659,7 @@ int gv_ivfpq_search(void *index_ptr, const GV_Vector *query, size_t k,
         chsize--;
         if (chsize > 0) gv_ivfpq_heap_sift_down(cheap, chsize, 0);
     }
+
     if (cheap != cheap_stack) free(cheap);
 
     /* LUT buffer — stack if small enough */
@@ -803,8 +772,6 @@ int gv_ivfpq_search(void *index_ptr, const GV_Vector *query, size_t k,
         if (codes_soa) {
             const size_t cap = list->capacity;
             const GV_IVFPQEntry *entries = list->entries;
-            /* Heap threshold for early rejection */
-            float heap_top = (hsize >= oversampled_k) ? heap[0].dist : FLT_MAX;
             for (size_t e = 0; e < lcount; ++e) {
                 if (entries[e].deleted != 0) continue;
                 /* Prefetch next entry's codes */
@@ -824,18 +791,8 @@ int gv_ivfpq_search(void *index_ptr, const GV_Vector *query, size_t k,
                 for (; m < idx_m; ++m) {
                     d += lut[m * idx_cbsz + base[m * cap]];
                 }
-                if (hsize < oversampled_k) {
-                    heap[hsize].dist = d;
-                    heap[hsize].entry = (GV_IVFPQEntry *)&entries[e];
-                    gv_ivfpq_heap_sift_up(heap, hsize);
-                    hsize++;
-                    if (hsize == oversampled_k) heap_top = heap[0].dist;
-                } else if (d < heap_top) {
-                    heap[0].dist = d;
-                    heap[0].entry = (GV_IVFPQEntry *)&entries[e];
-                    gv_ivfpq_heap_sift_down(heap, hsize, 0);
-                    heap_top = heap[0].dist;
-                }
+                gv_ivfpq_heap_push(heap, &hsize, oversampled_k,
+                                   (GV_IVFPQHeapItem){d, (GV_IVFPQEntry *)&entries[e]});
             }
         } else {
             for (size_t e = 0; e < lcount; ++e) {
@@ -852,16 +809,7 @@ int gv_ivfpq_search(void *index_ptr, const GV_Vector *query, size_t k,
                 for (; m < idx_m; ++m) {
                     d += lut[m * idx_cbsz + ent->codes[m]];
                 }
-                if (hsize < oversampled_k) {
-                    heap[hsize].dist = d;
-                    heap[hsize].entry = ent;
-                    gv_ivfpq_heap_sift_up(heap, hsize);
-                    hsize++;
-                } else if (d < heap[0].dist) {
-                    heap[0].dist = d;
-                    heap[0].entry = ent;
-                    gv_ivfpq_heap_sift_down(heap, hsize, 0);
-                }
+                gv_ivfpq_heap_push(heap, &hsize, oversampled_k, (GV_IVFPQHeapItem){d, ent});
             }
         }
     }

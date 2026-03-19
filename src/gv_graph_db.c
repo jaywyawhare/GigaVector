@@ -593,57 +593,6 @@ static uint64_t *collect_all_node_ids(const GV_GraphDB *g, size_t *out_count)
     return ids;
 }
 
-static int write_u32(FILE *f, uint32_t v)
-{
-    return fwrite(&v, sizeof(v), 1, f) == 1 ? 0 : -1;
-}
-
-static int write_u64(FILE *f, uint64_t v)
-{
-    return fwrite(&v, sizeof(v), 1, f) == 1 ? 0 : -1;
-}
-
-static int write_float(FILE *f, float v)
-{
-    return fwrite(&v, sizeof(v), 1, f) == 1 ? 0 : -1;
-}
-
-static int write_str(FILE *f, const char *s)
-{
-    uint32_t len = (uint32_t)strlen(s);
-    if (write_u32(f, len) != 0) return -1;
-    if (len > 0 && fwrite(s, 1, len, f) != len) return -1;
-    return 0;
-}
-
-static int read_u32(FILE *f, uint32_t *v)
-{
-    return fread(v, sizeof(*v), 1, f) == 1 ? 0 : -1;
-}
-
-static int read_u64(FILE *f, uint64_t *v)
-{
-    return fread(v, sizeof(*v), 1, f) == 1 ? 0 : -1;
-}
-
-static int read_float(FILE *f, float *v)
-{
-    return fread(v, sizeof(*v), 1, f) == 1 ? 0 : -1;
-}
-
-static char *read_str(FILE *f)
-{
-    uint32_t len;
-    if (read_u32(f, &len) != 0) return NULL;
-    char *s = (char *)malloc((size_t)len + 1);
-    if (!s) return NULL;
-    if (len > 0 && fread(s, 1, len, f) != len) {
-        free(s);
-        return NULL;
-    }
-    s[len] = '\0';
-    return s;
-}
 
 void gv_graph_config_init(GV_GraphDBConfig *config)
 {
@@ -1871,24 +1820,24 @@ int gv_graph_save(const GV_GraphDB *g, const char *path)
         goto save_fail;
 
     uint32_t version = GV_GRAPH_VERSION;
-    if (write_u32(f, version) != 0) goto save_fail;
+    if (gv_write_u32(f, version) != 0) goto save_fail;
 
-    if (write_u64(f, (uint64_t)g->node_count) != 0) goto save_fail;
-    if (write_u64(f, (uint64_t)g->edge_count) != 0) goto save_fail;
-    if (write_u64(f, g->next_node_id) != 0) goto save_fail;
-    if (write_u64(f, g->next_edge_id) != 0) goto save_fail;
+    if (gv_write_u64(f, (uint64_t)g->node_count) != 0) goto save_fail;
+    if (gv_write_u64(f, (uint64_t)g->edge_count) != 0) goto save_fail;
+    if (gv_write_u64(f, g->next_node_id) != 0) goto save_fail;
+    if (gv_write_u64(f, g->next_edge_id) != 0) goto save_fail;
 
     for (size_t b = 0; b < g->node_bucket_count; b++) {
         NodeEntry *e = g->node_buckets[b];
         while (e) {
-            if (write_u64(f, e->node.node_id) != 0) goto save_fail;
-            if (write_str(f, e->node.label) != 0) goto save_fail;
+            if (gv_write_u64(f, e->node.node_id) != 0) goto save_fail;
+            if (gv_write_string(f, e->node.label) != 0) goto save_fail;
 
-            if (write_u32(f, (uint32_t)e->node.prop_count) != 0) goto save_fail;
+            if (gv_write_u32(f, (uint32_t)e->node.prop_count) != 0) goto save_fail;
             GV_GraphProp *prop = e->node.properties;
             while (prop) {
-                if (write_str(f, prop->key) != 0) goto save_fail;
-                if (write_str(f, prop->value) != 0) goto save_fail;
+                if (gv_write_string(f, prop->key) != 0) goto save_fail;
+                if (gv_write_string(f, prop->value) != 0) goto save_fail;
                 prop = prop->next;
             }
 
@@ -1899,17 +1848,17 @@ int gv_graph_save(const GV_GraphDB *g, const char *path)
     for (size_t b = 0; b < g->edge_bucket_count; b++) {
         EdgeEntry *e = g->edge_buckets[b];
         while (e) {
-            if (write_u64(f, e->edge.edge_id) != 0) goto save_fail;
-            if (write_u64(f, e->edge.source_id) != 0) goto save_fail;
-            if (write_u64(f, e->edge.target_id) != 0) goto save_fail;
-            if (write_str(f, e->edge.label) != 0) goto save_fail;
-            if (write_float(f, e->edge.weight) != 0) goto save_fail;
+            if (gv_write_u64(f, e->edge.edge_id) != 0) goto save_fail;
+            if (gv_write_u64(f, e->edge.source_id) != 0) goto save_fail;
+            if (gv_write_u64(f, e->edge.target_id) != 0) goto save_fail;
+            if (gv_write_string(f, e->edge.label) != 0) goto save_fail;
+            if (gv_write_f32(f, e->edge.weight) != 0) goto save_fail;
 
-            if (write_u32(f, (uint32_t)e->edge.prop_count) != 0) goto save_fail;
+            if (gv_write_u32(f, (uint32_t)e->edge.prop_count) != 0) goto save_fail;
             GV_GraphProp *prop = e->edge.properties;
             while (prop) {
-                if (write_str(f, prop->key) != 0) goto save_fail;
-                if (write_str(f, prop->value) != 0) goto save_fail;
+                if (gv_write_string(f, prop->key) != 0) goto save_fail;
+                if (gv_write_string(f, prop->value) != 0) goto save_fail;
                 prop = prop->next;
             }
 
@@ -1945,16 +1894,16 @@ GV_GraphDB *gv_graph_load(const char *path)
     }
 
     uint32_t version;
-    if (read_u32(f, &version) != 0 || version != GV_GRAPH_VERSION) {
+    if (gv_read_u32(f, &version) != 0 || version != GV_GRAPH_VERSION) {
         fclose(f);
         return NULL;
     }
 
     uint64_t node_count, edge_count, next_node_id, next_edge_id;
-    if (read_u64(f, &node_count) != 0) { fclose(f); return NULL; }
-    if (read_u64(f, &edge_count) != 0) { fclose(f); return NULL; }
-    if (read_u64(f, &next_node_id) != 0) { fclose(f); return NULL; }
-    if (read_u64(f, &next_edge_id) != 0) { fclose(f); return NULL; }
+    if (gv_read_u64(f, &node_count) != 0) { fclose(f); return NULL; }
+    if (gv_read_u64(f, &edge_count) != 0) { fclose(f); return NULL; }
+    if (gv_read_u64(f, &next_node_id) != 0) { fclose(f); return NULL; }
+    if (gv_read_u64(f, &next_edge_id) != 0) { fclose(f); return NULL; }
 
     GV_GraphDBConfig cfg;
     gv_graph_config_init(&cfg);
@@ -1972,13 +1921,13 @@ GV_GraphDB *gv_graph_load(const char *path)
 
     for (uint64_t i = 0; i < node_count; i++) {
         uint64_t nid;
-        if (read_u64(f, &nid) != 0) goto load_fail;
+        if (gv_read_u64(f, &nid) != 0) goto load_fail;
 
-        char *label = read_str(f);
+        char *label = gv_read_string(f);
         if (!label) goto load_fail;
 
         uint32_t prop_count;
-        if (read_u32(f, &prop_count) != 0) {
+        if (gv_read_u32(f, &prop_count) != 0) {
             free(label);
             goto load_fail;
         }
@@ -2000,8 +1949,8 @@ GV_GraphDB *gv_graph_load(const char *path)
         entry->node.in_cap = 0;
 
         for (uint32_t p = 0; p < prop_count; p++) {
-            char *key = read_str(f);
-            char *val = read_str(f);
+            char *key = gv_read_string(f);
+            char *val = gv_read_string(f);
             if (!key || !val) {
                 free(key); free(val);
                 free_node_internals(&entry->node);
@@ -2028,21 +1977,21 @@ GV_GraphDB *gv_graph_load(const char *path)
 
     for (uint64_t i = 0; i < edge_count; i++) {
         uint64_t eid, src_id, tgt_id;
-        if (read_u64(f, &eid) != 0) goto load_fail;
-        if (read_u64(f, &src_id) != 0) goto load_fail;
-        if (read_u64(f, &tgt_id) != 0) goto load_fail;
+        if (gv_read_u64(f, &eid) != 0) goto load_fail;
+        if (gv_read_u64(f, &src_id) != 0) goto load_fail;
+        if (gv_read_u64(f, &tgt_id) != 0) goto load_fail;
 
-        char *label = read_str(f);
+        char *label = gv_read_string(f);
         if (!label) goto load_fail;
 
         float weight;
-        if (read_float(f, &weight) != 0) {
+        if (gv_read_f32(f, &weight) != 0) {
             free(label);
             goto load_fail;
         }
 
         uint32_t prop_count;
-        if (read_u32(f, &prop_count) != 0) {
+        if (gv_read_u32(f, &prop_count) != 0) {
             free(label);
             goto load_fail;
         }
@@ -2061,8 +2010,8 @@ GV_GraphDB *gv_graph_load(const char *path)
         entry->edge.prop_count = 0;
 
         for (uint32_t p = 0; p < prop_count; p++) {
-            char *key = read_str(f);
-            char *val = read_str(f);
+            char *key = gv_read_string(f);
+            char *val = gv_read_string(f);
             if (!key || !val) {
                 free(key); free(val);
                 free_edge_internals(&entry->edge);

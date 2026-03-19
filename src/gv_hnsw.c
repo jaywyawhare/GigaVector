@@ -17,6 +17,7 @@
 #include "gigavector/gv_vector.h"
 #include "gigavector/gv_binary_quant.h"
 #include "gigavector/gv_soa_storage.h"
+#include "gigavector/gv_utils.h"
 
 typedef struct {
     size_t vector_index;             /**< Index into GV_SoAStorage */
@@ -70,41 +71,6 @@ typedef struct {
     size_t insert_buf_size;
 } GV_HNSWIndex;
 
-static const char *gv_metadata_get_direct(GV_Metadata *metadata, const char *key) {
-    if (metadata == NULL || key == NULL) return NULL;
-    GV_Metadata *current = metadata;
-    while (current != NULL) {
-        if (strcmp(current->key, key) == 0) return current->value;
-        current = current->next;
-    }
-    return NULL;
-}
-
-static GV_Metadata *gv_metadata_copy(GV_Metadata *src) {
-    if (src == NULL) return NULL;
-    GV_Metadata *head = NULL, *tail = NULL;
-    GV_Metadata *current = src;
-    while (current != NULL) {
-        GV_Metadata *new_meta = (GV_Metadata *)malloc(sizeof(GV_Metadata));
-        if (new_meta == NULL) {
-            while (head) { GV_Metadata *n = head->next; free(head->key); free(head->value); free(head); head = n; }
-            return NULL;
-        }
-        new_meta->key = (char *)malloc(strlen(current->key) + 1);
-        new_meta->value = (char *)malloc(strlen(current->value) + 1);
-        if (!new_meta->key || !new_meta->value) {
-            free(new_meta->key); free(new_meta->value); free(new_meta);
-            while (head) { GV_Metadata *n = head->next; free(head->key); free(head->value); free(head); head = n; }
-            return NULL;
-        }
-        strcpy(new_meta->key, current->key);
-        strcpy(new_meta->value, current->value);
-        new_meta->next = NULL;
-        if (!head) { head = tail = new_meta; } else { tail->next = new_meta; tail = new_meta; }
-        current = current->next;
-    }
-    return head;
-}
 
 static size_t calculate_level(size_t maxLevel, size_t M) {
     double r = (double)rand() / ((double)RAND_MAX + 1.0);
@@ -1254,47 +1220,15 @@ int gv_hnsw_update(void *index_ptr, size_t node_index, const float *new_data, si
     return 0;
 }
 
-static int gv_write_uint32(FILE *out, uint32_t v) { return (fwrite(&v, 4, 1, out) == 1) ? 0 : -1; }
-static int gv_write_uint64(FILE *out, uint64_t v) { return (fwrite(&v, 8, 1, out) == 1) ? 0 : -1; }
-static int gv_write_floats(FILE *out, const float *d, size_t c) { return (fwrite(d, 4, c, out) == c) ? 0 : -1; }
-static int gv_write_string(FILE *out, const char *s, uint32_t len) {
-    if (!s && len > 0) return -1;
-    if (gv_write_uint32(out, len) != 0) return -1;
-    if (len == 0) return 0;
-    return (fwrite(s, 1, len, out) == len) ? 0 : -1;
-}
-static int gv_write_metadata(FILE *out, const GV_Metadata *m) {
-    uint32_t count = 0;
-    for (const GV_Metadata *c = m; c; c = c->next) count++;
-    if (gv_write_uint32(out, count) != 0) return -1;
-    for (const GV_Metadata *c = m; c; c = c->next) {
-        if (gv_write_string(out, c->key, (uint32_t)strlen(c->key)) != 0) return -1;
-        if (gv_write_string(out, c->value, (uint32_t)strlen(c->value)) != 0) return -1;
-    }
-    return 0;
-}
-static int gv_read_uint32(FILE *in, uint32_t *v) { return (v && fread(v, 4, 1, in) == 1) ? 0 : -1; }
-static int gv_read_uint64(FILE *in, uint64_t *v) { return (v && fread(v, 8, 1, in) == 1) ? 0 : -1; }
-static int gv_read_floats(FILE *in, float *d, size_t c) { return (d && fread(d, 4, c, in) == c) ? 0 : -1; }
-static int gv_read_string(FILE *in, char **s, uint32_t len) {
-    if (!s) return -1;
-    *s = NULL;
-    if (len == 0) { *s = (char *)calloc(1, 1); return *s ? 0 : -1; }
-    char *buf = (char *)malloc(len + 1);
-    if (!buf) return -1;
-    if (fread(buf, 1, len, in) != len) { free(buf); return -1; }
-    buf[len] = '\0'; *s = buf;
-    return 0;
-}
 static int gv_read_metadata(FILE *in, GV_Vector *vec) {
     if (!vec) return -1;
     uint32_t count = 0;
-    if (gv_read_uint32(in, &count) != 0) return -1;
+    if (gv_read_u32(in, &count) != 0) return -1;
     for (uint32_t i = 0; i < count; ++i) {
         uint32_t kl = 0, vl = 0;
         char *key = NULL, *value = NULL;
-        if (gv_read_uint32(in, &kl) != 0 || gv_read_string(in, &key, kl) != 0) { free(key); return -1; }
-        if (gv_read_uint32(in, &vl) != 0 || gv_read_string(in, &value, vl) != 0) { free(key); free(value); return -1; }
+        if (gv_read_u32(in, &kl) != 0 || gv_read_str(in, &key, kl) != 0) { free(key); return -1; }
+        if (gv_read_u32(in, &vl) != 0 || gv_read_str(in, &value, vl) != 0) { free(key); free(value); return -1; }
         if (gv_vector_set_metadata(vec, key, value) != 0) { free(key); free(value); return -1; }
         free(key); free(value);
     }
@@ -1305,18 +1239,18 @@ int gv_hnsw_save(const void *index_ptr, FILE *out, uint32_t version) {
     if (!index_ptr || !out) return -1;
     GV_HNSWIndex *index = (GV_HNSWIndex *)index_ptr;
 
-    if (gv_write_uint32(out, (uint32_t)index->M) != 0) return -1;
-    if (gv_write_uint32(out, (uint32_t)index->efConstruction) != 0) return -1;
-    if (gv_write_uint32(out, (uint32_t)index->efSearch) != 0) return -1;
-    if (gv_write_uint32(out, (uint32_t)index->maxLevel) != 0) return -1;
-    if (gv_write_uint64(out, (uint64_t)index->count) != 0) return -1;
+    if (gv_write_u32(out, (uint32_t)index->M) != 0) return -1;
+    if (gv_write_u32(out, (uint32_t)index->efConstruction) != 0) return -1;
+    if (gv_write_u32(out, (uint32_t)index->efSearch) != 0) return -1;
+    if (gv_write_u32(out, (uint32_t)index->maxLevel) != 0) return -1;
+    if (gv_write_u64(out, (uint64_t)index->count) != 0) return -1;
 
     uint64_t ep = (index->entry_point == SIZE_MAX) ? UINT64_MAX : (uint64_t)index->entry_point;
-    if (gv_write_uint64(out, ep) != 0) return -1;
+    if (gv_write_u64(out, ep) != 0) return -1;
 
     /* Pass 1: node data */
     for (size_t i = 0; i < index->count; ++i) {
-        if (gv_write_uint32(out, (uint32_t)index->nodes[i].level) != 0) return -1;
+        if (gv_write_u32(out, (uint32_t)index->nodes[i].level) != 0) return -1;
         const float *vd = gv_soa_storage_get_data(index->soa_storage, index->nodes[i].vector_index);
         if (!vd) return -1;
         if (gv_write_floats(out, vd, index->dimension) != 0) return -1;
@@ -1330,10 +1264,10 @@ int gv_hnsw_save(const void *index_ptr, FILE *out, uint32_t version) {
     for (size_t i = 0; i < index->count; ++i) {
         for (size_t l = 0; l <= index->nodes[i].level; ++l) {
             size_t nc = count_neighbors(index, i, l);
-            if (gv_write_uint32(out, (uint32_t)nc) != 0) return -1;
+            if (gv_write_u32(out, (uint32_t)nc) != 0) return -1;
             int32_t *start = nb_begin(index, i, l);
             for (size_t j = 0; j < nc; ++j) {
-                if (gv_write_uint64(out, (uint64_t)start[j]) != 0) return -1;
+                if (gv_write_u64(out, (uint64_t)start[j]) != 0) return -1;
             }
         }
     }
@@ -1345,12 +1279,12 @@ int gv_hnsw_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version)
 
     uint32_t M = 0, efConstruction = 0, efSearch = 0, maxLevel = 0;
     uint64_t count = 0, entry_point_idx = 0;
-    if (gv_read_uint32(in, &M) != 0) return -1;
-    if (gv_read_uint32(in, &efConstruction) != 0) return -1;
-    if (gv_read_uint32(in, &efSearch) != 0) return -1;
-    if (gv_read_uint32(in, &maxLevel) != 0) return -1;
-    if (gv_read_uint64(in, &count) != 0) return -1;
-    if (gv_read_uint64(in, &entry_point_idx) != 0) return -1;
+    if (gv_read_u32(in, &M) != 0) return -1;
+    if (gv_read_u32(in, &efConstruction) != 0) return -1;
+    if (gv_read_u32(in, &efSearch) != 0) return -1;
+    if (gv_read_u32(in, &maxLevel) != 0) return -1;
+    if (gv_read_u64(in, &count) != 0) return -1;
+    if (gv_read_u64(in, &entry_point_idx) != 0) return -1;
 
     GV_HNSWConfig config = {.M = M, .efConstruction = efConstruction, .efSearch = efSearch, .maxLevel = maxLevel};
     void *idx = gv_hnsw_create(dimension, &config, NULL);
@@ -1379,7 +1313,7 @@ int gv_hnsw_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version)
     /* Read nodes */
     for (size_t i = 0; i < (size_t)count; ++i) {
         uint32_t lev = 0;
-        if (gv_read_uint32(in, &lev) != 0) { gv_hnsw_destroy(idx); return -1; }
+        if (gv_read_u32(in, &lev) != 0) { gv_hnsw_destroy(idx); return -1; }
 
         float *vd = (float *)malloc(dimension * sizeof(float));
         if (!vd) { gv_hnsw_destroy(idx); return -1; }
@@ -1409,19 +1343,19 @@ int gv_hnsw_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version)
     for (size_t i = 0; i < (size_t)count; ++i) {
         for (size_t l = 0; l <= hnsw->nodes[i].level; ++l) {
             uint32_t nc = 0;
-            if (gv_read_uint32(in, &nc) != 0) { gv_hnsw_destroy(idx); return -1; }
+            if (gv_read_u32(in, &nc) != 0) { gv_hnsw_destroy(idx); return -1; }
             int32_t *start = nb_begin(hnsw, i, l);
             size_t max_n = max_nb_at_level(hnsw, l);
             for (uint32_t j = 0; j < nc && j < (uint32_t)max_n; ++j) {
                 uint64_t ni = 0;
-                if (gv_read_uint64(in, &ni) != 0) { gv_hnsw_destroy(idx); return -1; }
+                if (gv_read_u64(in, &ni) != 0) { gv_hnsw_destroy(idx); return -1; }
                 if (ni >= count) { gv_hnsw_destroy(idx); return -1; }
                 start[j] = (int32_t)ni;
             }
             /* Skip excess */
             for (uint32_t j = (uint32_t)max_n; j < nc; ++j) {
                 uint64_t dummy;
-                gv_read_uint64(in, &dummy);
+                gv_read_u64(in, &dummy);
             }
         }
     }

@@ -193,16 +193,7 @@ static int kg_prop_set(GV_KGProp **head, size_t *count,
     return 0;
 }
 
-static float kg_cosine_similarity(const float *a, const float *b, size_t dim) {
-    float dot = 0.0f, na = 0.0f, nb = 0.0f;
-    for (size_t i = 0; i < dim; i++) {
-        dot += a[i] * b[i];
-        na  += a[i] * a[i];
-        nb  += b[i] * b[i];
-    }
-    if (na < 1e-12f || nb < 1e-12f) return 0.0f;
-    return dot / (sqrtf(na) * sqrtf(nb));
-}
+
 
 static KG_EntityNode *kg_find_entity_node(const GV_KnowledgeGraph *kg,
                                            uint64_t entity_id) {
@@ -1144,7 +1135,7 @@ int gv_kg_search_similar(const GV_KnowledgeGraph *kg,
     size_t dim = kg->config.embedding_dimension;
     for (size_t i = 0; i < n; i++) {
         pairs[i].id = kg->embedding_entity_ids[i];
-        pairs[i].score = kg_cosine_similarity(query_embedding,
+        pairs[i].score = gv_cosine_similarity(query_embedding,
                                                kg->all_embeddings + i * dim,
                                                dim);
     }
@@ -1196,7 +1187,7 @@ int gv_kg_search_by_text(const GV_KnowledgeGraph *kg, const char *text,
                 const float *emb = kg_embedding_get(kg,
                     n->entity.entity_id, NULL);
                 if (emb) {
-                    float sim = kg_cosine_similarity(text_embedding, emb, dim);
+                    float sim = gv_cosine_similarity(text_embedding, emb, dim);
                     score += sim;
                 }
             }
@@ -1270,7 +1261,7 @@ int gv_kg_resolve_entity(GV_KnowledgeGraph *kg, const char *name,
             if (!en || !en->entity.type) continue;
             if (strcmp(en->entity.type, type) != 0) continue;
 
-            float sim = kg_cosine_similarity(embedding,
+            float sim = gv_cosine_similarity(embedding,
                 kg->all_embeddings + i * dim, dim);
             if (sim > best_sim) {
                 best_sim = sim;
@@ -1302,7 +1293,7 @@ int gv_kg_find_duplicates(const GV_KnowledgeGraph *kg, float threshold,
 
     for (size_t i = 0; i < n && found < max_count; i++) {
         for (size_t j = i + 1; j < n && found < max_count; j++) {
-            float sim = kg_cosine_similarity(
+            float sim = gv_cosine_similarity(
                 kg->all_embeddings + i * dim,
                 kg->all_embeddings + j * dim, dim);
             if (sim >= threshold) {
@@ -1417,7 +1408,7 @@ int gv_kg_predict_links(const GV_KnowledgeGraph *kg, uint64_t entity_id,
         if (other_id == entity_id) continue;
         if (kg_are_connected(kg, entity_id, other_id)) continue;
 
-        float sim = kg_cosine_similarity(src_emb,
+        float sim = gv_cosine_similarity(src_emb,
             kg->all_embeddings + i * dim, dim);
         if (sim < kg->config.link_prediction_threshold) continue;
 
@@ -1761,7 +1752,7 @@ int gv_kg_hybrid_search(const GV_KnowledgeGraph *kg,
         if (predicate_filter &&
             !kg_entity_has_predicate(kg, eid, predicate_filter)) continue;
 
-        float sim = kg_cosine_similarity(query_embedding,
+        float sim = gv_cosine_similarity(query_embedding,
             kg->all_embeddings + i * dim, dim);
 
         if (pair_count >= cap) {
@@ -1958,33 +1949,12 @@ int gv_kg_get_predicates(const GV_KnowledgeGraph *kg, char **out_predicates,
     return (int)found;
 }
 
-/**
- * @brief Internal: write raw bytes to file.
- */
-static int kg_write_bytes(FILE *fp, const void *data, size_t len) {
-    return (fwrite(data, 1, len, fp) == len) ? 0 : -1;
-}
-
-static int kg_write_u64(FILE *fp, uint64_t v) {
-    return kg_write_bytes(fp, &v, sizeof(v));
-}
-
-static int kg_write_f32(FILE *fp, float v) {
-    return kg_write_bytes(fp, &v, sizeof(v));
-}
-
-static int kg_write_string(FILE *fp, const char *s) {
-    uint32_t len = s ? (uint32_t)strlen(s) : 0;
-    if (gv_write_u32(fp, len) != 0) return -1;
-    if (len > 0 && kg_write_bytes(fp, s, len) != 0) return -1;
-    return 0;
-}
 
 static int kg_write_props(FILE *fp, const GV_KGProp *props, size_t count) {
     if (gv_write_u32(fp, (uint32_t)count) != 0) return -1;
     for (const GV_KGProp *p = props; p; p = p->next) {
-        if (kg_write_string(fp, p->key) != 0) return -1;
-        if (kg_write_string(fp, p->value) != 0) return -1;
+        if (gv_write_string(fp, p->key) != 0) return -1;
+        if (gv_write_string(fp, p->value) != 0) return -1;
     }
     return 0;
 }
@@ -2000,36 +1970,36 @@ int gv_kg_save(const GV_KnowledgeGraph *kg, const char *path) {
         return -1;
     }
 
-    if (kg_write_bytes(fp, KG_MAGIC, KG_MAGIC_LEN) != 0) goto fail;
+    if (gv_write_bytes(fp, KG_MAGIC, KG_MAGIC_LEN) != 0) goto fail;
     if (gv_write_u32(fp, KG_VERSION) != 0) goto fail;
 
     if (gv_write_u32(fp, (uint32_t)kg->config.embedding_dimension) != 0)
         goto fail;
-    if (kg_write_f32(fp, kg->config.similarity_threshold) != 0) goto fail;
-    if (kg_write_f32(fp, kg->config.link_prediction_threshold) != 0)
+    if (gv_write_f32(fp, kg->config.similarity_threshold) != 0) goto fail;
+    if (gv_write_f32(fp, kg->config.link_prediction_threshold) != 0)
         goto fail;
 
-    if (kg_write_u64(fp, (uint64_t)kg->entity_count) != 0) goto fail;
-    if (kg_write_u64(fp, (uint64_t)kg->relation_count) != 0) goto fail;
-    if (kg_write_u64(fp, kg->next_entity_id) != 0) goto fail;
-    if (kg_write_u64(fp, kg->next_relation_id) != 0) goto fail;
+    if (gv_write_u64(fp, (uint64_t)kg->entity_count) != 0) goto fail;
+    if (gv_write_u64(fp, (uint64_t)kg->relation_count) != 0) goto fail;
+    if (gv_write_u64(fp, kg->next_entity_id) != 0) goto fail;
+    if (gv_write_u64(fp, kg->next_relation_id) != 0) goto fail;
 
     for (size_t b = 0; b < kg->entity_bucket_count; b++) {
         for (KG_EntityNode *n = kg->entity_buckets[b]; n; n = n->next) {
             const GV_KGEntity *e = &n->entity;
-            if (kg_write_u64(fp, e->entity_id) != 0) goto fail;
-            if (kg_write_string(fp, e->name) != 0) goto fail;
-            if (kg_write_string(fp, e->type) != 0) goto fail;
+            if (gv_write_u64(fp, e->entity_id) != 0) goto fail;
+            if (gv_write_string(fp, e->name) != 0) goto fail;
+            if (gv_write_string(fp, e->type) != 0) goto fail;
 
             uint8_t has_emb = (e->embedding && e->dimension > 0) ? 1 : 0;
             if (gv_write_u8(fp, has_emb) != 0) goto fail;
             if (has_emb) {
-                if (kg_write_bytes(fp, e->embedding,
+                if (gv_write_bytes(fp, e->embedding,
                     e->dimension * sizeof(float)) != 0) goto fail;
             }
 
-            if (kg_write_f32(fp, e->confidence) != 0) goto fail;
-            if (kg_write_u64(fp, e->created_at) != 0) goto fail;
+            if (gv_write_f32(fp, e->confidence) != 0) goto fail;
+            if (gv_write_u64(fp, e->created_at) != 0) goto fail;
             if (kg_write_props(fp, e->properties, e->prop_count) != 0)
                 goto fail;
         }
@@ -2038,12 +2008,12 @@ int gv_kg_save(const GV_KnowledgeGraph *kg, const char *path) {
     for (size_t b = 0; b < kg->relation_bucket_count; b++) {
         for (KG_RelationNode *n = kg->relation_buckets[b]; n; n = n->next) {
             const GV_KGRelation *r = &n->relation;
-            if (kg_write_u64(fp, r->relation_id) != 0) goto fail;
-            if (kg_write_u64(fp, r->subject_id) != 0) goto fail;
-            if (kg_write_u64(fp, r->object_id) != 0) goto fail;
-            if (kg_write_string(fp, r->predicate) != 0) goto fail;
-            if (kg_write_f32(fp, r->weight) != 0) goto fail;
-            if (kg_write_u64(fp, r->created_at) != 0) goto fail;
+            if (gv_write_u64(fp, r->relation_id) != 0) goto fail;
+            if (gv_write_u64(fp, r->subject_id) != 0) goto fail;
+            if (gv_write_u64(fp, r->object_id) != 0) goto fail;
+            if (gv_write_string(fp, r->predicate) != 0) goto fail;
+            if (gv_write_f32(fp, r->weight) != 0) goto fail;
+            if (gv_write_u64(fp, r->created_at) != 0) goto fail;
 
             size_t pc = 0;
             for (GV_KGProp *p = r->properties; p; p = p->next) pc++;
@@ -2061,28 +2031,6 @@ fail:
     return -1;
 }
 
-static int kg_read_bytes(FILE *fp, void *buf, size_t len) {
-    return (fread(buf, 1, len, fp) == len) ? 0 : -1;
-}
-
-static int kg_read_u64(FILE *fp, uint64_t *v) {
-    return kg_read_bytes(fp, v, sizeof(*v));
-}
-
-static int kg_read_f32(FILE *fp, float *v) {
-    return kg_read_bytes(fp, v, sizeof(*v));
-}
-
-static char *kg_read_string(FILE *fp) {
-    uint32_t len;
-    if (gv_read_u32(fp, &len) != 0) return NULL;
-    if (len == 0) return gv_strdup("");
-    char *s = (char *)malloc(len + 1);
-    if (!s) return NULL;
-    if (kg_read_bytes(fp, s, len) != 0) { free(s); return NULL; }
-    s[len] = '\0';
-    return s;
-}
 
 static GV_KGProp *kg_read_props(FILE *fp, uint32_t count) {
     GV_KGProp *head = NULL;
@@ -2090,8 +2038,8 @@ static GV_KGProp *kg_read_props(FILE *fp, uint32_t count) {
     for (uint32_t i = 0; i < count; i++) {
         GV_KGProp *p = (GV_KGProp *)calloc(1, sizeof(GV_KGProp));
         if (!p) return head;
-        p->key = kg_read_string(fp);
-        p->value = kg_read_string(fp);
+        p->key = gv_read_string(fp);
+        p->value = gv_read_string(fp);
         p->next = NULL;
         if (!p->key || !p->value) {
             free(p->key);
@@ -2113,7 +2061,7 @@ GV_KnowledgeGraph *gv_kg_load(const char *path) {
     if (!fp) return NULL;
 
     char magic[KG_MAGIC_LEN];
-    if (kg_read_bytes(fp, magic, KG_MAGIC_LEN) != 0 ||
+    if (gv_read_bytes(fp, magic, KG_MAGIC_LEN) != 0 ||
         memcmp(magic, KG_MAGIC, KG_MAGIC_LEN) != 0) {
         fclose(fp);
         return NULL;
@@ -2128,8 +2076,8 @@ GV_KnowledgeGraph *gv_kg_load(const char *path) {
     uint32_t emb_dim;
     float sim_thresh, lp_thresh;
     if (gv_read_u32(fp, &emb_dim) != 0) { fclose(fp); return NULL; }
-    if (kg_read_f32(fp, &sim_thresh) != 0) { fclose(fp); return NULL; }
-    if (kg_read_f32(fp, &lp_thresh) != 0) { fclose(fp); return NULL; }
+    if (gv_read_f32(fp, &sim_thresh) != 0) { fclose(fp); return NULL; }
+    if (gv_read_f32(fp, &lp_thresh) != 0) { fclose(fp); return NULL; }
 
     GV_KGConfig cfg;
     gv_kg_config_init(&cfg);
@@ -2138,10 +2086,10 @@ GV_KnowledgeGraph *gv_kg_load(const char *path) {
     cfg.link_prediction_threshold = lp_thresh;
 
     uint64_t entity_count, relation_count, next_eid, next_rid;
-    if (kg_read_u64(fp, &entity_count) != 0) { fclose(fp); return NULL; }
-    if (kg_read_u64(fp, &relation_count) != 0) { fclose(fp); return NULL; }
-    if (kg_read_u64(fp, &next_eid) != 0) { fclose(fp); return NULL; }
-    if (kg_read_u64(fp, &next_rid) != 0) { fclose(fp); return NULL; }
+    if (gv_read_u64(fp, &entity_count) != 0) { fclose(fp); return NULL; }
+    if (gv_read_u64(fp, &relation_count) != 0) { fclose(fp); return NULL; }
+    if (gv_read_u64(fp, &next_eid) != 0) { fclose(fp); return NULL; }
+    if (gv_read_u64(fp, &next_rid) != 0) { fclose(fp); return NULL; }
 
     GV_KnowledgeGraph *kg = gv_kg_create(&cfg);
     if (!kg) { fclose(fp); return NULL; }
@@ -2150,10 +2098,10 @@ GV_KnowledgeGraph *gv_kg_load(const char *path) {
 
     for (uint64_t i = 0; i < entity_count; i++) {
         uint64_t eid;
-        if (kg_read_u64(fp, &eid) != 0) goto load_fail;
+        if (gv_read_u64(fp, &eid) != 0) goto load_fail;
 
-        char *name = kg_read_string(fp);
-        char *type = kg_read_string(fp);
+        char *name = gv_read_string(fp);
+        char *type = gv_read_string(fp);
         if (!name || !type) {
             free(name);
             free(type);
@@ -2169,7 +2117,7 @@ GV_KnowledgeGraph *gv_kg_load(const char *path) {
         float *emb_data = NULL;
         if (has_emb && emb_dim > 0) {
             emb_data = (float *)malloc(emb_dim * sizeof(float));
-            if (!emb_data || kg_read_bytes(fp, emb_data,
+            if (!emb_data || gv_read_bytes(fp, emb_data,
                 emb_dim * sizeof(float)) != 0) {
                 free(emb_data); free(name); free(type);
                 goto load_fail;
@@ -2178,8 +2126,8 @@ GV_KnowledgeGraph *gv_kg_load(const char *path) {
 
         float confidence;
         uint64_t created_at;
-        if (kg_read_f32(fp, &confidence) != 0 ||
-            kg_read_u64(fp, &created_at) != 0) {
+        if (gv_read_f32(fp, &confidence) != 0 ||
+            gv_read_u64(fp, &created_at) != 0) {
             free(emb_data); free(name); free(type);
             goto load_fail;
         }
@@ -2222,17 +2170,17 @@ GV_KnowledgeGraph *gv_kg_load(const char *path) {
 
     for (uint64_t i = 0; i < relation_count; i++) {
         uint64_t rid, sid, oid;
-        if (kg_read_u64(fp, &rid) != 0 ||
-            kg_read_u64(fp, &sid) != 0 ||
-            kg_read_u64(fp, &oid) != 0) goto load_fail;
+        if (gv_read_u64(fp, &rid) != 0 ||
+            gv_read_u64(fp, &sid) != 0 ||
+            gv_read_u64(fp, &oid) != 0) goto load_fail;
 
-        char *predicate = kg_read_string(fp);
+        char *predicate = gv_read_string(fp);
         if (!predicate) goto load_fail;
 
         float weight;
         uint64_t created_at;
-        if (kg_read_f32(fp, &weight) != 0 ||
-            kg_read_u64(fp, &created_at) != 0) {
+        if (gv_read_f32(fp, &weight) != 0 ||
+            gv_read_u64(fp, &created_at) != 0) {
             free(predicate);
             goto load_fail;
         }
