@@ -299,7 +299,7 @@ static int test_link_prediction(void) {
 
     uint64_t e1 = gv_kg_add_entity(kg, "Alice", "Person", emb1, DIM);
     uint64_t e2 = gv_kg_add_entity(kg, "Bob", "Person", emb2, DIM);
-    uint64_t e3 = gv_kg_add_entity(kg, "Charlie", "Person", emb3, DIM);
+    gv_kg_add_entity(kg, "Charlie", "Person", emb3, DIM);
 
     gv_kg_add_relation(kg, e1, "knows", e2, 1.0f);
 
@@ -417,7 +417,7 @@ static int test_save_load(void) {
     uint64_t e1 = gv_kg_add_entity(kg, "Alice", "Person", emb, DIM);
     uint64_t e2 = gv_kg_add_entity(kg, "Bob", "Person", NULL, 0);
     gv_kg_set_entity_prop(kg, e1, "email", "alice@test.com");
-    uint64_t r = gv_kg_add_relation(kg, e1, "knows", e2, 0.8f);
+    gv_kg_add_relation(kg, e1, "knows", e2, 0.8f);
 
     ASSERT(gv_kg_save(kg, path) == 0, "save KG");
     gv_kg_destroy(kg);

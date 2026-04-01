@@ -171,8 +171,8 @@ static int test_adjacency_queries(void) {
     uint64_t b = gv_graph_add_node(g, "B");
     uint64_t c = gv_graph_add_node(g, "C");
 
-    uint64_t e1 = gv_graph_add_edge(g, a, b, "R1", 1.0f);
-    uint64_t e2 = gv_graph_add_edge(g, a, c, "R2", 1.0f);
+    gv_graph_add_edge(g, a, b, "R1", 1.0f);
+    gv_graph_add_edge(g, a, c, "R2", 1.0f);
     uint64_t e3 = gv_graph_add_edge(g, b, a, "R3", 1.0f);
 
     uint64_t out[10];
