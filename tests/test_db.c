@@ -67,7 +67,6 @@ static int test_save_load_and_wal(void) {
 
 static int test_all_index_types(void) {
     GV_IndexType types[] = {GV_INDEX_TYPE_KDTREE, GV_INDEX_TYPE_HNSW, GV_INDEX_TYPE_IVFPQ};
-    const char *type_names[] = {"KDTREE", "HNSW", "IVFPQ"};
     
     for (int t = 0; t < 3; t++) {
         GV_Database *db = gv_db_open(NULL, 8, types[t]);
