@@ -33,6 +33,7 @@ typedef enum {
     GV_SQL_TOK_RPAREN,
     GV_SQL_TOK_LBRACKET,
     GV_SQL_TOK_RBRACKET,
+    GV_SQL_TOK_SEMICOLON,
     GV_SQL_TOK_EQ,
     GV_SQL_TOK_NE,
     GV_SQL_TOK_LT,
@@ -138,6 +139,7 @@ static GV_SQLToken gv_sql_lexer_next(GV_SQLLexer *lx)
     if (c == ')') { lx->pos++; tok.type = GV_SQL_TOK_RPAREN;   return tok; }
     if (c == '[') { lx->pos++; tok.type = GV_SQL_TOK_LBRACKET; return tok; }
     if (c == ']') { lx->pos++; tok.type = GV_SQL_TOK_RBRACKET; return tok; }
+    if (c == ';') { lx->pos++; tok.type = GV_SQL_TOK_SEMICOLON; return tok; }
 
     /* Two-character operators */
     if (c == '!' && lx->input[lx->pos + 1] == '=') {
@@ -146,6 +148,8 @@ static GV_SQLToken gv_sql_lexer_next(GV_SQLLexer *lx)
     if (c == '<') {
         if (lx->input[lx->pos + 1] == '=') {
             lx->pos += 2; tok.type = GV_SQL_TOK_LE;
+        } else if (lx->input[lx->pos + 1] == '>') {
+            lx->pos += 2; tok.type = GV_SQL_TOK_NE;
         } else {
             lx->pos++;    tok.type = GV_SQL_TOK_LT;
         }
@@ -314,6 +318,16 @@ static GV_SQLToken *gv_sql_advance(GV_SQLTokenBuf *buf)
     if (buf->pos < buf->count)
         return &buf->tokens[buf->pos++];
     return NULL;
+}
+
+static int gv_sql_consume_trailing_semicolons(GV_SQLTokenBuf *buf)
+{
+    GV_SQLToken *tok = gv_sql_peek(buf);
+    while (tok && tok->type == GV_SQL_TOK_SEMICOLON) {
+        gv_sql_advance(buf);
+        tok = gv_sql_peek(buf);
+    }
+    return (tok && tok->type == GV_SQL_TOK_EOF) ? 0 : -1;
 }
 
 static int gv_sql_expect(GV_SQLTokenBuf *buf, GV_SQLTokenType type)
@@ -648,7 +662,7 @@ static GV_SQLStmt *gv_sql_parse_select(GV_SQLTokenBuf *buf)
     GV_SQLToken *tok = gv_sql_peek(buf);
     if (!tok) { gv_sql_stmt_free(stmt); return NULL; }
 
-    /* SELECT COUNT(*) or SELECT * */
+    /* SELECT COUNT(*) or SELECT * or SELECT field[,field...] */
     if (tok->type == GV_SQL_TOK_COUNT) {
         gv_sql_advance(buf);
         if (!gv_sql_expect(buf, GV_SQL_TOK_LPAREN) ||
@@ -660,6 +674,22 @@ static GV_SQLStmt *gv_sql_parse_select(GV_SQLTokenBuf *buf)
         stmt->is_count = 1;
     } else if (tok->type == GV_SQL_TOK_STAR) {
         gv_sql_advance(buf);
+    } else if (tok->type == GV_SQL_TOK_IDENT) {
+        /* Parse projection list; executor currently returns canonical columns. */
+        for (;;) {
+            tok = gv_sql_peek(buf);
+            if (!tok || tok->type != GV_SQL_TOK_IDENT) {
+                gv_sql_stmt_free(stmt);
+                return NULL;
+            }
+            gv_sql_advance(buf);
+            tok = gv_sql_peek(buf);
+            if (tok && tok->type == GV_SQL_TOK_COMMA) {
+                gv_sql_advance(buf);
+                continue;
+            }
+            break;
+        }
     } else {
         gv_sql_stmt_free(stmt);
         return NULL;
@@ -702,6 +732,19 @@ static GV_SQLStmt *gv_sql_parse_select(GV_SQLTokenBuf *buf)
         stmt->order_field = gv_strdup(tok->text);
         gv_sql_advance(buf);
         if (!stmt->order_field) { gv_sql_stmt_free(stmt); return NULL; }
+
+        /* Optional function-style ORDER key: field(...). */
+        tok = gv_sql_peek(buf);
+        if (tok && tok->type == GV_SQL_TOK_LPAREN) {
+            int depth = 0;
+            do {
+                tok = gv_sql_peek(buf);
+                if (!tok) { gv_sql_stmt_free(stmt); return NULL; }
+                if (tok->type == GV_SQL_TOK_LPAREN) depth++;
+                else if (tok->type == GV_SQL_TOK_RPAREN) depth--;
+                gv_sql_advance(buf);
+            } while (depth > 0);
+        }
 
         tok = gv_sql_peek(buf);
         if (tok && tok->type == GV_SQL_TOK_DESC) {
@@ -1370,8 +1413,7 @@ int gv_sql_execute(GV_SQLEngine *eng, const char *query, GV_SQLResult *result)
     }
 
     /* Check for trailing tokens */
-    GV_SQLToken *remaining = gv_sql_peek(&tbuf);
-    if (remaining && remaining->type != GV_SQL_TOK_EOF) {
+    if (gv_sql_consume_trailing_semicolons(&tbuf) != 0) {
         gv_sql_set_error(eng, "Parse error: unexpected tokens after statement");
         gv_sql_stmt_free(stmt);
         gv_sql_tokenbuf_free(&tbuf);
@@ -1458,6 +1500,14 @@ int gv_sql_explain(GV_SQLEngine *eng, const char *query, char *plan, size_t plan
             gv_sql_set_error(eng, "Parse error: %s", tbuf.error);
         else
             gv_sql_set_error(eng, "Parse error: invalid SQL syntax");
+        gv_sql_tokenbuf_free(&tbuf);
+        pthread_mutex_unlock(&eng->mutex);
+        return -1;
+    }
+
+    if (gv_sql_consume_trailing_semicolons(&tbuf) != 0) {
+        gv_sql_set_error(eng, "Parse error: unexpected tokens after statement");
+        gv_sql_stmt_free(stmt);
         gv_sql_tokenbuf_free(&tbuf);
         pthread_mutex_unlock(&eng->mutex);
         return -1;
