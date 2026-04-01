@@ -181,6 +181,7 @@ static int execute_ann_phase(const GV_Database *db,
                              const GV_PhaseConfig *config,
                              const float *query, size_t dimension,
                              Candidate **out_candidates) {
+    (void)dimension;
     size_t fetch_k = config->output_k;
     if (fetch_k == 0) fetch_k = 100;
 

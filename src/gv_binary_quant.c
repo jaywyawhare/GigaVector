@@ -118,6 +118,7 @@ size_t gv_binary_hamming_distance_fast(const GV_BinaryVector *a, const GV_Binary
     size_t bytes = a->bytes_per_vector;
     size_t full_uint64s = bytes / 8;
     size_t remaining_bytes = bytes % 8;
+    (void)remaining_bytes;
 
 #ifdef __AVX2__
     if (full_uint64s >= 4) {
