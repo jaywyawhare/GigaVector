@@ -50,6 +50,7 @@ static void gv_rate_limiter_destroy(GV_RateLimiter *rl) {
     pthread_mutex_destroy(&rl->mutex);
 }
 
+#ifdef HAVE_MICROHTTPD
 /**
  * @brief Try to consume one token. Returns 1 if allowed, 0 if rate-limited.
  */
@@ -76,6 +77,8 @@ static int gv_rate_limiter_allow(GV_RateLimiter *rl) {
     pthread_mutex_unlock(&rl->mutex);
     return 0;
 }
+
+#endif /* HAVE_MICROHTTPD */
 
 /* Internal Structures */
 
@@ -311,6 +314,7 @@ static enum MHD_Result answer_to_connection(void *cls,
         return ret;
     }
 
+#ifdef HAVE_MICROHTTPD
     /* Check rate limit */
     if (server->rate_limit_enabled && !gv_rate_limiter_allow(&server->rate_limiter)) {
         const char *rate_json = "{\"error\":\"rate limit exceeded\"}";
@@ -328,6 +332,7 @@ static enum MHD_Result answer_to_connection(void *cls,
 
         return ret;
     }
+#endif /* HAVE_MICROHTTPD */
 
     /* Check authentication */
     if (!check_auth(server, connection)) {
