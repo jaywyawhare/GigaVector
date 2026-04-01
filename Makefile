@@ -1,5 +1,8 @@
 CC      := gcc
-CFLAGS  := -O3 -g -Wall -Wextra -MMD -Iinclude -march=native -msse4.2 -mavx2 -mavx512f -mfma -pthread -fPIC -DHAVE_CURL
+BASE_CFLAGS := -O3 -g -Wall -Wextra -MMD -Iinclude -pthread -fPIC
+SIMD_FLAGS ?=
+CURL_FLAGS ?= -DHAVE_CURL
+CFLAGS  := $(BASE_CFLAGS) $(SIMD_FLAGS) $(CURL_FLAGS)
 LDFLAGS := -lm -pthread -lcurl
 
 BUILD_DIR   := build
@@ -12,7 +15,7 @@ DATA_DIR    := snapshots
 BENCH_DIR   := $(BUILD_DIR)/bench
 
 LIB_NAME    := GigaVector
-LIB_VERSION := 0.0.1 
+LIB_VERSION := 0.8.2
 STATIC_LIB  := $(LIB_DIR)/lib$(LIB_NAME).a
 SHARED_LIB  := $(LIB_DIR)/lib$(LIB_NAME).so
 
@@ -193,13 +196,13 @@ test-ubsan:
 	@echo "All UBSAN tests passed"
 
 .PHONY: test-valgrind
-test-valgrind: lib $(BUILD_DIR)/test_test_db
+test-valgrind: lib $(BUILD_DIR)/test_db
 	@echo "Running tests with Valgrind..."
 	@if command -v valgrind >/dev/null 2>&1; then \
 		VALGRIND_OUTPUT=$$(LD_LIBRARY_PATH=$(LIB_DIR):$$LD_LIBRARY_PATH \
 			valgrind --leak-check=full --show-leak-kinds=all \
 			--track-origins=yes --error-exitcode=1 \
-			$(BUILD_DIR)/test_test_db 2>&1); \
+			$(BUILD_DIR)/test_db 2>&1); \
 		VALGRIND_EXIT=$$?; \
 		echo "$$VALGRIND_OUTPUT"; \
 		if echo "$$VALGRIND_OUTPUT" | grep -q "Fatal error at startup"; then \
@@ -226,7 +229,7 @@ test-all: c-test python-test-comprehensive test-asan test-tsan test-ubsan
 test-coverage:
 	@$(MAKE) clean
 	@echo "Building with coverage instrumentation (using -O0 for accurate coverage)..."
-	@$(MAKE) CFLAGS="-O0 -g -Wall -Wextra -MMD -Iinclude -march=native -msse4.2 -mavx2 -mavx512f -mfma -pthread -fPIC -DHAVE_CURL --coverage" \
+	@$(MAKE) CFLAGS="-O0 -g -Wall -Wextra -MMD -Iinclude -pthread -fPIC -DHAVE_CURL --coverage" \
 		LDFLAGS="-lm -pthread -lcurl --coverage" lib $(TEST_BINS)
 	@echo "Running tests with coverage..."
 	@for test in $(TEST_BINS); do \
