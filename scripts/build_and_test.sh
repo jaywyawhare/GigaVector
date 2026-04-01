@@ -5,11 +5,12 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BUILD_DIR="$SCRIPT_DIR/build"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+BUILD_DIR="$REPO_ROOT/build"
 LIB_DIR="$BUILD_DIR/lib"
 
 echo "=== Building GigaVector ==="
-cd "$SCRIPT_DIR"
+cd "$REPO_ROOT"
 make clean
 make lib
 
@@ -71,7 +72,6 @@ echo "To run individual tests:"
 echo "  LD_LIBRARY_PATH=$LIB_DIR:$LD_LIBRARY_PATH $BUILD_DIR/test_llm"
 echo "  LD_LIBRARY_PATH=$LIB_DIR:$LD_LIBRARY_PATH $BUILD_DIR/test_memory_llm"
 echo "  LD_LIBRARY_PATH=$LIB_DIR:$LD_LIBRARY_PATH $BUILD_DIR/test_embedding"
-
 
 
 
