@@ -46,7 +46,8 @@ Install from PyPI:
 pip install gigavector
 ```
 
-The package includes pre-built native libraries for supported platforms. No external dependencies required.
+The package includes the native `libGigaVector` shared library in wheel builds.
+When installing from source, a local C toolchain (and libcurl development headers) may be required to build the native library.
 
 ## Quick Start
 
