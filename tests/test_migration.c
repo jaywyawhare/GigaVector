@@ -113,7 +113,7 @@ static int test_migration_progress(void) {
 
     gv_migration_wait(mig);
     gv_migration_get_info(mig, &info);
-    ASSERT(info.elapsed_us >= 0, "elapsed_us should be non-negative");
+    ASSERT(info.elapsed_us > 0, "elapsed_us should be positive");
 
     gv_migration_destroy(mig);
     return 0;

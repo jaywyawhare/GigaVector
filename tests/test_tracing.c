@@ -93,7 +93,7 @@ static int test_trace_end(void) {
 
     gv_trace_end(trace);
     ASSERT(trace->active == 0, "trace should be inactive after end");
-    ASSERT(trace->total_duration_us >= 0, "total_duration_us should be set");
+    ASSERT((int64_t)trace->total_duration_us >= 0, "total_duration_us should be set");
 
     gv_trace_destroy(trace);
     return 0;

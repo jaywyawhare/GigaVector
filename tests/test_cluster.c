@@ -112,7 +112,7 @@ static int test_get_stats(void) {
     ASSERT(rc == 0, "gv_cluster_get_stats should succeed");
 
     ASSERT(stats.total_nodes >= 1, "total_nodes should be at least 1");
-    ASSERT(stats.active_nodes >= 0, "active_nodes should be non-negative");
+    ASSERT((int64_t)stats.active_nodes >= 0, "active_nodes should be non-negative");
 
     gv_cluster_destroy(cluster);
     return 0;
