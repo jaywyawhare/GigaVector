@@ -1163,16 +1163,9 @@ typedef struct {
     float score;
 } FT_DocScore;
 
-static int ft_docscore_cmp_desc(const void *a, const void *b) {
-    const FT_DocScore *da = (const FT_DocScore *)a;
-    const FT_DocScore *db = (const FT_DocScore *)b;
-    if (db->score > da->score) return 1;
-    if (db->score < da->score) return -1;
-    return 0;
-}
-
 static int ft_search_naive(const GV_FTIndex *idx, const FT_TokenList *query_tokens,
                             size_t limit, FT_MinHeap *heap) {
+    (void)limit;
     const char *unique_terms[256];
     size_t unique_count = 0;
     for (size_t i = 0; i < query_tokens->count && unique_count < 256; i++) {

@@ -134,22 +134,6 @@ static uint64_t kg_now_epoch(void) {
     return (uint64_t)time(NULL);
 }
 
-static GV_KGProp *kg_prop_clone_list(const GV_KGProp *src) {
-    GV_KGProp *head = NULL;
-    GV_KGProp *tail = NULL;
-    for (const GV_KGProp *p = src; p; p = p->next) {
-        GV_KGProp *node = (GV_KGProp *)calloc(1, sizeof(GV_KGProp));
-        if (!node) return head; /* partial clone on OOM */
-        node->key = gv_strdup(p->key);
-        node->value = gv_strdup(p->value);
-        node->next = NULL;
-        if (tail) tail->next = node;
-        else head = node;
-        tail = node;
-    }
-    return head;
-}
-
 static void kg_prop_free_list(GV_KGProp *head) {
     while (head) {
         GV_KGProp *next = head->next;

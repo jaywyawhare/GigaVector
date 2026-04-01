@@ -77,18 +77,6 @@ static size_t vocab_hash(const char *str, size_t bucket_count) {
     return h % bucket_count;
 }
 
-static GV_Vocab *vocab_create(void) {
-    GV_Vocab *v = calloc(1, sizeof(GV_Vocab));
-    if (!v) return NULL;
-    v->bucket_count = GV_ONNX_VOCAB_BUCKETS;
-    v->buckets = calloc(v->bucket_count, sizeof(GV_VocabEntry *));
-    if (!v->buckets) {
-        free(v);
-        return NULL;
-    }
-    return v;
-}
-
 static void vocab_destroy(GV_Vocab *v) {
     if (!v) return;
     for (size_t i = 0; i < v->bucket_count; i++) {
@@ -104,19 +92,6 @@ static void vocab_destroy(GV_Vocab *v) {
     free(v);
 }
 
-static int vocab_insert(GV_Vocab *v, const char *token, int64_t id) {
-    size_t idx = vocab_hash(token, v->bucket_count);
-    GV_VocabEntry *e = calloc(1, sizeof(GV_VocabEntry));
-    if (!e) return -1;
-    e->token = strdup(token);
-    if (!e->token) { free(e); return -1; }
-    e->id = id;
-    e->next = v->buckets[idx];
-    v->buckets[idx] = e;
-    v->size++;
-    return 0;
-}
-
 static int64_t vocab_lookup(const GV_Vocab *v, const char *token) {
     size_t idx = vocab_hash(token, v->bucket_count);
     for (const GV_VocabEntry *e = v->buckets[idx]; e; e = e->next) {
@@ -125,58 +100,11 @@ static int64_t vocab_lookup(const GV_Vocab *v, const char *token) {
     return GV_ONNX_UNK_TOKEN_ID;
 }
 
-/**
- * Load vocab.txt from the same directory as the model file.
- * Format: one token per line, ID equals the zero-based line number.
- */
-static GV_Vocab *vocab_load(const char *model_path) {
-    if (!model_path) return NULL;
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"
+#endif
 
-    /* Build vocab path: replace the filename with vocab.txt */
-    size_t path_len = strlen(model_path);
-    char *vocab_path = malloc(path_len + 16);
-    if (!vocab_path) return NULL;
-
-    strcpy(vocab_path, model_path);
-    char *slash = strrchr(vocab_path, '/');
-    if (!slash) slash = strrchr(vocab_path, '\\');
-    if (slash) {
-        strcpy(slash + 1, "vocab.txt");
-    } else {
-        strcpy(vocab_path, "vocab.txt");
-    }
-
-    FILE *fp = fopen(vocab_path, "r");
-    free(vocab_path);
-    if (!fp) return NULL;
-
-    GV_Vocab *v = vocab_create();
-    if (!v) { fclose(fp); return NULL; }
-
-    char line[GV_ONNX_MAX_TOKEN_LEN];
-    int64_t id = 0;
-    while (fgets(line, sizeof(line), fp)) {
-        /* Strip trailing newline */
-        size_t len = strlen(line);
-        while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r')) {
-            line[--len] = '\0';
-        }
-        if (len == 0) { id++; continue; }
-        vocab_insert(v, line, id);
-        id++;
-    }
-
-    fclose(fp);
-    return v;
-}
-
-/* Whitespace Tokenizer */
-
-/**
- * Tokenize @p text into integer IDs using a whitespace split and vocabulary
- * lookup.  Writes at most @p max_len IDs into @p out_ids and returns the
- * actual token count.  The sequence is wrapped with [CLS] ... [SEP].
- */
 static size_t tokenize_text(const GV_Vocab *vocab, const char *text,
                              int64_t *out_ids, size_t max_len) {
     if (!vocab || !text || !out_ids || max_len < 3) return 0;
@@ -207,7 +135,14 @@ static size_t tokenize_text(const GV_Vocab *vocab, const char *text,
     return pos;
 }
 
-/* Tensor Helpers */
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"
+#endif
+
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 
 GV_ONNXTensor gv_onnx_tensor_create(const size_t *shape, size_t ndim) {
     GV_ONNXTensor t;
