@@ -17,7 +17,7 @@ extern "C" {
  * - Cognitive science research on memory consolidation (Ebbinghaus forgetting curve)
  * - Spaced repetition systems (SM-2 algorithm concepts)
  * - Modern ML-based ranking (BM25, learning-to-rank principles)
- * - mem0 and supermemory approaches (semantic similarity + recency)
+ * - Semantic similarity and recency weighting
  *
  * The final importance score combines:
  * 1. Content-based features (informativeness, specificity, entity density)

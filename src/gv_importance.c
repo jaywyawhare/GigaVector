@@ -25,7 +25,7 @@
 
 #include "gigavector/gv_importance.h"
 
-/* BM25 Parameters (Okapi BM25 defaults from mem0) */
+/* BM25 Parameters (Okapi BM25 defaults) */
 
 #define BM25_K1 1.5    /* Term frequency saturation parameter */
 #define BM25_B  0.75   /* Length normalization parameter */

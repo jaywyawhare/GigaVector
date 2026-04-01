@@ -20,8 +20,8 @@ typedef struct {
 /**
  * @brief Extract memory candidates from conversation text using LLM.
  *
- * This function uses LLM to extract factual memories from conversations,
- * similar to Mem0's approach. Falls back to heuristics if LLM unavailable.
+ * This function uses LLM to extract factual memories from conversations.
+ * Falls back to heuristics if LLM unavailable.
  *
  * @param llm LLM handle; NULL to use heuristics only.
  * @param conversation Conversation text; must be non-NULL.
