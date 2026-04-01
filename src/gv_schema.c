@@ -296,7 +296,7 @@ int gv_schema_diff(const GV_Schema *old_schema, const GV_Schema *new_schema,
             /* Added */
             GV_SchemaDiff *d = &diffs[diff_count++];
             memset(d, 0, sizeof(*d));
-            strncpy(d->name, name, sizeof(d->name) - 1);
+            snprintf(d->name, sizeof(d->name), "%s", name);
             d->added = 1;
             d->new_type = new_schema->fields[i].type;
         } else {
@@ -306,7 +306,7 @@ int gv_schema_diff(const GV_Schema *old_schema, const GV_Schema *new_schema,
             if (ot != nt) {
                 GV_SchemaDiff *d = &diffs[diff_count++];
                 memset(d, 0, sizeof(*d));
-                strncpy(d->name, name, sizeof(d->name) - 1);
+                snprintf(d->name, sizeof(d->name), "%s", name);
                 d->type_changed = 1;
                 d->old_type = ot;
                 d->new_type = nt;
@@ -320,7 +320,7 @@ int gv_schema_diff(const GV_Schema *old_schema, const GV_Schema *new_schema,
         if (gv_schema_find_field_index(new_schema, name) < 0) {
             GV_SchemaDiff *d = &diffs[diff_count++];
             memset(d, 0, sizeof(*d));
-            strncpy(d->name, name, sizeof(d->name) - 1);
+            snprintf(d->name, sizeof(d->name), "%s", name);
             d->removed = 1;
             d->old_type = old_schema->fields[i].type;
         }

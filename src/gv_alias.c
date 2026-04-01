@@ -464,10 +464,8 @@ GV_AliasManager *gv_alias_load(const char *filepath) {
 
         GV_AliasEntry *e = &mgr->entries[idx];
         e->occupied = 1;
-        strncpy(e->alias_name, alias_buf, ALIAS_NAME_MAX - 1);
-        e->alias_name[ALIAS_NAME_MAX - 1] = '\0';
-        strncpy(e->collection_name, coll_buf, COLLECTION_MAX - 1);
-        e->collection_name[COLLECTION_MAX - 1] = '\0';
+        snprintf(e->alias_name, sizeof(e->alias_name), "%s", alias_buf);
+        snprintf(e->collection_name, sizeof(e->collection_name), "%s", coll_buf);
         e->created_at = created_at;
         e->updated_at = updated_at;
         mgr->count++;
