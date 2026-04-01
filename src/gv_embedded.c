@@ -281,29 +281,6 @@ static void emb_quant_encode(const GV_EmbeddedQuant *q, const float *vec,
     }
 }
 
-static void emb_quant_decode(const GV_EmbeddedQuant *q, const uint8_t *encoded,
-                              size_t dim, int bits, float *out) {
-    int max_val = (1 << bits) - 1;
-    size_t bit_offset = 0;
-
-    for (size_t d = 0; d < dim; ++d) {
-        uint8_t quantized = 0;
-        for (int b = 0; b < bits; ++b) {
-            if (encoded[bit_offset / 8] & (1U << (bit_offset % 8))) {
-                quantized |= (uint8_t)(1U << b);
-            }
-            bit_offset++;
-        }
-
-        float range = q->max_vals[d] - q->min_vals[d];
-        if (range < 1e-9f) {
-            out[d] = q->min_vals[d];
-        } else {
-            out[d] = q->min_vals[d] + ((float)quantized / (float)max_val) * range;
-        }
-    }
-}
-
 static GV_EmbeddedHNSW *emb_hnsw_create(GV_EmbeddedDB *db, size_t capacity) {
     GV_EmbeddedHNSW *h = (GV_EmbeddedHNSW *)emb_tracked_calloc(db, 1, sizeof(GV_EmbeddedHNSW));
     if (!h) return NULL;
