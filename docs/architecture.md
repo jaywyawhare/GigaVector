@@ -410,7 +410,7 @@ Multi-factor importance scoring based on cognitive science and ML ranking resear
 
 **NO hardcoded keyword lists**. All scoring uses statistical and structural analysis:
 - Language-agnostic (works for any language)
-- Based on SOTA research from mem0, Cortex, supermemory
+- Based on SOTA research on memory scoring and retrieval
 - Combines multiple signals for robust scoring
 
 ### Scoring Components
