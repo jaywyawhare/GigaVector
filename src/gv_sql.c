@@ -1,5 +1,4 @@
 #include <ctype.h>
-#include <math.h>
 #include <pthread.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -9,7 +8,6 @@
 #include "gigavector/gv_sql.h"
 #include "gigavector/gv_database.h"
 #include "gigavector/gv_distance.h"
-#include "gigavector/gv_filter.h"
 #include "gigavector/gv_metadata.h"
 #include "gigavector/gv_soa_storage.h"
 #include "gigavector/gv_utils.h"

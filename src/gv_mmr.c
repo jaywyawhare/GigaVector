@@ -13,7 +13,6 @@
 #include "gigavector/gv_mmr.h"
 #include "gigavector/gv_distance.h"
 #include "gigavector/gv_database.h"
-#include "gigavector/gv_vector.h"
 #include "gigavector/gv_types.h"
 
 #include <stdlib.h>

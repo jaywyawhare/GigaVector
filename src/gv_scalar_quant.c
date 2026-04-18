@@ -1,7 +1,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
-#include <math.h>
 #include <float.h>
 
 #include "gigavector/gv_scalar_quant.h"

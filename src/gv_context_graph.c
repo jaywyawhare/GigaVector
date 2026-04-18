@@ -4,13 +4,11 @@
 #include <stdio.h>
 #include <pthread.h>
 #include <stdint.h>
-#include <math.h>
 
 #include "gigavector/gv_context_graph.h"
 #include "gigavector/gv_llm.h"
 #include "gigavector/gv_utils.h"
 #include "gigavector/gv_embedding.h"
-#include "gigavector/gv_types.h"
 
 #define ENTITY_ID_PREFIX "ent_"
 #define RELATIONSHIP_ID_PREFIX "rel_"

@@ -3,7 +3,6 @@
 #include <stdint.h>
 
 #include "gigavector/gv_metadata_index.h"
-#include "gigavector/gv_metadata.h"
 #include "gigavector/gv_utils.h"
 
 #define GV_METADATA_INDEX_HASH_SIZE 1024

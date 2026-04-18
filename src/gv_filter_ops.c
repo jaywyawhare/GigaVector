@@ -17,7 +17,6 @@
 #include "gigavector/gv_database.h"
 #include "gigavector/gv_filter.h"
 #include "gigavector/gv_types.h"
-#include "gigavector/gv_vector.h"
 #include "gigavector/gv_soa_storage.h"
 
 /* Internal helper: collect all non-deleted indices that match a */

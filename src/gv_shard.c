@@ -5,7 +5,6 @@
 
 #include "gigavector/gv_shard.h"
 #include "gigavector/gv_database.h"
-#include "gigavector/gv_auth.h"  /* For hashing */
 
 #include <stdlib.h>
 #include <string.h>

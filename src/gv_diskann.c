@@ -12,7 +12,6 @@
  *   - Persistence: graph adjacency lists + PQ codebooks + metadata header
  */
 
-#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

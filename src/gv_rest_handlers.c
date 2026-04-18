@@ -12,7 +12,6 @@
 #include <string.h>
 #include <stdio.h>
 #include <time.h>
-#include <ctype.h>
 
 /* Response Helpers */
 

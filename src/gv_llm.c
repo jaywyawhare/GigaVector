@@ -3,7 +3,6 @@
 #include <stdio.h>
 #include <time.h>
 #include <stdarg.h>
-#include <ctype.h>
 
 #ifdef HAVE_CURL
 #include <curl/curl.h>
