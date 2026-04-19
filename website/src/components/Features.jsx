@@ -54,9 +54,10 @@ const features = [
 
 export default function Features() {
   const ref = useRef(null)
+  const isReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
   useEffect(() => {
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    if (isReduced) return
     const el = ref.current
     if (!el) return
 
@@ -77,7 +78,7 @@ export default function Features() {
 
   return (
     <section id="features" ref={ref}>
-      <div className="section-header-feat" style={{ opacity: 0, marginBottom: 48 }}>
+      <div className="section-header-feat" style={{ opacity: isReduced ? 1 : 0, marginBottom: 48 }}>
         <div className="section-label">Capabilities</div>
         <h2 className="section-heading">Everything you need. Nothing you don't.</h2>
         <p className="section-sub">From prototyping to production clusters.</p>
@@ -85,7 +86,7 @@ export default function Features() {
 
       <div className="feat-grid">
         {features.map((f, i) => (
-          <div key={i} className="feat" style={{ opacity: 0 }}>
+          <div key={i} className="feat" style={{ opacity: isReduced ? 1 : 0 }}>
             <div className="feat-name">{f.name}</div>
             <div className="feat-text">{f.text}</div>
             <div className="feat-tags">

@@ -97,9 +97,10 @@ function Cell({ val, highlight }) {
 
 export default function Comparison() {
   const ref = useRef(null)
+  const isReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
   useEffect(() => {
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    if (isReduced) return
     const ctx = gsap.context(() => {
       gsap.fromTo(ref.current,
         { y: 30, opacity: 0 },
@@ -111,7 +112,7 @@ export default function Comparison() {
   }, [])
 
   return (
-    <section id="comparison" ref={ref} style={{ opacity: 0 }}>
+    <section id="comparison" ref={ref} style={{ opacity: isReduced ? 1 : 0 }}>
       <div style={{ marginBottom: 48 }}>
         <div className="section-label">Comparison</div>
         <h2 className="section-heading">How GigaVector stacks up.</h2>

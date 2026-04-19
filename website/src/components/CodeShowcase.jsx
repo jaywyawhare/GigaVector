@@ -104,6 +104,7 @@ export default function CodeShowcase() {
   const [tab, setTab] = useState('quick')
   const [copyLabel, setCopyLabel] = useState('copy')
   const ref = useRef(null)
+  const isReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
   const onCopy = useCallback(() => {
     navigator.clipboard.writeText(code[tab].plain)
@@ -118,7 +119,7 @@ export default function CodeShowcase() {
   }, [tab])
 
   useEffect(() => {
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    if (isReduced) return
     const ctx = gsap.context(() => {
       gsap.fromTo(ref.current,
         { y: 30, opacity: 0 },
@@ -130,7 +131,7 @@ export default function CodeShowcase() {
   }, [])
 
   return (
-    <section id="code" ref={ref} style={{ opacity: 0 }}>
+    <section id="code" ref={ref} style={{ opacity: isReduced ? 1 : 0 }}>
       <div className="section-center" style={{ marginBottom: 48 }}>
         <div className="section-label">Developer experience</div>
         <h2 className="section-heading">5 lines to first search.</h2>
