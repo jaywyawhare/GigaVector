@@ -1,12 +1,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <math.h>
 #include <float.h>
 #include <stdint.h>
 
 #include "gigavector/gv_multivec.h"
-#include "gigavector/gv_vector.h"
 #include "gigavector/gv_distance.h"
 #include "gigavector/gv_heap.h"
 #include "gigavector/gv_utils.h"

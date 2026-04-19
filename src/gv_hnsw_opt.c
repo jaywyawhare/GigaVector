@@ -23,7 +23,6 @@
 #include <stdint.h>
 #include <pthread.h>
 #include <time.h>
-#include <errno.h>
 
 #include "gigavector/gv_hnsw_opt.h"
 #include "gigavector/gv_utils.h"

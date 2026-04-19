@@ -2,7 +2,6 @@
 #include <string.h>
 
 #include "gigavector/gv_distance.h"
-#include "gigavector/gv_config.h"
 
 #ifdef __SSE4_2__
 #include <nmmintrin.h>

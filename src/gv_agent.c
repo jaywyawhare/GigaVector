@@ -16,7 +16,6 @@
 #include <stdio.h>
 #include <stdarg.h>
 #include <stddef.h>
-#include <math.h>
 #include <pthread.h>
 
 #include "gigavector/gv_agent.h"

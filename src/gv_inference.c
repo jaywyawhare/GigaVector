@@ -19,9 +19,7 @@
 #include "gigavector/gv_inference.h"
 #include "gigavector/gv_auto_embed.h"
 #include "gigavector/gv_database.h"
-#include "gigavector/gv_json.h"
 #include "gigavector/gv_distance.h"
-#include "gigavector/gv_metadata.h"
 #include "gigavector/gv_soa_storage.h"
 
 /* Constants */

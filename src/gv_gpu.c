@@ -8,7 +8,6 @@
 
 #include "gigavector/gv_gpu.h"
 #include "gigavector/gv_database.h"
-#include "gigavector/gv_distance.h"
 
 #include <stdlib.h>
 #include <string.h>
