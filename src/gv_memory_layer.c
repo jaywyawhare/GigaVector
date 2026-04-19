@@ -12,7 +12,6 @@
 #include "gigavector/gv_importance.h"
 #include "gigavector/gv_metadata.h"
 #include "gigavector/gv_database.h"
-#include "gigavector/gv_soa_storage.h"
 #include "gigavector/gv_llm.h"
 #include "gigavector/gv_context_graph.h"
 

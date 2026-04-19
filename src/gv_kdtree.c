@@ -10,7 +10,6 @@
 #include "gigavector/gv_utils.h"
 #include "gigavector/gv_vector.h"
 #include "gigavector/gv_soa_storage.h"
-#include <math.h>
 
 static GV_KDNode *gv_kdtree_create_node(size_t vector_index, size_t axis) {
     GV_KDNode *node = (GV_KDNode *)malloc(sizeof(GV_KDNode));

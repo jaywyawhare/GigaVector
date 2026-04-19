@@ -7,7 +7,6 @@
 
 #include "gigavector/gv_server.h"
 #include "gigavector/gv_rest_handlers.h"
-#include "gigavector/gv_json.h"
 
 #include <stdlib.h>
 #include <string.h>
