@@ -1,4 +1,4 @@
-import { Routes, Route } from 'react-router-dom'
+import { Routes, Route, Outlet, Link } from 'react-router-dom'
 import Navbar from './components/Navbar'
 import Hero from './components/Hero'
 import Features from './components/Features'
@@ -26,13 +26,25 @@ function Landing() {
   )
 }
 
+function Layout() {
+  return (
+    <>
+      <Navbar />
+      <Outlet />
+      <Footer />
+    </>
+  )
+}
+
 function NotFound() {
   return (
-    <section style={{ minHeight: '60vh', display: 'grid', placeItems: 'center', textAlign: 'center' }}>
+    <section style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center' }}>
       <div>
-        <div className="section-label">404</div>
-        <h2 className="section-heading">Page not found.</h2>
-        <p className="section-sub center">The route does not exist in this UI.</p>
+        <img src="/404.webp" alt="404" style={{ maxWidth: '600px', marginBottom: '24px' }} />
+        <h2 className="section-heading" style={{ marginBottom: '24px' }}>Page not found.</h2>
+        <Link to="/" className="btn primary">
+          Go back to Home
+        </Link>
       </div>
     </section>
   )
@@ -40,15 +52,13 @@ function NotFound() {
 
 export default function App() {
   return (
-    <>
-      <Navbar />
-      <Routes>
+    <Routes>
+      <Route element={<Layout />}>
         <Route path="/" element={<Landing />} />
         <Route path="/docs" element={<DocsPage />} />
         <Route path="/docs/:slug" element={<DocsPage />} />
-        <Route path="*" element={<NotFound />} />
-      </Routes>
-      <Footer />
-    </>
+      </Route>
+      <Route path="*" element={<NotFound />} />
+    </Routes>
   )
 }
