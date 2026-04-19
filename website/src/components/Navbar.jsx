@@ -7,9 +7,10 @@ export default function Navbar() {
   const { pathname } = useLocation()
   const isHome = pathname === '/'
   const [mobileOpen, setMobileOpen] = useState(false)
+  const isReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
   useEffect(() => {
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    if (isReduced) return
     const ctx = gsap.context(() => {
       gsap.fromTo(ref.current,
         { y: -20, opacity: 0 },
@@ -24,7 +25,7 @@ export default function Navbar() {
   }, [pathname])
 
   return (
-    <nav ref={ref} className="nav" style={{ opacity: 0 }}>
+    <nav ref={ref} className="nav" style={{ opacity: isReduced ? 1 : 0 }}>
       <Link className="nav-logo" to="/">
         <img src="https://raw.githubusercontent.com/jaywyawhare/GigaVector/master/docs/gigavector-logo.png" alt="GigaVector" className="nav-logo-img" />
         GigaVector

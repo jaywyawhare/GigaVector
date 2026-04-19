@@ -7,9 +7,10 @@ gsap.registerPlugin(ScrollTrigger)
 
 export default function CTA() {
   const ref = useRef(null)
+  const isReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
   useEffect(() => {
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    if (isReduced) return
     const ctx = gsap.context(() => {
       gsap.fromTo(ref.current.children,
         { y: 20, opacity: 0 },
@@ -22,9 +23,9 @@ export default function CTA() {
 
   return (
     <div ref={ref} className="cta">
-      <h2 style={{ opacity: 0 }}>Start building.</h2>
-      <p style={{ opacity: 0 }}>One install. Zero configuration.</p>
-      <div className="cta-btns" style={{ opacity: 0 }}>
+      <h2 style={{ opacity: isReduced ? 1 : 0 }}>Start building.</h2>
+      <p style={{ opacity: isReduced ? 1 : 0 }}>One install. Zero configuration.</p>
+      <div className="cta-btns" style={{ opacity: isReduced ? 1 : 0 }}>
         <a className="btn primary" href="https://pypi.org/project/gigavector/" target="_blank" rel="noopener">
           pip install gigavector
         </a>
