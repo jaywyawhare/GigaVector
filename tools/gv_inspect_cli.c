@@ -102,8 +102,6 @@ static void inspect_backup(const char *path, int stats, int verify, int json) {
 }
 
 static void inspect_database(const char *path, int stats, int verify, int json) {
-    (void)verify;  /* Not implemented for databases yet */
-
     /* Try to open database */
     GV_Database *db = gv_db_open(path, 0, GV_INDEX_TYPE_HNSW);
     if (!db) {
@@ -112,6 +110,22 @@ static void inspect_database(const char *path, int stats, int verify, int json) 
         } else {
             fprintf(stderr, "Error: Failed to open database\n");
         }
+        return;
+    }
+
+    if (verify) {
+        int h = gv_db_health_check(db);
+        const char *label;
+        if (h == 0) label = "healthy";
+        else if (h == -1) label = "degraded";
+        else label = "unhealthy";
+
+        if (json) {
+            printf("{\"verify\":true,\"health\":\"%s\",\"health_code\":%d}\n", label, h);
+        } else {
+            printf("Database verification (gv_db_health_check): %s (%d)\n", label, h);
+        }
+        gv_db_close(db);
         return;
     }
 
