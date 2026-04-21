@@ -12,7 +12,9 @@ extern "C" {
  * @file gv_replication.h
  * @brief Replication and high availability for GigaVector.
  *
- * Provides leader-follower replication with automatic failover.
+ * Leader-side WAL progress is advanced with gv_replication_leader_append_wal()
+ * after durable writes. Registered followers are coordinated in-process (no TCP
+ * yet); sync_commit(), lag, and read routing use that model consistently.
  */
 
 struct GV_Database;
@@ -301,6 +303,22 @@ int gv_replication_set_max_read_lag(GV_ReplicationManager *mgr, uint64_t max_lag
  */
 int gv_replication_register_follower_db(GV_ReplicationManager *mgr,
                                          const char *node_id, GV_Database *db);
+
+/**
+ * @brief Advance the leader WAL cursor after durable local writes.
+ *
+ * Call after appending to the leader WAL (or equivalent committed entries).
+ * In the embedded coordinator, connected followers are updated to the new
+ * head immediately so sync_commit(), lag, and read routing stay coherent.
+ *
+ * @param mgr Replication manager.
+ * @param entry_delta Number of WAL entries (or logical positions) to add.
+ * @param byte_delta Optional byte volume to add to replication stats (may be 0).
+ * @return 0 on success, -1 if @p mgr is NULL or this node is not the leader.
+ */
+int gv_replication_leader_append_wal(GV_ReplicationManager *mgr,
+                                      uint64_t entry_delta,
+                                      uint64_t byte_delta);
 
 #ifdef __cplusplus
 }

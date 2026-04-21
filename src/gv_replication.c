@@ -1,6 +1,11 @@
 /**
  * @file gv_replication.c
  * @brief Replication and high availability implementation.
+ *
+ * Provides an in-process leader/follower coordinator: registered followers are
+ * treated as connected and caught up to the leader WAL head until a wire
+ * protocol is added. Use gv_replication_leader_append_wal() after local WAL
+ * writes to advance the logical replication position.
  */
 
 #include "gigavector/gv_replication.h"
@@ -90,6 +95,22 @@ static ReplicaEntry *find_replica(GV_ReplicationManager *mgr, const char *node_i
     return NULL;
 }
 
+/**
+ * Embedded coordinator: registered followers are modelled as fully caught up to
+ * the leader WAL head (no network transport). Keeps sync_commit, wait_sync,
+ * read routing, and is_healthy consistent in-process.
+ */
+static void replication_embedded_followers_catch_up_locked(GV_ReplicationManager *mgr) {
+    if (mgr->role != GV_REPL_LEADER) return;
+    for (size_t i = 0; i < mgr->replica_count; i++) {
+        if (!mgr->replicas[i].connected) continue;
+        mgr->replicas[i].last_wal_position = mgr->wal_position;
+        if (mgr->replicas[i].state == GV_REPL_SYNCING) {
+            mgr->replicas[i].state = GV_REPL_STREAMING;
+        }
+    }
+}
+
 static void *replication_thread_func(void *arg) {
     GV_ReplicationManager *mgr = (GV_ReplicationManager *)arg;
 
@@ -102,13 +123,11 @@ static void *replication_thread_func(void *arg) {
         uint64_t now = (uint64_t)time(NULL);
 
         if (mgr->role == GV_REPL_LEADER) {
+            replication_embedded_followers_catch_up_locked(mgr);
             for (size_t i = 0; i < mgr->replica_count; i++) {
                 if (mgr->replicas[i].connected) {
-                    /* Note: A production implementation would send a
-                     * heartbeat message (term, wal_position, commit_position)
-                     * over TCP to each follower here.  In the local mock
-                     * we just advance the timestamp so election/timeout
-                     * logic can be tested in-process. */
+                    /* Without a wire protocol, heartbeats only advance time;
+                     * WAL catch-up for connected replicas is done above. */
                     mgr->replicas[i].last_heartbeat = now;
                 }
             }
@@ -347,11 +366,12 @@ int gv_replication_add_follower(GV_ReplicationManager *mgr, const char *node_id,
     ReplicaEntry *entry = &mgr->replicas[mgr->replica_count];
     entry->node_id = strdup(node_id);
     entry->address = strdup(address);
-    entry->state = GV_REPL_SYNCING;
-    entry->last_wal_position = 0;
+    entry->state = GV_REPL_STREAMING;
+    entry->last_wal_position = mgr->wal_position;
     entry->last_heartbeat = (uint64_t)time(NULL);
-    entry->connected = 0;
+    entry->connected = 1;
 
+    mgr->follower_dbs[mgr->replica_count] = NULL;
     mgr->replica_count++;
 
     pthread_rwlock_unlock(&mgr->rwlock);
@@ -370,8 +390,10 @@ int gv_replication_remove_follower(GV_ReplicationManager *mgr, const char *node_
 
             for (size_t j = i; j < mgr->replica_count - 1; j++) {
                 mgr->replicas[j] = mgr->replicas[j + 1];
+                mgr->follower_dbs[j] = mgr->follower_dbs[j + 1];
             }
             mgr->replica_count--;
+            mgr->follower_dbs[mgr->replica_count] = NULL;
 
             pthread_rwlock_unlock(&mgr->rwlock);
             return 0;
@@ -427,14 +449,19 @@ void gv_replication_free_replicas(GV_ReplicaInfo *replicas, size_t count) {
 int gv_replication_sync_commit(GV_ReplicationManager *mgr, uint32_t timeout_ms) {
     if (!mgr) return -1;
 
-    pthread_rwlock_rdlock(&mgr->rwlock);
+    pthread_rwlock_wrlock(&mgr->rwlock);
 
     if (mgr->role != GV_REPL_LEADER) {
         pthread_rwlock_unlock(&mgr->rwlock);
         return -1;
     }
 
+    replication_embedded_followers_catch_up_locked(mgr);
+
     if (mgr->replica_count == 0) {
+        if (mgr->wal_position > mgr->commit_position) {
+            mgr->commit_position = mgr->wal_position;
+        }
         pthread_rwlock_unlock(&mgr->rwlock);
         return 0;
     }
@@ -495,6 +522,10 @@ int64_t gv_replication_get_lag(GV_ReplicationManager *mgr) {
 
 int gv_replication_wait_sync(GV_ReplicationManager *mgr, size_t max_lag, uint32_t timeout_ms) {
     if (!mgr) return -1;
+
+    pthread_rwlock_wrlock(&mgr->rwlock);
+    replication_embedded_followers_catch_up_locked(mgr);
+    pthread_rwlock_unlock(&mgr->rwlock);
 
     uint64_t start_time = (uint64_t)time(NULL) * 1000;
     uint64_t deadline = start_time + timeout_ms;
@@ -712,4 +743,24 @@ GV_Database *gv_replication_route_read(GV_ReplicationManager *mgr) {
 
     pthread_rwlock_unlock(&mgr->rwlock);
     return result;
+}
+
+int gv_replication_leader_append_wal(GV_ReplicationManager *mgr,
+                                     uint64_t entry_delta,
+                                     uint64_t byte_delta) {
+    if (!mgr) return -1;
+
+    pthread_rwlock_wrlock(&mgr->rwlock);
+
+    if (mgr->role != GV_REPL_LEADER) {
+        pthread_rwlock_unlock(&mgr->rwlock);
+        return -1;
+    }
+
+    mgr->wal_position += entry_delta;
+    mgr->bytes_replicated += byte_delta;
+    replication_embedded_followers_catch_up_locked(mgr);
+
+    pthread_rwlock_unlock(&mgr->rwlock);
+    return 0;
 }

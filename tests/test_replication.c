@@ -347,6 +347,35 @@ static int test_replication_set_max_read_lag(void) {
     return 0;
 }
 
+static int test_replication_leader_append_and_sync(void) {
+    GV_Database *db = gv_db_open(NULL, 4, GV_INDEX_TYPE_FLAT);
+    ASSERT(db != NULL, "create db for wal test");
+
+    GV_ReplicationConfig config;
+    gv_replication_config_init(&config);
+    config.node_id = "wal-node";
+
+    GV_ReplicationManager *mgr = gv_replication_create(db, &config);
+    ASSERT(mgr != NULL, "replication_create for wal test");
+
+    ASSERT(gv_replication_leader_append_wal(NULL, 1, 0) == -1,
+           "leader_append_wal(NULL) should fail");
+
+    ASSERT(gv_replication_add_follower(mgr, "f-wal", "127.0.0.1:9100") == 0,
+           "add_follower for wal test");
+
+    ASSERT(gv_replication_leader_append_wal(mgr, 3, 64) == 0, "leader_append_wal");
+    ASSERT(gv_replication_sync_commit(mgr, 2000) == 0, "sync_commit after append");
+
+    ASSERT(gv_replication_step_down(mgr) == 0, "step_down for negative append test");
+    ASSERT(gv_replication_leader_append_wal(mgr, 1, 0) == -1,
+           "leader_append_wal as non-leader should fail");
+
+    gv_replication_destroy(mgr);
+    gv_db_close(db);
+    return 0;
+}
+
 static int test_replication_free_replicas_null(void) {
     gv_replication_free_replicas(NULL, 0);
     return 0;
@@ -379,6 +408,7 @@ int main(void) {
         {"Testing replication_step_down_and_request...", test_replication_step_down_and_request},
         {"Testing replication_register_follower_db...", test_replication_register_follower_db},
         {"Testing replication_set_max_read_lag...", test_replication_set_max_read_lag},
+        {"Testing replication_leader_append_and_sync...", test_replication_leader_append_and_sync},
         {"Testing replication_free_replicas_null...", test_replication_free_replicas_null},
         {"Testing replication_role_enum_values...", test_replication_role_enum_values},
     };
