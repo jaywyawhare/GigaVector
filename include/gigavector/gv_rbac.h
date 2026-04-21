@@ -2,35 +2,16 @@
 #define GIGAVECTOR_GV_RBAC_H
 #include <stddef.h>
 #include <stdint.h>
+#include "gv_authz.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-typedef enum {
-    GV_PERM_READ = 1,
-    GV_PERM_WRITE = 2,
-    GV_PERM_DELETE = 4,
-    GV_PERM_ADMIN = 8,
-    GV_PERM_ALL = 15
-} GV_Permission;
 
 typedef struct {
     char *resource;           /* Collection/namespace name, or "*" for all */
     uint32_t permissions;     /* Bitmask of GV_Permission */
 } GV_RBACRule;
-
-typedef struct {
-    char *role_name;
-    GV_RBACRule *rules;
-    size_t rule_count;
-    int inherits_from;        /* Index of parent role (-1 for none) */
-} GV_Role;
-
-typedef struct {
-    char *user_id;
-    char **role_names;
-    size_t role_count;
-} GV_UserRoles;
 
 typedef struct GV_RBACManager GV_RBACManager;
 
