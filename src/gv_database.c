@@ -1944,10 +1944,11 @@ int gv_db_add_vector_with_metadata(GV_Database *db, const float *data, size_t di
                 return -1;
             }
         }
+        GV_Metadata *saved_meta_for_ivfpq = vector->metadata;
         status = gv_ivfpq_insert(db->hnsw_index, vector);
-        if (status == 0 && vector->metadata != NULL && db->metadata_index != NULL) {
+        if (status == 0 && saved_meta_for_ivfpq != NULL && db->metadata_index != NULL) {
             size_t vector_index = db->count;
-            GV_Metadata *current = vector->metadata;
+            GV_Metadata *current = saved_meta_for_ivfpq;
             while (current != NULL) {
                 gv_metadata_index_add(db->metadata_index, current->key, current->value, vector_index);
                 current = current->next;
@@ -1975,6 +1976,9 @@ int gv_db_add_vector_with_metadata(GV_Database *db, const float *data, size_t di
                 return -1;
             }
         }
+        /* flat/pq/lsh inserts may destroy the vector and clear metadata; ivfflat keeps it */
+        GV_Metadata *saved_meta_for_index = vector->metadata;
+
         if (db->index_type == GV_INDEX_TYPE_FLAT) {
             status = gv_flat_insert(db->hnsw_index, vector);
         } else if (db->index_type == GV_INDEX_TYPE_IVFFLAT) {
@@ -1984,9 +1988,9 @@ int gv_db_add_vector_with_metadata(GV_Database *db, const float *data, size_t di
         } else {
             status = gv_lsh_insert(db->hnsw_index, vector);
         }
-        if (status == 0 && vector->metadata != NULL && db->metadata_index != NULL) {
+        if (status == 0 && saved_meta_for_index != NULL && db->metadata_index != NULL) {
             size_t vector_index = db->count;
-            GV_Metadata *current = vector->metadata;
+            GV_Metadata *current = saved_meta_for_index;
             while (current != NULL) {
                 gv_metadata_index_add(db->metadata_index, current->key, current->value, vector_index);
                 current = current->next;
