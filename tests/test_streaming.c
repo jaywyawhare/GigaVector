@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 #include "gigavector/gv_streaming.h"
 #include "gigavector/gv_database.h"
 
@@ -329,12 +330,46 @@ static int test_reset_stats(void) {
     return 0;
 }
 
+static int test_actual_ingestion(void) {
+    cleanup();
+    GV_Database *db = gv_db_open(DB_PATH, 4, GV_INDEX_TYPE_FLAT);
+    ASSERT(db != NULL, "database open");
+
+    GV_StreamConfig cfg;
+    gv_stream_config_init(&cfg);
+    cfg.source = GV_STREAM_CUSTOM;
+    cfg.batch_size = 10;
+    cfg.batch_timeout_ms = 50;
+
+    GV_StreamConsumer *consumer = gv_stream_create(db, &cfg);
+    ASSERT(consumer != NULL, "create");
+
+    int rc = gv_stream_start(consumer);
+    ASSERT(rc == 0, "stream_start should succeed");
+
+    usleep(200000);
+
+    rc = gv_stream_stop(consumer);
+    ASSERT(rc == 0, "stream_stop should succeed");
+
+    GV_StreamStats stats;
+    rc = gv_stream_get_stats(consumer, &stats);
+    ASSERT(rc == 0, "get_stats should succeed");
+    ASSERT(stats.vectors_ingested > 0, "vectors should have been ingested");
+    ASSERT(stats.messages_failed == 0, "no messages should fail");
+
+    gv_stream_destroy(consumer);
+    gv_db_close(db);
+    cleanup();
+    return 0;
+}
+
 typedef int (*test_fn)(void);
 typedef struct { const char *name; test_fn fn; } TestCase;
 
 int main(void) {
     cleanup();
-    TestCase tests[] = {
+TestCase tests[] = {
         {"Testing config_init...",       test_config_init},
         {"Testing create_custom...",     test_create_custom},
         {"Testing create_kafka...",      test_create_kafka},
@@ -346,8 +381,9 @@ int main(void) {
         {"Testing start_stop...",        test_start_stop},
         {"Testing pause_resume...",      test_pause_resume},
         {"Testing commit...",            test_commit},
-        {"Testing seek_operations...",   test_seek_operations},
+        {"Testing seek_operations...",  test_seek_operations},
         {"Testing reset_stats...",       test_reset_stats},
+        {"Testing actual_ingestion...",  test_actual_ingestion},
     };
     int n = sizeof(tests) / sizeof(tests[0]);
     int passed = 0;
