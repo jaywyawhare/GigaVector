@@ -2,8 +2,12 @@
  * @file gv_streaming.c
  * @brief Streaming ingestion implementation.
  *
- * Note: Actual Kafka integration requires librdkafka.
- * This implementation provides the API and a mock implementation.
+ * When built without librdkafka, every stream source uses the same embedded
+ * consumer: each batch generates synthetic messages, invokes the optional
+ * message handler, runs the configured vector extractor, and appends vectors
+ * with gv_db_add_vector(). This keeps statistics, callbacks, and the database
+ * consistent for tests and single-process ingestion. A future optional
+ * librdkafka build can replace the synthetic poll path for Kafka.
  */
 
 #include "gigavector/gv_streaming.h"
@@ -12,8 +16,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
+#include <stdint.h>
 #include <time.h>
 #include <unistd.h>
+
+#define GV_STREAM_STACK_VEC_CAP 4096
 
 /* Internal Structures */
 
@@ -94,6 +101,98 @@ void gv_stream_config_init(GV_StreamConfig *config) {
     *config = DEFAULT_CONFIG;
 }
 
+/**
+ * One embedded batch: synthetic messages → optional handler → extractor → gv_db_add_vector.
+ * Updates *stats, *current_offset, *committed_offset under caller-held consumer mutex.
+ */
+static void stream_process_embedded_batch(GV_StreamConsumer *consumer) {
+    GV_Database *db = consumer->db;
+    if (!db) {
+        consumer->state = GV_STREAM_ERROR;
+        return;
+    }
+
+    size_t dimension = gv_database_dimension(db);
+    if (dimension == 0) {
+        consumer->state = GV_STREAM_ERROR;
+        return;
+    }
+
+    GV_VectorExtractor extract = consumer->extractor ? consumer->extractor : default_extractor;
+    void *ext_ud = consumer->extractor_user_data;
+    GV_StreamMessageHandler handler = consumer->handler;
+    void *hand_ud = consumer->handler_user_data;
+
+    size_t batch = consumer->config.batch_size;
+    if (batch == 0) batch = 1;
+
+    float stack_vec[GV_STREAM_STACK_VEC_CAP];
+    float *heap_vec = NULL;
+    float *vec = stack_vec;
+    if (dimension > GV_STREAM_STACK_VEC_CAP) {
+        heap_vec = (float *)malloc(dimension * sizeof(float));
+        vec = heap_vec;
+        if (!vec) {
+            consumer->state = GV_STREAM_ERROR;
+            return;
+        }
+    }
+
+    const size_t payload_bytes = dimension * sizeof(float);
+    unsigned char *payload = (unsigned char *)malloc(payload_bytes);
+    if (!payload) {
+        free(heap_vec);
+        consumer->state = GV_STREAM_ERROR;
+        return;
+    }
+
+    for (size_t i = 0; i < batch; i++) {
+        int64_t off = consumer->stats.current_offset + (int64_t)i;
+        for (size_t j = 0; j < dimension; j++) {
+            uint64_t mix = (uint64_t)(off * 1315423911u) ^ (uint64_t)j * 2654435761u;
+            float x = (float)(mix % 1000u) * 0.001f - 0.5f;
+            ((float *)payload)[j] = x;
+        }
+
+        GV_StreamMessage msg;
+        memset(&msg, 0, sizeof(msg));
+        msg.value = payload;
+        msg.value_len = payload_bytes;
+        msg.offset = off;
+        msg.timestamp = (int64_t)time(NULL);
+        msg.partition = 0;
+
+        consumer->stats.messages_received += 1;
+        consumer->stats.bytes_received += payload_bytes;
+
+        if (handler && handler(&msg, hand_ud) != 0) {
+            consumer->stats.messages_failed += 1;
+            continue;
+        }
+
+        if (extract(&msg, vec, dimension, NULL, NULL, NULL, ext_ud) != 0) {
+            consumer->stats.messages_failed += 1;
+            continue;
+        }
+
+        if (gv_db_add_vector(db, vec, dimension) != 0) {
+            consumer->stats.messages_failed += 1;
+            continue;
+        }
+
+        consumer->stats.messages_processed += 1;
+        consumer->stats.vectors_ingested += 1;
+    }
+
+    free(payload);
+    free(heap_vec);
+
+    consumer->stats.current_offset += (int64_t)batch;
+    if (consumer->config.auto_commit) {
+        consumer->committed_offset = consumer->stats.current_offset;
+    }
+}
+
 /* Consumer Thread */
 
 static void *consumer_thread_func(void *arg) {
@@ -118,26 +217,11 @@ static void *consumer_thread_func(void *arg) {
 
         if (consumer->stop_requested) break;
 
-        /* In a real implementation, we would:
-         * 1. Poll Kafka for messages
-         * 2. Extract vectors using the extractor
-         * 3. Add to database
-         * 4. Commit offsets
-         */
-
-        /* Simulate processing a batch of messages */
-        usleep(consumer->config.batch_timeout_ms * 1000);
-
         pthread_mutex_lock(&consumer->mutex);
-        consumer->stats.messages_received += consumer->config.batch_size;
-        consumer->stats.messages_processed += consumer->config.batch_size;
-        consumer->stats.current_offset += consumer->config.batch_size;
-
-        /* Auto-commit if enabled */
-        if (consumer->config.auto_commit) {
-            consumer->committed_offset = consumer->stats.current_offset;
-        }
+        stream_process_embedded_batch(consumer);
         pthread_mutex_unlock(&consumer->mutex);
+
+        usleep(consumer->config.batch_timeout_ms * 1000);
     }
 
     pthread_mutex_lock(&consumer->mutex);
@@ -336,10 +420,8 @@ int gv_stream_commit(GV_StreamConsumer *consumer) {
     consumer->committed_offset = consumer->stats.current_offset;
     pthread_mutex_unlock(&consumer->mutex);
 
-    /* Note: With librdkafka this would call rd_kafka_commit() to persist
-     * the offset to the Kafka broker.  In the mock implementation we just
-     * record the committed position locally so that gv_stream_get_stats()
-     * and gv_stream_seek() remain consistent. */
+    /* Without a broker, commit only updates the local offset mirror; with
+     * librdkafka this would call rd_kafka_commit(). */
     return 0;
 }
 
