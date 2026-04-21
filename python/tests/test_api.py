@@ -2,13 +2,20 @@ import os
 import tempfile
 import unittest
 
-from gigavector import Database, DistanceType, IndexType
+from gigavector import (
+    Database,
+    DistanceType,
+    IndexType,
+    ReplicationManager,
+    ReplicationConfig,
+)
 
 
 class TestAPI(unittest.TestCase):
     def test_basic_add_search(self):
         import tempfile
         import os
+
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = os.path.join(tmpdir, "test.db")
             with Database.open(db_path, dimension=3, index=IndexType.KDTREE) as db:
@@ -22,7 +29,9 @@ class TestAPI(unittest.TestCase):
             db_path = os.path.join(tmp, "db.bin")
             # WAL will be auto-created alongside the db file
             with Database.open(db_path, dimension=2, index=IndexType.KDTREE) as db:
-                db.add_vector([0.1, 0.2], metadata={"tag": "a", "owner": "b", "source": "demo"})
+                db.add_vector(
+                    [0.1, 0.2], metadata={"tag": "a", "owner": "b", "source": "demo"}
+                )
                 db.save(db_path)
 
             # Reopen to ensure snapshot + WAL restore
@@ -34,7 +43,12 @@ class TestAPI(unittest.TestCase):
         with Database.open(None, dimension=2, index=IndexType.KDTREE) as db:
             db.add_vector([0.0, 1.0], metadata={"color": "red"})
             db.add_vector([0.0, 2.0], metadata={"color": "blue"})
-            hits = db.search([0.0, 1.1], k=2, distance=DistanceType.EUCLIDEAN, filter_metadata=("color", "red"))
+            hits = db.search(
+                [0.0, 1.1],
+                k=2,
+                distance=DistanceType.EUCLIDEAN,
+                filter_metadata=("color", "red"),
+            )
             self.assertEqual(len(hits), 1)
 
     def test_batch_search(self):
@@ -88,7 +102,9 @@ class TestAPI(unittest.TestCase):
                 try:
                     if index == IndexType.IVFPQ:
                         # Train with enough vectors (>= codebook size, default 256).
-                        train = [[(i % 10) / 10.0 for _ in range(dim)] for i in range(256)]
+                        train = [
+                            [(i % 10) / 10.0 for _ in range(dim)] for i in range(256)
+                        ]
                         db.train_ivfpq(train)
                     for v in dataset:
                         db.add_vector(v)
@@ -100,7 +116,17 @@ class TestAPI(unittest.TestCase):
                 # Allow non-zero distance for approximate indexes (IVFPQ).
                 self.assertLess(hits[0].distance, 0.25)
 
+    def test_replication_leader_append_wal(self):
+        from gigavector import ReplicationManager, ReplicationConfig
+
+        with Database.open(None, dimension=4, index=IndexType.FLAT) as db:
+            config = ReplicationConfig(node_id="test-node")
+            mgr = ReplicationManager(db, config)
+            with mgr:
+                mgr.add_follower("follower-1", "127.0.0.1:9100")
+                mgr.leader_append_wal(5, 100)
+                mgr.sync_commit(2000)
+
 
 if __name__ == "__main__":
     unittest.main()
-
