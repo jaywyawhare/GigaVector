@@ -27,8 +27,8 @@ endif()
 set(CMAKE_C_FLAGS_RELEASE "-O3 -DNDEBUG")
 set(CMAKE_C_FLAGS_DEBUG "-O0 -g")
 
-# Ensure objects do not request an executable stack (ELF-only; not applicable on Windows PE).
-if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang" AND NOT WIN32)
+# Ensure objects do not request an executable stack on ELF targets only.
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang" AND NOT WIN32 AND NOT APPLE)
     add_compile_options(-Wa,--noexecstack)
     add_link_options(-Wl,-z,noexecstack)
 endif()
