@@ -3,6 +3,7 @@
 #include <string.h>
 #include <math.h>
 #include "core/bloom.h"
+#include "../test_tmp.h"
 
 #define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while(0)
 
@@ -110,7 +111,9 @@ static int test_bloom_clear(void) {
 }
 
 static int test_bloom_save_load(void) {
-    const char *path = "/tmp/test_bloom_save_load.bin";
+    char path[512];
+    ASSERT(gv_test_make_temp_path(path, sizeof(path), "test_bloom_save_load", ".bin") == 0,
+           "make temp path");
     GV_BloomFilter *bf = bloom_create(200, 0.01);
     ASSERT(bf != NULL, "bloom filter creation");
 

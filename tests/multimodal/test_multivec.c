@@ -3,6 +3,7 @@
 #include <string.h>
 #include <unistd.h>
 #include "multimodal/multivec.h"
+#include "../test_tmp.h"
 
 #define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while(0)
 
@@ -115,7 +116,9 @@ static int test_search(void) {
 }
 
 static int test_save_load(void) {
-    const char *tmppath = "/tmp/test_multivec.bin";
+    char tmppath[512];
+    ASSERT(gv_test_make_temp_path(tmppath, sizeof(tmppath), "test_multivec", ".bin") == 0,
+           "make temp path");
     void *idx = multivec_create(DIM, NULL);
     ASSERT(idx != NULL, "index creation");
 

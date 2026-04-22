@@ -3040,6 +3040,35 @@ void gv_free(void *ptr);
 )
 
 
+_DLL_DIR_HANDLES = []
+
+
+def _register_windows_dll_dirs(lib_path: Path, here: Path) -> None:
+    if os.name != "nt" or not hasattr(os, "add_dll_directory"):
+        return
+
+    seen: set[str] = set()
+    candidates = [here, lib_path.parent]
+
+    path_env = os.environ.get("PATH", "")
+    for entry in path_env.split(os.pathsep):
+        if entry:
+            candidates.append(Path(entry))
+
+    for candidate in candidates:
+        try:
+            resolved = str(candidate.resolve())
+        except OSError:
+            continue
+        if resolved in seen or not candidate.exists() or not candidate.is_dir():
+            continue
+        seen.add(resolved)
+        try:
+            _DLL_DIR_HANDLES.append(os.add_dll_directory(resolved))
+        except OSError:
+            continue
+
+
 def _load_lib() -> "FFIType.CData":
     """Load the GigaVector shared library.
 
@@ -3075,6 +3104,7 @@ def _load_lib() -> "FFIType.CData":
 
     for lib_path in candidate_paths:
         if lib_path.exists():
+            _register_windows_dll_dirs(lib_path, here)
             return ffi.dlopen(os.fspath(lib_path))
     raise FileNotFoundError(f"GigaVector shared library not found in {candidate_paths}")
 

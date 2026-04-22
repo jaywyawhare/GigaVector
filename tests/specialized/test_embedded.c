@@ -4,12 +4,11 @@
 #include <unistd.h>
 #include <math.h>
 #include "specialized/embedded.h"
+#include "../test_tmp.h"
 
 #define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while(0)
 
 #define DIM 4
-#define TMP_SAVE_PATH "/tmp/test_embedded.bin"
-
 static int test_config_init(void) {
     GV_EmbeddedConfig cfg;
     memset(&cfg, 0xFF, sizeof(cfg));
@@ -140,6 +139,9 @@ static int test_delete_compact(void) {
 }
 
 static int test_save_load(void) {
+    char path[512];
+    ASSERT(gv_test_make_temp_path(path, sizeof(path), "test_embedded", ".bin") == 0,
+           "make temp path");
     GV_EmbeddedConfig cfg;
     embedded_config_init(&cfg);
     cfg.dimension = DIM;
@@ -151,11 +153,11 @@ static int test_save_load(void) {
     embedded_add(db, v);
     embedded_add(db, v);
 
-    int rc = embedded_save(db, TMP_SAVE_PATH);
+    int rc = embedded_save(db, path);
     ASSERT(rc == 0, "save should succeed");
     embedded_close(db);
 
-    GV_EmbeddedDB *loaded = embedded_load(TMP_SAVE_PATH);
+    GV_EmbeddedDB *loaded = embedded_load(path);
     ASSERT(loaded != NULL, "load should succeed");
     ASSERT(embedded_count(loaded) == 2, "loaded db should have 2 vectors");
 
@@ -165,7 +167,7 @@ static int test_save_load(void) {
     ASSERT(fabsf(out[0] - 1.0f) < 1e-6f, "loaded vector data should match");
 
     embedded_close(loaded);
-    unlink(TMP_SAVE_PATH);
+    unlink(path);
     return 0;
 }
 

@@ -4,6 +4,7 @@
 #include <unistd.h>
 
 #include "features/graph_db.h"
+#include "../test_tmp.h"
 
 #define ASSERT(cond, msg)         \
     do {                          \
@@ -358,7 +359,9 @@ static int test_clustering_coefficient(void) {
 }
 
 static int test_save_load(void) {
-    const char *path = "/tmp/test_gv_graph.gvgr";
+    char path[512];
+    ASSERT(gv_test_make_temp_path(path, sizeof(path), "test_gv_graph", ".gvgr") == 0,
+           "make temp path");
 
     GV_GraphDB *g = graph_create(NULL);
     uint64_t n1 = graph_add_node(g, "Person");
