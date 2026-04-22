@@ -3,10 +3,9 @@
 #include <string.h>
 #include <unistd.h>
 #include "features/json_index.h"
+#include "../test_tmp.h"
 
 #define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while(0)
-
-#define TMP_INDEX_PATH "/tmp/test_json_index.bin"
 
 static int test_create_destroy(void) {
     GV_JSONPathIndex *idx = json_index_create();
@@ -142,6 +141,9 @@ static int test_count(void) {
 }
 
 static int test_save_load(void) {
+    char path[512];
+    ASSERT(gv_test_make_temp_path(path, sizeof(path), "test_json_index", ".bin") == 0,
+           "make temp path");
     GV_JSONPathIndex *idx = json_index_create();
     ASSERT(idx != NULL, "index creation");
 
@@ -153,11 +155,11 @@ static int test_save_load(void) {
     json_index_insert(idx, 0, "{\"name\": \"alice\"}");
     json_index_insert(idx, 1, "{\"name\": \"bob\"}");
 
-    int rc = json_index_save(idx, TMP_INDEX_PATH);
+    int rc = json_index_save(idx, path);
     ASSERT(rc == 0, "save index");
     json_index_destroy(idx);
 
-    GV_JSONPathIndex *loaded = json_index_load(TMP_INDEX_PATH);
+    GV_JSONPathIndex *loaded = json_index_load(path);
     ASSERT(loaded != NULL, "load index");
     ASSERT(json_index_count(loaded, "name") == 2, "loaded index should have 2 entries");
 
@@ -166,7 +168,7 @@ static int test_save_load(void) {
     ASSERT(found == 1, "lookup 'alice' in loaded index should return 1");
 
     json_index_destroy(loaded);
-    unlink(TMP_INDEX_PATH);
+    unlink(path);
     return 0;
 }
 
