@@ -44,7 +44,6 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 # Source files
 file(GLOB_RECURSE GV_SOURCE_FILES CONFIGURE_DEPENDS 
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.c"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cu"
 )
 list(SORT GV_SOURCE_FILES)
 set(SOURCES ${GV_SOURCE_FILES})
@@ -90,7 +89,7 @@ if(CMAKE_CUDA_COMPILER)
         set(CMAKE_CUDA_STANDARD 11)
         set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 
-        target_sources(GigaVector PRIVATE src/gv_gpu_kernels.cu)
+        target_sources(GigaVector PRIVATE src/specialized/gpu_kernels.cu)
         target_compile_definitions(GigaVector PRIVATE HAVE_CUDA)
         set_target_properties(GigaVector PROPERTIES
             CUDA_SEPARABLE_COMPILATION ON

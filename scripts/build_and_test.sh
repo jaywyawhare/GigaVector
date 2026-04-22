@@ -24,7 +24,7 @@ echo "=== Building LLM and Embedding Tests ==="
 # Build test_llm
 echo "Building test_llm..."
 gcc -O3 -g -Wall -Wextra -Iinclude -march=native -msse4.2 -mavx2 -mavx512f -mfma -pthread -fPIC -DHAVE_CURL \
-    tests/test_llm.c -L"$LIB_DIR" -lGigaVector -lm -pthread -lcurl \
+    tests/multimodal/test_llm.c -L"$LIB_DIR" -lGigaVector -lm -pthread -lcurl \
     -Wl,-rpath,"$LIB_DIR" -o "$BUILD_DIR/test_llm" || {
     echo "Failed to build test_llm"
     exit 1
@@ -33,7 +33,7 @@ gcc -O3 -g -Wall -Wextra -Iinclude -march=native -msse4.2 -mavx2 -mavx512f -mfma
 # Build test_memory_llm
 echo "Building test_memory_llm..."
 gcc -O3 -g -Wall -Wextra -Iinclude -march=native -msse4.2 -mavx2 -mavx512f -mfma -pthread -fPIC -DHAVE_CURL \
-    tests/test_memory_llm.c -L"$LIB_DIR" -lGigaVector -lm -pthread -lcurl \
+    tests/multimodal/test_memory_llm.c -L"$LIB_DIR" -lGigaVector -lm -pthread -lcurl \
     -Wl,-rpath,"$LIB_DIR" -o "$BUILD_DIR/test_memory_llm" || {
     echo "Failed to build test_memory_llm"
     exit 1
@@ -42,7 +42,7 @@ gcc -O3 -g -Wall -Wextra -Iinclude -march=native -msse4.2 -mavx2 -mavx512f -mfma
 # Build test_embedding
 echo "Building test_embedding..."
 gcc -O3 -g -Wall -Wextra -Iinclude -march=native -msse4.2 -mavx2 -mavx512f -mfma -pthread -fPIC -DHAVE_CURL \
-    tests/test_embedding.c -L"$LIB_DIR" -lGigaVector -lm -pthread -lcurl \
+    tests/multimodal/test_embedding.c -L"$LIB_DIR" -lGigaVector -lm -pthread -lcurl \
     -Wl,-rpath,"$LIB_DIR" -o "$BUILD_DIR/test_embedding" || {
     echo "Failed to build test_embedding"
     exit 1
@@ -72,7 +72,6 @@ echo "To run individual tests:"
 echo "  LD_LIBRARY_PATH=$LIB_DIR:$LD_LIBRARY_PATH $BUILD_DIR/test_llm"
 echo "  LD_LIBRARY_PATH=$LIB_DIR:$LD_LIBRARY_PATH $BUILD_DIR/test_memory_llm"
 echo "  LD_LIBRARY_PATH=$LIB_DIR:$LD_LIBRARY_PATH $BUILD_DIR/test_embedding"
-
 
 
 
