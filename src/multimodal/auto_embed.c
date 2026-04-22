@@ -328,6 +328,8 @@ static void ae_cache_destroy(AE_Cache *c) {
     free(c);
 }
 
+#ifdef HAVE_CURL
+
 /**
  * Escape a string for inclusion in a JSON string literal.
  * Writes into dst (up to dst_cap-1 bytes) and NUL-terminates.
@@ -710,6 +712,8 @@ static int ae_parse_google_batch(const char *body, size_t count,
     json_free(root);
     return success;
 }
+
+#endif /* HAVE_CURL */
 
 #ifdef HAVE_CURL
 

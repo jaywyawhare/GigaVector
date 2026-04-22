@@ -1,5 +1,6 @@
 include README.md
 include LICENCE.md
 recursive-include src/gigavector *.so
+recursive-include src/gigavector *.dylib
 recursive-include tests *.py
 

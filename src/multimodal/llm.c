@@ -986,6 +986,7 @@ int llm_generate_response(GV_LLM *llm, const GV_LLMMessage *messages, size_t mes
     return GV_LLM_SUCCESS;
 #else
     // No CURL support
+    (void)response_format;
     if (llm) {
         set_error(llm, "CURL support not compiled in");
     }
