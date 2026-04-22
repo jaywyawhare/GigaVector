@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.15)
 project(GigaVector VERSION 0.8.2 LANGUAGES C)
 
+# Install directory conventions
+include(GNUInstallDirs)
+
 # Set C standard
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -19,6 +22,12 @@ set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -g")
 set(CMAKE_C_FLAGS_RELEASE "-O3 -DNDEBUG")
 set(CMAKE_C_FLAGS_DEBUG "-O0 -g")
 
+# Ensure objects do not request an executable stack (fixes ld warnings on some toolchains).
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    add_compile_options(-Wa,--noexecstack)
+    add_link_options(-Wl,-z,noexecstack)
+endif()
+
 # CPU tuning is opt-in to avoid shipping binaries with unsupported instruction sets.
 if(ENABLE_NATIVE_OPTIMIZATIONS)
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -march=native -mtune=native")
@@ -27,24 +36,29 @@ endif()
 # Position Independent Code for shared libraries
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-# Include directories
-include_directories(include)
-
 # Source files
-file(GLOB GV_SOURCE_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/gv_*.c")
+file(GLOB_RECURSE GV_SOURCE_FILES CONFIGURE_DEPENDS 
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/*.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cu"
+)
 list(SORT GV_SOURCE_FILES)
 set(SOURCES ${GV_SOURCE_FILES})
 
 # Create library
 add_library(GigaVector ${SOURCES})
 
+# Public include root (do not flatten subdirectories)
+target_include_directories(GigaVector
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+)
+
 # Check for libcurl (required for LLM support)
 find_package(CURL)
 if(CURL_FOUND)
     target_compile_definitions(GigaVector PRIVATE HAVE_CURL)
     target_link_libraries(GigaVector PRIVATE ${CURL_LIBRARIES})
-    target_include_directories(GigaVector PRIVATE ${CURL_INCLUDE_DIRS})
-    message(STATUS "  LLM support: Enabled (libcurl found)")
 else()
     message(STATUS "  LLM support: Disabled (libcurl not found)")
     message(WARNING "Install libcurl-dev/libcurl-devel to enable LLM-based memory extraction")
@@ -56,8 +70,6 @@ find_path(MICROHTTPD_INCLUDE_DIR NAMES microhttpd.h)
 if(MICROHTTPD_LIBRARY AND MICROHTTPD_INCLUDE_DIR)
     target_compile_definitions(GigaVector PRIVATE HAVE_MICROHTTPD)
     target_link_libraries(GigaVector PRIVATE ${MICROHTTPD_LIBRARY})
-    target_include_directories(GigaVector PRIVATE ${MICROHTTPD_INCLUDE_DIR})
-    message(STATUS "  HTTP Server: Enabled (libmicrohttpd found)")
 else()
     message(STATUS "  HTTP Server: Disabled (libmicrohttpd not found)")
     message(WARNING "Install libmicrohttpd-dev to enable HTTP REST server")
@@ -94,19 +106,19 @@ target_link_libraries(GigaVector PRIVATE m pthread)
 set_target_properties(GigaVector PROPERTIES
     VERSION ${PROJECT_VERSION}
     SOVERSION ${PROJECT_VERSION_MAJOR}
-    PUBLIC_HEADER "include/gigavector/gigavector.h"
+    PUBLIC_HEADER "include/gigavector.h"
 )
 
 # Install library
 install(TARGETS GigaVector
-    LIBRARY DESTINATION lib
-    ARCHIVE DESTINATION lib
-    PUBLIC_HEADER DESTINATION include/gigavector
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    PUBLIC_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
 )
 
 # Install headers
-install(DIRECTORY include/gigavector/
-    DESTINATION include/gigavector
+install(DIRECTORY include/
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
     FILES_MATCHING PATTERN "*.h"
 )
 
@@ -116,22 +128,22 @@ target_link_libraries(gigavector_main PRIVATE GigaVector)
 
 # Install main executable
 install(TARGETS gigavector_main
-    RUNTIME DESTINATION bin
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 
 # CLI Tools
-add_executable(gvbackup tools/gv_backup_cli.c)
+add_executable(gvbackup tools/backup_cli.c)
 target_link_libraries(gvbackup PRIVATE GigaVector)
 
-add_executable(gvrestore tools/gv_restore_cli.c)
+add_executable(gvrestore tools/restore_cli.c)
 target_link_libraries(gvrestore PRIVATE GigaVector)
 
-add_executable(gvinspect tools/gv_inspect_cli.c)
+add_executable(gvinspect tools/inspect_cli.c)
 target_link_libraries(gvinspect PRIVATE GigaVector)
 
 # Install CLI tools
 install(TARGETS gvbackup gvrestore gvinspect
-    RUNTIME DESTINATION bin
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 
 # Sanitizers
@@ -150,7 +162,7 @@ endif()
 if(BUILD_TESTS)
     enable_testing()
 
-    file(GLOB TEST_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_*.c")
+    file(GLOB_RECURSE TEST_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_*.c")
     list(SORT TEST_SOURCES)
 
     foreach(TEST_SRC ${TEST_SOURCES})
