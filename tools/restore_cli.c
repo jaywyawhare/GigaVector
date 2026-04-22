@@ -1,5 +1,5 @@
 /**
- * @file gv_restore_cli.c
+ * @file restore_cli.c
  * @brief Command-line restore tool for GigaVector.
  *
  * Usage: gvrestore --source <backup_path> --dest <db_path> [options]
@@ -10,7 +10,7 @@
 #include <string.h>
 #include <getopt.h>
 
-#include "gigavector/gv_backup.h"
+#include "storage/backup.h"
 
 static void print_usage(const char *program) {
     printf("GigaVector Restore Tool\n\n");
@@ -94,13 +94,13 @@ int main(int argc, char *argv[]) {
 
     /* Configure restore options */
     GV_RestoreOptions options;
-    gv_restore_options_init(&options);
+    restore_options_init(&options);
     options.overwrite = force;
     options.verify_checksum = !no_verify;
     options.decryption_key = decrypt_key;
 
     /* Restore backup */
-    GV_BackupResult *result = gv_backup_restore(
+    GV_BackupResult *result = backup_restore(
         source, dest, &options,
         verbose ? progress_callback : NULL,
         &verbose
@@ -113,7 +113,7 @@ int main(int argc, char *argv[]) {
 
     if (!result->success) {
         fprintf(stderr, "Error: %s\n", result->error_message ? result->error_message : "Unknown error");
-        gv_backup_result_free(result);
+        backup_result_free(result);
         return 1;
     }
 
@@ -126,6 +126,6 @@ int main(int argc, char *argv[]) {
         printf("Database restored: %s\n", dest);
     }
 
-    gv_backup_result_free(result);
+    backup_result_free(result);
     return 0;
 }

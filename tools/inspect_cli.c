@@ -1,5 +1,5 @@
 /**
- * @file gv_inspect_cli.c
+ * @file inspect_cli.c
  * @brief Command-line inspection tool for GigaVector databases and backups.
  *
  * Usage: gvinspect <file_path> [options]
@@ -10,8 +10,8 @@
 #include <string.h>
 #include <getopt.h>
 
-#include "gigavector/gv_backup.h"
-#include "gigavector/gv_database.h"
+#include "storage/backup.h"
+#include "storage/database.h"
 
 static void print_usage(const char *program) {
     printf("GigaVector Inspect Tool\n\n");
@@ -41,7 +41,7 @@ static int ends_with(const char *str, const char *suffix) {
 
 static void inspect_backup(const char *path, int stats, int verify, int json) {
     if (verify) {
-        GV_BackupResult *result = gv_backup_verify(path, NULL);
+        GV_BackupResult *result = backup_verify(path, NULL);
         if (json) {
             printf("{\"valid\": %s", result->success ? "true" : "false");
             if (result->error_message) {
@@ -58,12 +58,12 @@ static void inspect_backup(const char *path, int stats, int verify, int json) {
                 }
             }
         }
-        gv_backup_result_free(result);
+        backup_result_free(result);
         return;
     }
 
     GV_BackupHeader header;
-    if (gv_backup_read_header(path, &header) != 0) {
+    if (backup_read_header(path, &header) != 0) {
         if (json) {
             printf("{\"error\": \"Failed to read backup header\"}\n");
         } else {
@@ -86,7 +86,7 @@ static void inspect_backup(const char *path, int stats, int verify, int json) {
         printf("}\n");
     } else {
         char info[1024];
-        gv_backup_get_info(path, info, sizeof(info));
+        backup_get_info(path, info, sizeof(info));
         printf("%s\n", info);
 
         if (stats) {
@@ -103,7 +103,7 @@ static void inspect_backup(const char *path, int stats, int verify, int json) {
 
 static void inspect_database(const char *path, int stats, int verify, int json) {
     /* Try to open database */
-    GV_Database *db = gv_db_open(path, 0, GV_INDEX_TYPE_HNSW);
+    GV_Database *db = db_open(path, 0, GV_INDEX_TYPE_HNSW);
     if (!db) {
         if (json) {
             printf("{\"error\": \"Failed to open database\"}\n");
@@ -114,7 +114,7 @@ static void inspect_database(const char *path, int stats, int verify, int json) 
     }
 
     if (verify) {
-        int h = gv_db_health_check(db);
+        int h = db_health_check(db);
         const char *label;
         if (h == 0) label = "healthy";
         else if (h == -1) label = "degraded";
@@ -123,9 +123,9 @@ static void inspect_database(const char *path, int stats, int verify, int json) 
         if (json) {
             printf("{\"verify\":true,\"health\":\"%s\",\"health_code\":%d}\n", label, h);
         } else {
-            printf("Database verification (gv_db_health_check): %s (%d)\n", label, h);
+            printf("Database verification (db_health_check): %s (%d)\n", label, h);
         }
-        gv_db_close(db);
+        db_close(db);
         return;
     }
 
@@ -135,7 +135,7 @@ static void inspect_database(const char *path, int stats, int verify, int json) 
         printf("  \"vector_count\": %zu,\n", db->count);
         printf("  \"dimension\": %zu,\n", db->dimension);
         printf("  \"index_type\": %u,\n", db->index_type);
-        printf("  \"memory_usage\": %zu\n", gv_db_get_memory_usage(db));
+        printf("  \"memory_usage\": %zu\n", db_get_memory_usage(db));
         printf("}\n");
     } else {
         printf("GigaVector Database\n");
@@ -154,12 +154,12 @@ static void inspect_database(const char *path, int stats, int verify, int json) 
 
         if (stats) {
             printf("\nDetailed Statistics:\n");
-            printf("  Memory Usage: %zu bytes\n", gv_db_get_memory_usage(db));
+            printf("  Memory Usage: %zu bytes\n", db_get_memory_usage(db));
             printf("  Data Size: %zu bytes\n", db->count * db->dimension * sizeof(float));
         }
     }
 
-    gv_db_close(db);
+    db_close(db);
 }
 
 int main(int argc, char *argv[]) {
