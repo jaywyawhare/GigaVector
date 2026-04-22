@@ -1,12 +1,11 @@
 name: Publish to PyPI
 
 on:
-  release:
-    types: [created]
   workflow_dispatch:
 
 jobs:
   publish:
+    if: false
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -28,7 +27,7 @@ jobs:
     - name: Build native library
       working-directory: .
       run: |
-        make lib
+        make lib HARDENING_FLAGS="-fcf-protection=none -mno-shstk"
         cp build/lib/libGigaVector.so python/src/gigavector/
     
     - name: Set up Python
