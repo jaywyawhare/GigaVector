@@ -18,7 +18,12 @@ option(ENABLE_COVERAGE "Enable code coverage" OFF)
 option(ENABLE_NATIVE_OPTIMIZATIONS "Enable CPU-specific optimizations (-march=native -mtune=native)" OFF)
 
 # Compiler flags
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -g")
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -g")
+elseif(MSVC)
+    # Keep warnings high on MSVC, but do not inject GCC/Clang flags.
+    add_compile_options(/W4)
+endif()
 set(CMAKE_C_FLAGS_RELEASE "-O3 -DNDEBUG")
 set(CMAKE_C_FLAGS_DEBUG "-O0 -g")
 
