@@ -10,6 +10,34 @@
 #include "api/grpc.h"
 #include "storage/database.h"
 
+#ifdef _WIN32
+/* The gRPC-style socket server relies on POSIX socket headers that are not
+ * available in the MinGW/Windows build environment.  The Python wheel uses
+ * the library directly (in-process) and never starts this network server, so
+ * provide no-op stubs to satisfy the linker. */
+#include <stdlib.h>
+#include <string.h>
+
+void grpc_config_init(GV_GrpcConfig *c) { if (c) memset(c, 0, sizeof(*c)); }
+GV_GrpcServer *grpc_create(GV_Database *db, const GV_GrpcConfig *cfg) { (void)db; (void)cfg; return NULL; }
+int  grpc_start(GV_GrpcServer *s)  { (void)s; return -1; }
+int  grpc_stop(GV_GrpcServer *s)   { (void)s; return -1; }
+void grpc_destroy(GV_GrpcServer *s) { (void)s; }
+int  grpc_is_running(const GV_GrpcServer *s) { (void)s; return 0; }
+int  grpc_get_stats(const GV_GrpcServer *s, GV_GrpcStats *st) { (void)s; (void)st; return -1; }
+const char *grpc_error_string(int e) { (void)e; return "gRPC server not supported on Windows"; }
+int grpc_encode_search_request(const float *q, size_t dim, size_t k, int dt,
+                               uint8_t *buf, size_t bsz, size_t *ol)
+    { (void)q;(void)dim;(void)k;(void)dt;(void)buf;(void)bsz;(void)ol; return -1; }
+int grpc_decode_search_request(const uint8_t *buf, size_t len,
+                               float **q, size_t *dim, size_t *k, int *dt)
+    { (void)buf;(void)len;(void)q;(void)dim;(void)k;(void)dt; return -1; }
+int grpc_encode_add_request(const float *d, size_t dim,
+                            uint8_t *buf, size_t bsz, size_t *ol)
+    { (void)d;(void)dim;(void)buf;(void)bsz;(void)ol; return -1; }
+
+#else  /* POSIX implementation below */
+
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -1146,3 +1174,5 @@ int grpc_encode_add_request(const float *data, size_t dimension,
     *out_len = needed;
     return GV_GRPC_OK;
 }
+
+#endif /* _WIN32 */
