@@ -49,6 +49,15 @@ def fix_wheel(wheel_path: Path) -> None:
         platlib_dir.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(purelib_dir), str(platlib_dir))
 
+        # Update RECORD paths so tools (auditwheel) can locate ELF files.
+        record_files = list(unpack_dir.glob("*.dist-info/RECORD"))
+        if len(record_files) != 1:
+            raise RuntimeError(f"Expected 1 RECORD file, found {len(record_files)}")
+        record_path = record_files[0]
+        record_text = record_path.read_text(encoding="utf-8", errors="replace")
+        record_text = record_text.replace(".data/purelib/", ".data/platlib/")
+        record_path.write_text(record_text, encoding="utf-8")
+
         # Repack wheel deterministically-ish: zipfile doesn't preserve order anyway,
         # but that's fine for our use (auditwheel runs next).
         tmp_wheel = td_path / wheel_path.name
