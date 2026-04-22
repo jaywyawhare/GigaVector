@@ -29,7 +29,7 @@ export default function Navbar() {
       <Link className="nav-logo" to="/">
         <img src="https://raw.githubusercontent.com/jaywyawhare/GigaVector/master/docs/gigavector-logo.png" alt="GigaVector" className="nav-logo-img" />
         GigaVector
-        <span className="nav-ver">0.8.2</span>
+        <span className="nav-ver">0.8.3</span>
       </Link>
 
       <ul className="nav-links">
