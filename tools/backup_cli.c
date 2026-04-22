@@ -1,5 +1,5 @@
 /**
- * @file gv_backup_cli.c
+ * @file backup_cli.c
  * @brief Command-line backup tool for GigaVector.
  *
  * Usage: gvbackup --source <db_path> --dest <backup_path> [options]
@@ -10,7 +10,7 @@
 #include <string.h>
 #include <getopt.h>
 
-#include "gigavector/gv_backup.h"
+#include "storage/backup.h"
 
 static void print_usage(const char *program) {
     printf("GigaVector Backup Tool\n\n");
@@ -95,13 +95,13 @@ int main(int argc, char *argv[]) {
 
     /* Configure backup options */
     GV_BackupOptions options;
-    gv_backup_options_init(&options);
+    backup_options_init(&options);
     options.compression = compress ? GV_BACKUP_COMPRESS_ZLIB : GV_BACKUP_COMPRESS_NONE;
     options.encryption_key = encrypt_key;
     options.verify_after = !no_verify;
 
     /* Create backup */
-    GV_BackupResult *result = gv_backup_create_from_file(
+    GV_BackupResult *result = backup_create_from_file(
         source, dest, &options,
         verbose ? progress_callback : NULL,
         &verbose
@@ -114,7 +114,7 @@ int main(int argc, char *argv[]) {
 
     if (!result->success) {
         fprintf(stderr, "Error: %s\n", result->error_message ? result->error_message : "Unknown error");
-        gv_backup_result_free(result);
+        backup_result_free(result);
         return 1;
     }
 
@@ -127,6 +127,6 @@ int main(int argc, char *argv[]) {
         printf("Backup created: %s\n", dest);
     }
 
-    gv_backup_result_free(result);
+    backup_result_free(result);
     return 0;
 }
