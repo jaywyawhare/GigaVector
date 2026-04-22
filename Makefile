@@ -18,7 +18,7 @@ DATA_DIR    := snapshots
 BENCH_DIR   := $(BUILD_DIR)/bench
 
 LIB_NAME    := GigaVector
-LIB_VERSION := 0.8.2
+LIB_VERSION := 0.8.3
 STATIC_LIB  := $(LIB_DIR)/lib$(LIB_NAME).a
 SHARED_LIB  := $(LIB_DIR)/lib$(LIB_NAME).so
 
