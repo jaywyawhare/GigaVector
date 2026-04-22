@@ -7,7 +7,7 @@ import glob
 
 from setuptools import setup
 from setuptools.command.build_py import build_py
-from wheel.bdist_wheel import bdist_wheel as _bdist_wheel
+from setuptools.command.bdist_wheel import bdist_wheel as _bdist_wheel
 
 
 class BuildPyWithMake(build_py):
@@ -94,6 +94,11 @@ class BuildPyWithMake(build_py):
 
 
 class bdist_wheel(_bdist_wheel):
+    def initialize_options(self):
+        super().initialize_options()
+        # Force a platform wheel; we bundle native binaries.
+        self.root_is_pure = False
+
     def finalize_options(self):
         super().finalize_options()
         # This wheel bundles a native ELF shared library (libGigaVector.so),
