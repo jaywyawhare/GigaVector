@@ -32,6 +32,6 @@ packages = ["gigavector", "gigavector.dashboard"]
 include-package-data = true
 
 [tool.setuptools.package-data]
-gigavector = ["libGigaVector.so", "dashboard/static/*"]
+gigavector = ["libGigaVector.so", "libGigaVector.dylib", "GigaVector.dll", "dashboard/static/*"]
 
 

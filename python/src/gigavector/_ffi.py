@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -3042,29 +3043,40 @@ void gv_free(void *ptr);
 def _load_lib() -> "FFIType.CData":
     """Load the GigaVector shared library.
 
-    Searches for libGigaVector.so in the following locations (in order):
-    1. build/libGigaVector.so (development build)
-    2. build/lib/libGigaVector.so (alternative build location)
-    3. Packaged alongside this module
+    Searches for the platform shared library in the following locations (in order):
+    1. Repository build outputs (development builds)
+    2. Packaged alongside this module
 
     Returns:
         CFFI library handle for calling C functions.
 
     Raises:
-        FileNotFoundError: If libGigaVector.so is not found in any location.
+        FileNotFoundError: If the library is not found in any location.
     """
     here = Path(__file__).resolve().parent
     repo_root = here.parent.parent.parent  # .../GigaVector
-    # Prefer freshly built library, fall back to packaged copy
-    candidate_paths = [
-        repo_root / "build" / "libGigaVector.so",  # Check build/ first
-        repo_root / "build" / "lib" / "libGigaVector.so",  # Then build/lib/
-        here / "libGigaVector.so",
-    ]
+
+    if os.name == "nt":
+        lib_names = ["GigaVector.dll"]
+    elif sys.platform == "darwin":
+        lib_names = ["libGigaVector.dylib", "libGigaVector.so"]
+    else:
+        lib_names = ["libGigaVector.so"]
+
+    candidate_paths = []
+    for name in lib_names:
+        candidate_paths.extend([
+            repo_root / "build" / name,
+            repo_root / "build" / "lib" / name,
+            repo_root / "build-cmake" / name,
+            repo_root / "build-cmake" / "Release" / name,
+            here / name,
+        ])
+
     for lib_path in candidate_paths:
         if lib_path.exists():
             return ffi.dlopen(os.fspath(lib_path))
-    raise FileNotFoundError(f"libGigaVector.so not found in {candidate_paths}")
+    raise FileNotFoundError(f"GigaVector shared library not found in {candidate_paths}")
 
 
 lib: "FFIType.CData" = _load_lib()
