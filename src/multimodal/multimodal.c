@@ -17,6 +17,12 @@
 #include <pthread.h>
 #include "core/utils.h"
 
+/* Windows: mkdir(path) only; wrap to match POSIX mkdir(path, mode). */
+#ifdef _WIN32
+#include <direct.h>
+#define mkdir(path, mode) _mkdir(path)
+#endif
+
 /* Constants */
 
 #define MEDIA_INDEX_MAGIC "GVMED"

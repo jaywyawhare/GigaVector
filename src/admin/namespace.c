@@ -15,6 +15,12 @@
 #include <sys/stat.h>
 #include <dirent.h>
 
+/* Windows: mkdir(path) only; wrap to match POSIX mkdir(path, mode). */
+#ifdef _WIN32
+#include <direct.h>
+#define mkdir(path, mode) _mkdir(path)
+#endif
+
 /* Internal Structures */
 
 #define MAX_NAMESPACE_NAME 64
