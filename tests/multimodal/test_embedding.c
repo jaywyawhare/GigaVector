@@ -3,6 +3,15 @@
 #include <string.h>
 #include "multimodal/embedding.h"
 
+static void set_env_if_unset(const char *key, const char *value) {
+    if (getenv(key)) return;
+#ifdef _WIN32
+    _putenv_s(key, value);
+#else
+    setenv(key, value, 0);
+#endif
+}
+
 static void read_env_file(const char *filename) {
     FILE *fp = fopen(filename, "r");
     if (!fp) return;
@@ -33,9 +42,7 @@ static void read_env_file(const char *filename) {
         }
         
         
-        if (!getenv(key)) {
-            setenv(key, value, 0);
-        }
+        set_env_if_unset(key, value);
     }
     
     fclose(fp);
@@ -229,4 +236,3 @@ int main(void) {
     
     return 0;
 }
-
