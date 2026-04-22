@@ -12,7 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest]
 
     steps:
       - name: Checkout code
@@ -42,6 +42,9 @@ jobs:
           CIBW_MANYLINUX_X86_64_IMAGE: "manylinux_2_28"
           # Dependencies needed to build libGigaVector.so inside the container
           CIBW_BEFORE_ALL_LINUX: "yum install -y libcurl-devel openssl-devel"
+          # macOS build deps (for TLS support)
+          CIBW_BEFORE_ALL_MACOS: "brew install openssl@3"
+          CIBW_ENVIRONMENT_MACOS: "CPPFLAGS='-I/opt/homebrew/opt/openssl@3/include' LDFLAGS='-L/opt/homebrew/opt/openssl@3/lib'"
           # Fix wheel layout before auditwheel runs (auditwheel requires platlib).
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: "python /project/python/tools/wheel_fixup_platlib.py {wheel} && auditwheel repair -w {dest_dir} {wheel}"
           # Reduce noise; repair with auditwheel to bundle non-glibc deps.
