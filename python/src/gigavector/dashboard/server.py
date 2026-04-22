@@ -1591,7 +1591,7 @@ class DashboardServer:
             self._thread = None
     def is_running(self) -> bool:
         """Check if dashboard is running in the background"""
-        return self._httpd is not None and self._thread is not None
+        return self._httpd is not None and self._thread is not None and self._thread.is_alive()
 
     @property
     def port(self) -> int:
