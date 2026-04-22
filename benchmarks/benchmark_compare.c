@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include <time.h>
 #include <math.h>
-#include "gigavector/gigavector.h"
+#include "gigavector.h"
 
 #define ITERATIONS 500000
 #define DIMENSION 128
@@ -69,7 +69,7 @@ int main(void) {
     start = get_time_ms();
     total = 0.0f;
     for (int i = 0; i < ITERATIONS; ++i) {
-        total += gv_distance_euclidean(&a, &b);
+        total += distance_euclidean(&a, &b);
     }
     double simd_time = get_time_ms() - start;
     printf("SIMD:      %.2f ms (%.2f ops/sec)\n", 
@@ -91,7 +91,7 @@ int main(void) {
     start = get_time_ms();
     total = 0.0f;
     for (int i = 0; i < ITERATIONS; ++i) {
-        total += gv_distance_cosine(&a, &b);
+        total += distance_cosine(&a, &b);
     }
     simd_time = get_time_ms() - start;
     printf("SIMD:      %.2f ms (%.2f ops/sec)\n", 

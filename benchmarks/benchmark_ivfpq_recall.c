@@ -4,7 +4,7 @@
 #include <string.h>
 #include <math.h>
 
-#include "gigavector/gigavector.h"
+#include "gigavector.h"
 
 static double now_ms(void) {
     struct timespec ts;
@@ -64,7 +64,7 @@ int main(int argc, char **argv) {
     fill_random(data, n, dim);
     fill_random(queries, q, dim);
 
-    GV_Database *db = gv_db_open(NULL, dim, GV_INDEX_TYPE_IVFPQ);
+    GV_Database *db = db_open(NULL, dim, GV_INDEX_TYPE_IVFPQ);
     if (!db) {
         fprintf(stderr, "db open failed\n");
         return 1;
@@ -78,7 +78,7 @@ int main(int argc, char **argv) {
         snprintf(buf, sizeof(buf), "%zu", i);
         const char *key = "id";
         const char *val = buf;
-        if (gv_db_add_vector_with_metadata(db, data + i * dim, dim, key, val) != 0) {
+        if (db_add_vector_with_metadata(db, data + i * dim, dim, key, val) != 0) {
             fprintf(stderr, "insert failed at %zu\n", i);
             return 1;
         }
@@ -90,7 +90,7 @@ int main(int argc, char **argv) {
     size_t correct = 0;
     double t0 = now_ms();
     for (size_t qi = 0; qi < q; ++qi) {
-        int found = gv_db_search_ivfpq_opts(db, queries + qi * dim, k, res,
+        int found = db_search_ivfpq_opts(db, queries + qi * dim, k, res,
                                             use_cosine ? GV_DISTANCE_COSINE : GV_DISTANCE_EUCLIDEAN,
                                             nprobe, rerank);
         if (found < 0) {
@@ -121,7 +121,7 @@ int main(int argc, char **argv) {
     printf("IVF-PQ recall@1=%.3f q=%zu k=%zu time=%.2fms qps=%.1f\n", recall, q, k, t1 - t0, qps);
 
     free(res);
-    gv_db_close(db);
+    db_close(db);
     free(data);
     free(queries);
     free(gt);

@@ -3,7 +3,7 @@
 #include <time.h>
 #include <string.h>
 
-#include "gigavector/gigavector.h"
+#include "gigavector.h"
 
 #define ITERATIONS 1000000
 #define DIMENSION 128
@@ -37,7 +37,7 @@ static void benchmark_euclidean(void) {
     double start = get_time_ms();
     float total = 0.0f;
     for (int i = 0; i < ITERATIONS; ++i) {
-        float dist = gv_distance_euclidean(&a, &b);
+        float dist = distance_euclidean(&a, &b);
         total += dist;
     }
     double end = get_time_ms();
@@ -77,7 +77,7 @@ static void benchmark_cosine(void) {
     double start = get_time_ms();
     float total = 0.0f;
     for (int i = 0; i < ITERATIONS; ++i) {
-        float sim = gv_distance_cosine(&a, &b);
+        float sim = distance_cosine(&a, &b);
         total += sim;
     }
     double end = get_time_ms();
@@ -130,7 +130,7 @@ static void benchmark_different_dimensions(void) {
 
         double start = get_time_ms();
         for (int i = 0; i < iterations; ++i) {
-            gv_distance_euclidean(&a, &b);
+            distance_euclidean(&a, &b);
         }
         double end = get_time_ms();
         double elapsed = end - start;
@@ -149,7 +149,7 @@ int main(void) {
     printf("GigaVector SIMD Performance Benchmark\n");
     printf("=====================================\n\n");
     
-    unsigned int features = gv_cpu_detect_features();
+    unsigned int features = cpu_detect_features();
     printf("CPU Features:\n");
     if (features & GV_CPU_FEATURE_SSE) printf("  SSE\n");
     if (features & GV_CPU_FEATURE_SSE4_2) printf("  SSE4.2\n");
