@@ -12,6 +12,38 @@
         }                         \
     } while (0)
 
+typedef struct {
+    int *count;
+} ReplayCtx;
+
+static int on_insert_basic_cb(void *ctx, const float *data, size_t dimension,
+                              const char *metadata_key, const char *metadata_value) {
+    (void)data;
+    (void)dimension;
+    (void)metadata_key;
+    (void)metadata_value;
+    if (!ctx) return -1;
+    ReplayCtx *rctx = (ReplayCtx *)ctx;
+    if (!rctx->count) return -1;
+    (*rctx->count)++;
+    return 0;
+}
+
+static int on_insert_rich_cb(void *ctx, const float *data, size_t dimension,
+                             const char *const *metadata_keys, const char *const *metadata_values,
+                             size_t metadata_count) {
+    (void)data;
+    (void)dimension;
+    (void)metadata_keys;
+    (void)metadata_values;
+    (void)metadata_count;
+    if (!ctx) return -1;
+    ReplayCtx *rctx = (ReplayCtx *)ctx;
+    if (!rctx->count) return -1;
+    (*rctx->count)++;
+    return 0;
+}
+
 static int test_wal_open_close(void) {
     const char *wal_path = "tmp_test_wal.bin.wal";
     remove(wal_path);
@@ -171,18 +203,9 @@ static int test_wal_replay(void) {
     wal_close(wal);
     
     int replay_count = 0;
-    int on_insert_cb(void *ctx, const float *data, size_t dimension,
-                     const char *metadata_key, const char *metadata_value) {
-        (void)ctx;
-        (void)data;
-        (void)dimension;
-        (void)metadata_key;
-        (void)metadata_value;
-        replay_count++;
-        return 0;
-    }
-    
-    int replay_result = wal_replay(wal_path, 2, on_insert_cb, NULL, GV_INDEX_TYPE_KDTREE);
+    ReplayCtx ctx = { .count = &replay_count };
+
+    int replay_result = wal_replay(wal_path, 2, on_insert_basic_cb, &ctx, GV_INDEX_TYPE_KDTREE);
     if (replay_result != 0) {
         remove(wal_path);
         return 0;
@@ -208,20 +231,9 @@ static int test_wal_replay_rich(void) {
     wal_close(wal);
     
     int replay_count = 0;
-    int on_insert_cb(void *ctx, const float *data, size_t dimension,
-                     const char *const *metadata_keys, const char *const *metadata_values,
-                     size_t metadata_count) {
-        (void)ctx;
-        (void)data;
-        (void)dimension;
-        (void)metadata_keys;
-        (void)metadata_values;
-        (void)metadata_count;
-        replay_count++;
-        return 0;
-    }
-    
-    ASSERT(wal_replay_rich(wal_path, 2, on_insert_cb, NULL, GV_INDEX_TYPE_KDTREE) == 0, "wal replay rich");
+    ReplayCtx ctx = { .count = &replay_count };
+
+    ASSERT(wal_replay_rich(wal_path, 2, on_insert_rich_cb, &ctx, GV_INDEX_TYPE_KDTREE) == 0, "wal replay rich");
     ASSERT(replay_count == 1, "replay count");
     
     remove(wal_path);
