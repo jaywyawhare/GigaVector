@@ -211,7 +211,12 @@ static int read_manifest(const char *db_filepath, size_t *dimension,
         return -1;
     }
 
-    fread(content, 1, fsize, fp);
+    if (fread(content, 1, (size_t)fsize, fp) != (size_t)fsize) {
+        free(content);
+        fclose(fp);
+        free(manifest_path);
+        return -1;
+    }
     content[fsize] = '\0';
     fclose(fp);
     free(manifest_path);

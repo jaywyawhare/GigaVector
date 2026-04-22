@@ -680,8 +680,11 @@ GV_BM25Index *bm25_load(const char *filepath) {
 
     GV_BM25Config config;
     bm25_config_init(&config);
-    fread(&config.k1, sizeof(config.k1), 1, fp);
-    fread(&config.b, sizeof(config.b), 1, fp);
+    if (fread(&config.k1, sizeof(config.k1), 1, fp) != 1 ||
+        fread(&config.b, sizeof(config.b), 1, fp) != 1) {
+        fclose(fp);
+        return NULL;
+    }
 
     GV_BM25Index *index = bm25_create(&config);
     if (!index) {
@@ -689,9 +692,13 @@ GV_BM25Index *bm25_load(const char *filepath) {
         return NULL;
     }
 
-    fread(&index->total_documents, sizeof(index->total_documents), 1, fp);
-    fread(&index->total_terms, sizeof(index->total_terms), 1, fp);
-    fread(&index->total_doc_length, sizeof(index->total_doc_length), 1, fp);
+    if (fread(&index->total_documents, sizeof(index->total_documents), 1, fp) != 1 ||
+        fread(&index->total_terms, sizeof(index->total_terms), 1, fp) != 1 ||
+        fread(&index->total_doc_length, sizeof(index->total_doc_length), 1, fp) != 1) {
+        bm25_destroy(index);
+        fclose(fp);
+        return NULL;
+    }
 
     size_t expected_docs = index->total_documents;
     size_t expected_terms = index->total_terms;
@@ -704,7 +711,11 @@ GV_BM25Index *bm25_load(const char *filepath) {
         if (doc_id == (size_t)-1) break;
 
         size_t doc_length;
-        fread(&doc_length, sizeof(doc_length), 1, fp);
+        if (fread(&doc_length, sizeof(doc_length), 1, fp) != 1) {
+            bm25_destroy(index);
+            fclose(fp);
+            return NULL;
+        }
 
         GV_DocInfo *di = get_or_create_doc_info(index, doc_id);
         if (di) {
@@ -719,11 +730,21 @@ GV_BM25Index *bm25_load(const char *filepath) {
 
         char *term = malloc(term_len + 1);
         if (!term) break;
-        fread(term, 1, term_len, fp);
+        if (fread(term, 1, term_len, fp) != term_len) {
+            free(term);
+            bm25_destroy(index);
+            fclose(fp);
+            return NULL;
+        }
         term[term_len] = '\0';
 
         size_t posting_count;
-        fread(&posting_count, sizeof(posting_count), 1, fp);
+        if (fread(&posting_count, sizeof(posting_count), 1, fp) != 1) {
+            free(term);
+            bm25_destroy(index);
+            fclose(fp);
+            return NULL;
+        }
 
         GV_PostingList *pl = get_or_create_posting_list(index, term);
         if (pl && posting_count > 0) {
@@ -734,7 +755,18 @@ GV_BM25Index *bm25_load(const char *filepath) {
                     pl->capacity = posting_count;
                 }
             }
-            fread(pl->postings, sizeof(GV_Posting), posting_count, fp);
+            if (!pl || !pl->postings || pl->capacity < posting_count) {
+                free(term);
+                bm25_destroy(index);
+                fclose(fp);
+                return NULL;
+            }
+            if (fread(pl->postings, sizeof(GV_Posting), posting_count, fp) != posting_count) {
+                free(term);
+                bm25_destroy(index);
+                fclose(fp);
+                return NULL;
+            }
             pl->count = posting_count;
         }
 

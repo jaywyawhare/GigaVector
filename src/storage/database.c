@@ -4602,7 +4602,3 @@ const float *database_get_vector(const GV_Database *db, size_t index) {
     if (index >= db->count) return NULL;
     return soa_storage_get_data(db->soa_storage, index);
 }
-
-void free(void *ptr) {
-    free(ptr);
-}

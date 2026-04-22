@@ -244,15 +244,18 @@ GV_BackupResult *backup_restore(const char *backup_path, const char *db_path,
     }
 
     GV_BackupHeader header;
-    fread(&header.version, sizeof(header.version), 1, fp);
-    fread(&header.flags, sizeof(header.flags), 1, fp);
-    fread(&header.created_at, sizeof(header.created_at), 1, fp);
-    fread(&header.vector_count, sizeof(header.vector_count), 1, fp);
-    fread(&header.dimension, sizeof(header.dimension), 1, fp);
-    fread(&header.index_type, sizeof(header.index_type), 1, fp);
-    fread(&header.original_size, sizeof(header.original_size), 1, fp);
-    fread(&header.compressed_size, sizeof(header.compressed_size), 1, fp);
-    fread(header.checksum, 1, BACKUP_CHECKSUM_LEN, fp);
+    if (fread(&header.version, sizeof(header.version), 1, fp) != 1 ||
+        fread(&header.flags, sizeof(header.flags), 1, fp) != 1 ||
+        fread(&header.created_at, sizeof(header.created_at), 1, fp) != 1 ||
+        fread(&header.vector_count, sizeof(header.vector_count), 1, fp) != 1 ||
+        fread(&header.dimension, sizeof(header.dimension), 1, fp) != 1 ||
+        fread(&header.index_type, sizeof(header.index_type), 1, fp) != 1 ||
+        fread(&header.original_size, sizeof(header.original_size), 1, fp) != 1 ||
+        fread(&header.compressed_size, sizeof(header.compressed_size), 1, fp) != 1 ||
+        fread(header.checksum, 1, BACKUP_CHECKSUM_LEN, fp) != BACKUP_CHECKSUM_LEN) {
+        fclose(fp);
+        return create_result(0, "Backup file truncated — failed to read header");
+    }
 
     GV_Database *db = db_open(NULL, header.dimension, header.index_type);
     if (!db) {
@@ -385,15 +388,18 @@ int backup_read_header(const char *backup_path, GV_BackupHeader *header) {
         return -1;
     }
 
-    fread(&header->version, sizeof(header->version), 1, fp);
-    fread(&header->flags, sizeof(header->flags), 1, fp);
-    fread(&header->created_at, sizeof(header->created_at), 1, fp);
-    fread(&header->vector_count, sizeof(header->vector_count), 1, fp);
-    fread(&header->dimension, sizeof(header->dimension), 1, fp);
-    fread(&header->index_type, sizeof(header->index_type), 1, fp);
-    fread(&header->original_size, sizeof(header->original_size), 1, fp);
-    fread(&header->compressed_size, sizeof(header->compressed_size), 1, fp);
-    fread(header->checksum, 1, BACKUP_CHECKSUM_LEN, fp);
+    if (fread(&header->version, sizeof(header->version), 1, fp) != 1 ||
+        fread(&header->flags, sizeof(header->flags), 1, fp) != 1 ||
+        fread(&header->created_at, sizeof(header->created_at), 1, fp) != 1 ||
+        fread(&header->vector_count, sizeof(header->vector_count), 1, fp) != 1 ||
+        fread(&header->dimension, sizeof(header->dimension), 1, fp) != 1 ||
+        fread(&header->index_type, sizeof(header->index_type), 1, fp) != 1 ||
+        fread(&header->original_size, sizeof(header->original_size), 1, fp) != 1 ||
+        fread(&header->compressed_size, sizeof(header->compressed_size), 1, fp) != 1 ||
+        fread(header->checksum, 1, BACKUP_CHECKSUM_LEN, fp) != BACKUP_CHECKSUM_LEN) {
+        fclose(fp);
+        return -1;
+    }
     header->checksum[64] = '\0';
 
     fclose(fp);
@@ -784,7 +790,12 @@ int backup_compute_checksum(const char *backup_path, char *checksum_out) {
         return -1;
     }
 
-    fread(buffer, 1, file_size, fp);
+    size_t to_read = (size_t)file_size;
+    if (fread(buffer, 1, to_read, fp) != to_read) {
+        free(buffer);
+        fclose(fp);
+        return -1;
+    }
     fclose(fp);
 
     if ((size_t)file_size > checksum_offset + BACKUP_CHECKSUM_LEN) {
