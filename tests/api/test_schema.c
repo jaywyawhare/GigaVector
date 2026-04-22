@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "api/schema.h"
+#include "../test_tmp.h"
 
 #define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while(0)
 
@@ -162,7 +163,9 @@ static int test_schema_diff(void) {
 }
 
 static int test_schema_save_load_and_json(void) {
-    const char *path = "/tmp/test_schema_save_load.bin";
+    char path[512];
+    ASSERT(gv_test_make_temp_path(path, sizeof(path), "test_schema_save_load", ".bin") == 0,
+           "make temp path");
     GV_Schema *schema = schema_create(1);
     ASSERT(schema != NULL, "schema creation");
 

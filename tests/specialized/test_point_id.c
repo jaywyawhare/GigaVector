@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "specialized/point_id.h"
+#include "../test_tmp.h"
 
 #define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while(0)
 
@@ -149,7 +150,9 @@ static int test_point_id_generate_uuid(void) {
 }
 
 static int test_point_id_save_load(void) {
-    const char *path = "/tmp/test_point_id_save_load.bin";
+    char path[512];
+    ASSERT(gv_test_make_temp_path(path, sizeof(path), "test_point_id_save_load", ".bin") == 0,
+           "make temp path");
     GV_PointIDMap *map = point_id_create(0);
     ASSERT(map != NULL, "map creation");
 

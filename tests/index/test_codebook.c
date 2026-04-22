@@ -3,6 +3,7 @@
 #include <string.h>
 #include <math.h>
 #include "index/codebook.h"
+#include "../test_tmp.h"
 
 #define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while(0)
 
@@ -149,7 +150,9 @@ static int test_codebook_copy(void) {
 }
 
 static int test_codebook_save_load(void) {
-    const char *path = "/tmp/test_codebook_save_load.bin";
+    char path[512];
+    ASSERT(gv_test_make_temp_path(path, sizeof(path), "test_codebook_save_load", ".bin") == 0,
+           "make temp path");
     GV_Codebook *cb = codebook_create(4, 2, 4);
     ASSERT(cb != NULL, "codebook creation");
 
@@ -184,7 +187,9 @@ static int test_codebook_save_load(void) {
 }
 
 static int test_codebook_save_load_fp(void) {
-    const char *path = "/tmp/test_codebook_fp.bin";
+    char path[512];
+    ASSERT(gv_test_make_temp_path(path, sizeof(path), "test_codebook_fp", ".bin") == 0,
+           "make temp path");
     GV_Codebook *cb = codebook_create(4, 4, 4);
     ASSERT(cb != NULL, "codebook creation dim=4 m=4");
 

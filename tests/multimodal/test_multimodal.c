@@ -2,10 +2,24 @@
 #include <stdlib.h>
 #include <string.h>
 #include "multimodal/multimodal.h"
+#include "../test_tmp.h"
 
 #define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while(0)
 
-static const char *TEST_STORAGE_DIR = "/tmp/test_multimodal";
+static const char *test_storage_dir(void) {
+    static char path[512];
+    static int initialized = 0;
+    if (!initialized) {
+        if (gv_test_make_temp_path(path, sizeof(path), "test_multimodal", "") != 0) {
+            return NULL;
+        }
+        if (gv_test_mkdir(path) != 0) {
+            return NULL;
+        }
+        initialized = 1;
+    }
+    return path;
+}
 
 static int test_media_config_init(void) {
     GV_MediaConfig config;
@@ -23,7 +37,8 @@ static int test_media_config_init(void) {
 static int test_media_create_destroy(void) {
     GV_MediaConfig config;
     media_config_init(&config);
-    config.storage_dir = TEST_STORAGE_DIR;
+    config.storage_dir = test_storage_dir();
+    ASSERT(config.storage_dir != NULL, "temp storage dir");
 
     GV_MediaStore *store = media_create(&config);
     ASSERT(store != NULL, "media store creation should succeed");
@@ -37,7 +52,8 @@ static int test_media_create_destroy(void) {
 static int test_media_store_blob(void) {
     GV_MediaConfig config;
     media_config_init(&config);
-    config.storage_dir = TEST_STORAGE_DIR;
+    config.storage_dir = test_storage_dir();
+    ASSERT(config.storage_dir != NULL, "temp storage dir");
 
     GV_MediaStore *store = media_create(&config);
     ASSERT(store != NULL, "media store creation");
@@ -57,7 +73,8 @@ static int test_media_store_blob(void) {
 static int test_media_retrieve(void) {
     GV_MediaConfig config;
     media_config_init(&config);
-    config.storage_dir = TEST_STORAGE_DIR;
+    config.storage_dir = test_storage_dir();
+    ASSERT(config.storage_dir != NULL, "temp storage dir");
 
     GV_MediaStore *store = media_create(&config);
     ASSERT(store != NULL, "media store creation");
@@ -81,7 +98,8 @@ static int test_media_retrieve(void) {
 static int test_media_get_info(void) {
     GV_MediaConfig config;
     media_config_init(&config);
-    config.storage_dir = TEST_STORAGE_DIR;
+    config.storage_dir = test_storage_dir();
+    ASSERT(config.storage_dir != NULL, "temp storage dir");
 
     GV_MediaStore *store = media_create(&config);
     ASSERT(store != NULL, "media store creation");
@@ -116,7 +134,8 @@ static int test_media_get_info(void) {
 static int test_media_exists_and_delete(void) {
     GV_MediaConfig config;
     media_config_init(&config);
-    config.storage_dir = TEST_STORAGE_DIR;
+    config.storage_dir = test_storage_dir();
+    ASSERT(config.storage_dir != NULL, "temp storage dir");
 
     GV_MediaStore *store = media_create(&config);
     ASSERT(store != NULL, "media store creation");
@@ -140,7 +159,8 @@ static int test_media_exists_and_delete(void) {
 static int test_media_total_size(void) {
     GV_MediaConfig config;
     media_config_init(&config);
-    config.storage_dir = TEST_STORAGE_DIR;
+    config.storage_dir = test_storage_dir();
+    ASSERT(config.storage_dir != NULL, "temp storage dir");
 
     GV_MediaStore *store = media_create(&config);
     ASSERT(store != NULL, "media store creation");
@@ -164,7 +184,8 @@ static int test_media_total_size(void) {
 static int test_media_get_path(void) {
     GV_MediaConfig config;
     media_config_init(&config);
-    config.storage_dir = TEST_STORAGE_DIR;
+    config.storage_dir = test_storage_dir();
+    ASSERT(config.storage_dir != NULL, "temp storage dir");
 
     GV_MediaStore *store = media_create(&config);
     ASSERT(store != NULL, "media store creation");
@@ -177,7 +198,7 @@ static int test_media_get_path(void) {
     int rc = media_get_path(store, 7, path, sizeof(path));
     ASSERT(rc == 0, "getting path should succeed");
     ASSERT(strlen(path) > 0, "path should be non-empty");
-    ASSERT(strstr(path, TEST_STORAGE_DIR) != NULL, "path should contain storage_dir");
+    ASSERT(strstr(path, config.storage_dir) != NULL, "path should contain storage_dir");
 
     media_destroy(store);
     return 0;

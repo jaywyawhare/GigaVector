@@ -5,6 +5,7 @@
 #include <unistd.h>
 
 #include "features/knowledge_graph.h"
+#include "../test_tmp.h"
 
 #define ASSERT(cond, msg)         \
     do {                          \
@@ -406,7 +407,9 @@ static int test_analytics(void) {
 }
 
 static int test_save_load(void) {
-    const char *path = "/tmp/test_gv_kg.gvkg";
+    char path[512];
+    ASSERT(gv_test_make_temp_path(path, sizeof(path), "test_gv_kg", ".gvkg") == 0,
+           "make temp path");
 
     GV_KGConfig cfg;
     kg_config_init(&cfg);
