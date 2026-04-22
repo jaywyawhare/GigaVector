@@ -795,14 +795,24 @@ static uint64_t parse_iso8601(const char *ts) {
 #if defined(_GNU_SOURCE) && defined(__linux__)
     time_t t = timegm(&tm_val);
 #else
-    /* Portable fallback: temporarily set TZ to UTC */
+    /* Portable fallback: temporarily set TZ to UTC.
+     * Windows lacks setenv/unsetenv; use _putenv_s/_tzset instead. */
     const char *tz_save = getenv("TZ");
+#ifdef _WIN32
+    _putenv_s("TZ", "UTC");
+    _tzset();
+    time_t t = mktime(&tm_val);
+    if (tz_save) _putenv_s("TZ", tz_save);
+    else         _putenv_s("TZ", "");
+    _tzset();
+#else
     setenv("TZ", "UTC", 1);
     tzset();
     time_t t = mktime(&tm_val);
     if (tz_save) setenv("TZ", tz_save, 1);
-    else unsetenv("TZ");
+    else         unsetenv("TZ");
     tzset();
+#endif
 #endif
 
     return (t == (time_t)-1) ? 0 : (uint64_t)t;
