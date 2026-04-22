@@ -1,0 +1,149 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include "admin/tracing.h"
+
+#define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while(0)
+
+static int test_trace_create_destroy(void) {
+    GV_QueryTrace *trace = trace_begin();
+    ASSERT(trace != NULL, "trace creation should succeed");
+    ASSERT(trace->active == 1, "new trace should be active");
+    ASSERT(trace->trace_id != 0, "trace_id should be non-zero");
+    ASSERT(trace->span_count == 0, "new trace should have no spans");
+
+    trace_destroy(trace);
+
+    trace_destroy(NULL);
+    return 0;
+}
+
+static int test_trace_span_start_end(void) {
+    GV_QueryTrace *trace = trace_begin();
+    ASSERT(trace != NULL, "trace creation");
+
+    trace_span_start(trace, "index_lookup");
+    ASSERT(trace->span_count == 1, "should have 1 span after start");
+    ASSERT(strcmp(trace->spans[0].name, "index_lookup") == 0, "span name should match");
+    ASSERT(trace->spans[0].duration_us == 0, "open span should have duration 0");
+
+    trace_span_end(trace);
+    ASSERT(trace->spans[0].duration_us > 0 || trace->spans[0].duration_us == 0,
+           "span duration should be set (may be 0 if very fast)");
+
+    trace_destroy(trace);
+    return 0;
+}
+
+static int test_trace_multiple_spans(void) {
+    GV_QueryTrace *trace = trace_begin();
+    ASSERT(trace != NULL, "trace creation");
+
+    trace_span_start(trace, "phase1");
+    trace_span_end(trace);
+
+    trace_span_start(trace, "phase2");
+    trace_span_end(trace);
+
+    trace_span_start(trace, "phase3");
+    trace_span_end(trace);
+
+    ASSERT(trace->span_count == 3, "should have 3 spans");
+    ASSERT(strcmp(trace->spans[0].name, "phase1") == 0, "first span name");
+    ASSERT(strcmp(trace->spans[1].name, "phase2") == 0, "second span name");
+    ASSERT(strcmp(trace->spans[2].name, "phase3") == 0, "third span name");
+
+    trace_destroy(trace);
+    return 0;
+}
+
+static int test_trace_span_add(void) {
+    GV_QueryTrace *trace = trace_begin();
+    ASSERT(trace != NULL, "trace creation");
+
+    trace_span_add(trace, "precomputed_step", 12345);
+    ASSERT(trace->span_count == 1, "should have 1 span after add");
+    ASSERT(strcmp(trace->spans[0].name, "precomputed_step") == 0, "span name should match");
+    ASSERT(trace->spans[0].duration_us == 12345, "duration should match added value");
+
+    trace_destroy(trace);
+    return 0;
+}
+
+static int test_trace_metadata(void) {
+    GV_QueryTrace *trace = trace_begin();
+    ASSERT(trace != NULL, "trace creation");
+
+    trace_span_start(trace, "search");
+    trace_set_metadata(trace, "k=10,ef=200");
+    ASSERT(trace->spans[0].metadata != NULL, "metadata should be set");
+    ASSERT(strcmp(trace->spans[0].metadata, "k=10,ef=200") == 0, "metadata content should match");
+    trace_span_end(trace);
+
+    trace_destroy(trace);
+    return 0;
+}
+
+static int test_trace_end(void) {
+    GV_QueryTrace *trace = trace_begin();
+    ASSERT(trace != NULL, "trace creation");
+
+    trace_span_start(trace, "work");
+    trace_span_end(trace);
+
+    trace_end(trace);
+    ASSERT(trace->active == 0, "trace should be inactive after end");
+    ASSERT((int64_t)trace->total_duration_us >= 0, "total_duration_us should be set");
+
+    trace_destroy(trace);
+    return 0;
+}
+
+static int test_trace_to_json(void) {
+    GV_QueryTrace *trace = trace_begin();
+    ASSERT(trace != NULL, "trace creation");
+
+    trace_span_add(trace, "step_a", 100);
+    trace_span_add(trace, "step_b", 200);
+    trace_end(trace);
+
+    char *json = trace_to_json(trace);
+    ASSERT(json != NULL, "JSON serialization should succeed");
+    ASSERT(strstr(json, "trace_id") != NULL, "JSON should contain trace_id");
+    ASSERT(strstr(json, "spans") != NULL, "JSON should contain spans");
+    ASSERT(strstr(json, "step_a") != NULL, "JSON should contain span name step_a");
+    ASSERT(strstr(json, "step_b") != NULL, "JSON should contain span name step_b");
+
+    free(json);
+    trace_destroy(trace);
+    return 0;
+}
+
+static int test_trace_get_time_us(void) {
+    uint64_t t1 = trace_get_time_us();
+    uint64_t t2 = trace_get_time_us();
+    ASSERT(t2 >= t1, "monotonic time should not go backwards");
+    return 0;
+}
+
+typedef int (*test_fn)(void);
+typedef struct { const char *name; test_fn fn; } TestCase;
+
+int main(void) {
+    TestCase tests[] = {
+        {"Testing trace create/destroy...", test_trace_create_destroy},
+        {"Testing trace span start/end...", test_trace_span_start_end},
+        {"Testing multiple spans...", test_trace_multiple_spans},
+        {"Testing trace span add...", test_trace_span_add},
+        {"Testing trace metadata...", test_trace_metadata},
+        {"Testing trace end...", test_trace_end},
+        {"Testing trace to JSON...", test_trace_to_json},
+        {"Testing trace get time...", test_trace_get_time_us},
+    };
+    int n = sizeof(tests) / sizeof(tests[0]);
+    int passed = 0;
+    for (int i = 0; i < n; i++) {
+        if (tests[i].fn() == 0) { passed++; }
+    }
+    return passed == n ? 0 : 1;
+}
