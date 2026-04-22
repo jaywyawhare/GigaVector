@@ -6,6 +6,12 @@
 #include <errno.h>
 #include <time.h>
 
+#ifdef _WIN32
+#include <direct.h>
+#define mkdir(path, mode) _mkdir(path)
+#define setenv(k, v, o) _putenv_s(k, v)
+#endif
+
 #include "gigavector.h"
 
 static const char *demo_data_dir(void) {
