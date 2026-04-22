@@ -2,11 +2,11 @@ CC      := gcc
 BASE_CFLAGS := -O3 -g -Wall -Wextra -MMD -Iinclude -pthread -fPIC
 SIMD_FLAGS ?=
 HARDENING_FLAGS ?=
-CURL_FLAGS ?= -DHAVE_CURL
-OPENSSL_FLAGS ?= -DGV_HAVE_OPENSSL
+CURL_FLAGS ?=
+OPENSSL_FLAGS ?=
 ONNX_FLAGS ?=
 CFLAGS  := $(BASE_CFLAGS) $(SIMD_FLAGS) $(HARDENING_FLAGS) $(CURL_FLAGS) $(OPENSSL_FLAGS) $(ONNX_FLAGS)
-LDFLAGS := -lm -pthread -lcurl -lssl -lcrypto
+LDFLAGS := -lm -pthread $(if $(CURL_FLAGS),-lcurl,) $(if $(OPENSSL_FLAGS),-lssl -lcrypto,)
 
 BUILD_DIR   := build
 SRC_DIR     := src
