@@ -790,8 +790,9 @@ static uint64_t parse_iso8601(const char *ts) {
     tm_val.tm_sec = sec;
     tm_val.tm_isdst = 0;
 
-    /* Use timegm if available, otherwise mktime with TZ adjustment */
-#if defined(_GNU_SOURCE) || defined(__linux__) || defined(__APPLE__)
+    /* timegm is a GNU extension exposed by _GNU_SOURCE; not available under
+     * strict POSIX mode on macOS, so fall back to mktime with TZ override. */
+#if defined(_GNU_SOURCE) && defined(__linux__)
     time_t t = timegm(&tm_val);
 #else
     /* Portable fallback: temporarily set TZ to UTC */
