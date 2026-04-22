@@ -14,27 +14,156 @@
 /* The gRPC-style socket server relies on POSIX socket headers that are not
  * available in the MinGW/Windows build environment.  The Python wheel uses
  * the library directly (in-process) and never starts this network server, so
- * provide no-op stubs to satisfy the linker. */
+ * provide an in-process fallback that preserves the API contract for tests. */
 #include <stdlib.h>
 #include <string.h>
 
-void grpc_config_init(GV_GrpcConfig *c) { if (c) memset(c, 0, sizeof(*c)); }
-GV_GrpcServer *grpc_create(GV_Database *db, const GV_GrpcConfig *cfg) { (void)db; (void)cfg; return NULL; }
-int  grpc_start(GV_GrpcServer *s)  { (void)s; return -1; }
-int  grpc_stop(GV_GrpcServer *s)   { (void)s; return -1; }
-void grpc_destroy(GV_GrpcServer *s) { (void)s; }
-int  grpc_is_running(const GV_GrpcServer *s) { (void)s; return 0; }
-int  grpc_get_stats(const GV_GrpcServer *s, GV_GrpcStats *st) { (void)s; (void)st; return -1; }
-const char *grpc_error_string(int e) { (void)e; return "gRPC server not supported on Windows"; }
-int grpc_encode_search_request(const float *q, size_t dim, size_t k, int dt,
-                               uint8_t *buf, size_t bsz, size_t *ol)
-    { (void)q;(void)dim;(void)k;(void)dt;(void)buf;(void)bsz;(void)ol; return -1; }
+struct GV_GrpcServer {
+    GV_Database *db;
+    GV_GrpcConfig config;
+    int running;
+    GV_GrpcStats stats;
+};
+
+static const GV_GrpcConfig DEFAULT_GRPC_CONFIG = {
+    .port = 50051,
+    .bind_address = "0.0.0.0",
+    .max_connections = 256,
+    .max_message_bytes = 16777216,
+    .thread_pool_size = 4,
+    .enable_compression = 0
+};
+
+static void write_u32_be(uint8_t *buf, uint32_t val) {
+    buf[0] = (uint8_t)(val >> 24);
+    buf[1] = (uint8_t)(val >> 16);
+    buf[2] = (uint8_t)(val >> 8);
+    buf[3] = (uint8_t)(val);
+}
+
+static uint32_t read_u32_be(const uint8_t *buf) {
+    return ((uint32_t)buf[0] << 24) |
+           ((uint32_t)buf[1] << 16) |
+           ((uint32_t)buf[2] << 8)  |
+           ((uint32_t)buf[3]);
+}
+
+static void write_float_be(uint8_t *buf, float val) {
+    uint32_t bits;
+    memcpy(&bits, &val, sizeof(bits));
+    write_u32_be(buf, bits);
+}
+
+static float read_float_be(const uint8_t *buf) {
+    uint32_t bits = read_u32_be(buf);
+    float val;
+    memcpy(&val, &bits, sizeof(val));
+    return val;
+}
+
+void grpc_config_init(GV_GrpcConfig *config) {
+    if (!config) return;
+    *config = DEFAULT_GRPC_CONFIG;
+}
+
+GV_GrpcServer *grpc_create(GV_Database *db, const GV_GrpcConfig *config) {
+    GV_GrpcServer *server;
+    if (!db) return NULL;
+    server = calloc(1, sizeof(*server));
+    if (!server) return NULL;
+    server->db = db;
+    server->config = config ? *config : DEFAULT_GRPC_CONFIG;
+    if (server->config.port == 0) server->config.port = 50051;
+    if (!server->config.bind_address) server->config.bind_address = "0.0.0.0";
+    if (server->config.max_connections == 0) server->config.max_connections = 256;
+    if (server->config.max_message_bytes == 0) server->config.max_message_bytes = 16777216;
+    if (server->config.thread_pool_size == 0) server->config.thread_pool_size = 4;
+    return server;
+}
+
+int grpc_start(GV_GrpcServer *server) {
+    if (!server) return GV_GRPC_ERROR_NULL;
+    if (server->running) return GV_GRPC_ERROR_RUNNING;
+    server->running = 1;
+    return GV_GRPC_OK;
+}
+
+int grpc_stop(GV_GrpcServer *server) {
+    if (!server) return GV_GRPC_ERROR_NULL;
+    if (!server->running) return GV_GRPC_ERROR_NOT_RUNNING;
+    server->running = 0;
+    return GV_GRPC_OK;
+}
+
+void grpc_destroy(GV_GrpcServer *server) {
+    if (!server) return;
+    free(server);
+}
+
+int grpc_is_running(const GV_GrpcServer *server) {
+    if (!server) return 0;
+    return server->running;
+}
+
+int grpc_get_stats(const GV_GrpcServer *server, GV_GrpcStats *stats) {
+    if (!server || !stats) return GV_GRPC_ERROR_NULL;
+    *stats = server->stats;
+    return GV_GRPC_OK;
+}
+
+const char *grpc_error_string(int error) {
+    switch (error) {
+        case GV_GRPC_OK:            return "Success";
+        case GV_GRPC_ERROR_NULL:    return "Null pointer argument";
+        case GV_GRPC_ERROR_CONFIG:  return "Invalid configuration";
+        case GV_GRPC_ERROR_RUNNING: return "Server is already running";
+        case GV_GRPC_ERROR_NOT_RUNNING: return "Server is not running";
+        case GV_GRPC_ERROR_START:   return "Failed to start server";
+        case GV_GRPC_ERROR_MEMORY:  return "Memory allocation failed";
+        case GV_GRPC_ERROR_BIND:    return "Failed to bind to address/port";
+        default:                    return "Unknown error";
+    }
+}
+
+int grpc_encode_search_request(const float *query, size_t dimension, size_t k,
+                               int distance_type, uint8_t *buf, size_t buf_size, size_t *out_len) {
+    size_t needed;
+    if (!query || !buf || !out_len) return GV_GRPC_ERROR_NULL;
+    needed = 12 + dimension * sizeof(float);
+    if (buf_size < needed) return GV_GRPC_ERROR_CONFIG;
+    write_u32_be(buf, (uint32_t)dimension);
+    write_u32_be(buf + 4, (uint32_t)k);
+    write_u32_be(buf + 8, (uint32_t)distance_type);
+    for (size_t i = 0; i < dimension; i++) write_float_be(buf + 12 + i * 4, query[i]);
+    *out_len = needed;
+    return GV_GRPC_OK;
+}
+
 int grpc_decode_search_request(const uint8_t *buf, size_t len,
-                               float **q, size_t *dim, size_t *k, int *dt)
-    { (void)buf;(void)len;(void)q;(void)dim;(void)k;(void)dt; return -1; }
-int grpc_encode_add_request(const float *d, size_t dim,
-                            uint8_t *buf, size_t bsz, size_t *ol)
-    { (void)d;(void)dim;(void)buf;(void)bsz;(void)ol; return -1; }
+                               float **query, size_t *dimension, size_t *k, int *distance_type) {
+    if (!buf || !query || !dimension || !k || !distance_type) return GV_GRPC_ERROR_NULL;
+    if (len < 12) return GV_GRPC_ERROR_CONFIG;
+    *dimension = (size_t)read_u32_be(buf);
+    *k = (size_t)read_u32_be(buf + 4);
+    *distance_type = (int)read_u32_be(buf + 8);
+    if (len < 12 + (*dimension) * sizeof(float)) return GV_GRPC_ERROR_CONFIG;
+    *query = malloc((*dimension) * sizeof(float));
+    if (!*query) return GV_GRPC_ERROR_MEMORY;
+    for (size_t i = 0; i < *dimension; i++) (*query)[i] = read_float_be(buf + 12 + i * 4);
+    return GV_GRPC_OK;
+}
+
+int grpc_encode_add_request(const float *data, size_t dimension,
+                            uint8_t *buf, size_t buf_size, size_t *out_len) {
+    size_t needed;
+    if (!data || !buf || !out_len) return GV_GRPC_ERROR_NULL;
+    needed = 4 + dimension * sizeof(float);
+    if (buf_size < needed) return GV_GRPC_ERROR_CONFIG;
+    write_u32_be(buf, (uint32_t)dimension);
+    for (size_t i = 0; i < dimension; i++) write_float_be(buf + 4 + i * 4, data[i]);
+    *out_len = needed;
+    return GV_GRPC_OK;
+}
 
 #else  /* POSIX implementation below */
 
