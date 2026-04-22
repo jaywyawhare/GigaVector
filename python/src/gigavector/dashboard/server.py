@@ -1573,8 +1573,15 @@ class DashboardServer:
 
     def start(self) -> None:
         """Start the dashboard server in a background daemon thread."""
-        if self._httpd is not None:
+        if self._thread is not None and self._thread.is_alive():
             raise RuntimeError("Server is already running")
+
+        if self._httpd is not None:
+            self._httpd.server_close()
+            self._httpd = None
+
+        self._thread = None
+
         self._httpd = _DashboardHTTPServer(self._db, (self._host, self._port))
         self._thread = threading.Thread(target=self._httpd.serve_forever, daemon=True)
         self._thread.start()
@@ -1589,6 +1596,10 @@ class DashboardServer:
         if self._thread is not None:
             self._thread.join(timeout=5)
             self._thread = None
+
+    def is_running(self) -> bool:
+        """Return whether the dashboard server thread is currently alive."""
+        return self._thread is not None and self._thread.is_alive()
 
     @property
     def port(self) -> int:
