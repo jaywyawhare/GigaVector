@@ -232,7 +232,7 @@ class _Handler(BaseHTTPRequestHandler):
         except ValueError:
             idx_name = "UNKNOWN"
         self._send_json({
-            "version": "0.8.3",
+            "version": "0.8.4",
             "index_type": idx_name,
             "dimension": self._db.dimension,
             "vector_count": self._db.count,
@@ -1364,7 +1364,7 @@ def _build_openapi_spec() -> dict[str, Any]:
         "openapi": "3.0.3",
         "info": {
             "title": "GigaVector API",
-            "version": "0.8.3",
+            "version": "0.8.4",
             "description": "High-performance vector database with LLM integration",
         },
         "servers": [{"url": "/", "description": "Local server"}],
