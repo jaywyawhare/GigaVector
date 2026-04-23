@@ -393,8 +393,11 @@ db = Database.open(None, dimension=128, index=IndexType.HNSW)
 server = serve_with_dashboard(db, port=6969)
 # Dashboard at http://localhost:6969/dashboard
 # Press Ctrl+C to stop
-server.stop()
-db.close()
+try:
+    server.wait()
+finally:
+    server.stop()
+    db.close()
 ```
 
 ### API Examples

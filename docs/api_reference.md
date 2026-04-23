@@ -953,6 +953,7 @@ gv_server_destroy(server);
 from gigavector import serve_with_dashboard
 server = serve_with_dashboard(db, port=6969)
 # Dashboard at http://localhost:6969/dashboard
+server.wait()
 ```
 
 ---

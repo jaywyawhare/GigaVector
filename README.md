@@ -545,7 +545,10 @@ from gigavector import Database, IndexType, serve_with_dashboard
 db = Database.open(None, dimension=128, index=IndexType.HNSW)
 server = serve_with_dashboard(db, port=6969)
 # Open http://localhost:6969/dashboard
-server.stop()
+try:
+    server.wait()
+finally:
+    server.stop()
 ```
 
 The dashboard provides four views:
