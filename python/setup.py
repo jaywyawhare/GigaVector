@@ -89,7 +89,13 @@ class BuildPyWithMake(build_py):
                 combined_c_flags = " ".join([x for x in [cmake_c_flags, extra_cflags] if x])
 
                 cmake_gen = _cmake_generator(env)
-                is_single_config = bool(cmake_gen)  # VS generators are multi-config
+                # Multi-config generators (Visual Studio, Ninja Multi-Config) pass
+                # --config at build time; single-config generators (MinGW Makefiles,
+                # Ninja, NMake) require CMAKE_BUILD_TYPE at configure time.
+                _MULTI_CONFIG = {"Visual Studio", "Ninja Multi-Config", "Xcode"}
+                is_multi_config = not cmake_gen or any(
+                    cmake_gen.startswith(mc) for mc in _MULTI_CONFIG if mc
+                ) or cmake_gen == ""
 
                 cmake_args = [
                     "cmake", "-S", str(repo_root), "-B", str(build_dir),
@@ -97,6 +103,7 @@ class BuildPyWithMake(build_py):
                 ]
                 if cmake_gen:
                     cmake_args += ["-G", cmake_gen]
+                if not is_multi_config:
                     # Single-config generators need CMAKE_BUILD_TYPE at configure time.
                     cmake_args += ["-DCMAKE_BUILD_TYPE=Release"]
                 if combined_c_flags:
@@ -105,8 +112,8 @@ class BuildPyWithMake(build_py):
                 subprocess.check_call(cmake_args, env=env)
 
                 build_cmd = ["cmake", "--build", str(build_dir)]
-                if not is_single_config:
-                    # Multi-config generators (Visual Studio) need --config at build time.
+                if is_multi_config:
+                    # Multi-config generators select the config at build time.
                     build_cmd += ["--config", "Release"]
                 subprocess.check_call(build_cmd, env=env)
 
@@ -158,18 +165,16 @@ class sdist(_sdist):
 
     def run(self):
         repo_root = Path(__file__).resolve().parent.parent
-        bundled = False
-        if (repo_root / "CMakeLists.txt").exists():
-            if _CSRC_DIR.exists():
-                shutil.rmtree(_CSRC_DIR)
-            shutil.copytree(repo_root / "src", _CSRC_DIR / "src")
-            shutil.copytree(repo_root / "include", _CSRC_DIR / "include")
-            shutil.copy2(repo_root / "CMakeLists.txt", _CSRC_DIR / "CMakeLists.txt")
-            bundled = True
         try:
+            if (repo_root / "CMakeLists.txt").exists():
+                if _CSRC_DIR.exists():
+                    shutil.rmtree(_CSRC_DIR)
+                shutil.copytree(repo_root / "src", _CSRC_DIR / "src")
+                shutil.copytree(repo_root / "include", _CSRC_DIR / "include")
+                shutil.copy2(repo_root / "CMakeLists.txt", _CSRC_DIR / "CMakeLists.txt")
             super().run()
         finally:
-            if bundled and _CSRC_DIR.exists():
+            if _CSRC_DIR.exists():
                 shutil.rmtree(_CSRC_DIR)
 
 
