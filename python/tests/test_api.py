@@ -34,7 +34,8 @@ class TestAPI(unittest.TestCase):
         server._thread.join.side_effect = KeyboardInterrupt
 
         with mock.patch.object(server, "stop") as stop:
-            server.wait()
+            with self.assertRaises(KeyboardInterrupt):
+                server.wait()
 
         stop.assert_called_once_with()
 

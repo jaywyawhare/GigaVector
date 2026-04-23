@@ -1600,6 +1600,7 @@ class DashboardServer:
             self._thread.join()
         except KeyboardInterrupt:
             self.stop()
+            raise
 
     @property
     def port(self) -> int:
