@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+from unittest import mock
 
 from gigavector import (
     Database,
@@ -9,9 +10,34 @@ from gigavector import (
     ReplicationManager,
     ReplicationConfig,
 )
+from gigavector.dashboard.server import DashboardServer
 
 
 class TestAPI(unittest.TestCase):
+    def test_dashboard_server_wait_raises_when_not_running(self):
+        server = DashboardServer(object(), port=0)
+
+        with self.assertRaisesRegex(RuntimeError, "Server is not running"):
+            server.wait()
+
+    def test_dashboard_server_wait_joins_thread(self):
+        server = DashboardServer(object(), port=0)
+        server._thread = mock.Mock()
+
+        server.wait()
+
+        server._thread.join.assert_called_once_with()
+
+    def test_dashboard_server_wait_stops_on_keyboard_interrupt(self):
+        server = DashboardServer(object(), port=0)
+        server._thread = mock.Mock()
+        server._thread.join.side_effect = KeyboardInterrupt
+
+        with mock.patch.object(server, "stop") as stop:
+            server.wait()
+
+        stop.assert_called_once_with()
+
     def test_basic_add_search(self):
         import tempfile
         import os

@@ -2360,6 +2360,7 @@ class ContextGraph:
             lib.gv_graph_query_result_free(c_results + i)
         
         return results
+
     
     def get_related(self, entity_id: str, max_depth: int = 3, max_results: int = 10) -> list[GraphQueryResult]:
         """Get related entities for a given entity.
@@ -2735,7 +2736,7 @@ def serve_with_dashboard(db: Database, port: int = 6969, **kwargs: Any) -> "Dash
     """Start a pure-Python dashboard server for the given database.
 
     Returns a running :class:`~gigavector.dashboard.server.DashboardServer`.
-    Call ``server.stop()`` when done.
+    Call ``server.wait()`` to block the main thread, then ``server.stop()`` when done.
 
     No C HTTP library (libmicrohttpd) is required.
     """
@@ -8960,4 +8961,3 @@ class EntityLinker:
                 related_triples=unique_triples[:max_triples] or None,
             ))
         return results
-

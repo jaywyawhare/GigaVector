@@ -1561,6 +1561,7 @@ class DashboardServer:
         server = DashboardServer(db, port=6969)
         server.start()
         # Dashboard at http://localhost:6969/dashboard
+        server.wait()
         server.stop()
     """
 
@@ -1589,6 +1590,16 @@ class DashboardServer:
         if self._thread is not None:
             self._thread.join(timeout=5)
             self._thread = None
+
+    def wait(self) -> None:
+        """Block until the dashboard server thread stops."""
+        if self._thread is None:
+            raise RuntimeError("Server is not running")
+
+        try:
+            self._thread.join()
+        except KeyboardInterrupt:
+            self.stop()
 
     @property
     def port(self) -> int:
