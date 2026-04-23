@@ -39,6 +39,42 @@ class TestAPI(unittest.TestCase):
 
         stop.assert_called_once_with()
 
+    def test_dashboard_server_recovers_from_stale_thread_state(self):
+        server = DashboardServer(object(), port=0)
+        stale_thread = mock.Mock()
+        stale_thread.is_alive.return_value = False
+        stale_httpd = mock.Mock()
+        new_httpd = mock.Mock()
+        new_thread = mock.Mock()
+
+        server._httpd = stale_httpd
+        server._thread = stale_thread
+
+        self.assertFalse(server.is_running())
+
+        with mock.patch(
+            "gigavector.dashboard.server._DashboardHTTPServer", return_value=new_httpd
+        ) as httpd_cls, mock.patch(
+            "gigavector.dashboard.server.threading.Thread", return_value=new_thread
+        ) as thread_cls:
+            server.start()
+
+        stale_httpd.server_close.assert_called_once_with()
+        httpd_cls.assert_called_once_with(server._db, (server._host, server._port))
+        thread_cls.assert_called_once_with(target=new_httpd.serve_forever, daemon=True)
+        new_thread.start.assert_called_once_with()
+        self.assertIs(server._httpd, new_httpd)
+        self.assertIs(server._thread, new_thread)
+
+    def test_dashboard_server_start_raises_when_thread_alive(self):
+        server = DashboardServer(object(), port=0)
+        server._httpd = mock.Mock()
+        server._thread = mock.Mock()
+        server._thread.is_alive.return_value = True
+
+        with self.assertRaisesRegex(RuntimeError, "Server is already running"):
+            server.start()
+
     def test_basic_add_search(self):
         import tempfile
         import os
