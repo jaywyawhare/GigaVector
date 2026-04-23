@@ -24,8 +24,12 @@ elseif(MSVC)
     # Keep warnings high on MSVC, but do not inject GCC/Clang flags.
     add_compile_options(/W4)
 endif()
-set(CMAKE_C_FLAGS_RELEASE "-O3 -DNDEBUG")
-set(CMAKE_C_FLAGS_DEBUG "-O0 -g")
+# MSVC already has sensible per-config defaults (/O2 /Od /Zi); only set
+# GCC/Clang style flags for those compilers.
+if(NOT MSVC)
+    set(CMAKE_C_FLAGS_RELEASE "-O3 -DNDEBUG")
+    set(CMAKE_C_FLAGS_DEBUG "-O0 -g")
+endif()
 
 # Ensure objects do not request an executable stack on ELF targets only.
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang" AND NOT WIN32 AND NOT APPLE)
@@ -40,6 +44,12 @@ endif()
 
 # Position Independent Code for shared libraries
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+# Export all symbols from the DLL on MSVC (mirrors MinGW --export-all-symbols
+# default so callers don't need per-symbol __declspec(dllexport) annotations).
+if(WIN32 AND BUILD_SHARED_LIBS)
+    set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
+endif()
 
 # Source files
 file(GLOB_RECURSE GV_SOURCE_FILES CONFIGURE_DEPENDS 
@@ -176,7 +186,11 @@ if(BUILD_TESTS)
         get_filename_component(TEST_NAME ${TEST_SRC} NAME_WE)
         string(REPLACE "test_" "" TEST_NAME ${TEST_NAME})
         add_executable(test_${TEST_NAME} ${TEST_SRC})
-        target_link_libraries(test_${TEST_NAME} PRIVATE GigaVector m pthread)
+        if(WIN32)
+            target_link_libraries(test_${TEST_NAME} PRIVATE GigaVector)
+        else()
+            target_link_libraries(test_${TEST_NAME} PRIVATE GigaVector m pthread)
+        endif()
         add_test(NAME ${TEST_NAME} COMMAND test_${TEST_NAME})
     endforeach()
 endif()
@@ -193,7 +207,11 @@ if(BUILD_BENCHMARKS)
     foreach(BENCH_SRC ${BENCHMARK_SOURCES})
         get_filename_component(BENCH_NAME ${BENCH_SRC} NAME_WE)
         add_executable(${BENCH_NAME} ${BENCH_SRC})
-        target_link_libraries(${BENCH_NAME} PRIVATE GigaVector m)
+        if(WIN32)
+            target_link_libraries(${BENCH_NAME} PRIVATE GigaVector)
+        else()
+            target_link_libraries(${BENCH_NAME} PRIVATE GigaVector m)
+        endif()
     endforeach()
 endif()
 
