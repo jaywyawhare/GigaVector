@@ -56,6 +56,8 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: |
           python -m pip install --upgrade build
+          make lib
+          cp build/lib/libGigaVector.so python/src/gigavector/
           python -m build -s python -o python/dist
 
       - name: Upload wheel artifacts
