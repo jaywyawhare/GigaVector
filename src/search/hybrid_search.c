@@ -10,7 +10,10 @@
 #include <string.h>
 #include <float.h>
 #include <pthread.h>
+#ifndef _WIN32
 #include <sys/time.h>
+#endif
+#include "core/compat.h"
 
 /* Internal Structures */
 

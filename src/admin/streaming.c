@@ -18,7 +18,10 @@
 #include <pthread.h>
 #include <stdint.h>
 #include <time.h>
+#ifndef _WIN32
 #include <unistd.h>
+#endif
+#include "core/compat.h"
 
 #define GV_STREAM_STACK_VEC_CAP 4096
 

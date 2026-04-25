@@ -3,10 +3,9 @@
 ## Prerequisites
 
 1. **Build Tools:**
-   - GCC compiler (with C99 support)
-   - Make
-   - libcurl development libraries
-   - Python 3.x (for Python bindings tests)
+   - Linux: `gcc`, `make`, `cmake`, `libcurl-dev`
+   - macOS: Xcode CLT + `brew install cmake curl`
+   - Windows (source builds only): [MSYS2](https://www.msys2.org/) with `mingw-w64-x86_64-gcc`, `mingw-w64-x86_64-cmake`, `mingw-w64-x86_64-make` and `C:\msys64\mingw64\bin` on `PATH`. PyPI wheel users need nothing extra.
 
 2. **API Keys (for LLM tests):**
    - `OPENAI_API_KEY` - Required for OpenAI LLM and embedding tests
@@ -246,16 +245,18 @@ make lib
 
 ### Missing Dependencies
 
-Install required libraries:
 ```bash
 # Ubuntu/Debian
-sudo apt-get install build-essential libcurl4-openssl-dev
+sudo apt-get install build-essential cmake libcurl4-openssl-dev
 
 # Fedora/RHEL
-sudo dnf install gcc make libcurl-devel
+sudo dnf install gcc make cmake libcurl-devel
 
 # macOS
-brew install curl
+brew install cmake curl
+
+# Windows (source builds only — PyPI wheel needs nothing extra)
+pacman -S --needed mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-make
 ```
 
 ## Test Output
