@@ -11,7 +11,8 @@ static inline void usleep(unsigned long usec) {
 }
 
 static inline unsigned int sleep(unsigned int sec) {
-    Sleep((DWORD)sec * 1000U);
+    unsigned long long ms = (unsigned long long)sec * 1000ULL;
+    Sleep((DWORD)(ms < 0xFFFFFFFFULL ? ms : 0xFFFFFFFFULL));
     return 0;
 }
 
@@ -21,7 +22,7 @@ static inline unsigned int sleep(unsigned int sec) {
 
 #ifndef _TIMEVAL_DEFINED
 #define _TIMEVAL_DEFINED
-struct timeval { long tv_sec; long tv_usec; };
+struct timeval { long long tv_sec; long tv_usec; };
 #endif
 
 static inline int gettimeofday(struct timeval *tv, void *tz) {
@@ -31,7 +32,7 @@ static inline int gettimeofday(struct timeval *tv, void *tz) {
     GetSystemTimeAsFileTime(&ft);
     uint64_t t = ((uint64_t)ft.dwHighDateTime << 32) | (uint64_t)ft.dwLowDateTime;
     t -= UINT64_C(116444736000000000);
-    tv->tv_sec  = (long)(t / UINT64_C(10000000));
+    tv->tv_sec  = (long long)(t / UINT64_C(10000000));
     tv->tv_usec = (long)((t % UINT64_C(10000000)) / 10ULL);
     return 0;
 }

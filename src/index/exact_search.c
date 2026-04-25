@@ -189,7 +189,7 @@ int exact_knn_search_kdtree(const GV_KDNode *root, const GV_SoAStorage *storage,
         }
         collected = total_count;
     } else {
-        vec_views = (GV_Vector *)malloc(total_count * sizeof(GV_Vector));
+        vec_views = (GV_Vector *)calloc(total_count, sizeof(GV_Vector));
         if (!vec_views) {
             free(vec_ptrs);
             return -1;
@@ -200,15 +200,7 @@ int exact_knn_search_kdtree(const GV_KDNode *root, const GV_SoAStorage *storage,
         }
     }
 
-    /* suppress GCC 15 false positive: error-path free()s confuse the analyzer */
-#if defined(__GNUC__) && !defined(__clang__)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
-#endif
     int r = exact_knn_search_vectors(vec_ptrs, collected, query, k, results, distance_type);
-#if defined(__GNUC__) && !defined(__clang__)
-#pragma GCC diagnostic pop
-#endif
     if (root != NULL) {
         free(vec_views);
     }
