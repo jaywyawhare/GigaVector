@@ -5,11 +5,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
-#if defined(__AVX512F__)
-#include <immintrin.h>
-#elif defined(__AVX2__)
+#if defined(__AVX512F__) || defined(__AVX2__)
 #include <immintrin.h>
 #endif
+#include "core/compat.h"
 
 #include "index/ivfpq.h"
 #include "search/distance.h"

@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include "core/compat.h"
 #include <stdint.h>
 
 #include "admin/versioning.h"

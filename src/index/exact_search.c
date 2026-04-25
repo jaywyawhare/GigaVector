@@ -166,7 +166,8 @@ int exact_knn_search_kdtree(const GV_KDNode *root, const GV_SoAStorage *storage,
     }
 
     GV_Vector *vec_views = NULL;
-    GV_Vector **vec_ptrs = (GV_Vector **)malloc(total_count * sizeof(GV_Vector *));
+    GV_Vector **vec_ptrs = NULL;
+    vec_ptrs = (GV_Vector **)malloc(total_count * sizeof(GV_Vector *));
     if (!vec_ptrs) {
         return -1;
     }
@@ -188,7 +189,7 @@ int exact_knn_search_kdtree(const GV_KDNode *root, const GV_SoAStorage *storage,
         }
         collected = total_count;
     } else {
-        vec_views = (GV_Vector *)malloc(total_count * sizeof(GV_Vector));
+        vec_views = (GV_Vector *)calloc(total_count, sizeof(GV_Vector));
         if (!vec_views) {
             free(vec_ptrs);
             return -1;
@@ -203,7 +204,6 @@ int exact_knn_search_kdtree(const GV_KDNode *root, const GV_SoAStorage *storage,
     if (root != NULL) {
         free(vec_views);
     }
-    // For root == NULL, don't free vec_ptrs[i] as they are used by results
     free(vec_ptrs);
     return r;
 }

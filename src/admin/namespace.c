@@ -13,12 +13,48 @@
 #include <time.h>
 #include <pthread.h>
 #include <sys/stat.h>
-#include <dirent.h>
 
-/* Windows: mkdir(path) only; wrap to match POSIX mkdir(path, mode). */
 #ifdef _WIN32
+#include <windows.h>
 #include <direct.h>
 #define mkdir(path, mode) _mkdir(path)
+/* Minimal dirent shim for MSVC — MinGW ships its own <dirent.h> */
+#ifndef _DIRENT_DEFINED
+#define _DIRENT_DEFINED
+struct dirent { char d_name[MAX_PATH]; };
+typedef struct {
+    HANDLE          hFind;
+    WIN32_FIND_DATAA ffd;
+    struct dirent   entry;
+    int             first;
+} DIR;
+static inline DIR *opendir(const char *path) {
+    char pattern[MAX_PATH];
+    snprintf(pattern, sizeof(pattern), "%s\\*", path);
+    DIR *d = (DIR *)malloc(sizeof(DIR));
+    if (!d) return NULL;
+    d->hFind = FindFirstFileA(pattern, &d->ffd);
+    if (d->hFind == INVALID_HANDLE_VALUE) { free(d); return NULL; }
+    d->first = 1;
+    return d;
+}
+static inline struct dirent *readdir(DIR *d) {
+    if (!d) return NULL;
+    if (d->first) { d->first = 0; }
+    else if (!FindNextFileA(d->hFind, &d->ffd)) return NULL;
+    strncpy(d->entry.d_name, d->ffd.cFileName, MAX_PATH - 1);
+    d->entry.d_name[MAX_PATH - 1] = '\0';
+    return &d->entry;
+}
+static inline int closedir(DIR *d) {
+    if (!d) return -1;
+    FindClose(d->hFind);
+    free(d);
+    return 0;
+}
+#endif /* _DIRENT_DEFINED */
+#else
+#include <dirent.h>
 #endif
 
 /* Internal Structures */

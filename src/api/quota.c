@@ -15,6 +15,7 @@
 #include <string.h>
 #include <pthread.h>
 #include <time.h>
+#include "core/compat.h"
 
 /* Constants */
 

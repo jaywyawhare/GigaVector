@@ -14,6 +14,7 @@
 #include <time.h>
 #include <pthread.h>
 
+#include "core/compat.h"
 #ifdef HAVE_CURL
 #include <curl/curl.h>
 #endif

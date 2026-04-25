@@ -3,6 +3,7 @@
 #include <string.h>
 #include <pthread.h>
 #include <time.h>
+#include "core/compat.h"
 #include <stdint.h>
 
 #include "admin/migration.h"

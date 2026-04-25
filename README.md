@@ -220,10 +220,15 @@ make test-all       # run everything
 ## Python Bindings
 
 ### Install
+
 ```bash
 pip install gigavector        # from PyPI
 cd python && pip install .    # from source
 ```
+
+Pre-built wheels (Linux x86_64, macOS x86_64/arm64, Windows AMD64) bundle all
+native dependencies. On Windows, [MSYS2](https://www.msys2.org/) with MinGW-w64
+is only required when building from source.
 
 ### Quick Start
 ```python

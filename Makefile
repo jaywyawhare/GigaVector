@@ -114,7 +114,14 @@ bench-ivfpq-suite: $(BENCH_DIR)/benchmark_ivfpq $(BENCH_DIR)/benchmark_ivfpq_rec
 	@BIN_DIR=$(BENCH_DIR) bash $(TEST_DIR)/ivfpq_suite.sh
 
 TEST_SRCS := $(shell find $(TEST_DIR) -name "test_*.c")
-TEST_BINS := $(patsubst $(TEST_DIR)/%.c,$(BUILD_DIR)/%,$(TEST_SRCS))
+ifeq ($(OS),Windows_NT)
+EXE_EXT := .exe
+else ifneq (,$(findstring mingw,$(CC)))
+EXE_EXT := .exe
+else
+EXE_EXT :=
+endif
+TEST_BINS := $(patsubst $(TEST_DIR)/%.c,$(BUILD_DIR)/%$(EXE_EXT),$(TEST_SRCS))
 
 ASAN_FLAGS := -fsanitize=address -fno-omit-frame-pointer -g
 TSAN_FLAGS := -fsanitize=thread -fno-omit-frame-pointer -g
@@ -150,7 +157,7 @@ c-test-single: lib
 	@echo "Built test: $(BUILD_DIR)/$(TEST)"
 	@$(BUILD_DIR)/$(TEST)
 
-$(BUILD_DIR)/%: $(TEST_DIR)/%.c $(STATIC_LIB)
+$(BUILD_DIR)/%$(EXE_EXT): $(TEST_DIR)/%.c $(STATIC_LIB)
 	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) $< -L$(LIB_DIR) -l$(LIB_NAME) $(LDFLAGS) -Wl,-rpath,$(abspath $(LIB_DIR)) -o $@
 	@echo "Built test: $@"

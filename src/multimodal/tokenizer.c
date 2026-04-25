@@ -8,7 +8,11 @@
 
 #include <stdlib.h>
 #include <string.h>
+#ifndef _WIN32
+#include <strings.h>
+#endif
 #include <ctype.h>
+#include "core/compat.h"
 
 struct GV_Tokenizer {
     GV_TokenizerConfig config;

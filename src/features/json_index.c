@@ -15,6 +15,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <pthread.h>
+#include "core/compat.h"
 #include "core/utils.h"
 
 #include "features/json_index.h"

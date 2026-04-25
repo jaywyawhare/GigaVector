@@ -40,14 +40,18 @@ A high-performance vector database library for Python. GigaVector provides effic
 
 ## Installation
 
-Install from PyPI:
-
 ```bash
 pip install gigavector
 ```
 
-The package includes the native `libGigaVector` shared library in wheel builds.
-When installing from source, a local C toolchain (and libcurl development headers) may be required to build the native library.
+Pre-built wheels for Linux (x86_64), macOS (x86_64 + arm64), and Windows (AMD64) are
+published to PyPI. The wheel bundles the native library and all runtime DLLs — no
+compiler or MinGW required.
+
+**Building from source** requires a C toolchain. On Windows this means
+[MSYS2](https://www.msys2.org/) with MinGW-w64 (`mingw-w64-x86_64-gcc`,
+`mingw-w64-x86_64-cmake`, `mingw-w64-x86_64-make`) and `C:\msys64\mingw64\bin` on
+`PATH`. MinGW is a build-time dependency only and is not needed at runtime.
 
 ## Quick Start
 
@@ -546,6 +550,9 @@ restored_db = backup_restore("backup.gvb", "restored.db", restore_opts)
 - Python 3.9 or higher
 - cffi >= 1.16
 - CUDA toolkit (optional, for GPU acceleration)
+
+On Windows, MinGW-w64 is only required when building from source. The PyPI wheel
+bundles the MinGW runtime DLLs so no extra software is needed at runtime.
 
 ## License
 
