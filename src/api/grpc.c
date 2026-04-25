@@ -182,10 +182,20 @@ int grpc_encode_add_request(const float *data, size_t dimension,
 #include <signal.h>
 
 #if defined(__STDC_NO_ATOMICS__)
-#define GV_ATOMIC_INC(ptr)   do { __sync_fetch_and_add((ptr), 1); } while (0)
-#define GV_ATOMIC_DEC(ptr)   do { __sync_fetch_and_sub((ptr), 1); } while (0)
-#define GV_ATOMIC_ADD(ptr,v) do { __sync_fetch_and_add((ptr), (v)); } while (0)
-#define GV_ATOMIC_LOAD(ptr)  __sync_fetch_and_add((ptr), 0)
+#  if defined(__GNUC__) || defined(__clang__)
+#    define GV_ATOMIC_INC(ptr)   do { __sync_fetch_and_add((ptr), 1); } while (0)
+#    define GV_ATOMIC_DEC(ptr)   do { __sync_fetch_and_sub((ptr), 1); } while (0)
+#    define GV_ATOMIC_ADD(ptr,v) do { __sync_fetch_and_add((ptr), (v)); } while (0)
+#    define GV_ATOMIC_LOAD(ptr)  __sync_fetch_and_add((ptr), 0)
+#  elif defined(_MSC_VER)
+#    include <intrin.h>
+#    define GV_ATOMIC_INC(ptr)   _InterlockedIncrement64((__int64 volatile *)(ptr))
+#    define GV_ATOMIC_DEC(ptr)   _InterlockedDecrement64((__int64 volatile *)(ptr))
+#    define GV_ATOMIC_ADD(ptr,v) _InterlockedExchangeAdd64((__int64 volatile *)(ptr), (v))
+#    define GV_ATOMIC_LOAD(ptr)  _InterlockedExchangeAdd64((__int64 volatile *)(ptr), 0)
+#  else
+#    error "No 64-bit atomic operations available for this compiler"
+#  endif
 #else
 #include <stdatomic.h>
 #define GV_ATOMIC_INC(ptr)   atomic_fetch_add((_Atomic uint64_t *)(ptr), 1)
