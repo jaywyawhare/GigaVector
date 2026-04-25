@@ -12,6 +12,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <time.h>
+#include "core/compat.h"
 #include <pthread.h>
 
 #ifdef HAVE_MICROHTTPD
