@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include "core/compat.h"
 #include "core/utils.h"
 
 #include "specialized/point_id.h"

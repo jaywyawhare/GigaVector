@@ -20,6 +20,7 @@
 /* Windows: mkdir(path) only; wrap to match POSIX mkdir(path, mode). */
 #ifdef _WIN32
 #include <direct.h>
+#include "core/compat.h"
 #define mkdir(path, mode) _mkdir(path)
 #endif
 

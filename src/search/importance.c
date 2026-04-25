@@ -22,6 +22,7 @@
 #include <math.h>
 #include <ctype.h>
 #include <stdio.h>
+#include "core/compat.h"
 #include "core/utils.h"
 
 #include "search/importance.h"

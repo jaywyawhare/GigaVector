@@ -17,6 +17,7 @@
 #include <string.h>
 #include <time.h>
 #include <pthread.h>
+#include "core/compat.h"
 
 /* * Internal Structures */
 

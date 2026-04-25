@@ -16,6 +16,7 @@
 
 #ifdef HAVE_CURL
 #include <curl/curl.h>
+#include "core/compat.h"
 #endif
 
 #include "multimodal/auto_embed.h"
