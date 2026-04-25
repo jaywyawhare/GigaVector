@@ -20,7 +20,6 @@ static inline unsigned int sleep(unsigned int sec) {
 #define getpid() ((int)GetCurrentProcessId())
 #endif
 
-/* strcasecmp / strncasecmp */
 #ifndef strcasecmp
 #define strcasecmp(a,b)    _stricmp((a),(b))
 #endif
@@ -28,12 +27,10 @@ static inline unsigned int sleep(unsigned int sec) {
 #define strncasecmp(a,b,n) _strnicmp((a),(b),(n))
 #endif
 
-/* strtok_r — MSVC only has strtok_s with the same signature */
 #ifndef strtok_r
 #define strtok_r(s,d,p) strtok_s((s),(d),(p))
 #endif
 
-/* __builtin_popcount — use MSVC intrinsic */
 #ifndef __GNUC__
 #include <intrin.h>
 #define __builtin_popcount(x)  __popcnt(x)
@@ -58,13 +55,11 @@ static inline int gettimeofday(struct timeval *tv, void *tz) {
     return 0;
 }
 
-/* ssize_t */
 #ifndef _SSIZE_T_DEFINED
 #define _SSIZE_T_DEFINED
 typedef SSIZE_T ssize_t;
 #endif
 
-/* S_ISDIR / S_ISREG — MSVC provides _S_IFMT/_S_IFDIR/_S_IFREG in <sys/stat.h> */
 #include <sys/stat.h>
 #ifndef S_ISDIR
 #define S_ISDIR(m)  (((m) & _S_IFMT) == _S_IFDIR)
@@ -73,8 +68,7 @@ typedef SSIZE_T ssize_t;
 #define S_ISREG(m)  (((m) & _S_IFMT) == _S_IFREG)
 #endif
 
-/* clock_gettime / struct timespec / CLOCK_* constants.
- * MinGW ships its own implementation; this shim is for MSVC only. */
+/* __GNUC__ guard: MinGW is also _WIN32 but ships clock_gettime natively */
 #ifndef __GNUC__
 #ifndef CLOCK_REALTIME
 #define CLOCK_REALTIME  0
@@ -108,8 +102,7 @@ static inline int clock_gettime(clockid_t clk, struct timespec *ts) {
 }
 #endif /* !__GNUC__ */
 
-/* POSIX file-descriptor open flags — MSVC uses _O_* names in <io.h>.
- * MinGW provides the standard names via <fcntl.h>, so skip under GCC. */
+/* __GNUC__ guard: MinGW provides O_* names via <fcntl.h> */
 #ifndef __GNUC__
 #include <io.h>
 #include <fcntl.h>
@@ -142,7 +135,6 @@ static inline int clock_gettime(clockid_t clk, struct timespec *ts) {
 
 #endif /* _WIN32 */
 
-/* __attribute__((unused)) — silence MSVC which doesn't support GCC attributes */
 #if !defined(__GNUC__) && !defined(__clang__)
 #define __attribute__(x)
 #endif
