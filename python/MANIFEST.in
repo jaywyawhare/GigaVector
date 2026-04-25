@@ -2,6 +2,7 @@ include README.md
 include LICENCE.md
 recursive-include src/gigavector *.so
 recursive-include src/gigavector *.dylib
+recursive-include src/gigavector *.dll
 recursive-include tests *.py
 # C sources bundled by the custom sdist command for Windows source builds
 include _csrc/CMakeLists.txt

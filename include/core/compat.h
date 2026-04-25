@@ -20,6 +20,27 @@ static inline unsigned int sleep(unsigned int sec) {
 #define getpid() ((int)GetCurrentProcessId())
 #endif
 
+/* strcasecmp / strncasecmp */
+#ifndef strcasecmp
+#define strcasecmp(a,b)    _stricmp((a),(b))
+#endif
+#ifndef strncasecmp
+#define strncasecmp(a,b,n) _strnicmp((a),(b),(n))
+#endif
+
+/* strtok_r — MSVC only has strtok_s with the same signature */
+#ifndef strtok_r
+#define strtok_r(s,d,p) strtok_s((s),(d),(p))
+#endif
+
+/* __builtin_popcount — use MSVC intrinsic */
+#ifndef __GNUC__
+#include <intrin.h>
+#define __builtin_popcount(x)  __popcnt(x)
+#define __builtin_popcountl(x) __popcnt((unsigned)(x))
+#define __builtin_prefetch(p,rw,loc) ((void)(p))
+#endif
+
 #ifndef _TIMEVAL_DEFINED
 #define _TIMEVAL_DEFINED
 struct timeval { long long tv_sec; long tv_usec; };
@@ -38,5 +59,10 @@ static inline int gettimeofday(struct timeval *tv, void *tz) {
 }
 
 #endif /* _WIN32 */
+
+/* __attribute__((unused)) — silence MSVC which doesn't support GCC attributes */
+#if !defined(__GNUC__) && !defined(__clang__)
+#define __attribute__(x)
+#endif
 
 #endif /* GV_COMPAT_H */
