@@ -22,12 +22,11 @@
 #include <sys/stat.h>
 #include <time.h>
 
+#include "core/compat.h"
+
 #ifdef _WIN32
 #include <windows.h>
 #include <io.h>
-#ifndef ssize_t
-typedef SSIZE_T ssize_t;
-#endif
 static ssize_t pread(int fd, void *buf, size_t count, long long offset) {
     HANDLE h = (HANDLE)_get_osfhandle(fd);
     if (h == INVALID_HANDLE_VALUE) return -1;
