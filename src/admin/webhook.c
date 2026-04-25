@@ -22,7 +22,10 @@
 #include <stdio.h>
 #include <pthread.h>
 #include <time.h>
+#ifndef _WIN32
 #include <unistd.h>
+#endif
+#include "core/compat.h"
 
 /* Internal Constants */
 

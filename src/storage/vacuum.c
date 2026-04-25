@@ -10,9 +10,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 #include <time.h>
 #include <errno.h>
+#include "core/compat.h"
 
 /* Internal Structures */
 

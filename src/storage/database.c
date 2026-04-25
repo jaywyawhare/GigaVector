@@ -74,7 +74,10 @@ static ssize_t getline(char **lineptr, size_t *n, FILE *stream) {
 #include "core/utils.h"
 
 #include <math.h>
+#ifndef _WIN32
 #include <sys/time.h>
+#endif
+#include "core/compat.h"
 
 static size_t db_estimate_vector_memory(size_t dimension);
 static void db_update_memory_usage(GV_Database *db);

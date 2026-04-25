@@ -1,4 +1,6 @@
+#ifndef _WIN32
 #define _GNU_SOURCE
+#endif
 
 #include <stdio.h>
 #include <stdlib.h>

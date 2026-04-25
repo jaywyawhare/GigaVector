@@ -39,16 +39,22 @@ jobs:
         env:
           CIBW_SKIP: "pp*"
           CIBW_ARCHS_LINUX:   "x86_64"
-          CIBW_ARCHS_MACOS:   "arm64"
+          CIBW_ARCHS_MACOS:   "x86_64 arm64"
           CIBW_ARCHS_WINDOWS: "AMD64"
           CIBW_ENVIRONMENT_LINUX: "HARDENING_FLAGS='-fcf-protection=none -mno-shstk'"
           CIBW_ENVIRONMENT_WINDOWS: >-
             PATH="C:\\msys64\\mingw64\\bin;$PATH"
             CMAKE_GENERATOR="MinGW Makefiles"
           CIBW_MANYLINUX_X86_64_IMAGE: "manylinux_2_28"
+          CIBW_BEFORE_BUILD_WINDOWS: "pip install delvewheel"
+          CIBW_BEFORE_BUILD_MACOS: "pip install delocate"
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: >-
             python /project/python/tools/wheel_fixup_platlib.py {wheel} &&
             auditwheel repair -w {dest_dir} {wheel}
+          CIBW_REPAIR_WHEEL_COMMAND_MACOS: >-
+            delocate-wheel --require-archs {delocate_archs} -w {dest_dir} {wheel}
+          CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: >-
+            delvewheel repair --add-path C:\msys64\mingw64\bin -w {dest_dir} {wheel}
           CIBW_BUILD_VERBOSITY: "1"
         run: cibuildwheel --output-dir python/dist python
 
