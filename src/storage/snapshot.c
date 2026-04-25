@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include "core/compat.h"
 
 typedef struct {
     uint64_t snapshot_id;

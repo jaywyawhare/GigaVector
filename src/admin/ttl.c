@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include "core/compat.h"
 #include <pthread.h>
 
 /* Internal Structures */

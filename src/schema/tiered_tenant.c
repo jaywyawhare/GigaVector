@@ -18,6 +18,7 @@
 #include <stdio.h>
 #include <pthread.h>
 #include <time.h>
+#include "core/compat.h"
 
 #define TENANT_ID_MAX_LEN   128
 #define HASH_BUCKETS        1024
