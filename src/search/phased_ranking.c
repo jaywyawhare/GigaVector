@@ -32,6 +32,7 @@
 #include <float.h>
 #include <time.h>
 #include <pthread.h>
+#include "core/compat.h"
 
 /** Maximum number of phases in a single pipeline. */
 #define GV_PIPELINE_MAX_PHASES 8

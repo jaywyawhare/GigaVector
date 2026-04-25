@@ -23,6 +23,7 @@
 #include <stdint.h>
 #include <pthread.h>
 #include <time.h>
+#include "core/compat.h"
 
 #include "index/hnsw_opt.h"
 #include "core/utils.h"

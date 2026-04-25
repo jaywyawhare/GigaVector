@@ -9,6 +9,7 @@
 #include <immintrin.h>
 #elif defined(__AVX2__)
 #include <immintrin.h>
+#include "core/compat.h"
 #endif
 
 #include "index/ivfpq.h"
