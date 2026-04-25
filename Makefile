@@ -114,7 +114,11 @@ bench-ivfpq-suite: $(BENCH_DIR)/benchmark_ivfpq $(BENCH_DIR)/benchmark_ivfpq_rec
 	@BIN_DIR=$(BENCH_DIR) bash $(TEST_DIR)/ivfpq_suite.sh
 
 TEST_SRCS := $(shell find $(TEST_DIR) -name "test_*.c")
-TEST_BINS := $(patsubst $(TEST_DIR)/%.c,$(BUILD_DIR)/%,$(TEST_SRCS))
+ifeq ($(OS),Windows_NT)
+	TEST_BINS := $(patsubst $(TEST_DIR)/%.c,$(BUILD_DIR)/%.exe,$(TEST_SRCS))
+else
+	TEST_BINS := $(patsubst $(TEST_DIR)/%.c,$(BUILD_DIR)/%,$(TEST_SRCS))
+endif
 
 ASAN_FLAGS := -fsanitize=address -fno-omit-frame-pointer -g
 TSAN_FLAGS := -fsanitize=thread -fno-omit-frame-pointer -g
