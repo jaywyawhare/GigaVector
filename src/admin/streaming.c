@@ -222,9 +222,21 @@ static void *consumer_thread_func(void *arg) {
 
         pthread_mutex_lock(&consumer->mutex);
         stream_process_embedded_batch(consumer);
-        pthread_mutex_unlock(&consumer->mutex);
 
-        usleep(consumer->config.batch_timeout_ms * 1000);
+        /* Interruptible sleep: wake early on pause/stop signal */
+        if (!consumer->stop_requested && !consumer->pause_requested) {
+            struct timespec deadline;
+            clock_gettime(CLOCK_REALTIME, &deadline);
+            long ms = (long)consumer->config.batch_timeout_ms;
+            deadline.tv_sec  += ms / 1000;
+            deadline.tv_nsec += (ms % 1000) * 1000000L;
+            if (deadline.tv_nsec >= 1000000000L) {
+                deadline.tv_sec++;
+                deadline.tv_nsec -= 1000000000L;
+            }
+            pthread_cond_timedwait(&consumer->state_cond, &consumer->mutex, &deadline);
+        }
+        pthread_mutex_unlock(&consumer->mutex);
     }
 
     pthread_mutex_lock(&consumer->mutex);
@@ -334,6 +346,7 @@ int stream_pause(GV_StreamConsumer *consumer) {
     }
 
     consumer->pause_requested = 1;
+    pthread_cond_broadcast(&consumer->state_cond);
 
     pthread_mutex_unlock(&consumer->mutex);
     return 0;
