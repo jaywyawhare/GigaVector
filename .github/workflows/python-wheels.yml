@@ -35,15 +35,16 @@ jobs:
       - name: Install build tooling
         run: python -m pip install --upgrade pip cibuildwheel==2.*
 
-      - name: Set up MinGW (Windows only)
+      - name: Set up ucrt64 (Windows only)
         if: matrix.os == 'windows-latest'
         shell: bash
         run: |
           C:/msys64/usr/bin/pacman -S --noconfirm --needed \
-            mingw-w64-x86_64-gcc \
-            mingw-w64-x86_64-cmake \
-            mingw-w64-x86_64-make
-          echo "C:/msys64/mingw64/bin" >> "$GITHUB_PATH"
+            mingw-w64-ucrt-x86_64-gcc \
+            mingw-w64-ucrt-x86_64-cmake \
+            mingw-w64-ucrt-x86_64-make \
+            mingw-w64-ucrt-x86_64-curl
+          echo "C:/msys64/ucrt64/bin" >> "$GITHUB_PATH"
 
       - name: Build wheels
         env:
@@ -53,7 +54,7 @@ jobs:
           CIBW_ARCHS_WINDOWS: "AMD64"
           CIBW_ENVIRONMENT_LINUX: "HARDENING_FLAGS='-fcf-protection=none -mno-shstk'"
           CIBW_ENVIRONMENT_WINDOWS: >-
-            PATH="C:\\msys64\\mingw64\\bin;$PATH"
+            PATH="C:\\msys64\\ucrt64\\bin;$PATH"
             CMAKE_GENERATOR="MinGW Makefiles"
           CIBW_MANYLINUX_X86_64_IMAGE: "manylinux_2_28"
           CIBW_BEFORE_BUILD_WINDOWS: "pip install delvewheel"
@@ -64,7 +65,7 @@ jobs:
           CIBW_REPAIR_WHEEL_COMMAND_MACOS: >-
             delocate-wheel --require-archs {delocate_archs} -w {dest_dir} {wheel}
           CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: >-
-            delvewheel repair --add-path C:\msys64\mingw64\bin -w {dest_dir} {wheel}
+            delvewheel repair --add-path C:\msys64\ucrt64\bin -w {dest_dir} {wheel}
           CIBW_BUILD_VERBOSITY: "1"
         run: cibuildwheel --output-dir python/dist python
 
