@@ -384,9 +384,6 @@ static void knn_search_recursive(const GV_KDNode *node, const GV_SoAStorage *sto
 
         float dist = distance(&node_vec, query, ctx->distance_type);
         if (!(dist < 0.0f && ctx->distance_type != GV_DISTANCE_DOT_PRODUCT)) {
-            if (ctx->distance_type == GV_DISTANCE_COSINE) {
-                dist = 1.0f - dist;
-            }
             knn_insert_result(ctx, storage_ctx, node->vector_index, dist);
         }
     }

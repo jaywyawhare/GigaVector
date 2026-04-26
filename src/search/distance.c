@@ -344,10 +344,10 @@ float distance_cosine(const GV_Vector *a, const GV_Vector *b) {
     float norm_b = vector_norm(b);
 
     if (norm_a == 0.0f || norm_b == 0.0f) {
-        return 0.0f;
+        return 1.0f;
     }
 
-    return dot_product / (norm_a * norm_b);
+    return 1.0f - (dot_product / (norm_a * norm_b));
 }
 
 #ifdef __AVX2__

@@ -1359,18 +1359,12 @@ int gv_ivfpq_range_search(void *index_ptr, const GV_Vector *query, float radius,
     for (size_t i = 0; i < found && result_count < max_results; ++i) {
         if (candidates[i].vector != NULL) {
             float dist;
-            if (idx->use_scalar_quant && candidates[i].entry != NULL && 
+            if (idx->use_scalar_quant && candidates[i].entry != NULL &&
                 candidates[i].entry->scalar_quant != NULL) {
                 dist = scalar_quant_distance(query->data, candidates[i].entry->scalar_quant,
                     (int)(cosine ? GV_DISTANCE_COSINE : GV_DISTANCE_EUCLIDEAN));
-                if (cosine && dist > -1.5f) {
-                    dist = 1.0f - dist;
-                }
             } else {
                 dist = distance(query, candidates[i].vector, cosine ? GV_DISTANCE_COSINE : GV_DISTANCE_EUCLIDEAN);
-                if (cosine && dist > -1.5f) {
-                    dist = 1.0f - dist;
-                }
             }
             if (dist <= radius) {
                 results[result_count].vector = candidates[i].vector;
