@@ -5172,7 +5172,10 @@ class AutoEmbedder:
         c_cfg.batch_size = config.batch_size
         self._embedder = lib.gv_auto_embed_create(c_cfg)
         if self._embedder == ffi.NULL:
-            raise RuntimeError("Failed to create AutoEmbedder")
+            raise RuntimeError(
+                "Failed to create AutoEmbedder. "
+                "This feature requires libcurl — recompile the library with libcurl-dev installed."
+            )
 
     def close(self) -> None:
         if self._embedder != ffi.NULL:
@@ -6495,7 +6498,10 @@ class SSOManager:
         c_cfg.admin_groups = _cstr(config.admin_groups, _ka) if config.admin_groups else ffi.NULL
         self._mgr = lib.gv_sso_create(c_cfg)
         if self._mgr == ffi.NULL:
-            raise RuntimeError("Failed to create SSO manager")
+            raise RuntimeError(
+                "Failed to create SSO manager. "
+                "This feature requires libcurl — recompile the library with libcurl-dev installed."
+            )
 
     def close(self) -> None:
         if self._mgr != ffi.NULL:

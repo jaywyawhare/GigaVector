@@ -529,7 +529,7 @@ static int compute_signature(const char *secret, const char *body,
 
 /* HTTP Delivery (libcurl or stub) */
 
-#ifdef GV_HAVE_CURL
+#ifdef HAVE_CURL
 #include <curl/curl.h>
 
 /* Discard response body */
@@ -593,7 +593,7 @@ static int deliver_webhook(const DeliveryWork *work) {
     return success ? 0 : -1;
 }
 
-#else /* !GV_HAVE_CURL -- stub implementation */
+#else /* !HAVE_CURL -- stub implementation */
 
 static int deliver_webhook(const DeliveryWork *work) {
     if (!work || !work->url || !work->json_body) return -1;
@@ -625,7 +625,7 @@ static int deliver_webhook(const DeliveryWork *work) {
     return -1;
 }
 
-#endif /* GV_HAVE_CURL */
+#endif /* HAVE_CURL */
 
 /* Work Queue Helpers */
 

@@ -5,7 +5,6 @@ from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
 from ._core import Database, IndexType
-from .async_api import AsyncDatabase
 
 
 class DatabasePool:

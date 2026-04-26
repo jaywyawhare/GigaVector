@@ -13,7 +13,7 @@ option(BUILD_SHARED_LIBS "Build shared library" ON)
 option(BUILD_TESTS "Build test executables" ON)
 option(BUILD_BENCHMARKS "Build benchmark executables" ON)
 option(BUILD_PYTHON_BINDINGS "Build Python bindings" OFF)
-option(ENABLE_SANITIZERS "Enable sanitizers (ASAN, TSAN, UBSAN)" OFF)
+option(ENABLE_SANITIZERS "Enable AddressSanitizer + UBSan (use ENABLE_TSAN for thread sanitizer)" OFF)
 option(ENABLE_COVERAGE "Enable code coverage" OFF)
 option(ENABLE_NATIVE_OPTIMIZATIONS "Enable CPU-specific optimizations (-march=native -mtune=native)" OFF)
 
@@ -68,25 +68,76 @@ target_include_directories(GigaVector
         $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
 
-# Check for libcurl (required for LLM support)
+# Check for libcurl (required for LLM support, webhook delivery, SSO, embeddings)
 find_package(CURL)
 if(CURL_FOUND)
     target_compile_definitions(GigaVector PRIVATE HAVE_CURL)
     target_link_libraries(GigaVector PRIVATE ${CURL_LIBRARIES})
+    message(STATUS "  LLM / Webhook / SSO / Embeddings: Enabled (libcurl found)")
 else()
-    message(STATUS "  LLM support: Disabled (libcurl not found)")
-    message(WARNING "Install libcurl-dev/libcurl-devel to enable LLM-based memory extraction")
+    message(STATUS "  LLM / Webhook / SSO / Embeddings: Disabled (libcurl not found)")
+    message(WARNING "Install libcurl-dev/libcurl-devel to enable LLM, webhook delivery, SSO and embedding providers")
 endif()
 
-# Check for libmicrohttpd (required for HTTP server)
+# Check for libmicrohttpd (required for HTTP REST server)
 find_library(MICROHTTPD_LIBRARY NAMES microhttpd)
 find_path(MICROHTTPD_INCLUDE_DIR NAMES microhttpd.h)
 if(MICROHTTPD_LIBRARY AND MICROHTTPD_INCLUDE_DIR)
     target_compile_definitions(GigaVector PRIVATE HAVE_MICROHTTPD)
+    target_include_directories(GigaVector PRIVATE ${MICROHTTPD_INCLUDE_DIR})
     target_link_libraries(GigaVector PRIVATE ${MICROHTTPD_LIBRARY})
+    message(STATUS "  HTTP REST server: Enabled (libmicrohttpd found)")
 else()
-    message(STATUS "  HTTP Server: Disabled (libmicrohttpd not found)")
-    message(WARNING "Install libmicrohttpd-dev to enable HTTP REST server")
+    message(STATUS "  HTTP REST server: Disabled (libmicrohttpd not found)")
+    message(WARNING "Install libmicrohttpd-dev to enable the HTTP REST server")
+endif()
+
+# Check for OpenSSL (required for TLS support)
+find_package(OpenSSL)
+if(OPENSSL_FOUND)
+    target_compile_definitions(GigaVector PRIVATE GV_HAVE_OPENSSL)
+    target_include_directories(GigaVector PRIVATE ${OPENSSL_INCLUDE_DIR})
+    target_link_libraries(GigaVector PRIVATE OpenSSL::SSL OpenSSL::Crypto)
+    message(STATUS "  TLS support: Enabled (OpenSSL found)")
+else()
+    message(STATUS "  TLS support: Disabled (OpenSSL not found)")
+    message(WARNING "Install libssl-dev/openssl-devel to enable TLS support")
+endif()
+
+# Check for ONNX Runtime (optional, for model serving)
+find_library(ONNXRUNTIME_LIBRARY NAMES onnxruntime)
+find_path(ONNXRUNTIME_INCLUDE_DIR NAMES onnxruntime_c_api.h
+    PATH_SUFFIXES onnxruntime)
+if(ONNXRUNTIME_LIBRARY AND ONNXRUNTIME_INCLUDE_DIR)
+    target_compile_definitions(GigaVector PRIVATE GV_HAVE_ONNX)
+    target_include_directories(GigaVector PRIVATE ${ONNXRUNTIME_INCLUDE_DIR})
+    target_link_libraries(GigaVector PRIVATE ${ONNXRUNTIME_LIBRARY})
+    message(STATUS "  ONNX model serving: Enabled (onnxruntime found)")
+else()
+    message(STATUS "  ONNX model serving: Disabled (onnxruntime not found)")
+    message(WARNING "Install onnxruntime to enable ONNX model serving")
+endif()
+
+# SIMD runtime dispatch — compile distance.c with AVX2/AVX512 flags when the
+# compiler supports them, without forcing -march=native across the whole build.
+include(CheckCCompilerFlag)
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang|AppleClang" AND NOT WIN32)
+    check_c_compiler_flag(-mavx2 COMPILER_SUPPORTS_AVX2)
+    check_c_compiler_flag(-mavx512f COMPILER_SUPPORTS_AVX512F)
+
+    set(GV_DISTANCE_SRC "${CMAKE_CURRENT_SOURCE_DIR}/src/search/distance.c")
+
+    if(COMPILER_SUPPORTS_AVX512F)
+        set_source_files_properties(${GV_DISTANCE_SRC} PROPERTIES
+            COMPILE_FLAGS "-mavx2 -mfma -mavx512f")
+        message(STATUS "  SIMD distance: AVX512 enabled")
+    elseif(COMPILER_SUPPORTS_AVX2)
+        set_source_files_properties(${GV_DISTANCE_SRC} PROPERTIES
+            COMPILE_FLAGS "-mavx2 -mfma")
+        message(STATUS "  SIMD distance: AVX2 enabled")
+    else()
+        message(STATUS "  SIMD distance: Scalar fallback (no AVX2/AVX512)")
+    endif()
 endif()
 
 # Check for CUDA (optional, for GPU acceleration)
@@ -163,10 +214,15 @@ install(TARGETS gvbackup gvrestore gvinspect
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 
-# Sanitizers
-if(ENABLE_SANITIZERS)
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=address -fsanitize=thread -fsanitize=undefined -fno-omit-frame-pointer")
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=address -fsanitize=thread -fsanitize=undefined")
+# Sanitizers — ASAN and TSAN are mutually exclusive; ENABLE_SANITIZERS uses ASAN+UBSAN.
+# Use ENABLE_TSAN for a separate thread-sanitizer build.
+option(ENABLE_TSAN "Enable ThreadSanitizer (incompatible with ASAN)" OFF)
+if(ENABLE_TSAN)
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=thread -fno-omit-frame-pointer")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=thread")
+elseif(ENABLE_SANITIZERS)
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=address -fsanitize=undefined -fno-omit-frame-pointer")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=address -fsanitize=undefined")
 endif()
 
 # Coverage
