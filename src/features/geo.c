@@ -48,11 +48,11 @@ struct GV_GeoIndex {
  */
 static uint32_t geo_hash(double lat, double lng)
 {
-    int ilat = (int)(lat * GV_GEO_GRID_SCALE);
-    int ilng = (int)(lng * GV_GEO_GRID_SCALE);
+    int64_t ilat = (int64_t)(lat * GV_GEO_GRID_SCALE);
+    int64_t ilng = (int64_t)(lng * GV_GEO_GRID_SCALE);
 
     /* Combine the two grid coordinates with a hash. */
-    uint32_t h = (uint32_t)((ilat * 73856093) ^ (ilng * 19349663));
+    uint32_t h = (uint32_t)((ilat * 73856093LL) ^ (ilng * 19349663LL));
     return h % GV_GEO_HASH_BUCKETS;
 }
 
@@ -291,7 +291,7 @@ static int geo_scan_radius(const GV_GeoIndex *index,
 
     for (int ilat = cell_min_lat; ilat <= cell_max_lat; ilat++) {
         for (int ilng = cell_min_lng; ilng <= cell_max_lng; ilng++) {
-            uint32_t h = (uint32_t)((ilat * 73856093) ^ (ilng * 19349663));
+            uint32_t h = (uint32_t)(((int64_t)ilat * 73856093LL) ^ ((int64_t)ilng * 19349663LL));
             uint32_t bucket = h % GV_GEO_HASH_BUCKETS;
 
             const GV_GeoEntry *entry = index->buckets[bucket].head;
@@ -366,7 +366,7 @@ int geo_bbox_search(const GV_GeoIndex *index, const GV_GeoBBox *bbox,
 
     for (int ilat = cell_min_lat; ilat <= cell_max_lat; ilat++) {
         for (int ilng = cell_min_lng; ilng <= cell_max_lng; ilng++) {
-            uint32_t h = (uint32_t)((ilat * 73856093) ^ (ilng * 19349663));
+            uint32_t h = (uint32_t)(((int64_t)ilat * 73856093LL) ^ ((int64_t)ilng * 19349663LL));
             uint32_t bucket = h % GV_GEO_HASH_BUCKETS;
 
             const GV_GeoEntry *entry = index->buckets[bucket].head;

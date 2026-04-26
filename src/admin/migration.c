@@ -39,6 +39,7 @@ struct GV_Migration {
     const void *new_index_config;   /* not owned */
     void *new_index;                /* the built index, owned until taken */
     int cancel_requested;
+    int thread_joined;
     pthread_mutex_t mutex;
     char error_message[256];
 };
@@ -368,8 +369,11 @@ int migration_wait(GV_Migration *mig)
         return -1;
     }
 
-    if (pthread_join(mig->thread, NULL) != 0) {
-        return -1;
+    if (!mig->thread_joined) {
+        if (pthread_join(mig->thread, NULL) != 0) {
+            return -1;
+        }
+        mig->thread_joined = 1;
     }
 
     return (mig->status == GV_MIGRATION_COMPLETED) ? 0 : -1;
@@ -430,7 +434,10 @@ void migration_destroy(GV_Migration *mig)
     }
     pthread_mutex_unlock(&mig->mutex);
 
-    pthread_join(mig->thread, NULL);
+    if (!mig->thread_joined) {
+        pthread_join(mig->thread, NULL);
+        mig->thread_joined = 1;
+    }
 
     /* If the index was built but never taken, destroy it based on type */
     if (mig->new_index != NULL) {
