@@ -86,3 +86,10 @@ jobs:
 
       - name: Run Python tests
         run: python -m unittest discover -s python/tests -v
+
+      - name: Lint and type-check Python (Linux only)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          python -m pip install ruff mypy
+          ruff check python/src/gigavector/async_api.py python/src/gigavector/pool.py python/src/gigavector/benchmark.py
+          mypy python/src/gigavector/async_api.py python/src/gigavector/pool.py python/src/gigavector/benchmark.py --ignore-missing-imports --follow-imports=silent

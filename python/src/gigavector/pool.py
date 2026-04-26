@@ -5,7 +5,6 @@ from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
 from ._core import Database, IndexType
-from .async_api import AsyncDatabase
 
 
 class DatabasePool:
@@ -24,12 +23,22 @@ class DatabasePool:
         self._open_kwargs = open_kwargs
         self._queue: asyncio.Queue[Database] = asyncio.Queue(maxsize=size)
         self._initialized = False
+        self._lock = asyncio.Lock()
 
     async def _initialize(self) -> None:
-        for _ in range(self._size):
-            db = Database.open(self._path, self._dimension, self._index_type, **self._open_kwargs)
-            await self._queue.put(db)
-        self._initialized = True
+        async with self._lock:
+            if self._initialized:
+                return
+            for _ in range(self._size):
+                db = await asyncio.to_thread(
+                    Database.open,
+                    self._path,
+                    self._dimension,
+                    self._index_type,
+                    **self._open_kwargs,
+                )
+                await self._queue.put(db)
+            self._initialized = True
 
     async def __aenter__(self) -> DatabasePool:
         await self._initialize()
