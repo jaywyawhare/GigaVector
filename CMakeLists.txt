@@ -59,7 +59,7 @@ if(MINGW)
     set(CMAKE_SHARED_LINKER_FLAGS
         "${CMAKE_SHARED_LINKER_FLAGS} -static-libgcc -Wl,-Bstatic -lpthread -Wl,-Bdynamic")
     set(CMAKE_EXE_LINKER_FLAGS
-        "${CMAKE_EXE_LINKER_FLAGS} -static-libgcc -Wl,-Bstatic -lpthread -Wl,-Bdynamic")
+        "${CMAKE_EXE_LINKER_FLAGS} -static-libgcc")
 endif()
 
 # Source files
