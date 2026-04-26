@@ -12,6 +12,7 @@
 #include "admin/cdc.h"
 #include "core/utils.h"
 
+#include <errno.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -131,7 +132,11 @@ GV_CDCStream *cdc_create(const GV_CDCConfig *config) {
 
     if (stream->persist_to_file && stream->log_path) {
         stream->log_fp = fopen(stream->log_path, "ab");
-        /* Failure to open is non-fatal; persistence is best-effort. */
+        if (!stream->log_fp) {
+            fprintf(stderr, "cdc_create: failed to open log file '%s': %s\n",
+                    stream->log_path, strerror(errno));
+            stream->persist_to_file = 0;
+        }
     }
 
     if (pthread_mutex_init(&stream->mutex, NULL) != 0) {
