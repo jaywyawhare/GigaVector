@@ -16,7 +16,7 @@ int gv_db_add_vector_with_metadata(GV_Database *db, const float *data, size_t di
                                    const char *metadata_key, const char *metadata_value);
 
 int gv_db_search(const GV_Database *db, const float *query_data, size_t k,
-                 GV_SearchResult *results);
+                 GV_SearchResult *results, GV_DistanceType distance_type);
 
 int gv_db_save(const GV_Database *db, const char *filepath);
 int gv_db_delete_vector_by_index(GV_Database *db, size_t vector_index);
