@@ -170,7 +170,7 @@ static uint32_t crc32_update(uint32_t crc, const void *data, size_t len) {
     for (size_t i = 0; i < len; ++i) {
         crc ^= p[i];
         for (int k = 0; k < 8; ++k) {
-            crc = (crc >> 1) ^ (0xEDB88320u & -(int)(crc & 1u));
+            crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1u)));
         }
     }
     return crc;
