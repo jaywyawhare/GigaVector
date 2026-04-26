@@ -1020,15 +1020,17 @@ int memory_search_filtered(GV_MemoryLayer *layer, const float *query_embedding,
     }
     
     if (source != NULL) {
+        size_t used = strlen(filter_expr);
         if (has_filter) {
-            strcat(filter_expr, " AND ");
+            strncat(filter_expr, " AND ", sizeof(filter_expr) - used - 1);
+            used += 5;
         }
         char source_filter[256];
         snprintf(source_filter, sizeof(source_filter), "source == \"%s\"", source);
-        strcat(filter_expr, source_filter);
+        strncat(filter_expr, source_filter, sizeof(filter_expr) - used - 1);
         has_filter = 1;
     }
-    
+
     GV_SearchResult *search_results = (GV_SearchResult *)malloc(k * sizeof(GV_SearchResult));
     if (search_results == NULL) {
         return -1;
@@ -1231,10 +1233,14 @@ int memory_search_advanced(GV_MemoryLayer *layer, const float *query_embedding,
     }
 
     if (opts.source != NULL) {
-        if (has_filter) strcat(filter_expr, " AND ");
+        size_t used = strlen(filter_expr);
+        if (has_filter) {
+            strncat(filter_expr, " AND ", sizeof(filter_expr) - used - 1);
+            used += 5;
+        }
         char source_filter[256];
         snprintf(source_filter, sizeof(source_filter), "source == \"%s\"", opts.source);
-        strcat(filter_expr, source_filter);
+        strncat(filter_expr, source_filter, sizeof(filter_expr) - used - 1);
         has_filter = 1;
     }
 

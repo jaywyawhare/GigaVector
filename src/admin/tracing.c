@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <pthread.h>
 #include "core/compat.h"
 #include <stdint.h>
 #include <inttypes.h>
@@ -22,8 +23,8 @@
 
 /* Internal State */
 
-/** Global trace ID counter. */
 static uint64_t trace_id_counter = 0;
+static pthread_mutex_t trace_id_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 /* Utility */
 
@@ -95,7 +96,9 @@ GV_QueryTrace *trace_begin(void) {
         return NULL;
     }
 
+    pthread_mutex_lock(&trace_id_mutex);
     trace->trace_id = ++trace_id_counter;
+    pthread_mutex_unlock(&trace_id_mutex);
     trace->total_duration_us = 0;
     trace->span_count = 0;
     trace->span_capacity = GV_TRACE_INITIAL_CAPACITY;
