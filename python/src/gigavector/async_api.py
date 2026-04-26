@@ -34,7 +34,8 @@ class AsyncDatabase:
 
     async def aclose(self) -> None:
         await self._run(self._db.close)
-        self._executor.shutdown(wait=True)
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, self._executor.shutdown, True)
 
     async def __aenter__(self) -> AsyncDatabase:
         return self
