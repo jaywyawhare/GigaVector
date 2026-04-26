@@ -51,16 +51,16 @@ static int test_cosine_distance(void) {
     ASSERT(v1 != NULL, "v1 creation");
     ASSERT(v2 != NULL, "v2 creation");
     
-    float sim = distance_cosine(v1, v2);
-    ASSERT_FLOAT_EQ(sim, 0.0f, "cosine similarity of orthogonal vectors");
-    
-    float sim_self = distance_cosine(v1, v1);
-    ASSERT_FLOAT_EQ(sim_self, 1.0f, "cosine similarity to self");
-    
+    float dist = distance_cosine(v1, v2);
+    ASSERT_FLOAT_EQ(dist, 1.0f, "cosine distance of orthogonal vectors");
+
+    float dist_self = distance_cosine(v1, v1);
+    ASSERT_FLOAT_EQ(dist_self, 0.0f, "cosine distance to self");
+
     float v3_data[3] = {2.0f, 0.0f, 0.0f};
     GV_Vector *v3 = vector_create_from_data(3, v3_data);
-    float sim_parallel = distance_cosine(v1, v3);
-    ASSERT_FLOAT_EQ(sim_parallel, 1.0f, "cosine similarity of parallel vectors");
+    float dist_parallel = distance_cosine(v1, v3);
+    ASSERT_FLOAT_EQ(dist_parallel, 0.0f, "cosine distance of parallel vectors");
     
     vector_destroy(v1);
     vector_destroy(v2);
