@@ -14,7 +14,7 @@ static int test_open_close(void) {
 }
 
 static int test_null_safety(void) {
-    gv_db_close(NULL); /* must not crash */
+    gv_db_close(NULL);
     return 0;
 }
 
