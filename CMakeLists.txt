@@ -214,10 +214,15 @@ install(TARGETS gvbackup gvrestore gvinspect
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 
-# Sanitizers
-if(ENABLE_SANITIZERS)
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=address -fsanitize=thread -fsanitize=undefined -fno-omit-frame-pointer")
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=address -fsanitize=thread -fsanitize=undefined")
+# Sanitizers — ASAN and TSAN are mutually exclusive; ENABLE_SANITIZERS uses ASAN+UBSAN.
+# Use ENABLE_TSAN for a separate thread-sanitizer build.
+option(ENABLE_TSAN "Enable ThreadSanitizer (incompatible with ASAN)" OFF)
+if(ENABLE_TSAN)
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=thread -fno-omit-frame-pointer")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=thread")
+elseif(ENABLE_SANITIZERS)
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=address -fsanitize=undefined -fno-omit-frame-pointer")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=address -fsanitize=undefined")
 endif()
 
 # Coverage
