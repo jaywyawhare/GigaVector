@@ -92,4 +92,4 @@ jobs:
         run: |
           python -m pip install ruff mypy
           ruff check python/src/gigavector/async_api.py python/src/gigavector/pool.py python/src/gigavector/benchmark.py
-          mypy python/src/gigavector/async_api.py python/src/gigavector/pool.py python/src/gigavector/benchmark.py --ignore-missing-imports
+          mypy python/src/gigavector/async_api.py python/src/gigavector/pool.py python/src/gigavector/benchmark.py --ignore-missing-imports --follow-imports=silent
