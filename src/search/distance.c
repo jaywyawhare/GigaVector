@@ -2,6 +2,7 @@
 #include <string.h>
 
 #include "search/distance.h"
+#include "core/config.h"
 
 #ifdef __SSE4_2__
 #include <nmmintrin.h>
