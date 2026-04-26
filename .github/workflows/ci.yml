@@ -23,13 +23,17 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake libcurl4-openssl-dev
+          sudo apt-get install -y \
+            build-essential cmake \
+            libcurl4-openssl-dev \
+            libssl-dev \
+            libmicrohttpd-dev
 
       # ── macOS ──────────────────────────────────────────────────────────────
       - name: Install system dependencies (macOS)
         if: matrix.os == 'macos-latest'
         run: |
-          brew install cmake curl
+          brew install cmake curl openssl
 
       # ── Windows (MinGW via pre-installed MSYS2) ────────────────────────────
       - name: Set up MinGW (Windows)
@@ -93,3 +97,68 @@ jobs:
           python -m pip install ruff mypy
           ruff check python/src/gigavector/async_api.py python/src/gigavector/pool.py python/src/gigavector/benchmark.py
           mypy python/src/gigavector/async_api.py python/src/gigavector/pool.py python/src/gigavector/benchmark.py --ignore-missing-imports --follow-imports=silent
+
+  # ── Sanitizer build (ASAN + UBSAN, Linux only) ──────────────────────────
+  sanitizers:
+    name: sanitizers (ASAN + UBSAN)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4.2.2
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake \
+            libcurl4-openssl-dev \
+            libssl-dev \
+            libmicrohttpd-dev
+
+      - name: Configure with sanitizers
+        run: |
+          cmake -S . -B build-san \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DBUILD_TESTS=ON \
+            -DBUILD_BENCHMARKS=OFF \
+            -DENABLE_SANITIZERS=ON
+
+      - name: Build
+        run: cmake --build build-san --parallel
+
+      - name: Run tests under ASAN/UBSAN
+        env:
+          ASAN_OPTIONS: detect_leaks=0:abort_on_error=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: ctest --test-dir build-san --output-on-failure --parallel
+
+  # ── Static analysis (cppcheck, Linux only) ──────────────────────────────
+  static-analysis:
+    name: static analysis (cppcheck)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4.2.2
+
+      - name: Install cppcheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cppcheck
+
+      - name: Run cppcheck
+        run: |
+          set -o pipefail
+          cppcheck \
+            --enable=warning,performance,portability \
+            --error-exitcode=1 \
+            --suppress=missingIncludeSystem \
+            --suppress=unusedFunction \
+            -I include \
+            src/ 2>&1 | tee cppcheck-report.txt
+
+      - name: Upload cppcheck report
+        if: always()
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: cppcheck-report
+          path: cppcheck-report.txt
