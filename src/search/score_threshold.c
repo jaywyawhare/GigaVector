@@ -1,4 +1,5 @@
 #include <stddef.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "search/score_threshold.h"
@@ -48,24 +49,16 @@ int db_search_with_threshold(const void *db, const float *query_data, size_t k,
 
     const GV_Database *database = (const GV_Database *)db;
 
-    /* Use stack-allocated GV_SearchResult array for the search.
-     * For very large k values, this could be problematic, but the specification
-     * says no dynamic allocation. Practically k is small (tens to hundreds). */
-    GV_SearchResult search_results[k];
-    memset(search_results, 0, sizeof(GV_SearchResult) * k);
+    GV_SearchResult *search_results = (GV_SearchResult *)calloc(k, sizeof(GV_SearchResult));
+    if (!search_results) return -1;
 
     int found = db_search(database, query_data, k, search_results,
                              (GV_DistanceType)distance_type);
     if (found < 0) {
+        free(search_results);
         return -1;
     }
 
-    /* Copy results into GV_ThresholdResult format and track index.
-     * GV_SearchResult contains a GV_Vector pointer; we need to derive
-     * a meaningful index. The SoA storage index can be recovered from
-     * the vector pointer offset relative to the database storage. For
-     * simplicity, we use the iteration index (position in search results)
-     * as the result index -- this mirrors the ordering from db_search. */
     size_t passed = 0;
     for (int i = 0; i < found; i++) {
         float dist = search_results[i].distance;
@@ -76,5 +69,6 @@ int db_search_with_threshold(const void *db, const float *query_data, size_t k,
         }
     }
 
+    free(search_results);
     return (int)passed;
 }
