@@ -44,7 +44,8 @@ jobs:
             mingw-w64-ucrt-x86_64-gcc \
             mingw-w64-ucrt-x86_64-cmake \
             mingw-w64-ucrt-x86_64-make \
-            mingw-w64-ucrt-x86_64-curl
+            mingw-w64-ucrt-x86_64-curl \
+            mingw-w64-ucrt-x86_64-openssl
           echo "C:/msys64/ucrt64/bin" >> "$GITHUB_PATH"
 
       # ── Build (Makefile — Linux/macOS only) ───────────────────────────────
