@@ -51,18 +51,10 @@ if(WIN32 AND BUILD_SHARED_LIBS)
     set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
 endif()
 
-# When building with MinGW, prefer static libraries for all third-party deps so
-# the resulting DLL has no dependency on MinGW runtime DLLs (libgcc_s_seh-1.dll,
-# libwinpthread-1.dll, libcurl-4.dll, libssl-3-x64.dll, libcrypto-3-x64.dll).
-# Users without MinGW installed can then load the DLL without any extra installs.
 if(MINGW)
-    # Force find_package to prefer .a over .dll.a import libs
     set(CMAKE_FIND_LIBRARY_SUFFIXES .a .dll.a .lib)
     set(CURL_USE_STATIC_LIBS ON)
     set(OPENSSL_USE_STATIC_LIBS ON)
-
-    # Statically link libgcc, winpthread, curl, ssl, crypto and the Windows
-    # system libs that static curl/openssl depend on.
     set(CMAKE_SHARED_LINKER_FLAGS
         "${CMAKE_SHARED_LINKER_FLAGS} -static-libgcc -Wl,-Bstatic -lpthread -lcurl -lssl -lcrypto -Wl,-Bdynamic -lws2_32 -lcrypt32 -lgdi32 -lbcrypt -lwldap32")
     set(CMAKE_EXE_LINKER_FLAGS
