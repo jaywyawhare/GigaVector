@@ -31,16 +31,17 @@ jobs:
         run: |
           brew install cmake curl
 
-      # ── Windows (MinGW via pre-installed MSYS2) ────────────────────────────
-      - name: Set up MinGW (Windows)
+      # ── Windows (ucrt64 via pre-installed MSYS2) ──────────────────────────
+      - name: Set up ucrt64 (Windows)
         if: matrix.os == 'windows-latest'
         shell: bash
         run: |
           C:/msys64/usr/bin/pacman -S --noconfirm --needed \
-            mingw-w64-x86_64-gcc \
-            mingw-w64-x86_64-cmake \
-            mingw-w64-x86_64-make
-          echo "C:/msys64/mingw64/bin" >> "$GITHUB_PATH"
+            mingw-w64-ucrt-x86_64-gcc \
+            mingw-w64-ucrt-x86_64-cmake \
+            mingw-w64-ucrt-x86_64-make \
+            mingw-w64-ucrt-x86_64-curl
+          echo "C:/msys64/ucrt64/bin" >> "$GITHUB_PATH"
 
       # ── Build (Makefile — Linux/macOS only) ───────────────────────────────
       - name: Build library with Make
