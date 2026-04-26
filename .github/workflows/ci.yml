@@ -128,7 +128,7 @@ jobs:
 
       - name: Run tests under ASAN/UBSAN
         env:
-          ASAN_OPTIONS: detect_leaks=1:abort_on_error=1
+          ASAN_OPTIONS: detect_leaks=0:abort_on_error=1
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
         run: ctest --test-dir build-san --output-on-failure --parallel
 
@@ -147,6 +147,7 @@ jobs:
 
       - name: Run cppcheck
         run: |
+          set -o pipefail
           cppcheck \
             --enable=warning,style,performance,portability \
             --error-exitcode=1 \

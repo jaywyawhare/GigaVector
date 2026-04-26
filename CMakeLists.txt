@@ -13,7 +13,7 @@ option(BUILD_SHARED_LIBS "Build shared library" ON)
 option(BUILD_TESTS "Build test executables" ON)
 option(BUILD_BENCHMARKS "Build benchmark executables" ON)
 option(BUILD_PYTHON_BINDINGS "Build Python bindings" OFF)
-option(ENABLE_SANITIZERS "Enable sanitizers (ASAN, TSAN, UBSAN)" OFF)
+option(ENABLE_SANITIZERS "Enable AddressSanitizer + UBSan (use ENABLE_TSAN for thread sanitizer)" OFF)
 option(ENABLE_COVERAGE "Enable code coverage" OFF)
 option(ENABLE_NATIVE_OPTIMIZATIONS "Enable CPU-specific optimizations (-march=native -mtune=native)" OFF)
 
