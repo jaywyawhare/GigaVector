@@ -153,7 +153,6 @@ jobs:
             --error-exitcode=1 \
             --suppress=missingIncludeSystem \
             --suppress=unusedFunction \
-            --suppress=unusedStructMember \
             -I include \
             src/ 2>&1 | tee cppcheck-report.txt
 
