@@ -3,17 +3,21 @@
 #include "admin/replication.h"
 #include "admin/shard.h"
 #include "api/server.h"
+#include "core/bloom.h"
 #include "features/context_graph.h"
 #include "index/kdtree.h"
+#include "multimodal/bm25.h"
 #include "multimodal/embedding.h"
 #include "multimodal/llm.h"
 #include "schema/metadata.h"
 #include "schema/vector.h"
+#include "search/mmr.h"
 #include "specialized/gpu.h"
 #include "storage/backup.h"
 #include "storage/database.h"
 #include "storage/memory_extraction.h"
 #include "storage/memory_layer.h"
+#include "storage/snapshot.h"
 #include "storage/wal.h"
 
 GV_Database *gv_db_open(const char *filepath, size_t dimension,
@@ -1145,4 +1149,116 @@ GV_Database *gv_namespace_get_db(GV_Namespace *ns) {
 
 void gv_namespace_config_init(GV_NamespaceConfig *config) {
   namespace_config_init(config);
+}
+
+/* ── BloomFilter wrappers ─────────────────────────────────────────────────── */
+
+GV_BloomFilter *gv_bloom_create(size_t expected_items, double fp_rate) {
+  return bloom_create(expected_items, fp_rate);
+}
+void gv_bloom_destroy(GV_BloomFilter *bf) { bloom_destroy(bf); }
+int gv_bloom_add(GV_BloomFilter *bf, const void *data, size_t len) {
+  return bloom_add(bf, data, len);
+}
+int gv_bloom_add_string(GV_BloomFilter *bf, const char *str) {
+  return bloom_add_string(bf, str);
+}
+int gv_bloom_check(const GV_BloomFilter *bf, const void *data, size_t len) {
+  return bloom_check(bf, data, len);
+}
+int gv_bloom_check_string(const GV_BloomFilter *bf, const char *str) {
+  return bloom_check_string(bf, str);
+}
+size_t gv_bloom_count(const GV_BloomFilter *bf) { return bloom_count(bf); }
+double gv_bloom_fp_rate(const GV_BloomFilter *bf) { return bloom_fp_rate(bf); }
+void gv_bloom_clear(GV_BloomFilter *bf) { bloom_clear(bf); }
+
+/* ── BM25 wrappers ────────────────────────────────────────────────────────── */
+
+void gv_bm25_config_init(GV_BM25Config *config) { bm25_config_init(config); }
+GV_BM25Index *gv_bm25_create(const GV_BM25Config *config) {
+  return bm25_create(config);
+}
+void gv_bm25_destroy(GV_BM25Index *index) { bm25_destroy(index); }
+int gv_bm25_add_document(GV_BM25Index *index, size_t doc_id, const char *text) {
+  return bm25_add_document(index, doc_id, text);
+}
+int gv_bm25_add_document_terms(GV_BM25Index *index, size_t doc_id,
+                                const char **terms, size_t term_count) {
+  return bm25_add_document_terms(index, doc_id, terms, term_count);
+}
+int gv_bm25_remove_document(GV_BM25Index *index, size_t doc_id) {
+  return bm25_remove_document(index, doc_id);
+}
+int gv_bm25_update_document(GV_BM25Index *index, size_t doc_id, const char *text) {
+  return bm25_update_document(index, doc_id, text);
+}
+int gv_bm25_search(GV_BM25Index *index, const char *query, size_t k,
+                   GV_BM25Result *results) {
+  return bm25_search(index, query, k, results);
+}
+int gv_bm25_score_document(GV_BM25Index *index, size_t doc_id,
+                            const char *query, double *score) {
+  return bm25_score_document(index, doc_id, query, score);
+}
+int gv_bm25_get_stats(const GV_BM25Index *index, GV_BM25Stats *stats) {
+  return bm25_get_stats(index, stats);
+}
+size_t gv_bm25_get_doc_freq(const GV_BM25Index *index, const char *term) {
+  return bm25_get_doc_freq(index, term);
+}
+int gv_bm25_has_document(const GV_BM25Index *index, size_t doc_id) {
+  return bm25_has_document(index, doc_id);
+}
+int gv_bm25_save(const GV_BM25Index *index, const char *filepath) {
+  return bm25_save(index, filepath);
+}
+GV_BM25Index *gv_bm25_load(const char *filepath) { return bm25_load(filepath); }
+
+/* ── SnapshotManager wrappers ─────────────────────────────────────────────── */
+
+GV_SnapshotManager *gv_snapshot_manager_create(size_t max_snapshots) {
+  return snapshot_manager_create(max_snapshots);
+}
+void gv_snapshot_manager_destroy(GV_SnapshotManager *mgr) {
+  snapshot_manager_destroy(mgr);
+}
+uint64_t gv_snapshot_create(GV_SnapshotManager *mgr, size_t vector_count,
+                             const float *vector_data, size_t dimension,
+                             const char *label) {
+  return snapshot_create(mgr, vector_count, vector_data, dimension, label);
+}
+GV_Snapshot *gv_snapshot_open(GV_SnapshotManager *mgr, uint64_t snapshot_id) {
+  return snapshot_open(mgr, snapshot_id);
+}
+void gv_snapshot_close(GV_Snapshot *snap) { snapshot_close(snap); }
+size_t gv_snapshot_count(const GV_Snapshot *snap) { return snapshot_count(snap); }
+const float *gv_snapshot_get_vector(const GV_Snapshot *snap, size_t index) {
+  return snapshot_get_vector(snap, index);
+}
+size_t gv_snapshot_dimension(const GV_Snapshot *snap) {
+  return snapshot_dimension(snap);
+}
+int gv_snapshot_list(const GV_SnapshotManager *mgr, GV_SnapshotInfo *infos,
+                     size_t max_infos) {
+  return snapshot_list(mgr, infos, max_infos);
+}
+int gv_snapshot_delete(GV_SnapshotManager *mgr, uint64_t snapshot_id) {
+  return snapshot_delete(mgr, snapshot_id);
+}
+
+/* ── MMR wrappers ─────────────────────────────────────────────────────────── */
+
+void gv_mmr_config_init(GV_MMRConfig *config) { mmr_config_init(config); }
+int gv_mmr_rerank(const float *query, size_t dimension,
+                  const float *candidates, const size_t *candidate_indices,
+                  const float *candidate_distances, size_t candidate_count,
+                  size_t k, const GV_MMRConfig *config, GV_MMRResult *results) {
+  return mmr_rerank(query, dimension, candidates, candidate_indices,
+                    candidate_distances, candidate_count, k, config, results);
+}
+int gv_mmr_search(const void *db, const float *query, size_t dimension,
+                  size_t k, size_t oversample, const GV_MMRConfig *config,
+                  GV_MMRResult *results) {
+  return mmr_search(db, query, dimension, k, oversample, config, results);
 }
