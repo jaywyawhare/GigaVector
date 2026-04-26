@@ -120,6 +120,8 @@ db.train_ivfpq(training_data)
 
 The Python bindings expose the following module groups. See [usage.md](usage.md) and [c_api_guide.md](c_api_guide.md) for full examples.
 
+- **Async & Concurrency:** `AsyncDatabase`, `DatabasePool` -- asyncio-native API and connection pooling.
+- **Benchmarking:** `Benchmark`, `BenchmarkResult` -- latency and throughput measurement.
 - **Core:** `Database`, `Vector`, `SearchHit`, `IndexType`, `DistanceType` -- database operations and search.
 - **Configuration:** `HNSWConfig`, `IVFPQConfig`, `ScalarQuantConfig` -- index tuning parameters.
 - **LLM Integration:** `LLM`, `LLMConfig`, `EmbeddingService` -- embedding generation and LLM helpers.

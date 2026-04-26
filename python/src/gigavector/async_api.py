@@ -13,7 +13,7 @@ class AsyncDatabase:
         self._executor = executor
 
     async def _run(self, fn, *args, **kwargs):
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(self._executor, lambda: fn(*args, **kwargs))
 
     @classmethod
@@ -26,7 +26,7 @@ class AsyncDatabase:
         **kwargs,
     ) -> AsyncDatabase:
         executor = ThreadPoolExecutor(max_workers=max_workers)
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         db = await loop.run_in_executor(
             executor, lambda: Database.open(path, dimension, index, **kwargs)
         )
@@ -95,7 +95,7 @@ class AsyncDatabase:
         return await self._run(self._db.search_batch, queries, k, **kwargs)
 
     async def count(self) -> int:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(self._executor, lambda: self._db.count)
 
     async def get_stats(self) -> Any:
