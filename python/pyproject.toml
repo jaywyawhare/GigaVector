@@ -43,11 +43,11 @@ gigavector = [
 	"GigaVector.dll",
 	
 	"dashboard/frontend/index.html",
-	"dashboard/frontend/assets/*",
-	"dashboard/frontend/src/*",
-	"dashboard/frontend/styles/*",
-	
-	"dashboard/backend/*"
+	"dashboard/frontend/assets/**/*",
+	"dashboard/frontend/src/**/*",
+	"dashboard/frontend/styles/**/*",
+
+	"dashboard/backend/**/*"
 	]
 
 
