@@ -416,6 +416,11 @@ GV_TypedValue typed_value_copy(const GV_TypedValue *src) {
             dst.data.array_val.capacity = src->data.array_val.count;
             if (src->data.array_val.count > 0) {
                 dst.data.array_val.items = malloc(dst.data.array_val.capacity * sizeof(GV_TypedValue));
+                if (!dst.data.array_val.items) {
+                    dst.data.array_val.count = 0;
+                    dst.data.array_val.capacity = 0;
+                    break;
+                }
                 for (size_t i = 0; i < src->data.array_val.count; i++) {
                     dst.data.array_val.items[i] = typed_value_copy(&src->data.array_val.items[i]);
                 }
@@ -427,6 +432,15 @@ GV_TypedValue typed_value_copy(const GV_TypedValue *src) {
             if (src->data.object_val.count > 0) {
                 dst.data.object_val.keys = malloc(dst.data.object_val.capacity * sizeof(char *));
                 dst.data.object_val.values = malloc(dst.data.object_val.capacity * sizeof(GV_TypedValue));
+                if (!dst.data.object_val.keys || !dst.data.object_val.values) {
+                    free(dst.data.object_val.keys);
+                    free(dst.data.object_val.values);
+                    dst.data.object_val.keys = NULL;
+                    dst.data.object_val.values = NULL;
+                    dst.data.object_val.count = 0;
+                    dst.data.object_val.capacity = 0;
+                    break;
+                }
                 for (size_t i = 0; i < src->data.object_val.count; i++) {
                     dst.data.object_val.keys[i] = gv_dup_cstr(src->data.object_val.keys[i]);
                     dst.data.object_val.values[i] = typed_value_copy(&src->data.object_val.values[i]);
