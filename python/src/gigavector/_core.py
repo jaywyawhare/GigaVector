@@ -4992,12 +4992,12 @@ class ThresholdResult:
     distance: float
 
 
-def search_with_threshold(db_ptr: CData, query: list[float], k: int,
+def search_with_threshold(db: 'Database', query: list[float], k: int,
                            distance_type: int, threshold: float) -> list[ThresholdResult]:
     dim = len(query)
     c_query = ffi.new("float[]", query)
     c_results = ffi.new("GV_ThresholdResult[]", k)
-    count = lib.gv_db_search_with_threshold(db_ptr, c_query, k, distance_type, threshold, c_results)
+    count = lib.gv_db_search_with_threshold(db._db, c_query, k, distance_type, threshold, c_results)
     if count < 0:
         raise RuntimeError("Threshold search failed")
     return [ThresholdResult(index=c_results[i].index, distance=c_results[i].distance) for i in range(count)]
@@ -5040,28 +5040,28 @@ class NamedVectorStore:
         return lib.gv_named_vectors_count(self._store)
 
 
-def delete_by_filter(db_ptr: CData, filter_expr: str) -> int:
-    result = lib.gv_db_delete_by_filter(db_ptr, filter_expr.encode())
+def delete_by_filter(db: 'Database', filter_expr: str) -> int:
+    result = lib.gv_db_delete_by_filter(db._db, filter_expr.encode())
     if result < 0:
         raise RuntimeError("Delete by filter failed")
     return result
 
 
-def update_metadata_by_filter(db_ptr: CData, filter_expr: str,
+def update_metadata_by_filter(db: 'Database', filter_expr: str,
                                keys: list[str], values: list[str]) -> int:
     c_keys = [ffi.new("char[]", k.encode()) for k in keys]
     c_vals = [ffi.new("char[]", v.encode()) for v in values]
     c_keys_arr = ffi.new("char *[]", c_keys)
     c_vals_arr = ffi.new("char *[]", c_vals)
-    result = lib.gv_db_update_metadata_by_filter(db_ptr, filter_expr.encode(),
+    result = lib.gv_db_update_metadata_by_filter(db._db, filter_expr.encode(),
                                                   c_keys_arr, c_vals_arr, len(keys))
     if result < 0:
         raise RuntimeError("Update metadata by filter failed")
     return result
 
 
-def count_by_filter(db_ptr: CData, filter_expr: str) -> int:
-    result = lib.gv_db_count_by_filter(db_ptr, filter_expr.encode())
+def count_by_filter(db: 'Database', filter_expr: str) -> int:
+    result = lib.gv_db_count_by_filter(db._db, filter_expr.encode())
     if result < 0:
         raise RuntimeError("Count by filter failed")
     return result
