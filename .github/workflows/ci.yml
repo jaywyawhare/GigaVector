@@ -87,7 +87,11 @@ jobs:
         shell: bash
         env:
           CMAKE_GENERATOR: "MinGW Makefiles"
-        run: python -m pip install ./python
+        run: |
+          python -m pip install delvewheel build
+          python -m build --wheel ./python --outdir /tmp/wheels
+          python -m delvewheel repair /tmp/wheels/gigavector*.whl -w /tmp/repaired
+          python -m pip install /tmp/repaired/gigavector*.whl
 
       - name: Run Python tests
         run: python -m unittest discover -s python/tests -v
