@@ -14,7 +14,7 @@
 
 /* Constants */
 
-#define GV_SQL_ERROR_SIZE      512
+#define GV_SQL_ERROR_SIZE      1024
 #define GV_SQL_MAX_QUERY_DIMS  16384
 #define GV_SQL_MAX_TOKENS      4096
 
