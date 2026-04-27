@@ -4,6 +4,7 @@
 #include <math.h>
 
 #include "gigavector.h"
+#include "../test_tmp.h"
 
 #define ASSERT(cond, msg)         \
     do {                          \
@@ -68,7 +69,8 @@ static int test_hnsw_large_dataset(void) {
     if (db == NULL) {
         return 0;
     }
-    
+
+    /* Insert 100 vectors: v[i] = {i*0.08, i*0.08+0.01, ...} */
     for (int i = 0; i < 100; i++) {
         float v[8];
         for (int j = 0; j < 8; j++) {
@@ -76,12 +78,17 @@ static int test_hnsw_large_dataset(void) {
         }
         ASSERT(db_add_vector(db, v, 8) == 0, "add vector in large dataset");
     }
-    
-    float q[8] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+
+    /* Query with the exact first vector; it must be the nearest neighbor */
+    float q[8] = {0.0f, 0.01f, 0.02f, 0.03f, 0.04f, 0.05f, 0.06f, 0.07f};
     GV_SearchResult res[5];
     int n = db_search(db, q, 5, res, GV_DISTANCE_EUCLIDEAN);
     ASSERT(n == 5, "search in large dataset");
-    
+    /* Nearest neighbor must have distance 0 (exact match) */
+    if (n >= 1) {
+        ASSERT(res[0].distance < 1e-5f, "nearest neighbor is correct");
+    }
+
     db_close(db);
     return 0;
 }
@@ -135,27 +142,32 @@ static int test_hnsw_range_search(void) {
 }
 
 static int test_hnsw_persistence(void) {
-    const char *path = "tmp_hnsw_db.bin";
+    char path[256];
+    if (gv_test_make_temp_path(path, sizeof(path), "gv_hnsw_persist", ".bin") != 0) return 0;
     remove(path);
-    
+
     GV_Database *db = db_open(path, 3, GV_INDEX_TYPE_HNSW);
     if (db == NULL) {
         return 0;
     }
-    
+
     float v[3] = {1.0f, 2.0f, 3.0f};
     ASSERT(db_add_vector(db, v, 3) == 0, "add vector");
     ASSERT(db_save(db, NULL) == 0, "save database");
     db_close(db);
-    
+
     GV_Database *db2 = db_open(path, 3, GV_INDEX_TYPE_HNSW);
     ASSERT(db2 != NULL, "reopen database");
-    
+
     float q[3] = {1.0f, 2.0f, 3.0f};
     GV_SearchResult res[1];
     int n = db_search(db2, q, 1, res, GV_DISTANCE_EUCLIDEAN);
     ASSERT(n == 1, "search after reload");
-    
+    /* The only inserted vector should be the nearest neighbor */
+    if (n == 1 && res[0].vector != NULL) {
+        ASSERT(res[0].distance < 1e-5f, "nearest neighbor is exact match after reload");
+    }
+
     db_close(db2);
     remove(path);
     return 0;

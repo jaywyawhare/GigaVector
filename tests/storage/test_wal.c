@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "gigavector.h"
+#include "../test_tmp.h"
 
 #define ASSERT(cond, msg)         \
     do {                          \
@@ -45,228 +46,226 @@ static int on_insert_rich_cb(void *ctx, const float *data, size_t dimension,
 }
 
 static int test_wal_open_close(void) {
-    const char *wal_path = "tmp_test_wal.bin.wal";
+    char wal_path[256];
+    if (gv_test_make_temp_path(wal_path, sizeof(wal_path), "gv_wal_open", ".wal") != 0) return 0;
     remove(wal_path);
-    
+
     GV_WAL *wal = wal_open(wal_path, 3, GV_INDEX_TYPE_KDTREE);
     ASSERT(wal != NULL, "wal open");
-    
+
     wal_close(wal);
-    
     remove(wal_path);
     return 0;
 }
 
 static int test_wal_append_insert(void) {
-    const char *wal_path = "tmp_test_wal_insert.bin.wal";
+    char wal_path[256];
+    if (gv_test_make_temp_path(wal_path, sizeof(wal_path), "gv_wal_insert", ".wal") != 0) return 0;
     remove(wal_path);
-    
+
     GV_WAL *wal = wal_open(wal_path, 2, GV_INDEX_TYPE_KDTREE);
     ASSERT(wal != NULL, "wal open");
-    
+
     float v[2] = {1.0f, 2.0f};
     ASSERT(wal_append_insert(wal, v, 2, "tag", "test") == 0, "append insert");
-    
     ASSERT(wal_append_insert(wal, v, 2, NULL, NULL) == 0, "append insert without metadata");
-    
+
     wal_close(wal);
-    
     remove(wal_path);
     return 0;
 }
 
 static int test_wal_append_insert_rich(void) {
-    const char *wal_path = "tmp_test_wal_rich.bin.wal";
+    char wal_path[256];
+    if (gv_test_make_temp_path(wal_path, sizeof(wal_path), "gv_wal_rich", ".wal") != 0) return 0;
     remove(wal_path);
-    
+
     GV_WAL *wal = wal_open(wal_path, 2, GV_INDEX_TYPE_KDTREE);
     ASSERT(wal != NULL, "wal open");
-    
+
     float v[2] = {1.0f, 2.0f};
     const char *keys[] = {"tag", "owner", "source"};
     const char *values[] = {"a", "b", "demo"};
-    
+
     ASSERT(wal_append_insert_rich(wal, v, 2, keys, values, 3) == 0, "append insert rich");
-    
+
     wal_close(wal);
-    
     remove(wal_path);
     return 0;
 }
 
 static int test_wal_append_delete(void) {
-    const char *wal_path = "tmp_test_wal_delete.bin.wal";
+    char wal_path[256];
+    if (gv_test_make_temp_path(wal_path, sizeof(wal_path), "gv_wal_delete", ".wal") != 0) return 0;
     remove(wal_path);
-    
+
     GV_WAL *wal = wal_open(wal_path, 2, GV_INDEX_TYPE_KDTREE);
     ASSERT(wal != NULL, "wal open");
-    
+
     ASSERT(wal_append_delete(wal, 0) == 0, "append delete");
-    
+
     wal_close(wal);
-    
     remove(wal_path);
     return 0;
 }
 
 static int test_wal_append_update(void) {
-    const char *wal_path = "tmp_test_wal_update.bin.wal";
+    char wal_path[256];
+    if (gv_test_make_temp_path(wal_path, sizeof(wal_path), "gv_wal_update", ".wal") != 0) return 0;
     remove(wal_path);
-    
+
     GV_WAL *wal = wal_open(wal_path, 2, GV_INDEX_TYPE_KDTREE);
     ASSERT(wal != NULL, "wal open");
-    
+
     float v[2] = {10.0f, 20.0f};
     const char *keys[] = {"tag"};
     const char *values[] = {"updated"};
-    
+
     ASSERT(wal_append_update(wal, 0, v, 2, keys, values, 1) == 0, "append update");
-    
+
     wal_close(wal);
-    
     remove(wal_path);
     return 0;
 }
 
 static int test_wal_truncate(void) {
-    const char *wal_path = "tmp_test_wal_truncate.bin.wal";
+    char wal_path[256];
+    if (gv_test_make_temp_path(wal_path, sizeof(wal_path), "gv_wal_trunc", ".wal") != 0) return 0;
     remove(wal_path);
-    
+
     GV_WAL *wal = wal_open(wal_path, 2, GV_INDEX_TYPE_KDTREE);
     ASSERT(wal != NULL, "wal open");
-    
+
     float v[2] = {1.0f, 2.0f};
     ASSERT(wal_append_insert(wal, v, 2, NULL, NULL) == 0, "append insert");
-    
     ASSERT(wal_truncate(wal) == 0, "truncate wal");
-    
+
     wal_close(wal);
-    
     remove(wal_path);
     return 0;
 }
 
 static int test_wal_reset(void) {
-    const char *wal_path = "tmp_test_wal_reset.bin.wal";
+    char wal_path[256];
+    if (gv_test_make_temp_path(wal_path, sizeof(wal_path), "gv_wal_reset", ".wal") != 0) return 0;
     remove(wal_path);
-    
+
     GV_WAL *wal = wal_open(wal_path, 2, GV_INDEX_TYPE_KDTREE);
     ASSERT(wal != NULL, "wal open");
-    
+
     float v[2] = {1.0f, 2.0f};
     ASSERT(wal_append_insert(wal, v, 2, NULL, NULL) == 0, "append insert");
-    
+
     wal_close(wal);
-    
+
     ASSERT(wal_reset(wal_path) == 0, "reset wal");
-    
+
     remove(wal_path);
     return 0;
 }
 
 static int test_wal_dump(void) {
-    const char *wal_path = "tmp_test_wal_dump.bin.wal";
+    char wal_path[256];
+    if (gv_test_make_temp_path(wal_path, sizeof(wal_path), "gv_wal_dump", ".wal") != 0) return 0;
     remove(wal_path);
-    
+
     GV_WAL *wal = wal_open(wal_path, 2, GV_INDEX_TYPE_KDTREE);
     ASSERT(wal != NULL, "wal open");
-    
+
     float v[2] = {1.0f, 2.0f};
     ASSERT(wal_append_insert(wal, v, 2, "tag", "test") == 0, "append insert");
-    
+
     wal_close(wal);
-    
+
     FILE *out = fopen("/dev/null", "w");
     if (out != NULL) {
         int dump_result = wal_dump(wal_path, 2, GV_INDEX_TYPE_KDTREE, out);
         fclose(out);
-        if (dump_result != 0) {
-            remove(wal_path);
-            return 0;
-        }
+        ASSERT(dump_result == 0, "wal dump succeeded");
     }
-    
+
     remove(wal_path);
     return 0;
 }
 
 static int test_wal_replay(void) {
-    const char *wal_path = "tmp_test_wal_replay.bin.wal";
+    char wal_path[256];
+    if (gv_test_make_temp_path(wal_path, sizeof(wal_path), "gv_wal_replay", ".wal") != 0) return 0;
     remove(wal_path);
-    
+
     GV_WAL *wal = wal_open(wal_path, 2, GV_INDEX_TYPE_KDTREE);
     ASSERT(wal != NULL, "wal open");
-    
+
     float v[2] = {1.0f, 2.0f};
     ASSERT(wal_append_insert(wal, v, 2, "tag", "test") == 0, "append insert");
-    
+
     wal_close(wal);
-    
+
     int replay_count = 0;
     ReplayCtx ctx = { .count = &replay_count };
 
     int replay_result = wal_replay(wal_path, 2, on_insert_basic_cb, &ctx, GV_INDEX_TYPE_KDTREE);
-    if (replay_result != 0) {
-        remove(wal_path);
-        return 0;
-    }
-    ASSERT(replay_count >= 0, "replay count");
-    
+    ASSERT(replay_result == 0, "wal replay succeeded");
+    ASSERT(replay_count == 1, "replay count is 1");
+
     remove(wal_path);
     return 0;
 }
 
 static int test_wal_replay_rich(void) {
-    const char *wal_path = "tmp_test_wal_replay_rich.bin.wal";
+    char wal_path[256];
+    if (gv_test_make_temp_path(wal_path, sizeof(wal_path), "gv_wal_replay_rich", ".wal") != 0) return 0;
     remove(wal_path);
-    
+
     GV_WAL *wal = wal_open(wal_path, 2, GV_INDEX_TYPE_KDTREE);
     ASSERT(wal != NULL, "wal open");
-    
+
     float v[2] = {1.0f, 2.0f};
     const char *keys[] = {"tag", "owner"};
     const char *values[] = {"a", "b"};
     ASSERT(wal_append_insert_rich(wal, v, 2, keys, values, 2) == 0, "append insert rich");
-    
+
     wal_close(wal);
-    
+
     int replay_count = 0;
     ReplayCtx ctx = { .count = &replay_count };
 
-    ASSERT(wal_replay_rich(wal_path, 2, on_insert_rich_cb, &ctx, GV_INDEX_TYPE_KDTREE) == 0, "wal replay rich");
-    ASSERT(replay_count == 1, "replay count");
-    
+    ASSERT(wal_replay_rich(wal_path, 2, on_insert_rich_cb, NULL, NULL, &ctx, GV_INDEX_TYPE_KDTREE) == 0,
+           "wal replay rich succeeded");
+    ASSERT(replay_count == 1, "replay count is 1");
+
     remove(wal_path);
     return 0;
 }
 
 static int test_wal_in_database(void) {
-    const char *path = "tmp_wal_db.bin";
-    const char *wal_path = "tmp_wal_db.bin.wal";
-    remove(path);
+    char db_path[256], wal_path[256];
+    if (gv_test_make_temp_path(db_path, sizeof(db_path), "gv_wal_db", ".bin") != 0) return 0;
+    if (gv_test_make_temp_path(wal_path, sizeof(wal_path), "gv_wal_db", ".wal") != 0) return 0;
+    remove(db_path);
     remove(wal_path);
-    
-    GV_Database *db = db_open(path, 2, GV_INDEX_TYPE_KDTREE);
+
+    GV_Database *db = db_open(db_path, 2, GV_INDEX_TYPE_KDTREE);
     ASSERT(db != NULL, "db open");
-    
+
     ASSERT(db_set_wal(db, wal_path) == 0, "set wal");
-    
+
     float v[2] = {1.0f, 2.0f};
     ASSERT(db_add_vector_with_metadata(db, v, 2, "tag", "test") == 0, "add vector");
-    
+
     int dump_result = db_wal_dump(db, stdout);
     if (dump_result != 0) {
         db_disable_wal(db);
         db_close(db);
-        remove(path);
+        remove(db_path);
         remove(wal_path);
         return 0;
     }
-    
+
     db_disable_wal(db);
     db_close(db);
-    
-    remove(path);
+
+    remove(db_path);
     remove(wal_path);
     return 0;
 }
@@ -286,4 +285,3 @@ int main(void) {
     rc |= test_wal_in_database();
     return rc;
 }
-
