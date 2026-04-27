@@ -170,6 +170,11 @@ int wal_append_insert(GV_WAL *wal, const float *data, size_t dimension,
         crc = crc32_update(crc, metadata_value, vlen);
     }
 
+    if (wal->version >= 2) {
+        crc = crc32_finish(crc);
+        if (write_u32(wal->file, crc) != 0) return -1;
+    }
+
     if (wal_sync(wal->file) != 0) {
         return -1;
     }
@@ -400,6 +405,11 @@ int wal_replay(const char *path, size_t expected_dimension,
             
             char **keys = NULL;
             char **values = NULL;
+            if (meta_count > 65536) {
+                free(buf);
+                fclose(f);
+                return -1;
+            }
             if (meta_count > 0) {
                 keys = (char **)malloc(sizeof(char *) * meta_count);
                 values = (char **)malloc(sizeof(char *) * meta_count);
@@ -497,6 +507,11 @@ int wal_replay(const char *path, size_t expected_dimension,
             
             char **keys = NULL;
             char **values = NULL;
+            if (meta_count > 65536) {
+                free(buf);
+                fclose(f);
+                return -1;
+            }
             if (meta_count > 0) {
                 keys = (char **)malloc(sizeof(char *) * meta_count);
                 values = (char **)malloc(sizeof(char *) * meta_count);
@@ -697,6 +712,11 @@ int wal_replay_rich(const char *path, size_t expected_dimension,
             
             char **keys = NULL;
             char **values = NULL;
+            if (meta_count > 65536) {
+                free(buf);
+                fclose(f);
+                return -1;
+            }
             if (meta_count > 0) {
                 keys = (char **)malloc(sizeof(char *) * meta_count);
                 values = (char **)malloc(sizeof(char *) * meta_count);
@@ -793,6 +813,11 @@ int wal_replay_rich(const char *path, size_t expected_dimension,
 
             char **keys = NULL;
             char **values = NULL;
+            if (meta_count > 65536) {
+                free(buf);
+                fclose(f);
+                return -1;
+            }
             if (meta_count > 0) {
                 keys = (char **)malloc(sizeof(char *) * meta_count);
                 values = (char **)malloc(sizeof(char *) * meta_count);
@@ -882,7 +907,7 @@ int wal_dump(const char *path, size_t expected_dimension, uint32_t expected_inde
 
     FILE *f = fopen(path, "rb");
     if (f == NULL) {
-        return (errno == ENOENT) ? -1 : -1;
+        return (errno == ENOENT) ? 0 : -1;
     }
 
     char magic[4] = {0};
@@ -947,6 +972,11 @@ int wal_dump(const char *path, size_t expected_dimension, uint32_t expected_inde
             
             char **keys = NULL;
             char **values = NULL;
+            if (meta_count > 65536) {
+                free(buf);
+                fclose(f);
+                return -1;
+            }
             if (meta_count > 0) {
                 keys = (char **)malloc(sizeof(char *) * meta_count);
                 values = (char **)malloc(sizeof(char *) * meta_count);
