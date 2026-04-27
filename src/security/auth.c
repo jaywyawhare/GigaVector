@@ -711,8 +711,10 @@ int auth_generate_jwt(GV_AuthManager *auth, const char *subject,
 
     char escaped_subject[256];
     size_t ei = 0;
-    for (size_t si = 0; subject[si] && ei + 2 < sizeof(escaped_subject); si++) {
-        if (subject[si] == '"' || subject[si] == '\\') escaped_subject[ei++] = '\\';
+    for (size_t si = 0; subject[si]; si++) {
+        size_t need = (subject[si] == '"' || subject[si] == '\\') ? 2 : 1;
+        if (ei + need + 1 > sizeof(escaped_subject)) return NULL;
+        if (need == 2) escaped_subject[ei++] = '\\';
         escaped_subject[ei++] = subject[si];
     }
     escaped_subject[ei] = '\0';

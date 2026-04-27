@@ -765,19 +765,25 @@ int wal_replay_rich(const char *path, size_t expected_dimension,
                 }
             }
             
-            for (uint32_t i = 0; i < meta_count; ++i) {
-                free(keys[i]);
-                free(values[i]);
-            }
-            free(keys);
-            free(values);
-            free(buf);
             if (on_update != NULL) {
                 int cb_res = on_update(ctx, (size_t)index_u64, buf, dim,
                     (const char *const *)keys, (const char *const *)values, meta_count);
-                if (cb_res != 0) {
-                    free(buf); free(keys); free(values); fclose(f); return -1;
+                for (uint32_t i = 0; i < meta_count; ++i) {
+                    free(keys[i]);
+                    free(values[i]);
                 }
+                free(keys);
+                free(values);
+                free(buf);
+                if (cb_res != 0) { fclose(f); return -1; }
+            } else {
+                for (uint32_t i = 0; i < meta_count; ++i) {
+                    free(keys[i]);
+                    free(values[i]);
+                }
+                free(keys);
+                free(values);
+                free(buf);
             }
             continue;
         }

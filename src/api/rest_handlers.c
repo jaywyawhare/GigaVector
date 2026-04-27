@@ -613,11 +613,22 @@ GV_HttpResponse *rest_handle_search(const GV_HandlerContext *ctx,
             for (size_t fi = 0; fi < nfilter && pos < sizeof(expr) - 1; fi++) {
                 const char *val = json_get_string(entries[fi].value);
                 if (!val) continue;
+                /* Escape backslashes and quotes in val before interpolation */
+                char safe_val[256];
+                size_t sv = 0;
+                for (size_t vi = 0; val[vi] && sv + 2 < sizeof(safe_val); vi++) {
+                    if (val[vi] == '"' || val[vi] == '\\') safe_val[sv++] = '\\';
+                    safe_val[sv++] = val[vi];
+                }
+                safe_val[sv] = '\0';
                 int n = snprintf(expr + pos, sizeof(expr) - pos,
                                  "%s%s == \"%s\"",
                                  fi > 0 ? " AND " : "",
-                                 entries[fi].key, val);
-                if (n > 0) pos += (size_t)n;
+                                 entries[fi].key, safe_val);
+                if (n > 0) {
+                    size_t written = (size_t)n;
+                    pos += written < sizeof(expr) - pos ? written : sizeof(expr) - pos - 1;
+                }
             }
             expr[pos] = '\0';
             found = db_search_with_filter_expr(ctx->db, query, k, results, distance, expr);
