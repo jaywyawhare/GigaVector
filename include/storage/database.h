@@ -520,15 +520,6 @@ int db_search_ivfpq_opts(const GV_Database *db, const float *query_data, size_t 
  * @param dimension Vector dimensionality (must match db->dimension).
  * @return 0 on success, -1 on error (no partial rollback).
  */
-/**
- * @brief Add an item.
- *
- * @param db Database instance.
- * @param data Input data buffer.
- * @param count Number of items.
- * @param dimension Vector dimensionality.
- * @return 0 on success, -1 on error.
- */
 int db_add_vectors(GV_Database *db, const float *data, size_t count, size_t dimension);
 
 /**
