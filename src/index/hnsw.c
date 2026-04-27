@@ -1119,8 +1119,10 @@ int gv_hnsw_search(void *index_ptr, const GV_Vector *query, size_t k,
         const float *node_data = SRCH_VEC(index->nodes[cn].vector_index);
         GV_Metadata *node_meta = soa_storage_get_metadata(index->soa_storage, index->nodes[cn].vector_index);
 
-        if (filter_key && !metadata_get_direct(node_meta, filter_key)) continue;
-        if (filter_key && strcmp(metadata_get_direct(node_meta, filter_key), filter_value) != 0) continue;
+        if (filter_key) {
+            const char *meta_val = metadata_get_direct(node_meta, filter_key);
+            if (!meta_val || !filter_value || strcmp(meta_val, filter_value) != 0) continue;
+        }
 
         GV_Vector *result_vec = (GV_Vector *)malloc(sizeof(GV_Vector));
         if (!result_vec) continue;
