@@ -82,7 +82,9 @@ GV_BackupResult *backup_create(GV_Database *db, const char *backup_path,
         return create_result(0, "Failed to create backup file");
     }
 
-    fwrite(BACKUP_MAGIC, 1, BACKUP_MAGIC_LEN, fp);
+    if (fwrite(BACKUP_MAGIC, 1, BACKUP_MAGIC_LEN, fp) != BACKUP_MAGIC_LEN) {
+        fclose(fp); return create_result(0, "Failed to write backup magic");
+    }
 
     GV_BackupHeader header;
     memset(&header, 0, sizeof(header));
@@ -99,20 +101,29 @@ GV_BackupResult *backup_create(GV_Database *db, const char *backup_path,
     header.dimension = db->dimension;
     header.index_type = db->index_type;
 
-    fwrite(&header.version, sizeof(header.version), 1, fp);
-    fwrite(&header.flags, sizeof(header.flags), 1, fp);
-    fwrite(&header.created_at, sizeof(header.created_at), 1, fp);
-    fwrite(&header.vector_count, sizeof(header.vector_count), 1, fp);
-    fwrite(&header.dimension, sizeof(header.dimension), 1, fp);
-    fwrite(&header.index_type, sizeof(header.index_type), 1, fp);
+#define FWRITE1(field) \
+    if (fwrite(&header.field, sizeof(header.field), 1, fp) != 1) { \
+        fclose(fp); return create_result(0, "Failed to write backup header"); \
+    }
+    FWRITE1(version)
+    FWRITE1(flags)
+    FWRITE1(created_at)
+    FWRITE1(vector_count)
+    FWRITE1(dimension)
+    FWRITE1(index_type)
+#undef FWRITE1
 
     /* Placeholder for sizes and checksum (will update at end) */
     long sizes_pos = ftell(fp);
     uint64_t zero = 0;
-    fwrite(&zero, sizeof(zero), 1, fp);
-    fwrite(&zero, sizeof(zero), 1, fp);
-    char checksum_placeholder[65] = {0};
-    fwrite(checksum_placeholder, 1, BACKUP_CHECKSUM_LEN, fp);
+    if (fwrite(&zero, sizeof(zero), 1, fp) != 1 ||
+        fwrite(&zero, sizeof(zero), 1, fp) != 1) {
+        fclose(fp); return create_result(0, "Failed to write backup placeholders");
+    }
+    char checksum_placeholder[64] = {0};
+    if (fwrite(checksum_placeholder, 1, BACKUP_CHECKSUM_LEN, fp) != BACKUP_CHECKSUM_LEN) {
+        fclose(fp); return create_result(0, "Failed to write checksum placeholder");
+    }
 
     uint64_t data_size = 0;
     size_t dimension = database_dimension(db);
