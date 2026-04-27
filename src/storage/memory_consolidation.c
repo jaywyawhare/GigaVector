@@ -160,16 +160,22 @@ char *memory_merge(GV_MemoryLayer *layer, const char *memory_id_1,
         return NULL;
     }
     
-    merged_content[0] = '\0';
+    size_t pos = 0;
     if (mem1.content) {
-        strcat(merged_content, mem1.content);
+        size_t l = strlen(mem1.content);
+        memcpy(merged_content + pos, mem1.content, l);
+        pos += l;
     }
     if (mem2.content) {
         if (mem1.content) {
-            strcat(merged_content, ". ");
+            memcpy(merged_content + pos, ". ", 2);
+            pos += 2;
         }
-        strcat(merged_content, mem2.content);
+        size_t l = strlen(mem2.content);
+        memcpy(merged_content + pos, mem2.content, l);
+        pos += l;
     }
+    merged_content[pos] = '\0';
     
     float *merged_embedding = (float *)malloc(layer->db->dimension * sizeof(float));
     if (merged_embedding == NULL) {

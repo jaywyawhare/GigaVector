@@ -3448,6 +3448,7 @@ static int db_compact_soa_storage(GV_Database *db) {
     }
 
     size_t new_count = storage->count - deleted_count;
+    if (new_count > SIZE_MAX / dimension / sizeof(float)) return -1;
     float *new_data = (float *)malloc(new_count * dimension * sizeof(float));
     GV_Metadata **new_metadata = (GV_Metadata **)calloc(new_count, sizeof(GV_Metadata *));
     int *new_deleted = (int *)calloc(new_count, sizeof(int));

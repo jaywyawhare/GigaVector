@@ -99,6 +99,7 @@ static uint32_t hash_vector(const float *data, size_t dimension, float **hyperpl
 
 static int bucket_add(GV_LSHBucket *bucket, size_t index) {
     if (bucket->count >= bucket->capacity) {
+        if (bucket->capacity > SIZE_MAX / 2 || (bucket->capacity > 0 && bucket->capacity * 2 > SIZE_MAX / sizeof(size_t))) return -1;
         size_t new_capacity = bucket->capacity == 0 ? 8 : bucket->capacity * 2;
         size_t *new_indices = (size_t *)realloc(bucket->indices, new_capacity * sizeof(size_t));
         if (new_indices == NULL) {

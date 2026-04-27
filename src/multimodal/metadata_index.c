@@ -166,6 +166,7 @@ int metadata_index_add(GV_MetadataIndex *index, const char *key, const char *val
     }
 
     if (entry->count >= entry->capacity) {
+        if (entry->capacity > SIZE_MAX / 2 || entry->capacity * 2 > SIZE_MAX / sizeof(size_t)) return -1;
         size_t new_capacity = entry->capacity * 2;
         size_t *new_indices = (size_t *)realloc(entry->vector_indices, new_capacity * sizeof(size_t));
         if (new_indices == NULL) {

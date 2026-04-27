@@ -223,6 +223,7 @@ static int add_posting(GV_PostingList *pl, size_t doc_id, size_t term_freq) {
     }
 
     if (pl->count >= pl->capacity) {
+        if (pl->capacity > SIZE_MAX / 2 || pl->capacity * 2 > SIZE_MAX / sizeof(GV_Posting)) return -1;
         size_t new_capacity = pl->capacity * 2;
         GV_Posting *new_postings = realloc(pl->postings, new_capacity * sizeof(GV_Posting));
         if (!new_postings) return -1;
@@ -614,45 +615,52 @@ int bm25_save(const GV_BM25Index *index, const char *filepath) {
 
     pthread_rwlock_rdlock((pthread_rwlock_t *)&index->rwlock);
 
+#define BM25_FWRITE(ptr, sz, n) \
+    do { if (fwrite((ptr), (sz), (n), fp) != (n)) { \
+        pthread_rwlock_unlock((pthread_rwlock_t *)&index->rwlock); \
+        fclose(fp); return -1; } } while (0)
+
     const char magic[] = "GV_BM25";
-    fwrite(magic, 1, 7, fp);
+    BM25_FWRITE(magic, 1, 7);
 
     uint32_t version = 1;
-    fwrite(&version, sizeof(version), 1, fp);
+    BM25_FWRITE(&version, sizeof(version), 1);
 
-    fwrite(&index->config.k1, sizeof(index->config.k1), 1, fp);
-    fwrite(&index->config.b, sizeof(index->config.b), 1, fp);
+    BM25_FWRITE(&index->config.k1, sizeof(index->config.k1), 1);
+    BM25_FWRITE(&index->config.b, sizeof(index->config.b), 1);
 
-    fwrite(&index->total_documents, sizeof(index->total_documents), 1, fp);
-    fwrite(&index->total_terms, sizeof(index->total_terms), 1, fp);
-    fwrite(&index->total_doc_length, sizeof(index->total_doc_length), 1, fp);
+    BM25_FWRITE(&index->total_documents, sizeof(index->total_documents), 1);
+    BM25_FWRITE(&index->total_terms, sizeof(index->total_terms), 1);
+    BM25_FWRITE(&index->total_doc_length, sizeof(index->total_doc_length), 1);
 
     for (size_t i = 0; i < DOC_HASH_BUCKETS; i++) {
         GV_DocInfo *di = index->doc_buckets[i];
         while (di) {
-            fwrite(&di->doc_id, sizeof(di->doc_id), 1, fp);
-            fwrite(&di->doc_length, sizeof(di->doc_length), 1, fp);
+            BM25_FWRITE(&di->doc_id, sizeof(di->doc_id), 1);
+            BM25_FWRITE(&di->doc_length, sizeof(di->doc_length), 1);
             di = di->next;
         }
     }
 
     size_t sentinel = (size_t)-1;
-    fwrite(&sentinel, sizeof(sentinel), 1, fp);
+    BM25_FWRITE(&sentinel, sizeof(sentinel), 1);
 
     for (size_t i = 0; i < TERM_HASH_BUCKETS; i++) {
         GV_PostingList *pl = index->term_buckets[i];
         while (pl) {
             size_t term_len = strlen(pl->term);
-            fwrite(&term_len, sizeof(term_len), 1, fp);
-            fwrite(pl->term, 1, term_len, fp);
-            fwrite(&pl->count, sizeof(pl->count), 1, fp);
-            fwrite(pl->postings, sizeof(GV_Posting), pl->count, fp);
+            BM25_FWRITE(&term_len, sizeof(term_len), 1);
+            BM25_FWRITE(pl->term, 1, term_len);
+            BM25_FWRITE(&pl->count, sizeof(pl->count), 1);
+            if (pl->count > 0) BM25_FWRITE(pl->postings, sizeof(GV_Posting), pl->count);
             pl = pl->next;
         }
     }
 
     size_t zero = 0;
-    fwrite(&zero, sizeof(zero), 1, fp);
+    BM25_FWRITE(&zero, sizeof(zero), 1);
+
+#undef BM25_FWRITE
 
     pthread_rwlock_unlock((pthread_rwlock_t *)&index->rwlock);
     fclose(fp);

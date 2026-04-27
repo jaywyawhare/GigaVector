@@ -11,6 +11,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#ifdef __linux__
+#include <sys/random.h>
+#endif
 
 /* Internal Structures */
 
@@ -240,17 +243,19 @@ static void aes256_decrypt_block(const unsigned char in[16], unsigned char out[1
 
 /* Random Generation */
 
-static void generate_random_bytes(unsigned char *buf, size_t len) {
+static int generate_random_bytes(unsigned char *buf, size_t len) {
+#ifdef __linux__
+    ssize_t r = getrandom(buf, len, 0);
+    if (r >= 0 && (size_t)r == len) return 0;
+#endif
     FILE *fp = fopen("/dev/urandom", "rb");
     if (fp) {
-        size_t read = fread(buf, 1, len, fp);
+        size_t n = fread(buf, 1, len, fp);
         fclose(fp);
-        if (read == len) return;
+        if (n == len) return 0;
     }
-    /* Fallback to weak random (not secure!) */
-    for (size_t i = 0; i < len; i++) {
-        buf[i] = (unsigned char)(rand() & 0xff);
-    }
+    fprintf(stderr, "GigaVector crypto: FATAL: could not obtain cryptographic randomness\n");
+    return -1;
 }
 
 /* Configuration */
@@ -325,28 +330,26 @@ int crypto_derive_key(GV_CryptoContext *ctx, const char *password,
     memcpy(dk, T, 32);
 
     memcpy(key->key, dk, 32);
-    generate_random_bytes(key->iv, 16);
+    if (generate_random_bytes(key->iv, 16) != 0) return -1;
 
     return 0;
 }
 
 int crypto_generate_key(GV_CryptoKey *key) {
     if (!key) return -1;
-    generate_random_bytes(key->key, 32);
-    generate_random_bytes(key->iv, 16);
+    if (generate_random_bytes(key->key, 32) != 0) return -1;
+    if (generate_random_bytes(key->iv, 16) != 0) return -1;
     return 0;
 }
 
 int crypto_generate_iv(unsigned char *iv) {
     if (!iv) return -1;
-    generate_random_bytes(iv, 16);
-    return 0;
+    return generate_random_bytes(iv, 16);
 }
 
 int crypto_generate_salt(unsigned char *salt, size_t salt_len) {
     if (!salt || salt_len == 0) return -1;
-    generate_random_bytes(salt, salt_len);
-    return 0;
+    return generate_random_bytes(salt, salt_len);
 }
 
 void crypto_wipe_key(GV_CryptoKey *key) {

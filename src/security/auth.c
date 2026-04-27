@@ -11,7 +11,7 @@
 #include <stdio.h>
 #include <time.h>
 #include <pthread.h>
-#if defined(__linux__)
+#ifdef __linux__
 #include <sys/random.h>
 #endif
 
@@ -185,20 +185,19 @@ void auth_to_hex(const unsigned char *hash, size_t hash_len, char *hex_out) {
 
 /* Random Generation */
 
-static void generate_random_bytes(unsigned char *buf, size_t len) {
-#if defined(__linux__)
-    if (getrandom(buf, len, 0) == (ssize_t)len) return;
+static int generate_random_bytes(unsigned char *buf, size_t len) {
+#ifdef __linux__
+    ssize_t r = getrandom(buf, len, 0);
+    if (r >= 0 && (size_t)r == len) return 0;
 #endif
     FILE *fp = fopen("/dev/urandom", "rb");
     if (fp) {
-        size_t nread = fread(buf, 1, len, fp);
+        size_t n = fread(buf, 1, len, fp);
         fclose(fp);
-        if (nread == len) return;
+        if (n == len) return 0;
     }
-    fprintf(stderr, "GigaVector: WARNING: falling back to weak PRNG for key generation\n");
-    for (size_t i = 0; i < len; i++) {
-        buf[i] = (unsigned char)(rand() & 0xff);
-    }
+    fprintf(stderr, "GigaVector auth: FATAL: could not obtain cryptographic randomness\n");
+    return -1;
 }
 
 /* Configuration */
@@ -248,15 +247,6 @@ void auth_destroy(GV_AuthManager *auth) {
 
 /* API Key Management */
 
-static int cmp_api_key_by_hash(const void *a, const void *b) {
-    return strcmp(((const APIKeyEntry *)a)->key_hash,
-                  ((const APIKeyEntry *)b)->key_hash);
-}
-
-static void auth_sort_keys(GV_AuthManager *auth) {
-    qsort(auth->keys, auth->key_count, sizeof(APIKeyEntry), cmp_api_key_by_hash);
-}
-
 int auth_generate_api_key(GV_AuthManager *auth, const char *description,
                               uint64_t expires_at, char *key_out, char *key_id_out) {
     if (!auth || !key_out || !key_id_out) return -1;
@@ -271,8 +261,11 @@ int auth_generate_api_key(GV_AuthManager *auth, const char *description,
     /* Generate random key ID and key */
     unsigned char key_id_bytes[KEY_ID_LEN];
     unsigned char key_bytes[KEY_LEN];
-    generate_random_bytes(key_id_bytes, KEY_ID_LEN);
-    generate_random_bytes(key_bytes, KEY_LEN);
+    if (generate_random_bytes(key_id_bytes, KEY_ID_LEN) != 0 ||
+        generate_random_bytes(key_bytes, KEY_LEN) != 0) {
+        pthread_rwlock_unlock(&auth->rwlock);
+        return -1;
+    }
 
     /* Convert to hex */
     auth_to_hex(key_id_bytes, KEY_ID_LEN, key_id_out);
@@ -292,7 +285,6 @@ int auth_generate_api_key(GV_AuthManager *auth, const char *description,
     entry->enabled = 1;
 
     auth->key_count++;
-    auth_sort_keys(auth);
 
     pthread_rwlock_unlock(&auth->rwlock);
     return 0;
@@ -411,37 +403,32 @@ GV_AuthResult auth_verify_api_key(GV_AuthManager *auth, const char *api_key,
 
     uint64_t now = (uint64_t)time(NULL);
 
-    APIKeyEntry key;
-    memset(&key, 0, sizeof(key));
-    strncpy(key.key_hash, hash_hex, sizeof(key.key_hash) - 1);
-    key.key_hash[sizeof(key.key_hash) - 1] = '\0';
-    APIKeyEntry *found_entry = (APIKeyEntry *)bsearch(&key, auth->keys, auth->key_count,
-                                                       sizeof(APIKeyEntry), cmp_api_key_by_hash);
+    for (size_t i = 0; i < auth->key_count; i++) {
+        if (strcmp(auth->keys[i].key_hash, hash_hex) == 0) {
+            if (!auth->keys[i].enabled) {
+                pthread_rwlock_unlock(&auth->rwlock);
+                return GV_AUTH_INVALID_KEY;
+            }
+            if (auth->keys[i].expires_at > 0 && auth->keys[i].expires_at < now) {
+                pthread_rwlock_unlock(&auth->rwlock);
+                return GV_AUTH_EXPIRED;
+            }
 
-    if (!found_entry) {
-        pthread_rwlock_unlock(&auth->rwlock);
-        return GV_AUTH_INVALID_KEY;
-    }
+            if (identity) {
+                memset(identity, 0, sizeof(*identity));
+                identity->key_id = gv_dup_cstr(auth->keys[i].key_id);
+                identity->subject = gv_dup_cstr(auth->keys[i].key_id);
+                identity->auth_time = now;
+                identity->expires_at = auth->keys[i].expires_at;
+            }
 
-    if (!found_entry->enabled) {
-        pthread_rwlock_unlock(&auth->rwlock);
-        return GV_AUTH_INVALID_KEY;
-    }
-    if (found_entry->expires_at > 0 && found_entry->expires_at < now) {
-        pthread_rwlock_unlock(&auth->rwlock);
-        return GV_AUTH_EXPIRED;
-    }
-
-    if (identity) {
-        memset(identity, 0, sizeof(*identity));
-        identity->key_id = gv_dup_cstr(found_entry->key_id);
-        identity->subject = gv_dup_cstr(found_entry->key_id);
-        identity->auth_time = now;
-        identity->expires_at = found_entry->expires_at;
+            pthread_rwlock_unlock(&auth->rwlock);
+            return GV_AUTH_SUCCESS;
+        }
     }
 
     pthread_rwlock_unlock(&auth->rwlock);
-    return GV_AUTH_SUCCESS;
+    return GV_AUTH_INVALID_KEY;
 }
 
 /* Base64 URL decoding for JWT verification */
@@ -706,24 +693,14 @@ int auth_generate_jwt(GV_AuthManager *auth, const char *subject,
     char header_b64[128];
     base64url_encode(header, strlen(header), header_b64);
 
-    /* Build payload — escape the subject so it can't break JSON structure */
+    /* Build payload */
     uint64_t now = (uint64_t)time(NULL);
     uint64_t exp = now + expires_in;
-
-    char escaped_subject[256];
-    size_t ei = 0;
-    for (size_t si = 0; subject[si]; si++) {
-        size_t need = (subject[si] == '"' || subject[si] == '\\') ? 2 : 1;
-        if (ei + need + 1 > sizeof(escaped_subject)) return -1;
-        if (need == 2) escaped_subject[ei++] = '\\';
-        escaped_subject[ei++] = subject[si];
-    }
-    escaped_subject[ei] = '\0';
 
     char payload[512];
     snprintf(payload, sizeof(payload),
              "{\"sub\":\"%s\",\"iat\":%llu,\"exp\":%llu}",
-             escaped_subject, (unsigned long long)now, (unsigned long long)exp);
+             subject, (unsigned long long)now, (unsigned long long)exp);
 
     char payload_b64[512];
     base64url_encode(payload, strlen(payload), payload_b64);
