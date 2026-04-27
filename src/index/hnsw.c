@@ -42,6 +42,7 @@ typedef struct {
     int use_acorn;
     size_t acorn_hops;
     GV_DistanceType distance_type;
+    unsigned int rand_seed;
     size_t entry_point;              /**< Node index of entry point (SIZE_MAX = none) */
     size_t count;
     size_t nodes_capacity;
@@ -72,12 +73,16 @@ typedef struct {
 } GV_HNSWIndex;
 
 
-static size_t calculate_level(size_t maxLevel, size_t M) {
+static size_t calculate_level(GV_HNSWIndex *index) {
+#ifndef _WIN32
+    double r = (double)rand_r(&index->rand_seed) / ((double)RAND_MAX + 1.0);
+#else
     double r = (double)rand() / ((double)RAND_MAX + 1.0);
+#endif
     if (r == 0.0) r = 1e-18;
-    double mL = 1.0 / log((double)M);
+    double mL = 1.0 / log((double)index->M);
     size_t level = (size_t)(-log(r) * mL);
-    return (level > maxLevel) ? maxLevel : level;
+    return (level > index->maxLevel) ? index->maxLevel : level;
 }
 
 static int compare_candidates(const void *a, const void *b) {
@@ -285,6 +290,7 @@ void *gv_hnsw_create(size_t dimension, const GV_HNSWConfig *config, GV_SoAStorag
     index->use_acorn = (config && config->use_acorn) ? 1 : 0;
     index->acorn_hops = (config && config->acorn_hops > 0 && config->acorn_hops <= 2) ? config->acorn_hops : 1;
     index->distance_type = config ? config->distance_type : GV_DISTANCE_EUCLIDEAN;
+    index->rand_seed = (unsigned int)(size_t)index ^ 0xdeadbeef;
     index->entry_point = SIZE_MAX;
     index->count = 0;
     index->nodes_capacity = 1024;
@@ -644,7 +650,7 @@ int gv_hnsw_insert(void *index_ptr, GV_Vector *vector) {
 }
 
 static int hnsw_insert_impl(GV_HNSWIndex *index, size_t vector_index, size_t dimension) {
-    size_t level = calculate_level(index->maxLevel, index->M);
+    size_t level = calculate_level(index);
     size_t node_idx = index->count;
 
     if (node_idx >= index->nodes_capacity) {
