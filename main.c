@@ -113,23 +113,18 @@ int main(int argc, char **argv) {
 
     printf("Index: %s | dim=%zu\n", index_type == GV_INDEX_TYPE_KDTREE ? "kdtree" :
                                    index_type == GV_INDEX_TYPE_HNSW ? "hnsw" : "ivfpq", dim);
-    GV_Database *db = db_open(db_path, dim, index_type);
-    if (db == NULL) {
-        fprintf(stderr, "Error: Failed to create database (check WAL/index compatibility)\n");
-        return EXIT_FAILURE;
-    }
-
+    GV_Database *db;
     if (index_type == GV_INDEX_TYPE_IVFPQ) {
         GV_IVFPQConfig cfg = {.nlist = ivf_nlist, .m = ivf_m, .nbits = ivf_nbits,
                               .nprobe = ivf_nprobe, .train_iters = 20,
                               .default_rerank = ivf_rerank, .use_cosine = ivf_cosine};
-        gv_ivfpq_destroy(db->hnsw_index);
-        db->hnsw_index = gv_ivfpq_create(dim, &cfg);
-        if (!db->hnsw_index) {
-            fprintf(stderr, "Error: IVF-PQ create failed\n");
-            db_close(db);
-            return EXIT_FAILURE;
-        }
+        db = db_open_with_ivfpq_config(db_path, dim, index_type, &cfg);
+    } else {
+        db = db_open(db_path, dim, index_type);
+    }
+    if (db == NULL) {
+        fprintf(stderr, "Error: Failed to create database (check WAL/index compatibility)\n");
+        return EXIT_FAILURE;
     }
 
     size_t train_count = (index_type == GV_INDEX_TYPE_IVFPQ) ? 2048 : 0;
