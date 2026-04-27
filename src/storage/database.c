@@ -185,6 +185,22 @@ static char *db_build_wal_path(const char *filepath) {
     return gv_dup_cstr(buf);
 }
 
+static int db_wal_apply_delete(void *ctx, size_t vector_index) {
+    GV_Database *db = (GV_Database *)ctx;
+    if (db == NULL) return -1;
+    return db_delete_vector_by_index(db, vector_index);
+}
+
+static int db_wal_apply_update(void *ctx, size_t vector_index, const float *data,
+                                size_t dimension,
+                                const char *const *metadata_keys, const char *const *metadata_values,
+                                size_t metadata_count) {
+    GV_Database *db = (GV_Database *)ctx;
+    if (db == NULL || data == NULL || dimension != db->dimension) return -1;
+    (void)metadata_keys; (void)metadata_values; (void)metadata_count;
+    return db_update_vector(db, vector_index, data, dimension);
+}
+
 static int db_wal_apply_rich(void *ctx, const float *data, size_t dimension,
                                 const char *const *metadata_keys, const char *const *metadata_values,
                                 size_t metadata_count) {
@@ -736,7 +752,9 @@ GV_Database *db_open(const char *filepath, size_t dimension, GV_IndexType index_
         }
 
         db->wal_replaying = 1;
-        if (wal_replay_rich(db->wal_path, db->dimension, db_wal_apply_rich, db, (uint32_t)db->index_type) != 0) {
+        if (wal_replay_rich(db->wal_path, db->dimension, db_wal_apply_rich,
+                            db_wal_apply_delete, db_wal_apply_update,
+                            db, (uint32_t)db->index_type) != 0) {
             db->wal_replaying = 0;
             wal_close(db->wal);
             db->wal = NULL;

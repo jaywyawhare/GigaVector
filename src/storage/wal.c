@@ -596,6 +596,10 @@ int wal_replay_rich(const char *path, size_t expected_dimension,
                        int (*on_insert)(void *ctx, const float *data, size_t dimension,
                                         const char *const *metadata_keys, const char *const *metadata_values,
                                         size_t metadata_count),
+                       int (*on_delete)(void *ctx, size_t vector_index),
+                       int (*on_update)(void *ctx, size_t vector_index, const float *data,
+                                        size_t dimension, const char *const *metadata_keys,
+                                        const char *const *metadata_values, size_t metadata_count),
                        void *ctx, uint32_t expected_index_type) {
     if (path == NULL || expected_dimension == 0 || on_insert == NULL) {
         return -1;
@@ -659,7 +663,10 @@ int wal_replay_rich(const char *path, size_t expected_dimension,
                     return -1;
                 }
             }
-            /* Skip delete records in replay - they are handled during load */
+            if (on_delete != NULL) {
+                int cb_res = on_delete(ctx, (size_t)index_u64);
+                if (cb_res != 0) { fclose(f); return -1; }
+            }
             continue;
         }
 
@@ -765,7 +772,13 @@ int wal_replay_rich(const char *path, size_t expected_dimension,
             free(keys);
             free(values);
             free(buf);
-            /* Skip update records in replay - they modify already-inserted vectors */
+            if (on_update != NULL) {
+                int cb_res = on_update(ctx, (size_t)index_u64, buf, dim,
+                    (const char *const *)keys, (const char *const *)values, meta_count);
+                if (cb_res != 0) {
+                    free(buf); free(keys); free(values); fclose(f); return -1;
+                }
+            }
             continue;
         }
 

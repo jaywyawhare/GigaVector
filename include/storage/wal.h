@@ -110,18 +110,26 @@ int wal_replay(const char *path, size_t expected_dimension,
  * @brief Replay a WAL file and deliver all metadata entries for each record.
  *
  * Newer API that passes arrays of metadata key/value pairs to the callback.
- * Existing WAL files with single metadata entries remain compatible.
+ * All operation types (INSERT, DELETE, UPDATE) are delivered to the caller.
+ * Pass NULL for on_delete or on_update to skip those record types.
  *
  * @param path WAL file path.
  * @param expected_dimension Dimension the WAL must match.
  * @param expected_index_type Index type; validated when nonzero (skipped for old WALs).
  * @param on_insert Callback invoked per insert record; must return 0 on success.
- * @return 0 on success, -1 on I/O or validation failure, or if the callback fails.
+ * @param on_delete Optional callback invoked per delete record; NULL to skip.
+ * @param on_update Optional callback invoked per update record; NULL to skip.
+ * @param ctx Caller context passed to all callbacks.
+ * @return 0 on success, -1 on I/O or validation failure, or if a callback fails.
  */
 int wal_replay_rich(const char *path, size_t expected_dimension,
                        int (*on_insert)(void *ctx, const float *data, size_t dimension,
                                         const char *const *metadata_keys, const char *const *metadata_values,
                                         size_t metadata_count),
+                       int (*on_delete)(void *ctx, size_t vector_index),
+                       int (*on_update)(void *ctx, size_t vector_index, const float *data,
+                                        size_t dimension, const char *const *metadata_keys,
+                                        const char *const *metadata_values, size_t metadata_count),
                        void *ctx, uint32_t expected_index_type);
 
 /**
