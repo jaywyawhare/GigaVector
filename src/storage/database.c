@@ -190,10 +190,14 @@ static char *db_build_wal_path(const char *filepath) {
     basename = (basename == NULL) ? filepath : basename + 1;
 
     char buf[1024];
+    int written;
     if (dir_override != NULL && dir_override[0] != '\0') {
-        snprintf(buf, sizeof(buf), "%s/%s.wal", dir_override, basename);
+        written = snprintf(buf, sizeof(buf), "%s/%s.wal", dir_override, basename);
     } else {
-        snprintf(buf, sizeof(buf), "%s.wal", filepath);
+        written = snprintf(buf, sizeof(buf), "%s.wal", filepath);
+    }
+    if (written < 0 || (size_t)written >= sizeof(buf)) {
+        return NULL;
     }
 
     return gv_dup_cstr(buf);
