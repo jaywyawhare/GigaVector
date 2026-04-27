@@ -39,6 +39,21 @@ static inline char *gv_dup_cstr(const char *s) {
     return gv_strdup(s);
 }
 
+/* CRC-32 (polynomial 0xEDB88320) */
+static inline uint32_t gv_crc32_init(void) { return 0xFFFFFFFFu; }
+
+static inline uint32_t gv_crc32_update(uint32_t crc, const void *data, size_t len) {
+    const uint8_t *p = (const uint8_t *)data;
+    for (size_t i = 0; i < len; ++i) {
+        crc ^= p[i];
+        for (int k = 0; k < 8; ++k)
+            crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1u)));
+    }
+    return crc;
+}
+
+static inline uint32_t gv_crc32_finish(uint32_t crc) { return crc ^ 0xFFFFFFFFu; }
+
 /* DJB2 string hash */
 static inline uint32_t hash_str(const char *s) {
     uint32_t h = 5381;
