@@ -412,6 +412,7 @@ GV_AuthResult auth_verify_api_key(GV_AuthManager *auth, const char *api_key,
     uint64_t now = (uint64_t)time(NULL);
 
     APIKeyEntry key;
+    memset(&key, 0, sizeof(key));
     strncpy(key.key_hash, hash_hex, sizeof(key.key_hash) - 1);
     key.key_hash[sizeof(key.key_hash) - 1] = '\0';
     APIKeyEntry *found_entry = (APIKeyEntry *)bsearch(&key, auth->keys, auth->key_count,
@@ -713,7 +714,7 @@ int auth_generate_jwt(GV_AuthManager *auth, const char *subject,
     size_t ei = 0;
     for (size_t si = 0; subject[si]; si++) {
         size_t need = (subject[si] == '"' || subject[si] == '\\') ? 2 : 1;
-        if (ei + need + 1 > sizeof(escaped_subject)) return NULL;
+        if (ei + need + 1 > sizeof(escaped_subject)) return -1;
         if (need == 2) escaped_subject[ei++] = '\\';
         escaped_subject[ei++] = subject[si];
     }
