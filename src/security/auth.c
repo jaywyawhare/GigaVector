@@ -248,6 +248,15 @@ void auth_destroy(GV_AuthManager *auth) {
 
 /* API Key Management */
 
+static int cmp_api_key_by_hash(const void *a, const void *b) {
+    return strcmp(((const APIKeyEntry *)a)->key_hash,
+                  ((const APIKeyEntry *)b)->key_hash);
+}
+
+static void auth_sort_keys(GV_AuthManager *auth) {
+    qsort(auth->keys, auth->key_count, sizeof(APIKeyEntry), cmp_api_key_by_hash);
+}
+
 int auth_generate_api_key(GV_AuthManager *auth, const char *description,
                               uint64_t expires_at, char *key_out, char *key_id_out) {
     if (!auth || !key_out || !key_id_out) return -1;
@@ -283,6 +292,7 @@ int auth_generate_api_key(GV_AuthManager *auth, const char *description,
     entry->enabled = 1;
 
     auth->key_count++;
+    auth_sort_keys(auth);
 
     pthread_rwlock_unlock(&auth->rwlock);
     return 0;
@@ -401,32 +411,36 @@ GV_AuthResult auth_verify_api_key(GV_AuthManager *auth, const char *api_key,
 
     uint64_t now = (uint64_t)time(NULL);
 
-    for (size_t i = 0; i < auth->key_count; i++) {
-        if (strcmp(auth->keys[i].key_hash, hash_hex) == 0) {
-            if (!auth->keys[i].enabled) {
-                pthread_rwlock_unlock(&auth->rwlock);
-                return GV_AUTH_INVALID_KEY;
-            }
-            if (auth->keys[i].expires_at > 0 && auth->keys[i].expires_at < now) {
-                pthread_rwlock_unlock(&auth->rwlock);
-                return GV_AUTH_EXPIRED;
-            }
+    APIKeyEntry key;
+    strncpy(key.key_hash, hash_hex, sizeof(key.key_hash) - 1);
+    key.key_hash[sizeof(key.key_hash) - 1] = '\0';
+    APIKeyEntry *found_entry = (APIKeyEntry *)bsearch(&key, auth->keys, auth->key_count,
+                                                       sizeof(APIKeyEntry), cmp_api_key_by_hash);
 
-            if (identity) {
-                memset(identity, 0, sizeof(*identity));
-                identity->key_id = gv_dup_cstr(auth->keys[i].key_id);
-                identity->subject = gv_dup_cstr(auth->keys[i].key_id);
-                identity->auth_time = now;
-                identity->expires_at = auth->keys[i].expires_at;
-            }
+    if (!found_entry) {
+        pthread_rwlock_unlock(&auth->rwlock);
+        return GV_AUTH_INVALID_KEY;
+    }
 
-            pthread_rwlock_unlock(&auth->rwlock);
-            return GV_AUTH_SUCCESS;
-        }
+    if (!found_entry->enabled) {
+        pthread_rwlock_unlock(&auth->rwlock);
+        return GV_AUTH_INVALID_KEY;
+    }
+    if (found_entry->expires_at > 0 && found_entry->expires_at < now) {
+        pthread_rwlock_unlock(&auth->rwlock);
+        return GV_AUTH_EXPIRED;
+    }
+
+    if (identity) {
+        memset(identity, 0, sizeof(*identity));
+        identity->key_id = gv_dup_cstr(found_entry->key_id);
+        identity->subject = gv_dup_cstr(found_entry->key_id);
+        identity->auth_time = now;
+        identity->expires_at = found_entry->expires_at;
     }
 
     pthread_rwlock_unlock(&auth->rwlock);
-    return GV_AUTH_INVALID_KEY;
+    return GV_AUTH_SUCCESS;
 }
 
 /* Base64 URL decoding for JWT verification */
