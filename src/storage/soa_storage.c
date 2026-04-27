@@ -78,7 +78,7 @@ size_t soa_storage_add(GV_SoAStorage *storage, const float *data, GV_Metadata *m
     if (storage->count >= storage->capacity) {
         if (storage->capacity > SIZE_MAX / 2) return (size_t)-1;
         size_t new_capacity = storage->capacity * 2;
-        if (new_capacity > SIZE_MAX / storage->dimension / sizeof(float)) return (size_t)-1;
+        if (storage->dimension == 0 || new_capacity > SIZE_MAX / storage->dimension / sizeof(float)) return (size_t)-1;
         size_t new_data_size = new_capacity * storage->dimension * sizeof(float);
         float *tmp_data = (float *)realloc(storage->data, new_data_size);
         GV_Metadata **tmp_meta = (GV_Metadata **)realloc(storage->metadata, new_capacity * sizeof(GV_Metadata *));

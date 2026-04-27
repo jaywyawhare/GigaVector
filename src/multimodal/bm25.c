@@ -618,7 +618,7 @@ int bm25_save(const GV_BM25Index *index, const char *filepath) {
 #define BM25_FWRITE(ptr, sz, n) \
     do { if (fwrite((ptr), (sz), (n), fp) != (n)) { \
         pthread_rwlock_unlock((pthread_rwlock_t *)&index->rwlock); \
-        fclose(fp); return -1; } } while (0)
+        fclose(fp); remove(filepath); return -1; } } while (0)
 
     const char magic[] = "GV_BM25";
     BM25_FWRITE(magic, 1, 7);

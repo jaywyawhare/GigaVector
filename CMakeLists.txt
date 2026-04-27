@@ -178,6 +178,8 @@ endif()
 # in the CRT / provided by MinGW's built-in runtime.
 if(NOT WIN32)
     target_link_libraries(GigaVector PRIVATE m pthread)
+else()
+    target_link_libraries(GigaVector PRIVATE bcrypt)
 endif()
 
 # Set library properties

@@ -13,6 +13,10 @@
 #include <pthread.h>
 #ifdef __linux__
 #include <sys/random.h>
+#elif defined(_WIN32)
+#include <windows.h>
+#include <bcrypt.h>
+#pragma comment(lib, "bcrypt.lib")
 #endif
 
 /* Internal Structures */
@@ -186,16 +190,21 @@ void auth_to_hex(const unsigned char *hash, size_t hash_len, char *hex_out) {
 /* Random Generation */
 
 static int generate_random_bytes(unsigned char *buf, size_t len) {
-#ifdef __linux__
+#if defined(_WIN32)
+    NTSTATUS st = BCryptGenRandom(NULL, (PUCHAR)buf, (ULONG)len, BCRYPT_USE_SYSTEM_PREFERRED_RNG);
+    if (BCRYPT_SUCCESS(st)) return 0;
+#elif defined(__linux__)
     ssize_t r = getrandom(buf, len, 0);
     if (r >= 0 && (size_t)r == len) return 0;
 #endif
+#if !defined(_WIN32)
     FILE *fp = fopen("/dev/urandom", "rb");
     if (fp) {
         size_t n = fread(buf, 1, len, fp);
         fclose(fp);
         if (n == len) return 0;
     }
+#endif
     fprintf(stderr, "GigaVector auth: FATAL: could not obtain cryptographic randomness\n");
     return -1;
 }

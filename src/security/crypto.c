@@ -13,6 +13,10 @@
 #include <stdio.h>
 #ifdef __linux__
 #include <sys/random.h>
+#elif defined(_WIN32)
+#include <windows.h>
+#include <bcrypt.h>
+#pragma comment(lib, "bcrypt.lib")
 #endif
 
 /* Internal Structures */
@@ -244,16 +248,21 @@ static void aes256_decrypt_block(const unsigned char in[16], unsigned char out[1
 /* Random Generation */
 
 static int generate_random_bytes(unsigned char *buf, size_t len) {
-#ifdef __linux__
+#if defined(_WIN32)
+    NTSTATUS st = BCryptGenRandom(NULL, (PUCHAR)buf, (ULONG)len, BCRYPT_USE_SYSTEM_PREFERRED_RNG);
+    if (BCRYPT_SUCCESS(st)) return 0;
+#elif defined(__linux__)
     ssize_t r = getrandom(buf, len, 0);
     if (r >= 0 && (size_t)r == len) return 0;
 #endif
+#if !defined(_WIN32)
     FILE *fp = fopen("/dev/urandom", "rb");
     if (fp) {
         size_t n = fread(buf, 1, len, fp);
         fclose(fp);
         if (n == len) return 0;
     }
+#endif
     fprintf(stderr, "GigaVector crypto: FATAL: could not obtain cryptographic randomness\n");
     return -1;
 }
@@ -338,7 +347,10 @@ int crypto_derive_key(GV_CryptoContext *ctx, const char *password,
 int crypto_generate_key(GV_CryptoKey *key) {
     if (!key) return -1;
     if (generate_random_bytes(key->key, 32) != 0) return -1;
-    if (generate_random_bytes(key->iv, 16) != 0) return -1;
+    if (generate_random_bytes(key->iv, 16) != 0) {
+        crypto_wipe_key(key);
+        return -1;
+    }
     return 0;
 }
 
