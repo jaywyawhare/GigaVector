@@ -7,6 +7,7 @@
 #include "features/json.h"
 #include "storage/database.h"
 #include "core/types.h"
+#include "schema/vector.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -646,6 +647,9 @@ GV_HttpResponse *rest_handle_search(const GV_HandlerContext *ctx,
         json_array_push(results_arr, result_obj);
     }
 
+    for (int i = 0; i < found; i++) {
+        if (results[i].vector) vector_destroy((GV_Vector *)results[i].vector);
+    }
     free(results);
 
     json_object_set(response, "results", results_arr);
@@ -750,9 +754,29 @@ GV_HttpResponse *rest_handle_search_range(const GV_HandlerContext *ctx,
     for (int i = 0; i < found; i++) {
         GV_JsonValue *result_obj = json_object();
         json_object_set(result_obj, "distance", json_number(results[i].distance));
+
+        if (results[i].vector) {
+            GV_JsonValue *data_arr = json_array();
+            for (size_t j = 0; j < ctx->db->dimension; j++) {
+                json_array_push(data_arr, json_number((double)results[i].vector->data[j]));
+            }
+            json_object_set(result_obj, "data", data_arr);
+
+            GV_JsonValue *meta_obj = json_object();
+            GV_Metadata *meta = results[i].vector->metadata;
+            while (meta) {
+                json_object_set(meta_obj, meta->key, json_string(meta->value));
+                meta = meta->next;
+            }
+            json_object_set(result_obj, "metadata", meta_obj);
+        }
+
         json_array_push(results_arr, result_obj);
     }
 
+    for (int i = 0; i < found; i++) {
+        if (results[i].vector) vector_destroy((GV_Vector *)results[i].vector);
+    }
     free(results);
 
     json_object_set(response, "results", results_arr);
@@ -789,6 +813,11 @@ GV_HttpResponse *rest_handle_search_batch(const GV_HandlerContext *ctx,
         json_free(body);
         return rest_response_error(GV_HTTP_400_BAD_REQUEST, "invalid_request",
                                        "Empty queries array");
+    }
+    if (qcount > 10000) {
+        json_free(body);
+        return rest_response_error(GV_HTTP_400_BAD_REQUEST, "invalid_request",
+                                       "Batch query count exceeds maximum of 10000");
     }
 
     /* Parse k */
