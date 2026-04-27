@@ -3,8 +3,8 @@ set -euo pipefail
 
 WAL="${1:-snapshots/database.bin.wal}"
 if [[ ! -f "$WAL" ]]; then
-  echo "WAL not found: $WAL" >&2
-  exit 1
+  echo "SKIP: WAL not found: $WAL" >&2
+  exit 77
 fi
 
 tmp="$(mktemp "${WAL}.XXXX")"

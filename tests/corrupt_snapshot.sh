@@ -3,8 +3,8 @@ set -euo pipefail
 
 SNAP="${1:-snapshots/database.bin}"
 if [[ ! -f "$SNAP" ]]; then
-  echo "Snapshot not found: $SNAP" >&2
-  exit 1
+  echo "SKIP: Snapshot not found: $SNAP" >&2
+  exit 77
 fi
 
 tmp="$(mktemp "${SNAP}.XXXX")"

@@ -259,6 +259,18 @@ if(BUILD_TESTS)
         endif()
         add_test(NAME ${TEST_NAME} COMMAND test_${TEST_NAME})
     endforeach()
+
+    # Shell-based tests (skip gracefully when prerequisites are absent)
+    find_program(BASH_EXECUTABLE bash)
+    if(BASH_EXECUTABLE AND NOT WIN32)
+        add_test(NAME corrupt_wal
+            COMMAND ${BASH_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/corrupt_wal.sh)
+        set_tests_properties(corrupt_wal PROPERTIES SKIP_RETURN_CODE 77)
+
+        add_test(NAME corrupt_snapshot
+            COMMAND ${BASH_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/corrupt_snapshot.sh)
+        set_tests_properties(corrupt_snapshot PROPERTIES SKIP_RETURN_CODE 77)
+    endif()
 endif()
 
 # Benchmarks
