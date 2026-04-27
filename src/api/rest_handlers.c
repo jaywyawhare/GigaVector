@@ -8,6 +8,7 @@
 #include "storage/database.h"
 #include "core/types.h"
 #include "schema/vector.h"
+#include "search/filter.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -599,10 +600,28 @@ GV_HttpResponse *rest_handle_search(const GV_HandlerContext *ctx,
     /* Check for filter */
     GV_JsonValue *filter = json_object_get(body, "filter");
     if (filter && json_is_object(filter) && json_object_length(filter) > 0) {
+        size_t nfilter = json_object_length(filter);
         GV_JsonEntry *entries = filter->data.object.entries;
-        found = db_search_filtered(ctx->db, query, k, results, distance,
-                                       entries[0].key,
-                                       json_get_string(entries[0].value));
+        if (nfilter == 1) {
+            found = db_search_filtered(ctx->db, query, k, results, distance,
+                                           entries[0].key,
+                                           json_get_string(entries[0].value));
+        } else {
+            /* Build "key == "val" AND key2 == "val2" ..." expression */
+            char expr[2048];
+            size_t pos = 0;
+            for (size_t fi = 0; fi < nfilter && pos < sizeof(expr) - 1; fi++) {
+                const char *val = json_get_string(entries[fi].value);
+                if (!val) continue;
+                int n = snprintf(expr + pos, sizeof(expr) - pos,
+                                 "%s%s == \"%s\"",
+                                 fi > 0 ? " AND " : "",
+                                 entries[fi].key, val);
+                if (n > 0) pos += (size_t)n;
+            }
+            expr[pos] = '\0';
+            found = db_search_with_filter_expr(ctx->db, query, k, results, distance, expr);
+        }
     } else {
         found = db_search(ctx->db, query, k, results, distance);
     }
