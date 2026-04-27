@@ -457,6 +457,18 @@ int db_search_filtered(const GV_Database *db, const float *query_data, size_t k,
                           const char *filter_key, const char *filter_value);
 
 /**
+ * @brief Free search results returned by any db_search* function.
+ *
+ * Releases the GV_Vector (including its data and metadata) pointed to by each
+ * result entry. Safe to call when results[i].vector is NULL. The caller is
+ * still responsible for freeing the results array itself.
+ *
+ * @param results Array of search results; may be NULL.
+ * @param count   Number of entries in the array.
+ */
+void gv_search_results_free(GV_SearchResult *results, size_t count);
+
+/**
  * @brief Range search: find all vectors within a distance threshold.
  *
  * @param db Database to search; must be non-NULL.

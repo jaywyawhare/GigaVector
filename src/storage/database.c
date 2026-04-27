@@ -2652,6 +2652,16 @@ int db_search_batch(const GV_Database *db, const float *queries, size_t qcount, 
     return (int)(qcount * k);
 }
 
+void gv_search_results_free(GV_SearchResult *results, size_t count) {
+    if (!results) return;
+    for (size_t i = 0; i < count; i++) {
+        if (results[i].vector) {
+            vector_destroy((GV_Vector *)results[i].vector);
+            results[i].vector = NULL;
+        }
+    }
+}
+
 int db_search_filtered(const GV_Database *db, const float *query_data, size_t k,
                           GV_SearchResult *results, GV_DistanceType distance_type,
                           const char *filter_key, const char *filter_value) {
