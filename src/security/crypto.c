@@ -375,23 +375,21 @@ int crypto_encrypt(GV_CryptoContext *ctx, const GV_CryptoKey *key,
     size_t total_len = plaintext_len + pad_len;
     *ciphertext_len = total_len;
 
-    /* CBC mode encryption */
+    /* CBC mode encryption — loop over total_len which includes PKCS7 padding block */
     unsigned char prev_block[16];
     memcpy(prev_block, key->iv, 16);
 
     size_t pos = 0;
-    while (pos < plaintext_len) {
+    while (pos < total_len) {
         unsigned char block[16];
-        size_t block_len = plaintext_len - pos;
+        size_t block_len = (pos < plaintext_len) ? (plaintext_len - pos) : 0;
         if (block_len > 16) block_len = 16;
 
-        memcpy(block, plaintext + pos, block_len);
+        if (block_len > 0) memcpy(block, plaintext + pos, block_len);
 
-        /* PKCS7 padding */
-        if (block_len < 16 || pos + 16 >= total_len) {
-            for (size_t i = block_len; i < 16; i++) {
-                block[i] = (unsigned char)pad_len;
-            }
+        /* PKCS7 padding fills the remainder of the block (or an entire block) */
+        for (size_t i = block_len; i < 16; i++) {
+            block[i] = (unsigned char)pad_len;
         }
 
         /* XOR with previous ciphertext block */
