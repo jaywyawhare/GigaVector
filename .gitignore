@@ -2,6 +2,12 @@
 build/
 build-cmake/
 build_warnings/
+build-audit/
+build-fix/
+build-san-test/
+build-win/
+build-win-cmake/
+build-win-test/
 
 # CMake artifacts in source root
 CMakeCache.txt
