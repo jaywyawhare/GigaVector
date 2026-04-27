@@ -38,6 +38,7 @@ include-package-data = true
 
 [tool.setuptools.package-data]
 gigavector = [
+	"py.typed",
 	"libGigaVector.so",
 	"libGigaVector.dylib",
 	"GigaVector.dll",
