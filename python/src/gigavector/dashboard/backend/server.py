@@ -530,7 +530,13 @@ class _Handler(BaseHTTPRequestHandler):
             return self._send_error_json(400, "invalid_request", "Missing 'path'")
         try:
             new_db = backup_restore_to_db(body["path"])
+            old_db = self.server.db
             self.server.db = new_db
+            if old_db is not None:
+                try:
+                    old_db.close()
+                except Exception:
+                    pass
             self._send_json({"success": True, "vector_count": new_db.count, "dimension": new_db.dimension})
         except Exception as e:
             self._send_error_json(500, "restore_failed", str(e))

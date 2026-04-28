@@ -115,6 +115,10 @@ GV_BackupResult *backup_create(GV_Database *db, const char *backup_path,
 
     /* Placeholder for sizes and checksum (will update at end) */
     long sizes_pos = ftell(fp);
+    if (sizes_pos < 0) {
+        fclose(fp);
+        return create_result(0, "Failed to get file position");
+    }
     uint64_t zero = 0;
     if (fwrite(&zero, sizeof(zero), 1, fp) != 1 ||
         fwrite(&zero, sizeof(zero), 1, fp) != 1) {
@@ -134,12 +138,23 @@ GV_BackupResult *backup_create(GV_Database *db, const char *backup_path,
         const float *vector = database_get_vector(db, i);
 
         if (vector) {
-            fwrite(vector, 1, vector_size, fp);
+            if (fwrite(vector, 1, vector_size, fp) != vector_size) {
+                fclose(fp);
+                return create_result(0, "Failed to write vector data (disk full?)");
+            }
             data_size += vector_size;
         } else {
             float *zeros = calloc(dimension, sizeof(float));
-            fwrite(zeros, 1, vector_size, fp);
+            if (!zeros) {
+                fclose(fp);
+                return create_result(0, "Failed to allocate zero-vector buffer");
+            }
+            size_t zw = fwrite(zeros, 1, vector_size, fp);
             free(zeros);
+            if (zw != vector_size) {
+                fclose(fp);
+                return create_result(0, "Failed to write placeholder vector (disk full?)");
+            }
             data_size += vector_size;
         }
 
@@ -153,6 +168,10 @@ GV_BackupResult *backup_create(GV_Database *db, const char *backup_path,
     }
 
     long end_pos = ftell(fp);
+    if (end_pos < 0) {
+        fclose(fp);
+        return create_result(0, "Failed to get file position after writing vectors");
+    }
     fseek(fp, sizes_pos, SEEK_SET);
     fwrite(&data_size, sizeof(data_size), 1, fp);
     fwrite(&zero, sizeof(zero), 1, fp);
@@ -520,10 +539,12 @@ GV_BackupResult *backup_verify(const char *backup_path, const char *decryption_k
         return create_result(0, "Backup file appears truncated");
     }
 
-    /* Verify checksum if present */
+    /* Verify checksum if present — force null termination before compare */
+    header.checksum[BACKUP_CHECKSUM_LEN - 1] = '\0';
     if (header.checksum[0] != '\0') {
         char computed[65];
         if (backup_compute_checksum(backup_path, computed) == 0) {
+            computed[64] = '\0';
             if (strcmp(computed, header.checksum) != 0) {
                 return create_result(0, "Checksum mismatch — backup may be corrupted");
             }

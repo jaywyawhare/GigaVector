@@ -449,13 +449,17 @@ int crypto_decrypt(GV_CryptoContext *ctx, const GV_CryptoKey *key,
         memcpy(prev_block, ciphertext + pos, 16);
     }
 
-    /* Remove PKCS7 padding */
+    /* Remove and validate PKCS7 padding */
     unsigned char pad = plaintext[ciphertext_len - 1];
-    if (pad > 0 && pad <= 16) {
-        *plaintext_len = ciphertext_len - pad;
-    } else {
-        *plaintext_len = ciphertext_len;
+    if (pad == 0 || pad > 16) {
+        return -1;
     }
+    for (unsigned char pi = 1; pi < pad; pi++) {
+        if (plaintext[ciphertext_len - 1 - pi] != pad) {
+            return -1;
+        }
+    }
+    *plaintext_len = ciphertext_len - pad;
 
     return 0;
 }
@@ -562,11 +566,16 @@ int crypto_decrypt_file(GV_CryptoContext *ctx, const GV_CryptoKey *key,
             fclose(fout);
             return -1;
         }
+        /* Capture last ciphertext block before overwriting buffer */
+        unsigned char last_cipher_block[16];
+        if (nread >= 16) {
+            memcpy(last_cipher_block, buffer + nread - 16, 16);
+        }
         fwrite(plain, 1, plain_len, fout);
 
-        /* Update IV for next block */
+        /* Update IV using the last ciphertext block (CBC chaining) */
         if (nread >= 16) {
-            memcpy(working_key.iv, buffer + nread - 16, 16);
+            memcpy(working_key.iv, last_cipher_block, 16);
         }
     }
 

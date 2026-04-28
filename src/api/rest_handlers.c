@@ -352,9 +352,28 @@ GV_HttpResponse *rest_handle_vectors_post(const GV_HandlerContext *ctx,
             size_t meta_count = json_object_length(metadata);
             if (meta_count > 0) {
                 GV_JsonEntry *entries = metadata->data.object.entries;
-                result = db_add_vector_with_metadata(ctx->db, vec, dim,
-                                                         entries[0].key,
-                                                         json_get_string(entries[0].value));
+                const char **mkeys = malloc(meta_count * sizeof(char *));
+                const char **mvals = malloc(meta_count * sizeof(char *));
+                char **mval_bufs = malloc(meta_count * sizeof(char *));
+                if (mkeys && mvals && mval_bufs) {
+                    for (size_t mi = 0; mi < meta_count; mi++) {
+                        mkeys[mi] = entries[mi].key;
+                        if (json_is_string(entries[mi].value)) {
+                            mvals[mi] = json_get_string(entries[mi].value);
+                            mval_bufs[mi] = NULL;
+                        } else {
+                            mval_bufs[mi] = json_stringify(entries[mi].value, false);
+                            mvals[mi] = mval_bufs[mi];
+                        }
+                    }
+                    result = db_add_vector_with_rich_metadata(ctx->db, vec, dim, mkeys, mvals, meta_count);
+                    for (size_t mi = 0; mi < meta_count; mi++) free(mval_bufs[mi]);
+                } else {
+                    result = db_add_vector(ctx->db, vec, dim);
+                }
+                free(mkeys);
+                free(mvals);
+                free(mval_bufs);
             } else {
                 result = db_add_vector(ctx->db, vec, dim);
             }
@@ -613,7 +632,14 @@ GV_HttpResponse *rest_handle_search(const GV_HandlerContext *ctx,
             for (size_t fi = 0; fi < nfilter && pos < sizeof(expr) - 1; fi++) {
                 const char *val = json_get_string(entries[fi].value);
                 if (!val) continue;
-                /* Escape backslashes and quotes in val before interpolation */
+                /* Escape backslashes and quotes in key and val before interpolation */
+                char safe_key[256];
+                size_t sk = 0;
+                for (size_t ki = 0; entries[fi].key[ki] && sk + 2 < sizeof(safe_key); ki++) {
+                    if (entries[fi].key[ki] == '"' || entries[fi].key[ki] == '\\') safe_key[sk++] = '\\';
+                    safe_key[sk++] = entries[fi].key[ki];
+                }
+                safe_key[sk] = '\0';
                 char safe_val[256];
                 size_t sv = 0;
                 for (size_t vi = 0; val[vi] && sv + 2 < sizeof(safe_val); vi++) {
@@ -624,7 +650,7 @@ GV_HttpResponse *rest_handle_search(const GV_HandlerContext *ctx,
                 int n = snprintf(expr + pos, sizeof(expr) - pos,
                                  "%s%s == \"%s\"",
                                  fi > 0 ? " AND " : "",
-                                 entries[fi].key, safe_val);
+                                 safe_key, safe_val);
                 if (n > 0) {
                     size_t written = (size_t)n;
                     pos += written < sizeof(expr) - pos ? written : sizeof(expr) - pos - 1;

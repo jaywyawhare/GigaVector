@@ -7,6 +7,7 @@
 
 #include "api/server.h"
 #include "api/rest_handlers.h"
+#include "security/crypto.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -237,7 +238,12 @@ static int check_auth(const GV_Server *server, struct MHD_Connection *connection
         }
     }
 
-    if (!auth || strcmp(auth, server->config.api_key) != 0) {
+    size_t key_len = strlen(server->config.api_key);
+    size_t auth_len = strlen(auth);
+    if (auth_len != key_len ||
+        crypto_constant_time_compare((const unsigned char *)auth,
+                                     (const unsigned char *)server->config.api_key,
+                                     key_len) != 0) {
         return 0;
     }
     return 1;

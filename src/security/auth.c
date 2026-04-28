@@ -530,9 +530,21 @@ GV_AuthResult auth_verify_jwt(GV_AuthManager *auth, const char *token,
     size_t secret_len = auth->config.jwt.secret_len;
     if (secret_len == 0) secret_len = strlen(auth->config.jwt.secret);
 
-    for (size_t i = 0; i < secret_len && i < 64; i++) {
-        key_ipad[i] ^= ((unsigned char *)auth->config.jwt.secret)[i];
-        key_opad[i] ^= ((unsigned char *)auth->config.jwt.secret)[i];
+    /* RFC 2104: keys longer than block size must be hashed first */
+    unsigned char hashed_key[32];
+    const unsigned char *key_bytes = (const unsigned char *)auth->config.jwt.secret;
+    size_t key_xor_len = secret_len;
+    if (secret_len > 64) {
+        SHA256_CTX kctx;
+        sha256_init(&kctx);
+        sha256_update(&kctx, key_bytes, secret_len);
+        sha256_final(&kctx, hashed_key);
+        key_bytes = hashed_key;
+        key_xor_len = 32;
+    }
+    for (size_t i = 0; i < key_xor_len; i++) {
+        key_ipad[i] ^= key_bytes[i];
+        key_opad[i] ^= key_bytes[i];
     }
 
     unsigned char inner_hash[32];
@@ -702,14 +714,30 @@ int auth_generate_jwt(GV_AuthManager *auth, const char *subject,
     char header_b64[128];
     base64url_encode(header, strlen(header), header_b64);
 
-    /* Build payload */
+    /* Build payload — escape subject to prevent JSON injection */
     uint64_t now = (uint64_t)time(NULL);
     uint64_t exp = now + expires_in;
+
+    char safe_subject[512];
+    {
+        size_t si = 0;
+        for (size_t i = 0; subject[i] && si + 2 < sizeof(safe_subject); i++) {
+            unsigned char ch = (unsigned char)subject[i];
+            if (ch == '"' || ch == '\\') {
+                safe_subject[si++] = '\\';
+            } else if (ch < 0x20) {
+                /* Drop control characters */
+                continue;
+            }
+            safe_subject[si++] = (char)ch;
+        }
+        safe_subject[si] = '\0';
+    }
 
     char payload[512];
     snprintf(payload, sizeof(payload),
              "{\"sub\":\"%s\",\"iat\":%llu,\"exp\":%llu}",
-             subject, (unsigned long long)now, (unsigned long long)exp);
+             safe_subject, (unsigned long long)now, (unsigned long long)exp);
 
     char payload_b64[512];
     base64url_encode(payload, strlen(payload), payload_b64);
@@ -718,14 +746,27 @@ int auth_generate_jwt(GV_AuthManager *auth, const char *subject,
     char sig_input[1024];
     snprintf(sig_input, sizeof(sig_input), "%s.%s", header_b64, payload_b64);
 
-    /* HMAC-SHA256 - simplified (XOR secret with inner/outer pad) */
+    /* HMAC-SHA256 */
     unsigned char key_ipad[64], key_opad[64];
     memset(key_ipad, 0x36, 64);
     memset(key_opad, 0x5c, 64);
 
-    for (size_t i = 0; i < auth->config.jwt.secret_len && i < 64; i++) {
-        key_ipad[i] ^= ((unsigned char *)auth->config.jwt.secret)[i];
-        key_opad[i] ^= ((unsigned char *)auth->config.jwt.secret)[i];
+    /* RFC 2104: keys longer than block size must be hashed first */
+    unsigned char hashed_sign_key[32];
+    const unsigned char *sign_key_bytes = (const unsigned char *)auth->config.jwt.secret;
+    size_t sign_key_len = auth->config.jwt.secret_len;
+    if (sign_key_len == 0) sign_key_len = strlen(auth->config.jwt.secret);
+    if (sign_key_len > 64) {
+        SHA256_CTX kctx;
+        sha256_init(&kctx);
+        sha256_update(&kctx, sign_key_bytes, sign_key_len);
+        sha256_final(&kctx, hashed_sign_key);
+        sign_key_bytes = hashed_sign_key;
+        sign_key_len = 32;
+    }
+    for (size_t i = 0; i < sign_key_len; i++) {
+        key_ipad[i] ^= sign_key_bytes[i];
+        key_opad[i] ^= sign_key_bytes[i];
     }
 
     unsigned char inner_hash[32];

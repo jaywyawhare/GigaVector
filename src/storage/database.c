@@ -1338,7 +1338,6 @@ GV_Database *db_open_with_ivfpq_config(const char *filepath, size_t dimension,
     db->root = NULL;
     db->hnsw_index = NULL;
     db->sparse_index = NULL;
-    db->sparse_index = NULL;
     db->filepath = NULL;
     db->wal_path = NULL;
 
