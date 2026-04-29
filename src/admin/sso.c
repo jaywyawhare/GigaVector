@@ -1075,6 +1075,25 @@ static GV_SSOToken *decode_jwt_claims(const char *jwt) {
  * Extract text content between <tag> and </tag> from XML.
  * Very basic: finds the first occurrence and extracts inner text.
  */
+/* Decode the five predefined XML/HTML entities in-place (output <= input). */
+static void xml_decode_entities(char *s) {
+    if (!s) return;
+    char *r = s, *w = s;
+    while (*r) {
+        if (*r == '&') {
+            if (strncmp(r, "&amp;",  5) == 0) { *w++ = '&';  r += 5; }
+            else if (strncmp(r, "&lt;",   4) == 0) { *w++ = '<';  r += 4; }
+            else if (strncmp(r, "&gt;",   4) == 0) { *w++ = '>';  r += 4; }
+            else if (strncmp(r, "&quot;", 6) == 0) { *w++ = '"';  r += 6; }
+            else if (strncmp(r, "&apos;", 6) == 0) { *w++ = '\''; r += 6; }
+            else { *w++ = *r++; }
+        } else {
+            *w++ = *r++;
+        }
+    }
+    *w = '\0';
+}
+
 static int xml_extract_text(const char *xml, const char *tag,
                             char *out, size_t out_size) {
     if (!xml || !tag || !out || out_size == 0) return -1;
@@ -1087,6 +1106,14 @@ static int xml_extract_text(const char *xml, const char *tag,
 
     const char *start = strstr(xml, open_tag);
     if (!start) return -1;
+
+    /* The char after the tag name must be '>', '/' or whitespace to avoid
+     * matching a longer tag like <NameIDPolicy> when searching for <NameID>. */
+    const char *after = start + strlen(open_tag);
+    if (*after != '>' && *after != '/' && *after != ' ' && *after != '\t' &&
+        *after != '\r' && *after != '\n') {
+        return -1;
+    }
 
     /* Skip to end of opening tag (past the '>' character) */
     const char *gt = strchr(start, '>');
@@ -1101,14 +1128,55 @@ static int xml_extract_text(const char *xml, const char *tag,
 
     memcpy(out, gt, len);
     out[len] = '\0';
+    xml_decode_entities(out);
 
+    return 0;
+}
+
+/* Extract the text content of the first AttributeValue child of the Attribute
+ * element that contains Name="attr_name" (exact match, case-sensitive). */
+static int xml_extract_attribute_value(const char *xml, const char *attr_name,
+                                       char *out, size_t out_size) {
+    if (!xml || !attr_name || !out || out_size == 0) return -1;
+
+    /* Build exact-match search: Name="<attr_name>" */
+    char needle[512];
+    snprintf(needle, sizeof(needle), "Name=\"%s\"", attr_name);
+    const char *attr_elem = strstr(xml, needle);
+    if (!attr_elem) return -1;
+
+    /* Find the end of this Attribute element */
+    const char *attr_end = strstr(attr_elem, "</Attribute");
+    if (!attr_end) attr_end = strstr(attr_elem, "</saml:Attribute");
+    if (!attr_end) attr_end = xml + strlen(xml);
+
+    /* Find the first AttributeValue child */
+    const char *val = strstr(attr_elem, "<AttributeValue");
+    if (!val || val >= attr_end)
+        val = strstr(attr_elem, "<saml:AttributeValue");
+    if (!val || val >= attr_end) return -1;
+
+    const char *gt = strchr(val, '>');
+    if (!gt || gt >= attr_end) return -1;
+    gt++;
+
+    const char *end = strchr(gt, '<');
+    if (!end || end >= attr_end) return -1;
+
+    size_t len = (size_t)(end - gt);
+    if (len >= out_size) len = out_size - 1;
+    memcpy(out, gt, len);
+    out[len] = '\0';
+    xml_decode_entities(out);
     return 0;
 }
 
 /**
  * Parse a base64-encoded SAML assertion and extract identity claims.
- * This is a basic stub: decodes the base64, then uses simple string
- * matching to find NameID and attribute values.  No full XML parser.
+ * Decodes standard or URL-safe base64, then uses structured string scanning
+ * to extract NameID, email, name, groups, roles and Conditions timestamps.
+ * XML entity references (&amp; &lt; &gt; &quot; &apos;) are decoded in all
+ * extracted values.
  */
 static GV_SSOToken *parse_saml_assertion(const char *b64_assertion) {
     if (!b64_assertion) return NULL;
@@ -1159,121 +1227,93 @@ static GV_SSOToken *parse_saml_assertion(const char *b64_assertion) {
 
     char buf[512];
 
-    /* Extract NameID */
+    /* Extract NameID — try namespace-prefixed and unprefixed variants */
     if (xml_extract_text(xml, "saml:NameID", buf, sizeof(buf)) == 0 ||
+        xml_extract_text(xml, "saml2:NameID", buf, sizeof(buf)) == 0 ||
         xml_extract_text(xml, "NameID", buf, sizeof(buf)) == 0) {
         token->subject = gv_dup_cstr(buf);
     }
 
-    /* Extract common attributes by searching for AttributeValue elements.
-     * SAML attributes follow the pattern:
-     *   <Attribute Name="..."><AttributeValue>...</AttributeValue></Attribute>
-     */
+    /* Extract common attributes. xml_extract_attribute_value matches
+     * Name="<value>" exactly and decodes XML entities in the result. */
 
     /* Email */
-    const char *email_attr = strstr(xml, "Name=\"email\"");
-    if (!email_attr) email_attr = strstr(xml, "Name=\"http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress\"");
-    if (email_attr) {
-        const char *val_start = strstr(email_attr, "<AttributeValue");
-        if (!val_start) val_start = strstr(email_attr, "<saml:AttributeValue");
-        if (val_start) {
-            const char *gt = strchr(val_start, '>');
-            if (gt) {
-                gt++;
-                const char *end = strchr(gt, '<');
-                if (end) {
-                    size_t len = (size_t)(end - gt);
-                    if (len < sizeof(buf)) {
-                        memcpy(buf, gt, len);
-                        buf[len] = '\0';
-                        token->email = gv_dup_cstr(buf);
-                    }
-                }
-            }
-        }
+    if (xml_extract_attribute_value(xml, "email", buf, sizeof(buf)) == 0 ||
+        xml_extract_attribute_value(xml,
+            "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress",
+            buf, sizeof(buf)) == 0 ||
+        xml_extract_attribute_value(xml,
+            "urn:oid:0.9.2342.19200300.100.1.3", buf, sizeof(buf)) == 0) {
+        token->email = gv_dup_cstr(buf);
     }
 
     /* Display name */
-    const char *name_attr = strstr(xml, "Name=\"name\"");
-    if (!name_attr) name_attr = strstr(xml, "Name=\"http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name\"");
-    if (name_attr) {
-        const char *val_start = strstr(name_attr, "<AttributeValue");
-        if (!val_start) val_start = strstr(name_attr, "<saml:AttributeValue");
-        if (val_start) {
-            const char *gt = strchr(val_start, '>');
-            if (gt) {
-                gt++;
-                const char *end = strchr(gt, '<');
-                if (end) {
-                    size_t len = (size_t)(end - gt);
-                    if (len < sizeof(buf)) {
-                        memcpy(buf, gt, len);
-                        buf[len] = '\0';
-                        token->name = gv_dup_cstr(buf);
-                    }
-                }
-            }
-        }
+    if (xml_extract_attribute_value(xml, "name", buf, sizeof(buf)) == 0 ||
+        xml_extract_attribute_value(xml, "displayName", buf, sizeof(buf)) == 0 ||
+        xml_extract_attribute_value(xml,
+            "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name",
+            buf, sizeof(buf)) == 0 ||
+        xml_extract_attribute_value(xml,
+            "urn:oid:2.16.840.1.113730.3.1.241", buf, sizeof(buf)) == 0) {
+        token->name = gv_dup_cstr(buf);
     }
 
-    /* Groups - may appear as multiple AttributeValue elements under one Attribute */
-    const char *groups_attr = strstr(xml, "Name=\"groups\"");
-    if (!groups_attr) groups_attr = strstr(xml, "Name=\"http://schemas.xmlsoap.org/claims/Group\"");
-    if (groups_attr) {
-        /* Count group values */
-        const char *search = groups_attr;
-        size_t count = 0;
+    /* Multi-value attribute helper: extract all AttributeValue children of the
+     * Attribute element whose Name= matches attr_name exactly. */
+#define EXTRACT_MULTI(attr_name_str, dest_arr, dest_count) do { \
+    char needle_m[512]; \
+    snprintf(needle_m, sizeof(needle_m), "Name=\"%s\"", (attr_name_str)); \
+    const char *ae = strstr(xml, needle_m); \
+    if (ae) { \
+        const char *ae_end = strstr(ae, "</Attribute"); \
+        if (!ae_end) ae_end = strstr(ae, "</saml:Attribute"); \
+        if (!ae_end) ae_end = xml + decoded_len; \
+        size_t cnt = 0; \
+        const char *pp = ae; \
+        while (pp < ae_end) { \
+            const char *vs = strstr(pp, "<AttributeValue"); \
+            if (!vs || vs >= ae_end) break; cnt++; pp = vs + 1; \
+        } \
+        if (cnt > MAX_GROUPS) cnt = MAX_GROUPS; \
+        if (cnt > 0) { \
+            (dest_arr) = calloc(cnt, sizeof(char *)); \
+            if ((dest_arr)) { \
+                pp = ae; size_t ix = 0; \
+                while (pp < ae_end && ix < cnt) { \
+                    const char *vs = strstr(pp, "<AttributeValue"); \
+                    if (!vs || vs >= ae_end) break; \
+                    const char *gtp = strchr(vs, '>'); \
+                    if (!gtp || gtp >= ae_end) break; gtp++; \
+                    const char *ep = strchr(gtp, '<'); \
+                    if (!ep || ep >= ae_end) break; \
+                    size_t vl = (size_t)(ep - gtp); \
+                    if (vl < sizeof(buf)) { \
+                        memcpy(buf, gtp, vl); buf[vl] = '\0'; \
+                        xml_decode_entities(buf); \
+                        (dest_arr)[ix++] = gv_dup_cstr(buf); \
+                    } \
+                    pp = ep; \
+                } \
+                (dest_count) = ix; \
+            } \
+        } \
+    } \
+} while (0)
 
-        /* Find the closing </Attribute> to bound our search */
-        const char *attr_end = strstr(search, "</Attribute");
-        if (!attr_end) attr_end = strstr(search, "</saml:Attribute");
-        if (!attr_end) attr_end = xml + decoded_len;
-
-        /* First pass: count */
-        const char *p = search;
-        while (p < attr_end) {
-            const char *vs = strstr(p, "<AttributeValue");
-            if (!vs) vs = strstr(p, "<saml:AttributeValue");
-            if (!vs || vs >= attr_end) break;
-
-            count++;
-            p = vs + 1;
-        }
-
-        if (count > MAX_GROUPS) count = MAX_GROUPS;
-
-        if (count > 0) {
-            token->groups = calloc(count, sizeof(char *));
-            if (token->groups) {
-                /* Second pass: extract values */
-                p = search;
-                size_t idx = 0;
-                while (p < attr_end && idx < count) {
-                    const char *vs = strstr(p, "<AttributeValue");
-                    if (!vs) vs = strstr(p, "<saml:AttributeValue");
-                    if (!vs || vs >= attr_end) break;
-
-                    const char *gt = strchr(vs, '>');
-                    if (!gt || gt >= attr_end) break;
-                    gt++;
-
-                    const char *end = strchr(gt, '<');
-                    if (!end || end >= attr_end) break;
-
-                    size_t len = (size_t)(end - gt);
-                    if (len < sizeof(buf)) {
-                        memcpy(buf, gt, len);
-                        buf[len] = '\0';
-                        token->groups[idx] = gv_dup_cstr(buf);
-                        idx++;
-                    }
-
-                    p = end;
-                }
-                token->group_count = idx;
-            }
-        }
+    /* Groups */
+    if (!token->groups) {
+        EXTRACT_MULTI("groups", token->groups, token->group_count);
     }
+    if (!token->groups) {
+        EXTRACT_MULTI("http://schemas.xmlsoap.org/claims/Group",
+                      token->groups, token->group_count);
+    }
+    if (!token->groups) {
+        EXTRACT_MULTI("urn:oid:1.3.6.1.4.1.5923.1.5.1.1",
+                      token->groups, token->group_count);
+    }
+
+#undef EXTRACT_MULTI
 
     /* Extract timestamps if present in Conditions element */
     const char *conditions = strstr(xml, "<Conditions");
