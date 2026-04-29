@@ -2,12 +2,10 @@
  * @file streaming.c
  * @brief Streaming ingestion implementation.
  *
- * When built without librdkafka, every stream source uses the same embedded
- * consumer: each batch generates synthetic messages, invokes the optional
- * message handler, runs the configured vector extractor, and appends vectors
- * with db_add_vector(). This keeps statistics, callbacks, and the database
- * consistent for tests and single-process ingestion. A future optional
- * librdkafka build can replace the synthetic poll path for Kafka.
+ * When built with HAVE_RDKAFKA, GV_STREAM_KAFKA sources use the real
+ * librdkafka consumer (rd_kafka_consumer_poll).  Without it, every source
+ * falls back to the embedded synthetic-message path that keeps statistics,
+ * callbacks, and the database consistent for tests and single-process use.
  */
 
 #include "admin/streaming.h"
@@ -22,6 +20,10 @@
 #include <unistd.h>
 #endif
 #include "core/compat.h"
+
+#ifdef HAVE_RDKAFKA
+#include <librdkafka/rdkafka.h>
+#endif
 
 #define GV_STREAM_STACK_VEC_CAP 4096
 
@@ -43,6 +45,11 @@ struct GV_StreamConsumer {
 
     /* Offset tracking */
     int64_t committed_offset;
+
+#ifdef HAVE_RDKAFKA
+    rd_kafka_t *rk;
+    rd_kafka_topic_partition_list_t *rk_topics;
+#endif
 
     /* Threading */
     pthread_t consumer_thread;
@@ -196,6 +203,107 @@ static void stream_process_embedded_batch(GV_StreamConsumer *consumer) {
     }
 }
 
+#ifdef HAVE_RDKAFKA
+/* Process one librdkafka poll batch. Caller holds consumer->mutex. */
+static void stream_process_kafka_batch(GV_StreamConsumer *consumer) {
+    GV_Database *db = consumer->db;
+    if (!db || !consumer->rk) {
+        consumer->state = GV_STREAM_ERROR;
+        return;
+    }
+
+    size_t dimension = database_dimension(db);
+    if (dimension == 0) {
+        consumer->state = GV_STREAM_ERROR;
+        return;
+    }
+
+    GV_VectorExtractor extract = consumer->extractor ? consumer->extractor : default_extractor;
+    void *ext_ud = consumer->extractor_user_data;
+    GV_StreamMessageHandler handler = consumer->handler;
+    void *hand_ud = consumer->handler_user_data;
+
+    float stack_vec[GV_STREAM_STACK_VEC_CAP];
+    float *heap_vec = NULL;
+    float *vec = stack_vec;
+    if (dimension > GV_STREAM_STACK_VEC_CAP) {
+        heap_vec = malloc(dimension * sizeof(float));
+        if (!heap_vec) { consumer->state = GV_STREAM_ERROR; return; }
+        vec = heap_vec;
+    }
+
+    int timeout_ms = (int)consumer->config.batch_timeout_ms;
+    size_t batch = consumer->config.batch_size;
+    if (batch == 0) batch = 1;
+
+    for (size_t i = 0; i < batch && !consumer->stop_requested; i++) {
+        rd_kafka_message_t *rkmsg = rd_kafka_consumer_poll(consumer->rk, timeout_ms);
+        if (!rkmsg) break;
+
+        if (rkmsg->err) {
+            if (rkmsg->err != RD_KAFKA_RESP_ERR__PARTITION_EOF) {
+                consumer->stats.messages_failed++;
+            }
+            rd_kafka_message_destroy(rkmsg);
+            continue;
+        }
+
+        GV_StreamMessage msg;
+        memset(&msg, 0, sizeof(msg));
+        msg.value     = rkmsg->payload;
+        msg.value_len = rkmsg->len;
+        msg.offset    = (int64_t)rkmsg->offset;
+        msg.timestamp = (int64_t)(rd_kafka_message_timestamp(rkmsg, NULL) / 1000);
+        msg.partition = (int)rkmsg->partition;
+        if (rkmsg->key)
+            msg.key = (const char *)rkmsg->key;
+
+        consumer->stats.messages_received++;
+        consumer->stats.bytes_received += rkmsg->len;
+        consumer->stats.current_offset = msg.offset + 1;
+
+        if (handler && handler(&msg, hand_ud) != 0) {
+            consumer->stats.messages_failed++;
+            rd_kafka_message_destroy(rkmsg);
+            continue;
+        }
+
+        char **mkeys = NULL, **mvals = NULL;
+        size_t mcount = 0;
+        if (extract(&msg, vec, dimension,
+                    (char ***)&mkeys, (char ***)&mvals, &mcount, ext_ud) != 0) {
+            consumer->stats.messages_failed++;
+            rd_kafka_message_destroy(rkmsg);
+            continue;
+        }
+
+        int added = (mcount > 0)
+            ? db_add_vector_with_rich_metadata(db, vec, dimension,
+                                               (const char **)mkeys,
+                                               (const char **)mvals, mcount)
+            : db_add_vector(db, vec, dimension);
+
+        if (mkeys) { for (size_t m = 0; m < mcount; m++) { free(mkeys[m]); free(mvals[m]); } free(mkeys); free(mvals); }
+
+        if (added != 0) {
+            consumer->stats.messages_failed++;
+        } else {
+            consumer->stats.messages_processed++;
+            consumer->stats.vectors_ingested++;
+        }
+
+        rd_kafka_message_destroy(rkmsg);
+    }
+
+    if (consumer->config.auto_commit && consumer->rk) {
+        rd_kafka_commit(consumer->rk, NULL, 0 /* sync */);
+        consumer->committed_offset = consumer->stats.current_offset;
+    }
+
+    free(heap_vec);
+}
+#endif /* HAVE_RDKAFKA */
+
 /* Consumer Thread */
 
 static void *consumer_thread_func(void *arg) {
@@ -221,7 +329,15 @@ static void *consumer_thread_func(void *arg) {
         if (consumer->stop_requested) break;
 
         pthread_mutex_lock(&consumer->mutex);
+#ifdef HAVE_RDKAFKA
+        if (consumer->rk) {
+            stream_process_kafka_batch(consumer);
+        } else {
+            stream_process_embedded_batch(consumer);
+        }
+#else
         stream_process_embedded_batch(consumer);
+#endif
 
         /* Interruptible sleep: wake early on pause/stop signal */
         if (!consumer->stop_requested && !consumer->pause_requested) {
@@ -271,6 +387,74 @@ GV_StreamConsumer *stream_create(GV_Database *db, const GV_StreamConfig *config)
         return NULL;
     }
 
+#ifdef HAVE_RDKAFKA
+    if (consumer->config.source == GV_STREAM_KAFKA &&
+        consumer->config.kafka.brokers && consumer->config.kafka.topic) {
+        char errstr[512];
+        rd_kafka_conf_t *conf = rd_kafka_conf_new();
+
+        rd_kafka_conf_set(conf, "bootstrap.servers",
+                          consumer->config.kafka.brokers, errstr, sizeof(errstr));
+
+        if (consumer->config.kafka.consumer_group) {
+            rd_kafka_conf_set(conf, "group.id",
+                              consumer->config.kafka.consumer_group,
+                              errstr, sizeof(errstr));
+        }
+
+        if (consumer->config.kafka.security_protocol) {
+            rd_kafka_conf_set(conf, "security.protocol",
+                              consumer->config.kafka.security_protocol,
+                              errstr, sizeof(errstr));
+        }
+        if (consumer->config.kafka.sasl_mechanism) {
+            rd_kafka_conf_set(conf, "sasl.mechanism",
+                              consumer->config.kafka.sasl_mechanism,
+                              errstr, sizeof(errstr));
+        }
+        if (consumer->config.kafka.sasl_username) {
+            rd_kafka_conf_set(conf, "sasl.username",
+                              consumer->config.kafka.sasl_username,
+                              errstr, sizeof(errstr));
+        }
+        if (consumer->config.kafka.sasl_password) {
+            rd_kafka_conf_set(conf, "sasl.password",
+                              consumer->config.kafka.sasl_password,
+                              errstr, sizeof(errstr));
+        }
+
+        consumer->rk = rd_kafka_new(RD_KAFKA_CONSUMER, conf, errstr, sizeof(errstr));
+        if (!consumer->rk) {
+            rd_kafka_conf_destroy(conf);
+            /* Fall back to synthetic mode rather than failing hard */
+        } else {
+            rd_kafka_poll_set_consumer(consumer->rk);
+
+            consumer->rk_topics = rd_kafka_topic_partition_list_new(1);
+            int partition = consumer->config.kafka.partition >= 0
+                            ? consumer->config.kafka.partition
+                            : RD_KAFKA_PARTITION_UA;
+            rd_kafka_topic_partition_list_add(consumer->rk_topics,
+                                              consumer->config.kafka.topic,
+                                              partition);
+
+            int64_t start_offset = consumer->config.kafka.start_offset < 0
+                                   ? RD_KAFKA_OFFSET_END
+                                   : consumer->config.kafka.start_offset;
+            rd_kafka_topic_partition_list_set_offset(consumer->rk_topics,
+                                                     consumer->config.kafka.topic,
+                                                     partition, start_offset);
+
+            if (rd_kafka_subscribe(consumer->rk, consumer->rk_topics) != RD_KAFKA_RESP_ERR_NO_ERROR) {
+                rd_kafka_topic_partition_list_destroy(consumer->rk_topics);
+                rd_kafka_destroy(consumer->rk);
+                consumer->rk = NULL;
+                consumer->rk_topics = NULL;
+            }
+        }
+    }
+#endif /* HAVE_RDKAFKA */
+
     return consumer;
 }
 
@@ -278,6 +462,18 @@ void stream_destroy(GV_StreamConsumer *consumer) {
     if (!consumer) return;
 
     stream_stop(consumer);
+
+#ifdef HAVE_RDKAFKA
+    if (consumer->rk) {
+        rd_kafka_consumer_close(consumer->rk);
+        if (consumer->rk_topics) {
+            rd_kafka_topic_partition_list_destroy(consumer->rk_topics);
+            consumer->rk_topics = NULL;
+        }
+        rd_kafka_destroy(consumer->rk);
+        consumer->rk = NULL;
+    }
+#endif
 
     pthread_cond_destroy(&consumer->state_cond);
     pthread_mutex_destroy(&consumer->mutex);
@@ -434,10 +630,17 @@ int stream_commit(GV_StreamConsumer *consumer) {
 
     pthread_mutex_lock(&consumer->mutex);
     consumer->committed_offset = consumer->stats.current_offset;
+#ifdef HAVE_RDKAFKA
+    rd_kafka_t *rk = consumer->rk;
+#endif
     pthread_mutex_unlock(&consumer->mutex);
 
-    /* Without a broker, commit only updates the local offset mirror; with
-     * librdkafka this would call rd_kafka_commit(). */
+#ifdef HAVE_RDKAFKA
+    if (rk) {
+        rd_kafka_resp_err_t err = rd_kafka_commit(rk, NULL, 0 /* sync */);
+        return (err == RD_KAFKA_RESP_ERR_NO_ERROR) ? 0 : -1;
+    }
+#endif
     return 0;
 }
 
