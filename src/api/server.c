@@ -238,6 +238,9 @@ static int check_auth(const GV_Server *server, struct MHD_Connection *connection
         }
     }
 
+    if (!auth) {
+        return 0;
+    }
     size_t key_len = strlen(server->config.api_key);
     size_t auth_len = strlen(auth);
     if (auth_len != key_len ||
