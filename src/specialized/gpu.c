@@ -16,21 +16,21 @@
 
 /* Check for CUDA availability at compile time */
 #ifdef HAVE_CUDA
-extern int cuda_available(void);
-extern int cuda_device_count(void);
-extern int cuda_get_device_info(int device_id, GV_GPUDeviceInfo *info);
-extern GV_GPUContext *cuda_create(const GV_GPUConfig *config);
-extern void cuda_destroy(GV_GPUContext *ctx);
-extern int cuda_synchronize(GV_GPUContext *ctx);
-extern int cuda_compute_distances(GV_GPUContext *ctx, const float *queries,
-                                      size_t num_queries, const float *database,
-                                      size_t num_vectors, size_t dimension,
-                                      GV_GPUDistanceMetric metric, float *distances);
-extern int cuda_knn_search(GV_GPUContext *ctx, const float *queries,
-                               size_t num_queries, const float *database,
-                               size_t num_vectors, size_t dimension,
-                               const GV_GPUSearchParams *params,
-                               size_t *indices, float *distances);
+extern int gv_cuda_available(void);
+extern int gv_cuda_device_count(void);
+extern int gv_cuda_get_device_info(int device_id, GV_GPUDeviceInfo *info);
+extern GV_GPUContext *gv_cuda_create(const GV_GPUConfig *config);
+extern void gv_cuda_destroy(GV_GPUContext *ctx);
+extern int gv_cuda_synchronize(GV_GPUContext *ctx);
+extern int gv_cuda_compute_distances(GV_GPUContext *ctx, const float *queries,
+                                         size_t num_queries, const float *database,
+                                         size_t num_vectors, size_t dimension,
+                                         GV_GPUDistanceMetric metric, float *distances);
+extern int gv_cuda_knn_search(GV_GPUContext *ctx, const float *queries,
+                                  size_t num_queries, const float *database,
+                                  size_t num_vectors, size_t dimension,
+                                  const GV_GPUSearchParams *params,
+                                  size_t *indices, float *distances);
 #endif
 
 /* Internal Structures */
@@ -85,7 +85,7 @@ void gpu_config_init(GV_GPUConfig *config) {
 
 int gpu_available(void) {
 #ifdef HAVE_CUDA
-    return cuda_available();
+    return gv_cuda_available();
 #else
     return 0;  /* CPU fallback always available, but no GPU */
 #endif
@@ -93,7 +93,7 @@ int gpu_available(void) {
 
 int gpu_device_count(void) {
 #ifdef HAVE_CUDA
-    return cuda_device_count();
+    return gv_cuda_device_count();
 #else
     return 0;
 #endif
@@ -103,7 +103,7 @@ int gpu_get_device_info(int device_id, GV_GPUDeviceInfo *info) {
     if (!info) return -1;
 
 #ifdef HAVE_CUDA
-    return cuda_get_device_info(device_id, info);
+    return gv_cuda_get_device_info(device_id, info);
 #else
     (void)device_id;
     /* Return CPU "device" info for fallback */
@@ -123,10 +123,10 @@ GV_GPUContext *gpu_create(const GV_GPUConfig *config) {
     ctx->config = config ? *config : DEFAULT_CONFIG;
 
 #ifdef HAVE_CUDA
-    ctx->cuda_available = cuda_available();
+    ctx->cuda_available = gv_cuda_available();
     if (ctx->cuda_available) {
         /* Initialize CUDA context */
-        GV_GPUContext *cuda_ctx = cuda_create(&ctx->config);
+        GV_GPUContext *cuda_ctx = gv_cuda_create(&ctx->config);
         if (cuda_ctx) {
             ctx->cuda_context = cuda_ctx->cuda_context;
             ctx->cuda_streams = cuda_ctx->cuda_streams;
@@ -150,7 +150,7 @@ void gpu_destroy(GV_GPUContext *ctx) {
 
 #ifdef HAVE_CUDA
     if (ctx->cuda_available) {
-        cuda_destroy(ctx);
+        gv_cuda_destroy(ctx);
     }
 #endif
 
@@ -162,7 +162,7 @@ int gpu_synchronize(GV_GPUContext *ctx) {
 
 #ifdef HAVE_CUDA
     if (ctx->cuda_available) {
-        return cuda_synchronize(ctx);
+        return gv_cuda_synchronize(ctx);
     }
 #endif
 
@@ -462,7 +462,7 @@ int gpu_compute_distances(GV_GPUContext *ctx, const float *queries,
 
 #ifdef HAVE_CUDA
     if (ctx->cuda_available) {
-        return cuda_compute_distances(ctx, queries, num_queries, database,
+        return gv_cuda_compute_distances(ctx, queries, num_queries, database,
                                           num_vectors, dimension, metric, distances);
     }
 #endif
@@ -567,7 +567,7 @@ int gpu_knn_search(GV_GPUContext *ctx, const float *queries,
 
 #ifdef HAVE_CUDA
     if (ctx->cuda_available) {
-        return cuda_knn_search(ctx, queries, num_queries, database,
+        return gv_cuda_knn_search(ctx, queries, num_queries, database,
                                    num_vectors, dimension, params,
                                    indices, distances);
     }
@@ -771,7 +771,7 @@ int gpu_train_ivfpq(GV_GPUContext *ctx, const float *vectors,
                     /* Use GPU to compute all pairwise distances */
                     GV_GPUSearchParams params = {0};
                     params.metric = GV_GPU_METRIC_EUCLIDEAN;
-                    cuda_compute_distances(ctx, d_vectors, num_vectors,
+                    gv_cuda_compute_distances(ctx, d_vectors, num_vectors,
                                               d_centroids, num_centroids,
                                               dimension, params.metric, d_distances);
                     cudaMemcpy(host_distances, d_distances, dist_size, cudaMemcpyDeviceToHost);
