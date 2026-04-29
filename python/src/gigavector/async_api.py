@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Iterable, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Iterable, Sequence
+from typing import Any
 
 from ._core import Database, DistanceType, IndexType, ScrollEntry, SearchHit
 
