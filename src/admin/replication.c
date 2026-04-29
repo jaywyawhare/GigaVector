@@ -172,7 +172,7 @@ static void *replication_thread_func(void *arg) {
                     votes++;
                 }
             }
-            size_t quorum = (mgr->replica_count + 1 + 1) / 2;
+            size_t quorum = (mgr->replica_count + 1) / 2 + 1;
             if (votes >= quorum) {
                 mgr->role = GV_REPL_LEADER;
                 free(mgr->leader_id);
@@ -355,7 +355,7 @@ int replication_request_leadership(GV_ReplicationManager *mgr) {
             votes++;
         }
     }
-    size_t quorum = (mgr->replica_count + 1 + 1) / 2;
+    size_t quorum = (mgr->replica_count + 1) / 2 + 1;
     if (votes >= quorum) {
         mgr->role = GV_REPL_LEADER;
         free(mgr->leader_id);
@@ -363,10 +363,11 @@ int replication_request_leadership(GV_ReplicationManager *mgr) {
         replication_embedded_followers_catch_up_locked(mgr);
     }
 
+    GV_ReplicationRole result_role = mgr->role;
     pthread_rwlock_unlock(&mgr->rwlock);
     pthread_mutex_unlock(&mgr->election_mutex);
 
-    return mgr->role == GV_REPL_LEADER ? 0 : -1;
+    return result_role == GV_REPL_LEADER ? 0 : -1;
 }
 
 int replication_add_follower(GV_ReplicationManager *mgr, const char *node_id,

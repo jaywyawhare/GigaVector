@@ -246,16 +246,23 @@ int cluster_start(GV_Cluster *cluster) {
                         if (*p == ':' || *p == '.') *p = '_';
                     }
                     if (!find_node(cluster, seed_id)) {
-                        NodeEntry *entry = &cluster->nodes[cluster->node_count];
-                        entry->node_id = gv_dup_cstr(seed_id);
-                        entry->address = gv_dup_cstr(tok);
-                        entry->role = GV_NODE_DATA;
-                        entry->state = GV_NODE_JOINING;
-                        entry->shard_ids = NULL;
-                        entry->shard_count = 0;
-                        entry->last_heartbeat = (uint64_t)time(NULL);
-                        entry->load = 0.0;
-                        cluster->node_count++;
+                        char *nid = gv_dup_cstr(seed_id);
+                        char *addr = gv_dup_cstr(tok);
+                        if (nid && addr) {
+                            NodeEntry *entry = &cluster->nodes[cluster->node_count];
+                            entry->node_id = nid;
+                            entry->address = addr;
+                            entry->role = GV_NODE_DATA;
+                            entry->state = GV_NODE_JOINING;
+                            entry->shard_ids = NULL;
+                            entry->shard_count = 0;
+                            entry->last_heartbeat = (uint64_t)time(NULL);
+                            entry->load = 0.0;
+                            cluster->node_count++;
+                        } else {
+                            free(nid);
+                            free(addr);
+                        }
                     }
                 }
                 tok = strtok_r(NULL, ",", &saveptr);
