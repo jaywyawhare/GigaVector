@@ -36,6 +36,22 @@ packages = [
 
 include-package-data = true
 
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "N"]
+ignore = ["E501", "N802", "N803", "N806", "B904"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/gigavector/_ffi.py" = ["E", "W", "F"]
+"src/gigavector/_core.py" = ["N"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
 [tool.setuptools.package-data]
 gigavector = [
 	"py.typed",
