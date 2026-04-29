@@ -1075,7 +1075,6 @@ static GV_SSOToken *decode_jwt_claims(const char *jwt) {
  * Extract text content between <tag> and </tag> from XML.
  * Very basic: finds the first occurrence and extracts inner text.
  */
-/* Decode the five predefined XML/HTML entities in-place (output <= input). */
 static void xml_decode_entities(char *s) {
     if (!s) return;
     char *r = s, *w = s;
@@ -1133,24 +1132,19 @@ static int xml_extract_text(const char *xml, const char *tag,
     return 0;
 }
 
-/* Extract the text content of the first AttributeValue child of the Attribute
- * element that contains Name="attr_name" (exact match, case-sensitive). */
 static int xml_extract_attribute_value(const char *xml, const char *attr_name,
                                        char *out, size_t out_size) {
     if (!xml || !attr_name || !out || out_size == 0) return -1;
 
-    /* Build exact-match search: Name="<attr_name>" */
     char needle[512];
     snprintf(needle, sizeof(needle), "Name=\"%s\"", attr_name);
     const char *attr_elem = strstr(xml, needle);
     if (!attr_elem) return -1;
 
-    /* Find the end of this Attribute element */
     const char *attr_end = strstr(attr_elem, "</Attribute");
     if (!attr_end) attr_end = strstr(attr_elem, "</saml:Attribute");
     if (!attr_end) attr_end = xml + strlen(xml);
 
-    /* Find the first AttributeValue child */
     const char *val = strstr(attr_elem, "<AttributeValue");
     if (!val || val >= attr_end)
         val = strstr(attr_elem, "<saml:AttributeValue");
@@ -1171,13 +1165,6 @@ static int xml_extract_attribute_value(const char *xml, const char *attr_name,
     return 0;
 }
 
-/**
- * Parse a base64-encoded SAML assertion and extract identity claims.
- * Decodes standard or URL-safe base64, then uses structured string scanning
- * to extract NameID, email, name, groups, roles and Conditions timestamps.
- * XML entity references (&amp; &lt; &gt; &quot; &apos;) are decoded in all
- * extracted values.
- */
 static GV_SSOToken *parse_saml_assertion(const char *b64_assertion) {
     if (!b64_assertion) return NULL;
 
@@ -1227,15 +1214,11 @@ static GV_SSOToken *parse_saml_assertion(const char *b64_assertion) {
 
     char buf[512];
 
-    /* Extract NameID — try namespace-prefixed and unprefixed variants */
     if (xml_extract_text(xml, "saml:NameID", buf, sizeof(buf)) == 0 ||
         xml_extract_text(xml, "saml2:NameID", buf, sizeof(buf)) == 0 ||
         xml_extract_text(xml, "NameID", buf, sizeof(buf)) == 0) {
         token->subject = gv_dup_cstr(buf);
     }
-
-    /* Extract common attributes. xml_extract_attribute_value matches
-     * Name="<value>" exactly and decodes XML entities in the result. */
 
     /* Email */
     if (xml_extract_attribute_value(xml, "email", buf, sizeof(buf)) == 0 ||
@@ -1258,8 +1241,6 @@ static GV_SSOToken *parse_saml_assertion(const char *b64_assertion) {
         token->name = gv_dup_cstr(buf);
     }
 
-    /* Multi-value attribute helper: extract all AttributeValue children of the
-     * Attribute element whose Name= matches attr_name exactly. */
 #define EXTRACT_MULTI(attr_name_str, dest_arr, dest_count) do { \
     char needle_m[512]; \
     snprintf(needle_m, sizeof(needle_m), "Name=\"%s\"", (attr_name_str)); \
@@ -1300,7 +1281,6 @@ static GV_SSOToken *parse_saml_assertion(const char *b64_assertion) {
     } \
 } while (0)
 
-    /* Groups */
     if (!token->groups) {
         EXTRACT_MULTI("groups", token->groups, token->group_count);
     }

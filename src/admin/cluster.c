@@ -225,9 +225,6 @@ int cluster_start(GV_Cluster *cluster) {
         local->state = GV_NODE_ACTIVE;
     }
 
-    /* Bootstrap peer list from comma-separated seed_nodes config string.
-     * Each entry is an address (host:port) used to pre-populate the node
-     * table so the heartbeat thread can track their health from startup. */
     if (cluster->config.seed_nodes && cluster->config.seed_nodes[0] != '\0') {
         char *seeds = gv_dup_cstr(cluster->config.seed_nodes);
         if (seeds) {

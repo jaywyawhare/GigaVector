@@ -179,9 +179,6 @@ static void *replication_thread_func(void *arg) {
                 mgr->leader_id = mgr->node_id ? gv_dup_cstr(mgr->node_id) : NULL;
                 replication_embedded_followers_catch_up_locked(mgr);
             }
-            /* If quorum not reachable with in-process replicas alone, stay
-             * CANDIDATE until more followers are registered or the caller
-             * invokes replication_request_leadership() directly. */
         }
 
         pthread_rwlock_unlock(&mgr->rwlock);
@@ -347,8 +344,6 @@ int replication_request_leadership(GV_ReplicationManager *mgr) {
     free(mgr->voted_for);
     mgr->voted_for = gv_dup_cstr(mgr->node_id);
 
-    /* Count self plus any in-process follower DBs as automatic votes.
-     * Remote-only replicas cannot be contacted without a wire protocol. */
     size_t votes = 1;
     for (size_t i = 0; i < mgr->replica_count; i++) {
         if (mgr->follower_dbs[i] != NULL) {
