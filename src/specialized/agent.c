@@ -190,8 +190,8 @@ static char *build_system_prompt(GV_AgentType type, const char *override,
             case GV_INDEX_TYPE_FLAT:    index_name = "flat";     break;
             case GV_INDEX_TYPE_IVFFLAT: index_name = "ivfflat";  break;
             case GV_INDEX_TYPE_IVFSQ8:  index_name = "ivfsq8";   break;
-            case GV_INDEX_TYPE_IVFSQ8:  index_name = "ivfsq8";   break;
             case GV_INDEX_TYPE_IVFTURBOQUANT: index_name = "ivfturboquant"; break;
+            case GV_INDEX_TYPE_IVFDISK: index_name = "ivfdisk"; break;
             case GV_INDEX_TYPE_PQ:      index_name = "pq";       break;
             case GV_INDEX_TYPE_LSH:     index_name = "lsh";      break;
             case GV_INDEX_TYPE_SPARSE:  index_name = "sparse";   break;

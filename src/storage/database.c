@@ -2184,86 +2184,6 @@ GV_Database *db_open_with_ivfturboquant_config(const char *filepath, size_t dime
     return db;
 }
 
-GV_Database *db_open_with_ivfsq8_config(const char *filepath, size_t dimension,
-                                        GV_IndexType index_type, const GV_IVFSQ8Config *config) {
-    if (index_type != GV_INDEX_TYPE_IVFSQ8) {
-        return db_open(filepath, dimension, index_type);
-    }
-    if (dimension == 0) {
-        return NULL;
-    }
-
-    GV_Database *db = (GV_Database *)malloc(sizeof(GV_Database));
-    if (db == NULL) {
-        return NULL;
-    }
-
-    db->dimension = dimension;
-    db->index_type = index_type;
-    db->root = NULL;
-    db->hnsw_index = NULL;
-    db->sparse_index = NULL;
-    db->soa_storage = NULL;
-    db->filepath = NULL;
-    db->wal_path = NULL;
-    if (filepath != NULL) {
-        db->filepath = gv_dup_cstr(filepath);
-        if (db->filepath == NULL) {
-            free(db);
-            return NULL;
-        }
-        db->wal_path = db_build_wal_path(filepath);
-        if (db->wal_path == NULL) {
-            free(db->filepath);
-            free(db);
-            return NULL;
-        }
-    }
-    db->wal = NULL;
-    db->wal_replaying = 0;
-    pthread_rwlock_init(&db->rwlock, NULL);
-    pthread_mutex_init(&db->wal_mutex, NULL);
-    db->count = 0;
-    db->exact_search_threshold = 1000;
-    db->force_exact_search = 0;
-    db->total_inserts = 0;
-    db->total_queries = 0;
-    db->total_range_queries = 0;
-    db->total_wal_records = 0;
-    db->cosine_normalized = 0;
-    db->metadata_index = metadata_index_create();
-    if (db->metadata_index == NULL) {
-        pthread_rwlock_destroy(&db->rwlock);
-        pthread_mutex_destroy(&db->wal_mutex);
-        free(db);
-        return NULL;
-    }
-    db_init_common_fields(db);
-
-    if (config != NULL) {
-        db->hnsw_index = ivfsq8_create(dimension, config);
-    } else {
-        GV_IVFSQ8Config default_cfg = {
-            .nlist = 64, .nprobe = 4, .train_iters = 15, .use_cosine = 0,
-            .per_dimension = 0, .default_rerank = 200
-        };
-        db->hnsw_index = ivfsq8_create(dimension, &default_cfg);
-    }
-
-    if (db->hnsw_index == NULL) {
-        metadata_index_destroy(db->metadata_index);
-        pthread_mutex_destroy(&db->resource_mutex);
-        pthread_mutex_destroy(&db->observability_mutex);
-        pthread_cond_destroy(&db->compaction_cond);
-        pthread_mutex_destroy(&db->compaction_mutex);
-        pthread_rwlock_destroy(&db->rwlock);
-        pthread_mutex_destroy(&db->wal_mutex);
-        free(db);
-        return NULL;
-    }
-
-    return db;
-}
 
 GV_Database *db_open_with_pq_config(const char *filepath, size_t dimension,
                                         GV_IndexType index_type, const GV_PQConfig *config) {
@@ -2570,14 +2490,6 @@ int db_add_vector(GV_Database *db, const float *data, size_t dimension) {
             return -1;
         }
         status = kdtree_insert(&(db->root), db->soa_storage, vector_index, 0);
-        if (status == 0 && metadata_count > 0 && db->metadata_index != NULL) {
-            for (size_t i = 0; i < metadata_count; i++) {
-                if (metadata_keys[i] != NULL && metadata_values[i] != NULL) {
-                    metadata_index_add(db->metadata_index, metadata_keys[i],
-                                       metadata_values[i], vector_index);
-                }
-            }
-        }
     } else if (db->index_type == GV_INDEX_TYPE_HNSW) {
         GV_Vector *vector = vector_create_from_data(dimension, data);
         if (vector == NULL) {
@@ -2588,15 +2500,6 @@ int db_add_vector(GV_Database *db, const float *data, size_t dimension) {
             db_normalize_vector(vector);
         }
         status = gv_hnsw_insert(db->hnsw_index, vector);
-        if (status == 0 && metadata_count > 0 && db->metadata_index != NULL) {
-            size_t vector_index = db->count;
-            for (size_t i = 0; i < metadata_count; i++) {
-                if (metadata_keys[i] != NULL && metadata_values[i] != NULL) {
-                    metadata_index_add(db->metadata_index, metadata_keys[i],
-                                       metadata_values[i], vector_index);
-                }
-            }
-        }
         if (status != 0) {
             vector_destroy(vector);
         }

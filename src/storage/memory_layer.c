@@ -1285,7 +1285,7 @@ char **memory_extract_from_text(GV_MemoryLayer *layer,
         meta.consolidated = 0;
         
         char *mem_id = memory_add(layer, candidates[i].content,
-                                      &(*embeddings)[i * layer->db->dimension], &meta);
+                                      &(*embeddings)[i * layer->db->dimension], &meta, NULL);
         memory_ids[i] = mem_id;
         
         memory_metadata_free(&meta);

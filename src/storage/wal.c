@@ -400,47 +400,10 @@ int wal_replay(const char *path, size_t expected_dimension,
         }
 
         if (type == GV_WAL_TYPE_IVFDISK_APPEND) {
-            uint64_t head_id = 0, vector_id = 0;
-            uint32_t dim = 0;
-            if (fread(&head_id, sizeof(uint64_t), 1, f) != 1 ||
-                fread(&vector_id, sizeof(uint64_t), 1, f) != 1 ||
-                read_u32(f, &dim) != 0 ||
-                dim != (uint32_t)expected_dimension) {
+            if (wal_skip_ivfdisk_append_record(f, has_crc) != 0) {
                 fclose(f);
                 return -1;
             }
-            float *buf = (float *)malloc((size_t)dim * sizeof(float));
-            if (!buf) { fclose(f); return -1; }
-            if (read_floats(f, buf, dim) != 0) {
-                free(buf);
-                fclose(f);
-                return -1;
-            }
-            if (has_crc) {
-                uint32_t crc = gv_crc32_init();
-                uint8_t type_byte = GV_WAL_TYPE_IVFDISK_APPEND;
-                crc = gv_crc32_update(crc, &type_byte, sizeof(uint8_t));
-                crc = gv_crc32_update(crc, &head_id, sizeof(uint64_t));
-                crc = gv_crc32_update(crc, &vector_id, sizeof(uint64_t));
-                crc = gv_crc32_update(crc, &dim, sizeof(uint32_t));
-                crc = gv_crc32_update(crc, buf, dim * sizeof(float));
-                crc = gv_crc32_finish(crc);
-                uint32_t stored_crc = 0;
-                if (read_u32(f, &stored_crc) != 0 || stored_crc != crc) {
-                    free(buf);
-                    fclose(f);
-                    return -1;
-                }
-            }
-            if (on_ivfdisk_append != NULL) {
-                int cb_res = on_ivfdisk_append(ctx, head_id, vector_id, buf, dim);
-                if (cb_res != 0) {
-                    free(buf);
-                    fclose(f);
-                    return -1;
-                }
-            }
-            free(buf);
             continue;
         }
 

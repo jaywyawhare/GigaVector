@@ -1,33 +1,4 @@
-static int posting_validate_segment_header(const uint8_t *hdr, size_t file_len,
-                                           size_t sector_size, size_t max_dimension,
-                                           uint64_t *head_id_out, uint64_t *sequence_out,
-                                           uint32_t *entry_count_out, uint32_t *dimension_out,
-                                           size_t *entries_offset_out)
-{
-    (void)head_id_out;
-    (void)sequence_out;
-    (void)entry_count_out;
-    (void)dimension_out;
-    (void)entries_offset_out;
-    PostingSegInfo info;
-    if (posting_parse_seg_info(hdr, file_len, sector_size, max_dimension, &info) != 0) return -1;
-
-    size_t entries_size = (size_t)info.entry_count * info.entry_stride;
-    if (info.entries_offset > file_len || entries_size > file_len - info.entries_offset) return -1;
-
-    uint32_t entries_crc = 0;
-    memcpy(&entries_crc, hdr + 32, 4);
-    if (entries_crc != posting_crc32(hdr + info.entries_offset, entries_size)) return -1;
-
-    if (head_id_out) memcpy(head_id_out, hdr + 8, 8);
-    if (sequence_out) memcpy(sequence_out, hdr + 16, 8);
-    if (entry_count_out) *entry_count_out = info.entry_count;
-    if (dimension_out) *dimension_out = info.dimension;
-    if (entries_offset_out) *entries_offset_out = info.entries_offset;
-    return 0;
-}
-
-#ifndef _WIN32/**
+/**
  * @file posting_list.c
  * @brief Append-only on-disk posting lists for larger-than-RAM vector partitions.
  */
@@ -342,6 +313,35 @@ static int posting_parse_seg_info(const uint8_t *hdr, size_t file_len, size_t se
                                                 sector_size);
     }
     info->entry_stride = posting_entry_stride(info->payload_type, info->dimension, info->pq_m);
+    return 0;
+}
+
+static int posting_validate_segment_header(const uint8_t *hdr, size_t file_len,
+                                           size_t sector_size, size_t max_dimension,
+                                           uint64_t *head_id_out, uint64_t *sequence_out,
+                                           uint32_t *entry_count_out, uint32_t *dimension_out,
+                                           size_t *entries_offset_out)
+{
+    (void)head_id_out;
+    (void)sequence_out;
+    (void)entry_count_out;
+    (void)dimension_out;
+    (void)entries_offset_out;
+    PostingSegInfo info;
+    if (posting_parse_seg_info(hdr, file_len, sector_size, max_dimension, &info) != 0) return -1;
+
+    size_t entries_size = (size_t)info.entry_count * info.entry_stride;
+    if (info.entries_offset > file_len || entries_size > file_len - info.entries_offset) return -1;
+
+    uint32_t entries_crc = 0;
+    memcpy(&entries_crc, hdr + 32, 4);
+    if (entries_crc != posting_crc32(hdr + info.entries_offset, entries_size)) return -1;
+
+    if (head_id_out) memcpy(head_id_out, hdr + 8, 8);
+    if (sequence_out) memcpy(sequence_out, hdr + 16, 8);
+    if (entry_count_out) *entry_count_out = info.entry_count;
+    if (dimension_out) *dimension_out = info.dimension;
+    if (entries_offset_out) *entries_offset_out = info.entries_offset;
     return 0;
 }
 
