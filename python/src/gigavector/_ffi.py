@@ -92,15 +92,6 @@ typedef struct {
     size_t default_rerank;
 } GV_IVFSQ8Config;
 
-typedef struct {
-    size_t nlist;
-    size_t nprobe;
-    size_t train_iters;
-    int use_cosine;
-    int per_dimension;
-    size_t default_rerank;
-} GV_IVFSQ8Config;
-
 typedef enum {
     GV_TURBOQUANT_ROTATION_AUTO = 0,
     GV_TURBOQUANT_ROTATION_FHWT = 1,
@@ -193,8 +184,6 @@ GV_Database *gv_db_open_with_ivfpq_config(const char *filepath, size_t dimension
 GV_Database *gv_db_open_with_ivfflat_config(const char *filepath, size_t dimension, GV_IndexType index_type, const GV_IVFFlatConfig *config);
 GV_Database *gv_db_open_with_ivfdisk_config(const char *filepath, size_t dimension, GV_IndexType index_type, const GV_IVFDiskConfig *config);
 GV_Database *gv_db_open_with_ivfsq8_config(const char *filepath, size_t dimension, GV_IndexType index_type, const GV_IVFSQ8Config *config);
-GV_Database *gv_db_open_with_ivfsq8_config(const char *filepath, size_t dimension, GV_IndexType index_type, const GV_IVFSQ8Config *config);
-GV_Database *gv_db_open_with_ivfturboquant_config(const char *filepath, size_t dimension, GV_IndexType index_type, const GV_IVFTurboQuantConfig *config);
 GV_Database *gv_db_open_with_ivfturboquant_config(const char *filepath, size_t dimension, GV_IndexType index_type, const GV_IVFTurboQuantConfig *config);
 GV_Database *gv_db_open_with_pq_config(const char *filepath, size_t dimension, GV_IndexType index_type, const GV_PQConfig *config);
 GV_Database *gv_db_open_with_lsh_config(const char *filepath, size_t dimension, GV_IndexType index_type, const GV_LSHConfig *config);
@@ -225,8 +214,6 @@ int gv_db_ivfpq_train(GV_Database *db, const float *data, size_t count, size_t d
 int gv_db_ivfflat_train(GV_Database *db, const float *data, size_t count, size_t dimension);
 int gv_db_ivfdisk_train(GV_Database *db, const float *data, size_t count, size_t dimension);
 int gv_db_ivfsq8_train(GV_Database *db, const float *data, size_t count, size_t dimension);
-int gv_db_ivfsq8_train(GV_Database *db, const float *data, size_t count, size_t dimension);
-int gv_db_ivfturboquant_train(GV_Database *db, const float *data, size_t count, size_t dimension);
 int gv_db_ivfturboquant_train(GV_Database *db, const float *data, size_t count, size_t dimension);
 int gv_db_pq_train(GV_Database *db, const float *data, size_t count, size_t dimension);
 int gv_db_add_vectors(GV_Database *db, const float *data, size_t count, size_t dimension);

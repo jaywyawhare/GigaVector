@@ -35,8 +35,6 @@ class IndexType(IntEnum):
     PQ = 6
     LSH = 7
     IVFSQ8 = 8
-    IVFSQ8 = 8
-    IVFTURBOQUANT = 9
     IVFTURBOQUANT = 9
 
 
@@ -46,6 +44,23 @@ class DistanceType(IntEnum):
     DOT_PRODUCT = 2
     MANHATTAN = 3
     HAMMING = 4
+
+
+def suggest_index(
+    dimension: int,
+    expected_count: int,
+    *,
+    max_memory_bytes: int = 0,
+    bytes_per_vector: int = 0,
+) -> IndexType:
+    """Recommend an index type for the given workload."""
+    if max_memory_bytes > 0 or bytes_per_vector > 0:
+        idx = lib.gv_index_suggest_with_budget(
+            dimension, expected_count, max_memory_bytes, bytes_per_vector
+        )
+    else:
+        idx = lib.gv_index_suggest(dimension, expected_count)
+    return IndexType(int(idx))
 
 
 @dataclass(frozen=True)
@@ -136,35 +151,6 @@ class IVFSQ8Config:
     use_cosine: bool = False
     per_dimension: bool = False
     default_rerank: int = 200
-
-
-class TurboQuantRotation(IntEnum):
-    AUTO = 0
-    FHWT = 1
-    QR = 2
-
-
-@dataclass
-class TurboQuantConfig:
-    bits: int = 8
-    projections: int = 0
-    seed: int = 42
-    use_qjl: bool = True
-    rotation: TurboQuantRotation = TurboQuantRotation.AUTO
-
-
-@dataclass
-class IVFTurboQuantConfig:
-    nlist: int = 64
-    nprobe: int = 4
-    train_iters: int = 15
-    use_cosine: bool = False
-    default_rerank: int = 200
-    turbo: TurboQuantConfig | None = None
-
-    def __post_init__(self) -> None:
-        if self.turbo is None:
-            self.turbo = TurboQuantConfig()
 
 
 class TurboQuantRotation(IntEnum):
@@ -323,7 +309,6 @@ class Database:
             hnsw_config: Optional HNSW configuration. Only used when index is HNSW.
             ivfpq_config: Optional IVFPQ configuration. Only used when index is IVFPQ.
             ivfflat_config: Optional IVF-Flat configuration. Only used when index is IVFFLAT.
-            ivfsq8_config: Optional IVF-SQ8 configuration. Only used when index is IVFSQ8.
             ivfsq8_config: Optional IVF-SQ8 configuration. Only used when index is IVFSQ8.
             ivfturboquant_config: Optional IVF-TurboQuant configuration. Only used when index is IVFTURBOQUANT.
             pq_config: Optional PQ configuration. Only used when index is PQ.
