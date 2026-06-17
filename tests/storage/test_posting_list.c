@@ -392,7 +392,7 @@ static int test_posting_pq_materialize(void)
 
     const size_t dim = 4;
     const uint32_t pq_m = 2;
-    float codebook[512];
+    float codebook[1024];
     memset(codebook, 0, sizeof(codebook));
     codebook[3 * 2 + 0] = 1.f;
     codebook[3 * 2 + 1] = 2.f;
