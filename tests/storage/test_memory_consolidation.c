@@ -70,13 +70,13 @@ static int test_find_similar_with_data(void) {
     meta1.timestamp = time(NULL);
     meta1.importance_score = 0.9;
 
-    char *id1 = memory_add(layer, "The sky is blue", emb1, &meta1);
+    char *id1 = memory_add(layer, "The sky is blue", emb1, &meta1, NULL);
     ASSERT(id1 != NULL, "add memory 1");
 
-    char *id2 = memory_add(layer, "The sky appears blue", emb2, NULL);
+    char *id2 = memory_add(layer, "The sky appears blue", emb2, NULL, NULL);
     ASSERT(id2 != NULL, "add memory 2");
 
-    char *id3 = memory_add(layer, "Dogs are mammals", emb3, NULL);
+    char *id3 = memory_add(layer, "Dogs are mammals", emb3, NULL, NULL);
     ASSERT(id3 != NULL, "add memory 3");
 
     GV_MemoryPair pairs[10];
@@ -102,10 +102,10 @@ static int test_memory_merge(void) {
     float emb1[DIM] = {1.0f, 0.0f, 0.0f, 0.0f};
     float emb2[DIM] = {0.9f, 0.1f, 0.0f, 0.0f};
 
-    char *id1 = memory_add(layer, "User likes Python", emb1, NULL);
+    char *id1 = memory_add(layer, "User likes Python", emb1, NULL, NULL);
     ASSERT(id1 != NULL, "add memory 1");
 
-    char *id2 = memory_add(layer, "User prefers Python over Java", emb2, NULL);
+    char *id2 = memory_add(layer, "User prefers Python over Java", emb2, NULL, NULL);
     ASSERT(id2 != NULL, "add memory 2");
 
     char *merged_id = memory_merge(layer, id1, id2);
@@ -156,10 +156,10 @@ static int test_memory_link(void) {
     float emb1[DIM] = {1.0f, 0.0f, 0.0f, 0.0f};
     float emb2[DIM] = {0.0f, 1.0f, 0.0f, 0.0f};
 
-    char *id1 = memory_add(layer, "Python is a programming language", emb1, NULL);
+    char *id1 = memory_add(layer, "Python is a programming language", emb1, NULL, NULL);
     ASSERT(id1 != NULL, "add memory 1");
 
-    char *id2 = memory_add(layer, "Python is used for machine learning", emb2, NULL);
+    char *id2 = memory_add(layer, "Python is used for machine learning", emb2, NULL, NULL);
     ASSERT(id2 != NULL, "add memory 2");
 
     int ret = memory_link(layer, id1, id2);
@@ -189,7 +189,7 @@ static int test_memory_archive(void) {
     ASSERT(layer != NULL, "memory layer creation");
 
     float emb[DIM] = {1.0f, 0.0f, 0.0f, 0.0f};
-    char *id = memory_add(layer, "Old fact that is no longer relevant", emb, NULL);
+    char *id = memory_add(layer, "Old fact that is no longer relevant", emb, NULL, NULL);
     ASSERT(id != NULL, "add memory");
 
     int ret = memory_archive(layer, id);
@@ -234,10 +234,10 @@ static int test_consolidate_pair(void) {
     float emb1[DIM] = {1.0f, 0.0f, 0.0f, 0.0f};
     float emb2[DIM] = {0.95f, 0.05f, 0.0f, 0.0f};
 
-    char *id1 = memory_add(layer, "User enjoys hiking", emb1, NULL);
+    char *id1 = memory_add(layer, "User enjoys hiking", emb1, NULL, NULL);
     ASSERT(id1 != NULL, "add memory 1");
 
-    char *id2 = memory_add(layer, "User likes outdoor activities like hiking", emb2, NULL);
+    char *id2 = memory_add(layer, "User likes outdoor activities like hiking", emb2, NULL, NULL);
     ASSERT(id2 != NULL, "add memory 2");
 
     char *consolidated = memory_consolidate_pair(layer, id1, id2, GV_CONSOLIDATION_MERGE);
@@ -259,10 +259,10 @@ static int test_memory_update_from_new(void) {
     float emb1[DIM] = {1.0f, 0.0f, 0.0f, 0.0f};
     float emb2[DIM] = {0.8f, 0.2f, 0.0f, 0.0f};
 
-    char *id1 = memory_add(layer, "User works at Company A", emb1, NULL);
+    char *id1 = memory_add(layer, "User works at Company A", emb1, NULL, NULL);
     ASSERT(id1 != NULL, "add memory 1");
 
-    char *id2 = memory_add(layer, "User now works at Company B", emb2, NULL);
+    char *id2 = memory_add(layer, "User now works at Company B", emb2, NULL, NULL);
     ASSERT(id2 != NULL, "add memory 2");
 
     int ret = memory_update_from_new(layer, id1, id2);
@@ -282,10 +282,10 @@ static int test_find_similar_high_threshold(void) {
     float emb1[DIM] = {1.0f, 0.0f, 0.0f, 0.0f};
     float emb2[DIM] = {0.0f, 1.0f, 0.0f, 0.0f};
 
-    char *id1 = memory_add(layer, "Cats are felines", emb1, NULL);
+    char *id1 = memory_add(layer, "Cats are felines", emb1, NULL, NULL);
     ASSERT(id1 != NULL, "add memory 1");
 
-    char *id2 = memory_add(layer, "Cars are vehicles", emb2, NULL);
+    char *id2 = memory_add(layer, "Cars are vehicles", emb2, NULL, NULL);
     ASSERT(id2 != NULL, "add memory 2");
 
     GV_MemoryPair pairs[10];

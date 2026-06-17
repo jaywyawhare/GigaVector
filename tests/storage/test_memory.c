@@ -33,7 +33,7 @@ int test_memory_layer_basic(void) {
     meta.importance_score = 0.8;
     meta.consolidated = 0;
     
-    char *memory_id = memory_add(layer, "User prefers Python over Java", embedding, &meta);
+    char *memory_id = memory_add(layer, "User prefers Python over Java", embedding, &meta, NULL);
     if (memory_id == NULL) {
         fprintf(stderr, "Failed to add memory\n");
         memory_layer_destroy(layer);
@@ -81,8 +81,8 @@ int test_memory_search(void) {
         query[i] = (float)i / 128.0f;
     }
     
-    memory_add(layer, "Memory 1", embedding1, NULL);
-    memory_add(layer, "Memory 2", embedding2, NULL);
+    memory_add(layer, "Memory 1", embedding1, NULL, NULL);
+    memory_add(layer, "Memory 2", embedding2, NULL, NULL);
     
     GV_MemoryResult results[10];
     int count = memory_search(layer, query, 10, results, GV_DISTANCE_COSINE);
