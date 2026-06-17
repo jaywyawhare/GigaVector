@@ -55,7 +55,7 @@ class TestIVFDisk(unittest.TestCase):
             train = [[float(i + d) * 0.1 for d in range(dim)] for i in range(32)]
             db.train_ivfdisk(train)
             for vec in train[:16]:
-                db.add(vec)
+                db.add_vector(vec)
 
             db.delete_vector(0)
             updated = [9.0, 9.1, 9.2, 9.3]
@@ -80,7 +80,7 @@ class TestIVFDisk(unittest.TestCase):
             train = [[float(i + d) * 0.1 for d in range(dim)] for i in range(24)]
             db.train_ivfdisk(train)
             for vec in train[:6]:
-                db.add(vec)
+                db.add_vector(vec)
             db.save()
             db.close()
 
@@ -107,7 +107,7 @@ class TestIVFDisk(unittest.TestCase):
 
             vectors = train[:8]
             for vec in vectors:
-                db.add(vec)
+                db.add_vector(vec)
             db.close()
 
             db2 = Database.open(path, dimension=dim, index=IndexType.IVFDISK)
@@ -136,9 +136,9 @@ class TestIVFDisk(unittest.TestCase):
             db.train_ivfdisk(train)
 
             border = [5.0, 0.0]
-            db.add(border)
+            db.add_vector(border)
             for vec in train[:10]:
-                db.add(vec)
+                db.add_vector(vec)
 
             hits = db.search(border, k=5, distance=DistanceType.EUCLIDEAN)
             self.assertGreaterEqual(len(hits), 1)
@@ -169,7 +169,7 @@ class TestIVFDisk(unittest.TestCase):
             try:
                 client = RemoteShardClient("127.0.0.1", 50219, dim)
                 client.train_ivfdisk(train)
-                db.add(train[0])
+                db.add_vector(train[0])
                 hits = db.search(train[0], k=3, distance=DistanceType.EUCLIDEAN)
                 self.assertGreaterEqual(len(hits), 1)
             finally:
