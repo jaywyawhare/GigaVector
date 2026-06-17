@@ -465,7 +465,9 @@ static float *diskann_page_cache_lookup(GV_DiskANNIndex *index, size_t page_id)
         size_t len = 0;
         const uint8_t *data = gv_disk_page_cache_lookup(index->shared_page_cache, key, &len);
         if (data && len == index->cache.page_data_bytes) {
-            return (float *)data;
+            float *page;
+            memcpy(&page, &data, sizeof(page));
+            return page;
         }
         index->cache.misses++;
         return NULL;
