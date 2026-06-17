@@ -387,7 +387,7 @@ static int test_grpc_msg_type_values(void) {
     ASSERT(GV_MSG_STATS == 8, "GV_MSG_STATS should be 8");
     ASSERT(GV_MSG_HEALTH == 9, "GV_MSG_HEALTH should be 9");
     ASSERT(GV_MSG_SAVE == 10, "GV_MSG_SAVE should be 10");
-    ASSERT(GV_MSG_IVFDISK_TRAIN == 13, "GV_MSG_IVFDISK_TRAIN should be 13");
+    ASSERT(GV_MSG_IVFDISK_TRAIN == 11, "GV_MSG_IVFDISK_TRAIN should be 11");
     ASSERT(GV_MSG_RESPONSE == 128, "GV_MSG_RESPONSE should be 128");
     return 0;
 }

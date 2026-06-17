@@ -1769,7 +1769,7 @@ typedef enum {
     GV_MSG_STATS = 8,
     GV_MSG_HEALTH = 9,
     GV_MSG_SAVE = 10,
-    GV_MSG_IVFDISK_TRAIN = 13,
+    GV_MSG_IVFDISK_TRAIN = 11,
     GV_MSG_RESPONSE = 128
 } GV_GrpcMsgType;
 
