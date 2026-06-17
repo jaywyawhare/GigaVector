@@ -183,12 +183,14 @@ class TestAPI(unittest.TestCase):
         from gigavector import ReplicationManager, ReplicationConfig
 
         with Database.open(None, dimension=4, index=IndexType.FLAT) as db:
-            config = ReplicationConfig(node_id="test-node")
-            mgr = ReplicationManager(db, config)
-            with mgr:
-                mgr.add_follower("follower-1", "127.0.0.1:9100")
-                mgr.leader_append_wal(5, 100)
-                mgr.sync_commit(2000)
+            with Database.open(None, dimension=4, index=IndexType.FLAT) as follower_db:
+                config = ReplicationConfig(node_id="test-node")
+                mgr = ReplicationManager(db, config)
+                with mgr:
+                    mgr.add_follower("follower-1", "127.0.0.1:9100")
+                    mgr.register_follower_db("follower-1", follower_db)
+                    mgr.leader_append_wal(5, 100)
+                    mgr.sync_commit(2000)
 
 
 if __name__ == "__main__":
