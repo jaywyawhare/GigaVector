@@ -21,6 +21,7 @@
 #ifndef _WIN32
 #include <unistd.h>
 #else
+#include <direct.h>
 #include <io.h>
 #define fsync(fd) _commit(fd)
 #endif
