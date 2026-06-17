@@ -145,6 +145,11 @@ class TestIVFDisk(unittest.TestCase):
             db.close()
 
     def test_grpc_train_ivfdisk(self) -> None:
+        import sys
+
+        if sys.platform == "win32":
+            self.skipTest("POSIX gRPC client not available on Windows")
+
         from gigavector import GrpcConfig, GrpcServer, RemoteShardClient
 
         with tempfile.TemporaryDirectory() as td:
