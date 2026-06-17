@@ -1428,11 +1428,15 @@ int wal_apply_record_buffer(const uint8_t *record, size_t len, int has_crc,
         pos += sizeof(uint32_t);
         if (dim != (uint32_t)expected_dimension) return -1;
         if (len < pos + dim * sizeof(float) + (has_crc ? sizeof(uint32_t) : 0)) return -1;
-        const float *data = (const float *)(record + pos);
+        float *vec = (float *)malloc((size_t)dim * sizeof(float));
+        if (!vec) return -1;
+        memcpy(vec, record + pos, (size_t)dim * sizeof(float));
+        int rc = 0;
         if (on_ivfdisk_append) {
-            return on_ivfdisk_append(ctx, head_id, vector_id, data, dim);
+            rc = on_ivfdisk_append(ctx, head_id, vector_id, vec, dim);
         }
-        return 0;
+        free(vec);
+        return rc;
     }
 
     if (type != GV_WAL_TYPE_INSERT && type != GV_WAL_TYPE_UPDATE) return -1;
@@ -1451,13 +1455,18 @@ int wal_apply_record_buffer(const uint8_t *record, size_t len, int has_crc,
     if (dim != (uint32_t)expected_dimension) return -1;
     if (len < pos + dim * sizeof(float) + sizeof(uint32_t)) return -1;
 
-    const float *data = (const float *)(record + pos);
+    float *vec = (float *)malloc((size_t)dim * sizeof(float));
+    if (!vec) return -1;
+    memcpy(vec, record + pos, (size_t)dim * sizeof(float));
     pos += dim * sizeof(float);
 
     uint32_t meta_count = 0;
     memcpy(&meta_count, record + pos, sizeof(uint32_t));
     pos += sizeof(uint32_t);
-    if (meta_count > 65536) return -1;
+    if (meta_count > 65536) {
+        free(vec);
+        return -1;
+    }
 
     char **keys = NULL;
     char **values = NULL;
@@ -1467,6 +1476,7 @@ int wal_apply_record_buffer(const uint8_t *record, size_t len, int has_crc,
         if (!keys || !values) {
             free(keys);
             free(values);
+            free(vec);
             return -1;
         }
         for (uint32_t i = 0; i < meta_count; i++) {
@@ -1500,12 +1510,12 @@ int wal_apply_record_buffer(const uint8_t *record, size_t len, int has_crc,
 
     int rc = -1;
     if (type == GV_WAL_TYPE_INSERT) {
-        rc = on_insert ? on_insert(ctx, data, dim,
+        rc = on_insert ? on_insert(ctx, vec, dim,
                                    (const char *const *)keys,
                                    (const char *const *)values,
                                    meta_count) : 0;
     } else if (on_update) {
-        rc = on_update(ctx, (size_t)vector_index, data, dim,
+        rc = on_update(ctx, (size_t)vector_index, vec, dim,
                        (const char *const *)keys,
                        (const char *const *)values,
                        meta_count);
@@ -1517,6 +1527,7 @@ int wal_apply_record_buffer(const uint8_t *record, size_t len, int has_crc,
     }
     free(keys);
     free(values);
+    free(vec);
     return rc;
 
 fail:
@@ -1528,6 +1539,7 @@ fail:
     }
     free(keys);
     free(values);
+    free(vec);
     return -1;
 }
 
