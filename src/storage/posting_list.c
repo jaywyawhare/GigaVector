@@ -23,6 +23,7 @@
 #else
 #include <direct.h>
 #include <io.h>
+#define mkdir(path, mode) _mkdir(path)
 #define fsync(fd) _commit(fd)
 #endif
 
@@ -82,6 +83,13 @@ typedef struct {
 static int posting_catalog_reconcile_head_live_counts(GV_PostingCatalog *cat,
                                                       uint64_t head_id, int persist);
 
+static const float *posting_bytes_as_floats(const uint8_t *bytes)
+{
+    const float *out;
+    memcpy(&out, &bytes, sizeof(out));
+    return out;
+}
+
 static int posting_file_sync(FILE *f)
 {
     if (fflush(f) != 0) return -1;
@@ -90,11 +98,7 @@ static int posting_file_sync(FILE *f)
 
 static int posting_mkdir_p(const char *path)
 {
-#ifdef _WIN32
-    if (_mkdir(path) == 0 || errno == EEXIST) return 0;
-#else
     if (mkdir(path, 0700) == 0 || errno == EEXIST) return 0;
-#endif
     return -1;
 }
 
@@ -359,7 +363,7 @@ static int posting_visit_entry(PostingParseCtx *pc, size_t off)
 
     switch (pc->info.payload_type) {
     case GV_POSTING_PAYLOAD_FLOAT:
-        entry.data = (const float *)(data + off + 16);
+        entry.data = posting_bytes_as_floats(data + off + 16);
         break;
     case GV_POSTING_PAYLOAD_SQ8:
         entry.codes = data + off + 16;
@@ -406,10 +410,10 @@ static int posting_segment_parse_buffer_impl(const uint8_t *data, size_t len,
     const float *sq8_max = NULL;
     const float *pq_codebook = NULL;
     if (info.payload_type == GV_POSTING_PAYLOAD_SQ8) {
-        sq8_min = (const float *)(data + GV_POSTING_SEG_HDR_SIZE);
+        sq8_min = posting_bytes_as_floats(data + GV_POSTING_SEG_HDR_SIZE);
         sq8_max = sq8_min + info.dimension;
     } else if (info.payload_type == GV_POSTING_PAYLOAD_PQ) {
-        pq_codebook = (const float *)(data + GV_POSTING_SEG_HDR_SIZE);
+        pq_codebook = posting_bytes_as_floats(data + GV_POSTING_SEG_HDR_SIZE);
     }
 
     float *scratch = NULL;
