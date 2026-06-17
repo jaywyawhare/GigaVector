@@ -11,6 +11,7 @@
 #include <fcntl.h>
 #include <io.h>
 #include <process.h>
+#include <sys/stat.h>
 #else
 #include <fcntl.h>
 #include <sys/stat.h>
