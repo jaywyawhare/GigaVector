@@ -17,7 +17,7 @@ ffi: FFIType = FFI()
 ffi.cdef(
     """
 typedef long long time_t;
-typedef enum { GV_INDEX_TYPE_KDTREE = 0, GV_INDEX_TYPE_HNSW = 1, GV_INDEX_TYPE_IVFPQ = 2, GV_INDEX_TYPE_SPARSE = 3, GV_INDEX_TYPE_FLAT = 4, GV_INDEX_TYPE_IVFFLAT = 5, GV_INDEX_TYPE_PQ = 6, GV_INDEX_TYPE_LSH = 7, GV_INDEX_TYPE_IVFSQ8 = 8, GV_INDEX_TYPE_IVFTURBOQUANT = 9 } GV_IndexType;
+typedef enum { GV_INDEX_TYPE_KDTREE = 0, GV_INDEX_TYPE_HNSW = 1, GV_INDEX_TYPE_IVFPQ = 2, GV_INDEX_TYPE_SPARSE = 3, GV_INDEX_TYPE_FLAT = 4, GV_INDEX_TYPE_IVFFLAT = 5, GV_INDEX_TYPE_PQ = 6, GV_INDEX_TYPE_LSH = 7, GV_INDEX_TYPE_IVFSQ8 = 8, GV_INDEX_TYPE_IVFTURBOQUANT = 9, GV_INDEX_TYPE_DISKANN = 10, GV_INDEX_TYPE_IVFDISK = 11 } GV_IndexType;
 typedef enum { GV_DISTANCE_EUCLIDEAN = 0, GV_DISTANCE_COSINE = 1, GV_DISTANCE_DOT_PRODUCT = 2, GV_DISTANCE_MANHATTAN = 3, GV_DISTANCE_HAMMING = 4 } GV_DistanceType;
 
 typedef struct {
@@ -68,6 +68,29 @@ typedef struct {
     size_t train_iters;
     int use_cosine;
 } GV_IVFFlatConfig;
+
+typedef struct {
+    size_t nlist;
+    size_t nprobe;
+    size_t train_iters;
+    size_t cache_size_mb;
+    size_t sector_size;
+    size_t max_list_bytes;
+    float head_ratio;
+    float border_ratio;
+    int use_hnsw_head;
+    int use_sq8;
+    const char *data_dir;
+} GV_IVFDiskConfig;
+
+typedef struct {
+    size_t nlist;
+    size_t nprobe;
+    size_t train_iters;
+    int use_cosine;
+    int per_dimension;
+    size_t default_rerank;
+} GV_IVFSQ8Config;
 
 typedef struct {
     size_t nlist;
@@ -168,7 +191,10 @@ GV_Database *gv_db_open(const char *filepath, size_t dimension, GV_IndexType ind
 GV_Database *gv_db_open_with_hnsw_config(const char *filepath, size_t dimension, GV_IndexType index_type, const GV_HNSWConfig *hnsw_config);
 GV_Database *gv_db_open_with_ivfpq_config(const char *filepath, size_t dimension, GV_IndexType index_type, const GV_IVFPQConfig *ivfpq_config);
 GV_Database *gv_db_open_with_ivfflat_config(const char *filepath, size_t dimension, GV_IndexType index_type, const GV_IVFFlatConfig *config);
+GV_Database *gv_db_open_with_ivfdisk_config(const char *filepath, size_t dimension, GV_IndexType index_type, const GV_IVFDiskConfig *config);
 GV_Database *gv_db_open_with_ivfsq8_config(const char *filepath, size_t dimension, GV_IndexType index_type, const GV_IVFSQ8Config *config);
+GV_Database *gv_db_open_with_ivfsq8_config(const char *filepath, size_t dimension, GV_IndexType index_type, const GV_IVFSQ8Config *config);
+GV_Database *gv_db_open_with_ivfturboquant_config(const char *filepath, size_t dimension, GV_IndexType index_type, const GV_IVFTurboQuantConfig *config);
 GV_Database *gv_db_open_with_ivfturboquant_config(const char *filepath, size_t dimension, GV_IndexType index_type, const GV_IVFTurboQuantConfig *config);
 GV_Database *gv_db_open_with_pq_config(const char *filepath, size_t dimension, GV_IndexType index_type, const GV_PQConfig *config);
 GV_Database *gv_db_open_with_lsh_config(const char *filepath, size_t dimension, GV_IndexType index_type, const GV_LSHConfig *config);
@@ -176,6 +202,9 @@ GV_Database *gv_db_open_from_memory(const void *data, size_t size,
                                     size_t dimension, GV_IndexType index_type);
 GV_Database *gv_db_open_mmap(const char *filepath, size_t dimension, GV_IndexType index_type);
 GV_IndexType gv_index_suggest(size_t dimension, size_t expected_count);
+size_t gv_index_suggest_bytes_per_vector(size_t dimension, size_t metadata_bytes_per_vector);
+GV_IndexType gv_index_suggest_with_budget(size_t dimension, size_t expected_count,
+                                          size_t max_memory_bytes, size_t bytes_per_vector);
 void gv_db_get_stats(const GV_Database *db, GV_DBStats *out);
 void gv_db_set_cosine_normalized(GV_Database *db, int enabled);
 void gv_db_close(GV_Database *db);
@@ -194,7 +223,10 @@ int gv_db_update_vector_metadata(GV_Database *db, size_t vector_index,
 int gv_db_save(const GV_Database *db, const char *filepath);
 int gv_db_ivfpq_train(GV_Database *db, const float *data, size_t count, size_t dimension);
 int gv_db_ivfflat_train(GV_Database *db, const float *data, size_t count, size_t dimension);
+int gv_db_ivfdisk_train(GV_Database *db, const float *data, size_t count, size_t dimension);
 int gv_db_ivfsq8_train(GV_Database *db, const float *data, size_t count, size_t dimension);
+int gv_db_ivfsq8_train(GV_Database *db, const float *data, size_t count, size_t dimension);
+int gv_db_ivfturboquant_train(GV_Database *db, const float *data, size_t count, size_t dimension);
 int gv_db_ivfturboquant_train(GV_Database *db, const float *data, size_t count, size_t dimension);
 int gv_db_pq_train(GV_Database *db, const float *data, size_t count, size_t dimension);
 int gv_db_add_vectors(GV_Database *db, const float *data, size_t count, size_t dimension);
@@ -246,6 +278,76 @@ int gv_wal_append_insert_rich(GV_WAL *wal, const float *data, size_t dimension,
                               const char *const *metadata_keys, const char *const *metadata_values,
                               size_t metadata_count);
 int gv_wal_truncate(GV_WAL *wal);
+
+// Posting list (on-disk larger-than-RAM partitions)
+typedef struct GV_PostingCatalog GV_PostingCatalog;
+
+typedef struct {
+    uint64_t vector_id;
+    uint8_t version;
+    uint8_t flags;
+    uint8_t payload_type;
+    size_t dimension;
+    const float *data;
+    const uint8_t *codes;
+    size_t code_len;
+} GV_PostingEntry;
+
+typedef struct {
+    uint64_t vector_id;
+    uint8_t version;
+    uint8_t flags;
+    const float *data;
+    const uint8_t *codes;
+} GV_PostingWriteEntry;
+
+typedef struct {
+    GV_PostingEntry *entries;
+    float *data_pool;
+    size_t count;
+    size_t dimension;
+} GV_PostingHeadView;
+
+typedef struct {
+    size_t cache_hits;
+    size_t cache_misses;
+    size_t cached_segments;
+    size_t cache_capacity;
+} GV_PostingCacheStats;
+
+typedef struct {
+    int payload_type;
+    uint32_t pq_m;
+    const float *pq_codebook;
+} GV_PostingSegmentParams;
+
+#define GV_POSTING_PAYLOAD_FLOAT 0
+#define GV_POSTING_PAYLOAD_SQ8 1
+#define GV_POSTING_PAYLOAD_PQ 2
+
+#define GV_POSTING_FLAG_DELETED 0x01u
+
+GV_PostingCatalog *gv_posting_catalog_open(const char *base_dir, size_t sector_size);
+void gv_posting_catalog_close(GV_PostingCatalog *cat);
+void gv_posting_catalog_set_cache_mb(GV_PostingCatalog *cat, size_t cache_size_mb);
+void gv_posting_catalog_get_cache_stats(const GV_PostingCatalog *cat, GV_PostingCacheStats *out);
+void gv_posting_catalog_set_auto_live_count(GV_PostingCatalog *cat, int enabled);
+int gv_posting_catalog_get_auto_live_count(const GV_PostingCatalog *cat);
+uint32_t gv_posting_catalog_segment_live_count(const GV_PostingCatalog *cat,
+                                               uint64_t head_id, uint64_t sequence);
+size_t gv_posting_catalog_segment_count(const GV_PostingCatalog *cat);
+size_t gv_posting_catalog_head_live_count(GV_PostingCatalog *cat, uint64_t head_id);
+int gv_posting_catalog_reconcile_live_counts(GV_PostingCatalog *cat);
+int gv_posting_catalog_append_segment(GV_PostingCatalog *cat, uint64_t head_id,
+                                      const GV_PostingWriteEntry *entries,
+                                      size_t entry_count, size_t dimension);
+int gv_posting_catalog_append_segment_ex(GV_PostingCatalog *cat, uint64_t head_id,
+                                         const GV_PostingWriteEntry *entries,
+                                         size_t entry_count, size_t dimension,
+                                         const GV_PostingSegmentParams *params);
+int gv_posting_catalog_materialize_head(GV_PostingCatalog *cat, uint64_t head_id,
+                                        GV_PostingHeadView *out);
+void gv_posting_head_view_free(GV_PostingHeadView *out);
 
 // Resource limits
 typedef struct {
@@ -334,6 +436,12 @@ typedef struct {
 typedef struct {
     char *content;
     int finish_reason;
+    int input_tokens;
+    int output_tokens;
+    int cache_read_tokens;
+    int cache_write_tokens;
+    int cache_write_5m_tokens;
+    int cache_write_1h_tokens;
     int token_count;
 } GV_LLMResponse;
 
@@ -348,7 +456,7 @@ void gv_llm_message_free(GV_LLMMessage *message);
 void gv_llm_messages_free(GV_LLMMessage *messages, size_t count);
 
 // Embedding service types
-typedef enum { GV_EMBEDDING_PROVIDER_OPENAI = 0, GV_EMBEDDING_PROVIDER_HUGGINGFACE = 1, GV_EMBEDDING_PROVIDER_CUSTOM = 2, GV_EMBEDDING_PROVIDER_NONE = 3 } GV_EmbeddingProvider;
+typedef enum { GV_EMBEDDING_PROVIDER_OPENAI = 0, GV_EMBEDDING_PROVIDER_HUGGINGFACE = 1, GV_EMBEDDING_PROVIDER_CUSTOM = 2, GV_EMBEDDING_PROVIDER_NONE = 3, GV_EMBEDDING_PROVIDER_GOOGLE = 4 } GV_EmbeddingProvider;
 
 typedef struct {
     GV_EmbeddingProvider provider;
@@ -484,6 +592,8 @@ typedef struct {
     GV_MemoryLink *links;
     size_t link_count;
     int consolidated;
+    time_t valid_from;
+    time_t valid_to;
 } GV_MemoryMetadata;
 
 typedef struct {
@@ -522,12 +632,29 @@ GV_MemoryLayerConfig gv_memory_layer_config_default(void);
 GV_MemoryLayer *gv_memory_layer_create(GV_Database *db, const GV_MemoryLayerConfig *config);
 void gv_memory_layer_destroy(GV_MemoryLayer *layer);
 char *gv_memory_add(GV_MemoryLayer *layer, const char *content, const float *embedding, GV_MemoryMetadata *metadata);
+char *gv_memory_add_opts(GV_MemoryLayer *layer, const char *content, const float *embedding, GV_MemoryMetadata *metadata, int ingest_context);
 char **gv_memory_extract_from_conversation(GV_MemoryLayer *layer, const char *conversation, const char *conversation_id, float **embeddings, size_t *memory_count);
 char **gv_memory_extract_from_text(GV_MemoryLayer *layer, const char *text, const char *source, float **embeddings, size_t *memory_count);
 int gv_memory_extract_candidates_from_conversation_llm(GV_LLM *llm, const char *conversation, const char *conversation_id, int is_agent_memory, const char *custom_prompt, void *candidates, size_t max_candidates, size_t *actual_count);
 const char *gv_llm_get_last_error(GV_LLM *llm);
 const char *gv_llm_error_string(int error_code);
 typedef enum { GV_LLM_SUCCESS = 0, GV_LLM_ERROR_NULL_POINTER = -1, GV_LLM_ERROR_INVALID_CONFIG = -2, GV_LLM_ERROR_INVALID_API_KEY = -3, GV_LLM_ERROR_INVALID_URL = -4, GV_LLM_ERROR_MEMORY_ALLOCATION = -5, GV_LLM_ERROR_CURL_INIT = -6, GV_LLM_ERROR_NETWORK = -7, GV_LLM_ERROR_TIMEOUT = -8, GV_LLM_ERROR_RESPONSE_TOO_LARGE = -9, GV_LLM_ERROR_PARSE_FAILED = -10, GV_LLM_ERROR_INVALID_RESPONSE = -11, GV_LLM_ERROR_CUSTOM_URL_REQUIRED = -12 } GV_LLMError;
+typedef struct {
+    float temporal_weight;
+    float importance_weight;
+    int include_linked;
+    float link_boost;
+    time_t min_timestamp;
+    time_t max_timestamp;
+    int memory_type;
+    const char *source;
+    const size_t *candidate_vector_indices;
+    size_t candidate_count;
+} GV_MemorySearchOptions;
+
+GV_MemorySearchOptions gv_memory_search_options_default(void);
+int gv_memory_search_advanced(GV_MemoryLayer *layer, const float *query_embedding, size_t k, GV_MemoryResult *results, GV_DistanceType distance_type, const GV_MemorySearchOptions *options);
+
 int gv_memory_consolidate(GV_MemoryLayer *layer, double threshold, int strategy);
 int gv_memory_search(GV_MemoryLayer *layer, const float *query_embedding, size_t k, GV_MemoryResult *results, GV_DistanceType distance_type);
 int gv_memory_search_filtered(GV_MemoryLayer *layer, const float *query_embedding, size_t k, GV_MemoryResult *results, GV_DistanceType distance_type, int memory_type, const char *source, time_t min_timestamp, time_t max_timestamp);
@@ -537,6 +664,13 @@ int gv_memory_update(GV_MemoryLayer *layer, const char *memory_id, const float *
 int gv_memory_delete(GV_MemoryLayer *layer, const char *memory_id);
 void gv_memory_result_free(GV_MemoryResult *result);
 void gv_memory_metadata_free(GV_MemoryMetadata *metadata);
+int gv_memory_link_create(GV_MemoryLayer *layer, const char *source_id, const char *target_id, GV_MemoryLinkType link_type, float strength, const char *reason);
+int gv_memory_link_remove(GV_MemoryLayer *layer, const char *source_id, const char *target_id);
+int gv_memory_link_get(GV_MemoryLayer *layer, const char *memory_id, GV_MemoryLink *links, size_t max_links);
+void gv_memory_link_free(GV_MemoryLink *link);
+int gv_memory_record_access(GV_MemoryLayer *layer, const char *memory_id, float relevance);
+int gv_memory_layer_extract_context_entities(GV_MemoryLayer *layer, const char *text, char ***out_names, size_t *out_count);
+void gv_memory_layer_free_context_entity_names(char **names, size_t count);
 
 // Database Accessor Functions
 size_t gv_database_count(const GV_Database *db);
@@ -784,6 +918,8 @@ int gv_shard_rebalance_status(GV_ShardManager *mgr, double *progress);
 int gv_shard_rebalance_cancel(GV_ShardManager *mgr);
 int gv_shard_attach_local(GV_ShardManager *mgr, uint32_t shard_id, GV_Database *db);
 GV_Database *gv_shard_get_local_db(GV_ShardManager *mgr, uint32_t shard_id);
+int gv_shard_migrate_vectors(GV_ShardManager *mgr, uint32_t from_shard, uint32_t to_shard, size_t count);
+int gv_shard_migrate_vector_at(GV_ShardManager *mgr, uint32_t from_shard, uint32_t to_shard, size_t vector_index, size_t *out_new_index);
 
 // Replication
 typedef enum { GV_REPL_LEADER = 0, GV_REPL_FOLLOWER = 1, GV_REPL_CANDIDATE = 2 } GV_ReplicationRole;
@@ -1330,6 +1466,8 @@ GV_ReadPolicy gv_replication_get_read_policy(GV_ReplicationManager *mgr);
 GV_Database *gv_replication_route_read(GV_ReplicationManager *mgr);
 int gv_replication_set_max_read_lag(GV_ReplicationManager *mgr, uint64_t max_lag);
 int gv_replication_register_follower_db(GV_ReplicationManager *mgr, const char *node_id, GV_Database *db);
+int gv_replication_register_follower_memory(GV_ReplicationManager *mgr, const char *node_id, GV_MemoryLayer *layer);
+GV_MemoryLayer *gv_replication_route_read_memory(GV_ReplicationManager *mgr);
 int gv_replication_leader_append_wal(GV_ReplicationManager *mgr, uint64_t entry_delta, uint64_t byte_delta);
 
 // Bloom Filter
@@ -1631,6 +1769,7 @@ typedef enum {
     GV_MSG_STATS = 8,
     GV_MSG_HEALTH = 9,
     GV_MSG_SAVE = 10,
+    GV_MSG_IVFDISK_TRAIN = 13,
     GV_MSG_RESPONSE = 128
 } GV_GrpcMsgType;
 
@@ -1678,6 +1817,26 @@ int gv_grpc_decode_search_request(const uint8_t *buf, size_t len,
                                    float **query, size_t *dimension, size_t *k, int *distance_type);
 int gv_grpc_encode_add_request(const float *data, size_t dimension,
                                 uint8_t *buf, size_t buf_size, size_t *out_len);
+int gv_grpc_encode_ivfdisk_train_request(const float *data, size_t count, size_t dimension,
+                                         uint8_t *buf, size_t buf_size, size_t *out_len);
+int gv_grpc_client_ivfdisk_train(const char *host, uint16_t port,
+                                 const float *data, size_t count, size_t dimension,
+                                 uint32_t timeout_ms);
+
+typedef struct {
+    size_t count;
+    size_t *indices;
+    float *distances;
+} GV_GrpcSearchResponse;
+
+int gv_grpc_client_search(const char *host, uint16_t port,
+                          const float *query, size_t dimension, size_t k,
+                          int distance_type, GV_GrpcSearchResponse *out,
+                          uint32_t timeout_ms);
+void gv_grpc_search_response_free(GV_GrpcSearchResponse *resp);
+
+int gv_db_apply_wal_record(GV_Database *db, const uint8_t *record, size_t len);
+const char *gv_db_wal_path(const GV_Database *db);
 
 /* --- Auto Embed --- */
 
@@ -2408,7 +2567,7 @@ typedef enum { GV_AGENT_QUERY = 0, GV_AGENT_TRANSFORM = 1, GV_AGENT_PERSONALIZE 
 
 typedef struct {
     GV_AgentType agent_type;
-    int llm_provider;
+    const char *llm_provider;
     const char *api_key;
     const char *model;
     float temperature;
@@ -2546,7 +2705,7 @@ GV_TieredManager *gv_tiered_load(const char *path);
 /* Integrated Inference */
 
 typedef struct {
-    int embed_provider;
+    const char *embed_provider;
     const char *api_key;
     const char *model;
     size_t dimension;
@@ -2776,6 +2935,7 @@ typedef struct {
     size_t *indices;
     float *distances;
     char **metadata_jsons;
+    char **column_values;
     size_t row_count;
     size_t column_count;
     char **column_names;
@@ -3071,6 +3231,13 @@ int gv_kg_get_predicates(const GV_KnowledgeGraph *kg, char **out_predicates, siz
 int gv_kg_save(const GV_KnowledgeGraph *kg, const char *path);
 GV_KnowledgeGraph *gv_kg_load(const char *path);
 
+typedef struct {
+    uint64_t entity_id;
+    float activation;
+} GV_KGActivation;
+
+int gv_kg_spreading_activation(const GV_KnowledgeGraph *kg, const uint64_t *seed_entities, size_t seed_count, size_t max_depth, float causal_boost, GV_KGActivation *out, size_t max_out);
+
 void gv_free(void *ptr);
 """
 )
@@ -3107,12 +3274,47 @@ def _register_windows_dll_dirs(lib_path: Path, here: Path) -> None:
             continue
 
 
+def _discover_repo_roots(here: Path) -> list[Path]:
+    """Candidate GigaVector repo roots when resolving libGigaVector.so."""
+    roots: list[Path] = []
+    seen: set[Path] = set()
+
+    def add(root: Path) -> None:
+        p = root.expanduser().resolve()
+        if p not in seen:
+            seen.add(p)
+            roots.append(p)
+
+    env_root = os.environ.get("GIGAVECTOR_ROOT")
+    if env_root:
+        add(Path(env_root))
+
+    env_lib = os.environ.get("GIGAVECTOR_LIB")
+    if env_lib:
+        lib_path = Path(env_lib).expanduser()
+        if lib_path.is_file() and lib_path.parent.name == "lib" and lib_path.parent.parent.name == "build":
+            add(lib_path.parent.parent.parent)
+
+    add(here.parent.parent.parent)
+
+    for parent in here.parents:
+        if (parent / "build" / "lib").is_dir():
+            add(parent)
+            break
+        if parent.name == "GigaVector" and (parent / "build").exists():
+            add(parent)
+            break
+
+    return roots
+
+
 def _load_lib() -> "FFIType.CData":
     """Load the GigaVector shared library.
 
     Searches for the platform shared library in the following locations (in order):
-    1. Repository build outputs (development builds)
+    1. ``GIGAVECTOR_LIB`` env override
     2. Packaged alongside this module
+    3. Repository build outputs (development builds)
 
     Returns:
         CFFI library handle for calling C functions.
@@ -3121,7 +3323,13 @@ def _load_lib() -> "FFIType.CData":
         FileNotFoundError: If the library is not found in any location.
     """
     here = Path(__file__).resolve().parent
-    repo_root = here.parent.parent.parent  # .../GigaVector
+
+    env_lib = os.environ.get("GIGAVECTOR_LIB")
+    if env_lib:
+        override = Path(env_lib).expanduser()
+        if override.is_file():
+            _register_windows_dll_dirs(override, here)
+            return ffi.dlopen(os.fspath(override))
 
     if os.name == "nt":
         lib_names = ["GigaVector.dll"]
@@ -3130,20 +3338,26 @@ def _load_lib() -> "FFIType.CData":
     else:
         lib_names = ["libGigaVector.so"]
 
-    candidate_paths = []
+    candidate_paths: list[Path] = []
     for name in lib_names:
-        candidate_paths.extend([
-            repo_root / "build" / "lib" / name,
-            repo_root / "build" / name,
-            repo_root / "build-cmake" / "Release" / name,
-            repo_root / "build-cmake" / name,
-            here / name,
-        ])
+        candidate_paths.append(here / name)
+        for repo_root in _discover_repo_roots(here):
+            candidate_paths.extend([
+                repo_root / "build" / "lib" / name,
+                repo_root / "build" / name,
+                repo_root / "build-cmake" / "Release" / name,
+                repo_root / "build-cmake" / name,
+            ])
 
+    seen: set[Path] = set()
     for lib_path in candidate_paths:
-        if lib_path.exists():
-            _register_windows_dll_dirs(lib_path, here)
-            return ffi.dlopen(os.fspath(lib_path))
+        resolved = lib_path.expanduser().resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        if resolved.is_file():
+            _register_windows_dll_dirs(resolved, here)
+            return ffi.dlopen(os.fspath(resolved))
     raise FileNotFoundError(f"GigaVector shared library not found in {candidate_paths}")
 
 

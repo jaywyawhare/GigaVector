@@ -438,6 +438,23 @@ class _Handler(BaseHTTPRequestHandler):
 
             def _value_for(col: str, i: int) -> Any:
                 key = col.lower()
+                if result.column_values and i < len(result.column_values):
+                    if col in columns:
+                        col_idx = columns.index(col)
+                        if col_idx < len(result.column_values[i]):
+                            val = result.column_values[i][col_idx]
+                            if key not in {"metadata", "metadata_json"}:
+                                if key in {"index", "id", "count", "deleted_count", "updated_count"}:
+                                    try:
+                                        return int(val)
+                                    except (TypeError, ValueError):
+                                        return val
+                                if key in {"distance", "score"}:
+                                    try:
+                                        return float(val)
+                                    except (TypeError, ValueError):
+                                        return val
+                            return val
                 if key in {"index", "id", "count", "deleted_count", "updated_count"}:
                     return result.indices[i] if i < len(result.indices) else None
                 if key in {"distance", "score"}:
@@ -581,12 +598,26 @@ class _Handler(BaseHTTPRequestHandler):
             try:
                 provider = AutoEmbedProvider[provider_name]
             except KeyError:
-                provider = AutoEmbedProvider.OPENAI
+                return self._send_error_json(
+                    400, "invalid_provider", f"Unknown provider: {body.get('provider')}"
+                )
+            if provider == AutoEmbedProvider.GOOGLE:
+                default_model = "text-embedding-004"
+                default_dim = 768
+            else:
+                default_model = "text-embedding-3-small"
+                default_dim = self._db.dimension
+            api_key = body.get("api_key", "")
+            if not api_key:
+                if provider == AutoEmbedProvider.GOOGLE:
+                    api_key = os.environ.get("GOOGLE_API_KEY", "") or os.environ.get("GEMINI_API_KEY", "")
+                elif provider == AutoEmbedProvider.OPENAI:
+                    api_key = os.environ.get("OPENAI_API_KEY", "")
             config = AutoEmbedConfig(
                 provider=provider,
-                api_key=body.get("api_key", ""),
-                model_name=body.get("model_name", "text-embedding-3-small"),
-                dimension=self._db.dimension,
+                api_key=api_key,
+                model_name=body.get("model_name", default_model),
+                dimension=int(body.get("dimension", default_dim)),
             )
             embedder = AutoEmbedder(config)
             try:

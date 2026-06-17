@@ -6,6 +6,7 @@ from types import TracebackType
 from typing import Any, Callable, Iterable, List, Optional, Sequence
 
 from ._ffi import ffi, lib
+from .retry import GRAPH_RETRY, NETWORK_RETRY, RetryPolicy, VECTOR_RETRY, call_with_retry
 
 CData = Any  # CFFI pointer type alias
 
@@ -34,6 +35,8 @@ class IndexType(IntEnum):
     PQ = 6
     LSH = 7
     IVFSQ8 = 8
+    IVFSQ8 = 8
+    IVFTURBOQUANT = 9
     IVFTURBOQUANT = 9
 
 
@@ -112,6 +115,20 @@ class IVFFlatConfig:
 
 
 @dataclass
+class IVFDiskConfig:
+    nlist: int = 64
+    nprobe: int = 4
+    train_iters: int = 15
+    cache_size_mb: int = 64
+    sector_size: int = 4096
+    max_list_bytes: int = 64 * 1024 * 1024
+    head_ratio: float = 0.2
+    border_ratio: float = 1.15
+    use_hnsw_head: bool = False
+    use_sq8: bool = False
+
+
+@dataclass
 class IVFSQ8Config:
     nlist: int = 64
     nprobe: int = 4
@@ -119,6 +136,35 @@ class IVFSQ8Config:
     use_cosine: bool = False
     per_dimension: bool = False
     default_rerank: int = 200
+
+
+class TurboQuantRotation(IntEnum):
+    AUTO = 0
+    FHWT = 1
+    QR = 2
+
+
+@dataclass
+class TurboQuantConfig:
+    bits: int = 8
+    projections: int = 0
+    seed: int = 42
+    use_qjl: bool = True
+    rotation: TurboQuantRotation = TurboQuantRotation.AUTO
+
+
+@dataclass
+class IVFTurboQuantConfig:
+    nlist: int = 64
+    nprobe: int = 4
+    train_iters: int = 15
+    use_cosine: bool = False
+    default_rerank: int = 200
+    turbo: TurboQuantConfig | None = None
+
+    def __post_init__(self) -> None:
+        if self.turbo is None:
+            self.turbo = TurboQuantConfig()
 
 
 class TurboQuantRotation(IntEnum):
@@ -179,21 +225,6 @@ class ScrollEntry:
     metadata: dict[str, str]
 
 
-def _choose_index_type(dimension: int, expected_count: int | None) -> IndexType:
-    """
-    Heuristic index selector based on dimension and estimated collection size.
-
-    - For small collections (<= 20k) and low/moderate dimensions (<= 64), use KDTREE.
-    - For very large collections (>= 500k) and high dimensions (>= 128), prefer IVFPQ.
-    - Otherwise, default to HNSW.
-    """
-    if expected_count is None or expected_count < 0:
-        # Fall back to HNSW when we don't know collection size.
-        return IndexType.HNSW
-    val = lib.gv_index_suggest(dimension, int(expected_count))
-    return IndexType(int(val))
-
-
 def _metadata_to_dict(meta_ptr: CData) -> dict[str, str]:
     """Convert a C GV_Metadata linked list to a Python dict."""
     if meta_ptr == ffi.NULL:
@@ -252,18 +283,36 @@ class Database:
     _db: CData
     dimension: int
     _closed: bool
+    _owned: bool
+    _retry_policy: RetryPolicy
 
-    def __init__(self, handle: CData, dimension: int) -> None:
+    def __init__(
+        self,
+        handle: CData,
+        dimension: int,
+        retry_policy: Optional[RetryPolicy] = None,
+        *,
+        owned: bool = True,
+    ) -> None:
         self._db = handle
         self.dimension = int(dimension)
         self._closed = False
+        self._owned = owned
+        self._retry_policy = retry_policy if retry_policy is not None else VECTOR_RETRY
+
+    @classmethod
+    def borrow(cls, handle: CData, dimension: int) -> Database:
+        """Wrap a non-owning C database handle (e.g. from replication read routing)."""
+        return cls(handle, dimension, owned=False)
 
     @classmethod
     def open(cls, path: str | None, dimension: int, index: IndexType = IndexType.KDTREE,
              hnsw_config: HNSWConfig | None = None, ivfpq_config: IVFPQConfig | None = None,
-             ivfflat_config: IVFFlatConfig | None = None, ivfsq8_config: IVFSQ8Config | None = None,
+             ivfflat_config: IVFFlatConfig | None = None, ivfdisk_config: IVFDiskConfig | None = None,
+             ivfsq8_config: IVFSQ8Config | None = None,
              ivfturboquant_config: IVFTurboQuantConfig | None = None,
-             pq_config: PQConfig | None = None, lsh_config: LSHConfig | None = None) -> Database:
+             pq_config: PQConfig | None = None, lsh_config: LSHConfig | None = None,
+             retry_policy: Optional[RetryPolicy] = None) -> Database:
         """
         Open a database instance.
 
@@ -274,6 +323,7 @@ class Database:
             hnsw_config: Optional HNSW configuration. Only used when index is HNSW.
             ivfpq_config: Optional IVFPQ configuration. Only used when index is IVFPQ.
             ivfflat_config: Optional IVF-Flat configuration. Only used when index is IVFFLAT.
+            ivfsq8_config: Optional IVF-SQ8 configuration. Only used when index is IVFSQ8.
             ivfsq8_config: Optional IVF-SQ8 configuration. Only used when index is IVFSQ8.
             ivfturboquant_config: Optional IVF-TurboQuant configuration. Only used when index is IVFTURBOQUANT.
             pq_config: Optional PQ configuration. Only used when index is PQ.
@@ -324,6 +374,26 @@ class Database:
                 "use_cosine": 1 if ivfflat_config.use_cosine else 0,
             })
             db = lib.gv_db_open_with_ivfflat_config(c_path, dimension, int(index), config)
+        elif ivfdisk_config is not None and index == IndexType.IVFDISK:
+            if path is None:
+                raise ValueError("IVFDisk requires a filesystem path")
+            data_dir = ffi.new("char[]", (path + ".ivfdisk").encode("utf-8"))
+            config = ffi.new("GV_IVFDiskConfig *", {
+                "nlist": ivfdisk_config.nlist,
+                "nprobe": ivfdisk_config.nprobe,
+                "train_iters": ivfdisk_config.train_iters,
+                "cache_size_mb": ivfdisk_config.cache_size_mb,
+                "sector_size": ivfdisk_config.sector_size,
+                "max_list_bytes": ivfdisk_config.max_list_bytes,
+                "head_ratio": ivfdisk_config.head_ratio,
+                "border_ratio": ivfdisk_config.border_ratio,
+                "use_hnsw_head": 1 if ivfdisk_config.use_hnsw_head else 0,
+                "use_sq8": 1 if ivfdisk_config.use_sq8 else 0,
+                "data_dir": data_dir,
+            })
+            db = lib.gv_db_open_with_ivfdisk_config(c_path, dimension, int(index), config)
+        elif index == IndexType.IVFDISK and path is not None:
+            db = lib.gv_db_open(c_path, dimension, int(index))
         elif ivfsq8_config is not None and index == IndexType.IVFSQ8:
             config = ffi.new("GV_IVFSQ8Config *", {
                 "nlist": ivfsq8_config.nlist,
@@ -423,7 +493,8 @@ class Database:
         """Close the database and release resources."""
         if self._closed:
             return
-        lib.gv_db_close(self._db)
+        if self._owned:
+            lib.gv_db_close(self._db)
         self._closed = True
 
     def get_stats(self) -> DBStats:
@@ -510,6 +581,10 @@ class Database:
     def train_ivfflat(self, data: Sequence[Sequence[float]]) -> None:
         """Train IVF-Flat index with provided vectors (only for IVFFLAT index)."""
         self._train_index(data, lib.gv_db_ivfflat_train)
+
+    def train_ivfdisk(self, data: Sequence[Sequence[float]]) -> None:
+        """Train IVFDisk centroids (only for IVFDISK index)."""
+        self._train_index(data, lib.gv_db_ivfdisk_train)
 
     def train_ivfsq8(self, data: Sequence[Sequence[float]]) -> None:
         """Train IVF-SQ8 index with provided vectors (only for IVFSQ8 index)."""
@@ -767,8 +842,15 @@ class Database:
 
         Raises:
             ValueError: If vector dimension doesn't match database dimension.
-            RuntimeError: If insertion fails.
+            RuntimeError: If insertion fails after retries.
         """
+        call_with_retry(
+            lambda: self._add_vector_once(vector, metadata),
+            self._retry_policy,
+            operation="add_vector",
+        )
+
+    def _add_vector_once(self, vector: Sequence[float], metadata: dict[str, str] | None) -> None:
         self._check_dimension(vector)
         buf = ffi.new("float[]", list(vector))
         
@@ -804,8 +886,15 @@ class Database:
 
         Raises:
             ValueError: If any vector has incorrect dimension.
-            RuntimeError: If insertion fails.
+            RuntimeError: If insertion fails after retries.
         """
+        call_with_retry(
+            lambda: self._add_vectors_once(vectors),
+            self._retry_policy,
+            operation="add_vectors",
+        )
+
+    def _add_vectors_once(self, vectors: Iterable[Sequence[float]]) -> None:
         data = [item for vec in vectors for item in vec]
         count = len(data) // self.dimension if self.dimension else 0
         if count * self.dimension != len(data):
@@ -1260,6 +1349,7 @@ class LLMConfig:
     max_tokens: int = 2000
     timeout_seconds: int = 30
     custom_prompt: Optional[str] = None
+    max_retries: int = 2
 
     def _to_c_config(self) -> CData:
         c_config = ffi.new("GV_LLMConfig *")
@@ -1305,6 +1395,12 @@ class LLMResponse:
     content: str
     finish_reason: int
     token_count: int
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+    cache_write_5m_tokens: int = 0
+    cache_write_1h_tokens: int = 0
 
 
 class LLM:
@@ -1319,6 +1415,12 @@ class LLM:
         if self._llm == ffi.NULL:
             raise RuntimeError("Failed to create LLM instance. Make sure libcurl is installed and API key is valid.")
         self._closed = False
+        self._model = config.model
+        self._retry_policy = RetryPolicy(
+            max_retries=config.max_retries,
+            base_delay=0.5,
+            max_delay=8.0,
+        )
 
     def __enter__(self) -> LLM:
         return self
@@ -1342,6 +1444,17 @@ class LLM:
         self,
         messages: Sequence[LLMMessage],
         response_format: Optional[str] = None
+    ) -> LLMResponse:
+        return call_with_retry(
+            lambda: self._generate_response_once(messages, response_format),
+            self._retry_policy,
+            operation="llm_generate_response",
+        )
+
+    def _generate_response_once(
+        self,
+        messages: Sequence[LLMMessage],
+        response_format: Optional[str] = None,
     ) -> LLMResponse:
         if self._closed:
             raise ValueError("LLM instance is closed")
@@ -1375,7 +1488,13 @@ class LLM:
         response = LLMResponse(
             content=content,
             finish_reason=int(c_response.finish_reason),
-            token_count=int(c_response.token_count)
+            token_count=int(c_response.token_count),
+            input_tokens=int(c_response.input_tokens),
+            output_tokens=int(c_response.output_tokens),
+            cache_read_tokens=int(c_response.cache_read_tokens),
+            cache_write_tokens=int(c_response.cache_write_tokens),
+            cache_write_5m_tokens=int(c_response.cache_write_5m_tokens),
+            cache_write_1h_tokens=int(c_response.cache_write_1h_tokens),
         )
 
         lib.gv_llm_response_free(c_response)
@@ -1404,6 +1523,7 @@ class EmbeddingProvider(IntEnum):
     HUGGINGFACE = 1
     CUSTOM = 2
     NONE = 3
+    GOOGLE = 4
 
 
 @dataclass
@@ -1462,12 +1582,13 @@ class EmbeddingService:
     _service: CData
     _closed: bool
 
-    def __init__(self, config: EmbeddingConfig) -> None:
+    def __init__(self, config: EmbeddingConfig, retry_policy: Optional[RetryPolicy] = None) -> None:
         c_config, _refs = config._to_c_config()
         self._service = lib.gv_embedding_service_create(c_config)
         if self._service == ffi.NULL:
             raise RuntimeError("Failed to create embedding service")
         self._closed = False
+        self._retry_policy = retry_policy if retry_policy is not None else NETWORK_RETRY
 
     def __enter__(self) -> EmbeddingService:
         return self
@@ -1496,6 +1617,16 @@ class EmbeddingService:
         Returns:
             Embedding vector or None on error
         """
+        try:
+            return call_with_retry(
+                lambda: self._generate_once(text),
+                self._retry_policy,
+                operation="embedding_generate",
+            )
+        except RuntimeError:
+            return None
+
+    def _generate_once(self, text: str) -> Sequence[float]:
         if self._closed:
             raise ValueError("Embedding service is closed")
         
@@ -1507,10 +1638,10 @@ class EmbeddingService:
         )
         
         if result != 0:
-            return None
+            raise RuntimeError("gv_embedding_generate failed")
         
         if embedding_ptr[0] == ffi.NULL:
-            return None
+            raise RuntimeError("gv_embedding_generate returned NULL")
         
         embedding = [embedding_ptr[0][i] for i in range(embedding_dim_ptr[0])]
         lib.gv_free(embedding_ptr[0])
@@ -1680,6 +1811,26 @@ class ConsolidationStrategy(IntEnum):
     ARCHIVE = 3
 
 
+class MemoryLinkType(IntEnum):
+    SIMILAR = 0
+    SUPPORTS = 1
+    CONTRADICTS = 2
+    EXTENDS = 3
+    CAUSAL = 4
+    EXAMPLE = 5
+    PREREQUISITE = 6
+    TEMPORAL = 7
+
+
+@dataclass(frozen=True)
+class MemoryLink:
+    target_memory_id: str
+    link_type: MemoryLinkType
+    strength: float
+    created_at: int
+    reason: Optional[str] = None
+
+
 @dataclass(frozen=True)
 class MemoryMetadata:
     memory_id: Optional[str] = None
@@ -1690,6 +1841,10 @@ class MemoryMetadata:
     extraction_metadata: Optional[str] = None
     related_memory_ids: Sequence[str] = ()
     consolidated: bool = False
+    valid_from: Optional[int] = None
+    valid_to: Optional[int] = None
+    access_count: int = 0
+    last_accessed: Optional[int] = None
 
 
 @dataclass(frozen=True)
@@ -1713,6 +1868,11 @@ class MemoryLayerConfig:
     llm_config: Optional[LLMConfig] = None
     use_llm_extraction: bool = True
     use_llm_consolidation: bool = False
+    enable_context_graph: bool = False
+    context_graph_config: Optional["ContextGraphConfig"] = None
+    embedding_callback: Optional[Callable[[str], Sequence[float]]] = None
+    embedding_dimension: int = 0
+    retry: Optional[RetryPolicy] = None
 
 
 def _create_c_metadata(meta: Optional[MemoryMetadata]) -> CData:
@@ -1732,14 +1892,16 @@ def _create_c_metadata(meta: Optional[MemoryMetadata]) -> CData:
     c_meta.memory_type = int(meta.memory_type)
     c_meta.source = ffi.new("char[]", meta.source.encode()) if meta.source else ffi.NULL
     c_meta.timestamp = meta.timestamp if meta.timestamp else 0
-    c_meta.last_accessed = 0
-    c_meta.access_count = 0
+    c_meta.last_accessed = meta.last_accessed if meta.last_accessed else 0
+    c_meta.access_count = meta.access_count
     c_meta.importance_score = meta.importance_score
     c_meta.extraction_metadata = ffi.new("char[]", meta.extraction_metadata.encode()) if meta.extraction_metadata else ffi.NULL
     c_meta.related_count = len(meta.related_memory_ids) if meta.related_memory_ids else 0
     c_meta.links = ffi.NULL
     c_meta.link_count = 0
     c_meta.consolidated = 1 if meta.consolidated else 0
+    c_meta.valid_from = meta.valid_from if meta.valid_from else 0
+    c_meta.valid_to = meta.valid_to if meta.valid_to else 0
 
     if meta.related_memory_ids:
         c_meta.related_memory_ids = ffi.new("char*[]", [ffi.new("char[]", id.encode()) for id in meta.related_memory_ids])
@@ -1780,7 +1942,11 @@ def _copy_memory_metadata(c_meta_ptr: CData) -> Optional[MemoryMetadata]:
             importance_score=float(c_meta_ptr.importance_score),
             extraction_metadata=extraction_metadata,
             related_memory_ids=tuple(related_ids),
-            consolidated=bool(c_meta_ptr.consolidated)
+            consolidated=bool(c_meta_ptr.consolidated),
+            valid_from=int(c_meta_ptr.valid_from) if c_meta_ptr.valid_from > 0 else None,
+            valid_to=int(c_meta_ptr.valid_to) if c_meta_ptr.valid_to > 0 else None,
+            access_count=int(c_meta_ptr.access_count),
+            last_accessed=int(c_meta_ptr.last_accessed) if c_meta_ptr.last_accessed > 0 else None,
         )
     except (AttributeError, TypeError, ValueError, UnicodeDecodeError):
         return None
@@ -1830,6 +1996,9 @@ class MemoryLayer:
     _layer: CData
     _db: Database
     _closed: bool
+    _owned: bool
+    _retry_policy: RetryPolicy
+    _c_refs: list
 
     def __init__(self, db: Database, config: Optional[MemoryLayerConfig] = None) -> None:
         if db._closed:
@@ -1837,6 +2006,8 @@ class MemoryLayer:
 
         if config is None:
             config = MemoryLayerConfig()
+        self._retry_policy = config.retry if config.retry is not None else db._retry_policy
+        self._c_refs = []
 
         c_config = ffi.new("GV_MemoryLayerConfig *")
         c_config.extraction_threshold = config.extraction_threshold
@@ -1850,8 +2021,20 @@ class MemoryLayer:
         c_config.context_graph_config = ffi.NULL
         c_config.enable_context_graph = 0
 
+        if config.enable_context_graph:
+            cg_cfg = config.context_graph_config or ContextGraphConfig()
+            if config.embedding_callback is not None and cg_cfg.embedding_callback is None:
+                cg_cfg.embedding_callback = config.embedding_callback
+            if config.embedding_dimension > 0 and cg_cfg.embedding_dimension <= 0:
+                cg_cfg.embedding_dimension = config.embedding_dimension
+            c_cg = cg_cfg._to_c_config()
+            self._c_refs.append(c_cg)
+            c_config.context_graph_config = c_cg
+            c_config.enable_context_graph = 1
+
         if config.llm_config:
             c_llm_config, _llm_refs = config.llm_config._to_c_config()
+            self._c_refs.extend(_llm_refs)
             c_config.llm_config = c_llm_config
         else:
             c_config.llm_config = ffi.NULL
@@ -1862,6 +2045,18 @@ class MemoryLayer:
         
         self._db = db
         self._closed = False
+        self._owned = True
+
+    @classmethod
+    def borrow(cls, handle: CData, db: Database) -> "MemoryLayer":
+        """Wrap a non-owning memory layer handle (e.g. from replication routing)."""
+        obj = cls.__new__(cls)
+        obj._layer = handle
+        obj._db = db
+        obj._closed = False
+        obj._owned = False
+        obj._retry_policy = db._retry_policy
+        return obj
 
     def __enter__(self) -> MemoryLayer:
         return self
@@ -1877,11 +2072,33 @@ class MemoryLayer:
     def close(self) -> None:
         """Close the memory layer and release resources."""
         if not self._closed and self._layer != ffi.NULL:
-            lib.gv_memory_layer_destroy(self._layer)
+            if self._owned:
+                lib.gv_memory_layer_destroy(self._layer)
             self._layer = ffi.NULL
             self._closed = True
     
-    def add(self, content: str, embedding: Sequence[float], metadata: Optional[MemoryMetadata] = None) -> str:
+    def add(
+        self,
+        content: str,
+        embedding: Sequence[float],
+        metadata: Optional[MemoryMetadata] = None,
+        *,
+        ingest_context: bool = True,
+    ) -> str:
+        return call_with_retry(
+            lambda: self._add_once(content, embedding, metadata, ingest_context=ingest_context),
+            self._retry_policy,
+            operation="memory_add",
+        )
+
+    def _add_once(
+        self,
+        content: str,
+        embedding: Sequence[float],
+        metadata: Optional[MemoryMetadata],
+        *,
+        ingest_context: bool = True,
+    ) -> str:
         if self._closed:
             raise ValueError("Memory layer is closed")
         
@@ -1891,7 +2108,13 @@ class MemoryLayer:
         c_embedding = ffi.new("float[]", embedding)
         c_meta = _create_c_metadata(metadata) if metadata else ffi.NULL
         
-        memory_id_ptr = lib.gv_memory_add(self._layer, content.encode(), c_embedding, c_meta)
+        memory_id_ptr = lib.gv_memory_add_opts(
+            self._layer,
+            content.encode(),
+            c_embedding,
+            c_meta,
+            1 if ingest_context else 0,
+        )
         if memory_id_ptr == ffi.NULL:
             raise RuntimeError("Failed to add memory")
         
@@ -1991,6 +2214,59 @@ class MemoryLayer:
             lib.gv_memory_result_free(c_results + i)
         
         return results
+
+    def search_advanced(
+        self,
+        query_embedding: Sequence[float],
+        k: int = 10,
+        distance: DistanceType = DistanceType.COSINE,
+        *,
+        temporal_weight: float = 0.0,
+        importance_weight: float = 0.4,
+        include_linked: bool = True,
+        link_boost: float = 0.1,
+        min_timestamp: int = 0,
+        max_timestamp: int = 0,
+        memory_type: int = -1,
+        source: Optional[str] = None,
+        candidate_vector_indices: Optional[Sequence[int]] = None,
+    ) -> list[MemoryResult]:
+        if self._closed:
+            raise ValueError("Memory layer is closed")
+        if len(query_embedding) != self._db.dimension:
+            raise ValueError(
+                f"Query embedding dimension {len(query_embedding)} does not match "
+                f"database dimension {self._db.dimension}"
+            )
+        opts = ffi.new("GV_MemorySearchOptions *")
+        opts[0] = lib.gv_memory_search_options_default()
+        opts[0].temporal_weight = temporal_weight
+        opts[0].importance_weight = importance_weight
+        opts[0].include_linked = 1 if include_linked else 0
+        opts[0].link_boost = link_boost
+        opts[0].min_timestamp = min_timestamp
+        opts[0].max_timestamp = max_timestamp
+        opts[0].memory_type = memory_type
+        opts[0].source = source.encode() if source else ffi.NULL
+        c_idx = None
+        if candidate_vector_indices:
+            c_idx = ffi.new("size_t[]", list(candidate_vector_indices))
+            opts[0].candidate_vector_indices = c_idx
+            opts[0].candidate_count = len(candidate_vector_indices)
+        c_embedding = ffi.new("float[]", query_embedding)
+        c_results = ffi.new("GV_MemoryResult[]", k)
+        count = lib.gv_memory_search_advanced(
+            self._layer, c_embedding, k, c_results, int(distance), opts,
+        )
+        if count < 0:
+            raise RuntimeError("Failed to search memories (advanced)")
+        results: list[MemoryResult] = []
+        for i in range(count):
+            result = _copy_memory_result(c_results + i)
+            if result:
+                results.append(result)
+            lib.gv_memory_result_free(c_results + i)
+        return results
     
     def get(self, memory_id: str) -> Optional[MemoryResult]:
         if self._closed:
@@ -2012,6 +2288,126 @@ class MemoryLayer:
         
         result = lib.gv_memory_delete(self._layer, memory_id.encode())
         return result == 0
+
+    def update(
+        self,
+        memory_id: str,
+        *,
+        embedding: Optional[Sequence[float]] = None,
+        metadata: Optional[MemoryMetadata] = None,
+    ) -> bool:
+        if self._closed:
+            raise ValueError("Memory layer is closed")
+        c_embedding = ffi.NULL
+        if embedding is not None:
+            if len(embedding) != self._db.dimension:
+                raise ValueError(
+                    f"Embedding dimension {len(embedding)} does not match "
+                    f"database dimension {self._db.dimension}"
+                )
+            c_embedding = ffi.new("float[]", list(embedding))
+        c_meta = _create_c_metadata(metadata) if metadata else ffi.NULL
+        result = lib.gv_memory_update(
+            self._layer, memory_id.encode(), c_embedding, c_meta,
+        )
+        return result == 0
+
+    def link_create(
+        self,
+        source_id: str,
+        target_id: str,
+        link_type: MemoryLinkType,
+        *,
+        strength: float = 1.0,
+        reason: Optional[str] = None,
+    ) -> None:
+        if self._closed:
+            raise ValueError("Memory layer is closed")
+        reason_bytes = reason.encode() if reason else ffi.NULL
+        rc = lib.gv_memory_link_create(
+            self._layer,
+            source_id.encode(),
+            target_id.encode(),
+            int(link_type),
+            strength,
+            reason_bytes,
+        )
+        if rc != 0:
+            raise RuntimeError("Failed to create memory link")
+
+    def link_remove(self, source_id: str, target_id: str) -> None:
+        if self._closed:
+            raise ValueError("Memory layer is closed")
+        rc = lib.gv_memory_link_remove(
+            self._layer, source_id.encode(), target_id.encode(),
+        )
+        if rc != 0:
+            raise RuntimeError("Failed to remove memory link")
+
+    def links(self, memory_id: str, *, max_links: int = 64) -> list[MemoryLink]:
+        if self._closed:
+            raise ValueError("Memory layer is closed")
+        c_links = ffi.new("GV_MemoryLink[]", max_links)
+        n = lib.gv_memory_link_get(self._layer, memory_id.encode(), c_links, max_links)
+        if n < 0:
+            raise RuntimeError("Failed to get memory links")
+        out: list[MemoryLink] = []
+        for i in range(n):
+            link = c_links[i]
+            target = (
+                ffi.string(link.target_memory_id).decode()
+                if link.target_memory_id != ffi.NULL
+                else ""
+            )
+            reason = (
+                ffi.string(link.reason).decode()
+                if link.reason != ffi.NULL
+                else None
+            )
+            out.append(
+                MemoryLink(
+                    target_memory_id=target,
+                    link_type=MemoryLinkType(int(link.link_type)),
+                    strength=float(link.strength),
+                    created_at=int(link.created_at),
+                    reason=reason,
+                )
+            )
+            lib.gv_memory_link_free(c_links + i)
+        return out
+
+    def record_access(self, memory_id: str, relevance: float = 1.0) -> None:
+        if self._closed:
+            raise ValueError("Memory layer is closed")
+        rc = lib.gv_memory_record_access(
+            self._layer, memory_id.encode(), relevance,
+        )
+        if rc != 0:
+            raise RuntimeError("Failed to record memory access")
+
+    def extract_context_entities(self, text: str) -> list[str]:
+        """Extract entity names from text into the layer context graph."""
+        if self._closed:
+            raise ValueError("Memory layer is closed")
+        names_ptr = ffi.new("char ***")
+        count_ptr = ffi.new("size_t *")
+        rc = lib.gv_memory_layer_extract_context_entities(
+            self._layer, text.encode(), names_ptr, count_ptr,
+        )
+        if rc != 0:
+            raise RuntimeError("Failed to extract context entities")
+        count = int(count_ptr[0])
+        if count == 0 or names_ptr[0] == ffi.NULL:
+            return []
+        out: list[str] = []
+        try:
+            for i in range(count):
+                name_ptr = names_ptr[0][i]
+                if name_ptr != ffi.NULL:
+                    out.append(ffi.string(name_ptr).decode("utf-8"))
+        finally:
+            lib.gv_memory_layer_free_context_entity_names(names_ptr[0], count)
+        return out
 
 
 class EntityType(IntEnum):
@@ -3024,6 +3420,7 @@ class ShardManager:
         if self._mgr == ffi.NULL:
             raise RuntimeError("Failed to create shard manager")
         self._closed = False
+        self._owned = True
 
     def __enter__(self) -> "ShardManager":
         return self
@@ -3033,7 +3430,8 @@ class ShardManager:
 
     def close(self) -> None:
         if not self._closed and self._mgr != ffi.NULL:
-            lib.gv_shard_manager_destroy(self._mgr)
+            if getattr(self, "_owned", True):
+                lib.gv_shard_manager_destroy(self._mgr)
             self._mgr = ffi.NULL
             self._closed = True
 
@@ -3047,6 +3445,16 @@ class ShardManager:
 
     def get_shard_for_vector(self, vector_id: int) -> int:
         return int(lib.gv_shard_for_vector(self._mgr, vector_id))
+
+    def get_shard_for_key(self, key: str | bytes) -> int:
+        if isinstance(key, str):
+            key = key.encode()
+        return int(lib.gv_shard_for_key(self._mgr, key, len(key)))
+
+    def get_local_db_handle(self, shard_id: int) -> CData | None:
+        """Return the raw C database handle attached to a shard (non-owning)."""
+        db = lib.gv_shard_get_local_db(self._mgr, shard_id)
+        return db if db != ffi.NULL else None
 
     def get_info(self, shard_id: int) -> ShardInfo:
         info = ffi.new("GV_ShardInfo *")
@@ -3087,6 +3495,7 @@ class ShardManager:
             raise RuntimeError("Failed to set shard state")
 
     def rebalance_start(self) -> None:
+        """Start C-level shard rebalancing between attached local databases."""
         if lib.gv_shard_rebalance_start(self._mgr) != 0:
             raise RuntimeError("Failed to start rebalancing")
 
@@ -3102,6 +3511,36 @@ class ShardManager:
     def attach_local(self, shard_id: int, db: Database) -> None:
         if lib.gv_shard_attach_local(self._mgr, shard_id, db._db) != 0:
             raise RuntimeError("Failed to attach local database")
+
+    def migrate_vectors(self, from_shard: int, to_shard: int, count: int = 1) -> int:
+        """Migrate vectors between attached local shard databases."""
+        rc = lib.gv_shard_migrate_vectors(self._mgr, from_shard, to_shard, count)
+        if rc < 0:
+            raise RuntimeError(
+                f"gv_shard_migrate_vectors failed (from={from_shard}, to={to_shard})"
+            )
+        return int(rc)
+
+    def migrate_vector_at(
+        self, from_shard: int, to_shard: int, vector_index: int,
+    ) -> int:
+        """Migrate one vector by index; returns new index on destination."""
+        out = ffi.new("size_t *")
+        rc = lib.gv_shard_migrate_vector_at(
+            self._mgr, from_shard, to_shard, vector_index, out,
+        )
+        if rc != 0:
+            raise RuntimeError(
+                f"gv_shard_migrate_vector_at failed (from={from_shard}, "
+                f"to={to_shard}, index={vector_index})"
+            )
+        return int(out[0])
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except Exception:
+            pass
 
 
 class ReplicationRole(IntEnum):
@@ -3178,6 +3617,7 @@ class ReplicationManager:
         if self._mgr == ffi.NULL:
             raise RuntimeError("Failed to create replication manager")
         self._closed = False
+        self._leader_db = db
 
     def __enter__(self) -> "ReplicationManager":
         return self
@@ -3247,6 +3687,15 @@ class ReplicationManager:
         ) != 0:
             raise RuntimeError("leader_append_wal failed (not leader or invalid manager)")
 
+    def leader_append_wal(self, entry_delta: int, byte_delta: int = 0) -> None:
+        """Advance leader WAL position after durable writes (embedded coordinator)."""
+        if entry_delta < 0 or byte_delta < 0:
+            raise ValueError("entry_delta and byte_delta must be non-negative")
+        if lib.gv_replication_leader_append_wal(
+            self._mgr, int(entry_delta), int(byte_delta)
+        ) != 0:
+            raise RuntimeError("leader_append_wal failed (not leader or invalid manager)")
+
     def sync_commit(self, timeout_ms: int = 5000) -> None:
         if lib.gv_replication_sync_commit(self._mgr, timeout_ms) != 0:
             raise RuntimeError("Sync commit failed")
@@ -3276,6 +3725,56 @@ class ReplicationManager:
 
     def is_healthy(self) -> bool:
         return lib.gv_replication_is_healthy(self._mgr) == 1
+
+    def set_read_policy(self, policy: ReadPolicy) -> None:
+        if lib.gv_replication_set_read_policy(self._mgr, int(policy)) != 0:
+            raise RuntimeError("Failed to set read policy")
+
+    def get_read_policy(self) -> ReadPolicy:
+        return ReadPolicy(lib.gv_replication_get_read_policy(self._mgr))
+
+    @property
+    def leader_db(self) -> Database:
+        """Primary database handle passed at construction."""
+        return self._leader_db
+
+    def route_read_db(self) -> Database:
+        """Return a non-owning Database wrapper for read routing."""
+        return Database.borrow(self.route_read(), self._leader_db.dimension)
+
+    def route_read(self) -> CData:
+        """Return non-owning C database handle for read routing."""
+        db = lib.gv_replication_route_read(self._mgr)
+        if db == ffi.NULL:
+            raise RuntimeError("No database available for read routing")
+        return db
+
+    def register_follower_db(self, node_id: str, db: Database) -> None:
+        if lib.gv_replication_register_follower_db(self._mgr, node_id.encode(), db._db) != 0:
+            raise RuntimeError(f"Failed to register follower db for {node_id}")
+
+    def register_follower_memory(self, node_id: str, memory: MemoryLayer) -> None:
+        if lib.gv_replication_register_follower_memory(
+            self._mgr, node_id.encode(), memory._layer,
+        ) != 0:
+            raise RuntimeError(f"Failed to register follower memory for {node_id}")
+
+    def route_read_memory(self, leader_memory: MemoryLayer) -> MemoryLayer:
+        """Return follower memory when read routing selects a replica, else leader."""
+        layer = lib.gv_replication_route_read_memory(self._mgr)
+        if layer == ffi.NULL:
+            return leader_memory
+        return MemoryLayer.borrow(layer, self._leader_db)
+
+    def set_max_read_lag(self, max_lag: int) -> None:
+        if lib.gv_replication_set_max_read_lag(self._mgr, max_lag) != 0:
+            raise RuntimeError("Failed to set max read lag")
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except Exception:
+            pass
 
 
 class NodeRole(IntEnum):
@@ -3421,6 +3920,22 @@ class Cluster:
     def wait_ready(self, timeout_ms: int = 30000) -> None:
         if lib.gv_cluster_wait_ready(self._cluster, timeout_ms) != 0:
             raise RuntimeError("Cluster not ready within timeout")
+
+    def get_shard_manager(self) -> ShardManager:
+        mgr = lib.gv_cluster_get_shard_manager(self._cluster)
+        if mgr == ffi.NULL:
+            raise RuntimeError("Cluster has no shard manager")
+        sm = ShardManager.__new__(ShardManager)
+        sm._mgr = mgr
+        sm._closed = False
+        sm._owned = False
+        return sm
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except Exception:
+            pass
 
 
 class NSIndexType(IntEnum):
@@ -5168,16 +5683,99 @@ class GrpcStats:
     avg_latency_us: float
 
 
+class RemoteShardClient:
+    """gRPC-style client for remote shard search."""
+
+    def __init__(
+        self,
+        host: str,
+        port: int,
+        dimension: int,
+        distance: DistanceType = DistanceType.EUCLIDEAN,
+        *,
+        timeout_ms: int = 5000,
+    ) -> None:
+        self.host = host
+        self.port = int(port)
+        self.dimension = int(dimension)
+        self.distance = distance
+        self.timeout_ms = int(timeout_ms)
+
+    def search(
+        self,
+        query_embedding: Sequence[float],
+        k: int,
+        distance: Optional[DistanceType] = None,
+    ) -> list[tuple[int, float]]:
+        if len(query_embedding) != self.dimension:
+            raise ValueError(
+                f"query dimension {len(query_embedding)} != shard dimension {self.dimension}",
+            )
+        c_query = ffi.new("float[]", list(query_embedding))
+        resp = ffi.new("GV_GrpcSearchResponse *")
+        rc = lib.gv_grpc_client_search(
+            self.host.encode(),
+            self.port,
+            c_query,
+            self.dimension,
+            k,
+            int(distance if distance is not None else self.distance),
+            resp,
+            self.timeout_ms,
+        )
+        if rc < 0:
+            raise RuntimeError(f"remote shard search failed for {self.host}:{self.port}")
+        try:
+            return [
+                (int(resp.indices[i]), float(resp.distances[i]))
+                for i in range(resp.count)
+            ]
+        finally:
+            lib.gv_grpc_search_response_free(resp)
+
+    def train_ivfdisk(self, data: Sequence[Sequence[float]]) -> None:
+        """Train IVFDisk centroids on a remote IVFDisk shard via GV_MSG_IVFDISK_TRAIN."""
+        if not data:
+            raise ValueError("train data must be non-empty")
+        dim = len(data[0])
+        if dim != self.dimension:
+            raise ValueError(
+                f"train dimension {dim} != shard dimension {self.dimension}",
+            )
+        flat: list[float] = []
+        for row in data:
+            if len(row) != dim:
+                raise ValueError("all train rows must have the same dimension")
+            flat.extend(float(x) for x in row)
+        count = len(data)
+        c_data = ffi.new("float[]", flat)
+        rc = lib.gv_grpc_client_ivfdisk_train(
+            self.host.encode(),
+            self.port,
+            c_data,
+            count,
+            self.dimension,
+            self.timeout_ms,
+        )
+        if rc != 0:
+            raise RuntimeError(
+                f"remote IVFDisk train failed for {self.host}:{self.port}",
+            )
+
+
 class GrpcServer:
     def __init__(self, db_ptr: CData, config: Optional[GrpcConfig] = None):
         c_cfg = ffi.new("GV_GrpcConfig *")
         lib.gv_grpc_config_init(c_cfg)
+        self._bind_address = None
         if config:
             c_cfg.port = config.port
             c_cfg.max_connections = config.max_connections
             c_cfg.max_message_bytes = config.max_message_bytes
             c_cfg.thread_pool_size = config.thread_pool_size
             c_cfg.enable_compression = 1 if config.enable_compression else 0
+            self._bind_address = ffi.new("char[]", config.bind_address.encode())
+            c_cfg.bind_address = self._bind_address
         self._server = lib.gv_grpc_create(db_ptr, c_cfg)
         if self._server == ffi.NULL:
             raise RuntimeError("Failed to create gRPC server")
@@ -5215,6 +5813,30 @@ class AutoEmbedProvider(IntEnum):
     CUSTOM = 3
 
 
+_AUTO_EMBED_DEFAULTS: dict[AutoEmbedProvider, tuple[str, int]] = {
+    AutoEmbedProvider.OPENAI: ("text-embedding-3-small", 1536),
+    AutoEmbedProvider.GOOGLE: ("text-embedding-004", 768),
+    AutoEmbedProvider.HUGGINGFACE: ("sentence-transformers/all-MiniLM-L6-v2", 384),
+    AutoEmbedProvider.CUSTOM: ("text-embedding-3-small", 1536),
+}
+
+
+def _auto_embed_model_and_dimension(
+    provider: AutoEmbedProvider, model_name: str, dimension: int
+) -> tuple[str, int]:
+    default_model, default_dim = _AUTO_EMBED_DEFAULTS[provider]
+    if provider == AutoEmbedProvider.GOOGLE:
+        if model_name == "text-embedding-3-small":
+            model_name = default_model
+        if dimension == 1536:
+            dimension = default_dim
+    elif model_name == "":
+        model_name = default_model
+    if dimension <= 0:
+        dimension = default_dim
+    return model_name, dimension
+
+
 @dataclass
 class AutoEmbedConfig:
     provider: AutoEmbedProvider = AutoEmbedProvider.OPENAI
@@ -5243,11 +5865,17 @@ class AutoEmbedder:
         c_cfg = ffi.new("GV_AutoEmbedConfig *")
         lib.gv_auto_embed_config_init(c_cfg)
         c_cfg.provider = config.provider.value
+        model_name, dimension = _auto_embed_model_and_dimension(
+            config.provider, config.model_name, config.dimension
+        )
+        _refs: list = []
         self._api_key = ffi.new("char[]", config.api_key.encode())
-        self._model = ffi.new("char[]", config.model_name.encode())
+        self._model = ffi.new("char[]", model_name.encode())
         c_cfg.api_key = self._api_key
         c_cfg.model_name = self._model
-        c_cfg.dimension = config.dimension
+        c_cfg.dimension = dimension
+        if config.base_url:
+            c_cfg.base_url = _cstr(config.base_url, _refs)
         c_cfg.cache_embeddings = 1 if config.cache_embeddings else 0
         c_cfg.max_cache_entries = config.max_cache_entries
         c_cfg.batch_size = config.batch_size
@@ -6398,7 +7026,7 @@ class AgentType(IntEnum):
 @dataclass(frozen=True)
 class AgentConfig:
     agent_type: AgentType = AgentType.QUERY
-    llm_provider: int = 0
+    llm_provider: str = "openai"
     api_key: str = ""
     model: str = ""
     temperature: float = 0.7
@@ -6421,7 +7049,7 @@ class Agent:
         _ka: list = []
         c_cfg = ffi.new("GV_AgentConfig *")
         c_cfg.agent_type = config.agent_type.value
-        c_cfg.llm_provider = config.llm_provider
+        c_cfg.llm_provider = _cstr(config.llm_provider, _ka)
         c_cfg.api_key = _cstr(config.api_key, _ka) if config.api_key else ffi.NULL
         c_cfg.model = _cstr(config.model, _ka) if config.model else ffi.NULL
         c_cfg.temperature = config.temperature
@@ -6735,10 +7363,10 @@ class TieredManager:
 
 @dataclass(frozen=True)
 class InferenceConfig:
-    embed_provider: int = 0
+    embed_provider: str = "openai"
     api_key: str = ""
     model: str = ""
-    dimension: int = 128
+    dimension: int = 0
     distance_type: DistanceType = DistanceType.COSINE
     cache_size: int = 1024
 
@@ -6757,10 +7385,11 @@ class InferenceEngine:
         c_cfg = ffi.new("GV_InferenceConfig *")
         lib.gv_inference_config_init(c_cfg)
         if config:
-            c_cfg.embed_provider = config.embed_provider
+            c_cfg.embed_provider = _cstr(config.embed_provider, _ka)
             c_cfg.api_key = _cstr(config.api_key, _ka) if config.api_key else ffi.NULL
             c_cfg.model = _cstr(config.model, _ka) if config.model else ffi.NULL
-            c_cfg.dimension = config.dimension
+            if config.dimension > 0:
+                c_cfg.dimension = config.dimension
             c_cfg.distance_type = config.distance_type.value
             c_cfg.cache_size = config.cache_size
         self._eng = lib.gv_inference_create(db._db, c_cfg)
@@ -7338,6 +7967,7 @@ class SQLResult:
     metadata_jsons: list[str]
     row_count: int
     column_names: list[str]
+    column_values: list[list[str]]
 
 
 class SQLEngine:
@@ -7374,7 +8004,15 @@ class SQLEngine:
             for i in range(result.column_count):
                 if result.column_names[i] != ffi.NULL:
                     columns.append(ffi.string(result.column_names[i]).decode())
-        out = SQLResult(indices, distances, metadata, result.row_count, columns)
+        cell_values: list[list[str]] = []
+        if result.column_values != ffi.NULL and result.column_count > 0:
+            for i in range(result.row_count):
+                row_vals = []
+                for j in range(result.column_count):
+                    ptr = result.column_values[i * result.column_count + j]
+                    row_vals.append(ffi.string(ptr).decode() if ptr != ffi.NULL else "")
+                cell_values.append(row_vals)
+        out = SQLResult(indices, distances, metadata, result.row_count, columns, cell_values)
         lib.gv_sql_free_result(result)
         return out
 
@@ -7707,6 +8345,23 @@ class GraphDB:
         lib.gv_graph_free_path(path)
         return result
 
+    def all_paths(self, from_id: int, to_id: int, max_depth: int = 10,
+                  max_paths: int = 64) -> List[GraphPath]:
+        paths = ffi.new("GV_GraphPath[]", max_paths)
+        n = lib.gv_graph_all_paths(self._g, from_id, to_id, max_depth, paths, max_paths)
+        if n < 0:
+            raise RuntimeError("all_paths failed")
+        results = []
+        for i in range(n):
+            p = paths[i]
+            results.append(GraphPath(
+                node_ids=[p.node_ids[j] for j in range(p.length + 1)],
+                edge_ids=[p.edge_ids[j] for j in range(p.length)],
+                total_weight=p.total_weight,
+            ))
+            lib.gv_graph_free_path(paths + i)
+        return results
+
     # -- Analytics --
 
     def pagerank(self, node_id: int, iterations: int = 20, damping: float = 0.85) -> float:
@@ -7815,7 +8470,7 @@ class KGStats:
 class KnowledgeGraph:
     """Knowledge graph with entities, relations, triples, embeddings, and analytics."""
 
-    def __init__(self, config: Optional[KGConfig] = None):
+    def __init__(self, config: Optional[KGConfig] = None, retry_policy: Optional[RetryPolicy] = None):
         c_cfg = ffi.new("GV_KGConfig *")
         lib.gv_kg_config_init(c_cfg)
         if config:
@@ -7828,14 +8483,32 @@ class KnowledgeGraph:
         self._kg = lib.gv_kg_create(c_cfg)
         if self._kg == ffi.NULL:
             raise RuntimeError("Failed to create knowledge graph")
+        self._retry_policy = retry_policy if retry_policy is not None else GRAPH_RETRY
+        self._closed = False
+
+    def close(self) -> None:
+        """Release the knowledge graph handle."""
+        if not self._closed and self._kg != ffi.NULL:
+            lib.gv_kg_destroy(self._kg)
+            self._kg = ffi.NULL
+            self._closed = True
 
     def __del__(self) -> None:
-        if hasattr(self, "_kg") and self._kg != ffi.NULL:
-            lib.gv_kg_destroy(self._kg)
+        try:
+            self.close()
+        except Exception:
+            pass
 
     # -- Entity ops --
 
     def add_entity(self, name: str, type_: str, embedding: Optional[List[float]] = None) -> int:
+        return call_with_retry(
+            lambda: self._add_entity_once(name, type_, embedding),
+            self._retry_policy,
+            operation="kg_add_entity",
+        )
+
+    def _add_entity_once(self, name: str, type_: str, embedding: Optional[List[float]] = None) -> int:
         if embedding:
             c_emb = ffi.new("float[]", embedding)
             eid = lib.gv_kg_add_entity(self._kg, name.encode(), type_.encode(), c_emb, len(embedding))
@@ -7888,6 +8561,13 @@ class KnowledgeGraph:
     # -- Relation ops --
 
     def add_relation(self, subject: int, predicate: str, object_: int, weight: float = 1.0) -> int:
+        return call_with_retry(
+            lambda: self._add_relation_once(subject, predicate, object_, weight),
+            self._retry_policy,
+            operation="kg_add_relation",
+        )
+
+    def _add_relation_once(self, subject: int, predicate: str, object_: int, weight: float = 1.0) -> int:
         rid = lib.gv_kg_add_relation(self._kg, subject, predicate.encode(), object_, weight)
         if rid == 0:
             raise RuntimeError("Failed to add relation")
@@ -7946,6 +8626,31 @@ class KnowledgeGraph:
         n = lib.gv_kg_search_similar(self._kg, c_emb, len(query_embedding), k, out)
         if n < 0:
             raise RuntimeError("Failed to search similar entities")
+        results = []
+        for i in range(n):
+            r = out[i]
+            results.append(KGSearchResult(
+                entity_id=r.entity_id,
+                name=ffi.string(r.name).decode() if r.name != ffi.NULL else "",
+                type=ffi.string(r.type).decode() if r.type != ffi.NULL else "",
+                similarity=r.similarity,
+            ))
+        lib.gv_kg_free_search_results(out, n)
+        return results
+
+    def search_by_text(self, text: str, query_embedding: Optional[List[float]] = None,
+                       k: int = 10) -> List[KGSearchResult]:
+        if query_embedding:
+            c_emb = ffi.new("float[]", query_embedding)
+            emb_ptr = c_emb
+            dim = len(query_embedding)
+        else:
+            emb_ptr = ffi.NULL
+            dim = 0
+        out = ffi.new("GV_KGSearchResult[]", k)
+        n = lib.gv_kg_search_by_text(self._kg, text.encode(), emb_ptr, dim, k, out)
+        if n < 0:
+            raise RuntimeError("Failed to search by text")
         results = []
         for i in range(n):
             r = out[i]
@@ -8081,6 +8786,30 @@ class KnowledgeGraph:
     def entity_centrality(self, entity_id: int) -> float:
         return lib.gv_kg_entity_centrality(self._kg, entity_id)
 
+    def get_entity_types(self, max_count: int = 256) -> List[str]:
+        out = ffi.new("char *[]", max_count)
+        n = lib.gv_kg_get_entity_types(self._kg, out, max_count)
+        if n < 0:
+            raise RuntimeError("Failed to get entity types")
+        types = []
+        for i in range(n):
+            if out[i] != ffi.NULL:
+                types.append(ffi.string(out[i]).decode())
+                lib.gv_free(out[i])
+        return types
+
+    def get_predicates(self, max_count: int = 256) -> List[str]:
+        out = ffi.new("char *[]", max_count)
+        n = lib.gv_kg_get_predicates(self._kg, out, max_count)
+        if n < 0:
+            raise RuntimeError("Failed to get predicates")
+        predicates = []
+        for i in range(n):
+            if out[i] != ffi.NULL:
+                predicates.append(ffi.string(out[i]).decode())
+                lib.gv_free(out[i])
+        return predicates
+
     # -- Persistence --
 
     def save(self, path: str) -> None:
@@ -8094,6 +8823,8 @@ class KnowledgeGraph:
             raise RuntimeError("Failed to load knowledge graph")
         obj = cls.__new__(cls)
         obj._kg = kg
+        obj._closed = False
+        obj._retry_policy = GRAPH_RETRY
         return obj
 
 
@@ -9048,3 +9779,163 @@ class EntityLinker:
                 related_triples=unique_triples[:max_triples] or None,
             ))
         return results
+
+
+@dataclass(frozen=True)
+class PostingCacheStats:
+    cache_hits: int
+    cache_misses: int
+    cached_segments: int
+    cache_capacity: int
+
+
+class PostingPayloadType(IntEnum):
+    FLOAT = 0
+    SQ8 = 1
+    PQ = 2
+
+
+@dataclass(frozen=True)
+class PostingVector:
+    vector_id: int
+    version: int
+    data: list[float]
+
+
+class PostingCatalog:
+    """On-disk append-only posting list catalog for larger-than-RAM partitions."""
+
+    def __init__(self, base_dir: str, sector_size: int = 4096) -> None:
+        self._keepalive: list = []
+        self._cat = lib.gv_posting_catalog_open(
+            _cstr(base_dir, self._keepalive), sector_size
+        )
+        if self._cat == ffi.NULL:
+            raise RuntimeError(f"failed to open posting catalog at {base_dir}")
+
+    def close(self) -> None:
+        if self._cat != ffi.NULL:
+            lib.gv_posting_catalog_close(self._cat)
+            self._cat = ffi.NULL
+
+    def __enter__(self) -> "PostingCatalog":
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        self.close()
+
+    def set_cache_mb(self, cache_size_mb: int) -> None:
+        lib.gv_posting_catalog_set_cache_mb(self._cat, cache_size_mb)
+
+    def cache_stats(self) -> PostingCacheStats:
+        stats = ffi.new("GV_PostingCacheStats *")
+        lib.gv_posting_catalog_get_cache_stats(self._cat, stats)
+        return PostingCacheStats(
+            cache_hits=int(stats.cache_hits),
+            cache_misses=int(stats.cache_misses),
+            cached_segments=int(stats.cached_segments),
+            cache_capacity=int(stats.cache_capacity),
+        )
+
+    def segment_count(self) -> int:
+        return int(lib.gv_posting_catalog_segment_count(self._cat))
+
+    def head_live_count(self, head_id: int) -> int:
+        return int(lib.gv_posting_catalog_head_live_count(self._cat, head_id))
+
+    def reconcile_live_counts(self) -> None:
+        if lib.gv_posting_catalog_reconcile_live_counts(self._cat) != 0:
+            raise RuntimeError("posting catalog live_count reconcile failed")
+
+    def set_auto_live_count(self, enabled: bool) -> None:
+        lib.gv_posting_catalog_set_auto_live_count(self._cat, 1 if enabled else 0)
+
+    def segment_live_count(self, head_id: int, sequence: int) -> int:
+        return int(lib.gv_posting_catalog_segment_live_count(
+            self._cat, head_id, sequence
+        ))
+
+    def append(
+        self,
+        head_id: int,
+        vector_id: int,
+        data: Sequence[float],
+        *,
+        version: int = 1,
+        deleted: bool = False,
+        payload_type: PostingPayloadType = PostingPayloadType.FLOAT,
+        codes: Sequence[int] | None = None,
+        pq_m: int = 0,
+        pq_codebook: Sequence[float] | None = None,
+    ) -> None:
+        dim = len(data)
+        arr = ffi.new("float[]", list(data))
+        self._keepalive.append(arr)
+        entry = ffi.new("GV_PostingWriteEntry *")
+        entry.vector_id = vector_id
+        entry.version = version
+        entry.flags = lib.GV_POSTING_FLAG_DELETED if deleted else 0
+        entry.data = arr
+
+        code_arr = ffi.NULL
+        if codes is not None:
+            code_arr = ffi.new("uint8_t[]", [int(c) & 0xFF for c in codes])
+            self._keepalive.append(code_arr)
+            entry.codes = code_arr
+        else:
+            entry.codes = ffi.NULL
+
+        self._keepalive.append(entry)
+
+        if payload_type == PostingPayloadType.FLOAT:
+            if lib.gv_posting_catalog_append_segment(
+                self._cat, head_id, entry, 1, dim
+            ) != 0:
+                raise RuntimeError("posting catalog append failed")
+            return
+
+        params = ffi.new("GV_PostingSegmentParams *")
+        params.payload_type = int(payload_type)
+        params.pq_m = pq_m
+        params.pq_codebook = ffi.NULL
+        self._keepalive.append(params)
+
+        if payload_type == PostingPayloadType.PQ:
+            if not pq_codebook or pq_m <= 0:
+                raise ValueError("PQ append requires pq_m and pq_codebook")
+            cb = ffi.new("float[]", list(pq_codebook))
+            self._keepalive.append(cb)
+            params.pq_codebook = cb
+            if codes is None:
+                raise ValueError("PQ append requires pre-encoded codes")
+
+        if lib.gv_posting_catalog_append_segment_ex(
+            self._cat, head_id, entry, 1, dim, params
+        ) != 0:
+            raise RuntimeError("posting catalog append failed")
+
+    def materialize(self, head_id: int) -> list[PostingVector]:
+        view = ffi.new("GV_PostingHeadView *")
+        if lib.gv_posting_catalog_materialize_head(self._cat, head_id, view) != 0:
+            raise RuntimeError("posting catalog materialize failed")
+        try:
+            out: list[PostingVector] = []
+            for i in range(int(view.count)):
+                e = view.entries[i]
+                dim = int(view.dimension)
+                data = [float(e.data[j]) for j in range(dim)]
+                out.append(
+                    PostingVector(
+                        vector_id=int(e.vector_id),
+                        version=int(e.version),
+                        data=data,
+                    )
+                )
+            return out
+        finally:
+            lib.gv_posting_head_view_free(view)

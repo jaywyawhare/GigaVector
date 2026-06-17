@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "gigavector"
-version = "0.8.24"
+version = "0.8.25"
 description = "High-performance vector database library for Python with multiple index types and metadata support"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -28,13 +28,11 @@ Repository = "https://github.com/jaywyawhare/GigaVector"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
-packages = [
-	"gigavector",
-	"gigavector.dashboard",
-	"gigavector.dashboard.backend",
-	]
-
 include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["gigavector*"]
 
 [tool.ruff]
 line-length = 100

@@ -3,8 +3,15 @@
 #include "admin/replication.h"
 #include "admin/shard.h"
 #include "api/server.h"
+#include "api/grpc.h"
 #include "core/bloom.h"
+#include "core/types.h"
 #include "features/context_graph.h"
+#include "features/graph_db.h"
+#include "features/knowledge_graph.h"
+#include "features/sql.h"
+#include "multimodal/learned_sparse.h"
+#include "search/phased_ranking.h"
 #include "index/kdtree.h"
 #include "multimodal/bm25.h"
 #include "multimodal/embedding.h"
@@ -17,8 +24,12 @@
 #include "storage/database.h"
 #include "storage/memory_extraction.h"
 #include "storage/memory_layer.h"
+#include "features/knowledge_graph.h"
 #include "storage/snapshot.h"
 #include "storage/wal.h"
+#include "storage/posting_list.h"
+
+#include <stdlib.h>
 
 GV_Database *gv_db_open(const char *filepath, size_t dimension,
                         GV_IndexType index_type) {
@@ -137,11 +148,32 @@ GV_Database *gv_db_open_with_ivfflat_config(const char *filepath,
   return db_open_with_ivfflat_config(filepath, dimension, index_type, config);
 }
 
+GV_Database *gv_db_open_with_ivfdisk_config(const char *filepath,
+                                            size_t dimension,
+                                            GV_IndexType index_type,
+                                            const GV_IVFDiskConfig *config) {
+  return db_open_with_ivfdisk_config(filepath, dimension, index_type, config);
+}
+
 GV_Database *gv_db_open_with_ivfsq8_config(const char *filepath,
                                            size_t dimension,
                                            GV_IndexType index_type,
                                            const GV_IVFSQ8Config *config) {
   return db_open_with_ivfsq8_config(filepath, dimension, index_type, config);
+}
+
+GV_Database *gv_db_open_with_ivfsq8_config(const char *filepath,
+                                           size_t dimension,
+                                           GV_IndexType index_type,
+                                           const GV_IVFSQ8Config *config) {
+  return db_open_with_ivfsq8_config(filepath, dimension, index_type, config);
+}
+
+GV_Database *gv_db_open_with_ivfturboquant_config(const char *filepath,
+                                                  size_t dimension,
+                                                  GV_IndexType index_type,
+                                                  const GV_IVFTurboQuantConfig *config) {
+  return db_open_with_ivfturboquant_config(filepath, dimension, index_type, config);
 }
 
 GV_Database *gv_db_open_with_ivfturboquant_config(const char *filepath,
@@ -179,6 +211,15 @@ GV_IndexType gv_index_suggest(size_t dimension, size_t expected_count) {
   return index_suggest(dimension, expected_count);
 }
 
+size_t gv_index_suggest_bytes_per_vector(size_t dimension, size_t metadata_bytes_per_vector) {
+  return index_suggest_bytes_per_vector(dimension, metadata_bytes_per_vector);
+}
+
+GV_IndexType gv_index_suggest_with_budget(size_t dimension, size_t expected_count,
+                                          size_t max_memory_bytes, size_t bytes_per_vector) {
+  return index_suggest_with_budget(dimension, expected_count, max_memory_bytes, bytes_per_vector);
+}
+
 void gv_db_get_stats(const GV_Database *db, GV_DBStats *out) {
   db_get_stats(db, out);
 }
@@ -211,9 +252,24 @@ int gv_db_ivfflat_train(GV_Database *db, const float *data, size_t count,
   return db_ivfflat_train(db, data, count, dimension);
 }
 
+int gv_db_ivfdisk_train(GV_Database *db, const float *data, size_t count,
+                        size_t dimension) {
+  return db_ivfdisk_train(db, data, count, dimension);
+}
+
 int gv_db_ivfsq8_train(GV_Database *db, const float *data, size_t count,
                        size_t dimension) {
   return db_ivfsq8_train(db, data, count, dimension);
+}
+
+int gv_db_ivfsq8_train(GV_Database *db, const float *data, size_t count,
+                       size_t dimension) {
+  return db_ivfsq8_train(db, data, count, dimension);
+}
+
+int gv_db_ivfturboquant_train(GV_Database *db, const float *data, size_t count,
+                              size_t dimension) {
+  return db_ivfturboquant_train(db, data, count, dimension);
 }
 
 int gv_db_ivfturboquant_train(GV_Database *db, const float *data, size_t count,
@@ -637,7 +693,13 @@ void gv_memory_layer_destroy(GV_MemoryLayer *layer) {
 
 char *gv_memory_add(GV_MemoryLayer *layer, const char *content,
                     const float *embedding, GV_MemoryMetadata *metadata) {
-  return memory_add(layer, content, embedding, metadata);
+  return memory_add(layer, content, embedding, metadata, NULL);
+}
+
+char *gv_memory_add_opts(GV_MemoryLayer *layer, const char *content,
+                         const float *embedding, GV_MemoryMetadata *metadata,
+                         int ingest_context) {
+  return memory_add_opts(layer, content, embedding, metadata, NULL, ingest_context);
 }
 
 char **gv_memory_extract_from_conversation(GV_MemoryLayer *layer,
@@ -687,6 +749,19 @@ int gv_memory_search_filtered(GV_MemoryLayer *layer,
                                 min_timestamp, max_timestamp);
 }
 
+GV_MemorySearchOptions gv_memory_search_options_default(void) {
+  return memory_search_options_default();
+}
+
+int gv_memory_search_advanced(GV_MemoryLayer *layer,
+                              const float *query_embedding, size_t k,
+                              GV_MemoryResult *results,
+                              GV_DistanceType distance_type,
+                              const GV_MemorySearchOptions *options) {
+  return memory_search_advanced(layer, query_embedding, k, results,
+                                distance_type, options);
+}
+
 int gv_memory_get_related(GV_MemoryLayer *layer, const char *memory_id,
                           size_t k, GV_MemoryResult *results) {
   return memory_get_related(layer, memory_id, k, results);
@@ -713,6 +788,39 @@ void gv_memory_result_free(GV_MemoryResult *result) {
 
 void gv_memory_metadata_free(GV_MemoryMetadata *metadata) {
   memory_metadata_free(metadata);
+}
+
+int gv_memory_link_create(GV_MemoryLayer *layer, const char *source_id,
+                          const char *target_id, GV_MemoryLinkType link_type,
+                          float strength, const char *reason) {
+  return memory_link_create(layer, source_id, target_id, link_type, strength,
+                            reason);
+}
+
+int gv_memory_link_remove(GV_MemoryLayer *layer, const char *source_id,
+                          const char *target_id) {
+  return memory_link_remove(layer, source_id, target_id);
+}
+
+int gv_memory_link_get(GV_MemoryLayer *layer, const char *memory_id,
+                       GV_MemoryLink *links, size_t max_links) {
+  return memory_link_get(layer, memory_id, links, max_links);
+}
+
+void gv_memory_link_free(GV_MemoryLink *link) { memory_link_free(link); }
+
+int gv_memory_record_access(GV_MemoryLayer *layer, const char *memory_id,
+                            float relevance) {
+  return memory_record_access(layer, memory_id, relevance);
+}
+
+int gv_memory_layer_extract_context_entities(GV_MemoryLayer *layer, const char *text,
+                                             char ***out_names, size_t *out_count) {
+  return memory_layer_extract_context_entities(layer, text, out_names, out_count);
+}
+
+void gv_memory_layer_free_context_entity_names(char **names, size_t count) {
+  memory_layer_free_context_entity_names(names, count);
 }
 
 /* ── GPU ── */
@@ -993,6 +1101,18 @@ GV_Database *gv_shard_get_local_db(GV_ShardManager *mgr, uint32_t shard_id) {
   return shard_get_local_db(mgr, shard_id);
 }
 
+int gv_shard_migrate_vectors(GV_ShardManager *mgr, uint32_t from_shard,
+                             uint32_t to_shard, size_t count) {
+  return shard_migrate_vectors(mgr, from_shard, to_shard, count);
+}
+
+int gv_shard_migrate_vector_at(GV_ShardManager *mgr, uint32_t from_shard,
+                               uint32_t to_shard, size_t vector_index,
+                               size_t *out_new_index) {
+  return shard_migrate_vector_at(mgr, from_shard, to_shard, vector_index,
+                                 out_new_index);
+}
+
 /* ── Replication (missing wrappers) ── */
 
 GV_ReplicationRole gv_replication_get_role(GV_ReplicationManager *mgr) {
@@ -1043,6 +1163,112 @@ int gv_replication_is_healthy(GV_ReplicationManager *mgr) {
   return replication_is_healthy(mgr);
 }
 
+int gv_replication_set_read_policy(GV_ReplicationManager *mgr,
+                                   GV_ReadPolicy policy) {
+  return replication_set_read_policy(mgr, policy);
+}
+
+GV_ReadPolicy gv_replication_get_read_policy(GV_ReplicationManager *mgr) {
+  return replication_get_read_policy(mgr);
+}
+
+GV_Database *gv_replication_route_read(GV_ReplicationManager *mgr) {
+  return replication_route_read(mgr);
+}
+
+int gv_replication_set_max_read_lag(GV_ReplicationManager *mgr,
+                                    uint64_t max_lag) {
+  return replication_set_max_read_lag(mgr, max_lag);
+}
+
+int gv_replication_register_follower_db(GV_ReplicationManager *mgr,
+                                        const char *node_id,
+                                        GV_Database *db) {
+  return replication_register_follower_db(mgr, node_id, db);
+}
+
+int gv_replication_register_follower_memory(GV_ReplicationManager *mgr,
+                                            const char *node_id,
+                                            GV_MemoryLayer *layer) {
+  return replication_register_follower_memory(mgr, node_id, layer);
+}
+
+GV_MemoryLayer *gv_replication_route_read_memory(GV_ReplicationManager *mgr) {
+  return replication_route_read_memory(mgr);
+}
+
+void gv_grpc_config_init(GV_GrpcConfig *config) { grpc_config_init(config); }
+
+GV_GrpcServer *gv_grpc_create(GV_Database *db, const GV_GrpcConfig *config) {
+  return grpc_create(db, config);
+}
+
+int gv_grpc_start(GV_GrpcServer *server) { return grpc_start(server); }
+
+int gv_grpc_stop(GV_GrpcServer *server) { return grpc_stop(server); }
+
+void gv_grpc_destroy(GV_GrpcServer *server) { grpc_destroy(server); }
+
+int gv_grpc_is_running(const GV_GrpcServer *server) {
+  return grpc_is_running(server);
+}
+
+int gv_grpc_get_stats(const GV_GrpcServer *server, GV_GrpcStats *stats) {
+  return grpc_get_stats(server, stats);
+}
+
+const char *gv_grpc_error_string(int error) { return grpc_error_string(error); }
+
+int gv_grpc_encode_search_request(const float *query, size_t dimension, size_t k,
+                                  int distance_type, uint8_t *buf, size_t buf_size,
+                                  size_t *out_len) {
+  return grpc_encode_search_request(query, dimension, k, distance_type, buf,
+                                    buf_size, out_len);
+}
+
+int gv_grpc_decode_search_request(const uint8_t *buf, size_t len, float **query,
+                                  size_t *dimension, size_t *k,
+                                  int *distance_type) {
+  return grpc_decode_search_request(buf, len, query, dimension, k, distance_type);
+}
+
+int gv_grpc_encode_add_request(const float *data, size_t dimension, uint8_t *buf,
+                               size_t buf_size, size_t *out_len) {
+  return grpc_encode_add_request(data, dimension, buf, buf_size, out_len);
+}
+
+int gv_grpc_encode_ivfdisk_train_request(const float *data, size_t count,
+                                         size_t dimension, uint8_t *buf,
+                                         size_t buf_size, size_t *out_len) {
+  return grpc_encode_ivfdisk_train_request(data, count, dimension, buf, buf_size,
+                                           out_len);
+}
+
+int gv_grpc_client_ivfdisk_train(const char *host, uint16_t port,
+                                 const float *data, size_t count,
+                                 size_t dimension, uint32_t timeout_ms) {
+  return grpc_client_ivfdisk_train(host, port, data, count, dimension, timeout_ms);
+}
+
+int gv_grpc_client_search(const char *host, uint16_t port, const float *query,
+                          size_t dimension, size_t k, int distance_type,
+                          GV_GrpcSearchResponse *out, uint32_t timeout_ms) {
+  return grpc_client_search(host, port, query, dimension, k, distance_type, out,
+                            timeout_ms);
+}
+
+void gv_grpc_search_response_free(GV_GrpcSearchResponse *resp) {
+  grpc_search_response_free(resp);
+}
+
+int gv_db_apply_wal_record(GV_Database *db, const uint8_t *record, size_t len) {
+  return db_apply_wal_record(db, record, len);
+}
+
+const char *gv_db_wal_path(const GV_Database *db) {
+  return db_wal_path(db);
+}
+
 /* ── Cluster ── */
 
 void gv_cluster_config_init(GV_ClusterConfig *config) {
@@ -1079,6 +1305,22 @@ void gv_cluster_free_node_info(GV_NodeInfo *info) {
 
 void gv_cluster_free_node_list(GV_NodeInfo *nodes, size_t count) {
   cluster_free_node_list(nodes, count);
+}
+
+int gv_cluster_get_stats(GV_Cluster *cluster, GV_ClusterStats *stats) {
+  return cluster_get_stats(cluster, stats);
+}
+
+GV_ShardManager *gv_cluster_get_shard_manager(GV_Cluster *cluster) {
+  return cluster_get_shard_manager(cluster);
+}
+
+int gv_cluster_is_healthy(GV_Cluster *cluster) {
+  return cluster_is_healthy(cluster);
+}
+
+int gv_cluster_wait_ready(GV_Cluster *cluster, uint32_t timeout_ms) {
+  return cluster_wait_ready(cluster, timeout_ms);
 }
 
 /* ── Namespace ── */
@@ -1286,3 +1528,642 @@ int gv_mmr_search(const void *db, const float *query, size_t dimension,
                   GV_MMRResult *results) {
   return mmr_search(db, query, dimension, k, oversample, config, results);
 }
+
+/* ── Knowledge graph wrappers ─────────────────────────────────────────────── */
+
+void gv_kg_config_init(GV_KGConfig *config) { kg_config_init(config); }
+
+GV_KnowledgeGraph *gv_kg_create(const GV_KGConfig *config) {
+  return kg_create(config);
+}
+
+void gv_kg_destroy(GV_KnowledgeGraph *kg) { kg_destroy(kg); }
+
+uint64_t gv_kg_add_entity(GV_KnowledgeGraph *kg, const char *name,
+                          const char *type, const float *embedding,
+                          size_t dimension) {
+  return kg_add_entity(kg, name, type, embedding, dimension);
+}
+
+int gv_kg_remove_entity(GV_KnowledgeGraph *kg, uint64_t entity_id) {
+  return kg_remove_entity(kg, entity_id);
+}
+
+const GV_KGEntity *gv_kg_get_entity(const GV_KnowledgeGraph *kg,
+                                    uint64_t entity_id) {
+  return kg_get_entity(kg, entity_id);
+}
+
+int gv_kg_set_entity_prop(GV_KnowledgeGraph *kg, uint64_t entity_id,
+                          const char *key, const char *value) {
+  return kg_set_entity_prop(kg, entity_id, key, value);
+}
+
+const char *gv_kg_get_entity_prop(const GV_KnowledgeGraph *kg,
+                                   uint64_t entity_id, const char *key) {
+  return kg_get_entity_prop(kg, entity_id, key);
+}
+
+int gv_kg_find_entities_by_type(const GV_KnowledgeGraph *kg, const char *type,
+                                uint64_t *out_ids, size_t max_count) {
+  return kg_find_entities_by_type(kg, type, out_ids, max_count);
+}
+
+int gv_kg_find_entities_by_name(const GV_KnowledgeGraph *kg, const char *name,
+                              uint64_t *out_ids, size_t max_count) {
+  return kg_find_entities_by_name(kg, name, out_ids, max_count);
+}
+
+uint64_t gv_kg_add_relation(GV_KnowledgeGraph *kg, uint64_t subject,
+                            const char *predicate, uint64_t object,
+                            float weight) {
+  return kg_add_relation(kg, subject, predicate, object, weight);
+}
+
+int gv_kg_remove_relation(GV_KnowledgeGraph *kg, uint64_t relation_id) {
+  return kg_remove_relation(kg, relation_id);
+}
+
+const GV_KGRelation *gv_kg_get_relation(const GV_KnowledgeGraph *kg,
+                                        uint64_t relation_id) {
+  return kg_get_relation(kg, relation_id);
+}
+
+int gv_kg_set_relation_prop(GV_KnowledgeGraph *kg, uint64_t relation_id,
+                            const char *key, const char *value) {
+  return kg_set_relation_prop(kg, relation_id, key, value);
+}
+
+int gv_kg_query_triples(const GV_KnowledgeGraph *kg, const uint64_t *subject,
+                        const char *predicate, const uint64_t *object,
+                        GV_KGTriple *out, size_t max_count) {
+  return kg_query_triples(kg, subject, predicate, object, out, max_count);
+}
+
+void gv_kg_free_triples(GV_KGTriple *triples, size_t count) {
+  kg_free_triples(triples, count);
+}
+
+int gv_kg_search_similar(const GV_KnowledgeGraph *kg,
+                         const float *query_embedding, size_t dimension,
+                         size_t k, GV_KGSearchResult *results) {
+  return kg_search_similar(kg, query_embedding, dimension, k, results);
+}
+
+int gv_kg_search_by_text(const GV_KnowledgeGraph *kg, const char *text,
+                         const float *text_embedding, size_t dimension,
+                         size_t k, GV_KGSearchResult *results) {
+  return kg_search_by_text(kg, text, text_embedding, dimension, k, results);
+}
+
+void gv_kg_free_search_results(GV_KGSearchResult *results, size_t count) {
+  kg_free_search_results(results, count);
+}
+
+int gv_kg_resolve_entity(GV_KnowledgeGraph *kg, const char *name,
+                         const char *type, const float *embedding,
+                         size_t dimension) {
+  return kg_resolve_entity(kg, name, type, embedding, dimension);
+}
+
+int gv_kg_find_duplicates(const GV_KnowledgeGraph *kg, float threshold,
+                          GV_KGLinkPrediction *out, size_t max_count) {
+  return kg_find_duplicates(kg, threshold, out, max_count);
+}
+
+int gv_kg_merge_entities(GV_KnowledgeGraph *kg, uint64_t keep_id,
+                         uint64_t merge_id) {
+  return kg_merge_entities(kg, keep_id, merge_id);
+}
+
+int gv_kg_predict_links(const GV_KnowledgeGraph *kg, uint64_t entity_id,
+                        size_t k, GV_KGLinkPrediction *results) {
+  return kg_predict_links(kg, entity_id, k, results);
+}
+
+int gv_kg_get_neighbors(const GV_KnowledgeGraph *kg, uint64_t entity_id,
+                        uint64_t *out_ids, size_t max_count) {
+  return kg_get_neighbors(kg, entity_id, out_ids, max_count);
+}
+
+int gv_kg_traverse(const GV_KnowledgeGraph *kg, uint64_t start,
+                   size_t max_depth, uint64_t *out_ids, size_t max_count) {
+  return kg_traverse(kg, start, max_depth, out_ids, max_count);
+}
+
+int gv_kg_shortest_path(const GV_KnowledgeGraph *kg, uint64_t from,
+                        uint64_t to, uint64_t *path_ids, size_t max_len) {
+  return kg_shortest_path(kg, from, to, path_ids, max_len);
+}
+
+int gv_kg_extract_subgraph(const GV_KnowledgeGraph *kg, uint64_t center,
+                           size_t radius, GV_KGSubgraph *subgraph) {
+  return kg_extract_subgraph(kg, center, radius, subgraph);
+}
+
+void gv_kg_free_subgraph(GV_KGSubgraph *subgraph) {
+  kg_free_subgraph(subgraph);
+}
+
+int gv_kg_hybrid_search(const GV_KnowledgeGraph *kg,
+                        const float *query_embedding, size_t dimension,
+                        const char *entity_type, const char *predicate_filter,
+                        size_t k, GV_KGSearchResult *results) {
+  return kg_hybrid_search(kg, query_embedding, dimension, entity_type,
+                          predicate_filter, k, results);
+}
+
+int gv_kg_get_stats(const GV_KnowledgeGraph *kg, GV_KGStats *stats) {
+  return kg_get_stats(kg, stats);
+}
+
+float gv_kg_entity_centrality(const GV_KnowledgeGraph *kg,
+                              uint64_t entity_id) {
+  return kg_entity_centrality(kg, entity_id);
+}
+
+int gv_kg_get_entity_types(const GV_KnowledgeGraph *kg, char **out_types,
+                           size_t max_count) {
+  return kg_get_entity_types(kg, out_types, max_count);
+}
+
+int gv_kg_get_predicates(const GV_KnowledgeGraph *kg, char **out_predicates,
+                         size_t max_count) {
+  return kg_get_predicates(kg, out_predicates, max_count);
+}
+
+int gv_kg_save(const GV_KnowledgeGraph *kg, const char *path) {
+  return kg_save(kg, path);
+}
+
+GV_KnowledgeGraph *gv_kg_load(const char *path) { return kg_load(path); }
+
+GV_PostingCatalog *gv_posting_catalog_open(const char *base_dir, size_t sector_size) {
+  return posting_catalog_open(base_dir, sector_size);
+}
+
+void gv_posting_catalog_close(GV_PostingCatalog *cat) {
+  posting_catalog_close(cat);
+}
+
+void gv_posting_catalog_set_cache_mb(GV_PostingCatalog *cat, size_t cache_size_mb) {
+  posting_catalog_set_cache_mb(cat, cache_size_mb);
+}
+
+void gv_posting_catalog_get_cache_stats(const GV_PostingCatalog *cat,
+                                        GV_PostingCacheStats *out) {
+  posting_catalog_get_cache_stats(cat, out);
+}
+
+void gv_posting_catalog_set_auto_live_count(GV_PostingCatalog *cat, int enabled) {
+  posting_catalog_set_auto_live_count(cat, enabled);
+}
+
+int gv_posting_catalog_get_auto_live_count(const GV_PostingCatalog *cat) {
+  return posting_catalog_get_auto_live_count(cat);
+}
+
+uint32_t gv_posting_catalog_segment_live_count(const GV_PostingCatalog *cat,
+                                               uint64_t head_id, uint64_t sequence) {
+  return posting_catalog_segment_live_count(cat, head_id, sequence);
+}
+
+size_t gv_posting_catalog_segment_count(const GV_PostingCatalog *cat) {
+  return posting_catalog_segment_count(cat);
+}
+
+size_t gv_posting_catalog_head_live_count(GV_PostingCatalog *cat, uint64_t head_id) {
+  return posting_catalog_head_live_count(cat, head_id);
+}
+
+int gv_posting_catalog_reconcile_live_counts(GV_PostingCatalog *cat) {
+  return posting_catalog_reconcile_live_counts(cat);
+}
+
+int gv_posting_catalog_append_segment(GV_PostingCatalog *cat, uint64_t head_id,
+                                      const GV_PostingWriteEntry *entries,
+                                      size_t entry_count, size_t dimension) {
+  return posting_catalog_append_segment(cat, head_id, entries, entry_count, dimension);
+}
+
+int gv_posting_catalog_append_segment_ex(GV_PostingCatalog *cat, uint64_t head_id,
+                                         const GV_PostingWriteEntry *entries,
+                                         size_t entry_count, size_t dimension,
+                                         const GV_PostingSegmentParams *params) {
+  return posting_catalog_append_segment_ex(cat, head_id, entries, entry_count,
+                                           dimension, params);
+}
+
+int gv_posting_catalog_materialize_head(GV_PostingCatalog *cat, uint64_t head_id,
+                                        GV_PostingHeadView *out) {
+  return posting_catalog_materialize_head(cat, head_id, out);
+}
+
+void gv_posting_head_view_free(GV_PostingHeadView *view) {
+  posting_head_view_free(view);
+}
+
+void gv_free(void *ptr) { free(ptr); }
+
+/* ── SQL engine wrappers ──────────────────────────────────────────────────── */
+
+GV_SQLEngine *gv_sql_create(void *db) { return sql_create(db); }
+
+void gv_sql_destroy(GV_SQLEngine *eng) { sql_destroy(eng); }
+
+int gv_sql_execute(GV_SQLEngine *eng, const char *query, GV_SQLResult *result) {
+  return sql_execute(eng, query, result);
+}
+
+void gv_sql_free_result(GV_SQLResult *result) { sql_free_result(result); }
+
+const char *gv_sql_last_error(const GV_SQLEngine *eng) {
+  return sql_last_error(eng);
+}
+
+int gv_sql_explain(GV_SQLEngine *eng, const char *query, char *plan,
+                   size_t plan_size) {
+  return sql_explain(eng, query, plan, plan_size);
+}
+
+/* ── Phased ranking pipeline wrappers ───────────────────────────────────── */
+
+GV_Pipeline *gv_pipeline_create(const void *db) { return pipeline_create(db); }
+
+void gv_pipeline_destroy(GV_Pipeline *pipe) { pipeline_destroy(pipe); }
+
+int gv_pipeline_add_phase(GV_Pipeline *pipe, const void *config) {
+  return pipeline_add_phase(pipe, (const GV_PhaseConfig *)config);
+}
+
+void gv_pipeline_clear_phases(GV_Pipeline *pipe) {
+  pipeline_clear_phases(pipe);
+}
+
+size_t gv_pipeline_phase_count(const GV_Pipeline *pipe) {
+  return pipeline_phase_count(pipe);
+}
+
+int gv_pipeline_execute(GV_Pipeline *pipe, const float *query, size_t dimension,
+                        size_t final_k, GV_PhasedResult *results) {
+  return pipeline_execute(pipe, query, dimension, final_k, results);
+}
+
+int gv_pipeline_get_stats(const GV_Pipeline *pipe, GV_PipelineStats *stats) {
+  return pipeline_get_stats(pipe, stats);
+}
+
+void gv_pipeline_free_stats(GV_PipelineStats *stats) {
+  pipeline_free_stats(stats);
+}
+
+/* ── Learned sparse index wrappers ────────────────────────────────────────── */
+
+void gv_ls_config_init(GV_LearnedSparseConfig *config) {
+  ls_config_init(config);
+}
+
+GV_LearnedSparseIndex *gv_ls_create(const GV_LearnedSparseConfig *config) {
+  return ls_create(config);
+}
+
+void gv_ls_destroy(GV_LearnedSparseIndex *idx) { ls_destroy(idx); }
+
+int gv_ls_insert(GV_LearnedSparseIndex *idx, const GV_SparseEntry *entries,
+                 size_t count) {
+  return ls_insert(idx, (const GV_LSSparseEntry *)entries, count);
+}
+
+int gv_ls_delete(GV_LearnedSparseIndex *idx, size_t doc_id) {
+  return ls_delete(idx, doc_id);
+}
+
+int gv_ls_search(const GV_LearnedSparseIndex *idx, const GV_SparseEntry *query,
+                 size_t query_count, size_t k, GV_LearnedSparseResult *results) {
+  return ls_search(idx, (const GV_LSSparseEntry *)query, query_count, k,
+                   results);
+}
+
+int gv_ls_search_with_threshold(const GV_LearnedSparseIndex *idx,
+                                const GV_SparseEntry *query, size_t query_count,
+                                float min_score, size_t k,
+                                GV_LearnedSparseResult *results) {
+  return ls_search_with_threshold(idx, (const GV_LSSparseEntry *)query,
+                                  query_count, min_score, k, results);
+}
+
+int gv_ls_get_stats(const GV_LearnedSparseIndex *idx,
+                    GV_LearnedSparseStats *stats) {
+  return ls_get_stats(idx, stats);
+}
+
+size_t gv_ls_count(const GV_LearnedSparseIndex *idx) { return ls_count(idx); }
+
+int gv_ls_save(const GV_LearnedSparseIndex *idx, const char *path) {
+  return ls_save(idx, path);
+}
+
+GV_LearnedSparseIndex *gv_ls_load(const char *path) { return ls_load(path); }
+
+/* ── Graph database wrappers ──────────────────────────────────────────────── */
+
+void gv_graph_config_init(GV_GraphDBConfig *config) {
+  graph_config_init(config);
+}
+
+GV_GraphDB *gv_graph_create(const GV_GraphDBConfig *config) {
+  return graph_create(config);
+}
+
+void gv_graph_destroy(GV_GraphDB *g) { graph_destroy(g); }
+
+uint64_t gv_graph_add_node(GV_GraphDB *g, const char *label) {
+  return graph_add_node(g, label);
+}
+
+int gv_graph_remove_node(GV_GraphDB *g, uint64_t node_id) {
+  return graph_remove_node(g, node_id);
+}
+
+const GV_GraphNode *gv_graph_get_node(const GV_GraphDB *g, uint64_t node_id) {
+  return graph_get_node(g, node_id);
+}
+
+int gv_graph_set_node_prop(GV_GraphDB *g, uint64_t node_id, const char *key,
+                           const char *value) {
+  return graph_set_node_prop(g, node_id, key, value);
+}
+
+const char *gv_graph_get_node_prop(const GV_GraphDB *g, uint64_t node_id,
+                                   const char *key) {
+  return graph_get_node_prop(g, node_id, key);
+}
+
+int gv_graph_find_nodes_by_label(const GV_GraphDB *g, const char *label,
+                                 uint64_t *out_ids, size_t max_count) {
+  return graph_find_nodes_by_label(g, label, out_ids, max_count);
+}
+
+uint64_t gv_graph_add_edge(GV_GraphDB *g, uint64_t source, uint64_t target,
+                           const char *label, float weight) {
+  return graph_add_edge(g, source, target, label, weight);
+}
+
+int gv_graph_remove_edge(GV_GraphDB *g, uint64_t edge_id) {
+  return graph_remove_edge(g, edge_id);
+}
+
+const GV_GraphEdge *gv_graph_get_edge(const GV_GraphDB *g, uint64_t edge_id) {
+  return graph_get_edge(g, edge_id);
+}
+
+int gv_graph_set_edge_prop(GV_GraphDB *g, uint64_t edge_id, const char *key,
+                           const char *value) {
+  return graph_set_edge_prop(g, edge_id, key, value);
+}
+
+const char *gv_graph_get_edge_prop(const GV_GraphDB *g, uint64_t edge_id,
+                                   const char *key) {
+  return graph_get_edge_prop(g, edge_id, key);
+}
+
+int gv_graph_get_edges_out(const GV_GraphDB *g, uint64_t node_id,
+                           uint64_t *out_ids, size_t max_count) {
+  return graph_get_edges_out(g, node_id, out_ids, max_count);
+}
+
+int gv_graph_get_edges_in(const GV_GraphDB *g, uint64_t node_id,
+                          uint64_t *out_ids, size_t max_count) {
+  return graph_get_edges_in(g, node_id, out_ids, max_count);
+}
+
+int gv_graph_get_neighbors(const GV_GraphDB *g, uint64_t node_id,
+                           uint64_t *out_ids, size_t max_count) {
+  return graph_get_neighbors(g, node_id, out_ids, max_count);
+}
+
+int gv_graph_bfs(const GV_GraphDB *g, uint64_t start, size_t max_depth,
+                 uint64_t *out_ids, size_t max_count) {
+  return graph_bfs(g, start, max_depth, out_ids, max_count);
+}
+
+int gv_graph_dfs(const GV_GraphDB *g, uint64_t start, size_t max_depth,
+                 uint64_t *out_ids, size_t max_count) {
+  return graph_dfs(g, start, max_depth, out_ids, max_count);
+}
+
+int gv_graph_shortest_path(const GV_GraphDB *g, uint64_t from, uint64_t to,
+                           GV_GraphPath *path) {
+  return graph_shortest_path(g, from, to, path);
+}
+
+int gv_graph_all_paths(const GV_GraphDB *g, uint64_t from, uint64_t to,
+                       size_t max_depth, GV_GraphPath *paths, size_t max_paths) {
+  return graph_all_paths(g, from, to, max_depth, paths, max_paths);
+}
+
+void gv_graph_free_path(GV_GraphPath *path) { graph_free_path(path); }
+
+float gv_graph_pagerank(const GV_GraphDB *g, uint64_t node_id,
+                        size_t iterations, float damping) {
+  return graph_pagerank(g, node_id, iterations, damping);
+}
+
+size_t gv_graph_degree(const GV_GraphDB *g, uint64_t node_id) {
+  return graph_degree(g, node_id);
+}
+
+size_t gv_graph_in_degree(const GV_GraphDB *g, uint64_t node_id) {
+  return graph_in_degree(g, node_id);
+}
+
+size_t gv_graph_out_degree(const GV_GraphDB *g, uint64_t node_id) {
+  return graph_out_degree(g, node_id);
+}
+
+int gv_graph_connected_components(const GV_GraphDB *g, uint64_t *component_ids,
+                                  size_t max_count) {
+  return graph_connected_components(g, component_ids, max_count);
+}
+
+float gv_graph_clustering_coefficient(const GV_GraphDB *g, uint64_t node_id) {
+  return graph_clustering_coefficient(g, node_id);
+}
+
+size_t gv_graph_node_count(const GV_GraphDB *g) { return graph_node_count(g); }
+
+size_t gv_graph_edge_count(const GV_GraphDB *g) { return graph_edge_count(g); }
+
+int gv_graph_save(const GV_GraphDB *g, const char *path) {
+  return graph_save(g, path);
+}
+
+GV_GraphDB *gv_graph_load(const char *path) { return graph_load(path); }
+
+/* ── Knowledge graph wrappers ─────────────────────────────────────────────── */
+
+void gv_kg_config_init(GV_KGConfig *config) { kg_config_init(config); }
+
+GV_KnowledgeGraph *gv_kg_create(const GV_KGConfig *config) {
+  return kg_create(config);
+}
+
+void gv_kg_destroy(GV_KnowledgeGraph *kg) { kg_destroy(kg); }
+
+uint64_t gv_kg_add_entity(GV_KnowledgeGraph *kg, const char *name,
+                          const char *type, const float *embedding,
+                          size_t dimension) {
+  return kg_add_entity(kg, name, type, embedding, dimension);
+}
+
+int gv_kg_remove_entity(GV_KnowledgeGraph *kg, uint64_t entity_id) {
+  return kg_remove_entity(kg, entity_id);
+}
+
+const GV_KGEntity *gv_kg_get_entity(const GV_KnowledgeGraph *kg,
+                                    uint64_t entity_id) {
+  return kg_get_entity(kg, entity_id);
+}
+
+int gv_kg_set_entity_prop(GV_KnowledgeGraph *kg, uint64_t entity_id,
+                          const char *key, const char *value) {
+  return kg_set_entity_prop(kg, entity_id, key, value);
+}
+
+const char *gv_kg_get_entity_prop(const GV_KnowledgeGraph *kg,
+                                  uint64_t entity_id, const char *key) {
+  return kg_get_entity_prop(kg, entity_id, key);
+}
+
+int gv_kg_find_entities_by_type(const GV_KnowledgeGraph *kg, const char *type,
+                                uint64_t *out_ids, size_t max_count) {
+  return kg_find_entities_by_type(kg, type, out_ids, max_count);
+}
+
+int gv_kg_find_entities_by_name(const GV_KnowledgeGraph *kg, const char *name,
+                                uint64_t *out_ids, size_t max_count) {
+  return kg_find_entities_by_name(kg, name, out_ids, max_count);
+}
+
+uint64_t gv_kg_add_relation(GV_KnowledgeGraph *kg, uint64_t subject,
+                            const char *predicate, uint64_t object,
+                            float weight) {
+  return kg_add_relation(kg, subject, predicate, object, weight);
+}
+
+int gv_kg_remove_relation(GV_KnowledgeGraph *kg, uint64_t relation_id) {
+  return kg_remove_relation(kg, relation_id);
+}
+
+const GV_KGRelation *gv_kg_get_relation(const GV_KnowledgeGraph *kg,
+                                      uint64_t relation_id) {
+  return kg_get_relation(kg, relation_id);
+}
+
+int gv_kg_set_relation_prop(GV_KnowledgeGraph *kg, uint64_t relation_id,
+                            const char *key, const char *value) {
+  return kg_set_relation_prop(kg, relation_id, key, value);
+}
+
+int gv_kg_query_triples(const GV_KnowledgeGraph *kg, const uint64_t *subject,
+                        const char *predicate, const uint64_t *object,
+                        GV_KGTriple *out, size_t max_count) {
+  return kg_query_triples(kg, subject, predicate, object, out, max_count);
+}
+
+void gv_kg_free_triples(GV_KGTriple *triples, size_t count) {
+  kg_free_triples(triples, count);
+}
+
+int gv_kg_search_similar(const GV_KnowledgeGraph *kg,
+                         const float *query_embedding, size_t dimension,
+                         size_t k, GV_KGSearchResult *results) {
+  return kg_search_similar(kg, query_embedding, dimension, k, results);
+}
+
+int gv_kg_search_by_text(const GV_KnowledgeGraph *kg, const char *text,
+                         const float *text_embedding, size_t dimension, size_t k,
+                         GV_KGSearchResult *results) {
+  return kg_search_by_text(kg, text, text_embedding, dimension, k, results);
+}
+
+void gv_kg_free_search_results(GV_KGSearchResult *results, size_t count) {
+  kg_free_search_results(results, count);
+}
+
+int gv_kg_resolve_entity(GV_KnowledgeGraph *kg, const char *name,
+                         const char *type, const float *embedding,
+                         size_t dimension) {
+  return kg_resolve_entity(kg, name, type, embedding, dimension);
+}
+
+int gv_kg_find_duplicates(const GV_KnowledgeGraph *kg, float threshold,
+                          GV_KGLinkPrediction *out, size_t max_count) {
+  return kg_find_duplicates(kg, threshold, out, max_count);
+}
+
+int gv_kg_merge_entities(GV_KnowledgeGraph *kg, uint64_t keep_id,
+                         uint64_t merge_id) {
+  return kg_merge_entities(kg, keep_id, merge_id);
+}
+
+int gv_kg_predict_links(const GV_KnowledgeGraph *kg, uint64_t entity_id,
+                        size_t k, GV_KGLinkPrediction *results) {
+  return kg_predict_links(kg, entity_id, k, results);
+}
+
+int gv_kg_get_neighbors(const GV_KnowledgeGraph *kg, uint64_t entity_id,
+                        uint64_t *out_ids, size_t max_count) {
+  return kg_get_neighbors(kg, entity_id, out_ids, max_count);
+}
+
+int gv_kg_traverse(const GV_KnowledgeGraph *kg, uint64_t start,
+                   size_t max_depth, uint64_t *out_ids, size_t max_count) {
+  return kg_traverse(kg, start, max_depth, out_ids, max_count);
+}
+
+int gv_kg_shortest_path(const GV_KnowledgeGraph *kg, uint64_t from,
+                        uint64_t to, uint64_t *path_ids, size_t max_len) {
+  return kg_shortest_path(kg, from, to, path_ids, max_len);
+}
+
+int gv_kg_extract_subgraph(const GV_KnowledgeGraph *kg, uint64_t center,
+                          size_t radius, GV_KGSubgraph *subgraph) {
+  return kg_extract_subgraph(kg, center, radius, subgraph);
+}
+
+void gv_kg_free_subgraph(GV_KGSubgraph *subgraph) {
+  kg_free_subgraph(subgraph);
+}
+
+int gv_kg_hybrid_search(const GV_KnowledgeGraph *kg,
+                        const float *query_embedding, size_t dimension,
+                        const char *entity_type, const char *predicate_filter,
+                        size_t k, GV_KGSearchResult *results) {
+  return kg_hybrid_search(kg, query_embedding, dimension, entity_type,
+                          predicate_filter, k, results);
+}
+
+int gv_kg_get_stats(const GV_KnowledgeGraph *kg, GV_KGStats *stats) {
+  return kg_get_stats(kg, stats);
+}
+
+float gv_kg_entity_centrality(const GV_KnowledgeGraph *kg, uint64_t entity_id) {
+  return kg_entity_centrality(kg, entity_id);
+}
+
+int gv_kg_get_entity_types(const GV_KnowledgeGraph *kg, char **out_types,
+                           size_t max_count) {
+  return kg_get_entity_types(kg, out_types, max_count);
+}
+
+int gv_kg_get_predicates(const GV_KnowledgeGraph *kg, char **out_predicates,
+                         size_t max_count) {
+  return kg_get_predicates(kg, out_predicates, max_count);
+}
+
+int gv_kg_save(const GV_KnowledgeGraph *kg, const char *path) {
+  return kg_save(kg, path);
+}
+
+GV_KnowledgeGraph *gv_kg_load(const char *path) { return kg_load(path); }
