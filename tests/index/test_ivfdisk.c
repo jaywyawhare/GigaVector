@@ -11,6 +11,7 @@
 #include "index/index_maintenance.h"
 #include "storage/posting_list.h"
 #include "storage/soa_storage.h"
+#include "../test_tmp.h"
 
 #define ASSERT(cond, msg) do { \
     if (!(cond)) { \
@@ -21,8 +22,8 @@
 
 static int test_ivfdisk_create_train_search(void)
 {
-    char dir[] = "/tmp/gv_ivfdisk_test_XXXXXX";
-    ASSERT(mkdtemp(dir) != NULL, "mkdtemp");
+    char dir[512];
+    ASSERT(gv_test_mkdtemp(dir, sizeof(dir), "gv_ivfdisk_test") == 0, "mkdtemp");
 
     GV_IVFDiskConfig cfg;
     ivfdisk_config_init(&cfg);
@@ -63,8 +64,8 @@ static int test_ivfdisk_create_train_search(void)
 
 static int test_ivfdisk_save_load_roundtrip(void)
 {
-    char dir[] = "/tmp/gv_ivfdisk_save_XXXXXX";
-    ASSERT(mkdtemp(dir) != NULL, "mkdtemp save dir");
+    char dir[512];
+    ASSERT(gv_test_mkdtemp(dir, sizeof(dir), "gv_ivfdisk_save") == 0, "mkdtemp save dir");
 
     GV_IVFDiskConfig cfg;
     ivfdisk_config_init(&cfg);
@@ -87,8 +88,8 @@ static int test_ivfdisk_save_load_roundtrip(void)
         ASSERT(ivfdisk_insert(idx, train + i * dim, dim, i) == 0, "insert");
     }
 
-    char snap_path[] = "/tmp/gv_ivfdisk_snap_XXXXXX";
-    int fd = mkstemp(snap_path);
+    char snap_path[512];
+    int fd = gv_test_mkstemp(snap_path, sizeof(snap_path), "gv_ivfdisk_snap");
     ASSERT(fd >= 0, "mkstemp snap");
     FILE *out = fdopen(fd, "wb");
     ASSERT(out != NULL, "fdopen out");
@@ -120,8 +121,8 @@ static int test_ivfdisk_save_load_roundtrip(void)
 
 static int test_db_ivfdisk_save_load(void)
 {
-    char db_path[] = "/tmp/gv_db_ivfdisk_XXXXXX";
-    ASSERT(mkstemp(db_path) >= 0, "mkstemp db");
+    char db_path[512];
+    ASSERT(gv_test_mkstemp(db_path, sizeof(db_path), "gv_db_ivfdisk") >= 0, "mkstemp db");
     unlink(db_path);
 
     const size_t dim = 4;
@@ -173,8 +174,8 @@ static int test_db_ivfdisk_save_load(void)
 
 static int test_ivfdisk_delete_update(void)
 {
-    char dir[] = "/tmp/gv_ivfdisk_del_XXXXXX";
-    ASSERT(mkdtemp(dir) != NULL, "mkdtemp");
+    char dir[512];
+    ASSERT(gv_test_mkdtemp(dir, sizeof(dir), "gv_ivfdisk_del") == 0, "mkdtemp");
 
     const size_t dim = 8;
     GV_IVFDiskConfig cfg;
@@ -216,8 +217,8 @@ static int test_ivfdisk_delete_update(void)
 
 static int test_ivfdisk_sq8_and_hnsw(void)
 {
-    char dir[] = "/tmp/gv_ivfdisk_sq8_XXXXXX";
-    ASSERT(mkdtemp(dir) != NULL, "mkdtemp");
+    char dir[512];
+    ASSERT(gv_test_mkdtemp(dir, sizeof(dir), "gv_ivfdisk_sq8") == 0, "mkdtemp");
 
     const size_t dim = 16;
     const size_t n = 128;
@@ -258,8 +259,8 @@ static int test_ivfdisk_sq8_and_hnsw(void)
 
 static int test_ivfdisk_recall_vs_flat(void)
 {
-    char dir[] = "/tmp/gv_ivfdisk_recall_XXXXXX";
-    ASSERT(mkdtemp(dir) != NULL, "mkdtemp");
+    char dir[512];
+    ASSERT(gv_test_mkdtemp(dir, sizeof(dir), "gv_ivfdisk_recall") == 0, "mkdtemp");
 
     const size_t dim = 32;
     const size_t n = 2000;
@@ -332,8 +333,8 @@ static int test_ivfdisk_recall_vs_flat(void)
 
 static int test_ivfdisk_border_replication(void)
 {
-    char dir[] = "/tmp/gv_ivfdisk_border_XXXXXX";
-    ASSERT(mkdtemp(dir) != NULL, "mkdtemp");
+    char dir[512];
+    ASSERT(gv_test_mkdtemp(dir, sizeof(dir), "gv_ivfdisk_border") == 0, "mkdtemp");
 
     const size_t dim = 2;
     GV_IVFDiskConfig cfg;
@@ -369,8 +370,8 @@ static int test_ivfdisk_border_replication(void)
 
 static int test_ivfdisk_head_ratio_enforced(void)
 {
-    char dir[] = "/tmp/gv_ivfdisk_ratio_XXXXXX";
-    ASSERT(mkdtemp(dir) != NULL, "mkdtemp");
+    char dir[512];
+    ASSERT(gv_test_mkdtemp(dir, sizeof(dir), "gv_ivfdisk_ratio") == 0, "mkdtemp");
 
     const size_t dim = 32;
     GV_IVFDiskConfig cfg;
@@ -396,8 +397,8 @@ static int test_ivfdisk_head_ratio_enforced(void)
 
 static int test_db_ivfdisk_wal_replay(void)
 {
-    char db_path[] = "/tmp/gv_ivfdisk_wal_XXXXXX";
-    ASSERT(mkstemp(db_path) >= 0, "mkstemp db");
+    char db_path[512];
+    ASSERT(gv_test_mkstemp(db_path, sizeof(db_path), "gv_ivfdisk_wal") >= 0, "mkstemp db");
     unlink(db_path);
 
     char wal_path[512];
@@ -450,8 +451,8 @@ static int test_db_ivfdisk_wal_replay(void)
 
 static int test_db_ivfdisk_mmap_open(void)
 {
-    char db_path[] = "/tmp/gv_ivfdisk_mmap_XXXXXX";
-    ASSERT(mkstemp(db_path) >= 0, "mkstemp db");
+    char db_path[512];
+    ASSERT(gv_test_mkstemp(db_path, sizeof(db_path), "gv_ivfdisk_mmap") >= 0, "mkstemp db");
     unlink(db_path);
 
     const size_t dim = 4;
@@ -497,8 +498,8 @@ static int test_db_ivfdisk_mmap_open(void)
 
 static int test_ivfdisk_maintenance_merge(void)
 {
-    char dir[] = "/tmp/gv_ivfdisk_maint_m_XXXXXX";
-    ASSERT(mkdtemp(dir) != NULL, "mkdtemp");
+    char dir[512];
+    ASSERT(gv_test_mkdtemp(dir, sizeof(dir), "gv_ivfdisk_maint_m") == 0, "mkdtemp");
 
     GV_IVFDiskConfig cfg;
     ivfdisk_config_init(&cfg);
@@ -558,8 +559,8 @@ static int test_ivfdisk_maintenance_merge(void)
 
 static int test_ivfdisk_maintenance_split(void)
 {
-    char dir[] = "/tmp/gv_ivfdisk_maint_s_XXXXXX";
-    ASSERT(mkdtemp(dir) != NULL, "mkdtemp");
+    char dir[512];
+    ASSERT(gv_test_mkdtemp(dir, sizeof(dir), "gv_ivfdisk_maint_s") == 0, "mkdtemp");
 
     GV_IVFDiskConfig cfg;
     ivfdisk_config_init(&cfg);
@@ -605,11 +606,11 @@ static int test_ivfdisk_maintenance_split(void)
 
 static int test_ivfdisk_head_checkpoint_replay(void)
 {
-    char dir[] = "/tmp/gv_ivfdisk_ckpt_XXXXXX";
-    ASSERT(mkdtemp(dir) != NULL, "mkdtemp");
+    char dir[512];
+    ASSERT(gv_test_mkdtemp(dir, sizeof(dir), "gv_ivfdisk_ckpt") == 0, "mkdtemp");
 
-    char snap_path[] = "/tmp/gv_ivfdisk_ckpt_snap_XXXXXX";
-    int snap_fd = mkstemp(snap_path);
+    char snap_path[512];
+    int snap_fd = gv_test_mkstemp(snap_path, sizeof(snap_path), "gv_ivfdisk_ckpt_snap");
     ASSERT(snap_fd >= 0, "mkstemp snap");
 
     GV_IVFDiskConfig cfg;
@@ -666,8 +667,8 @@ static int test_ivfdisk_head_checkpoint_replay(void)
 
 static int test_ivfdisk_lazy_merge_on_search(void)
 {
-    char dir[] = "/tmp/gv_ivfdisk_lazy_XXXXXX";
-    ASSERT(mkdtemp(dir) != NULL, "mkdtemp");
+    char dir[512];
+    ASSERT(gv_test_mkdtemp(dir, sizeof(dir), "gv_ivfdisk_lazy") == 0, "mkdtemp");
 
     GV_IVFDiskConfig cfg;
     ivfdisk_config_init(&cfg);
@@ -716,8 +717,8 @@ static int test_ivfdisk_lazy_merge_on_search(void)
 
 static int test_ivfdisk_maintenance_multi_split(void)
 {
-    char dir[] = "/tmp/gv_ivfdisk_msplit_XXXXXX";
-    ASSERT(mkdtemp(dir) != NULL, "mkdtemp");
+    char dir[512];
+    ASSERT(gv_test_mkdtemp(dir, sizeof(dir), "gv_ivfdisk_msplit") == 0, "mkdtemp");
 
     GV_IVFDiskConfig cfg;
     ivfdisk_config_init(&cfg);
@@ -758,8 +759,8 @@ static int test_ivfdisk_maintenance_multi_split(void)
 
 static int test_ivfdisk_head_checkpoint_timer(void)
 {
-    char dir[] = "/tmp/gv_ivfdisk_ckpt_t_XXXXXX";
-    ASSERT(mkdtemp(dir) != NULL, "mkdtemp");
+    char dir[512];
+    ASSERT(gv_test_mkdtemp(dir, sizeof(dir), "gv_ivfdisk_ckpt_t") == 0, "mkdtemp");
 
     gv_sim_time_set_mode(GV_TIME_SIM);
     gv_sim_time_reset(1700000000ULL);

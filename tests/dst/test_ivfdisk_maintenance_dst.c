@@ -32,8 +32,8 @@ static int recall_at_k(const GV_SearchResult *hits, int n, size_t target)
 
 static int test_insert_compact_search_oracle(void)
 {
-    char db_path[] = "/tmp/gv_dst_ivfdisk_maint_XXXXXX";
-    ASSERT(mkstemp(db_path) >= 0, "mkstemp db");
+    char db_path[512];
+    ASSERT(gv_test_mkstemp(db_path, sizeof(db_path), "gv_dst_ivfdisk_maint") >= 0, "mkstemp db");
     unlink(db_path);
 
     GV_IVFDiskConfig cfg;

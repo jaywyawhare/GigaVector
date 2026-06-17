@@ -4,11 +4,15 @@
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #ifdef _WIN32
 #include <direct.h>
+#include <fcntl.h>
+#include <io.h>
 #include <process.h>
 #else
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -44,6 +48,28 @@ static inline int gv_test_mkdir(const char *path) {
     if (mkdir(path, 0700) == 0 || errno == EEXIST) return 0;
 #endif
     return -1;
+}
+
+static inline int gv_test_mkdtemp(char *buf, size_t size, const char *stem) {
+    static unsigned seq;
+    seq++;
+    int n = snprintf(buf, size, "%s/%s_%lu_%u",
+                     gv_test_tmp_root(), stem, gv_test_pid(), seq);
+    if (n < 0 || (size_t)n >= size) return -1;
+    return gv_test_mkdir(buf);
+}
+
+static inline int gv_test_mkstemp(char *buf, size_t size, const char *stem) {
+    static unsigned seq;
+    seq++;
+    int n = snprintf(buf, size, "%s/%s_%lu_%u",
+                     gv_test_tmp_root(), stem, gv_test_pid(), seq);
+    if (n < 0 || (size_t)n >= size) return -1;
+#ifdef _WIN32
+    return _open(buf, _O_RDWR | _O_CREAT | _O_EXCL | _O_BINARY, _S_IREAD | _S_IWRITE);
+#else
+    return open(buf, O_RDWR | O_CREAT | O_EXCL, 0600);
+#endif
 }
 
 #endif
