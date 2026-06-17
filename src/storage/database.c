@@ -2833,10 +2833,8 @@ int db_add_vector_with_metadata(GV_Database *db, const float *data, size_t dimen
         }
     } else if (db->index_type == GV_INDEX_TYPE_FLAT ||
                db->index_type == GV_INDEX_TYPE_IVFFLAT ||
-         db->index_type == GV_INDEX_TYPE_IVFSQ8 ||
                db->index_type == GV_INDEX_TYPE_IVFSQ8 ||
-         db->index_type == GV_INDEX_TYPE_IVFSQ8 ||
-         db->index_type == GV_INDEX_TYPE_IVFTURBOQUANT ||
+               db->index_type == GV_INDEX_TYPE_IVFTURBOQUANT ||
                db->index_type == GV_INDEX_TYPE_PQ ||
                db->index_type == GV_INDEX_TYPE_LSH) {
         GV_Vector *vector = vector_create_from_data(dimension, data);
