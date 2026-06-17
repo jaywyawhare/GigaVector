@@ -167,13 +167,18 @@ int grpc_encode_add_request(const float *data, size_t dimension,
 
 int grpc_encode_ivfdisk_train_request(const float *data, size_t count, size_t dimension,
                                       uint8_t *buf, size_t buf_size, size_t *out_len) {
-    (void)data;
-    (void)count;
-    (void)dimension;
-    (void)buf;
-    (void)buf_size;
-    (void)out_len;
-    return GV_GRPC_ERROR_NOT_RUNNING;
+    if (!data || !buf || !out_len || count == 0 || dimension == 0) return GV_GRPC_ERROR_NULL;
+
+    size_t needed = 8 + count * dimension * sizeof(float);
+    if (buf_size < needed) return GV_GRPC_ERROR_CONFIG;
+
+    write_u32_be(buf, (uint32_t)count);
+    write_u32_be(buf + 4, (uint32_t)dimension);
+    for (size_t i = 0; i < count * dimension; i++) {
+        write_float_be(buf + 8 + i * 4, data[i]);
+    }
+    *out_len = needed;
+    return GV_GRPC_OK;
 }
 
 int grpc_client_ivfdisk_train(const char *host, uint16_t port,
