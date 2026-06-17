@@ -36,6 +36,8 @@ class IndexType(IntEnum):
     LSH = 7
     IVFSQ8 = 8
     IVFTURBOQUANT = 9
+    DISKANN = 10
+    IVFDISK = 11
 
 
 class DistanceType(IntEnum):
@@ -137,6 +139,8 @@ class IVFDiskConfig:
     cache_size_mb: int = 64
     sector_size: int = 4096
     max_list_bytes: int = 64 * 1024 * 1024
+    head_wal_checkpoint_bytes: int = 10 * 1024 * 1024
+    head_checkpoint_interval_sec: int = 300
     head_ratio: float = 0.2
     border_ratio: float = 1.15
     use_hnsw_head: bool = False
@@ -370,6 +374,8 @@ class Database:
                 "cache_size_mb": ivfdisk_config.cache_size_mb,
                 "sector_size": ivfdisk_config.sector_size,
                 "max_list_bytes": ivfdisk_config.max_list_bytes,
+                "head_wal_checkpoint_bytes": ivfdisk_config.head_wal_checkpoint_bytes,
+                "head_checkpoint_interval_sec": ivfdisk_config.head_checkpoint_interval_sec,
                 "head_ratio": ivfdisk_config.head_ratio,
                 "border_ratio": ivfdisk_config.border_ratio,
                 "use_hnsw_head": 1 if ivfdisk_config.use_hnsw_head else 0,

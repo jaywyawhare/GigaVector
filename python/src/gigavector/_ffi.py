@@ -76,6 +76,8 @@ typedef struct {
     size_t cache_size_mb;
     size_t sector_size;
     size_t max_list_bytes;
+    size_t head_wal_checkpoint_bytes;
+    size_t head_checkpoint_interval_sec;
     float head_ratio;
     float border_ratio;
     int use_hnsw_head;
