@@ -11,6 +11,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 #include "core/heap.h"
 #include "core/sim_time.h"
 #include "core/utils.h"
