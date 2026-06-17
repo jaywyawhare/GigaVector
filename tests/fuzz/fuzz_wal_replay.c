@@ -65,8 +65,8 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     }
     fclose(f);
 
-    (void)wal_replay_rich(path, FUZZ_DIM, noop_insert, noop_delete, noop_update, NULL,
-                          (uint32_t)GV_INDEX_TYPE_FLAT);
+    (void)wal_replay_rich(path, FUZZ_DIM, noop_insert, noop_delete, noop_update,
+                          NULL, NULL, (uint32_t)GV_INDEX_TYPE_FLAT);
     remove(path);
     return 0;
 }
