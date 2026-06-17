@@ -21,8 +21,9 @@ struct GV_MMap {
 GV_MMap *mmap_open_readonly(const char *path) {
     if (!path) return NULL;
 
-    HANDLE hFile = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, NULL,
-                               OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    HANDLE hFile = CreateFileA(path, GENERIC_READ,
+                               FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                               NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
     if (hFile == INVALID_HANDLE_VALUE) return NULL;
 
     LARGE_INTEGER sz;

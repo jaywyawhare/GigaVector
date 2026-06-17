@@ -20,9 +20,20 @@ typedef SSIZE_T ssize_t;
 #endif
 static FILE *fmemopen(void *buf, size_t size, const char *mode) {
     (void)mode;
-    FILE *tmp = tmpfile();
-    if (!tmp) return NULL;
-    if (fwrite(buf, 1, size, tmp) != size) { fclose(tmp); return NULL; }
+    char dir[MAX_PATH];
+    char path[MAX_PATH];
+    if (GetTempPathA((DWORD)sizeof(dir), dir) == 0) return NULL;
+    if (GetTempFileNameA(dir, "gvm", 0, path) == 0) return NULL;
+    FILE *tmp = fopen(path, "wb+");
+    if (!tmp) {
+        DeleteFileA(path);
+        return NULL;
+    }
+    if (fwrite(buf, 1, size, tmp) != size) {
+        fclose(tmp);
+        DeleteFileA(path);
+        return NULL;
+    }
     rewind(tmp);
     return tmp;
 }
