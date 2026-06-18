@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include <pthread.h>
 
+#include "core/memory.h"
 #include "core/types.h"
 #include "index/kdtree.h"
 #include "storage/wal.h"
@@ -125,6 +126,7 @@ typedef struct GV_Database {
     double current_ips;                 /**< Current inserts per second. */
     GV_RecallMetrics recall_metrics;   /**< Recall metrics for approximate search. */
     pthread_mutex_t observability_mutex; /**< Mutex for observability data. */
+    GV_Memory memory_pool;             /**< Tracked long-lived allocations (gv_db_alloc). */
 } GV_Database;
 
 typedef struct {
@@ -870,6 +872,14 @@ int db_set_resource_limits(GV_Database *db, const GV_ResourceLimits *limits);
  * @param limits Output structure to fill; must be non-NULL.
  */
 void db_get_resource_limits(const GV_Database *db, GV_ResourceLimits *limits);
+
+/**
+ * @brief Check whether an operation would exceed configured resource limits.
+ *
+ * @return 0 if within limits, -1 if a limit would be exceeded.
+ */
+int db_check_resource_limits(GV_Database *db, size_t additional_vectors,
+                             size_t additional_memory);
 
 /**
  * @brief Get current estimated memory usage in bytes.

@@ -26,6 +26,7 @@
 #include "core/config.h"
 #include "core/arena.h"
 #include "core/buffer.h"
+#include "core/memory.h"
 #include "core/scope.h"
 #include "core/heap.h"
 #include "core/types.h"

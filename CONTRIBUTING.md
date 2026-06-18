@@ -157,8 +157,13 @@ if (result != 0) {
 ```
 
 **2. Memory Management:**
+
+Ephemeral scratch inside API handlers and search paths should use `GV_WITH_ARENA` or
+`gv_tls_alloc` (see `docs/memory.md`). Use `malloc`/`free` only for data that
+outlives the request or is returned to callers.
+
 ```c
-// Always free allocated memory
+// Heap-owned buffer (caller or long-lived state)
 char *buffer = malloc(size);
 if (buffer == NULL) {
     return -1;
