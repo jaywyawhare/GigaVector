@@ -65,6 +65,7 @@ static ssize_t getline(char **lineptr, size_t *n, FILE *stream) {
 
 #include "core/types.h"
 #include "core/scope.h"
+#include "core/memory.h"
 
 #include "storage/database.h"
 #include "search/distance.h"
@@ -100,7 +101,7 @@ static ssize_t getline(char **lineptr, size_t *n, FILE *stream) {
 
 static size_t db_estimate_vector_memory(size_t dimension);
 static void db_update_memory_usage(GV_Database *db);
-static int db_check_resource_limits(GV_Database *db, size_t additional_vectors, size_t additional_memory);
+int db_check_resource_limits(GV_Database *db, size_t additional_vectors, size_t additional_memory);
 static void db_increment_concurrent_ops(GV_Database *db);
 static void db_decrement_concurrent_ops(GV_Database *db);
 static uint64_t db_get_time_us(void);
@@ -161,6 +162,7 @@ static void db_init_common_fields(GV_Database *db) {
     db->current_ips = 0.0;
     memset(&db->recall_metrics, 0, sizeof(GV_RecallMetrics));
     pthread_mutex_init(&db->observability_mutex, NULL);
+    gv_memory_init(&db->memory_pool);
 }
 
 static int db_write_header(FILE *out, uint32_t dimension, uint64_t count, uint32_t version) {
@@ -1235,6 +1237,7 @@ void db_close(GV_Database *db) {
         free(db->search_latency_hist.bucket_boundaries);
     }
     pthread_mutex_destroy(&db->observability_mutex);
+    gv_memory_fini(&db->memory_pool);
     free(db->filepath);
     free(db->wal_path);
     free(db);
@@ -4632,7 +4635,9 @@ static int db_compact_soa_storage(GV_Database *db) {
         return -1;
     }
 
-    size_t *index_map = (size_t *)malloc(storage->count * sizeof(size_t));
+    int map_on_heap = 0;
+    size_t *index_map = (size_t *)gv_tls_alloc_or_heap(
+        storage->count * sizeof(size_t), sizeof(size_t), &map_on_heap);
     if (index_map == NULL) {
         free(new_data);
         free(new_metadata);
@@ -4759,7 +4764,7 @@ static int db_compact_soa_storage(GV_Database *db) {
         }
     }
 
-    free(index_map);
+    gv_tls_free_or_heap(index_map, map_on_heap);
     return 0;
 }
 
@@ -4812,6 +4817,8 @@ int db_compact(GV_Database *db) {
     if (db == NULL) {
         return -1;
     }
+
+    gv_tls_arena_reset();
 
     pthread_rwlock_wrlock(&db->rwlock);
 
@@ -5000,7 +5007,7 @@ static void db_update_memory_usage(GV_Database *db) {
     pthread_mutex_unlock(&db->resource_mutex);
 }
 
-static int db_check_resource_limits(GV_Database *db, size_t additional_vectors, size_t additional_memory) {
+int db_check_resource_limits(GV_Database *db, size_t additional_vectors, size_t additional_memory) {
     if (db == NULL) {
         return -1;
     }

@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "core/scope.h"
 #include "core/utils.h"
 #include "storage/posting_list.h"
 
@@ -410,84 +411,86 @@ int ivfdisk_maintenance_run(GV_IVFDiskIndex *index,
     if (!cat || !cfg) return -1;
 
     size_t nheads = ivfdisk_nlist(index);
-    MaintJob *jobs = (MaintJob *)calloc(nheads * 2, sizeof(MaintJob));
-    if (!jobs) return -1;
-    size_t job_n = 0;
+    GV_WITH_ARENA(scratch, 256u * 1024u) {
+        MaintJob *jobs =
+            (MaintJob *)gv_arena_calloc(&scratch, nheads * 2, sizeof(MaintJob));
+        if (!jobs) return -1;
+        size_t job_n = 0;
 
-    for (size_t h = 0; h < nheads; ++h) {
-        GV_PostingHeadStats st;
-        if (posting_catalog_head_stats(cat, h, &st) != 0) continue;
-        if (st.live_count == 0) continue;
+        for (size_t h = 0; h < nheads; ++h) {
+            GV_PostingHeadStats st;
+            if (posting_catalog_head_stats(cat, h, &st) != 0) continue;
+            if (st.live_count == 0) continue;
 
-        if (cfg->max_list_bytes > 0 && st.byte_total >= cfg->max_list_bytes) {
-            jobs[job_n++] = (MaintJob){
-                .type = GV_MAINT_JOB_SPLIT, .head_id = h, .priority = 4
-            };
-            continue;
+            if (cfg->max_list_bytes > 0 && st.byte_total >= cfg->max_list_bytes) {
+                jobs[job_n++] = (MaintJob){
+                    .type = GV_MAINT_JOB_SPLIT, .head_id = h, .priority = 4
+                };
+                continue;
+            }
+            if (st.segment_count > 1 &&
+                st.live_ratio < local.live_ratio_threshold) {
+                jobs[job_n++] = (MaintJob){
+                    .type = GV_MAINT_JOB_MERGE, .head_id = h, .priority = 2
+                };
+                continue;
+            }
+            if (st.segment_count > local.segment_count_max) {
+                jobs[job_n++] = (MaintJob){
+                    .type = GV_MAINT_JOB_DEFRAG, .head_id = h, .priority = 1
+                };
+            }
         }
-        if (st.segment_count > 1 &&
-            st.live_ratio < local.live_ratio_threshold) {
-            jobs[job_n++] = (MaintJob){
-                .type = GV_MAINT_JOB_MERGE, .head_id = h, .priority = 2
-            };
-            continue;
-        }
-        if (st.segment_count > local.segment_count_max) {
-            jobs[job_n++] = (MaintJob){
-                .type = GV_MAINT_JOB_DEFRAG, .head_id = h, .priority = 1
-            };
-        }
-    }
 
-    qsort(jobs, job_n, sizeof(MaintJob), maint_job_cmp);
+        qsort(jobs, job_n, sizeof(MaintJob), maint_job_cmp);
 
-    GV_IVFDiskMaintenanceStats local_stats;
-    memset(&local_stats, 0, sizeof(local_stats));
+        GV_IVFDiskMaintenanceStats local_stats;
+        memset(&local_stats, 0, sizeof(local_stats));
 
-    size_t ran = 0;
-    for (size_t i = 0; i < job_n && ran < local.max_jobs_per_run; ++i) {
-        int rc = 0;
-        switch (jobs[i].type) {
-        case GV_MAINT_JOB_SPLIT: {
-            size_t nlist_before = ivfdisk_nlist(index);
-            rc = maint_split_head(index, jobs[i].head_id);
-            if (rc == 0) {
-                local_stats.splits++;
-                if (maint_reassign_head(index, jobs[i].head_id) > 0) {
-                    local_stats.reassigns++;
-                }
-                for (size_t h = nlist_before; h < ivfdisk_nlist(index); ++h) {
-                    if (maint_reassign_head(index, h) > 0) {
+        size_t ran = 0;
+        for (size_t i = 0; i < job_n && ran < local.max_jobs_per_run; ++i) {
+            int rc = 0;
+            switch (jobs[i].type) {
+            case GV_MAINT_JOB_SPLIT: {
+                size_t nlist_before = ivfdisk_nlist(index);
+                rc = maint_split_head(index, jobs[i].head_id);
+                if (rc == 0) {
+                    local_stats.splits++;
+                    if (maint_reassign_head(index, jobs[i].head_id) > 0) {
                         local_stats.reassigns++;
                     }
+                    for (size_t h = nlist_before; h < ivfdisk_nlist(index); ++h) {
+                        if (maint_reassign_head(index, h) > 0) {
+                            local_stats.reassigns++;
+                        }
+                    }
                 }
+                break;
             }
-            break;
+            case GV_MAINT_JOB_MERGE:
+                rc = maint_merge_head(index, jobs[i].head_id, 0);
+                if (rc == 0) local_stats.merges++;
+                break;
+            case GV_MAINT_JOB_DEFRAG:
+                rc = maint_merge_head(index, jobs[i].head_id, 1);
+                if (rc == 0) local_stats.defrags++;
+                break;
+            default:
+                break;
+            }
+            if (rc == 0) {
+                ran++;
+                local_stats.jobs_run++;
+            }
         }
-        case GV_MAINT_JOB_MERGE:
-            rc = maint_merge_head(index, jobs[i].head_id, 0);
-            if (rc == 0) local_stats.merges++;
-            break;
-        case GV_MAINT_JOB_DEFRAG:
-            rc = maint_merge_head(index, jobs[i].head_id, 1);
-            if (rc == 0) local_stats.defrags++;
-            break;
-        default:
-            break;
-        }
-        if (rc == 0) {
-            ran++;
-            local_stats.jobs_run++;
-        }
-    }
 
-    if (local_stats.jobs_run > 0) {
-        ivfdisk_rebuild_head_graph(index);
-        ivfdisk_rebuild_vector_map(index);
-    }
-    ivfdisk_head_checkpoint_if_needed(index);
+        if (local_stats.jobs_run > 0) {
+            ivfdisk_rebuild_head_graph(index);
+            ivfdisk_rebuild_vector_map(index);
+        }
+        ivfdisk_head_checkpoint_if_needed(index);
 
-    free(jobs);
-    if (stats) *stats = local_stats;
-    return 0;
+        if (stats) *stats = local_stats;
+        return 0;
+    }
 }

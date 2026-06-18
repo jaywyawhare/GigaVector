@@ -566,25 +566,27 @@ static void handle_add_vector(GV_GrpcServer *server, int fd,
         return;
     }
 
-    float *vec = malloc(dimension * sizeof(float));
-    if (!vec) {
-        send_error_response(fd, msg->request_id, -1, "out of memory");
-        GV_ATOMIC_INC(&server->errors);
-        return;
-    }
-    for (uint32_t i = 0; i < dimension; i++) {
-        vec[i] = read_float_be(msg->payload + 4 + i * 4);
-    }
+    GV_WITH_ARENA(scratch, GV_GRPC_SEARCH_ARENA_BYTES) {
+        float *vec = (float *)gv_arena_alloc(
+            &scratch, (size_t)dimension * sizeof(float), sizeof(float));
+        if (!vec) {
+            send_error_response(fd, msg->request_id, -1, "out of memory");
+            GV_ATOMIC_INC(&server->errors);
+            return;
+        }
+        for (uint32_t i = 0; i < dimension; i++) {
+            vec[i] = read_float_be(msg->payload + 4 + i * 4);
+        }
 
-    int rc = db_add_vector(server->db, vec, (size_t)dimension);
-    free(vec);
+        int rc = db_add_vector(server->db, vec, (size_t)dimension);
 
-    uint8_t resp[4];
-    write_u32_be(resp, (uint32_t)rc);
-    send_message(fd, GV_MSG_RESPONSE, msg->request_id, resp, 4);
+        uint8_t resp[4];
+        write_u32_be(resp, (uint32_t)rc);
+        send_message(fd, GV_MSG_RESPONSE, msg->request_id, resp, 4);
 
-    if (rc != 0) {
-        GV_ATOMIC_INC(&server->errors);
+        if (rc != 0) {
+            GV_ATOMIC_INC(&server->errors);
+        }
     }
 }
 
@@ -722,25 +724,27 @@ static void handle_update(GV_GrpcServer *server, int fd,
         return;
     }
 
-    float *vec = malloc(dimension * sizeof(float));
-    if (!vec) {
-        send_error_response(fd, msg->request_id, -1, "out of memory");
-        GV_ATOMIC_INC(&server->errors);
-        return;
-    }
-    for (uint32_t i = 0; i < dimension; i++) {
-        vec[i] = read_float_be(msg->payload + 8 + i * 4);
-    }
+    GV_WITH_ARENA(scratch, GV_GRPC_SEARCH_ARENA_BYTES) {
+        float *vec = (float *)gv_arena_alloc(
+            &scratch, (size_t)dimension * sizeof(float), sizeof(float));
+        if (!vec) {
+            send_error_response(fd, msg->request_id, -1, "out of memory");
+            GV_ATOMIC_INC(&server->errors);
+            return;
+        }
+        for (uint32_t i = 0; i < dimension; i++) {
+            vec[i] = read_float_be(msg->payload + 8 + i * 4);
+        }
 
-    int rc = db_update_vector(server->db, (size_t)index, vec, (size_t)dimension);
-    free(vec);
+        int rc = db_update_vector(server->db, (size_t)index, vec, (size_t)dimension);
 
-    uint8_t resp[4];
-    write_u32_be(resp, (uint32_t)rc);
-    send_message(fd, GV_MSG_RESPONSE, msg->request_id, resp, 4);
+        uint8_t resp[4];
+        write_u32_be(resp, (uint32_t)rc);
+        send_message(fd, GV_MSG_RESPONSE, msg->request_id, resp, 4);
 
-    if (rc != 0) {
-        GV_ATOMIC_INC(&server->errors);
+        if (rc != 0) {
+            GV_ATOMIC_INC(&server->errors);
+        }
     }
 }
 

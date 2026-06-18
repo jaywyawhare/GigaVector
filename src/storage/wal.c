@@ -11,6 +11,7 @@
 #endif
 
 #include "storage/wal.h"
+#include "core/scope.h"
 #include "core/utils.h"
 
 #define GV_WAL_MAGIC "GVW1"
@@ -33,6 +34,14 @@ static int wal_sync(FILE *f) {
     if (fflush(f) != 0) return -1;
     if (fsync(fileno(f)) != 0) return -1;
     return 0;
+}
+
+static void *wal_scratch_alloc(size_t bytes, int *on_heap) {
+    return gv_tls_alloc_or_heap(bytes, sizeof(void *), on_heap);
+}
+
+static void wal_scratch_release(void *ptr, int on_heap) {
+    gv_tls_free_or_heap(ptr, on_heap);
 }
 
 
@@ -337,6 +346,8 @@ int wal_replay(const char *path, size_t expected_dimension,
         return -1;
     }
 
+    gv_tls_arena_reset();
+
     FILE *f = fopen(path, "rb");
     if (f == NULL) {
         return (errno == ENOENT) ? 0 : -1;
@@ -515,42 +526,46 @@ int wal_replay(const char *path, size_t expected_dimension,
         }
 
         if (type == GV_WAL_TYPE_INSERT) {
+            gv_tls_arena_reset();
             uint32_t dim = 0;
             if (read_u32(f, &dim) != 0 || dim != (uint32_t)expected_dimension) {
                 fclose(f);
                 return -1;
             }
-            float *buf = (float *)malloc(sizeof(float) * dim);
+            int buf_on_heap = 0;
+            float *buf = (float *)wal_scratch_alloc(sizeof(float) * dim, &buf_on_heap);
             if (buf == NULL) {
                 fclose(f);
                 return -1;
             }
             if (read_floats(f, buf, dim) != 0) {
-                free(buf);
+                wal_scratch_release(buf, buf_on_heap);
                 fclose(f);
                 return -1;
             }
             uint32_t meta_count = 0;
             if (read_u32(f, &meta_count) != 0) {
-                free(buf);
+                wal_scratch_release(buf, buf_on_heap);
                 fclose(f);
                 return -1;
             }
             
             char **keys = NULL;
             char **values = NULL;
+            int keys_on_heap = 0;
+            int values_on_heap = 0;
             if (meta_count > 65536) {
-                free(buf);
+                wal_scratch_release(buf, buf_on_heap);
                 fclose(f);
                 return -1;
             }
             if (meta_count > 0) {
-                keys = (char **)malloc(sizeof(char *) * meta_count);
-                values = (char **)malloc(sizeof(char *) * meta_count);
+                keys = (char **)wal_scratch_alloc(sizeof(char *) * meta_count, &keys_on_heap);
+                values = (char **)wal_scratch_alloc(sizeof(char *) * meta_count, &values_on_heap);
                 if (keys == NULL || values == NULL) {
-                    free(buf);
-                    free(keys);
-                    free(values);
+                    wal_scratch_release(buf, buf_on_heap);
+                    wal_scratch_release(keys, keys_on_heap);
+                    wal_scratch_release(values, values_on_heap);
                     fclose(f);
                     return -1;
                 }
@@ -562,9 +577,9 @@ int wal_replay(const char *path, size_t expected_dimension,
                             free(keys[j]);
                             free(values[j]);
                         }
-                        free(buf);
-                        free(keys);
-                        free(values);
+                        wal_scratch_release(buf, buf_on_heap);
+                        wal_scratch_release(keys, keys_on_heap);
+                        wal_scratch_release(values, values_on_heap);
                         fclose(f);
                         return -1;
                     }
@@ -595,9 +610,9 @@ int wal_replay(const char *path, size_t expected_dimension,
                         free(keys[i]);
                         free(values[i]);
                     }
-                    free(buf);
-                    free(keys);
-                    free(values);
+                    wal_scratch_release(buf, buf_on_heap);
+                    wal_scratch_release(keys, keys_on_heap);
+                    wal_scratch_release(values, values_on_heap);
                     fclose(f);
                     return -1;
                 }
@@ -626,9 +641,10 @@ int wal_replay(const char *path, size_t expected_dimension,
                 free(keys[i]);
                 free(values[i]);
             }
-            free(buf);
-            free(keys);
-            free(values);
+            wal_scratch_release(buf, buf_on_heap);
+            wal_scratch_release(keys, keys_on_heap);
+            wal_scratch_release(values, values_on_heap);
+            gv_tls_arena_reset();
             if (cb_res != 0) {
                 fclose(f);
                 return -1;
@@ -657,6 +673,8 @@ int wal_replay_rich(const char *path, size_t expected_dimension,
     if (path == NULL || expected_dimension == 0 || on_insert == NULL) {
         return -1;
     }
+
+    gv_tls_arena_reset();
 
     FILE *f = fopen(path, "rb");
     if (f == NULL) {
@@ -887,42 +905,46 @@ int wal_replay_rich(const char *path, size_t expected_dimension,
         }
 
         if (type == GV_WAL_TYPE_INSERT) {
+            gv_tls_arena_reset();
             uint32_t dim = 0;
             if (read_u32(f, &dim) != 0 || dim != (uint32_t)expected_dimension) {
                 fclose(f);
                 return -1;
             }
-            float *buf = (float *)malloc(sizeof(float) * dim);
+            int buf_on_heap = 0;
+            float *buf = (float *)wal_scratch_alloc(sizeof(float) * dim, &buf_on_heap);
             if (buf == NULL) {
                 fclose(f);
                 return -1;
             }
             if (read_floats(f, buf, dim) != 0) {
-                free(buf);
+                wal_scratch_release(buf, buf_on_heap);
                 fclose(f);
                 return -1;
             }
             uint32_t meta_count = 0;
             if (read_u32(f, &meta_count) != 0) {
-                free(buf);
+                wal_scratch_release(buf, buf_on_heap);
                 fclose(f);
                 return -1;
             }
 
             char **keys = NULL;
             char **values = NULL;
+            int keys_on_heap = 0;
+            int values_on_heap = 0;
             if (meta_count > 65536) {
-                free(buf);
+                wal_scratch_release(buf, buf_on_heap);
                 fclose(f);
                 return -1;
             }
             if (meta_count > 0) {
-                keys = (char **)malloc(sizeof(char *) * meta_count);
-                values = (char **)malloc(sizeof(char *) * meta_count);
+                keys = (char **)wal_scratch_alloc(sizeof(char *) * meta_count, &keys_on_heap);
+                values = (char **)wal_scratch_alloc(sizeof(char *) * meta_count, &values_on_heap);
                 if (keys == NULL || values == NULL) {
-                    free(buf);
-                    free(keys);
-                    free(values);
+                    wal_scratch_release(buf, buf_on_heap);
+                    wal_scratch_release(keys, keys_on_heap);
+                    wal_scratch_release(values, values_on_heap);
                     fclose(f);
                     return -1;
                 }
@@ -934,9 +956,9 @@ int wal_replay_rich(const char *path, size_t expected_dimension,
                             free(keys[j]);
                             free(values[j]);
                         }
-                        free(buf);
-                        free(keys);
-                        free(values);
+                        wal_scratch_release(buf, buf_on_heap);
+                        wal_scratch_release(keys, keys_on_heap);
+                        wal_scratch_release(values, values_on_heap);
                         fclose(f);
                         return -1;
                     }
@@ -967,9 +989,9 @@ int wal_replay_rich(const char *path, size_t expected_dimension,
                         free(keys[i]);
                         free(values[i]);
                     }
-                    free(buf);
-                    free(keys);
-                    free(values);
+                    wal_scratch_release(buf, buf_on_heap);
+                    wal_scratch_release(keys, keys_on_heap);
+                    wal_scratch_release(values, values_on_heap);
                     fclose(f);
                     return -1;
                 }
@@ -981,9 +1003,10 @@ int wal_replay_rich(const char *path, size_t expected_dimension,
                 free(keys[i]);
                 free(values[i]);
             }
-            free(keys);
-            free(values);
-            free(buf);
+            wal_scratch_release(buf, buf_on_heap);
+            wal_scratch_release(keys, keys_on_heap);
+            wal_scratch_release(values, values_on_heap);
+            gv_tls_arena_reset();
             if (cb_res != 0) {
                 fclose(f);
                 return -1;
