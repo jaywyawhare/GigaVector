@@ -6,9 +6,29 @@
 
 #define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while(0)
 
-static const char *TMP_FILE = "tmp_test_mmap.bin";
-static const char *TMP_FILE2 = "tmp_test_mmap2.bin";
-static const char *TMP_FILE_LARGE = "tmp_test_mmap_large.bin";
+static char tmp_file[512];
+static char tmp_file2[512];
+static char tmp_file_large[512];
+static char tmp_noexist[512];
+#define TMP_FILE tmp_file
+#define TMP_FILE2 tmp_file2
+#define TMP_FILE_LARGE tmp_file_large
+
+static int init_mmap_paths(void) {
+    if (gv_test_make_temp_path(tmp_file, sizeof(tmp_file), "gv_test_mmap", ".bin") != 0) {
+        return -1;
+    }
+    if (gv_test_make_temp_path(tmp_file2, sizeof(tmp_file2), "gv_test_mmap2", ".bin") != 0) {
+        return -1;
+    }
+    if (gv_test_make_temp_path(tmp_file_large, sizeof(tmp_file_large), "gv_test_mmap_large", ".bin") != 0) {
+        return -1;
+    }
+    if (gv_test_make_temp_path(tmp_noexist, sizeof(tmp_noexist), "gv_test_mmap_noexist", ".bin") != 0) {
+        return -1;
+    }
+    return 0;
+}
 
 static void cleanup(void) {
     gv_test_remove_db(TMP_FILE);
@@ -103,8 +123,8 @@ static int test_double_close(void) {
 }
 
 static int test_open_nonexistent(void) {
-    remove("tmp_test_mmap_noexist.bin");
-    GV_MMap *mm = mmap_open_readonly("tmp_test_mmap_noexist.bin");
+    gv_test_remove_db(tmp_noexist);
+    GV_MMap *mm = mmap_open_readonly(tmp_noexist);
     ASSERT(mm == NULL, "open non-existent file should return NULL");
     return 0;
 }
@@ -215,6 +235,10 @@ typedef int (*test_fn)(void);
 typedef struct { const char *name; test_fn fn; } TestCase;
 
 int main(void) {
+    if (init_mmap_paths() != 0) {
+        fprintf(stderr, "FAIL: temp mmap paths\n");
+        return 1;
+    }
     cleanup();
     TestCase tests[] = {
         {"Testing open_readonly...",     test_open_readonly},

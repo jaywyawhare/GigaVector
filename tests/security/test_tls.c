@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "security/tls.h"
+#include "../test_tmp.h"
 
 #define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while(0)
 
@@ -47,10 +48,17 @@ static int test_tls_create_empty_config(void) {
 }
 
 static int test_tls_create_nonexistent_files(void) {
+    char cert_path[512];
+    char key_path[512];
+    ASSERT(gv_test_make_temp_path(cert_path, sizeof(cert_path), "gv_test_tls_cert", ".pem") == 0,
+           "cert temp path");
+    ASSERT(gv_test_make_temp_path(key_path, sizeof(key_path), "gv_test_tls_key", ".pem") == 0,
+           "key temp path");
+
     GV_TLSConfig config;
     tls_config_init(&config);
-    config.cert_file = "/tmp/nonexistent_cert_98765.pem";
-    config.key_file = "/tmp/nonexistent_key_98765.pem";
+    config.cert_file = cert_path;
+    config.key_file = key_path;
 
     GV_TLSContext *ctx = tls_create(&config);
     ASSERT(ctx == NULL, "tls_create with nonexistent files should return NULL");
@@ -134,10 +142,14 @@ static int test_tls_config_tls13(void) {
 }
 
 static int test_tls_config_mutual_tls(void) {
+    char ca_path[512];
+    ASSERT(gv_test_make_temp_path(ca_path, sizeof(ca_path), "gv_test_tls_ca", ".pem") == 0,
+           "ca temp path");
+
     GV_TLSConfig config;
     tls_config_init(&config);
     config.verify_client = 1;
-    config.ca_file = "/tmp/nonexistent_ca_98765.pem";
+    config.ca_file = ca_path;
     ASSERT(config.verify_client == 1, "verify_client should be settable to 1");
 
     GV_TLSContext *ctx = tls_create(&config);

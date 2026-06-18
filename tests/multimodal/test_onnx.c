@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "multimodal/onnx.h"
+#include "../test_tmp.h"
 
 #define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while(0)
 
@@ -12,9 +13,13 @@ static int test_onnx_available(void) {
 }
 
 static int test_load_nonexistent(void) {
+    char model_path[512];
+    ASSERT(gv_test_make_temp_path(model_path, sizeof(model_path), "gv_test_onnx_missing", ".onnx") == 0,
+           "model temp path");
+
     GV_ONNXConfig cfg;
     memset(&cfg, 0, sizeof(cfg));
-    cfg.model_path = "/tmp/nonexistent_model_file_that_does_not_exist.onnx";
+    cfg.model_path = model_path;
     cfg.num_threads = 1;
     cfg.use_gpu = 0;
     cfg.max_batch_size = 1;

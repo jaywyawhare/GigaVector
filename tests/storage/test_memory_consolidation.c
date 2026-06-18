@@ -22,7 +22,6 @@
         }                         \
     } while (0)
 
-#define TEST_DB "tmp_test_memcons.bin"
 #define DIM 4
 
 static GV_MemoryLayer *create_test_layer(GV_Database **out_db) {
@@ -308,8 +307,6 @@ int main(void) {
     int failed = 0;
     int passed = 0;
 
-    gv_test_remove_db(TEST_DB);
-
     struct { const char *name; int (*fn)(void); } tests[] = {
         {"test_find_similar_empty",           test_find_similar_empty},
         {"test_find_similar_with_data",       test_find_similar_with_data},
@@ -339,6 +336,5 @@ int main(void) {
     }
 
     printf("\n%d/%d tests passed\n", passed, num_tests);
-    gv_test_remove_db(TEST_DB);
     return failed > 0 ? 1 : 0;
 }

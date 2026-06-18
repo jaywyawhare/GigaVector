@@ -19,14 +19,20 @@
         }                         \
     } while (0)
 
-#define TEST_DB "tmp_test_inference.bin"
-#define TEST_DB_GOOGLE "tmp_test_inference_google.bin"
+static char test_db_path[512];
+static char test_db_google_path[512];
+#define TEST_DB test_db_path
+#define TEST_DB_GOOGLE test_db_google_path
 
-static void remove_test_db(const char *path) {
-    char wal_path[256];
-    remove(path);
-    snprintf(wal_path, sizeof(wal_path), "%s.wal", path);
-    remove(wal_path);
+static int init_test_db_paths(void) {
+    if (gv_test_make_temp_path(test_db_path, sizeof(test_db_path), "gv_test_inference", ".bin") != 0) {
+        return -1;
+    }
+    if (gv_test_make_temp_path(test_db_google_path, sizeof(test_db_google_path),
+                               "gv_test_inference_google", ".bin") != 0) {
+        return -1;
+    }
+    return 0;
 }
 
 static const char *get_google_api_key(void) {
@@ -303,7 +309,7 @@ static int test_search_filtered_no_provider(void) {
 }
 
 static int test_create_engine_google_defaults(void) {
-    remove_test_db(TEST_DB_GOOGLE);
+    gv_test_remove_db(TEST_DB_GOOGLE);
     GV_Database *db = db_open(TEST_DB_GOOGLE, 768, GV_INDEX_TYPE_FLAT);
     ASSERT(db != NULL, "database creation");
 
@@ -318,7 +324,7 @@ static int test_create_engine_google_defaults(void) {
 
     inference_destroy(eng);
     db_close(db);
-    remove_test_db(TEST_DB_GOOGLE);
+    gv_test_remove_db(TEST_DB_GOOGLE);
     return 0;
 }
 
@@ -328,7 +334,7 @@ static int test_google_live_add_search(void) {
         return 0;
     }
 
-    remove_test_db(TEST_DB_GOOGLE);
+    gv_test_remove_db(TEST_DB_GOOGLE);
     GV_Database *db = db_open(TEST_DB_GOOGLE, 768, GV_INDEX_TYPE_FLAT);
     if (db == NULL) {
         return 0;
@@ -344,7 +350,7 @@ static int test_google_live_add_search(void) {
     GV_InferenceEngine *eng = inference_create(db, &config);
     if (eng == NULL) {
         db_close(db);
-        remove_test_db(TEST_DB_GOOGLE);
+        gv_test_remove_db(TEST_DB_GOOGLE);
         return 0;
     }
 
@@ -359,11 +365,15 @@ static int test_google_live_add_search(void) {
 
     inference_destroy(eng);
     db_close(db);
-    remove_test_db(TEST_DB_GOOGLE);
+    gv_test_remove_db(TEST_DB_GOOGLE);
     return 0;
 }
 
 int main(void) {
+    if (init_test_db_paths() != 0) {
+        fprintf(stderr, "FAIL: temp db paths\n");
+        return 1;
+    }
     int failed = 0;
     int passed = 0;
 

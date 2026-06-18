@@ -14,11 +14,18 @@
         }                         \
     } while (0)
 
-static const char *TEST_DB = "tmp_test_agent.bin";
+static char test_db[512];
+
+static int init_test_db_path(void) {
+    return gv_test_make_temp_path(test_db, sizeof(test_db), "gv_test_agent", ".bin");
+}
 
 static GV_Database *create_test_db(void) {
-    gv_test_remove_db(TEST_DB);
-    return db_open(TEST_DB, 4, GV_INDEX_TYPE_FLAT);
+    if (init_test_db_path() != 0) {
+        return NULL;
+    }
+    gv_test_remove_db(test_db);
+    return db_open(test_db, 4, GV_INDEX_TYPE_FLAT);
 }
 
 static int test_agent_create_no_llm(void) {
@@ -40,7 +47,7 @@ static int test_agent_create_no_llm(void) {
     }
 
     db_close(db);
-    remove(TEST_DB);
+    gv_test_remove_db(test_db);
     return 0;
 }
 
@@ -65,7 +72,7 @@ static int test_agent_create_null_params(void) {
     ASSERT(agent == NULL, "agent creation with NULL config should fail");
 
     db_close(db);
-    remove(TEST_DB);
+    gv_test_remove_db(test_db);
     return 0;
 }
 
@@ -83,7 +90,7 @@ static int test_agent_create_null_api_key(void) {
     ASSERT(agent == NULL, "agent creation with NULL api_key should fail");
 
     db_close(db);
-    remove(TEST_DB);
+    gv_test_remove_db(test_db);
     return 0;
 }
 
@@ -172,7 +179,7 @@ static int test_agent_all_types_no_llm(void) {
     }
 
     db_close(db);
-    remove(TEST_DB);
+    gv_test_remove_db(test_db);
     return 0;
 }
 
@@ -194,13 +201,17 @@ static int test_agent_create_google_provider(void) {
     }
 
     db_close(db);
-    remove(TEST_DB);
+    gv_test_remove_db(test_db);
     return 0;
 }
 
 int main(void) {
+    if (init_test_db_path() != 0) {
+        fprintf(stderr, "FAIL: temp db path\n");
+        return 1;
+    }
     int failed = 0, passed = 0;
-    remove(TEST_DB);
+    gv_test_remove_db(test_db);
 
     struct { const char *name; int (*fn)(void); } tests[] = {
         {"test_agent_create_no_llm",       test_agent_create_no_llm},
@@ -224,6 +235,6 @@ int main(void) {
     }
 
     printf("\n%d/%d tests passed\n", passed, num_tests);
-    remove(TEST_DB);
+    gv_test_remove_db(test_db);
     return failed > 0 ? 1 : 0;
 }
