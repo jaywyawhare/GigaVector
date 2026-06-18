@@ -6,6 +6,7 @@
  */
 
 #include "api/server.h"
+#include "core/memory.h"
 #include "api/rest_handlers.h"
 #include "security/crypto.h"
 
@@ -189,7 +190,7 @@ static GV_HttpMethod parse_method(const char *method) {
 /* libmicrohttpd Callbacks */
 
 /**
- * @brief Callback to free connection info.
+ * @brief Callback to gv_free connection info.
  */
 static void request_completed_callback(void *cls,
                                         struct MHD_Connection *connection,
@@ -201,8 +202,8 @@ static void request_completed_callback(void *cls,
 
     GV_ConnectionInfo *con_info = *con_cls;
     if (con_info) {
-        free(con_info->data);
-        free(con_info);
+        gv_free(con_info->data);
+        gv_free(con_info);
     }
     *con_cls = NULL;
 }
@@ -270,7 +271,7 @@ static enum MHD_Result answer_to_connection(void *cls,
 
     /* First call: set up connection info */
     if (*con_cls == NULL) {
-        con_info = calloc(1, sizeof(GV_ConnectionInfo));
+        con_info = gv_calloc(1, sizeof(GV_ConnectionInfo));
         if (!con_info) {
             return MHD_NO;
         }
@@ -294,7 +295,7 @@ static enum MHD_Result answer_to_connection(void *cls,
         if (new_size > con_info->capacity) {
             size_t new_cap = con_info->capacity == 0 ? 4096 : con_info->capacity * 2;
             while (new_cap < new_size) new_cap *= 2;
-            char *new_data = realloc(con_info->data, new_cap + 1);
+            char *new_data = gv_realloc(con_info->data, new_cap + 1);
             if (!new_data) {
                 return MHD_NO;
             }
@@ -437,7 +438,7 @@ GV_Server *server_create(GV_Database *db, const GV_ServerConfig *config) {
         return NULL;
     }
 
-    GV_Server *server = calloc(1, sizeof(GV_Server));
+    GV_Server *server = gv_calloc(1, sizeof(GV_Server));
     if (!server) {
         return NULL;
     }
@@ -449,7 +450,7 @@ GV_Server *server_create(GV_Database *db, const GV_ServerConfig *config) {
 
     /* Initialize stats mutex */
     if (pthread_mutex_init(&server->stats_mutex, NULL) != 0) {
-        free(server);
+        gv_free(server);
         return NULL;
     }
 
@@ -556,7 +557,7 @@ void server_destroy(GV_Server *server) {
     }
 
     pthread_mutex_destroy(&server->stats_mutex);
-    free(server);
+    gv_free(server);
 }
 
 int server_is_running(const GV_Server *server) {

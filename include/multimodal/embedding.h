@@ -61,7 +61,7 @@ void embedding_service_destroy(GV_EmbeddingService *service);
  * @param service Embedding service instance.
  * @param text Text to embed.
  * @param embedding_dim Output: dimension of embedding vector.
- * @param embedding Output: allocated embedding vector (caller must free with free()).
+ * @param embedding Output: allocated embedding vector (caller must gv_free with gv_free()).
  * @return 0 on success, negative on error.
  */
 int embedding_generate(GV_EmbeddingService *service,
@@ -76,7 +76,7 @@ int embedding_generate(GV_EmbeddingService *service,
  * @param texts Array of text strings.
  * @param text_count Number of texts.
  * @param embedding_dims Output: array of embedding dimensions (one per text).
- * @param embeddings Output: array of embedding vectors (caller must free each with free()).
+ * @param embeddings Output: array of embedding vectors (caller must gv_free each with gv_free()).
  * @return Number of successful embeddings, negative on error.
  */
 int embedding_generate_batch(GV_EmbeddingService *service,
@@ -95,7 +95,7 @@ GV_EmbeddingConfig embedding_config_default(void);
 /**
  * @brief Free embedding configuration (frees allocated strings).
  * 
- * @param config Configuration to free.
+ * @param config Configuration to gv_free.
  */
 void embedding_config_free(GV_EmbeddingConfig *config);
 
@@ -120,7 +120,7 @@ void embedding_cache_destroy(GV_EmbeddingCache *cache);
  * @param cache Cache instance.
  * @param text Text to look up.
  * @param embedding_dim Output: dimension of embedding.
- * @param embedding Output: embedding vector (do not free, owned by cache).
+ * @param embedding Output: embedding vector (do not gv_free, owned by cache).
  * @return 1 if found, 0 if not found, negative on error.
  */
 int embedding_cache_get(GV_EmbeddingCache *cache,

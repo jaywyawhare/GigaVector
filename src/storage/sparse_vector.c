@@ -1,4 +1,5 @@
 #include <stdlib.h>
+#include "core/memory.h"
 #include <string.h>
 
 #include "storage/sparse_vector.h"
@@ -14,16 +15,16 @@ GV_SparseVector *sparse_vector_create(size_t dimension,
     if ((indices == NULL || values == NULL) && nnz > 0) {
         return NULL;
     }
-    GV_SparseVector *sv = (GV_SparseVector *)calloc(1, sizeof(GV_SparseVector));
+    GV_SparseVector *sv = (GV_SparseVector *)gv_calloc(1, sizeof(GV_SparseVector));
     if (!sv) {
         return NULL;
     }
     sv->dimension = dimension;
     sv->nnz = nnz;
     if (nnz > 0) {
-        sv->entries = (GV_SparseEntry *)malloc(nnz * sizeof(GV_SparseEntry));
+        sv->entries = (GV_SparseEntry *)gv_alloc(nnz * sizeof(GV_SparseEntry));
         if (!sv->entries) {
-            free(sv);
+            gv_free(sv);
             return NULL;
         }
         for (size_t i = 0; i < nnz; ++i) {
@@ -38,11 +39,11 @@ GV_SparseVector *sparse_vector_create(size_t dimension,
 void sparse_vector_destroy(GV_SparseVector *sv) {
     if (!sv) return;
     if (sv->entries != NULL) {
-        free(sv->entries);
+        gv_free(sv->entries);
     }
     if (sv->metadata != NULL) {
         vector_clear_metadata((GV_Vector *)sv);
     }
-    free(sv);
+    gv_free(sv);
 }
 

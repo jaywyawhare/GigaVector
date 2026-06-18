@@ -1,4 +1,5 @@
 #include <ctype.h>
+#include "core/memory.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -417,13 +418,13 @@ GV_Filter *filter_parse(const char *expr) {
         return NULL;
     }
 
-    GV_Filter *filter = (GV_Filter *)malloc(sizeof(GV_Filter));
+    GV_Filter *filter = (GV_Filter *)gv_alloc(sizeof(GV_Filter));
     if (!filter) {
         return NULL;
     }
     memset(filter, 0, sizeof(*filter));
     if (gv_arena_init(&filter->arena, GV_FILTER_ARENA_BYTES) != 0) {
-        free(filter);
+        gv_free(filter);
         return NULL;
     }
 
@@ -439,7 +440,7 @@ GV_Filter *filter_parse(const char *expr) {
     if (!root || parser.current.type != TOK_EOF) {
         filter_free_token(&parser.current);
         gv_arena_fini(&filter->arena);
-        free(filter);
+        gv_free(filter);
         return NULL;
     }
     filter_free_token(&parser.current);
@@ -529,5 +530,5 @@ int filter_eval(const GV_Filter *filter, const GV_Vector *vector) {
 void filter_destroy(GV_Filter *filter) {
     if (!filter) return;
     gv_arena_fini(&filter->arena);
-    free(filter);
+    gv_free(filter);
 }

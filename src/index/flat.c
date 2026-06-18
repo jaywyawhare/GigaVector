@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include "core/memory.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
@@ -25,7 +26,7 @@ GV_HEAP_DEFINE(flat_heap, GV_FlatHeapItem)
 void *flat_create(size_t dimension, const GV_FlatConfig *config, GV_SoAStorage *soa_storage) {
     if (dimension == 0) return NULL;
 
-    GV_FlatIndex *idx = (GV_FlatIndex *)calloc(1, sizeof(GV_FlatIndex));
+    GV_FlatIndex *idx = (GV_FlatIndex *)gv_calloc(1, sizeof(GV_FlatIndex));
     if (!idx) return NULL;
 
     idx->dimension = dimension;
@@ -41,7 +42,7 @@ void *flat_create(size_t dimension, const GV_FlatConfig *config, GV_SoAStorage *
     } else {
         idx->storage = soa_storage_create(dimension, 0);
         if (!idx->storage) {
-            free(idx);
+            gv_free(idx);
             return NULL;
         }
         idx->owns_storage = 1;
@@ -59,7 +60,7 @@ int flat_insert(void *index, GV_Vector *vector) {
     size_t vi = soa_storage_add(idx->storage, vector->data, vector->metadata);
     if (vi == (size_t)-1) return -1;
 
-    /* Storage took ownership of metadata, clear from vector to prevent double free */
+    /* Storage took ownership of metadata, clear from vector to prevent double gv_free */
     vector->metadata = NULL;
     vector_destroy(vector);
     return 0;
@@ -77,7 +78,7 @@ int flat_search(void *index, const GV_Vector *query, size_t k,
     size_t count = idx->storage->count;
     if (count == 0) return 0;
 
-    GV_FlatHeapItem *heap = (GV_FlatHeapItem *)malloc(k * sizeof(GV_FlatHeapItem));
+    GV_FlatHeapItem *heap = (GV_FlatHeapItem *)gv_alloc(k * sizeof(GV_FlatHeapItem));
     if (!heap) return -1;
     size_t heap_size = 0;
 
@@ -137,7 +138,7 @@ int flat_search(void *index, const GV_Vector *query, size_t k,
         }
     }
 
-    free(heap);
+    gv_free(heap);
     return n;
 }
 
@@ -202,7 +203,7 @@ void flat_destroy(void *index) {
     if (idx->owns_storage && idx->storage) {
         soa_storage_destroy(idx->storage);
     }
-    free(idx);
+    gv_free(idx);
 }
 
 size_t flat_count(const void *index) {
@@ -288,28 +289,28 @@ int flat_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version) {
         uint32_t deleted = 0;
         if (read_u32(in, &deleted) != 0) { flat_destroy(index); return -1; }
 
-        float *data = (float *)malloc(file_dim * sizeof(float));
+        float *data = (float *)gv_alloc(file_dim * sizeof(float));
         if (!data) { flat_destroy(index); return -1; }
         if (fread(data, sizeof(float), file_dim, in) != file_dim) {
-            free(data);
+            gv_free(data);
             flat_destroy(index);
             return -1;
         }
 
         uint32_t meta_count = 0;
-        if (read_u32(in, &meta_count) != 0) { free(data); flat_destroy(index); return -1; }
+        if (read_u32(in, &meta_count) != 0) { gv_free(data); flat_destroy(index); return -1; }
 
         GV_Metadata *metadata = NULL;
         for (uint32_t m = 0; m < meta_count; m++) {
             uint32_t klen = 0, vlen = 0;
             char *key = NULL, *value = NULL;
-            if (read_u32(in, &klen) != 0) { free(data); flat_destroy(index); return -1; }
-            if (read_str(in, &key, klen) != 0) { free(data); flat_destroy(index); return -1; }
-            if (read_u32(in, &vlen) != 0) { free(key); free(data); flat_destroy(index); return -1; }
-            if (read_str(in, &value, vlen) != 0) { free(key); free(data); flat_destroy(index); return -1; }
+            if (read_u32(in, &klen) != 0) { gv_free(data); flat_destroy(index); return -1; }
+            if (read_str(in, &key, klen) != 0) { gv_free(data); flat_destroy(index); return -1; }
+            if (read_u32(in, &vlen) != 0) { gv_free(key); gv_free(data); flat_destroy(index); return -1; }
+            if (read_str(in, &value, vlen) != 0) { gv_free(key); gv_free(data); flat_destroy(index); return -1; }
 
-            GV_Metadata *node = (GV_Metadata *)malloc(sizeof(GV_Metadata));
-            if (!node) { free(key); free(value); free(data); flat_destroy(index); return -1; }
+            GV_Metadata *node = (GV_Metadata *)gv_alloc(sizeof(GV_Metadata));
+            if (!node) { gv_free(key); gv_free(value); gv_free(data); flat_destroy(index); return -1; }
             node->key = key;
             node->value = value;
             node->next = metadata;
@@ -317,7 +318,7 @@ int flat_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version) {
         }
 
         size_t vi = soa_storage_add(idx->storage, data, metadata);
-        free(data);
+        gv_free(data);
         if (vi == (size_t)-1) { flat_destroy(index); return -1; }
 
         if (deleted) {

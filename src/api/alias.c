@@ -4,6 +4,7 @@
  */
 
 #include "api/alias.h"
+#include "core/memory.h"
 #include "core/utils.h"
 
 #include <stdlib.h>
@@ -101,11 +102,11 @@ static uint64_t current_time_unix(void) {
 /* Lifecycle */
 
 GV_AliasManager *alias_manager_create(void) {
-    GV_AliasManager *mgr = calloc(1, sizeof(GV_AliasManager));
+    GV_AliasManager *mgr = gv_calloc(1, sizeof(GV_AliasManager));
     if (!mgr) return NULL;
 
     if (pthread_rwlock_init(&mgr->rwlock, NULL) != 0) {
-        free(mgr);
+        gv_free(mgr);
         return NULL;
     }
 
@@ -116,7 +117,7 @@ void alias_manager_destroy(GV_AliasManager *mgr) {
     if (!mgr) return;
 
     pthread_rwlock_destroy(&mgr->rwlock);
-    free(mgr);
+    gv_free(mgr);
 }
 
 /* Alias Operations */
@@ -295,7 +296,7 @@ int alias_list(const GV_AliasManager *mgr, GV_AliasInfo **out_list,
         return 0;
     }
 
-    *out_list = calloc(mgr->count, sizeof(GV_AliasInfo));
+    *out_list = gv_calloc(mgr->count, sizeof(GV_AliasInfo));
     if (!*out_list) {
         pthread_rwlock_unlock((pthread_rwlock_t *)&mgr->rwlock);
         return -1;
@@ -320,10 +321,10 @@ int alias_list(const GV_AliasManager *mgr, GV_AliasInfo **out_list,
 void alias_free_list(GV_AliasInfo *list, size_t count) {
     if (!list) return;
     for (size_t i = 0; i < count; i++) {
-        free(list[i].alias_name);
-        free(list[i].collection_name);
+        gv_free(list[i].alias_name);
+        gv_free(list[i].collection_name);
     }
-    free(list);
+    gv_free(list);
 }
 
 int alias_get_info(const GV_AliasManager *mgr, const char *alias_name,

@@ -9,6 +9,7 @@
  */
 
 #include "security/tls.h"
+#include "core/memory.h"
 #include "core/utils.h"
 
 #include <stdlib.h>
@@ -128,7 +129,7 @@ GV_TLSContext *tls_create(const GV_TLSConfig *config) {
     }
 
     /* build wrapper */
-    GV_TLSContext *ctx = calloc(1, sizeof(GV_TLSContext));
+    GV_TLSContext *ctx = gv_calloc(1, sizeof(GV_TLSContext));
     if (!ctx) {
         SSL_CTX_free(ssl_ctx);
         return NULL;
@@ -142,8 +143,8 @@ GV_TLSContext *tls_create(const GV_TLSConfig *config) {
 void tls_destroy(GV_TLSContext *ctx) {
     if (!ctx) return;
     if (ctx->ssl_ctx)   SSL_CTX_free(ctx->ssl_ctx);
-    free(ctx->cert_path);
-    free(ctx);
+    gv_free(ctx->cert_path);
+    gv_free(ctx);
 }
 
 const char *tls_version_string(const GV_TLSContext *ctx) {

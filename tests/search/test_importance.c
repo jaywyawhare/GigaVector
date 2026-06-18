@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include "core/memory.h"
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -383,23 +384,23 @@ int test_access_history_serialization(void) {
     GV_AccessHistory restored;
     int result = access_history_deserialize(json, &restored);
     if (result != 0) {
-        free(json);
+        gv_free(json);
         TEST_FAIL("deserialize failed");
     }
 
     if (restored.total_accesses != history.total_accesses) {
-        free(json);
+        gv_free(json);
         access_history_free(&restored);
         TEST_FAIL("total_accesses mismatch");
     }
 
     if (fabs(restored.avg_relevance - history.avg_relevance) > 0.01) {
-        free(json);
+        gv_free(json);
         access_history_free(&restored);
         TEST_FAIL("avg_relevance mismatch");
     }
 
-    free(json);
+    gv_free(json);
     access_history_free(&history);
     access_history_free(&restored);
     TEST_PASS();

@@ -14,6 +14,7 @@
  */
 
 #include "admin/webhook.h"
+#include "core/memory.h"
 #include "security/crypto.h"
 #include "core/utils.h"
 
@@ -53,8 +54,8 @@ typedef struct {
 
 /** A single delivery work item placed on the queue. */
 typedef struct {
-    char *url;                /* Destination URL (owned, must free) */
-    char *json_body;          /* JSON payload  (owned, must free) */
+    char *url;                /* Destination URL (owned, must gv_free) */
+    char *json_body;          /* JSON payload  (owned, must gv_free) */
     char *secret;             /* HMAC secret   (owned, may be NULL) */
     int max_retries;
     int timeout_ms;
@@ -101,17 +102,17 @@ static int  deliver_webhook(const DeliveryWork *work);
 /* Lifecycle */
 
 GV_WebhookManager *webhook_create(void) {
-    GV_WebhookManager *mgr = calloc(1, sizeof(GV_WebhookManager));
+    GV_WebhookManager *mgr = gv_calloc(1, sizeof(GV_WebhookManager));
     if (!mgr) return NULL;
 
     if (pthread_mutex_init(&mgr->mutex, NULL) != 0) {
-        free(mgr);
+        gv_free(mgr);
         return NULL;
     }
 
     if (pthread_cond_init(&mgr->queue_cond, NULL) != 0) {
         pthread_mutex_destroy(&mgr->mutex);
-        free(mgr);
+        gv_free(mgr);
         return NULL;
     }
 
@@ -129,7 +130,7 @@ GV_WebhookManager *webhook_create(void) {
             mgr->workers_running = 0;
             pthread_cond_destroy(&mgr->queue_cond);
             pthread_mutex_destroy(&mgr->mutex);
-            free(mgr);
+            gv_free(mgr);
             return NULL;
         }
     }
@@ -165,15 +166,15 @@ void webhook_destroy(GV_WebhookManager *mgr) {
     /* Free webhook entries */
     for (size_t i = 0; i < MAX_WEBHOOKS; i++) {
         if (mgr->webhooks[i].in_use) {
-            free(mgr->webhooks[i].id);
-            free(mgr->webhooks[i].config.url);
-            free(mgr->webhooks[i].config.secret);
+            gv_free(mgr->webhooks[i].id);
+            gv_free(mgr->webhooks[i].config.url);
+            gv_free(mgr->webhooks[i].config.secret);
         }
     }
 
     pthread_cond_destroy(&mgr->queue_cond);
     pthread_mutex_destroy(&mgr->mutex);
-    free(mgr);
+    gv_free(mgr);
 }
 
 /* Register / Unregister */
@@ -193,7 +194,7 @@ int webhook_register(GV_WebhookManager *mgr, const char *webhook_id,
         }
     }
 
-    /* Find free slot */
+    /* Find gv_free slot */
     int slot = -1;
     for (size_t i = 0; i < MAX_WEBHOOKS; i++) {
         if (!mgr->webhooks[i].in_use) {
@@ -216,7 +217,7 @@ int webhook_register(GV_WebhookManager *mgr, const char *webhook_id,
 
     entry->config.url = gv_dup_cstr(config->url);
     if (!entry->config.url) {
-        free(entry->id);
+        gv_free(entry->id);
         entry->id = NULL;
         pthread_mutex_unlock(&mgr->mutex);
         return -1;
@@ -242,9 +243,9 @@ int webhook_unregister(GV_WebhookManager *mgr, const char *webhook_id) {
     for (size_t i = 0; i < MAX_WEBHOOKS; i++) {
         if (mgr->webhooks[i].in_use &&
             strcmp(mgr->webhooks[i].id, webhook_id) == 0) {
-            free(mgr->webhooks[i].id);
-            free(mgr->webhooks[i].config.url);
-            free(mgr->webhooks[i].config.secret);
+            gv_free(mgr->webhooks[i].id);
+            gv_free(mgr->webhooks[i].config.url);
+            gv_free(mgr->webhooks[i].config.secret);
             memset(&mgr->webhooks[i], 0, sizeof(WebhookEntry));
             mgr->webhook_count--;
             pthread_mutex_unlock(&mgr->mutex);
@@ -310,7 +311,7 @@ int webhook_list(const GV_WebhookManager *mgr, char ***out_ids, size_t *out_coun
         return 0;
     }
 
-    char **ids = calloc(count, sizeof(char *));
+    char **ids = gv_calloc(count, sizeof(char *));
     if (!ids) {
         pthread_mutex_unlock(&m->mutex);
         return -1;
@@ -322,8 +323,8 @@ int webhook_list(const GV_WebhookManager *mgr, char ***out_ids, size_t *out_coun
             ids[idx] = gv_dup_cstr(m->webhooks[i].id);
             if (!ids[idx]) {
                 /* Roll back */
-                for (size_t j = 0; j < idx; j++) free(ids[j]);
-                free(ids);
+                for (size_t j = 0; j < idx; j++) gv_free(ids[j]);
+                gv_free(ids);
                 pthread_mutex_unlock(&m->mutex);
                 return -1;
             }
@@ -341,9 +342,9 @@ int webhook_list(const GV_WebhookManager *mgr, char ***out_ids, size_t *out_coun
 void webhook_free_list(char **ids, size_t count) {
     if (!ids) return;
     for (size_t i = 0; i < count; i++) {
-        free(ids[i]);
+        gv_free(ids[i]);
     }
-    free(ids);
+    gv_free(ids);
 }
 
 /* Change Stream Subscribe / Unsubscribe */
@@ -422,9 +423,9 @@ int webhook_fire(GV_WebhookManager *mgr, const GV_Event *event) {
         work.timeout_ms = wh->config.timeout_ms;
 
         if (!work.url || !work.json_body) {
-            free(work.url);
-            free(work.json_body);
-            free(work.secret);
+            gv_free(work.url);
+            gv_free(work.json_body);
+            gv_free(work.secret);
             continue;
         }
 
@@ -452,7 +453,7 @@ int webhook_fire(GV_WebhookManager *mgr, const GV_Event *event) {
     }
 
     pthread_mutex_unlock(&mgr->mutex);
-    free(json);
+    gv_free(json);
     return 0;
 }
 
@@ -489,7 +490,7 @@ static char *build_json_payload(const GV_Event *event) {
 
     /* Conservative upper bound for the formatted string */
     size_t needed = strlen(type_str) + strlen(collection) + 128;
-    char *buf = malloc(needed);
+    char *buf = gv_alloc(needed);
     if (!buf) return NULL;
 
     snprintf(buf, needed,
@@ -646,9 +647,9 @@ static int enqueue_delivery(GV_WebhookManager *mgr, DeliveryWork *work) {
 
 static void free_delivery_work(DeliveryWork *work) {
     if (!work) return;
-    free(work->url);
-    free(work->json_body);
-    free(work->secret);
+    gv_free(work->url);
+    gv_free(work->json_body);
+    gv_free(work->secret);
     work->url = NULL;
     work->json_body = NULL;
     work->secret = NULL;

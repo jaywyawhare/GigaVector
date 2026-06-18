@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include "core/memory.h"
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -161,7 +162,7 @@ int main(void) {
         {"Testing backup options init...",          test_backup_options_init},
         {"Testing restore options init...",         test_restore_options_init},
         {"Testing compression string...",           test_compression_string},
-        {"Testing result free NULL...",             test_result_free_null},
+        {"Testing result gv_free NULL...",             test_result_free_null},
         {"Testing backup create non-existent...",   test_backup_create_nonexistent},
         {"Testing read header non-existent...",     test_read_header_nonexistent},
         {"Testing verify non-existent...",          test_verify_nonexistent},

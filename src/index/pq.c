@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include "core/memory.h"
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -63,7 +64,7 @@ static void pq_train_subquantizer(float *codebook, const float *subvecs,
         memset(&codebook[k * dsub], 0, dsub * sizeof(float));
     }
 
-    uint32_t *assignments = (uint32_t *)malloc(count * sizeof(uint32_t));
+    uint32_t *assignments = (uint32_t *)gv_alloc(count * sizeof(uint32_t));
     if (!assignments) return;
 
     for (size_t iter = 0; iter < train_iters; iter++) {
@@ -80,11 +81,11 @@ static void pq_train_subquantizer(float *codebook, const float *subvecs,
             assignments[i] = best_k;
         }
 
-        float *new_centroids = (float *)calloc(ksub * dsub, sizeof(float));
-        uint32_t *counts = (uint32_t *)calloc(ksub, sizeof(uint32_t));
+        float *new_centroids = (float *)gv_calloc(ksub * dsub, sizeof(float));
+        uint32_t *counts = (uint32_t *)gv_calloc(ksub, sizeof(uint32_t));
         if (!new_centroids || !counts) {
-            free(new_centroids);
-            free(counts);
+            gv_free(new_centroids);
+            gv_free(counts);
             break;
         }
 
@@ -104,11 +105,11 @@ static void pq_train_subquantizer(float *codebook, const float *subvecs,
             }
         }
 
-        free(new_centroids);
-        free(counts);
+        gv_free(new_centroids);
+        gv_free(counts);
     }
 
-    free(assignments);
+    gv_free(assignments);
 }
 
 static void pq_encode(const GV_PQIndex *idx, const float *data, uint8_t *codes) {
@@ -134,7 +135,7 @@ static void pq_encode(const GV_PQIndex *idx, const float *data, uint8_t *codes) 
 void *pq_create(size_t dimension, const GV_PQConfig *config) {
     if (dimension == 0) return NULL;
 
-    GV_PQIndex *idx = (GV_PQIndex *)calloc(1, sizeof(GV_PQIndex));
+    GV_PQIndex *idx = (GV_PQIndex *)gv_calloc(1, sizeof(GV_PQIndex));
     if (!idx) return NULL;
 
     idx->dimension = dimension;
@@ -150,12 +151,12 @@ void *pq_create(size_t dimension, const GV_PQConfig *config) {
     }
 
     if (idx->m == 0 || idx->nbits == 0 || idx->nbits > 8) {
-        free(idx);
+        gv_free(idx);
         return NULL;
     }
 
     if (dimension % idx->m != 0) {
-        free(idx);
+        gv_free(idx);
         return NULL;
     }
 
@@ -163,17 +164,17 @@ void *pq_create(size_t dimension, const GV_PQConfig *config) {
     idx->dsub = dimension / idx->m;
     idx->trained = 0;
 
-    idx->codebooks = (float *)calloc(idx->m * idx->ksub * idx->dsub, sizeof(float));
+    idx->codebooks = (float *)gv_calloc(idx->m * idx->ksub * idx->dsub, sizeof(float));
     if (!idx->codebooks) {
-        free(idx);
+        gv_free(idx);
         return NULL;
     }
 
     idx->entry_capacity = 128;
-    idx->entries = (GV_PQEntry *)calloc(idx->entry_capacity, sizeof(GV_PQEntry));
+    idx->entries = (GV_PQEntry *)gv_calloc(idx->entry_capacity, sizeof(GV_PQEntry));
     if (!idx->entries) {
-        free(idx->codebooks);
-        free(idx);
+        gv_free(idx->codebooks);
+        gv_free(idx);
         return NULL;
     }
     idx->entry_count = 0;
@@ -185,7 +186,7 @@ int pq_train(void *index, const float *data, size_t count) {
     if (!index || !data || count == 0) return -1;
     GV_PQIndex *idx = (GV_PQIndex *)index;
 
-    float *subvecs = (float *)malloc(count * idx->dsub * sizeof(float));
+    float *subvecs = (float *)gv_alloc(count * idx->dsub * sizeof(float));
     if (!subvecs) return -1;
 
     for (size_t m_i = 0; m_i < idx->m; m_i++) {
@@ -199,7 +200,7 @@ int pq_train(void *index, const float *data, size_t count) {
         pq_train_subquantizer(subcodebook, subvecs, count, idx->dsub, idx->ksub, idx->train_iters);
     }
 
-    free(subvecs);
+    gv_free(subvecs);
     idx->trained = 1;
     return 0;
 }
@@ -213,7 +214,7 @@ int pq_insert(void *index, GV_Vector *vector) {
 
     if (idx->entry_count >= idx->entry_capacity) {
         size_t new_capacity = idx->entry_capacity * 2;
-        GV_PQEntry *new_entries = (GV_PQEntry *)realloc(idx->entries, new_capacity * sizeof(GV_PQEntry));
+        GV_PQEntry *new_entries = (GV_PQEntry *)gv_realloc(idx->entries, new_capacity * sizeof(GV_PQEntry));
         if (!new_entries) return -1;
         memset(&new_entries[idx->entry_capacity], 0, (new_capacity - idx->entry_capacity) * sizeof(GV_PQEntry));
         idx->entries = new_entries;
@@ -222,14 +223,14 @@ int pq_insert(void *index, GV_Vector *vector) {
 
     GV_PQEntry *entry = &idx->entries[idx->entry_count];
 
-    entry->codes = (uint8_t *)malloc(idx->m * sizeof(uint8_t));
+    entry->codes = (uint8_t *)gv_alloc(idx->m * sizeof(uint8_t));
     if (!entry->codes) return -1;
 
     pq_encode(idx, vector->data, entry->codes);
 
-    entry->raw_data = (float *)malloc(idx->dimension * sizeof(float));
+    entry->raw_data = (float *)gv_alloc(idx->dimension * sizeof(float));
     if (!entry->raw_data) {
-        free(entry->codes);
+        gv_free(entry->codes);
         return -1;
     }
     memcpy(entry->raw_data, vector->data, idx->dimension * sizeof(float));
@@ -255,7 +256,7 @@ int pq_search(void *index, const GV_Vector *query, size_t k,
     if (!idx->trained) return -1;
     if (query->dimension != idx->dimension) return -1;
 
-    float *distance_table = (float *)malloc(idx->m * idx->ksub * sizeof(float));
+    float *distance_table = (float *)gv_alloc(idx->m * idx->ksub * sizeof(float));
     if (!distance_table) return -1;
 
     for (size_t m_i = 0; m_i < idx->m; m_i++) {
@@ -272,9 +273,9 @@ int pq_search(void *index, const GV_Vector *query, size_t k,
     if (oversample_k > idx->entry_count) oversample_k = idx->entry_count;
     if (oversample_k < k) oversample_k = k;
 
-    GV_PQHeapItem *heap = (GV_PQHeapItem *)malloc(oversample_k * sizeof(GV_PQHeapItem));
+    GV_PQHeapItem *heap = (GV_PQHeapItem *)gv_alloc(oversample_k * sizeof(GV_PQHeapItem));
     if (!heap) {
-        free(distance_table);
+        gv_free(distance_table);
         return -1;
     }
     size_t heap_size = 0;
@@ -298,12 +299,12 @@ int pq_search(void *index, const GV_Vector *query, size_t k,
         pq_heap_push(heap, &heap_size, oversample_k, (GV_PQHeapItem){dist, i});
     }
 
-    free(distance_table);
+    gv_free(distance_table);
 
     size_t cand_count = heap_size;
-    GV_PQHeapItem *candidates = (GV_PQHeapItem *)malloc(cand_count * sizeof(GV_PQHeapItem));
+    GV_PQHeapItem *candidates = (GV_PQHeapItem *)gv_alloc(cand_count * sizeof(GV_PQHeapItem));
     if (!candidates) {
-        free(heap);
+        gv_free(heap);
         return -1;
     }
 
@@ -315,7 +316,7 @@ int pq_search(void *index, const GV_Vector *query, size_t k,
             pq_heap_sift_down(heap, heap_size, 0);
         }
     }
-    free(heap);
+    gv_free(heap);
 
     for (size_t i = 0; i < cand_count; i++) {
         size_t entry_idx = candidates[i].idx;
@@ -373,7 +374,7 @@ int pq_search(void *index, const GV_Vector *query, size_t k,
         }
     }
 
-    free(candidates);
+    gv_free(candidates);
     return n;
 }
 
@@ -387,7 +388,7 @@ int pq_range_search(void *index, const GV_Vector *query, float radius,
     if (!idx->trained) return -1;
     if (query->dimension != idx->dimension) return -1;
 
-    float *distance_table = (float *)malloc(idx->m * idx->ksub * sizeof(float));
+    float *distance_table = (float *)gv_alloc(idx->m * idx->ksub * sizeof(float));
     if (!distance_table) return -1;
 
     for (size_t m_i = 0; m_i < idx->m; m_i++) {
@@ -447,7 +448,7 @@ int pq_range_search(void *index, const GV_Vector *query, float radius,
         }
     }
 
-    free(distance_table);
+    gv_free(distance_table);
     return (int)found;
 }
 
@@ -576,7 +577,7 @@ int pq_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version) {
     }
 
     if (entry_count > idx->entry_capacity) {
-        GV_PQEntry *new_entries = (GV_PQEntry *)realloc(idx->entries, entry_count * sizeof(GV_PQEntry));
+        GV_PQEntry *new_entries = (GV_PQEntry *)gv_realloc(idx->entries, entry_count * sizeof(GV_PQEntry));
         if (!new_entries) {
             pq_destroy(index);
             return -1;
@@ -596,14 +597,14 @@ int pq_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version) {
         entry->deleted = (int)deleted;
         entry->id = (size_t)id;
 
-        entry->codes = (uint8_t *)malloc(idx->m * sizeof(uint8_t));
+        entry->codes = (uint8_t *)gv_alloc(idx->m * sizeof(uint8_t));
         if (!entry->codes) { pq_destroy(index); return -1; }
         if (fread(entry->codes, sizeof(uint8_t), idx->m, in) != idx->m) {
             pq_destroy(index);
             return -1;
         }
 
-        entry->raw_data = (float *)malloc(idx->dimension * sizeof(float));
+        entry->raw_data = (float *)gv_alloc(idx->dimension * sizeof(float));
         if (!entry->raw_data) { pq_destroy(index); return -1; }
         if (fread(entry->raw_data, sizeof(float), idx->dimension, in) != idx->dimension) {
             pq_destroy(index);
@@ -619,11 +620,11 @@ int pq_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version) {
             char *key = NULL, *value = NULL;
             if (read_u32(in, &klen) != 0) { pq_destroy(index); return -1; }
             if (read_str(in, &key, klen) != 0) { pq_destroy(index); return -1; }
-            if (read_u32(in, &vlen) != 0) { free(key); pq_destroy(index); return -1; }
-            if (read_str(in, &value, vlen) != 0) { free(key); pq_destroy(index); return -1; }
+            if (read_u32(in, &vlen) != 0) { gv_free(key); pq_destroy(index); return -1; }
+            if (read_str(in, &value, vlen) != 0) { gv_free(key); pq_destroy(index); return -1; }
 
-            GV_Metadata *node = (GV_Metadata *)malloc(sizeof(GV_Metadata));
-            if (!node) { free(key); free(value); pq_destroy(index); return -1; }
+            GV_Metadata *node = (GV_Metadata *)gv_alloc(sizeof(GV_Metadata));
+            if (!node) { gv_free(key); gv_free(value); pq_destroy(index); return -1; }
             node->key = key;
             node->value = value;
             node->next = entry->metadata;
@@ -641,14 +642,14 @@ void pq_destroy(void *index) {
     if (!index) return;
     GV_PQIndex *idx = (GV_PQIndex *)index;
 
-    free(idx->codebooks);
+    gv_free(idx->codebooks);
 
     for (size_t i = 0; i < idx->entry_count; i++) {
-        free(idx->entries[i].codes);
-        free(idx->entries[i].raw_data);
+        gv_free(idx->entries[i].codes);
+        gv_free(idx->entries[i].raw_data);
         metadata_free(idx->entries[i].metadata);
     }
-    free(idx->entries);
+    gv_free(idx->entries);
 
-    free(idx);
+    gv_free(idx);
 }

@@ -4,6 +4,7 @@
  */
 
 #include "index/ivfdisk.h"
+#include "core/memory.h"
 
 #include <float.h>
 #include <math.h>
@@ -98,13 +99,13 @@ static int ivfdisk_kmeans(const float *data, size_t count, size_t dim,
     if (count < k || !data || !out_centroids) return -1;
     memcpy(out_centroids, data, k * dim * sizeof(float));
 
-    int *assign = (int *)malloc(count * sizeof(int));
-    float *new_centroids = (float *)calloc(k * dim, sizeof(float));
-    size_t *counts = (size_t *)calloc(k, sizeof(size_t));
+    int *assign = (int *)gv_alloc(count * sizeof(int));
+    float *new_centroids = (float *)gv_calloc(k * dim, sizeof(float));
+    size_t *counts = (size_t *)gv_calloc(k, sizeof(size_t));
     if (!assign || !new_centroids || !counts) {
-        free(assign);
-        free(new_centroids);
-        free(counts);
+        gv_free(assign);
+        gv_free(new_centroids);
+        gv_free(counts);
         return -1;
     }
 
@@ -149,9 +150,9 @@ static int ivfdisk_kmeans(const float *data, size_t count, size_t dim,
         memcpy(out_centroids, new_centroids, k * dim * sizeof(float));
     }
 
-    free(assign);
-    free(new_centroids);
-    free(counts);
+    gv_free(assign);
+    gv_free(new_centroids);
+    gv_free(counts);
     return 0;
 }
 
@@ -191,7 +192,7 @@ static size_t ivfdisk_pick_insert_heads(GV_IVFDiskIndex *idx, const float *vec,
     if (!idx || !vec || !heads || max_heads == 0) return 0;
 
     IVFDiskHeadDist *ranked =
-        (IVFDiskHeadDist *)malloc(idx->config.nlist * sizeof(IVFDiskHeadDist));
+        (IVFDiskHeadDist *)gv_alloc(idx->config.nlist * sizeof(IVFDiskHeadDist));
     if (!ranked) return 0;
 
     ivfdisk_rank_centroids(idx, vec, ranked);
@@ -237,18 +238,18 @@ static size_t ivfdisk_pick_insert_heads(GV_IVFDiskIndex *idx, const float *vec,
         }
     }
 
-    free(ranked);
+    gv_free(ranked);
     return count;
 }
 
 static size_t ivfdisk_nearest_centroid(const GV_IVFDiskIndex *idx, const float *vec)
 {
     IVFDiskHeadDist *ranked =
-        (IVFDiskHeadDist *)malloc(idx->config.nlist * sizeof(IVFDiskHeadDist));
+        (IVFDiskHeadDist *)gv_alloc(idx->config.nlist * sizeof(IVFDiskHeadDist));
     if (!ranked) return 0;
     ivfdisk_rank_centroids(idx, vec, ranked);
     size_t best = ranked[0].head_id;
-    free(ranked);
+    gv_free(ranked);
     return best;
 }
 
@@ -258,7 +259,7 @@ static int ivfdisk_ensure_loc(GV_IVFDiskIndex *idx, size_t vector_id)
     size_t new_cap = idx->vector_loc_cap ? idx->vector_loc_cap * 2 : 256;
     while (new_cap <= vector_id) new_cap *= 2;
     IVFDiskVectorLoc *tmp =
-        (IVFDiskVectorLoc *)realloc(idx->vector_locs, new_cap * sizeof(IVFDiskVectorLoc));
+        (IVFDiskVectorLoc *)gv_realloc(idx->vector_locs, new_cap * sizeof(IVFDiskVectorLoc));
     if (!tmp) return -1;
     memset(tmp + idx->vector_loc_cap, 0,
            (new_cap - idx->vector_loc_cap) * sizeof(IVFDiskVectorLoc));
@@ -323,13 +324,13 @@ static int ivfdisk_select_probe_heads(const GV_IVFDiskIndex *idx, const float *q
         qv.metadata = NULL;
 
         GV_SearchResult *hres =
-            (GV_SearchResult *)calloc(probe, sizeof(GV_SearchResult));
+            (GV_SearchResult *)gv_calloc(probe, sizeof(GV_SearchResult));
         if (!hres) return -1;
 
         int found = gv_hnsw_search(idx->head_hnsw, &qv, probe, hres,
                                    GV_DISTANCE_EUCLIDEAN, NULL, NULL);
         if (found <= 0) {
-            free(hres);
+            gv_free(hres);
             return -1;
         }
         for (int i = 0; i < found; ++i) {
@@ -337,7 +338,7 @@ static int ivfdisk_select_probe_heads(const GV_IVFDiskIndex *idx, const float *q
             heads[i].dist = hres[i].distance;
         }
         *out_probe = (size_t)found;
-        free(hres);
+        gv_free(hres);
         return 0;
     }
 
@@ -465,26 +466,26 @@ GV_IVFDiskIndex *ivfdisk_create(size_t dimension, const GV_IVFDiskConfig *config
         cfg.head_checkpoint_interval_sec = GV_IVFDISK_HEAD_CKPT_INTERVAL_SEC_DEFAULT;
     }
 
-    GV_IVFDiskIndex *idx = (GV_IVFDiskIndex *)calloc(1, sizeof(*idx));
+    GV_IVFDiskIndex *idx = (GV_IVFDiskIndex *)gv_calloc(1, sizeof(*idx));
     if (!idx) return NULL;
 
     idx->dimension = dimension;
     idx->config = cfg;
     idx->head_last_checkpoint_sec = gv_time_now_sec();
     idx->data_dir = gv_dup_cstr(cfg.data_dir);
-    idx->centroids = (float *)malloc(cfg.nlist * dimension * sizeof(float));
+    idx->centroids = (float *)gv_alloc(cfg.nlist * dimension * sizeof(float));
     if (!idx->data_dir || !idx->centroids) {
-        free(idx->data_dir);
-        free(idx->centroids);
-        free(idx);
+        gv_free(idx->data_dir);
+        gv_free(idx->centroids);
+        gv_free(idx);
         return NULL;
     }
 
     idx->page_cache = gv_disk_page_cache_create(cfg.cache_size_mb * 1024u * 1024u);
     if (!idx->page_cache) {
-        free(idx->data_dir);
-        free(idx->centroids);
-        free(idx);
+        gv_free(idx->data_dir);
+        gv_free(idx->centroids);
+        gv_free(idx);
         return NULL;
     }
     idx->owns_cache = 1;
@@ -492,9 +493,9 @@ GV_IVFDiskIndex *ivfdisk_create(size_t dimension, const GV_IVFDiskConfig *config
     idx->catalog = posting_catalog_open(cfg.data_dir, cfg.sector_size);
     if (!idx->catalog) {
         gv_disk_page_cache_destroy(idx->page_cache);
-        free(idx->data_dir);
-        free(idx->centroids);
-        free(idx);
+        gv_free(idx->data_dir);
+        gv_free(idx->centroids);
+        gv_free(idx);
         return NULL;
     }
     posting_catalog_attach_page_cache(idx->catalog, idx->page_cache);
@@ -512,10 +513,10 @@ void ivfdisk_destroy(GV_IVFDiskIndex *index)
     if (index->owns_cache) {
         gv_disk_page_cache_destroy(index->page_cache);
     }
-    free(index->vector_locs);
-    free(index->data_dir);
-    free(index->centroids);
-    free(index);
+    gv_free(index->vector_locs);
+    gv_free(index->data_dir);
+    gv_free(index->centroids);
+    gv_free(index);
 }
 
 static int ivfdisk_check_head_ratio(const GV_IVFDiskIndex *index)
@@ -677,7 +678,7 @@ int ivfdisk_update(GV_IVFDiskIndex *index, size_t vector_id, const float *new_da
 int ivfdisk_rebuild_vector_map(GV_IVFDiskIndex *index)
 {
     if (!index || !index->catalog) return -1;
-    free(index->vector_locs);
+    gv_free(index->vector_locs);
     index->vector_locs = NULL;
     index->vector_loc_cap = 0;
 
@@ -704,18 +705,18 @@ int ivfdisk_search(GV_IVFDiskIndex *index, const float *query, size_t k,
 
     ivfdisk_head_checkpoint_if_needed(index);
 
-    IVFDiskHeadDist *heads = (IVFDiskHeadDist *)malloc(index->config.nlist * sizeof(IVFDiskHeadDist));
+    IVFDiskHeadDist *heads = (IVFDiskHeadDist *)gv_alloc(index->config.nlist * sizeof(IVFDiskHeadDist));
     if (!heads) return -1;
 
     size_t probe = 0;
     if (ivfdisk_select_probe_heads(index, query, heads, &probe) != 0) {
-        free(heads);
+        gv_free(heads);
         return -1;
     }
 
-    IVFDiskHeapItem *heap = (IVFDiskHeapItem *)malloc(k * sizeof(IVFDiskHeapItem));
+    IVFDiskHeapItem *heap = (IVFDiskHeapItem *)gv_alloc(k * sizeof(IVFDiskHeapItem));
     if (!heap) {
-        free(heads);
+        gv_free(heads);
         return -1;
     }
 
@@ -734,21 +735,21 @@ int ivfdisk_search(GV_IVFDiskIndex *index, const float *query, size_t k,
         GV_PostingHeadView view;
         memset(&view, 0, sizeof(view));
         if (posting_catalog_materialize_head(index->catalog, heads[i].head_id, &view) != 0) {
-            free(heap);
-            free(heads);
+            gv_free(heap);
+            gv_free(heads);
             return -1;
         }
         for (size_t j = 0; j < view.count; ++j) {
             if (ivfdisk_collect_visit(&ctx, &view.entries[j]) != 0) {
                 posting_head_view_free(&view);
-                free(heap);
-                free(heads);
+                gv_free(heap);
+                gv_free(heads);
                 return -1;
             }
         }
         posting_head_view_free(&view);
     }
-    free(heads);
+    gv_free(heads);
 
     int n = (int)heap_size;
     for (int i = n - 1; i >= 0; --i) {
@@ -764,7 +765,7 @@ int ivfdisk_search(GV_IVFDiskIndex *index, const float *query, size_t k,
             ivfdisk_heap_sift_down(heap, heap_size, 0);
         }
     }
-    free(heap);
+    gv_free(heap);
     return n;
 }
 
@@ -936,7 +937,7 @@ const GV_IVFDiskConfig *ivfdisk_get_config(const GV_IVFDiskIndex *index)
 static int ivfdisk_grow_centroids(GV_IVFDiskIndex *index, size_t new_nlist)
 {
     if (!index || new_nlist <= index->config.nlist) return 0;
-    float *tmp = (float *)realloc(index->centroids, new_nlist * index->dimension * sizeof(float));
+    float *tmp = (float *)gv_realloc(index->centroids, new_nlist * index->dimension * sizeof(float));
     if (!tmp) return -1;
     memset(tmp + index->config.nlist * index->dimension, 0,
            (new_nlist - index->config.nlist) * index->dimension * sizeof(float));
@@ -1021,13 +1022,13 @@ int ivfdisk_add_centroid(GV_IVFDiskIndex *index, const float *centroid, uint64_t
            index->dimension * sizeof(float));
 
     size_t payload_len = 8 + index->dimension * sizeof(float);
-    uint8_t *payload = (uint8_t *)malloc(payload_len);
+    uint8_t *payload = (uint8_t *)gv_alloc(payload_len);
     if (!payload) return -1;
     uint64_t hid = (uint64_t)new_id;
     memcpy(payload, &hid, 8);
     memcpy(payload + 8, centroid, index->dimension * sizeof(float));
     int rc = ivfdisk_head_wal_append(index, GV_HEAD_WAL_ADD, payload, payload_len);
-    free(payload);
+    gv_free(payload);
     if (rc != 0) return -1;
 
     if (out_head_id) *out_head_id = hid;
@@ -1041,12 +1042,12 @@ int ivfdisk_set_centroid(GV_IVFDiskIndex *index, uint64_t head_id, const float *
            index->dimension * sizeof(float));
 
     size_t payload_len = 8 + index->dimension * sizeof(float);
-    uint8_t *payload = (uint8_t *)malloc(payload_len);
+    uint8_t *payload = (uint8_t *)gv_alloc(payload_len);
     if (!payload) return -1;
     memcpy(payload, &head_id, 8);
     memcpy(payload + 8, centroid, index->dimension * sizeof(float));
     int rc = ivfdisk_head_wal_append(index, GV_HEAD_WAL_UPDATE, payload, payload_len);
-    free(payload);
+    gv_free(payload);
     if (rc != 0) return -1;
     return ivfdisk_rebuild_head_graph(index);
 }
@@ -1195,23 +1196,23 @@ int ivfdisk_head_wal_replay(GV_IVFDiskIndex *index)
             fclose(wal);
             return -1;
         }
-        uint8_t *payload = plen > 0 ? (uint8_t *)malloc(plen) : NULL;
+        uint8_t *payload = plen > 0 ? (uint8_t *)gv_alloc(plen) : NULL;
         if (plen > 0 && !payload) { fclose(wal); return -1; }
         if (plen > 0 && fread(payload, 1, plen, wal) != plen) {
-            free(payload);
+            gv_free(payload);
             fclose(wal);
             return -1;
         }
         if (fread(&crc, 4, 1, wal) != 1 ||
             (plen > 0 && crc != ivfdisk_crc32(payload, plen))) {
-            free(payload);
+            gv_free(payload);
             fclose(wal);
             return -1;
         }
 
         if (type == GV_HEAD_WAL_ADD || type == GV_HEAD_WAL_UPDATE) {
             if (plen < 8 + index->dimension * sizeof(float)) {
-                free(payload);
+                gv_free(payload);
                 fclose(wal);
                 return -1;
             }
@@ -1220,13 +1221,13 @@ int ivfdisk_head_wal_replay(GV_IVFDiskIndex *index)
             if (type == GV_HEAD_WAL_ADD) {
                 if (hid >= index->config.nlist) {
                     if (ivfdisk_grow_centroids(index, (size_t)hid + 1) != 0) {
-                        free(payload);
+                        gv_free(payload);
                         fclose(wal);
                         return -1;
                     }
                 }
             } else if (hid >= index->config.nlist) {
-                free(payload);
+                gv_free(payload);
                 fclose(wal);
                 return -1;
             }
@@ -1234,7 +1235,7 @@ int ivfdisk_head_wal_replay(GV_IVFDiskIndex *index)
                    index->dimension * sizeof(float));
         } else if (type == GV_HEAD_WAL_SPLIT) {
             if (plen < 16) {
-                free(payload);
+                gv_free(payload);
                 fclose(wal);
                 return -1;
             }
@@ -1244,7 +1245,7 @@ int ivfdisk_head_wal_replay(GV_IVFDiskIndex *index)
             (void)src;
             if (neu >= index->config.nlist) {
                 if (ivfdisk_grow_centroids(index, (size_t)neu + 1) != 0) {
-                    free(payload);
+                    gv_free(payload);
                     fclose(wal);
                     return -1;
                 }
@@ -1259,7 +1260,7 @@ int ivfdisk_head_wal_replay(GV_IVFDiskIndex *index)
                        index->dimension * sizeof(float));
             }
         }
-        free(payload);
+        gv_free(payload);
     }
     fclose(wal);
     return 0;
@@ -1301,13 +1302,13 @@ int ivfdisk_maint_wal_split(GV_IVFDiskIndex *index, uint64_t src, uint64_t neu,
     if (!index || !src_centroid || !new_centroid) return -1;
     size_t dim = index->dimension;
     size_t payload_len = 16 + 2 * dim * sizeof(float);
-    uint8_t *payload = (uint8_t *)malloc(payload_len);
+    uint8_t *payload = (uint8_t *)gv_alloc(payload_len);
     if (!payload) return -1;
     memcpy(payload, &src, 8);
     memcpy(payload + 8, &neu, 8);
     memcpy(payload + 16, new_centroid, dim * sizeof(float));
     memcpy(payload + 16 + dim * sizeof(float), src_centroid, dim * sizeof(float));
     int rc = ivfdisk_head_wal_append(index, GV_HEAD_WAL_SPLIT, payload, payload_len);
-    free(payload);
+    gv_free(payload);
     return rc;
 }

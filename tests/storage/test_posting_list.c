@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include "core/memory.h"
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -52,7 +53,7 @@ static int test_posting_segment_encode_parse(void)
     ASSERT(posting_segment_parse_buffer(buf, len, 8, posting_test_count_visit, &visit_count) == 0, "parse");
     ASSERT(visit_count == 2, "two entries parsed");
 
-    free(buf);
+    gv_free(buf);
     return 0;
 }
 
@@ -164,8 +165,8 @@ static int test_posting_bulk_append(void)
 
     const size_t n = 10000;
     const size_t dim = 16;
-    GV_PostingWriteEntry *batch = (GV_PostingWriteEntry *)calloc(n, sizeof(GV_PostingWriteEntry));
-    float *data = (float *)malloc(n * dim * sizeof(float));
+    GV_PostingWriteEntry *batch = (GV_PostingWriteEntry *)gv_calloc(n, sizeof(GV_PostingWriteEntry));
+    float *data = (float *)gv_alloc(n * dim * sizeof(float));
     ASSERT(batch && data, "alloc batch");
 
     for (size_t i = 0; i < n; ++i) {
@@ -189,8 +190,8 @@ static int test_posting_bulk_append(void)
     ASSERT(view.entries[n - 1].vector_id == n, "last id");
 
     posting_head_view_free(&view);
-    free(batch);
-    free(data);
+    gv_free(batch);
+    gv_free(data);
     posting_catalog_close(cat);
     return 0;
 }
@@ -346,7 +347,7 @@ static int test_posting_v1_segment_compat(void)
            "parse downgraded v1 header");
     ASSERT(count == 1, "v1 compat entry");
 
-    free(buf);
+    gv_free(buf);
     return 0;
 }
 
@@ -381,7 +382,7 @@ static int test_posting_pq_payload(void)
            "parse pq");
     ASSERT(count == 1, "one pq entry");
 
-    free(buf);
+    gv_free(buf);
     return 0;
 }
 

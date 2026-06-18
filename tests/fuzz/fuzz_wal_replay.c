@@ -6,6 +6,7 @@
  */
 
 #include <stddef.h>
+#include "core/memory.h"
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -79,7 +80,7 @@ int main(int argc, char **argv) {
     }
     FILE *f = fopen(argv[1], "rb");
     if (!f) return 1;
-    uint8_t *buf = (uint8_t *)malloc(FUZZ_MAX_INPUT);
+    uint8_t *buf = (uint8_t *)gv_alloc(FUZZ_MAX_INPUT);
     if (!buf) {
         fclose(f);
         return 1;
@@ -87,7 +88,7 @@ int main(int argc, char **argv) {
     size_t n = fread(buf, 1, FUZZ_MAX_INPUT, f);
     fclose(f);
     int rc = LLVMFuzzerTestOneInput(buf, n);
-    free(buf);
+    gv_free(buf);
     return rc;
 }
 #endif

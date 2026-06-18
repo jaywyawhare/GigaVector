@@ -1,4 +1,5 @@
 #include "core/scope.h"
+#include "core/memory.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -15,7 +16,7 @@ static void gv_tls_arena_key_destroy(void *value) {
         return;
     }
     gv_arena_fini(arena);
-    free(arena);
+    gv_free(arena);
 }
 
 static void gv_tls_arena_key_create(void) {
@@ -29,12 +30,12 @@ GV_Arena *gv_tls_arena(void) {
         return arena;
     }
 
-    arena = (GV_Arena *)malloc(sizeof(GV_Arena));
+    arena = (GV_Arena *)gv_alloc(sizeof(GV_Arena));
     if (arena == NULL) {
         return NULL;
     }
     if (gv_arena_init(arena, GV_TLS_ARENA_BYTES) != 0) {
-        free(arena);
+        gv_free(arena);
         return NULL;
     }
     pthread_setspecific(gv_tls_arena_key, arena);
@@ -73,7 +74,22 @@ void *gv_tls_alloc_or_heap(size_t size, size_t alignment, int *on_heap) {
         }
         return ptr;
     }
-    ptr = malloc(size);
+    ptr = gv_alloc(size);
+    if (on_heap != NULL) {
+        *on_heap = ptr != NULL ? 1 : 0;
+    }
+    return ptr;
+}
+
+void *gv_tls_calloc_or_heap(size_t nmemb, size_t size, int *on_heap) {
+    void *ptr = gv_tls_calloc(nmemb, size);
+    if (ptr != NULL) {
+        if (on_heap != NULL) {
+            *on_heap = 0;
+        }
+        return ptr;
+    }
+    ptr = gv_calloc(nmemb, size);
     if (on_heap != NULL) {
         *on_heap = ptr != NULL ? 1 : 0;
     }
@@ -82,7 +98,7 @@ void *gv_tls_alloc_or_heap(size_t size, size_t alignment, int *on_heap) {
 
 void gv_tls_free_or_heap(void *ptr, int on_heap) {
     if (on_heap && ptr != NULL) {
-        free(ptr);
+        gv_free(ptr);
     }
 }
 #else
@@ -97,7 +113,7 @@ static VOID WINAPI gv_tls_arena_fls_destroy(PVOID value) {
         return;
     }
     gv_arena_fini(arena);
-    free(arena);
+    gv_free(arena);
 }
 
 static BOOL CALLBACK gv_tls_arena_init_once(PINIT_ONCE once, PVOID param, PVOID *ctx) {
@@ -117,12 +133,12 @@ GV_Arena *gv_tls_arena(void) {
     if (arena != NULL) {
         return arena;
     }
-    arena = (GV_Arena *)malloc(sizeof(GV_Arena));
+    arena = (GV_Arena *)gv_alloc(sizeof(GV_Arena));
     if (arena == NULL) {
         return NULL;
     }
     if (gv_arena_init(arena, GV_TLS_ARENA_BYTES) != 0) {
-        free(arena);
+        gv_free(arena);
         return NULL;
     }
     FlsSetValue(gv_tls_arena_fls, arena);
@@ -164,7 +180,22 @@ void *gv_tls_alloc_or_heap(size_t size, size_t alignment, int *on_heap) {
         }
         return ptr;
     }
-    ptr = malloc(size);
+    ptr = gv_alloc(size);
+    if (on_heap != NULL) {
+        *on_heap = ptr != NULL ? 1 : 0;
+    }
+    return ptr;
+}
+
+void *gv_tls_calloc_or_heap(size_t nmemb, size_t size, int *on_heap) {
+    void *ptr = gv_tls_calloc(nmemb, size);
+    if (ptr != NULL) {
+        if (on_heap != NULL) {
+            *on_heap = 0;
+        }
+        return ptr;
+    }
+    ptr = gv_calloc(nmemb, size);
     if (on_heap != NULL) {
         *on_heap = ptr != NULL ? 1 : 0;
     }
@@ -173,7 +204,7 @@ void *gv_tls_alloc_or_heap(size_t size, size_t alignment, int *on_heap) {
 
 void gv_tls_free_or_heap(void *ptr, int on_heap) {
     if (on_heap && ptr != NULL) {
-        free(ptr);
+        gv_free(ptr);
     }
 }
 
@@ -185,7 +216,7 @@ void gv_bytes_release(GV_Bytes *bytes) {
     }
 
     if (bytes->kind == GV_OWN_HEAP && bytes->data != NULL) {
-        free(bytes->data);
+        gv_free(bytes->data);
     }
 
     bytes->data = NULL;
@@ -218,7 +249,7 @@ GV_Bytes gv_bytes_copy_heap(const void *data, size_t len) {
         return bytes;
     }
 
-    void *copy = malloc(len);
+    void *copy = gv_alloc(len);
     if (copy == NULL) {
         return bytes;
     }

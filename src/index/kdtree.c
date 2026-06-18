@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include "core/memory.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -12,7 +13,7 @@
 #include "storage/soa_storage.h"
 
 static GV_KDNode *kdtree_create_node(size_t vector_index, size_t axis) {
-    GV_KDNode *node = (GV_KDNode *)malloc(sizeof(GV_KDNode));
+    GV_KDNode *node = (GV_KDNode *)gv_alloc(sizeof(GV_KDNode));
     if (node == NULL) {
         return NULL;
     }
@@ -127,28 +128,28 @@ static int read_metadata(FILE *in, GV_Vector *vec) {
             return -1;
         }
         if (read_str(in, &key, key_len) != 0) {
-            free(key);
+            gv_free(key);
             return -1;
         }
 
         if (read_u32(in, &val_len) != 0) {
-            free(key);
+            gv_free(key);
             return -1;
         }
         if (read_str(in, &value, val_len) != 0) {
-            free(key);
-            free(value);
+            gv_free(key);
+            gv_free(value);
             return -1;
         }
 
         if (vector_set_metadata(vec, key, value) != 0) {
-            free(key);
-            free(value);
+            gv_free(key);
+            gv_free(value);
             return -1;
         }
 
-        free(key);
-        free(value);
+        gv_free(key);
+        gv_free(value);
     }
 
     return 0;
@@ -186,13 +187,13 @@ int kdtree_load_recursive(GV_KDNode **root, GV_SoAStorage *storage, FILE *in, si
         return -1;
     }
 
-    float *temp_data = (float *)malloc(dimension * sizeof(float));
+    float *temp_data = (float *)gv_alloc(dimension * sizeof(float));
     if (temp_data == NULL) {
         return -1;
     }
 
     if (read_floats(in, temp_data, dimension) != 0) {
-        free(temp_data);
+        gv_free(temp_data);
         return -1;
     }
 
@@ -203,14 +204,14 @@ int kdtree_load_recursive(GV_KDNode **root, GV_SoAStorage *storage, FILE *in, si
         temp_vec.data = NULL;
         temp_vec.metadata = NULL;
         if (read_metadata(in, &temp_vec) != 0) {
-            free(temp_data);
+            gv_free(temp_data);
             return -1;
         }
         metadata = temp_vec.metadata;
     }
 
     size_t vector_index = soa_storage_add(storage, temp_data, metadata);
-    free(temp_data);
+    gv_free(temp_data);
     if (vector_index == (size_t)-1) {
         if (metadata != NULL) {
             GV_Vector temp_vec;
@@ -247,7 +248,7 @@ void kdtree_destroy_recursive(GV_KDNode *node) {
     }
     kdtree_destroy_recursive(node->left);
     kdtree_destroy_recursive(node->right);
-    free(node);
+    gv_free(node);
 }
 
 typedef struct {
@@ -275,7 +276,7 @@ static GV_Vector *knn_get_vector_view(GV_KNNStorageContext *storage_ctx, size_t 
         while (new_capacity <= index) {
             new_capacity *= 2;
         }
-        GV_Vector *new_views = (GV_Vector *)realloc(storage_ctx->temp_views, new_capacity * sizeof(GV_Vector));
+        GV_Vector *new_views = (GV_Vector *)gv_realloc(storage_ctx->temp_views, new_capacity * sizeof(GV_Vector));
         if (new_views == NULL) {
             return NULL;
         }
@@ -459,14 +460,14 @@ int kdtree_knn_search(const GV_KDNode *root, const GV_SoAStorage *storage, const
                 GV_Metadata *dst_head = NULL;
                 GV_Metadata *dst_tail = NULL;
                 while (src != NULL) {
-                    GV_Metadata *new_meta = (GV_Metadata *)malloc(sizeof(GV_Metadata));
+                    GV_Metadata *new_meta = (GV_Metadata *)gv_alloc(sizeof(GV_Metadata));
                     if (new_meta == NULL) {
                         /* Free what we've copied so far */
                         while (dst_head != NULL) {
                             GV_Metadata *next = dst_head->next;
-                            free(dst_head->key);
-                            free(dst_head->value);
-                            free(dst_head);
+                            gv_free(dst_head->key);
+                            gv_free(dst_head->value);
+                            gv_free(dst_head);
                             dst_head = next;
                         }
                         vector_destroy(copy);
@@ -491,7 +492,7 @@ int kdtree_knn_search(const GV_KDNode *root, const GV_SoAStorage *storage, const
         }
     }
 
-    free(storage_ctx.temp_views);
+    gv_free(storage_ctx.temp_views);
     return (int)ctx.count;
 }
 
@@ -535,13 +536,13 @@ int kdtree_knn_search_filtered(const GV_KDNode *root, const GV_SoAStorage *stora
                 GV_Metadata *dst_head = NULL;
                 GV_Metadata *dst_tail = NULL;
                 while (src != NULL) {
-                    GV_Metadata *new_meta = (GV_Metadata *)malloc(sizeof(GV_Metadata));
+                    GV_Metadata *new_meta = (GV_Metadata *)gv_alloc(sizeof(GV_Metadata));
                     if (new_meta == NULL) {
                         while (dst_head != NULL) {
                             GV_Metadata *next = dst_head->next;
-                            free(dst_head->key);
-                            free(dst_head->value);
-                            free(dst_head);
+                            gv_free(dst_head->key);
+                            gv_free(dst_head->value);
+                            gv_free(dst_head);
                             dst_head = next;
                         }
                         vector_destroy(copy);
@@ -566,7 +567,7 @@ int kdtree_knn_search_filtered(const GV_KDNode *root, const GV_SoAStorage *stora
         }
     }
 
-    free(storage_ctx.temp_views);
+    gv_free(storage_ctx.temp_views);
     return (int)ctx.count;
 }
 
@@ -698,7 +699,7 @@ int kdtree_range_search(const GV_KDNode *root, const GV_SoAStorage *storage, con
 
     range_search_recursive(root, storage, query, &ctx, &storage_ctx);
 
-    free(storage_ctx.temp_views);
+    gv_free(storage_ctx.temp_views);
     return (int)ctx.count;
 }
 
@@ -732,7 +733,7 @@ int kdtree_range_search_filtered(const GV_KDNode *root, const GV_SoAStorage *sto
 
     range_search_recursive(root, storage, query, &ctx, &storage_ctx);
 
-    free(storage_ctx.temp_views);
+    gv_free(storage_ctx.temp_views);
     return (int)ctx.count;
 }
 
@@ -792,7 +793,7 @@ static GV_KDNode *kdtree_delete_recursive(GV_KDNode *node, size_t vector_index, 
                 node->right = kdtree_delete_recursive(node->right, min_node->vector_index, depth + 1, storage);
             } else {
                 GV_KDNode *temp = node->left;
-                free(node);
+                gv_free(node);
                 return temp;
             }
         } else if (node->left != NULL) {
@@ -804,11 +805,11 @@ static GV_KDNode *kdtree_delete_recursive(GV_KDNode *node, size_t vector_index, 
                 node->right = kdtree_delete_recursive(node->right, min_node->vector_index, depth + 1, storage);
             } else {
                 GV_KDNode *temp = node->left;
-                free(node);
+                gv_free(node);
                 return temp;
             }
         } else {
-            free(node);
+            gv_free(node);
             return NULL;
         }
     } else {

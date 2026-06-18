@@ -18,6 +18,7 @@
 
 #include "search/phased_ranking.h"
 #include "core/scope.h"
+#include "core/memory.h"
 #include "storage/database.h"
 #include "search/distance.h"
 #include "search/ranking.h"
@@ -114,15 +115,17 @@ static size_t result_to_soa_index(const GV_Database *db, const GV_SearchResult *
 GV_Pipeline *pipeline_create(const void *db) {
     if (!db) return NULL;
 
-    GV_Pipeline *pipe = calloc(1, sizeof(GV_Pipeline));
+    const GV_Database *database = (const GV_Database *)db;
+    GV_Pipeline *pipe =
+        (GV_Pipeline *)gv_db_calloc((GV_Database *)database, 1, sizeof(GV_Pipeline));
     if (!pipe) return NULL;
 
-    pipe->db = (const GV_Database *)db;
+    pipe->db = database;
     pipe->phase_count = 0;
     pipe->total_latency_ms = 0.0;
 
     if (pthread_mutex_init(&pipe->mutex, NULL) != 0) {
-        free(pipe);
+        gv_db_free((GV_Database *)database, pipe);
         return NULL;
     }
 
@@ -131,8 +134,13 @@ GV_Pipeline *pipeline_create(const void *db) {
 
 void pipeline_destroy(GV_Pipeline *pipe) {
     if (!pipe) return;
+    GV_Database *db = (GV_Database *)pipe->db;
     pthread_mutex_destroy(&pipe->mutex);
-    free(pipe);
+    if (db != NULL) {
+        gv_db_free(db, pipe);
+    } else {
+        gv_free(pipe);
+    }
 }
 
 int pipeline_add_phase(GV_Pipeline *pipe, const GV_PhaseConfig *config) {
@@ -192,7 +200,7 @@ static int execute_ann_phase(const GV_Database *db,
         (GV_SearchResult *)gv_tls_calloc(fetch_k, sizeof(GV_SearchResult));
     int search_on_heap = 0;
     if (!search_res) {
-        search_res = calloc(fetch_k, sizeof(GV_SearchResult));
+        search_res = gv_calloc(fetch_k, sizeof(GV_SearchResult));
         search_on_heap = 1;
     }
     if (!search_res) return -1;
@@ -603,15 +611,15 @@ int pipeline_get_stats(const GV_Pipeline *pipe, GV_PipelineStats *stats) {
         return 0;
     }
 
-    stats->phase_input_counts  = calloc(n, sizeof(size_t));
-    stats->phase_output_counts = calloc(n, sizeof(size_t));
-    stats->phase_latencies_ms  = calloc(n, sizeof(double));
+    stats->phase_input_counts  = gv_calloc(n, sizeof(size_t));
+    stats->phase_output_counts = gv_calloc(n, sizeof(size_t));
+    stats->phase_latencies_ms  = gv_calloc(n, sizeof(double));
 
     if (!stats->phase_input_counts || !stats->phase_output_counts ||
         !stats->phase_latencies_ms) {
-        free(stats->phase_input_counts);
-        free(stats->phase_output_counts);
-        free(stats->phase_latencies_ms);
+        gv_free(stats->phase_input_counts);
+        gv_free(stats->phase_output_counts);
+        gv_free(stats->phase_latencies_ms);
         memset(stats, 0, sizeof(*stats));
         return -1;
     }
@@ -631,9 +639,9 @@ int pipeline_get_stats(const GV_Pipeline *pipe, GV_PipelineStats *stats) {
 void pipeline_free_stats(GV_PipelineStats *stats) {
     if (!stats) return;
 
-    free(stats->phase_input_counts);
-    free(stats->phase_output_counts);
-    free(stats->phase_latencies_ms);
+    gv_free(stats->phase_input_counts);
+    gv_free(stats->phase_output_counts);
+    gv_free(stats->phase_latencies_ms);
 
     stats->phase_input_counts  = NULL;
     stats->phase_output_counts = NULL;

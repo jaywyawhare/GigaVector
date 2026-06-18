@@ -4,6 +4,7 @@
  */
 
 #include "security/auth.h"
+#include "core/memory.h"
 #include "core/utils.h"
 
 #include <stdlib.h>
@@ -230,13 +231,13 @@ void auth_config_init(GV_AuthConfig *config) {
 /* Lifecycle */
 
 GV_AuthManager *auth_create(const GV_AuthConfig *config) {
-    GV_AuthManager *auth = calloc(1, sizeof(GV_AuthManager));
+    GV_AuthManager *auth = gv_calloc(1, sizeof(GV_AuthManager));
     if (!auth) return NULL;
 
     auth->config = config ? *config : DEFAULT_CONFIG;
 
     if (pthread_rwlock_init(&auth->rwlock, NULL) != 0) {
-        free(auth);
+        gv_free(auth);
         return NULL;
     }
 
@@ -247,11 +248,11 @@ void auth_destroy(GV_AuthManager *auth) {
     if (!auth) return;
 
     for (size_t i = 0; i < auth->key_count; i++) {
-        free(auth->keys[i].description);
+        gv_free(auth->keys[i].description);
     }
 
     pthread_rwlock_destroy(&auth->rwlock);
-    free(auth);
+    gv_free(auth);
 }
 
 /* API Key Management */
@@ -354,7 +355,7 @@ int auth_list_api_keys(GV_AuthManager *auth, GV_APIKey **keys, size_t *count) {
         return 0;
     }
 
-    *keys = malloc(*count * sizeof(GV_APIKey));
+    *keys = gv_alloc(*count * sizeof(GV_APIKey));
     if (!*keys) {
         pthread_rwlock_unlock(&auth->rwlock);
         return -1;
@@ -376,11 +377,11 @@ int auth_list_api_keys(GV_AuthManager *auth, GV_APIKey **keys, size_t *count) {
 void auth_free_api_keys(GV_APIKey *keys, size_t count) {
     if (!keys) return;
     for (size_t i = 0; i < count; i++) {
-        free(keys[i].key_id);
-        free(keys[i].key_hash);
-        free(keys[i].description);
+        gv_free(keys[i].key_id);
+        gv_free(keys[i].key_hash);
+        gv_free(keys[i].description);
     }
-    free(keys);
+    gv_free(keys);
 }
 
 /* Authentication */
@@ -676,8 +677,8 @@ GV_AuthResult auth_authenticate(GV_AuthManager *auth, const char *credential,
 
 void auth_free_identity(GV_Identity *identity) {
     if (!identity) return;
-    free(identity->subject);
-    free(identity->key_id);
+    gv_free(identity->subject);
+    gv_free(identity->key_id);
     memset(identity, 0, sizeof(*identity));
 }
 

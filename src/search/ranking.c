@@ -8,6 +8,7 @@
  */
 
 #include "search/ranking.h"
+#include "core/memory.h"
 #include "core/arena.h"
 #include "core/scope.h"
 #include "storage/database.h"
@@ -478,10 +479,10 @@ static GV_RankNode *parse_expr(Parser *p) {
 GV_RankExpr *rank_expr_parse(const char *expression) {
     if (!expression) return NULL;
 
-    GV_RankExpr *expr = calloc(1, sizeof(GV_RankExpr));
+    GV_RankExpr *expr = gv_calloc(1, sizeof(GV_RankExpr));
     if (!expr) return NULL;
     if (gv_arena_init(&expr->arena, GV_RANK_ARENA_BYTES) != 0) {
-        free(expr);
+        gv_free(expr);
         return NULL;
     }
 
@@ -498,7 +499,7 @@ GV_RankExpr *rank_expr_parse(const char *expression) {
 
     if (parser.has_error || !root || parser.cur.type != TOK_EOF) {
         gv_arena_fini(&expr->arena);
-        free(expr);
+        gv_free(expr);
         return NULL;
     }
 
@@ -510,10 +511,10 @@ GV_RankExpr *rank_expr_create_weighted(size_t n, const char **signal_names,
                                           const double *weights) {
     if (n == 0 || !signal_names || !weights) return NULL;
 
-    GV_RankExpr *expr = calloc(1, sizeof(GV_RankExpr));
+    GV_RankExpr *expr = gv_calloc(1, sizeof(GV_RankExpr));
     if (!expr) return NULL;
     if (gv_arena_init(&expr->arena, GV_RANK_ARENA_BYTES) != 0) {
-        free(expr);
+        gv_free(expr);
         return NULL;
     }
 
@@ -522,7 +523,7 @@ GV_RankExpr *rank_expr_create_weighted(size_t n, const char **signal_names,
     for (size_t i = 0; i < n; i++) {
         if (!signal_names[i]) {
             gv_arena_fini(&expr->arena);
-            free(expr);
+            gv_free(expr);
             return NULL;
         }
 
@@ -530,14 +531,14 @@ GV_RankExpr *rank_expr_create_weighted(size_t n, const char **signal_names,
         GV_RankNode *s = node_signal(&expr->arena, signal_names[i]);
         if (!w || !s) {
             gv_arena_fini(&expr->arena);
-            free(expr);
+            gv_free(expr);
             return NULL;
         }
 
         GV_RankNode *term = node_binary(&expr->arena, GV_RANK_MUL, w, s);
         if (!term) {
             gv_arena_fini(&expr->arena);
-            free(expr);
+            gv_free(expr);
             return NULL;
         }
 
@@ -547,7 +548,7 @@ GV_RankExpr *rank_expr_create_weighted(size_t n, const char **signal_names,
             sum = node_binary(&expr->arena, GV_RANK_ADD, sum, term);
             if (!sum) {
                 gv_arena_fini(&expr->arena);
-                free(expr);
+                gv_free(expr);
                 return NULL;
             }
         }
@@ -562,7 +563,7 @@ GV_RankExpr *rank_expr_create_weighted(size_t n, const char **signal_names,
 void rank_expr_destroy(GV_RankExpr *expr) {
     if (!expr) return;
     gv_arena_fini(&expr->arena);
-    free(expr);
+    gv_free(expr);
 }
 
 /* Signal Lookup (Internal) */
@@ -762,7 +763,7 @@ int rank_search(const void *db, const float *query, size_t dimension,
     int search_on_heap = 0;
     if (!search_results) {
         search_results =
-            (GV_SearchResult *)malloc(fetch_k * sizeof(GV_SearchResult));
+            (GV_SearchResult *)gv_alloc(fetch_k * sizeof(GV_SearchResult));
         search_on_heap = 1;
     }
     if (!search_results) return -1;

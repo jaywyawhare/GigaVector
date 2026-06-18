@@ -4,6 +4,7 @@
  */
 
 #include "index/index_maintenance.h"
+#include "core/memory.h"
 
 #include <float.h>
 #include <stdlib.h>
@@ -38,11 +39,11 @@ static int split_kmeans_run(SplitKMeans *km, const float *data, size_t count)
                km->dim * sizeof(float));
     }
 
-    float *new_centroids = (float *)calloc(km->k * km->dim, sizeof(float));
-    size_t *counts = (size_t *)calloc(km->k, sizeof(size_t));
+    float *new_centroids = (float *)gv_calloc(km->k * km->dim, sizeof(float));
+    size_t *counts = (size_t *)gv_calloc(km->k, sizeof(size_t));
     if (!new_centroids || !counts) {
-        free(new_centroids);
-        free(counts);
+        gv_free(new_centroids);
+        gv_free(counts);
         return -1;
     }
 
@@ -87,8 +88,8 @@ static int split_kmeans_run(SplitKMeans *km, const float *data, size_t count)
         memcpy(km->centroids, new_centroids, km->k * km->dim * sizeof(float));
     }
 
-    free(new_centroids);
-    free(counts);
+    gv_free(new_centroids);
+    gv_free(counts);
     return 0;
 }
 
@@ -133,29 +134,29 @@ static int maint_split_head(GV_IVFDiskIndex *index, uint64_t head_id)
     size_t k = maint_split_k(st.byte_total, view.count, cfg->max_list_bytes);
 
     SplitKMeans km = {
-        .centroids = (float *)malloc(k * dim * sizeof(float)),
-        .assign = (int *)malloc(view.count * sizeof(int)),
+        .centroids = (float *)gv_alloc(k * dim * sizeof(float)),
+        .assign = (int *)gv_alloc(view.count * sizeof(int)),
         .k = k,
         .dim = dim,
         .iters = cfg->train_iters ? cfg->train_iters : 8
     };
     if (!km.centroids || !km.assign) {
-        free(km.centroids);
-        free(km.assign);
+        gv_free(km.centroids);
+        gv_free(km.assign);
         posting_head_view_free(&view);
         return -1;
     }
     if (split_kmeans_run(&km, view.data_pool, view.count) != 0) {
-        free(km.centroids);
-        free(km.assign);
+        gv_free(km.centroids);
+        gv_free(km.assign);
         posting_head_view_free(&view);
         return -1;
     }
 
-    size_t *counts = (size_t *)calloc(k, sizeof(size_t));
+    size_t *counts = (size_t *)gv_calloc(k, sizeof(size_t));
     if (!counts) {
-        free(km.centroids);
-        free(km.assign);
+        gv_free(km.centroids);
+        gv_free(km.assign);
         posting_head_view_free(&view);
         return -1;
     }
@@ -169,9 +170,9 @@ static int maint_split_head(GV_IVFDiskIndex *index, uint64_t head_id)
         if (counts[c] > 0) nonempty++;
     }
     if (nonempty < 2) {
-        free(counts);
-        free(km.centroids);
-        free(km.assign);
+        gv_free(counts);
+        gv_free(km.centroids);
+        gv_free(km.assign);
         posting_head_view_free(&view);
         return 0;
     }
@@ -182,41 +183,41 @@ static int maint_split_head(GV_IVFDiskIndex *index, uint64_t head_id)
     }
 
     size_t nlist_before = ivfdisk_nlist(index);
-    uint64_t *cluster_head = (uint64_t *)calloc(k, sizeof(uint64_t));
+    uint64_t *cluster_head = (uint64_t *)gv_calloc(k, sizeof(uint64_t));
     GV_PostingWriteEntry **by_cluster =
-        (GV_PostingWriteEntry **)calloc(k, sizeof(GV_PostingWriteEntry *));
+        (GV_PostingWriteEntry **)gv_calloc(k, sizeof(GV_PostingWriteEntry *));
     if (!cluster_head || !by_cluster) {
-        free(cluster_head);
-        free(by_cluster);
-        free(counts);
-        free(km.centroids);
-        free(km.assign);
+        gv_free(cluster_head);
+        gv_free(by_cluster);
+        gv_free(counts);
+        gv_free(km.centroids);
+        gv_free(km.assign);
         posting_head_view_free(&view);
         return -1;
     }
     for (size_t c = 0; c < k; ++c) {
         if (counts[c] == 0) continue;
-        by_cluster[c] = (GV_PostingWriteEntry *)calloc(counts[c], sizeof(GV_PostingWriteEntry));
+        by_cluster[c] = (GV_PostingWriteEntry *)gv_calloc(counts[c], sizeof(GV_PostingWriteEntry));
         if (!by_cluster[c]) {
-            for (size_t j = 0; j < k; ++j) free(by_cluster[j]);
-            free(by_cluster);
-            free(cluster_head);
-            free(counts);
-            free(km.centroids);
-            free(km.assign);
+            for (size_t j = 0; j < k; ++j) gv_free(by_cluster[j]);
+            gv_free(by_cluster);
+            gv_free(cluster_head);
+            gv_free(counts);
+            gv_free(km.centroids);
+            gv_free(km.assign);
             posting_head_view_free(&view);
             return -1;
         }
     }
 
-    size_t *fill = (size_t *)calloc(k, sizeof(size_t));
+    size_t *fill = (size_t *)gv_calloc(k, sizeof(size_t));
     if (!fill) {
-        for (size_t j = 0; j < k; ++j) free(by_cluster[j]);
-        free(by_cluster);
-        free(cluster_head);
-        free(counts);
-        free(km.centroids);
-        free(km.assign);
+        for (size_t j = 0; j < k; ++j) gv_free(by_cluster[j]);
+        gv_free(by_cluster);
+        gv_free(cluster_head);
+        gv_free(counts);
+        gv_free(km.centroids);
+        gv_free(km.assign);
         posting_head_view_free(&view);
         return -1;
     }
@@ -272,24 +273,24 @@ static int maint_split_head(GV_IVFDiskIndex *index, uint64_t head_id)
     ivfdisk_maint_inc_split(index);
     (void)nlist_before;
 
-    for (size_t j = 0; j < k; ++j) free(by_cluster[j]);
-    free(by_cluster);
-    free(cluster_head);
-    free(fill);
-    free(counts);
-    free(km.centroids);
-    free(km.assign);
+    for (size_t j = 0; j < k; ++j) gv_free(by_cluster[j]);
+    gv_free(by_cluster);
+    gv_free(cluster_head);
+    gv_free(fill);
+    gv_free(counts);
+    gv_free(km.centroids);
+    gv_free(km.assign);
     posting_head_view_free(&view);
     return 0;
 
 split_fail:
-    for (size_t j = 0; j < k; ++j) free(by_cluster[j]);
-    free(by_cluster);
-    free(cluster_head);
-    free(fill);
-    free(counts);
-    free(km.centroids);
-    free(km.assign);
+    for (size_t j = 0; j < k; ++j) gv_free(by_cluster[j]);
+    gv_free(by_cluster);
+    gv_free(cluster_head);
+    gv_free(fill);
+    gv_free(counts);
+    gv_free(km.centroids);
+    gv_free(km.assign);
     posting_head_view_free(&view);
     return -1;
 }

@@ -4,6 +4,7 @@
  */
 
 #include "multimodal/tokenizer.h"
+#include "core/memory.h"
 #include "core/utils.h"
 
 #include <stdlib.h>
@@ -41,7 +42,7 @@ void tokenizer_config_init(GV_TokenizerConfig *config) {
 }
 
 GV_Tokenizer *tokenizer_create(const GV_TokenizerConfig *config) {
-    GV_Tokenizer *tokenizer = calloc(1, sizeof(GV_Tokenizer));
+    GV_Tokenizer *tokenizer = gv_calloc(1, sizeof(GV_Tokenizer));
     if (!tokenizer) return NULL;
 
     tokenizer->config = config ? *config : DEFAULT_CONFIG;
@@ -50,7 +51,7 @@ GV_Tokenizer *tokenizer_create(const GV_TokenizerConfig *config) {
 }
 
 void tokenizer_destroy(GV_Tokenizer *tokenizer) {
-    free(tokenizer);
+    gv_free(tokenizer);
 }
 
 static int is_token_char_whitespace(char c) {
@@ -63,7 +64,7 @@ static int is_token_char_simple(char c) {
 
 static int token_list_grow(GV_TokenList *list) {
     size_t new_capacity = list->capacity == 0 ? 16 : list->capacity * 2;
-    GV_Token *new_tokens = realloc(list->tokens, new_capacity * sizeof(GV_Token));
+    GV_Token *new_tokens = gv_realloc(list->tokens, new_capacity * sizeof(GV_Token));
     if (!new_tokens) return -1;
     list->tokens = new_tokens;
     list->capacity = new_capacity;
@@ -81,7 +82,7 @@ static int add_token(GV_TokenList *list, const char *start, size_t len,
         if (token_list_grow(list) != 0) return -1;
     }
 
-    char *text = malloc(len + 1);
+    char *text = gv_alloc(len + 1);
     if (!text) return -1;
 
     if (config->lowercase) {
@@ -94,7 +95,7 @@ static int add_token(GV_TokenList *list, const char *start, size_t len,
     text[len] = '\0';
 
     if (config->remove_stopwords && is_stopword(text)) {
-        free(text);
+        gv_free(text);
         return 0;  /* Skip stopword */
     }
 
@@ -165,9 +166,9 @@ void token_list_free(GV_TokenList *list) {
     if (!list) return;
 
     for (size_t i = 0; i < list->count; i++) {
-        free(list->tokens[i].text);
+        gv_free(list->tokens[i].text);
     }
-    free(list->tokens);
+    gv_free(list->tokens);
     memset(list, 0, sizeof(*list));
 }
 
@@ -190,7 +191,7 @@ int token_list_unique(const GV_TokenList *list, char ***unique_tokens, size_t *u
         return 0;
     }
 
-    char **tokens = malloc(list->count * sizeof(char *));
+    char **tokens = gv_alloc(list->count * sizeof(char *));
     if (!tokens) return -1;
 
     size_t count = 0;
@@ -215,7 +216,7 @@ int token_list_unique(const GV_TokenList *list, char ***unique_tokens, size_t *u
     }
 
     if (count < list->count) {
-        char **shrunk = realloc(tokens, count * sizeof(char *));
+        char **shrunk = gv_realloc(tokens, count * sizeof(char *));
         if (shrunk) tokens = shrunk;
     }
 
@@ -227,9 +228,9 @@ int token_list_unique(const GV_TokenList *list, char ***unique_tokens, size_t *u
 void unique_tokens_free(char **tokens, size_t count) {
     if (!tokens) return;
     for (size_t i = 0; i < count; i++) {
-        free(tokens[i]);
+        gv_free(tokens[i]);
     }
-    free(tokens);
+    gv_free(tokens);
 }
 
 int is_stopword(const char *word) {

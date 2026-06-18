@@ -1,4 +1,5 @@
 #include <stdlib.h>
+#include "core/memory.h"
 #include <string.h>
 #include <stdint.h>
 #include <float.h>
@@ -56,7 +57,7 @@ GV_ScalarQuantVector *scalar_quantize_train(const float *data, size_t count, siz
         return NULL;
     }
     
-    GV_ScalarQuantVector *sqv = (GV_ScalarQuantVector *)malloc(sizeof(GV_ScalarQuantVector));
+    GV_ScalarQuantVector *sqv = (GV_ScalarQuantVector *)gv_alloc(sizeof(GV_ScalarQuantVector));
     if (sqv == NULL) {
         return NULL;
     }
@@ -67,22 +68,22 @@ GV_ScalarQuantVector *scalar_quantize_train(const float *data, size_t count, siz
     sqv->bytes_per_vector = scalar_quant_bytes_needed(dimension, config->bits);
     
     if (sqv->per_dimension) {
-        sqv->min_vals = (float *)malloc(dimension * sizeof(float));
-        sqv->max_vals = (float *)malloc(dimension * sizeof(float));
+        sqv->min_vals = (float *)gv_alloc(dimension * sizeof(float));
+        sqv->max_vals = (float *)gv_alloc(dimension * sizeof(float));
         if (sqv->min_vals == NULL || sqv->max_vals == NULL) {
-            free(sqv->min_vals);
-            free(sqv->max_vals);
-            free(sqv);
+            gv_free(sqv->min_vals);
+            gv_free(sqv->max_vals);
+            gv_free(sqv);
             return NULL;
         }
         find_min_max_per_dimension(data, count, dimension, sqv->min_vals, sqv->max_vals);
     } else {
-        sqv->min_vals = (float *)malloc(sizeof(float));
-        sqv->max_vals = (float *)malloc(sizeof(float));
+        sqv->min_vals = (float *)gv_alloc(sizeof(float));
+        sqv->max_vals = (float *)gv_alloc(sizeof(float));
         if (sqv->min_vals == NULL || sqv->max_vals == NULL) {
-            free(sqv->min_vals);
-            free(sqv->max_vals);
-            free(sqv);
+            gv_free(sqv->min_vals);
+            gv_free(sqv->max_vals);
+            gv_free(sqv);
             return NULL;
         }
         find_min_max_global(data, count, dimension, sqv->min_vals, sqv->max_vals);
@@ -102,7 +103,7 @@ GV_ScalarQuantVector *scalar_quantize(const float *data, size_t dimension,
         return NULL;
     }
     
-    GV_ScalarQuantVector *sqv = (GV_ScalarQuantVector *)malloc(sizeof(GV_ScalarQuantVector));
+    GV_ScalarQuantVector *sqv = (GV_ScalarQuantVector *)gv_alloc(sizeof(GV_ScalarQuantVector));
     if (sqv == NULL) {
         return NULL;
     }
@@ -112,20 +113,20 @@ GV_ScalarQuantVector *scalar_quantize(const float *data, size_t dimension,
     sqv->per_dimension = config->per_dimension;
     sqv->bytes_per_vector = scalar_quant_bytes_needed(dimension, config->bits);
     
-    sqv->quantized = (uint8_t *)calloc(sqv->bytes_per_vector, sizeof(uint8_t));
+    sqv->quantized = (uint8_t *)gv_calloc(sqv->bytes_per_vector, sizeof(uint8_t));
     if (sqv->quantized == NULL) {
-        free(sqv);
+        gv_free(sqv);
         return NULL;
     }
     
     if (sqv->per_dimension) {
-        sqv->min_vals = (float *)malloc(dimension * sizeof(float));
-        sqv->max_vals = (float *)malloc(dimension * sizeof(float));
+        sqv->min_vals = (float *)gv_alloc(dimension * sizeof(float));
+        sqv->max_vals = (float *)gv_alloc(dimension * sizeof(float));
         if (sqv->min_vals == NULL || sqv->max_vals == NULL) {
-            free(sqv->quantized);
-            free(sqv->min_vals);
-            free(sqv->max_vals);
-            free(sqv);
+            gv_free(sqv->quantized);
+            gv_free(sqv->min_vals);
+            gv_free(sqv->max_vals);
+            gv_free(sqv);
             return NULL;
         }
         
@@ -134,13 +135,13 @@ GV_ScalarQuantVector *scalar_quantize(const float *data, size_t dimension,
             sqv->max_vals[i] = data[i];
         }
     } else {
-        sqv->min_vals = (float *)malloc(sizeof(float));
-        sqv->max_vals = (float *)malloc(sizeof(float));
+        sqv->min_vals = (float *)gv_alloc(sizeof(float));
+        sqv->max_vals = (float *)gv_alloc(sizeof(float));
         if (sqv->min_vals == NULL || sqv->max_vals == NULL) {
-            free(sqv->quantized);
-            free(sqv->min_vals);
-            free(sqv->max_vals);
-            free(sqv);
+            gv_free(sqv->quantized);
+            gv_free(sqv->min_vals);
+            gv_free(sqv->max_vals);
+            gv_free(sqv);
             return NULL;
         }
         
@@ -218,13 +219,13 @@ float scalar_quant_distance(const float *query, const GV_ScalarQuantVector *sqv,
         return -1.0f;
     }
     
-    float *dequantized = (float *)malloc(sqv->dimension * sizeof(float));
+    float *dequantized = (float *)gv_alloc(sqv->dimension * sizeof(float));
     if (dequantized == NULL) {
         return -1.0f;
     }
     
     if (scalar_dequantize(sqv, dequantized) != 0) {
-        free(dequantized);
+        gv_free(dequantized);
         return -1.0f;
     }
     
@@ -242,7 +243,7 @@ float scalar_quant_distance(const float *query, const GV_ScalarQuantVector *sqv,
     
     float dist = distance(&query_vec, &dequant_vec, (GV_DistanceType)distance_type);
     
-    free(dequantized);
+    gv_free(dequantized);
     return dist;
 }
 
@@ -251,14 +252,14 @@ void scalar_quant_vector_destroy(GV_ScalarQuantVector *sqv) {
         return;
     }
     if (sqv->quantized != NULL) {
-        free(sqv->quantized);
+        gv_free(sqv->quantized);
     }
     if (sqv->min_vals != NULL) {
-        free(sqv->min_vals);
+        gv_free(sqv->min_vals);
     }
     if (sqv->max_vals != NULL) {
-        free(sqv->max_vals);
+        gv_free(sqv->max_vals);
     }
-    free(sqv);
+    gv_free(sqv);
 }
 

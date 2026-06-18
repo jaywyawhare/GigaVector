@@ -4,6 +4,7 @@
  */
 
 #include "admin/shard.h"
+#include "core/memory.h"
 #include "storage/database.h"
 #include "storage/soa_storage.h"
 #include "multimodal/metadata_index.h"
@@ -94,14 +95,14 @@ static int compare_vnodes(const void *a, const void *b) {
 }
 
 static void rebuild_ring(GV_ShardManager *mgr) {
-    free(mgr->ring);
+    gv_free(mgr->ring);
     mgr->ring = NULL;
     mgr->ring_size = 0;
 
     if (mgr->shard_count == 0) return;
 
     size_t total_vnodes = mgr->shard_count * mgr->config.virtual_nodes;
-    mgr->ring = malloc(total_vnodes * sizeof(VirtualNode));
+    mgr->ring = gv_alloc(total_vnodes * sizeof(VirtualNode));
     if (!mgr->ring) return;
 
     size_t idx = 0;
@@ -142,13 +143,13 @@ static uint32_t find_shard_in_ring(GV_ShardManager *mgr, uint32_t hash) {
 /* Lifecycle */
 
 GV_ShardManager *shard_manager_create(const GV_ShardConfig *config) {
-    GV_ShardManager *mgr = calloc(1, sizeof(GV_ShardManager));
+    GV_ShardManager *mgr = gv_calloc(1, sizeof(GV_ShardManager));
     if (!mgr) return NULL;
 
     mgr->config = config ? *config : DEFAULT_CONFIG;
 
     if (pthread_rwlock_init(&mgr->rwlock, NULL) != 0) {
-        free(mgr);
+        gv_free(mgr);
         return NULL;
     }
 
@@ -159,12 +160,12 @@ void shard_manager_destroy(GV_ShardManager *mgr) {
     if (!mgr) return;
 
     for (size_t i = 0; i < mgr->shard_count; i++) {
-        free(mgr->shards[i].node_address);
+        gv_free(mgr->shards[i].node_address);
     }
 
-    free(mgr->ring);
+    gv_free(mgr->ring);
     pthread_rwlock_destroy(&mgr->rwlock);
-    free(mgr);
+    gv_free(mgr);
 }
 
 /* Shard Operations */
@@ -212,7 +213,7 @@ int shard_remove(GV_ShardManager *mgr, uint32_t shard_id) {
 
     for (size_t i = 0; i < mgr->shard_count; i++) {
         if (mgr->shards[i].shard_id == shard_id) {
-            free(mgr->shards[i].node_address);
+            gv_free(mgr->shards[i].node_address);
 
             /* Shift remaining */
             for (size_t j = i; j < mgr->shard_count - 1; j++) {
@@ -298,7 +299,7 @@ int shard_list(GV_ShardManager *mgr, GV_ShardInfo **shards, size_t *count) {
         return 0;
     }
 
-    *shards = malloc(*count * sizeof(GV_ShardInfo));
+    *shards = gv_alloc(*count * sizeof(GV_ShardInfo));
     if (!*shards) {
         pthread_rwlock_unlock(&mgr->rwlock);
         return -1;
@@ -321,9 +322,9 @@ int shard_list(GV_ShardManager *mgr, GV_ShardInfo **shards, size_t *count) {
 void shard_free_list(GV_ShardInfo *shards, size_t count) {
     if (!shards) return;
     for (size_t i = 0; i < count; i++) {
-        free(shards[i].node_address);
+        gv_free(shards[i].node_address);
     }
-    free(shards);
+    gv_free(shards);
 }
 
 int shard_set_state(GV_ShardManager *mgr, uint32_t shard_id, GV_ShardState state) {
@@ -383,11 +384,11 @@ static int migrate_vector_at_index(GV_Database *from_db, GV_Database *to_db, siz
     const char **keys = NULL;
     const char **values = NULL;
     if (meta_count > 0) {
-        keys = (const char **)calloc(meta_count, sizeof(const char *));
-        values = (const char **)calloc(meta_count, sizeof(const char *));
+        keys = (const char **)gv_calloc(meta_count, sizeof(const char *));
+        values = (const char **)gv_calloc(meta_count, sizeof(const char *));
         if (!keys || !values) {
-            free(keys);
-            free(values);
+            gv_free(keys);
+            gv_free(values);
             return -1;
         }
         size_t i = 0;
@@ -403,8 +404,8 @@ static int migrate_vector_at_index(GV_Database *from_db, GV_Database *to_db, siz
     size_t dest_before = database_count(to_db);
     int rc = db_add_vector_with_rich_metadata(
         to_db, vec, from_db->dimension, keys, values, meta_count);
-    free(keys);
-    free(values);
+    gv_free(keys);
+    gv_free(values);
     if (rc != 0) {
         return -1;
     }
@@ -546,14 +547,14 @@ int shard_rebalance_start(GV_ShardManager *mgr) {
     if (tolerance < 10) tolerance = 10;
 
     /* Identify overloaded and underloaded shards */
-    size_t *overloaded = calloc(mgr->shard_count, sizeof(size_t));
-    size_t *underloaded = calloc(mgr->shard_count, sizeof(size_t));
-    int64_t *excess = calloc(mgr->shard_count, sizeof(int64_t));
+    size_t *overloaded = gv_calloc(mgr->shard_count, sizeof(size_t));
+    size_t *underloaded = gv_calloc(mgr->shard_count, sizeof(size_t));
+    int64_t *excess = gv_calloc(mgr->shard_count, sizeof(int64_t));
 
     if (!overloaded || !underloaded || !excess) {
-        free(overloaded);
-        free(underloaded);
-        free(excess);
+        gv_free(overloaded);
+        gv_free(underloaded);
+        gv_free(excess);
         mgr->rebalancing = 0;
         pthread_rwlock_unlock(&mgr->rwlock);
         return -1;
@@ -627,9 +628,9 @@ int shard_rebalance_start(GV_ShardManager *mgr) {
     mgr->rebalance_progress = 1.0;
     pthread_rwlock_unlock(&mgr->rwlock);
 
-    free(overloaded);
-    free(underloaded);
-    free(excess);
+    gv_free(overloaded);
+    gv_free(underloaded);
+    gv_free(excess);
 
     return 0;
 }

@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include "core/memory.h"
 #include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
@@ -308,7 +309,7 @@ GV_Migration *migration_start(const float *source_data, size_t count,
         return NULL;
     }
 
-    GV_Migration *mig = (GV_Migration *)calloc(1, sizeof(GV_Migration));
+    GV_Migration *mig = (GV_Migration *)gv_calloc(1, sizeof(GV_Migration));
     if (!mig) {
         return NULL;
     }
@@ -320,13 +321,13 @@ GV_Migration *migration_start(const float *source_data, size_t count,
     mig->new_index_config = new_index_config;
 
     if (pthread_mutex_init(&mig->mutex, NULL) != 0) {
-        free(mig);
+        gv_free(mig);
         return NULL;
     }
 
     if (pthread_create(&mig->thread, NULL, migration_thread_func, mig) != 0) {
         pthread_mutex_destroy(&mig->mutex);
-        free(mig);
+        gv_free(mig);
         return NULL;
     }
 
@@ -461,12 +462,12 @@ void migration_destroy(GV_Migration *mig)
             lsh_destroy(mig->new_index);
             break;
         default:
-            /* Unknown type -- best effort: do nothing to avoid double free */
+            /* Unknown type -- best effort: do nothing to avoid double gv_free */
             break;
         }
         mig->new_index = NULL;
     }
 
     pthread_mutex_destroy(&mig->mutex);
-    free(mig);
+    gv_free(mig);
 }

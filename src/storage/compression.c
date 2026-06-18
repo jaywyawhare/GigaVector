@@ -14,6 +14,7 @@
  */
 
 #include "storage/compression.h"
+#include "core/memory.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -367,7 +368,7 @@ void compression_config_init(GV_CompressionConfig *config)
 
 GV_Compressor *compression_create(const GV_CompressionConfig *config)
 {
-    GV_Compressor *comp = (GV_Compressor *)calloc(1, sizeof(GV_Compressor));
+    GV_Compressor *comp = (GV_Compressor *)gv_calloc(1, sizeof(GV_Compressor));
     if (!comp) return NULL;
 
     comp->config = config ? *config : DEFAULT_CONFIG;
@@ -387,7 +388,7 @@ GV_Compressor *compression_create(const GV_CompressionConfig *config)
 void compression_destroy(GV_Compressor *comp)
 {
     if (!comp) return;
-    free(comp);
+    gv_free(comp);
 }
 
 /* Public API */

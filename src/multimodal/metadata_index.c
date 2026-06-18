@@ -1,4 +1,5 @@
 #include <stdlib.h>
+#include "core/memory.h"
 #include <string.h>
 #include <stdint.h>
 
@@ -43,15 +44,15 @@ static uint32_t metadata_index_hash_pair(const char *key, const char *value) {
 }
 
 GV_MetadataIndex *metadata_index_create(void) {
-    GV_MetadataIndex *index = (GV_MetadataIndex *)malloc(sizeof(GV_MetadataIndex));
+    GV_MetadataIndex *index = (GV_MetadataIndex *)gv_alloc(sizeof(GV_MetadataIndex));
     if (index == NULL) {
         return NULL;
     }
 
     index->bucket_count = GV_METADATA_INDEX_HASH_SIZE;
-    index->buckets = (GV_MetadataBucket *)calloc(index->bucket_count, sizeof(GV_MetadataBucket));
+    index->buckets = (GV_MetadataBucket *)gv_calloc(index->bucket_count, sizeof(GV_MetadataBucket));
     if (index->buckets == NULL) {
-        free(index);
+        gv_free(index);
         return NULL;
     }
 
@@ -67,31 +68,31 @@ void metadata_index_destroy(GV_MetadataIndex *index) {
     if (index->buckets != NULL) {
         size_t bucket_count = index->bucket_count;
         if (bucket_count == 0 || bucket_count >= 1000000) {
-            free(index->buckets);
+            gv_free(index->buckets);
         } else {
             for (size_t i = 0; i < bucket_count; ++i) {
                 GV_MetadataKVEntry *entry = index->buckets[i].head;
                 while (entry != NULL) {
                     GV_MetadataKVEntry *next = entry->next;
                     if (entry->key != NULL) {
-                        free(entry->key);
+                        gv_free(entry->key);
                     }
                     if (entry->value != NULL) {
-                        free(entry->value);
+                        gv_free(entry->value);
                     }
                     if (entry->vector_indices != NULL) {
-                        free(entry->vector_indices);
+                        gv_free(entry->vector_indices);
                     }
-                    free(entry);
+                    gv_free(entry);
                     entry = next;
                 }
             }
-            free(index->buckets);
+            gv_free(index->buckets);
         }
         index->buckets = NULL;
     }
     index->bucket_count = 0;
-    free(index);
+    gv_free(index);
 }
 
 static GV_MetadataKVEntry *metadata_index_find_or_create(GV_MetadataIndex *index,
@@ -116,17 +117,17 @@ static GV_MetadataKVEntry *metadata_index_find_or_create(GV_MetadataIndex *index
         return NULL;
     }
 
-    entry = (GV_MetadataKVEntry *)malloc(sizeof(GV_MetadataKVEntry));
+    entry = (GV_MetadataKVEntry *)gv_alloc(sizeof(GV_MetadataKVEntry));
     if (entry == NULL) {
         return NULL;
     }
 
-    entry->key = (char *)malloc(strlen(key) + 1);
-    entry->value = (char *)malloc(strlen(value) + 1);
+    entry->key = (char *)gv_alloc(strlen(key) + 1);
+    entry->value = (char *)gv_alloc(strlen(value) + 1);
     if (entry->key == NULL || entry->value == NULL) {
-        free(entry->key);
-        free(entry->value);
-        free(entry);
+        gv_free(entry->key);
+        gv_free(entry->value);
+        gv_free(entry);
         return NULL;
     }
 
@@ -134,11 +135,11 @@ static GV_MetadataKVEntry *metadata_index_find_or_create(GV_MetadataIndex *index
     strcpy(entry->value, value);
     entry->count = 0;
     entry->capacity = 16;
-    entry->vector_indices = (size_t *)malloc(entry->capacity * sizeof(size_t));
+    entry->vector_indices = (size_t *)gv_alloc(entry->capacity * sizeof(size_t));
     if (entry->vector_indices == NULL) {
-        free(entry->key);
-        free(entry->value);
-        free(entry);
+        gv_free(entry->key);
+        gv_free(entry->value);
+        gv_free(entry);
         return NULL;
     }
 
@@ -168,7 +169,7 @@ int metadata_index_add(GV_MetadataIndex *index, const char *key, const char *val
     if (entry->count >= entry->capacity) {
         if (entry->capacity > SIZE_MAX / 2 || entry->capacity * 2 > SIZE_MAX / sizeof(size_t)) return -1;
         size_t new_capacity = entry->capacity * 2;
-        size_t *new_indices = (size_t *)realloc(entry->vector_indices, new_capacity * sizeof(size_t));
+        size_t *new_indices = (size_t *)gv_realloc(entry->vector_indices, new_capacity * sizeof(size_t));
         if (new_indices == NULL) {
             return -1;
         }

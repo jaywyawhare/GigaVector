@@ -10,6 +10,7 @@
 #define _POSIX_C_SOURCE 200112L
 
 #include "admin/timetravel.h"
+#include "core/memory.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -95,7 +96,7 @@ static float *float_dup(const float *src, size_t count)
 {
     if (!src || count == 0)
         return NULL;
-    float *copy = malloc(count * sizeof(float));
+    float *copy = gv_alloc(count * sizeof(float));
     if (copy)
         memcpy(copy, src, count * sizeof(float));
     return copy;
@@ -112,7 +113,7 @@ static int ensure_log_capacity(GV_TimeTravelManager *mgr)
         return 0;
 
     size_t new_cap = mgr->log_capacity == 0 ? TT_INIT_CAP : mgr->log_capacity * 2;
-    TT_ChangeRecord *tmp = realloc(mgr->log, new_cap * sizeof(TT_ChangeRecord));
+    TT_ChangeRecord *tmp = gv_realloc(mgr->log, new_cap * sizeof(TT_ChangeRecord));
     if (!tmp)
         return -1;
 
@@ -142,8 +143,8 @@ static size_t compute_storage_bytes(const GV_TimeTravelManager *mgr)
  */
 static void free_change_record(TT_ChangeRecord *rec)
 {
-    free(rec->old_data);
-    free(rec->new_data);
+    gv_free(rec->old_data);
+    gv_free(rec->new_data);
     rec->old_data = NULL;
     rec->new_data = NULL;
 }
@@ -181,8 +182,8 @@ static uint64_t append_change(GV_TimeTravelManager *mgr, TT_ChangeType type,
 
     /* Verify copies succeeded where expected */
     if ((old_data && !rec->old_data) || (new_data && !rec->new_data)) {
-        free(rec->old_data);
-        free(rec->new_data);
+        gv_free(rec->old_data);
+        gv_free(rec->new_data);
         rec->old_data = NULL;
         rec->new_data = NULL;
         /* Revert vector count change */
@@ -295,7 +296,7 @@ void tt_config_init(GV_TimeTravelConfig *config)
 
 GV_TimeTravelManager *tt_create(const GV_TimeTravelConfig *config)
 {
-    GV_TimeTravelManager *mgr = calloc(1, sizeof(GV_TimeTravelManager));
+    GV_TimeTravelManager *mgr = gv_calloc(1, sizeof(GV_TimeTravelManager));
     if (!mgr)
         return NULL;
 
@@ -312,7 +313,7 @@ GV_TimeTravelManager *tt_create(const GV_TimeTravelConfig *config)
     mgr->current_vector_count = 0;
 
     if (pthread_rwlock_init(&mgr->rwlock, NULL) != 0) {
-        free(mgr);
+        gv_free(mgr);
         return NULL;
     }
 
@@ -327,10 +328,10 @@ void tt_destroy(GV_TimeTravelManager *mgr)
     for (size_t i = 0; i < mgr->log_count; i++) {
         free_change_record(&mgr->log[i]);
     }
-    free(mgr->log);
+    gv_free(mgr->log);
 
     pthread_rwlock_destroy(&mgr->rwlock);
-    free(mgr);
+    gv_free(mgr);
 }
 
 /* Mutation Recording */
@@ -419,7 +420,7 @@ int tt_query_at_version(const GV_TimeTravelManager *mgr, uint64_t version_id,
      *   - state[]: the current vector data
      */
 
-    float *state = malloc(dimension * sizeof(float));
+    float *state = gv_alloc(dimension * sizeof(float));
     if (!state) {
         pthread_rwlock_unlock((pthread_rwlock_t *)&mgr->rwlock);
         return -1;
@@ -485,7 +486,7 @@ int tt_query_at_version(const GV_TimeTravelManager *mgr, uint64_t version_id,
         result = 0;
     }
 
-    free(state);
+    gv_free(state);
     pthread_rwlock_unlock((pthread_rwlock_t *)&mgr->rwlock);
     return result;
 }
@@ -773,13 +774,13 @@ GV_TimeTravelManager *tt_load(const char *path)
 
         if (has_old) {
             size_t bytes = rec->dimension * sizeof(float);
-            rec->old_data = malloc(bytes);
+            rec->old_data = gv_alloc(bytes);
             if (!rec->old_data) goto fail;
             if (fread(rec->old_data, 1, bytes, f) != bytes) goto fail;
         }
         if (has_new) {
             size_t bytes = rec->dimension * sizeof(float);
-            rec->new_data = malloc(bytes);
+            rec->new_data = gv_alloc(bytes);
             if (!rec->new_data) goto fail;
             if (fread(rec->new_data, 1, bytes, f) != bytes) goto fail;
         }

@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include "core/memory.h"
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -26,7 +27,7 @@ struct GV_DedupIndex {
     /* Vector storage (flat, contiguous array) */
     float *vectors;                /**< Flat array: count * dimension floats. */
     size_t count;                  /**< Number of vectors currently stored. */
-    size_t capacity;               /**< Number of vectors that can be stored without realloc. */
+    size_t capacity;               /**< Number of vectors that can be stored without gv_realloc. */
 
     /* LSH hyperplanes – single flat allocation:
      *   hyperplanes[t * hash_bits * dimension + b * dimension + d]
@@ -95,7 +96,7 @@ static uint32_t dedup_hash_vector(const float *data,
 
 /* Bucket helpers */
 static int dedup_bucket_add(GV_DedupHashTable *table, uint32_t bucket_idx, size_t vec_index) {
-    GV_DedupBucketNode *node = (GV_DedupBucketNode *)malloc(sizeof(GV_DedupBucketNode));
+    GV_DedupBucketNode *node = (GV_DedupBucketNode *)gv_alloc(sizeof(GV_DedupBucketNode));
     if (node == NULL) {
         return -1;
     }
@@ -108,7 +109,7 @@ static int dedup_bucket_add(GV_DedupHashTable *table, uint32_t bucket_idx, size_
 static void dedup_bucket_free_chain(GV_DedupBucketNode *head) {
     while (head != NULL) {
         GV_DedupBucketNode *next = head->next;
-        free(head);
+        gv_free(head);
         head = next;
     }
 }
@@ -144,7 +145,7 @@ GV_DedupIndex *dedup_create(size_t dimension, const GV_DedupConfig *config) {
         return NULL;
     }
 
-    GV_DedupIndex *dedup = (GV_DedupIndex *)calloc(1, sizeof(GV_DedupIndex));
+    GV_DedupIndex *dedup = (GV_DedupIndex *)gv_calloc(1, sizeof(GV_DedupIndex));
     if (dedup == NULL) {
         return NULL;
     }
@@ -178,18 +179,18 @@ GV_DedupIndex *dedup_create(size_t dimension, const GV_DedupConfig *config) {
     /* Allocate initial vector storage */
     dedup->capacity = 256;
     dedup->count = 0;
-    dedup->vectors = (float *)malloc(dedup->capacity * dimension * sizeof(float));
+    dedup->vectors = (float *)gv_alloc(dedup->capacity * dimension * sizeof(float));
     if (dedup->vectors == NULL) {
-        free(dedup);
+        gv_free(dedup);
         return NULL;
     }
 
     /* Allocate hyperplanes (flat array) */
     size_t hp_count = dedup->config.num_hash_tables * dedup->config.hash_bits * dimension;
-    dedup->hyperplanes = (float *)malloc(hp_count * sizeof(float));
+    dedup->hyperplanes = (float *)gv_alloc(hp_count * sizeof(float));
     if (dedup->hyperplanes == NULL) {
-        free(dedup->vectors);
-        free(dedup);
+        gv_free(dedup->vectors);
+        gv_free(dedup);
         return NULL;
     }
     dedup_generate_hyperplanes(dedup->hyperplanes,
@@ -199,28 +200,28 @@ GV_DedupIndex *dedup_create(size_t dimension, const GV_DedupConfig *config) {
                                dedup->config.seed);
 
     /* Allocate hash tables */
-    dedup->tables = (GV_DedupHashTable *)calloc(dedup->config.num_hash_tables,
+    dedup->tables = (GV_DedupHashTable *)gv_calloc(dedup->config.num_hash_tables,
                                                  sizeof(GV_DedupHashTable));
     if (dedup->tables == NULL) {
-        free(dedup->hyperplanes);
-        free(dedup->vectors);
-        free(dedup);
+        gv_free(dedup->hyperplanes);
+        gv_free(dedup->vectors);
+        gv_free(dedup);
         return NULL;
     }
 
     for (size_t t = 0; t < dedup->config.num_hash_tables; ++t) {
         dedup->tables[t].num_buckets = num_buckets;
-        dedup->tables[t].buckets = (GV_DedupBucketNode **)calloc(num_buckets,
+        dedup->tables[t].buckets = (GV_DedupBucketNode **)gv_calloc(num_buckets,
                                                                    sizeof(GV_DedupBucketNode *));
         if (dedup->tables[t].buckets == NULL) {
             /* Clean up previously allocated tables */
             for (size_t i = 0; i < t; ++i) {
-                free(dedup->tables[i].buckets);
+                gv_free(dedup->tables[i].buckets);
             }
-            free(dedup->tables);
-            free(dedup->hyperplanes);
-            free(dedup->vectors);
-            free(dedup);
+            gv_free(dedup->tables);
+            gv_free(dedup->hyperplanes);
+            gv_free(dedup->vectors);
+            gv_free(dedup);
             return NULL;
         }
     }
@@ -239,15 +240,15 @@ void dedup_destroy(GV_DedupIndex *dedup) {
                 for (size_t b = 0; b < dedup->tables[t].num_buckets; ++b) {
                     dedup_bucket_free_chain(dedup->tables[t].buckets[b]);
                 }
-                free(dedup->tables[t].buckets);
+                gv_free(dedup->tables[t].buckets);
             }
         }
-        free(dedup->tables);
+        gv_free(dedup->tables);
     }
 
-    free(dedup->hyperplanes);
-    free(dedup->vectors);
-    free(dedup);
+    gv_free(dedup->hyperplanes);
+    gv_free(dedup->vectors);
+    gv_free(dedup);
 }
 
 int dedup_check(GV_DedupIndex *dedup, const float *data, size_t dimension) {
@@ -264,7 +265,7 @@ int dedup_check(GV_DedupIndex *dedup, const float *data, size_t dimension) {
     float eps_sq = dedup->config.epsilon * dedup->config.epsilon;
 
     /* Collect candidate set from all hash tables (de-duplicate with a seen array) */
-    int *seen = (int *)calloc(dedup->count, sizeof(int));
+    int *seen = (int *)gv_calloc(dedup->count, sizeof(int));
     if (seen == NULL) {
         return -1;
     }
@@ -282,7 +283,7 @@ int dedup_check(GV_DedupIndex *dedup, const float *data, size_t dimension) {
                 const float *existing = dedup->vectors + idx * dedup->dimension;
                 float dist_sq = dedup_l2_distance_sq(data, existing, dimension);
                 if (dist_sq <= eps_sq) {
-                    free(seen);
+                    gv_free(seen);
                     return (int)idx;
                 }
             }
@@ -290,7 +291,7 @@ int dedup_check(GV_DedupIndex *dedup, const float *data, size_t dimension) {
         }
     }
 
-    free(seen);
+    gv_free(seen);
     return -1;
 }
 
@@ -312,7 +313,7 @@ int dedup_insert(GV_DedupIndex *dedup, const float *data, size_t dimension) {
     /* Grow storage if necessary */
     if (dedup->count >= dedup->capacity) {
         size_t new_capacity = dedup->capacity * 2;
-        float *new_vectors = (float *)realloc(dedup->vectors,
+        float *new_vectors = (float *)gv_realloc(dedup->vectors,
                                                new_capacity * dedup->dimension * sizeof(float));
         if (new_vectors == NULL) {
             return -1;
@@ -360,7 +361,7 @@ int dedup_scan(GV_DedupIndex *dedup, GV_DedupResult *results, size_t max_results
         const float *vec_i = dedup->vectors + i * dedup->dimension;
 
         /* Allocate a per-vector seen flags array */
-        int *seen = (int *)calloc(dedup->count, sizeof(int));
+        int *seen = (int *)gv_calloc(dedup->count, sizeof(int));
         if (seen == NULL) {
             return (result_count > 0) ? (int)result_count : -1;
         }
@@ -383,7 +384,7 @@ int dedup_scan(GV_DedupIndex *dedup, GV_DedupResult *results, size_t max_results
                         results[result_count].distance = sqrtf(dist_sq);
                         result_count++;
                         if (result_count >= max_results) {
-                            free(seen);
+                            gv_free(seen);
                             return (int)result_count;
                         }
                     }
@@ -392,7 +393,7 @@ int dedup_scan(GV_DedupIndex *dedup, GV_DedupResult *results, size_t max_results
             }
         }
 
-        free(seen);
+        gv_free(seen);
     }
 
     return (int)result_count;

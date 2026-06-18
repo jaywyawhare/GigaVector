@@ -4,6 +4,7 @@
  */
 
 #include "storage/posting_list.h"
+#include "core/memory.h"
 
 #include <errno.h>
 #include <float.h>
@@ -232,8 +233,8 @@ static int posting_segment_ref_cmp(const void *a, const void *b)
 static void posting_free_segment_refs(PostingSegmentRef *refs, size_t count)
 {
     if (!refs) return;
-    for (size_t i = 0; i < count; ++i) free(refs[i].rel_path);
-    free(refs);
+    for (size_t i = 0; i < count; ++i) gv_free(refs[i].rel_path);
+    gv_free(refs);
 }
 
 static int posting_catalog_add_ref(GV_PostingCatalog *cat, const PostingSegmentRef *ref)
@@ -241,7 +242,7 @@ static int posting_catalog_add_ref(GV_PostingCatalog *cat, const PostingSegmentR
     if (cat->segment_count >= cat->segment_cap) {
         size_t new_cap = cat->segment_cap ? cat->segment_cap * 2 : 16;
         PostingSegmentRef *tmp =
-            (PostingSegmentRef *)realloc(cat->segments, new_cap * sizeof(PostingSegmentRef));
+            (PostingSegmentRef *)gv_realloc(cat->segments, new_cap * sizeof(PostingSegmentRef));
         if (!tmp) return -1;
         cat->segments = tmp;
         cat->segment_cap = new_cap;
@@ -419,7 +420,7 @@ static int posting_segment_parse_buffer_impl(const uint8_t *data, size_t len,
     float *scratch = NULL;
     if (fn && (info.payload_type == GV_POSTING_PAYLOAD_SQ8 ||
                info.payload_type == GV_POSTING_PAYLOAD_PQ)) {
-        scratch = (float *)malloc(info.dimension * sizeof(float));
+        scratch = (float *)gv_alloc(info.dimension * sizeof(float));
         if (!scratch) return -1;
     }
 
@@ -436,7 +437,7 @@ static int posting_segment_parse_buffer_impl(const uint8_t *data, size_t len,
         if (posting_visit_entry(&pc, off) != 0) { rc = -1; break; }
         off += info.entry_stride;
     }
-    free(scratch);
+    gv_free(scratch);
     return rc;
 }
 
@@ -481,14 +482,14 @@ int posting_segment_encode_ex(uint64_t head_id, uint64_t sequence,
     size_t entries_size = entry_count * entry_stride;
     size_t total = posting_align_up(entries_offset + entries_size, sector_size);
 
-    uint8_t *buf = (uint8_t *)calloc(1, total);
+    uint8_t *buf = (uint8_t *)gv_calloc(1, total);
     if (!buf) return -1;
 
     float *sq8_min = NULL;
     float *sq8_max = NULL;
     if (payload_type == GV_POSTING_PAYLOAD_SQ8 && entry_count > 0) {
-        sq8_min = (float *)malloc(2u * dimension * sizeof(float));
-        if (!sq8_min) { free(buf); return -1; }
+        sq8_min = (float *)gv_alloc(2u * dimension * sizeof(float));
+        if (!sq8_min) { gv_free(buf); return -1; }
         sq8_max = sq8_min + dimension;
         posting_compute_sq8_minmax(entries, entry_count, dimension, sq8_min, sq8_max);
         memcpy(buf + GV_POSTING_SEG_HDR_SIZE, sq8_min, 2u * dimension * sizeof(float));
@@ -506,15 +507,15 @@ int posting_segment_encode_ex(uint64_t head_id, uint64_t sequence,
 
         switch (payload_type) {
         case GV_POSTING_PAYLOAD_FLOAT:
-            if (!entries[i].data) { free(buf); free(sq8_min); return -1; }
+            if (!entries[i].data) { gv_free(buf); gv_free(sq8_min); return -1; }
             memcpy(buf + off + 16, entries[i].data, dimension * sizeof(float));
             break;
         case GV_POSTING_PAYLOAD_SQ8:
-            if (!entries[i].data) { free(buf); free(sq8_min); return -1; }
+            if (!entries[i].data) { gv_free(buf); gv_free(sq8_min); return -1; }
             posting_sq8_quant_row(entries[i].data, dimension, sq8_min, sq8_max, buf + off + 16);
             break;
         case GV_POSTING_PAYLOAD_PQ:
-            if (!entries[i].codes) { free(buf); free(sq8_min); return -1; }
+            if (!entries[i].codes) { gv_free(buf); gv_free(sq8_min); return -1; }
             memcpy(buf + off + 16, entries[i].codes, pq_m);
             break;
         }
@@ -524,7 +525,7 @@ int posting_segment_encode_ex(uint64_t head_id, uint64_t sequence,
     uint32_t entries_crc = posting_crc32(buf + entries_offset, entries_size);
     posting_write_segment_header(buf, head_id, sequence, (uint32_t)entry_count,
                                  (uint32_t)dimension, entries_crc, payload_type, pq_m);
-    free(sq8_min);
+    gv_free(sq8_min);
     *out_buf = buf;
     *out_len = total;
     return 0;
@@ -537,7 +538,7 @@ static int posting_read_file_bytes(const char *path, uint8_t **out_buf, size_t *
         const void *data = mmap_data(mm);
         size_t size = mmap_size(mm);
         if (!data || size == 0) { mmap_close(mm); return -1; }
-        uint8_t *copy = (uint8_t *)malloc(size);
+        uint8_t *copy = (uint8_t *)gv_alloc(size);
         if (!copy) { mmap_close(mm); return -1; }
         memcpy(copy, data, size);
         mmap_close(mm);
@@ -552,10 +553,10 @@ static int posting_read_file_bytes(const char *path, uint8_t **out_buf, size_t *
     long sz = ftell(f);
     if (sz <= 0) { fclose(f); return -1; }
     if (fseek(f, 0, SEEK_SET) != 0) { fclose(f); return -1; }
-    uint8_t *buf = (uint8_t *)malloc((size_t)sz);
+    uint8_t *buf = (uint8_t *)gv_alloc((size_t)sz);
     if (!buf) { fclose(f); return -1; }
     if (fread(buf, 1, (size_t)sz, f) != (size_t)sz) {
-        free(buf);
+        gv_free(buf);
         fclose(f);
         return -1;
     }
@@ -588,7 +589,7 @@ static int posting_segment_read_file_cached(GV_PostingCatalog *cat, const char *
             if (posting_read_file_bytes(path, &buf, &len) != 0) return -1;
             int rc = posting_segment_parse_buffer_impl(buf, len, cat->sector_size, 0, fn, ctx);
             if (gv_disk_page_cache_insert(cache, key, buf, len) != 0) {
-                free(buf);
+                gv_free(buf);
             }
             return rc;
         }
@@ -598,7 +599,7 @@ static int posting_segment_read_file_cached(GV_PostingCatalog *cat, const char *
     size_t len = 0;
     if (posting_read_file_bytes(path, &buf, &len) != 0) return -1;
     int rc = posting_segment_parse_buffer_impl(buf, len, cat ? cat->sector_size : 0, 0, fn, ctx);
-    free(buf);
+    gv_free(buf);
     return rc;
 }
 
@@ -613,7 +614,7 @@ static int posting_buf_append(uint8_t **buf, size_t *len, size_t *cap,
     if (*len + n > *cap) {
         size_t new_cap = *cap ? *cap * 2 : 256;
         while (new_cap < *len + n) new_cap *= 2;
-        uint8_t *tmp = (uint8_t *)realloc(*buf, new_cap);
+        uint8_t *tmp = (uint8_t *)gv_realloc(*buf, new_cap);
         if (!tmp) return -1;
         *buf = tmp;
         *cap = new_cap;
@@ -627,7 +628,7 @@ static int posting_catalog_write_file(const GV_PostingCatalog *cat, const char *
 {
     size_t cap = 256;
     size_t len = 0;
-    uint8_t *buf = (uint8_t *)malloc(cap);
+    uint8_t *buf = (uint8_t *)gv_alloc(cap);
     if (!buf) return -1;
 
     if (posting_buf_append(&buf, &len, &cap, GV_POSTING_CAT_MAGIC, 4) != 0) goto fail;
@@ -656,11 +657,11 @@ static int posting_catalog_write_file(const GV_PostingCatalog *cat, const char *
     int ok = (fwrite(buf, 1, len, f) == len &&
               posting_file_sync(f) == 0 &&
               fclose(f) == 0);
-    free(buf);
+    gv_free(buf);
     return ok ? 0 : -1;
 
 fail:
-    free(buf);
+    gv_free(buf);
     return -1;
 }
 
@@ -719,13 +720,13 @@ int posting_catalog_load(GV_PostingCatalog *cat)
     if (fseek(f, 0, SEEK_SET) != 0) { fclose(f); return -1; }
 
     size_t body_len = (size_t)file_size - sizeof(uint32_t);
-    uint8_t *body = (uint8_t *)malloc(body_len);
+    uint8_t *body = (uint8_t *)gv_alloc(body_len);
     if (!body) { fclose(f); return -1; }
-    if (fread(body, 1, body_len, f) != body_len) { free(body); fclose(f); return -1; }
+    if (fread(body, 1, body_len, f) != body_len) { gv_free(body); fclose(f); return -1; }
     uint32_t stored_crc = 0;
-    if (read_u32(f, &stored_crc) != 0) { free(body); fclose(f); return -1; }
+    if (read_u32(f, &stored_crc) != 0) { gv_free(body); fclose(f); return -1; }
     fclose(f);
-    if (posting_crc32(body, body_len) != stored_crc) { free(body); return -1; }
+    if (posting_crc32(body, body_len) != stored_crc) { gv_free(body); return -1; }
 
     posting_free_segment_refs(cat->segments, cat->segment_count);
     cat->segments = NULL;
@@ -735,7 +736,7 @@ int posting_catalog_load(GV_PostingCatalog *cat)
     const uint8_t *p = body + GV_POSTING_CAT_HDR_SIZE;
     const uint8_t *end = body + body_len;
     for (uint64_t i = 0; i < segment_count; ++i) {
-        if ((size_t)(end - p) < 30) { free(body); return -1; }
+        if ((size_t)(end - p) < 30) { gv_free(body); return -1; }
         PostingSegmentRef ref;
         memset(&ref, 0, sizeof(ref));
         memcpy(&ref.head_id, p, 8); p += 8;
@@ -744,19 +745,19 @@ int posting_catalog_load(GV_PostingCatalog *cat)
         memcpy(&ref.live_count, p, 4); p += 4;
         uint16_t plen = 0;
         memcpy(&plen, p, 2); p += 2;
-        if ((size_t)(end - p) < plen) { free(body); return -1; }
-        ref.rel_path = (char *)malloc((size_t)plen + 1);
-        if (!ref.rel_path) { free(body); return -1; }
+        if ((size_t)(end - p) < plen) { gv_free(body); return -1; }
+        ref.rel_path = (char *)gv_alloc((size_t)plen + 1);
+        if (!ref.rel_path) { gv_free(body); return -1; }
         if (plen > 0) { memcpy(ref.rel_path, p, plen); p += plen; }
         ref.rel_path[plen] = '\0';
         if (posting_catalog_add_ref(cat, &ref) != 0) {
-            free(ref.rel_path);
-            free(body);
+            gv_free(ref.rel_path);
+            gv_free(body);
             return -1;
         }
-        free(ref.rel_path);
+        gv_free(ref.rel_path);
     }
-    free(body);
+    gv_free(body);
     qsort(cat->segments, cat->segment_count, sizeof(PostingSegmentRef), posting_segment_ref_cmp);
     return 0;
 }
@@ -764,16 +765,16 @@ int posting_catalog_load(GV_PostingCatalog *cat)
 GV_PostingCatalog *posting_catalog_open(const char *base_dir, size_t sector_size)
 {
     if (!base_dir || !*base_dir) return NULL;
-    GV_PostingCatalog *cat = (GV_PostingCatalog *)calloc(1, sizeof(GV_PostingCatalog));
+    GV_PostingCatalog *cat = (GV_PostingCatalog *)gv_calloc(1, sizeof(GV_PostingCatalog));
     if (!cat) return NULL;
     cat->base_dir = gv_dup_cstr(base_dir);
     cat->sector_size = gv_disk_normalize_sector_size(sector_size);
-    if (!cat->base_dir) { free(cat); return NULL; }
+    if (!cat->base_dir) { gv_free(cat); return NULL; }
 
     cat->page_cache = gv_disk_page_cache_create(GV_POSTING_DEFAULT_CACHE_MB * 1024u * 1024u);
     if (!cat->page_cache) {
-        free(cat->base_dir);
-        free(cat);
+        gv_free(cat->base_dir);
+        gv_free(cat);
         return NULL;
     }
     cat->auto_live_count = 1;
@@ -798,8 +799,8 @@ void posting_catalog_close(GV_PostingCatalog *cat)
     if (!cat) return;
     gv_disk_page_cache_destroy(cat->page_cache);
     posting_free_segment_refs(cat->segments, cat->segment_count);
-    free(cat->base_dir);
-    free(cat);
+    gv_free(cat->base_dir);
+    gv_free(cat);
 }
 
 void posting_catalog_attach_page_cache(GV_PostingCatalog *cat, GV_DiskPageCache *cache)
@@ -896,25 +897,25 @@ int posting_catalog_append_segment_ex(GV_PostingCatalog *cat, uint64_t head_id,
     if (snprintf(rel_path, sizeof(rel_path), "%s/head_%llu_seq_%llu.seg",
                  GV_POSTING_SEGMENTS_SUBDIR, (unsigned long long)head_id,
                  (unsigned long long)sequence) >= (int)sizeof(rel_path)) {
-        free(seg_buf);
+        gv_free(seg_buf);
         return -1;
     }
 
     char abs_path[1024], tmp_path[1040];
     if (posting_join_path(abs_path, sizeof(abs_path), cat->base_dir, rel_path) != 0 ||
         snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", abs_path) >= (int)sizeof(tmp_path)) {
-        free(seg_buf);
+        gv_free(seg_buf);
         return -1;
     }
 
     FILE *f = fopen(tmp_path, "wb");
-    if (!f) { free(seg_buf); return -1; }
+    if (!f) { gv_free(seg_buf); return -1; }
     if (fwrite(seg_buf, 1, seg_len, f) != seg_len || posting_file_sync(f) != 0 || fclose(f) != 0) {
-        free(seg_buf);
+        gv_free(seg_buf);
         remove(tmp_path);
         return -1;
     }
-    free(seg_buf);
+    gv_free(seg_buf);
 
 #ifndef _WIN32
     if (rename(tmp_path, abs_path) != 0) { remove(tmp_path); return -1; }
@@ -1017,7 +1018,7 @@ static int posting_collect_visit(void *ctx, const GV_PostingEntry *entry)
     if (!entry || entry->dimension == 0) return -1;
     if (st->count >= st->cap) {
         size_t new_cap = st->cap ? st->cap * 2 : 64;
-        CollectedEntry *tmp = (CollectedEntry *)realloc(st->items, new_cap * sizeof(CollectedEntry));
+        CollectedEntry *tmp = (CollectedEntry *)gv_realloc(st->items, new_cap * sizeof(CollectedEntry));
         if (!tmp) return -1;
         st->items = tmp;
         st->cap = new_cap;
@@ -1028,7 +1029,7 @@ static int posting_collect_visit(void *ctx, const GV_PostingEntry *entry)
     ce->flags = entry->flags;
     ce->dimension = entry->dimension;
     if (entry->data) {
-        ce->data = (float *)malloc(entry->dimension * sizeof(float));
+        ce->data = (float *)gv_alloc(entry->dimension * sizeof(float));
         if (!ce->data) return -1;
         memcpy(ce->data, entry->data, entry->dimension * sizeof(float));
     } else {
@@ -1040,8 +1041,8 @@ static int posting_collect_visit(void *ctx, const GV_PostingEntry *entry)
 static void posting_collect_free(CollectState *st)
 {
     if (!st) return;
-    for (size_t i = 0; i < st->count; ++i) free(st->items[i].data);
-    free(st->items);
+    for (size_t i = 0; i < st->count; ++i) gv_free(st->items[i].data);
+    gv_free(st->items);
     st->items = NULL;
     st->count = 0;
     st->cap = 0;
@@ -1096,8 +1097,8 @@ int posting_catalog_materialize_head(GV_PostingCatalog *cat, uint64_t head_id,
         return 0;
     }
 
-    out->entries = (GV_PostingEntry *)calloc(live, sizeof(GV_PostingEntry));
-    out->data_pool = (float *)malloc(live * dim * sizeof(float));
+    out->entries = (GV_PostingEntry *)gv_calloc(live, sizeof(GV_PostingEntry));
+    out->data_pool = (float *)gv_alloc(live * dim * sizeof(float));
     if (!out->entries || !out->data_pool) {
         posting_head_view_free(out);
         posting_collect_free(&collected);
@@ -1160,7 +1161,7 @@ static int posting_tagged_visit_wrapper(void *ctx, const GV_PostingEntry *entry)
     TaggedVisitCtx *tv = (TaggedVisitCtx *)ctx;
     if (tv->collect->count >= tv->collect->cap) {
         size_t new_cap = tv->collect->cap ? tv->collect->cap * 2 : 64;
-        TaggedEntry *tmp = (TaggedEntry *)realloc(tv->collect->items, new_cap * sizeof(TaggedEntry));
+        TaggedEntry *tmp = (TaggedEntry *)gv_realloc(tv->collect->items, new_cap * sizeof(TaggedEntry));
         if (!tmp) return -1;
         tv->collect->items = tmp;
         tv->collect->cap = new_cap;
@@ -1204,12 +1205,12 @@ static int posting_catalog_reconcile_head_live_counts(GV_PostingCatalog *cat,
         char abs_path[1024];
         if (posting_join_path(abs_path, sizeof(abs_path), cat->base_dir,
                               cat->segments[i].rel_path) != 0) {
-            free(tagged.items);
+            gv_free(tagged.items);
             return -1;
         }
         TaggedVisitCtx tv = { .collect = &tagged, .segment_index = i };
         if (posting_segment_read_file_cached(cat, abs_path, posting_tagged_visit_wrapper, &tv) != 0) {
-            free(tagged.items);
+            gv_free(tagged.items);
             return -1;
         }
     }
@@ -1218,9 +1219,9 @@ static int posting_catalog_reconcile_head_live_counts(GV_PostingCatalog *cat,
 
     qsort(tagged.items, tagged.count, sizeof(TaggedEntry), tagged_entry_cmp);
 
-    uint32_t *seg_counts = (uint32_t *)calloc(cat->segment_count, sizeof(uint32_t));
+    uint32_t *seg_counts = (uint32_t *)gv_calloc(cat->segment_count, sizeof(uint32_t));
     if (!seg_counts) {
-        free(tagged.items);
+        gv_free(tagged.items);
         return -1;
     }
 
@@ -1228,8 +1229,8 @@ static int posting_catalog_reconcile_head_live_counts(GV_PostingCatalog *cat,
     memset(&collected, 0, sizeof(collected));
     if (posting_catalog_visit_head_impl(cat, head_id, posting_collect_visit, &collected) != 0) {
         posting_collect_free(&collected);
-        free(seg_counts);
-        free(tagged.items);
+        gv_free(seg_counts);
+        gv_free(tagged.items);
         return -1;
     }
     qsort(collected.items, collected.count, sizeof(CollectedEntry), posting_collected_cmp);
@@ -1259,8 +1260,8 @@ static int posting_catalog_reconcile_head_live_counts(GV_PostingCatalog *cat,
         }
     }
 
-    free(seg_counts);
-    free(tagged.items);
+    gv_free(seg_counts);
+    gv_free(tagged.items);
 
     if (changed && persist) return posting_catalog_save(cat);
     return 0;
@@ -1326,7 +1327,7 @@ static int posting_catalog_drop_head_segments(GV_PostingCatalog *cat, uint64_t h
     size_t kept_cap = cat->segment_count;
     size_t kept_n = 0;
     if (kept_cap > 0) {
-        kept = (PostingSegmentRef *)malloc(kept_cap * sizeof(PostingSegmentRef));
+        kept = (PostingSegmentRef *)gv_alloc(kept_cap * sizeof(PostingSegmentRef));
         if (!kept) return -1;
     }
 
@@ -1335,20 +1336,20 @@ static int posting_catalog_drop_head_segments(GV_PostingCatalog *cat, uint64_t h
             char abs_path[1024];
             if (posting_join_path(abs_path, sizeof(abs_path), cat->base_dir,
                                   cat->segments[i].rel_path) != 0) {
-                for (size_t j = 0; j < path_n; ++j) free(paths[j]);
-                free(paths);
+                for (size_t j = 0; j < path_n; ++j) gv_free(paths[j]);
+                gv_free(paths);
                 posting_free_segment_refs(kept, kept_n);
-                free(kept);
+                gv_free(kept);
                 return -1;
             }
             if (path_n >= path_cap) {
                 size_t new_cap = path_cap ? path_cap * 2 : 4;
-                char **tmp = (char **)realloc(paths, new_cap * sizeof(char *));
+                char **tmp = (char **)gv_realloc(paths, new_cap * sizeof(char *));
                 if (!tmp) {
-                    for (size_t j = 0; j < path_n; ++j) free(paths[j]);
-                    free(paths);
+                    for (size_t j = 0; j < path_n; ++j) gv_free(paths[j]);
+                    gv_free(paths);
                     posting_free_segment_refs(kept, kept_n);
-                    free(kept);
+                    gv_free(kept);
                     return -1;
                 }
                 paths = tmp;
@@ -1356,14 +1357,14 @@ static int posting_catalog_drop_head_segments(GV_PostingCatalog *cat, uint64_t h
             }
             paths[path_n] = gv_dup_cstr(abs_path);
             if (!paths[path_n]) {
-                for (size_t j = 0; j < path_n; ++j) free(paths[j]);
-                free(paths);
+                for (size_t j = 0; j < path_n; ++j) gv_free(paths[j]);
+                gv_free(paths);
                 posting_free_segment_refs(kept, kept_n);
-                free(kept);
+                gv_free(kept);
                 return -1;
             }
             path_n++;
-            free(cat->segments[i].rel_path);
+            gv_free(cat->segments[i].rel_path);
             GV_DiskPageCache *cache = posting_active_cache(cat);
             if (cache) {
                 char key[1024];
@@ -1375,7 +1376,7 @@ static int posting_catalog_drop_head_segments(GV_PostingCatalog *cat, uint64_t h
         }
     }
 
-    free(cat->segments);
+    gv_free(cat->segments);
     cat->segments = kept;
     cat->segment_count = kept_n;
     cat->segment_cap = kept_n;
@@ -1385,9 +1386,9 @@ static int posting_catalog_drop_head_segments(GV_PostingCatalog *cat, uint64_t h
     } else {
         for (size_t i = 0; i < path_n; ++i) {
             remove(paths[i]);
-            free(paths[i]);
+            gv_free(paths[i]);
         }
-        free(paths);
+        gv_free(paths);
         paths = NULL;
     }
     if (out_count) *out_count = path_n;
@@ -1411,9 +1412,9 @@ int posting_catalog_compact_head(GV_PostingCatalog *cat, uint64_t head_id,
     }
     for (size_t i = 0; i < old_count; ++i) {
         remove(old_paths[i]);
-        free(old_paths[i]);
+        gv_free(old_paths[i]);
     }
-    free(old_paths);
+    gv_free(old_paths);
 
     if (view.count == 0) {
         posting_head_view_free(&view);
@@ -1421,7 +1422,7 @@ int posting_catalog_compact_head(GV_PostingCatalog *cat, uint64_t head_id,
     }
 
     GV_PostingWriteEntry *writes =
-        (GV_PostingWriteEntry *)calloc(view.count, sizeof(GV_PostingWriteEntry));
+        (GV_PostingWriteEntry *)gv_calloc(view.count, sizeof(GV_PostingWriteEntry));
     if (!writes) {
         posting_head_view_free(&view);
         return -1;
@@ -1444,7 +1445,7 @@ int posting_catalog_compact_head(GV_PostingCatalog *cat, uint64_t head_id,
                                                dimension, &params);
     }
 
-    free(writes);
+    gv_free(writes);
     posting_head_view_free(&view);
     return rc;
 }
@@ -1463,9 +1464,9 @@ int posting_catalog_rewrite_head(GV_PostingCatalog *cat, uint64_t head_id,
     }
     for (size_t i = 0; i < old_count; ++i) {
         remove(old_paths[i]);
-        free(old_paths[i]);
+        gv_free(old_paths[i]);
     }
-    free(old_paths);
+    gv_free(old_paths);
 
     int rc = 0;
     if (entry_count > 0) {
@@ -1487,7 +1488,7 @@ int posting_catalog_rewrite_head(GV_PostingCatalog *cat, uint64_t head_id,
 void posting_head_view_free(GV_PostingHeadView *view)
 {
     if (!view) return;
-    free(view->entries);
-    free(view->data_pool);
+    gv_free(view->entries);
+    gv_free(view->data_pool);
     memset(view, 0, sizeof(*view));
 }

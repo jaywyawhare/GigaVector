@@ -1,4 +1,5 @@
 #include <errno.h>
+#include "core/memory.h"
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -300,7 +301,7 @@ GV_WAL *wal_open(const char *path, size_t dimension, uint32_t index_type) {
         return NULL;
     }
 
-    GV_WAL *wal = (GV_WAL *)malloc(sizeof(GV_WAL));
+    GV_WAL *wal = (GV_WAL *)gv_alloc(sizeof(GV_WAL));
     if (wal == NULL) {
         fclose(f);
         return NULL;
@@ -312,7 +313,7 @@ GV_WAL *wal_open(const char *path, size_t dimension, uint32_t index_type) {
     wal->version = file_version;
     if (wal->path == NULL) {
         fclose(f);
-        free(wal);
+        gv_free(wal);
         return NULL;
     }
     return wal;
@@ -1059,8 +1060,8 @@ void wal_close(GV_WAL *wal) {
         wal_sync(wal->file);
         fclose(wal->file);
     }
-    free(wal->path);
-    free(wal);
+    gv_free(wal->path);
+    gv_free(wal);
 }
 
 int wal_reset(const char *path) {
@@ -1142,8 +1143,8 @@ static int wal_skip_record_from_file(FILE *f, int has_crc, long *record_start, s
         for (uint32_t i = 0; i < meta_count; i++) {
             char *k = read_string(f);
             char *v = read_string(f);
-            free(k);
-            free(v);
+            gv_free(k);
+            gv_free(v);
             if (k == NULL || v == NULL) return -1;
         }
         if (has_crc) {
@@ -1249,13 +1250,13 @@ int wal_read_entry_at(const char *path, uint64_t entry_index, uint8_t *out_type,
                 fclose(f);
                 return -1;
             }
-            uint8_t *buf = (uint8_t *)malloc(len);
+            uint8_t *buf = (uint8_t *)gv_alloc(len);
             if (!buf) {
                 fclose(f);
                 return -1;
             }
             if (fread(buf, 1, len, f) != len) {
-                free(buf);
+                gv_free(buf);
                 fclose(f);
                 return -1;
             }

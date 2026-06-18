@@ -9,6 +9,7 @@
  */
 
 #include "search/consistency.h"
+#include "core/memory.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -53,7 +54,7 @@ struct GV_ConsistencyManager {
 
 GV_ConsistencyManager *consistency_create(GV_ConsistencyLevel default_level)
 {
-    GV_ConsistencyManager *mgr = calloc(1, sizeof(*mgr));
+    GV_ConsistencyManager *mgr = gv_calloc(1, sizeof(*mgr));
     if (!mgr) {
         return NULL;
     }
@@ -63,7 +64,7 @@ GV_ConsistencyManager *consistency_create(GV_ConsistencyLevel default_level)
     atomic_store(&mgr->next_token, 1); /* Tokens start at 1; 0 means unused */
 
     if (pthread_mutex_init(&mgr->mutex, NULL) != 0) {
-        free(mgr);
+        gv_free(mgr);
         return NULL;
     }
 
@@ -76,7 +77,7 @@ void consistency_destroy(GV_ConsistencyManager *mgr)
         return;
     }
     pthread_mutex_destroy(&mgr->mutex);
-    free(mgr);
+    gv_free(mgr);
 }
 
 /* Default Level */

@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include "core/memory.h"
 #include <stdlib.h>
 #include <string.h>
 #include "admin/versioning.h"
@@ -63,7 +64,7 @@ static int test_get_data(void) {
     ASSERT(dim_out == 4, "dim_out == 4");
     ASSERT(retrieved[0] == 10.0f && retrieved[7] == 80.0f, "data matches");
 
-    free(retrieved);
+    gv_free(retrieved);
     version_manager_destroy(mgr);
     return 0;
 }
@@ -154,7 +155,7 @@ static int test_save_load(void) {
     ASSERT(cnt == 1 && dim == 4, "loaded count/dim correct");
     ASSERT(d[0] == 3.14f, "loaded data matches");
 
-    free(d);
+    gv_free(d);
     version_manager_destroy(loaded);
     version_manager_destroy(mgr);
     fclose(tmp);

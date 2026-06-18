@@ -11,6 +11,7 @@
  */
 
 #include "search/mmr.h"
+#include "core/memory.h"
 #include "search/distance.h"
 #include "core/scope.h"
 #include "storage/database.h"
@@ -177,12 +178,9 @@ int mmr_rerank(const float *query, size_t dimension,
 
     /* Greedy iterative MMR selection */
     /* Track which candidates have been selected */
-    int *selected = (int *)gv_tls_calloc(candidate_count, sizeof(int));
     int selected_on_heap = 0;
-    if (!selected) {
-        selected = (int *)calloc(candidate_count, sizeof(int));
-        selected_on_heap = 1;
-    }
+    int *selected = (int *)gv_tls_calloc_or_heap(
+        candidate_count, sizeof(int), &selected_on_heap);
     if (!selected) {
         gv_tls_free_or_heap(relevance, relevance_on_heap);
         return -1;
@@ -298,7 +296,7 @@ int mmr_search(const void *db_ptr, const float *query, size_t dimension,
         (GV_SearchResult *)gv_tls_calloc(fetch_k, sizeof(GV_SearchResult));
     int search_res_on_heap = 0;
     if (!search_res) {
-        search_res = (GV_SearchResult *)calloc(fetch_k, sizeof(GV_SearchResult));
+        search_res = (GV_SearchResult *)gv_calloc(fetch_k, sizeof(GV_SearchResult));
         search_res_on_heap = 1;
     }
     if (!search_res) return -1;
@@ -306,7 +304,7 @@ int mmr_search(const void *db_ptr, const float *query, size_t dimension,
     int found = db_search(db, query, fetch_k, search_res, (GV_DistanceType)cfg.distance_type);
     if (found <= 0) {
         if (search_res_on_heap) {
-            free(search_res);
+            gv_free(search_res);
         }
         return (found == 0) ? 0 : -1;
     }
@@ -328,7 +326,7 @@ int mmr_search(const void *db_ptr, const float *query, size_t dimension,
         gv_tls_free_or_heap(cand_indices, idx_on_heap);
         gv_tls_free_or_heap(cand_distances, dist_on_heap);
         if (search_res_on_heap) {
-            free(search_res);
+            gv_free(search_res);
         }
         return -1;
     }
@@ -348,7 +346,7 @@ int mmr_search(const void *db_ptr, const float *query, size_t dimension,
     }
 
     if (search_res_on_heap) {
-        free(search_res);
+        gv_free(search_res);
     }
 
     if (valid == 0) {

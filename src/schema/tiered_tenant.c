@@ -11,6 +11,7 @@
  */
 
 #include "schema/tiered_tenant.h"
+#include "core/memory.h"
 #include "core/utils.h"
 
 #include <stdlib.h>
@@ -165,11 +166,11 @@ void tiered_config_init(GV_TieredTenantConfig *config) {
 }
 
 GV_TieredManager *tiered_create(const GV_TieredTenantConfig *config) {
-    GV_TieredManager *mgr = calloc(1, sizeof(GV_TieredManager));
+    GV_TieredManager *mgr = gv_calloc(1, sizeof(GV_TieredManager));
     if (!mgr) return NULL;
 
     if (pthread_rwlock_init(&mgr->rwlock, NULL) != 0) {
-        free(mgr);
+        gv_free(mgr);
         return NULL;
     }
 
@@ -189,13 +190,13 @@ void tiered_destroy(GV_TieredManager *mgr) {
         TenantEntry *e = mgr->buckets[i];
         while (e) {
             TenantEntry *next = e->next;
-            free(e);
+            gv_free(e);
             e = next;
         }
     }
 
     pthread_rwlock_destroy(&mgr->rwlock);
-    free(mgr);
+    gv_free(mgr);
 }
 
 int tiered_add_tenant(GV_TieredManager *mgr, const char *tenant_id,
@@ -228,7 +229,7 @@ int tiered_add_tenant(GV_TieredManager *mgr, const char *tenant_id,
         return -1;
     }
 
-    TenantEntry *entry = calloc(1, sizeof(TenantEntry));
+    TenantEntry *entry = gv_calloc(1, sizeof(TenantEntry));
     if (!entry) {
         pthread_rwlock_unlock(&mgr->rwlock);
         return -1;
@@ -267,7 +268,7 @@ int tiered_remove_tenant(GV_TieredManager *mgr, const char *tenant_id) {
             } else {
                 mgr->buckets[idx] = e->next;
             }
-            free(e);
+            gv_free(e);
             mgr->tenant_count--;
             pthread_rwlock_unlock(&mgr->rwlock);
             return 0;
@@ -555,7 +556,7 @@ GV_TieredManager *tiered_load(const char *path) {
 
         rec.tenant_id[TENANT_ID_MAX_LEN - 1] = '\0';
 
-        TenantEntry *entry = calloc(1, sizeof(TenantEntry));
+        TenantEntry *entry = gv_calloc(1, sizeof(TenantEntry));
         if (!entry) {
             tiered_destroy(mgr);
             goto fail;

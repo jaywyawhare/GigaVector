@@ -3,6 +3,7 @@
 #endif
 
 #include <stdio.h>
+#include "core/memory.h"
 #include <stdlib.h>
 
 #include "storage/mmap.h"
@@ -45,7 +46,7 @@ GV_MMap *mmap_open_readonly(const char *path) {
         return NULL;
     }
 
-    GV_MMap *mm = (GV_MMap *)malloc(sizeof(GV_MMap));
+    GV_MMap *mm = (GV_MMap *)gv_alloc(sizeof(GV_MMap));
     if (!mm) {
         UnmapViewOfFile(addr);
         CloseHandle(hMapping);
@@ -65,7 +66,7 @@ void mmap_close(GV_MMap *mm) {
     if (mm->addr)    UnmapViewOfFile(mm->addr);
     if (mm->hMapping) CloseHandle(mm->hMapping);
     if (mm->hFile != INVALID_HANDLE_VALUE) CloseHandle(mm->hFile);
-    free(mm);
+    gv_free(mm);
 }
 
 #else  /* POSIX */
@@ -94,7 +95,7 @@ GV_MMap *mmap_open_readonly(const char *path) {
     void *addr = mmap(NULL, (size_t)st.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
     if (addr == MAP_FAILED) { close(fd); return NULL; }
 
-    GV_MMap *mm = (GV_MMap *)malloc(sizeof(GV_MMap));
+    GV_MMap *mm = (GV_MMap *)gv_alloc(sizeof(GV_MMap));
     if (!mm) {
         munmap(addr, (size_t)st.st_size);
         close(fd);
@@ -111,7 +112,7 @@ void mmap_close(GV_MMap *mm) {
     if (!mm) return;
     if (mm->addr && mm->size > 0) munmap(mm->addr, mm->size);
     if (mm->fd >= 0) close(mm->fd);
-    free(mm);
+    gv_free(mm);
 }
 
 #endif /* _WIN32 */

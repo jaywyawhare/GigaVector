@@ -57,9 +57,9 @@ int main(int argc, char **argv) {
     if (argc > 5) use_cosine = atoi(argv[5]);
 
     srand(123);
-    float *data = (float *)malloc(n * dim * sizeof(float));
-    float *queries = (float *)malloc(q * dim * sizeof(float));
-    size_t *gt = (size_t *)malloc(q * k * sizeof(size_t));
+    float *data = (float *)gv_alloc(n * dim * sizeof(float));
+    float *queries = (float *)gv_alloc(q * dim * sizeof(float));
+    size_t *gt = (size_t *)gv_alloc(q * k * sizeof(size_t));
     if (!data || !queries || !gt) return 1;
     fill_random(data, n, dim);
     fill_random(queries, q, dim);
@@ -86,7 +86,7 @@ int main(int argc, char **argv) {
 
     brute_force(queries, q, data, n, dim, k, gt);
 
-    GV_SearchResult *res = (GV_SearchResult *)malloc(k * sizeof(GV_SearchResult));
+    GV_SearchResult *res = (GV_SearchResult *)gv_alloc(k * sizeof(GV_SearchResult));
     size_t correct = 0;
     double t0 = now_ms();
     for (size_t qi = 0; qi < q; ++qi) {
@@ -120,11 +120,11 @@ int main(int argc, char **argv) {
     double qps = (double)q / ((t1 - t0) / 1000.0);
     printf("IVF-PQ recall@1=%.3f q=%zu k=%zu time=%.2fms qps=%.1f\n", recall, q, k, t1 - t0, qps);
 
-    free(res);
+    gv_free(res);
     db_close(db);
-    free(data);
-    free(queries);
-    free(gt);
+    gv_free(data);
+    gv_free(queries);
+    gv_free(gt);
     return 0;
 }
 

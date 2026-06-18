@@ -1,4 +1,5 @@
 #include <math.h>
+#include "core/memory.h"
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -102,7 +103,7 @@ static size_t bloom_optimal_hashes(size_t m, size_t n)
 
 GV_BloomFilter *bloom_create(size_t expected_items, double fp_rate)
 {
-    GV_BloomFilter *bf = (GV_BloomFilter *)calloc(1, sizeof(GV_BloomFilter));
+    GV_BloomFilter *bf = (GV_BloomFilter *)gv_calloc(1, sizeof(GV_BloomFilter));
     if (bf == NULL) {
         return NULL;
     }
@@ -113,9 +114,9 @@ GV_BloomFilter *bloom_create(size_t expected_items, double fp_rate)
     bf->count          = 0;
 
     size_t byte_count = (bf->num_bits + 7) / 8;
-    bf->bits = (uint8_t *)calloc(byte_count, 1);
+    bf->bits = (uint8_t *)gv_calloc(byte_count, 1);
     if (bf->bits == NULL) {
-        free(bf);
+        gv_free(bf);
         return NULL;
     }
 
@@ -127,8 +128,8 @@ void bloom_destroy(GV_BloomFilter *bf)
     if (bf == NULL) {
         return;
     }
-    free(bf->bits);
-    free(bf);
+    gv_free(bf->bits);
+    gv_free(bf);
 }
 
 int bloom_add(GV_BloomFilter *bf, const void *data, size_t len)
@@ -294,7 +295,7 @@ int bloom_load(GV_BloomFilter **bf_ptr, FILE *in)
         return -1;
     }
 
-    GV_BloomFilter *bf = (GV_BloomFilter *)calloc(1, sizeof(GV_BloomFilter));
+    GV_BloomFilter *bf = (GV_BloomFilter *)gv_calloc(1, sizeof(GV_BloomFilter));
     if (bf == NULL) {
         return -1;
     }
@@ -305,15 +306,15 @@ int bloom_load(GV_BloomFilter **bf_ptr, FILE *in)
     bf->target_fp_rate = fp_rate;
 
     size_t byte_count = (num_bits + 7) / 8;
-    bf->bits = (uint8_t *)malloc(byte_count);
+    bf->bits = (uint8_t *)gv_alloc(byte_count);
     if (bf->bits == NULL) {
-        free(bf);
+        gv_free(bf);
         return -1;
     }
 
     if (fread(bf->bits, 1, byte_count, in) != byte_count) {
-        free(bf->bits);
-        free(bf);
+        gv_free(bf->bits);
+        gv_free(bf);
         return -1;
     }
 
@@ -330,7 +331,7 @@ GV_BloomFilter *bloom_merge(const GV_BloomFilter *a, const GV_BloomFilter *b)
         return NULL;
     }
 
-    GV_BloomFilter *merged = (GV_BloomFilter *)calloc(1, sizeof(GV_BloomFilter));
+    GV_BloomFilter *merged = (GV_BloomFilter *)gv_calloc(1, sizeof(GV_BloomFilter));
     if (merged == NULL) {
         return NULL;
     }
@@ -341,9 +342,9 @@ GV_BloomFilter *bloom_merge(const GV_BloomFilter *a, const GV_BloomFilter *b)
     merged->target_fp_rate = a->target_fp_rate;
 
     size_t byte_count = (a->num_bits + 7) / 8;
-    merged->bits = (uint8_t *)malloc(byte_count);
+    merged->bits = (uint8_t *)gv_alloc(byte_count);
     if (merged->bits == NULL) {
-        free(merged);
+        gv_free(merged);
         return NULL;
     }
 

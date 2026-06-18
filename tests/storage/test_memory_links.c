@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include "core/memory.h"
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -24,7 +25,7 @@ static GV_MemoryLayer *make_layer(GV_Database **out_db) {
 }
 
 static float *make_embedding(int seed) {
-    float *embedding = (float *)malloc(8 * sizeof(float));
+    float *embedding = (float *)gv_alloc(8 * sizeof(float));
     if (embedding == NULL) {
         return NULL;
     }
@@ -66,8 +67,8 @@ static int test_memory_get_update_delete(void) {
     ASSERT(memory_delete(layer, memory_id) == 0, "delete memory");
     ASSERT(memory_get(layer, memory_id, &got) != 0, "get after delete fails");
 
-    free(embedding);
-    free(memory_id);
+    gv_free(embedding);
+    gv_free(memory_id);
     memory_layer_destroy(layer);
     db_close(db);
     return 0;
@@ -107,10 +108,10 @@ static int test_memory_typed_links(void) {
     link_count = memory_link_get(layer, id_a, links, 8);
     ASSERT(link_count == 0, "forward link removed");
 
-    free(emb_a);
-    free(emb_b);
-    free(id_a);
-    free(id_b);
+    gv_free(emb_a);
+    gv_free(emb_b);
+    gv_free(id_a);
+    gv_free(id_b);
     memory_layer_destroy(layer);
     db_close(db);
     return 0;
@@ -136,8 +137,8 @@ static int test_memory_record_access_persists(void) {
     ASSERT(got.metadata->last_accessed > 0, "last accessed persisted");
     memory_result_free(&got);
 
-    free(embedding);
-    free(memory_id);
+    gv_free(embedding);
+    gv_free(memory_id);
     memory_layer_destroy(layer);
     db_close(db);
     return 0;
@@ -160,8 +161,8 @@ static int test_memory_hnsw_delete(void) {
     GV_MemoryResult got;
     ASSERT(memory_get(layer, memory_id, &got) != 0, "get after hnsw delete fails");
 
-    free(embedding);
-    free(memory_id);
+    gv_free(embedding);
+    gv_free(memory_id);
     memory_layer_destroy(layer);
     db_close(db);
     return 0;

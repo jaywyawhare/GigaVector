@@ -4,6 +4,7 @@
  */
 
 #include "security/authz.h"
+#include "core/memory.h"
 #include "core/utils.h"
 
 #include <stdlib.h>
@@ -52,11 +53,11 @@ struct GV_AuthzManager {
 /* Lifecycle */
 
 GV_AuthzManager *authz_create(void) {
-    GV_AuthzManager *authz = calloc(1, sizeof(GV_AuthzManager));
+    GV_AuthzManager *authz = gv_calloc(1, sizeof(GV_AuthzManager));
     if (!authz) return NULL;
 
     if (pthread_rwlock_init(&authz->rwlock, NULL) != 0) {
-        free(authz);
+        gv_free(authz);
         return NULL;
     }
 
@@ -68,22 +69,22 @@ void authz_destroy(GV_AuthzManager *authz) {
 
     /* Free roles */
     for (size_t i = 0; i < authz->role_count; i++) {
-        free(authz->roles[i].name);
+        gv_free(authz->roles[i].name);
         for (size_t j = 0; j < authz->roles[i].namespace_count; j++) {
-            free(authz->roles[i].namespaces[j]);
+            gv_free(authz->roles[i].namespaces[j]);
         }
     }
 
     /* Free users */
     for (size_t i = 0; i < authz->user_count; i++) {
-        free(authz->users[i].subject);
+        gv_free(authz->users[i].subject);
         for (size_t j = 0; j < authz->users[i].role_count; j++) {
-            free(authz->users[i].roles[j]);
+            gv_free(authz->users[i].roles[j]);
         }
     }
 
     pthread_rwlock_destroy(&authz->rwlock);
-    free(authz);
+    gv_free(authz);
 }
 
 /* Internal Helpers */
@@ -145,7 +146,7 @@ int authz_define_role(GV_AuthzManager *authz, const char *name,
 
         /* Clear old namespaces */
         for (size_t i = 0; i < existing->namespace_count; i++) {
-            free(existing->namespaces[i]);
+            gv_free(existing->namespaces[i]);
         }
         existing->namespace_count = 0;
 
@@ -189,9 +190,9 @@ int authz_remove_role(GV_AuthzManager *authz, const char *name) {
     for (size_t i = 0; i < authz->role_count; i++) {
         if (strcmp(authz->roles[i].name, name) == 0) {
             /* Free role data */
-            free(authz->roles[i].name);
+            gv_free(authz->roles[i].name);
             for (size_t j = 0; j < authz->roles[i].namespace_count; j++) {
-                free(authz->roles[i].namespaces[j]);
+                gv_free(authz->roles[i].namespaces[j]);
             }
 
             /* Shift remaining roles */
@@ -224,7 +225,7 @@ int authz_get_role(GV_AuthzManager *authz, const char *name, GV_Role *role) {
     role->permissions = entry->permissions;
 
     if (entry->namespace_count > 0) {
-        role->allowed_namespaces = malloc(entry->namespace_count * sizeof(char *));
+        role->allowed_namespaces = gv_alloc(entry->namespace_count * sizeof(char *));
         for (size_t i = 0; i < entry->namespace_count; i++) {
             role->allowed_namespaces[i] = gv_dup_cstr(entry->namespaces[i]);
         }
@@ -250,7 +251,7 @@ int authz_list_roles(GV_AuthzManager *authz, GV_Role **roles, size_t *count) {
         return 0;
     }
 
-    *roles = malloc(*count * sizeof(GV_Role));
+    *roles = gv_alloc(*count * sizeof(GV_Role));
     if (!*roles) {
         pthread_rwlock_unlock(&authz->rwlock);
         return -1;
@@ -261,7 +262,7 @@ int authz_list_roles(GV_AuthzManager *authz, GV_Role **roles, size_t *count) {
         (*roles)[i].permissions = authz->roles[i].permissions;
 
         if (authz->roles[i].namespace_count > 0) {
-            (*roles)[i].allowed_namespaces = malloc(authz->roles[i].namespace_count * sizeof(char *));
+            (*roles)[i].allowed_namespaces = gv_alloc(authz->roles[i].namespace_count * sizeof(char *));
             for (size_t j = 0; j < authz->roles[i].namespace_count; j++) {
                 (*roles)[i].allowed_namespaces[j] = gv_dup_cstr(authz->roles[i].namespaces[j]);
             }
@@ -278,11 +279,11 @@ int authz_list_roles(GV_AuthzManager *authz, GV_Role **roles, size_t *count) {
 
 void authz_free_role(GV_Role *role) {
     if (!role) return;
-    free(role->name);
+    gv_free(role->name);
     for (size_t i = 0; i < role->namespace_count; i++) {
-        free(role->allowed_namespaces[i]);
+        gv_free(role->allowed_namespaces[i]);
     }
-    free(role->allowed_namespaces);
+    gv_free(role->allowed_namespaces);
     memset(role, 0, sizeof(*role));
 }
 
@@ -291,7 +292,7 @@ void authz_free_roles(GV_Role *roles, size_t count) {
     for (size_t i = 0; i < count; i++) {
         authz_free_role(&roles[i]);
     }
-    free(roles);
+    gv_free(roles);
 }
 
 /* User-Role Assignment */
@@ -354,7 +355,7 @@ int authz_revoke_role(GV_AuthzManager *authz, const char *subject,
 
     for (size_t i = 0; i < user->role_count; i++) {
         if (strcmp(user->roles[i], role_name) == 0) {
-            free(user->roles[i]);
+            gv_free(user->roles[i]);
             for (size_t k = i; k < user->role_count - 1; k++) {
                 user->roles[k] = user->roles[k + 1];
             }
@@ -389,7 +390,7 @@ int authz_get_user_roles(GV_AuthzManager *authz, const char *subject,
         return 0;
     }
 
-    *roles = malloc(*count * sizeof(char *));
+    *roles = gv_alloc(*count * sizeof(char *));
     for (size_t i = 0; i < *count; i++) {
         (*roles)[i] = gv_dup_cstr(user->roles[i]);
     }
@@ -401,9 +402,9 @@ int authz_get_user_roles(GV_AuthzManager *authz, const char *subject,
 void authz_free_user_roles(char **roles, size_t count) {
     if (!roles) return;
     for (size_t i = 0; i < count; i++) {
-        free(roles[i]);
+        gv_free(roles[i]);
     }
-    free(roles);
+    gv_free(roles);
 }
 
 /* Authorization Checks */

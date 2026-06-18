@@ -173,9 +173,9 @@ static int vacuum_run_internal(GV_VacuumManager *mgr) {
         new_metadata = (GV_Metadata **)gv_db_calloc(storage->owner_db, new_count, sizeof(GV_Metadata *));
         new_deleted = (int *)gv_db_calloc(storage->owner_db, new_count, sizeof(int));
     } else {
-        new_data = (float *)malloc(new_count * dim * sizeof(float));
-        new_metadata = (GV_Metadata **)calloc(new_count, sizeof(GV_Metadata *));
-        new_deleted = (int *)calloc(new_count, sizeof(int));
+        new_data = (float *)gv_alloc(new_count * dim * sizeof(float));
+        new_metadata = (GV_Metadata **)gv_calloc(new_count, sizeof(GV_Metadata *));
+        new_deleted = (int *)gv_calloc(new_count, sizeof(int));
     }
 
     if (new_data == NULL || new_metadata == NULL || new_deleted == NULL) {
@@ -184,9 +184,9 @@ static int vacuum_run_internal(GV_VacuumManager *mgr) {
             if (new_metadata != NULL) gv_db_free(storage->owner_db, new_metadata);
             if (new_deleted != NULL) gv_db_free(storage->owner_db, new_deleted);
         } else {
-            free(new_data);
-            free(new_metadata);
-            free(new_deleted);
+            gv_free(new_data);
+            gv_free(new_metadata);
+            gv_free(new_deleted);
         }
         pthread_rwlock_unlock(&db->rwlock);
 
@@ -229,9 +229,9 @@ static int vacuum_run_internal(GV_VacuumManager *mgr) {
             GV_Metadata *md = storage->metadata[old_idx];
             while (md != NULL) {
                 GV_Metadata *next = md->next;
-                free(md->key);
-                free(md->value);
-                free(md);
+                gv_free(md->key);
+                gv_free(md->value);
+                gv_free(md);
                 md = next;
             }
             storage->metadata[old_idx] = NULL;
@@ -251,9 +251,9 @@ static int vacuum_run_internal(GV_VacuumManager *mgr) {
         gv_db_free(storage->owner_db, storage->metadata);
         gv_db_free(storage->owner_db, storage->deleted);
     } else {
-        free(storage->data);
-        free(storage->metadata);
-        free(storage->deleted);
+        gv_free(storage->data);
+        gv_free(storage->metadata);
+        gv_free(storage->deleted);
     }
 
     storage->data = new_data;
@@ -359,7 +359,7 @@ GV_VacuumManager *vacuum_create(GV_Database *db, const GV_VacuumConfig *config) 
         return NULL;
     }
 
-    GV_VacuumManager *mgr = (GV_VacuumManager *)calloc(1, sizeof(GV_VacuumManager));
+    GV_VacuumManager *mgr = (GV_VacuumManager *)gv_calloc(1, sizeof(GV_VacuumManager));
     if (mgr == NULL) {
         return NULL;
     }
@@ -383,13 +383,13 @@ GV_VacuumManager *vacuum_create(GV_Database *db, const GV_VacuumConfig *config) 
     mgr->thread_running = 0;
 
     if (pthread_mutex_init(&mgr->mutex, NULL) != 0) {
-        free(mgr);
+        gv_free(mgr);
         return NULL;
     }
 
     if (pthread_cond_init(&mgr->cond, NULL) != 0) {
         pthread_mutex_destroy(&mgr->mutex);
-        free(mgr);
+        gv_free(mgr);
         return NULL;
     }
 
@@ -406,7 +406,7 @@ void vacuum_destroy(GV_VacuumManager *mgr) {
 
     pthread_cond_destroy(&mgr->cond);
     pthread_mutex_destroy(&mgr->mutex);
-    free(mgr);
+    gv_free(mgr);
 }
 
 int vacuum_run(GV_VacuumManager *mgr) {

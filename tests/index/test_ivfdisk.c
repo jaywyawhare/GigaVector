@@ -222,7 +222,7 @@ static int test_ivfdisk_sq8_and_hnsw(void)
 
     const size_t dim = 16;
     const size_t n = 128;
-    float *data = (float *)malloc(n * dim * sizeof(float));
+    float *data = (float *)gv_alloc(n * dim * sizeof(float));
     ASSERT(data != NULL, "alloc");
     for (size_t i = 0; i < n * dim; ++i) {
         data[i] = (float)((i * 13u) % 997u) / 997.f;
@@ -253,7 +253,7 @@ static int test_ivfdisk_sq8_and_hnsw(void)
     ASSERT(results[0].id == 0, "self nearest");
 
     ivfdisk_destroy(idx);
-    free(data);
+    gv_free(data);
     return 0;
 }
 
@@ -266,7 +266,7 @@ static int test_ivfdisk_recall_vs_flat(void)
     const size_t n = 2000;
     const size_t k = 10;
 
-    float *data = (float *)malloc(n * dim * sizeof(float));
+    float *data = (float *)gv_alloc(n * dim * sizeof(float));
     ASSERT(data != NULL, "alloc data");
     for (size_t i = 0; i < n * dim; ++i) {
         data[i] = (float)((i * 17u) % 1000u) / 1000.f;
@@ -327,7 +327,7 @@ static int test_ivfdisk_recall_vs_flat(void)
 
     flat_destroy(flat);
     ivfdisk_destroy(idx);
-    free(data);
+    gv_free(data);
     return 0;
 }
 
@@ -384,13 +384,13 @@ static int test_ivfdisk_head_ratio_enforced(void)
     GV_IVFDiskIndex *idx = ivfdisk_create(dim, &cfg);
     ASSERT(idx != NULL, "create");
 
-    float *train = (float *)malloc(cfg.nlist * dim * sizeof(float));
+    float *train = (float *)gv_alloc(cfg.nlist * dim * sizeof(float));
     ASSERT(train != NULL, "alloc train");
     for (size_t i = 0; i < cfg.nlist * dim; ++i) {
         train[i] = (float)i * 0.001f;
     }
     ASSERT(ivfdisk_train(idx, train, cfg.nlist) != 0, "train rejects centroid RAM over head_ratio");
-    free(train);
+    gv_free(train);
     ivfdisk_destroy(idx);
     return 0;
 }

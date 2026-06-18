@@ -2,6 +2,7 @@
 #define _USE_MATH_DEFINES
 #endif
 #include <math.h>
+#include "core/memory.h"
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -88,13 +89,13 @@ double geo_distance_km(double lat1, double lng1, double lat2, double lng2)
 
 GV_GeoIndex *geo_create(void)
 {
-    GV_GeoIndex *index = (GV_GeoIndex *)calloc(1, sizeof(GV_GeoIndex));
+    GV_GeoIndex *index = (GV_GeoIndex *)gv_calloc(1, sizeof(GV_GeoIndex));
     if (index == NULL) {
         return NULL;
     }
 
     if (pthread_rwlock_init(&index->rwlock, NULL) != 0) {
-        free(index);
+        gv_free(index);
         return NULL;
     }
 
@@ -111,13 +112,13 @@ void geo_destroy(GV_GeoIndex *index)
         GV_GeoEntry *entry = index->buckets[i].head;
         while (entry != NULL) {
             GV_GeoEntry *next = entry->next;
-            free(entry);
+            gv_free(entry);
             entry = next;
         }
     }
 
     pthread_rwlock_destroy(&index->rwlock);
-    free(index);
+    gv_free(index);
 }
 
 /* Insert / Update / Remove */
@@ -131,7 +132,7 @@ int geo_insert(GV_GeoIndex *index, size_t point_index, double lat, double lng)
         return -1;
     }
 
-    GV_GeoEntry *entry = (GV_GeoEntry *)malloc(sizeof(GV_GeoEntry));
+    GV_GeoEntry *entry = (GV_GeoEntry *)gv_alloc(sizeof(GV_GeoEntry));
     if (entry == NULL) {
         return -1;
     }
@@ -170,7 +171,7 @@ int geo_update(GV_GeoIndex *index, size_t point_index, double lat, double lng)
             if ((*pp)->point_index == point_index) {
                 GV_GeoEntry *victim = *pp;
                 *pp = victim->next;
-                free(victim);
+                gv_free(victim);
                 index->count--;
                 found = 1;
                 break;
@@ -180,7 +181,7 @@ int geo_update(GV_GeoIndex *index, size_t point_index, double lat, double lng)
     }
 
     /* Insert the new entry while still holding the write lock. */
-    GV_GeoEntry *entry = (GV_GeoEntry *)malloc(sizeof(GV_GeoEntry));
+    GV_GeoEntry *entry = (GV_GeoEntry *)gv_alloc(sizeof(GV_GeoEntry));
     if (entry == NULL) {
         pthread_rwlock_unlock(&index->rwlock);
         return -1;
@@ -212,7 +213,7 @@ int geo_remove(GV_GeoIndex *index, size_t point_index)
             if ((*pp)->point_index == point_index) {
                 GV_GeoEntry *victim = *pp;
                 *pp = victim->next;
-                free(victim);
+                gv_free(victim);
                 index->count--;
                 pthread_rwlock_unlock(&index->rwlock);
                 return 0;

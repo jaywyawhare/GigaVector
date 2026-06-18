@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include <stdio.h>
+#include "core/memory.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
@@ -177,15 +178,15 @@ static size_t intersect_sorted(const size_t *a, size_t a_len,
 /* Create / Destroy */
 
 GV_PayloadIndex *payload_index_create(void) {
-    GV_PayloadIndex *idx = (GV_PayloadIndex *)malloc(sizeof(GV_PayloadIndex));
+    GV_PayloadIndex *idx = (GV_PayloadIndex *)gv_alloc(sizeof(GV_PayloadIndex));
     if (idx == NULL) {
         return NULL;
     }
     idx->field_count = 0;
     idx->field_capacity = GV_PAYLOAD_INITIAL_CAP;
-    idx->fields = (GV_FieldIndex *)calloc(idx->field_capacity, sizeof(GV_FieldIndex));
+    idx->fields = (GV_FieldIndex *)gv_calloc(idx->field_capacity, sizeof(GV_FieldIndex));
     if (idx->fields == NULL) {
-        free(idx);
+        gv_free(idx);
         return NULL;
     }
     return idx;
@@ -199,24 +200,24 @@ void payload_index_destroy(GV_PayloadIndex *idx) {
         GV_FieldIndex *fi = &idx->fields[i];
         switch (fi->schema.type) {
             case GV_FIELD_INT:
-                free(fi->data.int_data.entries);
+                gv_free(fi->data.int_data.entries);
                 break;
             case GV_FIELD_FLOAT:
-                free(fi->data.float_data.entries);
+                gv_free(fi->data.float_data.entries);
                 break;
             case GV_FIELD_STRING:
                 for (size_t j = 0; j < fi->data.string_data.count; j++) {
-                    free(fi->data.string_data.entries[j].value);
+                    gv_free(fi->data.string_data.entries[j].value);
                 }
-                free(fi->data.string_data.entries);
+                gv_free(fi->data.string_data.entries);
                 break;
             case GV_FIELD_BOOL:
-                free(fi->data.bool_data.entries);
+                gv_free(fi->data.bool_data.entries);
                 break;
         }
     }
-    free(idx->fields);
-    free(idx);
+    gv_free(idx->fields);
+    gv_free(idx);
 }
 
 /* Schema management */
@@ -232,7 +233,7 @@ int payload_index_add_field(GV_PayloadIndex *idx, const char *name, GV_FieldType
     /* Grow fields array if needed */
     if (idx->field_count >= idx->field_capacity) {
         size_t new_cap = idx->field_capacity * 2;
-        GV_FieldIndex *tmp = (GV_FieldIndex *)realloc(idx->fields, new_cap * sizeof(GV_FieldIndex));
+        GV_FieldIndex *tmp = (GV_FieldIndex *)gv_realloc(idx->fields, new_cap * sizeof(GV_FieldIndex));
         if (tmp == NULL) {
             return -1;
         }
@@ -250,25 +251,25 @@ int payload_index_add_field(GV_PayloadIndex *idx, const char *name, GV_FieldType
     /* Pre-allocate initial entry storage */
     switch (type) {
         case GV_FIELD_INT:
-            fi->data.int_data.entries = (GV_IntEntry *)malloc(GV_PAYLOAD_INITIAL_CAP * sizeof(GV_IntEntry));
+            fi->data.int_data.entries = (GV_IntEntry *)gv_alloc(GV_PAYLOAD_INITIAL_CAP * sizeof(GV_IntEntry));
             if (fi->data.int_data.entries == NULL) return -1;
             fi->data.int_data.count = 0;
             fi->data.int_data.capacity = GV_PAYLOAD_INITIAL_CAP;
             break;
         case GV_FIELD_FLOAT:
-            fi->data.float_data.entries = (GV_FloatEntry *)malloc(GV_PAYLOAD_INITIAL_CAP * sizeof(GV_FloatEntry));
+            fi->data.float_data.entries = (GV_FloatEntry *)gv_alloc(GV_PAYLOAD_INITIAL_CAP * sizeof(GV_FloatEntry));
             if (fi->data.float_data.entries == NULL) return -1;
             fi->data.float_data.count = 0;
             fi->data.float_data.capacity = GV_PAYLOAD_INITIAL_CAP;
             break;
         case GV_FIELD_STRING:
-            fi->data.string_data.entries = (GV_StringEntry *)malloc(GV_PAYLOAD_INITIAL_CAP * sizeof(GV_StringEntry));
+            fi->data.string_data.entries = (GV_StringEntry *)gv_alloc(GV_PAYLOAD_INITIAL_CAP * sizeof(GV_StringEntry));
             if (fi->data.string_data.entries == NULL) return -1;
             fi->data.string_data.count = 0;
             fi->data.string_data.capacity = GV_PAYLOAD_INITIAL_CAP;
             break;
         case GV_FIELD_BOOL:
-            fi->data.bool_data.entries = (GV_BoolEntry *)malloc(GV_PAYLOAD_INITIAL_CAP * sizeof(GV_BoolEntry));
+            fi->data.bool_data.entries = (GV_BoolEntry *)gv_alloc(GV_PAYLOAD_INITIAL_CAP * sizeof(GV_BoolEntry));
             if (fi->data.bool_data.entries == NULL) return -1;
             fi->data.bool_data.count = 0;
             fi->data.bool_data.capacity = GV_PAYLOAD_INITIAL_CAP;
@@ -289,19 +290,19 @@ int payload_index_remove_field(GV_PayloadIndex *idx, const char *name) {
             /* Free entry storage */
             switch (fi->schema.type) {
                 case GV_FIELD_INT:
-                    free(fi->data.int_data.entries);
+                    gv_free(fi->data.int_data.entries);
                     break;
                 case GV_FIELD_FLOAT:
-                    free(fi->data.float_data.entries);
+                    gv_free(fi->data.float_data.entries);
                     break;
                 case GV_FIELD_STRING:
                     for (size_t j = 0; j < fi->data.string_data.count; j++) {
-                        free(fi->data.string_data.entries[j].value);
+                        gv_free(fi->data.string_data.entries[j].value);
                     }
-                    free(fi->data.string_data.entries);
+                    gv_free(fi->data.string_data.entries);
                     break;
                 case GV_FIELD_BOOL:
-                    free(fi->data.bool_data.entries);
+                    gv_free(fi->data.bool_data.entries);
                     break;
             }
             /* Shift remaining fields down */
@@ -337,7 +338,7 @@ int payload_index_insert_int(GV_PayloadIndex *idx, size_t vector_id,
     /* Grow if needed */
     if (fi->data.int_data.count >= fi->data.int_data.capacity) {
         size_t new_cap = fi->data.int_data.capacity * 2;
-        GV_IntEntry *tmp = (GV_IntEntry *)realloc(fi->data.int_data.entries,
+        GV_IntEntry *tmp = (GV_IntEntry *)gv_realloc(fi->data.int_data.entries,
                                                     new_cap * sizeof(GV_IntEntry));
         if (tmp == NULL) return -1;
         fi->data.int_data.entries = tmp;
@@ -368,7 +369,7 @@ int payload_index_insert_float(GV_PayloadIndex *idx, size_t vector_id,
     }
     if (fi->data.float_data.count >= fi->data.float_data.capacity) {
         size_t new_cap = fi->data.float_data.capacity * 2;
-        GV_FloatEntry *tmp = (GV_FloatEntry *)realloc(fi->data.float_data.entries,
+        GV_FloatEntry *tmp = (GV_FloatEntry *)gv_realloc(fi->data.float_data.entries,
                                                         new_cap * sizeof(GV_FloatEntry));
         if (tmp == NULL) return -1;
         fi->data.float_data.entries = tmp;
@@ -397,7 +398,7 @@ int payload_index_insert_string(GV_PayloadIndex *idx, size_t vector_id,
     }
     if (fi->data.string_data.count >= fi->data.string_data.capacity) {
         size_t new_cap = fi->data.string_data.capacity * 2;
-        GV_StringEntry *tmp = (GV_StringEntry *)realloc(fi->data.string_data.entries,
+        GV_StringEntry *tmp = (GV_StringEntry *)gv_realloc(fi->data.string_data.entries,
                                                           new_cap * sizeof(GV_StringEntry));
         if (tmp == NULL) return -1;
         fi->data.string_data.entries = tmp;
@@ -429,7 +430,7 @@ int payload_index_insert_bool(GV_PayloadIndex *idx, size_t vector_id,
     }
     if (fi->data.bool_data.count >= fi->data.bool_data.capacity) {
         size_t new_cap = fi->data.bool_data.capacity * 2;
-        GV_BoolEntry *tmp = (GV_BoolEntry *)realloc(fi->data.bool_data.entries,
+        GV_BoolEntry *tmp = (GV_BoolEntry *)gv_realloc(fi->data.bool_data.entries,
                                                       new_cap * sizeof(GV_BoolEntry));
         if (tmp == NULL) return -1;
         fi->data.bool_data.entries = tmp;
@@ -509,7 +510,7 @@ int payload_index_remove(GV_PayloadIndex *idx, size_t vector_id) {
                         }
                         write++;
                     } else {
-                        free(fi->data.string_data.entries[i].value);
+                        gv_free(fi->data.string_data.entries[i].value);
                     }
                 }
                 fi->data.string_data.count = write;
@@ -814,19 +815,19 @@ int payload_index_query_multi(const GV_PayloadIndex *idx, const GV_PayloadQuery 
 
     /* Allocate temporary buffers for intermediate results */
     size_t buf_size = max_results;
-    size_t *buf_a = (size_t *)malloc(buf_size * sizeof(size_t));
-    size_t *buf_b = (size_t *)malloc(buf_size * sizeof(size_t));
+    size_t *buf_a = (size_t *)gv_alloc(buf_size * sizeof(size_t));
+    size_t *buf_b = (size_t *)gv_alloc(buf_size * sizeof(size_t));
     if (buf_a == NULL || buf_b == NULL) {
-        free(buf_a);
-        free(buf_b);
+        gv_free(buf_a);
+        gv_free(buf_b);
         return -1;
     }
 
     /* Execute the first query */
     int first_count = payload_index_query(idx, &queries[0], buf_a, buf_size);
     if (first_count < 0) {
-        free(buf_a);
-        free(buf_b);
+        gv_free(buf_a);
+        gv_free(buf_b);
         return -1;
     }
 
@@ -838,8 +839,8 @@ int payload_index_query_multi(const GV_PayloadIndex *idx, const GV_PayloadQuery 
     for (size_t q = 1; q < query_count; q++) {
         int next_count = payload_index_query(idx, &queries[q], buf_b, buf_size);
         if (next_count < 0) {
-            free(buf_a);
-            free(buf_b);
+            gv_free(buf_a);
+            gv_free(buf_b);
             return -1;
         }
         size_t nc = (size_t)next_count;
@@ -864,8 +865,8 @@ int payload_index_query_multi(const GV_PayloadIndex *idx, const GV_PayloadQuery 
     }
     memcpy(result_ids, buf_a, current_count * sizeof(size_t));
 
-    free(buf_a);
-    free(buf_b);
+    gv_free(buf_a);
+    gv_free(buf_b);
     return (int)current_count;
 }
 

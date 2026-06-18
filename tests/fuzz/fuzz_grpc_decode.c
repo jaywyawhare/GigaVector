@@ -7,6 +7,7 @@
  */
 
 #include <stddef.h>
+#include "core/memory.h"
 #include <stdint.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -24,7 +25,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     int distance_type = 0;
 
     if (grpc_decode_search_request(data, size, &query, &dimension, &k, &distance_type) == 0) {
-        free(query);
+        gv_free(query);
     }
     return 0;
 }

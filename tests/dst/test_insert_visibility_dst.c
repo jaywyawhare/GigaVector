@@ -7,6 +7,7 @@
  */
 
 #include <stdio.h>
+#include "core/memory.h"
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -59,7 +60,7 @@ static int run_visibility_oracle(GV_Database *db, GV_IndexType index_type, GV_Ds
             continue;
         }
 
-        GV_SearchResult *hits = (GV_SearchResult *)calloc(oversample_k, sizeof(GV_SearchResult));
+        GV_SearchResult *hits = (GV_SearchResult *)gv_calloc(oversample_k, sizeof(GV_SearchResult));
         ASSERT(hits != NULL, "alloc search buffer");
 
         int found = db_search(db, vec, oversample_k, hits, GV_DISTANCE_EUCLIDEAN);
@@ -67,7 +68,7 @@ static int run_visibility_oracle(GV_Database *db, GV_IndexType index_type, GV_Ds
         ASSERT(results_contain_id(hits, found, inserted_id),
                "inserted vector visible in oversampled search");
 
-        free(hits);
+        gv_free(hits);
     }
     return 0;
 }

@@ -1,4 +1,5 @@
 #include <stdlib.h>
+#include "core/memory.h"
 #include <string.h>
 #include <time.h>
 #include <stdio.h>
@@ -68,13 +69,13 @@ static void memory_layer_free_extracted_entities(GV_GraphEntity *entities, size_
         for (size_t i = 0; i < entity_count; i++) {
             graph_entity_free(&entities[i]);
         }
-        free(entities);
+        gv_free(entities);
     }
     if (relationships != NULL) {
         for (size_t i = 0; i < relationship_count; i++) {
             graph_relationship_free(&relationships[i]);
         }
-        free(relationships);
+        gv_free(relationships);
     }
 }
 
@@ -83,9 +84,9 @@ void memory_layer_free_context_entity_names(char **names, size_t count) {
         return;
     }
     for (size_t i = 0; i < count; i++) {
-        free(names[i]);
+        gv_free(names[i]);
     }
-    free(names);
+    gv_free(names);
 }
 
 int memory_layer_extract_context_entities(GV_MemoryLayer *layer, const char *text,
@@ -128,7 +129,7 @@ int memory_layer_extract_context_entities(GV_MemoryLayer *layer, const char *tex
         return 0;
     }
 
-    char **names = (char **)calloc(entity_count, sizeof(char *));
+    char **names = (char **)gv_calloc(entity_count, sizeof(char *));
     if (names == NULL) {
         memory_layer_free_extracted_entities(entities, entity_count,
                                              relationships, relationship_count);
@@ -153,7 +154,7 @@ int memory_layer_extract_context_entities(GV_MemoryLayer *layer, const char *tex
                                          relationships, relationship_count);
 
     if (name_count == 0) {
-        free(names);
+        gv_free(names);
         return 0;
     }
 
@@ -164,16 +165,16 @@ int memory_layer_extract_context_entities(GV_MemoryLayer *layer, const char *tex
 
 static GV_Metadata *memory_prepend_metadata(GV_Metadata *head, const char *key,
                                             const char *value) {
-    GV_Metadata *m = (GV_Metadata *)malloc(sizeof(GV_Metadata));
+    GV_Metadata *m = (GV_Metadata *)gv_alloc(sizeof(GV_Metadata));
     if (m == NULL) {
         return head;
     }
     m->key = gv_dup_cstr(key);
     m->value = gv_dup_cstr(value);
     if (m->key == NULL || m->value == NULL) {
-        free(m->key);
-        free(m->value);
-        free(m);
+        gv_free(m->key);
+        gv_free(m->value);
+        gv_free(m);
         return head;
     }
     m->next = head;
@@ -189,11 +190,11 @@ static int memory_metadata_list_to_arrays(GV_Metadata *list, const char ***out_k
     if (n == 0) {
         return -1;
     }
-    const char **keys = (const char **)malloc(n * sizeof(char *));
-    const char **values = (const char **)malloc(n * sizeof(char *));
+    const char **keys = (const char **)gv_alloc(n * sizeof(char *));
+    const char **values = (const char **)gv_alloc(n * sizeof(char *));
     if (keys == NULL || values == NULL) {
-        free(keys);
-        free(values);
+        gv_free(keys);
+        gv_free(values);
         return -1;
     }
     size_t i = 0;
@@ -223,7 +224,7 @@ static int memory_vector_index_allowed(size_t vector_index,
 }
 
 static char *generate_memory_id(uint64_t counter) {
-    char *id = (char *)malloc(MEMORY_ID_BUFFER_SIZE);
+    char *id = (char *)gv_alloc(MEMORY_ID_BUFFER_SIZE);
     if (id == NULL) {
         return NULL;
     }
@@ -242,7 +243,7 @@ static int serialize_related_ids(char **ids, size_t count, char **out) {
         total_len += strlen(ids[i]) + 1;
     }
     
-    char *result = (char *)malloc(total_len);
+    char *result = (char *)gv_alloc(total_len);
     if (result == NULL) {
         return -1;
     }
@@ -276,7 +277,7 @@ static int deserialize_related_ids(const char *serialized, char ***out, size_t *
         }
     }
     
-    char **ids = (char **)malloc(id_count * sizeof(char *));
+    char **ids = (char **)gv_alloc(id_count * sizeof(char *));
     if (ids == NULL) {
         return -1;
     }
@@ -286,12 +287,12 @@ static int deserialize_related_ids(const char *serialized, char ***out, size_t *
     for (size_t i = 0; i <= len; i++) {
         if (serialized[i] == ',' || serialized[i] == '\0') {
             size_t id_len = &serialized[i] - start;
-            ids[idx] = (char *)malloc(id_len + 1);
+            ids[idx] = (char *)gv_alloc(id_len + 1);
             if (ids[idx] == NULL) {
                 for (size_t j = 0; j < idx; j++) {
-                    free(ids[j]);
+                    gv_free(ids[j]);
                 }
-                free(ids);
+                gv_free(ids);
                 return -1;
             }
             memcpy(ids[idx], start, id_len);
@@ -318,7 +319,7 @@ static int serialize_links(const GV_MemoryLink *links, size_t count, char **out)
 
     /* Estimate buffer size: ~200 bytes per link should be sufficient */
     size_t buffer_size = count * 200 + 3;
-    char *result = (char *)malloc(buffer_size);
+    char *result = (char *)gv_alloc(buffer_size);
     if (result == NULL) {
         return -1;
     }
@@ -339,7 +340,7 @@ static int serialize_links(const GV_MemoryLink *links, size_t count, char **out)
             (long)links[i].created_at);
 
         if (written < 0 || (size_t)written >= buffer_size - pos) {
-            free(result);
+            gv_free(result);
             return -1;
         }
         pos += written;
@@ -349,7 +350,7 @@ static int serialize_links(const GV_MemoryLink *links, size_t count, char **out)
             written = snprintf(result + pos, buffer_size - pos,
                 ",\"reason\":\"%s\"", links[i].reason);
             if (written < 0 || (size_t)written >= buffer_size - pos) {
-                free(result);
+                gv_free(result);
                 return -1;
             }
             pos += written;
@@ -387,7 +388,7 @@ static int deserialize_links(const char *serialized, GV_MemoryLink **out, size_t
         return 0;
     }
 
-    GV_MemoryLink *links = (GV_MemoryLink *)calloc(link_count, sizeof(GV_MemoryLink));
+    GV_MemoryLink *links = (GV_MemoryLink *)gv_calloc(link_count, sizeof(GV_MemoryLink));
     if (links == NULL) {
         return -1;
     }
@@ -495,7 +496,7 @@ static GV_Metadata *create_memory_metadata(const GV_MemoryMetadata *meta) {
     GV_Metadata *tail = NULL;
     
     if (meta->memory_id) {
-        GV_Metadata *m = (GV_Metadata *)malloc(sizeof(GV_Metadata));
+        GV_Metadata *m = (GV_Metadata *)gv_alloc(sizeof(GV_Metadata));
         if (m == NULL) goto error;
         m->key = gv_dup_cstr("memory_id");
         m->value = gv_dup_cstr(meta->memory_id);
@@ -505,7 +506,7 @@ static GV_Metadata *create_memory_metadata(const GV_MemoryMetadata *meta) {
     
     char type_str[32];
     snprintf(type_str, sizeof(type_str), "%d", (int)meta->memory_type);
-    GV_Metadata *m = (GV_Metadata *)malloc(sizeof(GV_Metadata));
+    GV_Metadata *m = (GV_Metadata *)gv_alloc(sizeof(GV_Metadata));
     if (m == NULL) goto error;
     m->key = gv_dup_cstr("memory_type");
     m->value = gv_dup_cstr(type_str);
@@ -518,7 +519,7 @@ static GV_Metadata *create_memory_metadata(const GV_MemoryMetadata *meta) {
     }
     
     if (meta->source) {
-        m = (GV_Metadata *)malloc(sizeof(GV_Metadata));
+        m = (GV_Metadata *)gv_alloc(sizeof(GV_Metadata));
         if (m == NULL) goto error;
         m->key = gv_dup_cstr("source");
         m->value = gv_dup_cstr(meta->source);
@@ -529,7 +530,7 @@ static GV_Metadata *create_memory_metadata(const GV_MemoryMetadata *meta) {
     
     char timestamp_str[64];
     snprintf(timestamp_str, sizeof(timestamp_str), "%ld", (long)meta->timestamp);
-    m = (GV_Metadata *)malloc(sizeof(GV_Metadata));
+    m = (GV_Metadata *)gv_alloc(sizeof(GV_Metadata));
     if (m == NULL) goto error;
     m->key = gv_dup_cstr("timestamp");
     m->value = gv_dup_cstr(timestamp_str);
@@ -539,7 +540,7 @@ static GV_Metadata *create_memory_metadata(const GV_MemoryMetadata *meta) {
     
     char importance_str[32];
     snprintf(importance_str, sizeof(importance_str), "%.6f", meta->importance_score);
-    m = (GV_Metadata *)malloc(sizeof(GV_Metadata));
+    m = (GV_Metadata *)gv_alloc(sizeof(GV_Metadata));
     if (m == NULL) goto error;
     m->key = gv_dup_cstr("importance_score");
     m->value = gv_dup_cstr(importance_str);
@@ -548,7 +549,7 @@ static GV_Metadata *create_memory_metadata(const GV_MemoryMetadata *meta) {
     tail = m;
     
     if (meta->extraction_metadata) {
-        m = (GV_Metadata *)malloc(sizeof(GV_Metadata));
+        m = (GV_Metadata *)gv_alloc(sizeof(GV_Metadata));
         if (m == NULL) goto error;
         m->key = gv_dup_cstr("extraction_metadata");
         m->value = gv_dup_cstr(meta->extraction_metadata);
@@ -559,7 +560,7 @@ static GV_Metadata *create_memory_metadata(const GV_MemoryMetadata *meta) {
     
     char consolidated_str[8];
     snprintf(consolidated_str, sizeof(consolidated_str), "%d", meta->consolidated);
-    m = (GV_Metadata *)malloc(sizeof(GV_Metadata));
+    m = (GV_Metadata *)gv_alloc(sizeof(GV_Metadata));
     if (m == NULL) goto error;
     m->key = gv_dup_cstr("consolidated");
     m->value = gv_dup_cstr(consolidated_str);
@@ -570,9 +571,9 @@ static GV_Metadata *create_memory_metadata(const GV_MemoryMetadata *meta) {
     if (meta->related_count > 0) {
         char *related_str = NULL;
         if (serialize_related_ids(meta->related_memory_ids, meta->related_count, &related_str) == 0 && related_str) {
-            m = (GV_Metadata *)malloc(sizeof(GV_Metadata));
+            m = (GV_Metadata *)gv_alloc(sizeof(GV_Metadata));
             if (m == NULL) {
-                free(related_str);
+                gv_free(related_str);
                 goto error;
             }
             m->key = gv_dup_cstr("related_memories");
@@ -593,9 +594,9 @@ static GV_Metadata *create_memory_metadata(const GV_MemoryMetadata *meta) {
             links_str = gv_dup_cstr("[]");
         }
         if (links_str != NULL) {
-            m = (GV_Metadata *)malloc(sizeof(GV_Metadata));
+            m = (GV_Metadata *)gv_alloc(sizeof(GV_Metadata));
             if (m == NULL) {
-                free(links_str);
+                gv_free(links_str);
                 goto error;
             }
             m->key = gv_dup_cstr("memory_links");
@@ -609,7 +610,7 @@ static GV_Metadata *create_memory_metadata(const GV_MemoryMetadata *meta) {
     if (meta->valid_from > 0) {
         char valid_from_str[64];
         snprintf(valid_from_str, sizeof(valid_from_str), "%ld", (long)meta->valid_from);
-        m = (GV_Metadata *)malloc(sizeof(GV_Metadata));
+        m = (GV_Metadata *)gv_alloc(sizeof(GV_Metadata));
         if (m == NULL) goto error;
         m->key = gv_dup_cstr("valid_from");
         m->value = gv_dup_cstr(valid_from_str);
@@ -621,7 +622,7 @@ static GV_Metadata *create_memory_metadata(const GV_MemoryMetadata *meta) {
     if (meta->valid_to > 0) {
         char valid_to_str[64];
         snprintf(valid_to_str, sizeof(valid_to_str), "%ld", (long)meta->valid_to);
-        m = (GV_Metadata *)malloc(sizeof(GV_Metadata));
+        m = (GV_Metadata *)gv_alloc(sizeof(GV_Metadata));
         if (m == NULL) goto error;
         m->key = gv_dup_cstr("valid_to");
         m->value = gv_dup_cstr(valid_to_str);
@@ -633,7 +634,7 @@ static GV_Metadata *create_memory_metadata(const GV_MemoryMetadata *meta) {
     if (meta->access_count > 0) {
         char access_count_str[32];
         snprintf(access_count_str, sizeof(access_count_str), "%u", meta->access_count);
-        m = (GV_Metadata *)malloc(sizeof(GV_Metadata));
+        m = (GV_Metadata *)gv_alloc(sizeof(GV_Metadata));
         if (m == NULL) goto error;
         m->key = gv_dup_cstr("access_count");
         m->value = gv_dup_cstr(access_count_str);
@@ -645,7 +646,7 @@ static GV_Metadata *create_memory_metadata(const GV_MemoryMetadata *meta) {
     if (meta->last_accessed > 0) {
         char last_accessed_str[64];
         snprintf(last_accessed_str, sizeof(last_accessed_str), "%ld", (long)meta->last_accessed);
-        m = (GV_Metadata *)malloc(sizeof(GV_Metadata));
+        m = (GV_Metadata *)gv_alloc(sizeof(GV_Metadata));
         if (m == NULL) goto error;
         m->key = gv_dup_cstr("last_accessed");
         m->value = gv_dup_cstr(last_accessed_str);
@@ -724,7 +725,7 @@ GV_MemoryLayer *memory_layer_create(GV_Database *db, const GV_MemoryLayerConfig 
         return NULL;
     }
     
-    GV_MemoryLayer *layer = (GV_MemoryLayer *)malloc(sizeof(GV_MemoryLayer));
+    GV_MemoryLayer *layer = (GV_MemoryLayer *)gv_alloc(sizeof(GV_MemoryLayer));
     if (layer == NULL) {
         return NULL;
     }
@@ -765,7 +766,7 @@ GV_MemoryLayer *memory_layer_create(GV_Database *db, const GV_MemoryLayerConfig 
         if (layer->context_graph) {
             context_graph_destroy((GV_ContextGraph *)layer->context_graph);
         }
-        free(layer);
+        gv_free(layer);
         return NULL;
     }
     
@@ -786,7 +787,7 @@ void memory_layer_destroy(GV_MemoryLayer *layer) {
     }
     
     pthread_mutex_destroy(&layer->mutex);
-    free(layer);
+    gv_free(layer);
 }
 
 char *memory_add(GV_MemoryLayer *layer, const char *content,
@@ -830,7 +831,7 @@ char *memory_add_opts(GV_MemoryLayer *layer, const char *content,
     
     GV_Metadata *meta_list = create_memory_metadata(&meta);
     if (meta_list == NULL) {
-        free(memory_id);
+        gv_free(memory_id);
         pthread_mutex_unlock(&layer->mutex);
         return NULL;
     }
@@ -838,7 +839,7 @@ char *memory_add_opts(GV_MemoryLayer *layer, const char *content,
     meta_list = memory_prepend_metadata(meta_list, "content", content);
     if (meta_list == NULL || meta_list->key == NULL) {
         metadata_free(meta_list);
-        free(memory_id);
+        gv_free(memory_id);
         pthread_mutex_unlock(&layer->mutex);
         return NULL;
     }
@@ -848,7 +849,7 @@ char *memory_add_opts(GV_MemoryLayer *layer, const char *content,
     size_t meta_count = 0;
     if (memory_metadata_list_to_arrays(meta_list, &keys, &values, &meta_count) != 0) {
         metadata_free(meta_list);
-        free(memory_id);
+        gv_free(memory_id);
         pthread_mutex_unlock(&layer->mutex);
         return NULL;
     }
@@ -857,12 +858,12 @@ char *memory_add_opts(GV_MemoryLayer *layer, const char *content,
     int result = db_add_vector_with_rich_metadata(
         layer->db, embedding, layer->db->dimension,
         keys, values, meta_count);
-    free(keys);
-    free(values);
+    gv_free(keys);
+    gv_free(values);
     
     if (result != 0) {
         metadata_free(meta_list);
-        free(memory_id);
+        gv_free(memory_id);
         pthread_mutex_unlock(&layer->mutex);
         return NULL;
     }
@@ -905,27 +906,27 @@ int memory_search(GV_MemoryLayer *layer, const float *query_embedding,
     if (fetch_k < 10) fetch_k = 10;
     if (fetch_k > 100) fetch_k = 100;
 
-    GV_SearchResult *search_results = (GV_SearchResult *)malloc(fetch_k * sizeof(GV_SearchResult));
+    GV_SearchResult *search_results = (GV_SearchResult *)gv_alloc(fetch_k * sizeof(GV_SearchResult));
     if (search_results == NULL) {
         return -1;
     }
 
     int count = db_search(layer->db, query_embedding, fetch_k, search_results, distance_type);
     if (count < 0) {
-        free(search_results);
+        gv_free(search_results);
         return -1;
     }
 
     /* Build importance contexts for reranking */
-    GV_ImportanceContext *contexts = (GV_ImportanceContext *)calloc(count, sizeof(GV_ImportanceContext));
-    GV_ImportanceResult *importance_results = (GV_ImportanceResult *)calloc(count, sizeof(GV_ImportanceResult));
-    GV_MemoryResult *temp_results = (GV_MemoryResult *)calloc(count, sizeof(GV_MemoryResult));
+    GV_ImportanceContext *contexts = (GV_ImportanceContext *)gv_calloc(count, sizeof(GV_ImportanceContext));
+    GV_ImportanceResult *importance_results = (GV_ImportanceResult *)gv_calloc(count, sizeof(GV_ImportanceResult));
+    GV_MemoryResult *temp_results = (GV_MemoryResult *)gv_calloc(count, sizeof(GV_MemoryResult));
 
     if (contexts == NULL || importance_results == NULL || temp_results == NULL) {
-        free(search_results);
-        free(contexts);
-        free(importance_results);
-        free(temp_results);
+        gv_free(search_results);
+        gv_free(contexts);
+        gv_free(importance_results);
+        gv_free(temp_results);
         return -1;
     }
 
@@ -959,7 +960,7 @@ int memory_search(GV_MemoryLayer *layer, const float *query_embedding,
             }
             contexts[i].semantic_similarity = similarity;
 
-            GV_MemoryMetadata *meta = (GV_MemoryMetadata *)malloc(sizeof(GV_MemoryMetadata));
+            GV_MemoryMetadata *meta = (GV_MemoryMetadata *)gv_alloc(sizeof(GV_MemoryMetadata));
             if (meta != NULL) {
                 parse_memory_metadata(vec->metadata, meta);
                 temp_results[i].metadata = meta;
@@ -971,7 +972,7 @@ int memory_search(GV_MemoryLayer *layer, const float *query_embedding,
     }
 
     /* Calculate importance and rerank */
-    size_t *indices = (size_t *)malloc(count * sizeof(size_t));
+    size_t *indices = (size_t *)gv_alloc(count * sizeof(size_t));
     if (indices != NULL) {
         GV_ImportanceConfig config = importance_config_default();
 
@@ -993,7 +994,7 @@ int memory_search(GV_MemoryLayer *layer, const float *query_embedding,
             results[i].relevance_score = 0.6f * temp_results[src_idx].relevance_score +
                                          0.4f * (float)importance_results[src_idx].final_score;
 
-            /* Clear the source so we don't double-free */
+            /* Clear the source so we don't double-gv_free */
             memset(&temp_results[src_idx], 0, sizeof(GV_MemoryResult));
         }
 
@@ -1005,7 +1006,7 @@ int memory_search(GV_MemoryLayer *layer, const float *query_embedding,
         }
 
         count = (int)out_count;
-        free(indices);
+        gv_free(indices);
     } else {
         /* Fallback: just copy first k results without reranking */
         size_t out_count = (size_t)count < k ? (size_t)count : k;
@@ -1018,10 +1019,10 @@ int memory_search(GV_MemoryLayer *layer, const float *query_embedding,
         count = (int)out_count;
     }
 
-    free(search_results);
-    free(contexts);
-    free(importance_results);
-    free(temp_results);
+    gv_free(search_results);
+    gv_free(contexts);
+    gv_free(importance_results);
+    gv_free(temp_results);
 
     return count;
 }
@@ -1046,7 +1047,7 @@ int memory_get(GV_MemoryLayer *layer, const char *memory_id,
     }
     result->memory_id = gv_dup_cstr(memory_id);
 
-    GV_MemoryMetadata *meta = (GV_MemoryMetadata *)malloc(sizeof(GV_MemoryMetadata));
+    GV_MemoryMetadata *meta = (GV_MemoryMetadata *)gv_alloc(sizeof(GV_MemoryMetadata));
     if (meta != NULL) {
         parse_memory_metadata(vec.metadata, meta);
         result->metadata = meta;
@@ -1097,21 +1098,21 @@ void memory_result_free(GV_MemoryResult *result) {
         return;
     }
     
-    free(result->memory_id);
-    free(result->content);
+    gv_free(result->memory_id);
+    gv_free(result->content);
     if (result->metadata != NULL) {
         memory_metadata_free(result->metadata);
-        free(result->metadata);
+        gv_free(result->metadata);
     }
 
     if (result->related != NULL) {
         for (size_t i = 0; i < result->related_count; i++) {
             if (result->related[i] != NULL) {
                 memory_metadata_free(result->related[i]);
-                free(result->related[i]);
+                gv_free(result->related[i]);
             }
         }
-        free(result->related);
+        gv_free(result->related);
     }
 }
 
@@ -1120,15 +1121,15 @@ void memory_metadata_free(GV_MemoryMetadata *metadata) {
         return;
     }
 
-    free(metadata->memory_id);
-    free(metadata->source);
-    free(metadata->extraction_metadata);
+    gv_free(metadata->memory_id);
+    gv_free(metadata->source);
+    gv_free(metadata->extraction_metadata);
 
     if (metadata->related_memory_ids != NULL) {
         for (size_t i = 0; i < metadata->related_count; i++) {
-            free(metadata->related_memory_ids[i]);
+            gv_free(metadata->related_memory_ids[i]);
         }
-        free(metadata->related_memory_ids);
+        gv_free(metadata->related_memory_ids);
     }
 
     /* Free typed links */
@@ -1136,7 +1137,7 @@ void memory_metadata_free(GV_MemoryMetadata *metadata) {
         for (size_t i = 0; i < metadata->link_count; i++) {
             memory_link_free(&metadata->links[i]);
         }
-        free(metadata->links);
+        gv_free(metadata->links);
     }
 }
 
@@ -1174,15 +1175,15 @@ char **memory_extract_from_conversation(GV_MemoryLayer *layer,
         return NULL;
     }
     
-    char **memory_ids = (char **)malloc(actual_count * sizeof(char *));
+    char **memory_ids = (char **)gv_alloc(actual_count * sizeof(char *));
     if (memory_ids == NULL) {
         *memory_count = 0;
         return NULL;
     }
     
-    *embeddings = (float *)malloc(actual_count * layer->db->dimension * sizeof(float));
+    *embeddings = (float *)gv_alloc(actual_count * layer->db->dimension * sizeof(float));
     if (*embeddings == NULL) {
-        free(memory_ids);
+        gv_free(memory_ids);
         *memory_count = 0;
         return NULL;
     }
@@ -1211,11 +1212,11 @@ char **memory_extract_from_conversation(GV_MemoryLayer *layer,
             for (size_t j = 0; j < entity_count; j++) {
                 graph_entity_free(&entities[j]);
             }
-            free(entities);
+            gv_free(entities);
             for (size_t j = 0; j < relationship_count; j++) {
                 graph_relationship_free(&relationships[j]);
             }
-            free(relationships);
+            gv_free(relationships);
         }
     }
     
@@ -1262,15 +1263,15 @@ char **memory_extract_from_text(GV_MemoryLayer *layer,
         return NULL;
     }
     
-    char **memory_ids = (char **)malloc(actual_count * sizeof(char *));
+    char **memory_ids = (char **)gv_alloc(actual_count * sizeof(char *));
     if (memory_ids == NULL) {
         *memory_count = 0;
         return NULL;
     }
     
-    *embeddings = (float *)malloc(actual_count * layer->db->dimension * sizeof(float));
+    *embeddings = (float *)gv_alloc(actual_count * layer->db->dimension * sizeof(float));
     if (*embeddings == NULL) {
-        free(memory_ids);
+        gv_free(memory_ids);
         *memory_count = 0;
         return NULL;
     }
@@ -1319,7 +1320,7 @@ int memory_consolidate(GV_MemoryLayer *layer, double threshold, int strategy) {
                                                     pairs[i].memory_id_2, actual_strategy);
         if (new_id != NULL) {
             consolidated++;
-            free(new_id);
+            gv_free(new_id);
         }
     }
     
@@ -1356,7 +1357,7 @@ int memory_search_filtered(GV_MemoryLayer *layer, const float *query_embedding,
         has_filter = 1;
     }
 
-    GV_SearchResult *search_results = (GV_SearchResult *)malloc(k * sizeof(GV_SearchResult));
+    GV_SearchResult *search_results = (GV_SearchResult *)gv_alloc(k * sizeof(GV_SearchResult));
     if (search_results == NULL) {
         return -1;
     }
@@ -1370,7 +1371,7 @@ int memory_search_filtered(GV_MemoryLayer *layer, const float *query_embedding,
     }
     
     if (count < 0) {
-        free(search_results);
+        gv_free(search_results);
         return -1;
     }
     
@@ -1406,7 +1407,7 @@ int memory_search_filtered(GV_MemoryLayer *layer, const float *query_embedding,
             results[valid_count].memory_id = gv_dup_cstr(mem_id);
         }
         
-        GV_MemoryMetadata *meta = (GV_MemoryMetadata *)malloc(sizeof(GV_MemoryMetadata));
+        GV_MemoryMetadata *meta = (GV_MemoryMetadata *)gv_alloc(sizeof(GV_MemoryMetadata));
         if (meta != NULL) {
             parse_memory_metadata(vec->metadata, meta);
             results[valid_count].metadata = meta;
@@ -1418,7 +1419,7 @@ int memory_search_filtered(GV_MemoryLayer *layer, const float *query_embedding,
         valid_count++;
     }
     
-    free(search_results);
+    gv_free(search_results);
     return (int)valid_count;
 }
 
@@ -1480,8 +1481,8 @@ int memory_update(GV_MemoryLayer *layer, const char *memory_id,
     }
 
     int result = db_update_vector_metadata(layer->db, vector_index, keys, values, meta_count);
-    free(keys);
-    free(values);
+    gv_free(keys);
+    gv_free(values);
     metadata_free(meta_list);
     return result;
 }
@@ -1550,7 +1551,7 @@ int memory_search_advanced(GV_MemoryLayer *layer, const float *query_embedding,
     if (fetch_k < 10) fetch_k = 10;
     if (fetch_k > 100) fetch_k = 100;
 
-    GV_SearchResult *search_results = (GV_SearchResult *)malloc(fetch_k * sizeof(GV_SearchResult));
+    GV_SearchResult *search_results = (GV_SearchResult *)gv_alloc(fetch_k * sizeof(GV_SearchResult));
     if (search_results == NULL) {
         return -1;
     }
@@ -1585,22 +1586,22 @@ int memory_search_advanced(GV_MemoryLayer *layer, const float *query_embedding,
     }
 
     if (count < 0) {
-        free(search_results);
+        gv_free(search_results);
         return -1;
     }
 
     /* Build importance contexts for reranking */
-    GV_ImportanceContext *contexts = (GV_ImportanceContext *)calloc(count, sizeof(GV_ImportanceContext));
-    GV_ImportanceResult *importance_results = (GV_ImportanceResult *)calloc(count, sizeof(GV_ImportanceResult));
-    GV_MemoryResult *temp_results = (GV_MemoryResult *)calloc(count, sizeof(GV_MemoryResult));
-    float *combined_scores = (float *)calloc(count, sizeof(float));
+    GV_ImportanceContext *contexts = (GV_ImportanceContext *)gv_calloc(count, sizeof(GV_ImportanceContext));
+    GV_ImportanceResult *importance_results = (GV_ImportanceResult *)gv_calloc(count, sizeof(GV_ImportanceResult));
+    GV_MemoryResult *temp_results = (GV_MemoryResult *)gv_calloc(count, sizeof(GV_MemoryResult));
+    float *combined_scores = (float *)gv_calloc(count, sizeof(float));
 
     if (contexts == NULL || importance_results == NULL || temp_results == NULL || combined_scores == NULL) {
-        free(search_results);
-        free(contexts);
-        free(importance_results);
-        free(temp_results);
-        free(combined_scores);
+        gv_free(search_results);
+        gv_free(contexts);
+        gv_free(importance_results);
+        gv_free(temp_results);
+        gv_free(combined_scores);
         return -1;
     }
 
@@ -1668,7 +1669,7 @@ int memory_search_advanced(GV_MemoryLayer *layer, const float *query_embedding,
         contexts[valid_count].creation_time = creation_time;
         contexts[valid_count].semantic_similarity = semantic_score;
 
-        GV_MemoryMetadata *meta = (GV_MemoryMetadata *)malloc(sizeof(GV_MemoryMetadata));
+        GV_MemoryMetadata *meta = (GV_MemoryMetadata *)gv_alloc(sizeof(GV_MemoryMetadata));
         if (meta != NULL) {
             memset(meta, 0, sizeof(GV_MemoryMetadata));
             parse_memory_metadata(vec->metadata, meta);
@@ -1686,13 +1687,13 @@ int memory_search_advanced(GV_MemoryLayer *layer, const float *query_embedding,
         valid_count++;
     }
 
-    free(search_results);
+    gv_free(search_results);
 
     if (valid_count == 0) {
-        free(contexts);
-        free(importance_results);
-        free(temp_results);
-        free(combined_scores);
+        gv_free(contexts);
+        gv_free(importance_results);
+        gv_free(temp_results);
+        gv_free(combined_scores);
         return 0;
     }
 
@@ -1712,7 +1713,7 @@ int memory_search_advanced(GV_MemoryLayer *layer, const float *query_embedding,
     }
 
     /* Sort by combined score (simple selection sort for small k) */
-    size_t *indices = (size_t *)malloc(valid_count * sizeof(size_t));
+    size_t *indices = (size_t *)gv_alloc(valid_count * sizeof(size_t));
     if (indices == NULL) {
         /* Fallback: return unsorted */
         size_t out_count = (size_t)valid_count < k ? (size_t)valid_count : k;
@@ -1723,10 +1724,10 @@ int memory_search_advanced(GV_MemoryLayer *layer, const float *query_embedding,
         for (size_t i = out_count; i < (size_t)valid_count; i++) {
             memory_result_free(&temp_results[i]);
         }
-        free(contexts);
-        free(importance_results);
-        free(temp_results);
-        free(combined_scores);
+        gv_free(contexts);
+        gv_free(importance_results);
+        gv_free(temp_results);
+        gv_free(combined_scores);
         return (int)out_count;
     }
 
@@ -1790,11 +1791,11 @@ int memory_search_advanced(GV_MemoryLayer *layer, const float *query_embedding,
         }
     }
 
-    free(indices);
-    free(contexts);
-    free(importance_results);
-    free(temp_results);
-    free(combined_scores);
+    gv_free(indices);
+    gv_free(contexts);
+    gv_free(importance_results);
+    gv_free(temp_results);
+    gv_free(combined_scores);
 
     return (int)out_count;
 }
@@ -1833,8 +1834,8 @@ void memory_link_free(GV_MemoryLink *link) {
     if (link == NULL) {
         return;
     }
-    free(link->target_memory_id);
-    free(link->reason);
+    gv_free(link->target_memory_id);
+    gv_free(link->reason);
     memset(link, 0, sizeof(GV_MemoryLink));
 }
 
@@ -1864,7 +1865,7 @@ static int add_link_to_memory(GV_MemoryLayer *layer, const char *memory_id,
             result.metadata->links[i].link_type = link_type;
             result.metadata->links[i].strength = strength;
             if (result.metadata->links[i].reason) {
-                free(result.metadata->links[i].reason);
+                gv_free(result.metadata->links[i].reason);
             }
             result.metadata->links[i].reason = reason ? gv_dup_cstr(reason) : NULL;
 
@@ -1876,7 +1877,7 @@ static int add_link_to_memory(GV_MemoryLayer *layer, const char *memory_id,
 
     /* Add new link */
     size_t new_count = result.metadata->link_count + 1;
-    GV_MemoryLink *new_links = (GV_MemoryLink *)realloc(
+    GV_MemoryLink *new_links = (GV_MemoryLink *)gv_realloc(
         result.metadata->links, new_count * sizeof(GV_MemoryLink));
     if (new_links == NULL) {
         memory_result_free(&result);
@@ -1957,8 +1958,8 @@ static int remove_link_from_memory(GV_MemoryLayer *layer, const char *memory_id,
         if (result.metadata->links[i].target_memory_id &&
             strcmp(result.metadata->links[i].target_memory_id, target_id) == 0) {
             /* Free the link data */
-            free(result.metadata->links[i].target_memory_id);
-            free(result.metadata->links[i].reason);
+            gv_free(result.metadata->links[i].target_memory_id);
+            gv_free(result.metadata->links[i].reason);
 
             /* Shift remaining links */
             for (size_t j = i; j < result.metadata->link_count - 1; j++) {

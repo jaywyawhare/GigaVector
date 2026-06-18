@@ -1,4 +1,5 @@
 #include <float.h>
+#include "core/memory.h"
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -64,7 +65,7 @@ static void generate_hyperplanes(float **hyperplanes, float *offsets,
     size_t total_planes = num_tables * num_hash_bits;
 
     for (size_t i = 0; i < total_planes; ++i) {
-        hyperplanes[i] = (float *)malloc(dimension * sizeof(float));
+        hyperplanes[i] = (float *)gv_alloc(dimension * sizeof(float));
         if (hyperplanes[i] != NULL) {
             for (size_t d = 0; d < dimension; ++d) {
                 hyperplanes[i][d] = gaussian_random(&state);
@@ -101,7 +102,7 @@ static int bucket_add(GV_LSHBucket *bucket, size_t index) {
     if (bucket->count >= bucket->capacity) {
         if (bucket->capacity > SIZE_MAX / 2 || (bucket->capacity > 0 && bucket->capacity * 2 > SIZE_MAX / sizeof(size_t))) return -1;
         size_t new_capacity = bucket->capacity == 0 ? 8 : bucket->capacity * 2;
-        size_t *new_indices = (size_t *)realloc(bucket->indices, new_capacity * sizeof(size_t));
+        size_t *new_indices = (size_t *)gv_realloc(bucket->indices, new_capacity * sizeof(size_t));
         if (new_indices == NULL) {
             return -1;
         }
@@ -117,7 +118,7 @@ void *lsh_create(size_t dimension, const GV_LSHConfig *config, GV_SoAStorage *so
         return NULL;
     }
 
-    GV_LSHIndex *index = (GV_LSHIndex *)calloc(1, sizeof(GV_LSHIndex));
+    GV_LSHIndex *index = (GV_LSHIndex *)gv_calloc(1, sizeof(GV_LSHIndex));
     if (index == NULL) {
         return NULL;
     }
@@ -139,29 +140,29 @@ void *lsh_create(size_t dimension, const GV_LSHConfig *config, GV_SoAStorage *so
     } else {
         index->storage = soa_storage_create(dimension, 1024);
         if (index->storage == NULL) {
-            free(index);
+            gv_free(index);
             return NULL;
         }
         index->owns_storage = 1;
     }
 
     size_t total_planes = index->config.num_tables * index->config.num_hash_bits;
-    index->hyperplanes = (float **)calloc(total_planes, sizeof(float *));
+    index->hyperplanes = (float **)gv_calloc(total_planes, sizeof(float *));
     if (index->hyperplanes == NULL) {
         if (index->owns_storage) {
             soa_storage_destroy(index->storage);
         }
-        free(index);
+        gv_free(index);
         return NULL;
     }
 
-    index->offsets = (float *)malloc(total_planes * sizeof(float));
+    index->offsets = (float *)gv_alloc(total_planes * sizeof(float));
     if (index->offsets == NULL) {
-        free(index->hyperplanes);
+        gv_free(index->hyperplanes);
         if (index->owns_storage) {
             soa_storage_destroy(index->storage);
         }
-        free(index);
+        gv_free(index);
         return NULL;
     }
 
@@ -170,37 +171,37 @@ void *lsh_create(size_t dimension, const GV_LSHConfig *config, GV_SoAStorage *so
                         index->config.num_hash_bits, dimension,
                         index->config.seed, index->effective_bucket_width);
 
-    index->tables = (GV_LSHBucket **)calloc(index->config.num_tables, sizeof(GV_LSHBucket *));
+    index->tables = (GV_LSHBucket **)gv_calloc(index->config.num_tables, sizeof(GV_LSHBucket *));
     if (index->tables == NULL) {
         for (size_t i = 0; i < total_planes; ++i) {
-            free(index->hyperplanes[i]);
+            gv_free(index->hyperplanes[i]);
         }
-        free(index->hyperplanes);
+        gv_free(index->hyperplanes);
         if (index->owns_storage) {
             soa_storage_destroy(index->storage);
         }
-        free(index);
+        gv_free(index);
         return NULL;
     }
 
     for (size_t t = 0; t < index->config.num_tables; ++t) {
-        index->tables[t] = (GV_LSHBucket *)calloc(num_buckets, sizeof(GV_LSHBucket));
+        index->tables[t] = (GV_LSHBucket *)gv_calloc(num_buckets, sizeof(GV_LSHBucket));
         if (index->tables[t] == NULL) {
             for (size_t i = 0; i < t; ++i) {
                 for (size_t b = 0; b < num_buckets; ++b) {
-                    free(index->tables[i][b].indices);
+                    gv_free(index->tables[i][b].indices);
                 }
-                free(index->tables[i]);
+                gv_free(index->tables[i]);
             }
-            free(index->tables);
+            gv_free(index->tables);
             for (size_t i = 0; i < total_planes; ++i) {
-                free(index->hyperplanes[i]);
+                gv_free(index->hyperplanes[i]);
             }
-            free(index->hyperplanes);
+            gv_free(index->hyperplanes);
             if (index->owns_storage) {
                 soa_storage_destroy(index->storage);
             }
-            free(index);
+            gv_free(index);
             return NULL;
         }
     }
@@ -311,14 +312,14 @@ int lsh_search(void *index, const GV_Vector *query, size_t k,
         return 0;
     }
 
-    int *seen = (int *)calloc(storage_count, sizeof(int));
+    int *seen = (int *)gv_calloc(storage_count, sizeof(int));
     if (seen == NULL) {
         return -1;
     }
 
-    size_t *candidates = (size_t *)malloc(storage_count * sizeof(size_t));
+    size_t *candidates = (size_t *)gv_alloc(storage_count * sizeof(size_t));
     if (candidates == NULL) {
-        free(seen);
+        gv_free(seen);
         return -1;
     }
     size_t candidate_count = 0;
@@ -341,16 +342,16 @@ int lsh_search(void *index, const GV_Vector *query, size_t k,
         }
     }
 
-    free(seen);
+    gv_free(seen);
 
     if (candidate_count == 0) {
-        free(candidates);
+        gv_free(candidates);
         return 0;
     }
 
-    GV_LSHCandidate *heap = (GV_LSHCandidate *)malloc(k * sizeof(GV_LSHCandidate));
+    GV_LSHCandidate *heap = (GV_LSHCandidate *)gv_alloc(k * sizeof(GV_LSHCandidate));
     if (heap == NULL) {
-        free(candidates);
+        gv_free(candidates);
         return -1;
     }
     size_t heap_size = 0;
@@ -381,15 +382,15 @@ int lsh_search(void *index, const GV_Vector *query, size_t k,
         heap_push(heap, &heap_size, k, &temp_vec, dist, vec_idx);
     }
 
-    free(candidates);
+    gv_free(candidates);
 
-    GV_LSHCandidate *sorted = (GV_LSHCandidate *)malloc(heap_size * sizeof(GV_LSHCandidate));
+    GV_LSHCandidate *sorted = (GV_LSHCandidate *)gv_alloc(heap_size * sizeof(GV_LSHCandidate));
     if (sorted == NULL) {
-        free(heap);
+        gv_free(heap);
         return -1;
     }
     memcpy(sorted, heap, heap_size * sizeof(GV_LSHCandidate));
-    free(heap);
+    gv_free(heap);
 
     qsort(sorted, heap_size, sizeof(GV_LSHCandidate), compare_candidates);
 
@@ -405,7 +406,7 @@ int lsh_search(void *index, const GV_Vector *query, size_t k,
                     vector_destroy((GV_Vector *)results[j].vector);
                 }
             }
-            free(sorted);
+            gv_free(sorted);
             return -1;
         }
 
@@ -419,7 +420,7 @@ int lsh_search(void *index, const GV_Vector *query, size_t k,
         results[i].id = sidx;
     }
 
-    free(sorted);
+    gv_free(sorted);
     return (int)heap_size;
 }
 
@@ -441,14 +442,14 @@ int lsh_range_search(void *index, const GV_Vector *query, float radius,
         return 0;
     }
 
-    int *seen = (int *)calloc(storage_count, sizeof(int));
+    int *seen = (int *)gv_calloc(storage_count, sizeof(int));
     if (seen == NULL) {
         return -1;
     }
 
-    size_t *candidates = (size_t *)malloc(storage_count * sizeof(size_t));
+    size_t *candidates = (size_t *)gv_alloc(storage_count * sizeof(size_t));
     if (candidates == NULL) {
-        free(seen);
+        gv_free(seen);
         return -1;
     }
     size_t candidate_count = 0;
@@ -471,10 +472,10 @@ int lsh_range_search(void *index, const GV_Vector *query, float radius,
         }
     }
 
-    free(seen);
+    gv_free(seen);
 
     if (candidate_count == 0) {
-        free(candidates);
+        gv_free(candidates);
         return 0;
     }
 
@@ -509,7 +510,7 @@ int lsh_range_search(void *index, const GV_Vector *query, float radius,
                     vector_destroy((GV_Vector *)results[j].vector);
                 }
             }
-            free(candidates);
+            gv_free(candidates);
             return -1;
         }
 
@@ -523,7 +524,7 @@ int lsh_range_search(void *index, const GV_Vector *query, float radius,
         result_count++;
     }
 
-    free(candidates);
+    gv_free(candidates);
 
     /* Sort GV_SearchResult by distance(not using compare_candidates which is for GV_LSHCandidate) */
     for (size_t i = 0; i + 1 < (size_t)result_count; ++i) {
@@ -552,29 +553,29 @@ void lsh_destroy(void *index) {
         for (size_t t = 0; t < lsh->config.num_tables; ++t) {
             if (lsh->tables[t] != NULL) {
                 for (size_t b = 0; b < lsh->num_buckets; ++b) {
-                    free(lsh->tables[t][b].indices);
+                    gv_free(lsh->tables[t][b].indices);
                 }
-                free(lsh->tables[t]);
+                gv_free(lsh->tables[t]);
             }
         }
-        free(lsh->tables);
+        gv_free(lsh->tables);
     }
 
     if (lsh->hyperplanes != NULL) {
         size_t total_planes = lsh->config.num_tables * lsh->config.num_hash_bits;
         for (size_t i = 0; i < total_planes; ++i) {
-            free(lsh->hyperplanes[i]);
+            gv_free(lsh->hyperplanes[i]);
         }
-        free(lsh->hyperplanes);
+        gv_free(lsh->hyperplanes);
     }
 
-    free(lsh->offsets);
+    gv_free(lsh->offsets);
 
     if (lsh->storage != NULL && lsh->owns_storage) {
         soa_storage_destroy(lsh->storage);
     }
 
-    free(lsh);
+    gv_free(lsh);
 }
 
 size_t lsh_count(const void *index) {
@@ -677,26 +678,26 @@ static int lsh_read_metadata_into(FILE *in, GV_Metadata **metadata_out) {
             return -1;
         }
         if (read_str(in, &key, key_len) != 0) {
-            free(key);
+            gv_free(key);
             metadata_free(head);
             return -1;
         }
 
         if (read_u32(in, &val_len) != 0) {
-            free(key);
+            gv_free(key);
             metadata_free(head);
             return -1;
         }
         if (read_str(in, &value, val_len) != 0) {
-            free(key);
+            gv_free(key);
             metadata_free(head);
             return -1;
         }
 
-        GV_Metadata *new_meta = (GV_Metadata *)malloc(sizeof(GV_Metadata));
+        GV_Metadata *new_meta = (GV_Metadata *)gv_alloc(sizeof(GV_Metadata));
         if (new_meta == NULL) {
-            free(key);
-            free(value);
+            gv_free(key);
+            gv_free(value);
             metadata_free(head);
             return -1;
         }
@@ -825,7 +826,7 @@ int lsh_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version) {
 
     for (size_t i = 0; i < total_planes; ++i) {
         if (lsh->hyperplanes[i] == NULL) {
-            lsh->hyperplanes[i] = (float *)malloc(dimension * sizeof(float));
+            lsh->hyperplanes[i] = (float *)gv_alloc(dimension * sizeof(float));
             if (lsh->hyperplanes[i] == NULL) {
                 lsh_destroy(lsh);
                 return -1;
@@ -844,35 +845,35 @@ int lsh_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version) {
     }
 
     for (size_t i = 0; i < vector_count; ++i) {
-        float *data = (float *)malloc(dimension * sizeof(float));
+        float *data = (float *)gv_alloc(dimension * sizeof(float));
         if (data == NULL) {
             lsh_destroy(lsh);
             return -1;
         }
 
         if (read_floats(in, data, dimension) != 0) {
-            free(data);
+            gv_free(data);
             lsh_destroy(lsh);
             return -1;
         }
 
         GV_Metadata *metadata = NULL;
         if (lsh_read_metadata_into(in, &metadata) != 0) {
-            free(data);
+            gv_free(data);
             lsh_destroy(lsh);
             return -1;
         }
 
         uint32_t deleted_flag = 0;
         if (read_u32(in, &deleted_flag) != 0) {
-            free(data);
+            gv_free(data);
             metadata_free(metadata);
             lsh_destroy(lsh);
             return -1;
         }
 
         size_t vec_idx = soa_storage_add(lsh->storage, data, metadata);
-        free(data);
+        gv_free(data);
 
         if (vec_idx == (size_t)-1) {
             lsh_destroy(lsh);

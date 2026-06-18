@@ -9,6 +9,7 @@
  */
 
 #include <stdlib.h>
+#include "core/memory.h"
 #include <string.h>
 #include <stdio.h>
 #include <time.h>
@@ -121,7 +122,7 @@ static size_t ae_curl_write_cb(void *contents, size_t size, size_t nmemb,
         if (new_cap > AE_MAX_RESPONSE_SIZE) {
             new_cap = AE_MAX_RESPONSE_SIZE;
         }
-        char *tmp = (char *)realloc(buf->data, new_cap);
+        char *tmp = (char *)gv_realloc(buf->data, new_cap);
         if (!tmp) {
             return 0;
         }
@@ -138,14 +139,14 @@ static size_t ae_curl_write_cb(void *contents, size_t size, size_t nmemb,
 static void ae_response_buf_init(AE_ResponseBuf *buf) {
     buf->capacity = 4096;
     buf->size     = 0;
-    buf->data     = (char *)malloc(buf->capacity);
+    buf->data     = (char *)gv_alloc(buf->capacity);
     if (buf->data) {
         buf->data[0] = '\0';
     }
 }
 
 static void ae_response_buf_free(AE_ResponseBuf *buf) {
-    free(buf->data);
+    gv_free(buf->data);
     buf->data     = NULL;
     buf->size     = 0;
     buf->capacity = 0;
@@ -153,19 +154,19 @@ static void ae_response_buf_free(AE_ResponseBuf *buf) {
 #endif /* HAVE_CURL */
 
 static AE_Cache *ae_cache_create(size_t max_entries) {
-    AE_Cache *c = (AE_Cache *)calloc(1, sizeof(AE_Cache));
+    AE_Cache *c = (AE_Cache *)gv_calloc(1, sizeof(AE_Cache));
     if (!c) return NULL;
 
     c->bucket_count = AE_CACHE_BUCKET_COUNT;
     c->max_entries  = max_entries;
-    c->buckets = (AE_CacheEntry **)calloc(c->bucket_count, sizeof(AE_CacheEntry *));
+    c->buckets = (AE_CacheEntry **)gv_calloc(c->bucket_count, sizeof(AE_CacheEntry *));
     if (!c->buckets) {
-        free(c);
+        gv_free(c);
         return NULL;
     }
     if (pthread_mutex_init(&c->mutex, NULL) != 0) {
-        free(c->buckets);
-        free(c);
+        gv_free(c->buckets);
+        gv_free(c);
         return NULL;
     }
     return c;
@@ -212,9 +213,9 @@ static void ae_cache_evict_lru(AE_Cache *c) {
     }
 
     ae_lru_remove(c, victim);
-    free(victim->text);
-    free(victim->embedding);
-    free(victim);
+    gv_free(victim->text);
+    gv_free(victim->embedding);
+    gv_free(victim);
     c->count--;
 }
 
@@ -236,7 +237,7 @@ static int ae_cache_get(AE_Cache *c, const char *text,
             ae_lru_push_front(c, e);
 
             *out_dim = e->dimension;
-            *out_vec = (float *)malloc(e->dimension * sizeof(float));
+            *out_vec = (float *)gv_alloc(e->dimension * sizeof(float));
             if (!*out_vec) {
                 pthread_mutex_unlock(&c->mutex);
                 return -1;
@@ -267,7 +268,7 @@ static int ae_cache_put(AE_Cache *c, const char *text,
     while (e) {
         if (strcmp(e->text, text) == 0) {
             if (e->dimension != dim) {
-                float *tmp = (float *)realloc(e->embedding, dim * sizeof(float));
+                float *tmp = (float *)gv_realloc(e->embedding, dim * sizeof(float));
                 if (!tmp) {
                     pthread_mutex_unlock(&c->mutex);
                     return -1;
@@ -288,21 +289,21 @@ static int ae_cache_put(AE_Cache *c, const char *text,
         ae_cache_evict_lru(c);
     }
 
-    e = (AE_CacheEntry *)calloc(1, sizeof(AE_CacheEntry));
+    e = (AE_CacheEntry *)gv_calloc(1, sizeof(AE_CacheEntry));
     if (!e) {
         pthread_mutex_unlock(&c->mutex);
         return -1;
     }
     e->text = gv_dup_cstr(text);
     if (!e->text) {
-        free(e);
+        gv_free(e);
         pthread_mutex_unlock(&c->mutex);
         return -1;
     }
-    e->embedding = (float *)malloc(dim * sizeof(float));
+    e->embedding = (float *)gv_alloc(dim * sizeof(float));
     if (!e->embedding) {
-        free(e->text);
-        free(e);
+        gv_free(e->text);
+        gv_free(e);
         pthread_mutex_unlock(&c->mutex);
         return -1;
     }
@@ -327,9 +328,9 @@ static void ae_cache_clear(AE_Cache *c) {
         AE_CacheEntry *e = c->buckets[i];
         while (e) {
             AE_CacheEntry *next = e->hash_next;
-            free(e->text);
-            free(e->embedding);
-            free(e);
+            gv_free(e->text);
+            gv_free(e->embedding);
+            gv_free(e);
             e = next;
         }
         c->buckets[i] = NULL;
@@ -343,9 +344,9 @@ static void ae_cache_clear(AE_Cache *c) {
 static void ae_cache_destroy(AE_Cache *c) {
     if (!c) return;
     ae_cache_clear(c);
-    free(c->buckets);
+    gv_free(c->buckets);
     pthread_mutex_destroy(&c->mutex);
-    free(c);
+    gv_free(c);
 }
 
 #ifdef HAVE_CURL
@@ -382,17 +383,17 @@ static size_t ae_json_escape(char *dst, size_t dst_cap, const char *src) {
 
 /**
  * Build a single-text OpenAI-compatible JSON request body.
- * Caller must free the returned string.
+ * Caller must gv_free the returned string.
  */
 static char *ae_build_openai_request(const char *text, const char *model,
                                      size_t dimension) {
     size_t text_len = strlen(text);
     size_t alloc    = text_len * 2 + 512;
-    char *json = (char *)malloc(alloc);
+    char *json = (char *)gv_alloc(alloc);
     if (!json) return NULL;
 
-    char *escaped = (char *)malloc(text_len * 2 + 1);
-    if (!escaped) { free(json); return NULL; }
+    char *escaped = (char *)gv_alloc(text_len * 2 + 1);
+    if (!escaped) { gv_free(json); return NULL; }
     ae_json_escape(escaped, text_len * 2 + 1, text);
 
     if (dimension > 0) {
@@ -404,23 +405,23 @@ static char *ae_build_openai_request(const char *text, const char *model,
                  "{\"input\":\"%s\",\"model\":\"%s\"}",
                  escaped, model);
     }
-    free(escaped);
+    gv_free(escaped);
     return json;
 }
 
 /**
  * Build a single-text Google embedContent JSON request body.
- * Caller must free the returned string.
+ * Caller must gv_free the returned string.
  */
 static char *ae_build_google_request(const char *text, const char *model,
                                      size_t dimension) {
     size_t text_len = strlen(text);
     size_t alloc    = text_len * 2 + 512;
-    char *json = (char *)malloc(alloc);
+    char *json = (char *)gv_alloc(alloc);
     if (!json) return NULL;
 
-    char *escaped = (char *)malloc(text_len * 2 + 1);
-    if (!escaped) { free(json); return NULL; }
+    char *escaped = (char *)gv_alloc(text_len * 2 + 1);
+    if (!escaped) { gv_free(json); return NULL; }
     ae_json_escape(escaped, text_len * 2 + 1, text);
 
     const char *prefix = (strncmp(model, "models/", 7) != 0) ? "models/" : "";
@@ -437,13 +438,13 @@ static char *ae_build_google_request(const char *text, const char *model,
                  "\"content\":{\"parts\":[{\"text\":\"%s\"}]}}",
                  prefix, model, escaped);
     }
-    free(escaped);
+    gv_free(escaped);
     return json;
 }
 
 /**
  * Build a batch OpenAI-compatible JSON request body.
- * Caller must free the returned string.
+ * Caller must gv_free the returned string.
  */
 static char *ae_build_openai_batch_request(const char *const *texts,
                                            size_t count,
@@ -453,7 +454,7 @@ static char *ae_build_openai_batch_request(const char *const *texts,
     for (size_t i = 0; i < count; i++) {
         alloc += strlen(texts[i]) * 2 + 16;
     }
-    char *json = (char *)malloc(alloc);
+    char *json = (char *)gv_alloc(alloc);
     if (!json) return NULL;
 
     size_t pos = 0;
@@ -477,7 +478,7 @@ static char *ae_build_openai_batch_request(const char *const *texts,
 
 /**
  * Build a batch Google batchEmbedContents JSON request body.
- * Caller must free the returned string.
+ * Caller must gv_free the returned string.
  */
 static char *ae_build_google_batch_request(const char *const *texts,
                                            size_t count,
@@ -487,7 +488,7 @@ static char *ae_build_google_batch_request(const char *const *texts,
     for (size_t i = 0; i < count; i++) {
         alloc += strlen(texts[i]) * 2 + 256;
     }
-    char *json = (char *)malloc(alloc);
+    char *json = (char *)gv_alloc(alloc);
     if (!json) return NULL;
 
     const char *prefix = (strncmp(model, "models/", 7) != 0) ? "models/" : "";
@@ -518,33 +519,33 @@ static char *ae_build_google_batch_request(const char *const *texts,
 
 /**
  * Build a single-text HuggingFace TEI JSON request body.
- * Caller must free the returned string.
+ * Caller must gv_free the returned string.
  */
 static char *ae_build_hf_request(const char *text) {
     size_t text_len = strlen(text);
     size_t alloc    = text_len * 2 + 128;
-    char *json = (char *)malloc(alloc);
+    char *json = (char *)gv_alloc(alloc);
     if (!json) return NULL;
 
-    char *escaped = (char *)malloc(text_len * 2 + 1);
-    if (!escaped) { free(json); return NULL; }
+    char *escaped = (char *)gv_alloc(text_len * 2 + 1);
+    if (!escaped) { gv_free(json); return NULL; }
     ae_json_escape(escaped, text_len * 2 + 1, text);
 
     snprintf(json, alloc, "{\"input\":\"%s\"}", escaped);
-    free(escaped);
+    gv_free(escaped);
     return json;
 }
 
 /**
  * Build a batch HuggingFace TEI JSON request body.
- * Caller must free the returned string.
+ * Caller must gv_free the returned string.
  */
 static char *ae_build_hf_batch_request(const char *const *texts, size_t count) {
     size_t alloc = 128;
     for (size_t i = 0; i < count; i++) {
         alloc += strlen(texts[i]) * 2 + 16;
     }
-    char *json = (char *)malloc(alloc);
+    char *json = (char *)gv_alloc(alloc);
     if (!json) return NULL;
 
     size_t pos = 0;
@@ -561,7 +562,7 @@ static char *ae_build_hf_batch_request(const char *const *texts, size_t count) {
 
 /**
  * Parse an OpenAI /v1/embeddings response to extract the first embedding
- * vector.  Returns 0 on success, -1 on error.  Caller must free *out_vec.
+ * vector.  Returns 0 on success, -1 on error.  Caller must gv_free *out_vec.
  */
 static int ae_parse_openai_single(const char *body, float **out_vec,
                                   size_t *out_dim) {
@@ -581,7 +582,7 @@ static int ae_parse_openai_single(const char *body, float **out_vec,
         return -1;
     }
 
-    float *vec = (float *)malloc(dim * sizeof(float));
+    float *vec = (float *)gv_alloc(dim * sizeof(float));
     if (!vec) {
         json_free(root);
         return -1;
@@ -634,7 +635,7 @@ static int ae_parse_openai_batch(const char *body, size_t count,
         }
 
         size_t dim = json_array_length(emb);
-        float *vec = (float *)malloc(dim * sizeof(float));
+        float *vec = (float *)gv_alloc(dim * sizeof(float));
         if (!vec) { out_vecs[i] = NULL; out_dims[i] = 0; continue; }
 
         for (size_t j = 0; j < dim; j++) {
@@ -671,7 +672,7 @@ static int ae_parse_google_single(const char *body, float **out_vec,
     size_t dim = json_array_length(values);
     if (dim == 0) { json_free(root); return -1; }
 
-    float *vec = (float *)malloc(dim * sizeof(float));
+    float *vec = (float *)gv_alloc(dim * sizeof(float));
     if (!vec) { json_free(root); return -1; }
 
     for (size_t i = 0; i < dim; i++) {
@@ -715,7 +716,7 @@ static int ae_parse_google_batch(const char *body, size_t count,
         }
 
         size_t dim = json_array_length(vals);
-        float *vec = (float *)malloc(dim * sizeof(float));
+        float *vec = (float *)gv_alloc(dim * sizeof(float));
         if (!vec) { out_vecs[i] = NULL; out_dims[i] = 0; continue; }
 
         for (size_t j = 0; j < dim; j++) {
@@ -817,7 +818,7 @@ static struct curl_slist *ae_build_headers(const GV_AutoEmbedder *em) {
 
 /**
  * Perform a POST request and return the response body.
- * On success, buf->data is NUL-terminated.  Caller must free buf.
+ * On success, buf->data is NUL-terminated.  Caller must gv_free buf.
  * Returns 0 on success, -1 on network/curl error.
  */
 static int ae_http_post(GV_AutoEmbedder *em, const char *url,
@@ -864,7 +865,7 @@ static double ae_time_ms(void) {
 
 /**
  * Internal: perform a single-text embedding API call.
- * Returns 0 on success (-1 on error).  Caller must free *out_vec.
+ * Returns 0 on success (-1 on error).  Caller must gv_free *out_vec.
  */
 static int ae_embed_single_http(GV_AutoEmbedder *em, const char *text,
                                 float **out_vec, size_t *out_dim) {
@@ -894,7 +895,7 @@ static int ae_embed_single_http(GV_AutoEmbedder *em, const char *text,
 
     AE_ResponseBuf resp;
     int rc = ae_http_post(em, url, req_body, &resp);
-    free(req_body);
+    gv_free(req_body);
     if (rc != 0) return -1;
 
     int parse_rc = -1;
@@ -951,7 +952,7 @@ static int ae_embed_batch_http(GV_AutoEmbedder *em, const char *const *texts,
 
     AE_ResponseBuf resp;
     int rc = ae_http_post(em, url, req_body, &resp);
-    free(req_body);
+    gv_free(req_body);
     if (rc != 0) return -1;
 
     int parsed = -1;
@@ -988,7 +989,7 @@ void auto_embed_config_init(GV_AutoEmbedConfig *config) {
 GV_AutoEmbedder *auto_embed_create(const GV_AutoEmbedConfig *config) {
     if (!config) return NULL;
 
-    GV_AutoEmbedder *em = (GV_AutoEmbedder *)calloc(1, sizeof(GV_AutoEmbedder));
+    GV_AutoEmbedder *em = (GV_AutoEmbedder *)gv_calloc(1, sizeof(GV_AutoEmbedder));
     if (!em) return NULL;
 
     em->provider        = config->provider;
@@ -1010,10 +1011,10 @@ GV_AutoEmbedder *auto_embed_create(const GV_AutoEmbedConfig *config) {
 
     if (pthread_mutex_init(&em->mutex, NULL) != 0) {
         ae_cache_destroy(em->cache);
-        free(em->api_key);
-        free(em->model_name);
-        free(em->base_url);
-        free(em);
+        gv_free(em->api_key);
+        gv_free(em->model_name);
+        gv_free(em->base_url);
+        gv_free(em);
         return NULL;
     }
 
@@ -1022,10 +1023,10 @@ GV_AutoEmbedder *auto_embed_create(const GV_AutoEmbedConfig *config) {
     if (!em->curl) {
         pthread_mutex_destroy(&em->mutex);
         ae_cache_destroy(em->cache);
-        free(em->api_key);
-        free(em->model_name);
-        free(em->base_url);
-        free(em);
+        gv_free(em->api_key);
+        gv_free(em->model_name);
+        gv_free(em->base_url);
+        gv_free(em);
         return NULL;
     }
 #endif
@@ -1044,10 +1045,10 @@ void auto_embed_destroy(GV_AutoEmbedder *embedder) {
 
     ae_cache_destroy(embedder->cache);
     pthread_mutex_destroy(&embedder->mutex);
-    free(embedder->api_key);
-    free(embedder->model_name);
-    free(embedder->base_url);
-    free(embedder);
+    gv_free(embedder->api_key);
+    gv_free(embedder->model_name);
+    gv_free(embedder->base_url);
+    gv_free(embedder);
 }
 
 float *auto_embed_text(GV_AutoEmbedder *embedder, const char *text,
@@ -1058,7 +1059,7 @@ float *auto_embed_text(GV_AutoEmbedder *embedder, const char *text,
     char *truncated  = NULL;
     const char *input = text;
     if (text_len > embedder->max_text_length) {
-        truncated = (char *)malloc(embedder->max_text_length + 1);
+        truncated = (char *)gv_alloc(embedder->max_text_length + 1);
         if (!truncated) return NULL;
         memcpy(truncated, text, embedder->max_text_length);
         truncated[embedder->max_text_length] = '\0';
@@ -1075,7 +1076,7 @@ float *auto_embed_text(GV_AutoEmbedder *embedder, const char *text,
             embedder->total_embeddings++;
             pthread_mutex_unlock(&embedder->mutex);
             *out_dimension = dim;
-            free(truncated);
+            gv_free(truncated);
             return vec;
         }
     }
@@ -1090,7 +1091,7 @@ float *auto_embed_text(GV_AutoEmbedder *embedder, const char *text,
         embedder->api_errors++;
         if (embedder->cache) embedder->cache_misses++;
         pthread_mutex_unlock(&embedder->mutex);
-        free(truncated);
+        gv_free(truncated);
         return NULL;
     }
     embedder->total_embeddings++;
@@ -1105,7 +1106,7 @@ float *auto_embed_text(GV_AutoEmbedder *embedder, const char *text,
     }
 
     *out_dimension = dim;
-    free(truncated);
+    gv_free(truncated);
     return vec;
 }
 
@@ -1126,7 +1127,7 @@ int auto_embed_add_text(GV_AutoEmbedder *embedder, GV_Database *db,
         rc = db_add_vector(db, vec, dim);
     }
 
-    free(vec);
+    gv_free(vec);
     return rc;
 }
 
@@ -1140,14 +1141,14 @@ int auto_embed_search_text(GV_AutoEmbedder *embedder, const GV_Database *db,
     float *vec = auto_embed_text(embedder, text, &dim);
     if (!vec) return -1;
 
-    GV_SearchResult *results = (GV_SearchResult *)calloc(k, sizeof(GV_SearchResult));
-    if (!results) { free(vec); return -1; }
+    GV_SearchResult *results = (GV_SearchResult *)gv_calloc(k, sizeof(GV_SearchResult));
+    if (!results) { gv_free(vec); return -1; }
 
     int found = db_search(db, vec, k, results, (GV_DistanceType)distance_type);
-    free(vec);
+    gv_free(vec);
 
     if (found < 0) {
-        free(results);
+        gv_free(results);
         return -1;
     }
 
@@ -1181,7 +1182,7 @@ int auto_embed_search_text(GV_AutoEmbedder *embedder, const GV_Database *db,
     }
 
     *out_count = n;
-    free(results);
+    gv_free(results);
     return 0;
 }
 
@@ -1199,17 +1200,17 @@ int auto_embed_add_texts(GV_AutoEmbedder *embedder, GV_Database *db,
         size_t chunk = count - offset;
         if (chunk > batch_sz) chunk = batch_sz;
 
-        float **vecs = (float **)calloc(chunk, sizeof(float *));
-        size_t *dims = (size_t *)calloc(chunk, sizeof(size_t));
+        float **vecs = (float **)gv_calloc(chunk, sizeof(float *));
+        size_t *dims = (size_t *)gv_calloc(chunk, sizeof(size_t));
         if (!vecs || !dims) {
-            free(vecs); free(dims);
+            gv_free(vecs); gv_free(dims);
             return total_added > 0 ? total_added : -1;
         }
 
-        size_t *need_api = (size_t *)malloc(chunk * sizeof(size_t));
+        size_t *need_api = (size_t *)gv_alloc(chunk * sizeof(size_t));
         size_t  need_count = 0;
         if (!need_api) {
-            free(vecs); free(dims);
+            gv_free(vecs); gv_free(dims);
             return total_added > 0 ? total_added : -1;
         }
 
@@ -1229,22 +1230,22 @@ int auto_embed_add_texts(GV_AutoEmbedder *embedder, GV_Database *db,
         }
 
         if (need_count > 0) {
-            const char **sub_texts = (const char **)malloc(need_count * sizeof(char *));
+            const char **sub_texts = (const char **)gv_alloc(need_count * sizeof(char *));
             if (!sub_texts) {
-                for (size_t i = 0; i < chunk; i++) free(vecs[i]);
-                free(vecs); free(dims); free(need_api);
+                for (size_t i = 0; i < chunk; i++) gv_free(vecs[i]);
+                gv_free(vecs); gv_free(dims); gv_free(need_api);
                 return total_added > 0 ? total_added : -1;
             }
             for (size_t i = 0; i < need_count; i++) {
                 sub_texts[i] = texts[offset + need_api[i]];
             }
 
-            float **api_vecs = (float **)calloc(need_count, sizeof(float *));
-            size_t *api_dims = (size_t *)calloc(need_count, sizeof(size_t));
+            float **api_vecs = (float **)gv_calloc(need_count, sizeof(float *));
+            size_t *api_dims = (size_t *)gv_calloc(need_count, sizeof(size_t));
             if (!api_vecs || !api_dims) {
-                free(sub_texts); free(api_vecs); free(api_dims);
-                for (size_t i = 0; i < chunk; i++) free(vecs[i]);
-                free(vecs); free(dims); free(need_api);
+                gv_free(sub_texts); gv_free(api_vecs); gv_free(api_dims);
+                for (size_t i = 0; i < chunk; i++) gv_free(vecs[i]);
+                gv_free(vecs); gv_free(dims); gv_free(need_api);
                 return total_added > 0 ? total_added : -1;
             }
 
@@ -1285,12 +1286,12 @@ int auto_embed_add_texts(GV_AutoEmbedder *embedder, GV_Database *db,
                 }
             }
 
-            free(sub_texts);
-            free(api_vecs);
-            free(api_dims);
+            gv_free(sub_texts);
+            gv_free(api_vecs);
+            gv_free(api_dims);
         }
 
-        free(need_api);
+        gv_free(need_api);
 
         for (size_t i = 0; i < chunk; i++) {
             if (!vecs[i]) continue;
@@ -1305,11 +1306,11 @@ int auto_embed_add_texts(GV_AutoEmbedder *embedder, GV_Database *db,
                 rc = db_add_vector(db, vecs[i], dims[i]);
             }
             if (rc == 0) total_added++;
-            free(vecs[i]);
+            gv_free(vecs[i]);
         }
 
-        free(vecs);
-        free(dims);
+        gv_free(vecs);
+        gv_free(dims);
     }
 
     return total_added;

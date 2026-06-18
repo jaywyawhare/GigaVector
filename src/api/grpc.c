@@ -8,6 +8,7 @@
  */
 
 #include "api/grpc.h"
+#include "core/memory.h"
 #include "storage/database.h"
 
 #ifdef _WIN32
@@ -69,7 +70,7 @@ void grpc_config_init(GV_GrpcConfig *config) {
 GV_GrpcServer *grpc_create(GV_Database *db, const GV_GrpcConfig *config) {
     GV_GrpcServer *server;
     if (!db) return NULL;
-    server = calloc(1, sizeof(*server));
+    server = gv_calloc(1, sizeof(*server));
     if (!server) return NULL;
     server->db = db;
     server->config = config ? *config : DEFAULT_GRPC_CONFIG;
@@ -97,7 +98,7 @@ int grpc_stop(GV_GrpcServer *server) {
 
 void grpc_destroy(GV_GrpcServer *server) {
     if (!server) return;
-    free(server);
+    gv_free(server);
 }
 
 int grpc_is_running(const GV_GrpcServer *server) {
@@ -147,7 +148,7 @@ int grpc_decode_search_request(const uint8_t *buf, size_t len,
     *k = (size_t)read_u32_be(buf + 4);
     *distance_type = (int)read_u32_be(buf + 8);
     if (len < 12 + (*dimension) * sizeof(float)) return GV_GRPC_ERROR_CONFIG;
-    *query = malloc((*dimension) * sizeof(float));
+    *query = gv_alloc((*dimension) * sizeof(float));
     if (!*query) return GV_GRPC_ERROR_MEMORY;
     for (size_t i = 0; i < *dimension; i++) (*query)[i] = read_float_be(buf + 12 + i * 4);
     return GV_GRPC_OK;
@@ -210,8 +211,8 @@ int grpc_client_search(const char *host, uint16_t port,
 
 void grpc_search_response_free(GV_GrpcSearchResponse *resp) {
     if (!resp) return;
-    free(resp->indices);
-    free(resp->distances);
+    gv_free(resp->indices);
+    gv_free(resp->distances);
     resp->indices = NULL;
     resp->distances = NULL;
     resp->count = 0;
@@ -230,7 +231,7 @@ int grpc_decode_frame(const uint8_t *data, size_t len, size_t max_bytes, GV_Grpc
     msg->request_id = read_u32_be(data + 5);
     msg->payload_len = msg->length - 5;
     if (msg->payload_len > 0) {
-        msg->payload = (uint8_t *)malloc(msg->payload_len);
+        msg->payload = (uint8_t *)gv_alloc(msg->payload_len);
         if (!msg->payload) return GV_GRPC_ERROR_MEMORY;
         memcpy(msg->payload, data + 9, msg->payload_len);
     }
@@ -239,7 +240,7 @@ int grpc_decode_frame(const uint8_t *data, size_t len, size_t max_bytes, GV_Grpc
 
 void grpc_message_free(GV_GrpcMessage *msg) {
     if (!msg) return;
-    free(msg->payload);
+    gv_free(msg->payload);
     msg->payload = NULL;
     msg->payload_len = 0;
     msg->length = 0;
@@ -1205,7 +1206,7 @@ static void *worker_thread_func(void *arg) {
         pthread_mutex_unlock(&pool->mutex);
 
         handle_connection(pool->server, task->client_fd);
-        free(task);
+        gv_free(task);
     }
 
     return NULL;
@@ -1225,7 +1226,7 @@ static int thread_pool_init(GV_ThreadPool *pool, size_t thread_count,
         return -1;
     }
 
-    pool->threads = calloc(thread_count, sizeof(pthread_t));
+    pool->threads = gv_calloc(thread_count, sizeof(pthread_t));
     if (!pool->threads) {
         pthread_cond_destroy(&pool->cond);
         pthread_mutex_destroy(&pool->mutex);
@@ -1242,7 +1243,7 @@ static int thread_pool_init(GV_ThreadPool *pool, size_t thread_count,
             for (size_t j = 0; j < i; j++) {
                 pthread_join(pool->threads[j], NULL);
             }
-            free(pool->threads);
+            gv_free(pool->threads);
             pthread_cond_destroy(&pool->cond);
             pthread_mutex_destroy(&pool->mutex);
             return -1;
@@ -1253,7 +1254,7 @@ static int thread_pool_init(GV_ThreadPool *pool, size_t thread_count,
 }
 
 static void thread_pool_submit(GV_ThreadPool *pool, int client_fd) {
-    GV_GrpcTask *task = malloc(sizeof(GV_GrpcTask));
+    GV_GrpcTask *task = gv_alloc(sizeof(GV_GrpcTask));
     if (!task) {
         close(client_fd);
         return;
@@ -1291,11 +1292,11 @@ static void thread_pool_destroy(GV_ThreadPool *pool) {
     while (task) {
         GV_GrpcTask *next = task->next;
         close(task->client_fd);
-        free(task);
+        gv_free(task);
         task = next;
     }
 
-    free(pool->threads);
+    gv_free(pool->threads);
     pthread_cond_destroy(&pool->cond);
     pthread_mutex_destroy(&pool->mutex);
 }
@@ -1332,7 +1333,7 @@ static void *accept_thread_func(void *arg) {
 GV_GrpcServer *grpc_create(GV_Database *db, const GV_GrpcConfig *config) {
     if (!db) return NULL;
 
-    GV_GrpcServer *server = calloc(1, sizeof(GV_GrpcServer));
+    GV_GrpcServer *server = gv_calloc(1, sizeof(GV_GrpcServer));
     if (!server) return NULL;
 
     server->db = db;
@@ -1358,7 +1359,7 @@ GV_GrpcServer *grpc_create(GV_Database *db, const GV_GrpcConfig *config) {
     }
 
     if (pthread_mutex_init(&server->stats_mutex, NULL) != 0) {
-        free(server);
+        gv_free(server);
         return NULL;
     }
 
@@ -1458,7 +1459,7 @@ void grpc_destroy(GV_GrpcServer *server) {
     }
 
     pthread_mutex_destroy(&server->stats_mutex);
-    free(server);
+    gv_free(server);
 }
 
 int grpc_is_running(const GV_GrpcServer *server) {
@@ -1520,7 +1521,7 @@ int grpc_decode_search_request(const uint8_t *buf, size_t len,
     size_t expected = 12 + (*dimension) * sizeof(float);
     if (len < expected) return GV_GRPC_ERROR_CONFIG;
 
-    *query = malloc((*dimension) * sizeof(float));
+    *query = gv_alloc((*dimension) * sizeof(float));
     if (!*query) return GV_GRPC_ERROR_MEMORY;
 
     for (size_t i = 0; i < *dimension; i++) {
@@ -1707,11 +1708,11 @@ int grpc_client_search(const char *host, uint16_t port,
         return 0;
     }
 
-    out->indices = malloc((size_t)count * sizeof(size_t));
-    out->distances = malloc((size_t)count * sizeof(float));
+    out->indices = gv_alloc((size_t)count * sizeof(size_t));
+    out->distances = gv_alloc((size_t)count * sizeof(float));
     if (!out->indices || !out->distances) {
-        free(out->indices);
-        free(out->distances);
+        gv_free(out->indices);
+        gv_free(out->distances);
         grpc_wire_message_release(&msg);
         out->indices = NULL;
         out->distances = NULL;
@@ -1728,8 +1729,8 @@ int grpc_client_search(const char *host, uint16_t port,
 
 void grpc_search_response_free(GV_GrpcSearchResponse *resp) {
     if (!resp) return;
-    free(resp->indices);
-    free(resp->distances);
+    gv_free(resp->indices);
+    gv_free(resp->distances);
     resp->indices = NULL;
     resp->distances = NULL;
     resp->count = 0;

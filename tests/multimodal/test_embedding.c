@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include "core/memory.h"
 #include <stdlib.h>
 #include <string.h>
 #include "multimodal/embedding.h"
@@ -92,7 +93,7 @@ void test_google_embedding(void) {
     int result = embedding_generate(service, text, &embedding_dim, &embedding);
     
     if (result == 0 && embedding != NULL) {
-        free(embedding);
+        gv_free(embedding);
     }
     
     embedding_service_destroy(service);
@@ -135,14 +136,14 @@ void test_google_embedding_batch(void) {
     if (result >= 0 && result == (int)text_count) {
         for (size_t i = 0; i < text_count; i++) {
             if (embeddings[i] != NULL) {
-                free(embeddings[i]);
+                gv_free(embeddings[i]);
             }
         }
-        free(embedding_dims);
-        free(embeddings);
+        gv_free(embedding_dims);
+        gv_free(embeddings);
     } else {
-        free(embedding_dims);
-        free(embeddings);
+        gv_free(embedding_dims);
+        gv_free(embeddings);
     }
     
     embedding_service_destroy(service);
@@ -176,7 +177,7 @@ void test_openai_embedding(void) {
     int result = embedding_generate(service, text, &embedding_dim, &embedding);
     
     if (result == 0 && embedding != NULL) {
-        free(embedding);
+        gv_free(embedding);
     }
     
     embedding_service_destroy(service);
@@ -220,14 +221,14 @@ void test_openai_embedding_batch(void) {
     if (result >= 0 && result == (int)text_count) {
         for (size_t i = 0; i < text_count; i++) {
             if (embeddings[i] != NULL) {
-                free(embeddings[i]);
+                gv_free(embeddings[i]);
             }
         }
-        free(embedding_dims);
-        free(embeddings);
+        gv_free(embedding_dims);
+        gv_free(embeddings);
     } else {
-        free(embedding_dims);
-        free(embeddings);
+        gv_free(embedding_dims);
+        gv_free(embeddings);
     }
     
     embedding_service_destroy(service);

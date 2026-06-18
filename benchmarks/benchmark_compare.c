@@ -38,8 +38,8 @@ int main(void) {
     printf("=====================================\n\n");
     printf("Dimension: %d, Iterations: %d\n\n", DIMENSION, ITERATIONS);
 
-    float *a_data = (float *)malloc(DIMENSION * sizeof(float));
-    float *b_data = (float *)malloc(DIMENSION * sizeof(float));
+    float *a_data = (float *)gv_alloc(DIMENSION * sizeof(float));
+    float *b_data = (float *)gv_alloc(DIMENSION * sizeof(float));
     
     for (size_t i = 0; i < DIMENSION; ++i) {
         a_data[i] = (float)(i % 100) / 10.0f;
@@ -98,8 +98,8 @@ int main(void) {
            simd_time, (ITERATIONS / simd_time) * 1000.0);
     printf("Speedup:   %.2fx\n\n", scalar_time / simd_time);
 
-    free(a_data);
-    free(b_data);
+    gv_free(a_data);
+    gv_free(b_data);
     return 0;
 }
 

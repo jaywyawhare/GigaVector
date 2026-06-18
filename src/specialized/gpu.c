@@ -7,6 +7,7 @@
  */
 
 #include "specialized/gpu.h"
+#include "core/memory.h"
 #include "storage/database.h"
 
 #include <stdlib.h>
@@ -117,7 +118,7 @@ int gpu_get_device_info(int device_id, GV_GPUDeviceInfo *info) {
 /* Context Management */
 
 GV_GPUContext *gpu_create(const GV_GPUConfig *config) {
-    GV_GPUContext *ctx = calloc(1, sizeof(GV_GPUContext));
+    GV_GPUContext *ctx = gv_calloc(1, sizeof(GV_GPUContext));
     if (!ctx) return NULL;
 
     ctx->config = config ? *config : DEFAULT_CONFIG;
@@ -131,7 +132,7 @@ GV_GPUContext *gpu_create(const GV_GPUConfig *config) {
             ctx->cuda_context = cuda_ctx->cuda_context;
             ctx->cuda_streams = cuda_ctx->cuda_streams;
             ctx->device_id = cuda_ctx->device_id;
-            free(cuda_ctx);
+            gv_free(cuda_ctx);
         } else {
             ctx->cuda_available = 0;
         }
@@ -154,7 +155,7 @@ void gpu_destroy(GV_GPUContext *ctx) {
     }
 #endif
 
-    free(ctx);
+    gv_free(ctx);
 }
 
 int gpu_synchronize(GV_GPUContext *ctx) {
@@ -175,7 +176,7 @@ GV_GPUIndex *gpu_index_create(GV_GPUContext *ctx, const float *vectors,
                                   size_t count, size_t dimension) {
     if (!ctx || !vectors || count == 0 || dimension == 0) return NULL;
 
-    GV_GPUIndex *index = calloc(1, sizeof(GV_GPUIndex));
+    GV_GPUIndex *index = gv_calloc(1, sizeof(GV_GPUIndex));
     if (!index) return NULL;
 
     index->ctx = ctx;
@@ -185,15 +186,15 @@ GV_GPUIndex *gpu_index_create(GV_GPUContext *ctx, const float *vectors,
 
     /* Allocate host memory */
     size_t data_size = count * dimension * sizeof(float);
-    index->vectors = malloc(data_size);
+    index->vectors = gv_alloc(data_size);
     if (!index->vectors) {
-        free(index);
+        gv_free(index);
         return NULL;
     }
     memcpy(index->vectors, vectors, data_size);
 
     /* Precompute L2 norms for optimized cosine/euclidean */
-    index->norms = malloc(count * sizeof(float));
+    index->norms = gv_alloc(count * sizeof(float));
     if (index->norms) {
         for (size_t i = 0; i < count; i++) {
             float norm = 0;
@@ -239,7 +240,7 @@ GV_GPUIndex *gpu_index_from_db(GV_GPUContext *ctx, GV_Database *db) {
     if (count == 0 || dimension == 0) return NULL;
 
     /* Extract all vectors from database */
-    float *vectors = malloc(count * dimension * sizeof(float));
+    float *vectors = gv_alloc(count * dimension * sizeof(float));
     if (!vectors) return NULL;
 
     for (size_t i = 0; i < count; i++) {
@@ -250,7 +251,7 @@ GV_GPUIndex *gpu_index_from_db(GV_GPUContext *ctx, GV_Database *db) {
     }
 
     GV_GPUIndex *index = gpu_index_create(ctx, vectors, count, dimension);
-    free(vectors);
+    gv_free(vectors);
 
     return index;
 }
@@ -265,12 +266,12 @@ int gpu_index_add(GV_GPUIndex *index, const float *vectors, size_t count) {
         size_t new_capacity = index->capacity * 2;
         if (new_capacity < new_count) new_capacity = new_count;
 
-        float *new_vectors = realloc(index->vectors,
+        float *new_vectors = gv_realloc(index->vectors,
                                       new_capacity * index->dimension * sizeof(float));
         if (!new_vectors) return -1;
         index->vectors = new_vectors;
 
-        float *new_norms = realloc(index->norms, new_capacity * sizeof(float));
+        float *new_norms = gv_realloc(index->norms, new_capacity * sizeof(float));
         if (!new_norms) return -1;
         index->norms = new_norms;
 
@@ -407,9 +408,9 @@ void gpu_index_destroy(GV_GPUIndex *index) {
     }
 #endif
 
-    free(index->vectors);
-    free(index->norms);
-    free(index);
+    gv_free(index->vectors);
+    gv_free(index->norms);
+    gv_free(index);
 }
 
 /* CPU Distance Computation (Fallback) */
@@ -698,7 +699,7 @@ int gpu_batch_search(GV_GPUContext *ctx, GV_Database *db,
     if (count == 0) return -1;
 
     /* Extract all vectors for GPU search */
-    float *vectors = malloc(count * dimension * sizeof(float));
+    float *vectors = gv_alloc(count * dimension * sizeof(float));
     if (!vectors) return -1;
 
     for (size_t i = 0; i < count; i++) {
@@ -718,7 +719,7 @@ int gpu_batch_search(GV_GPUContext *ctx, GV_Database *db,
     int result = gpu_knn_search(ctx, queries, num_queries, vectors,
                                     count, dimension, &params, indices, distances);
 
-    free(vectors);
+    gv_free(vectors);
     return result;
 }
 
@@ -759,10 +760,10 @@ int gpu_train_ivfpq(GV_GPUContext *ctx, const float *vectors,
                        dimension * sizeof(float));
             }
 
-            size_t *assignments = calloc(num_vectors, sizeof(size_t));
-            size_t *counts = calloc(num_centroids, sizeof(size_t));
-            float *new_centroids = calloc(num_centroids * dimension, sizeof(float));
-            float *host_distances = malloc(dist_size);
+            size_t *assignments = gv_calloc(num_vectors, sizeof(size_t));
+            size_t *counts = gv_calloc(num_centroids, sizeof(size_t));
+            float *new_centroids = gv_calloc(num_centroids * dimension, sizeof(float));
+            float *host_distances = gv_alloc(dist_size);
 
             if (assignments && counts && new_centroids && host_distances) {
                 for (int iter = 0; iter < 10; iter++) {
@@ -805,10 +806,10 @@ int gpu_train_ivfpq(GV_GPUContext *ctx, const float *vectors,
                 }
             }
 
-            free(assignments);
-            free(counts);
-            free(new_centroids);
-            free(host_distances);
+            gv_free(assignments);
+            gv_free(counts);
+            gv_free(new_centroids);
+            gv_free(host_distances);
             cudaFree(d_vectors);
             cudaFree(d_centroids);
             cudaFree(d_distances);
@@ -850,14 +851,14 @@ int gpu_train_ivfpq(GV_GPUContext *ctx, const float *vectors,
     }
 
     /* Simple k-means iterations */
-    size_t *assignments = calloc(num_vectors, sizeof(size_t));
-    size_t *counts = calloc(num_centroids, sizeof(size_t));
-    float *new_centroids = calloc(num_centroids * dimension, sizeof(float));
+    size_t *assignments = gv_calloc(num_vectors, sizeof(size_t));
+    size_t *counts = gv_calloc(num_centroids, sizeof(size_t));
+    float *new_centroids = gv_calloc(num_centroids * dimension, sizeof(float));
 
     if (!assignments || !counts || !new_centroids) {
-        free(assignments);
-        free(counts);
-        free(new_centroids);
+        gv_free(assignments);
+        gv_free(counts);
+        gv_free(new_centroids);
         return -1;
     }
 
@@ -914,9 +915,9 @@ int gpu_train_ivfpq(GV_GPUContext *ctx, const float *vectors,
         }
     }
 
-    free(assignments);
-    free(counts);
-    free(new_centroids);
+    gv_free(assignments);
+    gv_free(counts);
+    gv_free(new_centroids);
 
     return 0;
 }

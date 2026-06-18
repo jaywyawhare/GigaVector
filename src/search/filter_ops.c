@@ -11,6 +11,7 @@
  */
 
 #include <stdlib.h>
+#include "core/memory.h"
 #include <string.h>
 
 #include "search/filter_ops.h"
@@ -71,12 +72,12 @@ static size_t *filter_ops_alloc_indices(size_t count, int *on_heap) {
         return indices;
     }
     *on_heap = 1;
-    return (size_t *)malloc(sizeof(size_t) * count);
+    return (size_t *)gv_alloc(sizeof(size_t) * count);
 }
 
 static void filter_ops_free_indices(size_t *indices, int on_heap) {
     if (indices != NULL && on_heap) {
-        free(indices);
+        gv_free(indices);
     }
 }
 

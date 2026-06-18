@@ -1,4 +1,5 @@
 #include <float.h>
+#include "core/memory.h"
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -250,14 +251,14 @@ static int ivfpq_kmeans(float *data, size_t n, size_t dim, size_t k, size_t iter
         size_t idx = (i * n) / k;
         memcpy(out_centroids + i * dim, data + idx * dim, dim * sizeof(float));
     }
-    int *assign = (int *)malloc(n * sizeof(int));
+    int *assign = (int *)gv_alloc(n * sizeof(int));
     if (!assign) return -1;
-    float *newc = (float *)calloc(k * dim, sizeof(float));
-    size_t *counts = (size_t *)calloc(k, sizeof(size_t));
+    float *newc = (float *)gv_calloc(k * dim, sizeof(float));
+    size_t *counts = (size_t *)gv_calloc(k, sizeof(size_t));
     if (!newc || !counts) {
-        free(assign);
-        free(newc);
-        free(counts);
+        gv_free(assign);
+        gv_free(newc);
+        gv_free(counts);
         return -1;
     }
 
@@ -279,15 +280,15 @@ static int ivfpq_kmeans(float *data, size_t n, size_t dim, size_t k, size_t iter
         memcpy(out_centroids, newc, k * dim * sizeof(float));
     }
 
-    free(assign);
-    free(newc);
-    free(counts);
+    gv_free(assign);
+    gv_free(newc);
+    gv_free(counts);
     return 0;
 }
 
 void *gv_ivfpq_create(size_t dimension, const GV_IVFPQConfig *config) {
     if (dimension == 0) return NULL;
-    GV_IVFPQIndex *idx = (GV_IVFPQIndex *)calloc(1, sizeof(GV_IVFPQIndex));
+    GV_IVFPQIndex *idx = (GV_IVFPQIndex *)gv_calloc(1, sizeof(GV_IVFPQIndex));
     if (!idx) return NULL;
     idx->dimension = dimension;
     /* heuristic defaults */
@@ -311,31 +312,31 @@ void *gv_ivfpq_create(size_t dimension, const GV_IVFPQConfig *config) {
         idx->scalar_quant_template = NULL;
     }
     if (idx->m == 0 || idx->dimension % idx->m != 0) {
-        free(idx);
+        gv_free(idx);
         return NULL;
     }
     idx->subdim = idx->dimension / idx->m;
     if (idx->nbits == 0 || idx->nbits > 16) {
-        free(idx);
+        gv_free(idx);
         return NULL;
     }
     idx->codebook_size = 1u << idx->nbits;
     if (idx->nprobe == 0 || idx->nprobe > idx->nlist) {
         idx->nprobe = idx->nlist;
     }
-    idx->coarse = (float *)malloc(idx->nlist * idx->dimension * sizeof(float));
+    idx->coarse = (float *)gv_alloc(idx->nlist * idx->dimension * sizeof(float));
     /* PQ codebooks stored AoS (unchanged) */
-    idx->pq = (float *)malloc(idx->m * idx->codebook_size * idx->subdim * sizeof(float));
-    idx->lists = (GV_IVFPQList *)calloc(idx->nlist, sizeof(GV_IVFPQList));
-    idx->list_mutex = (pthread_mutex_t *)calloc(idx->nlist, sizeof(pthread_mutex_t));
+    idx->pq = (float *)gv_alloc(idx->m * idx->codebook_size * idx->subdim * sizeof(float));
+    idx->lists = (GV_IVFPQList *)gv_calloc(idx->nlist, sizeof(GV_IVFPQList));
+    idx->list_mutex = (pthread_mutex_t *)gv_calloc(idx->nlist, sizeof(pthread_mutex_t));
     idx->lut_buf = NULL;
     idx->lut_buf_size = 0;
     if (!idx->coarse || !idx->pq || !idx->lists || !idx->list_mutex) {
-        free(idx->coarse);
-        free(idx->pq);
-        free(idx->lists);
-        free(idx->list_mutex);
-        free(idx);
+        gv_free(idx->coarse);
+        gv_free(idx->pq);
+        gv_free(idx->lists);
+        gv_free(idx->list_mutex);
+        gv_free(idx);
         return NULL;
     }
     pthread_rwlock_init(&idx->rwlock, NULL);
@@ -356,7 +357,7 @@ int gv_ivfpq_train(void *index_ptr, const float *data, size_t count) {
         return -1;
     }
     size_t total = count * idx->dimension;
-    float *train_buf = (float *)malloc(total * sizeof(float));
+    float *train_buf = (float *)gv_alloc(total * sizeof(float));
     if (!train_buf) {
         pthread_rwlock_unlock(&idx->rwlock);
         return -1;
@@ -374,7 +375,7 @@ int gv_ivfpq_train(void *index_ptr, const float *data, size_t count) {
         }
     }
     if (ivfpq_kmeans(train_buf, count, idx->dimension, idx->nlist, idx->train_iters, idx->coarse) != 0) {
-        free(train_buf);
+        gv_free(train_buf);
         pthread_rwlock_unlock(&idx->rwlock);
         return -1;
     }
@@ -399,9 +400,9 @@ int gv_ivfpq_train(void *index_ptr, const float *data, size_t count) {
     }
 
     /* train each subquantizer on residual subvectors */
-    float *subbuf = (float *)malloc(count * idx->subdim * sizeof(float));
+    float *subbuf = (float *)gv_alloc(count * idx->subdim * sizeof(float));
     if (!subbuf) {
-        free(train_buf);
+        gv_free(train_buf);
         pthread_rwlock_unlock(&idx->rwlock);
         return -1;
     }
@@ -411,13 +412,13 @@ int gv_ivfpq_train(void *index_ptr, const float *data, size_t count) {
         }
         if (ivfpq_kmeans(subbuf, count, idx->subdim, idx->codebook_size, idx->train_iters,
                             idx->pq + m * idx->codebook_size * idx->subdim) != 0) {
-            free(subbuf);
-            free(train_buf);
+            gv_free(subbuf);
+            gv_free(train_buf);
             pthread_rwlock_unlock(&idx->rwlock);
             return -1;
         }
     }
-    free(subbuf);
+    gv_free(subbuf);
     
     if (idx->use_scalar_quant) {
         if (idx->scalar_quant_template != NULL) {
@@ -425,13 +426,13 @@ int gv_ivfpq_train(void *index_ptr, const float *data, size_t count) {
         }
         idx->scalar_quant_template = scalar_quantize_train(train_buf, count, idx->dimension, &idx->scalar_quant_config);
         if (idx->scalar_quant_template == NULL) {
-            free(train_buf);
+            gv_free(train_buf);
             pthread_rwlock_unlock(&idx->rwlock);
             return -1;
         }
     }
     
-    free(train_buf);
+    gv_free(train_buf);
     idx->trained = 1;
     pthread_rwlock_unlock(&idx->rwlock);
     return 0;
@@ -451,7 +452,7 @@ static int ivfpq_encode(const GV_IVFPQIndex *idx, const float *vec, uint8_t *cod
     if (best_id < 0) return -1;
 
     const float *centroid = idx->coarse + best_id * idx->dimension;
-    float *res = (float *)malloc(idx->dimension * sizeof(float));
+    float *res = (float *)gv_alloc(idx->dimension * sizeof(float));
     if (!res) return -1;
     for (size_t j = 0; j < idx->dimension; ++j) {
         res[j] = vec[j] - centroid[j];
@@ -473,7 +474,7 @@ static int ivfpq_encode(const GV_IVFPQIndex *idx, const float *vec, uint8_t *cod
         codes[m] = bestc;
     }
 
-    free(res);
+    gv_free(res);
     return best_id;
 }
 
@@ -491,14 +492,14 @@ int gv_ivfpq_insert(void *index_ptr, GV_Vector *vector) {
             for (size_t i = 0; i < idx->dimension; ++i) vector->data[i] *= norm;
         }
     }
-    uint8_t *codes = (uint8_t *)malloc(idx->m);
+    uint8_t *codes = (uint8_t *)gv_alloc(idx->m);
     if (!codes) {
         pthread_rwlock_unlock(&idx->rwlock);
         return -1;
     }
     int list_id = ivfpq_encode(idx, vector->data, codes);
     if (list_id < 0) {
-        free(codes);
+        gv_free(codes);
         pthread_rwlock_unlock(&idx->rwlock);
         return -1;
     }
@@ -507,9 +508,9 @@ int gv_ivfpq_insert(void *index_ptr, GV_Vector *vector) {
     if (list->count >= list->capacity) {
         size_t oldcap = list->capacity;
         size_t newcap = oldcap ? oldcap * 2 : 16;
-        GV_IVFPQEntry *newents = (GV_IVFPQEntry *)realloc(list->entries, newcap * sizeof(GV_IVFPQEntry));
+        GV_IVFPQEntry *newents = (GV_IVFPQEntry *)gv_realloc(list->entries, newcap * sizeof(GV_IVFPQEntry));
         if (!newents) {
-            free(codes);
+            gv_free(codes);
             pthread_mutex_unlock(&idx->list_mutex[list_id]);
             pthread_rwlock_unlock(&idx->rwlock);
             return -1;
@@ -519,9 +520,9 @@ int gv_ivfpq_insert(void *index_ptr, GV_Vector *vector) {
          * Old layout: codes_soa[m * oldcap + e]
          * New layout: codes_soa[m * newcap + e]
          * We must copy each subquantizer's block to its new offset. */
-        uint8_t *newcodes = (uint8_t *)malloc(newcap * idx->m * sizeof(uint8_t));
+        uint8_t *newcodes = (uint8_t *)gv_alloc(newcap * idx->m * sizeof(uint8_t));
         if (!newcodes) {
-            free(codes);
+            gv_free(codes);
             pthread_mutex_unlock(&idx->list_mutex[list_id]);
             pthread_rwlock_unlock(&idx->rwlock);
             return -1;
@@ -533,7 +534,7 @@ int gv_ivfpq_insert(void *index_ptr, GV_Vector *vector) {
                        list->count * sizeof(uint8_t));
             }
         }
-        free(list->codes_soa);
+        gv_free(list->codes_soa);
         list->codes_soa = newcodes;
         list->capacity = newcap;
     }
@@ -544,7 +545,7 @@ int gv_ivfpq_insert(void *index_ptr, GV_Vector *vector) {
     list->entries[list->count].vector_index = idx->count;
     
     if (idx->use_scalar_quant && idx->scalar_quant_template != NULL) {
-        GV_ScalarQuantVector *sqv = (GV_ScalarQuantVector *)malloc(sizeof(GV_ScalarQuantVector));
+        GV_ScalarQuantVector *sqv = (GV_ScalarQuantVector *)gv_alloc(sizeof(GV_ScalarQuantVector));
         if (sqv != NULL) {
             sqv->dimension = idx->dimension;
             sqv->bits = idx->scalar_quant_config.bits;
@@ -552,17 +553,17 @@ int gv_ivfpq_insert(void *index_ptr, GV_Vector *vector) {
             sqv->bytes_per_vector = idx->scalar_quant_template->bytes_per_vector;
             /* Deep copy min/max to avoid aliasing the template pointers */
             size_t nvals = sqv->per_dimension ? idx->dimension : 1;
-            sqv->min_vals = (float *)malloc(nvals * sizeof(float));
-            sqv->max_vals = (float *)malloc(nvals * sizeof(float));
+            sqv->min_vals = (float *)gv_alloc(nvals * sizeof(float));
+            sqv->max_vals = (float *)gv_alloc(nvals * sizeof(float));
             if (sqv->min_vals == NULL || sqv->max_vals == NULL) {
-                free(sqv->min_vals);
-                free(sqv->max_vals);
-                free(sqv);
+                gv_free(sqv->min_vals);
+                gv_free(sqv->max_vals);
+                gv_free(sqv);
                 sqv = NULL;
             } else {
                 memcpy(sqv->min_vals, idx->scalar_quant_template->min_vals, nvals * sizeof(float));
                 memcpy(sqv->max_vals, idx->scalar_quant_template->max_vals, nvals * sizeof(float));
-                sqv->quantized = (uint8_t *)calloc(sqv->bytes_per_vector, sizeof(uint8_t));
+                sqv->quantized = (uint8_t *)gv_calloc(sqv->bytes_per_vector, sizeof(uint8_t));
                 if (sqv->quantized != NULL) {
                 size_t max_quant = (1ULL << sqv->bits) - 1;
                 for (size_t i = 0; i < idx->dimension; ++i) {
@@ -586,7 +587,7 @@ int gv_ivfpq_insert(void *index_ptr, GV_Vector *vector) {
                 }
                 list->entries[list->count].scalar_quant = sqv;
             } else {
-                free(sqv);
+                gv_free(sqv);
             }
         }
     }
@@ -627,7 +628,7 @@ int gv_ivfpq_search(void *index_ptr, const GV_Vector *query, size_t k,
     size_t nprobe = (nprobe_override > 0) ? nprobe_override : idx->nprobe;
     if (nprobe > idx->nlist) nprobe = idx->nlist;
 
-    /* Stack-allocate small buffers to avoid per-query malloc */
+    /* Stack-allocate small buffers to avoid per-query gv_alloc */
     /* Max 256 probes, 256 dim, 64 subquantizers * 256 codebook = 16384 LUT entries */
     #define IVFPQ_MAX_STACK_PROBES 256
     #define IVFPQ_MAX_STACK_DIM    1024
@@ -635,7 +636,7 @@ int gv_ivfpq_search(void *index_ptr, const GV_Vector *query, size_t k,
     #define IVFPQ_MAX_STACK_RERANK 512
 
     GV_IVFPQHeapItem cheap_stack[IVFPQ_MAX_STACK_PROBES];
-    GV_IVFPQHeapItem *cheap = (nprobe <= IVFPQ_MAX_STACK_PROBES) ? cheap_stack : (GV_IVFPQHeapItem *)malloc(nprobe * sizeof(GV_IVFPQHeapItem));
+    GV_IVFPQHeapItem *cheap = (nprobe <= IVFPQ_MAX_STACK_PROBES) ? cheap_stack : (GV_IVFPQHeapItem *)gv_alloc(nprobe * sizeof(GV_IVFPQHeapItem));
     size_t chsize = 0;
     if (!cheap) {
         pthread_rwlock_unlock(&idx->rwlock);
@@ -646,9 +647,9 @@ int gv_ivfpq_search(void *index_ptr, const GV_Vector *query, size_t k,
         ivfpq_heap_push(cheap, &chsize, nprobe, (GV_IVFPQHeapItem){d, (GV_IVFPQEntry *)(uintptr_t)c});
     }
     int probe_ids_stack[IVFPQ_MAX_STACK_PROBES];
-    int *probe_ids = (nprobe <= IVFPQ_MAX_STACK_PROBES) ? probe_ids_stack : (int *)malloc(nprobe * sizeof(int));
+    int *probe_ids = (nprobe <= IVFPQ_MAX_STACK_PROBES) ? probe_ids_stack : (int *)gv_alloc(nprobe * sizeof(int));
     if (!probe_ids) {
-        if (cheap != cheap_stack) free(cheap);
+        if (cheap != cheap_stack) gv_free(cheap);
         pthread_rwlock_unlock(&idx->rwlock);
         return -1;
     }
@@ -659,24 +660,24 @@ int gv_ivfpq_search(void *index_ptr, const GV_Vector *query, size_t k,
         if (chsize > 0) ivfpq_heap_sift_down(cheap, chsize, 0);
     }
 
-    if (cheap != cheap_stack) free(cheap);
+    if (cheap != cheap_stack) gv_free(cheap);
 
     /* LUT buffer — stack if small enough */
     size_t lut_need = idx->m * idx->codebook_size;
     float lut_stack[IVFPQ_MAX_STACK_LUT];
-    float *lut = (lut_need <= IVFPQ_MAX_STACK_LUT) ? lut_stack : (float *)malloc(lut_need * sizeof(float));
+    float *lut = (lut_need <= IVFPQ_MAX_STACK_LUT) ? lut_stack : (float *)gv_alloc(lut_need * sizeof(float));
     if (!lut) {
-        if (probe_ids != probe_ids_stack) free(probe_ids);
+        if (probe_ids != probe_ids_stack) gv_free(probe_ids);
         pthread_rwlock_unlock(&idx->rwlock);
         return -1;
     }
 
     /* Residual buffer — stack if small enough */
     float qres_stack[IVFPQ_MAX_STACK_DIM];
-    float *qres = (idx->dimension <= IVFPQ_MAX_STACK_DIM) ? qres_stack : (float *)malloc(idx->dimension * sizeof(float));
+    float *qres = (idx->dimension <= IVFPQ_MAX_STACK_DIM) ? qres_stack : (float *)gv_alloc(idx->dimension * sizeof(float));
     if (!qres) {
-        if (lut != lut_stack) free(lut);
-        if (probe_ids != probe_ids_stack) free(probe_ids);
+        if (lut != lut_stack) gv_free(lut);
+        if (probe_ids != probe_ids_stack) gv_free(probe_ids);
         pthread_rwlock_unlock(&idx->rwlock);
         return -1;
     }
@@ -689,11 +690,11 @@ int gv_ivfpq_search(void *index_ptr, const GV_Vector *query, size_t k,
         for (size_t i = 0; i < idx->dimension; ++i) norm += query->data[i] * query->data[i];
         if (norm > 0.0f) {
             norm = 1.0f / sqrtf(norm);
-            qbuf = (idx->dimension <= IVFPQ_MAX_STACK_DIM) ? qbuf_stack : (float *)malloc(idx->dimension * sizeof(float));
+            qbuf = (idx->dimension <= IVFPQ_MAX_STACK_DIM) ? qbuf_stack : (float *)gv_alloc(idx->dimension * sizeof(float));
             if (!qbuf) {
-                if (qres != qres_stack) free(qres);
-                if (lut != lut_stack) free(lut);
-                if (probe_ids != probe_ids_stack) free(probe_ids);
+                if (qres != qres_stack) gv_free(qres);
+                if (lut != lut_stack) gv_free(lut);
+                if (probe_ids != probe_ids_stack) gv_free(probe_ids);
                 pthread_rwlock_unlock(&idx->rwlock);
                 return -1;
             }
@@ -709,13 +710,13 @@ int gv_ivfpq_search(void *index_ptr, const GV_Vector *query, size_t k,
     if (rr_target > oversampled_k) oversampled_k = rr_target;
 
     GV_IVFPQHeapItem heap_stack[IVFPQ_MAX_STACK_RERANK];
-    GV_IVFPQHeapItem *heap = (oversampled_k <= IVFPQ_MAX_STACK_RERANK) ? heap_stack : (GV_IVFPQHeapItem *)malloc(oversampled_k * sizeof(GV_IVFPQHeapItem));
+    GV_IVFPQHeapItem *heap = (oversampled_k <= IVFPQ_MAX_STACK_RERANK) ? heap_stack : (GV_IVFPQHeapItem *)gv_alloc(oversampled_k * sizeof(GV_IVFPQHeapItem));
     size_t hsize = 0;
     if (!heap) {
-        if (qbuf && qbuf != qbuf_stack) free(qbuf);
-        if (qres != qres_stack) free(qres);
-        if (lut != lut_stack) free(lut);
-        if (probe_ids != probe_ids_stack) free(probe_ids);
+        if (qbuf && qbuf != qbuf_stack) gv_free(qbuf);
+        if (qres != qres_stack) gv_free(qres);
+        if (lut != lut_stack) gv_free(lut);
+        if (probe_ids != probe_ids_stack) gv_free(probe_ids);
         pthread_rwlock_unlock(&idx->rwlock);
         return -1;
     }
@@ -816,16 +817,16 @@ int gv_ivfpq_search(void *index_ptr, const GV_Vector *query, size_t k,
     size_t found = hsize;
     float bestd_stack[IVFPQ_MAX_STACK_RERANK];
     GV_IVFPQEntry *beste_stack[IVFPQ_MAX_STACK_RERANK];
-    float *bestd = (found <= IVFPQ_MAX_STACK_RERANK) ? bestd_stack : (float *)malloc(found * sizeof(float));
-    GV_IVFPQEntry **beste = (found <= IVFPQ_MAX_STACK_RERANK) ? beste_stack : (GV_IVFPQEntry **)malloc(found * sizeof(GV_IVFPQEntry *));
+    float *bestd = (found <= IVFPQ_MAX_STACK_RERANK) ? bestd_stack : (float *)gv_alloc(found * sizeof(float));
+    GV_IVFPQEntry **beste = (found <= IVFPQ_MAX_STACK_RERANK) ? beste_stack : (GV_IVFPQEntry **)gv_alloc(found * sizeof(GV_IVFPQEntry *));
     if (!bestd || !beste) {
-        if (heap != heap_stack) free(heap);
-        if (lut != lut_stack) free(lut);
-        if (qres != qres_stack) free(qres);
-        if (qbuf && qbuf != qbuf_stack) free(qbuf);
-        if (probe_ids != probe_ids_stack) free(probe_ids);
-        if (bestd != bestd_stack) free(bestd);
-        if (beste != (GV_IVFPQEntry **)beste_stack) free(beste);
+        if (heap != heap_stack) gv_free(heap);
+        if (lut != lut_stack) gv_free(lut);
+        if (qres != qres_stack) gv_free(qres);
+        if (qbuf && qbuf != qbuf_stack) gv_free(qbuf);
+        if (probe_ids != probe_ids_stack) gv_free(probe_ids);
+        if (bestd != bestd_stack) gv_free(bestd);
+        if (beste != (GV_IVFPQEntry **)beste_stack) gv_free(beste);
         pthread_rwlock_unlock(&idx->rwlock);
         return -1;
     }
@@ -891,13 +892,13 @@ int gv_ivfpq_search(void *index_ptr, const GV_Vector *query, size_t k,
         results[i].id = beste[i] ? beste[i]->vector_index : 0;
     }
 
-    if (probe_ids != probe_ids_stack) free(probe_ids);
-    if (lut != lut_stack) free(lut);
-    if (bestd != bestd_stack) free(bestd);
-    if (beste != (GV_IVFPQEntry **)beste_stack) free(beste);
-    if (qres != qres_stack) free(qres);
-    if (qbuf && qbuf != qbuf_stack) free(qbuf);
-    if (heap != heap_stack) free(heap);
+    if (probe_ids != probe_ids_stack) gv_free(probe_ids);
+    if (lut != lut_stack) gv_free(lut);
+    if (bestd != bestd_stack) gv_free(bestd);
+    if (beste != (GV_IVFPQEntry **)beste_stack) gv_free(beste);
+    if (qres != qres_stack) gv_free(qres);
+    if (qbuf && qbuf != qbuf_stack) gv_free(qbuf);
+    if (heap != heap_stack) gv_free(heap);
     pthread_rwlock_unlock(&idx->rwlock);
     return (int)result_count;
 }
@@ -911,27 +912,27 @@ void gv_ivfpq_destroy(void *index_ptr) {
             GV_IVFPQList *list = &idx->lists[i];
             if (list->entries) {
                 for (size_t e = 0; e < list->count; ++e) {
-                    free(list->entries[e].codes);
+                    gv_free(list->entries[e].codes);
                     if (list->entries[e].scalar_quant != NULL) {
                         GV_ScalarQuantVector *sqv = list->entries[e].scalar_quant;
                         if (sqv->quantized != NULL) {
-                            free(sqv->quantized);
+                            gv_free(sqv->quantized);
                         }
-                        free(sqv->min_vals);
-                        free(sqv->max_vals);
-                        free(sqv);
+                        gv_free(sqv->min_vals);
+                        gv_free(sqv->max_vals);
+                        gv_free(sqv);
                     }
                     vector_destroy(list->entries[e].vector);
                 }
-                free(list->entries);
+                gv_free(list->entries);
             }
-            free(list->codes_soa);
+            gv_free(list->codes_soa);
         }
     }
     if (idx->scalar_quant_template != NULL) {
         scalar_quant_vector_destroy(idx->scalar_quant_template);
     }
-    free(idx->lists);
+    gv_free(idx->lists);
     /* list_mutex freed separately */
     if (idx->list_mutex) {
         for (size_t i = 0; i < idx->nlist; ++i) {
@@ -940,11 +941,11 @@ void gv_ivfpq_destroy(void *index_ptr) {
     }
     pthread_rwlock_unlock(&idx->rwlock);
     pthread_rwlock_destroy(&idx->rwlock);
-    free(idx->list_mutex);
-    free(idx->coarse);
-    free(idx->pq);
-    free(idx->lut_buf);
-    free(idx);
+    gv_free(idx->list_mutex);
+    gv_free(idx->coarse);
+    gv_free(idx->pq);
+    gv_free(idx->lut_buf);
+    gv_free(idx);
 }
 
 int gv_ivfpq_save(const void *index_ptr, FILE *out, uint32_t version) {
@@ -1082,8 +1083,8 @@ int gv_ivfpq_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version
         crc = crc32_update(crc, &lcount, sizeof(size_t));
         GV_IVFPQList *list = &idx->lists[i];
         if (lcount > 0) {
-            list->entries = (GV_IVFPQEntry *)malloc(lcount * sizeof(GV_IVFPQEntry));
-            list->codes_soa = (uint8_t *)malloc(lcount * idx->m * sizeof(uint8_t));
+            list->entries = (GV_IVFPQEntry *)gv_alloc(lcount * sizeof(GV_IVFPQEntry));
+            list->codes_soa = (uint8_t *)gv_alloc(lcount * idx->m * sizeof(uint8_t));
             if (!list->entries || !list->codes_soa) {
                 gv_ivfpq_destroy(idx_ptr);
                 return -1;
@@ -1092,7 +1093,7 @@ int gv_ivfpq_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version
         }
         for (size_t e = 0; e < lcount; ++e) {
             GV_IVFPQEntry *ent = &list->entries[e];
-            ent->codes = (uint8_t *)malloc(idx->m);
+            ent->codes = (uint8_t *)gv_alloc(idx->m);
             if (!ent->codes) {
                 gv_ivfpq_destroy(idx_ptr);
                 return -1;
@@ -1145,21 +1146,21 @@ int gv_ivfpq_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version
                     return -1;
                 }
                 if (read_u32(in, &vlen) != 0) {
-                    free(k);
+                    gv_free(k);
                     vector_destroy(vec);
                     gv_ivfpq_destroy(idx_ptr);
                     return -1;
                 }
                 char *v = NULL;
                 if (read_str(in, &v, vlen) != 0) {
-                    free(k);
+                    gv_free(k);
                     vector_destroy(vec);
                     gv_ivfpq_destroy(idx_ptr);
                     return -1;
                 }
                 if (vector_set_metadata(vec, k, v) != 0) {
-                    free(k);
-                    free(v);
+                    gv_free(k);
+                    gv_free(v);
                     vector_destroy(vec);
                     gv_ivfpq_destroy(idx_ptr);
                     return -1;
@@ -1168,8 +1169,8 @@ int gv_ivfpq_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version
                 crc = crc32_update(crc, k, klen);
                 crc = crc32_update(crc, &vlen, sizeof(uint32_t));
                 crc = crc32_update(crc, v, vlen);
-                free(k);
-                free(v);
+                gv_free(k);
+                gv_free(v);
             }
             ent->vector = vec;
             ent->deleted = 0;
@@ -1209,7 +1210,7 @@ int gv_ivfpq_range_search(void *index_ptr, const GV_Vector *query, float radius,
     pthread_rwlock_rdlock(&idx->rwlock);
 
     int cosine = (distance_type == GV_DISTANCE_COSINE) ? 1 : 0;
-    float *qbuf = (float *)malloc(idx->dimension * sizeof(float));
+    float *qbuf = (float *)gv_alloc(idx->dimension * sizeof(float));
     if (!qbuf) {
         pthread_rwlock_unlock(&idx->rwlock);
         return -1;
@@ -1227,12 +1228,12 @@ int gv_ivfpq_range_search(void *index_ptr, const GV_Vector *query, float radius,
 
     size_t nprobe = idx->nprobe;
     if (nprobe > idx->nlist) nprobe = idx->nlist;
-    int *probe_ids = (int *)malloc(nprobe * sizeof(int));
-    float *probe_dists = (float *)malloc(nprobe * sizeof(float));
+    int *probe_ids = (int *)gv_alloc(nprobe * sizeof(int));
+    float *probe_dists = (float *)gv_alloc(nprobe * sizeof(float));
     if (!probe_ids || !probe_dists) {
-        free(probe_ids);
-        free(probe_dists);
-        free(qbuf);
+        gv_free(probe_ids);
+        gv_free(probe_dists);
+        gv_free(qbuf);
         pthread_rwlock_unlock(&idx->rwlock);
         return -1;
     }
@@ -1257,23 +1258,23 @@ int gv_ivfpq_range_search(void *index_ptr, const GV_Vector *query, float radius,
             }
         }
     }
-    free(probe_dists);
+    gv_free(probe_dists);
 
     size_t codebook_size = idx->codebook_size;
     /* allocate thread-local LUT buffer (not shared idx->lut_buf, which races under rdlock) */
     size_t lut_needed = idx->m * codebook_size;
-    float *lut = (float *)malloc(lut_needed * sizeof(float));
+    float *lut = (float *)gv_alloc(lut_needed * sizeof(float));
     if (!lut) {
-        free(probe_ids);
-        free(qbuf);
+        gv_free(probe_ids);
+        gv_free(qbuf);
         pthread_rwlock_unlock(&idx->rwlock);
         return -1;
     }
 
-    float *qres = (float *)malloc(idx->dimension * sizeof(float));
+    float *qres = (float *)gv_alloc(idx->dimension * sizeof(float));
     if (!qres) {
-        free(probe_ids);
-        free(qbuf);
+        gv_free(probe_ids);
+        gv_free(qbuf);
         pthread_rwlock_unlock(&idx->rwlock);
         return -1;
     }
@@ -1284,11 +1285,11 @@ int gv_ivfpq_range_search(void *index_ptr, const GV_Vector *query, float radius,
         float pq_distance;
     } RangeCandidate;
 
-    RangeCandidate *candidates = (RangeCandidate *)malloc(max_results * 2 * sizeof(RangeCandidate));
+    RangeCandidate *candidates = (RangeCandidate *)gv_alloc(max_results * 2 * sizeof(RangeCandidate));
     if (!candidates) {
-        free(qres);
-        free(probe_ids);
-        free(qbuf);
+        gv_free(qres);
+        gv_free(probe_ids);
+        gv_free(qbuf);
         pthread_rwlock_unlock(&idx->rwlock);
         return -1;
     }
@@ -1375,11 +1376,11 @@ int gv_ivfpq_range_search(void *index_ptr, const GV_Vector *query, float radius,
         }
     }
 
-    free(candidates);
-    free(lut);
-    free(qres);
-    free(probe_ids);
-    free(qbuf);
+    gv_free(candidates);
+    gv_free(lut);
+    gv_free(qres);
+    gv_free(probe_ids);
+    gv_free(qbuf);
     pthread_rwlock_unlock(&idx->rwlock);
     return (int)result_count;
 }
@@ -1468,7 +1469,7 @@ int gv_ivfpq_update(void *index_ptr, size_t entry_index, const float *new_data, 
                     
                     if (best_coarse_id >= 0) {
                         const float *centroid = idx->coarse + best_coarse_id * idx->dimension;
-                        float *residual = (float *)malloc(idx->dimension * sizeof(float));
+                        float *residual = (float *)gv_alloc(idx->dimension * sizeof(float));
                         if (residual != NULL) {
                             for (size_t j = 0; j < idx->dimension; ++j) {
                                 residual[j] = new_data[j] - centroid[j];
@@ -1494,7 +1495,7 @@ int gv_ivfpq_update(void *index_ptr, size_t entry_index, const float *new_data, 
                                 ent->codes[m] = bestc;
                                 list->codes_soa[m * list->capacity + e] = bestc;
                             }
-                            free(residual);
+                            gv_free(residual);
                         }
                     }
                 }

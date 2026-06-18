@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include "core/memory.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -38,8 +39,8 @@ static int test_arena_static_backing(void) {
     ASSERT(gv_arena_init_static(&arena, backing, sizeof(backing)) == 0, "static init");
 
     char *s = gv_arena_strdup(&arena, "gigavector");
-    ASSERT(s != NULL, "strdup in static arena");
-    ASSERT(strcmp(s, "gigavector") == 0, "strdup content");
+    ASSERT(s != NULL, "gv_strdup in static arena");
+    ASSERT(strcmp(s, "gigavector") == 0, "gv_strdup content");
 
     gv_arena_fini(&arena);
     ASSERT(backing[0] != 0 || s[0] == 'g', "backing untouched by fini");
@@ -65,8 +66,8 @@ static int test_arena_calloc(void) {
     ASSERT(gv_arena_init(&arena, 64) == 0, "arena init");
 
     int *values = (int *)gv_arena_calloc(&arena, 4, sizeof(int));
-    ASSERT(values != NULL, "calloc");
-    ASSERT(values[0] == 0 && values[3] == 0, "calloc zeroes");
+    ASSERT(values != NULL, "gv_calloc");
+    ASSERT(values[0] == 0 && values[3] == 0, "gv_calloc zeroes");
 
     gv_arena_fini(&arena);
     return 0;

@@ -4,6 +4,7 @@
  */
 
 #include <stddef.h>
+#include "core/memory.h"
 #include <stdint.h>
 #include <stdlib.h>
 
@@ -38,12 +39,12 @@ int main(int argc, char **argv)
     long sz = ftell(f);
     fseek(f, 0, SEEK_SET);
     if (sz <= 0 || sz > (long)FUZZ_MAX_INPUT) { fclose(f); return 0; }
-    uint8_t *buf = (uint8_t *)malloc((size_t)sz);
+    uint8_t *buf = (uint8_t *)gv_alloc((size_t)sz);
     if (!buf) { fclose(f); return 0; }
     fread(buf, 1, (size_t)sz, f);
     fclose(f);
     LLVMFuzzerTestOneInput(buf, (size_t)sz);
-    free(buf);
+    gv_free(buf);
     return 0;
 }
 #endif

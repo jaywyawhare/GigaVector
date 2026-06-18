@@ -4,6 +4,7 @@
  */
 
 #include "admin/namespace.h"
+#include "core/memory.h"
 #include "storage/database.h"
 #include "core/utils.h"
 
@@ -31,10 +32,10 @@ typedef struct {
 static inline DIR *opendir(const char *path) {
     char pattern[MAX_PATH];
     snprintf(pattern, sizeof(pattern), "%s\\*", path);
-    DIR *d = (DIR *)malloc(sizeof(DIR));
+    DIR *d = (DIR *)gv_alloc(sizeof(DIR));
     if (!d) return NULL;
     d->hFind = FindFirstFileA(pattern, &d->ffd);
-    if (d->hFind == INVALID_HANDLE_VALUE) { free(d); return NULL; }
+    if (d->hFind == INVALID_HANDLE_VALUE) { gv_free(d); return NULL; }
     d->first = 1;
     return d;
 }
@@ -49,7 +50,7 @@ static inline struct dirent *readdir(DIR *d) {
 static inline int closedir(DIR *d) {
     if (!d) return -1;
     FindClose(d->hFind);
-    free(d);
+    gv_free(d);
     return 0;
 }
 #endif /* _DIRENT_DEFINED */
@@ -97,11 +98,11 @@ void namespace_config_init(GV_NamespaceConfig *config) {
 /* Namespace Manager Lifecycle */
 
 GV_NamespaceManager *namespace_manager_create(const char *base_path) {
-    GV_NamespaceManager *mgr = calloc(1, sizeof(GV_NamespaceManager));
+    GV_NamespaceManager *mgr = gv_calloc(1, sizeof(GV_NamespaceManager));
     if (!mgr) return NULL;
 
     if (pthread_rwlock_init(&mgr->rwlock, NULL) != 0) {
-        free(mgr);
+        gv_free(mgr);
         return NULL;
     }
 
@@ -124,14 +125,14 @@ void namespace_manager_destroy(GV_NamespaceManager *mgr) {
             if (mgr->namespaces[i]->db) {
                 db_close(mgr->namespaces[i]->db);
             }
-            free(mgr->namespaces[i]->filepath);
-            free(mgr->namespaces[i]);
+            gv_free(mgr->namespaces[i]->filepath);
+            gv_free(mgr->namespaces[i]);
         }
     }
 
     pthread_rwlock_destroy(&mgr->rwlock);
-    free(mgr->base_path);
-    free(mgr);
+    gv_free(mgr->base_path);
+    gv_free(mgr);
 }
 
 /* Internal Helpers */
@@ -148,7 +149,7 @@ static GV_Namespace *find_namespace(GV_NamespaceManager *mgr, const char *name) 
 static char *build_filepath(const char *base_path, const char *name) {
     if (!base_path) return NULL;
     size_t len = strlen(base_path) + strlen(name) + 10;
-    char *path = malloc(len);
+    char *path = gv_alloc(len);
     if (!path) return NULL;
     snprintf(path, len, "%s/%s.gvdb", base_path, name);
     return path;
@@ -183,7 +184,7 @@ static GV_NSIndexType db_index_to_ns_index(GV_IndexType db_type) {
 static char *build_manifest_path(const char *db_filepath) {
     if (!db_filepath) return NULL;
     size_t len = strlen(db_filepath) + 20;  /* Extra space for .manifest.json */
-    char *path = malloc(len);
+    char *path = gv_alloc(len);
     if (!path) return NULL;
 
     /* Replace .gvdb with .manifest.json */
@@ -209,7 +210,7 @@ static int write_manifest(const char *db_filepath, size_t dimension,
 
     FILE *fp = fopen(manifest_path, "w");
     if (!fp) {
-        free(manifest_path);
+        gv_free(manifest_path);
         return -1;
     }
 
@@ -221,7 +222,7 @@ static int write_manifest(const char *db_filepath, size_t dimension,
     fprintf(fp, "}\n");
 
     fclose(fp);
-    free(manifest_path);
+    gv_free(manifest_path);
     return 0;
 }
 
@@ -237,7 +238,7 @@ static int read_manifest(const char *db_filepath, size_t *dimension,
 
     FILE *fp = fopen(manifest_path, "r");
     if (!fp) {
-        free(manifest_path);
+        gv_free(manifest_path);
         return -1;
     }
 
@@ -246,22 +247,22 @@ static int read_manifest(const char *db_filepath, size_t *dimension,
     long fsize = ftell(fp);
     fseek(fp, 0, SEEK_SET);
 
-    char *content = malloc(fsize + 1);
+    char *content = gv_alloc(fsize + 1);
     if (!content) {
         fclose(fp);
-        free(manifest_path);
+        gv_free(manifest_path);
         return -1;
     }
 
     if (fread(content, 1, (size_t)fsize, fp) != (size_t)fsize) {
-        free(content);
+        gv_free(content);
         fclose(fp);
-        free(manifest_path);
+        gv_free(manifest_path);
         return -1;
     }
     content[fsize] = '\0';
     fclose(fp);
-    free(manifest_path);
+    gv_free(manifest_path);
 
     /* Simple JSON parsing */
     *dimension = 128;  /* Default */
@@ -287,7 +288,7 @@ static int read_manifest(const char *db_filepath, size_t *dimension,
         if (p) *max_memory_bytes = (size_t)strtoul(p + 1, NULL, 10);
     }
 
-    free(content);
+    gv_free(content);
     return 0;
 }
 
@@ -317,7 +318,7 @@ GV_Namespace *namespace_create(GV_NamespaceManager *mgr, const GV_NamespaceConfi
     }
 
     /* Create namespace */
-    GV_Namespace *ns = calloc(1, sizeof(GV_Namespace));
+    GV_Namespace *ns = gv_calloc(1, sizeof(GV_Namespace));
     if (!ns) {
         pthread_rwlock_unlock(&mgr->rwlock);
         return NULL;
@@ -330,7 +331,7 @@ GV_Namespace *namespace_create(GV_NamespaceManager *mgr, const GV_NamespaceConfi
     ns->last_modified = ns->created_at;
 
     if (pthread_mutex_init(&ns->mutex, NULL) != 0) {
-        free(ns);
+        gv_free(ns);
         pthread_rwlock_unlock(&mgr->rwlock);
         return NULL;
     }
@@ -343,8 +344,8 @@ GV_Namespace *namespace_create(GV_NamespaceManager *mgr, const GV_NamespaceConfi
     ns->db = db_open(ns->filepath, config->dimension, index_type);
     if (!ns->db) {
         pthread_mutex_destroy(&ns->mutex);
-        free(ns->filepath);
-        free(ns);
+        gv_free(ns->filepath);
+        gv_free(ns);
         pthread_rwlock_unlock(&mgr->rwlock);
         return NULL;
     }
@@ -413,8 +414,8 @@ int namespace_delete(GV_NamespaceManager *mgr, const char *name) {
     if (ns->db) {
         db_close(ns->db);
     }
-    free(ns->filepath);
-    free(ns);
+    gv_free(ns->filepath);
+    gv_free(ns);
 
     return 0;
 }
@@ -431,7 +432,7 @@ int namespace_list(GV_NamespaceManager *mgr, char ***names, size_t *count) {
         return 0;
     }
 
-    *names = malloc(*count * sizeof(char *));
+    *names = gv_alloc(*count * sizeof(char *));
     if (!*names) {
         pthread_rwlock_unlock(&mgr->rwlock);
         return -1;
@@ -476,7 +477,7 @@ int namespace_get_info(const GV_Namespace *ns, GV_NamespaceInfo *info) {
 
 void namespace_free_info(GV_NamespaceInfo *info) {
     if (!info) return;
-    free(info->name);
+    gv_free(info->name);
     memset(info, 0, sizeof(*info));
 }
 

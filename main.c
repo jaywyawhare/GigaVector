@@ -131,7 +131,7 @@ int main(int argc, char **argv) {
     size_t vec_count = 16;
     float *train = NULL;
     if (train_count > 0) {
-        train = (float *)malloc(train_count * dim * sizeof(float));
+        train = (float *)gv_alloc(train_count * dim * sizeof(float));
         if (!train) {
             db_close(db);
             return EXIT_FAILURE;
@@ -139,15 +139,15 @@ int main(int argc, char **argv) {
         demo_fill_random(train, train_count, dim);
         if (gv_ivfpq_train(db->hnsw_index, train, train_count) != 0) {
             fprintf(stderr, "Error: IVF-PQ training failed\n");
-            free(train);
+            gv_free(train);
             db_close(db);
             return EXIT_FAILURE;
         }
     }
 
-    float *data = (float *)malloc(vec_count * dim * sizeof(float));
+    float *data = (float *)gv_alloc(vec_count * dim * sizeof(float));
     if (!data) {
-        free(train);
+        gv_free(train);
         db_close(db);
         return EXIT_FAILURE;
     }
@@ -157,8 +157,8 @@ int main(int argc, char **argv) {
         snprintf(idbuf, sizeof(idbuf), "%zu", i);
         if (db_add_vector_with_metadata(db, data + i * dim, dim, "id", idbuf) != 0) {
             fprintf(stderr, "Error: insert failed at %zu\n", i);
-            free(data);
-            free(train);
+            gv_free(data);
+            gv_free(train);
             db_close(db);
             return EXIT_FAILURE;
         }
@@ -167,10 +167,10 @@ int main(int argc, char **argv) {
     printf("Inserted %zu vectors%s.\n", vec_count,
            index_type == GV_INDEX_TYPE_IVFPQ ? " (IVF-PQ trained)" : "");
 
-    float *qbuf = (float *)malloc(dim * sizeof(float));
+    float *qbuf = (float *)gv_alloc(dim * sizeof(float));
     if (!qbuf) {
-        free(data);
-        free(train);
+        gv_free(data);
+        gv_free(train);
         db_close(db);
         return EXIT_FAILURE;
     }
@@ -188,9 +188,9 @@ int main(int argc, char **argv) {
 
     if (found < 0) {
         fprintf(stderr, "Error: Search failed\n");
-        free(qbuf);
-        free(data);
-        free(train);
+        gv_free(qbuf);
+        gv_free(data);
+        gv_free(train);
         db_close(db);
         return EXIT_FAILURE;
     }
@@ -203,17 +203,17 @@ int main(int argc, char **argv) {
     printf("\nSaving database to %s\n", db_path);
     if (db_save(db, NULL) != 0) {
         fprintf(stderr, "Error: Failed to save database\n");
-        free(qbuf);
-        free(data);
-        free(train);
+        gv_free(qbuf);
+        gv_free(data);
+        gv_free(train);
         db_close(db);
         return EXIT_FAILURE;
     }
     printf("Database saved successfully.\n");
 
-    free(qbuf);
-    free(data);
-    free(train);
+    gv_free(qbuf);
+    gv_free(data);
+    gv_free(train);
     db_close(db);
     printf("\nDemo completed successfully.\n");
     return EXIT_SUCCESS;

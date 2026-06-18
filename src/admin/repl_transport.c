@@ -4,6 +4,7 @@
  */
 
 #include "admin/repl_transport.h"
+#include "core/memory.h"
 #include "admin/replication.h"
 #include "storage/database.h"
 #include "storage/wal.h"
@@ -135,10 +136,10 @@ static int repl_recv_message(int fd, uint8_t *msg_type, uint32_t *request_id,
         *payload = NULL;
         return 0;
     }
-    *payload = (uint8_t *)malloc(plen);
+    *payload = (uint8_t *)gv_alloc(plen);
     if (!*payload) return -1;
     if (recv_exact(fd, *payload, plen) != 0) {
-        free(*payload);
+        gv_free(*payload);
         *payload = NULL;
         return -1;
     }
@@ -164,7 +165,7 @@ static int repl_transport_recv(GV_ReplTransport *transport, int fd, uint8_t *msg
     if (transport && transport->hooks.filter_inbound && *payload_len > 0) {
         if (transport->hooks.filter_inbound(transport->hooks.ctx, *msg_type,
                                             *payload, *payload_len) != 0) {
-            free(*payload);
+            gv_free(*payload);
             *payload = NULL;
             *payload_len = 0;
             return -1;
@@ -247,7 +248,7 @@ static void repl_tune_socket(int fd) {
 
 static void repl_clear_connection_pending(ReplConnection *conn) {
     if (!conn) return;
-    free(conn->pending_wal);
+    gv_free(conn->pending_wal);
     conn->pending_wal = NULL;
     conn->pending_wal_len = 0;
     conn->pending_wal_req_id = 0;
@@ -290,24 +291,24 @@ static int repl_send_catchup(GV_ReplTransport *transport, int fd, GV_Database *d
         uint8_t *record = NULL;
         size_t record_len = 0;
         if (wal_read_entry_at(path, i, &type, &record, &record_len) != 0) {
-            free(record);
+            gv_free(record);
             return -1;
         }
 
         size_t payload_len = 12 + record_len;
-        uint8_t *payload = (uint8_t *)malloc(payload_len);
+        uint8_t *payload = (uint8_t *)gv_alloc(payload_len);
         if (!payload) {
-            free(record);
+            gv_free(record);
             return -1;
         }
         write_u64_be(payload, i);
         write_u32_be(payload + 8, (uint32_t)record_len);
         memcpy(payload + 12, record, record_len);
-        free(record);
+        gv_free(record);
 
         int rc = repl_transport_send(transport, fd, REPL_MSG_WAL, (uint32_t)(i + 1),
                                        payload, payload_len);
-        free(payload);
+        gv_free(payload);
         if (rc != 0) return -1;
     }
     return 0;
@@ -324,19 +325,19 @@ static void repl_handle_client(GV_ReplTransport *transport, int fd) {
 
     if (repl_recv_message(fd, &msg_type, &req_id, &payload, &payload_len) != 0 ||
         msg_type != REPL_MSG_HELLO || payload_len < 4) {
-        free(payload);
+        gv_free(payload);
         close(fd);
         return;
     }
     uint32_t nid_len = read_u32_be(payload);
     if (nid_len >= sizeof(node_id) || payload_len < 4 + nid_len) {
-        free(payload);
+        gv_free(payload);
         close(fd);
         return;
     }
     memcpy(node_id, payload + 4, nid_len);
     node_id[nid_len] = '\0';
-    free(payload);
+    gv_free(payload);
 
     uint64_t catchup_from = 0;
     replication_replica_handshake(mgr, node_id, &catchup_from);
@@ -344,9 +345,9 @@ static void repl_handle_client(GV_ReplTransport *transport, int fd) {
     if (repl_recv_message(fd, &msg_type, &req_id, &payload, &payload_len) == 0 &&
         msg_type == REPL_MSG_CATCHUP && payload_len >= 8) {
         catchup_from = read_u64_be(payload);
-        free(payload);
+        gv_free(payload);
     } else {
-        free(payload);
+        gv_free(payload);
     }
 
     repl_send_catchup(transport, fd, replication_get_db(mgr), catchup_from);
@@ -387,7 +388,7 @@ static void repl_handle_client(GV_ReplTransport *transport, int fd) {
         if (msg_type == REPL_MSG_ACK && payload_len >= 8) {
             repl_update_replica_ack(mgr, node_id, read_u64_be(payload));
         }
-        free(payload);
+        gv_free(payload);
     }
 
     pthread_mutex_lock(&transport->conn_mutex);
@@ -395,7 +396,7 @@ static void repl_handle_client(GV_ReplTransport *transport, int fd) {
         repl_clear_connection_pending(&transport->connections[slot]);
         transport->connections[slot].active = 0;
         transport->connections[slot].fd = -1;
-        free(transport->connections[slot].node_id);
+        gv_free(transport->connections[slot].node_id);
         transport->connections[slot].node_id = NULL;
     }
     pthread_mutex_unlock(&transport->conn_mutex);
@@ -411,7 +412,7 @@ typedef struct {
 static void *repl_client_handler_thread(void *arg) {
     ReplClientArg *client = (ReplClientArg *)arg;
     repl_handle_client(client->transport, client->fd);
-    free(client);
+    gv_free(client);
     return NULL;
 }
 
@@ -426,7 +427,7 @@ static void *repl_accept_thread_func(void *arg) {
             usleep(100000);
             continue;
         }
-        ReplClientArg *client = (ReplClientArg *)malloc(sizeof(*client));
+        ReplClientArg *client = (ReplClientArg *)gv_alloc(sizeof(*client));
         if (!client) {
             close(client_fd);
             continue;
@@ -435,7 +436,7 @@ static void *repl_accept_thread_func(void *arg) {
         client->fd = client_fd;
         pthread_t tid;
         if (pthread_create(&tid, NULL, repl_client_handler_thread, client) != 0) {
-            free(client);
+            gv_free(client);
             close(client_fd);
             continue;
         }
@@ -468,7 +469,7 @@ static void *repl_follower_thread_func(void *arg) {
         const char *node_id = replication_get_node_id(mgr);
         if (!node_id) node_id = "follower";
         size_t nid_len = strlen(node_id);
-        uint8_t *hello = (uint8_t *)malloc(4 + nid_len);
+        uint8_t *hello = (uint8_t *)gv_alloc(4 + nid_len);
         if (!hello) {
             close(fd);
             continue;
@@ -476,7 +477,7 @@ static void *repl_follower_thread_func(void *arg) {
         write_u32_be(hello, (uint32_t)nid_len);
         memcpy(hello + 4, node_id, nid_len);
         repl_send_message(fd, REPL_MSG_HELLO, 1, hello, 4 + nid_len);
-        free(hello);
+        gv_free(hello);
 
         uint64_t catchup_from = 0;
         replication_get_positions(mgr, &catchup_from, NULL);
@@ -507,7 +508,7 @@ static void *repl_follower_thread_func(void *arg) {
                 replication_note_leader_heartbeat(mgr);
             }
 
-            free(payload);
+            gv_free(payload);
         }
 
         close(fd);
@@ -562,7 +563,7 @@ static int repl_start_leader_listener(GV_ReplTransport *transport) {
 #endif /* !_WIN32 */
 
 GV_ReplTransport *repl_transport_create(GV_ReplicationManager *mgr) {
-    GV_ReplTransport *t = (GV_ReplTransport *)calloc(1, sizeof(*t));
+    GV_ReplTransport *t = (GV_ReplTransport *)gv_calloc(1, sizeof(*t));
     if (!t) return NULL;
     t->mgr = mgr;
 #ifndef _WIN32
@@ -582,7 +583,7 @@ void repl_transport_destroy(GV_ReplTransport *transport) {
 #ifndef _WIN32
     pthread_mutex_destroy(&transport->conn_mutex);
 #endif
-    free(transport);
+    gv_free(transport);
 }
 
 int repl_transport_start(GV_ReplTransport *transport) {
@@ -627,7 +628,7 @@ int repl_transport_stop(GV_ReplTransport *transport) {
             close(transport->connections[i].fd);
             transport->connections[i].fd = -1;
             transport->connections[i].active = 0;
-            free(transport->connections[i].node_id);
+            gv_free(transport->connections[i].node_id);
             transport->connections[i].node_id = NULL;
             repl_clear_connection_pending(&transport->connections[i]);
         }
@@ -683,7 +684,7 @@ int repl_parse_frame_buffer(const uint8_t *data, size_t len, size_t max_bytes,
     *payload_len = plen;
     if (plen == 0) return 0;
 
-    *payload = (uint8_t *)malloc(plen);
+    *payload = (uint8_t *)gv_alloc(plen);
     if (!*payload) return -1;
     memcpy(*payload, data + 9, plen);
     return 0;
@@ -700,20 +701,20 @@ int repl_transport_broadcast_entry(GV_ReplTransport *transport, GV_Database *db,
     uint8_t *record = NULL;
     size_t record_len = 0;
     if (wal_read_entry_at(path, entry_index, &type, &record, &record_len) != 0) {
-        free(record);
+        gv_free(record);
         return -1;
     }
 
     size_t payload_len = 12 + record_len;
-    uint8_t *payload = (uint8_t *)malloc(payload_len);
+    uint8_t *payload = (uint8_t *)gv_alloc(payload_len);
     if (!payload) {
-        free(record);
+        gv_free(record);
         return -1;
     }
     write_u64_be(payload, entry_index);
     write_u32_be(payload + 8, (uint32_t)record_len);
     memcpy(payload + 12, record, record_len);
-    free(record);
+    gv_free(record);
 
     uint8_t heartbeat[16];
     {
@@ -727,8 +728,8 @@ int repl_transport_broadcast_entry(GV_ReplTransport *transport, GV_Database *db,
     for (int i = 0; i < REPL_MAX_CONNECTIONS; i++) {
         if (!transport->connections[i].active) continue;
         ReplConnection *conn = &transport->connections[i];
-        free(conn->pending_wal);
-        conn->pending_wal = (uint8_t *)malloc(payload_len);
+        gv_free(conn->pending_wal);
+        conn->pending_wal = (uint8_t *)gv_alloc(payload_len);
         if (!conn->pending_wal) continue;
         memcpy(conn->pending_wal, payload, payload_len);
         conn->pending_wal_len = payload_len;
@@ -739,7 +740,7 @@ int repl_transport_broadcast_entry(GV_ReplTransport *transport, GV_Database *db,
     }
     pthread_mutex_unlock(&transport->conn_mutex);
 
-    free(payload);
+    gv_free(payload);
     return 0;
 #else
     (void)entry_index;

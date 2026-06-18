@@ -13,6 +13,7 @@
  */
 
 #include <stdio.h>
+#include "core/memory.h"
 #include <stdlib.h>
 #include <string.h>
 #include <float.h>
@@ -219,20 +220,20 @@ static int diskann_pq_train(DiskANN_PQ *pq, const float *data, size_t count,
         pq->ksub = count;
     }
 
-    pq->codebooks = (float *)calloc(pq->m * pq->ksub * pq->dsub, sizeof(float));
+    pq->codebooks = (float *)gv_calloc(pq->m * pq->ksub * pq->dsub, sizeof(float));
     if (!pq->codebooks) return -1;
 
-    float *subvecs = (float *)malloc(count * pq->dsub * sizeof(float));
+    float *subvecs = (float *)gv_alloc(count * pq->dsub * sizeof(float));
     if (!subvecs) {
-        free(pq->codebooks);
+        gv_free(pq->codebooks);
         pq->codebooks = NULL;
         return -1;
     }
 
-    uint32_t *assignments = (uint32_t *)malloc(count * sizeof(uint32_t));
+    uint32_t *assignments = (uint32_t *)gv_alloc(count * sizeof(uint32_t));
     if (!assignments) {
-        free(subvecs);
-        free(pq->codebooks);
+        gv_free(subvecs);
+        gv_free(pq->codebooks);
         pq->codebooks = NULL;
         return -1;
     }
@@ -273,11 +274,11 @@ static int diskann_pq_train(DiskANN_PQ *pq, const float *data, size_t count,
                 assignments[i] = best_k;
             }
 
-            float *new_centroids = (float *)calloc(pq->ksub * pq->dsub, sizeof(float));
-            uint32_t *counts = (uint32_t *)calloc(pq->ksub, sizeof(uint32_t));
+            float *new_centroids = (float *)gv_calloc(pq->ksub * pq->dsub, sizeof(float));
+            uint32_t *counts = (uint32_t *)gv_calloc(pq->ksub, sizeof(uint32_t));
             if (!new_centroids || !counts) {
-                free(new_centroids);
-                free(counts);
+                gv_free(new_centroids);
+                gv_free(counts);
                 break;
             }
 
@@ -297,13 +298,13 @@ static int diskann_pq_train(DiskANN_PQ *pq, const float *data, size_t count,
                 }
             }
 
-            free(new_centroids);
-            free(counts);
+            gv_free(new_centroids);
+            gv_free(counts);
         }
     }
 
-    free(assignments);
-    free(subvecs);
+    gv_free(assignments);
+    gv_free(subvecs);
     pq->trained = 1;
     return 0;
 }
@@ -339,7 +340,7 @@ static float diskann_pq_distance(const DiskANN_PQ *pq, const float *query, const
 }
 
 static void diskann_pq_destroy(DiskANN_PQ *pq) {
-    free(pq->codebooks);
+    gv_free(pq->codebooks);
     pq->codebooks = NULL;
     pq->trained = 0;
 }
@@ -417,8 +418,8 @@ static void diskann_cache_evict_lru(DiskANN_Cache *cache) {
         cur = cur->hash_next;
     }
 
-    free(victim->data);
-    free(victim);
+    gv_free(victim->data);
+    gv_free(victim);
     cache->count--;
 }
 
@@ -439,13 +440,13 @@ static void diskann_cache_put(DiskANN_Cache *cache, size_t page_id, const float 
         diskann_cache_evict_lru(cache);
     }
 
-    DiskANN_CachePage *page = (DiskANN_CachePage *)calloc(1, sizeof(DiskANN_CachePage));
+    DiskANN_CachePage *page = (DiskANN_CachePage *)gv_calloc(1, sizeof(DiskANN_CachePage));
     if (!page) return;
 
     page->page_id = page_id;
-    page->data = (float *)malloc(cache->page_data_bytes);
+    page->data = (float *)gv_alloc(cache->page_data_bytes);
     if (!page->data) {
-        free(page);
+        gv_free(page);
         return;
     }
     memcpy(page->data, data, cache->page_data_bytes);
@@ -492,8 +493,8 @@ static void diskann_cache_destroy(DiskANN_Cache *cache) {
         DiskANN_CachePage *cur = cache->buckets[i];
         while (cur) {
             DiskANN_CachePage *next = cur->hash_next;
-            free(cur->data);
-            free(cur);
+            gv_free(cur->data);
+            gv_free(cur);
             cur = next;
         }
         cache->buckets[i] = NULL;
@@ -553,7 +554,7 @@ static int diskann_disk_read_vector(GV_DiskANNIndex *index, size_t vec_index, fl
     size_t page_vectors = index->vectors_per_page;
     size_t page_data_floats = page_vectors * index->dimension;
 
-    float *page_buf = (float *)calloc(page_data_floats, sizeof(float));
+    float *page_buf = (float *)gv_calloc(page_data_floats, sizeof(float));
     if (!page_buf) {
         off_t file_offset = (off_t)(vec_index * slot_size);
         size_t nread = 0;
@@ -581,7 +582,7 @@ static int diskann_disk_read_vector(GV_DiskANNIndex *index, size_t vec_index, fl
                                 vec_bytes - nread, file_offset + (off_t)nread);
             if (ret < 0) {
                 if (errno == EINTR) continue;
-                free(page_buf);
+                gv_free(page_buf);
                 return -1;
             }
             if (ret == 0) break;
@@ -594,7 +595,7 @@ static int diskann_disk_read_vector(GV_DiskANNIndex *index, size_t vec_index, fl
     memcpy(out, &page_buf[offset_in_page * index->dimension],
            index->dimension * sizeof(float));
 
-    free(page_buf);
+    gv_free(page_buf);
     return 0;
 }
 
@@ -608,7 +609,7 @@ static void diskann_disk_close(GV_DiskANNIndex *index) {
 static size_t diskann_compute_medoid(const float *data, size_t count, size_t dimension) {
     if (count == 0) return 0;
 
-    float *centroid = (float *)calloc(dimension, sizeof(float));
+    float *centroid = (float *)gv_calloc(dimension, sizeof(float));
     if (!centroid) return 0;
 
     for (size_t i = 0; i < count; i++) {
@@ -630,7 +631,7 @@ static size_t diskann_compute_medoid(const float *data, size_t count, size_t dim
         }
     }
 
-    free(centroid);
+    gv_free(centroid);
     return best;
 }
 
@@ -648,22 +649,22 @@ static int diskann_greedy_search(const GV_DiskANNIndex *index, const float *quer
     }
 
     size_t bitset_size = (index->count + 63) / 64;
-    uint64_t *seen = (uint64_t *)calloc(bitset_size, sizeof(uint64_t));
+    uint64_t *seen = (uint64_t *)gv_calloc(bitset_size, sizeof(uint64_t));
     if (!seen) return -1;
 
     size_t cand_cap = beam_width * 4;
     if (cand_cap < 256) cand_cap = 256;
-    DiskANN_Candidate *candidates = (DiskANN_Candidate *)malloc(cand_cap * sizeof(DiskANN_Candidate));
+    DiskANN_Candidate *candidates = (DiskANN_Candidate *)gv_alloc(cand_cap * sizeof(DiskANN_Candidate));
     if (!candidates) {
-        free(seen);
+        gv_free(seen);
         return -1;
     }
     size_t cand_count = 0;
 
-    float *vec_buf = (float *)malloc(index->dimension * sizeof(float));
+    float *vec_buf = (float *)gv_alloc(index->dimension * sizeof(float));
     if (!vec_buf) {
-        free(candidates);
-        free(seen);
+        gv_free(candidates);
+        gv_free(seen);
         return -1;
     }
 
@@ -740,9 +741,9 @@ static int diskann_greedy_search(const GV_DiskANNIndex *index, const float *quer
 
     *visited_count = result_count;
 
-    free(vec_buf);
-    free(candidates);
-    free(seen);
+    gv_free(vec_buf);
+    gv_free(candidates);
+    gv_free(seen);
     return 0;
 }
 
@@ -776,23 +777,23 @@ static void diskann_robust_prune(GV_DiskANNIndex *index, size_t node_id,
         }
     }
 
-    size_t *pruned = (size_t *)malloc(max_degree * sizeof(size_t));
+    size_t *pruned = (size_t *)gv_alloc(max_degree * sizeof(size_t));
     if (!pruned) return;
 
     size_t pruned_count = 0;
-    int *removed = (int *)calloc(cand_count, sizeof(int));
+    int *removed = (int *)gv_calloc(cand_count, sizeof(int));
     if (!removed) {
-        free(pruned);
+        gv_free(pruned);
         return;
     }
 
-    float *vec_a = (float *)malloc(index->dimension * sizeof(float));
-    float *vec_b = (float *)malloc(index->dimension * sizeof(float));
+    float *vec_a = (float *)gv_alloc(index->dimension * sizeof(float));
+    float *vec_b = (float *)gv_alloc(index->dimension * sizeof(float));
     if (!vec_a || !vec_b) {
-        free(vec_a);
-        free(vec_b);
-        free(removed);
-        free(pruned);
+        gv_free(vec_a);
+        gv_free(vec_b);
+        gv_free(removed);
+        gv_free(pruned);
         return;
     }
 
@@ -833,11 +834,11 @@ static void diskann_robust_prune(GV_DiskANNIndex *index, size_t node_id,
         }
     }
 
-    free(vec_a);
-    free(vec_b);
-    free(removed);
+    gv_free(vec_a);
+    gv_free(vec_b);
+    gv_free(removed);
 
-    free(node->neighbors);
+    gv_free(node->neighbors);
     node->neighbors = pruned;
     node->neighbor_count = pruned_count;
 }
@@ -857,7 +858,7 @@ void diskann_config_init(GV_DiskANNConfig *config) {
 GV_DiskANNIndex *diskann_create(size_t dimension, const GV_DiskANNConfig *config) {
     if (dimension == 0) return NULL;
 
-    GV_DiskANNIndex *index = (GV_DiskANNIndex *)calloc(1, sizeof(GV_DiskANNIndex));
+    GV_DiskANNIndex *index = (GV_DiskANNIndex *)gv_calloc(1, sizeof(GV_DiskANNIndex));
     if (!index) return NULL;
 
     index->dimension = dimension;
@@ -883,25 +884,25 @@ GV_DiskANNIndex *diskann_create(size_t dimension, const GV_DiskANNConfig *config
     if (index->vectors_per_page == 0) index->vectors_per_page = 1;
 
     if (config && config->data_path) {
-        index->data_path = (char *)malloc(strlen(config->data_path) + 1);
+        index->data_path = (char *)gv_alloc(strlen(config->data_path) + 1);
         if (!index->data_path) {
-            free(index);
+            gv_free(index);
             return NULL;
         }
         strcpy(index->data_path, config->data_path);
     } else {
         const char *default_path = "diskann_data.bin";
-        index->data_path = (char *)malloc(strlen(default_path) + 1);
+        index->data_path = (char *)gv_alloc(strlen(default_path) + 1);
         if (!index->data_path) {
-            free(index);
+            gv_free(index);
             return NULL;
         }
         strcpy(index->data_path, default_path);
     }
 
     if (diskann_disk_open(index) != 0) {
-        free(index->data_path);
-        free(index);
+        gv_free(index->data_path);
+        gv_free(index);
         return NULL;
     }
 
@@ -911,11 +912,11 @@ GV_DiskANNIndex *diskann_create(size_t dimension, const GV_DiskANNConfig *config
     diskann_pq_init(&index->pq);
 
     index->capacity = DISKANN_INITIAL_CAPACITY;
-    index->nodes = (DiskANN_Node *)calloc(index->capacity, sizeof(DiskANN_Node));
+    index->nodes = (DiskANN_Node *)gv_calloc(index->capacity, sizeof(DiskANN_Node));
     if (!index->nodes) {
         diskann_disk_close(index);
-        free(index->data_path);
-        free(index);
+        gv_free(index->data_path);
+        gv_free(index);
         return NULL;
     }
 
@@ -929,10 +930,10 @@ void diskann_destroy(GV_DiskANNIndex *index) {
     if (!index) return;
 
     for (size_t i = 0; i < index->count; i++) {
-        free(index->nodes[i].neighbors);
-        free(index->nodes[i].pq_code);
+        gv_free(index->nodes[i].neighbors);
+        gv_free(index->nodes[i].pq_code);
     }
-    free(index->nodes);
+    gv_free(index->nodes);
 
     diskann_pq_destroy(&index->pq);
 
@@ -940,8 +941,8 @@ void diskann_destroy(GV_DiskANNIndex *index) {
 
     diskann_disk_close(index);
 
-    free(index->data_path);
-    free(index);
+    gv_free(index->data_path);
+    gv_free(index);
 }
 
 int diskann_build(GV_DiskANNIndex *index, const float *data, size_t count, size_t dimension) {
@@ -949,7 +950,7 @@ int diskann_build(GV_DiskANNIndex *index, const float *data, size_t count, size_
     if (dimension != index->dimension) return -1;
 
     if (count > index->capacity) {
-        DiskANN_Node *new_nodes = (DiskANN_Node *)realloc(index->nodes, count * sizeof(DiskANN_Node));
+        DiskANN_Node *new_nodes = (DiskANN_Node *)gv_realloc(index->nodes, count * sizeof(DiskANN_Node));
         if (!new_nodes) return -1;
         memset(&new_nodes[index->capacity], 0, (count - index->capacity) * sizeof(DiskANN_Node));
         index->nodes = new_nodes;
@@ -974,7 +975,7 @@ int diskann_build(GV_DiskANNIndex *index, const float *data, size_t count, size_
 
     if (index->pq.trained) {
         for (size_t i = 0; i < count; i++) {
-            index->nodes[i].pq_code = (uint8_t *)malloc(index->pq.m);
+            index->nodes[i].pq_code = (uint8_t *)gv_alloc(index->pq.m);
             if (index->nodes[i].pq_code) {
                 diskann_pq_encode(&index->pq, &data[i * dimension], index->nodes[i].pq_code);
             }
@@ -983,7 +984,7 @@ int diskann_build(GV_DiskANNIndex *index, const float *data, size_t count, size_
 
     for (size_t i = 0; i < count; i++) {
         size_t initial_degree = index->max_degree < count ? index->max_degree : count - 1;
-        index->nodes[i].neighbors = (size_t *)malloc(initial_degree * sizeof(size_t));
+        index->nodes[i].neighbors = (size_t *)gv_alloc(initial_degree * sizeof(size_t));
         if (!index->nodes[i].neighbors) {
             index->nodes[i].neighbor_count = 0;
             continue;
@@ -1000,13 +1001,13 @@ int diskann_build(GV_DiskANNIndex *index, const float *data, size_t count, size_
         index->nodes[i].deleted = 0;
     }
 
-    size_t *search_results = (size_t *)malloc(index->build_beam_width * 2 * sizeof(size_t));
-    float *search_distances = (float *)malloc(index->build_beam_width * 2 * sizeof(float));
-    float *vec_buf = (float *)malloc(dimension * sizeof(float));
+    size_t *search_results = (size_t *)gv_alloc(index->build_beam_width * 2 * sizeof(size_t));
+    float *search_distances = (float *)gv_alloc(index->build_beam_width * 2 * sizeof(float));
+    float *vec_buf = (float *)gv_alloc(dimension * sizeof(float));
     if (!search_results || !search_distances || !vec_buf) {
-        free(search_results);
-        free(search_distances);
-        free(vec_buf);
+        gv_free(search_results);
+        gv_free(search_distances);
+        gv_free(vec_buf);
         return -1;
     }
 
@@ -1047,11 +1048,11 @@ int diskann_build(GV_DiskANNIndex *index, const float *data, size_t count, size_
 
             DiskANN_Node *node = &index->nodes[i];
             size_t total_cand = valid_count + node->neighbor_count;
-            size_t *all_cands = (size_t *)malloc(total_cand * sizeof(size_t));
-            float *all_dists = (float *)malloc(total_cand * sizeof(float));
+            size_t *all_cands = (size_t *)gv_alloc(total_cand * sizeof(size_t));
+            float *all_dists = (float *)gv_alloc(total_cand * sizeof(float));
             if (!all_cands || !all_dists) {
-                free(all_cands);
-                free(all_dists);
+                gv_free(all_cands);
+                gv_free(all_dists);
                 continue;
             }
 
@@ -1080,8 +1081,8 @@ int diskann_build(GV_DiskANNIndex *index, const float *data, size_t count, size_
 
             diskann_robust_prune(index, i, all_cands, all_dists, ac);
 
-            free(all_cands);
-            free(all_dists);
+            gv_free(all_cands);
+            gv_free(all_dists);
 
             for (size_t ni = 0; ni < node->neighbor_count; ni++) {
                 size_t nb = node->neighbors[ni];
@@ -1093,7 +1094,7 @@ int diskann_build(GV_DiskANNIndex *index, const float *data, size_t count, size_
                 }
 
                 if (!exists && nb_node->neighbor_count < index->max_degree) {
-                    size_t *new_neighbors = (size_t *)realloc(nb_node->neighbors,
+                    size_t *new_neighbors = (size_t *)gv_realloc(nb_node->neighbors,
                                                                (nb_node->neighbor_count + 1) * sizeof(size_t));
                     if (new_neighbors) {
                         nb_node->neighbors = new_neighbors;
@@ -1104,9 +1105,9 @@ int diskann_build(GV_DiskANNIndex *index, const float *data, size_t count, size_
         }
     }
 
-    free(search_results);
-    free(search_distances);
-    free(vec_buf);
+    gv_free(search_results);
+    gv_free(search_distances);
+    gv_free(vec_buf);
 
     return 0;
 }
@@ -1117,7 +1118,7 @@ int diskann_insert(GV_DiskANNIndex *index, const float *data, size_t dimension) 
 
     if (index->count >= index->capacity) {
         size_t new_cap = index->capacity * 2;
-        DiskANN_Node *new_nodes = (DiskANN_Node *)realloc(index->nodes, new_cap * sizeof(DiskANN_Node));
+        DiskANN_Node *new_nodes = (DiskANN_Node *)gv_realloc(index->nodes, new_cap * sizeof(DiskANN_Node));
         if (!new_nodes) return -1;
         memset(&new_nodes[index->capacity], 0, (new_cap - index->capacity) * sizeof(DiskANN_Node));
         index->nodes = new_nodes;
@@ -1133,7 +1134,7 @@ int diskann_insert(GV_DiskANNIndex *index, const float *data, size_t dimension) 
     node->deleted = 0;
 
     if (index->pq.trained) {
-        node->pq_code = (uint8_t *)malloc(index->pq.m);
+        node->pq_code = (uint8_t *)gv_alloc(index->pq.m);
         if (node->pq_code) {
             diskann_pq_encode(&index->pq, data, node->pq_code);
         }
@@ -1151,11 +1152,11 @@ int diskann_insert(GV_DiskANNIndex *index, const float *data, size_t dimension) 
     size_t max_results = index->build_beam_width * 2;
     if (max_results > index->count) max_results = index->count;
 
-    size_t *search_results = (size_t *)malloc(max_results * sizeof(size_t));
-    float *search_distances = (float *)malloc(max_results * sizeof(float));
+    size_t *search_results = (size_t *)gv_alloc(max_results * sizeof(size_t));
+    float *search_distances = (float *)gv_alloc(max_results * sizeof(float));
     if (!search_results || !search_distances) {
-        free(search_results);
-        free(search_distances);
+        gv_free(search_results);
+        gv_free(search_distances);
         return -1;
     }
 
@@ -1164,10 +1165,10 @@ int diskann_insert(GV_DiskANNIndex *index, const float *data, size_t dimension) 
                            search_results, &visited_count, max_results);
 
     size_t valid_count = 0;
-    float *vec_buf = (float *)malloc(dimension * sizeof(float));
+    float *vec_buf = (float *)gv_alloc(dimension * sizeof(float));
     if (!vec_buf) {
-        free(search_results);
-        free(search_distances);
+        gv_free(search_results);
+        gv_free(search_distances);
         return -1;
     }
 
@@ -1189,7 +1190,7 @@ int diskann_insert(GV_DiskANNIndex *index, const float *data, size_t dimension) 
         valid_count++;
     }
 
-    free(vec_buf);
+    gv_free(vec_buf);
 
     if (valid_count > 0) {
         diskann_robust_prune(index, new_id, search_results, search_distances, valid_count);
@@ -1210,7 +1211,7 @@ int diskann_insert(GV_DiskANNIndex *index, const float *data, size_t dimension) 
 
         if (!exists) {
             if (nb_node->neighbor_count < index->max_degree) {
-                size_t *new_neighbors = (size_t *)realloc(nb_node->neighbors,
+                size_t *new_neighbors = (size_t *)gv_realloc(nb_node->neighbors,
                                                            (nb_node->neighbor_count + 1) * sizeof(size_t));
                 if (new_neighbors) {
                     nb_node->neighbors = new_neighbors;
@@ -1222,8 +1223,8 @@ int diskann_insert(GV_DiskANNIndex *index, const float *data, size_t dimension) 
         }
     }
 
-    free(search_results);
-    free(search_distances);
+    gv_free(search_results);
+    gv_free(search_distances);
 
     return 0;
 }
@@ -1241,26 +1242,26 @@ int diskann_search(const GV_DiskANNIndex *index, const float *query, size_t dime
     if (max_visited > index->count) max_visited = index->count;
     if (max_visited < k) max_visited = k;
 
-    size_t *visited = (size_t *)malloc(max_visited * sizeof(size_t));
+    size_t *visited = (size_t *)gv_alloc(max_visited * sizeof(size_t));
     if (!visited) return -1;
 
     size_t visited_count = 0;
     if (diskann_greedy_search(index, query, index->search_beam_width,
                                visited, &visited_count, max_visited) != 0) {
-        free(visited);
+        gv_free(visited);
         return -1;
     }
 
-    DiskANN_Candidate *refined = (DiskANN_Candidate *)malloc(visited_count * sizeof(DiskANN_Candidate));
+    DiskANN_Candidate *refined = (DiskANN_Candidate *)gv_alloc(visited_count * sizeof(DiskANN_Candidate));
     if (!refined) {
-        free(visited);
+        gv_free(visited);
         return -1;
     }
 
-    float *vec_buf = (float *)malloc(dimension * sizeof(float));
+    float *vec_buf = (float *)gv_alloc(dimension * sizeof(float));
     if (!vec_buf) {
-        free(refined);
-        free(visited);
+        gv_free(refined);
+        gv_free(visited);
         return -1;
     }
 
@@ -1278,8 +1279,8 @@ int diskann_search(const GV_DiskANNIndex *index, const float *query, size_t dime
         refined_count++;
     }
 
-    free(vec_buf);
-    free(visited);
+    gv_free(vec_buf);
+    gv_free(visited);
 
     qsort(refined, refined_count, sizeof(DiskANN_Candidate), diskann_cand_compare);
 
@@ -1289,7 +1290,7 @@ int diskann_search(const GV_DiskANNIndex *index, const float *query, size_t dime
         results[i].distance = refined[i].distance;
     }
 
-    free(refined);
+    gv_free(refined);
 
     /* Update latency stats (cast away const for stats tracking) */
     clock_gettime(CLOCK_MONOTONIC, &ts_end);
@@ -1492,10 +1493,10 @@ GV_DiskANNIndex *diskann_load(const char *filepath, const GV_DiskANNConfig *conf
         if (read_u64(f, &pq_ksub) != 0) goto fail;
 
         size_t cb_size = (size_t)(pq_m * pq_ksub * pq_dsub);
-        pq_codebooks = (float *)malloc(cb_size * sizeof(float));
+        pq_codebooks = (float *)gv_alloc(cb_size * sizeof(float));
         if (!pq_codebooks) goto fail;
         if (read_floats(f, pq_codebooks, cb_size) != 0) {
-            free(pq_codebooks);
+            gv_free(pq_codebooks);
             goto fail;
         }
     }
@@ -1512,9 +1513,9 @@ GV_DiskANNIndex *diskann_load(const char *filepath, const GV_DiskANNConfig *conf
 
     TempNode *temp_nodes = NULL;
     if (count > 0) {
-        temp_nodes = (TempNode *)calloc((size_t)count, sizeof(TempNode));
+        temp_nodes = (TempNode *)gv_calloc((size_t)count, sizeof(TempNode));
         if (!temp_nodes) {
-            free(pq_codebooks);
+            gv_free(pq_codebooks);
             goto fail;
         }
     }
@@ -1524,7 +1525,7 @@ GV_DiskANNIndex *diskann_load(const char *filepath, const GV_DiskANNConfig *conf
         if (read_u64(f, &temp_nodes[i].neighbor_count) != 0) goto fail_temp;
 
         if (temp_nodes[i].neighbor_count > 0) {
-            temp_nodes[i].neighbors = (size_t *)malloc((size_t)temp_nodes[i].neighbor_count * sizeof(size_t));
+            temp_nodes[i].neighbors = (size_t *)gv_alloc((size_t)temp_nodes[i].neighbor_count * sizeof(size_t));
             if (!temp_nodes[i].neighbors) goto fail_temp;
 
             for (size_t j = 0; j < (size_t)temp_nodes[i].neighbor_count; j++) {
@@ -1537,7 +1538,7 @@ GV_DiskANNIndex *diskann_load(const char *filepath, const GV_DiskANNConfig *conf
         uint32_t has_pq = 0;
         if (read_u32(f, &has_pq) != 0) goto fail_temp;
         if (has_pq && pq_trained) {
-            temp_nodes[i].pq_code = (uint8_t *)malloc((size_t)pq_m);
+            temp_nodes[i].pq_code = (uint8_t *)gv_alloc((size_t)pq_m);
             if (!temp_nodes[i].pq_code) goto fail_temp;
             if (read_bytes(f, temp_nodes[i].pq_code, (size_t)pq_m) != 0) goto fail_temp;
         }
@@ -1548,10 +1549,10 @@ GV_DiskANNIndex *diskann_load(const char *filepath, const GV_DiskANNConfig *conf
 
     char *stored_path = NULL;
     if (stored_path_len > 0) {
-        stored_path = (char *)malloc(stored_path_len + 1);
+        stored_path = (char *)gv_alloc(stored_path_len + 1);
         if (!stored_path) goto fail_temp;
         if (fread(stored_path, 1, stored_path_len, f) != stored_path_len) {
-            free(stored_path);
+            gv_free(stored_path);
             goto fail_temp;
         }
         stored_path[stored_path_len] = '\0';
@@ -1566,18 +1567,18 @@ GV_DiskANNIndex *diskann_load(const char *filepath, const GV_DiskANNConfig *conf
     f = NULL;
 
     GV_DiskANNIndex *index = diskann_create((size_t)dimension, &load_config);
-    free(stored_path);
+    gv_free(stored_path);
 
     if (!index) {
         /* Clean up temp nodes */
         if (temp_nodes) {
             for (size_t i = 0; i < (size_t)count; i++) {
-                free(temp_nodes[i].neighbors);
-                free(temp_nodes[i].pq_code);
+                gv_free(temp_nodes[i].neighbors);
+                gv_free(temp_nodes[i].pq_code);
             }
-            free(temp_nodes);
+            gv_free(temp_nodes);
         }
-        free(pq_codebooks);
+        gv_free(pq_codebooks);
         return NULL;
     }
 
@@ -1588,18 +1589,18 @@ GV_DiskANNIndex *diskann_load(const char *filepath, const GV_DiskANNConfig *conf
         index->pq.codebooks = pq_codebooks;
         index->pq.trained = 1;
     } else {
-        free(pq_codebooks);
+        gv_free(pq_codebooks);
     }
 
     if ((size_t)count > index->capacity) {
-        DiskANN_Node *new_nodes = (DiskANN_Node *)realloc(index->nodes, (size_t)count * sizeof(DiskANN_Node));
+        DiskANN_Node *new_nodes = (DiskANN_Node *)gv_realloc(index->nodes, (size_t)count * sizeof(DiskANN_Node));
         if (!new_nodes) {
             if (temp_nodes) {
                 for (size_t i = 0; i < (size_t)count; i++) {
-                    free(temp_nodes[i].neighbors);
-                    free(temp_nodes[i].pq_code);
+                    gv_free(temp_nodes[i].neighbors);
+                    gv_free(temp_nodes[i].pq_code);
                 }
-                free(temp_nodes);
+                gv_free(temp_nodes);
             }
             diskann_destroy(index);
             return NULL;
@@ -1621,18 +1622,18 @@ GV_DiskANNIndex *diskann_load(const char *filepath, const GV_DiskANNConfig *conf
         temp_nodes[i].pq_code = NULL;
     }
 
-    free(temp_nodes);
+    gv_free(temp_nodes);
     return index;
 
 fail_temp:
     if (temp_nodes) {
         for (size_t i = 0; i < (size_t)count; i++) {
-            free(temp_nodes[i].neighbors);
-            free(temp_nodes[i].pq_code);
+            gv_free(temp_nodes[i].neighbors);
+            gv_free(temp_nodes[i].pq_code);
         }
-        free(temp_nodes);
+        gv_free(temp_nodes);
     }
-    free(pq_codebooks);
+    gv_free(pq_codebooks);
 fail:
     if (f) fclose(f);
     return NULL;

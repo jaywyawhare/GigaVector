@@ -1,4 +1,5 @@
 #include "core/arena.h"
+#include "core/memory.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -34,7 +35,7 @@ static int gv_arena_grow(GV_Arena *arena, size_t required) {
         new_cap *= 2;
     }
 
-    uint8_t *grown = (uint8_t *)realloc(arena->base, new_cap);
+    uint8_t *grown = (uint8_t *)gv_realloc(arena->base, new_cap);
     if (grown == NULL) {
         return -1;
     }
@@ -59,7 +60,7 @@ int gv_arena_init(GV_Arena *arena, size_t initial_capacity) {
         initial_capacity = 4096;
     }
 
-    arena->base = (uint8_t *)malloc(initial_capacity);
+    arena->base = (uint8_t *)gv_alloc(initial_capacity);
     if (arena->base == NULL) {
         return -1;
     }
@@ -94,7 +95,7 @@ void gv_arena_fini(GV_Arena *arena) {
     }
 
     if ((arena->flags & GV_ARENA_OWN_HEAP) != 0 && arena->base != NULL) {
-        free(arena->base);
+        gv_free(arena->base);
     }
 
     arena->base = NULL;

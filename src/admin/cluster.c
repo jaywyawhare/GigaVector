@@ -4,6 +4,7 @@
  */
 
 #include "admin/cluster.h"
+#include "core/memory.h"
 #include "core/utils.h"
 
 #include <stdlib.h>
@@ -127,7 +128,7 @@ static void *heartbeat_thread_func(void *arg) {
 /* Lifecycle */
 
 GV_Cluster *cluster_create(const GV_ClusterConfig *config) {
-    GV_Cluster *cluster = calloc(1, sizeof(GV_Cluster));
+    GV_Cluster *cluster = gv_calloc(1, sizeof(GV_Cluster));
     if (!cluster) return NULL;
 
     cluster->config = config ? *config : DEFAULT_CONFIG;
@@ -142,23 +143,23 @@ GV_Cluster *cluster_create(const GV_ClusterConfig *config) {
     /* Create shard manager */
     cluster->shard_mgr = shard_manager_create(NULL);
     if (!cluster->shard_mgr) {
-        free(cluster->local_node_id);
-        free(cluster);
+        gv_free(cluster->local_node_id);
+        gv_free(cluster);
         return NULL;
     }
 
     if (pthread_rwlock_init(&cluster->rwlock, NULL) != 0) {
         shard_manager_destroy(cluster->shard_mgr);
-        free(cluster->local_node_id);
-        free(cluster);
+        gv_free(cluster->local_node_id);
+        gv_free(cluster);
         return NULL;
     }
 
     if (pthread_mutex_init(&cluster->state_mutex, NULL) != 0) {
         pthread_rwlock_destroy(&cluster->rwlock);
         shard_manager_destroy(cluster->shard_mgr);
-        free(cluster->local_node_id);
-        free(cluster);
+        gv_free(cluster->local_node_id);
+        gv_free(cluster);
         return NULL;
     }
 
@@ -166,8 +167,8 @@ GV_Cluster *cluster_create(const GV_ClusterConfig *config) {
         pthread_mutex_destroy(&cluster->state_mutex);
         pthread_rwlock_destroy(&cluster->rwlock);
         shard_manager_destroy(cluster->shard_mgr);
-        free(cluster->local_node_id);
-        free(cluster);
+        gv_free(cluster->local_node_id);
+        gv_free(cluster);
         return NULL;
     }
 
@@ -192,9 +193,9 @@ void cluster_destroy(GV_Cluster *cluster) {
     cluster_stop(cluster);
 
     for (size_t i = 0; i < cluster->node_count; i++) {
-        free(cluster->nodes[i].node_id);
-        free(cluster->nodes[i].address);
-        free(cluster->nodes[i].shard_ids);
+        gv_free(cluster->nodes[i].node_id);
+        gv_free(cluster->nodes[i].address);
+        gv_free(cluster->nodes[i].shard_ids);
     }
 
     pthread_cond_destroy(&cluster->ready_cond);
@@ -202,8 +203,8 @@ void cluster_destroy(GV_Cluster *cluster) {
     pthread_rwlock_destroy(&cluster->rwlock);
 
     shard_manager_destroy(cluster->shard_mgr);
-    free(cluster->local_node_id);
-    free(cluster);
+    gv_free(cluster->local_node_id);
+    gv_free(cluster);
 }
 
 int cluster_start(GV_Cluster *cluster) {
@@ -257,14 +258,14 @@ int cluster_start(GV_Cluster *cluster) {
                             entry->load = 0.0;
                             cluster->node_count++;
                         } else {
-                            free(nid);
-                            free(addr);
+                            gv_free(nid);
+                            gv_free(addr);
                         }
                     }
                 }
                 tok = strtok_r(NULL, ",", &saveptr);
             }
-            free(seeds);
+            gv_free(seeds);
         }
     }
 
@@ -324,7 +325,7 @@ static void copy_node_info(const NodeEntry *entry, GV_NodeInfo *info) {
     info->role = entry->role;
     info->state = entry->state;
     if (entry->shard_count > 0 && entry->shard_ids) {
-        info->shard_ids = malloc(entry->shard_count * sizeof(uint32_t));
+        info->shard_ids = gv_alloc(entry->shard_count * sizeof(uint32_t));
         memcpy(info->shard_ids, entry->shard_ids, entry->shard_count * sizeof(uint32_t));
     } else {
         info->shard_ids = NULL;
@@ -368,7 +369,7 @@ int cluster_list_nodes(GV_Cluster *cluster, GV_NodeInfo **nodes, size_t *count) 
         return 0;
     }
 
-    *nodes = malloc(*count * sizeof(GV_NodeInfo));
+    *nodes = gv_alloc(*count * sizeof(GV_NodeInfo));
     if (!*nodes) {
         pthread_rwlock_unlock(&cluster->rwlock);
         return -1;
@@ -384,9 +385,9 @@ int cluster_list_nodes(GV_Cluster *cluster, GV_NodeInfo **nodes, size_t *count) 
 
 void cluster_free_node_info(GV_NodeInfo *info) {
     if (!info) return;
-    free(info->node_id);
-    free(info->address);
-    free(info->shard_ids);
+    gv_free(info->node_id);
+    gv_free(info->address);
+    gv_free(info->shard_ids);
     memset(info, 0, sizeof(*info));
 }
 
@@ -395,7 +396,7 @@ void cluster_free_node_list(GV_NodeInfo *nodes, size_t count) {
     for (size_t i = 0; i < count; i++) {
         cluster_free_node_info(&nodes[i]);
     }
-    free(nodes);
+    gv_free(nodes);
 }
 
 /* Cluster Operations */

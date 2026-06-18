@@ -9,6 +9,7 @@
  */
 
 #include "multimodal/onnx.h"
+#include "core/memory.h"
 #include "core/utils.h"
 
 #include <stdlib.h>
@@ -84,13 +85,13 @@ static void vocab_destroy(GV_Vocab *v) {
         GV_VocabEntry *e = v->buckets[i];
         while (e) {
             GV_VocabEntry *next = e->next;
-            free(e->token);
-            free(e);
+            gv_free(e->token);
+            gv_free(e);
             e = next;
         }
     }
-    free(v->buckets);
-    free(v);
+    gv_free(v->buckets);
+    gv_free(v);
 }
 
 static int64_t vocab_lookup(const GV_Vocab *v, const char *token) {
@@ -152,7 +153,7 @@ GV_ONNXTensor onnx_tensor_create(const size_t *shape, size_t ndim) {
     if (!shape || ndim == 0) return t;
 
     t.ndim = ndim;
-    t.shape = malloc(ndim * sizeof(size_t));
+    t.shape = gv_alloc(ndim * sizeof(size_t));
     if (!t.shape) return t;
     memcpy(t.shape, shape, ndim * sizeof(size_t));
 
@@ -161,9 +162,9 @@ GV_ONNXTensor onnx_tensor_create(const size_t *shape, size_t ndim) {
         t.total_elements *= shape[i];
     }
 
-    t.data = calloc(t.total_elements, sizeof(float));
+    t.data = gv_calloc(t.total_elements, sizeof(float));
     if (!t.data) {
-        free(t.shape);
+        gv_free(t.shape);
         memset(&t, 0, sizeof(t));
     }
 
@@ -172,8 +173,8 @@ GV_ONNXTensor onnx_tensor_create(const size_t *shape, size_t ndim) {
 
 void onnx_tensor_destroy(GV_ONNXTensor *tensor) {
     if (!tensor) return;
-    free(tensor->data);
-    free(tensor->shape);
+    gv_free(tensor->data);
+    gv_free(tensor->shape);
     tensor->data = NULL;
     tensor->shape = NULL;
     tensor->ndim = 0;
@@ -214,7 +215,7 @@ GV_ONNXModel *onnx_load(const GV_ONNXConfig *config) {
         return NULL;
     }
 
-    GV_ONNXModel *m = calloc(1, sizeof(GV_ONNXModel));
+    GV_ONNXModel *m = gv_calloc(1, sizeof(GV_ONNXModel));
     if (!m) return NULL;
 
     m->config = *config;
@@ -282,7 +283,7 @@ GV_ONNXModel *onnx_load(const GV_ONNXConfig *config) {
     m->api->GetAllocatorWithDefaultOptions(&allocator);
 
     m->api->SessionGetInputCount(m->session, &m->input_count);
-    m->input_names = calloc(m->input_count, sizeof(char *));
+    m->input_names = gv_calloc(m->input_count, sizeof(char *));
     for (size_t i = 0; i < m->input_count; i++) {
         char *name = NULL;
         m->api->SessionGetInputName(m->session, i, allocator, &name);
@@ -291,7 +292,7 @@ GV_ONNXModel *onnx_load(const GV_ONNXConfig *config) {
     }
 
     m->api->SessionGetOutputCount(m->session, &m->output_count);
-    m->output_names = calloc(m->output_count, sizeof(char *));
+    m->output_names = gv_calloc(m->output_count, sizeof(char *));
     for (size_t i = 0; i < m->output_count; i++) {
         char *name = NULL;
         m->api->SessionGetOutputName(m->session, i, allocator, &name);
@@ -322,16 +323,16 @@ void onnx_destroy(GV_ONNXModel *model) {
     }
 
     if (model->input_names) {
-        for (size_t i = 0; i < model->input_count; i++) free(model->input_names[i]);
-        free(model->input_names);
+        for (size_t i = 0; i < model->input_count; i++) gv_free(model->input_names[i]);
+        gv_free(model->input_names);
     }
     if (model->output_names) {
-        for (size_t i = 0; i < model->output_count; i++) free(model->output_names[i]);
-        free(model->output_names);
+        for (size_t i = 0; i < model->output_count; i++) gv_free(model->output_names[i]);
+        gv_free(model->output_names);
     }
 
     vocab_destroy(model->vocab);
-    free(model);
+    gv_free(model);
 }
 
 /* Inference */
@@ -350,11 +351,11 @@ int onnx_infer(GV_ONNXModel *model, const GV_ONNXTensor *inputs,
     pthread_mutex_lock(&model->mutex);
 
     /* Build OrtValue inputs */
-    OrtValue **ort_inputs = calloc(input_count, sizeof(OrtValue *));
+    OrtValue **ort_inputs = gv_calloc(input_count, sizeof(OrtValue *));
     if (!ort_inputs) goto unlock;
 
     for (size_t i = 0; i < input_count; i++) {
-        int64_t *shape64 = malloc(inputs[i].ndim * sizeof(int64_t));
+        int64_t *shape64 = gv_alloc(inputs[i].ndim * sizeof(int64_t));
         if (!shape64) goto cleanup;
         for (size_t d = 0; d < inputs[i].ndim; d++) {
             shape64[d] = (int64_t)inputs[i].shape[d];
@@ -364,12 +365,12 @@ int onnx_infer(GV_ONNXModel *model, const GV_ONNXTensor *inputs,
             inputs[i].total_elements * sizeof(float),
             shape64, inputs[i].ndim,
             ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, &ort_inputs[i]);
-        free(shape64);
+        gv_free(shape64);
         if (check_status(model, s)) goto cleanup;
     }
 
     /* Run session */
-    OrtValue **ort_outputs = calloc(output_count, sizeof(OrtValue *));
+    OrtValue **ort_outputs = gv_calloc(output_count, sizeof(OrtValue *));
     if (!ort_outputs) goto cleanup;
 
     const char **in_names  = (const char **)model->input_names;
@@ -381,7 +382,7 @@ int onnx_infer(GV_ONNXModel *model, const GV_ONNXTensor *inputs,
         out_names, output_count, ort_outputs);
 
     if (check_status(model, run_status)) {
-        free(ort_outputs);
+        gv_free(ort_outputs);
         goto cleanup;
     }
 
@@ -396,7 +397,7 @@ int onnx_infer(GV_ONNXModel *model, const GV_ONNXTensor *inputs,
         }
         model->api->ReleaseValue(ort_outputs[i]);
     }
-    free(ort_outputs);
+    gv_free(ort_outputs);
 
     rc = 0;
 
@@ -405,7 +406,7 @@ cleanup:
         for (size_t i = 0; i < input_count; i++) {
             if (ort_inputs[i]) model->api->ReleaseValue(ort_inputs[i]);
         }
-        free(ort_inputs);
+        gv_free(ort_inputs);
     }
 
 unlock:
@@ -426,9 +427,9 @@ int onnx_rerank(GV_ONNXModel *model, const char *query_text,
 
     size_t batch = model->config.max_batch_size > 0
                        ? model->config.max_batch_size : 32;
-    int64_t *ids   = calloc(GV_ONNX_MAX_SEQ_LEN, sizeof(int64_t));
-    int64_t *attn  = calloc(GV_ONNX_MAX_SEQ_LEN, sizeof(int64_t));
-    if (!ids || !attn) { free(ids); free(attn); return -1; }
+    int64_t *ids   = gv_calloc(GV_ONNX_MAX_SEQ_LEN, sizeof(int64_t));
+    int64_t *attn  = gv_calloc(GV_ONNX_MAX_SEQ_LEN, sizeof(int64_t));
+    if (!ids || !attn) { gv_free(ids); gv_free(attn); return -1; }
 
     /* Tokenize query once */
     int64_t q_ids[GV_ONNX_MAX_SEQ_LEN];
@@ -514,8 +515,8 @@ int onnx_rerank(GV_ONNXModel *model, const char *query_text,
         if (rc != 0) break;
     }
 
-    free(ids);
-    free(attn);
+    gv_free(ids);
+    gv_free(attn);
     return rc;
 }
 
@@ -598,7 +599,7 @@ int onnx_get_input_info(const GV_ONNXModel *model, size_t *input_count,
     if (!model || !input_count || !input_names) return -1;
 
     *input_count = model->input_count;
-    *input_names = calloc(model->input_count, sizeof(char *));
+    *input_names = gv_calloc(model->input_count, sizeof(char *));
     if (!*input_names) return -1;
 
     for (size_t i = 0; i < model->input_count; i++) {
@@ -614,7 +615,7 @@ int onnx_get_output_info(const GV_ONNXModel *model, size_t *output_count,
     if (!model || !output_count || !output_names) return -1;
 
     *output_count = model->output_count;
-    *output_names = calloc(model->output_count, sizeof(char *));
+    *output_names = gv_calloc(model->output_count, sizeof(char *));
     if (!*output_names) return -1;
 
     for (size_t i = 0; i < model->output_count; i++) {
@@ -645,7 +646,7 @@ void onnx_destroy(GV_ONNXModel *model) {
     if (!model) return;
     pthread_mutex_destroy(&model->mutex);
     vocab_destroy(model->vocab);
-    free(model);
+    gv_free(model);
 }
 
 int onnx_infer(GV_ONNXModel *model, const GV_ONNXTensor *inputs,

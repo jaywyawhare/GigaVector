@@ -4,6 +4,7 @@
  */
 
 #include "api/rest_handlers.h"
+#include "core/memory.h"
 #include "features/json.h"
 #include "storage/database.h"
 #include "core/types.h"
@@ -28,7 +29,7 @@ GV_HttpResponse *rest_response_json(GV_JsonValue *data) {
         return NULL;
     }
 
-    GV_HttpResponse *response = calloc(1, sizeof(GV_HttpResponse));
+    GV_HttpResponse *response = gv_calloc(1, sizeof(GV_HttpResponse));
     if (!response) {
         json_free(data);
         return NULL;
@@ -38,7 +39,7 @@ GV_HttpResponse *rest_response_json(GV_JsonValue *data) {
     json_free(data);
 
     if (!response->body) {
-        free(response);
+        gv_free(response);
         return NULL;
     }
 
@@ -79,8 +80,8 @@ GV_HttpResponse *rest_response_success(const char *message) {
 
 void rest_response_free(GV_HttpResponse *response) {
     if (!response) return;
-    free(response->body);
-    free(response);
+    gv_free(response->body);
+    gv_free(response);
 }
 
 /* Request Parsing Helpers */
@@ -307,7 +308,7 @@ GV_HttpResponse *rest_handle_vectors_post(const GV_HandlerContext *ctx,
 
                         /* Free converted value buffers */
                         for (size_t m = 0; m < meta_count; m++) {
-                            free(value_buffers[m]);
+                            gv_free(value_buffers[m]);
                         }
                     } else {
                         result = db_add_vector(ctx->db, vec, dim);
@@ -374,7 +375,7 @@ GV_HttpResponse *rest_handle_vectors_post(const GV_HandlerContext *ctx,
                         }
                     }
                     result = db_add_vector_with_rich_metadata(ctx->db, vec, dim, mkeys, mvals, meta_count);
-                    for (size_t mi = 0; mi < meta_count; mi++) free(mval_bufs[mi]);
+                    for (size_t mi = 0; mi < meta_count; mi++) gv_free(mval_bufs[mi]);
                 } else {
                     result = db_add_vector(ctx->db, vec, dim);
                 }

@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include "core/memory.h"
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -124,7 +125,7 @@ static double estimate_index_cost(const GV_CollectionStats *st, size_t k, size_t
 
 GV_QueryOptimizer *optimizer_create(void)
 {
-    GV_QueryOptimizer *opt = (GV_QueryOptimizer *)calloc(1, sizeof(GV_QueryOptimizer));
+    GV_QueryOptimizer *opt = (GV_QueryOptimizer *)gv_calloc(1, sizeof(GV_QueryOptimizer));
     if (!opt)
         return NULL;
 
@@ -140,7 +141,7 @@ GV_QueryOptimizer *optimizer_create(void)
 
 void optimizer_destroy(GV_QueryOptimizer *opt)
 {
-    free(opt);
+    gv_free(opt);
 }
 
 void optimizer_update_stats(GV_QueryOptimizer *opt, const GV_CollectionStats *stats)

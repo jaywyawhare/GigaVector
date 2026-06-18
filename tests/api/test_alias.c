@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include "core/memory.h"
 #include <stdlib.h>
 #include <string.h>
 #include "api/alias.h"
@@ -114,7 +115,7 @@ static int test_get_info(void) {
     ASSERT(strcmp(info.collection_name, "target_col") == 0,
            "collection_name should match");
 
-    /* Note: info fields are owned by the manager; we do not free them here */
+    /* Note: info fields are owned by the manager; we do not gv_free them here */
     alias_manager_destroy(mgr);
     return 0;
 }

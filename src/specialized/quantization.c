@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include "core/memory.h"
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -70,7 +71,7 @@ static uint64_t xorshift64(uint64_t *state) {
 /* RaBitQ: generate a random orthogonal matrix via Householder */
 /* reflections.  Produces a dimension x dimension rotation matrix. */
 static float *rabitq_generate_rotation(size_t dimension, uint64_t seed) {
-    float *R = (float *)malloc(dimension * dimension * sizeof(float));
+    float *R = (float *)gv_alloc(dimension * dimension * sizeof(float));
     if (!R) return NULL;
 
     /* Start with identity. */
@@ -81,12 +82,12 @@ static float *rabitq_generate_rotation(size_t dimension, uint64_t seed) {
 
     uint64_t rng = seed ? seed : 0x123456789ABCULL;
 
-    float *v = (float *)malloc(dimension * sizeof(float));
-    float *tmp_row = (float *)malloc(dimension * sizeof(float));
+    float *v = (float *)gv_alloc(dimension * sizeof(float));
+    float *tmp_row = (float *)gv_alloc(dimension * sizeof(float));
     if (!v || !tmp_row) {
-        free(v);
-        free(tmp_row);
-        free(R);
+        gv_free(v);
+        gv_free(tmp_row);
+        gv_free(R);
         return NULL;
     }
 
@@ -130,8 +131,8 @@ static float *rabitq_generate_rotation(size_t dimension, uint64_t seed) {
         }
     }
 
-    free(v);
-    free(tmp_row);
+    gv_free(v);
+    gv_free(tmp_row);
     return R;
 }
 
@@ -220,7 +221,7 @@ GV_QuantCodebook *quant_train(const float *vectors, size_t count,
                                  const GV_QuantConfig *config) {
     if (!vectors || count == 0 || dimension == 0 || !config) return NULL;
 
-    GV_QuantCodebook *cb = (GV_QuantCodebook *)calloc(1, sizeof(GV_QuantCodebook));
+    GV_QuantCodebook *cb = (GV_QuantCodebook *)gv_calloc(1, sizeof(GV_QuantCodebook));
     if (!cb) return NULL;
 
     cb->type      = config->type;
@@ -229,10 +230,10 @@ GV_QuantCodebook *quant_train(const float *vectors, size_t count,
     cb->ternary_threshold = 0.5f; /* default: half a std-dev */
 
     /* Per-dimension statistics */
-    cb->min_vals  = (float *)malloc(dimension * sizeof(float));
-    cb->max_vals  = (float *)malloc(dimension * sizeof(float));
-    cb->mean_vals = (float *)malloc(dimension * sizeof(float));
-    cb->std_vals  = (float *)malloc(dimension * sizeof(float));
+    cb->min_vals  = (float *)gv_alloc(dimension * sizeof(float));
+    cb->max_vals  = (float *)gv_alloc(dimension * sizeof(float));
+    cb->mean_vals = (float *)gv_alloc(dimension * sizeof(float));
+    cb->std_vals  = (float *)gv_alloc(dimension * sizeof(float));
     if (!cb->min_vals || !cb->max_vals || !cb->mean_vals || !cb->std_vals) {
         quant_codebook_destroy(cb);
         return NULL;
@@ -354,7 +355,7 @@ int quant_encode(const GV_QuantCodebook *cb, const float *vector,
     const float *src = vector;
 
     if (cb->use_rabitq && cb->rotation) {
-        rotated = (float *)malloc(dimension * sizeof(float));
+        rotated = (float *)gv_alloc(dimension * sizeof(float));
         if (!rotated) return -1;
         apply_rotation(cb->rotation, vector, rotated, dimension);
         src = rotated;
@@ -438,7 +439,7 @@ int quant_encode(const GV_QuantCodebook *cb, const float *vector,
     }
     }
 
-    free(rotated);
+    gv_free(rotated);
     return 0;
 }
 
@@ -459,11 +460,11 @@ int quant_decode(const GV_QuantCodebook *cb, const uint8_t *codes,
         }
         /* If RaBitQ was used, apply the inverse (transpose) rotation. */
         if (cb->use_rabitq && cb->rotation) {
-            float *tmp = (float *)malloc(dimension * sizeof(float));
+            float *tmp = (float *)gv_alloc(dimension * sizeof(float));
             if (!tmp) return -1;
             memcpy(tmp, output, dimension * sizeof(float));
             apply_rotation_transpose(cb->rotation, tmp, output, dimension);
-            free(tmp);
+            gv_free(tmp);
         }
         break;
     }
@@ -540,11 +541,11 @@ float quant_distance(const GV_QuantCodebook *cb, const float *query,
     /* For binary/RaBitQ: encode the query, then compute Hamming. */
     if (cb->type == GV_QUANT_BINARY) {
         size_t code_bytes = quant_code_size(cb, dimension);
-        uint8_t *qcodes = (uint8_t *)calloc(code_bytes, sizeof(uint8_t));
+        uint8_t *qcodes = (uint8_t *)gv_calloc(code_bytes, sizeof(uint8_t));
         if (!qcodes) return -1.0f;
 
         if (quant_encode(cb, query, dimension, qcodes) != 0) {
-            free(qcodes);
+            gv_free(qcodes);
             return -1.0f;
         }
 
@@ -569,7 +570,7 @@ float quant_distance(const GV_QuantCodebook *cb, const float *query,
             hamming = hamming - full_pop + masked_pop;
         }
 
-        free(qcodes);
+        gv_free(qcodes);
         return (float)hamming;
     }
 
@@ -580,7 +581,7 @@ float quant_distance(const GV_QuantCodebook *cb, const float *query,
     size_t bpv = bits_per_value(cb->type);
 
     /* Build per-dimension distance table. */
-    float *dist_table = (float *)malloc(dimension * levels * sizeof(float));
+    float *dist_table = (float *)gv_alloc(dimension * levels * sizeof(float));
     if (!dist_table) return -1.0f;
 
     for (size_t d = 0; d < dimension; d++) {
@@ -643,7 +644,7 @@ float quant_distance(const GV_QuantCodebook *cb, const float *query,
     }
 
     (void)bpv;
-    free(dist_table);
+    gv_free(dist_table);
     return dist_sq;
 }
 
@@ -682,18 +683,18 @@ float quant_distance_qq(const GV_QuantCodebook *cb,
     }
 
     /* Scalar types: decode both, compute squared Euclidean. */
-    float *buf_a = (float *)malloc(dimension * sizeof(float));
-    float *buf_b = (float *)malloc(dimension * sizeof(float));
+    float *buf_a = (float *)gv_alloc(dimension * sizeof(float));
+    float *buf_b = (float *)gv_alloc(dimension * sizeof(float));
     if (!buf_a || !buf_b) {
-        free(buf_a);
-        free(buf_b);
+        gv_free(buf_a);
+        gv_free(buf_b);
         return -1.0f;
     }
 
     if (quant_decode(cb, codes_a, dimension, buf_a) != 0 ||
         quant_decode(cb, codes_b, dimension, buf_b) != 0) {
-        free(buf_a);
-        free(buf_b);
+        gv_free(buf_a);
+        gv_free(buf_b);
         return -1.0f;
     }
 
@@ -703,8 +704,8 @@ float quant_distance_qq(const GV_QuantCodebook *cb,
         dist_sq += diff * diff;
     }
 
-    free(buf_a);
-    free(buf_b);
+    gv_free(buf_a);
+    gv_free(buf_b);
     return dist_sq;
 }
 
@@ -790,7 +791,7 @@ GV_QuantCodebook *quant_codebook_load(const char *path) {
     size_t dim = (size_t)dim_u32;
     if (dim == 0) goto fail;
 
-    GV_QuantCodebook *cb = (GV_QuantCodebook *)calloc(1, sizeof(GV_QuantCodebook));
+    GV_QuantCodebook *cb = (GV_QuantCodebook *)gv_calloc(1, sizeof(GV_QuantCodebook));
     if (!cb) goto fail;
 
     cb->type               = (GV_QuantType)type_u32;
@@ -800,10 +801,10 @@ GV_QuantCodebook *quant_codebook_load(const char *path) {
     cb->rabitq_seed        = seed_u64;
     cb->ternary_threshold  = thresh_f;
 
-    cb->min_vals  = (float *)malloc(dim * sizeof(float));
-    cb->max_vals  = (float *)malloc(dim * sizeof(float));
-    cb->mean_vals = (float *)malloc(dim * sizeof(float));
-    cb->std_vals  = (float *)malloc(dim * sizeof(float));
+    cb->min_vals  = (float *)gv_alloc(dim * sizeof(float));
+    cb->max_vals  = (float *)gv_alloc(dim * sizeof(float));
+    cb->mean_vals = (float *)gv_alloc(dim * sizeof(float));
+    cb->std_vals  = (float *)gv_alloc(dim * sizeof(float));
     if (!cb->min_vals || !cb->max_vals || !cb->mean_vals || !cb->std_vals) {
         quant_codebook_destroy(cb);
         goto fail;
@@ -818,7 +819,7 @@ GV_QuantCodebook *quant_codebook_load(const char *path) {
     cb->rotation = NULL;
     if (cb->use_rabitq) {
         size_t n = dim * dim;
-        cb->rotation = (float *)malloc(n * sizeof(float));
+        cb->rotation = (float *)gv_alloc(n * sizeof(float));
         if (!cb->rotation) { quant_codebook_destroy(cb); goto fail; }
         if (fread(cb->rotation, sizeof(float), n, f) != n) {
             quant_codebook_destroy(cb);
@@ -838,10 +839,10 @@ fail:
 
 void quant_codebook_destroy(GV_QuantCodebook *cb) {
     if (!cb) return;
-    free(cb->min_vals);
-    free(cb->max_vals);
-    free(cb->mean_vals);
-    free(cb->std_vals);
-    free(cb->rotation);
-    free(cb);
+    gv_free(cb->min_vals);
+    gv_free(cb->max_vals);
+    gv_free(cb->mean_vals);
+    gv_free(cb->std_vals);
+    gv_free(cb->rotation);
+    gv_free(cb);
 }

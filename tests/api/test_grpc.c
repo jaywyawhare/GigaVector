@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include "core/memory.h"
 #include <stdlib.h>
 #include <string.h>
 #include "api/grpc.h"
@@ -149,7 +150,7 @@ static int test_grpc_encode_search_request(void) {
         ASSERT(decoded_query[i] == query[i], "decoded query values should match");
     }
 
-    free(decoded_query);
+    gv_free(decoded_query);
     return 0;
 }
 
@@ -173,7 +174,7 @@ static int test_grpc_encode_search_request_large_k(void) {
     ASSERT(decoded_k == 1000, "decoded k should be 1000");
     ASSERT(decoded_dist_type == 1, "decoded distance_type should be 1");
 
-    free(decoded_query);
+    gv_free(decoded_query);
     return 0;
 }
 

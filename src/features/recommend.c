@@ -4,6 +4,7 @@
  */
 
 #include "features/recommend.h"
+#include "core/memory.h"
 #include "storage/database.h"
 #include "core/types.h"
 
@@ -135,7 +136,7 @@ int recommend_by_vector(const GV_Database *db,
     }
 
     /* Allocate query vector: positive centroid minus weighted negative centroid */
-    float *query = (float *)calloc(dimension, sizeof(float));
+    float *query = (float *)gv_calloc(dimension, sizeof(float));
     if (!query) return -1;
 
     /* Compute positive centroid (element-wise average, weighted) */
@@ -152,9 +153,9 @@ int recommend_by_vector(const GV_Database *db,
 
     /* Subtract weighted negative centroid */
     if (negative_vectors && negative_count > 0) {
-        float *neg_centroid = (float *)calloc(dimension, sizeof(float));
+        float *neg_centroid = (float *)gv_calloc(dimension, sizeof(float));
         if (!neg_centroid) {
-            free(query);
+            gv_free(query);
             return -1;
         }
         for (size_t n = 0; n < negative_count; n++) {
@@ -167,7 +168,7 @@ int recommend_by_vector(const GV_Database *db,
         for (size_t d = 0; d < dimension; d++) {
             query[d] -= neg_centroid[d] * neg_scale;
         }
-        free(neg_centroid);
+        gv_free(neg_centroid);
     }
 
     /* L2-normalize the query vector */
@@ -177,17 +178,17 @@ int recommend_by_vector(const GV_Database *db,
     size_t search_k = k * cfg.oversample;
     if (search_k < k) search_k = k; /* overflow guard */
 
-    GV_SearchResult *search_res = (GV_SearchResult *)calloc(search_k, sizeof(GV_SearchResult));
+    GV_SearchResult *search_res = (GV_SearchResult *)gv_calloc(search_k, sizeof(GV_SearchResult));
     if (!search_res) {
-        free(query);
+        gv_free(query);
         return -1;
     }
 
     int found = db_search(db, query, search_k, search_res, (GV_DistanceType)cfg.distance_type);
-    free(query);
+    gv_free(query);
 
     if (found < 0) {
-        free(search_res);
+        gv_free(search_res);
         return -1;
     }
 
@@ -195,7 +196,7 @@ int recommend_by_vector(const GV_Database *db,
     int result_count = convert_results(db, search_res, found,
                                        NULL, 0,
                                        k, results);
-    free(search_res);
+    gv_free(search_res);
     return result_count;
 }
 
@@ -220,13 +221,13 @@ int recommend_by_id(const GV_Database *db,
     if (dim == 0) return -1;
 
     /* Fetch positive vectors */
-    float *pos_buf = (float *)malloc(positive_count * dim * sizeof(float));
+    float *pos_buf = (float *)gv_alloc(positive_count * dim * sizeof(float));
     if (!pos_buf) return -1;
 
     for (size_t i = 0; i < positive_count; i++) {
         const float *vec = database_get_vector(db, positive_ids[i]);
         if (!vec) {
-            free(pos_buf);
+            gv_free(pos_buf);
             return -1;
         }
         memcpy(pos_buf + i * dim, vec, dim * sizeof(float));
@@ -235,16 +236,16 @@ int recommend_by_id(const GV_Database *db,
     /* Fetch negative vectors */
     float *neg_buf = NULL;
     if (negative_ids && negative_count > 0) {
-        neg_buf = (float *)malloc(negative_count * dim * sizeof(float));
+        neg_buf = (float *)gv_alloc(negative_count * dim * sizeof(float));
         if (!neg_buf) {
-            free(pos_buf);
+            gv_free(pos_buf);
             return -1;
         }
         for (size_t i = 0; i < negative_count; i++) {
             const float *vec = database_get_vector(db, negative_ids[i]);
             if (!vec) {
-                free(pos_buf);
-                free(neg_buf);
+                gv_free(pos_buf);
+                gv_free(neg_buf);
                 return -1;
             }
             memcpy(neg_buf + i * dim, vec, dim * sizeof(float));
@@ -256,10 +257,10 @@ int recommend_by_id(const GV_Database *db,
     size_t exclude_count = 0;
     if (cfg.exclude_input) {
         exclude_count = positive_count + negative_count;
-        exclude_ids = (size_t *)malloc(exclude_count * sizeof(size_t));
+        exclude_ids = (size_t *)gv_alloc(exclude_count * sizeof(size_t));
         if (!exclude_ids) {
-            free(pos_buf);
-            free(neg_buf);
+            gv_free(pos_buf);
+            gv_free(neg_buf);
             return -1;
         }
         memcpy(exclude_ids, positive_ids, positive_count * sizeof(size_t));
@@ -269,11 +270,11 @@ int recommend_by_id(const GV_Database *db,
     }
 
     /* Compute the recommendation query vector */
-    float *query = (float *)calloc(dim, sizeof(float));
+    float *query = (float *)gv_calloc(dim, sizeof(float));
     if (!query) {
-        free(pos_buf);
-        free(neg_buf);
-        free(exclude_ids);
+        gv_free(pos_buf);
+        gv_free(neg_buf);
+        gv_free(exclude_ids);
         return -1;
     }
 
@@ -291,12 +292,12 @@ int recommend_by_id(const GV_Database *db,
 
     /* Subtract negative centroid */
     if (neg_buf && negative_count > 0) {
-        float *neg_centroid = (float *)calloc(dim, sizeof(float));
+        float *neg_centroid = (float *)gv_calloc(dim, sizeof(float));
         if (!neg_centroid) {
-            free(pos_buf);
-            free(neg_buf);
-            free(exclude_ids);
-            free(query);
+            gv_free(pos_buf);
+            gv_free(neg_buf);
+            gv_free(exclude_ids);
+            gv_free(query);
             return -1;
         }
         for (size_t n = 0; n < negative_count; n++) {
@@ -309,11 +310,11 @@ int recommend_by_id(const GV_Database *db,
         for (size_t d = 0; d < dim; d++) {
             query[d] -= neg_centroid[d] * neg_scale;
         }
-        free(neg_centroid);
+        gv_free(neg_centroid);
     }
 
-    free(pos_buf);
-    free(neg_buf);
+    gv_free(pos_buf);
+    gv_free(neg_buf);
 
     /* L2-normalize */
     l2_normalize(query, dim);
@@ -327,27 +328,27 @@ int recommend_by_id(const GV_Database *db,
     }
     if (search_k < k) search_k = k; /* overflow guard */
 
-    GV_SearchResult *search_res = (GV_SearchResult *)calloc(search_k, sizeof(GV_SearchResult));
+    GV_SearchResult *search_res = (GV_SearchResult *)gv_calloc(search_k, sizeof(GV_SearchResult));
     if (!search_res) {
-        free(query);
-        free(exclude_ids);
+        gv_free(query);
+        gv_free(exclude_ids);
         return -1;
     }
 
     int found = db_search(db, query, search_k, search_res, (GV_DistanceType)cfg.distance_type);
-    free(query);
+    gv_free(query);
 
     if (found < 0) {
-        free(search_res);
-        free(exclude_ids);
+        gv_free(search_res);
+        gv_free(exclude_ids);
         return -1;
     }
 
     int result_count = convert_results(db, search_res, found,
                                        exclude_ids, exclude_count,
                                        k, results);
-    free(search_res);
-    free(exclude_ids);
+    gv_free(search_res);
+    gv_free(exclude_ids);
     return result_count;
 }
 
@@ -370,7 +371,7 @@ int recommend_discover(const GV_Database *db,
     }
 
     /* Compute direction vector: target - context */
-    float *direction = (float *)malloc(dimension * sizeof(float));
+    float *direction = (float *)gv_alloc(dimension * sizeof(float));
     if (!direction) return -1;
 
     for (size_t d = 0; d < dimension; d++) {
@@ -384,17 +385,17 @@ int recommend_discover(const GV_Database *db,
     size_t search_k = k * cfg.oversample;
     if (search_k < k) search_k = k; /* overflow guard */
 
-    GV_SearchResult *search_res = (GV_SearchResult *)calloc(search_k, sizeof(GV_SearchResult));
+    GV_SearchResult *search_res = (GV_SearchResult *)gv_calloc(search_k, sizeof(GV_SearchResult));
     if (!search_res) {
-        free(direction);
+        gv_free(direction);
         return -1;
     }
 
     int found = db_search(db, direction, search_k, search_res, (GV_DistanceType)cfg.distance_type);
-    free(direction);
+    gv_free(direction);
 
     if (found < 0) {
-        free(search_res);
+        gv_free(search_res);
         return -1;
     }
 
@@ -402,6 +403,6 @@ int recommend_discover(const GV_Database *db,
     int result_count = convert_results(db, search_res, found,
                                        NULL, 0,
                                        k, results);
-    free(search_res);
+    gv_free(search_res);
     return result_count;
 }

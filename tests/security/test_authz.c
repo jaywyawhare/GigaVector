@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include "core/memory.h"
 #include <stdlib.h>
 #include <string.h>
 #include "security/authz.h"
@@ -18,7 +19,7 @@ static GV_Identity make_identity(const char *subject) {
 }
 
 static void free_identity(GV_Identity *id) {
-    free(id->subject);
+    gv_free(id->subject);
     id->subject = NULL;
 }
 

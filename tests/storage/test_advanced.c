@@ -30,7 +30,7 @@ static int test_open_from_memory(void) {
     long size = ftell(f);
     fseek(f, 0, SEEK_SET);
     
-    void *data = malloc(size);
+    void *data = gv_alloc(size);
     ASSERT(data != NULL, "allocate memory");
     fread(data, 1, size, f);
     fclose(f);
@@ -43,7 +43,7 @@ static int test_open_from_memory(void) {
     int n = db_search(db2, q, 1, res, GV_DISTANCE_EUCLIDEAN);
     ASSERT(n == 1, "search from memory");
     
-    free(data);
+    gv_free(data);
     db_close(db1);
     db_close(db2);
     remove(path);

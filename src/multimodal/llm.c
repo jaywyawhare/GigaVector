@@ -1,4 +1,5 @@
 #include <stdlib.h>
+#include "core/memory.h"
 #include <string.h>
 #include <stdio.h>
 #include <time.h>
@@ -36,9 +37,9 @@ static void secure_memclear(void *ptr, size_t len) {
 static void set_error(struct GV_LLM *llm, const char *format, ...) {
     if (llm == NULL) return;
     if (llm->last_error) {
-        free(llm->last_error);
+        gv_free(llm->last_error);
     }
-    llm->last_error = (char *)malloc(MAX_ERROR_MESSAGE);
+    llm->last_error = (char *)gv_alloc(MAX_ERROR_MESSAGE);
     if (llm->last_error == NULL) return;
     
     va_list args;
@@ -103,7 +104,7 @@ static size_t write_callback(void *contents, size_t size, size_t nmemb, void *us
         if (new_capacity > MAX_RESPONSE_SIZE) {
             new_capacity = MAX_RESPONSE_SIZE;
         }
-        char *new_data = (char *)realloc(buf->data, new_capacity);
+        char *new_data = (char *)gv_realloc(buf->data, new_capacity);
         if (new_data == NULL) {
             return 0;
         }
@@ -195,13 +196,13 @@ static char *build_openai_request(const GV_LLMConfig *config, const GV_LLMMessag
         total_size += 50;
     }
     
-    char *json = (char *)malloc(total_size);
+    char *json = (char *)gv_alloc(total_size);
     if (json == NULL) return NULL;
     
     size_t pos = 0;
     int written = snprintf(json + pos, total_size - pos, "{\"model\":\"%s\",\"messages\":[", model);
     if (written < 0 || (size_t)written >= total_size - pos) {
-        free(json);
+        gv_free(json);
         return NULL;
     }
     pos += written;
@@ -209,7 +210,7 @@ static char *build_openai_request(const GV_LLMConfig *config, const GV_LLMMessag
     for (size_t i = 0; i < message_count; i++) {
         if (i > 0) {
             if (pos >= total_size - 1) {
-                free(json);
+                gv_free(json);
                 return NULL;
             }
             json[pos++] = ',';
@@ -218,31 +219,31 @@ static char *build_openai_request(const GV_LLMConfig *config, const GV_LLMMessag
         const char *role = messages[i].role ? messages[i].role : "user";
         written = snprintf(json + pos, total_size - pos, "{\"role\":\"%s\",\"content\":\"", role);
         if (written < 0 || (size_t)written >= total_size - pos) {
-            free(json);
+            gv_free(json);
             return NULL;
         }
         pos += written;
         
         const char *content = messages[i].content ? messages[i].content : "";
         size_t content_escaped_size = json_escape_size(content);
-        char *escaped = (char *)malloc(content_escaped_size + 1);
+        char *escaped = (char *)gv_alloc(content_escaped_size + 1);
         if (escaped == NULL) {
-            free(json);
+            gv_free(json);
             return NULL;
         }
         json_escape_append(escaped, content);
         written = snprintf(json + pos, total_size - pos, "%s", escaped);
         if (written < 0 || (size_t)written >= total_size - pos) {
-            free(escaped);
-            free(json);
+            gv_free(escaped);
+            gv_free(json);
             return NULL;
         }
         pos += written;
-        free(escaped);
+        gv_free(escaped);
         
         written = snprintf(json + pos, total_size - pos, "\"}");
         if (written < 0 || (size_t)written >= total_size - pos) {
-            free(json);
+            gv_free(json);
             return NULL;
         }
         pos += written;
@@ -252,7 +253,7 @@ static char *build_openai_request(const GV_LLMConfig *config, const GV_LLMMessag
     snprintf(temp_str, sizeof(temp_str), "%.2f", config->temperature > 0 ? config->temperature : 0.7);
     written = snprintf(json + pos, total_size - pos, "],\"temperature\":%s", temp_str);
     if (written < 0 || (size_t)written >= total_size - pos) {
-        free(json);
+        gv_free(json);
         return NULL;
     }
     pos += written;
@@ -260,7 +261,7 @@ static char *build_openai_request(const GV_LLMConfig *config, const GV_LLMMessag
     if (response_format && strcmp(response_format, "json_object") == 0) {
         written = snprintf(json + pos, total_size - pos, ",\"response_format\":{\"type\":\"json_object\"}");
         if (written < 0 || (size_t)written >= total_size - pos) {
-            free(json);
+            gv_free(json);
             return NULL;
         }
         pos += written;
@@ -269,7 +270,7 @@ static char *build_openai_request(const GV_LLMConfig *config, const GV_LLMMessag
     if (config->max_tokens > 0) {
         written = snprintf(json + pos, total_size - pos, ",\"max_tokens\":%d", config->max_tokens);
         if (written < 0 || (size_t)written >= total_size - pos) {
-            free(json);
+            gv_free(json);
             return NULL;
         }
         pos += written;
@@ -277,7 +278,7 @@ static char *build_openai_request(const GV_LLMConfig *config, const GV_LLMMessag
     
     written = snprintf(json + pos, total_size - pos, "}");
     if (written < 0 || (size_t)written >= total_size - pos) {
-        free(json);
+        gv_free(json);
         return NULL;
     }
     return json;
@@ -297,13 +298,13 @@ static char *build_gemini_request(const GV_LLMConfig *config, const GV_LLMMessag
     
     total_size += 128;  // Generation config
     
-    char *json = (char *)malloc(total_size);
+    char *json = (char *)gv_alloc(total_size);
     if (json == NULL) return NULL;
     
     size_t pos = 0;
     int written = snprintf(json + pos, total_size - pos, "{\"contents\":[");
     if (written < 0 || (size_t)written >= total_size - pos) {
-        free(json);
+        gv_free(json);
         return NULL;
     }
     pos += written;
@@ -311,7 +312,7 @@ static char *build_gemini_request(const GV_LLMConfig *config, const GV_LLMMessag
     for (size_t i = 0; i < message_count; i++) {
         if (i > 0) {
             if (pos >= total_size - 1) {
-                free(json);
+                gv_free(json);
                 return NULL;
             }
             json[pos++] = ',';
@@ -324,31 +325,31 @@ static char *build_gemini_request(const GV_LLMConfig *config, const GV_LLMMessag
         
         written = snprintf(json + pos, total_size - pos, "{\"role\":\"%s\",\"parts\":[{\"text\":\"", gemini_role);
         if (written < 0 || (size_t)written >= total_size - pos) {
-            free(json);
+            gv_free(json);
             return NULL;
         }
         pos += written;
         
         const char *content = messages[i].content ? messages[i].content : "";
         size_t content_escaped_size = json_escape_size(content);
-        char *escaped = (char *)malloc(content_escaped_size + 1);
+        char *escaped = (char *)gv_alloc(content_escaped_size + 1);
         if (escaped == NULL) {
-            free(json);
+            gv_free(json);
             return NULL;
         }
         json_escape_append(escaped, content);
         written = snprintf(json + pos, total_size - pos, "%s", escaped);
         if (written < 0 || (size_t)written >= total_size - pos) {
-            free(escaped);
-            free(json);
+            gv_free(escaped);
+            gv_free(json);
             return NULL;
         }
         pos += written;
-        free(escaped);
+        gv_free(escaped);
         
         written = snprintf(json + pos, total_size - pos, "\"}]}");
         if (written < 0 || (size_t)written >= total_size - pos) {
-            free(json);
+            gv_free(json);
             return NULL;
         }
         pos += written;
@@ -356,7 +357,7 @@ static char *build_gemini_request(const GV_LLMConfig *config, const GV_LLMMessag
     
     written = snprintf(json + pos, total_size - pos, "]");
     if (written < 0 || (size_t)written >= total_size - pos) {
-        free(json);
+        gv_free(json);
         return NULL;
     }
     pos += written;
@@ -366,7 +367,7 @@ static char *build_gemini_request(const GV_LLMConfig *config, const GV_LLMMessag
     snprintf(temp_str, sizeof(temp_str), "%.2f", config->temperature > 0 ? config->temperature : 0.7);
     written = snprintf(json + pos, total_size - pos, ",\"generationConfig\":{\"temperature\":%s", temp_str);
     if (written < 0 || (size_t)written >= total_size - pos) {
-        free(json);
+        gv_free(json);
         return NULL;
     }
     pos += written;
@@ -374,7 +375,7 @@ static char *build_gemini_request(const GV_LLMConfig *config, const GV_LLMMessag
     if (config->max_tokens > 0) {
         written = snprintf(json + pos, total_size - pos, ",\"maxOutputTokens\":%d", config->max_tokens);
         if (written < 0 || (size_t)written >= total_size - pos) {
-            free(json);
+            gv_free(json);
             return NULL;
         }
         pos += written;
@@ -384,7 +385,7 @@ static char *build_gemini_request(const GV_LLMConfig *config, const GV_LLMMessag
         written = snprintf(json + pos, total_size - pos,
                            ",\"responseMimeType\":\"application/json\"");
         if (written < 0 || (size_t)written >= total_size - pos) {
-            free(json);
+            gv_free(json);
             return NULL;
         }
         pos += written;
@@ -392,7 +393,7 @@ static char *build_gemini_request(const GV_LLMConfig *config, const GV_LLMMessag
 
     written = snprintf(json + pos, total_size - pos, "}}");
     if (written < 0 || (size_t)written >= total_size - pos) {
-        free(json);
+        gv_free(json);
         return NULL;
     }
     return json;
@@ -416,14 +417,14 @@ static char *build_anthropic_request(const GV_LLMConfig *config, const GV_LLMMes
     total_size += 64;  // max_tokens
     total_size += 128; // response_format system prompt
 
-    char *json = (char *)malloc(total_size);
+    char *json = (char *)gv_alloc(total_size);
     if (json == NULL) return NULL;
 
     size_t pos = 0;
     int written = snprintf(json + pos, total_size - pos, "{\"model\":\"%s\",\"max_tokens\":%d",
                     model, config->max_tokens > 0 ? config->max_tokens : 4096);
     if (written < 0 || (size_t)written >= total_size - pos) {
-        free(json);
+        gv_free(json);
         return NULL;
     }
     pos += written;
@@ -433,7 +434,7 @@ static char *build_anthropic_request(const GV_LLMConfig *config, const GV_LLMMes
         written = snprintf(json + pos, total_size - pos,
                            ",\"system\":\"Respond only with valid JSON. No markdown, no explanation.\"");
         if (written < 0 || (size_t)written >= total_size - pos) {
-            free(json);
+            gv_free(json);
             return NULL;
         }
         pos += written;
@@ -441,7 +442,7 @@ static char *build_anthropic_request(const GV_LLMConfig *config, const GV_LLMMes
 
     written = snprintf(json + pos, total_size - pos, ",\"messages\":[");
     if (written < 0 || (size_t)written >= total_size - pos) {
-        free(json);
+        gv_free(json);
         return NULL;
     }
     pos += written;
@@ -449,7 +450,7 @@ static char *build_anthropic_request(const GV_LLMConfig *config, const GV_LLMMes
     for (size_t i = 0; i < message_count; i++) {
         if (i > 0) {
             if (pos >= total_size - 1) {
-                free(json);
+                gv_free(json);
                 return NULL;
             }
             json[pos++] = ',';
@@ -458,31 +459,31 @@ static char *build_anthropic_request(const GV_LLMConfig *config, const GV_LLMMes
         const char *role = messages[i].role ? messages[i].role : "user";
         written = snprintf(json + pos, total_size - pos, "{\"role\":\"%s\",\"content\":\"", role);
         if (written < 0 || (size_t)written >= total_size - pos) {
-            free(json);
+            gv_free(json);
             return NULL;
         }
         pos += written;
         
         const char *content = messages[i].content ? messages[i].content : "";
         size_t content_escaped_size = json_escape_size(content);
-        char *escaped = (char *)malloc(content_escaped_size + 1);
+        char *escaped = (char *)gv_alloc(content_escaped_size + 1);
         if (escaped == NULL) {
-            free(json);
+            gv_free(json);
             return NULL;
         }
         json_escape_append(escaped, content);
         written = snprintf(json + pos, total_size - pos, "%s", escaped);
         if (written < 0 || (size_t)written >= total_size - pos) {
-            free(escaped);
-            free(json);
+            gv_free(escaped);
+            gv_free(json);
             return NULL;
         }
         pos += written;
-        free(escaped);
+        gv_free(escaped);
         
         written = snprintf(json + pos, total_size - pos, "\"}");
         if (written < 0 || (size_t)written >= total_size - pos) {
-            free(json);
+            gv_free(json);
             return NULL;
         }
         pos += written;
@@ -490,7 +491,7 @@ static char *build_anthropic_request(const GV_LLMConfig *config, const GV_LLMMes
     
     written = snprintf(json + pos, total_size - pos, "]}");
     if (written < 0 || (size_t)written >= total_size - pos) {
-        free(json);
+        gv_free(json);
         return NULL;
     }
     return json;
@@ -792,7 +793,7 @@ GV_LLM *llm_create(const GV_LLMConfig *config) {
     }
 
 #ifdef HAVE_CURL
-    GV_LLM *llm = (GV_LLM *)malloc(sizeof(GV_LLM));
+    GV_LLM *llm = (GV_LLM *)gv_alloc(sizeof(GV_LLM));
     if (llm == NULL) {
         return NULL;
     }
@@ -805,34 +806,34 @@ GV_LLM *llm_create(const GV_LLMConfig *config) {
     if (config->api_key) {
         llm->config.api_key = gv_dup_cstr(config->api_key);
         if (llm->config.api_key == NULL) {
-            free(llm);
+            gv_free(llm);
             return NULL;
         }
     }
     if (config->model) {
         llm->config.model = gv_dup_cstr(config->model);
         if (llm->config.model == NULL) {
-            free(llm->config.api_key);
-            free(llm);
+            gv_free(llm->config.api_key);
+            gv_free(llm);
             return NULL;
         }
     }
     if (config->base_url) {
         llm->config.base_url = gv_dup_cstr(config->base_url);
         if (llm->config.base_url == NULL) {
-            free(llm->config.api_key);
-            free(llm->config.model);
-            free(llm);
+            gv_free(llm->config.api_key);
+            gv_free(llm->config.model);
+            gv_free(llm);
             return NULL;
         }
     }
     if (config->custom_prompt) {
         llm->config.custom_prompt = gv_dup_cstr(config->custom_prompt);
         if (llm->config.custom_prompt == NULL) {
-            free(llm->config.api_key);
-            free(llm->config.model);
-            free(llm->config.base_url);
-            free(llm);
+            gv_free(llm->config.api_key);
+            gv_free(llm->config.model);
+            gv_free(llm->config.base_url);
+            gv_free(llm);
             return NULL;
         }
     }
@@ -840,12 +841,12 @@ GV_LLM *llm_create(const GV_LLMConfig *config) {
     llm->curl_handle = curl_easy_init();
     if (llm->curl_handle == NULL) {
         set_error(llm, "Failed to initialize CURL");
-        free(llm->config.api_key);
-        free(llm->config.model);
-        free(llm->config.base_url);
-        free(llm->config.custom_prompt);
-        free(llm->last_error);
-        free(llm);
+        gv_free(llm->config.api_key);
+        gv_free(llm->config.model);
+        gv_free(llm->config.base_url);
+        gv_free(llm->config.custom_prompt);
+        gv_free(llm->last_error);
+        gv_free(llm);
         return NULL;
     }
     
@@ -870,14 +871,14 @@ void llm_destroy(GV_LLM *llm) {
     // Securely clear API key from memory
     if (llm->config.api_key) {
         secure_memclear(llm->config.api_key, strlen(llm->config.api_key));
-        free(llm->config.api_key);
+        gv_free(llm->config.api_key);
     }
     
-    free(llm->config.model);
-    free(llm->config.base_url);
-    free(llm->config.custom_prompt);
-    free(llm->last_error);
-    free(llm);
+    gv_free(llm->config.model);
+    gv_free(llm->config.base_url);
+    gv_free(llm->config.custom_prompt);
+    gv_free(llm->last_error);
+    gv_free(llm);
 }
 
 int llm_generate_response(GV_LLM *llm, const GV_LLMMessage *messages, size_t message_count,
@@ -962,11 +963,11 @@ int llm_generate_response(GV_LLM *llm, const GV_LLMMessage *messages, size_t mes
     }
     
     struct ResponseBuffer buf;
-    buf.data = (char *)malloc(4096);
+    buf.data = (char *)gv_alloc(4096);
     buf.size = 0;
     buf.capacity = 4096;
     if (buf.data == NULL) {
-        free(request_json);
+        gv_free(request_json);
         set_error(llm, "Failed to allocate response buffer");
         return GV_LLM_ERROR_MEMORY_ALLOCATION;
     }
@@ -981,8 +982,8 @@ int llm_generate_response(GV_LLM *llm, const GV_LLMMessage *messages, size_t mes
     
     // Add authentication header
     if (llm->config.api_key == NULL) {
-        free(buf.data);
-        free(request_json);
+        gv_free(buf.data);
+        gv_free(request_json);
         curl_slist_free_all(headers);
         set_error(llm, "API key is NULL");
         return GV_LLM_ERROR_INVALID_API_KEY;
@@ -1008,10 +1009,10 @@ int llm_generate_response(GV_LLM *llm, const GV_LLMMessage *messages, size_t mes
     CURLcode res = curl_easy_perform(curl);
     
     curl_slist_free_all(headers);
-    free(request_json);
+    gv_free(request_json);
     
     if (res != CURLE_OK) {
-        free(buf.data);
+        gv_free(buf.data);
         if (res == CURLE_OPERATION_TIMEDOUT) {
             set_error(llm, "Request timeout: %s", curl_easy_strerror(res));
             return GV_LLM_ERROR_TIMEOUT;
@@ -1023,7 +1024,7 @@ int llm_generate_response(GV_LLM *llm, const GV_LLMMessage *messages, size_t mes
     
     // Check if response was truncated
     if (buf.size >= MAX_RESPONSE_SIZE) {
-        free(buf.data);
+        gv_free(buf.data);
         set_error(llm, "Response exceeds maximum size (%d bytes)", MAX_RESPONSE_SIZE);
         return GV_LLM_ERROR_RESPONSE_TOO_LARGE;
     }
@@ -1037,18 +1038,18 @@ int llm_generate_response(GV_LLM *llm, const GV_LLMMessage *messages, size_t mes
             const char *error_end = strstr(error_msg, "\"");
             if (error_end) {
                 size_t msg_len = error_end - error_msg;
-                char *error_buf = (char *)malloc(msg_len + 1);
+                char *error_buf = (char *)gv_alloc(msg_len + 1);
                 if (error_buf) {
                     memcpy(error_buf, error_msg, msg_len);
                     error_buf[msg_len] = '\0';
                     set_error(llm, "API error: %s", error_buf);
-                    free(error_buf);
+                    gv_free(error_buf);
                 }
             }
         } else {
             set_error(llm, "API returned an error response");
         }
-        free(buf.data);
+        gv_free(buf.data);
         return GV_LLM_ERROR_INVALID_RESPONSE;
     }
     
@@ -1071,7 +1072,7 @@ int llm_generate_response(GV_LLM *llm, const GV_LLMMessage *messages, size_t mes
             break;
     }
     
-    free(buf.data);
+    gv_free(buf.data);
     
     if (parse_result != 0) {
         set_error(llm, "Failed to parse LLM response");
@@ -1138,7 +1139,7 @@ void llm_response_free(GV_LLMResponse *response) {
     if (response == NULL) {
         return;
     }
-    free(response->content);
+    gv_free(response->content);
     memset(response, 0, sizeof(GV_LLMResponse));
 }
 
@@ -1146,8 +1147,8 @@ void llm_message_free(GV_LLMMessage *message) {
     if (message == NULL) {
         return;
     }
-    free(message->role);
-    free(message->content);
+    gv_free(message->role);
+    gv_free(message->content);
     memset(message, 0, sizeof(GV_LLMMessage));
 }
 
@@ -1158,6 +1159,6 @@ void llm_messages_free(GV_LLMMessage *messages, size_t count) {
     for (size_t i = 0; i < count; i++) {
         llm_message_free(&messages[i]);
     }
-    free(messages);
+    gv_free(messages);
 }
 

@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include "core/memory.h"
 #include <stdlib.h>
 #include <string.h>
 #include "storage/compression.h"
@@ -51,8 +52,8 @@ static int test_compress_decompress_lz4(void) {
     size_t bound = compress_bound(comp, sizeof(input));
     ASSERT(bound > 0, "compress_bound should be > 0");
 
-    char *compressed = (char *)malloc(bound);
-    ASSERT(compressed != NULL, "malloc failed");
+    char *compressed = (char *)gv_alloc(bound);
+    ASSERT(compressed != NULL, "gv_alloc failed");
 
     size_t comp_size = compress(comp, input, sizeof(input), compressed, bound);
     ASSERT(comp_size > 0, "compression failed");
@@ -64,7 +65,7 @@ static int test_compress_decompress_lz4(void) {
     ASSERT(memcmp(input, decompressed, sizeof(input)) == 0,
            "decompressed data does not match original");
 
-    free(compressed);
+    gv_free(compressed);
     compression_destroy(comp);
     return 0;
 }
@@ -84,8 +85,8 @@ static int test_compress_decompress_zstd(void) {
     size_t bound = compress_bound(comp, sizeof(input));
     ASSERT(bound > 0, "compress_bound should be > 0");
 
-    char *compressed = (char *)malloc(bound);
-    ASSERT(compressed != NULL, "malloc failed");
+    char *compressed = (char *)gv_alloc(bound);
+    ASSERT(compressed != NULL, "gv_alloc failed");
 
     size_t comp_size = compress(comp, input, sizeof(input), compressed, bound);
     ASSERT(comp_size > 0, "compression failed");
@@ -97,7 +98,7 @@ static int test_compress_decompress_zstd(void) {
     ASSERT(memcmp(input, decompressed, sizeof(input)) == 0,
            "decompressed data does not match original");
 
-    free(compressed);
+    gv_free(compressed);
     compression_destroy(comp);
     return 0;
 }
@@ -130,8 +131,8 @@ static int test_compression_stats(void) {
     fill_test_data(input, sizeof(input));
 
     size_t bound = compress_bound(comp, sizeof(input));
-    char *compressed = (char *)malloc(bound);
-    ASSERT(compressed != NULL, "malloc failed");
+    char *compressed = (char *)gv_alloc(bound);
+    ASSERT(compressed != NULL, "gv_alloc failed");
 
     size_t comp_size = compress(comp, input, sizeof(input), compressed, bound);
     ASSERT(comp_size > 0, "compression failed");
@@ -142,7 +143,7 @@ static int test_compression_stats(void) {
     ASSERT(rc == 0, "get_stats failed");
     ASSERT(stats.total_compressed >= 1, "total_compressed should be >= 1");
 
-    free(compressed);
+    gv_free(compressed);
     compression_destroy(comp);
     return 0;
 }
@@ -159,8 +160,8 @@ static int test_compress_snappy(void) {
     fill_test_data(input, sizeof(input));
 
     size_t bound = compress_bound(comp, sizeof(input));
-    char *compressed = (char *)malloc(bound);
-    ASSERT(compressed != NULL, "malloc failed");
+    char *compressed = (char *)gv_alloc(bound);
+    ASSERT(compressed != NULL, "gv_alloc failed");
 
     size_t comp_size = compress(comp, input, sizeof(input), compressed, bound);
     ASSERT(comp_size > 0, "snappy compression failed");
@@ -172,7 +173,7 @@ static int test_compress_snappy(void) {
     ASSERT(memcmp(input, decompressed, sizeof(input)) == 0,
            "snappy decompressed data mismatch");
 
-    free(compressed);
+    gv_free(compressed);
     compression_destroy(comp);
     return 0;
 }

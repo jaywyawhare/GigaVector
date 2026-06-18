@@ -4,6 +4,7 @@
  */
 
 #include "multimodal/bm25.h"
+#include "core/memory.h"
 #include "core/utils.h"
 
 #include <stdlib.h>
@@ -85,20 +86,20 @@ void bm25_config_init(GV_BM25Config *config) {
 }
 
 GV_BM25Index *bm25_create(const GV_BM25Config *config) {
-    GV_BM25Index *index = calloc(1, sizeof(GV_BM25Index));
+    GV_BM25Index *index = gv_calloc(1, sizeof(GV_BM25Index));
     if (!index) return NULL;
 
     index->config = config ? *config : DEFAULT_CONFIG;
 
     index->tokenizer = tokenizer_create(&index->config.tokenizer);
     if (!index->tokenizer) {
-        free(index);
+        gv_free(index);
         return NULL;
     }
 
     if (pthread_rwlock_init(&index->rwlock, NULL) != 0) {
         tokenizer_destroy(index->tokenizer);
-        free(index);
+        gv_free(index);
         return NULL;
     }
 
@@ -112,9 +113,9 @@ void bm25_destroy(GV_BM25Index *index) {
         GV_PostingList *pl = index->term_buckets[i];
         while (pl) {
             GV_PostingList *next = pl->next;
-            free(pl->term);
-            free(pl->postings);
-            free(pl);
+            gv_free(pl->term);
+            gv_free(pl->postings);
+            gv_free(pl);
             pl = next;
         }
     }
@@ -123,14 +124,14 @@ void bm25_destroy(GV_BM25Index *index) {
         GV_DocInfo *di = index->doc_buckets[i];
         while (di) {
             GV_DocInfo *next = di->next;
-            free(di);
+            gv_free(di);
             di = next;
         }
     }
 
     pthread_rwlock_destroy(&index->rwlock);
     tokenizer_destroy(index->tokenizer);
-    free(index);
+    gv_free(index);
 }
 
 static GV_PostingList *find_posting_list(GV_BM25Index *index, const char *term) {
@@ -156,19 +157,19 @@ static GV_PostingList *get_or_create_posting_list(GV_BM25Index *index, const cha
         pl = pl->next;
     }
 
-    pl = calloc(1, sizeof(GV_PostingList));
+    pl = gv_calloc(1, sizeof(GV_PostingList));
     if (!pl) return NULL;
 
     pl->term = gv_dup_cstr(term);
     if (!pl->term) {
-        free(pl);
+        gv_free(pl);
         return NULL;
     }
 
-    pl->postings = malloc(INITIAL_POSTING_CAPACITY * sizeof(GV_Posting));
+    pl->postings = gv_alloc(INITIAL_POSTING_CAPACITY * sizeof(GV_Posting));
     if (!pl->postings) {
-        free(pl->term);
-        free(pl);
+        gv_free(pl->term);
+        gv_free(pl);
         return NULL;
     }
     pl->capacity = INITIAL_POSTING_CAPACITY;
@@ -203,7 +204,7 @@ static GV_DocInfo *get_or_create_doc_info(GV_BM25Index *index, size_t doc_id) {
         di = di->next;
     }
 
-    di = calloc(1, sizeof(GV_DocInfo));
+    di = gv_calloc(1, sizeof(GV_DocInfo));
     if (!di) return NULL;
 
     di->doc_id = doc_id;
@@ -225,7 +226,7 @@ static int add_posting(GV_PostingList *pl, size_t doc_id, size_t term_freq) {
     if (pl->count >= pl->capacity) {
         if (pl->capacity > SIZE_MAX / 2 || pl->capacity * 2 > SIZE_MAX / sizeof(GV_Posting)) return -1;
         size_t new_capacity = pl->capacity * 2;
-        GV_Posting *new_postings = realloc(pl->postings, new_capacity * sizeof(GV_Posting));
+        GV_Posting *new_postings = gv_realloc(pl->postings, new_capacity * sizeof(GV_Posting));
         if (!new_postings) return -1;
         pl->postings = new_postings;
         pl->capacity = new_capacity;
@@ -353,7 +354,7 @@ int bm25_remove_document(GV_BM25Index *index, size_t doc_id) {
 
     index->total_doc_length -= di->doc_length;
     index->total_documents--;
-    free(di);
+    gv_free(di);
 
     for (size_t i = 0; i < TERM_HASH_BUCKETS; i++) {
         GV_PostingList *pl = index->term_buckets[i];
@@ -442,7 +443,7 @@ int bm25_search_terms(GV_BM25Index *index, const char **terms, size_t term_count
         return 0;
     }
 
-    DocScore *scores = calloc(index->total_documents, sizeof(DocScore));
+    DocScore *scores = gv_calloc(index->total_documents, sizeof(DocScore));
     if (!scores) {
         pthread_rwlock_unlock(&index->rwlock);
         return -1;
@@ -496,7 +497,7 @@ int bm25_search_terms(GV_BM25Index *index, const char **terms, size_t term_count
         }
     }
 
-    free(scores);
+    gv_free(scores);
     pthread_rwlock_unlock(&index->rwlock);
 
     return (int)actual_count;
@@ -736,10 +737,10 @@ GV_BM25Index *bm25_load(const char *filepath) {
         if (fread(&term_len, sizeof(term_len), 1, fp) != 1) break;
         if (term_len == 0) break;
 
-        char *term = malloc(term_len + 1);
+        char *term = gv_alloc(term_len + 1);
         if (!term) break;
         if (fread(term, 1, term_len, fp) != term_len) {
-            free(term);
+            gv_free(term);
             bm25_destroy(index);
             fclose(fp);
             return NULL;
@@ -748,7 +749,7 @@ GV_BM25Index *bm25_load(const char *filepath) {
 
         size_t posting_count;
         if (fread(&posting_count, sizeof(posting_count), 1, fp) != 1) {
-            free(term);
+            gv_free(term);
             bm25_destroy(index);
             fclose(fp);
             return NULL;
@@ -757,20 +758,20 @@ GV_BM25Index *bm25_load(const char *filepath) {
         GV_PostingList *pl = get_or_create_posting_list(index, term);
         if (pl && posting_count > 0) {
             if (posting_count > pl->capacity) {
-                GV_Posting *new_postings = realloc(pl->postings, posting_count * sizeof(GV_Posting));
+                GV_Posting *new_postings = gv_realloc(pl->postings, posting_count * sizeof(GV_Posting));
                 if (new_postings) {
                     pl->postings = new_postings;
                     pl->capacity = posting_count;
                 }
             }
             if (!pl || !pl->postings || pl->capacity < posting_count) {
-                free(term);
+                gv_free(term);
                 bm25_destroy(index);
                 fclose(fp);
                 return NULL;
             }
             if (fread(pl->postings, sizeof(GV_Posting), posting_count, fp) != posting_count) {
-                free(term);
+                gv_free(term);
                 bm25_destroy(index);
                 fclose(fp);
                 return NULL;
@@ -778,7 +779,7 @@ GV_BM25Index *bm25_load(const char *filepath) {
             pl->count = posting_count;
         }
 
-        free(term);
+        gv_free(term);
     }
 
     fclose(fp);

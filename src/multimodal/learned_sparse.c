@@ -10,6 +10,7 @@
  */
 
 #include "multimodal/learned_sparse.h"
+#include "core/memory.h"
 #include "core/heap.h"
 #include "core/utils.h"
 
@@ -92,7 +93,7 @@ static int ls_posting_append(GV_LSPostingList *pl, size_t doc_id, float weight,
     if (pl->count >= pl->capacity) {
         size_t new_cap = pl->capacity == 0 ? GV_LS_INITIAL_POSTING_CAPACITY
                                            : pl->capacity * 2;
-        GV_LSPosting *new_arr = (GV_LSPosting *)realloc(
+        GV_LSPosting *new_arr = (GV_LSPosting *)gv_realloc(
             pl->postings, new_cap * sizeof(GV_LSPosting));
         if (!new_arr) return -1;
         pl->postings = new_arr;
@@ -112,7 +113,7 @@ static int ls_posting_append(GV_LSPostingList *pl, size_t doc_id, float weight,
                                  : pl->block_maxw_capacity * 2;
             while (new_cap <= block_idx) new_cap *= 2;
 
-            float *new_bm = (float *)realloc(
+            float *new_bm = (float *)gv_realloc(
                 pl->block_maxw, new_cap * sizeof(float));
             if (!new_bm) return -1;
 
@@ -139,8 +140,8 @@ static int ls_posting_append(GV_LSPostingList *pl, size_t doc_id, float weight,
  * @brief Free a posting list's internal arrays.
  */
 static void ls_posting_list_free(GV_LSPostingList *pl) {
-    free(pl->postings);
-    free(pl->block_maxw);
+    gv_free(pl->postings);
+    gv_free(pl->block_maxw);
     pl->postings = NULL;
     pl->block_maxw = NULL;
     pl->count = 0;
@@ -169,13 +170,13 @@ typedef struct {
 } GV_LSScoreMap;
 
 static GV_LSScoreMap *ls_score_map_create(size_t num_buckets) {
-    GV_LSScoreMap *map = (GV_LSScoreMap *)calloc(1, sizeof(GV_LSScoreMap));
+    GV_LSScoreMap *map = (GV_LSScoreMap *)gv_calloc(1, sizeof(GV_LSScoreMap));
     if (!map) return NULL;
 
     map->num_buckets = num_buckets;
-    map->buckets = (GV_LSScoreEntry **)calloc(num_buckets, sizeof(GV_LSScoreEntry *));
+    map->buckets = (GV_LSScoreEntry **)gv_calloc(num_buckets, sizeof(GV_LSScoreEntry *));
     if (!map->buckets) {
-        free(map);
+        gv_free(map);
         return NULL;
     }
     return map;
@@ -187,12 +188,12 @@ static void ls_score_map_destroy(GV_LSScoreMap *map) {
         GV_LSScoreEntry *e = map->buckets[i];
         while (e) {
             GV_LSScoreEntry *next = e->next;
-            free(e);
+            gv_free(e);
             e = next;
         }
     }
-    free(map->buckets);
-    free(map);
+    gv_free(map->buckets);
+    gv_free(map);
 }
 
 static float *ls_score_map_get_or_insert(GV_LSScoreMap *map, size_t doc_id) {
@@ -205,7 +206,7 @@ static float *ls_score_map_get_or_insert(GV_LSScoreMap *map, size_t doc_id) {
         e = e->next;
     }
 
-    e = (GV_LSScoreEntry *)calloc(1, sizeof(GV_LSScoreEntry));
+    e = (GV_LSScoreEntry *)gv_calloc(1, sizeof(GV_LSScoreEntry));
     if (!e) return NULL;
     e->doc_id = doc_id;
     e->score  = 0.0f;
@@ -286,7 +287,7 @@ static int ls_search_wand(const GV_LearnedSparseIndex *idx,
                               const GV_LSSparseEntry *query, size_t query_count,
                               float min_score, size_t k,
                               GV_LearnedSparseResult *results) {
-    GV_LSWandCursor *cursors = (GV_LSWandCursor *)calloc(
+    GV_LSWandCursor *cursors = (GV_LSWandCursor *)gv_calloc(
         query_count, sizeof(GV_LSWandCursor));
     if (!cursors) return -1;
 
@@ -310,13 +311,13 @@ static int ls_search_wand(const GV_LearnedSparseIndex *idx,
     }
 
     if (num_cursors == 0) {
-        free(cursors);
+        gv_free(cursors);
         return 0;
     }
 
-    GV_LSHeapItem *heap = (GV_LSHeapItem *)malloc(k * sizeof(GV_LSHeapItem));
+    GV_LSHeapItem *heap = (GV_LSHeapItem *)gv_alloc(k * sizeof(GV_LSHeapItem));
     if (!heap) {
-        free(cursors);
+        gv_free(cursors);
         return -1;
     }
     size_t heap_size = 0;
@@ -392,8 +393,8 @@ static int ls_search_wand(const GV_LearnedSparseIndex *idx,
         }
     }
 
-    free(heap);
-    free(cursors);
+    gv_free(heap);
+    gv_free(cursors);
     return n;
 }
 
@@ -426,7 +427,7 @@ static int ls_search_accumulate(const GV_LearnedSparseIndex *idx,
         }
     }
 
-    GV_LSHeapItem *heap = (GV_LSHeapItem *)malloc(k * sizeof(GV_LSHeapItem));
+    GV_LSHeapItem *heap = (GV_LSHeapItem *)gv_alloc(k * sizeof(GV_LSHeapItem));
     if (!heap) {
         ls_score_map_destroy(map);
         return -1;
@@ -455,7 +456,7 @@ static int ls_search_accumulate(const GV_LearnedSparseIndex *idx,
         }
     }
 
-    free(heap);
+    gv_free(heap);
     ls_score_map_destroy(map);
     return n;
 }
@@ -480,24 +481,24 @@ GV_LearnedSparseIndex *ls_create(const GV_LearnedSparseConfig *config) {
     if (cfg.max_nonzeros == 0)    cfg.max_nonzeros    = 256;
     if (cfg.wand_block_size == 0) cfg.wand_block_size = 128;
 
-    GV_LearnedSparseIndex *idx = (GV_LearnedSparseIndex *)calloc(
+    GV_LearnedSparseIndex *idx = (GV_LearnedSparseIndex *)gv_calloc(
         1, sizeof(GV_LearnedSparseIndex));
     if (!idx) return NULL;
 
     idx->config = cfg;
 
-    idx->posting_lists = (GV_LSPostingList *)calloc(
+    idx->posting_lists = (GV_LSPostingList *)gv_calloc(
         cfg.vocab_size, sizeof(GV_LSPostingList));
     if (!idx->posting_lists) {
-        free(idx);
+        gv_free(idx);
         return NULL;
     }
 
     idx->doc_capacity = GV_LS_INITIAL_DOC_CAPACITY;
-    idx->docs = (GV_LSDocMeta *)calloc(idx->doc_capacity, sizeof(GV_LSDocMeta));
+    idx->docs = (GV_LSDocMeta *)gv_calloc(idx->doc_capacity, sizeof(GV_LSDocMeta));
     if (!idx->docs) {
-        free(idx->posting_lists);
-        free(idx);
+        gv_free(idx->posting_lists);
+        gv_free(idx);
         return NULL;
     }
 
@@ -507,9 +508,9 @@ GV_LearnedSparseIndex *ls_create(const GV_LearnedSparseConfig *config) {
     idx->total_entry_count = 0;
 
     if (pthread_rwlock_init(&idx->rwlock, NULL) != 0) {
-        free(idx->docs);
-        free(idx->posting_lists);
-        free(idx);
+        gv_free(idx->docs);
+        gv_free(idx->posting_lists);
+        gv_free(idx);
         return NULL;
     }
 
@@ -523,12 +524,12 @@ void ls_destroy(GV_LearnedSparseIndex *idx) {
         for (size_t i = 0; i < idx->config.vocab_size; i++) {
             ls_posting_list_free(&idx->posting_lists[i]);
         }
-        free(idx->posting_lists);
+        gv_free(idx->posting_lists);
     }
 
-    free(idx->docs);
+    gv_free(idx->docs);
     pthread_rwlock_destroy(&idx->rwlock);
-    free(idx);
+    gv_free(idx);
 }
 
 int ls_insert(GV_LearnedSparseIndex *idx, const GV_LSSparseEntry *entries,
@@ -540,7 +541,7 @@ int ls_insert(GV_LearnedSparseIndex *idx, const GV_LSSparseEntry *entries,
 
     if (idx->doc_count >= idx->doc_capacity) {
         size_t new_cap = idx->doc_capacity * 2;
-        GV_LSDocMeta *new_docs = (GV_LSDocMeta *)realloc(
+        GV_LSDocMeta *new_docs = (GV_LSDocMeta *)gv_realloc(
             idx->docs, new_cap * sizeof(GV_LSDocMeta));
         if (!new_docs) {
             pthread_rwlock_unlock(&idx->rwlock);
@@ -776,7 +777,7 @@ GV_LearnedSparseIndex *ls_load(const char *path) {
     if (doc_count > 0) {
         while (idx->doc_capacity < doc_count) {
             size_t new_cap = idx->doc_capacity * 2;
-            GV_LSDocMeta *new_docs = (GV_LSDocMeta *)realloc(
+            GV_LSDocMeta *new_docs = (GV_LSDocMeta *)gv_realloc(
                 idx->docs, new_cap * sizeof(GV_LSDocMeta));
             if (!new_docs) {
                 ls_destroy(idx);

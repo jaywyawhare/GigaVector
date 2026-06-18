@@ -20,6 +20,7 @@
  */
 
 #include "multimodal/muvera.h"
+#include "core/memory.h"
 #include "core/utils.h"
 
 #include <stdlib.h>
@@ -146,7 +147,7 @@ static int muvera_encode_single(const GV_MuveraEncoder *enc,
     }
 
     /* reduced_tokens: num_tokens x reduced_dim */
-    float *reduced_tokens = (float *)malloc(num_tokens * rd * sizeof(float));
+    float *reduced_tokens = (float *)gv_alloc(num_tokens * rd * sizeof(float));
     if (!reduced_tokens) return -1;
 
     for (size_t t = 0; t < num_tokens; t++) {
@@ -156,9 +157,9 @@ static int muvera_encode_single(const GV_MuveraEncoder *enc,
     /* Output layout: for projection i, bucket b:
      *   output[(i * NUM_BUCKETS + b) * reduced_dim ... + reduced_dim - 1]
      */
-    size_t *bucket_counts = (size_t *)calloc(np * GV_MUVERA_NUM_BUCKETS, sizeof(size_t));
+    size_t *bucket_counts = (size_t *)gv_calloc(np * GV_MUVERA_NUM_BUCKETS, sizeof(size_t));
     if (!bucket_counts) {
-        free(reduced_tokens);
+        gv_free(reduced_tokens);
         return -1;
     }
 
@@ -191,8 +192,8 @@ static int muvera_encode_single(const GV_MuveraEncoder *enc,
         }
     }
 
-    free(bucket_counts);
-    free(reduced_tokens);
+    gv_free(bucket_counts);
+    gv_free(reduced_tokens);
 
     if (enc->config.normalize) {
         float norm_sq = 0.0f;
@@ -252,22 +253,22 @@ GV_MuveraEncoder *muvera_create(const GV_MuveraConfig *config) {
 
     cfg.output_dimension = np * GV_MUVERA_NUM_BUCKETS * reduced_dim;
 
-    GV_MuveraEncoder *enc = (GV_MuveraEncoder *)calloc(1, sizeof(GV_MuveraEncoder));
+    GV_MuveraEncoder *enc = (GV_MuveraEncoder *)gv_calloc(1, sizeof(GV_MuveraEncoder));
     if (!enc) return NULL;
 
     enc->config      = cfg;
     enc->reduced_dim = reduced_dim;
 
-    enc->sign_vectors = (float *)malloc(np * td * sizeof(float));
+    enc->sign_vectors = (float *)gv_alloc(np * td * sizeof(float));
     if (!enc->sign_vectors) {
-        free(enc);
+        gv_free(enc);
         return NULL;
     }
 
-    enc->proj_matrix = (float *)malloc(reduced_dim * td * sizeof(float));
+    enc->proj_matrix = (float *)gv_alloc(reduced_dim * td * sizeof(float));
     if (!enc->proj_matrix) {
-        free(enc->sign_vectors);
-        free(enc);
+        gv_free(enc->sign_vectors);
+        gv_free(enc);
         return NULL;
     }
 
@@ -289,9 +290,9 @@ GV_MuveraEncoder *muvera_create(const GV_MuveraConfig *config) {
 void muvera_destroy(GV_MuveraEncoder *enc) {
     if (!enc) return;
 
-    free(enc->sign_vectors);
-    free(enc->proj_matrix);
-    free(enc);
+    gv_free(enc->sign_vectors);
+    gv_free(enc->proj_matrix);
+    gv_free(enc);
 }
 
 int muvera_encode(const GV_MuveraEncoder *enc,
@@ -400,7 +401,7 @@ GV_MuveraEncoder *muvera_load(const char *path) {
         return NULL;
     }
 
-    GV_MuveraEncoder *enc = (GV_MuveraEncoder *)calloc(1, sizeof(GV_MuveraEncoder));
+    GV_MuveraEncoder *enc = (GV_MuveraEncoder *)gv_calloc(1, sizeof(GV_MuveraEncoder));
     if (!enc) { fclose(fp); return NULL; }
 
     enc->config.token_dimension  = (size_t)td;
@@ -412,15 +413,15 @@ GV_MuveraEncoder *muvera_load(const char *path) {
 
     {
         size_t count = (size_t)(np * td);
-        enc->sign_vectors = (float *)malloc(count * sizeof(float));
+        enc->sign_vectors = (float *)gv_alloc(count * sizeof(float));
         if (!enc->sign_vectors) {
-            free(enc);
+            gv_free(enc);
             fclose(fp);
             return NULL;
         }
         if (fread(enc->sign_vectors, sizeof(float), count, fp) != count) {
-            free(enc->sign_vectors);
-            free(enc);
+            gv_free(enc->sign_vectors);
+            gv_free(enc);
             fclose(fp);
             return NULL;
         }
@@ -428,17 +429,17 @@ GV_MuveraEncoder *muvera_load(const char *path) {
 
     {
         size_t count = (size_t)(rd * td);
-        enc->proj_matrix = (float *)malloc(count * sizeof(float));
+        enc->proj_matrix = (float *)gv_alloc(count * sizeof(float));
         if (!enc->proj_matrix) {
-            free(enc->sign_vectors);
-            free(enc);
+            gv_free(enc->sign_vectors);
+            gv_free(enc);
             fclose(fp);
             return NULL;
         }
         if (fread(enc->proj_matrix, sizeof(float), count, fp) != count) {
-            free(enc->proj_matrix);
-            free(enc->sign_vectors);
-            free(enc);
+            gv_free(enc->proj_matrix);
+            gv_free(enc->sign_vectors);
+            gv_free(enc);
             fclose(fp);
             return NULL;
         }

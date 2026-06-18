@@ -4,6 +4,7 @@
  */
 
 #include "specialized/mvcc.h"
+#include "core/memory.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -96,7 +97,7 @@ static void mvcc_remove_active(GV_MVCCManager *mgr, uint64_t gv_txn_id)
         if ((*pp)->gv_txn_id == gv_txn_id) {
             GV_TxnEntry *tmp = *pp;
             *pp = tmp->next;
-            free(tmp);
+            gv_free(tmp);
             return;
         }
         pp = &(*pp)->next;
@@ -141,7 +142,7 @@ static int mvcc_grow_versions(GV_MVCCManager *mgr)
         return 0;
 
     size_t new_cap = mgr->ver_capacity == 0 ? MVCC_INIT_CAP : mgr->ver_capacity * 2;
-    GV_MVCCVersion *tmp = realloc(mgr->versions, new_cap * sizeof(GV_MVCCVersion));
+    GV_MVCCVersion *tmp = gv_realloc(mgr->versions, new_cap * sizeof(GV_MVCCVersion));
     if (!tmp)
         return -1;
     mgr->versions = tmp;
@@ -156,7 +157,7 @@ static int idx_array_push(size_t **arr, size_t *count, size_t *capacity, size_t 
 {
     if (*count >= *capacity) {
         size_t new_cap = *capacity == 0 ? MVCC_INIT_CAP : (*capacity) * 2;
-        size_t *tmp = realloc(*arr, new_cap * sizeof(size_t));
+        size_t *tmp = gv_realloc(*arr, new_cap * sizeof(size_t));
         if (!tmp)
             return -1;
         *arr = tmp;
@@ -228,7 +229,7 @@ static int mvcc_version_visible(const GV_MVCCManager *mgr,
 
 GV_MVCCManager *gv_mvcc_create(size_t dimension)
 {
-    GV_MVCCManager *mgr = calloc(1, sizeof(GV_MVCCManager));
+    GV_MVCCManager *mgr = gv_calloc(1, sizeof(GV_MVCCManager));
     if (!mgr)
         return NULL;
 
@@ -240,7 +241,7 @@ GV_MVCCManager *gv_mvcc_create(size_t dimension)
     mgr->active_txns = NULL;
 
     if (pthread_mutex_init(&mgr->mutex, NULL) != 0) {
-        free(mgr);
+        gv_free(mgr);
         return NULL;
     }
 
@@ -253,19 +254,19 @@ void gv_mvcc_destroy(GV_MVCCManager *mgr)
         return;
 
     for (size_t i = 0; i < mgr->ver_count; i++) {
-        free(mgr->versions[i].data);
+        gv_free(mgr->versions[i].data);
     }
-    free(mgr->versions);
+    gv_free(mgr->versions);
 
     GV_TxnEntry *e = mgr->active_txns;
     while (e) {
         GV_TxnEntry *next = e->next;
-        free(e);
+        gv_free(e);
         e = next;
     }
 
     pthread_mutex_destroy(&mgr->mutex);
-    free(mgr);
+    gv_free(mgr);
 }
 
 GV_Transaction *gv_txn_begin(GV_MVCCManager *mgr)
@@ -273,7 +274,7 @@ GV_Transaction *gv_txn_begin(GV_MVCCManager *mgr)
     if (!mgr)
         return NULL;
 
-    GV_Transaction *txn = calloc(1, sizeof(GV_Transaction));
+    GV_Transaction *txn = gv_calloc(1, sizeof(GV_Transaction));
     if (!txn)
         return NULL;
 
@@ -291,10 +292,10 @@ GV_Transaction *gv_txn_begin(GV_MVCCManager *mgr)
     txn->gv_txn_id = mgr->next_txn_id++;
     txn->snapshot_txn_id = txn->gv_txn_id - 1;
 
-    GV_TxnEntry *entry = malloc(sizeof(GV_TxnEntry));
+    GV_TxnEntry *entry = gv_alloc(sizeof(GV_TxnEntry));
     if (!entry) {
         pthread_mutex_unlock(&mgr->mutex);
-        free(txn);
+        gv_free(txn);
         return NULL;
     }
     entry->gv_txn_id = txn->gv_txn_id;
@@ -389,7 +390,7 @@ int gv_txn_add_vector(GV_Transaction *txn, const float *data, size_t dimension)
 
     GV_MVCCManager *mgr = txn->mgr;
 
-    float *copy = malloc(dimension * sizeof(float));
+    float *copy = gv_alloc(dimension * sizeof(float));
     if (!copy)
         return -1;
     memcpy(copy, data, dimension * sizeof(float));
@@ -398,7 +399,7 @@ int gv_txn_add_vector(GV_Transaction *txn, const float *data, size_t dimension)
 
     if (mvcc_grow_versions(mgr) != 0) {
         pthread_mutex_unlock(&mgr->mutex);
-        free(copy);
+        gv_free(copy);
         return -1;
     }
 
@@ -571,7 +572,7 @@ int gv_mvcc_gc(GV_MVCCManager *mgr)
         }
 
         if (reclaimable) {
-            free(ver->data);
+            gv_free(ver->data);
             ver->data = NULL;
         } else {
             if (dst != src)

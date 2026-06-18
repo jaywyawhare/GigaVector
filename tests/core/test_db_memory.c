@@ -26,7 +26,7 @@ static int test_db_alloc_tracked(void) {
     ASSERT(db->memory_pool.owned_count == n0 + 2, "track b");
 
     gv_db_free(db, a);
-    ASSERT(db->memory_pool.owned_count == n0 + 1, "free a");
+    ASSERT(db->memory_pool.owned_count == n0 + 1, "gv_free a");
 
     db_close(db);
     return 0;

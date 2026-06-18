@@ -1,4 +1,5 @@
 #include <stddef.h>
+#include "core/memory.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -54,7 +55,7 @@ int db_search_with_threshold(const void *db, const float *query_data, size_t k,
         (GV_SearchResult *)gv_tls_calloc(k, sizeof(GV_SearchResult));
     int search_results_on_heap = 0;
     if (!search_results) {
-        search_results = (GV_SearchResult *)calloc(k, sizeof(GV_SearchResult));
+        search_results = (GV_SearchResult *)gv_calloc(k, sizeof(GV_SearchResult));
         search_results_on_heap = 1;
     }
     if (!search_results) return -1;
@@ -63,7 +64,7 @@ int db_search_with_threshold(const void *db, const float *query_data, size_t k,
                              (GV_DistanceType)distance_type);
     if (found < 0) {
         if (search_results_on_heap) {
-            free(search_results);
+            gv_free(search_results);
         }
         return -1;
     }
@@ -79,7 +80,7 @@ int db_search_with_threshold(const void *db, const float *query_data, size_t k,
     }
 
     if (search_results_on_heap) {
-        free(search_results);
+        gv_free(search_results);
     }
     return (int)passed;
 }

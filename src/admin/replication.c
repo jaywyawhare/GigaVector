@@ -9,6 +9,7 @@
  */
 
 #include "admin/replication.h"
+#include "core/memory.h"
 #include "admin/repl_transport.h"
 #include "storage/database.h"
 #include "storage/memory_layer.h"
@@ -166,9 +167,9 @@ static void *replication_thread_func(void *arg) {
                     if (elapsed > timeout_sec) {
                         mgr->role = GV_REPL_CANDIDATE;
                         mgr->term++;
-                        free(mgr->leader_id);
+                        gv_free(mgr->leader_id);
                         mgr->leader_id = NULL;
-                        free(mgr->voted_for);
+                        gv_free(mgr->voted_for);
                         mgr->voted_for = mgr->node_id ? gv_dup_cstr(mgr->node_id) : NULL;
                     }
                 }
@@ -187,7 +188,7 @@ static void *replication_thread_func(void *arg) {
             size_t quorum = (mgr->replica_count + 1) / 2 + 1;
             if (votes >= quorum) {
                 mgr->role = GV_REPL_LEADER;
-                free(mgr->leader_id);
+                gv_free(mgr->leader_id);
                 mgr->leader_id = mgr->node_id ? gv_dup_cstr(mgr->node_id) : NULL;
                 replication_embedded_followers_catch_up_locked(mgr);
             }
@@ -202,7 +203,7 @@ static void *replication_thread_func(void *arg) {
 GV_ReplicationManager *replication_create(GV_Database *db, const GV_ReplicationConfig *config) {
     if (!db) return NULL;
 
-    GV_ReplicationManager *mgr = calloc(1, sizeof(GV_ReplicationManager));
+    GV_ReplicationManager *mgr = gv_calloc(1, sizeof(GV_ReplicationManager));
     if (!mgr) return NULL;
 
     mgr->config = config ? *config : DEFAULT_CONFIG;
@@ -224,26 +225,26 @@ GV_ReplicationManager *replication_create(GV_Database *db, const GV_ReplicationC
     mgr->term = 1;
 
     if (pthread_rwlock_init(&mgr->rwlock, NULL) != 0) {
-        free(mgr->node_id);
-        free(mgr->leader_id);
-        free(mgr);
+        gv_free(mgr->node_id);
+        gv_free(mgr->leader_id);
+        gv_free(mgr);
         return NULL;
     }
 
     if (pthread_mutex_init(&mgr->election_mutex, NULL) != 0) {
         pthread_rwlock_destroy(&mgr->rwlock);
-        free(mgr->node_id);
-        free(mgr->leader_id);
-        free(mgr);
+        gv_free(mgr->node_id);
+        gv_free(mgr->leader_id);
+        gv_free(mgr);
         return NULL;
     }
 
     if (pthread_cond_init(&mgr->sync_cond, NULL) != 0) {
         pthread_mutex_destroy(&mgr->election_mutex);
         pthread_rwlock_destroy(&mgr->rwlock);
-        free(mgr->node_id);
-        free(mgr->leader_id);
-        free(mgr);
+        gv_free(mgr->node_id);
+        gv_free(mgr->leader_id);
+        gv_free(mgr);
         return NULL;
     }
 
@@ -261,18 +262,18 @@ void replication_destroy(GV_ReplicationManager *mgr) {
     }
 
     for (size_t i = 0; i < mgr->replica_count; i++) {
-        free(mgr->replicas[i].node_id);
-        free(mgr->replicas[i].address);
+        gv_free(mgr->replicas[i].node_id);
+        gv_free(mgr->replicas[i].address);
     }
 
     pthread_cond_destroy(&mgr->sync_cond);
     pthread_mutex_destroy(&mgr->election_mutex);
     pthread_rwlock_destroy(&mgr->rwlock);
 
-    free(mgr->node_id);
-    free(mgr->leader_id);
-    free(mgr->voted_for);
-    free(mgr);
+    gv_free(mgr->node_id);
+    gv_free(mgr->leader_id);
+    gv_free(mgr->voted_for);
+    gv_free(mgr);
 }
 
 int replication_start(GV_ReplicationManager *mgr) {
@@ -356,7 +357,7 @@ int replication_step_down(GV_ReplicationManager *mgr) {
     }
 
     mgr->role = GV_REPL_FOLLOWER;
-    free(mgr->leader_id);
+    gv_free(mgr->leader_id);
     mgr->leader_id = NULL;
 
     pthread_rwlock_unlock(&mgr->rwlock);
@@ -371,7 +372,7 @@ int replication_request_leadership(GV_ReplicationManager *mgr) {
 
     mgr->role = GV_REPL_CANDIDATE;
     mgr->term++;
-    free(mgr->voted_for);
+    gv_free(mgr->voted_for);
     mgr->voted_for = gv_dup_cstr(mgr->node_id);
 
     size_t votes = 1;
@@ -383,7 +384,7 @@ int replication_request_leadership(GV_ReplicationManager *mgr) {
     size_t quorum = (mgr->replica_count + 1) / 2 + 1;
     if (votes >= quorum) {
         mgr->role = GV_REPL_LEADER;
-        free(mgr->leader_id);
+        gv_free(mgr->leader_id);
         mgr->leader_id = gv_dup_cstr(mgr->node_id);
         replication_embedded_followers_catch_up_locked(mgr);
     }
@@ -434,8 +435,8 @@ int replication_remove_follower(GV_ReplicationManager *mgr, const char *node_id)
 
     for (size_t i = 0; i < mgr->replica_count; i++) {
         if (strcmp(mgr->replicas[i].node_id, node_id) == 0) {
-            free(mgr->replicas[i].node_id);
-            free(mgr->replicas[i].address);
+            gv_free(mgr->replicas[i].node_id);
+            gv_free(mgr->replicas[i].address);
 
             for (size_t j = i; j < mgr->replica_count - 1; j++) {
                 mgr->replicas[j] = mgr->replicas[j + 1];
@@ -468,7 +469,7 @@ int replication_list_replicas(GV_ReplicationManager *mgr, GV_ReplicaInfo **repli
         return 0;
     }
 
-    *replicas = malloc(*count * sizeof(GV_ReplicaInfo));
+    *replicas = gv_alloc(*count * sizeof(GV_ReplicaInfo));
     if (!*replicas) {
         pthread_rwlock_unlock(&mgr->rwlock);
         return -1;
@@ -491,10 +492,10 @@ int replication_list_replicas(GV_ReplicationManager *mgr, GV_ReplicaInfo **repli
 void replication_free_replicas(GV_ReplicaInfo *replicas, size_t count) {
     if (!replicas) return;
     for (size_t i = 0; i < count; i++) {
-        free(replicas[i].node_id);
-        free(replicas[i].address);
+        gv_free(replicas[i].node_id);
+        gv_free(replicas[i].address);
     }
-    free(replicas);
+    gv_free(replicas);
 }
 
 int replication_sync_commit(GV_ReplicationManager *mgr, uint32_t timeout_ms) {
@@ -635,7 +636,7 @@ int replication_get_stats(GV_ReplicationManager *mgr, GV_ReplicationStats *stats
 
 void replication_free_stats(GV_ReplicationStats *stats) {
     if (!stats) return;
-    free(stats->leader_id);
+    gv_free(stats->leader_id);
     memset(stats, 0, sizeof(*stats));
 }
 

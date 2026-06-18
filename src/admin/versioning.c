@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 199309L
 
 #include <stdio.h>
+#include "core/memory.h"
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -73,7 +74,7 @@ static int ensure_capacity(GV_VersionManager *mgr)
     if (mgr->entry_count < mgr->entry_capacity) return 0;
 
     size_t new_cap = mgr->entry_capacity == 0 ? 4 : mgr->entry_capacity * 2;
-    GV_VersionEntry *tmp = realloc(mgr->entries, new_cap * sizeof(GV_VersionEntry));
+    GV_VersionEntry *tmp = gv_realloc(mgr->entries, new_cap * sizeof(GV_VersionEntry));
     if (!tmp) return -1;
 
     memset(tmp + mgr->entry_capacity, 0, (new_cap - mgr->entry_capacity) * sizeof(GV_VersionEntry));
@@ -88,7 +89,7 @@ GV_VersionManager *version_manager_create(size_t max_versions)
 {
     if (max_versions == 0) return NULL;
 
-    GV_VersionManager *mgr = calloc(1, sizeof(GV_VersionManager));
+    GV_VersionManager *mgr = gv_calloc(1, sizeof(GV_VersionManager));
     if (!mgr) return NULL;
 
     mgr->max_versions = max_versions;
@@ -100,10 +101,10 @@ void version_manager_destroy(GV_VersionManager *mgr)
 {
     if (!mgr) return;
     for (size_t i = 0; i < mgr->entry_count; i++) {
-        free(mgr->entries[i].data);
+        gv_free(mgr->entries[i].data);
     }
-    free(mgr->entries);
-    free(mgr);
+    gv_free(mgr->entries);
+    gv_free(mgr);
 }
 
 uint64_t version_create(GV_VersionManager *mgr, const float *data,
@@ -117,7 +118,7 @@ uint64_t version_create(GV_VersionManager *mgr, const float *data,
     if (ensure_capacity(mgr) != 0) return 0;
 
     size_t total_floats = count * dimension;
-    float *copy = malloc(total_floats * sizeof(float));
+    float *copy = gv_alloc(total_floats * sizeof(float));
     if (!copy) return 0;
     memcpy(copy, data, total_floats * sizeof(float));
 
@@ -178,7 +179,7 @@ float *version_get_data(const GV_VersionManager *mgr, uint64_t version_id,
     if (!e) return NULL;
 
     size_t total_floats = e->count * e->dimension;
-    float *copy = malloc(total_floats * sizeof(float));
+    float *copy = gv_alloc(total_floats * sizeof(float));
     if (!copy) return NULL;
     memcpy(copy, e->data, total_floats * sizeof(float));
 
@@ -194,7 +195,7 @@ int version_delete(GV_VersionManager *mgr, uint64_t version_id)
     GV_VersionEntry *e = find_entry(mgr, version_id);
     if (!e) return -1;
 
-    free(e->data);
+    gv_free(e->data);
     e->data   = NULL;
     e->active = 0;
     return 0;
@@ -330,7 +331,7 @@ int version_load(GV_VersionManager **mgr_ptr, FILE *in)
 
         size_t data_bytes = e->count * e->dimension * sizeof(float);
         if (data_bytes > 0) {
-            e->data = malloc(data_bytes);
+            e->data = gv_alloc(data_bytes);
             if (!e->data) goto fail;
             if (fread(e->data, 1, data_bytes, in) != data_bytes) goto fail;
         }

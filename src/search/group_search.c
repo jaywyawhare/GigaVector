@@ -8,6 +8,7 @@
  */
 
 #include "search/group_search.h"
+#include "core/memory.h"
 #include "core/arena.h"
 #include "core/scope.h"
 #include "storage/database.h"
@@ -150,13 +151,13 @@ static void free_search_result_vector(GV_SearchResult *r) {
     GV_Metadata *m = v->metadata;
     while (m) {
         GV_Metadata *next = m->next;
-        free(m->key);
-        free(m->value);
-        free(m);
+        gv_free(m->key);
+        gv_free(m->value);
+        gv_free(m);
         m = next;
     }
-    free(v->data);
-    free(v);
+    gv_free(v->data);
+    gv_free(v);
     r->vector = NULL;
 }
 
@@ -258,7 +259,7 @@ int group_search(const GV_Database *db, const float *query, size_t dimension,
 
             size_t out_groups = map.bucket_count < group_limit ? map.bucket_count : group_limit;
 
-            result->groups = (GV_SearchGroup *)calloc(out_groups, sizeof(GV_SearchGroup));
+            result->groups = (GV_SearchGroup *)gv_calloc(out_groups, sizeof(GV_SearchGroup));
             if (!result->groups) {
                 rc = -1;
             } else {
@@ -275,7 +276,7 @@ int group_search(const GV_Database *db, const float *query, size_t dimension,
                     }
 
                     size_t n_hits = b->hit_count < hits_per_group ? b->hit_count : hits_per_group;
-                    result->groups[g].hits = (GV_GroupHit *)malloc(n_hits * sizeof(GV_GroupHit));
+                    result->groups[g].hits = (GV_GroupHit *)gv_alloc(n_hits * sizeof(GV_GroupHit));
                     if (!result->groups[g].hits) {
                         group_search_free_result(result);
                         rc = -1;
@@ -306,10 +307,10 @@ void group_search_free_result(GV_GroupedResult *result) {
     if (!result) return;
     if (result->groups) {
         for (size_t i = 0; i < result->group_count; i++) {
-            free(result->groups[i].group_value);
-            free(result->groups[i].hits);
+            gv_free(result->groups[i].group_value);
+            gv_free(result->groups[i].hits);
         }
-        free(result->groups);
+        gv_free(result->groups);
     }
     memset(result, 0, sizeof(*result));
 }

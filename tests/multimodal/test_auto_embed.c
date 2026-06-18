@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include "core/memory.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -171,7 +172,7 @@ static int test_embed_text_no_api(void) {
     if (embedding != NULL) {
         /* Some implementations may generate a dummy embedding */
         ASSERT(out_dim > 0, "if embedding returned, dimension should be > 0");
-        free(embedding);
+        gv_free(embedding);
     }
 
     auto_embed_destroy(embedder);
@@ -288,7 +289,7 @@ static int test_google_live_embed(void) {
     size_t dim = 0;
     float *vec = auto_embed_text(embedder, "Hello, GigaVector!", &dim);
     if (vec != NULL) {
-        free(vec);
+        gv_free(vec);
     }
 
     auto_embed_destroy(embedder);

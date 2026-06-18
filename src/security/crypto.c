@@ -7,6 +7,7 @@
  */
 
 #include "security/crypto.h"
+#include "core/memory.h"
 #include "security/auth.h"  /* For SHA-256 */
 #include <stdlib.h>
 #include <string.h>
@@ -283,7 +284,7 @@ void crypto_config_init(GV_CryptoConfig *config) {
 /* Lifecycle */
 
 GV_CryptoContext *crypto_create(const GV_CryptoConfig *config) {
-    GV_CryptoContext *ctx = calloc(1, sizeof(GV_CryptoContext));
+    GV_CryptoContext *ctx = gv_calloc(1, sizeof(GV_CryptoContext));
     if (!ctx) return NULL;
     ctx->config = config ? *config : DEFAULT_CONFIG;
     return ctx;
@@ -292,7 +293,7 @@ GV_CryptoContext *crypto_create(const GV_CryptoConfig *config) {
 void crypto_destroy(GV_CryptoContext *ctx) {
     if (!ctx) return;
     memset(ctx, 0, sizeof(*ctx));
-    free(ctx);
+    gv_free(ctx);
 }
 
 /* Key Management */
@@ -319,7 +320,7 @@ int crypto_derive_key(GV_CryptoContext *ctx, const char *password,
     unsigned char counter[4] = {0, 0, 0, 1};
 
     /* First iteration: HMAC(password, salt || counter) */
-    unsigned char *msg = malloc(salt_len + 4);
+    unsigned char *msg = gv_alloc(salt_len + 4);
     if (!msg) return -1;
     memcpy(msg, salt, salt_len);
     memcpy(msg + salt_len, counter, 4);
@@ -335,7 +336,7 @@ int crypto_derive_key(GV_CryptoContext *ctx, const char *password,
         }
     }
 
-    free(msg);
+    gv_free(msg);
     memcpy(dk, T, 32);
 
     memcpy(key->key, dk, 32);
@@ -484,11 +485,11 @@ int crypto_encrypt_file(GV_CryptoContext *ctx, const GV_CryptoKey *key,
     /* Write IV at beginning */
     fwrite(key->iv, 1, 16, fout);
 
-    unsigned char *buffer = malloc(FILE_BUFFER_SIZE);
-    unsigned char *cipher = malloc(FILE_BUFFER_SIZE + 16);
+    unsigned char *buffer = gv_alloc(FILE_BUFFER_SIZE);
+    unsigned char *cipher = gv_alloc(FILE_BUFFER_SIZE + 16);
     if (!buffer || !cipher) {
-        free(buffer);
-        free(cipher);
+        gv_free(buffer);
+        gv_free(cipher);
         fclose(fin);
         fclose(fout);
         return -1;
@@ -501,8 +502,8 @@ int crypto_encrypt_file(GV_CryptoContext *ctx, const GV_CryptoKey *key,
     while ((nread = fread(buffer, 1, FILE_BUFFER_SIZE, fin)) > 0) {
         size_t cipher_len;
         if (crypto_encrypt(ctx, &working_key, buffer, nread, cipher, &cipher_len) != 0) {
-            free(buffer);
-            free(cipher);
+            gv_free(buffer);
+            gv_free(cipher);
             fclose(fin);
             fclose(fout);
             return -1;
@@ -517,8 +518,8 @@ int crypto_encrypt_file(GV_CryptoContext *ctx, const GV_CryptoKey *key,
         total_read += nread;
     }
 
-    free(buffer);
-    free(cipher);
+    gv_free(buffer);
+    gv_free(cipher);
     fclose(fin);
     fclose(fout);
 
@@ -546,11 +547,11 @@ int crypto_decrypt_file(GV_CryptoContext *ctx, const GV_CryptoKey *key,
         return -1;
     }
 
-    unsigned char *buffer = malloc(FILE_BUFFER_SIZE);
-    unsigned char *plain = malloc(FILE_BUFFER_SIZE);
+    unsigned char *buffer = gv_alloc(FILE_BUFFER_SIZE);
+    unsigned char *plain = gv_alloc(FILE_BUFFER_SIZE);
     if (!buffer || !plain) {
-        free(buffer);
-        free(plain);
+        gv_free(buffer);
+        gv_free(plain);
         fclose(fin);
         fclose(fout);
         return -1;
@@ -560,8 +561,8 @@ int crypto_decrypt_file(GV_CryptoContext *ctx, const GV_CryptoKey *key,
     while ((nread = fread(buffer, 1, FILE_BUFFER_SIZE, fin)) > 0) {
         size_t plain_len;
         if (crypto_decrypt(ctx, &working_key, buffer, nread, plain, &plain_len) != 0) {
-            free(buffer);
-            free(plain);
+            gv_free(buffer);
+            gv_free(plain);
             fclose(fin);
             fclose(fout);
             return -1;
@@ -579,8 +580,8 @@ int crypto_decrypt_file(GV_CryptoContext *ctx, const GV_CryptoKey *key,
         }
     }
 
-    free(buffer);
-    free(plain);
+    gv_free(buffer);
+    gv_free(plain);
     fclose(fin);
     fclose(fout);
 
@@ -594,7 +595,7 @@ GV_CryptoStream *crypto_stream_create(GV_CryptoContext *ctx,
                                           int encrypting) {
     if (!ctx || !key) return NULL;
 
-    GV_CryptoStream *stream = calloc(1, sizeof(GV_CryptoStream));
+    GV_CryptoStream *stream = gv_calloc(1, sizeof(GV_CryptoStream));
     if (!stream) return NULL;
 
     stream->ctx = ctx;
@@ -689,7 +690,7 @@ void crypto_stream_destroy(GV_CryptoStream *stream) {
     if (!stream) return;
     crypto_wipe_key(&stream->key);
     memset(stream, 0, sizeof(*stream));
-    free(stream);
+    gv_free(stream);
 }
 
 /* HMAC-SHA256 */
@@ -719,14 +720,14 @@ int crypto_hmac_sha256(const unsigned char *key, size_t key_len,
     }
 
     /* Inner hash: H(K XOR ipad || data) */
-    unsigned char *inner_data = malloc(64 + data_len);
+    unsigned char *inner_data = gv_alloc(64 + data_len);
     if (!inner_data) return -1;
     memcpy(inner_data, k_ipad, 64);
     memcpy(inner_data + 64, data, data_len);
 
     unsigned char inner_hash[32];
     auth_sha256(inner_data, 64 + data_len, inner_hash);
-    free(inner_data);
+    gv_free(inner_data);
 
     /* Outer hash: H(K XOR opad || inner_hash) */
     unsigned char outer_data[96];

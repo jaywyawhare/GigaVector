@@ -38,6 +38,7 @@ void      gv_tls_arena_reset(void);
 void     *gv_tls_alloc(size_t size, size_t alignment);
 void     *gv_tls_calloc(size_t nmemb, size_t size);
 void     *gv_tls_alloc_or_heap(size_t size, size_t alignment, int *on_heap);
+void     *gv_tls_calloc_or_heap(size_t nmemb, size_t size, int *on_heap);
 void      gv_tls_free_or_heap(void *ptr, int on_heap);
 
 #define GV_WITH_ARENA(arena, cap)                                              \
