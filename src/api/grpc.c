@@ -270,6 +270,12 @@ int grpc_fuzz_dispatch_message(GV_GrpcServer *server, int response_fd,
 #include <time.h>
 #include <signal.h>
 
+#include "core/arena.h"
+#include "core/scope.h"
+
+#define GV_GRPC_SEARCH_ARENA_BYTES   (64u * 1024u)
+#define GV_GRPC_BATCH_SEARCH_ARENA_BYTES (256u * 1024u)
+
 #if defined(__STDC_NO_ATOMICS__)
 #  if defined(__GNUC__) || defined(__clang__)
 #    define GV_ATOMIC_INC(ptr)   do { __sync_fetch_and_add((ptr), 1); } while (0)
@@ -620,53 +626,50 @@ static void handle_search(GV_GrpcServer *server, int fd,
         return;
     }
 
-    float *query = malloc(dimension * sizeof(float));
-    if (!query) {
-        send_error_response(fd, msg->request_id, -1, "out of memory");
-        GV_ATOMIC_INC(&server->errors);
-        return;
-    }
-    for (uint32_t i = 0; i < dimension; i++) {
-        query[i] = read_float_be(msg->payload + 12 + i * 4);
-    }
+    GV_WITH_ARENA(scratch, GV_GRPC_SEARCH_ARENA_BYTES) {
+        float *query = (float *)gv_arena_alloc(
+            &scratch, (size_t)dimension * sizeof(float), sizeof(float));
+        if (!query) {
+            send_error_response(fd, msg->request_id, -1, "out of memory");
+            GV_ATOMIC_INC(&server->errors);
+            return;
+        }
+        for (uint32_t i = 0; i < dimension; i++) {
+            query[i] = read_float_be(msg->payload + 12 + i * 4);
+        }
 
-    GV_SearchResult *results = calloc(search_k, sizeof(GV_SearchResult));
-    if (!results) {
-        free(query);
-        send_error_response(fd, msg->request_id, -1, "out of memory");
-        GV_ATOMIC_INC(&server->errors);
-        return;
-    }
+        GV_SearchResult *results = (GV_SearchResult *)gv_arena_calloc(
+            &scratch, search_k, sizeof(GV_SearchResult));
+        if (!results) {
+            send_error_response(fd, msg->request_id, -1, "out of memory");
+            GV_ATOMIC_INC(&server->errors);
+            return;
+        }
 
-    int found = db_search(server->db, query, search_k, results,
+        int found = db_search(server->db, query, search_k, results,
                               (GV_DistanceType)distance_type);
-    free(query);
+        if (found < 0) {
+            send_error_response(fd, msg->request_id, -1, "search failed");
+            GV_ATOMIC_INC(&server->errors);
+            return;
+        }
 
-    if (found < 0) {
-        free(results);
-        send_error_response(fd, msg->request_id, -1, "search failed");
-        GV_ATOMIC_INC(&server->errors);
-        return;
+        size_t resp_len = 4 + (size_t)found * 8;
+        uint8_t *resp = (uint8_t *)gv_arena_alloc(&scratch, resp_len, 4);
+        if (!resp) {
+            send_error_response(fd, msg->request_id, -1, "out of memory");
+            GV_ATOMIC_INC(&server->errors);
+            return;
+        }
+
+        write_u32_be(resp, (uint32_t)found);
+        for (int i = 0; i < found; i++) {
+            write_u32_be(resp + 4 + (size_t)i * 8, (uint32_t)results[i].id);
+            write_float_be(resp + 4 + (size_t)i * 8 + 4, results[i].distance);
+        }
+
+        send_message(fd, GV_MSG_RESPONSE, msg->request_id, resp, resp_len);
     }
-
-    size_t resp_len = 4 + (size_t)found * 8;
-    uint8_t *resp = malloc(resp_len);
-    if (!resp) {
-        free(results);
-        send_error_response(fd, msg->request_id, -1, "out of memory");
-        GV_ATOMIC_INC(&server->errors);
-        return;
-    }
-
-    write_u32_be(resp, (uint32_t)found);
-    for (int i = 0; i < found; i++) {
-        write_u32_be(resp + 4 + (size_t)i * 8, (uint32_t)results[i].id);
-        write_float_be(resp + 4 + (size_t)i * 8 + 4, results[i].distance);
-    }
-
-    send_message(fd, GV_MSG_RESPONSE, msg->request_id, resp, resp_len);
-    free(resp);
-    free(results);
 }
 
 /**
@@ -871,62 +874,58 @@ static void handle_batch_search(GV_GrpcServer *server, int fd,
         return;
     }
 
-    float *queries = malloc(total_floats * sizeof(float));
-    if (!queries) {
-        send_error_response(fd, msg->request_id, -1, "out of memory");
-        GV_ATOMIC_INC(&server->errors);
-        return;
-    }
-    for (size_t i = 0; i < total_floats; i++) {
-        queries[i] = read_float_be(msg->payload + 16 + i * 4);
-    }
+    GV_WITH_ARENA(scratch, GV_GRPC_BATCH_SEARCH_ARENA_BYTES) {
+        float *queries = (float *)gv_arena_alloc(
+            &scratch, total_floats * sizeof(float), sizeof(float));
+        if (!queries) {
+            send_error_response(fd, msg->request_id, -1, "out of memory");
+            GV_ATOMIC_INC(&server->errors);
+            return;
+        }
+        for (size_t i = 0; i < total_floats; i++) {
+            queries[i] = read_float_be(msg->payload + 16 + i * 4);
+        }
 
-    GV_SearchResult *results = calloc(total_results, sizeof(GV_SearchResult));
-    if (!results) {
-        free(queries);
-        send_error_response(fd, msg->request_id, -1, "out of memory");
-        GV_ATOMIC_INC(&server->errors);
-        return;
-    }
+        GV_SearchResult *results = (GV_SearchResult *)gv_arena_calloc(
+            &scratch, total_results, sizeof(GV_SearchResult));
+        if (!results) {
+            send_error_response(fd, msg->request_id, -1, "out of memory");
+            GV_ATOMIC_INC(&server->errors);
+            return;
+        }
 
-    int total_found = db_search_batch(server->db, queries, (size_t)qcount,
+        int total_found = db_search_batch(server->db, queries, (size_t)qcount,
                                           (size_t)k, results,
                                           (GV_DistanceType)distance_type);
-    free(queries);
-
-    if (total_found < 0) {
-        free(results);
-        send_error_response(fd, msg->request_id, -1, "batch search failed");
-        GV_ATOMIC_INC(&server->errors);
-        return;
-    }
-
-    /* Each query returns exactly k results (padding with zeros if fewer) */
-    size_t resp_len = 4 + (size_t)qcount * (4 + (size_t)k * 8);
-    uint8_t *resp = malloc(resp_len);
-    if (!resp) {
-        free(results);
-        send_error_response(fd, msg->request_id, -1, "out of memory");
-        GV_ATOMIC_INC(&server->errors);
-        return;
-    }
-
-    write_u32_be(resp, qcount);
-    size_t offset = 4;
-    for (uint32_t q = 0; q < qcount; q++) {
-        write_u32_be(resp + offset, k);
-        offset += 4;
-        for (uint32_t r = 0; r < k; r++) {
-            size_t ri = (size_t)q * (size_t)k + (size_t)r;
-            write_u32_be(resp + offset, (uint32_t)r);
-            write_float_be(resp + offset + 4, results[ri].distance);
-            offset += 8;
+        if (total_found < 0) {
+            send_error_response(fd, msg->request_id, -1, "batch search failed");
+            GV_ATOMIC_INC(&server->errors);
+            return;
         }
-    }
 
-    send_message(fd, GV_MSG_RESPONSE, msg->request_id, resp, resp_len);
-    free(resp);
-    free(results);
+        size_t resp_len = 4 + (size_t)qcount * (4 + (size_t)k * 8);
+        uint8_t *resp = (uint8_t *)gv_arena_alloc(&scratch, resp_len, 4);
+        if (!resp) {
+            send_error_response(fd, msg->request_id, -1, "out of memory");
+            GV_ATOMIC_INC(&server->errors);
+            return;
+        }
+
+        write_u32_be(resp, qcount);
+        size_t offset = 4;
+        for (uint32_t q = 0; q < qcount; q++) {
+            write_u32_be(resp + offset, k);
+            offset += 4;
+            for (uint32_t r = 0; r < k; r++) {
+                size_t ri = (size_t)q * (size_t)k + (size_t)r;
+                write_u32_be(resp + offset, (uint32_t)results[ri].id);
+                write_float_be(resp + offset + 4, results[ri].distance);
+                offset += 8;
+            }
+        }
+
+        send_message(fd, GV_MSG_RESPONSE, msg->request_id, resp, resp_len);
+    }
 }
 
 /**
