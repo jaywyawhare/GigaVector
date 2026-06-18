@@ -9,6 +9,7 @@
 
 #include "storage/database.h"
 #include "multimodal/inference.h"
+#include "../test_tmp.h"
 
 #define ASSERT(cond, msg)         \
     do {                          \
@@ -74,7 +75,7 @@ static int test_config_modify(void) {
 }
 
 static int test_create_engine(void) {
-    remove(TEST_DB);
+    gv_test_remove_db(TEST_DB);
     GV_Database *db = db_open(TEST_DB, 4, GV_INDEX_TYPE_FLAT);
     ASSERT(db != NULL, "database creation");
 
@@ -88,7 +89,7 @@ static int test_create_engine(void) {
 
     inference_destroy(eng);
     db_close(db);
-    remove(TEST_DB);
+    gv_test_remove_db(TEST_DB);
     return 0;
 }
 
@@ -104,7 +105,7 @@ static int test_create_null_db(void) {
 }
 
 static int test_create_null_config(void) {
-    remove(TEST_DB);
+    gv_test_remove_db(TEST_DB);
     GV_Database *db = db_open(TEST_DB, 4, GV_INDEX_TYPE_FLAT);
     ASSERT(db != NULL, "database creation");
 
@@ -112,7 +113,7 @@ static int test_create_null_config(void) {
     ASSERT(eng == NULL, "engine creation with NULL config should fail");
 
     db_close(db);
-    remove(TEST_DB);
+    gv_test_remove_db(TEST_DB);
     return 0;
 }
 
@@ -122,7 +123,7 @@ static int test_destroy_null(void) {
 }
 
 static int test_add_no_provider(void) {
-    remove(TEST_DB);
+    gv_test_remove_db(TEST_DB);
     GV_Database *db = db_open(TEST_DB, 4, GV_INDEX_TYPE_FLAT);
     ASSERT(db != NULL, "database creation");
 
@@ -139,12 +140,12 @@ static int test_add_no_provider(void) {
 
     inference_destroy(eng);
     db_close(db);
-    remove(TEST_DB);
+    gv_test_remove_db(TEST_DB);
     return 0;
 }
 
 static int test_search_empty(void) {
-    remove(TEST_DB);
+    gv_test_remove_db(TEST_DB);
     GV_Database *db = db_open(TEST_DB, 4, GV_INDEX_TYPE_FLAT);
     ASSERT(db != NULL, "database creation");
 
@@ -166,7 +167,7 @@ static int test_search_empty(void) {
 
     inference_destroy(eng);
     db_close(db);
-    remove(TEST_DB);
+    gv_test_remove_db(TEST_DB);
     return 0;
 }
 
@@ -197,7 +198,7 @@ static int test_result_structure(void) {
 }
 
 static int test_create_destroy_cycle(void) {
-    remove(TEST_DB);
+    gv_test_remove_db(TEST_DB);
     GV_Database *db = db_open(TEST_DB, 4, GV_INDEX_TYPE_FLAT);
     ASSERT(db != NULL, "database creation");
 
@@ -213,12 +214,12 @@ static int test_create_destroy_cycle(void) {
     }
 
     db_close(db);
-    remove(TEST_DB);
+    gv_test_remove_db(TEST_DB);
     return 0;
 }
 
 static int test_add_with_metadata(void) {
-    remove(TEST_DB);
+    gv_test_remove_db(TEST_DB);
     GV_Database *db = db_open(TEST_DB, 4, GV_INDEX_TYPE_FLAT);
     ASSERT(db != NULL, "database creation");
 
@@ -236,13 +237,13 @@ static int test_add_with_metadata(void) {
 
     inference_destroy(eng);
     db_close(db);
-    remove(TEST_DB);
+    gv_test_remove_db(TEST_DB);
     return 0;
 }
 
 
 static int test_add_batch_no_provider(void) {
-    remove(TEST_DB);
+    gv_test_remove_db(TEST_DB);
     GV_Database *db = db_open(TEST_DB, 4, GV_INDEX_TYPE_FLAT);
     ASSERT(db != NULL, "database creation");
 
@@ -270,12 +271,12 @@ static int test_add_batch_no_provider(void) {
 
     inference_destroy(eng);
     db_close(db);
-    remove(TEST_DB);
+    gv_test_remove_db(TEST_DB);
     return 0;
 }
 
 static int test_search_filtered_no_provider(void) {
-    remove(TEST_DB);
+    gv_test_remove_db(TEST_DB);
     GV_Database *db = db_open(TEST_DB, 4, GV_INDEX_TYPE_FLAT);
     ASSERT(db != NULL, "database creation");
 
@@ -297,7 +298,7 @@ static int test_search_filtered_no_provider(void) {
 
     inference_destroy(eng);
     db_close(db);
-    remove(TEST_DB);
+    gv_test_remove_db(TEST_DB);
     return 0;
 }
 
@@ -366,7 +367,7 @@ int main(void) {
     int failed = 0;
     int passed = 0;
 
-    remove(TEST_DB);
+    gv_test_remove_db(TEST_DB);
 
     struct { const char *name; int (*fn)(void); } tests[] = {
         {"test_config_init_defaults",         test_config_init_defaults},
@@ -401,6 +402,6 @@ int main(void) {
     }
 
     printf("\n%d/%d tests passed\n", passed, num_tests);
-    remove(TEST_DB);
+    gv_test_remove_db(TEST_DB);
     return failed > 0 ? 1 : 0;
 }

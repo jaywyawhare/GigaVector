@@ -73,4 +73,16 @@ static inline int gv_test_mkstemp(char *buf, size_t size, const char *stem) {
 #endif
 }
 
+static inline void gv_test_remove_db(const char *path) {
+    if (path == NULL || !*path) {
+        return;
+    }
+    remove(path);
+    char wal_path[512];
+    int n = snprintf(wal_path, sizeof(wal_path), "%s.wal", path);
+    if (n > 0 && (size_t)n < sizeof(wal_path)) {
+        remove(wal_path);
+    }
+}
+
 #endif

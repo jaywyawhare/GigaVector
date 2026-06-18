@@ -11,6 +11,7 @@
 #include "api/server.h"
 #include "api/rest_handlers.h"
 #include "features/json.h"
+#include "../test_tmp.h"
 
 #define ASSERT(cond, msg)         \
     do {                          \
@@ -22,16 +23,6 @@
 
 #define TEST_DB "tmp_test_rest.bin"
 #define TEST_DIM 4
-
-static void remove_test_db(const char *path) {
-    if (path == NULL) {
-        return;
-    }
-    remove(path);
-    char wal_path[512];
-    snprintf(wal_path, sizeof(wal_path), "%s.wal", path);
-    remove(wal_path);
-}
 
 static GV_HandlerContext create_test_ctx(GV_Database *db, GV_ServerConfig *scfg) {
     server_config_init(scfg);
@@ -183,7 +174,7 @@ static int test_parse_query_param_edge(void) {
 }
 
 static int test_handle_health(void) {
-    remove_test_db(TEST_DB);
+    gv_test_remove_db(TEST_DB);
     GV_Database *db = db_open(TEST_DB, TEST_DIM, GV_INDEX_TYPE_FLAT);
     ASSERT(db != NULL, "database creation");
 
@@ -207,12 +198,12 @@ static int test_handle_health(void) {
 
     rest_response_free(resp);
     db_close(db);
-    remove_test_db(TEST_DB);
+    gv_test_remove_db(TEST_DB);
     return 0;
 }
 
 static int test_handle_stats(void) {
-    remove_test_db(TEST_DB);
+    gv_test_remove_db(TEST_DB);
     GV_Database *db = db_open(TEST_DB, TEST_DIM, GV_INDEX_TYPE_FLAT);
     ASSERT(db != NULL, "database creation");
 
@@ -244,12 +235,12 @@ static int test_handle_stats(void) {
 
     rest_response_free(resp);
     db_close(db);
-    remove_test_db(TEST_DB);
+    gv_test_remove_db(TEST_DB);
     return 0;
 }
 
 static int test_handle_stats_empty(void) {
-    remove_test_db(TEST_DB);
+    gv_test_remove_db(TEST_DB);
     GV_Database *db = db_open(TEST_DB, TEST_DIM, GV_INDEX_TYPE_FLAT);
     ASSERT(db != NULL, "database creation");
 
@@ -272,12 +263,12 @@ static int test_handle_stats_empty(void) {
 
     rest_response_free(resp);
     db_close(db);
-    remove_test_db(TEST_DB);
+    gv_test_remove_db(TEST_DB);
     return 0;
 }
 
 static int test_route_get_health(void) {
-    remove_test_db(TEST_DB);
+    gv_test_remove_db(TEST_DB);
     GV_Database *db = db_open(TEST_DB, TEST_DIM, GV_INDEX_TYPE_FLAT);
     ASSERT(db != NULL, "database creation");
 
@@ -299,12 +290,12 @@ static int test_route_get_health(void) {
 
     rest_response_free(resp);
     db_close(db);
-    remove_test_db(TEST_DB);
+    gv_test_remove_db(TEST_DB);
     return 0;
 }
 
 static int test_route_get_stats(void) {
-    remove_test_db(TEST_DB);
+    gv_test_remove_db(TEST_DB);
     GV_Database *db = db_open(TEST_DB, TEST_DIM, GV_INDEX_TYPE_FLAT);
     ASSERT(db != NULL, "database creation");
 
@@ -326,12 +317,12 @@ static int test_route_get_stats(void) {
 
     rest_response_free(resp);
     db_close(db);
-    remove_test_db(TEST_DB);
+    gv_test_remove_db(TEST_DB);
     return 0;
 }
 
 static int test_route_not_found(void) {
-    remove_test_db(TEST_DB);
+    gv_test_remove_db(TEST_DB);
     GV_Database *db = db_open(TEST_DB, TEST_DIM, GV_INDEX_TYPE_FLAT);
     ASSERT(db != NULL, "database creation");
 
@@ -353,12 +344,12 @@ static int test_route_not_found(void) {
 
     rest_response_free(resp);
     db_close(db);
-    remove_test_db(TEST_DB);
+    gv_test_remove_db(TEST_DB);
     return 0;
 }
 
 static int test_route_method_mismatch(void) {
-    remove_test_db(TEST_DB);
+    gv_test_remove_db(TEST_DB);
     GV_Database *db = db_open(TEST_DB, TEST_DIM, GV_INDEX_TYPE_FLAT);
     ASSERT(db != NULL, "database creation");
 
@@ -383,7 +374,7 @@ static int test_route_method_mismatch(void) {
 
     rest_response_free(resp);
     db_close(db);
-    remove_test_db(TEST_DB);
+    gv_test_remove_db(TEST_DB);
     return 0;
 }
 
@@ -391,7 +382,7 @@ int main(void) {
     int failed = 0;
     int passed = 0;
 
-    remove_test_db(TEST_DB);
+    gv_test_remove_db(TEST_DB);
 
     struct { const char *name; int (*fn)(void); } tests[] = {
         {"test_response_success",          test_response_success},
@@ -424,6 +415,6 @@ int main(void) {
     }
 
     printf("\n%d/%d tests passed\n", passed, num_tests);
-    remove_test_db(TEST_DB);
+    gv_test_remove_db(TEST_DB);
     return failed > 0 ? 1 : 0;
 }

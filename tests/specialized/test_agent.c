@@ -4,6 +4,7 @@
 
 #include "storage/database.h"
 #include "specialized/agent.h"
+#include "../test_tmp.h"
 
 #define ASSERT(cond, msg)         \
     do {                          \
@@ -16,7 +17,7 @@
 static const char *TEST_DB = "tmp_test_agent.bin";
 
 static GV_Database *create_test_db(void) {
-    remove(TEST_DB);
+    gv_test_remove_db(TEST_DB);
     return db_open(TEST_DB, 4, GV_INDEX_TYPE_FLAT);
 }
 

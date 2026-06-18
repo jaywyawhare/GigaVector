@@ -297,6 +297,7 @@ if(BUILD_TESTS)
 
     if(NOT WIN32)
         set_tests_properties(repl_tcp repl_tcp_fault PROPERTIES RESOURCE_LOCK gv_tcp_repl)
+        set_tests_properties(cluster PROPERTIES RESOURCE_LOCK gv_cluster_ports)
     endif()
 
     # Shell-based tests (skip gracefully when prerequisites are absent)

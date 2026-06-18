@@ -29,7 +29,7 @@ with Database.open("example.db", dimension=128, index=IndexType.HNSW) as db:
 
 | | |
 |---|---|
-| **8** Index Types | HNSW, IVF-PQ, IVF-Flat, DiskANN, Flat, KD-Tree, LSH, Sparse |
+| **12** Index Types | HNSW, IVF-PQ, IVF-Flat, IVF-SQ8, IVF-TurboQuant, IVFDisk, DiskANN, Flat, KD-Tree, PQ, LSH, Sparse |
 | **5** Distance Metrics | Euclidean, Cosine, Dot Product, Manhattan, Hamming |
 | **0** Dependencies | Pure C core, no external libraries |
 | **SIMD** Optimized | SSE4.2, AVX2, AVX-512F, optional CUDA GPU |
@@ -65,6 +65,10 @@ OpenAI, Anthropic, Gemini integrations, auto-embedding, semantic memory, ONNX mo
 | **HNSW** | Approximate | No | General-purpose, high recall |
 | **IVF-PQ** | Approximate | Yes | Large-scale, memory-efficient |
 | **IVF-Flat** | Approximate | Yes | Large-scale, higher accuracy |
+| **IVF-SQ8** | Approximate | Yes | Large-scale IVF with 8-bit scalar quantization |
+| **IVF-TurboQuant** | Approximate | Yes | Training-free quant in IVF lists |
+| **IVFDisk** | Approximate | Yes | Larger-than-RAM IVF + disk posting lists |
+| **DiskANN** | Approximate | Yes | Graph-on-disk, billion-scale |
 | **KD-Tree** | Exact | No | Low-dimensional data (< 20D) |
 | **LSH** | Approximate | No | Fast hash-based search |
 | **PQ** | Approximate | Yes | Compressed-domain search |

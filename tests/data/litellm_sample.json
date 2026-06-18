@@ -1,0 +1,8 @@
+{
+  "test-custom-model": {
+    "input_cost_per_token": 0.000002,
+    "output_cost_per_token": 0.000010,
+    "cache_creation_input_token_cost": 0.0000025,
+    "cache_read_input_token_cost": 0.0000002
+  }
+}

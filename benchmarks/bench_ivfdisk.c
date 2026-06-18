@@ -254,7 +254,11 @@ int main(int argc, char **argv)
     if (train_n > n) train_n = n;
     if (train_n < nlist) train_n = nlist;
 
-    char dir[] = "/tmp/gv_bench_ivfdisk_XXXXXX";
+    char dir[512];
+    const char *tmpdir = getenv("TMPDIR");
+    if (tmpdir == NULL || !*tmpdir) tmpdir = getenv("TEMP");
+    if (tmpdir == NULL || !*tmpdir) tmpdir = "/tmp";
+    snprintf(dir, sizeof(dir), "%s/gv_bench_ivfdisk_XXXXXX", tmpdir);
     if (!mkdtemp(dir)) {
         fprintf(stderr, "mkdtemp failed\n");
         return 1;

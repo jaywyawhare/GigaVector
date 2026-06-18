@@ -16,7 +16,7 @@
 
 ## Feature Overview
 
-### Index Algorithms (10 types)
+### Index Algorithms (12 types)
 
 | Index | Type | Training | Best For |
 |-------|------|----------|----------|
@@ -26,6 +26,8 @@
 | **IVF-Flat** | Approximate | Yes | Large-scale, higher accuracy than IVF-PQ |
 | **IVF-SQ8** | Approximate | Yes | Large-scale IVF with 8-bit scalar quant per dimension |
 | **IVF-TurboQuant** | Approximate | Yes | Large-scale IVF with PolarQuant (+ optional QJL); no codebook training |
+| **DiskANN** | Approximate | Yes | Billion-scale graph on disk with page cache |
+| **IVFDisk** | Approximate | Yes | Larger-than-RAM IVF head + disk posting lists |
 | **Flat** | Exact (brute-force) | No | Small datasets, baseline/ground-truth |
 | **PQ** | Approximate | Yes | Compressed-domain search |
 | **LSH** | Approximate | No | Fast hash-based approximate search |
@@ -41,8 +43,8 @@
 | > 500k vectors, memory-constrained | IVF-PQ |
 | > 500k vectors, higher accuracy | IVF-Flat |
 | > 500k vectors, IVF structure with less RAM than IVF-Flat | IVF-SQ8 |
-| > 500k vectors, IVF structure with less RAM than IVF-Flat | IVF-SQ8 |
 | > 500k vectors, training-free quant in IVF lists (even dimension) | IVF-TurboQuant |
+| Dataset exceeds RAM budget | IVFDisk or DiskANN |
 | Compressed-domain search | PQ |
 | Fast approximate, no training | LSH |
 | Sparse/NLP data | Sparse |
@@ -75,8 +77,8 @@ Euclidean, Cosine, Dot Product, Manhattan, Hamming -- all with SIMD-optimized im
 - **IVF-PQ per-query tuning** -- nprobe and rerank overrides on individual search calls
 - **IVF-SQ8** -- inverted lists with 8-bit scalar-quantized vectors; optional exact rerank of top-N via `default_rerank`
 - **IVF-TurboQuant** -- inverted lists with PolarQuant (+ optional QJL residual sketch); IVF centroids trained via k-means only
-- **IVF-SQ8** -- inverted lists with 8-bit scalar-quantized vectors; optional exact rerank of top-N via `default_rerank`
-- **IVF-TurboQuant** -- inverted lists with PolarQuant (+ optional QJL residual sketch); IVF centroids trained via k-means only
+- **IVFDisk** -- SPANN-style in-memory IVF head with disk-backed posting lists for larger-than-RAM workloads
+- **DiskANN** -- Vamana graph on disk with LRU page cache for very large datasets
 - **Exact search control** -- configurable threshold to fall back to brute-force; force exact search mode
 - **Cosine normalization** -- automatic L2 normalization of stored vectors for cosine distance optimization
 - **Index suggestion** -- heuristic-based `gv_index_suggest()` recommends optimal index for your workload

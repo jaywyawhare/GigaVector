@@ -6,6 +6,7 @@
 #include <netinet/in.h>
 #include "admin/replication.h"
 #include "storage/database.h"
+#include "../test_tmp.h"
 
 #define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while(0)
 
@@ -22,12 +23,14 @@ static int pick_port(void) {
 }
 
 static int test_tcp_wal_replication(void) {
-    char leader_path[] = "/tmp/gv_tcp_leader.gv";
-    char follower_path[] = "/tmp/gv_tcp_follower.gv";
-    remove(leader_path);
-    remove(follower_path);
-    remove("/tmp/gv_tcp_leader.gv.wal");
-    remove("/tmp/gv_tcp_follower.gv.wal");
+    char leader_path[512];
+    char follower_path[512];
+    ASSERT(gv_test_make_temp_path(leader_path, sizeof(leader_path), "gv_tcp_leader", ".gv") == 0,
+           "leader temp path");
+    ASSERT(gv_test_make_temp_path(follower_path, sizeof(follower_path), "gv_tcp_follower", ".gv") == 0,
+           "follower temp path");
+    gv_test_remove_db(leader_path);
+    gv_test_remove_db(follower_path);
 
     int port = pick_port();
     char addr[64];
@@ -80,10 +83,8 @@ static int test_tcp_wal_replication(void) {
     replication_destroy(leader);
     db_close(follower_db);
     db_close(leader_db);
-    remove(leader_path);
-    remove(follower_path);
-    remove("/tmp/gv_tcp_leader.gv.wal");
-    remove("/tmp/gv_tcp_follower.gv.wal");
+    gv_test_remove_db(leader_path);
+    gv_test_remove_db(follower_path);
     return 0;
 }
 

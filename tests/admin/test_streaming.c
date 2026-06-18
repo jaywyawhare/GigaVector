@@ -4,16 +4,14 @@
 #include <unistd.h>
 #include "admin/streaming.h"
 #include "storage/database.h"
+#include "../test_tmp.h"
 
 #define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while(0)
 
 static const char *DB_PATH = "tmp_test_streaming.bin";
 
 static void cleanup(void) {
-    remove(DB_PATH);
-    char wal_path[512];
-    snprintf(wal_path, sizeof(wal_path), "%s.wal", DB_PATH);
-    remove(wal_path);
+    gv_test_remove_db(DB_PATH);
 }
 
 static int dummy_handler(const GV_StreamMessage *msg, void *user_data) {

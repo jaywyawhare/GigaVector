@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "storage/mmap.h"
+#include "../test_tmp.h"
 
 #define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while(0)
 
@@ -10,9 +11,9 @@ static const char *TMP_FILE2 = "tmp_test_mmap2.bin";
 static const char *TMP_FILE_LARGE = "tmp_test_mmap_large.bin";
 
 static void cleanup(void) {
-    remove(TMP_FILE);
-    remove(TMP_FILE2);
-    remove(TMP_FILE_LARGE);
+    gv_test_remove_db(TMP_FILE);
+    gv_test_remove_db(TMP_FILE2);
+    gv_test_remove_db(TMP_FILE_LARGE);
 }
 
 static int write_file(const char *path, const void *data, size_t len) {

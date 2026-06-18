@@ -12,6 +12,7 @@
 #include "storage/database.h"
 #include "storage/memory_layer.h"
 #include "storage/memory_consolidation.h"
+#include "../test_tmp.h"
 
 #define ASSERT(cond, msg)         \
     do {                          \
@@ -307,7 +308,7 @@ int main(void) {
     int failed = 0;
     int passed = 0;
 
-    remove(TEST_DB);
+    gv_test_remove_db(TEST_DB);
 
     struct { const char *name; int (*fn)(void); } tests[] = {
         {"test_find_similar_empty",           test_find_similar_empty},
@@ -338,6 +339,6 @@ int main(void) {
     }
 
     printf("\n%d/%d tests passed\n", passed, num_tests);
-    remove(TEST_DB);
+    gv_test_remove_db(TEST_DB);
     return failed > 0 ? 1 : 0;
 }

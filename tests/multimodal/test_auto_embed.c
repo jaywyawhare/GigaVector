@@ -4,6 +4,7 @@
 
 #include "storage/database.h"
 #include "multimodal/auto_embed.h"
+#include "../test_tmp.h"
 
 #define ASSERT(cond, msg)         \
     do {                          \
@@ -173,7 +174,7 @@ static int test_embed_text_no_api(void) {
 }
 
 static int test_add_text_no_api(void) {
-    remove(TEST_DB);
+    gv_test_remove_db(TEST_DB);
     GV_Database *db = db_open(TEST_DB, 64, GV_INDEX_TYPE_FLAT);
     ASSERT(db != NULL, "database creation");
 
@@ -195,7 +196,7 @@ static int test_add_text_no_api(void) {
 
     auto_embed_destroy(embedder);
     db_close(db);
-    remove(TEST_DB);
+    gv_test_remove_db(TEST_DB);
     return 0;
 }
 
@@ -293,7 +294,7 @@ int main(void) {
     int failed = 0;
     int passed = 0;
 
-    remove(TEST_DB);
+    gv_test_remove_db(TEST_DB);
 
     struct { const char *name; int (*fn)(void); } tests[] = {
         {"test_config_init_defaults",    test_config_init_defaults},
@@ -325,6 +326,6 @@ int main(void) {
     }
 
     printf("\n%d/%d tests passed\n", passed, num_tests);
-    remove(TEST_DB);
+    gv_test_remove_db(TEST_DB);
     return failed > 0 ? 1 : 0;
 }

@@ -48,6 +48,18 @@ gv_grpc_ivf_*
 gv_vis_dst_*
 oom-*
 diskann_data.bin
+crash-*
+leak-*
+timeout-*
+slow-unit-*
+tmp_test_*.bin
+tmp_test_*.bin.wal
+tmp_mmap_test.bin*
+test_*_save.db*
+test_*_save.db.wal
+test_flat_save.db*
+test_memory_llm.db*
+test_pq_save.db*
 
 
 # Python artifacts
