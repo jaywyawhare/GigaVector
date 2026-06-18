@@ -9,6 +9,7 @@ jobs:
   build-and-test:
     name: build & test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -21,6 +22,7 @@ jobs:
       # ── Linux ──────────────────────────────────────────────────────────────
       - name: Install system dependencies (Linux)
         if: matrix.os == 'ubuntu-latest'
+        timeout-minutes: 10
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -32,12 +34,14 @@ jobs:
       # ── macOS ──────────────────────────────────────────────────────────────
       - name: Install system dependencies (macOS)
         if: matrix.os == 'macos-latest'
+        timeout-minutes: 10
         run: |
           brew install cmake curl openssl
 
       # ── Windows (ucrt64 via pre-installed MSYS2) ──────────────────────────
       - name: Set up ucrt64 (Windows)
         if: matrix.os == 'windows-latest'
+        timeout-minutes: 10
         shell: bash
         run: |
           C:/msys64/usr/bin/pacman -S --noconfirm --needed \
@@ -51,27 +55,33 @@ jobs:
       # ── Build (Makefile — Linux/macOS only) ───────────────────────────────
       - name: Build library with Make
         if: matrix.os != 'windows-latest'
+        timeout-minutes: 10
         run: make lib
 
       - name: Run C tests (Make)
         if: matrix.os != 'windows-latest'
+        timeout-minutes: 10
         run: make c-test
 
       # ── Build (CMake — all platforms) ─────────────────────────────────────
       - name: Configure CMake build (Linux/macOS)
         if: matrix.os != 'windows-latest'
+        timeout-minutes: 10
         run: cmake -S . -B build-cmake -DBUILD_TESTS=ON -DBUILD_BENCHMARKS=OFF
 
       - name: Configure CMake build (Windows)
         if: matrix.os == 'windows-latest'
+        timeout-minutes: 10
         shell: bash
         run: cmake -S . -B build-cmake -G "MinGW Makefiles" -DBUILD_TESTS=ON -DBUILD_BENCHMARKS=OFF
 
       - name: Build with CMake
+        timeout-minutes: 10
         run: cmake --build build-cmake --parallel
 
       - name: Run CMake tests
-        run: ctest --test-dir build-cmake --output-on-failure --parallel
+        timeout-minutes: 10
+        run: ctest --test-dir build-cmake --output-on-failure --parallel --timeout 120
 
       # ── Python wheel ───────────────────────────────────────────────────────
       - name: Set up Python
@@ -81,10 +91,12 @@ jobs:
 
       - name: Install Python package (Linux/macOS)
         if: matrix.os != 'windows-latest'
+        timeout-minutes: 10
         run: python -m pip install ./python
 
       - name: Install Python package (Windows)
         if: matrix.os == 'windows-latest'
+        timeout-minutes: 10
         shell: bash
         env:
           CMAKE_GENERATOR: "MinGW Makefiles"
@@ -95,10 +107,12 @@ jobs:
           python -m pip install /tmp/repaired/gigavector*.whl
 
       - name: Run Python tests
+        timeout-minutes: 10
         run: python -m unittest discover -s python/tests -v
 
       - name: Lint and type-check Python (Linux only)
         if: matrix.os == 'ubuntu-latest'
+        timeout-minutes: 10
         run: |
           python -m pip install ruff mypy
           ruff check python/src/gigavector/async_api.py python/src/gigavector/pool.py python/src/gigavector/benchmark.py
@@ -108,11 +122,13 @@ jobs:
   sanitizers:
     name: sanitizers (ASAN + UBSAN)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout code
         uses: actions/checkout@v4.2.2
 
       - name: Install dependencies
+        timeout-minutes: 10
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -122,6 +138,7 @@ jobs:
             libmicrohttpd-dev
 
       - name: Configure with sanitizers
+        timeout-minutes: 10
         run: |
           cmake -S . -B build-san \
             -DCMAKE_BUILD_TYPE=Debug \
@@ -130,23 +147,27 @@ jobs:
             -DENABLE_SANITIZERS=ON
 
       - name: Build
+        timeout-minutes: 10
         run: cmake --build build-san --parallel
 
       - name: Run tests under ASAN/UBSAN
+        timeout-minutes: 10
         env:
           ASAN_OPTIONS: detect_leaks=0:abort_on_error=1
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
-        run: ctest --test-dir build-san --output-on-failure --parallel
+        run: ctest --test-dir build-san --output-on-failure --parallel --timeout 120
 
   # ── libFuzzer + DST (clang, Linux only) ───────────────────────────────
   fuzz:
     name: libFuzzer + DST
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout code
         uses: actions/checkout@v4.2.2
 
       - name: Install dependencies
+        timeout-minutes: 10
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -156,14 +177,17 @@ jobs:
             libmicrohttpd-dev
 
       - name: Build library
+        timeout-minutes: 10
         run: make lib
 
       - name: Run DST oracles
+        timeout-minutes: 10
         run: |
           make c-test-single TEST=dst/test_repl_oracle
           make c-test-single TEST=dst/test_grpc_frame_dst
 
       - name: Generate fuzz corpus and run fuzzers
+        timeout-minutes: 10
         run: |
           make fuzz-corpus
           make fuzz-run
@@ -172,16 +196,19 @@ jobs:
   static-analysis:
     name: static analysis (cppcheck)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout code
         uses: actions/checkout@v4.2.2
 
       - name: Install cppcheck
+        timeout-minutes: 10
         run: |
           sudo apt-get update
           sudo apt-get install -y cppcheck
 
       - name: Run cppcheck
+        timeout-minutes: 10
         run: |
           set -o pipefail
           cppcheck \

@@ -11,6 +11,9 @@ static const char *DB_PATH = "tmp_test_streaming.bin";
 
 static void cleanup(void) {
     remove(DB_PATH);
+    char wal_path[512];
+    snprintf(wal_path, sizeof(wal_path), "%s.wal", DB_PATH);
+    remove(wal_path);
 }
 
 static int dummy_handler(const GV_StreamMessage *msg, void *user_data) {

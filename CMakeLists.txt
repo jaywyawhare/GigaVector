@@ -292,7 +292,12 @@ if(BUILD_TESTS)
             target_link_libraries(test_${TEST_NAME} PRIVATE GigaVector m pthread)
         endif()
         add_test(NAME ${TEST_NAME} COMMAND test_${TEST_NAME})
+        set_tests_properties(${TEST_NAME} PROPERTIES TIMEOUT 120)
     endforeach()
+
+    if(NOT WIN32)
+        set_tests_properties(repl_tcp repl_tcp_fault PROPERTIES RESOURCE_LOCK gv_tcp_repl)
+    endif()
 
     # Shell-based tests (skip gracefully when prerequisites are absent)
     find_program(BASH_EXECUTABLE bash)

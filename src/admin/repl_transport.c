@@ -18,6 +18,7 @@
 
 #ifndef _WIN32
 #include <unistd.h>
+#include <fcntl.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <poll.h>
@@ -184,6 +185,8 @@ static int parse_host_port(const char *address, char *host, size_t host_cap, uin
     return (*port > 0) ? 0 : -1;
 }
 
+#define REPL_CONNECT_TIMEOUT_MS 3000
+
 static int repl_connect_host(const char *host, uint16_t port) {
     char port_str[16];
     snprintf(port_str, sizeof(port_str), "%u", (unsigned)port);
@@ -200,7 +203,32 @@ static int repl_connect_host(const char *host, uint16_t port) {
     for (struct addrinfo *ai = res; ai != NULL; ai = ai->ai_next) {
         fd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
         if (fd < 0) continue;
-        if (connect(fd, ai->ai_addr, ai->ai_addrlen) == 0) break;
+
+        int flags = fcntl(fd, F_GETFL, 0);
+        if (flags >= 0) {
+            (void)fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+        }
+
+        int rc = connect(fd, ai->ai_addr, ai->ai_addrlen);
+        if (rc == 0) {
+            if (flags >= 0) {
+                (void)fcntl(fd, F_SETFL, flags);
+            }
+            break;
+        }
+        if (errno == EINPROGRESS) {
+            struct pollfd pfd = {.fd = fd, .events = POLLOUT};
+            if (poll(&pfd, 1, REPL_CONNECT_TIMEOUT_MS) > 0) {
+                int err = 0;
+                socklen_t errlen = sizeof(err);
+                if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &errlen) == 0 && err == 0) {
+                    if (flags >= 0) {
+                        (void)fcntl(fd, F_SETFL, flags);
+                    }
+                    break;
+                }
+            }
+        }
         close(fd);
         fd = -1;
     }
@@ -212,6 +240,9 @@ static void repl_tune_socket(int fd) {
     if (fd < 0) return;
     int flag = 1;
     setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag));
+    struct timeval tv = {.tv_sec = 10, .tv_usec = 0};
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
 }
 
 static void repl_clear_connection_pending(ReplConnection *conn) {

@@ -448,6 +448,90 @@ static void db_refresh_count(GV_Database *db) {
     }
 }
 
+static void db_destroy_indexes(GV_Database *db) {
+    if (db == NULL) {
+        return;
+    }
+    if (db->index_type == GV_INDEX_TYPE_KDTREE) {
+        kdtree_destroy_recursive(db->root);
+        db->root = NULL;
+    } else if (db->index_type == GV_INDEX_TYPE_HNSW) {
+        if (db->hnsw_index) {
+            gv_hnsw_destroy(db->hnsw_index);
+            db->hnsw_index = NULL;
+        }
+    } else if (db->index_type == GV_INDEX_TYPE_IVFPQ) {
+        if (db->hnsw_index) {
+            gv_ivfpq_destroy(db->hnsw_index);
+            db->hnsw_index = NULL;
+        }
+    } else if (db->index_type == GV_INDEX_TYPE_SPARSE) {
+        if (db->sparse_index) {
+            sparse_index_destroy(db->sparse_index);
+            db->sparse_index = NULL;
+        }
+    } else if (db->index_type == GV_INDEX_TYPE_FLAT) {
+        if (db->hnsw_index) {
+            flat_destroy(db->hnsw_index);
+            db->hnsw_index = NULL;
+        }
+    } else if (db->index_type == GV_INDEX_TYPE_IVFFLAT) {
+        if (db->hnsw_index) {
+            ivfflat_destroy(db->hnsw_index);
+            db->hnsw_index = NULL;
+        }
+    } else if (db->index_type == GV_INDEX_TYPE_IVFSQ8) {
+        if (db->hnsw_index) {
+            ivfsq8_destroy(db->hnsw_index);
+            db->hnsw_index = NULL;
+        }
+    } else if (db->index_type == GV_INDEX_TYPE_IVFTURBOQUANT) {
+        if (db->hnsw_index) {
+            ivfturboquant_destroy(db->hnsw_index);
+            db->hnsw_index = NULL;
+        }
+    } else if (db->index_type == GV_INDEX_TYPE_PQ) {
+        if (db->hnsw_index) {
+            pq_destroy(db->hnsw_index);
+            db->hnsw_index = NULL;
+        }
+    } else if (db->index_type == GV_INDEX_TYPE_LSH) {
+        if (db->hnsw_index) {
+            lsh_destroy(db->hnsw_index);
+            db->hnsw_index = NULL;
+        }
+    } else if (db->index_type == GV_INDEX_TYPE_IVFDISK) {
+        if (db->hnsw_index) {
+            ivfdisk_destroy((GV_IVFDiskIndex *)db->hnsw_index);
+            db->hnsw_index = NULL;
+        }
+    }
+}
+
+static void db_free_open_failure(GV_Database *db) {
+    if (db == NULL) {
+        return;
+    }
+    db_destroy_indexes(db);
+    if (db->metadata_index) {
+        metadata_index_destroy(db->metadata_index);
+        db->metadata_index = NULL;
+    }
+    if (db->soa_storage) {
+        soa_storage_destroy(db->soa_storage);
+        db->soa_storage = NULL;
+    }
+    pthread_rwlock_destroy(&db->rwlock);
+    pthread_mutex_destroy(&db->wal_mutex);
+    pthread_mutex_destroy(&db->compaction_mutex);
+    pthread_cond_destroy(&db->compaction_cond);
+    pthread_mutex_destroy(&db->resource_mutex);
+    pthread_mutex_destroy(&db->observability_mutex);
+    free(db->filepath);
+    free(db->wal_path);
+    free(db);
+}
+
 static int db_replay_wal(GV_Database *db) {
     if (db == NULL || db->wal_path == NULL) {
         return 0;
@@ -795,19 +879,13 @@ GV_Database *db_open(const char *filepath, size_t dimension, GV_IndexType index_
             if (db->wal_path != NULL) {
                 db->wal = wal_open(db->wal_path, db->dimension, (uint32_t)db->index_type);
                 if (db->wal == NULL) {
-                    if (db->hnsw_index) gv_hnsw_destroy(db->hnsw_index);
-                    free(db->filepath);
-                    free(db->wal_path);
-                    free(db);
+                    db_free_open_failure(db);
                     return NULL;
                 }
                 if (db_replay_wal(db) != 0) {
                     wal_close(db->wal);
                     db->wal = NULL;
-                    if (db->hnsw_index) gv_hnsw_destroy(db->hnsw_index);
-                    free(db->filepath);
-                    free(db->wal_path);
-                    free(db);
+                    db_free_open_failure(db);
                     return NULL;
                 }
             }
@@ -1116,28 +1194,14 @@ GV_Database *db_open(const char *filepath, size_t dimension, GV_IndexType index_
     if (db->wal_path != NULL) {
         db->wal = wal_open(db->wal_path, db->dimension, (uint32_t)db->index_type);
         if (db->wal == NULL) {
-            if (db->index_type == GV_INDEX_TYPE_KDTREE) {
-                kdtree_destroy_recursive(db->root);
-            } else if (db->index_type == GV_INDEX_TYPE_HNSW) {
-                if (db->hnsw_index) gv_hnsw_destroy(db->hnsw_index);
-            }
-            free(db->filepath);
-            free(db->wal_path);
-            free(db);
+            db_free_open_failure(db);
             return NULL;
         }
 
         if (db_replay_wal(db) != 0) {
             wal_close(db->wal);
             db->wal = NULL;
-            if (db->index_type == GV_INDEX_TYPE_KDTREE) {
-                kdtree_destroy_recursive(db->root);
-            } else if (db->index_type == GV_INDEX_TYPE_HNSW) {
-                if (db->hnsw_index) gv_hnsw_destroy(db->hnsw_index);
-            }
-            free(db->filepath);
-            free(db->wal_path);
-            free(db);
+            db_free_open_failure(db);
             return NULL;
         }
     }
@@ -1147,40 +1211,7 @@ load_fail:
     if (in != NULL) {
         fclose(in);
     }
-    if (db->index_type == GV_INDEX_TYPE_KDTREE) {
-        kdtree_destroy_recursive(db->root);
-    } else if (db->index_type == GV_INDEX_TYPE_HNSW) {
-        if (db->hnsw_index) gv_hnsw_destroy(db->hnsw_index);
-    } else if (db->index_type == GV_INDEX_TYPE_IVFPQ) {
-        if (db->hnsw_index) gv_ivfpq_destroy(db->hnsw_index);
-    } else if (db->index_type == GV_INDEX_TYPE_FLAT) {
-        if (db->hnsw_index) flat_destroy(db->hnsw_index);
-    } else if (db->index_type == GV_INDEX_TYPE_IVFFLAT) {
-        if (db->hnsw_index) ivfflat_destroy(db->hnsw_index);
-    } else if (db->index_type == GV_INDEX_TYPE_IVFSQ8) {
-        if (db->hnsw_index) ivfsq8_destroy(db->hnsw_index);
-    } else if (db->index_type == GV_INDEX_TYPE_IVFSQ8) {
-        if (db->hnsw_index) ivfsq8_destroy(db->hnsw_index);
-    } else if (db->index_type == GV_INDEX_TYPE_IVFTURBOQUANT) {
-        if (db->hnsw_index) ivfturboquant_destroy(db->hnsw_index);
-    } else if (db->index_type == GV_INDEX_TYPE_PQ) {
-        if (db->hnsw_index) pq_destroy(db->hnsw_index);
-    } else if (db->index_type == GV_INDEX_TYPE_LSH) {
-        if (db->hnsw_index) lsh_destroy(db->hnsw_index);
-    } else if (db->index_type == GV_INDEX_TYPE_IVFDISK) {
-        if (db->hnsw_index) ivfdisk_destroy((GV_IVFDiskIndex *)db->hnsw_index);
-    }
-    if (db->metadata_index) metadata_index_destroy(db->metadata_index);
-    if (db->soa_storage) soa_storage_destroy(db->soa_storage);
-    pthread_rwlock_destroy(&db->rwlock);
-    pthread_mutex_destroy(&db->wal_mutex);
-    pthread_mutex_destroy(&db->compaction_mutex);
-    pthread_cond_destroy(&db->compaction_cond);
-    pthread_mutex_destroy(&db->resource_mutex);
-    pthread_mutex_destroy(&db->observability_mutex);
-    free(db->filepath);
-    free(db->wal_path);
-    free(db);
+    db_free_open_failure(db);
     return NULL;
 }
 
