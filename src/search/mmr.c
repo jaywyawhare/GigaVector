@@ -12,6 +12,7 @@
 
 #include "search/mmr.h"
 #include "search/distance.h"
+#include "core/scope.h"
 #include "storage/database.h"
 #include "core/types.h"
 
@@ -164,7 +165,9 @@ int mmr_rerank(const float *query, size_t dimension,
     if (k > candidate_count) k = candidate_count;
 
     /* Compute and normalise relevance scores */
-    float *relevance = (float *)malloc(candidate_count * sizeof(float));
+    int relevance_on_heap = 0;
+    float *relevance = (float *)gv_tls_alloc_or_heap(
+        candidate_count * sizeof(float), sizeof(float), &relevance_on_heap);
     if (!relevance) return -1;
 
     for (size_t i = 0; i < candidate_count; i++) {
@@ -174,9 +177,14 @@ int mmr_rerank(const float *query, size_t dimension,
 
     /* Greedy iterative MMR selection */
     /* Track which candidates have been selected */
-    int *selected = (int *)calloc(candidate_count, sizeof(int));
+    int *selected = (int *)gv_tls_calloc(candidate_count, sizeof(int));
+    int selected_on_heap = 0;
     if (!selected) {
-        free(relevance);
+        selected = (int *)calloc(candidate_count, sizeof(int));
+        selected_on_heap = 1;
+    }
+    if (!selected) {
+        gv_tls_free_or_heap(relevance, relevance_on_heap);
         return -1;
     }
 
@@ -255,8 +263,8 @@ int mmr_rerank(const float *query, size_t dimension,
         selected_count++;
     }
 
-    free(relevance);
-    free(selected);
+    gv_tls_free_or_heap(relevance, relevance_on_heap);
+    gv_tls_free_or_heap(selected, selected_on_heap);
 
     return (int)selected_count;
 }
@@ -286,27 +294,48 @@ int mmr_search(const void *db_ptr, const float *query, size_t dimension,
     size_t fetch_k = k * oversample;
     if (fetch_k < k) fetch_k = k; /* overflow guard */
 
-    GV_SearchResult *search_res = (GV_SearchResult *)calloc(fetch_k, sizeof(GV_SearchResult));
+    GV_SearchResult *search_res =
+        (GV_SearchResult *)gv_tls_calloc(fetch_k, sizeof(GV_SearchResult));
+    int search_res_on_heap = 0;
+    if (!search_res) {
+        search_res = (GV_SearchResult *)calloc(fetch_k, sizeof(GV_SearchResult));
+        search_res_on_heap = 1;
+    }
     if (!search_res) return -1;
 
     int found = db_search(db, query, fetch_k, search_res, (GV_DistanceType)cfg.distance_type);
     if (found <= 0) {
-        free(search_res);
+        if (search_res_on_heap) {
+            free(search_res);
+        }
         return (found == 0) ? 0 : -1;
     }
 
     size_t candidate_count = (size_t)found;
 
-    /* Extract candidate data for MMR reranking */
-    float *cand_vectors   = (float *)malloc(candidate_count * dimension * sizeof(float));
-    size_t *cand_indices  = (size_t *)malloc(candidate_count * sizeof(size_t));
-    float *cand_distances = (float *)malloc(candidate_count * sizeof(float));
+    float *cand_vectors =
+        (float *)gv_tls_alloc(candidate_count * dimension * sizeof(float), sizeof(float));
+    size_t *cand_indices =
+        (size_t *)gv_tls_alloc(candidate_count * sizeof(size_t), sizeof(size_t));
+    float *cand_distances =
+        (float *)gv_tls_alloc(candidate_count * sizeof(float), sizeof(float));
+    int scratch_on_heap = 0;
+    if (!cand_vectors || !cand_indices || !cand_distances) {
+        scratch_on_heap = 1;
+        cand_vectors = (float *)malloc(candidate_count * dimension * sizeof(float));
+        cand_indices = (size_t *)malloc(candidate_count * sizeof(size_t));
+        cand_distances = (float *)malloc(candidate_count * sizeof(float));
+    }
 
     if (!cand_vectors || !cand_indices || !cand_distances) {
-        free(cand_vectors);
-        free(cand_indices);
-        free(cand_distances);
-        free(search_res);
+        if (scratch_on_heap) {
+            free(cand_vectors);
+            free(cand_indices);
+            free(cand_distances);
+        }
+        if (search_res_on_heap) {
+            free(search_res);
+        }
         return -1;
     }
 
@@ -324,12 +353,16 @@ int mmr_search(const void *db_ptr, const float *query, size_t dimension,
         valid++;
     }
 
-    free(search_res);
+    if (search_res_on_heap) {
+        free(search_res);
+    }
 
     if (valid == 0) {
-        free(cand_vectors);
-        free(cand_indices);
-        free(cand_distances);
+        if (scratch_on_heap) {
+            free(cand_vectors);
+            free(cand_indices);
+            free(cand_distances);
+        }
         return 0;
     }
 
@@ -339,9 +372,11 @@ int mmr_search(const void *db_ptr, const float *query, size_t dimension,
                                      cand_distances, valid,
                                      k, &cfg, results);
 
-    free(cand_vectors);
-    free(cand_indices);
-    free(cand_distances);
+    if (scratch_on_heap) {
+        free(cand_vectors);
+        free(cand_indices);
+        free(cand_distances);
+    }
 
     return result_count;
 }

@@ -35,6 +35,10 @@ GV_Bytes gv_bytes_copy_heap(const void *data, size_t len);
 
 GV_Arena *gv_tls_arena(void);
 void      gv_tls_arena_reset(void);
+void     *gv_tls_alloc(size_t size, size_t alignment);
+void     *gv_tls_calloc(size_t nmemb, size_t size);
+void     *gv_tls_alloc_or_heap(size_t size, size_t alignment, int *on_heap);
+void      gv_tls_free_or_heap(void *ptr, int on_heap);
 
 #define GV_WITH_ARENA(arena, cap)                                              \
     for (GV_Arena arena, *_gv_scope_##arena =                                   \

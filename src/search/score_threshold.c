@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "search/score_threshold.h"
+#include "core/scope.h"
 #include "storage/database.h"
 
 /*
@@ -49,13 +50,21 @@ int db_search_with_threshold(const void *db, const float *query_data, size_t k,
 
     const GV_Database *database = (const GV_Database *)db;
 
-    GV_SearchResult *search_results = (GV_SearchResult *)calloc(k, sizeof(GV_SearchResult));
+    GV_SearchResult *search_results =
+        (GV_SearchResult *)gv_tls_calloc(k, sizeof(GV_SearchResult));
+    int search_results_on_heap = 0;
+    if (!search_results) {
+        search_results = (GV_SearchResult *)calloc(k, sizeof(GV_SearchResult));
+        search_results_on_heap = 1;
+    }
     if (!search_results) return -1;
 
     int found = db_search(database, query_data, k, search_results,
                              (GV_DistanceType)distance_type);
     if (found < 0) {
-        free(search_results);
+        if (search_results_on_heap) {
+            free(search_results);
+        }
         return -1;
     }
 
@@ -69,6 +78,8 @@ int db_search_with_threshold(const void *db, const float *query_data, size_t k,
         }
     }
 
-    free(search_results);
+    if (search_results_on_heap) {
+        free(search_results);
+    }
     return (int)passed;
 }

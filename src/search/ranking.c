@@ -8,6 +8,7 @@
  */
 
 #include "search/ranking.h"
+#include "core/scope.h"
 #include "storage/database.h"
 #include "core/utils.h"
 
@@ -770,7 +771,14 @@ int rank_search(const void *db, const float *query, size_t dimension,
     if (fetch_k < k) fetch_k = k;
 
     /* Allocate search results buffer. */
-    GV_SearchResult *search_results = malloc(fetch_k * sizeof(GV_SearchResult));
+    GV_SearchResult *search_results =
+        (GV_SearchResult *)gv_tls_calloc(fetch_k, sizeof(GV_SearchResult));
+    int search_on_heap = 0;
+    if (!search_results) {
+        search_results =
+            (GV_SearchResult *)malloc(fetch_k * sizeof(GV_SearchResult));
+        search_on_heap = 1;
+    }
     if (!search_results) return -1;
     memset(search_results, 0, fetch_k * sizeof(GV_SearchResult));
 
@@ -778,18 +786,20 @@ int rank_search(const void *db, const float *query, size_t dimension,
     int found = db_search(database, query, fetch_k, search_results,
                              (GV_DistanceType)distance_type);
     if (found < 0) {
-        free(search_results);
+        gv_tls_free_or_heap(search_results, search_on_heap);
         return -1;
     }
     if (found == 0) {
-        free(search_results);
+        gv_tls_free_or_heap(search_results, search_on_heap);
         return 0;
     }
 
     /* Step 2: Score each candidate. */
-    RankCandidate *candidates = malloc((size_t)found * sizeof(RankCandidate));
+    int candidates_on_heap = 0;
+    RankCandidate *candidates = (RankCandidate *)gv_tls_alloc_or_heap(
+        (size_t)found * sizeof(RankCandidate), sizeof(RankCandidate), &candidates_on_heap);
     if (!candidates) {
-        free(search_results);
+        gv_tls_free_or_heap(search_results, search_on_heap);
         return -1;
     }
 
@@ -817,7 +827,7 @@ int rank_search(const void *db, const float *query, size_t dimension,
                                                        signals, sig_count);
     }
 
-    free(search_results);
+    gv_tls_free_or_heap(search_results, search_on_heap);
 
     /* Step 3: Sort by final_score descending. */
     qsort(candidates, (size_t)found, sizeof(RankCandidate), compare_ranked_desc);
@@ -830,7 +840,7 @@ int rank_search(const void *db, const float *query, size_t dimension,
         results[i].vector_score = candidates[i].vector_score;
     }
 
-    free(candidates);
+    gv_tls_free_or_heap(candidates, candidates_on_heap);
 
     return (int)result_count;
 }

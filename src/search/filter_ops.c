@@ -14,6 +14,7 @@
 #include <string.h>
 
 #include "search/filter_ops.h"
+#include "core/scope.h"
 #include "storage/database.h"
 #include "search/filter.h"
 #include "core/types.h"
@@ -63,6 +64,22 @@ static int filter_ops_collect_matches(const GV_Database *db,
     return matched;
 }
 
+static size_t *filter_ops_alloc_indices(size_t count, int *on_heap) {
+    size_t *indices = (size_t *)gv_tls_alloc(sizeof(size_t) * count, sizeof(size_t));
+    if (indices != NULL) {
+        *on_heap = 0;
+        return indices;
+    }
+    *on_heap = 1;
+    return (size_t *)malloc(sizeof(size_t) * count);
+}
+
+static void filter_ops_free_indices(size_t *indices, int on_heap) {
+    if (indices != NULL && on_heap) {
+        free(indices);
+    }
+}
+
 /* Public API */
 
 int db_delete_by_filter(GV_Database *db, const char *filter_expr)
@@ -83,7 +100,8 @@ int db_delete_by_filter(GV_Database *db, const char *filter_expr)
         return count; /* 0 matches or error */
     }
 
-    size_t *indices = (size_t *)malloc(sizeof(size_t) * (size_t)count);
+    int on_heap = 0;
+    size_t *indices = filter_ops_alloc_indices((size_t)count, &on_heap);
     if (!indices) {
         filter_destroy(filter);
         return -1;
@@ -94,7 +112,7 @@ int db_delete_by_filter(GV_Database *db, const char *filter_expr)
     filter_destroy(filter);
 
     if (collected < 0) {
-        free(indices);
+        filter_ops_free_indices(indices, on_heap);
         return -1;
     }
 
@@ -111,7 +129,7 @@ int db_delete_by_filter(GV_Database *db, const char *filter_expr)
         }
     }
 
-    free(indices);
+    filter_ops_free_indices(indices, on_heap);
     return deleted;
 }
 
@@ -134,7 +152,8 @@ int db_update_by_filter(GV_Database *db, const char *filter_expr,
         return count;
     }
 
-    size_t *indices = (size_t *)malloc(sizeof(size_t) * (size_t)count);
+    int on_heap = 0;
+    size_t *indices = filter_ops_alloc_indices((size_t)count, &on_heap);
     if (!indices) {
         filter_destroy(filter);
         return -1;
@@ -145,7 +164,7 @@ int db_update_by_filter(GV_Database *db, const char *filter_expr,
     filter_destroy(filter);
 
     if (collected < 0) {
-        free(indices);
+        filter_ops_free_indices(indices, on_heap);
         return -1;
     }
 
@@ -156,7 +175,7 @@ int db_update_by_filter(GV_Database *db, const char *filter_expr,
         }
     }
 
-    free(indices);
+    filter_ops_free_indices(indices, on_heap);
     return updated;
 }
 
@@ -184,7 +203,8 @@ int db_update_metadata_by_filter(GV_Database *db, const char *filter_expr,
         return count;
     }
 
-    size_t *indices = (size_t *)malloc(sizeof(size_t) * (size_t)count);
+    int on_heap = 0;
+    size_t *indices = filter_ops_alloc_indices((size_t)count, &on_heap);
     if (!indices) {
         filter_destroy(filter);
         return -1;
@@ -195,7 +215,7 @@ int db_update_metadata_by_filter(GV_Database *db, const char *filter_expr,
     filter_destroy(filter);
 
     if (collected < 0) {
-        free(indices);
+        filter_ops_free_indices(indices, on_heap);
         return -1;
     }
 
@@ -208,7 +228,7 @@ int db_update_metadata_by_filter(GV_Database *db, const char *filter_expr,
         }
     }
 
-    free(indices);
+    filter_ops_free_indices(indices, on_heap);
     return updated;
 }
 

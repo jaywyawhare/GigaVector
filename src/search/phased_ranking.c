@@ -17,6 +17,7 @@
  */
 
 #include "search/phased_ranking.h"
+#include "core/scope.h"
 #include "storage/database.h"
 #include "search/distance.h"
 #include "search/ranking.h"
@@ -186,20 +187,28 @@ static int execute_ann_phase(const GV_Database *db,
     size_t fetch_k = config->output_k;
     if (fetch_k == 0) fetch_k = 100;
 
-    GV_SearchResult *search_res = calloc(fetch_k, sizeof(GV_SearchResult));
+    GV_SearchResult *search_res =
+        (GV_SearchResult *)gv_tls_calloc(fetch_k, sizeof(GV_SearchResult));
+    int search_on_heap = 0;
+    if (!search_res) {
+        search_res = calloc(fetch_k, sizeof(GV_SearchResult));
+        search_on_heap = 1;
+    }
     if (!search_res) return -1;
 
     GV_DistanceType dist = (GV_DistanceType)config->params.ann.distance_type;
 
     int found = db_search(db, query, fetch_k, search_res, dist);
     if (found <= 0) {
-        free(search_res);
+        gv_tls_free_or_heap(search_res, search_on_heap);
         return (found == 0) ? 0 : -1;
     }
 
+    int candidates_on_heap = 1;
+    (void)candidates_on_heap;
     Candidate *candidates = malloc((size_t)found * sizeof(Candidate));
     if (!candidates) {
-        free(search_res);
+        gv_tls_free_or_heap(search_res, search_on_heap);
         return -1;
     }
 
@@ -214,7 +223,7 @@ static int execute_ann_phase(const GV_Database *db,
         valid++;
     }
 
-    free(search_res);
+    gv_tls_free_or_heap(search_res, search_on_heap);
 
     if (valid == 0) {
         free(candidates);
@@ -274,14 +283,20 @@ static int execute_rerank_mmr_phase(const GV_Database *db,
     size_t keep = config->output_k;
     if (keep == 0 || keep > count) keep = count;
 
-    float  *cand_vectors   = malloc(count * dimension * sizeof(float));
-    size_t *cand_indices   = malloc(count * sizeof(size_t));
-    float  *cand_distances = malloc(count * sizeof(float));
+    int cand_on_heap = 0;
+    float  *cand_vectors = (float *)gv_tls_alloc_or_heap(
+        count * dimension * sizeof(float), sizeof(float), &cand_on_heap);
+    int idx_on_heap = 0;
+    size_t *cand_indices = (size_t *)gv_tls_alloc_or_heap(
+        count * sizeof(size_t), sizeof(size_t), &idx_on_heap);
+    int dist_on_heap = 0;
+    float  *cand_distances = (float *)gv_tls_alloc_or_heap(
+        count * sizeof(float), sizeof(float), &dist_on_heap);
 
     if (!cand_vectors || !cand_indices || !cand_distances) {
-        free(cand_vectors);
-        free(cand_indices);
-        free(cand_distances);
+        gv_tls_free_or_heap(cand_vectors, cand_on_heap);
+        gv_tls_free_or_heap(cand_indices, idx_on_heap);
+        gv_tls_free_or_heap(cand_distances, dist_on_heap);
         return -1;
     }
 
@@ -297,9 +312,9 @@ static int execute_rerank_mmr_phase(const GV_Database *db,
     }
 
     if (valid == 0) {
-        free(cand_vectors);
-        free(cand_indices);
-        free(cand_distances);
+        gv_tls_free_or_heap(cand_vectors, cand_on_heap);
+        gv_tls_free_or_heap(cand_indices, idx_on_heap);
+        gv_tls_free_or_heap(cand_distances, dist_on_heap);
         *out_count = 0;
         return 0;
     }
@@ -310,11 +325,13 @@ static int execute_rerank_mmr_phase(const GV_Database *db,
     mmr_config_init(&mmr_cfg);
     mmr_cfg.lambda = config->params.mmr.lambda;
 
-    GV_MMRResult *mmr_results = malloc(keep * sizeof(GV_MMRResult));
+    int mmr_on_heap = 0;
+    GV_MMRResult *mmr_results = (GV_MMRResult *)gv_tls_alloc_or_heap(
+        keep * sizeof(GV_MMRResult), sizeof(GV_MMRResult), &mmr_on_heap);
     if (!mmr_results) {
-        free(cand_vectors);
-        free(cand_indices);
-        free(cand_distances);
+        gv_tls_free_or_heap(cand_vectors, cand_on_heap);
+        gv_tls_free_or_heap(cand_indices, idx_on_heap);
+        gv_tls_free_or_heap(cand_distances, dist_on_heap);
         return -1;
     }
 
@@ -323,12 +340,12 @@ static int execute_rerank_mmr_phase(const GV_Database *db,
                                    cand_distances, valid,
                                    keep, &mmr_cfg, mmr_results);
 
-    free(cand_vectors);
-    free(cand_indices);
-    free(cand_distances);
+    gv_tls_free_or_heap(cand_vectors, cand_on_heap);
+    gv_tls_free_or_heap(cand_indices, idx_on_heap);
+    gv_tls_free_or_heap(cand_distances, dist_on_heap);
 
     if (mmr_count < 0) {
-        free(mmr_results);
+        gv_tls_free_or_heap(mmr_results, mmr_on_heap);
         return -1;
     }
 
@@ -344,7 +361,7 @@ static int execute_rerank_mmr_phase(const GV_Database *db,
         new_candidates[i].phase_id = phase_id;
     }
 
-    free(mmr_results);
+    gv_tls_free_or_heap(mmr_results, mmr_on_heap);
 
     *out_candidates = new_candidates;
     *out_count = (size_t)mmr_count;

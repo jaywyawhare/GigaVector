@@ -4,6 +4,7 @@
  */
 
 #include "search/hybrid_search.h"
+#include "core/scope.h"
 #include "storage/database.h"
 
 #include <stdlib.h>
@@ -163,7 +164,13 @@ int hybrid_search_with_stats(GV_HybridSearcher *searcher, const float *query_vec
 
     /* Allocate candidates (max 2 * prefetch_k) */
     size_t max_candidates = prefetch_k * 2;
-    CandidateEntry *candidates = calloc(max_candidates, sizeof(CandidateEntry));
+    int candidates_on_heap = 0;
+    CandidateEntry *candidates = (CandidateEntry *)gv_tls_calloc(
+        max_candidates, sizeof(CandidateEntry));
+    if (!candidates) {
+        candidates = calloc(max_candidates, sizeof(CandidateEntry));
+        candidates_on_heap = 1;
+    }
     if (!candidates) {
         pthread_mutex_unlock(&searcher->mutex);
         return -1;
@@ -175,7 +182,13 @@ int hybrid_search_with_stats(GV_HybridSearcher *searcher, const float *query_vec
     if (query_vector) {
         double vec_start = get_time_ms();
 
-        GV_SearchResult *vec_results = malloc(prefetch_k * sizeof(GV_SearchResult));
+        int vec_on_heap = 0;
+        GV_SearchResult *vec_results = (GV_SearchResult *)gv_tls_calloc(
+            prefetch_k, sizeof(GV_SearchResult));
+        if (!vec_results) {
+            vec_results = malloc(prefetch_k * sizeof(GV_SearchResult));
+            vec_on_heap = 1;
+        }
         if (vec_results) {
             int vec_found = db_search(searcher->db, query_vector, prefetch_k,
                                           vec_results, cfg->distance_type);
@@ -195,7 +208,7 @@ int hybrid_search_with_stats(GV_HybridSearcher *searcher, const float *query_vec
                     entry->vector_rank = i + 1;
                 }
             }
-            free(vec_results);
+            gv_tls_free_or_heap(vec_results, vec_on_heap);
         }
 
         vector_time = get_time_ms() - vec_start;
@@ -206,7 +219,9 @@ int hybrid_search_with_stats(GV_HybridSearcher *searcher, const float *query_vec
     if (query_text) {
         double txt_start = get_time_ms();
 
-        GV_BM25Result *txt_results = malloc(prefetch_k * sizeof(GV_BM25Result));
+        int txt_on_heap = 0;
+        GV_BM25Result *txt_results = (GV_BM25Result *)gv_tls_alloc_or_heap(
+            prefetch_k * sizeof(GV_BM25Result), sizeof(GV_BM25Result), &txt_on_heap);
         if (txt_results) {
             int txt_found = bm25_search(searcher->bm25, query_text, prefetch_k, txt_results);
 
@@ -221,7 +236,7 @@ int hybrid_search_with_stats(GV_HybridSearcher *searcher, const float *query_vec
                     entry->text_rank = i + 1;
                 }
             }
-            free(txt_results);
+            gv_tls_free_or_heap(txt_results, txt_on_heap);
         }
 
         text_time = get_time_ms() - txt_start;
@@ -277,7 +292,7 @@ int hybrid_search_with_stats(GV_HybridSearcher *searcher, const float *query_vec
         results[i].text_rank = candidates[i].text_rank;
     }
 
-    free(candidates);
+    gv_tls_free_or_heap(candidates, candidates_on_heap);
 
     pthread_mutex_unlock(&searcher->mutex);
 

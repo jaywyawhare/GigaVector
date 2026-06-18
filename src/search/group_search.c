@@ -8,6 +8,7 @@
  */
 
 #include "search/group_search.h"
+#include "core/scope.h"
 #include "storage/database.h"
 #include "core/types.h"
 #include "core/utils.h"
@@ -196,7 +197,13 @@ int group_search(const GV_Database *db, const float *query, size_t dimension,
     }
 
     /* Step 1: Oversample -- fetch many candidates via db_search() */
-    GV_SearchResult *candidates = (GV_SearchResult *)calloc(oversample, sizeof(GV_SearchResult));
+    GV_SearchResult *candidates =
+        (GV_SearchResult *)gv_tls_calloc(oversample, sizeof(GV_SearchResult));
+    int candidates_on_heap = 0;
+    if (!candidates) {
+        candidates = (GV_SearchResult *)calloc(oversample, sizeof(GV_SearchResult));
+        candidates_on_heap = 1;
+    }
     if (!candidates) {
         return -1;
     }
@@ -204,14 +211,22 @@ int group_search(const GV_Database *db, const float *query, size_t dimension,
     int found = db_search(db, query, oversample, candidates,
                               (GV_DistanceType)config->distance_type);
     if (found < 0) {
-        free(candidates);
+        if (candidates_on_heap) {
+            if (candidates_on_heap) {
+            free(candidates);
+        }
+        }
         return -1;
     }
     size_t n_candidates = (size_t)found;
     result->total_hits = n_candidates;
 
     if (n_candidates == 0) {
-        free(candidates);
+        if (candidates_on_heap) {
+            if (candidates_on_heap) {
+            free(candidates);
+        }
+        }
         return 0;
     }
 
@@ -237,7 +252,9 @@ int group_search(const GV_Database *db, const float *query, size_t dimension,
         for (size_t i = 0; i < n_candidates; i++) {
             free_search_result_vector(&candidates[i]);
         }
-        free(candidates);
+        if (candidates_on_heap) {
+            free(candidates);
+        }
         group_map_destroy(&map);
         return 0;
     }
@@ -261,7 +278,9 @@ int group_search(const GV_Database *db, const float *query, size_t dimension,
         for (size_t i = 0; i < n_candidates; i++) {
             free_search_result_vector(&candidates[i]);
         }
-        free(candidates);
+        if (candidates_on_heap) {
+            free(candidates);
+        }
         group_map_destroy(&map);
         return -1;
     }
@@ -277,7 +296,9 @@ int group_search(const GV_Database *db, const float *query, size_t dimension,
             for (size_t i = 0; i < n_candidates; i++) {
                 free_search_result_vector(&candidates[i]);
             }
-            free(candidates);
+            if (candidates_on_heap) {
+                free(candidates);
+            }
             group_map_destroy(&map);
             return -1;
         }
@@ -289,7 +310,9 @@ int group_search(const GV_Database *db, const float *query, size_t dimension,
             for (size_t i = 0; i < n_candidates; i++) {
                 free_search_result_vector(&candidates[i]);
             }
-            free(candidates);
+            if (candidates_on_heap) {
+                free(candidates);
+            }
             group_map_destroy(&map);
             return -1;
         }
@@ -305,7 +328,9 @@ int group_search(const GV_Database *db, const float *query, size_t dimension,
     for (size_t i = 0; i < n_candidates; i++) {
         free_search_result_vector(&candidates[i]);
     }
-    free(candidates);
+    if (candidates_on_heap) {
+        free(candidates);
+    }
     group_map_destroy(&map);
 
     return 0;

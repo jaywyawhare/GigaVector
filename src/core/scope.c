@@ -48,6 +48,43 @@ void gv_tls_arena_reset(void) {
         gv_arena_reset(arena);
     }
 }
+
+void *gv_tls_alloc(size_t size, size_t alignment) {
+    GV_Arena *arena = gv_tls_arena();
+    if (arena == NULL) {
+        return NULL;
+    }
+    return gv_arena_alloc(arena, size, alignment);
+}
+
+void *gv_tls_calloc(size_t nmemb, size_t size) {
+    GV_Arena *arena = gv_tls_arena();
+    if (arena == NULL) {
+        return NULL;
+    }
+    return gv_arena_calloc(arena, nmemb, size);
+}
+
+void *gv_tls_alloc_or_heap(size_t size, size_t alignment, int *on_heap) {
+    void *ptr = gv_tls_alloc(size, alignment);
+    if (ptr != NULL) {
+        if (on_heap != NULL) {
+            *on_heap = 0;
+        }
+        return ptr;
+    }
+    ptr = malloc(size);
+    if (on_heap != NULL) {
+        *on_heap = ptr != NULL ? 1 : 0;
+    }
+    return ptr;
+}
+
+void gv_tls_free_or_heap(void *ptr, int on_heap) {
+    if (on_heap && ptr != NULL) {
+        free(ptr);
+    }
+}
 #else
 
 GV_Arena *gv_tls_arena(void) {
@@ -55,6 +92,33 @@ GV_Arena *gv_tls_arena(void) {
 }
 
 void gv_tls_arena_reset(void) {
+}
+
+void *gv_tls_alloc(size_t size, size_t alignment) {
+    (void)size;
+    (void)alignment;
+    return NULL;
+}
+
+void *gv_tls_calloc(size_t nmemb, size_t size) {
+    (void)nmemb;
+    (void)size;
+    return NULL;
+}
+
+void *gv_tls_alloc_or_heap(size_t size, size_t alignment, int *on_heap) {
+    void *ptr = malloc(size);
+    if (on_heap != NULL) {
+        *on_heap = ptr != NULL ? 1 : 0;
+    }
+    (void)alignment;
+    return ptr;
+}
+
+void gv_tls_free_or_heap(void *ptr, int on_heap) {
+    if (on_heap && ptr != NULL) {
+        free(ptr);
+    }
 }
 
 #endif
