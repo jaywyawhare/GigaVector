@@ -11,7 +11,11 @@ tmp="$(mktemp "${SNAP}.XXXX")"
 cp "$SNAP" "$tmp"
 
 # Flip a byte near the end of the file (before CRC) to trigger CRC mismatch.
-size=$(stat -c%s "$tmp")
+if stat --version >/dev/null 2>&1; then
+  size=$(stat -c%s "$tmp")
+else
+  size=$(stat -f%z "$tmp")
+fi
 if (( size < 8 )); then
   echo "Snapshot too small to corrupt safely" >&2
   exit 1

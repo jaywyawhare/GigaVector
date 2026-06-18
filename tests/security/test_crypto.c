@@ -3,17 +3,21 @@
 #include <string.h>
 #include <unistd.h>
 #include "security/crypto.h"
+#include "../test_tmp.h"
 
 #define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while(0)
 
-#define TMP_PLAIN_PATH "/tmp/test_crypto_plain.bin"
-#define TMP_ENC_PATH   "/tmp/test_crypto_enc.bin"
-#define TMP_DEC_PATH   "/tmp/test_crypto_dec.bin"
-
 static void cleanup_temp_files(void) {
-    unlink(TMP_PLAIN_PATH);
-    unlink(TMP_ENC_PATH);
-    unlink(TMP_DEC_PATH);
+    char p[512];
+    if (gv_test_make_temp_path(p, sizeof(p), "gv_test_crypto_plain", ".bin") == 0) {
+        unlink(p);
+    }
+    if (gv_test_make_temp_path(p, sizeof(p), "gv_test_crypto_enc", ".bin") == 0) {
+        unlink(p);
+    }
+    if (gv_test_make_temp_path(p, sizeof(p), "gv_test_crypto_dec", ".bin") == 0) {
+        unlink(p);
+    }
 }
 
 static int test_config_init(void) {

@@ -184,6 +184,11 @@ jobs:
         timeout-minutes: 10
         run: |
           make c-test-single TEST=dst/test_repl_oracle
+          make c-test-single TEST=dst/test_repl_oracle_ivfdisk
+          make c-test-single TEST=dst/test_repl_fault_dst
+          make c-test-single TEST=dst/test_repl_liveness_dst
+          make c-test-single TEST=dst/test_insert_visibility_dst
+          make c-test-single TEST=dst/test_ivfdisk_maintenance_dst
           make c-test-single TEST=dst/test_grpc_frame_dst
 
       - name: Generate fuzz corpus and run fuzzers

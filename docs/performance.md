@@ -391,6 +391,19 @@ GigaVector supports two deployment modes for vector search. Use `index_suggest_w
 - **DiskANN**: graph traversal on SSD; strong for billion-scale when graph quality matters.
 - **IVFDisk**: SPANN-style IVF head + sequential disk lists; strong for filtered/partitioned larger-than-RAM workloads.
 
+### DiskANN tuning
+
+| Knob | Typical range | Effect |
+|------|---------------|--------|
+| `max_degree` | 32–128 | Higher → better graph quality, more disk I/O per hop |
+| `search_list_size` | 50–400 | Beam width during build; larger → slower build, better recall |
+| `ef_search` | 32–256 | Query-time beam; raise for recall at higher latency |
+| `num_threads` | 1–hardware | Parallel graph construction |
+
+**When to use:** datasets that exceed RAM but need graph-quality ANN on SSD. Pair with `db_open_mmap()` for read-only replicas.
+
+**Trade-off vs IVFDisk:** DiskANN favors unstructured global ANN; IVFDisk favors partition-aware, append-heavy ingestion and filtered search.
+
 ### IVFDisk tuning
 
 | Knob | Default | Effect |

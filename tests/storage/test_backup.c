@@ -3,19 +3,60 @@
 #include <string.h>
 #include <unistd.h>
 #include "storage/backup.h"
+#include "../test_tmp.h"
 
 #define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while(0)
 
-#define TMP_BACKUP_PATH "/tmp/test_backup.bak"
-#define TMP_RESTORE_PATH "/tmp/test_restore.db"
-#define TMP_INCR_PATH "/tmp/test_incr.bak"
-#define TMP_MERGED_PATH "/tmp/test_merged.bak"
+static char tmp_backup_path[512];
+static char tmp_restore_path[512];
+static char tmp_incr_path[512];
+static char tmp_merged_path[512];
+static char tmp_missing_db_path[512];
+static char tmp_missing_bak_path[512];
+static int tmp_paths_ready;
+
+static int ensure_temp_paths(void) {
+    if (tmp_paths_ready) {
+        return 0;
+    }
+    if (gv_test_make_temp_path(tmp_backup_path, sizeof(tmp_backup_path),
+                               "gv_test_backup", ".bak") != 0) {
+        return -1;
+    }
+    if (gv_test_make_temp_path(tmp_restore_path, sizeof(tmp_restore_path),
+                               "gv_test_restore", ".db") != 0) {
+        return -1;
+    }
+    if (gv_test_make_temp_path(tmp_incr_path, sizeof(tmp_incr_path),
+                               "gv_test_incr", ".bak") != 0) {
+        return -1;
+    }
+    if (gv_test_make_temp_path(tmp_merged_path, sizeof(tmp_merged_path),
+                               "gv_test_merged", ".bak") != 0) {
+        return -1;
+    }
+    if (gv_test_make_temp_path(tmp_missing_db_path, sizeof(tmp_missing_db_path),
+                               "gv_test_missing_db", ".db") != 0) {
+        return -1;
+    }
+    if (gv_test_make_temp_path(tmp_missing_bak_path, sizeof(tmp_missing_bak_path),
+                               "gv_test_missing_bak", ".bak") != 0) {
+        return -1;
+    }
+    tmp_paths_ready = 1;
+    return 0;
+}
 
 static void cleanup_temp_files(void) {
-    unlink(TMP_BACKUP_PATH);
-    unlink(TMP_RESTORE_PATH);
-    unlink(TMP_INCR_PATH);
-    unlink(TMP_MERGED_PATH);
+    if (!tmp_paths_ready) {
+        return;
+    }
+    unlink(tmp_backup_path);
+    unlink(tmp_restore_path);
+    unlink(tmp_incr_path);
+    unlink(tmp_merged_path);
+    unlink(tmp_missing_db_path);
+    unlink(tmp_missing_bak_path);
 }
 
 static int test_backup_options_init(void) {
@@ -62,11 +103,12 @@ static int test_result_free_null(void) {
 
 static int test_backup_create_nonexistent(void) {
     cleanup_temp_files();
+    ASSERT(ensure_temp_paths() == 0, "temp paths");
     GV_BackupOptions opts;
     backup_options_init(&opts);
 
     GV_BackupResult *result = backup_create_from_file(
-        "/tmp/nonexistent_db_file.db", TMP_BACKUP_PATH, &opts, NULL, NULL);
+        tmp_missing_db_path, tmp_backup_path, &opts, NULL, NULL);
     /* With a non-existent source, we expect either NULL or result->success == 0 */
     if (result != NULL) {
         ASSERT(result->success == 0, "backup of non-existent file should fail");
@@ -77,15 +119,17 @@ static int test_backup_create_nonexistent(void) {
 }
 
 static int test_read_header_nonexistent(void) {
+    ASSERT(ensure_temp_paths() == 0, "temp paths");
     GV_BackupHeader header;
     memset(&header, 0, sizeof(header));
-    int rc = backup_read_header("/tmp/no_such_backup.bak", &header);
+    int rc = backup_read_header(tmp_missing_bak_path, &header);
     ASSERT(rc == -1, "read header on non-existent file should return -1");
     return 0;
 }
 
 static int test_verify_nonexistent(void) {
-    GV_BackupResult *result = backup_verify("/tmp/no_such_backup.bak", NULL);
+    ASSERT(ensure_temp_paths() == 0, "temp paths");
+    GV_BackupResult *result = backup_verify(tmp_missing_bak_path, NULL);
     if (result != NULL) {
         ASSERT(result->success == 0, "verify non-existent backup should fail");
         backup_result_free(result);
