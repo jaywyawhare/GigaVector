@@ -29,6 +29,13 @@ void     gv_bytes_release(GV_Bytes *bytes);
 GV_Bytes gv_bytes_from_arena(GV_Arena *arena, void *data, size_t len);
 GV_Bytes gv_bytes_copy_heap(const void *data, size_t len);
 
+#ifndef GV_TLS_ARENA_BYTES
+#define GV_TLS_ARENA_BYTES (256u * 1024u)
+#endif
+
+GV_Arena *gv_tls_arena(void);
+void      gv_tls_arena_reset(void);
+
 #define GV_WITH_ARENA(arena, cap)                                              \
     for (GV_Arena arena, *_gv_scope_##arena =                                   \
             (GV_Arena *)((gv_arena_init(&(arena), (cap)), (void *)1));         \

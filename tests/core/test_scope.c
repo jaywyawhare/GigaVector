@@ -76,12 +76,28 @@ static int test_bytes_heap_copy(void) {
     return 0;
 }
 
+static int test_tls_arena_reuse(void) {
+    GV_Arena *a = gv_tls_arena();
+    ASSERT(a != NULL, "tls arena");
+    void *p = gv_arena_alloc(a, 32, 8);
+    ASSERT(p != NULL, "tls alloc");
+    ASSERT(gv_arena_used(a) >= 32, "tls used");
+
+    gv_tls_arena_reset();
+    ASSERT(gv_arena_used(a) == 0, "tls reset");
+
+    void *q = gv_arena_alloc(a, 16, 8);
+    ASSERT(q == p, "tls reuse from base");
+    return 0;
+}
+
 int main(void) {
     struct { const char *name; int (*fn)(void); } tests[] = {
         {"test_nested_arena_scopes", test_nested_arena_scopes},
         {"test_early_return_unwinds", test_early_return_unwinds},
         {"test_with_db_scope", test_with_db_scope},
         {"test_bytes_heap_copy", test_bytes_heap_copy},
+        {"test_tls_arena_reuse", test_tls_arena_reuse},
     };
 
     int passed = 0;

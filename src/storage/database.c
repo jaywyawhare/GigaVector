@@ -64,6 +64,7 @@ static ssize_t getline(char **lineptr, size_t *n, FILE *stream) {
 #endif
 
 #include "core/types.h"
+#include "core/scope.h"
 
 #include "storage/database.h"
 #include "search/distance.h"
@@ -3455,6 +3456,8 @@ int db_search(const GV_Database *db, const float *query_data, size_t k,
         return -1;
     }
 
+    gv_tls_arena_reset();
+
     uint64_t start_time_us = db_get_time_us();
 
     memset(results, 0, k * sizeof(GV_SearchResult));
@@ -3587,6 +3590,7 @@ int db_search_batch(const GV_Database *db, const float *queries, size_t qcount, 
     if (db == NULL || queries == NULL || results == NULL || qcount == 0 || k == 0) {
         return -1;
     }
+    gv_tls_arena_reset();
     pthread_rwlock_rdlock((pthread_rwlock_t *)&db->rwlock);
     ((GV_Database *)db)->total_queries += 1;
     if (db->index_type == GV_INDEX_TYPE_KDTREE && db->root == NULL) {

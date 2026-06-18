@@ -711,6 +711,9 @@ GV_HttpResponse *rest_handle_search(const GV_HandlerContext *ctx,
 
         return rest_response_json(response);
     }
+
+    return rest_response_error(GV_HTTP_500_INTERNAL_ERROR, "internal_error",
+                                   "Search handler scope failed");
 }
 
 GV_HttpResponse *rest_handle_search_range(const GV_HandlerContext *ctx,
@@ -832,6 +835,9 @@ GV_HttpResponse *rest_handle_search_range(const GV_HandlerContext *ctx,
 
         return rest_response_json(response);
     }
+
+    return rest_response_error(GV_HTTP_500_INTERNAL_ERROR, "internal_error",
+                                   "Search handler scope failed");
 }
 
 GV_HttpResponse *rest_handle_search_batch(const GV_HandlerContext *ctx,
@@ -946,6 +952,9 @@ GV_HttpResponse *rest_handle_search_batch(const GV_HandlerContext *ctx,
 
         return rest_response_json(response);
     }
+
+    return rest_response_error(GV_HTTP_500_INTERNAL_ERROR, "internal_error",
+                                   "Search handler scope failed");
 }
 
 GV_HttpResponse *rest_handle_compact(const GV_HandlerContext *ctx,
