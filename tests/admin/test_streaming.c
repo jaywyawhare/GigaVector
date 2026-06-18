@@ -8,10 +8,17 @@
 
 #define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while(0)
 
-static const char *DB_PATH = "tmp_test_streaming.bin";
+static char db_path[512];
+#define DB_PATH db_path
+
+static int init_db_path(void) {
+    return gv_test_make_temp_path(db_path, sizeof(db_path), "gv_test_streaming", ".bin");
+}
 
 static void cleanup(void) {
-    gv_test_remove_db(DB_PATH);
+    if (init_db_path() == 0) {
+        gv_test_remove_db(db_path);
+    }
 }
 
 static int dummy_handler(const GV_StreamMessage *msg, void *user_data) {
@@ -390,6 +397,10 @@ typedef int (*test_fn)(void);
 typedef struct { const char *name; test_fn fn; } TestCase;
 
 int main(void) {
+    if (init_db_path() != 0) {
+        fprintf(stderr, "FAIL: temp db path\n");
+        return 1;
+    }
     cleanup();
 TestCase tests[] = {
         {"Testing config_init...",       test_config_init},

@@ -21,8 +21,14 @@
         }                         \
     } while (0)
 
-#define TEST_DB "tmp_test_rest.bin"
 #define TEST_DIM 4
+
+static char test_db_path[512];
+#define TEST_DB test_db_path
+
+static int init_test_db_path(void) {
+    return gv_test_make_temp_path(test_db_path, sizeof(test_db_path), "gv_test_rest", ".bin");
+}
 
 static GV_HandlerContext create_test_ctx(GV_Database *db, GV_ServerConfig *scfg) {
     server_config_init(scfg);
@@ -379,6 +385,10 @@ static int test_route_method_mismatch(void) {
 }
 
 int main(void) {
+    if (init_test_db_path() != 0) {
+        fprintf(stderr, "FAIL: temp db path\n");
+        return 1;
+    }
     int failed = 0;
     int passed = 0;
 
