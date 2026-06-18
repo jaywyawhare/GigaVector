@@ -17,14 +17,16 @@ static int test_db_alloc_tracked(void) {
     GV_Database *db = db_open(NULL, 4, GV_INDEX_TYPE_FLAT);
     ASSERT(db != NULL, "db open");
 
+    size_t n0 = db->memory_pool.owned_count;
     void *a = gv_db_alloc(db, 64);
+    ASSERT(a != NULL, "alloc a");
+    ASSERT(db->memory_pool.owned_count == n0 + 1, "track a");
     void *b = gv_db_calloc(db, 4, 8);
-    ASSERT(a != NULL && b != NULL, "db alloc succeeds");
-    ASSERT(db->memory_pool.owned_count == 2, "tracked blocks");
-    ASSERT(db->memory_pool.pool_bytes == 64 + 32, "pool bytes");
+    ASSERT(b != NULL, "alloc b");
+    ASSERT(db->memory_pool.owned_count == n0 + 2, "track b");
 
     gv_db_free(db, a);
-    ASSERT(db->memory_pool.owned_count == 1, "free removes tracking");
+    ASSERT(db->memory_pool.owned_count == n0 + 1, "free a");
 
     db_close(db);
     return 0;

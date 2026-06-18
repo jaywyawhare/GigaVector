@@ -275,6 +275,7 @@ int grpc_fuzz_dispatch_message(GV_GrpcServer *server, int response_fd,
 
 #define GV_GRPC_SEARCH_ARENA_BYTES   (64u * 1024u)
 #define GV_GRPC_BATCH_SEARCH_ARENA_BYTES (256u * 1024u)
+#define GV_GRPC_INSERT_ARENA_BYTES   (1024u * 1024u)
 
 #if defined(__STDC_NO_ATOMICS__)
 #  if defined(__GNUC__) || defined(__clang__)
@@ -772,21 +773,22 @@ static void handle_get(GV_GrpcServer *server, int fd,
         return;
     }
 
-    size_t resp_len = 4 + dim * sizeof(float);
-    uint8_t *resp = malloc(resp_len);
-    if (!resp) {
-        send_error_response(fd, msg->request_id, -1, "out of memory");
-        GV_ATOMIC_INC(&server->errors);
-        return;
-    }
+    GV_WITH_ARENA(scratch, GV_GRPC_SEARCH_ARENA_BYTES) {
+        size_t resp_len = 4 + dim * sizeof(float);
+        uint8_t *resp = (uint8_t *)gv_arena_alloc(&scratch, resp_len, 4);
+        if (!resp) {
+            send_error_response(fd, msg->request_id, -1, "out of memory");
+            GV_ATOMIC_INC(&server->errors);
+            return;
+        }
 
-    write_u32_be(resp, (uint32_t)dim);
-    for (size_t i = 0; i < dim; i++) {
-        write_float_be(resp + 4 + i * 4, vec[i]);
-    }
+        write_u32_be(resp, (uint32_t)dim);
+        for (size_t i = 0; i < dim; i++) {
+            write_float_be(resp + 4 + i * 4, vec[i]);
+        }
 
-    send_message(fd, GV_MSG_RESPONSE, msg->request_id, resp, resp_len);
-    free(resp);
+        send_message(fd, GV_MSG_RESPONSE, msg->request_id, resp, resp_len);
+    }
 }
 
 /**
@@ -814,25 +816,27 @@ static void handle_batch_add(GV_GrpcServer *server, int fd,
         return;
     }
 
-    float *data = malloc(total_floats * sizeof(float));
-    if (!data) {
-        send_error_response(fd, msg->request_id, -1, "out of memory");
-        GV_ATOMIC_INC(&server->errors);
-        return;
-    }
-    for (size_t i = 0; i < total_floats; i++) {
-        data[i] = read_float_be(msg->payload + 8 + i * 4);
-    }
+    GV_WITH_ARENA(scratch, GV_GRPC_INSERT_ARENA_BYTES) {
+        float *data = (float *)gv_arena_alloc(
+            &scratch, total_floats * sizeof(float), sizeof(float));
+        if (!data) {
+            send_error_response(fd, msg->request_id, -1, "out of memory");
+            GV_ATOMIC_INC(&server->errors);
+            return;
+        }
+        for (size_t i = 0; i < total_floats; i++) {
+            data[i] = read_float_be(msg->payload + 8 + i * 4);
+        }
 
-    int rc = db_add_vectors(server->db, data, (size_t)count, (size_t)dimension);
-    free(data);
+        int rc = db_add_vectors(server->db, data, (size_t)count, (size_t)dimension);
 
-    uint8_t resp[4];
-    write_u32_be(resp, (uint32_t)rc);
-    send_message(fd, GV_MSG_RESPONSE, msg->request_id, resp, 4);
+        uint8_t resp[4];
+        write_u32_be(resp, (uint32_t)rc);
+        send_message(fd, GV_MSG_RESPONSE, msg->request_id, resp, 4);
 
-    if (rc != 0) {
-        GV_ATOMIC_INC(&server->errors);
+        if (rc != 0) {
+            GV_ATOMIC_INC(&server->errors);
+        }
     }
 }
 
@@ -983,27 +987,27 @@ static void handle_health(GV_GrpcServer *server, int fd,
  */
 static void handle_save(GV_GrpcServer *server, int fd,
                          const GV_GrpcMessage *msg) {
-    const char *filepath = NULL;
-    char *filepath_buf = NULL;
-
-    if (msg->payload_len > 0) {
-        filepath_buf = malloc(msg->payload_len + 1);
-        if (filepath_buf) {
-            memcpy(filepath_buf, msg->payload, msg->payload_len);
-            filepath_buf[msg->payload_len] = '\0';
-            filepath = filepath_buf;
+    GV_WITH_ARENA(scratch, GV_GRPC_INSERT_ARENA_BYTES) {
+        const char *filepath = NULL;
+        char *filepath_buf = NULL;
+        if (msg->payload_len > 0) {
+            filepath_buf = gv_arena_alloc(&scratch, msg->payload_len + 1, 1);
+            if (filepath_buf) {
+                memcpy(filepath_buf, msg->payload, msg->payload_len);
+                filepath_buf[msg->payload_len] = '\0';
+                filepath = filepath_buf;
+            }
         }
-    }
 
-    int rc = db_save(server->db, filepath);
-    free(filepath_buf);
+        int rc = db_save(server->db, filepath);
 
-    uint8_t resp[4];
-    write_u32_be(resp, (uint32_t)rc);
-    send_message(fd, GV_MSG_RESPONSE, msg->request_id, resp, 4);
+        uint8_t resp[4];
+        write_u32_be(resp, (uint32_t)rc);
+        send_message(fd, GV_MSG_RESPONSE, msg->request_id, resp, 4);
 
-    if (rc != 0) {
-        GV_ATOMIC_INC(&server->errors);
+        if (rc != 0) {
+            GV_ATOMIC_INC(&server->errors);
+        }
     }
 }
 
@@ -1042,24 +1046,26 @@ static void handle_ivfdisk_train(GV_GrpcServer *server, int fd,
         return;
     }
 
-    float *data = malloc(total_floats * sizeof(float));
-    if (!data) {
-        send_error_response(fd, msg->request_id, -1, "out of memory");
-        GV_ATOMIC_INC(&server->errors);
-        return;
-    }
-    for (size_t i = 0; i < total_floats; i++) {
-        data[i] = read_float_be(msg->payload + 8 + i * 4);
-    }
+    GV_WITH_ARENA(scratch, GV_GRPC_INSERT_ARENA_BYTES) {
+        float *data = (float *)gv_arena_alloc(
+            &scratch, total_floats * sizeof(float), sizeof(float));
+        if (!data) {
+            send_error_response(fd, msg->request_id, -1, "out of memory");
+            GV_ATOMIC_INC(&server->errors);
+            return;
+        }
+        for (size_t i = 0; i < total_floats; i++) {
+            data[i] = read_float_be(msg->payload + 8 + i * 4);
+        }
 
-    int rc = db_ivfdisk_train(server->db, data, (size_t)count, (size_t)dimension);
-    free(data);
+        int rc = db_ivfdisk_train(server->db, data, (size_t)count, (size_t)dimension);
 
-    uint8_t resp[4];
-    write_u32_be(resp, (uint32_t)rc);
-    send_message(fd, GV_MSG_RESPONSE, msg->request_id, resp, 4);
-    if (rc != 0) {
-        GV_ATOMIC_INC(&server->errors);
+        uint8_t resp[4];
+        write_u32_be(resp, (uint32_t)rc);
+        send_message(fd, GV_MSG_RESPONSE, msg->request_id, resp, 4);
+        if (rc != 0) {
+            GV_ATOMIC_INC(&server->errors);
+        }
     }
 }
 

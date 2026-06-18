@@ -6,6 +6,7 @@
 
 #include "storage/vacuum.h"
 #include "storage/database.h"
+#include "core/memory.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -164,14 +165,29 @@ static int vacuum_run_internal(GV_VacuumManager *mgr) {
     size_t bytes_reclaimed = deleted_count * dim * sizeof(float);
 
     /* Allocate compacted arrays */
-    float *new_data = (float *)malloc(new_count * dim * sizeof(float));
-    GV_Metadata **new_metadata = (GV_Metadata **)calloc(new_count, sizeof(GV_Metadata *));
-    int *new_deleted = (int *)calloc(new_count, sizeof(int));
+    float *new_data = NULL;
+    GV_Metadata **new_metadata = NULL;
+    int *new_deleted = NULL;
+    if (storage->owner_db != NULL) {
+        new_data = (float *)gv_db_alloc(storage->owner_db, new_count * dim * sizeof(float));
+        new_metadata = (GV_Metadata **)gv_db_calloc(storage->owner_db, new_count, sizeof(GV_Metadata *));
+        new_deleted = (int *)gv_db_calloc(storage->owner_db, new_count, sizeof(int));
+    } else {
+        new_data = (float *)malloc(new_count * dim * sizeof(float));
+        new_metadata = (GV_Metadata **)calloc(new_count, sizeof(GV_Metadata *));
+        new_deleted = (int *)calloc(new_count, sizeof(int));
+    }
 
     if (new_data == NULL || new_metadata == NULL || new_deleted == NULL) {
-        free(new_data);
-        free(new_metadata);
-        free(new_deleted);
+        if (storage->owner_db != NULL) {
+            if (new_data != NULL) gv_db_free(storage->owner_db, new_data);
+            if (new_metadata != NULL) gv_db_free(storage->owner_db, new_metadata);
+            if (new_deleted != NULL) gv_db_free(storage->owner_db, new_deleted);
+        } else {
+            free(new_data);
+            free(new_metadata);
+            free(new_deleted);
+        }
         pthread_rwlock_unlock(&db->rwlock);
 
         pthread_mutex_lock(&mgr->mutex);
@@ -230,9 +246,15 @@ static int vacuum_run_internal(GV_VacuumManager *mgr) {
     }
 
     /* Swap arrays */
-    free(storage->data);
-    free(storage->metadata);
-    free(storage->deleted);
+    if (storage->owner_db != NULL) {
+        gv_db_free(storage->owner_db, storage->data);
+        gv_db_free(storage->owner_db, storage->metadata);
+        gv_db_free(storage->owner_db, storage->deleted);
+    } else {
+        free(storage->data);
+        free(storage->metadata);
+        free(storage->deleted);
+    }
 
     storage->data = new_data;
     storage->metadata = new_metadata;

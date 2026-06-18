@@ -14,6 +14,7 @@
 
 #define GV_REST_SEARCH_ARENA_BYTES (64u * 1024u)
 #define GV_REST_BATCH_ARENA_BYTES  (256u * 1024u)
+#define GV_REST_INSERT_ARENA_BYTES (1024u * 1024u)
 
 #include <stdlib.h>
 #include <string.h>
@@ -242,10 +243,12 @@ GV_HttpResponse *rest_handle_vectors_post(const GV_HandlerContext *ctx,
     size_t inserted = 0;
     GV_JsonValue *indices = json_array();
 
+    GV_WITH_ARENA(scratch, GV_REST_INSERT_ARENA_BYTES) {
     if (vectors_arr && json_is_array(vectors_arr)) {
         /* Batch insert */
         size_t count = json_array_length(vectors_arr);
         for (size_t i = 0; i < count; i++) {
+            gv_arena_reset(&scratch);
             GV_JsonValue *vec_obj = json_array_get(vectors_arr, i);
             GV_JsonValue *vec_data = json_object_get(vec_obj, "data");
 
@@ -258,7 +261,7 @@ GV_HttpResponse *rest_handle_vectors_post(const GV_HandlerContext *ctx,
                 continue;
             }
 
-            float *vec = malloc(dim * sizeof(float));
+            float *vec = (float *)gv_arena_alloc(&scratch, dim * sizeof(float), sizeof(float));
             if (!vec) continue;
 
             for (size_t j = 0; j < dim; j++) {
@@ -276,9 +279,12 @@ GV_HttpResponse *rest_handle_vectors_post(const GV_HandlerContext *ctx,
             if (metadata && json_is_object(metadata)) {
                 size_t meta_count = json_object_length(metadata);
                 if (meta_count > 0) {
-                    const char **keys = malloc(meta_count * sizeof(char *));
-                    const char **values = malloc(meta_count * sizeof(char *));
-                    char **value_buffers = malloc(meta_count * sizeof(char *));
+                    const char **keys = (const char **)gv_arena_alloc(
+                        &scratch, meta_count * sizeof(char *), sizeof(void *));
+                    const char **values = (const char **)gv_arena_alloc(
+                        &scratch, meta_count * sizeof(char *), sizeof(void *));
+                    char **value_buffers = (char **)gv_arena_calloc(
+                        &scratch, meta_count, sizeof(char *));
 
                     if (keys && values && value_buffers) {
                         /* Extract all key-value pairs */
@@ -306,18 +312,12 @@ GV_HttpResponse *rest_handle_vectors_post(const GV_HandlerContext *ctx,
                     } else {
                         result = db_add_vector(ctx->db, vec, dim);
                     }
-
-                    free(keys);
-                    free(values);
-                    free(value_buffers);
                 } else {
                     result = db_add_vector(ctx->db, vec, dim);
                 }
             } else {
                 result = db_add_vector(ctx->db, vec, dim);
             }
-
-            free(vec);
 
             if (result == 0) {
                 json_array_push(indices, json_number((double)(ctx->db->count - 1)));
@@ -334,7 +334,7 @@ GV_HttpResponse *rest_handle_vectors_post(const GV_HandlerContext *ctx,
                                            "Vector dimension does not match database");
         }
 
-        float *vec = malloc(dim * sizeof(float));
+        float *vec = (float *)gv_arena_alloc(&scratch, dim * sizeof(float), sizeof(float));
         if (!vec) {
             json_free(body);
             json_free(indices);
@@ -357,9 +357,11 @@ GV_HttpResponse *rest_handle_vectors_post(const GV_HandlerContext *ctx,
             size_t meta_count = json_object_length(metadata);
             if (meta_count > 0) {
                 GV_JsonEntry *entries = metadata->data.object.entries;
-                const char **mkeys = malloc(meta_count * sizeof(char *));
-                const char **mvals = malloc(meta_count * sizeof(char *));
-                char **mval_bufs = malloc(meta_count * sizeof(char *));
+                const char **mkeys = (const char **)gv_arena_alloc(
+                    &scratch, meta_count * sizeof(char *), sizeof(void *));
+                const char **mvals = (const char **)gv_arena_alloc(
+                    &scratch, meta_count * sizeof(char *), sizeof(void *));
+                char **mval_bufs = (char **)gv_arena_calloc(&scratch, meta_count, sizeof(char *));
                 if (mkeys && mvals && mval_bufs) {
                     for (size_t mi = 0; mi < meta_count; mi++) {
                         mkeys[mi] = entries[mi].key;
@@ -376,17 +378,12 @@ GV_HttpResponse *rest_handle_vectors_post(const GV_HandlerContext *ctx,
                 } else {
                     result = db_add_vector(ctx->db, vec, dim);
                 }
-                free(mkeys);
-                free(mvals);
-                free(mval_bufs);
             } else {
                 result = db_add_vector(ctx->db, vec, dim);
             }
         } else {
             result = db_add_vector(ctx->db, vec, dim);
         }
-
-        free(vec);
 
         if (result == 0) {
             json_array_push(indices, json_number((double)(ctx->db->count - 1)));
@@ -397,6 +394,7 @@ GV_HttpResponse *rest_handle_vectors_post(const GV_HandlerContext *ctx,
         json_free(indices);
         return rest_response_error(GV_HTTP_400_BAD_REQUEST, "invalid_request",
                                        "Missing 'data' or 'vectors' field");
+    }
     }
 
     json_free(body);
@@ -500,7 +498,8 @@ GV_HttpResponse *rest_handle_vectors_put(const GV_HandlerContext *ctx,
                                            "Vector dimension does not match database");
         }
 
-        float *vec = malloc(dim * sizeof(float));
+    GV_WITH_ARENA(scratch, GV_REST_INSERT_ARENA_BYTES) {
+        float *vec = (float *)gv_arena_alloc(&scratch, dim * sizeof(float), sizeof(float));
         if (!vec) {
             json_free(body);
             return rest_response_error(GV_HTTP_500_INTERNAL_ERROR, "memory_error",
@@ -516,13 +515,13 @@ GV_HttpResponse *rest_handle_vectors_put(const GV_HandlerContext *ctx,
         }
 
         int result = db_update_vector(ctx->db, vector_index, vec, dim);
-        free(vec);
 
         if (result != 0) {
             json_free(body);
             return rest_response_error(GV_HTTP_500_INTERNAL_ERROR, "update_failed",
                                            "Failed to update vector");
         }
+    }
     }
 
     json_free(body);

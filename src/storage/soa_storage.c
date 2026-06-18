@@ -5,9 +5,43 @@
 #include "storage/soa_storage.h"
 #include "schema/metadata.h"
 #include "schema/vector.h"
+#include "core/memory.h"
 #include "core/utils.h"
+#include "storage/database.h"
 
 #define GV_SOA_SAVE_MAGIC 0x534F4153u /* "SOAS" */
+
+static void *soa_alloc(GV_SoAStorage *storage, size_t size) {
+    if (storage != NULL && storage->owner_db != NULL) {
+        return gv_db_alloc(storage->owner_db, size);
+    }
+    return malloc(size);
+}
+
+static void *soa_calloc(GV_SoAStorage *storage, size_t nmemb, size_t size) {
+    if (storage != NULL && storage->owner_db != NULL) {
+        return gv_db_calloc(storage->owner_db, nmemb, size);
+    }
+    return calloc(nmemb, size);
+}
+
+static void *soa_realloc(GV_SoAStorage *storage, void *ptr, size_t size) {
+    if (storage != NULL && storage->owner_db != NULL) {
+        return gv_db_realloc(storage->owner_db, ptr, size);
+    }
+    return realloc(ptr, size);
+}
+
+static void soa_free(GV_SoAStorage *storage, void *ptr) {
+    if (ptr == NULL) {
+        return;
+    }
+    if (storage != NULL && storage->owner_db != NULL) {
+        gv_db_free(storage->owner_db, ptr);
+        return;
+    }
+    free(ptr);
+}
 
 static int soa_read_metadata(FILE *in, GV_Metadata **out)
 {
@@ -50,10 +84,10 @@ static int soa_storage_grow(GV_SoAStorage *storage, size_t min_capacity)
         return -1;
     }
     size_t new_data_size = new_capacity * storage->dimension * sizeof(float);
-    float *tmp_data = (float *)realloc(storage->data, new_data_size);
+    float *tmp_data = (float *)soa_realloc(storage, storage->data, new_data_size);
     GV_Metadata **tmp_meta =
-        (GV_Metadata **)realloc(storage->metadata, new_capacity * sizeof(GV_Metadata *));
-    int *tmp_del = (int *)realloc(storage->deleted, new_capacity * sizeof(int));
+        (GV_Metadata **)soa_realloc(storage, storage->metadata, new_capacity * sizeof(GV_Metadata *));
+    int *tmp_del = (int *)soa_realloc(storage, storage->deleted, new_capacity * sizeof(int));
     if (!tmp_data || !tmp_meta || !tmp_del) {
         if (tmp_data) storage->data = tmp_data;
         if (tmp_meta) storage->metadata = tmp_meta;
@@ -82,6 +116,7 @@ GV_SoAStorage *soa_storage_create(size_t dimension, size_t initial_capacity) {
     if (storage == NULL) {
         return NULL;
     }
+    memset(storage, 0, sizeof(*storage));
 
     storage->dimension = dimension;
     storage->count = 0;
@@ -116,6 +151,39 @@ GV_SoAStorage *soa_storage_create(size_t dimension, size_t initial_capacity) {
     return storage;
 }
 
+void soa_storage_bind_database(GV_SoAStorage *storage, GV_Database *db) {
+    if (storage == NULL || db == NULL) {
+        return;
+    }
+    size_t data_bytes = storage->capacity * storage->dimension * sizeof(float);
+    float *data = (float *)gv_db_alloc(db, data_bytes);
+    GV_Metadata **meta = (GV_Metadata **)gv_db_calloc(
+        db, storage->capacity, sizeof(GV_Metadata *));
+    int *del = (int *)gv_db_calloc(db, storage->capacity, sizeof(int));
+    if (data == NULL || meta == NULL || del == NULL) {
+        if (data != NULL) gv_db_free(db, data);
+        if (meta != NULL) gv_db_free(db, meta);
+        if (del != NULL) gv_db_free(db, del);
+        return;
+    }
+    if (storage->data != NULL) {
+        memcpy(data, storage->data, storage->count * storage->dimension * sizeof(float));
+        free(storage->data);
+    }
+    if (storage->metadata != NULL) {
+        memcpy(meta, storage->metadata, storage->capacity * sizeof(GV_Metadata *));
+        free(storage->metadata);
+    }
+    if (storage->deleted != NULL) {
+        memcpy(del, storage->deleted, storage->capacity * sizeof(int));
+        free(storage->deleted);
+    }
+    storage->data = data;
+    storage->metadata = meta;
+    storage->deleted = del;
+    storage->owner_db = db;
+}
+
 void soa_storage_destroy(GV_SoAStorage *storage) {
     if (storage == NULL) {
         return;
@@ -131,11 +199,21 @@ void soa_storage_destroy(GV_SoAStorage *storage) {
                 vector_clear_metadata(&temp_vector);
             }
         }
-        free(storage->metadata);
+        if (storage->owner_db == NULL) {
+            soa_free(storage, storage->metadata);
+        }
     }
 
-    free(storage->deleted);
-    free(storage->data);
+    if (storage->owner_db == NULL) {
+        soa_free(storage, storage->deleted);
+        soa_free(storage, storage->data);
+    } else {
+        /* Arrays are owned by GV_Memory; db_close tears them down via gv_memory_fini. */
+        storage->data = NULL;
+        storage->metadata = NULL;
+        storage->deleted = NULL;
+        storage->owner_db = NULL;
+    }
     free(storage);
 }
 
@@ -145,26 +223,9 @@ size_t soa_storage_add(GV_SoAStorage *storage, const float *data, GV_Metadata *m
     }
 
     if (storage->count >= storage->capacity) {
-        if (storage->capacity > SIZE_MAX / 2) return (size_t)-1;
-        size_t new_capacity = storage->capacity * 2;
-        if (storage->dimension == 0 || new_capacity > SIZE_MAX / storage->dimension / sizeof(float)) return (size_t)-1;
-        size_t new_data_size = new_capacity * storage->dimension * sizeof(float);
-        float *tmp_data = (float *)realloc(storage->data, new_data_size);
-        GV_Metadata **tmp_meta = (GV_Metadata **)realloc(storage->metadata, new_capacity * sizeof(GV_Metadata *));
-        int *tmp_del = (int *)realloc(storage->deleted, new_capacity * sizeof(int));
-        if (!tmp_data || !tmp_meta || !tmp_del) {
-            /* Preserve any successful reallocs to avoid leaking the old block */
-            if (tmp_data) storage->data = tmp_data;
-            if (tmp_meta) storage->metadata = tmp_meta;
-            if (tmp_del) storage->deleted = tmp_del;
+        if (soa_storage_grow(storage, storage->capacity * 2) != 0) {
             return (size_t)-1;
         }
-        memset(tmp_meta + storage->capacity, 0, (new_capacity - storage->capacity) * sizeof(GV_Metadata *));
-        memset(tmp_del + storage->capacity, 0, (new_capacity - storage->capacity) * sizeof(int));
-        storage->data = tmp_data;
-        storage->metadata = tmp_meta;
-        storage->deleted = tmp_del;
-        storage->capacity = new_capacity;
     }
 
     size_t index = storage->count;

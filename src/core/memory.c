@@ -106,3 +106,32 @@ void gv_db_free(GV_Database *db, void *ptr) {
     gv_memory_untrack(&db->memory_pool, ptr);
     free(ptr);
 }
+
+void *gv_db_realloc(GV_Database *db, void *ptr, size_t size) {
+    if (db == NULL || size == 0) {
+        return NULL;
+    }
+    size_t old_size = 0;
+    if (ptr != NULL) {
+        old_size = gv_memory_untrack(&db->memory_pool, ptr);
+    }
+    size_t delta = size > old_size ? size - old_size : 0;
+    if (delta > 0 && db_check_resource_limits(db, 0, delta) != 0) {
+        if (ptr != NULL) {
+            (void)gv_memory_track(&db->memory_pool, ptr, old_size);
+        }
+        return NULL;
+    }
+    void *next = realloc(ptr, size);
+    if (next == NULL) {
+        if (ptr != NULL) {
+            (void)gv_memory_track(&db->memory_pool, ptr, old_size);
+        }
+        return NULL;
+    }
+    if (gv_memory_track(&db->memory_pool, next, size) != 0) {
+        free(next);
+        return NULL;
+    }
+    return next;
+}

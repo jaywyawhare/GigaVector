@@ -26,6 +26,7 @@ struct GV_Database;
 
 void *gv_db_alloc(struct GV_Database *db, size_t size);
 void *gv_db_calloc(struct GV_Database *db, size_t nmemb, size_t size);
+void *gv_db_realloc(struct GV_Database *db, void *ptr, size_t size);
 void  gv_db_free(struct GV_Database *db, void *ptr);
 
 #ifdef __cplusplus

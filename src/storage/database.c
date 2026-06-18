@@ -138,6 +138,12 @@ static int db_ivfdisk_create_index(GV_Database *db, size_t dimension, const char
     return db->hnsw_index ? 0 : -1;
 }
 
+static void db_attach_soa_storage(GV_Database *db) {
+    if (db != NULL && db->soa_storage != NULL) {
+        soa_storage_bind_database(db->soa_storage, db);
+    }
+}
+
 static void db_init_common_fields(GV_Database *db) {
     db->compaction_running = 0;
     pthread_mutex_init(&db->compaction_mutex, NULL);
@@ -607,6 +613,7 @@ GV_Database *db_open(const char *filepath, size_t dimension, GV_IndexType index_
             free(db);
             return NULL;
         }
+        db_attach_soa_storage(db);
     }
 
     if (index_type == GV_INDEX_TYPE_HNSW && filepath == NULL) {
@@ -1302,6 +1309,7 @@ static GV_Database *db_open_from_memory_impl(const void *data, size_t size,
             free(db);
             return NULL;
         }
+        db_attach_soa_storage(db);
     }
 
     FILE *in = fmemopen((void *)data, size, "rb");
@@ -1762,6 +1770,7 @@ GV_Database *db_open_with_hnsw_config(const char *filepath, size_t dimension,
             free(db);
             return NULL;
         }
+        db_attach_soa_storage(db);
     }
 
     db->hnsw_index = gv_hnsw_create(dimension, hnsw_config, db->soa_storage);
@@ -1989,6 +1998,7 @@ GV_Database *db_open_with_ivfdisk_config(const char *filepath, size_t dimension,
         return NULL;
     }
     db_init_common_fields(db);
+    db_attach_soa_storage(db);
 
     db->wal_path = db_build_wal_path(filepath);
     if (db->wal_path == NULL ||
@@ -2332,6 +2342,7 @@ GV_Database *db_open_with_lsh_config(const char *filepath, size_t dimension,
         free(db);
         return NULL;
     }
+    db_attach_soa_storage(db);
 
     if (config != NULL) {
         db->hnsw_index = lsh_create(dimension, config, db->soa_storage);
@@ -4624,14 +4635,30 @@ static int db_compact_soa_storage(GV_Database *db) {
 
     size_t new_count = storage->count - deleted_count;
     if (dimension == 0 || new_count > SIZE_MAX / dimension / sizeof(float)) return -1;
-    float *new_data = (float *)malloc(new_count * dimension * sizeof(float));
-    GV_Metadata **new_metadata = (GV_Metadata **)calloc(new_count, sizeof(GV_Metadata *));
-    int *new_deleted = (int *)calloc(new_count, sizeof(int));
+
+    float *new_data = NULL;
+    GV_Metadata **new_metadata = NULL;
+    int *new_deleted = NULL;
+    if (storage->owner_db != NULL) {
+        new_data = (float *)gv_db_alloc(storage->owner_db, new_count * dimension * sizeof(float));
+        new_metadata = (GV_Metadata **)gv_db_calloc(storage->owner_db, new_count, sizeof(GV_Metadata *));
+        new_deleted = (int *)gv_db_calloc(storage->owner_db, new_count, sizeof(int));
+    } else {
+        new_data = (float *)malloc(new_count * dimension * sizeof(float));
+        new_metadata = (GV_Metadata **)calloc(new_count, sizeof(GV_Metadata *));
+        new_deleted = (int *)calloc(new_count, sizeof(int));
+    }
     
     if (new_data == NULL || new_metadata == NULL || new_deleted == NULL) {
-        free(new_data);
-        free(new_metadata);
-        free(new_deleted);
+        if (storage->owner_db != NULL) {
+            if (new_data != NULL) gv_db_free(storage->owner_db, new_data);
+            if (new_metadata != NULL) gv_db_free(storage->owner_db, new_metadata);
+            if (new_deleted != NULL) gv_db_free(storage->owner_db, new_deleted);
+        } else {
+            free(new_data);
+            free(new_metadata);
+            free(new_deleted);
+        }
         return -1;
     }
 
@@ -4639,9 +4666,15 @@ static int db_compact_soa_storage(GV_Database *db) {
     size_t *index_map = (size_t *)gv_tls_alloc_or_heap(
         storage->count * sizeof(size_t), sizeof(size_t), &map_on_heap);
     if (index_map == NULL) {
-        free(new_data);
-        free(new_metadata);
-        free(new_deleted);
+        if (storage->owner_db != NULL) {
+            gv_db_free(storage->owner_db, new_data);
+            gv_db_free(storage->owner_db, new_metadata);
+            gv_db_free(storage->owner_db, new_deleted);
+        } else {
+            free(new_data);
+            free(new_metadata);
+            free(new_deleted);
+        }
         return -1;
     }
 
@@ -4669,9 +4702,15 @@ static int db_compact_soa_storage(GV_Database *db) {
         }
     }
 
-    free(storage->data);
-    free(storage->metadata);
-    free(storage->deleted);
+    if (storage->owner_db != NULL) {
+        gv_db_free(storage->owner_db, storage->data);
+        gv_db_free(storage->owner_db, storage->metadata);
+        gv_db_free(storage->owner_db, storage->deleted);
+    } else {
+        free(storage->data);
+        free(storage->metadata);
+        free(storage->deleted);
+    }
 
     storage->data = new_data;
     storage->metadata = new_metadata;

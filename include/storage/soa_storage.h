@@ -6,6 +6,8 @@
 #include <stdint.h>
 #include "core/types.h"
 
+struct GV_Database;
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -23,6 +25,7 @@ typedef struct {
     float *data;             /**< Contiguous array: [vec0_dim0, vec0_dim1, ..., vec1_dim0, ...]. */
     GV_Metadata **metadata;  /**< Array of metadata pointers, one per vector (may be NULL). */
     int *deleted;            /**< Array of deletion flags: 1 if deleted, 0 if active. */
+    struct GV_Database *owner_db; /**< When set, allocations use gv_db_alloc/realloc. */
 } GV_SoAStorage;
 
 /**
@@ -33,6 +36,11 @@ typedef struct {
  * @return Allocated storage or NULL on failure.
  */
 GV_SoAStorage *soa_storage_create(size_t dimension, size_t initial_capacity);
+
+/**
+ * @brief Route SoA heap growth through @p db's memory pool (gv_db_alloc/realloc).
+ */
+void soa_storage_bind_database(GV_SoAStorage *storage, struct GV_Database *db);
 
 /**
  * @brief Destroy SoA storage and free all resources.
