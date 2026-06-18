@@ -14,7 +14,12 @@
         }                         \
     } while (0)
 
-#define TEST_DB "tmp_test_auto_embed.bin"
+static char test_db_path[512];
+#define TEST_DB test_db_path
+
+static int init_test_db_path(void) {
+    return gv_test_make_temp_path(test_db_path, sizeof(test_db_path), "gv_test_auto_embed", ".bin");
+}
 
 static const char *get_google_api_key(void) {
     const char *key = getenv("GOOGLE_API_KEY");
@@ -291,6 +296,10 @@ static int test_google_live_embed(void) {
 }
 
 int main(void) {
+    if (init_test_db_path() != 0) {
+        fprintf(stderr, "FAIL: temp db path\n");
+        return 1;
+    }
     int failed = 0;
     int passed = 0;
 

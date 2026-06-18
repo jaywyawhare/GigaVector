@@ -8,10 +8,16 @@ mkdir -p "$ROOT/tests/fuzz/corpus/grpc" "$ROOT/tests/fuzz/corpus/wal" \
 
 make -C "$ROOT" lib >/dev/null
 
-cat > /tmp/gv_gen_corpus.c <<'EOF'
+TMP_ROOT="${TMPDIR:-${TEMP:-/tmp}}"
+GEN_SRC="$(mktemp "$TMP_ROOT/gv_gen_corpus.XXXXXX.c")"
+GEN_BIN="$(mktemp "$TMP_ROOT/gv_gen_corpus.XXXXXX")"
+trap 'rm -f "$GEN_SRC" "$GEN_BIN"' EXIT
+
+cat > "$GEN_SRC" <<'EOF'
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 #include "api/grpc.h"
 #include "admin/repl_transport.h"
 #include "storage/wal.h"
@@ -34,6 +40,13 @@ static void write_file(const char *path, const uint8_t *data, size_t len) {
     if (!f) { perror(path); exit(1); }
     fwrite(data, 1, len, f);
     fclose(f);
+}
+
+static void make_wal_tmp(char *buf, size_t size) {
+    const char *root = getenv("TMPDIR");
+    if (!root || !*root) root = getenv("TEMP");
+    if (!root || !*root) root = "/tmp";
+    snprintf(buf, size, "%s/gv_corpus_seed_%lu.wal", root, (unsigned long)getpid());
 }
 
 int main(int argc, char **argv) {
@@ -63,7 +76,8 @@ int main(int argc, char **argv) {
         write_file(grpc_frame_path, frame, 4 + frame_len);
     }
 
-    char wal_tmp[] = "/tmp/gv_corpus_seed.wal";
+    char wal_tmp[512];
+    make_wal_tmp(wal_tmp, sizeof(wal_tmp));
     remove(wal_tmp);
     GV_WAL *wal = wal_open(wal_tmp, 4, 0);
     if (wal) {
@@ -143,7 +157,7 @@ int main(int argc, char **argv) {
 }
 EOF
 
-gcc -O2 -I"$ROOT/include" /tmp/gv_gen_corpus.c -L"$ROOT/build/lib" -lGigaVector -lm -pthread \
-    -Wl,-rpath,"$ROOT/build/lib" -o /tmp/gv_gen_corpus
-/tmp/gv_gen_corpus "$ROOT"
+gcc -O2 -I"$ROOT/include" "$GEN_SRC" -L"$ROOT/build/lib" -lGigaVector -lm -pthread \
+    -Wl,-rpath,"$ROOT/build/lib" -o "$GEN_BIN"
+"$GEN_BIN" "$ROOT"
 echo "Corpus written to $ROOT/tests/fuzz/corpus/"
