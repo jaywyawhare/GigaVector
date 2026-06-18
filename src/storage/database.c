@@ -4450,14 +4450,14 @@ int db_update_vector_metadata(GV_Database *db, size_t vector_index,
             GV_Metadata *current = old_metadata;
             GV_Metadata *prev = NULL;
             while (current != NULL) {
-                GV_Metadata *copy = (GV_Metadata *)malloc(sizeof(GV_Metadata));
+                GV_Metadata *copy = (GV_Metadata *)gv_db_alloc(db, sizeof(GV_Metadata));
                 if (copy == NULL) {
                     /* Free what we've copied so far */
                     while (old_metadata_copy != NULL) {
                         GV_Metadata *next = old_metadata_copy->next;
                         free(old_metadata_copy->key);
                         free(old_metadata_copy->value);
-                        free(old_metadata_copy);
+                        gv_db_free(db, old_metadata_copy);
                         old_metadata_copy = next;
                     }
                     vector_clear_metadata(&temp_vec);
@@ -4490,7 +4490,7 @@ int db_update_vector_metadata(GV_Database *db, size_t vector_index,
             GV_Metadata *next = old_metadata_copy->next;
             free(old_metadata_copy->key);
             free(old_metadata_copy->value);
-            free(old_metadata_copy);
+            gv_db_free(db, old_metadata_copy);
             old_metadata_copy = next;
         }
     } else if (db->index_type == GV_INDEX_TYPE_HNSW ||
@@ -4543,13 +4543,13 @@ int db_update_vector_metadata(GV_Database *db, size_t vector_index,
             GV_Metadata *current = old_metadata;
             GV_Metadata *prev = NULL;
             while (current != NULL) {
-                GV_Metadata *copy = (GV_Metadata *)malloc(sizeof(GV_Metadata));
+                GV_Metadata *copy = (GV_Metadata *)gv_db_alloc(db, sizeof(GV_Metadata));
                 if (copy == NULL) {
                     while (old_metadata_copy != NULL) {
                         GV_Metadata *next = old_metadata_copy->next;
                         free(old_metadata_copy->key);
                         free(old_metadata_copy->value);
-                        free(old_metadata_copy);
+                        gv_db_free(db, old_metadata_copy);
                         old_metadata_copy = next;
                     }
                     vector_clear_metadata(&temp_vec);
@@ -4581,7 +4581,7 @@ int db_update_vector_metadata(GV_Database *db, size_t vector_index,
             GV_Metadata *next = old_metadata_copy->next;
             free(old_metadata_copy->key);
             free(old_metadata_copy->value);
-            free(old_metadata_copy);
+            gv_db_free(db, old_metadata_copy);
             old_metadata_copy = next;
         }
     } else if (db->index_type == GV_INDEX_TYPE_SPARSE) {
