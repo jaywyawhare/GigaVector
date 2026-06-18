@@ -276,6 +276,19 @@ int grpc_fuzz_dispatch_message(GV_GrpcServer *server, int response_fd,
 #define GV_GRPC_SEARCH_ARENA_BYTES   (64u * 1024u)
 #define GV_GRPC_BATCH_SEARCH_ARENA_BYTES (256u * 1024u)
 #define GV_GRPC_INSERT_ARENA_BYTES   (1024u * 1024u)
+#define GV_GRPC_WIRE_ARENA_BYTES       GV_TLS_ARENA_BYTES
+
+#if defined(__GNUC__) || defined(__clang__)
+#  define GV_GRPC_THREAD_LOCAL __thread
+#elif defined(_MSC_VER)
+#  define GV_GRPC_THREAD_LOCAL __declspec(thread)
+#else
+#  define GV_GRPC_THREAD_LOCAL _Thread_local
+#endif
+
+static GV_GRPC_THREAD_LOCAL int gv_grpc_payload_on_heap;
+
+static void grpc_wire_message_release(GV_GrpcMessage *msg);
 
 #if defined(__STDC_NO_ATOMICS__)
 #  if defined(__GNUC__) || defined(__clang__)
@@ -472,9 +485,10 @@ static int send_exact(int fd, const uint8_t *buf, size_t len) {
  * Wire format: [4-byte big-endian length][1-byte type][4-byte request_id][payload]
  * The length field encodes the number of bytes that follow (type + request_id + payload).
  *
- * @return 0 on success, -1 on error. Caller must free msg->payload.
+ * @return 0 on success, -1 on error. Release payload via grpc_wire_message_release().
  */
 static int recv_message(int fd, GV_GrpcMessage *msg, size_t max_bytes) {
+    gv_grpc_payload_on_heap = 0;
     uint8_t header[4];
     if (recv_exact(fd, header, 4) != 0) return -1;
 
@@ -490,11 +504,11 @@ static int recv_message(int fd, GV_GrpcMessage *msg, size_t max_bytes) {
     msg->payload_len = msg->length - 5;
 
     if (msg->payload_len > 0) {
-        msg->payload = malloc(msg->payload_len);
+        msg->payload = (uint8_t *)gv_tls_alloc_or_heap(
+            msg->payload_len, 1, &gv_grpc_payload_on_heap);
         if (!msg->payload) return -1;
         if (recv_exact(fd, msg->payload, msg->payload_len) != 0) {
-            free(msg->payload);
-            msg->payload = NULL;
+            grpc_wire_message_release(msg);
             return -1;
         }
     } else {
@@ -502,6 +516,17 @@ static int recv_message(int fd, GV_GrpcMessage *msg, size_t max_bytes) {
     }
 
     return 0;
+}
+
+static void grpc_wire_message_release(GV_GrpcMessage *msg) {
+    if (msg == NULL) {
+        return;
+    }
+    gv_tls_free_or_heap(msg->payload, gv_grpc_payload_on_heap);
+    msg->payload = NULL;
+    msg->payload_len = 0;
+    gv_grpc_payload_on_heap = 0;
+    gv_tls_arena_reset();
 }
 
 /**
@@ -532,16 +557,17 @@ static int send_error_response(int fd, uint32_t request_id, int32_t error_code,
                                 const char *error_msg) {
     size_t msg_len = error_msg ? strlen(error_msg) : 0;
     size_t payload_len = 4 + msg_len;
-    uint8_t *payload = malloc(payload_len);
-    if (!payload) return -1;
-
-    write_u32_be(payload, (uint32_t)error_code);
-    if (msg_len > 0) {
-        memcpy(payload + 4, error_msg, msg_len);
+    int rc = -1;
+    GV_WITH_ARENA(scratch, GV_GRPC_WIRE_ARENA_BYTES) {
+        uint8_t *payload = (uint8_t *)gv_arena_alloc(&scratch, payload_len, 1);
+        if (payload) {
+            write_u32_be(payload, (uint32_t)error_code);
+            if (msg_len > 0) {
+                memcpy(payload + 4, error_msg, msg_len);
+            }
+            rc = send_message(fd, GV_MSG_RESPONSE, request_id, payload, payload_len);
+        }
     }
-
-    int rc = send_message(fd, GV_MSG_RESPONSE, request_id, payload, payload_len);
-    free(payload);
     return rc;
 }
 
@@ -1052,19 +1078,19 @@ static void handle_ivfdisk_train(GV_GrpcServer *server, int fd,
         if (!data) {
             send_error_response(fd, msg->request_id, -1, "out of memory");
             GV_ATOMIC_INC(&server->errors);
-            return;
-        }
-        for (size_t i = 0; i < total_floats; i++) {
-            data[i] = read_float_be(msg->payload + 8 + i * 4);
-        }
+        } else {
+            for (size_t i = 0; i < total_floats; i++) {
+                data[i] = read_float_be(msg->payload + 8 + i * 4);
+            }
 
-        int rc = db_ivfdisk_train(server->db, data, (size_t)count, (size_t)dimension);
+            int rc = db_ivfdisk_train(server->db, data, (size_t)count, (size_t)dimension);
 
-        uint8_t resp[4];
-        write_u32_be(resp, (uint32_t)rc);
-        send_message(fd, GV_MSG_RESPONSE, msg->request_id, resp, 4);
-        if (rc != 0) {
-            GV_ATOMIC_INC(&server->errors);
+            uint8_t resp[4];
+            write_u32_be(resp, (uint32_t)rc);
+            send_message(fd, GV_MSG_RESPONSE, msg->request_id, resp, 4);
+            if (rc != 0) {
+                GV_ATOMIC_INC(&server->errors);
+            }
         }
     }
 }
@@ -1126,6 +1152,7 @@ static void handle_connection(GV_GrpcServer *server, int client_fd) {
     setsockopt(client_fd, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag));
 
     while (!server->stop_requested) {
+        gv_tls_arena_reset();
         GV_GrpcMessage msg;
         memset(&msg, 0, sizeof(msg));
 
@@ -1144,7 +1171,7 @@ static void handle_connection(GV_GrpcServer *server, int client_fd) {
         GV_ATOMIC_ADD(&server->total_latency_us, elapsed_us);
         GV_ATOMIC_INC(&server->latency_samples);
 
-        free(msg.payload);
+        grpc_wire_message_release(&msg);
     }
 
     close(client_fd);
@@ -1564,26 +1591,30 @@ int grpc_client_ivfdisk_train(const char *host, uint16_t port,
     if (fd < 0) return -1;
 
     size_t payload_cap = 8 + count * dimension * sizeof(float);
-    uint8_t *payload = (uint8_t *)malloc(payload_cap);
-    if (!payload) {
-        close(fd);
-        return -1;
-    }
+    int rc = -1;
+    GV_WITH_ARENA(scratch, GV_GRPC_INSERT_ARENA_BYTES) {
+        uint8_t *payload = (uint8_t *)gv_arena_alloc(&scratch, payload_cap, 1);
+        if (!payload) {
+            close(fd);
+            return -1;
+        }
 
-    size_t payload_len = 0;
-    if (grpc_encode_ivfdisk_train_request(data, count, dimension,
-                                          payload, payload_cap, &payload_len) != 0) {
-        free(payload);
-        close(fd);
-        return -1;
-    }
+        size_t payload_len = 0;
+        if (grpc_encode_ivfdisk_train_request(data, count, dimension,
+                                              payload, payload_cap, &payload_len) != 0) {
+            close(fd);
+            return -1;
+        }
 
-    if (send_message(fd, GV_MSG_IVFDISK_TRAIN, 1, payload, payload_len) != 0) {
-        free(payload);
-        close(fd);
+        if (send_message(fd, GV_MSG_IVFDISK_TRAIN, 1, payload, payload_len) != 0) {
+            close(fd);
+            return -1;
+        }
+        rc = 0;
+    }
+    if (rc != 0) {
         return -1;
     }
-    free(payload);
 
     GV_GrpcMessage msg;
     memset(&msg, 0, sizeof(msg));
@@ -1594,12 +1625,12 @@ int grpc_client_ivfdisk_train(const char *host, uint16_t port,
     close(fd);
 
     if (msg.msg_type != GV_MSG_RESPONSE || !msg.payload || msg.payload_len < 4) {
-        free(msg.payload);
+        grpc_wire_message_release(&msg);
         return -1;
     }
 
     int32_t status = (int32_t)read_u32_be(msg.payload);
-    free(msg.payload);
+    grpc_wire_message_release(&msg);
     return status == 0 ? 0 : -1;
 }
 
@@ -1655,24 +1686,24 @@ int grpc_client_search(const char *host, uint16_t port,
     close(fd);
 
     if (msg.msg_type != GV_MSG_RESPONSE || !msg.payload || msg.payload_len < 4) {
-        free(msg.payload);
+        grpc_wire_message_release(&msg);
         return -1;
     }
 
     if ((int32_t)read_u32_be(msg.payload) < 0) {
-        free(msg.payload);
+        grpc_wire_message_release(&msg);
         return -1;
     }
 
     uint32_t count = read_u32_be(msg.payload);
     if (msg.payload_len < 4 + (size_t)count * 8) {
-        free(msg.payload);
+        grpc_wire_message_release(&msg);
         return -1;
     }
 
     out->count = count;
     if (count == 0) {
-        free(msg.payload);
+        grpc_wire_message_release(&msg);
         return 0;
     }
 
@@ -1681,7 +1712,7 @@ int grpc_client_search(const char *host, uint16_t port,
     if (!out->indices || !out->distances) {
         free(out->indices);
         free(out->distances);
-        free(msg.payload);
+        grpc_wire_message_release(&msg);
         out->indices = NULL;
         out->distances = NULL;
         return -1;
@@ -1691,7 +1722,7 @@ int grpc_client_search(const char *host, uint16_t port,
         out->indices[i] = (size_t)read_u32_be(msg.payload + 4 + (size_t)i * 8);
         out->distances[i] = read_float_be(msg.payload + 4 + (size_t)i * 8 + 4);
     }
-    free(msg.payload);
+    grpc_wire_message_release(&msg);
     return (int)count;
 }
 
@@ -1706,6 +1737,7 @@ void grpc_search_response_free(GV_GrpcSearchResponse *resp) {
 
 int grpc_decode_frame(const uint8_t *data, size_t len, size_t max_bytes, GV_GrpcMessage *msg) {
     if (!data || !msg) return GV_GRPC_ERROR_NULL;
+    gv_grpc_payload_on_heap = 0;
     memset(msg, 0, sizeof(*msg));
     if (len < 9) return GV_GRPC_ERROR_CONFIG;
 
@@ -1717,7 +1749,8 @@ int grpc_decode_frame(const uint8_t *data, size_t len, size_t max_bytes, GV_Grpc
     msg->request_id = read_u32_be(data + 5);
     msg->payload_len = msg->length - 5;
     if (msg->payload_len > 0) {
-        msg->payload = (uint8_t *)malloc(msg->payload_len);
+        msg->payload = (uint8_t *)gv_tls_alloc_or_heap(
+            msg->payload_len, 1, &gv_grpc_payload_on_heap);
         if (!msg->payload) return GV_GRPC_ERROR_MEMORY;
         memcpy(msg->payload, data + 9, msg->payload_len);
     }
@@ -1725,11 +1758,7 @@ int grpc_decode_frame(const uint8_t *data, size_t len, size_t max_bytes, GV_Grpc
 }
 
 void grpc_message_free(GV_GrpcMessage *msg) {
-    if (!msg) return;
-    free(msg->payload);
-    msg->payload = NULL;
-    msg->payload_len = 0;
-    msg->length = 0;
+    grpc_wire_message_release(msg);
 }
 
 int grpc_fuzz_dispatch_message(GV_GrpcServer *server, int response_fd,

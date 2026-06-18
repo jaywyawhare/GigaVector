@@ -313,26 +313,20 @@ int mmr_search(const void *db_ptr, const float *query, size_t dimension,
 
     size_t candidate_count = (size_t)found;
 
-    float *cand_vectors =
-        (float *)gv_tls_alloc(candidate_count * dimension * sizeof(float), sizeof(float));
-    size_t *cand_indices =
-        (size_t *)gv_tls_alloc(candidate_count * sizeof(size_t), sizeof(size_t));
-    float *cand_distances =
-        (float *)gv_tls_alloc(candidate_count * sizeof(float), sizeof(float));
-    int scratch_on_heap = 0;
-    if (!cand_vectors || !cand_indices || !cand_distances) {
-        scratch_on_heap = 1;
-        cand_vectors = (float *)malloc(candidate_count * dimension * sizeof(float));
-        cand_indices = (size_t *)malloc(candidate_count * sizeof(size_t));
-        cand_distances = (float *)malloc(candidate_count * sizeof(float));
-    }
+    int vec_on_heap = 0;
+    int idx_on_heap = 0;
+    int dist_on_heap = 0;
+    float *cand_vectors = (float *)gv_tls_alloc_or_heap(
+        candidate_count * dimension * sizeof(float), sizeof(float), &vec_on_heap);
+    size_t *cand_indices = (size_t *)gv_tls_alloc_or_heap(
+        candidate_count * sizeof(size_t), sizeof(size_t), &idx_on_heap);
+    float *cand_distances = (float *)gv_tls_alloc_or_heap(
+        candidate_count * sizeof(float), sizeof(float), &dist_on_heap);
 
     if (!cand_vectors || !cand_indices || !cand_distances) {
-        if (scratch_on_heap) {
-            free(cand_vectors);
-            free(cand_indices);
-            free(cand_distances);
-        }
+        gv_tls_free_or_heap(cand_vectors, vec_on_heap);
+        gv_tls_free_or_heap(cand_indices, idx_on_heap);
+        gv_tls_free_or_heap(cand_distances, dist_on_heap);
         if (search_res_on_heap) {
             free(search_res);
         }
@@ -358,11 +352,9 @@ int mmr_search(const void *db_ptr, const float *query, size_t dimension,
     }
 
     if (valid == 0) {
-        if (scratch_on_heap) {
-            free(cand_vectors);
-            free(cand_indices);
-            free(cand_distances);
-        }
+        gv_tls_free_or_heap(cand_vectors, vec_on_heap);
+        gv_tls_free_or_heap(cand_indices, idx_on_heap);
+        gv_tls_free_or_heap(cand_distances, dist_on_heap);
         return 0;
     }
 
@@ -372,11 +364,9 @@ int mmr_search(const void *db_ptr, const float *query, size_t dimension,
                                      cand_distances, valid,
                                      k, &cfg, results);
 
-    if (scratch_on_heap) {
-        free(cand_vectors);
-        free(cand_indices);
-        free(cand_distances);
-    }
+    gv_tls_free_or_heap(cand_vectors, vec_on_heap);
+    gv_tls_free_or_heap(cand_indices, idx_on_heap);
+    gv_tls_free_or_heap(cand_distances, dist_on_heap);
 
     return result_count;
 }

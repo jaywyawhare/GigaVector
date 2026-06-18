@@ -182,7 +182,8 @@ size_t pipeline_phase_count(const GV_Pipeline *pipe) {
 static int execute_ann_phase(const GV_Database *db,
                              const GV_PhaseConfig *config,
                              const float *query, size_t dimension,
-                             Candidate **out_candidates) {
+                             Candidate **out_candidates,
+                             int *out_on_heap) {
     (void)dimension;
     size_t fetch_k = config->output_k;
     if (fetch_k == 0) fetch_k = 100;
@@ -204,9 +205,9 @@ static int execute_ann_phase(const GV_Database *db,
         return (found == 0) ? 0 : -1;
     }
 
-    int candidates_on_heap = 1;
-    (void)candidates_on_heap;
-    Candidate *candidates = malloc((size_t)found * sizeof(Candidate));
+    int candidates_on_heap = 0;
+    Candidate *candidates = (Candidate *)gv_tls_alloc_or_heap(
+        (size_t)found * sizeof(Candidate), sizeof(Candidate), &candidates_on_heap);
     if (!candidates) {
         gv_tls_free_or_heap(search_res, search_on_heap);
         return -1;
@@ -226,12 +227,15 @@ static int execute_ann_phase(const GV_Database *db,
     gv_tls_free_or_heap(search_res, search_on_heap);
 
     if (valid == 0) {
-        free(candidates);
+        gv_tls_free_or_heap(candidates, candidates_on_heap);
         *out_candidates = NULL;
         return 0;
     }
 
     *out_candidates = candidates;
+    if (out_on_heap) {
+        *out_on_heap = candidates_on_heap;
+    }
     return (int)valid;
 }
 
@@ -279,7 +283,8 @@ static int execute_rerank_mmr_phase(const GV_Database *db,
                                     int phase_id,
                                     Candidate *candidates, size_t count,
                                     Candidate **out_candidates,
-                                    size_t *out_count) {
+                                    size_t *out_count,
+                                    int *out_on_heap) {
     size_t keep = config->output_k;
     if (keep == 0 || keep > count) keep = count;
 
@@ -349,9 +354,11 @@ static int execute_rerank_mmr_phase(const GV_Database *db,
         return -1;
     }
 
-    Candidate *new_candidates = malloc((size_t)mmr_count * sizeof(Candidate));
+    int new_on_heap = 0;
+    Candidate *new_candidates = (Candidate *)gv_tls_alloc_or_heap(
+        (size_t)mmr_count * sizeof(Candidate), sizeof(Candidate), &new_on_heap);
     if (!new_candidates) {
-        free(mmr_results);
+        gv_tls_free_or_heap(mmr_results, mmr_on_heap);
         return -1;
     }
 
@@ -365,6 +372,9 @@ static int execute_rerank_mmr_phase(const GV_Database *db,
 
     *out_candidates = new_candidates;
     *out_count = (size_t)mmr_count;
+    if (out_on_heap) {
+        *out_on_heap = new_on_heap;
+    }
     return 0;
 }
 
@@ -465,6 +475,7 @@ int pipeline_execute(GV_Pipeline *pipe, const float *query,
 
     Candidate *candidates = NULL;
     size_t     cand_count = 0;
+    int        candidates_on_heap = 0;
     int        rc = 0;
 
     for (size_t p = 0; p < pipe->phase_count; p++) {
@@ -478,12 +489,15 @@ int pipeline_execute(GV_Pipeline *pipe, const float *query,
         switch (cfg->type) {
         case GV_PHASE_ANN: {
             Candidate *ann_cands = NULL;
+            int ann_on_heap = 0;
             int ann_count = execute_ann_phase(pipe->db, cfg, query, dimension,
-                                              &ann_cands);
+                                              &ann_cands, &ann_on_heap);
             if (ann_count < 0) {
                 rc = -1;
             } else {
+                gv_tls_free_or_heap(candidates, candidates_on_heap);
                 candidates = ann_cands;
+                candidates_on_heap = ann_on_heap;
                 cand_count = (size_t)ann_count;
                 pipe->stats[p].input_count = 0; /* ANN has no input candidates. */
             }
@@ -506,13 +520,16 @@ int pipeline_execute(GV_Pipeline *pipe, const float *query,
             if (!candidates || cand_count == 0) break;
             Candidate *new_cands = NULL;
             size_t new_count = 0;
+            int new_on_heap = 0;
             if (execute_rerank_mmr_phase(pipe->db, cfg, query, dimension,
                                          (int)p, candidates, cand_count,
-                                         &new_cands, &new_count) < 0) {
+                                         &new_cands, &new_count,
+                                         &new_on_heap) < 0) {
                 rc = -1;
             } else {
-                free(candidates);
+                gv_tls_free_or_heap(candidates, candidates_on_heap);
                 candidates = new_cands;
+                candidates_on_heap = new_on_heap;
                 cand_count = new_count;
             }
             break;
@@ -568,7 +585,7 @@ int pipeline_execute(GV_Pipeline *pipe, const float *query,
         result_count = (int)copy_count;
     }
 
-    free(candidates);
+    gv_tls_free_or_heap(candidates, candidates_on_heap);
     pthread_mutex_unlock(&pipe->mutex);
 
     return (rc < 0) ? -1 : result_count;

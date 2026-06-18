@@ -4,6 +4,9 @@
 
 #include "search/filter.h"
 #include "schema/metadata.h"
+#include "core/arena.h"
+
+#define GV_FILTER_ARENA_BYTES (64u * 1024u)
 
 typedef enum {
     GV_FILTER_NODE_COMPARISON,
@@ -37,6 +40,7 @@ typedef struct GV_FilterNode {
 
 struct GV_Filter {
     GV_FilterNode *root;
+    GV_Arena arena;
 };
 
 typedef struct {
@@ -70,9 +74,14 @@ typedef struct {
     char *text;
 } GV_FilterToken;
 
+typedef struct {
+    GV_FilterLexer lexer;
+    GV_FilterToken current;
+    GV_Arena *arena;
+} GV_FilterParser;
+
 static void filter_free_token(GV_FilterToken *tok) {
-    if (tok && tok->text) {
-        free(tok->text);
+    if (tok) {
         tok->text = NULL;
     }
 }
@@ -96,7 +105,17 @@ static int filter_match_kw(const char *s, size_t len, const char *kw) {
     return 1;
 }
 
-static GV_FilterToken filter_lexer_next(GV_FilterLexer *lx) {
+static char *filter_alloc_text(GV_Arena *arena, const char *src, size_t len) {
+    char *text = (char *)gv_arena_alloc(arena, len + 1, 1);
+    if (!text) {
+        return NULL;
+    }
+    memcpy(text, src, len);
+    text[len] = '\0';
+    return text;
+}
+
+static GV_FilterToken filter_lexer_next(GV_Arena *arena, GV_FilterLexer *lx) {
     GV_FilterToken tok;
     tok.type = TOK_EOF;
     tok.text = NULL;
@@ -111,32 +130,26 @@ static GV_FilterToken filter_lexer_next(GV_FilterLexer *lx) {
     if (isalpha((unsigned char)c) || c == '_') {
         size_t start = lx->pos;
         lx->pos++;
-        while (isalnum((unsigned char)lx->input[lx->pos]) || lx->input[lx->pos] == '_' || lx->input[lx->pos] == '.') {
+        while (isalnum((unsigned char)lx->input[lx->pos]) || lx->input[lx->pos] == '_' ||
+               lx->input[lx->pos] == '.') {
             lx->pos++;
         }
         size_t len = lx->pos - start;
-        char *text = (char *)malloc(len + 1);
+        char *text = filter_alloc_text(arena, lx->input + start, len);
         if (!text) {
             tok.type = TOK_ERROR;
             return tok;
         }
-        memcpy(text, lx->input + start, len);
-        text[len] = '\0';
 
         if (filter_match_kw(text, len, "AND")) {
-            free(text);
             tok.type = TOK_AND;
         } else if (filter_match_kw(text, len, "OR")) {
-            free(text);
             tok.type = TOK_OR;
         } else if (filter_match_kw(text, len, "NOT")) {
-            free(text);
             tok.type = TOK_NOT;
         } else if (filter_match_kw(text, len, "CONTAINS")) {
-            free(text);
             tok.type = TOK_CONTAINS;
         } else if (filter_match_kw(text, len, "PREFIX")) {
-            free(text);
             tok.type = TOK_PREFIX;
         } else {
             tok.type = TOK_IDENT;
@@ -161,14 +174,12 @@ static GV_FilterToken filter_lexer_next(GV_FilterLexer *lx) {
             return tok;
         }
         size_t len = lx->pos - start;
-        char *text = (char *)malloc(len + 1);
+        char *text = filter_alloc_text(arena, lx->input + start, len);
         if (!text) {
             tok.type = TOK_ERROR;
             return tok;
         }
-        memcpy(text, lx->input + start, len);
-        text[len] = '\0';
-        lx->pos++; /* consume closing quote */
+        lx->pos++;
 
         tok.type = TOK_STRING;
         tok.text = text;
@@ -182,13 +193,11 @@ static GV_FilterToken filter_lexer_next(GV_FilterLexer *lx) {
             lx->pos++;
         }
         size_t len = lx->pos - start;
-        char *text = (char *)malloc(len + 1);
+        char *text = filter_alloc_text(arena, lx->input + start, len);
         if (!text) {
             tok.type = TOK_ERROR;
             return tok;
         }
-        memcpy(text, lx->input + start, len);
-        text[len] = '\0';
         tok.type = TOK_NUMBER;
         tok.text = text;
         return tok;
@@ -240,14 +249,9 @@ static GV_FilterToken filter_lexer_next(GV_FilterLexer *lx) {
     return tok;
 }
 
-typedef struct {
-    GV_FilterLexer lexer;
-    GV_FilterToken current;
-} GV_FilterParser;
-
 static void filter_parser_advance(GV_FilterParser *p) {
     filter_free_token(&p->current);
-    p->current = filter_lexer_next(&p->lexer);
+    p->current = filter_lexer_next(p->arena, &p->lexer);
 }
 
 static int filter_expect(GV_FilterParser *p, GV_FilterTokenType type) {
@@ -257,21 +261,11 @@ static int filter_expect(GV_FilterParser *p, GV_FilterTokenType type) {
     return 1;
 }
 
-static GV_FilterNode *filter_node_new(GV_FilterNodeType type) {
-    GV_FilterNode *n = (GV_FilterNode *)calloc(1, sizeof(GV_FilterNode));
+static GV_FilterNode *filter_node_new(GV_Arena *arena, GV_FilterNodeType type) {
+    GV_FilterNode *n = (GV_FilterNode *)gv_arena_calloc(arena, 1, sizeof(GV_FilterNode));
     if (!n) return NULL;
     n->type = type;
     return n;
-}
-
-static void filter_node_free(GV_FilterNode *node) {
-    if (!node) return;
-    filter_node_free(node->left);
-    filter_node_free(node->right);
-    filter_node_free(node->child);
-    free(node->key);
-    free(node->value);
-    free(node);
 }
 
 static GV_FilterNode *filter_parse_expr(GV_FilterParser *p);
@@ -282,7 +276,6 @@ static GV_FilterNode *filter_parse_primary(GV_FilterParser *p) {
         GV_FilterNode *node = filter_parse_expr(p);
         if (!node) return NULL;
         if (!filter_expect(p, TOK_RPAREN)) {
-            filter_node_free(node);
             return NULL;
         }
         filter_parser_advance(p);
@@ -314,7 +307,6 @@ static GV_FilterNode *filter_parse_primary(GV_FilterParser *p) {
     } else if (p->current.type == TOK_PREFIX) {
         op = GV_FILTER_OP_PREFIX;
     } else {
-        free(key);
         return NULL;
     }
     GV_FilterTokenType optype = p->current.type;
@@ -322,17 +314,14 @@ static GV_FilterNode *filter_parse_primary(GV_FilterParser *p) {
 
     if (optype == TOK_CONTAINS || optype == TOK_PREFIX) {
         if (p->current.type != TOK_STRING && p->current.type != TOK_IDENT) {
-            free(key);
             return NULL;
         }
         char *val = p->current.text;
         p->current.text = NULL;
         filter_parser_advance(p);
 
-        GV_FilterNode *node = filter_node_new(GV_FILTER_NODE_COMPARISON);
+        GV_FilterNode *node = filter_node_new(p->arena, GV_FILTER_NODE_COMPARISON);
         if (!node) {
-            free(key);
-            free(val);
             return NULL;
         }
         node->key = key;
@@ -342,8 +331,8 @@ static GV_FilterNode *filter_parse_primary(GV_FilterParser *p) {
         return node;
     }
 
-    if (p->current.type != TOK_STRING && p->current.type != TOK_NUMBER && p->current.type != TOK_IDENT) {
-        free(key);
+    if (p->current.type != TOK_STRING && p->current.type != TOK_NUMBER &&
+        p->current.type != TOK_IDENT) {
         return NULL;
     }
     char *val = p->current.text;
@@ -351,10 +340,8 @@ static GV_FilterNode *filter_parse_primary(GV_FilterParser *p) {
     GV_FilterTokenType vtype = p->current.type;
     filter_parser_advance(p);
 
-    GV_FilterNode *node = filter_node_new(GV_FILTER_NODE_COMPARISON);
+    GV_FilterNode *node = filter_node_new(p->arena, GV_FILTER_NODE_COMPARISON);
     if (!node) {
-        free(key);
-        free(val);
         return NULL;
     }
     node->key = key;
@@ -362,7 +349,7 @@ static GV_FilterNode *filter_parse_primary(GV_FilterParser *p) {
     node->op = op;
     if (vtype == TOK_NUMBER) {
         char *endptr = NULL;
-        node->numeric_value = strtod(node->value, endptr ? &endptr : NULL);
+        node->numeric_value = strtod(node->value, &endptr);
         node->is_numeric = 1;
     } else {
         node->is_numeric = 0;
@@ -375,9 +362,8 @@ static GV_FilterNode *filter_parse_not(GV_FilterParser *p) {
         filter_parser_advance(p);
         GV_FilterNode *child = filter_parse_not(p);
         if (!child) return NULL;
-        GV_FilterNode *node = filter_node_new(GV_FILTER_NODE_NOT);
+        GV_FilterNode *node = filter_node_new(p->arena, GV_FILTER_NODE_NOT);
         if (!node) {
-            filter_node_free(child);
             return NULL;
         }
         node->child = child;
@@ -393,13 +379,10 @@ static GV_FilterNode *filter_parse_and(GV_FilterParser *p) {
         filter_parser_advance(p);
         GV_FilterNode *right = filter_parse_not(p);
         if (!right) {
-            filter_node_free(left);
             return NULL;
         }
-        GV_FilterNode *node = filter_node_new(GV_FILTER_NODE_AND);
+        GV_FilterNode *node = filter_node_new(p->arena, GV_FILTER_NODE_AND);
         if (!node) {
-            filter_node_free(left);
-            filter_node_free(right);
             return NULL;
         }
         node->left = left;
@@ -416,13 +399,10 @@ static GV_FilterNode *filter_parse_expr(GV_FilterParser *p) {
         filter_parser_advance(p);
         GV_FilterNode *right = filter_parse_and(p);
         if (!right) {
-            filter_node_free(left);
             return NULL;
         }
-        GV_FilterNode *node = filter_node_new(GV_FILTER_NODE_OR);
+        GV_FilterNode *node = filter_node_new(p->arena, GV_FILTER_NODE_OR);
         if (!node) {
-            filter_node_free(left);
-            filter_node_free(right);
             return NULL;
         }
         node->left = left;
@@ -436,26 +416,34 @@ GV_Filter *filter_parse(const char *expr) {
     if (expr == NULL) {
         return NULL;
     }
+
+    GV_Filter *filter = (GV_Filter *)malloc(sizeof(GV_Filter));
+    if (!filter) {
+        return NULL;
+    }
+    memset(filter, 0, sizeof(*filter));
+    if (gv_arena_init(&filter->arena, GV_FILTER_ARENA_BYTES) != 0) {
+        free(filter);
+        return NULL;
+    }
+
     GV_FilterParser parser;
     parser.lexer.input = expr;
     parser.lexer.pos = 0;
     parser.current.type = TOK_EOF;
     parser.current.text = NULL;
+    parser.arena = &filter->arena;
     filter_parser_advance(&parser);
 
     GV_FilterNode *root = filter_parse_expr(&parser);
     if (!root || parser.current.type != TOK_EOF) {
-        filter_node_free(root);
         filter_free_token(&parser.current);
+        gv_arena_fini(&filter->arena);
+        free(filter);
         return NULL;
     }
     filter_free_token(&parser.current);
 
-    GV_Filter *filter = (GV_Filter *)malloc(sizeof(GV_Filter));
-    if (!filter) {
-        filter_node_free(root);
-        return NULL;
-    }
     filter->root = root;
     return filter;
 }
@@ -540,7 +528,6 @@ int filter_eval(const GV_Filter *filter, const GV_Vector *vector) {
 
 void filter_destroy(GV_Filter *filter) {
     if (!filter) return;
-    filter_node_free(filter->root);
+    gv_arena_fini(&filter->arena);
     free(filter);
 }
-

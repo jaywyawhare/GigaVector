@@ -24,6 +24,7 @@
 #include <stdio.h>
 #include "core/compat.h"
 #include "core/utils.h"
+#include "core/scope.h"
 
 #include "search/importance.h"
 
@@ -1058,7 +1059,9 @@ int importance_rerank(const GV_ImportanceConfig *config,
 
     /* Combine importance with similarity */
     double importance_weight = 1.0 - similarity_weight;
-    double *combined_scores = malloc(count * sizeof(double));
+    int scores_on_heap = 0;
+    double *combined_scores = (double *)gv_tls_alloc_or_heap(
+        count * sizeof(double), sizeof(double), &scores_on_heap);
     if (combined_scores == NULL) {
         return -1;
     }
@@ -1080,6 +1083,6 @@ int importance_rerank(const GV_ImportanceConfig *config,
         }
     }
 
-    free(combined_scores);
+    gv_tls_free_or_heap(combined_scores, scores_on_heap);
     return 0;
 }
