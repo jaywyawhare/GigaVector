@@ -888,7 +888,7 @@ GV_DiskANNIndex *diskann_create(size_t dimension, const GV_DiskANNConfig *config
             free(index);
             return NULL;
         }
-        strcpy(index->data_path, config->data_path);
+        memcpy(index->data_path, config->data_path, strlen(config->data_path) + 1);
     } else {
         const char *default_path = "diskann_data.bin";
         index->data_path = (char *)malloc(strlen(default_path) + 1);
@@ -896,7 +896,7 @@ GV_DiskANNIndex *diskann_create(size_t dimension, const GV_DiskANNConfig *config
             free(index);
             return NULL;
         }
-        strcpy(index->data_path, default_path);
+        memcpy(index->data_path, default_path, strlen(default_path) + 1);
     }
 
     if (diskann_disk_open(index) != 0) {

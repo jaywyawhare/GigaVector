@@ -45,7 +45,6 @@
 #include "index/ivfdisk.h"
 #include "index/index_maintenance.h"
 #include "index/ivfsq8.h"
-#include "index/ivfsq8.h"
 #include "index/ivfturboquant.h"
 #include "index/ivfpq.h"
 #include "index/kdtree.h"

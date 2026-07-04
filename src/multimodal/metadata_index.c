@@ -130,8 +130,8 @@ static GV_MetadataKVEntry *metadata_index_find_or_create(GV_MetadataIndex *index
         return NULL;
     }
 
-    strcpy(entry->key, key);
-    strcpy(entry->value, value);
+    memcpy(entry->key, key, strlen(key) + 1);
+    memcpy(entry->value, value, strlen(value) + 1);
     entry->count = 0;
     entry->capacity = 16;
     entry->vector_indices = (size_t *)malloc(entry->capacity * sizeof(size_t));

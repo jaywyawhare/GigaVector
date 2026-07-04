@@ -424,29 +424,6 @@ GV_Database *db_open_with_ivfsq8_config(const char *filepath, size_t dimension,
 int db_ivfsq8_train(GV_Database *db, const float *data, size_t count, size_t dimension);
 
 /**
- * @brief Open an in-memory database with IVF-SQ8 configuration.
- *
- * @param filepath Optional file path string to associate with the database.
- * @param dimension Expected dimensionality.
- * @param index_type Must be GV_INDEX_TYPE_IVFSQ8 for config to apply.
- * @param config IVF-SQ8 configuration; NULL to use defaults.
- * @return Allocated database instance or NULL on failure.
- */
-GV_Database *db_open_with_ivfsq8_config(const char *filepath, size_t dimension,
-                                        GV_IndexType index_type, const GV_IVFSQ8Config *config);
-
-/**
- * @brief Train IVF-SQ8 coarse centroids and scalar quantizer.
- *
- * @param db Database; must be GV_INDEX_TYPE_IVFSQ8.
- * @param data Contiguous floats of size count * dimension.
- * @param count Number of training vectors.
- * @param dimension Vector dimension; must match db->dimension.
- * @return 0 on success, -1 on invalid args or training failure.
- */
-int db_ivfsq8_train(GV_Database *db, const float *data, size_t count, size_t dimension);
-
-/**
  * @brief Open an in-memory database with IVF-TurboQuant configuration.
  *
  * @param filepath Optional file path string to associate with the database.

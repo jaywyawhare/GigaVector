@@ -685,8 +685,8 @@ static int generate_google_embedding_batch(GV_EmbeddingService *service,
         return -1;
     }
     
-    strcpy(request_json, "{\"requests\":[");
-    size_t pos = strlen(request_json);
+    memcpy(request_json, "{\"requests\":[", 14);
+    size_t pos = 13;
     
     /* Google API expects model in format "models/{model}" */
     const char *model_prefix = (strncmp(model, "models/", 7) != 0) ? "models/" : "";
@@ -975,8 +975,8 @@ static int generate_huggingface_embedding_batch(GV_EmbeddingService *service,
         return -1;
     }
 
-    strcpy(request_json, "{\"input\":[");
-    size_t pos = strlen(request_json);
+    memcpy(request_json, "{\"input\":[", 11);
+    size_t pos = 10;
 
     for (size_t i = 0; i < text_count; i++) {
         if (i > 0) {
@@ -1121,8 +1121,8 @@ static int generate_openai_embedding_batch(GV_EmbeddingService *service,
     const char *model = service->config.model ? service->config.model : "text-embedding-3-small";
     int dim = service->config.embedding_dimension > 0 ? (int)service->config.embedding_dimension : 0;
 
-    strcpy(request_json, "{\"input\":[");
-    size_t pos = strlen(request_json);
+    memcpy(request_json, "{\"input\":[", 11);
+    size_t pos = 10;
 
     for (size_t i = 0; i < text_count; i++) {
         if (i > 0) {

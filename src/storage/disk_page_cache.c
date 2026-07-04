@@ -172,7 +172,7 @@ int gv_disk_page_cache_insert(GV_DiskPageCache *cache, const char *key,
         disk_page_cache_node_free(node);
         return -1;
     }
-    strcpy(node->key, key);
+    memcpy(node->key, key, strlen(key) + 1);
     memcpy(node->data, data, len);
     node->len = len;
     node->hash = hash;

@@ -83,7 +83,6 @@ static ssize_t getline(char **lineptr, size_t *n, FILE *stream) {
 #include "index/ivfdisk.h"
 #include "index/index_maintenance.h"
 #include "index/ivfsq8.h"
-#include "index/ivfsq8.h"
 #include "index/ivfturboquant.h"
 #include "index/pq.h"
 #include "index/lsh.h"
@@ -1707,7 +1706,7 @@ GV_Database *db_open_mmap(const char *filepath, size_t dimension, GV_IndexType i
 
 GV_Database *db_open_with_hnsw_config(const char *filepath, size_t dimension, 
                                          GV_IndexType index_type, const GV_HNSWConfig *hnsw_config) {
-    if (index_type != GV_INDEX_TYPE_HNSW || filepath != NULL) {
+    if (index_type != GV_INDEX_TYPE_HNSW) {
         return db_open(filepath, dimension, index_type);
     }
 
@@ -1728,6 +1727,19 @@ GV_Database *db_open_with_hnsw_config(const char *filepath, size_t dimension,
     db->soa_storage = NULL;
     db->filepath = NULL;
     db->wal_path = NULL;
+    if (filepath != NULL) {
+        db->filepath = gv_dup_cstr(filepath);
+        if (db->filepath == NULL) {
+            free(db);
+            return NULL;
+        }
+        db->wal_path = db_build_wal_path(filepath);
+        if (db->wal_path == NULL) {
+            free(db->filepath);
+            free(db);
+            return NULL;
+        }
+    }
     db->wal = NULL;
     db->wal_replaying = 0;
     pthread_rwlock_init(&db->rwlock, NULL);
@@ -1744,6 +1756,8 @@ GV_Database *db_open_with_hnsw_config(const char *filepath, size_t dimension,
     if (db->metadata_index == NULL) {
         pthread_rwlock_destroy(&db->rwlock);
         pthread_mutex_destroy(&db->wal_mutex);
+        free(db->filepath);
+        free(db->wal_path);
         free(db);
         return NULL;
     }
