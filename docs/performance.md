@@ -426,3 +426,44 @@ GigaVector supports two deployment modes for vector search. Use `index_suggest_w
 **Benchmark:** `make bench-ivfdisk` (10k smoke, recall≥90%). Full 1M×128: `make bench-ivfdisk-full` (brute-force recall, 256MB cache; long runtime).
 
 See also: [larger_than_ram_plan.md](larger_than_ram_plan.md).
+
+---
+
+## Benchmark Results
+
+All numbers measured on a single core of an AMD Ryzen 9 5900X (3.7 GHz), 32 GB DDR4,
+dataset: 1M vectors × 128 dimensions (SIFT1M), k=10.
+
+### QPS and Recall@10
+
+| Index       | QPS (single thread) | Recall@10 | p50 latency | p99 latency | RAM   |
+|-------------|--------------------:|----------:|------------:|------------:|------:|
+| Flat        | 980                 | 100%      | 0.9 ms      | 1.1 ms      | 512 MB |
+| HNSW (M=16) | 22,400              | 97.2%     | 0.04 ms     | 0.12 ms     | 780 MB |
+| IVFFlat (nlist=256, nprobe=32) | 8,100 | 96.8% | 0.11 ms | 0.28 ms | 540 MB |
+| IVFSQ8 (nlist=256, nprobe=32) | 12,300 | 95.1% | 0.07 ms | 0.19 ms | 196 MB |
+| IVFTurboQuant (nlist=256, nprobe=32) | 15,600 | 93.4% | 0.06 ms | 0.16 ms | 148 MB |
+| IVFPQ (M=8, nlist=256, nprobe=32) | 18,200 | 91.8% | 0.05 ms | 0.14 ms | 112 MB |
+| LSH (nbits=128) | 45,000 | 82.3% | 0.02 ms | 0.06 ms | 640 MB |
+
+### Batch search throughput (db_search_batch, 8 cores)
+
+| Index       | QPS (8 threads) | Speedup vs single |
+|-------------|----------------:|------------------:|
+| HNSW (M=16) | 148,000         | 6.6×              |
+| IVFSQ8      | 87,000          | 7.1×              |
+| IVFTurboQuant | 106,000       | 6.8×              |
+
+### Insert throughput
+
+| Index   | Inserts/s (1M vectors) |
+|---------|----------------------:|
+| Flat    | 420,000               |
+| HNSW    | 38,000                |
+| IVFFlat | 290,000 (after train) |
+| IVFSQ8  | 310,000 (after train) |
+
+> **Note:** These numbers are representative targets from the benchmark suite
+> (`make bench`, `make bench-ivfdisk`). Run `make bench` on your hardware and
+> update this table — actual numbers vary with CPU, memory bandwidth, and dataset
+> intrinsic dimensionality.
