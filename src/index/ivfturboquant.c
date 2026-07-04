@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #include "index/ivfturboquant.h"
+#include "index/ivf_base.h"
 #include "search/distance.h"
 #include "schema/vector.h"
 #include "schema/metadata.h"
@@ -53,82 +54,6 @@ static void ivfturboquant_default_config(size_t dimension, GV_IVFTurboQuantConfi
     cfg->turbo.seed = 42;
     cfg->turbo.use_qjl = 1;
     cfg->turbo.rotation = GV_TURBOQUANT_ROTATION_AUTO;
-}
-
-static void ivfturboquant_argmin(const float *data, size_t count, size_t dim,
-                                 const float *centroids, size_t k, int *assign) {
-    for (size_t i = 0; i < count; i++) {
-        const float *vec = data + i * dim;
-        float best_dist = INFINITY;
-        int best_idx = -1;
-        for (size_t c = 0; c < k; c++) {
-            const float *centroid = centroids + c * dim;
-            float dist = 0.0f;
-            for (size_t d = 0; d < dim; d++) {
-                float diff = vec[d] - centroid[d];
-                dist += diff * diff;
-            }
-            if (dist < best_dist) {
-                best_dist = dist;
-                best_idx = (int)c;
-            }
-        }
-        assign[i] = best_idx;
-    }
-}
-
-static int ivfturboquant_kmeans(const float *data, size_t count, size_t dim,
-                                size_t k, size_t iters, float *out_centroids) {
-    if (count < k || !data || !out_centroids) {
-        return -1;
-    }
-
-    memcpy(out_centroids, data, k * dim * sizeof(float));
-
-    int *assign = (int *)malloc(count * sizeof(int));
-    float *new_centroids = (float *)calloc(k * dim, sizeof(float));
-    size_t *counts = (size_t *)calloc(k, sizeof(size_t));
-
-    if (!assign || !new_centroids || !counts) {
-        free(assign);
-        free(new_centroids);
-        free(counts);
-        return -1;
-    }
-
-    for (size_t iter = 0; iter < iters; iter++) {
-        ivfturboquant_argmin(data, count, dim, out_centroids, k, assign);
-
-        memset(new_centroids, 0, k * dim * sizeof(float));
-        memset(counts, 0, k * sizeof(size_t));
-
-        for (size_t i = 0; i < count; i++) {
-            int c = assign[i];
-            if (c < 0) {
-                continue;
-            }
-            const float *vec = data + i * dim;
-            for (size_t d = 0; d < dim; d++) {
-                new_centroids[c * dim + d] += vec[d];
-            }
-            counts[c]++;
-        }
-
-        for (size_t c = 0; c < k; c++) {
-            if (counts[c] > 0) {
-                for (size_t d = 0; d < dim; d++) {
-                    new_centroids[c * dim + d] /= (float)counts[c];
-                }
-            }
-        }
-
-        memcpy(out_centroids, new_centroids, k * dim * sizeof(float));
-    }
-
-    free(assign);
-    free(new_centroids);
-    free(counts);
-    return 0;
 }
 
 static float ivfturboquant_entry_distance(const GV_IVFTurboQuantIndex *idx,
@@ -256,8 +181,8 @@ int ivfturboquant_train(void *index, const float *data, size_t count) {
         }
     }
 
-    if (ivfturboquant_kmeans(train_buf, count, idx->dimension, idx->config.nlist,
-                             idx->config.train_iters, idx->centroids) != 0) {
+    if (ivf_train_centroids(train_buf, count, idx->dimension, idx->config.nlist,
+                            idx->config.train_iters, idx->centroids) != 0) {
         free(train_buf);
         return -1;
     }
