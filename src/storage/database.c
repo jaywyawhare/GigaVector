@@ -3596,13 +3596,69 @@ int db_search_ivfpq_opts(const GV_Database *db, const float *query_data, size_t 
     return r;
 }
 
+typedef struct {
+    const GV_Database *db;
+    const float *queries;
+    GV_SearchResult *results;
+    size_t start;
+    size_t count;
+    size_t k;
+    GV_DistanceType distance_type;
+    int error;
+} BatchSearchJob;
+
+static void *db_batch_search_worker(void *arg) {
+    BatchSearchJob *job = (BatchSearchJob *)arg;
+    const GV_Database *db = job->db;
+    size_t dim = db->dimension;
+
+    for (size_t i = 0; i < job->count; i++) {
+        GV_Vector qv;
+        qv.dimension = dim;
+        qv.metadata = NULL;
+        qv.data = (float *)(job->queries + (job->start + i) * dim);
+        GV_SearchResult *slot = job->results + (job->start + i) * job->k;
+        int r = -1;
+
+        if (db->index_type == GV_INDEX_TYPE_KDTREE) {
+            r = db->soa_storage
+                    ? kdtree_knn_search(db->root, db->soa_storage, &qv, job->k, slot, job->distance_type)
+                    : -1;
+        } else if (db->index_type == GV_INDEX_TYPE_HNSW) {
+            r = gv_hnsw_search(db->hnsw_index, &qv, job->k, slot, job->distance_type, NULL, NULL);
+        } else if (db->index_type == GV_INDEX_TYPE_IVFPQ) {
+            r = gv_ivfpq_search(db->hnsw_index, &qv, job->k, slot, job->distance_type, 0, 0);
+        } else if (db->index_type == GV_INDEX_TYPE_FLAT) {
+            r = flat_search(db->hnsw_index, &qv, job->k, slot, job->distance_type, NULL, NULL);
+        } else if (db->index_type == GV_INDEX_TYPE_IVFFLAT) {
+            r = ivfflat_search(db->hnsw_index, &qv, job->k, slot, job->distance_type, NULL, NULL);
+        } else if (db->index_type == GV_INDEX_TYPE_IVFSQ8) {
+            r = ivfsq8_search(db->hnsw_index, &qv, job->k, slot, job->distance_type, NULL, NULL);
+        } else if (db->index_type == GV_INDEX_TYPE_IVFTURBOQUANT) {
+            r = ivfturboquant_search(db->hnsw_index, &qv, job->k, slot, job->distance_type, NULL, NULL);
+        } else if (db->index_type == GV_INDEX_TYPE_PQ) {
+            r = pq_search(db->hnsw_index, &qv, job->k, slot, job->distance_type, NULL, NULL);
+        } else if (db->index_type == GV_INDEX_TYPE_LSH) {
+            r = lsh_search(db->hnsw_index, &qv, job->k, slot, job->distance_type, NULL, NULL);
+        }
+
+        if (r < 0) {
+            job->error = 1;
+            return NULL;
+        }
+    }
+    return NULL;
+}
+
 int db_search_batch(const GV_Database *db, const float *queries, size_t qcount, size_t k,
                        GV_SearchResult *results, GV_DistanceType distance_type) {
     if (db == NULL || queries == NULL || results == NULL || qcount == 0 || k == 0) {
         return -1;
     }
+
     pthread_rwlock_rdlock((pthread_rwlock_t *)&db->rwlock);
     ((GV_Database *)db)->total_queries += 1;
+
     if (db->index_type == GV_INDEX_TYPE_KDTREE && db->root == NULL) {
         pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
         return 0;
@@ -3621,45 +3677,65 @@ int db_search_batch(const GV_Database *db, const float *queries, size_t qcount, 
         return 0;
     }
 
-    GV_Vector qv;
-    qv.dimension = db->dimension;
-    qv.metadata = NULL;
+#ifdef _WIN32
+    long ncpu = 1;
+    SYSTEM_INFO si;
+    GetSystemInfo(&si);
+    ncpu = (long)si.dwNumberOfProcessors;
+#else
+    long ncpu = sysconf(_SC_NPROCESSORS_ONLN);
+#endif
+    if (ncpu < 1) ncpu = 1;
 
-    for (size_t i = 0; i < qcount; ++i) {
-        qv.data = (float *)(queries + i * db->dimension);
-        GV_SearchResult *slot = results + i * k;
-        int r = -1;
-        if (db->index_type == GV_INDEX_TYPE_KDTREE) {
-            if (db->soa_storage == NULL) {
-                r = -1;
-            } else {
-                r = kdtree_knn_search(db->root, db->soa_storage, &qv, k, slot, distance_type);
-            }
-        } else if (db->index_type == GV_INDEX_TYPE_HNSW) {
-            r = gv_hnsw_search(db->hnsw_index, &qv, k, slot, distance_type, NULL, NULL);
-        } else if (db->index_type == GV_INDEX_TYPE_IVFPQ) {
-            r = gv_ivfpq_search(db->hnsw_index, &qv, k, slot, distance_type, 0, 0);
-        } else if (db->index_type == GV_INDEX_TYPE_FLAT) {
-            r = flat_search(db->hnsw_index, &qv, k, slot, distance_type, NULL, NULL);
-        } else if (db->index_type == GV_INDEX_TYPE_IVFFLAT) {
-            r = ivfflat_search(db->hnsw_index, &qv, k, slot, distance_type, NULL, NULL);
-        } else if (db->index_type == GV_INDEX_TYPE_IVFSQ8) {
-            r = ivfsq8_search(db->hnsw_index, &qv, k, slot, distance_type, NULL, NULL);
-        } else if (db->index_type == GV_INDEX_TYPE_IVFTURBOQUANT) {
-            r = ivfturboquant_search(db->hnsw_index, &qv, k, slot, distance_type, NULL, NULL);
-        } else if (db->index_type == GV_INDEX_TYPE_PQ) {
-            r = pq_search(db->hnsw_index, &qv, k, slot, distance_type, NULL, NULL);
-        } else if (db->index_type == GV_INDEX_TYPE_LSH) {
-            r = lsh_search(db->hnsw_index, &qv, k, slot, distance_type, NULL, NULL);
-        }
-        if (r < 0) {
-            pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
-            return -1;
+    size_t nthreads = (size_t)ncpu < qcount ? (size_t)ncpu : qcount;
+
+    pthread_t *tids = (pthread_t *)malloc(nthreads * sizeof(pthread_t));
+    BatchSearchJob *jobs = (BatchSearchJob *)malloc(nthreads * sizeof(BatchSearchJob));
+    if (!tids || !jobs) {
+        free(tids);
+        free(jobs);
+        pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
+        return -1;
+    }
+
+    size_t base = qcount / nthreads;
+    size_t rem  = qcount % nthreads;
+    size_t offset = 0;
+    size_t launched = 0;
+
+    for (size_t t = 0; t < nthreads; t++) {
+        size_t chunk = base + (t < rem ? 1 : 0);
+        jobs[t].db            = db;
+        jobs[t].queries       = queries;
+        jobs[t].results       = results;
+        jobs[t].start         = offset;
+        jobs[t].count         = chunk;
+        jobs[t].k             = k;
+        jobs[t].distance_type = distance_type;
+        jobs[t].error         = 0;
+        offset += chunk;
+
+        if (chunk == 0) continue;
+        if (pthread_create(&tids[t], NULL, db_batch_search_worker, &jobs[t]) != 0) {
+            jobs[t].error = 1;
+            /* run remaining queries on caller thread */
+            db_batch_search_worker(&jobs[t]);
+        } else {
+            launched++;
         }
     }
 
+    int had_error = 0;
+    for (size_t t = 0; t < launched; t++) {
+        pthread_join(tids[t], NULL);
+        if (jobs[t].error) had_error = 1;
+    }
+
+    free(tids);
+    free(jobs);
     pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
-    return (int)(qcount * k);
+
+    return had_error ? -1 : (int)(qcount * k);
 }
 
 void gv_search_results_free(GV_SearchResult *results, size_t count) {
