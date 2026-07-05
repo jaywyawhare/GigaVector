@@ -1,6 +1,7 @@
 #ifndef GIGAVECTOR_GIGAVECTOR_H
 #define GIGAVECTOR_GIGAVECTOR_H
 
+#include "admin/ab_test.h"
 #include "admin/cache.h"
 #include "admin/cdc.h"
 #include "admin/cluster.h"

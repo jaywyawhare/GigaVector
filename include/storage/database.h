@@ -128,6 +128,8 @@ typedef struct GV_Database {
     GV_RecallMetrics recall_metrics;   /**< Recall metrics for approximate search. */
     pthread_mutex_t observability_mutex; /**< Mutex for observability data. */
     GV_Memory memory_pool;             /**< Tracked long-lived allocations (gv_db_alloc). */
+    struct GV_ABTest *ab_test;           /**< Active A/B test state, or NULL. */
+    pthread_mutex_t ab_mutex;            /**< Mutex protecting ab_test access. */
 } GV_Database;
 
 typedef struct {

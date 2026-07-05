@@ -165,6 +165,8 @@ static void db_init_common_fields(GV_Database *db) {
     memset(&db->recall_metrics, 0, sizeof(GV_RecallMetrics));
     pthread_mutex_init(&db->observability_mutex, NULL);
     gv_memory_init(&db->memory_pool);
+    db->ab_test = NULL;
+    pthread_mutex_init(&db->ab_mutex, NULL);
 }
 
 static int db_write_header(FILE *out, uint32_t dimension, uint64_t count, uint32_t version) {
@@ -515,6 +517,7 @@ static void db_free_open_failure(GV_Database *db) {
     pthread_cond_destroy(&db->compaction_cond);
     pthread_mutex_destroy(&db->resource_mutex);
     pthread_mutex_destroy(&db->observability_mutex);
+    pthread_mutex_destroy(&db->ab_mutex);
     gv_free(db->filepath);
     gv_free(db->wal_path);
     gv_free(db);
@@ -720,6 +723,7 @@ GV_Database *db_open(const char *filepath, size_t dimension, GV_IndexType index_
             pthread_cond_destroy(&db->compaction_cond);
             pthread_mutex_destroy(&db->resource_mutex);
             pthread_mutex_destroy(&db->observability_mutex);
+    pthread_mutex_destroy(&db->ab_mutex);
             pthread_rwlock_destroy(&db->rwlock);
             pthread_mutex_destroy(&db->wal_mutex);
             if (db->soa_storage) soa_storage_destroy(db->soa_storage);
@@ -734,6 +738,7 @@ GV_Database *db_open(const char *filepath, size_t dimension, GV_IndexType index_
             pthread_cond_destroy(&db->compaction_cond);
             pthread_mutex_destroy(&db->resource_mutex);
             pthread_mutex_destroy(&db->observability_mutex);
+    pthread_mutex_destroy(&db->ab_mutex);
             pthread_rwlock_destroy(&db->rwlock);
             pthread_mutex_destroy(&db->wal_mutex);
             if (db->soa_storage) soa_storage_destroy(db->soa_storage);
@@ -750,6 +755,7 @@ GV_Database *db_open(const char *filepath, size_t dimension, GV_IndexType index_
             pthread_cond_destroy(&db->compaction_cond);
             pthread_mutex_destroy(&db->resource_mutex);
             pthread_mutex_destroy(&db->observability_mutex);
+    pthread_mutex_destroy(&db->ab_mutex);
             pthread_rwlock_destroy(&db->rwlock);
             pthread_mutex_destroy(&db->wal_mutex);
             if (db->soa_storage) soa_storage_destroy(db->soa_storage);
@@ -1261,6 +1267,7 @@ void db_close(GV_Database *db) {
         db->search_latency_hist.bucket_boundaries = NULL;
     }
     pthread_mutex_destroy(&db->observability_mutex);
+    pthread_mutex_destroy(&db->ab_mutex);
     gv_memory_fini(&db->memory_pool);
     gv_free(db->filepath);
     gv_free(db->wal_path);
@@ -1894,6 +1901,7 @@ GV_Database *db_open_with_ivfpq_config(const char *filepath, size_t dimension,
         metadata_index_destroy(db->metadata_index);
         pthread_mutex_destroy(&db->resource_mutex);
         pthread_mutex_destroy(&db->observability_mutex);
+    pthread_mutex_destroy(&db->ab_mutex);
         pthread_cond_destroy(&db->compaction_cond);
         pthread_mutex_destroy(&db->compaction_mutex);
         pthread_rwlock_destroy(&db->rwlock);
@@ -1976,6 +1984,7 @@ GV_Database *db_open_with_ivfflat_config(const char *filepath, size_t dimension,
         metadata_index_destroy(db->metadata_index);
         pthread_mutex_destroy(&db->resource_mutex);
         pthread_mutex_destroy(&db->observability_mutex);
+    pthread_mutex_destroy(&db->ab_mutex);
         pthread_cond_destroy(&db->compaction_cond);
         pthread_mutex_destroy(&db->compaction_mutex);
         pthread_rwlock_destroy(&db->rwlock);
@@ -2043,6 +2052,7 @@ GV_Database *db_open_with_ivfdisk_config(const char *filepath, size_t dimension,
         gv_free(db->wal_path);
         pthread_mutex_destroy(&db->resource_mutex);
         pthread_mutex_destroy(&db->observability_mutex);
+    pthread_mutex_destroy(&db->ab_mutex);
         pthread_cond_destroy(&db->compaction_cond);
         pthread_mutex_destroy(&db->compaction_mutex);
         pthread_rwlock_destroy(&db->rwlock);
@@ -2125,6 +2135,7 @@ GV_Database *db_open_with_ivfsq8_config(const char *filepath, size_t dimension,
         metadata_index_destroy(db->metadata_index);
         pthread_mutex_destroy(&db->resource_mutex);
         pthread_mutex_destroy(&db->observability_mutex);
+    pthread_mutex_destroy(&db->ab_mutex);
         pthread_cond_destroy(&db->compaction_cond);
         pthread_mutex_destroy(&db->compaction_mutex);
         pthread_rwlock_destroy(&db->rwlock);
@@ -2216,6 +2227,7 @@ GV_Database *db_open_with_ivfturboquant_config(const char *filepath, size_t dime
         metadata_index_destroy(db->metadata_index);
         pthread_mutex_destroy(&db->resource_mutex);
         pthread_mutex_destroy(&db->observability_mutex);
+    pthread_mutex_destroy(&db->ab_mutex);
         pthread_mutex_destroy(&db->compaction_mutex);
         pthread_cond_destroy(&db->compaction_cond);
         pthread_rwlock_destroy(&db->rwlock);
@@ -2297,6 +2309,7 @@ GV_Database *db_open_with_pq_config(const char *filepath, size_t dimension,
         metadata_index_destroy(db->metadata_index);
         pthread_mutex_destroy(&db->resource_mutex);
         pthread_mutex_destroy(&db->observability_mutex);
+    pthread_mutex_destroy(&db->ab_mutex);
         pthread_cond_destroy(&db->compaction_cond);
         pthread_mutex_destroy(&db->compaction_mutex);
         pthread_rwlock_destroy(&db->rwlock);
@@ -2369,6 +2382,7 @@ GV_Database *db_open_with_lsh_config(const char *filepath, size_t dimension,
         metadata_index_destroy(db->metadata_index);
         pthread_mutex_destroy(&db->resource_mutex);
         pthread_mutex_destroy(&db->observability_mutex);
+    pthread_mutex_destroy(&db->ab_mutex);
         pthread_cond_destroy(&db->compaction_cond);
         pthread_mutex_destroy(&db->compaction_mutex);
         pthread_rwlock_destroy(&db->rwlock);
@@ -2390,6 +2404,7 @@ GV_Database *db_open_with_lsh_config(const char *filepath, size_t dimension,
         metadata_index_destroy(db->metadata_index);
         pthread_mutex_destroy(&db->resource_mutex);
         pthread_mutex_destroy(&db->observability_mutex);
+    pthread_mutex_destroy(&db->ab_mutex);
         pthread_cond_destroy(&db->compaction_cond);
         pthread_mutex_destroy(&db->compaction_mutex);
         pthread_rwlock_destroy(&db->rwlock);
