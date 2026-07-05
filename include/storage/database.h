@@ -1080,6 +1080,27 @@ int db_export_json(const GV_Database *db, const char *filepath);
  */
 int db_import_json(GV_Database *db, const char *filepath);
 
+/**
+ * @brief Search for k nearest neighbors with fuzzy (approximate) metadata string matching.
+ *
+ * Builds a temporary BK-tree from all values of @p metadata_field stored in the
+ * database, finds every value whose Levenshtein distance to @p value is at most
+ * @p max_edit_dist, then runs a filtered k-NN search for each matching value and
+ * returns the top-k results ranked by vector distance.
+ *
+ * @param db             Database to search; must be non-NULL.
+ * @param query          Query vector data array (length db->dimension).
+ * @param k              Number of nearest neighbors to return.
+ * @param metadata_field Metadata key whose values are fuzzy-matched; must be non-NULL.
+ * @param value          Target string; must be non-NULL.
+ * @param max_edit_dist  Maximum allowed Levenshtein distance (0 = exact match only).
+ * @param results        Output array of at least @p k elements.
+ * @return Number of results written (0 to k), or -1 on error.
+ */
+int gv_db_search_fuzzy(GV_Database *db, const float *query, size_t k,
+                        const char *metadata_field, const char *value, int max_edit_dist,
+                        GV_SearchResult *results);
+
 #ifdef __cplusplus
 }
 #endif

@@ -5518,3 +5518,129 @@ const float *database_get_vector(const GV_Database *db, size_t index) {
     if (index >= db->count) return NULL;
     return soa_storage_get_data(db->soa_storage, index);
 }
+
+/* ------------------------------------------------------------------ */
+/* Fuzzy string filter search via BK-tree                              */
+/* ------------------------------------------------------------------ */
+
+#include "core/bktree.h"
+
+int gv_db_search_fuzzy(GV_Database *db, const float *query, size_t k,
+                        const char *metadata_field, const char *value, int max_edit_dist,
+                        GV_SearchResult *results) {
+    if (!db || !query || !results || k == 0 || !metadata_field || !value) return -1;
+
+    memset(results, 0, k * sizeof(GV_SearchResult));
+
+    /* ---- Step 1: collect unique values for metadata_field ---------- */
+    /* Use read lock while scanning the SoA storage. */
+    pthread_rwlock_rdlock(&db->rwlock);
+
+    GV_SoAStorage *soa = db->soa_storage;
+    if (!soa || soa->count == 0) {
+        pthread_rwlock_unlock(&db->rwlock);
+        return 0;
+    }
+
+    /* Collect unique values into a temporary BK-tree. */
+    GV_BKTree *tree = bktree_create();
+    if (!tree) {
+        pthread_rwlock_unlock(&db->rwlock);
+        return -1;
+    }
+
+    for (size_t i = 0; i < soa->count; i++) {
+        if (soa->deleted && soa->deleted[i]) continue;
+        GV_Metadata *m = soa->metadata ? soa->metadata[i] : NULL;
+        while (m) {
+            if (m->key && m->value && strcmp(m->key, metadata_field) == 0) {
+                bktree_insert(tree, m->value);
+                break;
+            }
+            m = m->next;
+        }
+    }
+
+    pthread_rwlock_unlock(&db->rwlock);
+
+    if (tree->count == 0) {
+        bktree_destroy(tree);
+        return 0;
+    }
+
+    /* ---- Step 2: fuzzy search the BK-tree for matching values ------ */
+    size_t max_matches = tree->count < 4096 ? tree->count : 4096;
+    const char **matches = (const char **)gv_alloc(max_matches * sizeof(const char *));
+    if (!matches) {
+        bktree_destroy(tree);
+        return -1;
+    }
+    size_t nmatch = 0;
+    bktree_search(tree, value, max_edit_dist, matches, &nmatch, max_matches);
+
+    if (nmatch == 0) {
+        gv_free(matches);
+        bktree_destroy(tree);
+        return 0;
+    }
+
+    /* ---- Step 3: run filtered search for each matching value ------- */
+    /* Collect up to k * nmatch candidates, then rank and return top-k. */
+    size_t cand_cap = k * nmatch + k;
+    GV_SearchResult *cands = (GV_SearchResult *)gv_alloc(cand_cap * sizeof(GV_SearchResult));
+    if (!cands) {
+        gv_free(matches);
+        bktree_destroy(tree);
+        return -1;
+    }
+    memset(cands, 0, cand_cap * sizeof(GV_SearchResult));
+    size_t total = 0;
+
+    for (size_t mi = 0; mi < nmatch; mi++) {
+        size_t slot = total;
+        size_t avail = cand_cap - slot;
+        if (avail == 0) break;
+        size_t want = avail < k ? avail : k;
+
+        GV_SearchResult *sub = cands + slot;
+        memset(sub, 0, want * sizeof(GV_SearchResult));
+
+        int got = db_search_filtered(db, query, want, sub,
+                                     GV_DISTANCE_EUCLIDEAN,
+                                     metadata_field, matches[mi]);
+        if (got > 0) {
+            total += (size_t)got;
+        }
+    }
+
+    /* ---- Step 4: sort candidates by distance and return top-k ------ */
+    /* Simple insertion sort — candidate count is typically small. */
+    for (size_t i = 1; i < total; i++) {
+        GV_SearchResult tmp = cands[i];
+        size_t j = i;
+        while (j > 0 && cands[j - 1].distance > tmp.distance) {
+            cands[j] = cands[j - 1];
+            j--;
+        }
+        cands[j] = tmp;
+    }
+
+    /* Deduplicate by vector id and copy top-k to output. */
+    size_t out = 0;
+    for (size_t i = 0; i < total && out < k; i++) {
+        if (!cands[i].vector && !cands[i].sparse_vector) continue;
+        /* Check for duplicate id */
+        int dup = 0;
+        for (size_t j = 0; j < out; j++) {
+            if (results[j].id == cands[i].id) { dup = 1; break; }
+        }
+        if (!dup) {
+            results[out++] = cands[i];
+        }
+    }
+
+    gv_free(cands);
+    gv_free(matches);
+    bktree_destroy(tree);
+    return (int)out;
+}
