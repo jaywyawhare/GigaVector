@@ -11,6 +11,7 @@
 #include "admin/sso.h"
 #include "admin/streaming.h"
 #include "admin/timetravel.h"
+#include "admin/otlp.h"
 #include "admin/tracing.h"
 #include "admin/ttl.h"
 #include "admin/versioning.h"

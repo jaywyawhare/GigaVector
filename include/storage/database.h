@@ -24,6 +24,7 @@
 #include "storage/sparse_vector.h"
 #include "storage/soa_storage.h"
 #include "multimodal/metadata_index.h"
+#include "admin/otlp.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -128,6 +129,7 @@ typedef struct GV_Database {
     GV_RecallMetrics recall_metrics;   /**< Recall metrics for approximate search. */
     pthread_mutex_t observability_mutex; /**< Mutex for observability data. */
     GV_Memory memory_pool;             /**< Tracked long-lived allocations (gv_db_alloc). */
+    GV_OtlpConfig otlp_config;          /**< OpenTelemetry OTLP exporter configuration. */
 } GV_Database;
 
 typedef struct {
