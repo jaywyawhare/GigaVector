@@ -102,6 +102,7 @@
 #include "specialized/point_id.h"
 #include "specialized/quantization.h"
 #include "storage/backup.h"
+#include "storage/scroll_cursor.h"
 #include "storage/compression.h"
 #include "storage/database.h"
 #include "storage/memory_consolidation.h"
