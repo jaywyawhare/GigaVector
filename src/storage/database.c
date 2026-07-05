@@ -93,6 +93,7 @@ static ssize_t getline(char **lineptr, size_t *n, FILE *stream) {
 #include "search/filter.h"
 #include "specialized/optimizer.h"
 #include "index/ivf_retrain.h"
+#include "storage/tiered_storage.h"
 
 #include <math.h>
 #ifndef _WIN32
@@ -175,6 +176,13 @@ static void db_init_common_fields(GV_Database *db) {
     db->initial_inertia = 0.0f;
     db->retrain_running = 0;
     pthread_mutex_init(&db->retrain_mutex, NULL);
+
+    /* Tiered storage — disabled by default */
+    db->tiering_enabled      = 0;
+    db->hot_max_age_seconds  = 86400;    /* 1 day */
+    db->warm_max_age_seconds = 604800;   /* 7 days */
+    db->hot_max_vectors      = 100000;
+    db->tiered_storage       = NULL;
 }
 
 static int db_write_header(FILE *out, uint32_t dimension, uint64_t count, uint32_t version) {
@@ -1238,6 +1246,10 @@ void db_close(GV_Database *db) {
         db->search_latency_hist.bucket_boundaries = NULL;
     }
     pthread_mutex_destroy(&db->observability_mutex);
+    if (db->tiered_storage != NULL) {
+        tiered_storage_destroy(db->tiered_storage);
+        db->tiered_storage = NULL;
+    }
     gv_memory_fini(&db->memory_pool);
     gv_free(db->filepath);
     gv_free(db->wal_path);
@@ -2680,9 +2692,13 @@ int db_add_vector(GV_Database *db, const float *data, size_t dimension) {
         return -1;
     }
 
+    size_t ts_slot_0 = db->count; /* 0-based slot for this vector */
     db->count += 1;
     db->total_inserts += 1;
     db_update_memory_usage(db);
+    if (db->tiering_enabled && db->tiered_storage) {
+        tiered_storage_record_insert(db->tiered_storage, ts_slot_0, start_time_us);
+    }
     pthread_rwlock_unlock(&db->rwlock);
 
     /* IVF incremental retrain: check drift after threshold is reached */
@@ -2921,8 +2937,12 @@ int db_add_vector_with_metadata(GV_Database *db, const float *data, size_t dimen
         return -1;
     }
 
+    size_t ts_slot_1 = db->count;
     db->count += 1;
     db->total_inserts += 1;
+    if (db->tiering_enabled && db->tiered_storage) {
+        tiered_storage_record_insert(db->tiered_storage, ts_slot_1, start_time_us);
+    }
     pthread_rwlock_unlock(&db->rwlock);
 
     uint64_t end_time_us = db_get_time_us();
@@ -3267,9 +3287,13 @@ int db_add_vector_with_rich_metadata(GV_Database *db, const float *data, size_t 
         return -1;
     }
 
+    size_t ts_slot_2 = db->count;
     db->count += 1;
     db->total_inserts += 1;
     db_update_memory_usage(db);
+    if (db->tiering_enabled && db->tiered_storage) {
+        tiered_storage_record_insert(db->tiered_storage, ts_slot_2, start_time_us);
+    }
     pthread_rwlock_unlock(&db->rwlock);
 
     uint64_t end_time_us = db_get_time_us();
