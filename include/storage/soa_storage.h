@@ -19,13 +19,14 @@ extern "C" {
  * Metadata is stored separately per vector since it's variable size.
  */
 typedef struct {
-    size_t dimension;        /**< Dimensionality of all vectors. */
-    size_t count;            /**< Current number of vectors stored. */
-    size_t capacity;         /**< Allocated capacity (number of vectors). */
-    float *data;             /**< Contiguous array: [vec0_dim0, vec0_dim1, ..., vec1_dim0, ...]. */
-    GV_Metadata **metadata;  /**< Array of metadata pointers, one per vector (may be NULL). */
-    int *deleted;            /**< Array of deletion flags: 1 if deleted, 0 if active. */
-    struct GV_Database *owner_db; /**< When set, allocations use gv_db_alloc/realloc. */
+    size_t dimension;              /**< Dimensionality of all vectors. */
+    size_t count;                  /**< Current number of vectors stored. */
+    size_t capacity;               /**< Allocated capacity (number of vectors). */
+    float *data;                   /**< Contiguous array: [vec0_dim0, vec0_dim1, ..., vec1_dim0, ...]. */
+    GV_Metadata **metadata;        /**< Array of metadata pointers, one per vector (may be NULL). */
+    int *deleted;                  /**< Array of deletion flags: 1 if deleted, 0 if active. */
+    uint64_t *insert_timestamps;   /**< Parallel array of insertion timestamps (ms since epoch). */
+    struct GV_Database *owner_db;  /**< When set, allocations use gv_db_alloc/realloc. */
 } GV_SoAStorage;
 
 /**
@@ -153,6 +154,16 @@ int soa_storage_update_metadata(GV_SoAStorage *storage, size_t index, GV_Metadat
 
 int soa_storage_save(const GV_SoAStorage *storage, FILE *out, uint32_t version);
 int soa_storage_load(GV_SoAStorage *storage, FILE *in, uint32_t version);
+
+/**
+ * @brief Refresh the insertion timestamp for a vector (e.g., after an update).
+ *
+ * @param storage Storage to modify; must be non-NULL.
+ * @param index Vector index; must be < storage->count.
+ * @param timestamp_ms New timestamp in milliseconds since epoch.
+ * @return 0 on success, -1 on invalid arguments.
+ */
+int soa_storage_set_timestamp(GV_SoAStorage *storage, size_t index, uint64_t timestamp_ms);
 
 #ifdef __cplusplus
 }

@@ -77,6 +77,7 @@
 #include "search/consistency.h"
 #include "search/distance.h"
 #include "search/filter.h"
+#include "search/freshness.h"
 #include "search/filter_ops.h"
 #include "search/group_search.h"
 #include "search/hybrid_search.h"
