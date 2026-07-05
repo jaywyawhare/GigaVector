@@ -127,6 +127,17 @@ typedef struct GV_Database {
     GV_RecallMetrics recall_metrics;   /**< Recall metrics for approximate search. */
     pthread_mutex_t observability_mutex; /**< Mutex for observability data. */
     GV_Memory memory_pool;             /**< Tracked long-lived allocations (gv_db_alloc). */
+
+    /* IVF incremental retraining */
+    int retrain_enabled;               /**< Non-zero to enable automatic drift-triggered retrain. */
+    float retrain_drift_threshold;     /**< Drift ratio above which retrain is triggered (default 0.15). */
+    size_t retrain_min_new_vectors;    /**< Min inserts before drift is checked (default 50000). */
+    size_t inserts_since_retrain;      /**< Insert counter since last retrain / training. */
+    float last_retrain_drift;          /**< Most-recent drift value from ivf_retrain_check_drift(). */
+    float initial_inertia;             /**< Inertia recorded at training time (for drift ratio). */
+    int retrain_running;               /**< 1 while background retrain thread is active. */
+    pthread_t retrain_thread;          /**< Background retrain thread handle. */
+    pthread_mutex_t retrain_mutex;     /**< Mutex protecting retrain state fields. */
 } GV_Database;
 
 typedef struct {
