@@ -113,6 +113,7 @@
 #include "storage/turboquant.h"
 #include "storage/snapshot.h"
 #include "storage/soa_storage.h"
+#include "storage/tiered_storage.h"
 #include "storage/sparse_vector.h"
 #include "storage/vacuum.h"
 #include "storage/wal.h"

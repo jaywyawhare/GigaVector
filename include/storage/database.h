@@ -24,6 +24,7 @@
 #include "storage/sparse_vector.h"
 #include "storage/soa_storage.h"
 #include "multimodal/metadata_index.h"
+#include "storage/tiered_storage.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -128,6 +129,13 @@ typedef struct GV_Database {
     GV_RecallMetrics recall_metrics;   /**< Recall metrics for approximate search. */
     pthread_mutex_t observability_mutex; /**< Mutex for observability data. */
     GV_Memory memory_pool;             /**< Tracked long-lived allocations (gv_db_alloc). */
+
+    /* Tiered storage */
+    int tiering_enabled;                /**< Non-zero when tiered storage is active. */
+    uint64_t hot_max_age_seconds;       /**< Age threshold (s) for HOT->WARM demotion (default 86400). */
+    uint64_t warm_max_age_seconds;      /**< Age threshold (s) for WARM->COLD demotion (default 604800). */
+    size_t hot_max_vectors;             /**< Maximum hot-tier vector count (0 = unlimited). */
+    GV_TieredStorageManager *tiered_storage; /**< Tiered storage manager; NULL if disabled. */
 } GV_Database;
 
 typedef struct {
