@@ -90,6 +90,7 @@ static ssize_t getline(char **lineptr, size_t *n, FILE *stream) {
 #include "index/pq.h"
 #include "index/lsh.h"
 #include "core/utils.h"
+#include "core/sim_time.h"
 #include "search/filter.h"
 #include "specialized/optimizer.h"
 #include "index/ivf_retrain.h"
@@ -4518,6 +4519,12 @@ int db_update_vector(GV_Database *db, size_t vector_index, const float *new_data
     } else {
         pthread_rwlock_unlock(&db->rwlock);
         return -1;
+    }
+
+    /* Refresh insertion timestamp on successful update. */
+    if (status == 0 && db->soa_storage != NULL &&
+        vector_index < db->soa_storage->count) {
+        soa_storage_set_timestamp(db->soa_storage, vector_index, gv_time_now_ms());
     }
 
     if (status == 0 && db->wal != NULL) {
