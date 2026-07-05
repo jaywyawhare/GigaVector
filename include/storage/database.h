@@ -25,6 +25,7 @@
 #include "storage/soa_storage.h"
 #include "multimodal/metadata_index.h"
 #include "storage/tiered_storage.h"
+#include "admin/otlp.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -146,6 +147,7 @@ typedef struct GV_Database {
     uint64_t warm_max_age_seconds;      /**< Age threshold (s) for WARM->COLD demotion (default 604800). */
     size_t hot_max_vectors;             /**< Maximum hot-tier vector count (0 = unlimited). */
     GV_TieredStorageManager *tiered_storage; /**< Tiered storage manager; NULL if disabled. */
+    GV_OtlpConfig otlp_config;          /**< OpenTelemetry OTLP exporter configuration. */
 } GV_Database;
 
 typedef struct {
