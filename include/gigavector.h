@@ -46,6 +46,7 @@
 #include "index/hnsw.h"
 #include "index/hnsw_opt.h"
 #include "index/ivf_base.h"
+#include "index/ivf_retrain.h"
 #include "index/ivfflat.h"
 #include "index/ivfdisk.h"
 #include "index/index_maintenance.h"

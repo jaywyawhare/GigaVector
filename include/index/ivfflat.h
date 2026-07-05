@@ -133,6 +133,26 @@ int ivfflat_save(const void *index, FILE *out, uint32_t version);
  */
 int ivfflat_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version);
 
+/**
+ * @brief Compute the mean squared distance of all live vectors to their assigned centroids.
+ *
+ * @param index IVF-Flat index (from ivfflat_create).
+ * @return Mean inertia value, or -1.0f if index is NULL or untrained.
+ */
+float ivfflat_compute_inertia(const void *index);
+
+/**
+ * @brief Retrain coarse centroids in-place using currently stored vectors.
+ *
+ * Runs @p iters iterations of Lloyd's k-means on all live vectors, then
+ * reassigns every vector to its nearest new centroid.
+ *
+ * @param index IVF-Flat index.
+ * @param iters Number of k-means iterations.
+ * @return 0 on success, -1 on error (untrained, too few vectors, OOM).
+ */
+int ivfflat_retrain(void *index, size_t iters);
+
 #ifdef __cplusplus
 }
 #endif
