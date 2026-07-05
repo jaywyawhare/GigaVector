@@ -19,6 +19,7 @@
 #include "search/phased_ranking.h"
 #include "core/scope.h"
 #include "core/memory.h"
+#include "search/quant_rerank.h"
 #include "storage/database.h"
 #include "search/distance.h"
 #include "search/ranking.h"
@@ -78,6 +79,14 @@ static double timespec_to_ms(const struct timespec *ts) {
 
 static double elapsed_ms(const struct timespec *start, const struct timespec *end) {
     return timespec_to_ms(end) - timespec_to_ms(start);
+}
+
+static int compare_candidates_asc(const void *a, const void *b) {
+    const Candidate *ca = (const Candidate *)a;
+    const Candidate *cb = (const Candidate *)b;
+    if (ca->score < cb->score) return -1;
+    if (ca->score > cb->score) return  1;
+    return 0;
 }
 
 static int compare_candidates_desc(const void *a, const void *b) {
@@ -456,6 +465,61 @@ static int execute_filter_phase(const GV_Database *db,
     return 0;
 }
 
+/**
+ * @brief Execute quantization-aware reranking phase.
+ *
+ * For each surviving candidate, computes an asymmetric quantized distance
+ * (raw float query vs stored code) via quant_distance(), then sorts
+ * ascending by the refined score and keeps top output_k.
+ *
+ * The candidates array is updated in-place: score is replaced with the
+ * refined rerank_score.
+ */
+static int execute_rerank_quant_phase(const GV_Database *db,
+                                      const GV_PhaseConfig *config,
+                                      const float *query,
+                                      int phase_id,
+                                      Candidate *candidates, size_t count,
+                                      size_t *out_count) {
+    if (!config->params.quant.codebook || !config->params.quant.codes ||
+        config->params.quant.code_stride == 0) {
+        return -1;
+    }
+
+    size_t dim = database_dimension(db);
+    if (dim == 0) return -1;
+
+    const GV_QuantCodebook *cb    = config->params.quant.codebook;
+    const uint8_t          *codes = config->params.quant.codes;
+    size_t                  stride = config->params.quant.code_stride;
+
+    size_t valid = 0;
+    for (size_t i = 0; i < count; i++) {
+        const uint8_t *code = codes + candidates[i].index * stride;
+        float refined = quant_distance(cb, query, dim, code);
+        if (refined < 0.0f) continue; /* skip on error */
+
+        /* Replace score with refined value; store in same slot. */
+        candidates[valid].index    = candidates[i].index;
+        candidates[valid].score    = refined;
+        candidates[valid].phase_id = phase_id;
+        valid++;
+    }
+
+    if (valid == 0) {
+        *out_count = 0;
+        return 0;
+    }
+
+    /* Sort ascending (lower refined distance = better). */
+    qsort(candidates, valid, sizeof(Candidate), compare_candidates_asc);
+
+    size_t keep = config->output_k;
+    if (keep == 0 || keep > valid) keep = valid;
+    *out_count = keep;
+    return 0;
+}
+
 int pipeline_execute(GV_Pipeline *pipe, const float *query,
                         size_t dimension, size_t final_k,
                         GV_PhasedResult *results) {
@@ -560,6 +624,19 @@ int pipeline_execute(GV_Pipeline *pipe, const float *query,
             size_t new_count = cand_count;
             if (execute_filter_phase(pipe->db, cfg, (int)p, candidates,
                                      cand_count, &new_count) < 0) {
+                rc = -1;
+            } else {
+                cand_count = new_count;
+            }
+            break;
+        }
+
+        case GV_PHASE_RERANK_QUANT: {
+            if (!candidates || cand_count == 0) break;
+            size_t new_count = cand_count;
+            if (execute_rerank_quant_phase(pipe->db, cfg, query, (int)p,
+                                           candidates, cand_count,
+                                           &new_count) < 0) {
                 rc = -1;
             } else {
                 cand_count = new_count;

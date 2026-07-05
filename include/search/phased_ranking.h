@@ -35,6 +35,8 @@
 #define GIGAVECTOR_GV_PHASED_RANKING_H
 
 #include <stddef.h>
+#include <stdint.h>
+#include "specialized/quantization.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -48,7 +50,8 @@ typedef enum {
     GV_PHASE_RERANK_EXPR      = 1,  /**< Re-rank with a ranking expression (ranking.h). */
     GV_PHASE_RERANK_MMR       = 2,  /**< Re-rank for diversity via MMR (mmr.h). */
     GV_PHASE_RERANK_CALLBACK  = 3,  /**< Re-rank with a user-supplied scoring callback. */
-    GV_PHASE_FILTER           = 4   /**< Filter candidates by metadata expression. */
+    GV_PHASE_FILTER           = 4,  /**< Filter candidates by metadata expression. */
+    GV_PHASE_RERANK_QUANT     = 5   /**< Re-rank with asymmetric quantized distance (quant_rerank.h). */
 } GV_PhaseType;
 
 /**
@@ -99,6 +102,13 @@ typedef struct {
         struct {
             const char *filter_expr; /**< Metadata filter expression (see filter.h). */
         } filter;
+
+        /** Parameters for GV_PHASE_RERANK_QUANT. */
+        struct {
+            GV_QuantCodebook *codebook;   /**< Trained quantization codebook. */
+            const uint8_t    *codes;      /**< Flat array of encoded vectors. */
+            size_t            code_stride; /**< Bytes per encoded vector. */
+        } quant;
     } params;
 } GV_PhaseConfig;
 

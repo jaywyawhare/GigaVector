@@ -83,6 +83,7 @@
 #include "search/importance.h"
 #include "search/mmr.h"
 #include "search/phased_ranking.h"
+#include "search/quant_rerank.h"
 #include "search/ranking.h"
 #include "search/score_threshold.h"
 #include "security/auth.h"
