@@ -41,7 +41,8 @@ typedef enum {
     GV_INDEX_TYPE_IVFSQ8  = 8,
     GV_INDEX_TYPE_IVFTURBOQUANT = 9,
     GV_INDEX_TYPE_DISKANN = 10,  /**< On-disk Vamana graph (standalone API; Phase 0 suggest). */
-    GV_INDEX_TYPE_IVFDISK = 11   /**< IVF head + on-disk posting lists per centroid. */
+    GV_INDEX_TYPE_IVFDISK = 11,  /**< IVF head + on-disk posting lists per centroid. */
+    GV_INDEX_TYPE_RABITQ  = 12   /**< 1-bit randomised binary quantisation with exact rerank. */
 } GV_IndexType;
 
 /** Default metadata bytes assumed per vector when estimating RAM for index_suggest(). */
