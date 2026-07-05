@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include "core/memory.h"
 #include <stdlib.h>
 #include <string.h>
 #include "search/group_search.h"
@@ -180,7 +181,7 @@ int main(void) {
     TestCase tests[] = {
         {"Testing group search config init...",       test_config_init},
         {"Testing group search basic...",             test_group_search_basic},
-        {"Testing group search free result...",       test_group_search_free_result},
+        {"Testing group search gv_free result...",       test_group_search_free_result},
         {"Testing group search single group...",      test_group_search_single_group},
         {"Testing group search limit...",             test_group_search_limit},
         {"Testing group search hits sorted...",       test_group_search_hits_sorted},

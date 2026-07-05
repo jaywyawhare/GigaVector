@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include "core/memory.h"
 #include <stdlib.h>
 #include <string.h>
 #include "admin/namespace.h"
@@ -87,8 +88,8 @@ static int test_list_namespaces(void) {
     ASSERT(count == 2, "should have 2 namespaces");
 
     if (names) {
-        for (size_t i = 0; i < count; i++) free(names[i]);
-        free(names);
+        for (size_t i = 0; i < count; i++) gv_free(names[i]);
+        gv_free(names);
     }
 
     namespace_manager_destroy(mgr);

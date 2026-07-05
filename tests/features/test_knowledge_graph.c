@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include "core/memory.h"
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -395,12 +396,12 @@ static int test_analytics(void) {
     char *types[5];
     int nt = kg_get_entity_types(kg, types, 5);
     ASSERT(nt == 2, "2 entity types");
-    for (int i = 0; i < nt; i++) free(types[i]);
+    for (int i = 0; i < nt; i++) gv_free(types[i]);
 
     char *preds[5];
     int np = kg_get_predicates(kg, preds, 5);
     ASSERT(np == 2, "2 predicates");
-    for (int i = 0; i < np; i++) free(preds[i]);
+    for (int i = 0; i < np; i++) gv_free(preds[i]);
 
     kg_destroy(kg);
     return 0;

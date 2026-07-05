@@ -1,11 +1,11 @@
 #include <stdio.h>
+#include "core/memory.h"
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
 #include <stdint.h>
 
 #include "index/ivfsq8.h"
-#include "index/ivf_base.h"
 #include "search/distance.h"
 #include "schema/vector.h"
 #include "schema/metadata.h"
@@ -40,13 +40,85 @@ typedef struct {
 
 GV_HEAP_DEFINE(ivfsq8_heap, GV_IVFSQ8HeapItem)
 
+static void ivfsq8_argmin(const float *data, size_t count, size_t dim,
+                            const float *centroids, size_t k, int *assign) {
+    for (size_t i = 0; i < count; i++) {
+        const float *vec = data + i * dim;
+        float best_dist = INFINITY;
+        int best_idx = -1;
+        for (size_t c = 0; c < k; c++) {
+            const float *centroid = centroids + c * dim;
+            float dist = 0.0f;
+            for (size_t d = 0; d < dim; d++) {
+                float diff = vec[d] - centroid[d];
+                dist += diff * diff;
+            }
+            if (dist < best_dist) {
+                best_dist = dist;
+                best_idx = (int)c;
+            }
+        }
+        assign[i] = best_idx;
+    }
+}
+
+static int ivfsq8_kmeans(const float *data, size_t count, size_t dim,
+                         size_t k, size_t iters, float *out_centroids) {
+    if (count < k || !data || !out_centroids) return -1;
+
+    memcpy(out_centroids, data, k * dim * sizeof(float));
+
+    int *assign = (int *)gv_alloc(count * sizeof(int));
+    float *new_centroids = (float *)gv_calloc(k * dim, sizeof(float));
+    size_t *counts = (size_t *)gv_calloc(k, sizeof(size_t));
+
+    if (!assign || !new_centroids || !counts) {
+        gv_free(assign);
+        gv_free(new_centroids);
+        gv_free(counts);
+        return -1;
+    }
+
+    for (size_t iter = 0; iter < iters; iter++) {
+        ivfsq8_argmin(data, count, dim, out_centroids, k, assign);
+
+        memset(new_centroids, 0, k * dim * sizeof(float));
+        memset(counts, 0, k * sizeof(size_t));
+
+        for (size_t i = 0; i < count; i++) {
+            int c = assign[i];
+            if (c < 0) continue;
+            const float *vec = data + i * dim;
+            for (size_t d = 0; d < dim; d++) {
+                new_centroids[c * dim + d] += vec[d];
+            }
+            counts[c]++;
+        }
+
+        for (size_t c = 0; c < k; c++) {
+            if (counts[c] > 0) {
+                for (size_t d = 0; d < dim; d++) {
+                    new_centroids[c * dim + d] /= (float)counts[c];
+                }
+            }
+        }
+
+        memcpy(out_centroids, new_centroids, k * dim * sizeof(float));
+    }
+
+    gv_free(assign);
+    gv_free(new_centroids);
+    gv_free(counts);
+    return 0;
+}
+
 static GV_ScalarQuantVector *ivfsq8_quantize_vector(const float *data, const GV_IVFSQ8Index *idx) {
     const GV_ScalarQuantVector *tmpl = idx->scalar_quant_template;
     if (tmpl == NULL || data == NULL) {
         return NULL;
     }
 
-    GV_ScalarQuantVector *sqv = (GV_ScalarQuantVector *)malloc(sizeof(GV_ScalarQuantVector));
+    GV_ScalarQuantVector *sqv = (GV_ScalarQuantVector *)gv_alloc(sizeof(GV_ScalarQuantVector));
     if (sqv == NULL) {
         return NULL;
     }
@@ -57,22 +129,22 @@ static GV_ScalarQuantVector *ivfsq8_quantize_vector(const float *data, const GV_
     sqv->bytes_per_vector = tmpl->bytes_per_vector;
 
     size_t nvals = sqv->per_dimension ? idx->dimension : 1;
-    sqv->min_vals = (float *)malloc(nvals * sizeof(float));
-    sqv->max_vals = (float *)malloc(nvals * sizeof(float));
+    sqv->min_vals = (float *)gv_alloc(nvals * sizeof(float));
+    sqv->max_vals = (float *)gv_alloc(nvals * sizeof(float));
     if (sqv->min_vals == NULL || sqv->max_vals == NULL) {
-        free(sqv->min_vals);
-        free(sqv->max_vals);
-        free(sqv);
+        gv_free(sqv->min_vals);
+        gv_free(sqv->max_vals);
+        gv_free(sqv);
         return NULL;
     }
     memcpy(sqv->min_vals, tmpl->min_vals, nvals * sizeof(float));
     memcpy(sqv->max_vals, tmpl->max_vals, nvals * sizeof(float));
 
-    sqv->quantized = (uint8_t *)calloc(sqv->bytes_per_vector, sizeof(uint8_t));
+    sqv->quantized = (uint8_t *)gv_calloc(sqv->bytes_per_vector, sizeof(uint8_t));
     if (sqv->quantized == NULL) {
-        free(sqv->min_vals);
-        free(sqv->max_vals);
-        free(sqv);
+        gv_free(sqv->min_vals);
+        gv_free(sqv->max_vals);
+        gv_free(sqv);
         return NULL;
     }
 
@@ -139,7 +211,7 @@ void *ivfsq8_create(size_t dimension, const GV_IVFSQ8Config *config) {
         return NULL;
     }
 
-    GV_IVFSQ8Index *idx = (GV_IVFSQ8Index *)calloc(1, sizeof(GV_IVFSQ8Index));
+    GV_IVFSQ8Index *idx = (GV_IVFSQ8Index *)gv_calloc(1, sizeof(GV_IVFSQ8Index));
     if (!idx) {
         return NULL;
     }
@@ -161,15 +233,15 @@ void *ivfsq8_create(size_t dimension, const GV_IVFSQ8Config *config) {
         idx->config.nprobe = idx->config.nlist;
     }
 
-    idx->centroids = (float *)malloc(idx->config.nlist * dimension * sizeof(float));
-    idx->lists = (GV_IVFSQ8Entry **)calloc(idx->config.nlist, sizeof(GV_IVFSQ8Entry *));
-    idx->list_sizes = (size_t *)calloc(idx->config.nlist, sizeof(size_t));
+    idx->centroids = (float *)gv_alloc(idx->config.nlist * dimension * sizeof(float));
+    idx->lists = (GV_IVFSQ8Entry **)gv_calloc(idx->config.nlist, sizeof(GV_IVFSQ8Entry *));
+    idx->list_sizes = (size_t *)gv_calloc(idx->config.nlist, sizeof(size_t));
 
     if (!idx->centroids || !idx->lists || !idx->list_sizes) {
-        free(idx->centroids);
-        free(idx->lists);
-        free(idx->list_sizes);
-        free(idx);
+        gv_free(idx->centroids);
+        gv_free(idx->lists);
+        gv_free(idx->list_sizes);
+        gv_free(idx);
         return NULL;
     }
 
@@ -192,7 +264,7 @@ int ivfsq8_train(void *index, const float *data, size_t count) {
     }
 
     size_t total = count * idx->dimension;
-    float *train_buf = (float *)malloc(total * sizeof(float));
+    float *train_buf = (float *)gv_alloc(total * sizeof(float));
     if (!train_buf) {
         return -1;
     }
@@ -214,9 +286,9 @@ int ivfsq8_train(void *index, const float *data, size_t count) {
         }
     }
 
-    if (ivf_train_centroids(train_buf, count, idx->dimension, idx->config.nlist,
-                            idx->config.train_iters, idx->centroids) != 0) {
-        free(train_buf);
+    if (ivfsq8_kmeans(train_buf, count, idx->dimension, idx->config.nlist,
+                      idx->config.train_iters, idx->centroids) != 0) {
+        gv_free(train_buf);
         return -1;
     }
 
@@ -231,7 +303,7 @@ int ivfsq8_train(void *index, const float *data, size_t count) {
     }
 
     idx->scalar_quant_template = scalar_quantize_train(train_buf, count, idx->dimension, &sq_cfg);
-    free(train_buf);
+    gv_free(train_buf);
 
     if (idx->scalar_quant_template == NULL) {
         return -1;
@@ -267,7 +339,7 @@ int ivfsq8_insert(void *index, GV_Vector *vector) {
         }
     }
 
-    GV_IVFSQ8Entry *entry = (GV_IVFSQ8Entry *)malloc(sizeof(GV_IVFSQ8Entry));
+    GV_IVFSQ8Entry *entry = (GV_IVFSQ8Entry *)gv_alloc(sizeof(GV_IVFSQ8Entry));
     if (!entry) {
         return -1;
     }
@@ -275,7 +347,7 @@ int ivfsq8_insert(void *index, GV_Vector *vector) {
     entry->vector = vector;
     entry->scalar_quant = ivfsq8_quantize_vector(vector->data, idx);
     if (entry->scalar_quant == NULL) {
-        free(entry);
+        gv_free(entry);
         return -1;
     }
 
@@ -311,7 +383,7 @@ int ivfsq8_search(void *index, const GV_Vector *query, size_t k,
         heap_cap = idx->config.default_rerank;
     }
 
-    GV_IVFSQ8HeapItem *centroid_heap = (GV_IVFSQ8HeapItem *)malloc(
+    GV_IVFSQ8HeapItem *centroid_heap = (GV_IVFSQ8HeapItem *)gv_alloc(
         nprobe * sizeof(GV_IVFSQ8HeapItem));
     if (!centroid_heap) {
         return -1;
@@ -328,9 +400,9 @@ int ivfsq8_search(void *index, const GV_Vector *query, size_t k,
         ivfsq8_heap_push(centroid_heap, &heap_size, nprobe, (GV_IVFSQ8HeapItem){dist, i, NULL});
     }
 
-    size_t *probe_lists = (size_t *)malloc(nprobe * sizeof(size_t));
+    size_t *probe_lists = (size_t *)gv_alloc(nprobe * sizeof(size_t));
     if (!probe_lists) {
-        free(centroid_heap);
+        gv_free(centroid_heap);
         return -1;
     }
 
@@ -342,11 +414,11 @@ int ivfsq8_search(void *index, const GV_Vector *query, size_t k,
             ivfsq8_heap_sift_down(centroid_heap, heap_size, 0);
         }
     }
-    free(centroid_heap);
+    gv_free(centroid_heap);
 
-    GV_IVFSQ8HeapItem *heap = (GV_IVFSQ8HeapItem *)malloc(heap_cap * sizeof(GV_IVFSQ8HeapItem));
+    GV_IVFSQ8HeapItem *heap = (GV_IVFSQ8HeapItem *)gv_alloc(heap_cap * sizeof(GV_IVFSQ8HeapItem));
     if (!heap) {
-        free(probe_lists);
+        gv_free(probe_lists);
         return -1;
     }
 
@@ -365,12 +437,12 @@ int ivfsq8_search(void *index, const GV_Vector *query, size_t k,
             entry = entry->next;
         }
     }
-    free(probe_lists);
+    gv_free(probe_lists);
 
     size_t found = heap_size;
-    GV_IVFSQ8HeapItem *candidates = (GV_IVFSQ8HeapItem *)malloc(found * sizeof(GV_IVFSQ8HeapItem));
+    GV_IVFSQ8HeapItem *candidates = (GV_IVFSQ8HeapItem *)gv_alloc(found * sizeof(GV_IVFSQ8HeapItem));
     if (!candidates) {
-        free(heap);
+        gv_free(heap);
         return -1;
     }
 
@@ -382,7 +454,7 @@ int ivfsq8_search(void *index, const GV_Vector *query, size_t k,
             ivfsq8_heap_sift_down(heap, heap_size, 0);
         }
     }
-    free(heap);
+    gv_free(heap);
 
     if (idx->config.default_rerank > 0 && found > 0) {
         size_t rr = idx->config.default_rerank;
@@ -416,7 +488,7 @@ int ivfsq8_search(void *index, const GV_Vector *query, size_t k,
         ivfsq8_copy_result(&results[i], candidates[i].entry, candidates[i].dist);
     }
 
-    free(candidates);
+    gv_free(candidates);
     return (int)result_count;
 }
 
@@ -438,7 +510,7 @@ int ivfsq8_range_search(void *index, const GV_Vector *query, float radius,
         nprobe = idx->config.nlist;
     }
 
-    GV_IVFSQ8HeapItem *centroid_heap = (GV_IVFSQ8HeapItem *)malloc(
+    GV_IVFSQ8HeapItem *centroid_heap = (GV_IVFSQ8HeapItem *)gv_alloc(
         nprobe * sizeof(GV_IVFSQ8HeapItem));
     if (!centroid_heap) {
         return -1;
@@ -455,9 +527,9 @@ int ivfsq8_range_search(void *index, const GV_Vector *query, float radius,
         ivfsq8_heap_push(centroid_heap, &heap_size, nprobe, (GV_IVFSQ8HeapItem){dist, i, NULL});
     }
 
-    size_t *probe_lists = (size_t *)malloc(nprobe * sizeof(size_t));
+    size_t *probe_lists = (size_t *)gv_alloc(nprobe * sizeof(size_t));
     if (!probe_lists) {
-        free(centroid_heap);
+        gv_free(centroid_heap);
         return -1;
     }
 
@@ -469,7 +541,7 @@ int ivfsq8_range_search(void *index, const GV_Vector *query, float radius,
             ivfsq8_heap_sift_down(centroid_heap, heap_size, 0);
         }
     }
-    free(centroid_heap);
+    gv_free(centroid_heap);
 
     size_t found = 0;
     for (size_t i = 0; i < nprobe && found < max_results; i++) {
@@ -487,7 +559,7 @@ int ivfsq8_range_search(void *index, const GV_Vector *query, float radius,
         }
     }
 
-    free(probe_lists);
+    gv_free(probe_lists);
     return (int)found;
 }
 
@@ -517,20 +589,20 @@ void ivfsq8_destroy(void *index) {
                 if (entry->scalar_quant) {
                     scalar_quant_vector_destroy(entry->scalar_quant);
                 }
-                free(entry);
+                gv_free(entry);
                 entry = next;
             }
         }
-        free(idx->lists);
+        gv_free(idx->lists);
     }
 
     if (idx->scalar_quant_template) {
         scalar_quant_vector_destroy(idx->scalar_quant_template);
     }
 
-    free(idx->centroids);
-    free(idx->list_sizes);
-    free(idx);
+    gv_free(idx->centroids);
+    gv_free(idx->list_sizes);
+    gv_free(idx);
 }
 
 size_t ivfsq8_count(const void *index) {
@@ -623,7 +695,7 @@ static int ivfsq8_read_scalar_template(FILE *in, GV_ScalarQuantVector **out) {
     if (read_u32(in, &per_dim) != 0) return -1;
     if (read_u32(in, &bytes) != 0) return -1;
 
-    GV_ScalarQuantVector *tmpl = (GV_ScalarQuantVector *)calloc(1, sizeof(GV_ScalarQuantVector));
+    GV_ScalarQuantVector *tmpl = (GV_ScalarQuantVector *)gv_calloc(1, sizeof(GV_ScalarQuantVector));
     if (!tmpl) return -1;
 
     tmpl->dimension = dim;
@@ -633,8 +705,8 @@ static int ivfsq8_read_scalar_template(FILE *in, GV_ScalarQuantVector **out) {
     tmpl->quantized = NULL;
 
     size_t nvals = tmpl->per_dimension ? tmpl->dimension : 1;
-    tmpl->min_vals = (float *)malloc(nvals * sizeof(float));
-    tmpl->max_vals = (float *)malloc(nvals * sizeof(float));
+    tmpl->min_vals = (float *)gv_alloc(nvals * sizeof(float));
+    tmpl->max_vals = (float *)gv_alloc(nvals * sizeof(float));
     if (!tmpl->min_vals || !tmpl->max_vals) {
         scalar_quant_vector_destroy(tmpl);
         return -1;
@@ -815,25 +887,25 @@ int ivfsq8_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version) 
                 return -1;
             }
 
-            float *data = (float *)malloc(idx->dimension * sizeof(float));
+            float *data = (float *)gv_alloc(idx->dimension * sizeof(float));
             if (!data) {
                 ivfsq8_destroy(index);
                 return -1;
             }
             if (fread(data, sizeof(float), idx->dimension, in) != idx->dimension) {
-                free(data);
+                gv_free(data);
                 ivfsq8_destroy(index);
                 return -1;
             }
 
             GV_Vector *vec = vector_create_from_data(idx->dimension, data);
-            free(data);
+            gv_free(data);
             if (!vec) {
                 ivfsq8_destroy(index);
                 return -1;
             }
 
-            GV_IVFSQ8Entry *entry = (GV_IVFSQ8Entry *)malloc(sizeof(GV_IVFSQ8Entry));
+            GV_IVFSQ8Entry *entry = (GV_IVFSQ8Entry *)gv_alloc(sizeof(GV_IVFSQ8Entry));
             if (!entry) {
                 vector_destroy(vec);
                 ivfsq8_destroy(index);
@@ -847,15 +919,15 @@ int ivfsq8_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version) 
 
             if (idx->scalar_quant_template == NULL) {
                 vector_destroy(vec);
-                free(entry);
+                gv_free(entry);
                 ivfsq8_destroy(index);
                 return -1;
             }
 
-            entry->scalar_quant = (GV_ScalarQuantVector *)malloc(sizeof(GV_ScalarQuantVector));
+            entry->scalar_quant = (GV_ScalarQuantVector *)gv_alloc(sizeof(GV_ScalarQuantVector));
             if (entry->scalar_quant == NULL) {
                 vector_destroy(vec);
-                free(entry);
+                gv_free(entry);
                 ivfsq8_destroy(index);
                 return -1;
             }
@@ -864,14 +936,14 @@ int ivfsq8_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version) 
             entry->scalar_quant->per_dimension = idx->config.per_dimension;
             entry->scalar_quant->bytes_per_vector = idx->scalar_quant_template->bytes_per_vector;
             size_t nvals = entry->scalar_quant->per_dimension ? idx->dimension : 1;
-            entry->scalar_quant->min_vals = (float *)malloc(nvals * sizeof(float));
-            entry->scalar_quant->max_vals = (float *)malloc(nvals * sizeof(float));
-            entry->scalar_quant->quantized = (uint8_t *)malloc(entry->scalar_quant->bytes_per_vector);
+            entry->scalar_quant->min_vals = (float *)gv_alloc(nvals * sizeof(float));
+            entry->scalar_quant->max_vals = (float *)gv_alloc(nvals * sizeof(float));
+            entry->scalar_quant->quantized = (uint8_t *)gv_alloc(entry->scalar_quant->bytes_per_vector);
             if (!entry->scalar_quant->min_vals || !entry->scalar_quant->max_vals ||
                 !entry->scalar_quant->quantized) {
                 scalar_quant_vector_destroy(entry->scalar_quant);
                 vector_destroy(vec);
-                free(entry);
+                gv_free(entry);
                 ivfsq8_destroy(index);
                 return -1;
             }
@@ -883,7 +955,7 @@ int ivfsq8_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version) 
                 entry->scalar_quant->bytes_per_vector) {
                 scalar_quant_vector_destroy(entry->scalar_quant);
                 vector_destroy(vec);
-                free(entry);
+                gv_free(entry);
                 ivfsq8_destroy(index);
                 return -1;
             }
@@ -892,7 +964,7 @@ int ivfsq8_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version) 
             if (read_u32(in, &meta_count) != 0) {
                 scalar_quant_vector_destroy(entry->scalar_quant);
                 vector_destroy(vec);
-                free(entry);
+                gv_free(entry);
                 ivfsq8_destroy(index);
                 return -1;
             }
@@ -907,20 +979,20 @@ int ivfsq8_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version) 
                 if (read_str(in, &value, vlen) != 0) goto meta_fail;
 
                 if (vector_set_metadata(vec, key, value) != 0) {
-                    free(key);
-                    free(value);
+                    gv_free(key);
+                    gv_free(value);
                     goto meta_fail;
                 }
-                free(key);
-                free(value);
+                gv_free(key);
+                gv_free(value);
                 continue;
 
             meta_fail:
-                if (key) free(key);
-                if (value) free(value);
+                if (key) gv_free(key);
+                if (value) gv_free(value);
                 scalar_quant_vector_destroy(entry->scalar_quant);
                 vector_destroy(vec);
-                free(entry);
+                gv_free(entry);
                 ivfsq8_destroy(index);
                 return -1;
             }

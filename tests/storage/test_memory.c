@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include "core/memory.h"
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
@@ -45,7 +46,7 @@ int test_memory_layer_basic(void) {
     int ret = memory_get(layer, memory_id, &result);
     if (ret != 0) {
         fprintf(stderr, "Failed to get memory\n");
-        free(memory_id);
+        gv_free(memory_id);
         memory_layer_destroy(layer);
         db_close(db);
         return 1;
@@ -56,7 +57,7 @@ int test_memory_layer_basic(void) {
     assert(result.metadata->memory_type == GV_MEMORY_TYPE_FACT);
     
     memory_result_free(&result);
-    free(memory_id);
+    gv_free(memory_id);
     memory_layer_destroy(layer);
     db_close(db);
     return 0;

@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include "core/memory.h"
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -36,7 +37,7 @@ static char *merge_provenance_source(const char *source_a, const char *source_b)
 
     if (a_swap && b_swap) {
         size_t len = strlen(a) + strlen(b) + 2;
-        char *combined = (char *)malloc(len);
+        char *combined = (char *)gv_alloc(len);
         if (combined == NULL) {
             return NULL;
         }
@@ -103,7 +104,7 @@ int memory_find_similar(GV_MemoryLayer *layer, double threshold,
         return 0;
     }
     
-    GV_SearchResult *search_results = (GV_SearchResult *)malloc(100 * sizeof(GV_SearchResult));
+    GV_SearchResult *search_results = (GV_SearchResult *)gv_alloc(100 * sizeof(GV_SearchResult));
     if (search_results == NULL) {
         return -1;
     }
@@ -173,7 +174,7 @@ int memory_find_similar(GV_MemoryLayer *layer, double threshold,
         }
     }
     
-    free(search_results);
+    gv_free(search_results);
     *actual_count = pair_idx;
     return 0;
 }
@@ -220,7 +221,7 @@ char *memory_merge(GV_MemoryLayer *layer, const char *memory_id_1,
     if (mem2.content) merged_len += strlen(mem2.content);
     merged_len += 10;
     
-    char *merged_content = (char *)malloc(merged_len);
+    char *merged_content = (char *)gv_alloc(merged_len);
     if (merged_content == NULL) {
         memory_result_free(&mem1);
         memory_result_free(&mem2);
@@ -245,21 +246,21 @@ char *memory_merge(GV_MemoryLayer *layer, const char *memory_id_1,
     merged_content[pos] = '\0';
 
     size_t dimension = layer->db->dimension;
-    float *merged_embedding = (float *)malloc(dimension * sizeof(float));
+    float *merged_embedding = (float *)gv_alloc(dimension * sizeof(float));
     if (merged_embedding == NULL) {
-        free(merged_content);
+        gv_free(merged_content);
         memory_result_free(&mem1);
         memory_result_free(&mem2);
         return NULL;
     }
 
-    float *emb1 = (float *)malloc(dimension * sizeof(float));
-    float *emb2 = (float *)malloc(dimension * sizeof(float));
+    float *emb1 = (float *)gv_alloc(dimension * sizeof(float));
+    float *emb2 = (float *)gv_alloc(dimension * sizeof(float));
     if (emb1 == NULL || emb2 == NULL) {
-        free(emb1);
-        free(emb2);
-        free(merged_embedding);
-        free(merged_content);
+        gv_free(emb1);
+        gv_free(emb2);
+        gv_free(merged_embedding);
+        gv_free(merged_content);
         memory_result_free(&mem1);
         memory_result_free(&mem2);
         return NULL;
@@ -267,10 +268,10 @@ char *memory_merge(GV_MemoryLayer *layer, const char *memory_id_1,
 
     if (memory_get_embedding(layer, memory_id_1, emb1, dimension) != 0 ||
         memory_get_embedding(layer, memory_id_2, emb2, dimension) != 0) {
-        free(emb1);
-        free(emb2);
-        free(merged_embedding);
-        free(merged_content);
+        gv_free(emb1);
+        gv_free(emb2);
+        gv_free(merged_embedding);
+        gv_free(merged_content);
         memory_result_free(&mem1);
         memory_result_free(&mem2);
         return NULL;
@@ -280,8 +281,8 @@ char *memory_merge(GV_MemoryLayer *layer, const char *memory_id_1,
         merged_embedding[i] = 0.5f * (emb1[i] + emb2[i]);
     }
     l2_normalize(merged_embedding, dimension);
-    free(emb1);
-    free(emb2);
+    gv_free(emb1);
+    gv_free(emb2);
 
     GV_MemoryMetadata merged_meta;
     memset(&merged_meta, 0, sizeof(merged_meta));
@@ -296,9 +297,9 @@ char *memory_merge(GV_MemoryLayer *layer, const char *memory_id_1,
 
     char *new_id = memory_add(layer, merged_content, merged_embedding, &merged_meta, NULL);
 
-    free(merged_meta.source);
-    free(merged_embedding);
-    free(merged_content);
+    gv_free(merged_meta.source);
+    gv_free(merged_embedding);
+    gv_free(merged_content);
 
     if (new_id != NULL) {
         copy_parent_links(layer, new_id, mem1.metadata, memory_id_2);
@@ -375,8 +376,8 @@ void memory_pair_free(GV_MemoryPair *pair) {
         return;
     }
     
-    free(pair->memory_id_1);
-    free(pair->memory_id_2);
+    gv_free(pair->memory_id_1);
+    gv_free(pair->memory_id_2);
     memset(pair, 0, sizeof(GV_MemoryPair));
 }
 

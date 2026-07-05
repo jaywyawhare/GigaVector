@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include "core/memory.h"
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -60,8 +61,8 @@ static int test_quant_encode_decode_roundtrip(void) {
     size_t code_sz = quant_code_size(cb, DIM);
     ASSERT(code_sz > 0, "code size should be > 0");
 
-    uint8_t *codes = (uint8_t *)malloc(code_sz);
-    ASSERT(codes != NULL, "malloc failed");
+    uint8_t *codes = (uint8_t *)gv_alloc(code_sz);
+    ASSERT(codes != NULL, "gv_alloc failed");
 
     int rc = quant_encode(cb, data, DIM, codes);
     ASSERT(rc == 0, "quant_encode failed");
@@ -76,7 +77,7 @@ static int test_quant_encode_decode_roundtrip(void) {
         ASSERT(diff < 0.5f, "decoded value deviates too much from original");
     }
 
-    free(codes);
+    gv_free(codes);
     quant_codebook_destroy(cb);
     return 0;
 }
@@ -94,8 +95,8 @@ static int test_quant_distance_asymmetric(void) {
     ASSERT(cb != NULL, "training failed");
 
     size_t code_sz = quant_code_size(cb, DIM);
-    uint8_t *codes = (uint8_t *)malloc(code_sz);
-    ASSERT(codes != NULL, "malloc failed");
+    uint8_t *codes = (uint8_t *)gv_alloc(code_sz);
+    ASSERT(codes != NULL, "gv_alloc failed");
 
     int rc = quant_encode(cb, data, DIM, codes);
     ASSERT(rc == 0, "encode failed");
@@ -104,7 +105,7 @@ static int test_quant_distance_asymmetric(void) {
     ASSERT(dist >= 0.0f, "distance should be non-negative");
     ASSERT(dist < 10.0f, "distance of same vector should be small");
 
-    free(codes);
+    gv_free(codes);
     quant_codebook_destroy(cb);
     return 0;
 }
@@ -122,9 +123,9 @@ static int test_quant_distance_symmetric(void) {
     ASSERT(cb != NULL, "training failed");
 
     size_t code_sz = quant_code_size(cb, DIM);
-    uint8_t *codes_a = (uint8_t *)malloc(code_sz);
-    uint8_t *codes_b = (uint8_t *)malloc(code_sz);
-    ASSERT(codes_a != NULL && codes_b != NULL, "malloc failed");
+    uint8_t *codes_a = (uint8_t *)gv_alloc(code_sz);
+    uint8_t *codes_b = (uint8_t *)gv_alloc(code_sz);
+    ASSERT(codes_a != NULL && codes_b != NULL, "gv_alloc failed");
 
     int rc = quant_encode(cb, data, DIM, codes_a);
     ASSERT(rc == 0, "encode a failed");
@@ -135,8 +136,8 @@ static int test_quant_distance_symmetric(void) {
     ASSERT(dist >= 0.0f, "symmetric distance should be non-negative");
     ASSERT(dist < 0.001f, "distance of identical codes should be near zero");
 
-    free(codes_a);
-    free(codes_b);
+    gv_free(codes_a);
+    gv_free(codes_b);
     quant_codebook_destroy(cb);
     return 0;
 }
@@ -156,13 +157,13 @@ static int test_quant_binary_mode(void) {
     /* Binary: 1 bit per dim -> 2 bytes for 16 dims */
     ASSERT(code_sz > 0, "binary code size should be > 0");
 
-    uint8_t *codes = (uint8_t *)malloc(code_sz);
-    ASSERT(codes != NULL, "malloc failed");
+    uint8_t *codes = (uint8_t *)gv_alloc(code_sz);
+    ASSERT(codes != NULL, "gv_alloc failed");
 
     int rc = quant_encode(cb, data, DIM, codes);
     ASSERT(rc == 0, "binary encode failed");
 
-    free(codes);
+    gv_free(codes);
     quant_codebook_destroy(cb);
     return 0;
 }

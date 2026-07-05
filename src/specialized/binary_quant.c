@@ -1,4 +1,5 @@
 #include <stdlib.h>
+#include "core/memory.h"
 #include <string.h>
 #include <stdint.h>
 
@@ -26,16 +27,16 @@ GV_BinaryVector *binary_quantize(const float *data, size_t dimension) {
         return NULL;
     }
 
-    GV_BinaryVector *bv = (GV_BinaryVector *)malloc(sizeof(GV_BinaryVector));
+    GV_BinaryVector *bv = (GV_BinaryVector *)gv_alloc(sizeof(GV_BinaryVector));
     if (bv == NULL) {
         return NULL;
     }
 
     bv->dimension = dimension;
     bv->bytes_per_vector = binary_bytes_needed(dimension);
-    bv->bits = (uint8_t *)calloc(bv->bytes_per_vector, sizeof(uint8_t));
+    bv->bits = (uint8_t *)gv_calloc(bv->bytes_per_vector, sizeof(uint8_t));
     if (bv->bits == NULL) {
-        free(bv);
+        gv_free(bv);
         return NULL;
     }
 
@@ -55,7 +56,7 @@ GV_BinaryVector *binary_vector_wrap(uint8_t *bits, size_t dimension) {
         return NULL;
     }
 
-    GV_BinaryVector *bv = (GV_BinaryVector *)malloc(sizeof(GV_BinaryVector));
+    GV_BinaryVector *bv = (GV_BinaryVector *)gv_alloc(sizeof(GV_BinaryVector));
     if (bv == NULL) {
         return NULL;
     }
@@ -71,9 +72,9 @@ void binary_vector_destroy(GV_BinaryVector *bv) {
         return;
     }
     if (bv->bits != NULL) {
-        free(bv->bits);
+        gv_free(bv->bits);
     }
-    free(bv);
+    gv_free(bv);
 }
 
 #ifdef __SSE4_2__

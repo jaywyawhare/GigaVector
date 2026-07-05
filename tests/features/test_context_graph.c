@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include "core/memory.h"
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
@@ -42,8 +43,8 @@ static void test_context_graph_add_entities(void) {
     
     assert(context_graph_add_entities(graph, entities, 2) == 0);
     
-    free(entities[0].name);
-    free(entities[1].name);
+    gv_free(entities[0].name);
+    gv_free(entities[1].name);
     context_graph_destroy(graph);
 }
 
@@ -80,11 +81,11 @@ static void test_context_graph_add_relationships(void) {
     for (int i = 0; i < count; i++) {
         graph_query_result_free(&results[i]);
     }
-    free(entities[0].name);
-    free(entities[1].name);
-    free(rel.source_entity_id);
-    free(rel.destination_entity_id);
-    free(rel.relationship_type);
+    gv_free(entities[0].name);
+    gv_free(entities[1].name);
+    gv_free(rel.source_entity_id);
+    gv_free(rel.destination_entity_id);
+    gv_free(rel.relationship_type);
     context_graph_destroy(graph);
 }
 
@@ -97,7 +98,7 @@ static void test_context_graph_search(void) {
     memset(&entity, 0, sizeof(entity));
     entity.name = gv_dup_cstr("TestEntity");
     entity.entity_type = GV_ENTITY_TYPE_PERSON;
-    float *embedding = (float *)malloc(128 * sizeof(float));
+    float *embedding = (float *)gv_alloc(128 * sizeof(float));
     for (int i = 0; i < 128; i++) {
         embedding[i] = 0.1f;
     }
@@ -118,8 +119,8 @@ static void test_context_graph_search(void) {
     for (int i = 0; i < count; i++) {
         graph_query_result_free(&results[i]);
     }
-    free(entity.name);
-    free(embedding);
+    gv_free(entity.name);
+    gv_free(embedding);
     context_graph_destroy(graph);
 }
 

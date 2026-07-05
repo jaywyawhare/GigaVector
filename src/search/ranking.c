@@ -8,6 +8,9 @@
  */
 
 #include "search/ranking.h"
+#include "core/memory.h"
+#include "core/arena.h"
+#include "core/scope.h"
 #include "storage/database.h"
 #include "core/utils.h"
 
@@ -27,8 +30,11 @@
 
 /* Opaque Expression Type */
 
+#define GV_RANK_ARENA_BYTES (64u * 1024u)
+
 struct GV_RankExpr {
-    GV_RankNode *root;  /**< Root of the expression tree. */
+    GV_RankNode *root;
+    GV_Arena arena;
 };
 
 /* Node Helpers (Internal) */
@@ -45,33 +51,31 @@ struct GV_RankExpr {
 /** Sentinel for binary division (parsed as MUL with reciprocal right). */
 #define GV_RANK_OP_DIV     ((GV_RankOp)103)
 
-static GV_RankNode *node_alloc(void) {
-    GV_RankNode *n = calloc(1, sizeof(GV_RankNode));
-    return n;
+static GV_RankNode *node_alloc(GV_Arena *arena) {
+    return (GV_RankNode *)gv_arena_calloc(arena, 1, sizeof(GV_RankNode));
 }
 
-static GV_RankNode *node_const(double value) {
-    GV_RankNode *n = node_alloc();
+static GV_RankNode *node_const(GV_Arena *arena, double value) {
+    GV_RankNode *n = node_alloc(arena);
     if (!n) return NULL;
     n->op = GV_RANK_OP_CONST;
     n->operand.constant = value;
     return n;
 }
 
-static GV_RankNode *node_signal(const char *name) {
-    GV_RankNode *n = node_alloc();
+static GV_RankNode *node_signal(GV_Arena *arena, const char *name) {
+    GV_RankNode *n = node_alloc(arena);
     if (!n) return NULL;
     n->op = GV_RANK_OP_SIGNAL;
-    n->operand.signal_name = gv_dup_cstr(name);
+    n->operand.signal_name = gv_arena_strdup(arena, name);
     if (!n->operand.signal_name) {
-        free(n);
         return NULL;
     }
     return n;
 }
 
-static GV_RankNode *node_binary(GV_RankOp op, GV_RankNode *left, GV_RankNode *right) {
-    GV_RankNode *n = node_alloc();
+static GV_RankNode *node_binary(GV_Arena *arena, GV_RankOp op, GV_RankNode *left, GV_RankNode *right) {
+    GV_RankNode *n = node_alloc(arena);
     if (!n) return NULL;
     n->op = op;
     n->operand.children.left = left;
@@ -79,26 +83,12 @@ static GV_RankNode *node_binary(GV_RankOp op, GV_RankNode *left, GV_RankNode *ri
     return n;
 }
 
-static GV_RankNode *node_unary(GV_RankOp op, GV_RankNode *child) {
-    GV_RankNode *n = node_alloc();
+static GV_RankNode *node_unary(GV_Arena *arena, GV_RankOp op, GV_RankNode *child) {
+    GV_RankNode *n = node_alloc(arena);
     if (!n) return NULL;
     n->op = op;
     n->operand.children.left = child;
     return n;
-}
-
-static void node_free(GV_RankNode *n) {
-    if (!n) return;
-
-    if (n->op == GV_RANK_OP_SIGNAL) {
-        free((void *)n->operand.signal_name);
-    } else if (n->op != GV_RANK_OP_CONST) {
-        /* Interior node -- free children recursively. */
-        node_free(n->operand.children.left);
-        node_free(n->operand.children.right);
-        node_free(n->operand.children.third);
-    }
-    free(n);
 }
 
 /* Lexer (Internal) */
@@ -128,6 +118,7 @@ typedef struct {
     size_t      pos;
     Token       cur;
     int         has_error;
+    GV_Arena   *arena;
 } Parser;
 
 static void skip_ws(Parser *p) {
@@ -231,28 +222,28 @@ static GV_RankNode *parse_func(Parser *p, const char *name) {
 
         /* First arg: value expression (typically a signal). */
         GV_RankNode *val = parse_expr(p);
-        if (!val || p->has_error) { node_free(val); return NULL; }
+        if (!val || p->has_error) { return NULL; }
 
-        if (p->cur.type != TOK_COMMA) { p->has_error = 1; node_free(val); return NULL; }
+        if (p->cur.type != TOK_COMMA) { p->has_error = 1; return NULL; }
         next_token(p);
 
         /* Second arg: origin. */
         GV_RankNode *origin_node = parse_expr(p);
-        if (!origin_node || p->has_error) { node_free(val); node_free(origin_node); return NULL; }
+        if (!origin_node || p->has_error) {  return NULL; }
 
-        if (p->cur.type != TOK_COMMA) { p->has_error = 1; node_free(val); node_free(origin_node); return NULL; }
+        if (p->cur.type != TOK_COMMA) { p->has_error = 1;  return NULL; }
         next_token(p);
 
         /* Third arg: scale. */
         GV_RankNode *scale_node = parse_expr(p);
-        if (!scale_node || p->has_error) { node_free(val); node_free(origin_node); node_free(scale_node); return NULL; }
+        if (!scale_node || p->has_error) {   return NULL; }
 
-        if (p->cur.type != TOK_RPAREN) { p->has_error = 1; node_free(val); node_free(origin_node); node_free(scale_node); return NULL; }
+        if (p->cur.type != TOK_RPAREN) { p->has_error = 1;   return NULL; }
         next_token(p);
 
         /* Build decay node.  Store origin and scale as constants when possible. */
-        GV_RankNode *n = node_alloc();
-        if (!n) { node_free(val); node_free(origin_node); node_free(scale_node); return NULL; }
+        GV_RankNode *n = node_alloc(p->arena);
+        if (!n) {   return NULL; }
         n->op = op;
         n->operand.children.left  = val;
         n->operand.children.right = origin_node;
@@ -268,42 +259,42 @@ static GV_RankNode *parse_func(Parser *p, const char *name) {
     /* log(expr) */
     if (strcmp(name, "log") == 0) {
         GV_RankNode *child = parse_expr(p);
-        if (!child || p->has_error) { node_free(child); return NULL; }
-        if (p->cur.type != TOK_RPAREN) { p->has_error = 1; node_free(child); return NULL; }
+        if (!child || p->has_error) { return NULL; }
+        if (p->cur.type != TOK_RPAREN) { p->has_error = 1; return NULL; }
         next_token(p);
-        return node_unary(GV_RANK_LOG, child);
+        return node_unary(p->arena, GV_RANK_LOG, child);
     }
 
     /* pow(base, exp) */
     if (strcmp(name, "pow") == 0) {
         GV_RankNode *base = parse_expr(p);
-        if (!base || p->has_error) { node_free(base); return NULL; }
-        if (p->cur.type != TOK_COMMA) { p->has_error = 1; node_free(base); return NULL; }
+        if (!base || p->has_error) { return NULL; }
+        if (p->cur.type != TOK_COMMA) { p->has_error = 1; return NULL; }
         next_token(p);
         GV_RankNode *exponent = parse_expr(p);
-        if (!exponent || p->has_error) { node_free(base); node_free(exponent); return NULL; }
-        if (p->cur.type != TOK_RPAREN) { p->has_error = 1; node_free(base); node_free(exponent); return NULL; }
+        if (!exponent || p->has_error) {  return NULL; }
+        if (p->cur.type != TOK_RPAREN) { p->has_error = 1;  return NULL; }
         next_token(p);
-        return node_binary(GV_RANK_POW, base, exponent);
+        return node_binary(p->arena, GV_RANK_POW, base, exponent);
     }
 
     /* clamp(expr, lo, hi) */
     if (strcmp(name, "clamp") == 0) {
         GV_RankNode *child = parse_expr(p);
-        if (!child || p->has_error) { node_free(child); return NULL; }
-        if (p->cur.type != TOK_COMMA) { p->has_error = 1; node_free(child); return NULL; }
+        if (!child || p->has_error) { return NULL; }
+        if (p->cur.type != TOK_COMMA) { p->has_error = 1; return NULL; }
         next_token(p);
         GV_RankNode *lo = parse_expr(p);
-        if (!lo || p->has_error) { node_free(child); node_free(lo); return NULL; }
-        if (p->cur.type != TOK_COMMA) { p->has_error = 1; node_free(child); node_free(lo); return NULL; }
+        if (!lo || p->has_error) {  return NULL; }
+        if (p->cur.type != TOK_COMMA) { p->has_error = 1;  return NULL; }
         next_token(p);
         GV_RankNode *hi = parse_expr(p);
-        if (!hi || p->has_error) { node_free(child); node_free(lo); node_free(hi); return NULL; }
-        if (p->cur.type != TOK_RPAREN) { p->has_error = 1; node_free(child); node_free(lo); node_free(hi); return NULL; }
+        if (!hi || p->has_error) {   return NULL; }
+        if (p->cur.type != TOK_RPAREN) { p->has_error = 1;   return NULL; }
         next_token(p);
 
-        GV_RankNode *n = node_alloc();
-        if (!n) { node_free(child); node_free(lo); node_free(hi); return NULL; }
+        GV_RankNode *n = node_alloc(p->arena);
+        if (!n) {   return NULL; }
         n->op = GV_RANK_CLAMP;
         n->operand.children.left  = child;
         n->operand.children.right = lo;
@@ -314,46 +305,46 @@ static GV_RankNode *parse_func(Parser *p, const char *name) {
     /* max(a, b) */
     if (strcmp(name, "max") == 0) {
         GV_RankNode *a = parse_expr(p);
-        if (!a || p->has_error) { node_free(a); return NULL; }
-        if (p->cur.type != TOK_COMMA) { p->has_error = 1; node_free(a); return NULL; }
+        if (!a || p->has_error) { return NULL; }
+        if (p->cur.type != TOK_COMMA) { p->has_error = 1; return NULL; }
         next_token(p);
         GV_RankNode *b = parse_expr(p);
-        if (!b || p->has_error) { node_free(a); node_free(b); return NULL; }
-        if (p->cur.type != TOK_RPAREN) { p->has_error = 1; node_free(a); node_free(b); return NULL; }
+        if (!b || p->has_error) {  return NULL; }
+        if (p->cur.type != TOK_RPAREN) { p->has_error = 1;  return NULL; }
         next_token(p);
-        return node_binary(GV_RANK_MAX, a, b);
+        return node_binary(p->arena, GV_RANK_MAX, a, b);
     }
 
     /* min(a, b) */
     if (strcmp(name, "min") == 0) {
         GV_RankNode *a = parse_expr(p);
-        if (!a || p->has_error) { node_free(a); return NULL; }
-        if (p->cur.type != TOK_COMMA) { p->has_error = 1; node_free(a); return NULL; }
+        if (!a || p->has_error) { return NULL; }
+        if (p->cur.type != TOK_COMMA) { p->has_error = 1; return NULL; }
         next_token(p);
         GV_RankNode *b = parse_expr(p);
-        if (!b || p->has_error) { node_free(a); node_free(b); return NULL; }
-        if (p->cur.type != TOK_RPAREN) { p->has_error = 1; node_free(a); node_free(b); return NULL; }
+        if (!b || p->has_error) {  return NULL; }
+        if (p->cur.type != TOK_RPAREN) { p->has_error = 1;  return NULL; }
         next_token(p);
-        return node_binary(GV_RANK_MIN, a, b);
+        return node_binary(p->arena, GV_RANK_MIN, a, b);
     }
 
     /* linear(expr, a, b) -> a*expr + b */
     if (strcmp(name, "linear") == 0) {
         GV_RankNode *child = parse_expr(p);
-        if (!child || p->has_error) { node_free(child); return NULL; }
-        if (p->cur.type != TOK_COMMA) { p->has_error = 1; node_free(child); return NULL; }
+        if (!child || p->has_error) { return NULL; }
+        if (p->cur.type != TOK_COMMA) { p->has_error = 1; return NULL; }
         next_token(p);
         GV_RankNode *a_node = parse_expr(p);
-        if (!a_node || p->has_error) { node_free(child); node_free(a_node); return NULL; }
-        if (p->cur.type != TOK_COMMA) { p->has_error = 1; node_free(child); node_free(a_node); return NULL; }
+        if (!a_node || p->has_error) {  return NULL; }
+        if (p->cur.type != TOK_COMMA) { p->has_error = 1;  return NULL; }
         next_token(p);
         GV_RankNode *b_node = parse_expr(p);
-        if (!b_node || p->has_error) { node_free(child); node_free(a_node); node_free(b_node); return NULL; }
-        if (p->cur.type != TOK_RPAREN) { p->has_error = 1; node_free(child); node_free(a_node); node_free(b_node); return NULL; }
+        if (!b_node || p->has_error) {   return NULL; }
+        if (p->cur.type != TOK_RPAREN) { p->has_error = 1;   return NULL; }
         next_token(p);
 
-        GV_RankNode *n = node_alloc();
-        if (!n) { node_free(child); node_free(a_node); node_free(b_node); return NULL; }
+        GV_RankNode *n = node_alloc(p->arena);
+        if (!n) {   return NULL; }
         n->op = GV_RANK_LINEAR;
         n->operand.children.left  = child;
         n->operand.children.right = a_node;
@@ -384,22 +375,22 @@ static GV_RankNode *parse_factor(Parser *p) {
         next_token(p);
         GV_RankNode *child = parse_factor(p);
         if (!child) return NULL;
-        return node_unary(GV_RANK_NEG, child);
+        return node_unary(p->arena, GV_RANK_NEG, child);
     }
 
     /* Parenthesized sub-expression. */
     if (p->cur.type == TOK_LPAREN) {
         next_token(p);
         GV_RankNode *inner = parse_expr(p);
-        if (!inner || p->has_error) { node_free(inner); return NULL; }
-        if (p->cur.type != TOK_RPAREN) { p->has_error = 1; node_free(inner); return NULL; }
+        if (!inner || p->has_error) { return NULL; }
+        if (p->cur.type != TOK_RPAREN) { p->has_error = 1; return NULL; }
         next_token(p);
         return inner;
     }
 
     /* Numeric literal. */
     if (p->cur.type == TOK_NUM) {
-        GV_RankNode *n = node_const(p->cur.num_val);
+        GV_RankNode *n = node_const(p->arena, p->cur.num_val);
         next_token(p);
         return n;
     }
@@ -416,7 +407,7 @@ static GV_RankNode *parse_factor(Parser *p) {
         }
 
         /* Signal reference (includes the built-in _score). */
-        return node_signal(name);
+        return node_signal(p->arena, name);
     }
 
     /* Unexpected token. */
@@ -436,20 +427,17 @@ static GV_RankNode *parse_term(Parser *p) {
         next_token(p);
 
         GV_RankNode *right = parse_factor(p);
-        if (!right || p->has_error) {
-            node_free(left);
-            node_free(right);
-            return NULL;
+        if (!right || p->has_error) {  return NULL;
         }
 
         if (op_tok == TOK_STAR) {
-            left = node_binary(GV_RANK_MUL, left, right);
+            left = node_binary(p->arena, GV_RANK_MUL, left, right);
         } else {
             /* Division: represent as MUL(left, POW(right, -1)). */
-            GV_RankNode *neg_one = node_const(-1.0);
-            GV_RankNode *recip = node_binary(GV_RANK_POW, right, neg_one);
-            if (!recip) { node_free(left); return NULL; }
-            left = node_binary(GV_RANK_MUL, left, recip);
+            GV_RankNode *neg_one = node_const(p->arena, -1.0);
+            GV_RankNode *recip = node_binary(p->arena, GV_RANK_POW, right, neg_one);
+            if (!recip) { return NULL; }
+            left = node_binary(p->arena, GV_RANK_MUL, left, recip);
         }
         if (!left) return NULL;
     }
@@ -469,19 +457,16 @@ static GV_RankNode *parse_expr(Parser *p) {
         next_token(p);
 
         GV_RankNode *right = parse_term(p);
-        if (!right || p->has_error) {
-            node_free(left);
-            node_free(right);
-            return NULL;
+        if (!right || p->has_error) {  return NULL;
         }
 
         if (op_tok == TOK_PLUS) {
-            left = node_binary(GV_RANK_ADD, left, right);
+            left = node_binary(p->arena, GV_RANK_ADD, left, right);
         } else {
             /* Subtraction: ADD(left, NEG(right)). */
-            GV_RankNode *neg = node_unary(GV_RANK_NEG, right);
-            if (!neg) { node_free(left); return NULL; }
-            left = node_binary(GV_RANK_ADD, left, neg);
+            GV_RankNode *neg = node_unary(p->arena, GV_RANK_NEG, right);
+            if (!neg) { return NULL; }
+            left = node_binary(p->arena, GV_RANK_ADD, left, neg);
         }
         if (!left) return NULL;
     }
@@ -494,33 +479,30 @@ static GV_RankNode *parse_expr(Parser *p) {
 GV_RankExpr *rank_expr_parse(const char *expression) {
     if (!expression) return NULL;
 
+    GV_RankExpr *expr = gv_calloc(1, sizeof(GV_RankExpr));
+    if (!expr) return NULL;
+    if (gv_arena_init(&expr->arena, GV_RANK_ARENA_BYTES) != 0) {
+        gv_free(expr);
+        return NULL;
+    }
+
     Parser parser;
     memset(&parser, 0, sizeof(parser));
     parser.src = expression;
     parser.pos = 0;
     parser.has_error = 0;
+    parser.arena = &expr->arena;
 
-    /* Prime the lexer. */
     next_token(&parser);
 
     GV_RankNode *root = parse_expr(&parser);
 
-    if (parser.has_error || !root) {
-        node_free(root);
+    if (parser.has_error || !root || parser.cur.type != TOK_EOF) {
+        gv_arena_fini(&expr->arena);
+        gv_free(expr);
         return NULL;
     }
 
-    /* Ensure we consumed the entire input. */
-    if (parser.cur.type != TOK_EOF) {
-        node_free(root);
-        return NULL;
-    }
-
-    GV_RankExpr *expr = calloc(1, sizeof(GV_RankExpr));
-    if (!expr) {
-        node_free(root);
-        return NULL;
-    }
     expr->root = root;
     return expr;
 }
@@ -529,43 +511,49 @@ GV_RankExpr *rank_expr_create_weighted(size_t n, const char **signal_names,
                                           const double *weights) {
     if (n == 0 || !signal_names || !weights) return NULL;
 
-    /* Build: w0*s0 + w1*s1 + ... */
+    GV_RankExpr *expr = gv_calloc(1, sizeof(GV_RankExpr));
+    if (!expr) return NULL;
+    if (gv_arena_init(&expr->arena, GV_RANK_ARENA_BYTES) != 0) {
+        gv_free(expr);
+        return NULL;
+    }
+
     GV_RankNode *sum = NULL;
 
     for (size_t i = 0; i < n; i++) {
         if (!signal_names[i]) {
-            node_free(sum);
+            gv_arena_fini(&expr->arena);
+            gv_free(expr);
             return NULL;
         }
 
-        GV_RankNode *w = node_const(weights[i]);
-        GV_RankNode *s = node_signal(signal_names[i]);
+        GV_RankNode *w = node_const(&expr->arena, weights[i]);
+        GV_RankNode *s = node_signal(&expr->arena, signal_names[i]);
         if (!w || !s) {
-            node_free(w);
-            node_free(s);
-            node_free(sum);
+            gv_arena_fini(&expr->arena);
+            gv_free(expr);
             return NULL;
         }
 
-        GV_RankNode *term = node_binary(GV_RANK_MUL, w, s);
+        GV_RankNode *term = node_binary(&expr->arena, GV_RANK_MUL, w, s);
         if (!term) {
-            node_free(sum);
+            gv_arena_fini(&expr->arena);
+            gv_free(expr);
             return NULL;
         }
 
         if (!sum) {
             sum = term;
         } else {
-            sum = node_binary(GV_RANK_ADD, sum, term);
-            if (!sum) return NULL;
+            sum = node_binary(&expr->arena, GV_RANK_ADD, sum, term);
+            if (!sum) {
+                gv_arena_fini(&expr->arena);
+                gv_free(expr);
+                return NULL;
+            }
         }
     }
 
-    GV_RankExpr *expr = calloc(1, sizeof(GV_RankExpr));
-    if (!expr) {
-        node_free(sum);
-        return NULL;
-    }
     expr->root = sum;
     return expr;
 }
@@ -574,8 +562,8 @@ GV_RankExpr *rank_expr_create_weighted(size_t n, const char **signal_names,
 
 void rank_expr_destroy(GV_RankExpr *expr) {
     if (!expr) return;
-    node_free(expr->root);
-    free(expr);
+    gv_arena_fini(&expr->arena);
+    gv_free(expr);
 }
 
 /* Signal Lookup (Internal) */
@@ -770,7 +758,14 @@ int rank_search(const void *db, const float *query, size_t dimension,
     if (fetch_k < k) fetch_k = k;
 
     /* Allocate search results buffer. */
-    GV_SearchResult *search_results = malloc(fetch_k * sizeof(GV_SearchResult));
+    GV_SearchResult *search_results =
+        (GV_SearchResult *)gv_tls_calloc(fetch_k, sizeof(GV_SearchResult));
+    int search_on_heap = 0;
+    if (!search_results) {
+        search_results =
+            (GV_SearchResult *)gv_alloc(fetch_k * sizeof(GV_SearchResult));
+        search_on_heap = 1;
+    }
     if (!search_results) return -1;
     memset(search_results, 0, fetch_k * sizeof(GV_SearchResult));
 
@@ -778,18 +773,20 @@ int rank_search(const void *db, const float *query, size_t dimension,
     int found = db_search(database, query, fetch_k, search_results,
                              (GV_DistanceType)distance_type);
     if (found < 0) {
-        free(search_results);
+        gv_tls_free_or_heap(search_results, search_on_heap);
         return -1;
     }
     if (found == 0) {
-        free(search_results);
+        gv_tls_free_or_heap(search_results, search_on_heap);
         return 0;
     }
 
     /* Step 2: Score each candidate. */
-    RankCandidate *candidates = malloc((size_t)found * sizeof(RankCandidate));
+    int candidates_on_heap = 0;
+    RankCandidate *candidates = (RankCandidate *)gv_tls_alloc_or_heap(
+        (size_t)found * sizeof(RankCandidate), sizeof(RankCandidate), &candidates_on_heap);
     if (!candidates) {
-        free(search_results);
+        gv_tls_free_or_heap(search_results, search_on_heap);
         return -1;
     }
 
@@ -817,7 +814,7 @@ int rank_search(const void *db, const float *query, size_t dimension,
                                                        signals, sig_count);
     }
 
-    free(search_results);
+    gv_tls_free_or_heap(search_results, search_on_heap);
 
     /* Step 3: Sort by final_score descending. */
     qsort(candidates, (size_t)found, sizeof(RankCandidate), compare_ranked_desc);
@@ -830,7 +827,7 @@ int rank_search(const void *db, const float *query, size_t dimension,
         results[i].vector_score = candidates[i].vector_score;
     }
 
-    free(candidates);
+    gv_tls_free_or_heap(candidates, candidates_on_heap);
 
     return (int)result_count;
 }

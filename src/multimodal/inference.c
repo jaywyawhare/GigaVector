@@ -12,6 +12,7 @@
  */
 
 #include <stdlib.h>
+#include "core/memory.h"
 #include <string.h>
 #include <stdio.h>
 #include <pthread.h>
@@ -190,7 +191,7 @@ GV_InferenceEngine *inference_create(void *db,
 
     const char *provider = config->embed_provider ? config->embed_provider : "openai";
 
-    GV_InferenceEngine *eng = (GV_InferenceEngine *)calloc(1, sizeof(*eng));
+    GV_InferenceEngine *eng = (GV_InferenceEngine *)gv_calloc(1, sizeof(*eng));
     if (!eng) return NULL;
 
     eng->db            = (GV_Database *)db;
@@ -200,7 +201,7 @@ GV_InferenceEngine *inference_create(void *db,
 
     /* Initialize the mutex */
     if (pthread_mutex_init(&eng->mutex, NULL) != 0) {
-        free(eng);
+        gv_free(eng);
         return NULL;
     }
 
@@ -220,7 +221,7 @@ GV_InferenceEngine *inference_create(void *db,
     eng->embedder = auto_embed_create(&ae_cfg);
     if (!eng->embedder) {
         pthread_mutex_destroy(&eng->mutex);
-        free(eng);
+        gv_free(eng);
         return NULL;
     }
 
@@ -232,7 +233,7 @@ void inference_destroy(GV_InferenceEngine *eng) {
 
     auto_embed_destroy(eng->embedder);
     pthread_mutex_destroy(&eng->mutex);
-    free(eng);
+    gv_free(eng);
 }
 
 /* Insert -- single */
@@ -263,7 +264,7 @@ int inference_add(GV_InferenceEngine *eng, const char *text,
         eng->db, vec, dim,
         (const char *const *)keys, (const char *const *)values, meta_count);
 
-    free(vec);
+    gv_free(vec);
     pthread_mutex_unlock(&eng->mutex);
 
     return rc == 0 ? (int)new_index : -1;
@@ -306,7 +307,7 @@ int inference_add_batch(GV_InferenceEngine *eng, const char **texts,
             (const char *const *)keys, (const char *const *)values,
             meta_count);
 
-        free(vec);
+        gv_free(vec);
         if (rc != 0) failures++;
     }
 
@@ -331,19 +332,19 @@ int inference_search(GV_InferenceEngine *eng, const char *query_text,
     }
 
     /* Allocate temporary search results */
-    GV_SearchResult *sr = (GV_SearchResult *)calloc(k, sizeof(GV_SearchResult));
+    GV_SearchResult *sr = (GV_SearchResult *)gv_calloc(k, sizeof(GV_SearchResult));
     if (!sr) {
-        free(vec);
+        gv_free(vec);
         pthread_mutex_unlock(&eng->mutex);
         return -1;
     }
 
     int found = db_search(eng->db, vec, k, sr,
                              (GV_DistanceType)eng->distance_type);
-    free(vec);
+    gv_free(vec);
 
     if (found < 0) {
-        free(sr);
+        gv_free(sr);
         pthread_mutex_unlock(&eng->mutex);
         return -1;
     }
@@ -355,7 +356,7 @@ int inference_search(GV_InferenceEngine *eng, const char *query_text,
         inf_populate_result(eng->db, &sr[i], &results[i]);
     }
 
-    free(sr);
+    gv_free(sr);
     pthread_mutex_unlock(&eng->mutex);
     return count;
 }
@@ -379,9 +380,9 @@ int inference_search_filtered(GV_InferenceEngine *eng,
     }
 
     /* Allocate temporary search results */
-    GV_SearchResult *sr = (GV_SearchResult *)calloc(k, sizeof(GV_SearchResult));
+    GV_SearchResult *sr = (GV_SearchResult *)gv_calloc(k, sizeof(GV_SearchResult));
     if (!sr) {
-        free(vec);
+        gv_free(vec);
         pthread_mutex_unlock(&eng->mutex);
         return -1;
     }
@@ -389,10 +390,10 @@ int inference_search_filtered(GV_InferenceEngine *eng,
     int found = db_search_with_filter_expr(
         eng->db, vec, k, sr,
         (GV_DistanceType)eng->distance_type, filter_expr);
-    free(vec);
+    gv_free(vec);
 
     if (found < 0) {
-        free(sr);
+        gv_free(sr);
         pthread_mutex_unlock(&eng->mutex);
         return -1;
     }
@@ -404,7 +405,7 @@ int inference_search_filtered(GV_InferenceEngine *eng,
         inf_populate_result(eng->db, &sr[i], &results[i]);
     }
 
-    free(sr);
+    gv_free(sr);
     pthread_mutex_unlock(&eng->mutex);
     return count;
 }
@@ -434,7 +435,7 @@ int inference_upsert(GV_InferenceEngine *eng, size_t index,
         eng->db, index, vec, dim,
         (const char *const *)keys, (const char *const *)values, meta_count);
 
-    free(vec);
+    gv_free(vec);
     pthread_mutex_unlock(&eng->mutex);
     return rc;
 }
@@ -445,9 +446,9 @@ void inference_free_results(GV_InferenceResult *results, size_t count) {
     if (!results) return;
 
     for (size_t i = 0; i < count; i++) {
-        free(results[i].text);
+        gv_free(results[i].text);
         results[i].text = NULL;
-        free(results[i].metadata_json);
+        gv_free(results[i].metadata_json);
         results[i].metadata_json = NULL;
     }
 }

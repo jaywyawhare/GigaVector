@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include <pthread.h>
+#include "core/memory.h"
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -127,7 +128,7 @@ static int reverse_ensure(GV_ReverseMap *rev, size_t needed_index)
         new_cap *= 2;
     }
 
-    char **new_ids = (char **)realloc(rev->ids, new_cap * sizeof(char *));
+    char **new_ids = (char **)gv_realloc(rev->ids, new_cap * sizeof(char *));
     if (!new_ids) {
         return -1;
     }
@@ -146,7 +147,7 @@ static int map_resize(GV_PointIDMap *map, size_t new_capacity)
 {
     new_capacity = next_pow2(new_capacity);
 
-    GV_PointIDEntry *new_buckets = (GV_PointIDEntry *)calloc(new_capacity,
+    GV_PointIDEntry *new_buckets = (GV_PointIDEntry *)gv_calloc(new_capacity,
                                                               sizeof(GV_PointIDEntry));
     if (!new_buckets) {
         return -1;
@@ -165,7 +166,7 @@ static int map_resize(GV_PointIDMap *map, size_t new_capacity)
         new_buckets[new_idx] = *old; /* Shallow copy; we keep the same string_id pointer. */
     }
 
-    free(map->buckets);
+    gv_free(map->buckets);
     map->buckets  = new_buckets;
     map->capacity = new_capacity;
     return 0;
@@ -180,20 +181,20 @@ GV_PointIDMap *point_id_create(size_t initial_capacity)
     }
     initial_capacity = next_pow2(initial_capacity);
 
-    GV_PointIDMap *map = (GV_PointIDMap *)calloc(1, sizeof(GV_PointIDMap));
+    GV_PointIDMap *map = (GV_PointIDMap *)gv_calloc(1, sizeof(GV_PointIDMap));
     if (!map) {
         return NULL;
     }
 
     if (pthread_rwlock_init(&map->rwlock, NULL) != 0) {
-        free(map);
+        gv_free(map);
         return NULL;
     }
 
-    map->buckets = (GV_PointIDEntry *)calloc(initial_capacity, sizeof(GV_PointIDEntry));
+    map->buckets = (GV_PointIDEntry *)gv_calloc(initial_capacity, sizeof(GV_PointIDEntry));
     if (!map->buckets) {
         pthread_rwlock_destroy(&map->rwlock);
-        free(map);
+        gv_free(map);
         return NULL;
     }
 
@@ -214,14 +215,14 @@ void point_id_destroy(GV_PointIDMap *map)
     /* Free all owned string copies. */
     for (size_t i = 0; i < map->capacity; i++) {
         if (map->buckets[i].occupied) {
-            free(map->buckets[i].string_id);
+            gv_free(map->buckets[i].string_id);
         }
     }
 
-    free(map->buckets);
-    free(map->reverse.ids);
+    gv_free(map->buckets);
+    gv_free(map->reverse.ids);
     pthread_rwlock_destroy(&map->rwlock);
-    free(map);
+    gv_free(map);
 }
 
 /* Public API: Map Operations */
@@ -335,7 +336,7 @@ int point_id_remove(GV_PointIDMap *map, const char *string_id)
     }
 
     /* Free the owned string. */
-    free(map->buckets[idx].string_id);
+    gv_free(map->buckets[idx].string_id);
 
     /* Mark as empty.  To maintain linear-probing correctness we must
      * rehash subsequent entries in the same cluster. */
@@ -582,30 +583,30 @@ GV_PointIDMap *point_id_load(const char *filepath)
             goto fail;
         }
 
-        char *id_buf = (char *)malloc(slen + 1);
+        char *id_buf = (char *)gv_alloc(slen + 1);
         if (!id_buf) {
             goto fail;
         }
 
         if (slen > 0 && fread(id_buf, 1, slen, fp) != slen) {
-            free(id_buf);
+            gv_free(id_buf);
             goto fail;
         }
         id_buf[slen] = '\0';
 
         size_t internal_index = 0;
         if (fread(&internal_index, sizeof(size_t), 1, fp) != 1) {
-            free(id_buf);
+            gv_free(id_buf);
             goto fail;
         }
 
-        /* point_id_set will strdup the key internally, so we can free ours. */
+        /* point_id_set will gv_strdup the key internally, so we can gv_free ours. */
         if (point_id_set(map, id_buf, internal_index) != 0) {
-            free(id_buf);
+            gv_free(id_buf);
             goto fail;
         }
 
-        free(id_buf);
+        gv_free(id_buf);
     }
 
     fclose(fp);

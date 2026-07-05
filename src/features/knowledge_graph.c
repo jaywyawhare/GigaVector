@@ -8,6 +8,7 @@
  */
 
 #include "features/knowledge_graph.h"
+#include "core/memory.h"
 #include "core/utils.h"
 
 #include <stdlib.h>
@@ -28,7 +29,7 @@ typedef struct {
 } KG_IdList;
 
 static int kg_idlist_init(KG_IdList *list) {
-    list->ids = (uint64_t *)malloc(KG_INITIAL_IDX * sizeof(uint64_t));
+    list->ids = (uint64_t *)gv_alloc(KG_INITIAL_IDX * sizeof(uint64_t));
     if (!list->ids) return -1;
     list->count = 0;
     list->capacity = KG_INITIAL_IDX;
@@ -38,7 +39,7 @@ static int kg_idlist_init(KG_IdList *list) {
 static int kg_idlist_push(KG_IdList *list, uint64_t id) {
     if (list->count >= list->capacity) {
         size_t new_cap = list->capacity * 2;
-        uint64_t *tmp = (uint64_t *)realloc(list->ids,
+        uint64_t *tmp = (uint64_t *)gv_realloc(list->ids,
                                              new_cap * sizeof(uint64_t));
         if (!tmp) return -1;
         list->ids = tmp;
@@ -59,7 +60,7 @@ static void kg_idlist_remove(KG_IdList *list, uint64_t id) {
 }
 
 static void kg_idlist_free(KG_IdList *list) {
-    free(list->ids);
+    gv_free(list->ids);
     list->ids = NULL;
     list->count = 0;
     list->capacity = 0;
@@ -136,9 +137,9 @@ static uint64_t kg_now_epoch(void) {
 static void kg_prop_free_list(GV_KGProp *head) {
     while (head) {
         GV_KGProp *next = head->next;
-        free(head->key);
-        free(head->value);
-        free(head);
+        gv_free(head->key);
+        gv_free(head->value);
+        gv_free(head);
         head = next;
     }
 }
@@ -156,18 +157,18 @@ static int kg_prop_set(GV_KGProp **head, size_t *count,
     if (existing) {
         char *dup = gv_dup_cstr(value);
         if (!dup) return -1;
-        free(existing->value);
+        gv_free(existing->value);
         existing->value = dup;
         return 0;
     }
-    GV_KGProp *node = (GV_KGProp *)calloc(1, sizeof(GV_KGProp));
+    GV_KGProp *node = (GV_KGProp *)gv_calloc(1, sizeof(GV_KGProp));
     if (!node) return -1;
     node->key = gv_dup_cstr(key);
     node->value = gv_dup_cstr(value);
     if (!node->key || !node->value) {
-        free(node->key);
-        free(node->value);
-        free(node);
+        gv_free(node->key);
+        gv_free(node->value);
+        gv_free(node);
         return -1;
     }
     node->next = *head;
@@ -212,11 +213,11 @@ static KG_IndexEntry *kg_index_get_or_create(KG_IndexEntry **table,
     for (KG_IndexEntry *e = table[idx]; e; e = e->next) {
         if (e->key == key) return e;
     }
-    KG_IndexEntry *entry = (KG_IndexEntry *)calloc(1, sizeof(KG_IndexEntry));
+    KG_IndexEntry *entry = (KG_IndexEntry *)gv_calloc(1, sizeof(KG_IndexEntry));
     if (!entry) return NULL;
     entry->key = key;
     if (kg_idlist_init(&entry->list) != 0) {
-        free(entry);
+        gv_free(entry);
         return NULL;
     }
     entry->next = table[idx];
@@ -237,11 +238,11 @@ static void kg_index_free_table(KG_IndexEntry **table, size_t buckets) {
         while (e) {
             KG_IndexEntry *next = e->next;
             kg_idlist_free(&e->list);
-            free(e);
+            gv_free(e);
             e = next;
         }
     }
-    free(table);
+    gv_free(table);
 }
 
 static int kg_embedding_add(GV_KnowledgeGraph *kg, uint64_t entity_id,
@@ -249,9 +250,9 @@ static int kg_embedding_add(GV_KnowledgeGraph *kg, uint64_t entity_id,
     if (dim != kg->config.embedding_dimension) return -1;
     if (kg->embedding_count >= kg->embedding_cap) {
         size_t new_cap = kg->embedding_cap == 0 ? 256 : kg->embedding_cap * 2;
-        float *new_emb = (float *)realloc(kg->all_embeddings,
+        float *new_emb = (float *)gv_realloc(kg->all_embeddings,
                                            new_cap * dim * sizeof(float));
-        uint64_t *new_ids = (uint64_t *)realloc(kg->embedding_entity_ids,
+        uint64_t *new_ids = (uint64_t *)gv_realloc(kg->embedding_entity_ids,
                                                   new_cap * sizeof(uint64_t));
         if (!new_emb || !new_ids) {
             /* Rollback on partial allocation */
@@ -300,9 +301,9 @@ static const float *kg_embedding_get(const GV_KnowledgeGraph *kg,
 }
 
 static void kg_entity_data_free(GV_KGEntity *e) {
-    free(e->name);
-    free(e->type);
-    free(e->embedding);
+    gv_free(e->name);
+    gv_free(e->type);
+    gv_free(e->embedding);
     kg_prop_free_list(e->properties);
     e->name = NULL;
     e->type = NULL;
@@ -311,7 +312,7 @@ static void kg_entity_data_free(GV_KGEntity *e) {
 }
 
 static void kg_relation_data_free(GV_KGRelation *r) {
-    free(r->predicate);
+    gv_free(r->predicate);
     kg_prop_free_list(r->properties);
     r->predicate = NULL;
     r->properties = NULL;
@@ -322,7 +323,7 @@ static size_t kg_collect_relations_for_entity(const GV_KnowledgeGraph *kg,
                                                uint64_t **out_ids) {
     size_t total = 0;
     size_t cap = 64;
-    uint64_t *ids = (uint64_t *)malloc(cap * sizeof(uint64_t));
+    uint64_t *ids = (uint64_t *)gv_alloc(cap * sizeof(uint64_t));
     if (!ids) { *out_ids = NULL; return 0; }
 
     KG_IndexEntry *se = kg_index_find(kg->subject_index,
@@ -331,7 +332,7 @@ static size_t kg_collect_relations_for_entity(const GV_KnowledgeGraph *kg,
         for (size_t i = 0; i < se->list.count; i++) {
             if (total >= cap) {
                 cap *= 2;
-                uint64_t *tmp = (uint64_t *)realloc(ids,
+                uint64_t *tmp = (uint64_t *)gv_realloc(ids,
                                                       cap * sizeof(uint64_t));
                 if (!tmp) break;
                 ids = tmp;
@@ -351,7 +352,7 @@ static size_t kg_collect_relations_for_entity(const GV_KnowledgeGraph *kg,
             if (dup) continue;
             if (total >= cap) {
                 cap *= 2;
-                uint64_t *tmp = (uint64_t *)realloc(ids,
+                uint64_t *tmp = (uint64_t *)gv_realloc(ids,
                                                       cap * sizeof(uint64_t));
                 if (!tmp) break;
                 ids = tmp;
@@ -382,7 +383,7 @@ static int kg_remove_relation_internal(GV_KnowledgeGraph *kg,
             if (prev) prev->next = n->next;
             else kg->relation_buckets[idx] = n->next;
             kg_relation_data_free(&n->relation);
-            free(n);
+            gv_free(n);
             kg->relation_count--;
             return 0;
         }
@@ -419,12 +420,12 @@ static size_t kg_shared_neighbors(const GV_KnowledgeGraph *kg,
     size_t cb = kg_collect_relations_for_entity(kg, b, &nb);
 
     size_t na_cap = 64, nb_cap = 64;
-    uint64_t *neigh_a = (uint64_t *)malloc(na_cap * sizeof(uint64_t));
-    uint64_t *neigh_b = (uint64_t *)malloc(nb_cap * sizeof(uint64_t));
+    uint64_t *neigh_a = (uint64_t *)gv_alloc(na_cap * sizeof(uint64_t));
+    uint64_t *neigh_b = (uint64_t *)gv_alloc(nb_cap * sizeof(uint64_t));
     size_t neigh_a_count = 0, neigh_b_count = 0;
 
     if (!neigh_a || !neigh_b) {
-        free(na); free(nb); free(neigh_a); free(neigh_b);
+        gv_free(na); gv_free(nb); gv_free(neigh_a); gv_free(neigh_b);
         return 0;
     }
 
@@ -435,7 +436,7 @@ static size_t kg_shared_neighbors(const GV_KnowledgeGraph *kg,
                           rn->relation.object_id : rn->relation.subject_id;
         if (neigh_a_count >= na_cap) {
             na_cap *= 2;
-            uint64_t *tmp = (uint64_t *)realloc(neigh_a,
+            uint64_t *tmp = (uint64_t *)gv_realloc(neigh_a,
                                                   na_cap * sizeof(uint64_t));
             if (!tmp) break;
             neigh_a = tmp;
@@ -450,7 +451,7 @@ static size_t kg_shared_neighbors(const GV_KnowledgeGraph *kg,
                           rn->relation.object_id : rn->relation.subject_id;
         if (neigh_b_count >= nb_cap) {
             nb_cap *= 2;
-            uint64_t *tmp = (uint64_t *)realloc(neigh_b,
+            uint64_t *tmp = (uint64_t *)gv_realloc(neigh_b,
                                                   nb_cap * sizeof(uint64_t));
             if (!tmp) break;
             neigh_b = tmp;
@@ -465,8 +466,8 @@ static size_t kg_shared_neighbors(const GV_KnowledgeGraph *kg,
         }
     }
 
-    free(na); free(nb);
-    free(neigh_a); free(neigh_b);
+    gv_free(na); gv_free(nb);
+    gv_free(neigh_a); gv_free(neigh_b);
     return shared;
 }
 
@@ -487,11 +488,11 @@ typedef struct {
 } KG_BFSState;
 
 static int kg_bfs_init(KG_BFSState *bfs, size_t cap) {
-    bfs->visited = (uint64_t *)malloc(cap * sizeof(uint64_t));
-    bfs->depths  = (size_t *)malloc(cap * sizeof(size_t));
-    bfs->parent  = (uint64_t *)calloc(cap, sizeof(uint64_t));
+    bfs->visited = (uint64_t *)gv_alloc(cap * sizeof(uint64_t));
+    bfs->depths  = (size_t *)gv_alloc(cap * sizeof(size_t));
+    bfs->parent  = (uint64_t *)gv_calloc(cap, sizeof(uint64_t));
     if (!bfs->visited || !bfs->depths || !bfs->parent) {
-        free(bfs->visited); free(bfs->depths); free(bfs->parent);
+        gv_free(bfs->visited); gv_free(bfs->depths); gv_free(bfs->parent);
         return -1;
     }
     bfs->count = 0;
@@ -510,11 +511,11 @@ static int kg_bfs_push(KG_BFSState *bfs, uint64_t id, size_t depth,
                         uint64_t parent) {
     if (bfs->count >= bfs->cap) {
         size_t new_cap = bfs->cap * 2;
-        uint64_t *v = (uint64_t *)realloc(bfs->visited,
+        uint64_t *v = (uint64_t *)gv_realloc(bfs->visited,
                                             new_cap * sizeof(uint64_t));
-        size_t *d = (size_t *)realloc(bfs->depths,
+        size_t *d = (size_t *)gv_realloc(bfs->depths,
                                        new_cap * sizeof(size_t));
-        uint64_t *p = (uint64_t *)realloc(bfs->parent,
+        uint64_t *p = (uint64_t *)gv_realloc(bfs->parent,
                                             new_cap * sizeof(uint64_t));
         if (!v || !d || !p) {
             if (v) bfs->visited = v;
@@ -535,9 +536,9 @@ static int kg_bfs_push(KG_BFSState *bfs, uint64_t id, size_t depth,
 }
 
 static void kg_bfs_free(KG_BFSState *bfs) {
-    free(bfs->visited);
-    free(bfs->depths);
-    free(bfs->parent);
+    gv_free(bfs->visited);
+    gv_free(bfs->depths);
+    gv_free(bfs->parent);
     bfs->visited = NULL;
     bfs->depths = NULL;
     bfs->parent = NULL;
@@ -646,7 +647,7 @@ GV_KnowledgeGraph *kg_create(const GV_KGConfig *config) {
         kg_config_init(&cfg);
     }
 
-    GV_KnowledgeGraph *kg = (GV_KnowledgeGraph *)calloc(1,
+    GV_KnowledgeGraph *kg = (GV_KnowledgeGraph *)gv_calloc(1,
                                 sizeof(GV_KnowledgeGraph));
     if (!kg) return NULL;
 
@@ -657,19 +658,19 @@ GV_KnowledgeGraph *kg_create(const GV_KGConfig *config) {
     kg->next_entity_id = 1;
     kg->next_relation_id = 1;
 
-    kg->entity_buckets = (KG_EntityNode **)calloc(kg->entity_bucket_count,
+    kg->entity_buckets = (KG_EntityNode **)gv_calloc(kg->entity_bucket_count,
                                                    sizeof(KG_EntityNode *));
     if (!kg->entity_buckets) goto fail;
 
-    kg->relation_buckets = (KG_RelationNode **)calloc(
+    kg->relation_buckets = (KG_RelationNode **)gv_calloc(
         kg->relation_bucket_count, sizeof(KG_RelationNode *));
     if (!kg->relation_buckets) goto fail;
 
-    kg->subject_index = (KG_IndexEntry **)calloc(kg->spo_bucket_count,
+    kg->subject_index = (KG_IndexEntry **)gv_calloc(kg->spo_bucket_count,
                                                   sizeof(KG_IndexEntry *));
-    kg->object_index = (KG_IndexEntry **)calloc(kg->spo_bucket_count,
+    kg->object_index = (KG_IndexEntry **)gv_calloc(kg->spo_bucket_count,
                                                  sizeof(KG_IndexEntry *));
-    kg->predicate_index = (KG_IndexEntry **)calloc(kg->spo_bucket_count,
+    kg->predicate_index = (KG_IndexEntry **)gv_calloc(kg->spo_bucket_count,
                                                     sizeof(KG_IndexEntry *));
     if (!kg->subject_index || !kg->object_index || !kg->predicate_index)
         goto fail;
@@ -679,12 +680,12 @@ GV_KnowledgeGraph *kg_create(const GV_KGConfig *config) {
     return kg;
 
 fail:
-    free(kg->entity_buckets);
-    free(kg->relation_buckets);
-    free(kg->subject_index);
-    free(kg->object_index);
-    free(kg->predicate_index);
-    free(kg);
+    gv_free(kg->entity_buckets);
+    gv_free(kg->relation_buckets);
+    gv_free(kg->subject_index);
+    gv_free(kg->object_index);
+    gv_free(kg->predicate_index);
+    gv_free(kg);
     return NULL;
 }
 
@@ -696,32 +697,32 @@ void kg_destroy(GV_KnowledgeGraph *kg) {
         while (n) {
             KG_EntityNode *next = n->next;
             kg_entity_data_free(&n->entity);
-            free(n);
+            gv_free(n);
             n = next;
         }
     }
-    free(kg->entity_buckets);
+    gv_free(kg->entity_buckets);
 
     for (size_t i = 0; i < kg->relation_bucket_count; i++) {
         KG_RelationNode *n = kg->relation_buckets[i];
         while (n) {
             KG_RelationNode *next = n->next;
             kg_relation_data_free(&n->relation);
-            free(n);
+            gv_free(n);
             n = next;
         }
     }
-    free(kg->relation_buckets);
+    gv_free(kg->relation_buckets);
 
     kg_index_free_table(kg->subject_index, kg->spo_bucket_count);
     kg_index_free_table(kg->object_index, kg->spo_bucket_count);
     kg_index_free_table(kg->predicate_index, kg->spo_bucket_count);
 
-    free(kg->all_embeddings);
-    free(kg->embedding_entity_ids);
+    gv_free(kg->all_embeddings);
+    gv_free(kg->embedding_entity_ids);
 
     pthread_rwlock_destroy(&kg->rwlock);
-    free(kg);
+    gv_free(kg);
 }
 
 uint64_t kg_add_entity(GV_KnowledgeGraph *kg, const char *name,
@@ -736,7 +737,7 @@ uint64_t kg_add_entity(GV_KnowledgeGraph *kg, const char *name,
         return 0;
     }
 
-    KG_EntityNode *node = (KG_EntityNode *)calloc(1, sizeof(KG_EntityNode));
+    KG_EntityNode *node = (KG_EntityNode *)gv_calloc(1, sizeof(KG_EntityNode));
     if (!node) {
         pthread_rwlock_unlock(&kg->rwlock);
         return 0;
@@ -753,15 +754,15 @@ uint64_t kg_add_entity(GV_KnowledgeGraph *kg, const char *name,
     e->confidence = 1.0f;
 
     if (!e->name || !e->type) {
-        free(e->name);
-        free(e->type);
-        free(node);
+        gv_free(e->name);
+        gv_free(e->type);
+        gv_free(node);
         pthread_rwlock_unlock(&kg->rwlock);
         return 0;
     }
 
     if (embedding && dimension > 0 && kg->config.embedding_dimension > 0) {
-        e->embedding = (float *)malloc(dimension * sizeof(float));
+        e->embedding = (float *)gv_alloc(dimension * sizeof(float));
         if (e->embedding) {
             memcpy(e->embedding, embedding, dimension * sizeof(float));
             e->dimension = dimension;
@@ -789,7 +790,7 @@ int kg_remove_entity(GV_KnowledgeGraph *kg, uint64_t entity_id) {
     for (size_t i = 0; i < rel_count; i++) {
         kg_remove_relation_internal(kg, rel_ids[i]);
     }
-    free(rel_ids);
+    gv_free(rel_ids);
 
     kg_embedding_remove(kg, entity_id);
 
@@ -801,7 +802,7 @@ int kg_remove_entity(GV_KnowledgeGraph *kg, uint64_t entity_id) {
             if (prev) prev->next = n->next;
             else kg->entity_buckets[bucket] = n->next;
             kg_entity_data_free(&n->entity);
-            free(n);
+            gv_free(n);
             kg->entity_count--;
             pthread_rwlock_unlock(&kg->rwlock);
             return 0;
@@ -901,7 +902,7 @@ uint64_t kg_add_relation(GV_KnowledgeGraph *kg, uint64_t subject,
         return 0;
     }
 
-    KG_RelationNode *node = (KG_RelationNode *)calloc(1,
+    KG_RelationNode *node = (KG_RelationNode *)gv_calloc(1,
                                 sizeof(KG_RelationNode));
     if (!node) {
         pthread_rwlock_unlock(&kg->rwlock);
@@ -919,7 +920,7 @@ uint64_t kg_add_relation(GV_KnowledgeGraph *kg, uint64_t subject,
     r->created_at  = kg_now_epoch();
 
     if (!r->predicate) {
-        free(node);
+        gv_free(node);
         pthread_rwlock_unlock(&kg->rwlock);
         return 0;
     }
@@ -1088,9 +1089,9 @@ int kg_query_triples(const GV_KnowledgeGraph *kg, const uint64_t *subject,
 void kg_free_triples(GV_KGTriple *triples, size_t count) {
     if (!triples) return;
     for (size_t i = 0; i < count; i++) {
-        free(triples[i].subject_name);
-        free(triples[i].predicate);
-        free(triples[i].object_name);
+        gv_free(triples[i].subject_name);
+        gv_free(triples[i].predicate);
+        gv_free(triples[i].object_name);
     }
 }
 
@@ -1109,7 +1110,7 @@ int kg_search_similar(const GV_KnowledgeGraph *kg,
         return 0;
     }
 
-    KG_ScorePair *pairs = (KG_ScorePair *)malloc(n * sizeof(KG_ScorePair));
+    KG_ScorePair *pairs = (KG_ScorePair *)gv_alloc(n * sizeof(KG_ScorePair));
     if (!pairs) {
         pthread_rwlock_unlock((pthread_rwlock_t *)&kg->rwlock);
         return -1;
@@ -1134,7 +1135,7 @@ int kg_search_similar(const GV_KnowledgeGraph *kg,
         results[i].similarity = pairs[i].score;
     }
 
-    free(pairs);
+    gv_free(pairs);
     pthread_rwlock_unlock((pthread_rwlock_t *)&kg->rwlock);
     return (int)result_count;
 }
@@ -1147,7 +1148,7 @@ int kg_search_by_text(const GV_KnowledgeGraph *kg, const char *text,
     pthread_rwlock_rdlock((pthread_rwlock_t *)&kg->rwlock);
 
     size_t cap = 256;
-    KG_ScorePair *pairs = (KG_ScorePair *)malloc(cap * sizeof(KG_ScorePair));
+    KG_ScorePair *pairs = (KG_ScorePair *)gv_alloc(cap * sizeof(KG_ScorePair));
     if (!pairs) {
         pthread_rwlock_unlock((pthread_rwlock_t *)&kg->rwlock);
         return -1;
@@ -1177,7 +1178,7 @@ int kg_search_by_text(const GV_KnowledgeGraph *kg, const char *text,
             if (score > 0.0f) {
                 if (pair_count >= cap) {
                     cap *= 2;
-                    KG_ScorePair *tmp = (KG_ScorePair *)realloc(pairs,
+                    KG_ScorePair *tmp = (KG_ScorePair *)gv_realloc(pairs,
                         cap * sizeof(KG_ScorePair));
                     if (!tmp) break;
                     pairs = tmp;
@@ -1200,7 +1201,7 @@ int kg_search_by_text(const GV_KnowledgeGraph *kg, const char *text,
         results[i].similarity = pairs[i].score;
     }
 
-    free(pairs);
+    gv_free(pairs);
     pthread_rwlock_unlock((pthread_rwlock_t *)&kg->rwlock);
     return (int)result_count;
 }
@@ -1208,8 +1209,8 @@ int kg_search_by_text(const GV_KnowledgeGraph *kg, const char *text,
 void kg_free_search_results(GV_KGSearchResult *results, size_t count) {
     if (!results) return;
     for (size_t i = 0; i < count; i++) {
-        free(results[i].name);
-        free(results[i].type);
+        gv_free(results[i].name);
+        gv_free(results[i].type);
     }
 }
 
@@ -1340,7 +1341,7 @@ int kg_merge_entities(GV_KnowledgeGraph *kg, uint64_t keep_id,
             if (oe) kg_idlist_push(&oe->list, rid);
         }
     }
-    free(rel_ids);
+    gv_free(rel_ids);
 
     kg_embedding_remove(kg, merge_id);
 
@@ -1352,7 +1353,7 @@ int kg_merge_entities(GV_KnowledgeGraph *kg, uint64_t keep_id,
             if (prev) prev->next = n->next;
             else kg->entity_buckets[bucket] = n->next;
             kg_entity_data_free(&n->entity);
-            free(n);
+            gv_free(n);
             kg->entity_count--;
             break;
         }
@@ -1378,7 +1379,7 @@ int kg_predict_links(const GV_KnowledgeGraph *kg, uint64_t entity_id,
     }
 
     size_t cap = 256;
-    KG_ScorePair *candidates = (KG_ScorePair *)malloc(
+    KG_ScorePair *candidates = (KG_ScorePair *)gv_alloc(
         cap * sizeof(KG_ScorePair));
     if (!candidates) {
         pthread_rwlock_unlock((pthread_rwlock_t *)&kg->rwlock);
@@ -1404,7 +1405,7 @@ int kg_predict_links(const GV_KnowledgeGraph *kg, uint64_t entity_id,
 
         if (cand_count >= cap) {
             cap *= 2;
-            KG_ScorePair *tmp = (KG_ScorePair *)realloc(candidates,
+            KG_ScorePair *tmp = (KG_ScorePair *)gv_realloc(candidates,
                 cap * sizeof(KG_ScorePair));
             if (!tmp) break;
             candidates = tmp;
@@ -1424,7 +1425,7 @@ int kg_predict_links(const GV_KnowledgeGraph *kg, uint64_t entity_id,
         results[i].confidence = candidates[i].score;
     }
 
-    free(candidates);
+    gv_free(candidates);
     pthread_rwlock_unlock((pthread_rwlock_t *)&kg->rwlock);
     return (int)result_count;
 }
@@ -1525,13 +1526,13 @@ int kg_spreading_activation(const GV_KnowledgeGraph *kg,
     pthread_rwlock_rdlock((pthread_rwlock_t *)&kg->rwlock);
 
     size_t out_count = 0;
-    uint64_t *queue_ids = (uint64_t *)malloc(max_out * sizeof(uint64_t));
-    float *queue_act = (float *)malloc(max_out * sizeof(float));
-    size_t *queue_depth = (size_t *)malloc(max_out * sizeof(size_t));
+    uint64_t *queue_ids = (uint64_t *)gv_alloc(max_out * sizeof(uint64_t));
+    float *queue_act = (float *)gv_alloc(max_out * sizeof(float));
+    size_t *queue_depth = (size_t *)gv_alloc(max_out * sizeof(size_t));
     if (!queue_ids || !queue_act || !queue_depth) {
-        free(queue_ids);
-        free(queue_act);
-        free(queue_depth);
+        gv_free(queue_ids);
+        gv_free(queue_act);
+        gv_free(queue_depth);
         pthread_rwlock_unlock((pthread_rwlock_t *)&kg->rwlock);
         return -1;
     }
@@ -1562,9 +1563,9 @@ int kg_spreading_activation(const GV_KnowledgeGraph *kg,
     }
 
     if (out_count == 0) {
-        free(queue_ids);
-        free(queue_act);
-        free(queue_depth);
+        gv_free(queue_ids);
+        gv_free(queue_act);
+        gv_free(queue_depth);
         pthread_rwlock_unlock((pthread_rwlock_t *)&kg->rwlock);
         return 0;
     }
@@ -1649,9 +1650,9 @@ int kg_spreading_activation(const GV_KnowledgeGraph *kg,
         }
     }
 
-    free(queue_ids);
-    free(queue_act);
-    free(queue_depth);
+    gv_free(queue_ids);
+    gv_free(queue_act);
+    gv_free(queue_depth);
     pthread_rwlock_unlock((pthread_rwlock_t *)&kg->rwlock);
     return (int)out_count;
 }
@@ -1731,7 +1732,7 @@ int kg_shortest_path(const GV_KnowledgeGraph *kg, uint64_t from,
     }
 
     size_t path_len = 0;
-    uint64_t *rev = (uint64_t *)malloc(bfs.count * sizeof(uint64_t));
+    uint64_t *rev = (uint64_t *)gv_alloc(bfs.count * sizeof(uint64_t));
     if (!rev) {
         kg_bfs_free(&bfs);
         pthread_rwlock_unlock((pthread_rwlock_t *)&kg->rwlock);
@@ -1757,7 +1758,7 @@ int kg_shortest_path(const GV_KnowledgeGraph *kg, uint64_t from,
         path_ids[i] = rev[path_len - 1 - i];
     }
 
-    free(rev);
+    gv_free(rev);
     kg_bfs_free(&bfs);
     pthread_rwlock_unlock((pthread_rwlock_t *)&kg->rwlock);
     return (int)out_len;
@@ -1785,7 +1786,7 @@ int kg_extract_subgraph(const GV_KnowledgeGraph *kg, uint64_t center,
 
     kg_bfs_run(kg, center, radius, &bfs);
 
-    subgraph->entity_ids = (uint64_t *)malloc(bfs.count * sizeof(uint64_t));
+    subgraph->entity_ids = (uint64_t *)gv_alloc(bfs.count * sizeof(uint64_t));
     if (!subgraph->entity_ids) {
         kg_bfs_free(&bfs);
         pthread_rwlock_unlock((pthread_rwlock_t *)&kg->rwlock);
@@ -1796,9 +1797,9 @@ int kg_extract_subgraph(const GV_KnowledgeGraph *kg, uint64_t center,
 
     size_t rel_cap = 256;
     size_t rel_count = 0;
-    uint64_t *rel_ids = (uint64_t *)malloc(rel_cap * sizeof(uint64_t));
+    uint64_t *rel_ids = (uint64_t *)gv_alloc(rel_cap * sizeof(uint64_t));
     if (!rel_ids) {
-        free(subgraph->entity_ids);
+        gv_free(subgraph->entity_ids);
         subgraph->entity_ids = NULL;
         subgraph->entity_count = 0;
         kg_bfs_free(&bfs);
@@ -1823,7 +1824,7 @@ int kg_extract_subgraph(const GV_KnowledgeGraph *kg, uint64_t center,
             if (dup) continue;
             if (rel_count >= rel_cap) {
                 rel_cap *= 2;
-                uint64_t *tmp = (uint64_t *)realloc(rel_ids,
+                uint64_t *tmp = (uint64_t *)gv_realloc(rel_ids,
                     rel_cap * sizeof(uint64_t));
                 if (!tmp) break;
                 rel_ids = tmp;
@@ -1842,8 +1843,8 @@ int kg_extract_subgraph(const GV_KnowledgeGraph *kg, uint64_t center,
 
 void kg_free_subgraph(GV_KGSubgraph *subgraph) {
     if (!subgraph) return;
-    free(subgraph->entity_ids);
-    free(subgraph->relation_ids);
+    gv_free(subgraph->entity_ids);
+    gv_free(subgraph->relation_ids);
     subgraph->entity_ids = NULL;
     subgraph->relation_ids = NULL;
     subgraph->entity_count = 0;
@@ -1868,7 +1869,7 @@ int kg_hybrid_search(const GV_KnowledgeGraph *kg,
     }
 
     size_t cap = 256;
-    KG_ScorePair *pairs = (KG_ScorePair *)malloc(cap * sizeof(KG_ScorePair));
+    KG_ScorePair *pairs = (KG_ScorePair *)gv_alloc(cap * sizeof(KG_ScorePair));
     if (!pairs) {
         pthread_rwlock_unlock((pthread_rwlock_t *)&kg->rwlock);
         return -1;
@@ -1891,7 +1892,7 @@ int kg_hybrid_search(const GV_KnowledgeGraph *kg,
 
         if (pair_count >= cap) {
             cap *= 2;
-            KG_ScorePair *tmp = (KG_ScorePair *)realloc(pairs,
+            KG_ScorePair *tmp = (KG_ScorePair *)gv_realloc(pairs,
                 cap * sizeof(KG_ScorePair));
             if (!tmp) break;
             pairs = tmp;
@@ -1912,7 +1913,7 @@ int kg_hybrid_search(const GV_KnowledgeGraph *kg,
         results[i].similarity = pairs[i].score;
     }
 
-    free(pairs);
+    gv_free(pairs);
     pthread_rwlock_unlock((pthread_rwlock_t *)&kg->rwlock);
     return (int)result_count;
 }
@@ -1929,7 +1930,7 @@ int kg_get_stats(const GV_KnowledgeGraph *kg, GV_KGStats *stats) {
     stats->embedding_count = kg->embedding_count;
 
     size_t type_cap = 128;
-    char **types = (char **)calloc(type_cap, sizeof(char *));
+    char **types = (char **)gv_calloc(type_cap, sizeof(char *));
     size_t type_count = 0;
     if (types) {
         for (size_t b = 0; b < kg->entity_bucket_count; b++) {
@@ -1945,7 +1946,7 @@ int kg_get_stats(const GV_KnowledgeGraph *kg, GV_KGStats *stats) {
                 if (!found) {
                     if (type_count >= type_cap) {
                         type_cap *= 2;
-                        char **tmp = (char **)realloc(types,
+                        char **tmp = (char **)gv_realloc(types,
                             type_cap * sizeof(char *));
                         if (!tmp) break;
                         types = tmp;
@@ -1955,11 +1956,11 @@ int kg_get_stats(const GV_KnowledgeGraph *kg, GV_KGStats *stats) {
             }
         }
         stats->type_count = type_count;
-        free(types);
+        gv_free(types);
     }
 
     size_t pred_cap = 128;
-    char **preds = (char **)calloc(pred_cap, sizeof(char *));
+    char **preds = (char **)gv_calloc(pred_cap, sizeof(char *));
     size_t pred_count = 0;
     if (preds) {
         for (size_t b = 0; b < kg->relation_bucket_count; b++) {
@@ -1976,7 +1977,7 @@ int kg_get_stats(const GV_KnowledgeGraph *kg, GV_KGStats *stats) {
                 if (!found) {
                     if (pred_count >= pred_cap) {
                         pred_cap *= 2;
-                        char **tmp = (char **)realloc(preds,
+                        char **tmp = (char **)gv_realloc(preds,
                             pred_cap * sizeof(char *));
                         if (!tmp) break;
                         preds = tmp;
@@ -1986,7 +1987,7 @@ int kg_get_stats(const GV_KnowledgeGraph *kg, GV_KGStats *stats) {
             }
         }
         stats->predicate_count = pred_count;
-        free(preds);
+        gv_free(preds);
     }
 
     pthread_rwlock_unlock((pthread_rwlock_t *)&kg->rwlock);
@@ -2170,15 +2171,15 @@ static GV_KGProp *kg_read_props(FILE *fp, uint32_t count) {
     GV_KGProp *head = NULL;
     GV_KGProp *tail = NULL;
     for (uint32_t i = 0; i < count; i++) {
-        GV_KGProp *p = (GV_KGProp *)calloc(1, sizeof(GV_KGProp));
+        GV_KGProp *p = (GV_KGProp *)gv_calloc(1, sizeof(GV_KGProp));
         if (!p) return head;
         p->key = read_string(fp);
         p->value = read_string(fp);
         p->next = NULL;
         if (!p->key || !p->value) {
-            free(p->key);
-            free(p->value);
-            free(p);
+            gv_free(p->key);
+            gv_free(p->value);
+            gv_free(p);
             return head;
         }
         if (tail) tail->next = p;
@@ -2237,23 +2238,23 @@ GV_KnowledgeGraph *kg_load(const char *path) {
         char *name = read_string(fp);
         char *type = read_string(fp);
         if (!name || !type) {
-            free(name);
-            free(type);
+            gv_free(name);
+            gv_free(type);
             goto load_fail;
         }
 
         uint8_t has_emb;
         if (read_u8(fp, &has_emb) != 0) {
-            free(name); free(type);
+            gv_free(name); gv_free(type);
             goto load_fail;
         }
 
         float *emb_data = NULL;
         if (has_emb && emb_dim > 0) {
-            emb_data = (float *)malloc(emb_dim * sizeof(float));
+            emb_data = (float *)gv_alloc(emb_dim * sizeof(float));
             if (!emb_data || read_bytes(fp, emb_data,
                 emb_dim * sizeof(float)) != 0) {
-                free(emb_data); free(name); free(type);
+                gv_free(emb_data); gv_free(name); gv_free(type);
                 goto load_fail;
             }
         }
@@ -2262,21 +2263,21 @@ GV_KnowledgeGraph *kg_load(const char *path) {
         uint64_t created_at;
         if (read_f32(fp, &confidence) != 0 ||
             read_u64(fp, &created_at) != 0) {
-            free(emb_data); free(name); free(type);
+            gv_free(emb_data); gv_free(name); gv_free(type);
             goto load_fail;
         }
 
         uint32_t prop_count;
         if (read_u32(fp, &prop_count) != 0) {
-            free(emb_data); free(name); free(type);
+            gv_free(emb_data); gv_free(name); gv_free(type);
             goto load_fail;
         }
         GV_KGProp *props = kg_read_props(fp, prop_count);
 
-        KG_EntityNode *node = (KG_EntityNode *)calloc(1,
+        KG_EntityNode *node = (KG_EntityNode *)gv_calloc(1,
                                   sizeof(KG_EntityNode));
         if (!node) {
-            free(emb_data); free(name); free(type);
+            gv_free(emb_data); gv_free(name); gv_free(type);
             kg_prop_free_list(props);
             goto load_fail;
         }
@@ -2315,21 +2316,21 @@ GV_KnowledgeGraph *kg_load(const char *path) {
         uint64_t created_at;
         if (read_f32(fp, &weight) != 0 ||
             read_u64(fp, &created_at) != 0) {
-            free(predicate);
+            gv_free(predicate);
             goto load_fail;
         }
 
         uint32_t prop_count;
         if (read_u32(fp, &prop_count) != 0) {
-            free(predicate);
+            gv_free(predicate);
             goto load_fail;
         }
         GV_KGProp *props = kg_read_props(fp, prop_count);
 
-        KG_RelationNode *node = (KG_RelationNode *)calloc(1,
+        KG_RelationNode *node = (KG_RelationNode *)gv_calloc(1,
                                     sizeof(KG_RelationNode));
         if (!node) {
-            free(predicate);
+            gv_free(predicate);
             kg_prop_free_list(props);
             goto load_fail;
         }

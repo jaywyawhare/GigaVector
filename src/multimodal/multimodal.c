@@ -8,6 +8,7 @@
  */
 
 #include "multimodal/multimodal.h"
+#include "core/memory.h"
 #include "security/auth.h"     /* For auth_sha256, auth_to_hex */
 #include <stdlib.h>
 #include <string.h>
@@ -106,9 +107,9 @@ static GV_MediaNode *find_node(const GV_MediaStore *store, size_t vector_index) 
  */
 static void free_node(GV_MediaNode *node) {
     if (!node) return;
-    free(node->entry.filename);
-    free(node->entry.mime_type);
-    free(node);
+    gv_free(node->entry.filename);
+    gv_free(node->entry.mime_type);
+    gv_free(node);
 }
 
 /**
@@ -193,7 +194,7 @@ static int write_blob_file(const char *path, const void *data, size_t size) {
 }
 
 /**
- * @brief Read an entire file into a malloc'd buffer.
+ * @brief Read an entire file into a gv_alloc'd buffer.
  *
  * @param path     File path.
  * @param out_size Set to file size on success.
@@ -211,7 +212,7 @@ static void *read_entire_file(const char *path, size_t *out_size) {
     }
     fseek(fp, 0, SEEK_SET);
 
-    void *buf = malloc((size_t)sz);
+    void *buf = gv_alloc((size_t)sz);
     if (!buf) {
         fclose(fp);
         return NULL;
@@ -221,7 +222,7 @@ static void *read_entire_file(const char *path, size_t *out_size) {
     fclose(fp);
 
     if (nread != (size_t)sz) {
-        free(buf);
+        gv_free(buf);
         return NULL;
     }
 
@@ -237,31 +238,31 @@ GV_MediaStore *media_create(const GV_MediaConfig *config) {
     /* Ensure storage directory exists */
     if (ensure_directory(config->storage_dir) != 0) return NULL;
 
-    GV_MediaStore *store = calloc(1, sizeof(GV_MediaStore));
+    GV_MediaStore *store = gv_calloc(1, sizeof(GV_MediaStore));
     if (!store) return NULL;
 
     store->config = *config;
     store->storage_dir = gv_dup_cstr(config->storage_dir);
     if (!store->storage_dir) {
-        free(store);
+        gv_free(store);
         return NULL;
     }
 
     /* Allocate hash table */
     store->num_buckets = HASH_TABLE_INITIAL_CAPACITY;
-    store->buckets = calloc(store->num_buckets, sizeof(GV_MediaNode *));
+    store->buckets = gv_calloc(store->num_buckets, sizeof(GV_MediaNode *));
     if (!store->buckets) {
-        free(store->storage_dir);
-        free(store);
+        gv_free(store->storage_dir);
+        gv_free(store);
         return NULL;
     }
 
     store->count = 0;
 
     if (pthread_rwlock_init(&store->lock, NULL) != 0) {
-        free(store->buckets);
-        free(store->storage_dir);
-        free(store);
+        gv_free(store->buckets);
+        gv_free(store->storage_dir);
+        gv_free(store);
         return NULL;
     }
 
@@ -283,13 +284,13 @@ void media_destroy(GV_MediaStore *store) {
         }
     }
 
-    free(store->buckets);
-    free(store->storage_dir);
+    gv_free(store->buckets);
+    gv_free(store->storage_dir);
 
     pthread_rwlock_unlock(&store->lock);
     pthread_rwlock_destroy(&store->lock);
 
-    free(store);
+    gv_free(store);
 }
 
 /* Store Operations */
@@ -333,7 +334,7 @@ int media_store_blob(GV_MediaStore *store, size_t vector_index,
     }
 
     /* Create metadata node */
-    GV_MediaNode *node = calloc(1, sizeof(GV_MediaNode));
+    GV_MediaNode *node = gv_calloc(1, sizeof(GV_MediaNode));
     if (!node) {
         pthread_rwlock_unlock(&store->lock);
         return -1;
@@ -367,7 +368,7 @@ int media_store_file(GV_MediaStore *store, size_t vector_index,
 
     int rc = media_store_blob(store, vector_index, type,
                                   data, file_size, basename, NULL);
-    free(data);
+    gv_free(data);
     return rc;
 }
 
@@ -403,7 +404,7 @@ int media_retrieve(const GV_MediaStore *store, size_t vector_index,
         memcpy(buffer, data, file_size);
     }
 
-    free(data);
+    gv_free(data);
     return 0;
 }
 
@@ -648,7 +649,7 @@ GV_MediaStore *media_load_index(const char *index_path,
 
     /* Read entries */
     for (uint64_t i = 0; i < count; i++) {
-        GV_MediaNode *node = calloc(1, sizeof(GV_MediaNode));
+        GV_MediaNode *node = gv_calloc(1, sizeof(GV_MediaNode));
         if (!node) {
             fclose(fp);
             media_destroy(store);
@@ -673,7 +674,7 @@ GV_MediaStore *media_load_index(const char *index_path,
         uint32_t fn_len;
         if (fread(&fn_len, sizeof(fn_len), 1, fp) != 1) goto load_error;
         if (fn_len > 0) {
-            node->entry.filename = malloc(fn_len + 1);
+            node->entry.filename = gv_alloc(fn_len + 1);
             if (!node->entry.filename) goto load_error;
             if (fread(node->entry.filename, 1, fn_len, fp) != fn_len) goto load_error;
             node->entry.filename[fn_len] = '\0';
@@ -688,7 +689,7 @@ GV_MediaStore *media_load_index(const char *index_path,
         uint32_t mt_len;
         if (fread(&mt_len, sizeof(mt_len), 1, fp) != 1) goto load_error;
         if (mt_len > 0) {
-            node->entry.mime_type = malloc(mt_len + 1);
+            node->entry.mime_type = gv_alloc(mt_len + 1);
             if (!node->entry.mime_type) goto load_error;
             if (fread(node->entry.mime_type, 1, mt_len, fp) != mt_len) goto load_error;
             node->entry.mime_type[mt_len] = '\0';

@@ -7,6 +7,7 @@
  */
 
 #include <stdlib.h>
+#include "core/memory.h"
 #include <string.h>
 #include <stdio.h>
 #include <ctype.h>
@@ -73,7 +74,7 @@ const char *json_error_string(GV_JsonError error) {
 /* Value Creation */
 
 GV_JsonValue *json_null(void) {
-    GV_JsonValue *val = (GV_JsonValue *)calloc(1, sizeof(GV_JsonValue));
+    GV_JsonValue *val = (GV_JsonValue *)gv_calloc(1, sizeof(GV_JsonValue));
     if (val) {
         val->type = GV_JSON_NULL;
     }
@@ -81,7 +82,7 @@ GV_JsonValue *json_null(void) {
 }
 
 GV_JsonValue *json_bool(bool value) {
-    GV_JsonValue *val = (GV_JsonValue *)calloc(1, sizeof(GV_JsonValue));
+    GV_JsonValue *val = (GV_JsonValue *)gv_calloc(1, sizeof(GV_JsonValue));
     if (val) {
         val->type = GV_JSON_BOOL;
         val->data.boolean = value;
@@ -90,7 +91,7 @@ GV_JsonValue *json_bool(bool value) {
 }
 
 GV_JsonValue *json_number(double value) {
-    GV_JsonValue *val = (GV_JsonValue *)calloc(1, sizeof(GV_JsonValue));
+    GV_JsonValue *val = (GV_JsonValue *)gv_calloc(1, sizeof(GV_JsonValue));
     if (val) {
         val->type = GV_JSON_NUMBER;
         val->data.number = value;
@@ -102,12 +103,12 @@ GV_JsonValue *json_string(const char *value) {
     if (value == NULL) {
         return NULL;
     }
-    GV_JsonValue *val = (GV_JsonValue *)calloc(1, sizeof(GV_JsonValue));
+    GV_JsonValue *val = (GV_JsonValue *)gv_calloc(1, sizeof(GV_JsonValue));
     if (val) {
         val->type = GV_JSON_STRING;
         val->data.string = gv_dup_cstr(value);
         if (val->data.string == NULL) {
-            free(val);
+            gv_free(val);
             return NULL;
         }
     }
@@ -115,7 +116,7 @@ GV_JsonValue *json_string(const char *value) {
 }
 
 GV_JsonValue *json_array(void) {
-    GV_JsonValue *val = (GV_JsonValue *)calloc(1, sizeof(GV_JsonValue));
+    GV_JsonValue *val = (GV_JsonValue *)gv_calloc(1, sizeof(GV_JsonValue));
     if (val) {
         val->type = GV_JSON_ARRAY;
         val->data.array.items = NULL;
@@ -126,7 +127,7 @@ GV_JsonValue *json_array(void) {
 }
 
 GV_JsonValue *json_object(void) {
-    GV_JsonValue *val = (GV_JsonValue *)calloc(1, sizeof(GV_JsonValue));
+    GV_JsonValue *val = (GV_JsonValue *)gv_calloc(1, sizeof(GV_JsonValue));
     if (val) {
         val->type = GV_JSON_OBJECT;
         val->data.object.entries = NULL;
@@ -145,26 +146,26 @@ void json_free(GV_JsonValue *value) {
 
     switch (value->type) {
         case GV_JSON_STRING:
-            free(value->data.string);
+            gv_free(value->data.string);
             break;
         case GV_JSON_ARRAY:
             for (size_t i = 0; i < value->data.array.count; i++) {
                 json_free(value->data.array.items[i]);
             }
-            free(value->data.array.items);
+            gv_free(value->data.array.items);
             break;
         case GV_JSON_OBJECT:
             for (size_t i = 0; i < value->data.object.count; i++) {
-                free(value->data.object.entries[i].key);
+                gv_free(value->data.object.entries[i].key);
                 json_free(value->data.object.entries[i].value);
             }
-            free(value->data.object.entries);
+            gv_free(value->data.object.entries);
             break;
         default:
             break;
     }
 
-    free(value);
+    gv_free(value);
 }
 
 GV_JsonValue *json_copy(const GV_JsonValue *value) {
@@ -290,7 +291,7 @@ GV_JsonError json_array_push(GV_JsonValue *array, GV_JsonValue *value) {
         size_t new_capacity = array->data.array.capacity == 0
             ? INITIAL_ARRAY_CAPACITY
             : array->data.array.capacity * 2;
-        GV_JsonValue **new_items = (GV_JsonValue **)realloc(
+        GV_JsonValue **new_items = (GV_JsonValue **)gv_realloc(
             array->data.array.items,
             new_capacity * sizeof(GV_JsonValue *)
         );
@@ -346,7 +347,7 @@ GV_JsonError json_object_set(GV_JsonValue *object, const char *key, GV_JsonValue
         size_t new_capacity = object->data.object.capacity == 0
             ? INITIAL_OBJECT_CAPACITY
             : object->data.object.capacity * 2;
-        GV_JsonEntry *new_entries = (GV_JsonEntry *)realloc(
+        GV_JsonEntry *new_entries = (GV_JsonEntry *)gv_realloc(
             object->data.object.entries,
             new_capacity * sizeof(GV_JsonEntry)
         );
@@ -442,7 +443,7 @@ GV_JsonValue *json_get_path(const GV_JsonValue *root, const char *path) {
         token = strtok(NULL, ".");
     }
 
-    free(path_copy);
+    gv_free(path_copy);
     return (GV_JsonValue *)current;
 }
 
@@ -487,7 +488,7 @@ static char *parse_string_content(ParserState *state) {
     // Calculate required size (with room for escapes)
     size_t capacity = STRING_BUFFER_INITIAL;
     size_t length = 0;
-    char *buffer = (char *)malloc(capacity);
+    char *buffer = (char *)gv_alloc(capacity);
     if (buffer == NULL) {
         state->error = GV_JSON_ERROR_MEMORY;
         return NULL;
@@ -496,9 +497,9 @@ static char *parse_string_content(ParserState *state) {
     while (*state->pos && *state->pos != '"') {
         if (length + 6 >= capacity) {  // Room for UTF-8 + null
             capacity *= 2;
-            char *new_buffer = (char *)realloc(buffer, capacity);
+            char *new_buffer = (char *)gv_realloc(buffer, capacity);
             if (new_buffer == NULL) {
-                free(buffer);
+                gv_free(buffer);
                 state->error = GV_JSON_ERROR_MEMORY;
                 return NULL;
             }
@@ -520,7 +521,7 @@ static char *parse_string_content(ParserState *state) {
                     state->pos++;
                     unsigned int codepoint;
                     if (parse_hex4(state->pos, &codepoint) != 0) {
-                        free(buffer);
+                        gv_free(buffer);
                         state->error = GV_JSON_ERROR_INVALID_STRING;
                         return NULL;
                     }
@@ -534,7 +535,7 @@ static char *parse_string_content(ParserState *state) {
                             unsigned int low;
                             if (parse_hex4(state->pos, &low) != 0 ||
                                 low < 0xDC00 || low > 0xDFFF) {
-                                free(buffer);
+                                gv_free(buffer);
                                 state->error = GV_JSON_ERROR_INVALID_STRING;
                                 return NULL;
                             }
@@ -562,13 +563,13 @@ static char *parse_string_content(ParserState *state) {
                     break;
                 }
                 default:
-                    free(buffer);
+                    gv_free(buffer);
                     state->error = GV_JSON_ERROR_INVALID_STRING;
                     return NULL;
             }
         } else if ((unsigned char)*state->pos < 0x20) {
             // Control characters not allowed in strings
-            free(buffer);
+            gv_free(buffer);
             state->error = GV_JSON_ERROR_INVALID_STRING;
             return NULL;
         } else {
@@ -578,7 +579,7 @@ static char *parse_string_content(ParserState *state) {
     }
 
     if (*state->pos != '"') {
-        free(buffer);
+        gv_free(buffer);
         state->error = GV_JSON_ERROR_UNEXPECTED_END;
         return NULL;
     }
@@ -594,9 +595,9 @@ static GV_JsonValue *parse_string(ParserState *state) {
         return NULL;
     }
 
-    GV_JsonValue *value = (GV_JsonValue *)calloc(1, sizeof(GV_JsonValue));
+    GV_JsonValue *value = (GV_JsonValue *)gv_calloc(1, sizeof(GV_JsonValue));
     if (value == NULL) {
-        free(str);
+        gv_free(str);
         state->error = GV_JSON_ERROR_MEMORY;
         return NULL;
     }
@@ -661,7 +662,7 @@ static GV_JsonValue *parse_number(ParserState *state) {
         return NULL;
     }
 
-    GV_JsonValue *value = (GV_JsonValue *)calloc(1, sizeof(GV_JsonValue));
+    GV_JsonValue *value = (GV_JsonValue *)gv_calloc(1, sizeof(GV_JsonValue));
     if (value == NULL) {
         state->error = GV_JSON_ERROR_MEMORY;
         return NULL;
@@ -786,7 +787,7 @@ static GV_JsonValue *parse_object(ParserState *state) {
         skip_whitespace(state);
 
         if (*state->pos != ':') {
-            free(key);
+            gv_free(key);
             json_free(object);
             state->error = GV_JSON_ERROR_UNEXPECTED_TOKEN;
             state->depth--;
@@ -798,14 +799,14 @@ static GV_JsonValue *parse_object(ParserState *state) {
 
         GV_JsonValue *value = parse_value(state);
         if (value == NULL) {
-            free(key);
+            gv_free(key);
             json_free(object);
             state->depth--;
             return NULL;
         }
 
         GV_JsonError err = json_object_set(object, key, value);
-        free(key);
+        gv_free(key);
         if (err != GV_JSON_OK) {
             json_free(value);
             json_free(object);
@@ -933,7 +934,7 @@ static int stringify_grow(StringifyState *state, size_t needed) {
         if (new_capacity < state->length + needed + 1) {
             new_capacity = state->length + needed + 1;
         }
-        char *new_buffer = (char *)realloc(state->buffer, new_capacity);
+        char *new_buffer = (char *)gv_realloc(state->buffer, new_capacity);
         if (new_buffer == NULL) {
             return -1;
         }
@@ -1157,7 +1158,7 @@ static int stringify_value(StringifyState *state, const GV_JsonValue *value) {
 
 char *json_stringify(const GV_JsonValue *value, bool pretty) {
     StringifyState state = {
-        .buffer = (char *)malloc(256),
+        .buffer = (char *)gv_alloc(256),
         .length = 0,
         .capacity = 256,
         .pretty = pretty,
@@ -1170,7 +1171,7 @@ char *json_stringify(const GV_JsonValue *value, bool pretty) {
     state.buffer[0] = '\0';
 
     if (stringify_value(&state, value) != 0) {
-        free(state.buffer);
+        gv_free(state.buffer);
         return NULL;
     }
 

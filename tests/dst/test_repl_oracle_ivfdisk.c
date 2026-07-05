@@ -4,6 +4,7 @@
  */
 
 #include <stdio.h>
+#include "core/memory.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -40,14 +41,14 @@ static int apply_new_wal_records(GV_Database *leader, GV_Database *follower,
         uint8_t *record = NULL;
         size_t record_len = 0;
         if (wal_read_entry_at(path, i, &type, &record, &record_len) != 0) {
-            free(record);
+            gv_free(record);
             return -1;
         }
         if (db_apply_wal_record(follower, record, record_len) != 0) {
-            free(record);
+            gv_free(record);
             return -1;
         }
-        free(record);
+        gv_free(record);
     }
     *applied_count = total;
     return 0;

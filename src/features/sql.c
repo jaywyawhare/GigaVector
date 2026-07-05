@@ -1,4 +1,5 @@
 #include <ctype.h>
+#include "core/memory.h"
 #include <pthread.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -83,7 +84,7 @@ static void sql_lexer_init(GV_SQLLexer *lx, const char *input)
 static void sql_token_free(GV_SQLToken *tok)
 {
     if (tok && tok->text) {
-        free(tok->text);
+        gv_free(tok->text);
         tok->text = NULL;
     }
 }
@@ -110,7 +111,7 @@ static int sql_kw_match(const char *s, size_t len, const char *kw)
 
 static char *sql_strndup(const char *s, size_t n)
 {
-    char *p = (char *)malloc(n + 1);
+    char *p = (char *)gv_alloc(n + 1);
     if (!p) return NULL;
     memcpy(p, s, n);
     p[n] = '\0';
@@ -267,7 +268,7 @@ static int sql_tokenize(GV_SQLTokenBuf *buf, const char *query)
     GV_SQLLexer lx;
     sql_lexer_init(&lx, query);
 
-    buf->tokens = (GV_SQLToken *)calloc(GV_SQL_MAX_TOKENS, sizeof(GV_SQLToken));
+    buf->tokens = (GV_SQLToken *)gv_calloc(GV_SQL_MAX_TOKENS, sizeof(GV_SQLToken));
     if (!buf->tokens) {
         snprintf(buf->error, GV_SQL_ERROR_SIZE, "Out of memory during tokenization");
         return -1;
@@ -299,7 +300,7 @@ static void sql_tokenbuf_free(GV_SQLTokenBuf *buf)
     if (!buf || !buf->tokens) return;
     for (size_t i = 0; i < buf->count; i++)
         sql_token_free(&buf->tokens[i]);
-    free(buf->tokens);
+    gv_free(buf->tokens);
     buf->tokens = NULL;
     buf->count = 0;
 }
@@ -426,32 +427,32 @@ static void sql_where_free(GV_SQLWhere *w)
     sql_where_free(w->left);
     sql_where_free(w->right);
     sql_where_free(w->child);
-    free(w->field);
-    free(w->value);
-    free(w);
+    gv_free(w->field);
+    gv_free(w->value);
+    gv_free(w);
 }
 
 static void sql_stmt_free(GV_SQLStmt *s)
 {
     if (!s) return;
-    free(s->table);
+    gv_free(s->table);
     sql_where_free(s->where);
-    free(s->order_field);
-    if (s->ann.query_vector) free(s->ann.query_vector);
-    if (s->order_ann.query_vector) free(s->order_ann.query_vector);
+    gv_free(s->order_field);
+    if (s->ann.query_vector) gv_free(s->ann.query_vector);
+    if (s->order_ann.query_vector) gv_free(s->order_ann.query_vector);
     if (s->select_columns) {
         for (size_t i = 0; i < s->select_column_count; i++)
-            free(s->select_columns[i]);
-        free(s->select_columns);
+            gv_free(s->select_columns[i]);
+        gv_free(s->select_columns);
     }
     if (s->set_clauses) {
         for (size_t i = 0; i < s->set_count; i++) {
-            free(s->set_clauses[i].field);
-            free(s->set_clauses[i].value);
+            gv_free(s->set_clauses[i].field);
+            gv_free(s->set_clauses[i].value);
         }
-        free(s->set_clauses);
+        gv_free(s->set_clauses);
     }
-    free(s);
+    gv_free(s);
 }
 
 /* Recursive descent parser */
@@ -519,7 +520,7 @@ static int sql_parse_ann_params(GV_SQLTokenBuf *buf, GV_SQLAnn *ann, int require
     if (tmp_count == 0) return -1;
     if (require_k && ann->k == 0) return -1;
 
-    ann->query_vector = (float *)malloc(tmp_count * sizeof(float));
+    ann->query_vector = (float *)gv_alloc(tmp_count * sizeof(float));
     if (!ann->query_vector) return -1;
     memcpy(ann->query_vector, tmp_vec, tmp_count * sizeof(float));
     ann->query_dim = tmp_count;
@@ -546,7 +547,7 @@ static GV_SQLWhere *sql_parse_where_primary(GV_SQLTokenBuf *buf)
         sql_advance(buf);
         GV_SQLWhere *child = sql_parse_where_primary(buf);
         if (!child) return NULL;
-        GV_SQLWhere *node = (GV_SQLWhere *)calloc(1, sizeof(GV_SQLWhere));
+        GV_SQLWhere *node = (GV_SQLWhere *)gv_calloc(1, sizeof(GV_SQLWhere));
         if (!node) { sql_where_free(child); return NULL; }
         node->type = GV_SQL_WHERE_NOT;
         node->child = child;
@@ -572,7 +573,7 @@ static GV_SQLWhere *sql_parse_where_primary(GV_SQLTokenBuf *buf)
     sql_advance(buf);
 
     tok = sql_peek(buf);
-    if (!tok) { free(field); return NULL; }
+    if (!tok) { gv_free(field); return NULL; }
 
     GV_SQLCmpOp op;
     switch (tok->type) {
@@ -584,7 +585,7 @@ static GV_SQLWhere *sql_parse_where_primary(GV_SQLTokenBuf *buf)
     case GV_SQL_TOK_GE:   op = GV_SQL_CMP_GE;   break;
     case GV_SQL_TOK_LIKE: op = GV_SQL_CMP_LIKE;  break;
     default:
-        free(field);
+        gv_free(field);
         return NULL;
     }
     sql_advance(buf);
@@ -593,12 +594,12 @@ static GV_SQLWhere *sql_parse_where_primary(GV_SQLTokenBuf *buf)
     if (!tok || (tok->type != GV_SQL_TOK_STRING &&
                  tok->type != GV_SQL_TOK_NUMBER &&
                  tok->type != GV_SQL_TOK_IDENT)) {
-        free(field);
+        gv_free(field);
         return NULL;
     }
 
-    GV_SQLWhere *node = (GV_SQLWhere *)calloc(1, sizeof(GV_SQLWhere));
-    if (!node) { free(field); return NULL; }
+    GV_SQLWhere *node = (GV_SQLWhere *)gv_calloc(1, sizeof(GV_SQLWhere));
+    if (!node) { gv_free(field); return NULL; }
     node->type = GV_SQL_WHERE_CMP;
     node->field = field;
     node->op = op;
@@ -630,7 +631,7 @@ static GV_SQLWhere *sql_parse_where_and(GV_SQLTokenBuf *buf)
         sql_advance(buf);
         GV_SQLWhere *right = sql_parse_where_primary(buf);
         if (!right) { sql_where_free(left); return NULL; }
-        GV_SQLWhere *node = (GV_SQLWhere *)calloc(1, sizeof(GV_SQLWhere));
+        GV_SQLWhere *node = (GV_SQLWhere *)gv_calloc(1, sizeof(GV_SQLWhere));
         if (!node) { sql_where_free(left); sql_where_free(right); return NULL; }
         node->type = GV_SQL_WHERE_AND;
         node->left = left;
@@ -650,7 +651,7 @@ static GV_SQLWhere *sql_parse_where_expr(GV_SQLTokenBuf *buf)
         sql_advance(buf);
         GV_SQLWhere *right = sql_parse_where_and(buf);
         if (!right) { sql_where_free(left); return NULL; }
-        GV_SQLWhere *node = (GV_SQLWhere *)calloc(1, sizeof(GV_SQLWhere));
+        GV_SQLWhere *node = (GV_SQLWhere *)gv_calloc(1, sizeof(GV_SQLWhere));
         if (!node) { sql_where_free(left); sql_where_free(right); return NULL; }
         node->type = GV_SQL_WHERE_OR;
         node->left = left;
@@ -664,7 +665,7 @@ static GV_SQLWhere *sql_parse_where_expr(GV_SQLTokenBuf *buf)
 static GV_SQLStmt *sql_parse_select(GV_SQLTokenBuf *buf)
 {
     /* SELECT already consumed */
-    GV_SQLStmt *stmt = (GV_SQLStmt *)calloc(1, sizeof(GV_SQLStmt));
+    GV_SQLStmt *stmt = (GV_SQLStmt *)gv_calloc(1, sizeof(GV_SQLStmt));
     if (!stmt) return NULL;
     stmt->type = GV_SQL_STMT_SELECT;
 
@@ -686,7 +687,7 @@ static GV_SQLStmt *sql_parse_select(GV_SQLTokenBuf *buf)
         stmt->select_star = 1;
     } else if (tok->type == GV_SQL_TOK_IDENT) {
         size_t cap = 4;
-        stmt->select_columns = (char **)calloc(cap, sizeof(char *));
+        stmt->select_columns = (char **)gv_calloc(cap, sizeof(char *));
         if (!stmt->select_columns) { sql_stmt_free(stmt); return NULL; }
         for (;;) {
             tok = sql_peek(buf);
@@ -696,7 +697,7 @@ static GV_SQLStmt *sql_parse_select(GV_SQLTokenBuf *buf)
             }
             if (stmt->select_column_count >= cap) {
                 cap *= 2;
-                char **tmp = (char **)realloc(stmt->select_columns,
+                char **tmp = (char **)gv_realloc(stmt->select_columns,
                                               cap * sizeof(char *));
                 if (!tmp) { sql_stmt_free(stmt); return NULL; }
                 stmt->select_columns = tmp;
@@ -813,7 +814,7 @@ static GV_SQLStmt *sql_parse_select(GV_SQLTokenBuf *buf)
 static GV_SQLStmt *sql_parse_delete(GV_SQLTokenBuf *buf)
 {
     /* DELETE already consumed */
-    GV_SQLStmt *stmt = (GV_SQLStmt *)calloc(1, sizeof(GV_SQLStmt));
+    GV_SQLStmt *stmt = (GV_SQLStmt *)gv_calloc(1, sizeof(GV_SQLStmt));
     if (!stmt) return NULL;
     stmt->type = GV_SQL_STMT_DELETE;
 
@@ -835,7 +836,7 @@ static GV_SQLStmt *sql_parse_delete(GV_SQLTokenBuf *buf)
 static GV_SQLStmt *sql_parse_update(GV_SQLTokenBuf *buf)
 {
     /* UPDATE already consumed */
-    GV_SQLStmt *stmt = (GV_SQLStmt *)calloc(1, sizeof(GV_SQLStmt));
+    GV_SQLStmt *stmt = (GV_SQLStmt *)gv_calloc(1, sizeof(GV_SQLStmt));
     if (!stmt) return NULL;
     stmt->type = GV_SQL_STMT_UPDATE;
 
@@ -849,7 +850,7 @@ static GV_SQLStmt *sql_parse_update(GV_SQLTokenBuf *buf)
 
     /* Parse SET clauses: field = value [, field = value ...] */
     size_t cap = 8;
-    stmt->set_clauses = (GV_SQLSetClause *)calloc(cap, sizeof(GV_SQLSetClause));
+    stmt->set_clauses = (GV_SQLSetClause *)gv_calloc(cap, sizeof(GV_SQLSetClause));
     if (!stmt->set_clauses) { sql_stmt_free(stmt); return NULL; }
     stmt->set_count = 0;
 
@@ -860,25 +861,25 @@ static GV_SQLStmt *sql_parse_update(GV_SQLTokenBuf *buf)
         sql_advance(buf);
         if (!field) { sql_stmt_free(stmt); return NULL; }
 
-        if (!sql_expect(buf, GV_SQL_TOK_EQ)) { free(field); sql_stmt_free(stmt); return NULL; }
+        if (!sql_expect(buf, GV_SQL_TOK_EQ)) { gv_free(field); sql_stmt_free(stmt); return NULL; }
 
         tok = sql_peek(buf);
         if (!tok || (tok->type != GV_SQL_TOK_STRING &&
                      tok->type != GV_SQL_TOK_NUMBER &&
                      tok->type != GV_SQL_TOK_IDENT)) {
-            free(field);
+            gv_free(field);
             sql_stmt_free(stmt);
             return NULL;
         }
         char *value = gv_dup_cstr(tok->text ? tok->text : "");
         sql_advance(buf);
-        if (!value) { free(field); sql_stmt_free(stmt); return NULL; }
+        if (!value) { gv_free(field); sql_stmt_free(stmt); return NULL; }
 
         if (stmt->set_count >= cap) {
             cap *= 2;
-            GV_SQLSetClause *tmp = (GV_SQLSetClause *)realloc(
+            GV_SQLSetClause *tmp = (GV_SQLSetClause *)gv_realloc(
                 stmt->set_clauses, cap * sizeof(GV_SQLSetClause));
-            if (!tmp) { free(field); free(value); sql_stmt_free(stmt); return NULL; }
+            if (!tmp) { gv_free(field); gv_free(value); sql_stmt_free(stmt); return NULL; }
             stmt->set_clauses = tmp;
         }
         stmt->set_clauses[stmt->set_count].field = field;
@@ -968,7 +969,7 @@ static int sql_eval_where(const GV_SQLWhere *w, const GV_Vector *vec)
                 char *tmp = sql_strndup(pattern, plen);
                 if (!tmp) return -1;
                 int found = (strstr(meta_val, tmp) != NULL);
-                free(tmp);
+                gv_free(tmp);
                 return found;
             } else if (prefix_wild) {
                 /* ends with */
@@ -1018,7 +1019,7 @@ static int sql_eval_where(const GV_SQLWhere *w, const GV_Vector *vec)
 static char *sql_metadata_to_json(const GV_Metadata *meta)
 {
     if (!meta) {
-        char *s = (char *)malloc(3);
+        char *s = (char *)gv_alloc(3);
         if (s) { s[0] = '{'; s[1] = '}'; s[2] = '\0'; }
         return s;
     }
@@ -1026,14 +1027,14 @@ static char *sql_metadata_to_json(const GV_Metadata *meta)
     /* Build JSON string incrementally */
     size_t cap = 256;
     size_t len = 0;
-    char *buf = (char *)malloc(cap);
+    char *buf = (char *)gv_alloc(cap);
     if (!buf) return NULL;
     buf[len++] = '{';
 
     int first = 1;
     for (const GV_Metadata *m = meta; m; m = m->next) {
         if (!first) {
-            if (len + 2 > cap) { cap *= 2; char *t = realloc(buf, cap); if (!t) { free(buf); return NULL; } buf = t; }
+            if (len + 2 > cap) { cap *= 2; char *t = gv_realloc(buf, cap); if (!t) { gv_free(buf); return NULL; } buf = t; }
             buf[len++] = ',';
         }
         first = 0;
@@ -1042,7 +1043,7 @@ static char *sql_metadata_to_json(const GV_Metadata *meta)
         size_t klen = m->key ? strlen(m->key) : 0;
         size_t vlen = m->value ? strlen(m->value) : 0;
         size_t needed = len + klen + vlen + 8; /* quotes, colon, etc */
-        if (needed > cap) { while (cap < needed) cap *= 2; char *t = realloc(buf, cap); if (!t) { free(buf); return NULL; } buf = t; }
+        if (needed > cap) { while (cap < needed) cap *= 2; char *t = gv_realloc(buf, cap); if (!t) { gv_free(buf); return NULL; } buf = t; }
 
         buf[len++] = '"';
         if (m->key) { memcpy(buf + len, m->key, klen); len += klen; }
@@ -1053,7 +1054,7 @@ static char *sql_metadata_to_json(const GV_Metadata *meta)
         buf[len++] = '"';
     }
 
-    if (len + 2 > cap) { cap = len + 2; char *t = realloc(buf, cap); if (!t) { free(buf); return NULL; } buf = t; }
+    if (len + 2 > cap) { cap = len + 2; char *t = gv_realloc(buf, cap); if (!t) { gv_free(buf); return NULL; } buf = t; }
     buf[len++] = '}';
     buf[len] = '\0';
     return buf;
@@ -1144,7 +1145,7 @@ static int sql_get_metadata_value(GV_Database *db, size_t index,
         char *json = sql_metadata_to_json(view.metadata);
         if (!json) return -1;
         snprintf(out, out_size, "%s", json);
-        free(json);
+        gv_free(json);
         return 0;
     }
 
@@ -1275,14 +1276,14 @@ static int sql_build_select_result(GV_SQLEngine *eng, const GV_SQLStmt *stmt,
     memset(result, 0, sizeof(*result));
     result->row_count = row_count;
     result->column_count = col_count;
-    result->column_names = (char **)calloc(col_count, sizeof(char *));
-    result->indices = (size_t *)calloc(row_count ? row_count : 1, sizeof(size_t));
+    result->column_names = (char **)gv_calloc(col_count, sizeof(char *));
+    result->indices = (size_t *)gv_calloc(row_count ? row_count : 1, sizeof(size_t));
     result->metadata_jsons =
-        (char **)calloc(row_count ? row_count : 1, sizeof(char *));
+        (char **)gv_calloc(row_count ? row_count : 1, sizeof(char *));
     result->column_values =
-        (char **)calloc((row_count ? row_count : 1) * col_count, sizeof(char *));
+        (char **)gv_calloc((row_count ? row_count : 1) * col_count, sizeof(char *));
     if (has_distances)
-        result->distances = (float *)calloc(row_count ? row_count : 1, sizeof(float));
+        result->distances = (float *)gv_calloc(row_count ? row_count : 1, sizeof(float));
 
     if (!result->column_names || !result->indices || !result->metadata_jsons ||
         !result->column_values ||
@@ -1345,7 +1346,7 @@ static int sql_exec_ann(GV_SQLEngine *eng, const GV_SQLStmt *stmt, GV_SQLResult 
     }
 
     size_t k = ann->k;
-    GV_SearchResult *sr = (GV_SearchResult *)calloc(k, sizeof(GV_SearchResult));
+    GV_SearchResult *sr = (GV_SearchResult *)gv_calloc(k, sizeof(GV_SearchResult));
     if (!sr) { sql_set_error(eng, "Out of memory"); return -1; }
 
     int found;
@@ -1354,13 +1355,13 @@ static int sql_exec_ann(GV_SQLEngine *eng, const GV_SQLStmt *stmt, GV_SQLResult 
         if (oversample > db->count && db->count > 0) oversample = db->count;
         if (oversample < k) oversample = k;
         GV_SearchResult *all_sr =
-            (GV_SearchResult *)calloc(oversample, sizeof(GV_SearchResult));
-        if (!all_sr) { free(sr); sql_set_error(eng, "Out of memory"); return -1; }
+            (GV_SearchResult *)gv_calloc(oversample, sizeof(GV_SearchResult));
+        if (!all_sr) { gv_free(sr); sql_set_error(eng, "Out of memory"); return -1; }
 
         found = db_search(db, ann->query_vector, oversample, all_sr, ann->metric);
         if (found < 0) {
-            free(all_sr);
-            free(sr);
+            gv_free(all_sr);
+            gv_free(sr);
             sql_set_error(eng, "ANN search failed");
             return -1;
         }
@@ -1371,12 +1372,12 @@ static int sql_exec_ann(GV_SQLEngine *eng, const GV_SQLStmt *stmt, GV_SQLResult 
             if (sql_eval_where(stmt->where, all_sr[i].vector) == 1)
                 sr[matched++] = all_sr[i];
         }
-        free(all_sr);
+        gv_free(all_sr);
         found = matched;
     } else {
         found = db_search(db, ann->query_vector, k, sr, ann->metric);
         if (found < 0) {
-            free(sr);
+            gv_free(sr);
             sql_set_error(eng, "ANN search failed");
             return -1;
         }
@@ -1384,9 +1385,9 @@ static int sql_exec_ann(GV_SQLEngine *eng, const GV_SQLStmt *stmt, GV_SQLResult 
 
     if (found < 0) found = 0;
 
-    GV_SQLRow *rows = (GV_SQLRow *)calloc((size_t)found, sizeof(GV_SQLRow));
+    GV_SQLRow *rows = (GV_SQLRow *)gv_calloc((size_t)found, sizeof(GV_SQLRow));
     if (!rows && found > 0) {
-        free(sr);
+        gv_free(sr);
         sql_set_error(eng, "Out of memory");
         return -1;
     }
@@ -1399,13 +1400,13 @@ static int sql_exec_ann(GV_SQLEngine *eng, const GV_SQLStmt *stmt, GV_SQLResult 
         rows[i].distance = sr[i].distance;
         rows[i].has_distance = 1;
     }
-    free(sr);
+    gv_free(sr);
 
     sql_sort_rows(db, stmt, rows, row_count);
     sql_apply_row_limit(rows, &row_count, stmt);
 
     int rc = sql_build_select_result(eng, stmt, rows, row_count, 1, result);
-    free(rows);
+    gv_free(rows);
     return rc;
 }
 
@@ -1420,7 +1421,7 @@ static int sql_exec_where_scan(GV_SQLEngine *eng, const GV_SQLStmt *stmt,
 
     size_t total = soa->count;
     size_t cap = 256;
-    GV_SQLRow *rows = (GV_SQLRow *)malloc(cap * sizeof(GV_SQLRow));
+    GV_SQLRow *rows = (GV_SQLRow *)gv_alloc(cap * sizeof(GV_SQLRow));
     if (!rows) { sql_set_error(eng, "Out of memory"); return -1; }
     size_t row_count = 0;
 
@@ -1433,8 +1434,8 @@ static int sql_exec_where_scan(GV_SQLEngine *eng, const GV_SQLStmt *stmt,
 
         if (row_count >= cap) {
             cap *= 2;
-            GV_SQLRow *tmp = (GV_SQLRow *)realloc(rows, cap * sizeof(GV_SQLRow));
-            if (!tmp) { free(rows); sql_set_error(eng, "Out of memory"); return -1; }
+            GV_SQLRow *tmp = (GV_SQLRow *)gv_realloc(rows, cap * sizeof(GV_SQLRow));
+            if (!tmp) { gv_free(rows); sql_set_error(eng, "Out of memory"); return -1; }
             rows = tmp;
         }
         rows[row_count].index = i;
@@ -1447,7 +1448,7 @@ static int sql_exec_where_scan(GV_SQLEngine *eng, const GV_SQLStmt *stmt,
     sql_apply_row_limit(rows, &row_count, stmt);
 
     int rc = sql_build_select_result(eng, stmt, rows, row_count, 0, result);
-    free(rows);
+    gv_free(rows);
     return rc;
 }
 
@@ -1479,12 +1480,12 @@ static int sql_exec_count(GV_SQLEngine *eng, const GV_SQLStmt *stmt, GV_SQLResul
     memset(result, 0, sizeof(*result));
     result->row_count = 1;
     result->column_count = 1;
-    result->column_names = (char **)calloc(1, sizeof(char *));
+    result->column_names = (char **)gv_calloc(1, sizeof(char *));
     if (result->column_names) {
         result->column_names[0] = gv_dup_cstr("count");
     }
 
-    result->indices = (size_t *)calloc(1, sizeof(size_t));
+    result->indices = (size_t *)gv_calloc(1, sizeof(size_t));
     if (!result->indices || !result->column_names) {
         sql_free_result(result);
         sql_set_error(eng, "Out of memory");
@@ -1507,7 +1508,7 @@ static int sql_exec_delete(GV_SQLEngine *eng, const GV_SQLStmt *stmt, GV_SQLResu
 
     /* Collect matching indices first (iterate, then delete) */
     size_t cap = 256;
-    size_t *del_idx = (size_t *)malloc(cap * sizeof(size_t));
+    size_t *del_idx = (size_t *)gv_alloc(cap * sizeof(size_t));
     if (!del_idx) { sql_set_error(eng, "Out of memory"); return -1; }
 
     for (size_t i = 0; i < total; i++) {
@@ -1519,8 +1520,8 @@ static int sql_exec_delete(GV_SQLEngine *eng, const GV_SQLStmt *stmt, GV_SQLResu
         if (sql_eval_where(stmt->where, &view) == 1) {
             if (deleted >= cap) {
                 cap *= 2;
-                size_t *tmp = (size_t *)realloc(del_idx, cap * sizeof(size_t));
-                if (!tmp) { free(del_idx); sql_set_error(eng, "Out of memory"); return -1; }
+                size_t *tmp = (size_t *)gv_realloc(del_idx, cap * sizeof(size_t));
+                if (!tmp) { gv_free(del_idx); sql_set_error(eng, "Out of memory"); return -1; }
                 del_idx = tmp;
             }
             del_idx[deleted++] = i;
@@ -1531,17 +1532,17 @@ static int sql_exec_delete(GV_SQLEngine *eng, const GV_SQLStmt *stmt, GV_SQLResu
     for (size_t i = 0; i < deleted; i++) {
         db_delete_vector_by_index(db, del_idx[i]);
     }
-    free(del_idx);
+    gv_free(del_idx);
 
     /* Build result: single row with delete count */
     memset(result, 0, sizeof(*result));
     result->row_count = 1;
     result->column_count = 1;
-    result->column_names = (char **)calloc(1, sizeof(char *));
+    result->column_names = (char **)gv_calloc(1, sizeof(char *));
     if (result->column_names) {
         result->column_names[0] = gv_dup_cstr("deleted_count");
     }
-    result->indices = (size_t *)calloc(1, sizeof(size_t));
+    result->indices = (size_t *)gv_calloc(1, sizeof(size_t));
     if (!result->indices || !result->column_names) {
         sql_free_result(result);
         sql_set_error(eng, "Out of memory");
@@ -1571,11 +1572,11 @@ static int sql_exec_update(GV_SQLEngine *eng, const GV_SQLStmt *stmt, GV_SQLResu
         if (sql_eval_where(stmt->where, &view) != 1) continue;
 
         /* Apply SET clauses as metadata updates */
-        const char **keys = (const char **)malloc(stmt->set_count * sizeof(char *));
-        const char **vals = (const char **)malloc(stmt->set_count * sizeof(char *));
+        const char **keys = (const char **)gv_alloc(stmt->set_count * sizeof(char *));
+        const char **vals = (const char **)gv_alloc(stmt->set_count * sizeof(char *));
         if (!keys || !vals) {
-            free(keys);
-            free(vals);
+            gv_free(keys);
+            gv_free(vals);
             sql_set_error(eng, "Out of memory");
             return -1;
         }
@@ -1584,8 +1585,8 @@ static int sql_exec_update(GV_SQLEngine *eng, const GV_SQLStmt *stmt, GV_SQLResu
             vals[j] = stmt->set_clauses[j].value;
         }
         db_update_vector_metadata(db, i, keys, vals, stmt->set_count);
-        free(keys);
-        free(vals);
+        gv_free(keys);
+        gv_free(vals);
         updated++;
     }
 
@@ -1593,11 +1594,11 @@ static int sql_exec_update(GV_SQLEngine *eng, const GV_SQLStmt *stmt, GV_SQLResu
     memset(result, 0, sizeof(*result));
     result->row_count = 1;
     result->column_count = 1;
-    result->column_names = (char **)calloc(1, sizeof(char *));
+    result->column_names = (char **)gv_calloc(1, sizeof(char *));
     if (result->column_names) {
         result->column_names[0] = gv_dup_cstr("updated_count");
     }
-    result->indices = (size_t *)calloc(1, sizeof(size_t));
+    result->indices = (size_t *)gv_calloc(1, sizeof(size_t));
     if (!result->indices || !result->column_names) {
         sql_free_result(result);
         sql_set_error(eng, "Out of memory");
@@ -1613,12 +1614,12 @@ GV_SQLEngine *sql_create(void *db)
 {
     if (!db) return NULL;
 
-    GV_SQLEngine *eng = (GV_SQLEngine *)calloc(1, sizeof(GV_SQLEngine));
+    GV_SQLEngine *eng = (GV_SQLEngine *)gv_calloc(1, sizeof(GV_SQLEngine));
     if (!eng) return NULL;
 
     eng->db = (GV_Database *)db;
     if (pthread_mutex_init(&eng->mutex, NULL) != 0) {
-        free(eng);
+        gv_free(eng);
         return NULL;
     }
     eng->last_error[0] = '\0';
@@ -1629,7 +1630,7 @@ void sql_destroy(GV_SQLEngine *eng)
 {
     if (!eng) return;
     pthread_mutex_destroy(&eng->mutex);
-    free(eng);
+    gv_free(eng);
 }
 
 int sql_execute(GV_SQLEngine *eng, const char *query, GV_SQLResult *result)
@@ -1700,26 +1701,26 @@ void sql_free_result(GV_SQLResult *result)
 {
     if (!result) return;
 
-    free(result->indices);
-    free(result->distances);
+    gv_free(result->indices);
+    gv_free(result->distances);
 
     if (result->metadata_jsons) {
         for (size_t i = 0; i < result->row_count; i++)
-            free(result->metadata_jsons[i]);
-        free(result->metadata_jsons);
+            gv_free(result->metadata_jsons[i]);
+        gv_free(result->metadata_jsons);
     }
 
     if (result->column_values) {
         size_t cells = result->row_count * result->column_count;
         for (size_t i = 0; i < cells; i++)
-            free(result->column_values[i]);
-        free(result->column_values);
+            gv_free(result->column_values[i]);
+        gv_free(result->column_values);
     }
 
     if (result->column_names) {
         for (size_t i = 0; i < result->column_count; i++)
-            free(result->column_names[i]);
-        free(result->column_names);
+            gv_free(result->column_names[i]);
+        gv_free(result->column_names);
     }
 
     memset(result, 0, sizeof(*result));

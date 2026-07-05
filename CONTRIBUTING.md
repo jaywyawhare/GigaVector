@@ -157,8 +157,13 @@ if (result != 0) {
 ```
 
 **2. Memory Management:**
+
+Ephemeral scratch inside API handlers and search paths should use `GV_WITH_ARENA` or
+`gv_tls_alloc`. Use `gv_alloc`/`gv_free` for caller-owned or long-lived data without
+a DB context; use `gv_db_*` / `gv_pool_*` for SoA and other DB-bound allocations.
+
 ```c
-// Always free allocated memory
+// Heap-owned buffer (caller or long-lived state)
 char *buffer = malloc(size);
 if (buffer == NULL) {
     return -1;

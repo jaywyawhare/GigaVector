@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include "core/memory.h"
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -106,8 +107,8 @@ static int test_scalar_quant_per_dimension(void) {
 
 static int test_scalar_quant_train(void) {
     size_t count = 64;
-    float *train_data = (float *)malloc(count * DIM * sizeof(float));
-    ASSERT(train_data != NULL, "malloc failed");
+    float *train_data = (float *)gv_alloc(count * DIM * sizeof(float));
+    ASSERT(train_data != NULL, "gv_alloc failed");
 
     for (size_t i = 0; i < count; i++) {
         fill_vector(&train_data[i * DIM], DIM, (float)i * 0.5f);
@@ -122,7 +123,7 @@ static int test_scalar_quant_train(void) {
     ASSERT(sqv->dimension == DIM, "dimension mismatch after train");
 
     scalar_quant_vector_destroy(sqv);
-    free(train_data);
+    gv_free(train_data);
     return 0;
 }
 

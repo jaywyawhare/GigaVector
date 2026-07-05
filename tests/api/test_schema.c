@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include "core/memory.h"
 #include <stdlib.h>
 #include <string.h>
 #include "api/schema.h"
@@ -192,7 +193,7 @@ static int test_schema_save_load_and_json(void) {
     ASSERT(strlen(json) > 0, "JSON string is non-empty");
     ASSERT(strstr(json, "name") != NULL, "JSON contains 'name'");
     ASSERT(strstr(json, "rating") != NULL, "JSON contains 'rating'");
-    free(json);
+    gv_free(json);
 
     schema_destroy(schema);
     schema_destroy(loaded);

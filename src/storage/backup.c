@@ -4,6 +4,7 @@
  */
 
 #include "storage/backup.h"
+#include "core/memory.h"
 #include "storage/database.h"
 #include "core/utils.h"
 #include "security/auth.h"     /* For SHA-256 */
@@ -51,7 +52,7 @@ void restore_options_init(GV_RestoreOptions *options) {
 }
 
 static GV_BackupResult *create_result(int success, const char *error) {
-    GV_BackupResult *result = calloc(1, sizeof(GV_BackupResult));
+    GV_BackupResult *result = gv_calloc(1, sizeof(GV_BackupResult));
     if (!result) return NULL;
     result->success = success;
     if (error) {
@@ -144,13 +145,13 @@ GV_BackupResult *backup_create(GV_Database *db, const char *backup_path,
             }
             data_size += vector_size;
         } else {
-            float *zeros = calloc(dimension, sizeof(float));
+            float *zeros = gv_calloc(dimension, sizeof(float));
             if (!zeros) {
                 fclose(fp);
                 return create_result(0, "Failed to allocate zero-vector buffer");
             }
             size_t zw = fwrite(zeros, 1, vector_size, fp);
-            free(zeros);
+            gv_free(zeros);
             if (zw != vector_size) {
                 fclose(fp);
                 return create_result(0, "Failed to write placeholder vector (disk full?)");
@@ -229,8 +230,8 @@ GV_BackupResult *backup_create_from_file(const char *db_path, const char *backup
 
 void backup_result_free(GV_BackupResult *result) {
     if (!result) return;
-    free(result->error_message);
-    free(result);
+    gv_free(result->error_message);
+    gv_free(result);
 }
 
 GV_BackupResult *backup_restore(const char *backup_path, const char *db_path,
@@ -295,7 +296,7 @@ GV_BackupResult *backup_restore(const char *backup_path, const char *db_path,
     }
 
     size_t vector_size = header.dimension * sizeof(float);
-    float *buffer = malloc(vector_size);
+    float *buffer = gv_alloc(vector_size);
     if (!buffer) {
         db_close(db);
         fclose(fp);
@@ -316,7 +317,7 @@ GV_BackupResult *backup_restore(const char *backup_path, const char *db_path,
         }
     }
 
-    free(buffer);
+    gv_free(buffer);
     fclose(fp);
 
     if (progress) {
@@ -378,7 +379,7 @@ GV_BackupResult *backup_restore_to_db(const char *backup_path,
     fseek(fp, BACKUP_HEADER_SIZE, SEEK_SET);
 
     size_t vector_size = header.dimension * sizeof(float);
-    float *buffer = malloc(vector_size);
+    float *buffer = gv_alloc(vector_size);
     if (!buffer) {
         fclose(fp);
         db_close(*db);
@@ -395,7 +396,7 @@ GV_BackupResult *backup_restore_to_db(const char *backup_path,
         vectors_read++;
     }
 
-    free(buffer);
+    gv_free(buffer);
     fclose(fp);
 
     GV_BackupResult *result = create_result(1, NULL);
@@ -488,11 +489,11 @@ GV_BackupResult *backup_verify(const char *backup_path, const char *decryption_k
         size_t probe_size = header.dimension * sizeof(float);
         /* Encrypted data may have padding — read extra 16 bytes */
         size_t read_size = probe_size + 16;
-        unsigned char *encrypted_probe = malloc(read_size);
-        unsigned char *decrypted_probe = malloc(read_size);
+        unsigned char *encrypted_probe = gv_alloc(read_size);
+        unsigned char *decrypted_probe = gv_alloc(read_size);
         if (!encrypted_probe || !decrypted_probe) {
-            free(encrypted_probe);
-            free(decrypted_probe);
+            gv_free(encrypted_probe);
+            gv_free(decrypted_probe);
             fclose(fp);
             crypto_wipe_key(&key);
             crypto_destroy(ctx);
@@ -503,8 +504,8 @@ GV_BackupResult *backup_verify(const char *backup_path, const char *decryption_k
         fclose(fp);
 
         if (bytes_read < probe_size) {
-            free(encrypted_probe);
-            free(decrypted_probe);
+            gv_free(encrypted_probe);
+            gv_free(decrypted_probe);
             crypto_wipe_key(&key);
             crypto_destroy(ctx);
             return create_result(0, "Backup file truncated — cannot read probe block");
@@ -513,8 +514,8 @@ GV_BackupResult *backup_verify(const char *backup_path, const char *decryption_k
         size_t decrypted_len = 0;
         int dec_rc = crypto_decrypt(ctx, &key, encrypted_probe, bytes_read,
                                        decrypted_probe, &decrypted_len);
-        free(encrypted_probe);
-        free(decrypted_probe);
+        gv_free(encrypted_probe);
+        gv_free(decrypted_probe);
         crypto_wipe_key(&key);
         crypto_destroy(ctx);
 
@@ -731,7 +732,7 @@ GV_BackupResult *backup_merge(const char *base_backup_path,
 
     fseek(base_fp, 0, SEEK_SET);
 
-    char *buffer = malloc(BUFFER_SIZE);
+    char *buffer = gv_alloc(BUFFER_SIZE);
     if (!buffer) {
         fclose(base_fp);
         fclose(out_fp);
@@ -790,7 +791,7 @@ GV_BackupResult *backup_merge(const char *base_backup_path,
         fclose(inc_fp);
     }
 
-    free(buffer);
+    gv_free(buffer);
 
     fseek(out_fp, BACKUP_MAGIC_LEN + sizeof(uint32_t) * 2 + sizeof(uint64_t), SEEK_SET);
     fwrite(&total_vectors, sizeof(total_vectors), 1, out_fp);
@@ -817,7 +818,7 @@ int backup_compute_checksum(const char *backup_path, char *checksum_out) {
 
     size_t checksum_offset = BACKUP_HEADER_FIXED_SIZE;
 
-    unsigned char *buffer = malloc(file_size);
+    unsigned char *buffer = gv_alloc(file_size);
     if (!buffer) {
         fclose(fp);
         return -1;
@@ -825,7 +826,7 @@ int backup_compute_checksum(const char *backup_path, char *checksum_out) {
 
     size_t to_read = (size_t)file_size;
     if (fread(buffer, 1, to_read, fp) != to_read) {
-        free(buffer);
+        gv_free(buffer);
         fclose(fp);
         return -1;
     }
@@ -837,7 +838,7 @@ int backup_compute_checksum(const char *backup_path, char *checksum_out) {
 
     unsigned char hash[32];
     auth_sha256(buffer, file_size, hash);
-    free(buffer);
+    gv_free(buffer);
 
     auth_to_hex(hash, 32, checksum_out);
 

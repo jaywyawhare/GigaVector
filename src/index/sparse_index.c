@@ -1,4 +1,5 @@
 #include <float.h>
+#include "core/memory.h"
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -48,28 +49,28 @@ static int sparse_read_metadata(FILE *in, GV_SparseVector *sv) {
             return -1;
         }
         if (read_str(in, &key, key_len) != 0) {
-            free(key);
+            gv_free(key);
             return -1;
         }
 
         if (read_u32(in, &val_len) != 0) {
-            free(key);
+            gv_free(key);
             return -1;
         }
         if (read_str(in, &value, val_len) != 0) {
-            free(key);
+            gv_free(key);
             return -1;
         }
 
         /* attach metadata onto the sparse vector; treat it as GV_Vector for API */
         if (vector_set_metadata((GV_Vector *)sv, key, value) != 0) {
-            free(key);
-            free(value);
+            gv_free(key);
+            gv_free(value);
             return -1;
         }
 
-        free(key);
-        free(value);
+        gv_free(key);
+        gv_free(value);
     }
 
     return 0;
@@ -79,37 +80,37 @@ GV_SparseIndex *sparse_index_create(size_t dimension) {
     if (dimension == 0) {
         return NULL;
     }
-    GV_SparseIndex *idx = (GV_SparseIndex *)calloc(1, sizeof(GV_SparseIndex));
+    GV_SparseIndex *idx = (GV_SparseIndex *)gv_calloc(1, sizeof(GV_SparseIndex));
     if (!idx) return NULL;
     idx->dimension = dimension;
     idx->capacity = 1024;
-    idx->vectors = (GV_SparseVector **)calloc(idx->capacity, sizeof(GV_SparseVector *));
-    idx->deleted = (int *)calloc(idx->capacity, sizeof(int));
+    idx->vectors = (GV_SparseVector **)gv_calloc(idx->capacity, sizeof(GV_SparseVector *));
+    idx->deleted = (int *)gv_calloc(idx->capacity, sizeof(int));
     if (!idx->vectors || !idx->deleted) {
-        free(idx->vectors);
-        free(idx->deleted);
-        free(idx);
+        gv_free(idx->vectors);
+        gv_free(idx->deleted);
+        gv_free(idx);
         return NULL;
     }
-    idx->postings = (GV_SparsePosting **)calloc(dimension, sizeof(GV_SparsePosting *));
+    idx->postings = (GV_SparsePosting **)gv_calloc(dimension, sizeof(GV_SparsePosting *));
     if (!idx->postings) {
-        free(idx->vectors);
-        free(idx);
+        gv_free(idx->vectors);
+        gv_free(idx);
         return NULL;
     }
-    idx->df = (double *)calloc(dimension, sizeof(double));
+    idx->df = (double *)gv_calloc(dimension, sizeof(double));
     if (!idx->df) {
-        free(idx->postings);
-        free(idx->vectors);
-        free(idx);
+        gv_free(idx->postings);
+        gv_free(idx->vectors);
+        gv_free(idx);
         return NULL;
     }
-    idx->doc_len = (double *)calloc(idx->capacity, sizeof(double));
+    idx->doc_len = (double *)gv_calloc(idx->capacity, sizeof(double));
     if (!idx->doc_len) {
-        free(idx->df);
-        free(idx->postings);
-        free(idx->vectors);
-        free(idx);
+        gv_free(idx->df);
+        gv_free(idx->postings);
+        gv_free(idx->vectors);
+        gv_free(idx);
         return NULL;
     }
     idx->avg_doc_len = 0.0;
@@ -123,7 +124,7 @@ static void sparse_postings_free(GV_SparsePosting **postings, size_t dimension) 
         GV_SparsePosting *p = postings[i];
         while (p) {
             GV_SparsePosting *n = p->next;
-            free(p);
+            gv_free(p);
             p = n;
         }
     }
@@ -132,17 +133,17 @@ static void sparse_postings_free(GV_SparsePosting **postings, size_t dimension) 
 void sparse_index_destroy(GV_SparseIndex *index) {
     if (!index) return;
     sparse_postings_free(index->postings, index->dimension);
-    free(index->postings);
-    free(index->df);
-    free(index->doc_len);
-    free(index->deleted);
+    gv_free(index->postings);
+    gv_free(index->df);
+    gv_free(index->doc_len);
+    gv_free(index->deleted);
     if (index->vectors) {
         for (size_t i = 0; i < index->count; ++i) {
             sparse_vector_destroy(index->vectors[i]);
         }
     }
-    free(index->vectors);
-    free(index);
+    gv_free(index->vectors);
+    gv_free(index);
 }
 
 int sparse_index_add(GV_SparseIndex *index, GV_SparseVector *vector) {
@@ -155,17 +156,17 @@ int sparse_index_add(GV_SparseIndex *index, GV_SparseVector *vector) {
     if (index->count == index->capacity) {
         size_t newcap = index->capacity * 2;
         GV_SparseVector **tmp_vec =
-            (GV_SparseVector **)realloc(index->vectors, newcap * sizeof(GV_SparseVector *));
+            (GV_SparseVector **)gv_realloc(index->vectors, newcap * sizeof(GV_SparseVector *));
         if (!tmp_vec) {
             return -1;
         }
-        double *tmp_len = (double *)realloc(index->doc_len, newcap * sizeof(double));
-        int *tmp_deleted = (int *)realloc(index->deleted, newcap * sizeof(int));
+        double *tmp_len = (double *)gv_realloc(index->doc_len, newcap * sizeof(double));
+        int *tmp_deleted = (int *)gv_realloc(index->deleted, newcap * sizeof(int));
         if (!tmp_len || !tmp_deleted) {
             /* keep old arrays intact */
-            if (tmp_vec) free(tmp_vec);
-            if (tmp_len) free(tmp_len);
-            if (tmp_deleted) free(tmp_deleted);
+            if (tmp_vec) gv_free(tmp_vec);
+            if (tmp_len) gv_free(tmp_len);
+            if (tmp_deleted) gv_free(tmp_deleted);
             return -1;
         }
         /* zero-init new doc_len and deleted regions */
@@ -190,7 +191,7 @@ int sparse_index_add(GV_SparseIndex *index, GV_SparseVector *vector) {
         }
         dl += (double)val;
 
-        GV_SparsePosting *p = (GV_SparsePosting *)malloc(sizeof(GV_SparsePosting));
+        GV_SparsePosting *p = (GV_SparsePosting *)gv_alloc(sizeof(GV_SparsePosting));
         if (!p) {
             return -1;
         }
@@ -234,11 +235,11 @@ int sparse_index_search(const GV_SparseIndex *index, const GV_SparseVector *quer
         k = index->count;
     }
 
-    float *scores = (float *)calloc(index->count, sizeof(float));
-    int *touched = (int *)calloc(index->count, sizeof(int));
+    float *scores = (float *)gv_calloc(index->count, sizeof(float));
+    int *touched = (int *)gv_calloc(index->count, sizeof(int));
     if (!scores || !touched) {
-        free(scores);
-        free(touched);
+        gv_free(scores);
+        gv_free(touched);
         return -1;
     }
 
@@ -342,8 +343,8 @@ int sparse_index_search(const GV_SparseIndex *index, const GV_SparseVector *quer
         }
     }
 
-    free(scores);
-    free(touched);
+    gv_free(scores);
+    gv_free(touched);
     return (int)filled;
 }
 
@@ -402,24 +403,24 @@ int sparse_index_load(GV_SparseIndex **index_out, FILE *in,
         uint32_t *indices = NULL;
         float *values = NULL;
         if (nnz > 0) {
-            indices = (uint32_t *)malloc(nnz * sizeof(uint32_t));
-            values = (float *)malloc(nnz * sizeof(float));
+            indices = (uint32_t *)gv_alloc(nnz * sizeof(uint32_t));
+            values = (float *)gv_alloc(nnz * sizeof(float));
             if (!indices || !values) {
-                free(indices);
-                free(values);
+                gv_free(indices);
+                gv_free(values);
                 sparse_index_destroy(idx);
                 return -1;
             }
             for (size_t i = 0; i < nnz; ++i) {
                 if (read_u32(in, &indices[i]) != 0) {
-                    free(indices);
-                    free(values);
+                    gv_free(indices);
+                    gv_free(values);
                     sparse_index_destroy(idx);
                     return -1;
                 }
                 if (read_floats(in, &values[i], 1) != 0) {
-                    free(indices);
-                    free(values);
+                    gv_free(indices);
+                    gv_free(values);
                     sparse_index_destroy(idx);
                     return -1;
                 }
@@ -427,8 +428,8 @@ int sparse_index_load(GV_SparseIndex **index_out, FILE *in,
         }
 
         GV_SparseVector *sv = sparse_vector_create(dimension, indices, values, nnz);
-        free(indices);
-        free(values);
+        gv_free(indices);
+        gv_free(values);
         if (!sv) {
             sparse_index_destroy(idx);
             return -1;
@@ -492,7 +493,7 @@ int sparse_index_update(GV_SparseIndex *index, size_t vector_index, GV_SparseVec
             if ((*p)->vector_id == vector_index) {
                 GV_SparsePosting *to_remove = *p;
                 *p = to_remove->next;
-                free(to_remove);
+                gv_free(to_remove);
                 break;
             }
             p = &((*p)->next);
@@ -518,7 +519,7 @@ int sparse_index_update(GV_SparseIndex *index, size_t vector_index, GV_SparseVec
         uint32_t dim = new_vector->entries[i].index;
         if (dim >= index->dimension) continue;
         
-        GV_SparsePosting *p = (GV_SparsePosting *)malloc(sizeof(GV_SparsePosting));
+        GV_SparsePosting *p = (GV_SparsePosting *)gv_alloc(sizeof(GV_SparsePosting));
         if (p == NULL) {
             return -1;
         }

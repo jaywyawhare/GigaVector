@@ -18,12 +18,14 @@
  */
 
 #include <stdlib.h>
+#include "core/memory.h"
 #include <string.h>
 #include <math.h>
 #include <ctype.h>
 #include <stdio.h>
 #include "core/compat.h"
 #include "core/utils.h"
+#include "core/scope.h"
 
 #include "search/importance.h"
 
@@ -721,7 +723,7 @@ int importance_record_access(GV_AccessHistory *history,
         size_t new_capacity = history->event_capacity == 0 ? 16 : history->event_capacity * 2;
         if (new_capacity > 100) new_capacity = 100;
 
-        GV_AccessEvent *new_events = realloc(history->events,
+        GV_AccessEvent *new_events = gv_realloc(history->events,
                                               new_capacity * sizeof(GV_AccessEvent));
         if (new_events == NULL) {
             return -1;
@@ -764,7 +766,7 @@ int access_history_init(GV_AccessHistory *history, size_t initial_capacity) {
     memset(history, 0, sizeof(GV_AccessHistory));
 
     if (initial_capacity > 0) {
-        history->events = calloc(initial_capacity, sizeof(GV_AccessEvent));
+        history->events = gv_calloc(initial_capacity, sizeof(GV_AccessEvent));
         if (history->events == NULL) {
             return -1;
         }
@@ -779,7 +781,7 @@ void access_history_free(GV_AccessHistory *history) {
         return;
     }
 
-    free(history->events);
+    gv_free(history->events);
     memset(history, 0, sizeof(GV_AccessHistory));
 }
 
@@ -789,7 +791,7 @@ char *access_history_serialize(const GV_AccessHistory *history) {
     }
 
     size_t buffer_size = 256 + history->event_count * 100;
-    char *buffer = malloc(buffer_size);
+    char *buffer = gv_alloc(buffer_size);
     if (buffer == NULL) {
         return NULL;
     }
@@ -859,7 +861,7 @@ int access_history_deserialize(const char *json, GV_AccessHistory *history) {
 
                 if (history->event_count >= history->event_capacity) {
                     size_t new_cap = history->event_capacity * 2;
-                    GV_AccessEvent *new_events = realloc(history->events,
+                    GV_AccessEvent *new_events = gv_realloc(history->events,
                                                           new_cap * sizeof(GV_AccessEvent));
                     if (new_events) {
                         history->events = new_events;
@@ -1058,7 +1060,9 @@ int importance_rerank(const GV_ImportanceConfig *config,
 
     /* Combine importance with similarity */
     double importance_weight = 1.0 - similarity_weight;
-    double *combined_scores = malloc(count * sizeof(double));
+    int scores_on_heap = 0;
+    double *combined_scores = (double *)gv_tls_alloc_or_heap(
+        count * sizeof(double), sizeof(double), &scores_on_heap);
     if (combined_scores == NULL) {
         return -1;
     }
@@ -1080,6 +1084,6 @@ int importance_rerank(const GV_ImportanceConfig *config,
         }
     }
 
-    free(combined_scores);
+    gv_tls_free_or_heap(combined_scores, scores_on_heap);
     return 0;
 }

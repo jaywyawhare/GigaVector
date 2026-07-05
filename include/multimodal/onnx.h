@@ -142,7 +142,7 @@ GV_ONNXTensor onnx_tensor_create(const size_t *shape, size_t ndim);
  *
  * Safe to call with a tensor whose data is already NULL.
  *
- * @param tensor Tensor to free.
+ * @param tensor Tensor to gv_free.
  */
 void onnx_tensor_destroy(GV_ONNXTensor *tensor);
 
@@ -152,7 +152,7 @@ void onnx_tensor_destroy(GV_ONNXTensor *tensor);
  * @param model       Model handle.
  * @param input_count Output: number of inputs.
  * @param input_names Output: allocated array of name strings (caller frees
- *                    each string and the array itself with free()).
+ *                    each string and the array itself with gv_free()).
  * @return 0 on success, -1 on error.
  */
 int onnx_get_input_info(const GV_ONNXModel *model, size_t *input_count,
@@ -164,7 +164,7 @@ int onnx_get_input_info(const GV_ONNXModel *model, size_t *input_count,
  * @param model        Model handle.
  * @param output_count Output: number of outputs.
  * @param output_names Output: allocated array of name strings (caller frees
- *                     each string and the array itself with free()).
+ *                     each string and the array itself with gv_free()).
  * @return 0 on success, -1 on error.
  */
 int onnx_get_output_info(const GV_ONNXModel *model, size_t *output_count,

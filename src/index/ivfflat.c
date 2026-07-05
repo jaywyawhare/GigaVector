@@ -1,11 +1,11 @@
 #include <stdio.h>
+#include "core/memory.h"
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
 #include <stdint.h>
 
 #include "index/ivfflat.h"
-#include "index/ivf_base.h"
 #include "search/distance.h"
 #include "schema/vector.h"
 #include "schema/metadata.h"
@@ -39,10 +39,83 @@ typedef struct {
 GV_HEAP_DEFINE(ivfflat_heap, GV_IVFFlatHeapItem)
 
 /* K-means helper: assign vectors to nearest centroids */
+static void ivfflat_argmin(const float *data, size_t count, size_t dim,
+                               const float *centroids, size_t k, int *assign) {
+    for (size_t i = 0; i < count; i++) {
+        const float *vec = data + i * dim;
+        float best_dist = INFINITY;
+        int best_idx = -1;
+        for (size_t c = 0; c < k; c++) {
+            const float *centroid = centroids + c * dim;
+            float dist = 0.0f;
+            for (size_t d = 0; d < dim; d++) {
+                float diff = vec[d] - centroid[d];
+                dist += diff * diff;
+            }
+            if (dist < best_dist) {
+                best_dist = dist;
+                best_idx = (int)c;
+            }
+        }
+        assign[i] = best_idx;
+    }
+}
+
+/* Simple Lloyd's K-means algorithm */
+static int ivfflat_kmeans(const float *data, size_t count, size_t dim,
+                              size_t k, size_t iters, float *out_centroids) {
+    if (count < k || !data || !out_centroids) return -1;
+
+    memcpy(out_centroids, data, k * dim * sizeof(float));
+
+    int *assign = (int *)gv_alloc(count * sizeof(int));
+    float *new_centroids = (float *)gv_calloc(k * dim, sizeof(float));
+    size_t *counts = (size_t *)gv_calloc(k, sizeof(size_t));
+
+    if (!assign || !new_centroids || !counts) {
+        gv_free(assign);
+        gv_free(new_centroids);
+        gv_free(counts);
+        return -1;
+    }
+
+    for (size_t iter = 0; iter < iters; iter++) {
+        ivfflat_argmin(data, count, dim, out_centroids, k, assign);
+
+        memset(new_centroids, 0, k * dim * sizeof(float));
+        memset(counts, 0, k * sizeof(size_t));
+
+        for (size_t i = 0; i < count; i++) {
+            int c = assign[i];
+            if (c < 0) continue;
+            const float *vec = data + i * dim;
+            for (size_t d = 0; d < dim; d++) {
+                new_centroids[c * dim + d] += vec[d];
+            }
+            counts[c]++;
+        }
+
+        for (size_t c = 0; c < k; c++) {
+            if (counts[c] > 0) {
+                for (size_t d = 0; d < dim; d++) {
+                    new_centroids[c * dim + d] /= (float)counts[c];
+                }
+            }
+        }
+
+        memcpy(out_centroids, new_centroids, k * dim * sizeof(float));
+    }
+
+    gv_free(assign);
+    gv_free(new_centroids);
+    gv_free(counts);
+    return 0;
+}
+
 void *ivfflat_create(size_t dimension, const GV_IVFFlatConfig *config) {
     if (dimension == 0) return NULL;
 
-    GV_IVFFlatIndex *idx = (GV_IVFFlatIndex *)calloc(1, sizeof(GV_IVFFlatIndex));
+    GV_IVFFlatIndex *idx = (GV_IVFFlatIndex *)gv_calloc(1, sizeof(GV_IVFFlatIndex));
     if (!idx) return NULL;
 
     idx->dimension = dimension;
@@ -61,20 +134,20 @@ void *ivfflat_create(size_t dimension, const GV_IVFFlatConfig *config) {
         idx->config.nprobe = idx->config.nlist;
     }
 
-    idx->centroids = (float *)malloc(idx->config.nlist * dimension * sizeof(float));
+    idx->centroids = (float *)gv_alloc(idx->config.nlist * dimension * sizeof(float));
     if (!idx->centroids) {
-        free(idx);
+        gv_free(idx);
         return NULL;
     }
 
-    idx->lists = (GV_IVFFlatEntry **)calloc(idx->config.nlist, sizeof(GV_IVFFlatEntry *));
-    idx->list_sizes = (size_t *)calloc(idx->config.nlist, sizeof(size_t));
+    idx->lists = (GV_IVFFlatEntry **)gv_calloc(idx->config.nlist, sizeof(GV_IVFFlatEntry *));
+    idx->list_sizes = (size_t *)gv_calloc(idx->config.nlist, sizeof(size_t));
 
     if (!idx->lists || !idx->list_sizes) {
-        free(idx->centroids);
-        free(idx->lists);
-        free(idx->list_sizes);
-        free(idx);
+        gv_free(idx->centroids);
+        gv_free(idx->lists);
+        gv_free(idx->list_sizes);
+        gv_free(idx);
         return NULL;
     }
 
@@ -92,8 +165,8 @@ int ivfflat_train(void *index, const float *data, size_t count) {
 
     if (count < idx->config.nlist) return -1;
 
-    if (ivf_train_centroids(data, count, idx->dimension, idx->config.nlist,
-                            idx->config.train_iters, idx->centroids) != 0) {
+    if (ivfflat_kmeans(data, count, idx->dimension, idx->config.nlist,
+                          idx->config.train_iters, idx->centroids) != 0) {
         return -1;
     }
 
@@ -125,7 +198,7 @@ int ivfflat_insert(void *index, GV_Vector *vector) {
         }
     }
 
-    GV_IVFFlatEntry *entry = (GV_IVFFlatEntry *)malloc(sizeof(GV_IVFFlatEntry));
+    GV_IVFFlatEntry *entry = (GV_IVFFlatEntry *)gv_alloc(sizeof(GV_IVFFlatEntry));
     if (!entry) return -1;
 
     entry->vector = vector;
@@ -153,7 +226,7 @@ int ivfflat_search(void *index, const GV_Vector *query, size_t k,
     size_t nprobe = idx->config.nprobe;
     if (nprobe > idx->config.nlist) nprobe = idx->config.nlist;
 
-    GV_IVFFlatHeapItem *centroid_heap = (GV_IVFFlatHeapItem *)malloc(
+    GV_IVFFlatHeapItem *centroid_heap = (GV_IVFFlatHeapItem *)gv_alloc(
         nprobe * sizeof(GV_IVFFlatHeapItem));
     if (!centroid_heap) return -1;
 
@@ -170,9 +243,9 @@ int ivfflat_search(void *index, const GV_Vector *query, size_t k,
         ivfflat_heap_push(centroid_heap, &heap_size, nprobe, (GV_IVFFlatHeapItem){dist, i, NULL});
     }
 
-    size_t *probe_lists = (size_t *)malloc(nprobe * sizeof(size_t));
+    size_t *probe_lists = (size_t *)gv_alloc(nprobe * sizeof(size_t));
     if (!probe_lists) {
-        free(centroid_heap);
+        gv_free(centroid_heap);
         return -1;
     }
 
@@ -184,11 +257,11 @@ int ivfflat_search(void *index, const GV_Vector *query, size_t k,
             ivfflat_heap_sift_down(centroid_heap, heap_size, 0);
         }
     }
-    free(centroid_heap);
+    gv_free(centroid_heap);
 
-    GV_IVFFlatHeapItem *heap = (GV_IVFFlatHeapItem *)malloc(k * sizeof(GV_IVFFlatHeapItem));
+    GV_IVFFlatHeapItem *heap = (GV_IVFFlatHeapItem *)gv_alloc(k * sizeof(GV_IVFFlatHeapItem));
     if (!heap) {
-        free(probe_lists);
+        gv_free(probe_lists);
         return -1;
     }
 
@@ -212,7 +285,7 @@ int ivfflat_search(void *index, const GV_Vector *query, size_t k,
         }
     }
 
-    free(probe_lists);
+    gv_free(probe_lists);
 
     int n = (int)heap_size;
     for (int i = n - 1; i >= 0; i--) {
@@ -246,7 +319,7 @@ int ivfflat_search(void *index, const GV_Vector *query, size_t k,
         }
     }
 
-    free(heap);
+    gv_free(heap);
     return n;
 }
 
@@ -264,7 +337,7 @@ int ivfflat_range_search(void *index, const GV_Vector *query, float radius,
     size_t nprobe = idx->config.nprobe;
     if (nprobe > idx->config.nlist) nprobe = idx->config.nlist;
 
-    GV_IVFFlatHeapItem *centroid_heap = (GV_IVFFlatHeapItem *)malloc(
+    GV_IVFFlatHeapItem *centroid_heap = (GV_IVFFlatHeapItem *)gv_alloc(
         nprobe * sizeof(GV_IVFFlatHeapItem));
     if (!centroid_heap) return -1;
 
@@ -281,9 +354,9 @@ int ivfflat_range_search(void *index, const GV_Vector *query, float radius,
         ivfflat_heap_push(centroid_heap, &heap_size, nprobe, (GV_IVFFlatHeapItem){dist, i, NULL});
     }
 
-    size_t *probe_lists = (size_t *)malloc(nprobe * sizeof(size_t));
+    size_t *probe_lists = (size_t *)gv_alloc(nprobe * sizeof(size_t));
     if (!probe_lists) {
-        free(centroid_heap);
+        gv_free(centroid_heap);
         return -1;
     }
 
@@ -295,7 +368,7 @@ int ivfflat_range_search(void *index, const GV_Vector *query, float radius,
             ivfflat_heap_sift_down(centroid_heap, heap_size, 0);
         }
     }
-    free(centroid_heap);
+    gv_free(centroid_heap);
 
     size_t found = 0;
 
@@ -334,7 +407,7 @@ int ivfflat_range_search(void *index, const GV_Vector *query, float radius,
         }
     }
 
-    free(probe_lists);
+    gv_free(probe_lists);
     return (int)found;
 }
 
@@ -357,16 +430,16 @@ void ivfflat_destroy(void *index) {
                 if (entry->vector) {
                     vector_destroy(entry->vector);
                 }
-                free(entry);
+                gv_free(entry);
                 entry = next;
             }
         }
-        free(idx->lists);
+        gv_free(idx->lists);
     }
 
-    free(idx->centroids);
-    free(idx->list_sizes);
-    free(idx);
+    gv_free(idx->centroids);
+    gv_free(idx->list_sizes);
+    gv_free(idx);
 }
 
 size_t ivfflat_count(const void *index) {
@@ -573,20 +646,20 @@ int ivfflat_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version)
                 return -1;
             }
 
-            float *data = (float *)malloc(idx->dimension * sizeof(float));
+            float *data = (float *)gv_alloc(idx->dimension * sizeof(float));
             if (!data) {
                 ivfflat_destroy(index);
                 return -1;
             }
 
             if (fread(data, sizeof(float), idx->dimension, in) != idx->dimension) {
-                free(data);
+                gv_free(data);
                 ivfflat_destroy(index);
                 return -1;
             }
 
             GV_Vector *vec = vector_create_from_data(idx->dimension, data);
-            free(data);
+            gv_free(data);
 
             if (!vec) {
                 ivfflat_destroy(index);
@@ -615,31 +688,31 @@ int ivfflat_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version)
                     return -1;
                 }
                 if (read_u32(in, &vlen) != 0) {
-                    free(key);
+                    gv_free(key);
                     vector_destroy(vec);
                     ivfflat_destroy(index);
                     return -1;
                 }
                 if (read_str(in, &value, vlen) != 0) {
-                    free(key);
+                    gv_free(key);
                     vector_destroy(vec);
                     ivfflat_destroy(index);
                     return -1;
                 }
 
                 if (vector_set_metadata(vec, key, value) != 0) {
-                    free(key);
-                    free(value);
+                    gv_free(key);
+                    gv_free(value);
                     vector_destroy(vec);
                     ivfflat_destroy(index);
                     return -1;
                 }
 
-                free(key);
-                free(value);
+                gv_free(key);
+                gv_free(value);
             }
 
-            GV_IVFFlatEntry *entry = (GV_IVFFlatEntry *)malloc(sizeof(GV_IVFFlatEntry));
+            GV_IVFFlatEntry *entry = (GV_IVFFlatEntry *)gv_alloc(sizeof(GV_IVFFlatEntry));
             if (!entry) {
                 vector_destroy(vec);
                 ivfflat_destroy(index);

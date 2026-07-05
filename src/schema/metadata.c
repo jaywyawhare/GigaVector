@@ -1,4 +1,5 @@
 #include <stdlib.h>
+#include "core/memory.h"
 #include <string.h>
 
 #include "schema/metadata.h"
@@ -16,28 +17,28 @@ int vector_set_metadata(GV_Vector *vector, const char *key, const char *value) {
             if (new_value == NULL) {
                 return -1;
             }
-            free(current->value);
+            gv_free(current->value);
             current->value = new_value;
             return 0;
         }
         current = current->next;
     }
 
-    GV_Metadata *new_meta = (GV_Metadata *)malloc(sizeof(GV_Metadata));
+    GV_Metadata *new_meta = (GV_Metadata *)gv_alloc(sizeof(GV_Metadata));
     if (new_meta == NULL) {
         return -1;
     }
 
     new_meta->key = gv_dup_cstr(key);
     if (new_meta->key == NULL) {
-        free(new_meta);
+        gv_free(new_meta);
         return -1;
     }
 
     new_meta->value = gv_dup_cstr(value);
     if (new_meta->value == NULL) {
-        free(new_meta->key);
-        free(new_meta);
+        gv_free(new_meta->key);
+        gv_free(new_meta);
         return -1;
     }
 
@@ -76,9 +77,9 @@ int vector_remove_metadata(GV_Vector *vector, const char *key) {
             } else {
                 prev->next = current->next;
             }
-            free(current->key);
-            free(current->value);
-            free(current);
+            gv_free(current->key);
+            gv_free(current->value);
+            gv_free(current);
             return 0;
         }
         prev = current;
@@ -95,9 +96,9 @@ void vector_clear_metadata(GV_Vector *vector) {
     GV_Metadata *current = vector->metadata;
     while (current != NULL) {
         GV_Metadata *next = current->next;
-        free(current->key);
-        free(current->value);
-        free(current);
+        gv_free(current->key);
+        gv_free(current->value);
+        gv_free(current);
         current = next;
     }
     vector->metadata = NULL;
@@ -107,9 +108,9 @@ void metadata_free(GV_Metadata *meta) {
     GV_Metadata *current = meta;
     while (current != NULL) {
         GV_Metadata *next = current->next;
-        free(current->key);
-        free(current->value);
-        free(current);
+        gv_free(current->key);
+        gv_free(current->value);
+        gv_free(current);
         current = next;
     }
 }
@@ -118,21 +119,21 @@ GV_Metadata *metadata_from_keys_values(const char **keys, const char **values, s
     GV_Metadata *head = NULL;
     GV_Metadata **tail = &head;
     for (size_t i = 0; i < count; i++) {
-        GV_Metadata *item = malloc(sizeof(GV_Metadata));
+        GV_Metadata *item = gv_alloc(sizeof(GV_Metadata));
         if (!item) {
             metadata_free(head);
             return NULL;
         }
         item->key = gv_dup_cstr(keys[i]);
         if (!item->key) {
-            free(item);
+            gv_free(item);
             metadata_free(head);
             return NULL;
         }
         item->value = gv_dup_cstr(values[i]);
         if (!item->value) {
-            free(item->key);
-            free(item);
+            gv_free(item->key);
+            gv_free(item);
             metadata_free(head);
             return NULL;
         }

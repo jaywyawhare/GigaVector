@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include "core/memory.h"
 #include <stdlib.h>
 #include <string.h>
 #include "admin/tracing.h"
@@ -114,7 +115,7 @@ static int test_trace_to_json(void) {
     ASSERT(strstr(json, "step_a") != NULL, "JSON should contain span name step_a");
     ASSERT(strstr(json, "step_b") != NULL, "JSON should contain span name step_b");
 
-    free(json);
+    gv_free(json);
     trace_destroy(trace);
     return 0;
 }

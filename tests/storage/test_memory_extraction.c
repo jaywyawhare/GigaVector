@@ -4,6 +4,7 @@
  */
 
 #include <stdio.h>
+#include "core/memory.h"
 #include <stdlib.h>
 #include <string.h>
 #include "core/utils.h"
@@ -79,7 +80,7 @@ static int test_score_candidate(void) {
     double score = memory_score_candidate(&candidate);
     ASSERT(score >= 0.0 && score <= 1.0, "score should be in [0,1]");
 
-    free(candidate.content);
+    gv_free(candidate.content);
     return 0;
 }
 
@@ -105,8 +106,8 @@ static int test_score_candidate_varied(void) {
     double score_long = memory_score_candidate(&long_candidate);
     ASSERT(score_long >= 0.0 && score_long <= 1.0, "long content score in range");
 
-    free(short_candidate.content);
-    free(long_candidate.content);
+    gv_free(short_candidate.content);
+    gv_free(long_candidate.content);
     return 0;
 }
 

@@ -6,6 +6,7 @@
 #define _POSIX_C_SOURCE 199309L
 
 #include "storage/snapshot.h"
+#include "core/memory.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -53,7 +54,7 @@ static int ensure_capacity(GV_SnapshotManager *mgr)
     }
 
     size_t new_cap = mgr->capacity == 0 ? INITIAL_CAPACITY : mgr->capacity * 2;
-    GV_SnapshotEntry *new_entries = realloc(mgr->entries,
+    GV_SnapshotEntry *new_entries = gv_realloc(mgr->entries,
                                             new_cap * sizeof(GV_SnapshotEntry));
     if (!new_entries) {
         return -1;
@@ -76,7 +77,7 @@ static GV_SnapshotEntry *find_entry(const GV_SnapshotManager *mgr,
 
 GV_SnapshotManager *snapshot_manager_create(size_t max_snapshots)
 {
-    GV_SnapshotManager *mgr = calloc(1, sizeof(GV_SnapshotManager));
+    GV_SnapshotManager *mgr = gv_calloc(1, sizeof(GV_SnapshotManager));
     if (!mgr) {
         return NULL;
     }
@@ -91,10 +92,10 @@ void snapshot_manager_destroy(GV_SnapshotManager *mgr)
         return;
     }
     for (size_t i = 0; i < mgr->count; i++) {
-        free(mgr->entries[i].data);
+        gv_free(mgr->entries[i].data);
     }
-    free(mgr->entries);
-    free(mgr);
+    gv_free(mgr->entries);
+    gv_free(mgr);
 }
 
 uint64_t snapshot_create(GV_SnapshotManager *mgr, size_t vector_count,
@@ -123,7 +124,7 @@ uint64_t snapshot_create(GV_SnapshotManager *mgr, size_t vector_count,
     float *data_copy = NULL;
 
     if (total_floats > 0) {
-        data_copy = malloc(total_floats * sizeof(float));
+        data_copy = gv_alloc(total_floats * sizeof(float));
         if (!data_copy) {
             return 0;
         }
@@ -158,7 +159,7 @@ GV_Snapshot *snapshot_open(GV_SnapshotManager *mgr, uint64_t snapshot_id)
         return NULL;
     }
 
-    GV_Snapshot *snap = malloc(sizeof(GV_Snapshot));
+    GV_Snapshot *snap = gv_alloc(sizeof(GV_Snapshot));
     if (!snap) {
         return NULL;
     }
@@ -168,7 +169,7 @@ GV_Snapshot *snapshot_open(GV_SnapshotManager *mgr, uint64_t snapshot_id)
 
 void snapshot_close(GV_Snapshot *snap)
 {
-    free(snap);
+    gv_free(snap);
 }
 
 size_t snapshot_count(const GV_Snapshot *snap)
@@ -232,7 +233,7 @@ int snapshot_delete(GV_SnapshotManager *mgr, uint64_t snapshot_id)
         return -1;
     }
 
-    free(entry->data);
+    gv_free(entry->data);
     entry->data   = NULL;
     entry->active = 0;
     return 0;
@@ -376,7 +377,7 @@ int snapshot_load(GV_SnapshotManager **mgr_ptr, FILE *in)
 
         size_t total_floats = e->vector_count * e->dimension;
         if (total_floats > 0) {
-            e->data = malloc(total_floats * sizeof(float));
+            e->data = gv_alloc(total_floats * sizeof(float));
             if (!e->data) {
                 snapshot_manager_destroy(mgr);
                 return -1;

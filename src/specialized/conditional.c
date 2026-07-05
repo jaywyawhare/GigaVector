@@ -9,6 +9,7 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include "specialized/conditional.h"
+#include "core/memory.h"
 #include "storage/database.h"
 #include "schema/metadata.h"
 #include "core/utils.h"
@@ -71,7 +72,7 @@ static int ensure_slot_capacity(GV_CondManager *mgr, size_t index)
         new_count *= 2;
     }
 
-    GV_VersionSlot *tmp = realloc(mgr->slots, new_count * sizeof(GV_VersionSlot));
+    GV_VersionSlot *tmp = gv_realloc(mgr->slots, new_count * sizeof(GV_VersionSlot));
     if (!tmp) return -1;
 
     /* Zero-initialize newly allocated region */
@@ -210,7 +211,7 @@ GV_CondManager *cond_create(void *db)
 {
     if (!db) return NULL;
 
-    GV_CondManager *mgr = calloc(1, sizeof(GV_CondManager));
+    GV_CondManager *mgr = gv_calloc(1, sizeof(GV_CondManager));
     if (!mgr) return NULL;
 
     mgr->db = (GV_Database *)db;
@@ -223,8 +224,8 @@ GV_CondManager *cond_create(void *db)
 void cond_destroy(GV_CondManager *mgr)
 {
     if (!mgr) return;
-    free(mgr->slots);
-    free(mgr);
+    gv_free(mgr->slots);
+    gv_free(mgr);
 }
 
 /* * Conditional Vector Update */
@@ -316,7 +317,7 @@ GV_ConditionalResult cond_update_metadata(GV_CondManager *mgr, size_t index,
     GV_Metadata *new_list = NULL;
     GV_Metadata **tail = &new_list;
     for (const GV_Metadata *cur = existing; cur; cur = cur->next) {
-        GV_Metadata *node = malloc(sizeof(GV_Metadata));
+        GV_Metadata *node = gv_alloc(sizeof(GV_Metadata));
         if (!node) {
             metadata_free(new_list);
             pthread_rwlock_unlock(&db->rwlock);
@@ -326,9 +327,9 @@ GV_ConditionalResult cond_update_metadata(GV_CondManager *mgr, size_t index,
         node->value = gv_dup_cstr(cur->value);
         node->next = NULL;
         if (!node->key || !node->value) {
-            free(node->key);
-            free(node->value);
-            free(node);
+            gv_free(node->key);
+            gv_free(node->value);
+            gv_free(node);
             metadata_free(new_list);
             pthread_rwlock_unlock(&db->rwlock);
             return GV_COND_FAILED;
@@ -347,7 +348,7 @@ GV_ConditionalResult cond_update_metadata(GV_CondManager *mgr, size_t index,
                 pthread_rwlock_unlock(&db->rwlock);
                 return GV_COND_FAILED;
             }
-            free(cur->value);
+            gv_free(cur->value);
             cur->value = dup;
             found = 1;
             break;
@@ -355,7 +356,7 @@ GV_ConditionalResult cond_update_metadata(GV_CondManager *mgr, size_t index,
     }
 
     if (!found) {
-        GV_Metadata *node = malloc(sizeof(GV_Metadata));
+        GV_Metadata *node = gv_alloc(sizeof(GV_Metadata));
         if (!node) {
             metadata_free(new_list);
             pthread_rwlock_unlock(&db->rwlock);
@@ -365,9 +366,9 @@ GV_ConditionalResult cond_update_metadata(GV_CondManager *mgr, size_t index,
         node->value = gv_dup_cstr(value);
         node->next = new_list;
         if (!node->key || !node->value) {
-            free(node->key);
-            free(node->value);
-            free(node);
+            gv_free(node->key);
+            gv_free(node->value);
+            gv_free(node);
             metadata_free(new_list);
             pthread_rwlock_unlock(&db->rwlock);
             return GV_COND_FAILED;

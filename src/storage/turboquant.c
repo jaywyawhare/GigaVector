@@ -1,4 +1,5 @@
 #include <stdlib.h>
+#include "core/memory.h"
 #include <string.h>
 #include <math.h>
 #include <stdint.h>
@@ -77,7 +78,7 @@ static void tq_fwht(float *values, size_t n) {
 }
 
 static int tq_build_fhwt_signs(size_t dim, uint64_t seed, float **out_signs) {
-    float *signs = (float *)malloc(dim * sizeof(float));
+    float *signs = (float *)gv_alloc(dim * sizeof(float));
     if (!signs) {
         return -1;
     }
@@ -90,13 +91,13 @@ static int tq_build_fhwt_signs(size_t dim, uint64_t seed, float **out_signs) {
 }
 
 static int tq_build_rotation_qr(size_t dim, uint64_t seed, float **out_matrix) {
-    float *matrix = (float *)calloc(dim * dim, sizeof(float));
-    float *col = (float *)malloc(dim * sizeof(float));
-    float *tmp = (float *)malloc(dim * sizeof(float));
+    float *matrix = (float *)gv_calloc(dim * dim, sizeof(float));
+    float *col = (float *)gv_alloc(dim * sizeof(float));
+    float *tmp = (float *)gv_alloc(dim * sizeof(float));
     if (!matrix || !col || !tmp) {
-        free(matrix);
-        free(col);
-        free(tmp);
+        gv_free(matrix);
+        gv_free(col);
+        gv_free(tmp);
         return -1;
     }
 
@@ -119,9 +120,9 @@ static int tq_build_rotation_qr(size_t dim, uint64_t seed, float **out_matrix) {
             norm += col[i] * col[i];
         }
         if (norm <= 0.0f) {
-            free(matrix);
-            free(col);
-            free(tmp);
+            gv_free(matrix);
+            gv_free(col);
+            gv_free(tmp);
             return -1;
         }
         norm = 1.0f / sqrtf(norm);
@@ -130,8 +131,8 @@ static int tq_build_rotation_qr(size_t dim, uint64_t seed, float **out_matrix) {
         }
     }
 
-    free(col);
-    free(tmp);
+    gv_free(col);
+    gv_free(tmp);
     *out_matrix = matrix;
     return 0;
 }
@@ -178,7 +179,7 @@ static int tq_build_qjl_matrix(size_t dim, size_t projections, uint64_t seed, fl
         *out_matrix = NULL;
         return 0;
     }
-    float *matrix = (float *)malloc(projections * dim * sizeof(float));
+    float *matrix = (float *)gv_alloc(projections * dim * sizeof(float));
     if (!matrix) {
         return -1;
     }
@@ -274,7 +275,7 @@ GV_TurboQuantizer *turboquant_create(size_t dimension, const GV_TurboQuantConfig
         cfg.projections = 0;
     }
 
-    GV_TurboQuantizer *q = (GV_TurboQuantizer *)calloc(1, sizeof(GV_TurboQuantizer));
+    GV_TurboQuantizer *q = (GV_TurboQuantizer *)gv_calloc(1, sizeof(GV_TurboQuantizer));
     if (!q) {
         return NULL;
     }
@@ -324,10 +325,10 @@ void turboquant_destroy(GV_TurboQuantizer *quantizer) {
     if (!quantizer) {
         return;
     }
-    free(quantizer->rotation);
-    free(quantizer->fhwt_signs);
-    free(quantizer->qjl_matrix);
-    free(quantizer);
+    gv_free(quantizer->rotation);
+    gv_free(quantizer->fhwt_signs);
+    gv_free(quantizer->qjl_matrix);
+    gv_free(quantizer);
 }
 
 size_t turboquant_dimension(const GV_TurboQuantizer *quantizer) {
@@ -341,25 +342,25 @@ GV_TurboQuantCode *turboquant_encode(const GV_TurboQuantizer *quantizer, const f
 
     size_t dim = quantizer->dim;
     size_t pairs = dim / 2;
-    float *rotated = (float *)malloc(dim * sizeof(float));
+    float *rotated = (float *)gv_alloc(dim * sizeof(float));
     if (!rotated) {
         return NULL;
     }
     tq_rotate_apply(quantizer, vector, rotated);
 
-    GV_TurboQuantCode *code = (GV_TurboQuantCode *)calloc(1, sizeof(GV_TurboQuantCode));
+    GV_TurboQuantCode *code = (GV_TurboQuantCode *)gv_calloc(1, sizeof(GV_TurboQuantCode));
     if (!code) {
-        free(rotated);
+        gv_free(rotated);
         return NULL;
     }
     code->dim = dim;
     code->bits = quantizer->polar_bits;
     code->projections = quantizer->projections;
-    code->radii = (float *)malloc(pairs * sizeof(float));
-    code->angle_indices = (uint16_t *)malloc(pairs * sizeof(uint16_t));
+    code->radii = (float *)gv_alloc(pairs * sizeof(float));
+    code->angle_indices = (uint16_t *)gv_alloc(pairs * sizeof(uint16_t));
     if (!code->radii || !code->angle_indices) {
         turboquant_code_destroy(code);
-        free(rotated);
+        gv_free(rotated);
         return NULL;
     }
 
@@ -369,14 +370,14 @@ GV_TurboQuantCode *turboquant_encode(const GV_TurboQuantizer *quantizer, const f
     }
 
     if (quantizer->use_qjl && quantizer->projections > 0) {
-        float *recon_rotated = (float *)malloc(dim * sizeof(float));
-        float *residual = (float *)malloc(dim * sizeof(float));
-        code->qjl_signs = (int8_t *)malloc(quantizer->projections * sizeof(int8_t));
+        float *recon_rotated = (float *)gv_alloc(dim * sizeof(float));
+        float *residual = (float *)gv_alloc(dim * sizeof(float));
+        code->qjl_signs = (int8_t *)gv_alloc(quantizer->projections * sizeof(int8_t));
         if (!recon_rotated || !residual || !code->qjl_signs) {
-            free(recon_rotated);
-            free(residual);
+            gv_free(recon_rotated);
+            gv_free(residual);
             turboquant_code_destroy(code);
-            free(rotated);
+            gv_free(rotated);
             return NULL;
         }
 
@@ -387,12 +388,12 @@ GV_TurboQuantCode *turboquant_encode(const GV_TurboQuantizer *quantizer, const f
             recon_rotated[2 * i + 1] = r * sinf(theta);
         }
 
-        float *recon = (float *)malloc(dim * sizeof(float));
+        float *recon = (float *)gv_alloc(dim * sizeof(float));
         if (!recon) {
-            free(recon_rotated);
-            free(residual);
+            gv_free(recon_rotated);
+            gv_free(residual);
             turboquant_code_destroy(code);
-            free(rotated);
+            gv_free(rotated);
             return NULL;
         }
         tq_rotate_inverse(quantizer, recon_rotated, recon);
@@ -414,12 +415,12 @@ GV_TurboQuantCode *turboquant_encode(const GV_TurboQuantizer *quantizer, const f
             code->qjl_signs[p] = (dot >= 0.0f) ? 1 : -1;
         }
 
-        free(recon);
-        free(recon_rotated);
-        free(residual);
+        gv_free(recon);
+        gv_free(recon_rotated);
+        gv_free(residual);
     }
 
-    free(rotated);
+    gv_free(rotated);
     return code;
 }
 
@@ -427,10 +428,10 @@ void turboquant_code_destroy(GV_TurboQuantCode *code) {
     if (!code) {
         return;
     }
-    free(code->radii);
-    free(code->angle_indices);
-    free(code->qjl_signs);
-    free(code);
+    gv_free(code->radii);
+    gv_free(code->angle_indices);
+    gv_free(code->qjl_signs);
+    gv_free(code);
 }
 
 int turboquant_prepare_query(const GV_TurboQuantizer *quantizer, const float *query,
@@ -440,14 +441,14 @@ int turboquant_prepare_query(const GV_TurboQuantizer *quantizer, const float *qu
     }
     memset(out, 0, sizeof(*out));
     out->projections = quantizer->projections;
-    out->rotated_query = (float *)malloc(quantizer->dim * sizeof(float));
+    out->rotated_query = (float *)gv_alloc(quantizer->dim * sizeof(float));
     if (!out->rotated_query) {
         return -1;
     }
     tq_rotate_apply(quantizer, query, out->rotated_query);
 
     if (quantizer->use_qjl && quantizer->projections > 0) {
-        out->qjl_projected = (float *)malloc(quantizer->projections * sizeof(float));
+        out->qjl_projected = (float *)gv_alloc(quantizer->projections * sizeof(float));
         if (!out->qjl_projected) {
             turboquant_query_destroy(out);
             return -1;
@@ -468,8 +469,8 @@ void turboquant_query_destroy(GV_TurboQuantQuery *query) {
     if (!query) {
         return;
     }
-    free(query->rotated_query);
-    free(query->qjl_projected);
+    gv_free(query->rotated_query);
+    gv_free(query->qjl_projected);
     query->rotated_query = NULL;
     query->qjl_projected = NULL;
     query->projections = 0;

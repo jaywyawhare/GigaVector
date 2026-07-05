@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include "core/memory.h"
 #include <stdlib.h>
 #include <string.h>
 #include "multimodal/multimodal.h"
@@ -120,11 +121,11 @@ static int test_media_get_info(void) {
 
     if (entry.filename) {
         ASSERT(strcmp(entry.filename, "clip.wav") == 0, "filename should match");
-        free(entry.filename);
+        gv_free(entry.filename);
     }
     if (entry.mime_type) {
         ASSERT(strcmp(entry.mime_type, "audio/wav") == 0, "mime_type should match");
-        free(entry.mime_type);
+        gv_free(entry.mime_type);
     }
 
     media_destroy(store);

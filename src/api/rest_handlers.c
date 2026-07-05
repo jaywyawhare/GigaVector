@@ -4,11 +4,18 @@
  */
 
 #include "api/rest_handlers.h"
+#include "core/memory.h"
 #include "features/json.h"
 #include "storage/database.h"
 #include "core/types.h"
+#include "core/arena.h"
+#include "core/scope.h"
 #include "schema/vector.h"
 #include "search/filter.h"
+
+#define GV_REST_SEARCH_ARENA_BYTES (64u * 1024u)
+#define GV_REST_BATCH_ARENA_BYTES  (256u * 1024u)
+#define GV_REST_INSERT_ARENA_BYTES (1024u * 1024u)
 
 #include <stdlib.h>
 #include <string.h>
@@ -22,7 +29,7 @@ GV_HttpResponse *rest_response_json(GV_JsonValue *data) {
         return NULL;
     }
 
-    GV_HttpResponse *response = calloc(1, sizeof(GV_HttpResponse));
+    GV_HttpResponse *response = gv_calloc(1, sizeof(GV_HttpResponse));
     if (!response) {
         json_free(data);
         return NULL;
@@ -32,7 +39,7 @@ GV_HttpResponse *rest_response_json(GV_JsonValue *data) {
     json_free(data);
 
     if (!response->body) {
-        free(response);
+        gv_free(response);
         return NULL;
     }
 
@@ -73,8 +80,8 @@ GV_HttpResponse *rest_response_success(const char *message) {
 
 void rest_response_free(GV_HttpResponse *response) {
     if (!response) return;
-    free(response->body);
-    free(response);
+    gv_free(response->body);
+    gv_free(response);
 }
 
 /* Request Parsing Helpers */
@@ -237,10 +244,12 @@ GV_HttpResponse *rest_handle_vectors_post(const GV_HandlerContext *ctx,
     size_t inserted = 0;
     GV_JsonValue *indices = json_array();
 
+    GV_WITH_ARENA(scratch, GV_REST_INSERT_ARENA_BYTES) {
     if (vectors_arr && json_is_array(vectors_arr)) {
         /* Batch insert */
         size_t count = json_array_length(vectors_arr);
         for (size_t i = 0; i < count; i++) {
+            gv_arena_reset(&scratch);
             GV_JsonValue *vec_obj = json_array_get(vectors_arr, i);
             GV_JsonValue *vec_data = json_object_get(vec_obj, "data");
 
@@ -253,7 +262,7 @@ GV_HttpResponse *rest_handle_vectors_post(const GV_HandlerContext *ctx,
                 continue;
             }
 
-            float *vec = malloc(dim * sizeof(float));
+            float *vec = (float *)gv_arena_alloc(&scratch, dim * sizeof(float), sizeof(float));
             if (!vec) continue;
 
             for (size_t j = 0; j < dim; j++) {
@@ -271,9 +280,12 @@ GV_HttpResponse *rest_handle_vectors_post(const GV_HandlerContext *ctx,
             if (metadata && json_is_object(metadata)) {
                 size_t meta_count = json_object_length(metadata);
                 if (meta_count > 0) {
-                    const char **keys = malloc(meta_count * sizeof(char *));
-                    const char **values = malloc(meta_count * sizeof(char *));
-                    char **value_buffers = malloc(meta_count * sizeof(char *));
+                    const char **keys = (const char **)gv_arena_alloc(
+                        &scratch, meta_count * sizeof(char *), sizeof(void *));
+                    const char **values = (const char **)gv_arena_alloc(
+                        &scratch, meta_count * sizeof(char *), sizeof(void *));
+                    char **value_buffers = (char **)gv_arena_calloc(
+                        &scratch, meta_count, sizeof(char *));
 
                     if (keys && values && value_buffers) {
                         /* Extract all key-value pairs */
@@ -296,23 +308,17 @@ GV_HttpResponse *rest_handle_vectors_post(const GV_HandlerContext *ctx,
 
                         /* Free converted value buffers */
                         for (size_t m = 0; m < meta_count; m++) {
-                            free(value_buffers[m]);
+                            gv_free(value_buffers[m]);
                         }
                     } else {
                         result = db_add_vector(ctx->db, vec, dim);
                     }
-
-                    free(keys);
-                    free(values);
-                    free(value_buffers);
                 } else {
                     result = db_add_vector(ctx->db, vec, dim);
                 }
             } else {
                 result = db_add_vector(ctx->db, vec, dim);
             }
-
-            free(vec);
 
             if (result == 0) {
                 json_array_push(indices, json_number((double)(ctx->db->count - 1)));
@@ -329,7 +335,7 @@ GV_HttpResponse *rest_handle_vectors_post(const GV_HandlerContext *ctx,
                                            "Vector dimension does not match database");
         }
 
-        float *vec = malloc(dim * sizeof(float));
+        float *vec = (float *)gv_arena_alloc(&scratch, dim * sizeof(float), sizeof(float));
         if (!vec) {
             json_free(body);
             json_free(indices);
@@ -352,9 +358,11 @@ GV_HttpResponse *rest_handle_vectors_post(const GV_HandlerContext *ctx,
             size_t meta_count = json_object_length(metadata);
             if (meta_count > 0) {
                 GV_JsonEntry *entries = metadata->data.object.entries;
-                const char **mkeys = malloc(meta_count * sizeof(char *));
-                const char **mvals = malloc(meta_count * sizeof(char *));
-                char **mval_bufs = malloc(meta_count * sizeof(char *));
+                const char **mkeys = (const char **)gv_arena_alloc(
+                    &scratch, meta_count * sizeof(char *), sizeof(void *));
+                const char **mvals = (const char **)gv_arena_alloc(
+                    &scratch, meta_count * sizeof(char *), sizeof(void *));
+                char **mval_bufs = (char **)gv_arena_calloc(&scratch, meta_count, sizeof(char *));
                 if (mkeys && mvals && mval_bufs) {
                     for (size_t mi = 0; mi < meta_count; mi++) {
                         mkeys[mi] = entries[mi].key;
@@ -367,21 +375,16 @@ GV_HttpResponse *rest_handle_vectors_post(const GV_HandlerContext *ctx,
                         }
                     }
                     result = db_add_vector_with_rich_metadata(ctx->db, vec, dim, mkeys, mvals, meta_count);
-                    for (size_t mi = 0; mi < meta_count; mi++) free(mval_bufs[mi]);
+                    for (size_t mi = 0; mi < meta_count; mi++) gv_free(mval_bufs[mi]);
                 } else {
                     result = db_add_vector(ctx->db, vec, dim);
                 }
-                free(mkeys);
-                free(mvals);
-                free(mval_bufs);
             } else {
                 result = db_add_vector(ctx->db, vec, dim);
             }
         } else {
             result = db_add_vector(ctx->db, vec, dim);
         }
-
-        free(vec);
 
         if (result == 0) {
             json_array_push(indices, json_number((double)(ctx->db->count - 1)));
@@ -392,6 +395,7 @@ GV_HttpResponse *rest_handle_vectors_post(const GV_HandlerContext *ctx,
         json_free(indices);
         return rest_response_error(GV_HTTP_400_BAD_REQUEST, "invalid_request",
                                        "Missing 'data' or 'vectors' field");
+    }
     }
 
     json_free(body);
@@ -495,7 +499,8 @@ GV_HttpResponse *rest_handle_vectors_put(const GV_HandlerContext *ctx,
                                            "Vector dimension does not match database");
         }
 
-        float *vec = malloc(dim * sizeof(float));
+    GV_WITH_ARENA(scratch, GV_REST_INSERT_ARENA_BYTES) {
+        float *vec = (float *)gv_arena_alloc(&scratch, dim * sizeof(float), sizeof(float));
         if (!vec) {
             json_free(body);
             return rest_response_error(GV_HTTP_500_INTERNAL_ERROR, "memory_error",
@@ -511,13 +516,13 @@ GV_HttpResponse *rest_handle_vectors_put(const GV_HandlerContext *ctx,
         }
 
         int result = db_update_vector(ctx->db, vector_index, vec, dim);
-        free(vec);
 
         if (result != 0) {
             json_free(body);
             return rest_response_error(GV_HTTP_500_INTERNAL_ERROR, "update_failed",
                                            "Failed to update vector");
         }
+    }
     }
 
     json_free(body);
@@ -576,143 +581,139 @@ GV_HttpResponse *rest_handle_search(const GV_HandlerContext *ctx,
                                        "Query dimension does not match database");
     }
 
-    float *query = malloc(dim * sizeof(float));
-    if (!query) {
-        json_free(body);
-        return rest_response_error(GV_HTTP_500_INTERNAL_ERROR, "memory_error",
-                                       "Failed to allocate memory");
-    }
-
-    for (size_t i = 0; i < dim; i++) {
-        GV_JsonValue *v = json_array_get(query_arr, i);
-        double num;
-        if (json_get_number(v, &num) == GV_JSON_OK) {
-            query[i] = (float)num;
+    GV_WITH_ARENA(scratch, GV_REST_SEARCH_ARENA_BYTES) {
+        float *query = (float *)gv_arena_alloc(
+            &scratch, dim * sizeof(float), sizeof(float));
+        if (!query) {
+            json_free(body);
+            return rest_response_error(GV_HTTP_500_INTERNAL_ERROR, "memory_error",
+                                           "Failed to allocate memory");
         }
-    }
 
-    /* Parse k */
-    GV_JsonValue *k_val = json_object_get(body, "k");
-    double k_num;
-    size_t k = 10;
-    if (k_val && json_get_number(k_val, &k_num) == GV_JSON_OK) {
-        k = (size_t)k_num;
-    }
+        for (size_t i = 0; i < dim; i++) {
+            GV_JsonValue *v = json_array_get(query_arr, i);
+            double num;
+            if (json_get_number(v, &num) == GV_JSON_OK) {
+                query[i] = (float)num;
+            }
+        }
 
-    /* Parse distance type */
-    const char *dist_str = json_get_string_path(body, "distance");
-    GV_DistanceType distance = parse_distance_type(dist_str);
+        /* Parse k */
+        GV_JsonValue *k_val = json_object_get(body, "k");
+        double k_num;
+        size_t k = 10;
+        if (k_val && json_get_number(k_val, &k_num) == GV_JSON_OK) {
+            k = (size_t)k_num;
+        }
 
-    /* Allocate results */
-    GV_SearchResult *results = calloc(k, sizeof(GV_SearchResult));
-    if (!results) {
-        free(query);
-        json_free(body);
-        return rest_response_error(GV_HTTP_500_INTERNAL_ERROR, "memory_error",
-                                       "Failed to allocate memory");
-    }
+        /* Parse distance type */
+        const char *dist_str = json_get_string_path(body, "distance");
+        GV_DistanceType distance = parse_distance_type(dist_str);
 
-    /* Perform search */
-    clock_t start = clock();
-    int found;
+        GV_SearchResult *results = (GV_SearchResult *)gv_arena_calloc(
+            &scratch, k, sizeof(GV_SearchResult));
+        if (!results) {
+            json_free(body);
+            return rest_response_error(GV_HTTP_500_INTERNAL_ERROR, "memory_error",
+                                           "Failed to allocate memory");
+        }
 
-    /* Check for filter */
-    GV_JsonValue *filter = json_object_get(body, "filter");
-    if (filter && json_is_object(filter) && json_object_length(filter) > 0) {
-        size_t nfilter = json_object_length(filter);
-        GV_JsonEntry *entries = filter->data.object.entries;
-        if (nfilter == 1) {
-            found = db_search_filtered(ctx->db, query, k, results, distance,
-                                           entries[0].key,
-                                           json_get_string(entries[0].value));
+        clock_t start = clock();
+        int found;
+
+        GV_JsonValue *filter = json_object_get(body, "filter");
+        if (filter && json_is_object(filter) && json_object_length(filter) > 0) {
+            size_t nfilter = json_object_length(filter);
+            GV_JsonEntry *entries = filter->data.object.entries;
+            if (nfilter == 1) {
+                found = db_search_filtered(ctx->db, query, k, results, distance,
+                                               entries[0].key,
+                                               json_get_string(entries[0].value));
+            } else {
+                char expr[2048];
+                size_t pos = 0;
+                for (size_t fi = 0; fi < nfilter && pos < sizeof(expr) - 1; fi++) {
+                    const char *val = json_get_string(entries[fi].value);
+                    if (!val) continue;
+                    char safe_key[256];
+                    size_t sk = 0;
+                    for (size_t ki = 0; entries[fi].key[ki] && sk + 2 < sizeof(safe_key); ki++) {
+                        if (entries[fi].key[ki] == '"' || entries[fi].key[ki] == '\\') safe_key[sk++] = '\\';
+                        safe_key[sk++] = entries[fi].key[ki];
+                    }
+                    safe_key[sk] = '\0';
+                    char safe_val[256];
+                    size_t sv = 0;
+                    for (size_t vi = 0; val[vi] && sv + 2 < sizeof(safe_val); vi++) {
+                        if (val[vi] == '"' || val[vi] == '\\') safe_val[sv++] = '\\';
+                        safe_val[sv++] = val[vi];
+                    }
+                    safe_val[sv] = '\0';
+                    int n = snprintf(expr + pos, sizeof(expr) - pos,
+                                     "%s%s == \"%s\"",
+                                     fi > 0 ? " AND " : "",
+                                     safe_key, safe_val);
+                    if (n > 0) {
+                        size_t written = (size_t)n;
+                        pos += written < sizeof(expr) - pos ? written : sizeof(expr) - pos - 1;
+                    }
+                }
+                expr[pos] = '\0';
+                found = db_search_with_filter_expr(ctx->db, query, k, results, distance, expr);
+            }
         } else {
-            /* Build "key == "val" AND key2 == "val2" ..." expression */
-            char expr[2048];
-            size_t pos = 0;
-            for (size_t fi = 0; fi < nfilter && pos < sizeof(expr) - 1; fi++) {
-                const char *val = json_get_string(entries[fi].value);
-                if (!val) continue;
-                /* Escape backslashes and quotes in key and val before interpolation */
-                char safe_key[256];
-                size_t sk = 0;
-                for (size_t ki = 0; entries[fi].key[ki] && sk + 2 < sizeof(safe_key); ki++) {
-                    if (entries[fi].key[ki] == '"' || entries[fi].key[ki] == '\\') safe_key[sk++] = '\\';
-                    safe_key[sk++] = entries[fi].key[ki];
-                }
-                safe_key[sk] = '\0';
-                char safe_val[256];
-                size_t sv = 0;
-                for (size_t vi = 0; val[vi] && sv + 2 < sizeof(safe_val); vi++) {
-                    if (val[vi] == '"' || val[vi] == '\\') safe_val[sv++] = '\\';
-                    safe_val[sv++] = val[vi];
-                }
-                safe_val[sv] = '\0';
-                int n = snprintf(expr + pos, sizeof(expr) - pos,
-                                 "%s%s == \"%s\"",
-                                 fi > 0 ? " AND " : "",
-                                 safe_key, safe_val);
-                if (n > 0) {
-                    size_t written = (size_t)n;
-                    pos += written < sizeof(expr) - pos ? written : sizeof(expr) - pos - 1;
-                }
-            }
-            expr[pos] = '\0';
-            found = db_search_with_filter_expr(ctx->db, query, k, results, distance, expr);
-        }
-    } else {
-        found = db_search(ctx->db, query, k, results, distance);
-    }
-
-    clock_t end = clock();
-    double latency_ms = ((double)(end - start) / CLOCKS_PER_SEC) * 1000.0;
-
-    free(query);
-    json_free(body);
-
-    if (found < 0) {
-        free(results);
-        return rest_response_error(GV_HTTP_500_INTERNAL_ERROR, "search_failed",
-                                       "Search operation failed");
-    }
-
-    /* Build response */
-    GV_JsonValue *response = json_object();
-    GV_JsonValue *results_arr = json_array();
-
-    for (int i = 0; i < found; i++) {
-        GV_JsonValue *result_obj = json_object();
-        json_object_set(result_obj, "distance", json_number(results[i].distance));
-
-        /* Add vector data and metadata if available */
-        if (results[i].vector) {
-            GV_JsonValue *data_arr = json_array();
-            for (size_t j = 0; j < ctx->db->dimension; j++) {
-                json_array_push(data_arr, json_number((double)results[i].vector->data[j]));
-            }
-            json_object_set(result_obj, "data", data_arr);
-
-            GV_JsonValue *meta_obj = json_object();
-            GV_Metadata *meta = results[i].vector->metadata;
-            while (meta) {
-                json_object_set(meta_obj, meta->key, json_string(meta->value));
-                meta = meta->next;
-            }
-            json_object_set(result_obj, "metadata", meta_obj);
+            found = db_search(ctx->db, query, k, results, distance);
         }
 
-        json_array_push(results_arr, result_obj);
+        clock_t end = clock();
+        double latency_ms = ((double)(end - start) / CLOCKS_PER_SEC) * 1000.0;
+
+        json_free(body);
+
+        if (found < 0) {
+            return rest_response_error(GV_HTTP_500_INTERNAL_ERROR, "search_failed",
+                                           "Search operation failed");
+        }
+
+        GV_JsonValue *response = json_object();
+        GV_JsonValue *results_arr = json_array();
+
+        for (int i = 0; i < found; i++) {
+            GV_JsonValue *result_obj = json_object();
+            json_object_set(result_obj, "distance", json_number(results[i].distance));
+
+            if (results[i].vector) {
+                GV_JsonValue *data_arr = json_array();
+                for (size_t j = 0; j < ctx->db->dimension; j++) {
+                    json_array_push(data_arr, json_number((double)results[i].vector->data[j]));
+                }
+                json_object_set(result_obj, "data", data_arr);
+
+                GV_JsonValue *meta_obj = json_object();
+                GV_Metadata *meta = results[i].vector->metadata;
+                while (meta) {
+                    json_object_set(meta_obj, meta->key, json_string(meta->value));
+                    meta = meta->next;
+                }
+                json_object_set(result_obj, "metadata", meta_obj);
+            }
+
+            json_array_push(results_arr, result_obj);
+        }
+
+        for (int i = 0; i < found; i++) {
+            if (results[i].vector) vector_destroy((GV_Vector *)results[i].vector);
+        }
+
+        json_object_set(response, "results", results_arr);
+        json_object_set(response, "count", json_number((double)found));
+        json_object_set(response, "latency_ms", json_number(latency_ms));
+
+        return rest_response_json(response);
     }
 
-    for (int i = 0; i < found; i++) {
-        if (results[i].vector) vector_destroy((GV_Vector *)results[i].vector);
-    }
-    free(results);
-
-    json_object_set(response, "results", results_arr);
-    json_object_set(response, "count", json_number((double)found));
-    json_object_set(response, "latency_ms", json_number(latency_ms));
-
-    return rest_response_json(response);
+    return rest_response_error(GV_HTTP_500_INTERNAL_ERROR, "internal_error",
+                                   "Search handler scope failed");
 }
 
 GV_HttpResponse *rest_handle_search_range(const GV_HandlerContext *ctx,
@@ -744,102 +745,99 @@ GV_HttpResponse *rest_handle_search_range(const GV_HandlerContext *ctx,
                                        "Query dimension does not match database");
     }
 
-    float *query = malloc(dim * sizeof(float));
-    if (!query) {
-        json_free(body);
-        return rest_response_error(GV_HTTP_500_INTERNAL_ERROR, "memory_error",
-                                       "Failed to allocate memory");
-    }
-
-    for (size_t i = 0; i < dim; i++) {
-        GV_JsonValue *v = json_array_get(query_arr, i);
-        double num;
-        if (json_get_number(v, &num) == GV_JSON_OK) {
-            query[i] = (float)num;
-        }
-    }
-
-    /* Parse radius */
-    GV_JsonValue *radius_val = json_object_get(body, "radius");
-    double radius_num;
-    float radius = 1.0f;
-    if (radius_val && json_get_number(radius_val, &radius_num) == GV_JSON_OK) {
-        radius = (float)radius_num;
-    }
-
-    /* Parse max_results */
-    GV_JsonValue *max_val = json_object_get(body, "max_results");
-    double max_num;
-    size_t max_results = 100;
-    if (max_val && json_get_number(max_val, &max_num) == GV_JSON_OK) {
-        max_results = (size_t)max_num;
-    }
-
-    /* Parse distance type */
-    const char *dist_str = json_get_string_path(body, "distance");
-    GV_DistanceType distance = parse_distance_type(dist_str);
-
-    /* Allocate results */
-    GV_SearchResult *results = calloc(max_results, sizeof(GV_SearchResult));
-    if (!results) {
-        free(query);
-        json_free(body);
-        return rest_response_error(GV_HTTP_500_INTERNAL_ERROR, "memory_error",
-                                       "Failed to allocate memory");
-    }
-
-    /* Perform range search */
-    clock_t start = clock();
-    int found = db_range_search(ctx->db, query, radius, results, max_results, distance);
-    clock_t end = clock();
-    double latency_ms = ((double)(end - start) / CLOCKS_PER_SEC) * 1000.0;
-
-    free(query);
-    json_free(body);
-
-    if (found < 0) {
-        free(results);
-        return rest_response_error(GV_HTTP_500_INTERNAL_ERROR, "search_failed",
-                                       "Range search operation failed");
-    }
-
-    /* Build response */
-    GV_JsonValue *response = json_object();
-    GV_JsonValue *results_arr = json_array();
-
-    for (int i = 0; i < found; i++) {
-        GV_JsonValue *result_obj = json_object();
-        json_object_set(result_obj, "distance", json_number(results[i].distance));
-
-        if (results[i].vector) {
-            GV_JsonValue *data_arr = json_array();
-            for (size_t j = 0; j < ctx->db->dimension; j++) {
-                json_array_push(data_arr, json_number((double)results[i].vector->data[j]));
-            }
-            json_object_set(result_obj, "data", data_arr);
-
-            GV_JsonValue *meta_obj = json_object();
-            GV_Metadata *meta = results[i].vector->metadata;
-            while (meta) {
-                json_object_set(meta_obj, meta->key, json_string(meta->value));
-                meta = meta->next;
-            }
-            json_object_set(result_obj, "metadata", meta_obj);
+    GV_WITH_ARENA(scratch, GV_REST_SEARCH_ARENA_BYTES) {
+        float *query = (float *)gv_arena_alloc(
+            &scratch, dim * sizeof(float), sizeof(float));
+        if (!query) {
+            json_free(body);
+            return rest_response_error(GV_HTTP_500_INTERNAL_ERROR, "memory_error",
+                                           "Failed to allocate memory");
         }
 
-        json_array_push(results_arr, result_obj);
+        for (size_t i = 0; i < dim; i++) {
+            GV_JsonValue *v = json_array_get(query_arr, i);
+            double num;
+            if (json_get_number(v, &num) == GV_JSON_OK) {
+                query[i] = (float)num;
+            }
+        }
+
+        GV_JsonValue *radius_val = json_object_get(body, "radius");
+        double radius_num;
+        float radius = 1.0f;
+        if (radius_val && json_get_number(radius_val, &radius_num) == GV_JSON_OK) {
+            radius = (float)radius_num;
+        }
+
+        GV_JsonValue *max_val = json_object_get(body, "max_results");
+        double max_num;
+        size_t max_results = 100;
+        if (max_val && json_get_number(max_val, &max_num) == GV_JSON_OK) {
+            max_results = (size_t)max_num;
+        }
+
+        const char *dist_str = json_get_string_path(body, "distance");
+        GV_DistanceType distance = parse_distance_type(dist_str);
+
+        GV_SearchResult *results = (GV_SearchResult *)gv_arena_calloc(
+            &scratch, max_results, sizeof(GV_SearchResult));
+        if (!results) {
+            json_free(body);
+            return rest_response_error(GV_HTTP_500_INTERNAL_ERROR, "memory_error",
+                                           "Failed to allocate memory");
+        }
+
+        clock_t start = clock();
+        int found = db_range_search(ctx->db, query, radius, results, max_results, distance);
+        clock_t end = clock();
+        double latency_ms = ((double)(end - start) / CLOCKS_PER_SEC) * 1000.0;
+
+        json_free(body);
+
+        if (found < 0) {
+            return rest_response_error(GV_HTTP_500_INTERNAL_ERROR, "search_failed",
+                                           "Range search operation failed");
+        }
+
+        GV_JsonValue *response = json_object();
+        GV_JsonValue *results_arr = json_array();
+
+        for (int i = 0; i < found; i++) {
+            GV_JsonValue *result_obj = json_object();
+            json_object_set(result_obj, "distance", json_number(results[i].distance));
+
+            if (results[i].vector) {
+                GV_JsonValue *data_arr = json_array();
+                for (size_t j = 0; j < ctx->db->dimension; j++) {
+                    json_array_push(data_arr, json_number((double)results[i].vector->data[j]));
+                }
+                json_object_set(result_obj, "data", data_arr);
+
+                GV_JsonValue *meta_obj = json_object();
+                GV_Metadata *meta = results[i].vector->metadata;
+                while (meta) {
+                    json_object_set(meta_obj, meta->key, json_string(meta->value));
+                    meta = meta->next;
+                }
+                json_object_set(result_obj, "metadata", meta_obj);
+            }
+
+            json_array_push(results_arr, result_obj);
+        }
+
+        for (int i = 0; i < found; i++) {
+            if (results[i].vector) vector_destroy((GV_Vector *)results[i].vector);
+        }
+
+        json_object_set(response, "results", results_arr);
+        json_object_set(response, "count", json_number((double)found));
+        json_object_set(response, "latency_ms", json_number(latency_ms));
+
+        return rest_response_json(response);
     }
 
-    for (int i = 0; i < found; i++) {
-        if (results[i].vector) vector_destroy((GV_Vector *)results[i].vector);
-    }
-    free(results);
-
-    json_object_set(response, "results", results_arr);
-    json_object_set(response, "count", json_number((double)found));
-    json_object_set(response, "latency_ms", json_number(latency_ms));
-
-    return rest_response_json(response);
+    return rest_response_error(GV_HTTP_500_INTERNAL_ERROR, "internal_error",
+                                   "Search handler scope failed");
 }
 
 GV_HttpResponse *rest_handle_search_batch(const GV_HandlerContext *ctx,
@@ -888,76 +886,75 @@ GV_HttpResponse *rest_handle_search_batch(const GV_HandlerContext *ctx,
     const char *dist_str = json_get_string_path(body, "distance");
     GV_DistanceType distance = parse_distance_type(dist_str);
 
-    /* Allocate queries buffer */
-    float *queries = malloc(qcount * ctx->db->dimension * sizeof(float));
-    if (!queries) {
-        json_free(body);
-        return rest_response_error(GV_HTTP_500_INTERNAL_ERROR, "memory_error",
-                                       "Failed to allocate memory");
-    }
-
-    for (size_t q = 0; q < qcount; q++) {
-        GV_JsonValue *query_arr = json_array_get(queries_arr, q);
-        if (!query_arr || !json_is_array(query_arr)) {
-            continue;
+    GV_WITH_ARENA(scratch, GV_REST_BATCH_ARENA_BYTES) {
+        size_t total_floats = qcount * ctx->db->dimension;
+        float *queries = (float *)gv_arena_alloc(
+            &scratch, total_floats * sizeof(float), sizeof(float));
+        if (!queries) {
+            json_free(body);
+            return rest_response_error(GV_HTTP_500_INTERNAL_ERROR, "memory_error",
+                                           "Failed to allocate memory");
         }
-        for (size_t i = 0; i < ctx->db->dimension && i < json_array_length(query_arr); i++) {
-            GV_JsonValue *v = json_array_get(query_arr, i);
-            double num;
-            if (json_get_number(v, &num) == GV_JSON_OK) {
-                queries[q * ctx->db->dimension + i] = (float)num;
+
+        for (size_t q = 0; q < qcount; q++) {
+            GV_JsonValue *query_arr = json_array_get(queries_arr, q);
+            if (!query_arr || !json_is_array(query_arr)) {
+                continue;
+            }
+            for (size_t i = 0; i < ctx->db->dimension && i < json_array_length(query_arr); i++) {
+                GV_JsonValue *v = json_array_get(query_arr, i);
+                double num;
+                if (json_get_number(v, &num) == GV_JSON_OK) {
+                    queries[q * ctx->db->dimension + i] = (float)num;
+                }
             }
         }
-    }
 
-    /* Allocate results */
-    GV_SearchResult *results = calloc(qcount * k, sizeof(GV_SearchResult));
-    if (!results) {
-        free(queries);
-        json_free(body);
-        return rest_response_error(GV_HTTP_500_INTERNAL_ERROR, "memory_error",
-                                       "Failed to allocate memory");
-    }
-
-    /* Perform batch search */
-    clock_t start = clock();
-    int total = db_search_batch(ctx->db, queries, qcount, k, results, distance);
-    clock_t end = clock();
-    double latency_ms = ((double)(end - start) / CLOCKS_PER_SEC) * 1000.0;
-
-    free(queries);
-    json_free(body);
-
-    if (total < 0) {
-        free(results);
-        return rest_response_error(GV_HTTP_500_INTERNAL_ERROR, "search_failed",
-                                       "Batch search operation failed");
-    }
-
-    /* Build response */
-    GV_JsonValue *response = json_object();
-    GV_JsonValue *batch_results = json_array();
-
-    for (size_t q = 0; q < qcount; q++) {
-        GV_JsonValue *query_results = json_array();
-        for (size_t i = 0; i < k; i++) {
-            GV_SearchResult *r = &results[q * k + i];
-            if (r->vector) {
-                GV_JsonValue *result_obj = json_object();
-                json_object_set(result_obj, "distance", json_number(r->distance));
-                json_array_push(query_results, result_obj);
-            }
+        GV_SearchResult *results = (GV_SearchResult *)gv_arena_calloc(
+            &scratch, qcount * k, sizeof(GV_SearchResult));
+        if (!results) {
+            json_free(body);
+            return rest_response_error(GV_HTTP_500_INTERNAL_ERROR, "memory_error",
+                                           "Failed to allocate memory");
         }
-        json_array_push(batch_results, query_results);
+
+        clock_t start = clock();
+        int total = db_search_batch(ctx->db, queries, qcount, k, results, distance);
+        clock_t end = clock();
+        double latency_ms = ((double)(end - start) / CLOCKS_PER_SEC) * 1000.0;
+
+        json_free(body);
+
+        if (total < 0) {
+            return rest_response_error(GV_HTTP_500_INTERNAL_ERROR, "search_failed",
+                                           "Batch search operation failed");
+        }
+
+        GV_JsonValue *response = json_object();
+        GV_JsonValue *batch_results = json_array();
+
+        for (size_t q = 0; q < qcount; q++) {
+            GV_JsonValue *query_results = json_array();
+            for (size_t i = 0; i < k; i++) {
+                GV_SearchResult *r = &results[q * k + i];
+                if (r->vector) {
+                    GV_JsonValue *result_obj = json_object();
+                    json_object_set(result_obj, "distance", json_number(r->distance));
+                    json_array_push(query_results, result_obj);
+                }
+            }
+            json_array_push(batch_results, query_results);
+        }
+
+        json_object_set(response, "results", batch_results);
+        json_object_set(response, "query_count", json_number((double)qcount));
+        json_object_set(response, "latency_ms", json_number(latency_ms));
+
+        return rest_response_json(response);
     }
 
-    free(results);
-
-    json_object_set(response, "results", batch_results);
-    json_object_set(response, "query_count", json_number((double)qcount));
-    json_object_set(response, "latency_ms", json_number(latency_ms));
-
-    return rest_response_json(response);
+    return rest_response_error(GV_HTTP_500_INTERNAL_ERROR, "internal_error",
+                                   "Search handler scope failed");
 }
 
 GV_HttpResponse *rest_handle_compact(const GV_HandlerContext *ctx,

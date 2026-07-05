@@ -1,4 +1,5 @@
 #include <stdlib.h>
+#include "core/memory.h"
 #include <string.h>
 #include <ctype.h>
 #include <time.h>
@@ -106,7 +107,7 @@ int memory_extract_candidates_from_conversation(const char *conversation,
         if (sentence_end > sentence_start) {
             size_t sentence_len = sentence_end - sentence_start;
             if (sentence_len > 10) {
-                char *sentence = (char *)malloc(sentence_len + 1);
+                char *sentence = (char *)gv_alloc(sentence_len + 1);
                 if (sentence != NULL) {
                     memcpy(sentence, sentence_start, sentence_len);
                     sentence[sentence_len] = '\0';
@@ -121,7 +122,7 @@ int memory_extract_candidates_from_conversation(const char *conversation,
                             gv_dup_cstr(conversation_id) : NULL;
                         candidate_idx++;
                     } else {
-                        free(sentence);
+                        gv_free(sentence);
                     }
                 }
             }
@@ -167,8 +168,8 @@ void memory_candidate_free(GV_MemoryCandidate *candidate) {
         return;
     }
     
-    free(candidate->content);
-    free(candidate->extraction_context);
+    gv_free(candidate->content);
+    gv_free(candidate->extraction_context);
     memset(candidate, 0, sizeof(GV_MemoryCandidate));
 }
 
@@ -330,7 +331,7 @@ int memory_extract_candidates_from_conversation_llm(GV_LLM *llm,
                            get_default_user_extraction_prompt());
     
     size_t prompt_len = strlen(base_prompt) + strlen(conversation) + 100;
-    char *full_prompt = (char *)malloc(prompt_len);
+    char *full_prompt = (char *)gv_alloc(prompt_len);
     if (full_prompt == NULL) {
         return -1;
     }
@@ -338,18 +339,18 @@ int memory_extract_candidates_from_conversation_llm(GV_LLM *llm,
     snprintf(full_prompt, prompt_len, "%s%s", base_prompt, conversation);
     
     // Create messages
-    GV_LLMMessage *messages = (GV_LLMMessage *)malloc(sizeof(GV_LLMMessage));
+    GV_LLMMessage *messages = (GV_LLMMessage *)gv_alloc(sizeof(GV_LLMMessage));
     if (messages == NULL) {
-        free(full_prompt);
+        gv_free(full_prompt);
         return -1;
     }
     
     messages[0].role = gv_dup_cstr("user");
     messages[0].content = gv_dup_cstr(full_prompt);  // Make a copy, don't share pointer
     if (messages[0].content == NULL) {
-        free(messages[0].role);
-        free(messages);
-        free(full_prompt);
+        gv_free(messages[0].role);
+        gv_free(messages);
+        gv_free(full_prompt);
         return -1;
     }
     
@@ -358,8 +359,8 @@ int memory_extract_candidates_from_conversation_llm(GV_LLM *llm,
     int result = llm_generate_response(llm, messages, 1, "json_object", &response);
     
     llm_message_free(&messages[0]);
-    free(messages);
-    free(full_prompt);
+    gv_free(messages);
+    gv_free(full_prompt);
     
     // Check for LLM success (GV_LLM_SUCCESS == 0)
     if (result != 0) {

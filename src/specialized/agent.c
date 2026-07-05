@@ -12,6 +12,7 @@
  */
 
 #include <stdlib.h>
+#include "core/memory.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdarg.h>
@@ -166,7 +167,7 @@ static char *build_system_prompt(GV_AgentType type, const char *override,
         needed += strlen(schema_json) + 128;
     }
 
-    char *prompt = (char *)malloc(needed);
+    char *prompt = (char *)gv_alloc(needed);
     if (prompt == NULL) return NULL;
 
     size_t pos = 0;
@@ -175,7 +176,7 @@ static char *build_system_prompt(GV_AgentType type, const char *override,
     /* Copy base prompt */
     written = snprintf(prompt + pos, needed - pos, "%s", base_prompt);
     if (written < 0 || (size_t)written >= needed - pos) {
-        free(prompt);
+        gv_free(prompt);
         return NULL;
     }
     pos += (size_t)written;
@@ -222,7 +223,7 @@ static char *build_system_prompt(GV_AgentType type, const char *override,
  * @brief Allocate and initialize an empty agent result.
  */
 static GV_AgentResult *alloc_result(void) {
-    GV_AgentResult *r = (GV_AgentResult *)calloc(1, sizeof(GV_AgentResult));
+    GV_AgentResult *r = (GV_AgentResult *)gv_calloc(1, sizeof(GV_AgentResult));
     return r;
 }
 
@@ -247,7 +248,7 @@ static GV_AgentResult *result_error(GV_AgentResult *r, const char *fmt, ...) {
  * @brief Call the LLM with retry logic.
  *
  * Sends a system + user message pair and returns the response content string
- * (caller must free).  Returns NULL on failure after all retries.
+ * (caller must gv_free).  Returns NULL on failure after all retries.
  */
 static char *llm_call_with_retry(GV_Agent *agent, const char *system_prompt,
                                  const char *user_message) {
@@ -259,10 +260,10 @@ static char *llm_call_with_retry(GV_Agent *agent, const char *system_prompt,
 
     if (!messages[0].role || !messages[0].content ||
         !messages[1].role || !messages[1].content) {
-        free(messages[0].role);
-        free(messages[0].content);
-        free(messages[1].role);
-        free(messages[1].content);
+        gv_free(messages[0].role);
+        gv_free(messages[0].content);
+        gv_free(messages[1].role);
+        gv_free(messages[1].content);
         return NULL;
     }
 
@@ -282,10 +283,10 @@ static char *llm_call_with_retry(GV_Agent *agent, const char *system_prompt,
         llm_response_free(&response);
     }
 
-    free(messages[0].role);
-    free(messages[0].content);
-    free(messages[1].role);
-    free(messages[1].content);
+    gv_free(messages[0].role);
+    gv_free(messages[0].content);
+    gv_free(messages[1].role);
+    gv_free(messages[1].content);
 
     return content;
 }
@@ -316,7 +317,7 @@ GV_Agent *agent_create(const void *db, const GV_AgentConfig *config) {
     if (db == NULL || config == NULL) return NULL;
     if (config->api_key == NULL) return NULL;
 
-    GV_Agent *agent = (GV_Agent *)calloc(1, sizeof(GV_Agent));
+    GV_Agent *agent = (GV_Agent *)gv_calloc(1, sizeof(GV_Agent));
     if (agent == NULL) return NULL;
 
     agent->type = (GV_AgentType)config->agent_type;
@@ -328,14 +329,14 @@ GV_Agent *agent_create(const void *db, const GV_AgentConfig *config) {
     llm_cfg.provider = provider_from_string(config->llm_provider);
     llm_cfg.api_key = gv_dup_cstr(config->api_key);
     if (llm_cfg.api_key == NULL) {
-        free(agent);
+        gv_free(agent);
         return NULL;
     }
     llm_cfg.model = gv_dup_cstr(config->model ? config->model
                                               : agent_default_model(llm_cfg.provider));
     if (llm_cfg.model == NULL) {
-        free(llm_cfg.api_key);
-        free(agent);
+        gv_free(llm_cfg.api_key);
+        gv_free(agent);
         return NULL;
     }
     llm_cfg.temperature = (config->temperature >= 0.0f) ? config->temperature : AGENT_DEFAULT_TEMPERATURE;
@@ -345,10 +346,10 @@ GV_Agent *agent_create(const void *db, const GV_AgentConfig *config) {
     llm_cfg.custom_prompt = NULL;
 
     agent->llm = llm_create(&llm_cfg);
-    free(llm_cfg.api_key);
-    free(llm_cfg.model);
+    gv_free(llm_cfg.api_key);
+    gv_free(llm_cfg.model);
     if (agent->llm == NULL) {
-        free(agent);
+        gv_free(agent);
         return NULL;
     }
 
@@ -362,14 +363,14 @@ GV_Agent *agent_create(const void *db, const GV_AgentConfig *config) {
                                                NULL, agent->db);
     if (agent->system_prompt == NULL) {
         llm_destroy(agent->llm);
-        free(agent);
+        gv_free(agent);
         return NULL;
     }
 
     if (pthread_mutex_init(&agent->mutex, NULL) != 0) {
-        free(agent->system_prompt);
+        gv_free(agent->system_prompt);
         llm_destroy(agent->llm);
-        free(agent);
+        gv_free(agent);
         return NULL;
     }
 
@@ -381,10 +382,10 @@ void agent_destroy(GV_Agent *agent) {
 
     pthread_mutex_destroy(&agent->mutex);
     llm_destroy(agent->llm);
-    free(agent->system_prompt);
-    free(agent->schema_json);
+    gv_free(agent->system_prompt);
+    gv_free(agent->schema_json);
     /* embed_svc is not owned; caller manages its lifecycle. */
-    free(agent);
+    gv_free(agent);
 }
 
 /* Schema Hints */
@@ -394,11 +395,11 @@ void agent_set_schema_hint(GV_Agent *agent, const char *schema_json) {
 
     pthread_mutex_lock(&agent->mutex);
 
-    free(agent->schema_json);
+    gv_free(agent->schema_json);
     agent->schema_json = gv_dup_cstr(schema_json);
 
     /* Rebuild system prompt with the new schema */
-    free(agent->system_prompt);
+    gv_free(agent->system_prompt);
     agent->system_prompt = build_system_prompt(agent->type, NULL,
                                                agent->schema_json, agent->db);
 
@@ -439,7 +440,7 @@ GV_AgentResult *agent_query(GV_Agent *agent, const char *natural_language_query,
         pthread_mutex_unlock(&agent->mutex);
         result_error(result, "failed to parse LLM JSON response: %s",
                      json_error_string(json_err));
-        free(llm_response);
+        gv_free(llm_response);
         return result;
     }
 
@@ -470,7 +471,7 @@ GV_AgentResult *agent_query(GV_Agent *agent, const char *natural_language_query,
         int embed_rc = embedding_generate(agent->embed_svc, search_text, &embed_dim, &query_vec);
         if (embed_rc != 0 || query_vec == NULL) {
             json_free(root);
-            free(llm_response);
+            gv_free(llm_response);
             pthread_mutex_unlock(&agent->mutex);
             return result_error(result, "embedding generation failed for search text");
         }
@@ -482,7 +483,7 @@ GV_AgentResult *agent_query(GV_Agent *agent, const char *natural_language_query,
         if (vec_val != NULL && json_is_array(vec_val)) {
             size_t vec_len = json_array_length(vec_val);
             if (vec_len > 0 && vec_len == agent->db->dimension) {
-                query_vec = (float *)malloc(vec_len * sizeof(float));
+                query_vec = (float *)gv_alloc(vec_len * sizeof(float));
                 if (query_vec != NULL) {
                     embed_dim = vec_len;
                     for (size_t i = 0; i < vec_len; i++) {
@@ -499,13 +500,13 @@ GV_AgentResult *agent_query(GV_Agent *agent, const char *natural_language_query,
     }
 
     json_free(root);
-    free(llm_response);
+    gv_free(llm_response);
 
     /* Execute the search if we have a query vector */
     if (query_vec != NULL && embed_dim == agent->db->dimension) {
-        GV_SearchResult *sr = (GV_SearchResult *)calloc(effective_k, sizeof(GV_SearchResult));
+        GV_SearchResult *sr = (GV_SearchResult *)gv_calloc(effective_k, sizeof(GV_SearchResult));
         if (sr == NULL) {
-            free(query_vec);
+            gv_free(query_vec);
             pthread_mutex_unlock(&agent->mutex);
             return result_error(result, "memory allocation failed for search results");
         }
@@ -518,26 +519,26 @@ GV_AgentResult *agent_query(GV_Agent *agent, const char *natural_language_query,
             found = db_search(agent->db, query_vec, effective_k, sr, dist_type);
         }
 
-        free(query_vec);
+        gv_free(query_vec);
 
         if (found < 0) {
-            free(sr);
+            gv_free(sr);
             pthread_mutex_unlock(&agent->mutex);
             return result_error(result, "database search failed");
         }
 
         /* Convert SearchResult to indices + distances */
         result->result_count = (size_t)found;
-        result->result_indices = (size_t *)malloc((size_t)found * sizeof(size_t));
-        result->result_distances = (float *)malloc((size_t)found * sizeof(float));
+        result->result_indices = (size_t *)gv_alloc((size_t)found * sizeof(size_t));
+        result->result_distances = (float *)gv_alloc((size_t)found * sizeof(float));
 
         if (result->result_indices == NULL || result->result_distances == NULL) {
-            free(result->result_indices);
+            gv_free(result->result_indices);
             result->result_indices = NULL;
-            free(result->result_distances);
+            gv_free(result->result_distances);
             result->result_distances = NULL;
             result->result_count = 0;
-            free(sr);
+            gv_free(sr);
             pthread_mutex_unlock(&agent->mutex);
             return result_error(result, "memory allocation failed");
         }
@@ -555,10 +556,10 @@ GV_AgentResult *agent_query(GV_Agent *agent, const char *natural_language_query,
             result->result_distances[i] = sr[i].distance;
         }
 
-        free(sr);
+        gv_free(sr);
         result->success = 1;
     } else {
-        free(query_vec);
+        gv_free(query_vec);
         result_error(result, "could not obtain a valid query vector from LLM response");
     }
 
@@ -599,7 +600,7 @@ GV_AgentResult *agent_transform(GV_Agent *agent, const char *natural_language_in
         pthread_mutex_unlock(&agent->mutex);
         result_error(result, "failed to parse LLM JSON response: %s",
                      json_error_string(json_err));
-        free(llm_response);
+        gv_free(llm_response);
         return result;
     }
 
@@ -611,7 +612,7 @@ GV_AgentResult *agent_transform(GV_Agent *agent, const char *natural_language_in
         result->generated_filter = gv_dup_cstr(filter_str);
     }
 
-    free(llm_response);
+    gv_free(llm_response);
 
     if (operation == NULL || filter_str == NULL) {
         json_free(root);
@@ -634,7 +635,7 @@ GV_AgentResult *agent_transform(GV_Agent *agent, const char *natural_language_in
         size_t deleted = 0;
 
         /* Collect matching indices first to avoid mutation during iteration */
-        size_t *match_indices = (size_t *)malloc(total * sizeof(size_t));
+        size_t *match_indices = (size_t *)gv_alloc(total * sizeof(size_t));
         size_t match_count = 0;
 
         if (match_indices != NULL) {
@@ -665,7 +666,7 @@ GV_AgentResult *agent_transform(GV_Agent *agent, const char *natural_language_in
                 }
             }
 
-            free(match_indices);
+            gv_free(match_indices);
         }
 
         result->result_count = deleted;
@@ -697,9 +698,9 @@ GV_AgentResult *agent_transform(GV_Agent *agent, const char *natural_language_in
             if (update_obj != NULL && json_is_object(update_obj)) {
                 size_t n_keys = json_object_length(update_obj);
                 if (n_keys > 0) {
-                    const char **keys = (const char **)malloc(n_keys * sizeof(const char *));
-                    const char **vals = (const char **)malloc(n_keys * sizeof(const char *));
-                    char **val_copies = (char **)calloc(n_keys, sizeof(char *));
+                    const char **keys = (const char **)gv_alloc(n_keys * sizeof(const char *));
+                    const char **vals = (const char **)gv_alloc(n_keys * sizeof(const char *));
+                    char **val_copies = (char **)gv_calloc(n_keys, sizeof(char *));
 
                     if (keys && vals && val_copies) {
                         size_t ki = 0;
@@ -723,13 +724,13 @@ GV_AgentResult *agent_transform(GV_Agent *agent, const char *natural_language_in
                         }
 
                         for (size_t c = 0; c < ki; c++) {
-                            free(val_copies[c]);
+                            gv_free(val_copies[c]);
                         }
                     }
 
-                    free(keys);
-                    free(vals);
-                    free(val_copies);
+                    gv_free(keys);
+                    gv_free(vals);
+                    gv_free(val_copies);
                 }
             } else {
                 /* No metadata updates specified; just count the match */
@@ -788,7 +789,7 @@ GV_AgentResult *agent_personalize(GV_Agent *agent, const char *query,
 
     /* Build user message with query and profile */
     size_t msg_size = strlen(query) + strlen(user_profile_json) + 256;
-    char *user_msg = (char *)malloc(msg_size);
+    char *user_msg = (char *)gv_alloc(msg_size);
     if (user_msg == NULL) {
         pthread_mutex_unlock(&agent->mutex);
         return result_error(result, "memory allocation failed");
@@ -799,7 +800,7 @@ GV_AgentResult *agent_personalize(GV_Agent *agent, const char *query,
 
     /* Call LLM */
     char *llm_response = llm_call_with_retry(agent, agent->system_prompt, user_msg);
-    free(user_msg);
+    gv_free(user_msg);
     if (llm_response == NULL) {
         pthread_mutex_unlock(&agent->mutex);
         return result_error(result, "LLM call failed after retries");
@@ -812,7 +813,7 @@ GV_AgentResult *agent_personalize(GV_Agent *agent, const char *query,
         pthread_mutex_unlock(&agent->mutex);
         result_error(result, "failed to parse LLM JSON response: %s",
                      json_error_string(json_err));
-        free(llm_response);
+        gv_free(llm_response);
         return result;
     }
 
@@ -827,7 +828,7 @@ GV_AgentResult *agent_personalize(GV_Agent *agent, const char *query,
         result->generated_filter = gv_dup_cstr(filter_str);
     }
 
-    free(llm_response);
+    gv_free(llm_response);
 
     /* Embed search text */
     float *query_vec = NULL;
@@ -848,7 +849,7 @@ GV_AgentResult *agent_personalize(GV_Agent *agent, const char *query,
         if (vec_val != NULL && json_is_array(vec_val)) {
             size_t vec_len = json_array_length(vec_val);
             if (vec_len > 0 && vec_len == agent->db->dimension) {
-                query_vec = (float *)malloc(vec_len * sizeof(float));
+                query_vec = (float *)gv_alloc(vec_len * sizeof(float));
                 if (query_vec != NULL) {
                     embed_dim = vec_len;
                     for (size_t i = 0; i < vec_len; i++) {
@@ -865,7 +866,7 @@ GV_AgentResult *agent_personalize(GV_Agent *agent, const char *query,
     }
 
     if (query_vec == NULL || embed_dim != agent->db->dimension) {
-        free(query_vec);
+        gv_free(query_vec);
         json_free(root);
         pthread_mutex_unlock(&agent->mutex);
         return result_error(result, "could not obtain a valid query vector from LLM response");
@@ -875,9 +876,9 @@ GV_AgentResult *agent_personalize(GV_Agent *agent, const char *query,
     size_t oversample_k = k * AGENT_OVERSAMPLE_FACTOR;
     if (oversample_k < k) oversample_k = k;  /* Overflow guard. */
 
-    GV_SearchResult *sr = (GV_SearchResult *)calloc(oversample_k, sizeof(GV_SearchResult));
+    GV_SearchResult *sr = (GV_SearchResult *)gv_calloc(oversample_k, sizeof(GV_SearchResult));
     if (sr == NULL) {
-        free(query_vec);
+        gv_free(query_vec);
         json_free(root);
         pthread_mutex_unlock(&agent->mutex);
         return result_error(result, "memory allocation failed for search results");
@@ -891,10 +892,10 @@ GV_AgentResult *agent_personalize(GV_Agent *agent, const char *query,
         found = db_search(agent->db, query_vec, oversample_k, sr, dist_type);
     }
 
-    free(query_vec);
+    gv_free(query_vec);
 
     if (found < 0) {
-        free(sr);
+        gv_free(sr);
         json_free(root);
         pthread_mutex_unlock(&agent->mutex);
         return result_error(result, "database search failed");
@@ -904,9 +905,9 @@ GV_AgentResult *agent_personalize(GV_Agent *agent, const char *query,
     GV_JsonValue *adjustments = json_object_get(root, "adjustments");
 
     /* Build personalized entries */
-    PersonalizedEntry *entries = (PersonalizedEntry *)malloc((size_t)found * sizeof(PersonalizedEntry));
+    PersonalizedEntry *entries = (PersonalizedEntry *)gv_alloc((size_t)found * sizeof(PersonalizedEntry));
     if (entries == NULL) {
-        free(sr);
+        gv_free(sr);
         json_free(root);
         pthread_mutex_unlock(&agent->mutex);
         return result_error(result, "memory allocation failed");
@@ -960,7 +961,7 @@ GV_AgentResult *agent_personalize(GV_Agent *agent, const char *query,
         }
     }
 
-    free(sr);
+    gv_free(sr);
     json_free(root);
 
     /* Sort by adjusted distance */
@@ -968,15 +969,15 @@ GV_AgentResult *agent_personalize(GV_Agent *agent, const char *query,
 
     /* Take top k */
     size_t final_count = ((size_t)found < k) ? (size_t)found : k;
-    result->result_indices = (size_t *)malloc(final_count * sizeof(size_t));
-    result->result_distances = (float *)malloc(final_count * sizeof(float));
+    result->result_indices = (size_t *)gv_alloc(final_count * sizeof(size_t));
+    result->result_distances = (float *)gv_alloc(final_count * sizeof(float));
 
     if (result->result_indices == NULL || result->result_distances == NULL) {
-        free(result->result_indices);
+        gv_free(result->result_indices);
         result->result_indices = NULL;
-        free(result->result_distances);
+        gv_free(result->result_distances);
         result->result_distances = NULL;
-        free(entries);
+        gv_free(entries);
         pthread_mutex_unlock(&agent->mutex);
         return result_error(result, "memory allocation failed");
     }
@@ -989,7 +990,7 @@ GV_AgentResult *agent_personalize(GV_Agent *agent, const char *query,
     result->result_count = final_count;
     result->success = 1;
 
-    free(entries);
+    gv_free(entries);
     pthread_mutex_unlock(&agent->mutex);
     return result;
 }
@@ -999,10 +1000,10 @@ GV_AgentResult *agent_personalize(GV_Agent *agent, const char *query,
 void agent_free_result(GV_AgentResult *result) {
     if (result == NULL) return;
 
-    free(result->response_text);
-    free(result->result_indices);
-    free(result->result_distances);
-    free(result->generated_filter);
-    free(result->error_message);
-    free(result);
+    gv_free(result->response_text);
+    gv_free(result->result_indices);
+    gv_free(result->result_distances);
+    gv_free(result->generated_filter);
+    gv_free(result->error_message);
+    gv_free(result);
 }

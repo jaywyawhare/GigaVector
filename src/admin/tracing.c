@@ -6,6 +6,7 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include "admin/tracing.h"
+#include "core/memory.h"
 #include "core/utils.h"
 
 #include <stdio.h>
@@ -52,7 +53,7 @@ static int trace_ensure_capacity(GV_QueryTrace *trace) {
         new_capacity = GV_TRACE_INITIAL_CAPACITY;
     }
 
-    GV_TraceSpan *new_spans = realloc(trace->spans, new_capacity * sizeof(GV_TraceSpan));
+    GV_TraceSpan *new_spans = gv_realloc(trace->spans, new_capacity * sizeof(GV_TraceSpan));
     if (!new_spans) {
         return -1;
     }
@@ -85,14 +86,14 @@ static GV_TraceSpan *trace_find_last_open_span(GV_QueryTrace *trace) {
 /* Trace Lifecycle */
 
 GV_QueryTrace *trace_begin(void) {
-    GV_QueryTrace *trace = calloc(1, sizeof(GV_QueryTrace));
+    GV_QueryTrace *trace = gv_calloc(1, sizeof(GV_QueryTrace));
     if (!trace) {
         return NULL;
     }
 
-    trace->spans = malloc(GV_TRACE_INITIAL_CAPACITY * sizeof(GV_TraceSpan));
+    trace->spans = gv_alloc(GV_TRACE_INITIAL_CAPACITY * sizeof(GV_TraceSpan));
     if (!trace->spans) {
-        free(trace);
+        gv_free(trace);
         return NULL;
     }
 
@@ -128,12 +129,12 @@ void trace_destroy(GV_QueryTrace *trace) {
     }
 
     for (size_t i = 0; i < trace->span_count; i++) {
-        free((void *)trace->spans[i].name);
-        free((void *)trace->spans[i].metadata);
+        gv_free((void *)trace->spans[i].name);
+        gv_free((void *)trace->spans[i].metadata);
     }
 
-    free(trace->spans);
-    free(trace);
+    gv_free(trace->spans);
+    gv_free(trace);
 }
 
 /* Span Operations */
@@ -207,7 +208,7 @@ void trace_set_metadata(GV_QueryTrace *trace, const char *metadata) {
     }
 
     /* Free any previously set metadata. */
-    free((void *)span->metadata);
+    gv_free((void *)span->metadata);
     span->metadata = metadata ? gv_dup_cstr(metadata) : NULL;
 }
 
@@ -268,7 +269,7 @@ char *trace_to_json(const GV_QueryTrace *trace) {
      * Per span: {"name":"...","start_us":...,"duration_us":...,"metadata":...}  ~200 bytes + name/metadata
      */
     size_t estimate = 128 + trace->span_count * 512;
-    char *buf = malloc(estimate);
+    char *buf = gv_alloc(estimate);
     if (!buf) {
         return NULL;
     }
@@ -280,7 +281,7 @@ char *trace_to_json(const GV_QueryTrace *trace) {
                    "{\"trace_id\":%" PRIu64 ",\"total_us\":%" PRIu64 ",\"spans\":[",
                    trace->trace_id, trace->total_duration_us);
     if (ret < 0) {
-        free(buf);
+        gv_free(buf);
         return NULL;
     }
     offset += (size_t)ret;
@@ -303,7 +304,7 @@ char *trace_to_json(const GV_QueryTrace *trace) {
                        "{\"name\":\"%s\",\"start_us\":%" PRIu64 ",\"duration_us\":%" PRIu64 ",\"metadata\":",
                        escaped_name, span->start_us, span->duration_us);
         if (ret < 0) {
-            free(buf);
+            gv_free(buf);
             return NULL;
         }
         offset += (size_t)ret;
@@ -317,7 +318,7 @@ char *trace_to_json(const GV_QueryTrace *trace) {
             ret = snprintf(buf + offset, estimate - offset, "null}");
         }
         if (ret < 0) {
-            free(buf);
+            gv_free(buf);
             return NULL;
         }
         offset += (size_t)ret;
@@ -325,9 +326,9 @@ char *trace_to_json(const GV_QueryTrace *trace) {
         /* Grow buffer if running low. */
         if (offset + 512 > estimate) {
             estimate *= 2;
-            char *new_buf = realloc(buf, estimate);
+            char *new_buf = gv_realloc(buf, estimate);
             if (!new_buf) {
-                free(buf);
+                gv_free(buf);
                 return NULL;
             }
             buf = new_buf;
@@ -336,13 +337,13 @@ char *trace_to_json(const GV_QueryTrace *trace) {
 
     ret = snprintf(buf + offset, estimate - offset, "]}");
     if (ret < 0) {
-        free(buf);
+        gv_free(buf);
         return NULL;
     }
     offset += (size_t)ret;
 
     /* Shrink to fit. */
-    char *result = realloc(buf, offset + 1);
+    char *result = gv_realloc(buf, offset + 1);
     return result ? result : buf;
 }
 

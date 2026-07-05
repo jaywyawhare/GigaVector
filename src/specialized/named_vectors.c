@@ -9,6 +9,7 @@
  */
 
 #include "specialized/named_vectors.h"
+#include "core/memory.h"
 #include "search/distance.h"
 #include "core/heap.h"
 #include "core/types.h"
@@ -103,7 +104,7 @@ static int nv_ensure_capacity(GV_NamedVectorStore *store, size_t required) {
         new_cap *= 2;
     }
 
-    uint8_t *new_alive = (uint8_t *)realloc(store->point_alive, new_cap * sizeof(uint8_t));
+    uint8_t *new_alive = (uint8_t *)gv_realloc(store->point_alive, new_cap * sizeof(uint8_t));
     if (!new_alive) return -1;
     memset(new_alive + store->point_capacity, 0, (new_cap - store->point_capacity) * sizeof(uint8_t));
     store->point_alive = new_alive;
@@ -111,14 +112,14 @@ static int nv_ensure_capacity(GV_NamedVectorStore *store, size_t required) {
     for (size_t b = 0; b < GV_NV_FIELD_HASH_BUCKETS; b++) {
         GV_NVField *f = store->buckets[b];
         while (f) {
-            float *new_vecs = (float *)realloc(f->vectors,
+            float *new_vecs = (float *)gv_realloc(f->vectors,
                                                new_cap * f->dimension * sizeof(float));
             if (!new_vecs) return -1;
             memset(new_vecs + f->capacity * f->dimension, 0,
                    (new_cap - f->capacity) * f->dimension * sizeof(float));
             f->vectors = new_vecs;
 
-            uint8_t *new_occ = (uint8_t *)realloc(f->occupied, new_cap * sizeof(uint8_t));
+            uint8_t *new_occ = (uint8_t *)gv_realloc(f->occupied, new_cap * sizeof(uint8_t));
             if (!new_occ) return -1;
             memset(new_occ + f->capacity, 0, (new_cap - f->capacity) * sizeof(uint8_t));
             f->occupied = new_occ;
@@ -150,11 +151,11 @@ static float nv_compute_distance(const float *a, const float *b,
 }
 
 GV_NamedVectorStore *named_vectors_create(void) {
-    GV_NamedVectorStore *store = (GV_NamedVectorStore *)calloc(1, sizeof(GV_NamedVectorStore));
+    GV_NamedVectorStore *store = (GV_NamedVectorStore *)gv_calloc(1, sizeof(GV_NamedVectorStore));
     if (!store) return NULL;
 
     if (pthread_rwlock_init(&store->rwlock, NULL) != 0) {
-        free(store);
+        gv_free(store);
         return NULL;
     }
 
@@ -168,17 +169,17 @@ void named_vectors_destroy(GV_NamedVectorStore *store) {
         GV_NVField *f = store->buckets[b];
         while (f) {
             GV_NVField *next = f->hash_next;
-            free(f->name);
-            free(f->vectors);
-            free(f->occupied);
-            free(f);
+            gv_free(f->name);
+            gv_free(f->vectors);
+            gv_free(f->occupied);
+            gv_free(f);
             f = next;
         }
     }
 
-    free(store->point_alive);
+    gv_free(store->point_alive);
     pthread_rwlock_destroy(&store->rwlock);
-    free(store);
+    gv_free(store);
 }
 
 int named_vectors_add_field(GV_NamedVectorStore *store, const GV_VectorFieldConfig *config) {
@@ -196,7 +197,7 @@ int named_vectors_add_field(GV_NamedVectorStore *store, const GV_VectorFieldConf
         return -1;
     }
 
-    GV_NVField *f = (GV_NVField *)calloc(1, sizeof(GV_NVField));
+    GV_NVField *f = (GV_NVField *)gv_calloc(1, sizeof(GV_NVField));
     if (!f) {
         pthread_rwlock_unlock(&store->rwlock);
         return -1;
@@ -204,7 +205,7 @@ int named_vectors_add_field(GV_NamedVectorStore *store, const GV_VectorFieldConf
 
     f->name = gv_dup_cstr(config->name);
     if (!f->name) {
-        free(f);
+        gv_free(f);
         pthread_rwlock_unlock(&store->rwlock);
         return -1;
     }
@@ -213,13 +214,13 @@ int named_vectors_add_field(GV_NamedVectorStore *store, const GV_VectorFieldConf
     f->distance_type = config->distance_type;
 
     if (store->point_capacity > 0) {
-        f->vectors = (float *)calloc(store->point_capacity * f->dimension, sizeof(float));
-        f->occupied = (uint8_t *)calloc(store->point_capacity, sizeof(uint8_t));
+        f->vectors = (float *)gv_calloc(store->point_capacity * f->dimension, sizeof(float));
+        f->occupied = (uint8_t *)gv_calloc(store->point_capacity, sizeof(uint8_t));
         if (!f->vectors || !f->occupied) {
-            free(f->vectors);
-            free(f->occupied);
-            free(f->name);
-            free(f);
+            gv_free(f->vectors);
+            gv_free(f->occupied);
+            gv_free(f->name);
+            gv_free(f);
             pthread_rwlock_unlock(&store->rwlock);
             return -1;
         }
@@ -251,10 +252,10 @@ int named_vectors_remove_field(GV_NamedVectorStore *store, const char *name) {
             } else {
                 store->buckets[bucket] = f->hash_next;
             }
-            free(f->name);
-            free(f->vectors);
-            free(f->occupied);
-            free(f);
+            gv_free(f->name);
+            gv_free(f->vectors);
+            gv_free(f->occupied);
+            gv_free(f);
             store->field_count--;
             pthread_rwlock_unlock(&store->rwlock);
             return 0;
@@ -423,7 +424,7 @@ int named_vectors_search(const GV_NamedVectorStore *store, const char *field_nam
         return -1;
     }
 
-    GV_NVHeapItem *heap = (GV_NVHeapItem *)malloc(k * sizeof(GV_NVHeapItem));
+    GV_NVHeapItem *heap = (GV_NVHeapItem *)gv_alloc(k * sizeof(GV_NVHeapItem));
     if (!heap) {
         pthread_rwlock_unlock((pthread_rwlock_t *)&store->rwlock);
         return -1;
@@ -454,7 +455,7 @@ int named_vectors_search(const GV_NamedVectorStore *store, const char *field_nam
         }
     }
 
-    free(heap);
+    gv_free(heap);
     pthread_rwlock_unlock((pthread_rwlock_t *)&store->rwlock);
     return n;
 }
@@ -596,12 +597,12 @@ GV_NamedVectorStore *named_vectors_load(const char *filepath) {
             goto fail;
         }
         if (read_u64(fp, &dimension_u64) != 0) {
-            free(name);
+            gv_free(name);
             named_vectors_destroy(store);
             goto fail;
         }
         if (read_u32(fp, &dist_type) != 0) {
-            free(name);
+            gv_free(name);
             named_vectors_destroy(store);
             goto fail;
         }
@@ -612,13 +613,13 @@ GV_NamedVectorStore *named_vectors_load(const char *filepath) {
         cfg.distance_type = (int)dist_type;
 
         if (named_vectors_add_field(store, &cfg) != 0) {
-            free(name);
+            gv_free(name);
             named_vectors_destroy(store);
             goto fail;
         }
 
         GV_NVField *f = nv_find_field(store, name);
-        free(name);
+        gv_free(name);
 
         if (!f) {
             named_vectors_destroy(store);

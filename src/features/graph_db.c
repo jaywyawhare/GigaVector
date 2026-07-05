@@ -11,6 +11,7 @@
 #define _POSIX_C_SOURCE 200112L
 
 #include "features/graph_db.h"
+#include "core/memory.h"
 #include "core/utils.h"
 
 #include <stdlib.h>
@@ -58,7 +59,7 @@ static char *str_dup(const char *s)
 {
     if (!s) return NULL;
     size_t len = strlen(s);
-    char *copy = (char *)malloc(len + 1);
+    char *copy = (char *)gv_alloc(len + 1);
     if (!copy) return NULL;
     memcpy(copy, s, len + 1);
     return copy;
@@ -68,9 +69,9 @@ static void free_prop_list(GV_GraphProp *head)
 {
     while (head) {
         GV_GraphProp *next = head->next;
-        free(head->key);
-        free(head->value);
-        free(head);
+        gv_free(head->key);
+        gv_free(head->value);
+        gv_free(head);
         head = next;
     }
 }
@@ -98,18 +99,18 @@ static int set_prop(GV_GraphProp **head, size_t *count,
     if (existing) {
         char *new_val = str_dup(value);
         if (!new_val) return -1;
-        free(existing->value);
+        gv_free(existing->value);
         existing->value = new_val;
         return 0;
     }
-    GV_GraphProp *prop = (GV_GraphProp *)calloc(1, sizeof(GV_GraphProp));
+    GV_GraphProp *prop = (GV_GraphProp *)gv_calloc(1, sizeof(GV_GraphProp));
     if (!prop) return -1;
     prop->key = str_dup(key);
     prop->value = str_dup(value);
     if (!prop->key || !prop->value) {
-        free(prop->key);
-        free(prop->value);
-        free(prop);
+        gv_free(prop->key);
+        gv_free(prop->value);
+        gv_free(prop);
         return -1;
     }
     prop->next = *head;
@@ -145,7 +146,7 @@ static int adj_add(GV_GraphEdgeRef **arr, size_t *count, size_t *cap,
 {
     if (*count >= *cap) {
         size_t new_cap = (*cap == 0) ? INITIAL_ADJ_CAP : (*cap * 2);
-        GV_GraphEdgeRef *tmp = (GV_GraphEdgeRef *)realloc(
+        GV_GraphEdgeRef *tmp = (GV_GraphEdgeRef *)gv_realloc(
             *arr, new_cap * sizeof(GV_GraphEdgeRef));
         if (!tmp) return -1;
         *arr = tmp;
@@ -170,15 +171,15 @@ static void adj_remove(GV_GraphEdgeRef *arr, size_t *count, uint64_t edge_id)
 
 static void free_node_internals(GV_GraphNode *node)
 {
-    free(node->label);
+    gv_free(node->label);
     free_prop_list(node->properties);
-    free(node->out_edges);
-    free(node->in_edges);
+    gv_free(node->out_edges);
+    gv_free(node->in_edges);
 }
 
 static void free_edge_internals(GV_GraphEdge *edge)
 {
-    free(edge->label);
+    gv_free(edge->label);
     free_prop_list(edge->properties);
 }
 
@@ -211,7 +212,7 @@ static int remove_edge_internal(GV_GraphDB *g, uint64_t edge_id)
     }
 
     free_edge_internals(&e->edge);
-    free(e);
+    gv_free(e);
     g->edge_count--;
     return 0;
 }
@@ -227,11 +228,11 @@ typedef struct {
 static int visited_init(VisitedSet *vs, size_t capacity)
 {
     if (capacity < 16) capacity = 16;
-    vs->slots = (uint64_t *)malloc(capacity * sizeof(uint64_t));
-    vs->occupied = (int *)calloc(capacity, sizeof(int));
+    vs->slots = (uint64_t *)gv_alloc(capacity * sizeof(uint64_t));
+    vs->occupied = (int *)gv_calloc(capacity, sizeof(int));
     if (!vs->slots || !vs->occupied) {
-        free(vs->slots);
-        free(vs->occupied);
+        gv_free(vs->slots);
+        gv_free(vs->occupied);
         return -1;
     }
     vs->capacity = capacity;
@@ -241,8 +242,8 @@ static int visited_init(VisitedSet *vs, size_t capacity)
 
 static void visited_free(VisitedSet *vs)
 {
-    free(vs->slots);
-    free(vs->occupied);
+    gv_free(vs->slots);
+    gv_free(vs->occupied);
     vs->slots = NULL;
     vs->occupied = NULL;
 }
@@ -263,11 +264,11 @@ static int visited_insert(VisitedSet *vs, uint64_t id)
     /* Rehash if load factor > 0.7 */
     if (vs->count * 10 > vs->capacity * 7) {
         size_t new_cap = vs->capacity * 2;
-        uint64_t *new_slots = (uint64_t *)malloc(new_cap * sizeof(uint64_t));
-        int *new_occ = (int *)calloc(new_cap, sizeof(int));
+        uint64_t *new_slots = (uint64_t *)gv_alloc(new_cap * sizeof(uint64_t));
+        int *new_occ = (int *)gv_calloc(new_cap, sizeof(int));
         if (!new_slots || !new_occ) {
-            free(new_slots);
-            free(new_occ);
+            gv_free(new_slots);
+            gv_free(new_occ);
             return -1;
         }
         for (size_t i = 0; i < vs->capacity; i++) {
@@ -284,8 +285,8 @@ static int visited_insert(VisitedSet *vs, uint64_t id)
                 }
             }
         }
-        free(vs->slots);
-        free(vs->occupied);
+        gv_free(vs->slots);
+        gv_free(vs->occupied);
         vs->slots = new_slots;
         vs->occupied = new_occ;
         vs->capacity = new_cap;
@@ -319,17 +320,17 @@ typedef struct {
 static int distmap_init(DistMap *dm, size_t capacity)
 {
     if (capacity < 16) capacity = 16;
-    dm->keys = (uint64_t *)malloc(capacity * sizeof(uint64_t));
-    dm->vals = (float *)malloc(capacity * sizeof(float));
-    dm->prev_node = (uint64_t *)malloc(capacity * sizeof(uint64_t));
-    dm->prev_edge = (uint64_t *)malloc(capacity * sizeof(uint64_t));
-    dm->occupied = (int *)calloc(capacity, sizeof(int));
+    dm->keys = (uint64_t *)gv_alloc(capacity * sizeof(uint64_t));
+    dm->vals = (float *)gv_alloc(capacity * sizeof(float));
+    dm->prev_node = (uint64_t *)gv_alloc(capacity * sizeof(uint64_t));
+    dm->prev_edge = (uint64_t *)gv_alloc(capacity * sizeof(uint64_t));
+    dm->occupied = (int *)gv_calloc(capacity, sizeof(int));
     if (!dm->keys || !dm->vals || !dm->prev_node || !dm->prev_edge || !dm->occupied) {
-        free(dm->keys);
-        free(dm->vals);
-        free(dm->prev_node);
-        free(dm->prev_edge);
-        free(dm->occupied);
+        gv_free(dm->keys);
+        gv_free(dm->vals);
+        gv_free(dm->prev_node);
+        gv_free(dm->prev_edge);
+        gv_free(dm->occupied);
         return -1;
     }
     dm->capacity = capacity;
@@ -339,11 +340,11 @@ static int distmap_init(DistMap *dm, size_t capacity)
 
 static void distmap_free(DistMap *dm)
 {
-    free(dm->keys);
-    free(dm->vals);
-    free(dm->prev_node);
-    free(dm->prev_edge);
-    free(dm->occupied);
+    gv_free(dm->keys);
+    gv_free(dm->vals);
+    gv_free(dm->prev_node);
+    gv_free(dm->prev_edge);
+    gv_free(dm->occupied);
 }
 
 static size_t distmap_probe(const DistMap *dm, uint64_t key)
@@ -354,13 +355,13 @@ static size_t distmap_probe(const DistMap *dm, uint64_t key)
 static int distmap_rehash(DistMap *dm)
 {
     size_t new_cap = dm->capacity * 2;
-    uint64_t *nk = (uint64_t *)malloc(new_cap * sizeof(uint64_t));
-    float *nv = (float *)malloc(new_cap * sizeof(float));
-    uint64_t *npn = (uint64_t *)malloc(new_cap * sizeof(uint64_t));
-    uint64_t *npe = (uint64_t *)malloc(new_cap * sizeof(uint64_t));
-    int *no = (int *)calloc(new_cap, sizeof(int));
+    uint64_t *nk = (uint64_t *)gv_alloc(new_cap * sizeof(uint64_t));
+    float *nv = (float *)gv_alloc(new_cap * sizeof(float));
+    uint64_t *npn = (uint64_t *)gv_alloc(new_cap * sizeof(uint64_t));
+    uint64_t *npe = (uint64_t *)gv_alloc(new_cap * sizeof(uint64_t));
+    int *no = (int *)gv_calloc(new_cap, sizeof(int));
     if (!nk || !nv || !npn || !npe || !no) {
-        free(nk); free(nv); free(npn); free(npe); free(no);
+        gv_free(nk); gv_free(nv); gv_free(npn); gv_free(npe); gv_free(no);
         return -1;
     }
     for (size_t i = 0; i < dm->capacity; i++) {
@@ -379,8 +380,8 @@ static int distmap_rehash(DistMap *dm)
             }
         }
     }
-    free(dm->keys); free(dm->vals); free(dm->prev_node);
-    free(dm->prev_edge); free(dm->occupied);
+    gv_free(dm->keys); gv_free(dm->vals); gv_free(dm->prev_node);
+    gv_free(dm->prev_edge); gv_free(dm->occupied);
     dm->keys = nk; dm->vals = nv; dm->prev_node = npn;
     dm->prev_edge = npe; dm->occupied = no;
     dm->capacity = new_cap;
@@ -474,7 +475,7 @@ typedef struct {
 static int heap_init(MinHeap *h, size_t capacity)
 {
     if (capacity < 16) capacity = 16;
-    h->data = (HeapEntry *)malloc(capacity * sizeof(HeapEntry));
+    h->data = (HeapEntry *)gv_alloc(capacity * sizeof(HeapEntry));
     if (!h->data) return -1;
     h->size = 0;
     h->capacity = capacity;
@@ -483,7 +484,7 @@ static int heap_init(MinHeap *h, size_t capacity)
 
 static void heap_free(MinHeap *h)
 {
-    free(h->data);
+    gv_free(h->data);
     h->data = NULL;
 }
 
@@ -530,7 +531,7 @@ static int heap_push(MinHeap *h, uint64_t node_id, float dist)
 {
     if (h->size >= h->capacity) {
         size_t new_cap = h->capacity * 2;
-        HeapEntry *tmp = (HeapEntry *)realloc(h->data,
+        HeapEntry *tmp = (HeapEntry *)gv_realloc(h->data,
                                               new_cap * sizeof(HeapEntry));
         if (!tmp) return -1;
         h->data = tmp;
@@ -573,7 +574,7 @@ static uint64_t *collect_all_node_ids(const GV_GraphDB *g, size_t *out_count)
         *out_count = 0;
         return NULL;
     }
-    uint64_t *ids = (uint64_t *)malloc(g->node_count * sizeof(uint64_t));
+    uint64_t *ids = (uint64_t *)gv_alloc(g->node_count * sizeof(uint64_t));
     if (!ids) {
         *out_count = 0;
         return NULL;
@@ -612,7 +613,7 @@ GV_GraphDB *graph_create(const GV_GraphDBConfig *config)
     if (cfg.node_bucket_count == 0) cfg.node_bucket_count = DEFAULT_NODE_BUCKETS;
     if (cfg.edge_bucket_count == 0) cfg.edge_bucket_count = DEFAULT_EDGE_BUCKETS;
 
-    GV_GraphDB *g = (GV_GraphDB *)calloc(1, sizeof(GV_GraphDB));
+    GV_GraphDB *g = (GV_GraphDB *)gv_calloc(1, sizeof(GV_GraphDB));
     if (!g) return NULL;
 
     g->node_bucket_count = cfg.node_bucket_count;
@@ -621,21 +622,21 @@ GV_GraphDB *graph_create(const GV_GraphDBConfig *config)
     g->next_node_id = 1;
     g->next_edge_id = 1;
 
-    g->node_buckets = (NodeEntry **)calloc(g->node_bucket_count,
+    g->node_buckets = (NodeEntry **)gv_calloc(g->node_bucket_count,
                                            sizeof(NodeEntry *));
-    g->edge_buckets = (EdgeEntry **)calloc(g->edge_bucket_count,
+    g->edge_buckets = (EdgeEntry **)gv_calloc(g->edge_bucket_count,
                                            sizeof(EdgeEntry *));
     if (!g->node_buckets || !g->edge_buckets) {
-        free(g->node_buckets);
-        free(g->edge_buckets);
-        free(g);
+        gv_free(g->node_buckets);
+        gv_free(g->edge_buckets);
+        gv_free(g);
         return NULL;
     }
 
     if (pthread_rwlock_init(&g->rwlock, NULL) != 0) {
-        free(g->node_buckets);
-        free(g->edge_buckets);
-        free(g);
+        gv_free(g->node_buckets);
+        gv_free(g->edge_buckets);
+        gv_free(g);
         return NULL;
     }
 
@@ -651,25 +652,25 @@ void graph_destroy(GV_GraphDB *g)
         while (e) {
             NodeEntry *next = e->next;
             free_node_internals(&e->node);
-            free(e);
+            gv_free(e);
             e = next;
         }
     }
-    free(g->node_buckets);
+    gv_free(g->node_buckets);
 
     for (size_t b = 0; b < g->edge_bucket_count; b++) {
         EdgeEntry *e = g->edge_buckets[b];
         while (e) {
             EdgeEntry *next = e->next;
             free_edge_internals(&e->edge);
-            free(e);
+            gv_free(e);
             e = next;
         }
     }
-    free(g->edge_buckets);
+    gv_free(g->edge_buckets);
 
     pthread_rwlock_destroy(&g->rwlock);
-    free(g);
+    gv_free(g);
 }
 
 uint64_t graph_add_node(GV_GraphDB *g, const char *label)
@@ -679,9 +680,9 @@ uint64_t graph_add_node(GV_GraphDB *g, const char *label)
     char *lbl = str_dup(label);
     if (!lbl) return 0;
 
-    NodeEntry *entry = (NodeEntry *)calloc(1, sizeof(NodeEntry));
+    NodeEntry *entry = (NodeEntry *)gv_calloc(1, sizeof(NodeEntry));
     if (!entry) {
-        free(lbl);
+        gv_free(lbl);
         return 0;
     }
 
@@ -745,7 +746,7 @@ int graph_remove_node(GV_GraphDB *g, uint64_t node_id)
             g->node_buckets[idx] = cur->next;
         }
         free_node_internals(&cur->node);
-        free(cur);
+        gv_free(cur);
         g->node_count--;
     }
 
@@ -829,9 +830,9 @@ uint64_t graph_add_edge(GV_GraphDB *g, uint64_t source, uint64_t target,
     char *lbl = str_dup(label);
     if (!lbl) return 0;
 
-    EdgeEntry *entry = (EdgeEntry *)calloc(1, sizeof(EdgeEntry));
+    EdgeEntry *entry = (EdgeEntry *)gv_calloc(1, sizeof(EdgeEntry));
     if (!entry) {
-        free(lbl);
+        gv_free(lbl);
         return 0;
     }
 
@@ -843,8 +844,8 @@ uint64_t graph_add_edge(GV_GraphDB *g, uint64_t source, uint64_t target,
         NodeEntry *tgt = find_node_entry(g, target);
         if (!src || !tgt) {
             pthread_rwlock_unlock(&g->rwlock);
-            free(lbl);
-            free(entry);
+            gv_free(lbl);
+            gv_free(entry);
             return 0;
         }
     }
@@ -1029,19 +1030,19 @@ int graph_bfs(const GV_GraphDB *g, uint64_t start, size_t max_depth,
     }
 
     size_t queue_cap = g->node_count > 64 ? g->node_count : 64;
-    uint64_t *q_ids = (uint64_t *)malloc(queue_cap * sizeof(uint64_t));
-    size_t *q_depths = (size_t *)malloc(queue_cap * sizeof(size_t));
+    uint64_t *q_ids = (uint64_t *)gv_alloc(queue_cap * sizeof(uint64_t));
+    size_t *q_depths = (size_t *)gv_alloc(queue_cap * sizeof(size_t));
     if (!q_ids || !q_depths) {
-        free(q_ids);
-        free(q_depths);
+        gv_free(q_ids);
+        gv_free(q_depths);
         pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
         return -1;
     }
 
     VisitedSet visited;
     if (visited_init(&visited, queue_cap * 2) != 0) {
-        free(q_ids);
-        free(q_depths);
+        gv_free(q_ids);
+        gv_free(q_depths);
         pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
         return -1;
     }
@@ -1072,13 +1073,13 @@ int graph_bfs(const GV_GraphDB *g, uint64_t start, size_t max_depth,
                     if (visited_insert(&visited, nid) == 1) {
                         if (q_tail >= queue_cap) {
                             size_t new_cap = queue_cap * 2;
-                            uint64_t *nqi = (uint64_t *)realloc(
+                            uint64_t *nqi = (uint64_t *)gv_realloc(
                                 q_ids, new_cap * sizeof(uint64_t));
-                            size_t *nqd = (size_t *)realloc(
+                            size_t *nqd = (size_t *)gv_realloc(
                                 q_depths, new_cap * sizeof(size_t));
                             if (!nqi || !nqd) {
-                                free(nqi ? nqi : q_ids);
-                                free(nqd ? nqd : q_depths);
+                                gv_free(nqi ? nqi : q_ids);
+                                gv_free(nqd ? nqd : q_depths);
                                 if (nqi) q_ids = nqi;
                                 if (nqd) q_depths = nqd;
                                 goto bfs_done;
@@ -1098,13 +1099,13 @@ int graph_bfs(const GV_GraphDB *g, uint64_t start, size_t max_depth,
                     if (visited_insert(&visited, nid) == 1) {
                         if (q_tail >= queue_cap) {
                             size_t new_cap = queue_cap * 2;
-                            uint64_t *nqi = (uint64_t *)realloc(
+                            uint64_t *nqi = (uint64_t *)gv_realloc(
                                 q_ids, new_cap * sizeof(uint64_t));
-                            size_t *nqd = (size_t *)realloc(
+                            size_t *nqd = (size_t *)gv_realloc(
                                 q_depths, new_cap * sizeof(size_t));
                             if (!nqi || !nqd) {
-                                free(nqi ? nqi : q_ids);
-                                free(nqd ? nqd : q_depths);
+                                gv_free(nqi ? nqi : q_ids);
+                                gv_free(nqd ? nqd : q_depths);
                                 if (nqi) q_ids = nqi;
                                 if (nqd) q_depths = nqd;
                                 goto bfs_done;
@@ -1124,8 +1125,8 @@ int graph_bfs(const GV_GraphDB *g, uint64_t start, size_t max_depth,
 
 bfs_done:
     visited_free(&visited);
-    free(q_ids);
-    free(q_depths);
+    gv_free(q_ids);
+    gv_free(q_depths);
     pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
 
     return (result_count > (int)max_count) ? (int)max_count : result_count;
@@ -1206,7 +1207,7 @@ int graph_shortest_path(const GV_GraphDB *g, uint64_t from, uint64_t to,
     }
 
     if (from == to) {
-        path->node_ids = (uint64_t *)malloc(sizeof(uint64_t));
+        path->node_ids = (uint64_t *)gv_alloc(sizeof(uint64_t));
         if (path->node_ids) {
             path->node_ids[0] = from;
         }
@@ -1306,12 +1307,12 @@ int graph_shortest_path(const GV_GraphDB *g, uint64_t from, uint64_t to,
 
     path->length = path_len;
     path->total_weight = distmap_get(&dm, to);
-    path->node_ids = (uint64_t *)malloc((path_len + 1) * sizeof(uint64_t));
-    path->edge_ids = (uint64_t *)malloc(path_len * sizeof(uint64_t));
+    path->node_ids = (uint64_t *)gv_alloc((path_len + 1) * sizeof(uint64_t));
+    path->edge_ids = (uint64_t *)gv_alloc(path_len * sizeof(uint64_t));
 
     if (!path->node_ids || (path_len > 0 && !path->edge_ids)) {
-        free(path->node_ids);
-        free(path->edge_ids);
+        gv_free(path->node_ids);
+        gv_free(path->edge_ids);
         memset(path, 0, sizeof(GV_GraphPath));
         distmap_free(&dm);
         heap_free(&heap);
@@ -1344,11 +1345,11 @@ static int build_path(const GV_GraphDB *g,
 {
     (void)g;
     out->length = depth;
-    out->node_ids = (uint64_t *)malloc((depth + 1) * sizeof(uint64_t));
-    out->edge_ids = depth > 0 ? (uint64_t *)malloc(depth * sizeof(uint64_t)) : NULL;
+    out->node_ids = (uint64_t *)gv_alloc((depth + 1) * sizeof(uint64_t));
+    out->edge_ids = depth > 0 ? (uint64_t *)gv_alloc(depth * sizeof(uint64_t)) : NULL;
     if (!out->node_ids || (depth > 0 && !out->edge_ids)) {
-        free(out->node_ids);
-        free(out->edge_ids);
+        gv_free(out->node_ids);
+        gv_free(out->edge_ids);
         memset(out, 0, sizeof(GV_GraphPath));
         return -1;
     }
@@ -1423,11 +1424,11 @@ int graph_all_paths(const GV_GraphDB *g, uint64_t from, uint64_t to,
         return -1;
     }
 
-    uint64_t *node_stack = (uint64_t *)malloc((max_depth + 2) * sizeof(uint64_t));
-    uint64_t *edge_stack = (uint64_t *)malloc((max_depth + 1) * sizeof(uint64_t));
+    uint64_t *node_stack = (uint64_t *)gv_alloc((max_depth + 2) * sizeof(uint64_t));
+    uint64_t *edge_stack = (uint64_t *)gv_alloc((max_depth + 1) * sizeof(uint64_t));
     if (!node_stack || !edge_stack) {
-        free(node_stack);
-        free(edge_stack);
+        gv_free(node_stack);
+        gv_free(edge_stack);
         pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
         return -1;
     }
@@ -1439,8 +1440,8 @@ int graph_all_paths(const GV_GraphDB *g, uint64_t from, uint64_t to,
                   node_stack, edge_stack,
                   paths, max_paths, &path_count);
 
-    free(node_stack);
-    free(edge_stack);
+    gv_free(node_stack);
+    gv_free(edge_stack);
     pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
 
     return (path_count > (int)max_paths) ? (int)max_paths : path_count;
@@ -1449,8 +1450,8 @@ int graph_all_paths(const GV_GraphDB *g, uint64_t from, uint64_t to,
 void graph_free_path(GV_GraphPath *path)
 {
     if (!path) return;
-    free(path->node_ids);
-    free(path->edge_ids);
+    gv_free(path->node_ids);
+    gv_free(path->edge_ids);
     path->node_ids = NULL;
     path->edge_ids = NULL;
     path->length = 0;
@@ -1473,21 +1474,21 @@ float graph_pagerank(const GV_GraphDB *g, uint64_t node_id,
     size_t id_count = 0;
     uint64_t *all_ids = collect_all_node_ids(g, &id_count);
     if (!all_ids || id_count == 0) {
-        free(all_ids);
+        gv_free(all_ids);
         pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
         return 0.0f;
     }
 
     size_t map_cap = id_count * 3;
-    uint64_t *map_keys = (uint64_t *)malloc(map_cap * sizeof(uint64_t));
-    int *map_occ = (int *)calloc(map_cap, sizeof(int));
-    size_t *map_idx = (size_t *)malloc(map_cap * sizeof(size_t));
-    float *scores = (float *)malloc(id_count * sizeof(float));
-    float *new_scores = (float *)malloc(id_count * sizeof(float));
+    uint64_t *map_keys = (uint64_t *)gv_alloc(map_cap * sizeof(uint64_t));
+    int *map_occ = (int *)gv_calloc(map_cap, sizeof(int));
+    size_t *map_idx = (size_t *)gv_alloc(map_cap * sizeof(size_t));
+    float *scores = (float *)gv_alloc(id_count * sizeof(float));
+    float *new_scores = (float *)gv_alloc(id_count * sizeof(float));
 
     if (!map_keys || !map_occ || !map_idx || !scores || !new_scores) {
-        free(all_ids); free(map_keys); free(map_occ);
-        free(map_idx); free(scores); free(new_scores);
+        gv_free(all_ids); gv_free(map_keys); gv_free(map_occ);
+        gv_free(map_idx); gv_free(scores); gv_free(new_scores);
         pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
         return 0.0f;
     }
@@ -1547,12 +1548,12 @@ float graph_pagerank(const GV_GraphDB *g, uint64_t node_id,
         result = scores[target_idx];
     }
 
-    free(all_ids);
-    free(map_keys);
-    free(map_occ);
-    free(map_idx);
-    free(scores);
-    free(new_scores);
+    gv_free(all_ids);
+    gv_free(map_keys);
+    gv_free(map_occ);
+    gv_free(map_idx);
+    gv_free(scores);
+    gv_free(new_scores);
     pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
     return result;
 }
@@ -1616,12 +1617,12 @@ int graph_connected_components(const GV_GraphDB *g,
     }
 
     size_t map_cap = id_count * 3;
-    uint64_t *map_keys = (uint64_t *)malloc(map_cap * sizeof(uint64_t));
-    int *map_occ = (int *)calloc(map_cap, sizeof(int));
-    size_t *map_idx = (size_t *)malloc(map_cap * sizeof(size_t));
+    uint64_t *map_keys = (uint64_t *)gv_alloc(map_cap * sizeof(uint64_t));
+    int *map_occ = (int *)gv_calloc(map_cap, sizeof(int));
+    size_t *map_idx = (size_t *)gv_alloc(map_cap * sizeof(size_t));
 
     if (!map_keys || !map_occ || !map_idx) {
-        free(all_ids); free(map_keys); free(map_occ); free(map_idx);
+        gv_free(all_ids); gv_free(map_keys); gv_free(map_occ); gv_free(map_idx);
         pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
         return -1;
     }
@@ -1639,9 +1640,9 @@ int graph_connected_components(const GV_GraphDB *g,
         }
     }
 
-    uint64_t *queue = (uint64_t *)malloc(id_count * sizeof(uint64_t));
+    uint64_t *queue = (uint64_t *)gv_alloc(id_count * sizeof(uint64_t));
     if (!queue) {
-        free(all_ids); free(map_keys); free(map_occ); free(map_idx);
+        gv_free(all_ids); gv_free(map_keys); gv_free(map_occ); gv_free(map_idx);
         pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
         return -1;
     }
@@ -1682,11 +1683,11 @@ int graph_connected_components(const GV_GraphDB *g,
         }
     }
 
-    free(all_ids);
-    free(map_keys);
-    free(map_occ);
-    free(map_idx);
-    free(queue);
+    gv_free(all_ids);
+    gv_free(map_keys);
+    gv_free(map_occ);
+    gv_free(map_idx);
+    gv_free(queue);
     pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
     return (int)comp_id;
 }
@@ -1709,7 +1710,7 @@ float graph_clustering_coefficient(const GV_GraphDB *g, uint64_t node_id)
         return 0.0f;
     }
 
-    uint64_t *neighbors = (uint64_t *)malloc(total_refs * sizeof(uint64_t));
+    uint64_t *neighbors = (uint64_t *)gv_alloc(total_refs * sizeof(uint64_t));
     if (!neighbors) {
         pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
         return 0.0f;
@@ -1717,7 +1718,7 @@ float graph_clustering_coefficient(const GV_GraphDB *g, uint64_t node_id)
 
     VisitedSet seen;
     if (visited_init(&seen, total_refs * 2 + 16) != 0) {
-        free(neighbors);
+        gv_free(neighbors);
         pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
         return 0.0f;
     }
@@ -1738,14 +1739,14 @@ float graph_clustering_coefficient(const GV_GraphDB *g, uint64_t node_id)
     visited_free(&seen);
 
     if (k < 2) {
-        free(neighbors);
+        gv_free(neighbors);
         pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
         return 0.0f;
     }
 
     VisitedSet nbr_set;
     if (visited_init(&nbr_set, k * 3 + 16) != 0) {
-        free(neighbors);
+        gv_free(neighbors);
         pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
         return 0.0f;
     }
@@ -1780,7 +1781,7 @@ float graph_clustering_coefficient(const GV_GraphDB *g, uint64_t node_id)
     float cc = (possible > 0) ? (float)edge_count_among / (float)possible : 0.0f;
 
     visited_free(&nbr_set);
-    free(neighbors);
+    gv_free(neighbors);
     pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
     return cc;
 }
@@ -1927,13 +1928,13 @@ GV_GraphDB *graph_load(const char *path)
 
         uint32_t prop_count;
         if (read_u32(f, &prop_count) != 0) {
-            free(label);
+            gv_free(label);
             goto load_fail;
         }
 
-        NodeEntry *entry = (NodeEntry *)calloc(1, sizeof(NodeEntry));
+        NodeEntry *entry = (NodeEntry *)gv_calloc(1, sizeof(NodeEntry));
         if (!entry) {
-            free(label);
+            gv_free(label);
             goto load_fail;
         }
         entry->node.node_id = nid;
@@ -1951,20 +1952,20 @@ GV_GraphDB *graph_load(const char *path)
             char *key = read_string(f);
             char *val = read_string(f);
             if (!key || !val) {
-                free(key); free(val);
+                gv_free(key); gv_free(val);
                 free_node_internals(&entry->node);
-                free(entry);
+                gv_free(entry);
                 goto load_fail;
             }
             if (set_prop(&entry->node.properties, &entry->node.prop_count,
                          key, val) != 0) {
-                free(key); free(val);
+                gv_free(key); gv_free(val);
                 free_node_internals(&entry->node);
-                free(entry);
+                gv_free(entry);
                 goto load_fail;
             }
-            free(key);
-            free(val);
+            gv_free(key);
+            gv_free(val);
         }
 
         size_t idx = hash_u64(nid, g->node_bucket_count);
@@ -1985,19 +1986,19 @@ GV_GraphDB *graph_load(const char *path)
 
         float weight;
         if (read_f32(f, &weight) != 0) {
-            free(label);
+            gv_free(label);
             goto load_fail;
         }
 
         uint32_t prop_count;
         if (read_u32(f, &prop_count) != 0) {
-            free(label);
+            gv_free(label);
             goto load_fail;
         }
 
-        EdgeEntry *entry = (EdgeEntry *)calloc(1, sizeof(EdgeEntry));
+        EdgeEntry *entry = (EdgeEntry *)gv_calloc(1, sizeof(EdgeEntry));
         if (!entry) {
-            free(label);
+            gv_free(label);
             goto load_fail;
         }
         entry->edge.edge_id = eid;
@@ -2012,20 +2013,20 @@ GV_GraphDB *graph_load(const char *path)
             char *key = read_string(f);
             char *val = read_string(f);
             if (!key || !val) {
-                free(key); free(val);
+                gv_free(key); gv_free(val);
                 free_edge_internals(&entry->edge);
-                free(entry);
+                gv_free(entry);
                 goto load_fail;
             }
             if (set_prop(&entry->edge.properties, &entry->edge.prop_count,
                          key, val) != 0) {
-                free(key); free(val);
+                gv_free(key); gv_free(val);
                 free_edge_internals(&entry->edge);
-                free(entry);
+                gv_free(entry);
                 goto load_fail;
             }
-            free(key);
-            free(val);
+            gv_free(key);
+            gv_free(val);
         }
 
         size_t idx = hash_u64(eid, g->edge_bucket_count);

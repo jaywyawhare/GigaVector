@@ -17,6 +17,8 @@
  */
 
 #include "search/phased_ranking.h"
+#include "core/scope.h"
+#include "core/memory.h"
 #include "storage/database.h"
 #include "search/distance.h"
 #include "search/ranking.h"
@@ -113,15 +115,17 @@ static size_t result_to_soa_index(const GV_Database *db, const GV_SearchResult *
 GV_Pipeline *pipeline_create(const void *db) {
     if (!db) return NULL;
 
-    GV_Pipeline *pipe = calloc(1, sizeof(GV_Pipeline));
+    const GV_Database *database = (const GV_Database *)db;
+    GV_Pipeline *pipe =
+        (GV_Pipeline *)gv_db_calloc((GV_Database *)database, 1, sizeof(GV_Pipeline));
     if (!pipe) return NULL;
 
-    pipe->db = (const GV_Database *)db;
+    pipe->db = database;
     pipe->phase_count = 0;
     pipe->total_latency_ms = 0.0;
 
     if (pthread_mutex_init(&pipe->mutex, NULL) != 0) {
-        free(pipe);
+        gv_db_free((GV_Database *)database, pipe);
         return NULL;
     }
 
@@ -130,8 +134,13 @@ GV_Pipeline *pipeline_create(const void *db) {
 
 void pipeline_destroy(GV_Pipeline *pipe) {
     if (!pipe) return;
+    GV_Database *db = (GV_Database *)pipe->db;
     pthread_mutex_destroy(&pipe->mutex);
-    free(pipe);
+    if (db != NULL) {
+        gv_db_free(db, pipe);
+    } else {
+        gv_free(pipe);
+    }
 }
 
 int pipeline_add_phase(GV_Pipeline *pipe, const GV_PhaseConfig *config) {
@@ -181,25 +190,34 @@ size_t pipeline_phase_count(const GV_Pipeline *pipe) {
 static int execute_ann_phase(const GV_Database *db,
                              const GV_PhaseConfig *config,
                              const float *query, size_t dimension,
-                             Candidate **out_candidates) {
+                             Candidate **out_candidates,
+                             int *out_on_heap) {
     (void)dimension;
     size_t fetch_k = config->output_k;
     if (fetch_k == 0) fetch_k = 100;
 
-    GV_SearchResult *search_res = calloc(fetch_k, sizeof(GV_SearchResult));
+    GV_SearchResult *search_res =
+        (GV_SearchResult *)gv_tls_calloc(fetch_k, sizeof(GV_SearchResult));
+    int search_on_heap = 0;
+    if (!search_res) {
+        search_res = gv_calloc(fetch_k, sizeof(GV_SearchResult));
+        search_on_heap = 1;
+    }
     if (!search_res) return -1;
 
     GV_DistanceType dist = (GV_DistanceType)config->params.ann.distance_type;
 
     int found = db_search(db, query, fetch_k, search_res, dist);
     if (found <= 0) {
-        free(search_res);
+        gv_tls_free_or_heap(search_res, search_on_heap);
         return (found == 0) ? 0 : -1;
     }
 
-    Candidate *candidates = malloc((size_t)found * sizeof(Candidate));
+    int candidates_on_heap = 0;
+    Candidate *candidates = (Candidate *)gv_tls_alloc_or_heap(
+        (size_t)found * sizeof(Candidate), sizeof(Candidate), &candidates_on_heap);
     if (!candidates) {
-        free(search_res);
+        gv_tls_free_or_heap(search_res, search_on_heap);
         return -1;
     }
 
@@ -214,15 +232,18 @@ static int execute_ann_phase(const GV_Database *db,
         valid++;
     }
 
-    free(search_res);
+    gv_tls_free_or_heap(search_res, search_on_heap);
 
     if (valid == 0) {
-        free(candidates);
+        gv_tls_free_or_heap(candidates, candidates_on_heap);
         *out_candidates = NULL;
         return 0;
     }
 
     *out_candidates = candidates;
+    if (out_on_heap) {
+        *out_on_heap = candidates_on_heap;
+    }
     return (int)valid;
 }
 
@@ -270,18 +291,25 @@ static int execute_rerank_mmr_phase(const GV_Database *db,
                                     int phase_id,
                                     Candidate *candidates, size_t count,
                                     Candidate **out_candidates,
-                                    size_t *out_count) {
+                                    size_t *out_count,
+                                    int *out_on_heap) {
     size_t keep = config->output_k;
     if (keep == 0 || keep > count) keep = count;
 
-    float  *cand_vectors   = malloc(count * dimension * sizeof(float));
-    size_t *cand_indices   = malloc(count * sizeof(size_t));
-    float  *cand_distances = malloc(count * sizeof(float));
+    int cand_on_heap = 0;
+    float  *cand_vectors = (float *)gv_tls_alloc_or_heap(
+        count * dimension * sizeof(float), sizeof(float), &cand_on_heap);
+    int idx_on_heap = 0;
+    size_t *cand_indices = (size_t *)gv_tls_alloc_or_heap(
+        count * sizeof(size_t), sizeof(size_t), &idx_on_heap);
+    int dist_on_heap = 0;
+    float  *cand_distances = (float *)gv_tls_alloc_or_heap(
+        count * sizeof(float), sizeof(float), &dist_on_heap);
 
     if (!cand_vectors || !cand_indices || !cand_distances) {
-        free(cand_vectors);
-        free(cand_indices);
-        free(cand_distances);
+        gv_tls_free_or_heap(cand_vectors, cand_on_heap);
+        gv_tls_free_or_heap(cand_indices, idx_on_heap);
+        gv_tls_free_or_heap(cand_distances, dist_on_heap);
         return -1;
     }
 
@@ -297,9 +325,9 @@ static int execute_rerank_mmr_phase(const GV_Database *db,
     }
 
     if (valid == 0) {
-        free(cand_vectors);
-        free(cand_indices);
-        free(cand_distances);
+        gv_tls_free_or_heap(cand_vectors, cand_on_heap);
+        gv_tls_free_or_heap(cand_indices, idx_on_heap);
+        gv_tls_free_or_heap(cand_distances, dist_on_heap);
         *out_count = 0;
         return 0;
     }
@@ -310,11 +338,13 @@ static int execute_rerank_mmr_phase(const GV_Database *db,
     mmr_config_init(&mmr_cfg);
     mmr_cfg.lambda = config->params.mmr.lambda;
 
-    GV_MMRResult *mmr_results = malloc(keep * sizeof(GV_MMRResult));
+    int mmr_on_heap = 0;
+    GV_MMRResult *mmr_results = (GV_MMRResult *)gv_tls_alloc_or_heap(
+        keep * sizeof(GV_MMRResult), sizeof(GV_MMRResult), &mmr_on_heap);
     if (!mmr_results) {
-        free(cand_vectors);
-        free(cand_indices);
-        free(cand_distances);
+        gv_tls_free_or_heap(cand_vectors, cand_on_heap);
+        gv_tls_free_or_heap(cand_indices, idx_on_heap);
+        gv_tls_free_or_heap(cand_distances, dist_on_heap);
         return -1;
     }
 
@@ -323,18 +353,20 @@ static int execute_rerank_mmr_phase(const GV_Database *db,
                                    cand_distances, valid,
                                    keep, &mmr_cfg, mmr_results);
 
-    free(cand_vectors);
-    free(cand_indices);
-    free(cand_distances);
+    gv_tls_free_or_heap(cand_vectors, cand_on_heap);
+    gv_tls_free_or_heap(cand_indices, idx_on_heap);
+    gv_tls_free_or_heap(cand_distances, dist_on_heap);
 
     if (mmr_count < 0) {
-        free(mmr_results);
+        gv_tls_free_or_heap(mmr_results, mmr_on_heap);
         return -1;
     }
 
-    Candidate *new_candidates = malloc((size_t)mmr_count * sizeof(Candidate));
+    int new_on_heap = 0;
+    Candidate *new_candidates = (Candidate *)gv_tls_alloc_or_heap(
+        (size_t)mmr_count * sizeof(Candidate), sizeof(Candidate), &new_on_heap);
     if (!new_candidates) {
-        free(mmr_results);
+        gv_tls_free_or_heap(mmr_results, mmr_on_heap);
         return -1;
     }
 
@@ -344,10 +376,13 @@ static int execute_rerank_mmr_phase(const GV_Database *db,
         new_candidates[i].phase_id = phase_id;
     }
 
-    free(mmr_results);
+    gv_tls_free_or_heap(mmr_results, mmr_on_heap);
 
     *out_candidates = new_candidates;
     *out_count = (size_t)mmr_count;
+    if (out_on_heap) {
+        *out_on_heap = new_on_heap;
+    }
     return 0;
 }
 
@@ -448,6 +483,7 @@ int pipeline_execute(GV_Pipeline *pipe, const float *query,
 
     Candidate *candidates = NULL;
     size_t     cand_count = 0;
+    int        candidates_on_heap = 0;
     int        rc = 0;
 
     for (size_t p = 0; p < pipe->phase_count; p++) {
@@ -461,12 +497,15 @@ int pipeline_execute(GV_Pipeline *pipe, const float *query,
         switch (cfg->type) {
         case GV_PHASE_ANN: {
             Candidate *ann_cands = NULL;
+            int ann_on_heap = 0;
             int ann_count = execute_ann_phase(pipe->db, cfg, query, dimension,
-                                              &ann_cands);
+                                              &ann_cands, &ann_on_heap);
             if (ann_count < 0) {
                 rc = -1;
             } else {
+                gv_tls_free_or_heap(candidates, candidates_on_heap);
                 candidates = ann_cands;
+                candidates_on_heap = ann_on_heap;
                 cand_count = (size_t)ann_count;
                 pipe->stats[p].input_count = 0; /* ANN has no input candidates. */
             }
@@ -489,13 +528,16 @@ int pipeline_execute(GV_Pipeline *pipe, const float *query,
             if (!candidates || cand_count == 0) break;
             Candidate *new_cands = NULL;
             size_t new_count = 0;
+            int new_on_heap = 0;
             if (execute_rerank_mmr_phase(pipe->db, cfg, query, dimension,
                                          (int)p, candidates, cand_count,
-                                         &new_cands, &new_count) < 0) {
+                                         &new_cands, &new_count,
+                                         &new_on_heap) < 0) {
                 rc = -1;
             } else {
-                free(candidates);
+                gv_tls_free_or_heap(candidates, candidates_on_heap);
                 candidates = new_cands;
+                candidates_on_heap = new_on_heap;
                 cand_count = new_count;
             }
             break;
@@ -551,7 +593,7 @@ int pipeline_execute(GV_Pipeline *pipe, const float *query,
         result_count = (int)copy_count;
     }
 
-    free(candidates);
+    gv_tls_free_or_heap(candidates, candidates_on_heap);
     pthread_mutex_unlock(&pipe->mutex);
 
     return (rc < 0) ? -1 : result_count;
@@ -569,15 +611,15 @@ int pipeline_get_stats(const GV_Pipeline *pipe, GV_PipelineStats *stats) {
         return 0;
     }
 
-    stats->phase_input_counts  = calloc(n, sizeof(size_t));
-    stats->phase_output_counts = calloc(n, sizeof(size_t));
-    stats->phase_latencies_ms  = calloc(n, sizeof(double));
+    stats->phase_input_counts  = gv_calloc(n, sizeof(size_t));
+    stats->phase_output_counts = gv_calloc(n, sizeof(size_t));
+    stats->phase_latencies_ms  = gv_calloc(n, sizeof(double));
 
     if (!stats->phase_input_counts || !stats->phase_output_counts ||
         !stats->phase_latencies_ms) {
-        free(stats->phase_input_counts);
-        free(stats->phase_output_counts);
-        free(stats->phase_latencies_ms);
+        gv_free(stats->phase_input_counts);
+        gv_free(stats->phase_output_counts);
+        gv_free(stats->phase_latencies_ms);
         memset(stats, 0, sizeof(*stats));
         return -1;
     }
@@ -597,9 +639,9 @@ int pipeline_get_stats(const GV_Pipeline *pipe, GV_PipelineStats *stats) {
 void pipeline_free_stats(GV_PipelineStats *stats) {
     if (!stats) return;
 
-    free(stats->phase_input_counts);
-    free(stats->phase_output_counts);
-    free(stats->phase_latencies_ms);
+    gv_free(stats->phase_input_counts);
+    gv_free(stats->phase_output_counts);
+    gv_free(stats->phase_latencies_ms);
 
     stats->phase_input_counts  = NULL;
     stats->phase_output_counts = NULL;

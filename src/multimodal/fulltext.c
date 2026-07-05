@@ -5,6 +5,7 @@
  */
 
 #include "multimodal/fulltext.h"
+#include "core/memory.h"
 #include "core/heap.h"
 #include "core/utils.h"
 
@@ -555,14 +556,14 @@ static void ft_token_list_init(FT_TokenList *tl) {
 }
 
 static void ft_token_list_free(FT_TokenList *tl) {
-    free(tl->tokens);
+    gv_free(tl->tokens);
     memset(tl, 0, sizeof(*tl));
 }
 
 static int ft_token_list_push(FT_TokenList *tl, const char *text, size_t pos) {
     if (tl->count >= tl->capacity) {
         size_t new_cap = tl->capacity == 0 ? 32 : tl->capacity * 2;
-        FT_Token *buf = realloc(tl->tokens, new_cap * sizeof(FT_Token));
+        FT_Token *buf = gv_realloc(tl->tokens, new_cap * sizeof(FT_Token));
         if (!buf) return -1;
         tl->tokens = buf;
         tl->capacity = new_cap;
@@ -664,13 +665,13 @@ static FT_PostingList *ft_get_or_create_posting_list(GV_FTIndex *idx, const char
         pl = pl->next;
     }
 
-    pl = calloc(1, sizeof(FT_PostingList));
+    pl = gv_calloc(1, sizeof(FT_PostingList));
     if (!pl) return NULL;
     pl->term = gv_dup_cstr(term);
-    if (!pl->term) { free(pl); return NULL; }
+    if (!pl->term) { gv_free(pl); return NULL; }
 
-    pl->postings = malloc(FT_INITIAL_POSTING_CAP * sizeof(FT_Posting));
-    if (!pl->postings) { free(pl->term); free(pl); return NULL; }
+    pl->postings = gv_alloc(FT_INITIAL_POSTING_CAP * sizeof(FT_Posting));
+    if (!pl->postings) { gv_free(pl->term); gv_free(pl); return NULL; }
     pl->capacity = FT_INITIAL_POSTING_CAP;
 
     pl->next = idx->term_buckets[bucket];
@@ -697,7 +698,7 @@ static FT_DocInfo *ft_get_or_create_doc_info(GV_FTIndex *idx, size_t doc_id) {
         di = di->next;
     }
 
-    di = calloc(1, sizeof(FT_DocInfo));
+    di = gv_calloc(1, sizeof(FT_DocInfo));
     if (!di) return NULL;
     di->doc_id = doc_id;
     di->next = idx->doc_buckets[bucket];
@@ -715,7 +716,7 @@ static int ft_add_posting(FT_PostingList *pl, size_t doc_id, size_t position,
                 FT_PositionList *pos = &pl->postings[i].pos;
                 if (pos->count >= pos->capacity) {
                     size_t new_cap = pos->capacity == 0 ? FT_INITIAL_POS_CAP : pos->capacity * 2;
-                    size_t *buf = realloc(pos->positions, new_cap * sizeof(size_t));
+                    size_t *buf = gv_realloc(pos->positions, new_cap * sizeof(size_t));
                     if (!buf) return -1;
                     pos->positions = buf;
                     pos->capacity = new_cap;
@@ -728,7 +729,7 @@ static int ft_add_posting(FT_PostingList *pl, size_t doc_id, size_t position,
 
     if (pl->count >= pl->capacity) {
         size_t new_cap = pl->capacity * 2;
-        FT_Posting *buf = realloc(pl->postings, new_cap * sizeof(FT_Posting));
+        FT_Posting *buf = gv_realloc(pl->postings, new_cap * sizeof(FT_Posting));
         if (!buf) return -1;
         pl->postings = buf;
         pl->capacity = new_cap;
@@ -740,7 +741,7 @@ static int ft_add_posting(FT_PostingList *pl, size_t doc_id, size_t position,
     p->term_freq = 1;
 
     if (store_positions) {
-        p->pos.positions = malloc(FT_INITIAL_POS_CAP * sizeof(size_t));
+        p->pos.positions = gv_alloc(FT_INITIAL_POS_CAP * sizeof(size_t));
         if (!p->pos.positions) return -1;
         p->pos.capacity = FT_INITIAL_POS_CAP;
         p->pos.positions[0] = position;
@@ -754,7 +755,7 @@ static int ft_add_posting(FT_PostingList *pl, size_t doc_id, size_t position,
 static void ft_remove_doc_from_posting_list(FT_PostingList *pl, size_t doc_id) {
     for (size_t i = 0; i < pl->count; i++) {
         if (pl->postings[i].doc_id == doc_id) {
-            free(pl->postings[i].pos.positions);
+            gv_free(pl->postings[i].pos.positions);
             for (size_t j = i; j < pl->count - 1; j++) {
                 pl->postings[j] = pl->postings[j + 1];
             }
@@ -765,7 +766,7 @@ static void ft_remove_doc_from_posting_list(FT_PostingList *pl, size_t doc_id) {
 }
 
 static void ft_invalidate_block_maxes(FT_PostingList *pl) {
-    free(pl->bmax.block_maxes);
+    gv_free(pl->bmax.block_maxes);
     pl->bmax.block_maxes = NULL;
     pl->bmax.block_count = 0;
 }
@@ -778,9 +779,9 @@ static void ft_build_block_maxes(FT_PostingList *pl, size_t block_size,
                                   const GV_FTIndex *idx) {
     if (!pl || pl->count == 0 || block_size == 0) return;
 
-    free(pl->bmax.block_maxes);
+    gv_free(pl->bmax.block_maxes);
     size_t nblocks = (pl->count + block_size - 1) / block_size;
-    pl->bmax.block_maxes = malloc(nblocks * sizeof(float));
+    pl->bmax.block_maxes = gv_alloc(nblocks * sizeof(float));
     if (!pl->bmax.block_maxes) { pl->bmax.block_count = 0; return; }
     pl->bmax.block_count = nblocks;
 
@@ -828,13 +829,13 @@ static float ft_compute_bm25_term(size_t term_freq, size_t doc_length,
 }
 
 GV_FTIndex *ft_create(const GV_FTConfig *config) {
-    GV_FTIndex *idx = calloc(1, sizeof(GV_FTIndex));
+    GV_FTIndex *idx = gv_calloc(1, sizeof(GV_FTIndex));
     if (!idx) return NULL;
 
     idx->config = config ? *config : DEFAULT_FT_CONFIG;
 
     if (pthread_rwlock_init(&idx->rwlock, NULL) != 0) {
-        free(idx);
+        gv_free(idx);
         return NULL;
     }
 
@@ -849,12 +850,12 @@ void ft_destroy(GV_FTIndex *idx) {
         while (pl) {
             FT_PostingList *next = pl->next;
             for (size_t j = 0; j < pl->count; j++) {
-                free(pl->postings[j].pos.positions);
+                gv_free(pl->postings[j].pos.positions);
             }
-            free(pl->postings);
-            free(pl->bmax.block_maxes);
-            free(pl->term);
-            free(pl);
+            gv_free(pl->postings);
+            gv_free(pl->bmax.block_maxes);
+            gv_free(pl->term);
+            gv_free(pl);
             pl = next;
         }
     }
@@ -863,13 +864,13 @@ void ft_destroy(GV_FTIndex *idx) {
         FT_DocInfo *di = idx->doc_buckets[i];
         while (di) {
             FT_DocInfo *next = di->next;
-            free(di);
+            gv_free(di);
             di = next;
         }
     }
 
     pthread_rwlock_destroy(&idx->rwlock);
-    free(idx);
+    gv_free(idx);
 }
 
 int ft_add_document(GV_FTIndex *idx, size_t doc_id, const char *text) {
@@ -931,7 +932,7 @@ int ft_remove_document(GV_FTIndex *idx, size_t doc_id) {
 
     idx->total_doc_length -= di->doc_length;
     idx->total_documents--;
-    free(di);
+    gv_free(di);
 
     for (size_t i = 0; i < FT_TERM_HASH_BUCKETS; i++) {
         FT_PostingList *pl = idx->term_buckets[i];
@@ -963,13 +964,13 @@ typedef struct {
 } FT_MinHeap;
 
 static void ft_heap_init(FT_MinHeap *h, size_t capacity) {
-    h->entries = malloc(capacity * sizeof(FT_HeapEntry));
+    h->entries = gv_alloc(capacity * sizeof(FT_HeapEntry));
     h->count = 0;
     h->capacity = capacity;
 }
 
 static void ft_heap_free(FT_MinHeap *h) {
-    free(h->entries);
+    gv_free(h->entries);
     h->count = 0;
     h->capacity = 0;
 }
@@ -1179,7 +1180,7 @@ static int ft_search_naive(const GV_FTIndex *idx, const FT_TokenList *query_toke
     }
 
     size_t score_cap = 256;
-    FT_DocScore *scores = calloc(score_cap, sizeof(FT_DocScore));
+    FT_DocScore *scores = gv_calloc(score_cap, sizeof(FT_DocScore));
     if (!scores) return -1;
     size_t score_count = 0;
 
@@ -1209,8 +1210,8 @@ static int ft_search_naive(const GV_FTIndex *idx, const FT_TokenList *query_toke
             if (!found) {
                 if (score_count >= score_cap) {
                     score_cap *= 2;
-                    FT_DocScore *tmp = realloc(scores, score_cap * sizeof(FT_DocScore));
-                    if (!tmp) { free(scores); return -1; }
+                    FT_DocScore *tmp = gv_realloc(scores, score_cap * sizeof(FT_DocScore));
+                    if (!tmp) { gv_free(scores); return -1; }
                     scores = tmp;
                 }
                 scores[score_count].doc_id = doc_id;
@@ -1226,7 +1227,7 @@ static int ft_search_naive(const GV_FTIndex *idx, const FT_TokenList *query_toke
         }
     }
 
-    free(scores);
+    gv_free(scores);
     return 0;
 }
 
@@ -1272,7 +1273,7 @@ int ft_search(const GV_FTIndex *idx, const char *query, size_t limit,
             if (!found) unique_terms[unique_count++] = tokens.tokens[i].text;
         }
 
-        FT_TermCursor *cursors = calloc(unique_count, sizeof(FT_TermCursor));
+        FT_TermCursor *cursors = gv_calloc(unique_count, sizeof(FT_TermCursor));
         size_t ncursors = 0;
         if (cursors) {
             for (size_t i = 0; i < unique_count; i++) {
@@ -1288,7 +1289,7 @@ int ft_search(const GV_FTIndex *idx, const char *query, size_t limit,
             if (ncursors > 0) {
                 ft_search_blockmax_wand(idx, cursors, ncursors, limit, &heap);
             }
-            free(cursors);
+            gv_free(cursors);
         }
     } else {
         ft_search_naive(idx, &tokens, limit, &heap);
@@ -1296,7 +1297,7 @@ int ft_search(const GV_FTIndex *idx, const char *query, size_t limit,
 
     int count = (int)heap.count;
 
-    FT_HeapEntry *sorted = malloc(heap.count * sizeof(FT_HeapEntry));
+    FT_HeapEntry *sorted = gv_alloc(heap.count * sizeof(FT_HeapEntry));
     if (sorted) {
         memcpy(sorted, heap.entries, heap.count * sizeof(FT_HeapEntry));
         for (size_t i = 0; i < (size_t)count; i++) {
@@ -1314,7 +1315,7 @@ int ft_search(const GV_FTIndex *idx, const char *query, size_t limit,
             results[i].match_positions = NULL;
             results[i].match_count = 0;
         }
-        free(sorted);
+        gv_free(sorted);
     } else {
         for (int i = 0; i < count; i++) {
             results[i].doc_id = heap.entries[i].doc_id;
@@ -1381,8 +1382,8 @@ static int ft_check_phrase(const GV_FTIndex *idx, size_t doc_id,
             if (match_positions_out) {
                 if (match_cnt >= match_cap) {
                     size_t new_cap = match_cap == 0 ? 8 : match_cap * 2;
-                    size_t *tmp = realloc(match_starts, new_cap * sizeof(size_t));
-                    if (!tmp) { free(match_starts); return 0; }
+                    size_t *tmp = gv_realloc(match_starts, new_cap * sizeof(size_t));
+                    if (!tmp) { gv_free(match_starts); return 0; }
                     match_starts = tmp;
                     match_cap = new_cap;
                 }
@@ -1400,7 +1401,7 @@ static int ft_check_phrase(const GV_FTIndex *idx, size_t doc_id,
         return 1;
     }
 
-    free(match_starts);
+    gv_free(match_starts);
     return 0;
 }
 
@@ -1448,7 +1449,7 @@ int ft_search_phrase(const GV_FTIndex *idx, const char *phrase, size_t limit,
     }
 
     size_t result_count = 0;
-    FT_DocScore *candidates = malloc(rarest_count * sizeof(FT_DocScore));
+    FT_DocScore *candidates = gv_alloc(rarest_count * sizeof(FT_DocScore));
     if (!candidates) {
         pthread_rwlock_unlock((pthread_rwlock_t *)&idx->rwlock);
         ft_token_list_free(&tokens);
@@ -1492,7 +1493,7 @@ int ft_search_phrase(const GV_FTIndex *idx, const char *phrase, size_t limit,
                 results[result_count].match_count = match_cnt;
                 result_count++;
             } else {
-                free(match_pos);
+                gv_free(match_pos);
             }
         }
     }
@@ -1509,7 +1510,7 @@ int ft_search_phrase(const GV_FTIndex *idx, const char *phrase, size_t limit,
         }
     }
 
-    free(candidates);
+    gv_free(candidates);
     pthread_rwlock_unlock((pthread_rwlock_t *)&idx->rwlock);
     ft_token_list_free(&tokens);
     return (int)result_count;
@@ -1518,7 +1519,7 @@ int ft_search_phrase(const GV_FTIndex *idx, const char *phrase, size_t limit,
 void ft_free_results(GV_FTResult *results, size_t count) {
     if (!results) return;
     for (size_t i = 0; i < count; i++) {
-        free(results[i].match_positions);
+        gv_free(results[i].match_positions);
         results[i].match_positions = NULL;
         results[i].match_count = 0;
     }
@@ -1669,20 +1670,20 @@ GV_FTIndex *ft_load(const char *path) {
         if (fread(&term_len, sizeof(term_len), 1, fp) != 1) break;
         if (term_len == 0) break;
 
-        char *term = malloc((size_t)term_len + 1);
+        char *term = gv_alloc((size_t)term_len + 1);
         if (!term) break;
-        if (fread(term, 1, term_len, fp) != term_len) { free(term); break; }
+        if (fread(term, 1, term_len, fp) != term_len) { gv_free(term); break; }
         term[term_len] = '\0';
 
         uint64_t pcount;
-        if (fread(&pcount, sizeof(pcount), 1, fp) != 1) { free(term); break; }
+        if (fread(&pcount, sizeof(pcount), 1, fp) != 1) { gv_free(term); break; }
 
         FT_PostingList *pl = ft_get_or_create_posting_list(idx, term);
-        free(term);
+        gv_free(term);
         if (!pl) break;
 
         if ((size_t)pcount > pl->capacity) {
-            FT_Posting *buf = realloc(pl->postings, (size_t)pcount * sizeof(FT_Posting));
+            FT_Posting *buf = gv_realloc(pl->postings, (size_t)pcount * sizeof(FT_Posting));
             if (!buf) break;
             pl->postings = buf;
             pl->capacity = (size_t)pcount;
@@ -1700,7 +1701,7 @@ GV_FTIndex *ft_load(const char *path) {
             p->term_freq = (size_t)tf;
 
             if (pcnt > 0) {
-                p->pos.positions = malloc((size_t)pcnt * sizeof(size_t));
+                p->pos.positions = gv_alloc((size_t)pcnt * sizeof(size_t));
                 if (!p->pos.positions) goto done;
                 p->pos.capacity = (size_t)pcnt;
                 for (uint64_t k = 0; k < pcnt; k++) {

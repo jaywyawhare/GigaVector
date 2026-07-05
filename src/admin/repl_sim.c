@@ -4,6 +4,7 @@
  */
 
 #include "admin/repl_sim.h"
+#include "core/memory.h"
 #include "admin/repl_transport.h"
 
 #include <stdlib.h>
@@ -41,13 +42,13 @@ static int repl_sim_should_drop_enqueue(GV_ReplSim *sim) {
 
 static void repl_sim_free_msg(ReplSimMsg *msg) {
     if (!msg) return;
-    free(msg->follower_id);
-    free(msg->record);
+    gv_free(msg->follower_id);
+    gv_free(msg->record);
     memset(msg, 0, sizeof(*msg));
 }
 
 GV_ReplSim *repl_sim_create(uint64_t rng_seed) {
-    GV_ReplSim *sim = calloc(1, sizeof(*sim));
+    GV_ReplSim *sim = gv_calloc(1, sizeof(*sim));
     if (!sim) return NULL;
     sim->rng_state = rng_seed ? rng_seed : 0x475652454c4cULL;
     return sim;
@@ -58,7 +59,7 @@ void repl_sim_destroy(GV_ReplSim *sim) {
     for (size_t i = 0; i < sim->msg_count; i++) {
         repl_sim_free_msg(&sim->msgs[i]);
     }
-    free(sim);
+    gv_free(sim);
 }
 
 void repl_sim_set_faults(GV_ReplSim *sim, const GV_ReplSimFaultConfig *faults) {
@@ -102,9 +103,9 @@ int repl_sim_enqueue_wal(GV_ReplSim *sim, const char *follower_id,
     if (repl_sim_should_drop_enqueue(sim)) return -1;
 
     ReplSimMsg *msg = &sim->msgs[sim->msg_count];
-    msg->follower_id = strdup(follower_id);
+    msg->follower_id = gv_strdup(follower_id);
     msg->entry_index = entry_index;
-    msg->record = (uint8_t *)malloc(record_len);
+    msg->record = (uint8_t *)gv_alloc(record_len);
     if (!msg->follower_id || !msg->record) {
         repl_sim_free_msg(msg);
         return -1;
@@ -138,7 +139,7 @@ int repl_sim_deliver_wal(GV_ReplSim *sim, const char *follower_id,
     *record = msg->record;
     *record_len = msg->record_len;
     msg->record = NULL;
-    free(msg->follower_id);
+    gv_free(msg->follower_id);
     memset(msg, 0, sizeof(*msg));
     if (idx < sim->msg_count - 1) {
         sim->msgs[idx] = sim->msgs[sim->msg_count - 1];
@@ -157,7 +158,7 @@ int repl_sim_flush_follower(GV_ReplSim *sim, const char *follower_id) {
         if (repl_sim_deliver_wal(sim, follower_id, &entry_index, &record, &record_len) != 0) {
             break;
         }
-        free(record);
+        gv_free(record);
         delivered++;
     }
     return delivered;

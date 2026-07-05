@@ -4,6 +4,7 @@
  */
 
 #include "admin/ttl.h"
+#include "core/memory.h"
 #include "storage/database.h"
 
 #include <stdlib.h>
@@ -74,19 +75,19 @@ void ttl_config_init(GV_TTLConfig *config) {
 /* Lifecycle */
 
 GV_TTLManager *ttl_create(const GV_TTLConfig *config) {
-    GV_TTLManager *mgr = calloc(1, sizeof(GV_TTLManager));
+    GV_TTLManager *mgr = gv_calloc(1, sizeof(GV_TTLManager));
     if (!mgr) return NULL;
 
     mgr->config = config ? *config : DEFAULT_CONFIG;
 
     if (pthread_mutex_init(&mgr->mutex, NULL) != 0) {
-        free(mgr);
+        gv_free(mgr);
         return NULL;
     }
 
     if (pthread_cond_init(&mgr->cleanup_cond, NULL) != 0) {
         pthread_mutex_destroy(&mgr->mutex);
-        free(mgr);
+        gv_free(mgr);
         return NULL;
     }
 
@@ -104,14 +105,14 @@ void ttl_destroy(GV_TTLManager *mgr) {
         GV_TTLEntry *entry = mgr->buckets[i];
         while (entry) {
             GV_TTLEntry *next = entry->next;
-            free(entry);
+            gv_free(entry);
             entry = next;
         }
     }
 
     pthread_cond_destroy(&mgr->cleanup_cond);
     pthread_mutex_destroy(&mgr->mutex);
-    free(mgr);
+    gv_free(mgr);
 }
 
 /* Internal Helpers */
@@ -136,7 +137,7 @@ static int remove_entry(GV_TTLManager *mgr, size_t vector_index) {
         if ((*pp)->vector_index == vector_index) {
             GV_TTLEntry *to_free = *pp;
             *pp = (*pp)->next;
-            free(to_free);
+            gv_free(to_free);
             mgr->entry_count--;
             return 0;
         }
@@ -180,7 +181,7 @@ int ttl_set_absolute(GV_TTLManager *mgr, size_t vector_index, uint64_t expire_at
     }
 
     /* Create new entry */
-    entry = malloc(sizeof(GV_TTLEntry));
+    entry = gv_alloc(sizeof(GV_TTLEntry));
     if (!entry) {
         pthread_mutex_unlock(&mgr->mutex);
         return -1;
@@ -273,7 +274,7 @@ int ttl_cleanup_expired(GV_TTLManager *mgr, GV_Database *db) {
     size_t max_expire = mgr->config.max_expired_per_cleanup;
 
     /* Collect expired indices */
-    size_t *expired_indices = malloc(max_expire * sizeof(size_t));
+    size_t *expired_indices = gv_alloc(max_expire * sizeof(size_t));
     if (!expired_indices) {
         pthread_mutex_unlock(&mgr->mutex);
         return -1;
@@ -302,7 +303,7 @@ int ttl_cleanup_expired(GV_TTLManager *mgr, GV_Database *db) {
         }
     }
 
-    free(expired_indices);
+    gv_free(expired_indices);
 
     pthread_mutex_lock(&mgr->mutex);
     mgr->last_cleanup_time = now;

@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include "core/memory.h"
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -99,8 +100,8 @@ static int test_binary_hamming_fast_matches_normal(void) {
 
 static int test_binary_vector_wrap(void) {
     size_t nbytes = binary_bytes_needed(DIM);
-    uint8_t *bits = (uint8_t *)calloc(nbytes, 1);
-    ASSERT(bits != NULL, "calloc failed");
+    uint8_t *bits = (uint8_t *)gv_calloc(nbytes, 1);
+    ASSERT(bits != NULL, "gv_calloc failed");
 
     bits[0] = 0xAA; /* 10101010 */
 
@@ -110,7 +111,7 @@ static int test_binary_vector_wrap(void) {
     ASSERT(bv->bytes_per_vector == nbytes, "bytes_per_vector mismatch after wrap");
 
     binary_vector_destroy(bv);
-    /* bits is owned by bv after wrap — do NOT free(bits) */
+    /* bits is owned by bv after wrap — do NOT gv_free(bits) */
     return 0;
 }
 

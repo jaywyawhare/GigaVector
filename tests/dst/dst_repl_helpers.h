@@ -2,6 +2,7 @@
 #define GV_DST_REPL_HELPERS_H
 
 #include <stddef.h>
+#include "core/memory.h"
 #include <stdint.h>
 
 #include "admin/replication.h"
@@ -20,7 +21,7 @@ static inline int gv_dst_read_latest_wal(const GV_Database *leader,
 
     uint8_t type = 0;
     if (wal_read_entry_at(path, total - 1, &type, record, record_len) != 0) {
-        free(*record);
+        gv_free(*record);
         *record = NULL;
         return -1;
     }
@@ -38,7 +39,7 @@ static inline int gv_dst_sim_deliver_latest(GV_ReplSim *sim, GV_ReplicationManag
         return -1;
     }
     int rc = db_apply_wal_record(follower_db, record, record_len);
-    free(record);
+    gv_free(record);
     if (rc != 0) return -1;
     return replication_replica_ack(mgr, follower_id, entry_index);
 }
@@ -52,7 +53,7 @@ static inline int gv_dst_sim_enqueue_latest(GV_ReplSim *sim, const GV_Database *
         return -1;
     }
     int rc = repl_sim_enqueue_wal(sim, follower_id, entry_index, record, record_len);
-    free(record);
+    gv_free(record);
     return rc;
 }
 
@@ -72,14 +73,14 @@ static inline int gv_dst_catch_up_follower(GV_ReplicationManager *mgr,
         uint8_t *record = NULL;
         size_t record_len = 0;
         if (wal_read_entry_at(leader_path, idx, &type, &record, &record_len) != 0) {
-            free(record);
+            gv_free(record);
             return -1;
         }
         if (db_apply_wal_record(follower, record, record_len) != 0) {
-            free(record);
+            gv_free(record);
             return -1;
         }
-        free(record);
+        gv_free(record);
         if (replication_replica_ack(mgr, follower_id, idx) != 0) {
             return -1;
         }

@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include "core/memory.h"
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -69,12 +70,12 @@ static int test_muvera_encode(void) {
     ASSERT(enc != NULL, "create failed");
 
     size_t out_dim = muvera_output_dimension(enc);
-    float *output = (float *)calloc(out_dim, sizeof(float));
-    ASSERT(output != NULL, "calloc failed");
+    float *output = (float *)gv_calloc(out_dim, sizeof(float));
+    ASSERT(output != NULL, "gv_calloc failed");
 
     size_t num_tokens = 5;
-    float *tokens = (float *)malloc(num_tokens * TOKEN_DIM * sizeof(float));
-    ASSERT(tokens != NULL, "malloc failed");
+    float *tokens = (float *)gv_alloc(num_tokens * TOKEN_DIM * sizeof(float));
+    ASSERT(tokens != NULL, "gv_alloc failed");
     fill_tokens(tokens, num_tokens, TOKEN_DIM, 1.0f);
 
     int rc = muvera_encode(enc, tokens, num_tokens, output);
@@ -86,8 +87,8 @@ static int test_muvera_encode(void) {
     }
     ASSERT(nonzero, "encoded output should not be all zeros");
 
-    free(tokens);
-    free(output);
+    gv_free(tokens);
+    gv_free(output);
     muvera_destroy(enc);
     return 0;
 }
@@ -104,13 +105,13 @@ static int test_muvera_encode_deterministic(void) {
     ASSERT(enc1 != NULL && enc2 != NULL, "create failed");
 
     size_t out_dim = muvera_output_dimension(enc1);
-    float *out1 = (float *)malloc(out_dim * sizeof(float));
-    float *out2 = (float *)malloc(out_dim * sizeof(float));
-    ASSERT(out1 != NULL && out2 != NULL, "malloc failed");
+    float *out1 = (float *)gv_alloc(out_dim * sizeof(float));
+    float *out2 = (float *)gv_alloc(out_dim * sizeof(float));
+    ASSERT(out1 != NULL && out2 != NULL, "gv_alloc failed");
 
     size_t num_tokens = 3;
-    float *tokens = (float *)malloc(num_tokens * TOKEN_DIM * sizeof(float));
-    ASSERT(tokens != NULL, "malloc failed");
+    float *tokens = (float *)gv_alloc(num_tokens * TOKEN_DIM * sizeof(float));
+    ASSERT(tokens != NULL, "gv_alloc failed");
     fill_tokens(tokens, num_tokens, TOKEN_DIM, 2.0f);
 
     ASSERT(muvera_encode(enc1, tokens, num_tokens, out1) == 0, "encode1 failed");
@@ -119,9 +120,9 @@ static int test_muvera_encode_deterministic(void) {
     ASSERT(memcmp(out1, out2, out_dim * sizeof(float)) == 0,
            "same seed should produce identical encodings");
 
-    free(tokens);
-    free(out1);
-    free(out2);
+    gv_free(tokens);
+    gv_free(out1);
+    gv_free(out2);
     muvera_destroy(enc1);
     muvera_destroy(enc2);
     return 0;
@@ -140,26 +141,26 @@ static int test_muvera_encode_batch(void) {
     size_t batch_size = 3;
 
     size_t counts[3] = { 4, 2, 6 };
-    float *set0 = (float *)malloc(counts[0] * TOKEN_DIM * sizeof(float));
-    float *set1 = (float *)malloc(counts[1] * TOKEN_DIM * sizeof(float));
-    float *set2 = (float *)malloc(counts[2] * TOKEN_DIM * sizeof(float));
-    ASSERT(set0 && set1 && set2, "malloc failed");
+    float *set0 = (float *)gv_alloc(counts[0] * TOKEN_DIM * sizeof(float));
+    float *set1 = (float *)gv_alloc(counts[1] * TOKEN_DIM * sizeof(float));
+    float *set2 = (float *)gv_alloc(counts[2] * TOKEN_DIM * sizeof(float));
+    ASSERT(set0 && set1 && set2, "gv_alloc failed");
 
     fill_tokens(set0, counts[0], TOKEN_DIM, 0.0f);
     fill_tokens(set1, counts[1], TOKEN_DIM, 1.0f);
     fill_tokens(set2, counts[2], TOKEN_DIM, 2.0f);
 
     const float *token_sets[3] = { set0, set1, set2 };
-    float *outputs = (float *)calloc(batch_size * out_dim, sizeof(float));
-    ASSERT(outputs != NULL, "calloc failed");
+    float *outputs = (float *)gv_calloc(batch_size * out_dim, sizeof(float));
+    ASSERT(outputs != NULL, "gv_calloc failed");
 
     int rc = muvera_encode_batch(enc, token_sets, counts, batch_size, outputs);
     ASSERT(rc == 0, "muvera_encode_batch failed");
 
-    free(set0);
-    free(set1);
-    free(set2);
-    free(outputs);
+    gv_free(set0);
+    gv_free(set1);
+    gv_free(set2);
+    gv_free(outputs);
     muvera_destroy(enc);
     return 0;
 }

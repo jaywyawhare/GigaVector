@@ -4,6 +4,7 @@
  */
 
 #include "storage/disk_page_cache.h"
+#include "core/memory.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -63,9 +64,9 @@ static void disk_page_cache_touch(GV_DiskPageCache *cache, DiskPageCacheNode *no
 static void disk_page_cache_node_free(DiskPageCacheNode *node)
 {
     if (!node) return;
-    free(node->key);
-    free(node->data);
-    free(node);
+    gv_free(node->key);
+    gv_free(node->data);
+    gv_free(node);
 }
 
 static void disk_page_cache_evict(GV_DiskPageCache *cache)
@@ -85,7 +86,7 @@ static void disk_page_cache_evict(GV_DiskPageCache *cache)
 
 GV_DiskPageCache *gv_disk_page_cache_create(size_t max_bytes)
 {
-    GV_DiskPageCache *cache = (GV_DiskPageCache *)calloc(1, sizeof(GV_DiskPageCache));
+    GV_DiskPageCache *cache = (GV_DiskPageCache *)gv_calloc(1, sizeof(GV_DiskPageCache));
     if (!cache) return NULL;
     cache->max_bytes = max_bytes;
     return cache;
@@ -102,7 +103,7 @@ void gv_disk_page_cache_destroy(GV_DiskPageCache *cache)
             node = next;
         }
     }
-    free(cache);
+    gv_free(cache);
 }
 
 void gv_disk_page_cache_set_max_bytes(GV_DiskPageCache *cache, size_t max_bytes)
@@ -150,7 +151,7 @@ int gv_disk_page_cache_insert(GV_DiskPageCache *cache, const char *key,
     for (DiskPageCacheNode *node = cache->buckets[bucket]; node; node = node->hash_next) {
         if (node->hash == hash && strcmp(node->key, key) == 0) {
             if (node->len != len) {
-                uint8_t *tmp = (uint8_t *)realloc(node->data, len);
+                uint8_t *tmp = (uint8_t *)gv_realloc(node->data, len);
                 if (!tmp) return -1;
                 cache->used_bytes -= node->len;
                 cache->used_bytes += len;
@@ -164,10 +165,10 @@ int gv_disk_page_cache_insert(GV_DiskPageCache *cache, const char *key,
         }
     }
 
-    DiskPageCacheNode *node = (DiskPageCacheNode *)calloc(1, sizeof(*node));
+    DiskPageCacheNode *node = (DiskPageCacheNode *)gv_calloc(1, sizeof(*node));
     if (!node) return -1;
-    node->key = (char *)malloc(strlen(key) + 1);
-    node->data = (uint8_t *)malloc(len);
+    node->key = (char *)gv_alloc(strlen(key) + 1);
+    node->data = (uint8_t *)gv_alloc(len);
     if (!node->key || !node->data) {
         disk_page_cache_node_free(node);
         return -1;

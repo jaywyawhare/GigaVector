@@ -1,4 +1,5 @@
 #include <stdlib.h>
+#include "core/memory.h"
 #include <string.h>
 
 #include "schema/vector.h"
@@ -16,15 +17,15 @@ GV_Vector *vector_create(size_t dimension) {
         return NULL;
     }
 
-    GV_Vector *vector = (GV_Vector *)malloc(sizeof(GV_Vector));
+    GV_Vector *vector = (GV_Vector *)gv_alloc(sizeof(GV_Vector));
     if (vector == NULL) {
         return NULL;
     }
 
     vector->dimension = dimension;
-    vector->data = (float *)calloc(dimension, sizeof(float));
+    vector->data = (float *)gv_calloc(dimension, sizeof(float));
     if (vector->data == NULL) {
-        free(vector);
+        gv_free(vector);
         return NULL;
     }
 
@@ -52,9 +53,9 @@ void vector_destroy(GV_Vector *vector) {
     }
 
     vector_clear_metadata(vector);
-    free(vector->data);
+    gv_free(vector->data);
     vector->data = NULL;
-    free(vector);
+    gv_free(vector);
 }
 
 int vector_set(GV_Vector *vector, size_t index, float value) {

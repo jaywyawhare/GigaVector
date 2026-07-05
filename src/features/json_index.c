@@ -10,6 +10,7 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include <stdio.h>
+#include "core/memory.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
@@ -246,7 +247,7 @@ static size_t jpi_float_upper_bound(const GV_JPFloatEntry *entries, size_t count
 static int jpi_insert_string(GV_JPPathIndex *pi, size_t vector_index, const char *value) {
     if (pi->data.str.count >= pi->data.str.capacity) {
         size_t new_cap = pi->data.str.capacity * 2;
-        GV_JPStringEntry *tmp = (GV_JPStringEntry *)realloc(
+        GV_JPStringEntry *tmp = (GV_JPStringEntry *)gv_realloc(
             pi->data.str.entries, new_cap * sizeof(GV_JPStringEntry));
         if (!tmp) return -1;
         pi->data.str.entries = tmp;
@@ -271,7 +272,7 @@ static int jpi_insert_string(GV_JPPathIndex *pi, size_t vector_index, const char
 static int jpi_insert_int(GV_JPPathIndex *pi, size_t vector_index, int64_t value) {
     if (pi->data.int_data.count >= pi->data.int_data.capacity) {
         size_t new_cap = pi->data.int_data.capacity * 2;
-        GV_JPIntEntry *tmp = (GV_JPIntEntry *)realloc(
+        GV_JPIntEntry *tmp = (GV_JPIntEntry *)gv_realloc(
             pi->data.int_data.entries, new_cap * sizeof(GV_JPIntEntry));
         if (!tmp) return -1;
         pi->data.int_data.entries = tmp;
@@ -293,7 +294,7 @@ static int jpi_insert_int(GV_JPPathIndex *pi, size_t vector_index, int64_t value
 static int jpi_insert_float(GV_JPPathIndex *pi, size_t vector_index, double value) {
     if (pi->data.float_data.count >= pi->data.float_data.capacity) {
         size_t new_cap = pi->data.float_data.capacity * 2;
-        GV_JPFloatEntry *tmp = (GV_JPFloatEntry *)realloc(
+        GV_JPFloatEntry *tmp = (GV_JPFloatEntry *)gv_realloc(
             pi->data.float_data.entries, new_cap * sizeof(GV_JPFloatEntry));
         if (!tmp) return -1;
         pi->data.float_data.entries = tmp;
@@ -316,7 +317,7 @@ static int jpi_insert_float(GV_JPPathIndex *pi, size_t vector_index, double valu
 static int jpi_insert_bool(GV_JPPathIndex *pi, size_t vector_index, bool value) {
     if (pi->data.bool_data.count >= pi->data.bool_data.capacity) {
         size_t new_cap = pi->data.bool_data.capacity * 2;
-        GV_JPBoolEntry *tmp = (GV_JPBoolEntry *)realloc(
+        GV_JPBoolEntry *tmp = (GV_JPBoolEntry *)gv_realloc(
             pi->data.bool_data.entries, new_cap * sizeof(GV_JPBoolEntry));
         if (!tmp) return -1;
         pi->data.bool_data.entries = tmp;
@@ -363,7 +364,7 @@ static void jpi_remove_from_path(GV_JPPathIndex *pi, size_t vector_index) {
                     }
                     w++;
                 } else {
-                    free(pi->data.str.entries[i].value);
+                    gv_free(pi->data.str.entries[i].value);
                 }
             }
             pi->data.str.count = w;
@@ -411,33 +412,33 @@ static void jpi_remove_from_path(GV_JPPathIndex *pi, size_t vector_index) {
     }
 }
 
-/* Helpers: free a single per-path index's entries */
+/* Helpers: gv_free a single per-path index's entries */
 
 static void jpi_free_path_entries(GV_JPPathIndex *pi) {
     switch (pi->type) {
         case GV_JP_STRING:
             for (size_t i = 0; i < pi->data.str.count; i++) {
-                free(pi->data.str.entries[i].value);
+                gv_free(pi->data.str.entries[i].value);
             }
-            free(pi->data.str.entries);
+            gv_free(pi->data.str.entries);
             pi->data.str.entries = NULL;
             pi->data.str.count = 0;
             pi->data.str.capacity = 0;
             break;
         case GV_JP_INT:
-            free(pi->data.int_data.entries);
+            gv_free(pi->data.int_data.entries);
             pi->data.int_data.entries = NULL;
             pi->data.int_data.count = 0;
             pi->data.int_data.capacity = 0;
             break;
         case GV_JP_FLOAT:
-            free(pi->data.float_data.entries);
+            gv_free(pi->data.float_data.entries);
             pi->data.float_data.entries = NULL;
             pi->data.float_data.count = 0;
             pi->data.float_data.capacity = 0;
             break;
         case GV_JP_BOOL:
-            free(pi->data.bool_data.entries);
+            gv_free(pi->data.bool_data.entries);
             pi->data.bool_data.entries = NULL;
             pi->data.bool_data.count = 0;
             pi->data.bool_data.capacity = 0;
@@ -450,28 +451,28 @@ static void jpi_free_path_entries(GV_JPPathIndex *pi) {
 static int jpi_init_path_entries(GV_JPPathIndex *pi) {
     switch (pi->type) {
         case GV_JP_STRING:
-            pi->data.str.entries = (GV_JPStringEntry *)malloc(
+            pi->data.str.entries = (GV_JPStringEntry *)gv_alloc(
                 GV_JPI_INITIAL_CAP * sizeof(GV_JPStringEntry));
             if (!pi->data.str.entries) return -1;
             pi->data.str.count = 0;
             pi->data.str.capacity = GV_JPI_INITIAL_CAP;
             break;
         case GV_JP_INT:
-            pi->data.int_data.entries = (GV_JPIntEntry *)malloc(
+            pi->data.int_data.entries = (GV_JPIntEntry *)gv_alloc(
                 GV_JPI_INITIAL_CAP * sizeof(GV_JPIntEntry));
             if (!pi->data.int_data.entries) return -1;
             pi->data.int_data.count = 0;
             pi->data.int_data.capacity = GV_JPI_INITIAL_CAP;
             break;
         case GV_JP_FLOAT:
-            pi->data.float_data.entries = (GV_JPFloatEntry *)malloc(
+            pi->data.float_data.entries = (GV_JPFloatEntry *)gv_alloc(
                 GV_JPI_INITIAL_CAP * sizeof(GV_JPFloatEntry));
             if (!pi->data.float_data.entries) return -1;
             pi->data.float_data.count = 0;
             pi->data.float_data.capacity = GV_JPI_INITIAL_CAP;
             break;
         case GV_JP_BOOL:
-            pi->data.bool_data.entries = (GV_JPBoolEntry *)malloc(
+            pi->data.bool_data.entries = (GV_JPBoolEntry *)gv_alloc(
                 GV_JPI_INITIAL_CAP * sizeof(GV_JPBoolEntry));
             if (!pi->data.bool_data.entries) return -1;
             pi->data.bool_data.count = 0;
@@ -484,13 +485,13 @@ static int jpi_init_path_entries(GV_JPPathIndex *pi) {
 /* Lifecycle */
 
 GV_JSONPathIndex *json_index_create(void) {
-    GV_JSONPathIndex *idx = (GV_JSONPathIndex *)calloc(1, sizeof(GV_JSONPathIndex));
+    GV_JSONPathIndex *idx = (GV_JSONPathIndex *)gv_calloc(1, sizeof(GV_JSONPathIndex));
     if (!idx) return NULL;
 
     idx->path_count = 0;
 
     if (pthread_rwlock_init(&idx->rwlock, NULL) != 0) {
-        free(idx);
+        gv_free(idx);
         return NULL;
     }
 
@@ -505,7 +506,7 @@ void json_index_destroy(GV_JSONPathIndex *idx) {
     }
 
     pthread_rwlock_destroy(&idx->rwlock);
-    free(idx);
+    gv_free(idx);
 }
 
 /* Path Registration */
@@ -906,7 +907,7 @@ GV_JSONPathIndex *json_index_load(const char *path_file) {
 
         switch (pi->type) {
             case GV_JP_STRING: {
-                pi->data.str.entries = (GV_JPStringEntry *)malloc(
+                pi->data.str.entries = (GV_JPStringEntry *)gv_alloc(
                     cap * sizeof(GV_JPStringEntry));
                 if (!pi->data.str.entries) {
                     json_index_destroy(idx);
@@ -923,14 +924,14 @@ GV_JSONPathIndex *json_index_load(const char *path_file) {
                         fclose(fp);
                         return NULL;
                     }
-                    char *s = (char *)malloc(slen + 1);
+                    char *s = (char *)gv_alloc(slen + 1);
                     if (!s) {
                         json_index_destroy(idx);
                         fclose(fp);
                         return NULL;
                     }
                     if (fread(s, 1, slen, fp) != slen) {
-                        free(s);
+                        gv_free(s);
                         json_index_destroy(idx);
                         fclose(fp);
                         return NULL;
@@ -939,7 +940,7 @@ GV_JSONPathIndex *json_index_load(const char *path_file) {
 
                     uint64_t vi;
                     if (fread(&vi, sizeof(vi), 1, fp) != 1) {
-                        free(s);
+                        gv_free(s);
                         json_index_destroy(idx);
                         fclose(fp);
                         return NULL;
@@ -952,7 +953,7 @@ GV_JSONPathIndex *json_index_load(const char *path_file) {
                 break;
             }
             case GV_JP_INT: {
-                pi->data.int_data.entries = (GV_JPIntEntry *)malloc(
+                pi->data.int_data.entries = (GV_JPIntEntry *)gv_alloc(
                     cap * sizeof(GV_JPIntEntry));
                 if (!pi->data.int_data.entries) {
                     json_index_destroy(idx);
@@ -978,7 +979,7 @@ GV_JSONPathIndex *json_index_load(const char *path_file) {
                 break;
             }
             case GV_JP_FLOAT: {
-                pi->data.float_data.entries = (GV_JPFloatEntry *)malloc(
+                pi->data.float_data.entries = (GV_JPFloatEntry *)gv_alloc(
                     cap * sizeof(GV_JPFloatEntry));
                 if (!pi->data.float_data.entries) {
                     json_index_destroy(idx);
@@ -1004,7 +1005,7 @@ GV_JSONPathIndex *json_index_load(const char *path_file) {
                 break;
             }
             case GV_JP_BOOL: {
-                pi->data.bool_data.entries = (GV_JPBoolEntry *)malloc(
+                pi->data.bool_data.entries = (GV_JPBoolEntry *)gv_alloc(
                     cap * sizeof(GV_JPBoolEntry));
                 if (!pi->data.bool_data.entries) {
                     json_index_destroy(idx);

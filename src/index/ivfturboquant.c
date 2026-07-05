@@ -1,11 +1,11 @@
 #include <stdio.h>
+#include "core/memory.h"
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
 #include <stdint.h>
 
 #include "index/ivfturboquant.h"
-#include "index/ivf_base.h"
 #include "search/distance.h"
 #include "schema/vector.h"
 #include "schema/metadata.h"
@@ -56,6 +56,82 @@ static void ivfturboquant_default_config(size_t dimension, GV_IVFTurboQuantConfi
     cfg->turbo.rotation = GV_TURBOQUANT_ROTATION_AUTO;
 }
 
+static void ivfturboquant_argmin(const float *data, size_t count, size_t dim,
+                                 const float *centroids, size_t k, int *assign) {
+    for (size_t i = 0; i < count; i++) {
+        const float *vec = data + i * dim;
+        float best_dist = INFINITY;
+        int best_idx = -1;
+        for (size_t c = 0; c < k; c++) {
+            const float *centroid = centroids + c * dim;
+            float dist = 0.0f;
+            for (size_t d = 0; d < dim; d++) {
+                float diff = vec[d] - centroid[d];
+                dist += diff * diff;
+            }
+            if (dist < best_dist) {
+                best_dist = dist;
+                best_idx = (int)c;
+            }
+        }
+        assign[i] = best_idx;
+    }
+}
+
+static int ivfturboquant_kmeans(const float *data, size_t count, size_t dim,
+                                size_t k, size_t iters, float *out_centroids) {
+    if (count < k || !data || !out_centroids) {
+        return -1;
+    }
+
+    memcpy(out_centroids, data, k * dim * sizeof(float));
+
+    int *assign = (int *)gv_alloc(count * sizeof(int));
+    float *new_centroids = (float *)gv_calloc(k * dim, sizeof(float));
+    size_t *counts = (size_t *)gv_calloc(k, sizeof(size_t));
+
+    if (!assign || !new_centroids || !counts) {
+        gv_free(assign);
+        gv_free(new_centroids);
+        gv_free(counts);
+        return -1;
+    }
+
+    for (size_t iter = 0; iter < iters; iter++) {
+        ivfturboquant_argmin(data, count, dim, out_centroids, k, assign);
+
+        memset(new_centroids, 0, k * dim * sizeof(float));
+        memset(counts, 0, k * sizeof(size_t));
+
+        for (size_t i = 0; i < count; i++) {
+            int c = assign[i];
+            if (c < 0) {
+                continue;
+            }
+            const float *vec = data + i * dim;
+            for (size_t d = 0; d < dim; d++) {
+                new_centroids[c * dim + d] += vec[d];
+            }
+            counts[c]++;
+        }
+
+        for (size_t c = 0; c < k; c++) {
+            if (counts[c] > 0) {
+                for (size_t d = 0; d < dim; d++) {
+                    new_centroids[c * dim + d] /= (float)counts[c];
+                }
+            }
+        }
+
+        memcpy(out_centroids, new_centroids, k * dim * sizeof(float));
+    }
+
+    gv_free(assign);
+    gv_free(new_centroids);
+    gv_free(counts);
+    return 0;
+}
+
 static float ivfturboquant_entry_distance(const GV_IVFTurboQuantIndex *idx,
                                           const GV_Vector *query,
                                           const GV_IVFTurboQuantEntry *entry,
@@ -103,7 +179,7 @@ void *ivfturboquant_create(size_t dimension, const GV_IVFTurboQuantConfig *confi
         return NULL;
     }
 
-    GV_IVFTurboQuantIndex *idx = (GV_IVFTurboQuantIndex *)calloc(1, sizeof(GV_IVFTurboQuantIndex));
+    GV_IVFTurboQuantIndex *idx = (GV_IVFTurboQuantIndex *)gv_calloc(1, sizeof(GV_IVFTurboQuantIndex));
     if (!idx) {
         return NULL;
     }
@@ -120,24 +196,24 @@ void *ivfturboquant_create(size_t dimension, const GV_IVFTurboQuantConfig *confi
         idx->config.nprobe = idx->config.nlist;
     }
 
-    idx->centroids = (float *)malloc(idx->config.nlist * dimension * sizeof(float));
-    idx->lists = (GV_IVFTurboQuantEntry **)calloc(idx->config.nlist, sizeof(GV_IVFTurboQuantEntry *));
-    idx->list_sizes = (size_t *)calloc(idx->config.nlist, sizeof(size_t));
+    idx->centroids = (float *)gv_alloc(idx->config.nlist * dimension * sizeof(float));
+    idx->lists = (GV_IVFTurboQuantEntry **)gv_calloc(idx->config.nlist, sizeof(GV_IVFTurboQuantEntry *));
+    idx->list_sizes = (size_t *)gv_calloc(idx->config.nlist, sizeof(size_t));
 
     if (!idx->centroids || !idx->lists || !idx->list_sizes) {
-        free(idx->centroids);
-        free(idx->lists);
-        free(idx->list_sizes);
-        free(idx);
+        gv_free(idx->centroids);
+        gv_free(idx->lists);
+        gv_free(idx->list_sizes);
+        gv_free(idx);
         return NULL;
     }
 
     idx->quantizer = turboquant_create(dimension, &idx->config.turbo);
     if (idx->quantizer == NULL) {
-        free(idx->centroids);
-        free(idx->lists);
-        free(idx->list_sizes);
-        free(idx);
+        gv_free(idx->centroids);
+        gv_free(idx->lists);
+        gv_free(idx->list_sizes);
+        gv_free(idx);
         return NULL;
     }
 
@@ -159,7 +235,7 @@ int ivfturboquant_train(void *index, const float *data, size_t count) {
     }
 
     size_t total = count * idx->dimension;
-    float *train_buf = (float *)malloc(total * sizeof(float));
+    float *train_buf = (float *)gv_alloc(total * sizeof(float));
     if (!train_buf) {
         return -1;
     }
@@ -181,13 +257,13 @@ int ivfturboquant_train(void *index, const float *data, size_t count) {
         }
     }
 
-    if (ivf_train_centroids(train_buf, count, idx->dimension, idx->config.nlist,
-                            idx->config.train_iters, idx->centroids) != 0) {
-        free(train_buf);
+    if (ivfturboquant_kmeans(train_buf, count, idx->dimension, idx->config.nlist,
+                             idx->config.train_iters, idx->centroids) != 0) {
+        gv_free(train_buf);
         return -1;
     }
 
-    free(train_buf);
+    gv_free(train_buf);
     idx->trained = 1;
     return 0;
 }
@@ -218,7 +294,7 @@ int ivfturboquant_insert(void *index, GV_Vector *vector) {
         }
     }
 
-    GV_IVFTurboQuantEntry *entry = (GV_IVFTurboQuantEntry *)malloc(sizeof(GV_IVFTurboQuantEntry));
+    GV_IVFTurboQuantEntry *entry = (GV_IVFTurboQuantEntry *)gv_alloc(sizeof(GV_IVFTurboQuantEntry));
     if (!entry) {
         return -1;
     }
@@ -226,7 +302,7 @@ int ivfturboquant_insert(void *index, GV_Vector *vector) {
     entry->vector = vector;
     entry->code = turboquant_encode(idx->quantizer, vector->data);
     if (entry->code == NULL) {
-        free(entry);
+        gv_free(entry);
         return -1;
     }
 
@@ -267,7 +343,7 @@ int ivfturboquant_search(void *index, const GV_Vector *query, size_t k,
         heap_cap = idx->config.default_rerank;
     }
 
-    GV_IVFTurboQuantHeapItem *centroid_heap = (GV_IVFTurboQuantHeapItem *)malloc(
+    GV_IVFTurboQuantHeapItem *centroid_heap = (GV_IVFTurboQuantHeapItem *)gv_alloc(
         nprobe * sizeof(GV_IVFTurboQuantHeapItem));
     if (!centroid_heap) {
         turboquant_query_destroy(&prepared);
@@ -286,9 +362,9 @@ int ivfturboquant_search(void *index, const GV_Vector *query, size_t k,
                                 (GV_IVFTurboQuantHeapItem){dist, i, NULL});
     }
 
-    size_t *probe_lists = (size_t *)malloc(nprobe * sizeof(size_t));
+    size_t *probe_lists = (size_t *)gv_alloc(nprobe * sizeof(size_t));
     if (!probe_lists) {
-        free(centroid_heap);
+        gv_free(centroid_heap);
         turboquant_query_destroy(&prepared);
         return -1;
     }
@@ -301,12 +377,12 @@ int ivfturboquant_search(void *index, const GV_Vector *query, size_t k,
             ivfturboquant_heap_sift_down(centroid_heap, heap_size, 0);
         }
     }
-    free(centroid_heap);
+    gv_free(centroid_heap);
 
-    GV_IVFTurboQuantHeapItem *heap = (GV_IVFTurboQuantHeapItem *)malloc(
+    GV_IVFTurboQuantHeapItem *heap = (GV_IVFTurboQuantHeapItem *)gv_alloc(
         heap_cap * sizeof(GV_IVFTurboQuantHeapItem));
     if (!heap) {
-        free(probe_lists);
+        gv_free(probe_lists);
         turboquant_query_destroy(&prepared);
         return -1;
     }
@@ -327,13 +403,13 @@ int ivfturboquant_search(void *index, const GV_Vector *query, size_t k,
             entry = entry->next;
         }
     }
-    free(probe_lists);
+    gv_free(probe_lists);
 
     size_t found = heap_size;
-    GV_IVFTurboQuantHeapItem *candidates = (GV_IVFTurboQuantHeapItem *)malloc(
+    GV_IVFTurboQuantHeapItem *candidates = (GV_IVFTurboQuantHeapItem *)gv_alloc(
         found * sizeof(GV_IVFTurboQuantHeapItem));
     if (!candidates) {
-        free(heap);
+        gv_free(heap);
         turboquant_query_destroy(&prepared);
         return -1;
     }
@@ -346,7 +422,7 @@ int ivfturboquant_search(void *index, const GV_Vector *query, size_t k,
             ivfturboquant_heap_sift_down(heap, heap_size, 0);
         }
     }
-    free(heap);
+    gv_free(heap);
 
     if (idx->config.default_rerank > 0 && found > 0) {
         size_t rr = idx->config.default_rerank;
@@ -383,7 +459,7 @@ int ivfturboquant_search(void *index, const GV_Vector *query, size_t k,
         ivfturboquant_copy_result(&results[i], candidates[i].entry, candidates[i].dist);
     }
 
-    free(candidates);
+    gv_free(candidates);
     return (int)result_count;
 }
 
@@ -405,7 +481,7 @@ int ivfturboquant_range_search(void *index, const GV_Vector *query, float radius
         nprobe = idx->config.nlist;
     }
 
-    GV_IVFTurboQuantHeapItem *centroid_heap = (GV_IVFTurboQuantHeapItem *)malloc(
+    GV_IVFTurboQuantHeapItem *centroid_heap = (GV_IVFTurboQuantHeapItem *)gv_alloc(
         nprobe * sizeof(GV_IVFTurboQuantHeapItem));
     if (!centroid_heap) {
         return -1;
@@ -423,9 +499,9 @@ int ivfturboquant_range_search(void *index, const GV_Vector *query, float radius
                                 (GV_IVFTurboQuantHeapItem){dist, i, NULL});
     }
 
-    size_t *probe_lists = (size_t *)malloc(nprobe * sizeof(size_t));
+    size_t *probe_lists = (size_t *)gv_alloc(nprobe * sizeof(size_t));
     if (!probe_lists) {
-        free(centroid_heap);
+        gv_free(centroid_heap);
         return -1;
     }
 
@@ -437,7 +513,7 @@ int ivfturboquant_range_search(void *index, const GV_Vector *query, float radius
             ivfturboquant_heap_sift_down(centroid_heap, heap_size, 0);
         }
     }
-    free(centroid_heap);
+    gv_free(centroid_heap);
 
     size_t found = 0;
     for (size_t i = 0; i < nprobe && found < max_results; i++) {
@@ -455,7 +531,7 @@ int ivfturboquant_range_search(void *index, const GV_Vector *query, float radius
         }
     }
 
-    free(probe_lists);
+    gv_free(probe_lists);
     return (int)found;
 }
 
@@ -485,20 +561,20 @@ void ivfturboquant_destroy(void *index) {
                 if (entry->code) {
                     turboquant_code_destroy(entry->code);
                 }
-                free(entry);
+                gv_free(entry);
                 entry = next;
             }
         }
-        free(idx->lists);
+        gv_free(idx->lists);
     }
 
     if (idx->quantizer) {
         turboquant_destroy(idx->quantizer);
     }
 
-    free(idx->centroids);
-    free(idx->list_sizes);
-    free(idx);
+    gv_free(idx->centroids);
+    gv_free(idx->list_sizes);
+    gv_free(idx);
 }
 
 size_t ivfturboquant_count(const void *index) {
@@ -740,25 +816,25 @@ int ivfturboquant_load(void **index_ptr, FILE *in, size_t dimension, uint32_t ve
                 return -1;
             }
 
-            float *data = (float *)malloc(idx->dimension * sizeof(float));
+            float *data = (float *)gv_alloc(idx->dimension * sizeof(float));
             if (!data) {
                 ivfturboquant_destroy(index);
                 return -1;
             }
             if (fread(data, sizeof(float), idx->dimension, in) != idx->dimension) {
-                free(data);
+                gv_free(data);
                 ivfturboquant_destroy(index);
                 return -1;
             }
 
             GV_Vector *vec = vector_create_from_data(idx->dimension, data);
-            free(data);
+            gv_free(data);
             if (!vec) {
                 ivfturboquant_destroy(index);
                 return -1;
             }
 
-            GV_IVFTurboQuantEntry *entry = (GV_IVFTurboQuantEntry *)malloc(sizeof(GV_IVFTurboQuantEntry));
+            GV_IVFTurboQuantEntry *entry = (GV_IVFTurboQuantEntry *)gv_alloc(sizeof(GV_IVFTurboQuantEntry));
             if (!entry) {
                 vector_destroy(vec);
                 ivfturboquant_destroy(index);
@@ -772,7 +848,7 @@ int ivfturboquant_load(void **index_ptr, FILE *in, size_t dimension, uint32_t ve
             entry->code = turboquant_encode(idx->quantizer, vec->data);
             if (entry->code == NULL) {
                 vector_destroy(vec);
-                free(entry);
+                gv_free(entry);
                 ivfturboquant_destroy(index);
                 return -1;
             }
@@ -781,7 +857,7 @@ int ivfturboquant_load(void **index_ptr, FILE *in, size_t dimension, uint32_t ve
             if (read_u32(in, &meta_count) != 0) {
                 turboquant_code_destroy(entry->code);
                 vector_destroy(vec);
-                free(entry);
+                gv_free(entry);
                 ivfturboquant_destroy(index);
                 return -1;
             }
@@ -796,20 +872,20 @@ int ivfturboquant_load(void **index_ptr, FILE *in, size_t dimension, uint32_t ve
                 if (read_str(in, &value, vlen) != 0) goto meta_fail;
 
                 if (vector_set_metadata(vec, key, value) != 0) {
-                    free(key);
-                    free(value);
+                    gv_free(key);
+                    gv_free(value);
                     goto meta_fail;
                 }
-                free(key);
-                free(value);
+                gv_free(key);
+                gv_free(value);
                 continue;
 
             meta_fail:
-                if (key) free(key);
-                if (value) free(value);
+                if (key) gv_free(key);
+                if (value) gv_free(value);
                 turboquant_code_destroy(entry->code);
                 vector_destroy(vec);
-                free(entry);
+                gv_free(entry);
                 ivfturboquant_destroy(index);
                 return -1;
             }

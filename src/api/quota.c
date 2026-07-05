@@ -10,6 +10,7 @@
  */
 
 #include "api/quota.h"
+#include "core/memory.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -174,11 +175,11 @@ void gv_quota_config_init(GV_QuotaConfig *config) {
 /* Lifecycle */
 
 GV_QuotaManager *gv_quota_create(void) {
-    GV_QuotaManager *mgr = calloc(1, sizeof(GV_QuotaManager));
+    GV_QuotaManager *mgr = gv_calloc(1, sizeof(GV_QuotaManager));
     if (!mgr) return NULL;
 
     if (pthread_mutex_init(&mgr->mutex, NULL) != 0) {
-        free(mgr);
+        gv_free(mgr);
         return NULL;
     }
 
@@ -188,7 +189,7 @@ GV_QuotaManager *gv_quota_create(void) {
 void gv_quota_destroy(GV_QuotaManager *mgr) {
     if (!mgr) return;
     pthread_mutex_destroy(&mgr->mutex);
-    free(mgr);
+    gv_free(mgr);
 }
 
 /* Tenant Quota CRUD */
@@ -210,7 +211,7 @@ int gv_quota_set(GV_QuotaManager *mgr, const char *tenant_id,
         return 0;
     }
 
-    /* New tenant -- find a free slot */
+    /* New tenant -- find a gv_free slot */
     idx = find_free_slot(mgr);
     if (idx < 0) {
         pthread_mutex_unlock(&mgr->mutex);

@@ -4,6 +4,7 @@
  */
 
 #include <stdio.h>
+#include "core/memory.h"
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -417,7 +418,7 @@ void test_stringify(void) {
     GV_JsonValue *parsed = json_parse(str, &err);
     if (parsed == NULL) {
         FAIL("Failed to parse stringified JSON");
-        free(str);
+        gv_free(str);
         json_free(obj);
         return;
     }
@@ -425,13 +426,13 @@ void test_stringify(void) {
     const char *name = json_get_string(json_object_get(parsed, "name"));
     if (name == NULL || strcmp(name, "John") != 0) {
         FAIL("Name not preserved");
-        free(str);
+        gv_free(str);
         json_free(obj);
         json_free(parsed);
         return;
     }
 
-    free(str);
+    gv_free(str);
     json_free(obj);
     json_free(parsed);
     PASS();

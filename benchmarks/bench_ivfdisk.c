@@ -85,7 +85,7 @@ static float euclid_sq(const float *a, const float *b, size_t dim)
 static void brute_topk(const float *query, const float *data, size_t n, size_t dim, size_t k,
                        size_t *out_ids)
 {
-    float *best_dist = (float *)malloc(k * sizeof(float));
+    float *best_dist = (float *)gv_alloc(k * sizeof(float));
     if (!best_dist) return;
 
     for (size_t i = 0; i < k; ++i) {
@@ -104,7 +104,7 @@ static void brute_topk(const float *query, const float *data, size_t n, size_t d
             out_ids[worst] = i;
         }
     }
-    free(best_dist);
+    gv_free(best_dist);
 }
 
 static int id_in_topk(size_t id, const size_t *ids, size_t k)
@@ -121,11 +121,11 @@ static double recall_at_k_brute(const float *queries, size_t qcount,
 {
     size_t hits = 0;
     size_t total = 0;
-    GV_SearchResult *res = (GV_SearchResult *)calloc(k, sizeof(GV_SearchResult));
-    size_t *gt = (size_t *)calloc(k, sizeof(size_t));
+    GV_SearchResult *res = (GV_SearchResult *)gv_calloc(k, sizeof(GV_SearchResult));
+    size_t *gt = (size_t *)gv_calloc(k, sizeof(size_t));
     if (!res || !gt) {
-        free(res);
-        free(gt);
+        gv_free(res);
+        gv_free(gt);
         return 0.0;
     }
 
@@ -142,8 +142,8 @@ static double recall_at_k_brute(const float *queries, size_t qcount,
         total += (size_t)found;
     }
 
-    free(res);
-    free(gt);
+    gv_free(res);
+    gv_free(gt);
     return total > 0 ? (double)hits / (double)total : 0.0;
 }
 
@@ -153,11 +153,11 @@ static double recall_at_k_flat(const float *queries, size_t qcount,
 {
     size_t hits = 0;
     size_t total = 0;
-    GV_SearchResult *res = (GV_SearchResult *)calloc(k, sizeof(GV_SearchResult));
-    GV_SearchResult *gt = (GV_SearchResult *)calloc(k, sizeof(GV_SearchResult));
+    GV_SearchResult *res = (GV_SearchResult *)gv_calloc(k, sizeof(GV_SearchResult));
+    GV_SearchResult *gt = (GV_SearchResult *)gv_calloc(k, sizeof(GV_SearchResult));
     if (!res || !gt) {
-        free(res);
-        free(gt);
+        gv_free(res);
+        gv_free(gt);
         return 0.0;
     }
 
@@ -186,8 +186,8 @@ static double recall_at_k_flat(const float *queries, size_t qcount,
         }
     }
 
-    free(res);
-    free(gt);
+    gv_free(res);
+    gv_free(gt);
     return total > 0 ? (double)hits / (double)total : 0.0;
 }
 
@@ -196,12 +196,12 @@ static void latency_percentiles(GV_IVFDiskIndex *idx, const float *queries,
                                 double *p50_ms, double *p99_ms)
 {
     size_t samples = qcount * 5;
-    double *lat = (double *)malloc(samples * sizeof(double));
+    double *lat = (double *)gv_alloc(samples * sizeof(double));
     if (!lat) return;
 
-    GV_SearchResult *res = (GV_SearchResult *)calloc(k, sizeof(GV_SearchResult));
+    GV_SearchResult *res = (GV_SearchResult *)gv_calloc(k, sizeof(GV_SearchResult));
     if (!res) {
-        free(lat);
+        gv_free(lat);
         return;
     }
 
@@ -216,8 +216,8 @@ static void latency_percentiles(GV_IVFDiskIndex *idx, const float *queries,
 
     *p50_ms = lat[samples / 2];
     *p99_ms = lat[(samples * 99) / 100];
-    free(res);
-    free(lat);
+    gv_free(res);
+    gv_free(lat);
 }
 
 int main(int argc, char **argv)
@@ -269,9 +269,9 @@ int main(int argc, char **argv)
     fprintf(stderr, "  data_dir=%s gt=%s cache_mb=%zu\n",
             dir, use_brute_gt ? "brute_force" : "flat_index", cache_mb);
 
-    float *data = (float *)malloc(n * dim * sizeof(float));
-    float *train = (float *)malloc(train_n * dim * sizeof(float));
-    float *query = (float *)malloc(queries * dim * sizeof(float));
+    float *data = (float *)gv_alloc(n * dim * sizeof(float));
+    float *train = (float *)gv_alloc(train_n * dim * sizeof(float));
+    float *query = (float *)gv_alloc(queries * dim * sizeof(float));
     if (!data || !train || !query) {
         fprintf(stderr, "alloc failed\n");
         return 1;
@@ -303,7 +303,7 @@ int main(int argc, char **argv)
         return 1;
     }
     t_train = now_ms() - t_train;
-    free(train);
+    gv_free(train);
     train = NULL;
 
     double t_ins = now_ms();
@@ -385,8 +385,8 @@ int main(int argc, char **argv)
 
     ivfdisk_destroy(idx);
     if (flat) flat_destroy(flat);
-    free(data);
-    free(query);
+    gv_free(data);
+    gv_free(query);
 
     return pass ? 0 : 1;
 }

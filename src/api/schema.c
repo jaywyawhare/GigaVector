@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include "core/memory.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
@@ -50,7 +51,7 @@ static int buf_append(char **buf, size_t *len, size_t *cap, const char *src) {
     size_t src_len = strlen(src);
     while (*len + src_len + 1 > *cap) {
         size_t new_cap = (*cap == 0) ? 256 : (*cap) * 2;
-        char *tmp = (char *)realloc(*buf, new_cap);
+        char *tmp = (char *)gv_realloc(*buf, new_cap);
         if (!tmp) return -1;
         *buf = tmp;
         *cap = new_cap;
@@ -92,15 +93,15 @@ static int buf_append_json_string(char **buf, size_t *len, size_t *cap, const ch
 /* Create / Destroy / Copy */
 
 GV_Schema *schema_create(uint32_t version) {
-    GV_Schema *schema = (GV_Schema *)calloc(1, sizeof(GV_Schema));
+    GV_Schema *schema = (GV_Schema *)gv_calloc(1, sizeof(GV_Schema));
     if (!schema) return NULL;
 
     schema->version = version;
     schema->field_count = 0;
     schema->field_capacity = GV_SCHEMA_INITIAL_CAPACITY;
-    schema->fields = (GV_SchemaField *)calloc(schema->field_capacity, sizeof(GV_SchemaField));
+    schema->fields = (GV_SchemaField *)gv_calloc(schema->field_capacity, sizeof(GV_SchemaField));
     if (!schema->fields) {
-        free(schema);
+        gv_free(schema);
         return NULL;
     }
     return schema;
@@ -108,22 +109,22 @@ GV_Schema *schema_create(uint32_t version) {
 
 void schema_destroy(GV_Schema *schema) {
     if (!schema) return;
-    free(schema->fields);
-    free(schema);
+    gv_free(schema->fields);
+    gv_free(schema);
 }
 
 GV_Schema *schema_copy(const GV_Schema *schema) {
     if (!schema) return NULL;
 
-    GV_Schema *copy = (GV_Schema *)calloc(1, sizeof(GV_Schema));
+    GV_Schema *copy = (GV_Schema *)gv_calloc(1, sizeof(GV_Schema));
     if (!copy) return NULL;
 
     copy->version = schema->version;
     copy->field_count = schema->field_count;
     copy->field_capacity = schema->field_capacity;
-    copy->fields = (GV_SchemaField *)calloc(copy->field_capacity, sizeof(GV_SchemaField));
+    copy->fields = (GV_SchemaField *)gv_calloc(copy->field_capacity, sizeof(GV_SchemaField));
     if (!copy->fields) {
-        free(copy);
+        gv_free(copy);
         return NULL;
     }
     memcpy(copy->fields, schema->fields, schema->field_count * sizeof(GV_SchemaField));
@@ -142,7 +143,7 @@ int schema_add_field(GV_Schema *schema, const char *name, GV_SchemaFieldType typ
     /* Grow array if needed */
     if (schema->field_count >= schema->field_capacity) {
         size_t new_cap = schema->field_capacity * 2;
-        GV_SchemaField *tmp = (GV_SchemaField *)realloc(
+        GV_SchemaField *tmp = (GV_SchemaField *)gv_realloc(
             schema->fields, new_cap * sizeof(GV_SchemaField));
         if (!tmp) return -1;
         schema->fields = tmp;
@@ -495,6 +496,6 @@ char *schema_to_json(const GV_Schema *schema) {
     return buf;
 
 fail:
-    free(buf);
+    gv_free(buf);
     return NULL;
 }

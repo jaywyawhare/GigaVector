@@ -1,4 +1,5 @@
 #include <float.h>
+#include "core/memory.h"
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -89,7 +90,7 @@ static void *emb_tracked_malloc(GV_EmbeddedDB *db, size_t size) {
             return NULL;
         }
     }
-    void *ptr = malloc(size);
+    void *ptr = gv_alloc(size);
     if (ptr) {
         db->memory_used += size;
     }
@@ -104,7 +105,7 @@ static void *emb_tracked_calloc(GV_EmbeddedDB *db, size_t nmemb, size_t size) {
             return NULL;
         }
     }
-    void *ptr = calloc(nmemb, size);
+    void *ptr = gv_calloc(nmemb, size);
     if (ptr) {
         db->memory_used += total;
     }
@@ -118,7 +119,7 @@ static void *emb_tracked_realloc(GV_EmbeddedDB *db, void *ptr, size_t old_size, 
             return NULL;
         }
     }
-    void *new_ptr = realloc(ptr, new_size);
+    void *new_ptr = gv_realloc(ptr, new_size);
     if (new_ptr) {
         if (new_size > old_size) {
             db->memory_used += (new_size - old_size);
@@ -131,7 +132,7 @@ static void *emb_tracked_realloc(GV_EmbeddedDB *db, void *ptr, size_t old_size, 
 
 static void emb_tracked_free(GV_EmbeddedDB *db, void *ptr, size_t size) {
     if (ptr) {
-        free(ptr);
+        gv_free(ptr);
         if (db->memory_used >= size) {
             db->memory_used -= size;
         } else {
@@ -349,7 +350,7 @@ static int emb_hnsw_insert(GV_EmbeddedDB *db, size_t vec_idx) {
     size_t cand_count = 0;
 
     if (ef > 0) {
-        candidates = (GV_EmbeddedHeapItem *)malloc(ef * sizeof(GV_EmbeddedHeapItem));
+        candidates = (GV_EmbeddedHeapItem *)gv_alloc(ef * sizeof(GV_EmbeddedHeapItem));
         if (!candidates) return -1;
 
         for (size_t i = 0; i < db->count; ++i) {
@@ -364,7 +365,7 @@ static int emb_hnsw_insert(GV_EmbeddedDB *db, size_t vec_idx) {
     size_t connect_count = cand_count < h->M ? cand_count : h->M;
 
     if (cand_count > 0) {
-        GV_EmbeddedHeapItem *sorted = (GV_EmbeddedHeapItem *)malloc(cand_count * sizeof(GV_EmbeddedHeapItem));
+        GV_EmbeddedHeapItem *sorted = (GV_EmbeddedHeapItem *)gv_alloc(cand_count * sizeof(GV_EmbeddedHeapItem));
         if (sorted) {
             memcpy(sorted, candidates, cand_count * sizeof(GV_EmbeddedHeapItem));
             for (size_t i = 0; i < cand_count; ++i) {
@@ -390,11 +391,11 @@ static int emb_hnsw_insert(GV_EmbeddedDB *db, size_t vec_idx) {
                 }
             }
 
-            free(sorted);
+            gv_free(sorted);
         }
     }
 
-    free(candidates);
+    gv_free(candidates);
     return 0;
 }
 
@@ -411,11 +412,11 @@ static int emb_hnsw_search(const GV_EmbeddedDB *db, const float *query, size_t k
     size_t ef = k < 64 ? 64 : k * 2;
     if (ef > db->count) ef = db->count;
 
-    uint8_t *visited = (uint8_t *)calloc((db->count + 7) / 8, 1);
+    uint8_t *visited = (uint8_t *)gv_calloc((db->count + 7) / 8, 1);
     if (!visited) return -1;
 
-    GV_EmbeddedHeapItem *candidates = (GV_EmbeddedHeapItem *)malloc(ef * sizeof(GV_EmbeddedHeapItem));
-    if (!candidates) { free(visited); return -1; }
+    GV_EmbeddedHeapItem *candidates = (GV_EmbeddedHeapItem *)gv_alloc(ef * sizeof(GV_EmbeddedHeapItem));
+    if (!candidates) { gv_free(visited); return -1; }
     size_t cand_size = 0;
 
     float entry_dist = emb_compute_distance(query, db->vectors + entry * db->dimension,
@@ -455,8 +456,8 @@ static int emb_hnsw_search(const GV_EmbeddedDB *db, const float *query, size_t k
         }
     }
 
-    free(candidates);
-    free(visited);
+    gv_free(candidates);
+    gv_free(visited);
     return 0;
 }
 
@@ -620,7 +621,7 @@ static int emb_lsh_search(const GV_EmbeddedDB *db, const float *query, size_t k,
                            int dist_type, GV_EmbeddedHeapItem *heap, size_t *heap_size) {
     GV_EmbeddedLSH *l = db->lsh;
 
-    uint8_t *seen = (uint8_t *)calloc((db->count + 7) / 8, 1);
+    uint8_t *seen = (uint8_t *)gv_calloc((db->count + 7) / 8, 1);
     if (!seen) return -1;
 
     for (size_t t = 0; t < l->num_tables; ++t) {
@@ -642,7 +643,7 @@ static int emb_lsh_search(const GV_EmbeddedDB *db, const float *query, size_t k,
         }
     }
 
-    free(seen);
+    gv_free(seen);
     return 0;
 }
 
@@ -711,7 +712,7 @@ GV_EmbeddedDB *embedded_open(const GV_EmbeddedConfig *config) {
         return NULL;
     }
 
-    GV_EmbeddedDB *db = (GV_EmbeddedDB *)calloc(1, sizeof(GV_EmbeddedDB));
+    GV_EmbeddedDB *db = (GV_EmbeddedDB *)gv_calloc(1, sizeof(GV_EmbeddedDB));
     if (!db) return NULL;
 
     db->dimension       = config->dimension;
@@ -727,7 +728,7 @@ GV_EmbeddedDB *embedded_open(const GV_EmbeddedConfig *config) {
     }
 
     if (emb_ensure_capacity(db, init_cap) != 0) {
-        free(db);
+        gv_free(db);
         return NULL;
     }
 
@@ -736,7 +737,7 @@ GV_EmbeddedDB *embedded_open(const GV_EmbeddedConfig *config) {
         if (!db->quant) {
             emb_tracked_free(db, db->vectors, db->capacity * db->dimension * sizeof(float));
             emb_tracked_free(db, db->deleted, db->deleted_bytes);
-            free(db);
+            gv_free(db);
             return NULL;
         }
     }
@@ -747,7 +748,7 @@ GV_EmbeddedDB *embedded_open(const GV_EmbeddedConfig *config) {
             if (db->quant) emb_quant_destroy(db, db->quant);
             emb_tracked_free(db, db->vectors, db->capacity * db->dimension * sizeof(float));
             emb_tracked_free(db, db->deleted, db->deleted_bytes);
-            free(db);
+            gv_free(db);
             return NULL;
         }
     } else if (db->index_type == GV_EMBEDDED_INDEX_LSH) {
@@ -756,7 +757,7 @@ GV_EmbeddedDB *embedded_open(const GV_EmbeddedConfig *config) {
             if (db->quant) emb_quant_destroy(db, db->quant);
             emb_tracked_free(db, db->vectors, db->capacity * db->dimension * sizeof(float));
             emb_tracked_free(db, db->deleted, db->deleted_bytes);
-            free(db);
+            gv_free(db);
             return NULL;
         }
     }
@@ -773,7 +774,7 @@ void embedded_close(GV_EmbeddedDB *db) {
 
     emb_tracked_free(db, db->vectors, db->capacity * db->dimension * sizeof(float));
     emb_tracked_free(db, db->deleted, db->deleted_bytes);
-    free(db);
+    gv_free(db);
 }
 
 int embedded_add(GV_EmbeddedDB *db, const float *vector) {
@@ -839,18 +840,18 @@ int embedded_search(const GV_EmbeddedDB *db, const float *query, size_t k,
     if (!db || !query || !results || k == 0) return -1;
     if (db->count == 0) return 0;
 
-    GV_EmbeddedHeapItem *heap = (GV_EmbeddedHeapItem *)malloc(k * sizeof(GV_EmbeddedHeapItem));
+    GV_EmbeddedHeapItem *heap = (GV_EmbeddedHeapItem *)gv_alloc(k * sizeof(GV_EmbeddedHeapItem));
     if (!heap) return -1;
     size_t heap_size = 0;
 
     if (db->index_type == GV_EMBEDDED_INDEX_HNSW && db->hnsw) {
         if (emb_hnsw_search(db, query, k, distance_type, heap, &heap_size) != 0) {
-            free(heap);
+            gv_free(heap);
             return -1;
         }
     } else if (db->index_type == GV_EMBEDDED_INDEX_LSH && db->lsh) {
         if (emb_lsh_search(db, query, k, distance_type, heap, &heap_size) != 0) {
-            free(heap);
+            gv_free(heap);
             return -1;
         }
     } else {
@@ -873,7 +874,7 @@ int embedded_search(const GV_EmbeddedDB *db, const float *query, size_t k,
         }
     }
 
-    free(heap);
+    gv_free(heap);
     return n;
 }
 

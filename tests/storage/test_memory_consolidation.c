@@ -4,6 +4,7 @@
  */
 
 #include <stdio.h>
+#include "core/memory.h"
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -87,9 +88,9 @@ static int test_find_similar_with_data(void) {
     ASSERT(ret == 0, "find_similar should succeed");
 
     memory_pairs_free(pairs, actual_count);
-    free(id1);
-    free(id2);
-    free(id3);
+    gv_free(id1);
+    gv_free(id2);
+    gv_free(id3);
     cleanup(layer, db);
     return 0;
 }
@@ -127,11 +128,11 @@ static int test_memory_merge(void) {
             ASSERT(!flat, "merged embedding should not be flat 0.5");
             memory_result_free(&result);
         }
-        free(merged_id);
+        gv_free(merged_id);
     }
 
-    free(id1);
-    free(id2);
+    gv_free(id1);
+    gv_free(id2);
     cleanup(layer, db);
     return 0;
 }
@@ -165,8 +166,8 @@ static int test_memory_link(void) {
     int ret = memory_link(layer, id1, id2);
     ASSERT(ret == 0, "linking memories should succeed");
 
-    free(id1);
-    free(id2);
+    gv_free(id1);
+    gv_free(id2);
     cleanup(layer, db);
     return 0;
 }
@@ -195,7 +196,7 @@ static int test_memory_archive(void) {
     int ret = memory_archive(layer, id);
     ASSERT(ret == 0, "archiving memory should succeed");
 
-    free(id);
+    gv_free(id);
     cleanup(layer, db);
     return 0;
 }
@@ -242,11 +243,11 @@ static int test_consolidate_pair(void) {
 
     char *consolidated = memory_consolidate_pair(layer, id1, id2, GV_CONSOLIDATION_MERGE);
     if (consolidated != NULL) {
-        free(consolidated);
+        gv_free(consolidated);
     }
 
-    free(id1);
-    free(id2);
+    gv_free(id1);
+    gv_free(id2);
     cleanup(layer, db);
     return 0;
 }
@@ -268,8 +269,8 @@ static int test_memory_update_from_new(void) {
     int ret = memory_update_from_new(layer, id1, id2);
     (void)ret;
 
-    free(id1);
-    free(id2);
+    gv_free(id1);
+    gv_free(id2);
     cleanup(layer, db);
     return 0;
 }
@@ -297,8 +298,8 @@ static int test_find_similar_high_threshold(void) {
     (void)actual_count;
 
     memory_pairs_free(pairs, actual_count);
-    free(id1);
-    free(id2);
+    gv_free(id1);
+    gv_free(id2);
     cleanup(layer, db);
     return 0;
 }

@@ -70,7 +70,7 @@ static int test_insert_compact_search_oracle(void)
 
     for (size_t q = 0; q < 4; ++q) {
         size_t k = db->count > 0 ? db->count : 1;
-        GV_SearchResult *hits = (GV_SearchResult *)calloc(k, sizeof(GV_SearchResult));
+        GV_SearchResult *hits = (GV_SearchResult *)gv_calloc(k, sizeof(GV_SearchResult));
         ASSERT(hits != NULL, "alloc hits");
         int found = db_search(db, current + q * DIM, k, hits, GV_DISTANCE_EUCLIDEAN);
         ASSERT(found > 0, "search after maintenance");
@@ -78,7 +78,7 @@ static int test_insert_compact_search_oracle(void)
         for (int i = 0; i < found; ++i) {
             if (hits[i].vector) vector_destroy((GV_Vector *)hits[i].vector);
         }
-        free(hits);
+        gv_free(hits);
     }
 
     db_close(db);

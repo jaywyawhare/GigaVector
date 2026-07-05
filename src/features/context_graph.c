@@ -1,4 +1,5 @@
 #include <stdlib.h>
+#include "core/memory.h"
 #include <string.h>
 #include <time.h>
 #include <stdio.h>
@@ -39,7 +40,7 @@ struct GV_ContextGraph {
 };
 
 static char *generate_entity_id(uint64_t counter) {
-    char *id = (char *)malloc(ENTITY_ID_BUFFER_SIZE);
+    char *id = (char *)gv_alloc(ENTITY_ID_BUFFER_SIZE);
     if (id == NULL) {
         return NULL;
     }
@@ -48,7 +49,7 @@ static char *generate_entity_id(uint64_t counter) {
 }
 
 static char *generate_relationship_id(uint64_t counter) {
-    char *id = (char *)malloc(RELATIONSHIP_ID_BUFFER_SIZE);
+    char *id = (char *)gv_alloc(RELATIONSHIP_ID_BUFFER_SIZE);
     if (id == NULL) {
         return NULL;
     }
@@ -74,7 +75,7 @@ GV_ContextGraphConfig context_graph_config_default(void) {
 }
 
 GV_ContextGraph *context_graph_create(const GV_ContextGraphConfig *config) {
-    GV_ContextGraph *graph = (GV_ContextGraph *)calloc(1, sizeof(GV_ContextGraph));
+    GV_ContextGraph *graph = (GV_ContextGraph *)gv_calloc(1, sizeof(GV_ContextGraph));
     if (graph == NULL) {
         return NULL;
     }
@@ -87,13 +88,13 @@ GV_ContextGraph *context_graph_create(const GV_ContextGraphConfig *config) {
     
     graph->entity_table_size = 1024;
     graph->relationship_table_size = 1024;
-    graph->entity_table = (EntityNode **)calloc(graph->entity_table_size, sizeof(EntityNode *));
-    graph->relationship_table = (RelationshipNode **)calloc(graph->relationship_table_size, sizeof(RelationshipNode *));
+    graph->entity_table = (EntityNode **)gv_calloc(graph->entity_table_size, sizeof(EntityNode *));
+    graph->relationship_table = (RelationshipNode **)gv_calloc(graph->relationship_table_size, sizeof(RelationshipNode *));
     
     if (graph->entity_table == NULL || graph->relationship_table == NULL) {
-        free(graph->entity_table);
-        free(graph->relationship_table);
-        free(graph);
+        gv_free(graph->entity_table);
+        gv_free(graph->relationship_table);
+        gv_free(graph);
         return NULL;
     }
     
@@ -101,9 +102,9 @@ GV_ContextGraph *context_graph_create(const GV_ContextGraphConfig *config) {
     graph->next_relationship_id = 1;
     
     if (pthread_mutex_init(&graph->mutex, NULL) != 0) {
-        free(graph->entity_table);
-        free(graph->relationship_table);
-        free(graph);
+        gv_free(graph->entity_table);
+        gv_free(graph->relationship_table);
+        gv_free(graph);
         return NULL;
     }
     
@@ -140,7 +141,7 @@ static int parse_entities_json(const char *json_response, GV_GraphEntity **entit
         return 0;  // No entities found, but valid JSON
     }
     
-    GV_GraphEntity *ents = (GV_GraphEntity *)calloc(count, sizeof(GV_GraphEntity));
+    GV_GraphEntity *ents = (GV_GraphEntity *)gv_calloc(count, sizeof(GV_GraphEntity));
     if (ents == NULL) {
         return -1;
     }
@@ -158,12 +159,12 @@ static int parse_entities_json(const char *json_response, GV_GraphEntity **entit
         if (name_end == NULL) break;
         
         size_t name_len = name_end - name_start;
-        ents[idx].name = (char *)malloc(name_len + 1);
+        ents[idx].name = (char *)gv_alloc(name_len + 1);
         if (ents[idx].name == NULL) {
             for (size_t i = 0; i < idx; i++) {
-                free(ents[i].name);
+                gv_free(ents[i].name);
             }
-            free(ents);
+            gv_free(ents);
             return -1;
         }
         memcpy(ents[idx].name, name_start, name_len);
@@ -248,7 +249,7 @@ static int parse_relationships_json(const char *json_response, GV_GraphRelations
         return 0;  // No relationships found, but valid JSON
     }
     
-    GV_GraphRelationship *rels = (GV_GraphRelationship *)calloc(count, sizeof(GV_GraphRelationship));
+    GV_GraphRelationship *rels = (GV_GraphRelationship *)gv_calloc(count, sizeof(GV_GraphRelationship));
     if (rels == NULL) {
         return -1;
     }
@@ -266,14 +267,14 @@ static int parse_relationships_json(const char *json_response, GV_GraphRelations
         if (source_end == NULL) break;
         
         size_t source_len = source_end - source_start;
-        char *source = (char *)malloc(source_len + 1);
+        char *source = (char *)gv_alloc(source_len + 1);
         if (source == NULL) {
             for (size_t i = 0; i < idx; i++) {
-                free(rels[i].source_entity_id);
-                free(rels[i].destination_entity_id);
-                free(rels[i].relationship_type);
+                gv_free(rels[i].source_entity_id);
+                gv_free(rels[i].destination_entity_id);
+                gv_free(rels[i].relationship_type);
             }
-            free(rels);
+            gv_free(rels);
             return -1;
         }
         memcpy(source, source_start, source_len);
@@ -290,7 +291,7 @@ static int parse_relationships_json(const char *json_response, GV_GraphRelations
                 const char *rel_end = strchr(rel_start, '"');
                 if (rel_end != NULL) {
                     size_t rel_len = rel_end - rel_start;
-                    rels[idx].relationship_type = (char *)malloc(rel_len + 1);
+                    rels[idx].relationship_type = (char *)gv_alloc(rel_len + 1);
                     if (rels[idx].relationship_type != NULL) {
                         memcpy(rels[idx].relationship_type, rel_start, rel_len);
                         rels[idx].relationship_type[rel_len] = '\0';
@@ -307,7 +308,7 @@ static int parse_relationships_json(const char *json_response, GV_GraphRelations
                 const char *dest_end = strchr(dest_start, '"');
                 if (dest_end != NULL) {
                     size_t dest_len = dest_end - dest_start;
-                    char *dest = (char *)malloc(dest_len + 1);
+                    char *dest = (char *)gv_alloc(dest_len + 1);
                     if (dest != NULL) {
                         memcpy(dest, dest_start, dest_len);
                         dest[dest_len] = '\0';
@@ -320,16 +321,16 @@ static int parse_relationships_json(const char *json_response, GV_GraphRelations
                         rels[idx].source_entity_id = gv_dup_cstr(source_id);
                         rels[idx].destination_entity_id = gv_dup_cstr(dest_id);
                         
-                        free(source);
-                        free(dest);
+                        gv_free(source);
+                        gv_free(dest);
                     } else {
-                        free(source);
+                        gv_free(source);
                         for (size_t i = 0; i < idx; i++) {
-                            free(rels[i].source_entity_id);
-                            free(rels[i].destination_entity_id);
-                            free(rels[i].relationship_type);
+                            gv_free(rels[i].source_entity_id);
+                            gv_free(rels[i].destination_entity_id);
+                            gv_free(rels[i].relationship_type);
                         }
-                        free(rels);
+                        gv_free(rels);
                         return -1;
                     }
                 }
@@ -337,13 +338,13 @@ static int parse_relationships_json(const char *json_response, GV_GraphRelations
         }
         
         if (rels[idx].source_entity_id == NULL || rels[idx].destination_entity_id == NULL) {
-            free(source);
+            gv_free(source);
             for (size_t i = 0; i < idx; i++) {
-                free(rels[i].source_entity_id);
-                free(rels[i].destination_entity_id);
-                free(rels[i].relationship_type);
+                gv_free(rels[i].source_entity_id);
+                gv_free(rels[i].destination_entity_id);
+                gv_free(rels[i].relationship_type);
             }
-            free(rels);
+            gv_free(rels);
             return -1;
         }
         
@@ -368,28 +369,28 @@ void context_graph_destroy(GV_ContextGraph *graph) {
         while (node != NULL) {
             EntityNode *next = node->next;
             graph_entity_free(&node->entity);
-            free(node->entity_id);
-            free(node);
+            gv_free(node->entity_id);
+            gv_free(node);
             node = next;
         }
     }
-    free(graph->entity_table);
+    gv_free(graph->entity_table);
     
     for (size_t i = 0; i < graph->relationship_table_size; i++) {
         RelationshipNode *node = graph->relationship_table[i];
         while (node != NULL) {
             RelationshipNode *next = node->next;
             graph_relationship_free(&node->relationship);
-            free(node->relationship_id);
-            free(node);
+            gv_free(node->relationship_id);
+            gv_free(node);
             node = next;
         }
     }
-    free(graph->relationship_table);
+    gv_free(graph->relationship_table);
     
     pthread_mutex_unlock(&graph->mutex);
     pthread_mutex_destroy(&graph->mutex);
-    free(graph);
+    gv_free(graph);
 }
 
 static int extract_entities_llm(GV_LLM *llm, const char *text, const char *user_id,
@@ -425,7 +426,7 @@ static int extract_entities_llm(GV_LLM *llm, const char *text, const char *user_
     
     int parse_result = parse_entities_json(response.content, entities, entity_count);
     
-    free(response.content);
+    gv_free(response.content);
     return parse_result;
 }
 
@@ -470,7 +471,7 @@ static int extract_relationships_llm(GV_LLM *llm, const char *text, const char *
     
     int parse_result = parse_relationships_json(response.content, relationships, relationship_count);
     
-    free(response.content);
+    gv_free(response.content);
     return parse_result;
 }
 
@@ -524,7 +525,7 @@ int context_graph_extract(GV_ContextGraph *graph,
         if (*entities != NULL && *entity_count > 0) {
             GV_EmbeddingService *embedding_service = (GV_EmbeddingService *)graph->config.embedding_service;
             if (embedding_service != NULL) {
-                const char **texts = (const char **)malloc(*entity_count * sizeof(const char *));
+                const char **texts = (const char **)gv_alloc(*entity_count * sizeof(const char *));
                 if (texts != NULL) {
                     for (size_t i = 0; i < *entity_count; i++) {
                         texts[i] = ((*entities)[i].embedding == NULL && (*entities)[i].name != NULL) 
@@ -548,8 +549,8 @@ int context_graph_extract(GV_ContextGraph *graph,
                         }
                     }
                     
-                    free(texts);
-                    if (embedding_dims) free(embedding_dims);
+                    gv_free(texts);
+                    if (embedding_dims) gv_free(embedding_dims);
                 }
             } else if (graph->config.embedding_callback != NULL) {
                 for (size_t i = 0; i < *entity_count; i++) {
@@ -575,7 +576,7 @@ int context_graph_extract(GV_ContextGraph *graph,
             for (size_t i = 0; i < *entity_count; i++) {
                 graph_entity_free(&(*entities)[i]);
             }
-            free(*entities);
+            gv_free(*entities);
             *entities = NULL;
             *entity_count = 0;
             return -1;
@@ -615,22 +616,22 @@ int context_graph_add_entities(GV_ContextGraph *graph,
             found->entity.updated = time(NULL);
             found->entity.mentions++;
             if (ent->embedding != NULL && ent->embedding_dim > 0) {
-                free(found->entity.embedding);
-                found->entity.embedding = (float *)malloc(ent->embedding_dim * sizeof(float));
+                gv_free(found->entity.embedding);
+                found->entity.embedding = (float *)gv_alloc(ent->embedding_dim * sizeof(float));
                 if (found->entity.embedding != NULL) {
                     memcpy(found->entity.embedding, ent->embedding, ent->embedding_dim * sizeof(float));
                     found->entity.embedding_dim = ent->embedding_dim;
                 }
             }
         } else {
-            EntityNode *new_node = (EntityNode *)calloc(1, sizeof(EntityNode));
+            EntityNode *new_node = (EntityNode *)gv_calloc(1, sizeof(EntityNode));
             if (new_node == NULL) {
                 continue;
             }
             
             new_node->entity_id = generate_entity_id(graph->next_entity_id++);
             if (new_node->entity_id == NULL) {
-                free(new_node);
+                gv_free(new_node);
                 continue;
             }
             
@@ -652,7 +653,7 @@ int context_graph_add_entities(GV_ContextGraph *graph,
             }
             
             if (ent->embedding != NULL && ent->embedding_dim > 0) {
-                new_node->entity.embedding = (float *)malloc(ent->embedding_dim * sizeof(float));
+                new_node->entity.embedding = (float *)gv_alloc(ent->embedding_dim * sizeof(float));
                 if (new_node->entity.embedding != NULL) {
                     memcpy(new_node->entity.embedding, ent->embedding, ent->embedding_dim * sizeof(float));
                     new_node->entity.embedding_dim = ent->embedding_dim;
@@ -721,14 +722,14 @@ int context_graph_add_relationships(GV_ContextGraph *graph,
             found->relationship.updated = time(NULL);
             found->relationship.mentions++;
         } else {
-            RelationshipNode *new_node = (RelationshipNode *)calloc(1, sizeof(RelationshipNode));
+            RelationshipNode *new_node = (RelationshipNode *)gv_calloc(1, sizeof(RelationshipNode));
             if (new_node == NULL) {
                 continue;
             }
             
             new_node->relationship_id = generate_relationship_id(graph->next_relationship_id++);
             if (new_node->relationship_id == NULL) {
-                free(new_node);
+                gv_free(new_node);
                 continue;
             }
             
@@ -905,7 +906,7 @@ int context_graph_get_related(GV_ContextGraph *graph,
         size_t depth;
     } QueueItem;
     
-    QueueItem *queue = (QueueItem *)malloc(max_results * 2 * sizeof(QueueItem));
+    QueueItem *queue = (QueueItem *)gv_alloc(max_results * 2 * sizeof(QueueItem));
     if (queue == NULL) {
         pthread_mutex_unlock(&graph->mutex);
         return -1;
@@ -913,9 +914,9 @@ int context_graph_get_related(GV_ContextGraph *graph,
     
     size_t queue_front = 0;
     size_t queue_back = 0;
-    int *visited = (int *)calloc(graph->entity_table_size * 100, sizeof(int));
+    int *visited = (int *)gv_calloc(graph->entity_table_size * 100, sizeof(int));
     if (visited == NULL) {
-        free(queue);
+        gv_free(queue);
         pthread_mutex_unlock(&graph->mutex);
         return -1;
     }
@@ -983,8 +984,8 @@ int context_graph_get_related(GV_ContextGraph *graph,
         }
     }
     
-    free(queue);
-    free(visited);
+    gv_free(queue);
+    gv_free(visited);
     
     pthread_mutex_unlock(&graph->mutex);
     return (int)result_count;
@@ -1008,8 +1009,8 @@ int context_graph_delete_entities(GV_ContextGraph *graph,
             if (strcmp(node->entity_id, entity_ids[i]) == 0) {
                 *node_ptr = node->next;
                 graph_entity_free(&node->entity);
-                free(node->entity_id);
-                free(node);
+                gv_free(node->entity_id);
+                gv_free(node);
                 break;
             }
             node_ptr = &node->next;
@@ -1039,8 +1040,8 @@ int context_graph_delete_relationships(GV_ContextGraph *graph,
                 if (strcmp(node->relationship_id, relationship_ids[i]) == 0) {
                     *node_ptr = node->next;
                     graph_relationship_free(&node->relationship);
-                    free(node->relationship_id);
-                    free(node);
+                    gv_free(node->relationship_id);
+                    gv_free(node);
                     goto next_relationship;
                 }
                 node_ptr = &node->next;
@@ -1059,12 +1060,12 @@ void graph_entity_free(GV_GraphEntity *entity) {
         return;
     }
     
-    free(entity->entity_id);
-    free(entity->name);
-    free(entity->embedding);
-    free(entity->user_id);
-    free(entity->agent_id);
-    free(entity->run_id);
+    gv_free(entity->entity_id);
+    gv_free(entity->name);
+    gv_free(entity->embedding);
+    gv_free(entity->user_id);
+    gv_free(entity->agent_id);
+    gv_free(entity->run_id);
     memset(entity, 0, sizeof(GV_GraphEntity));
 }
 
@@ -1073,10 +1074,10 @@ void graph_relationship_free(GV_GraphRelationship *relationship) {
         return;
     }
     
-    free(relationship->relationship_id);
-    free(relationship->source_entity_id);
-    free(relationship->destination_entity_id);
-    free(relationship->relationship_type);
+    gv_free(relationship->relationship_id);
+    gv_free(relationship->source_entity_id);
+    gv_free(relationship->destination_entity_id);
+    gv_free(relationship->relationship_type);
     memset(relationship, 0, sizeof(GV_GraphRelationship));
 }
 
@@ -1085,9 +1086,9 @@ void graph_query_result_free(GV_GraphQueryResult *result) {
         return;
     }
     
-    free(result->source_name);
-    free(result->relationship_type);
-    free(result->destination_name);
+    gv_free(result->source_name);
+    gv_free(result->relationship_type);
+    gv_free(result->destination_name);
     memset(result, 0, sizeof(GV_GraphQueryResult));
 }
 

@@ -9,6 +9,7 @@
  */
 
 #include <stdio.h>
+#include "core/memory.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -44,12 +45,12 @@ static int apply_latest_wal_to_follower(GV_Database *leader, GV_Database *follow
     uint8_t *record = NULL;
     size_t record_len = 0;
     if (wal_read_entry_at(path, total - 1, &type, &record, &record_len) != 0) {
-        free(record);
+        gv_free(record);
         return -1;
     }
 
     int rc = db_apply_wal_record(follower, record, record_len);
-    free(record);
+    gv_free(record);
     return rc;
 }
 

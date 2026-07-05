@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include "core/memory.h"
 #include <stdlib.h>
 #include <string.h>
 #include <float.h>
@@ -46,7 +47,7 @@ static const GV_MultiVecConfig multivec_default_config = {
 void *multivec_create(size_t dimension, const GV_MultiVecConfig *config) {
     if (dimension == 0) return NULL;
 
-    GV_MultiVecIndex *idx = (GV_MultiVecIndex *)calloc(1, sizeof(GV_MultiVecIndex));
+    GV_MultiVecIndex *idx = (GV_MultiVecIndex *)gv_calloc(1, sizeof(GV_MultiVecIndex));
     if (!idx) return NULL;
 
     idx->dimension = dimension;
@@ -57,9 +58,9 @@ void *multivec_create(size_t dimension, const GV_MultiVecConfig *config) {
     }
 
     idx->doc_capacity = 16;
-    idx->docs = (GV_DocEntry *)calloc(idx->doc_capacity, sizeof(GV_DocEntry));
+    idx->docs = (GV_DocEntry *)gv_calloc(idx->doc_capacity, sizeof(GV_DocEntry));
     if (!idx->docs) {
-        free(idx);
+        gv_free(idx);
         return NULL;
     }
 
@@ -74,10 +75,10 @@ void multivec_destroy(void *index) {
     GV_MultiVecIndex *idx = (GV_MultiVecIndex *)index;
 
     for (size_t i = 0; i < idx->doc_count; i++) {
-        free(idx->docs[i].chunks);
+        gv_free(idx->docs[i].chunks);
     }
-    free(idx->docs);
-    free(idx);
+    gv_free(idx->docs);
+    gv_free(idx);
 }
 
 int multivec_add_document(void *index, uint64_t doc_id,
@@ -98,7 +99,7 @@ int multivec_add_document(void *index, uint64_t doc_id,
 
     if (idx->doc_count >= idx->doc_capacity) {
         size_t new_cap = idx->doc_capacity * 2;
-        GV_DocEntry *new_docs = (GV_DocEntry *)realloc(idx->docs,
+        GV_DocEntry *new_docs = (GV_DocEntry *)gv_realloc(idx->docs,
                                                        new_cap * sizeof(GV_DocEntry));
         if (!new_docs) return -1;
         idx->docs = new_docs;
@@ -106,7 +107,7 @@ int multivec_add_document(void *index, uint64_t doc_id,
     }
 
     size_t data_size = num_chunks * dimension * sizeof(float);
-    float *chunk_copy = (float *)malloc(data_size);
+    float *chunk_copy = (float *)gv_alloc(data_size);
     if (!chunk_copy) return -1;
     memcpy(chunk_copy, chunks, data_size);
 
@@ -130,7 +131,7 @@ int multivec_delete_document(void *index, uint64_t doc_id) {
         if (!idx->docs[i].deleted && idx->docs[i].doc_id == doc_id) {
             idx->docs[i].deleted = 1;
             idx->total_chunks -= idx->docs[i].num_chunks;
-            free(idx->docs[i].chunks);
+            gv_free(idx->docs[i].chunks);
             idx->docs[i].chunks = NULL;
             idx->docs[i].num_chunks = 0;
             return 0;
@@ -199,7 +200,7 @@ int multivec_search(void *index, const float *query, size_t k,
 
     GV_MultiVecIndex *idx = (GV_MultiVecIndex *)index;
 
-    GV_MVHeapItem *heap = (GV_MVHeapItem *)malloc(k * sizeof(GV_MVHeapItem));
+    GV_MVHeapItem *heap = (GV_MVHeapItem *)gv_alloc(k * sizeof(GV_MVHeapItem));
     if (!heap) return -1;
     size_t heap_size = 0;
 
@@ -239,7 +240,7 @@ int multivec_search(void *index, const float *query, size_t k,
         }
     }
 
-    free(heap);
+    gv_free(heap);
     return n;
 }
 
@@ -328,13 +329,13 @@ int multivec_load(void **index_ptr, FILE *in, size_t dimension) {
         float *chunks = NULL;
 
         if (floats > 0) {
-            chunks = (float *)malloc(floats * sizeof(float));
+            chunks = (float *)gv_alloc(floats * sizeof(float));
             if (!chunks) {
                 multivec_destroy(index);
                 return -1;
             }
             if (fread(chunks, sizeof(float), floats, in) != floats) {
-                free(chunks);
+                gv_free(chunks);
                 multivec_destroy(index);
                 return -1;
             }
@@ -342,7 +343,7 @@ int multivec_load(void **index_ptr, FILE *in, size_t dimension) {
 
         int rc = multivec_add_document(index, doc_id, chunks,
                                           (size_t)num_chunks, (size_t)file_dim);
-        free(chunks);
+        gv_free(chunks);
 
         if (rc != 0) {
             multivec_destroy(index);

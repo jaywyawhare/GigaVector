@@ -5,6 +5,7 @@
  */
 
 #include "security/rbac.h"
+#include "core/memory.h"
 #include "core/utils.h"
 
 #include <stdlib.h>
@@ -168,7 +169,7 @@ static int expect_char(const char **pp, char c) {
 }
 
 /**
- * @brief Parse a JSON string value. Caller must free the result.
+ * @brief Parse a JSON string value. Caller must gv_free the result.
  *        Returns NULL on failure.
  */
 static char *parse_string(const char **pp) {
@@ -178,7 +179,7 @@ static char *parse_string(const char **pp) {
 
     size_t cap = 128;
     size_t len = 0;
-    char *buf = malloc(cap);
+    char *buf = gv_alloc(cap);
     if (!buf) return NULL;
 
     while (**pp && **pp != '"') {
@@ -196,15 +197,15 @@ static char *parse_string(const char **pp) {
         }
         if (len + 1 >= cap) {
             cap *= 2;
-            char *tmp = realloc(buf, cap);
-            if (!tmp) { free(buf); return NULL; }
+            char *tmp = gv_realloc(buf, cap);
+            if (!tmp) { gv_free(buf); return NULL; }
             buf = tmp;
         }
         buf[len++] = c;
         (*pp)++;
     }
 
-    if (**pp != '"') { free(buf); return NULL; }
+    if (**pp != '"') { gv_free(buf); return NULL; }
     (*pp)++;
 
     buf[len] = '\0';
@@ -240,13 +241,13 @@ static int parse_int(const char **pp) {
 
 /**
  * @brief Expect a JSON key string followed by ':'. Returns the key or NULL.
- *        Caller must free.
+ *        Caller must gv_free.
  */
 static char *parse_key(const char **pp) {
     char *key = parse_string(pp);
     if (!key) return NULL;
     skip_ws(pp);
-    if (**pp != ':') { free(key); return NULL; }
+    if (**pp != ':') { gv_free(key); return NULL; }
     (*pp)++;
     return key;
 }
@@ -254,11 +255,11 @@ static char *parse_key(const char **pp) {
 /* Lifecycle */
 
 GV_RBACManager *rbac_create(void) {
-    GV_RBACManager *mgr = calloc(1, sizeof(GV_RBACManager));
+    GV_RBACManager *mgr = gv_calloc(1, sizeof(GV_RBACManager));
     if (!mgr) return NULL;
 
     if (pthread_rwlock_init(&mgr->rwlock, NULL) != 0) {
-        free(mgr);
+        gv_free(mgr);
         return NULL;
     }
 
@@ -270,22 +271,22 @@ void rbac_destroy(GV_RBACManager *mgr) {
 
     /* Free roles */
     for (size_t i = 0; i < mgr->role_count; i++) {
-        free(mgr->roles[i].name);
+        gv_free(mgr->roles[i].name);
         for (size_t j = 0; j < mgr->roles[i].rule_count; j++) {
-            free(mgr->roles[i].rules[j].resource);
+            gv_free(mgr->roles[i].rules[j].resource);
         }
     }
 
     /* Free users */
     for (size_t i = 0; i < mgr->user_count; i++) {
-        free(mgr->users[i].user_id);
+        gv_free(mgr->users[i].user_id);
         for (size_t j = 0; j < mgr->users[i].role_count; j++) {
-            free(mgr->users[i].role_names[j]);
+            gv_free(mgr->users[i].role_names[j]);
         }
     }
 
     pthread_rwlock_destroy(&mgr->rwlock);
-    free(mgr);
+    gv_free(mgr);
 }
 
 /* Role Management */
@@ -333,9 +334,9 @@ int rbac_delete_role(GV_RBACManager *mgr, const char *role_name) {
     }
 
     /* Free role data */
-    free(mgr->roles[idx].name);
+    gv_free(mgr->roles[idx].name);
     for (size_t j = 0; j < mgr->roles[idx].rule_count; j++) {
-        free(mgr->roles[idx].rules[j].resource);
+        gv_free(mgr->roles[idx].rules[j].resource);
     }
 
     /* Update parent references: any role that inherits from the deleted role
@@ -420,7 +421,7 @@ int rbac_remove_rule(GV_RBACManager *mgr, const char *role_name,
 
     for (size_t i = 0; i < role->rule_count; i++) {
         if (strcmp(role->rules[i].resource, resource) == 0) {
-            free(role->rules[i].resource);
+            gv_free(role->rules[i].resource);
             /* Shift remaining rules */
             for (size_t k = i; k < role->rule_count - 1; k++) {
                 role->rules[k] = role->rules[k + 1];
@@ -557,7 +558,7 @@ int rbac_revoke_role(GV_RBACManager *mgr, const char *user_id,
 
     for (size_t i = 0; i < user->role_count; i++) {
         if (strcmp(user->role_names[i], role_name) == 0) {
-            free(user->role_names[i]);
+            gv_free(user->role_names[i]);
             for (size_t k = i; k < user->role_count - 1; k++) {
                 user->role_names[k] = user->role_names[k + 1];
             }
@@ -587,7 +588,7 @@ int rbac_get_user_roles(const GV_RBACManager *mgr, const char *user_id,
     }
 
     *out_count = user->role_count;
-    *out_roles = malloc(user->role_count * sizeof(char *));
+    *out_roles = gv_alloc(user->role_count * sizeof(char *));
     if (!*out_roles) {
         *out_count = 0;
         pthread_rwlock_unlock((pthread_rwlock_t *)&mgr->rwlock);
@@ -646,7 +647,7 @@ int rbac_list_roles(const GV_RBACManager *mgr, char ***out_names,
         return 0;
     }
 
-    *out_names = malloc(mgr->role_count * sizeof(char *));
+    *out_names = gv_alloc(mgr->role_count * sizeof(char *));
     if (!*out_names) {
         *out_count = 0;
         pthread_rwlock_unlock((pthread_rwlock_t *)&mgr->rwlock);
@@ -664,9 +665,9 @@ int rbac_list_roles(const GV_RBACManager *mgr, char ***out_names,
 void rbac_free_string_list(char **list, size_t count) {
     if (!list) return;
     for (size_t i = 0; i < count; i++) {
-        free(list[i]);
+        gv_free(list[i]);
     }
-    free(list);
+    gv_free(list);
 }
 
 /* Built-in Roles */
@@ -783,7 +784,7 @@ GV_RBACManager *rbac_load(const char *filepath) {
     if (fsize <= 0) { fclose(fp); return NULL; }
     fseek(fp, 0, SEEK_SET);
 
-    char *data = malloc((size_t)fsize + 1);
+    char *data = gv_alloc((size_t)fsize + 1);
     if (!data) { fclose(fp); return NULL; }
 
     size_t nread = fread(data, 1, (size_t)fsize, fp);
@@ -791,7 +792,7 @@ GV_RBACManager *rbac_load(const char *filepath) {
     data[nread] = '\0';
 
     GV_RBACManager *mgr = rbac_create();
-    if (!mgr) { free(data); return NULL; }
+    if (!mgr) { gv_free(data); return NULL; }
 
     const char *p = data;
 
@@ -813,7 +814,7 @@ GV_RBACManager *rbac_load(const char *filepath) {
         if (!key) goto fail;
 
         if (strcmp(key, "roles") == 0) {
-            free(key);
+            gv_free(key);
 
             /* Parse roles array */
             if (expect_char(&p, '[') != 0) goto fail;
@@ -841,25 +842,25 @@ GV_RBACManager *rbac_load(const char *filepath) {
 
                     char *rkey = parse_key(&p);
                     if (!rkey) {
-                        free(role_name);
-                        free(inherits);
-                        for (size_t ri = 0; ri < rule_count; ri++) free(rule_resources[ri]);
+                        gv_free(role_name);
+                        gv_free(inherits);
+                        for (size_t ri = 0; ri < rule_count; ri++) gv_free(rule_resources[ri]);
                         goto fail;
                     }
 
                     if (strcmp(rkey, "name") == 0) {
-                        free(rkey);
+                        gv_free(rkey);
                         role_name = parse_string(&p);
                     } else if (strcmp(rkey, "inherits") == 0) {
-                        free(rkey);
+                        gv_free(rkey);
                         inherits = parse_string(&p);
                     } else if (strcmp(rkey, "rules") == 0) {
-                        free(rkey);
+                        gv_free(rkey);
 
                         /* Parse rules array */
                         if (expect_char(&p, '[') != 0) {
-                            free(role_name);
-                            free(inherits);
+                            gv_free(role_name);
+                            gv_free(inherits);
                             goto fail;
                         }
 
@@ -870,9 +871,9 @@ GV_RBACManager *rbac_load(const char *filepath) {
 
                             /* Parse rule object */
                             if (expect_char(&p, '{') != 0) {
-                                free(role_name);
-                                free(inherits);
-                                for (size_t ri = 0; ri < rule_count; ri++) free(rule_resources[ri]);
+                                gv_free(role_name);
+                                gv_free(inherits);
+                                for (size_t ri = 0; ri < rule_count; ri++) gv_free(rule_resources[ri]);
                                 goto fail;
                             }
 
@@ -886,22 +887,22 @@ GV_RBACManager *rbac_load(const char *filepath) {
 
                                 char *rrkey = parse_key(&p);
                                 if (!rrkey) {
-                                    free(res);
-                                    free(role_name);
-                                    free(inherits);
-                                    for (size_t ri = 0; ri < rule_count; ri++) free(rule_resources[ri]);
+                                    gv_free(res);
+                                    gv_free(role_name);
+                                    gv_free(inherits);
+                                    for (size_t ri = 0; ri < rule_count; ri++) gv_free(rule_resources[ri]);
                                     goto fail;
                                 }
 
                                 if (strcmp(rrkey, "resource") == 0) {
-                                    free(rrkey);
+                                    gv_free(rrkey);
                                     res = parse_string(&p);
                                 } else if (strcmp(rrkey, "permissions") == 0) {
-                                    free(rrkey);
+                                    gv_free(rrkey);
                                     int v = parse_int(&p);
                                     perms = (v >= 0) ? (uint32_t)v : 0;
                                 } else {
-                                    free(rrkey);
+                                    gv_free(rrkey);
                                     /* Skip unknown value */
                                     parse_string(&p);
                                 }
@@ -912,16 +913,16 @@ GV_RBACManager *rbac_load(const char *filepath) {
                                 rule_permissions[rule_count] = perms;
                                 rule_count++;
                             } else {
-                                free(res);
+                                gv_free(res);
                             }
                         }
                     } else {
-                        free(rkey);
+                        gv_free(rkey);
                         /* Skip unknown value */
                         skip_ws(&p);
                         if (*p == '"') {
                             char *tmp = parse_string(&p);
-                            free(tmp);
+                            gv_free(tmp);
                         } else if (*p == '[') {
                             /* Skip array: find matching ] */
                             int depth = 1;
@@ -954,20 +955,20 @@ GV_RBACManager *rbac_load(const char *filepath) {
                     if (inherits && strcmp(inherits, "none") != 0) {
                         inherit_names[ri] = inherits;
                     } else {
-                        free(inherits);
+                        gv_free(inherits);
                     }
 
                     mgr->role_count++;
                 } else {
-                    free(role_name);
-                    free(inherits);
+                    gv_free(role_name);
+                    gv_free(inherits);
                     for (size_t rr = 0; rr < rule_count; rr++) {
-                        free(rule_resources[rr]);
+                        gv_free(rule_resources[rr]);
                     }
                 }
             }
         } else if (strcmp(key, "users") == 0) {
-            free(key);
+            gv_free(key);
 
             /* Parse users array */
             if (expect_char(&p, '[') != 0) goto fail;
@@ -991,20 +992,20 @@ GV_RBACManager *rbac_load(const char *filepath) {
 
                     char *ukey = parse_key(&p);
                     if (!ukey) {
-                        free(uid);
-                        for (size_t ri = 0; ri < prole_count; ri++) free(parsed_roles[ri]);
+                        gv_free(uid);
+                        for (size_t ri = 0; ri < prole_count; ri++) gv_free(parsed_roles[ri]);
                         goto fail;
                     }
 
                     if (strcmp(ukey, "user_id") == 0) {
-                        free(ukey);
+                        gv_free(ukey);
                         uid = parse_string(&p);
                     } else if (strcmp(ukey, "roles") == 0) {
-                        free(ukey);
+                        gv_free(ukey);
 
                         if (expect_char(&p, '[') != 0) {
-                            free(uid);
-                            for (size_t ri = 0; ri < prole_count; ri++) free(parsed_roles[ri]);
+                            gv_free(uid);
+                            for (size_t ri = 0; ri < prole_count; ri++) gv_free(parsed_roles[ri]);
                             goto fail;
                         }
 
@@ -1017,15 +1018,15 @@ GV_RBACManager *rbac_load(const char *filepath) {
                             if (rn && prole_count < MAX_ROLES_PER_USER) {
                                 parsed_roles[prole_count++] = rn;
                             } else {
-                                free(rn);
+                                gv_free(rn);
                             }
                         }
                     } else {
-                        free(ukey);
+                        gv_free(ukey);
                         skip_ws(&p);
                         if (*p == '"') {
                             char *tmp = parse_string(&p);
-                            free(tmp);
+                            gv_free(tmp);
                         } else {
                             parse_int(&p);
                         }
@@ -1045,19 +1046,19 @@ GV_RBACManager *rbac_load(const char *filepath) {
 
                     mgr->user_count++;
                 } else {
-                    free(uid);
+                    gv_free(uid);
                     for (size_t rr = 0; rr < prole_count; rr++) {
-                        free(parsed_roles[rr]);
+                        gv_free(parsed_roles[rr]);
                     }
                 }
             }
         } else {
-            free(key);
+            gv_free(key);
             /* Skip unknown top-level value */
             skip_ws(&p);
             if (*p == '"') {
                 char *tmp = parse_string(&p);
-                free(tmp);
+                gv_free(tmp);
             } else if (*p == '[') {
                 int depth = 1;
                 p++;
@@ -1085,20 +1086,20 @@ GV_RBACManager *rbac_load(const char *filepath) {
         if (inherit_names[i]) {
             int pidx = find_role_index(mgr, inherit_names[i]);
             mgr->roles[i].parent_index = pidx;
-            free(inherit_names[i]);
+            gv_free(inherit_names[i]);
             inherit_names[i] = NULL;
         }
     }
 
-    free(data);
+    gv_free(data);
     return mgr;
 
 fail:
     /* Clean up inheritance names on failure */
     for (size_t i = 0; i < MAX_ROLES; i++) {
-        free(inherit_names[i]);
+        gv_free(inherit_names[i]);
     }
-    free(data);
+    gv_free(data);
     rbac_destroy(mgr);
     return NULL;
 }

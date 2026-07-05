@@ -10,6 +10,7 @@
  */
 
 #include "admin/cdc.h"
+#include "core/memory.h"
 #include "core/utils.h"
 
 #include <errno.h>
@@ -103,12 +104,12 @@ GV_CDCStream *cdc_create(const GV_CDCConfig *config) {
     if (cfg.ring_buffer_size == 0) cfg.ring_buffer_size = DEFAULT_RING_SIZE;
     if (cfg.max_log_size_mb == 0)  cfg.max_log_size_mb  = DEFAULT_MAX_LOG_SIZE_MB;
 
-    GV_CDCStream *stream = calloc(1, sizeof(GV_CDCStream));
+    GV_CDCStream *stream = gv_calloc(1, sizeof(GV_CDCStream));
     if (!stream) return NULL;
 
-    stream->ring = calloc(cfg.ring_buffer_size, sizeof(CDCRingEntry));
+    stream->ring = gv_calloc(cfg.ring_buffer_size, sizeof(CDCRingEntry));
     if (!stream->ring) {
-        free(stream);
+        gv_free(stream);
         return NULL;
     }
 
@@ -124,8 +125,8 @@ GV_CDCStream *cdc_create(const GV_CDCConfig *config) {
     if (cfg.log_path) {
         stream->log_path = gv_dup_cstr(cfg.log_path);
         if (!stream->log_path) {
-            free(stream->ring);
-            free(stream);
+            gv_free(stream->ring);
+            gv_free(stream);
             return NULL;
         }
     }
@@ -141,9 +142,9 @@ GV_CDCStream *cdc_create(const GV_CDCConfig *config) {
 
     if (pthread_mutex_init(&stream->mutex, NULL) != 0) {
         if (stream->log_fp) fclose(stream->log_fp);
-        free(stream->log_path);
-        free(stream->ring);
-        free(stream);
+        gv_free(stream->log_path);
+        gv_free(stream->ring);
+        gv_free(stream);
         return NULL;
     }
 
@@ -157,16 +158,16 @@ void cdc_destroy(GV_CDCStream *stream) {
     for (size_t i = 0; i < stream->ring_size; i++) {
         free_ring_entry(&stream->ring[i]);
     }
-    free(stream->ring);
+    gv_free(stream->ring);
 
     if (stream->log_fp) {
         fflush(stream->log_fp);
         fclose(stream->log_fp);
     }
-    free(stream->log_path);
+    gv_free(stream->log_path);
 
     pthread_mutex_destroy(&stream->mutex);
-    free(stream);
+    gv_free(stream);
 }
 
 /* Publishing */
@@ -246,7 +247,7 @@ int cdc_subscribe(GV_CDCStream *stream, uint32_t event_mask,
 
     if (slot < 0) {
         pthread_mutex_unlock(&stream->mutex);
-        return -1; /* no free slots */
+        return -1; /* no gv_free slots */
     }
 
     CDCSubscriber *sub = &stream->subscribers[slot];
@@ -398,8 +399,8 @@ size_t cdc_pending_count(const GV_CDCStream *stream, const GV_CDCCursor *cursor)
 static void free_ring_entry(CDCRingEntry *entry) {
     if (!entry || !entry->valid) return;
 
-    free(entry->vector_data);
-    free(entry->metadata_json);
+    gv_free(entry->vector_data);
+    gv_free(entry->metadata_json);
     memset(entry, 0, sizeof(CDCRingEntry));
 }
 
@@ -419,7 +420,7 @@ static int deep_copy_event(CDCRingEntry *dst, const GV_CDCEvent *src,
     /* Deep-copy vector data */
     if (include_vector_data && src->vector_data && src->dimension > 0) {
         size_t nbytes = src->dimension * sizeof(float);
-        dst->vector_data = malloc(nbytes);
+        dst->vector_data = gv_alloc(nbytes);
         if (!dst->vector_data) {
             dst->valid = 0;
             return -1;
@@ -431,7 +432,7 @@ static int deep_copy_event(CDCRingEntry *dst, const GV_CDCEvent *src,
     if (src->metadata_json) {
         dst->metadata_json = gv_dup_cstr(src->metadata_json);
         if (!dst->metadata_json) {
-            free(dst->vector_data);
+            gv_free(dst->vector_data);
             dst->vector_data = NULL;
             dst->valid = 0;
             return -1;

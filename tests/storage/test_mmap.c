@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include "core/memory.h"
 #include <stdlib.h>
 #include <string.h>
 #include "storage/mmap.h"
@@ -148,7 +149,7 @@ static int test_open_empty_file(void) {
 static int test_mmap_large_file(void) {
     cleanup();
     size_t file_size = 1024 * 1024;
-    unsigned char *buf = (unsigned char *)malloc(file_size);
+    unsigned char *buf = (unsigned char *)gv_alloc(file_size);
     ASSERT(buf != NULL, "allocate 1MB buffer");
 
     for (size_t i = 0; i < file_size; i++) {
@@ -174,7 +175,7 @@ static int test_mmap_large_file(void) {
     }
 
     mmap_close(mm);
-    free(buf);
+    gv_free(buf);
     cleanup();
     return 0;
 }

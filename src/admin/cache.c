@@ -4,6 +4,7 @@
  */
 
 #include "admin/cache.h"
+#include "core/memory.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -148,10 +149,10 @@ static void hash_remove(GV_Cache *cache, CacheEntry *entry) {
 
 static void free_entry(CacheEntry *entry) {
     if (!entry) return;
-    free(entry->query_data);
-    free(entry->indices);
-    free(entry->distances);
-    free(entry);
+    gv_free(entry->query_data);
+    gv_free(entry->indices);
+    gv_free(entry->distances);
+    gv_free(entry);
 }
 
 /* Evict the least valuable entry based on policy */
@@ -209,13 +210,13 @@ void cache_config_init(GV_CacheConfig *config) {
 /* Lifecycle */
 
 GV_Cache *cache_create(const GV_CacheConfig *config) {
-    GV_Cache *cache = calloc(1, sizeof(GV_Cache));
+    GV_Cache *cache = gv_calloc(1, sizeof(GV_Cache));
     if (!cache) return NULL;
 
     cache->config = config ? *config : DEFAULT_CONFIG;
 
     if (pthread_mutex_init(&cache->lock, NULL) != 0) {
-        free(cache);
+        gv_free(cache);
         return NULL;
     }
 
@@ -236,7 +237,7 @@ void cache_destroy(GV_Cache *cache) {
     }
 
     pthread_mutex_destroy(&cache->lock);
-    free(cache);
+    gv_free(cache);
 }
 
 /* Cache Operations */
@@ -274,11 +275,11 @@ int cache_lookup(GV_Cache *cache, const float *query_data, size_t dimension,
 
             /* Cache hit - copy results */
             result->count = cur->count;
-            result->indices = malloc(cur->count * sizeof(size_t));
-            result->distances = malloc(cur->count * sizeof(float));
+            result->indices = gv_alloc(cur->count * sizeof(size_t));
+            result->distances = gv_alloc(cur->count * sizeof(float));
             if (!result->indices || !result->distances) {
-                free(result->indices);
-                free(result->distances);
+                gv_free(result->indices);
+                gv_free(result->distances);
                 result->indices = NULL;
                 result->distances = NULL;
                 result->count = 0;
@@ -324,7 +325,7 @@ int cache_store(GV_Cache *cache, const float *query_data, size_t dimension,
     }
 
     /* Allocate entry */
-    CacheEntry *entry = calloc(1, sizeof(CacheEntry));
+    CacheEntry *entry = gv_calloc(1, sizeof(CacheEntry));
     if (!entry) {
         pthread_mutex_unlock(&cache->lock);
         return -1;
@@ -336,9 +337,9 @@ int cache_store(GV_Cache *cache, const float *query_data, size_t dimension,
     entry->distance_type = distance_type;
 
     /* Copy query data */
-    entry->query_data = malloc(dimension * sizeof(float));
+    entry->query_data = gv_alloc(dimension * sizeof(float));
     if (!entry->query_data) {
-        free(entry);
+        gv_free(entry);
         pthread_mutex_unlock(&cache->lock);
         return -1;
     }
@@ -346,13 +347,13 @@ int cache_store(GV_Cache *cache, const float *query_data, size_t dimension,
 
     /* Copy results */
     entry->count = count;
-    entry->indices = malloc(count * sizeof(size_t));
-    entry->distances = malloc(count * sizeof(float));
+    entry->indices = gv_alloc(count * sizeof(size_t));
+    entry->distances = gv_alloc(count * sizeof(float));
     if (!entry->indices || !entry->distances) {
-        free(entry->query_data);
-        free(entry->indices);
-        free(entry->distances);
-        free(entry);
+        gv_free(entry->query_data);
+        gv_free(entry->indices);
+        gv_free(entry->distances);
+        gv_free(entry);
         pthread_mutex_unlock(&cache->lock);
         return -1;
     }
@@ -459,8 +460,8 @@ void cache_invalidate_all(GV_Cache *cache) {
 
 void cache_free_result(GV_CachedResult *result) {
     if (!result) return;
-    free(result->indices);
-    free(result->distances);
+    gv_free(result->indices);
+    gv_free(result->distances);
     result->indices = NULL;
     result->distances = NULL;
     result->count = 0;

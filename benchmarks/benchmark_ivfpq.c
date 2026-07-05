@@ -40,8 +40,8 @@ int main(int argc, char **argv) {
     if (argc > 8) use_cosine = atoi(argv[8]);
 
     srand(42);
-    float *data = (float *)malloc(n * dim * sizeof(float));
-    float *queries = (float *)malloc(q * dim * sizeof(float));
+    float *data = (float *)gv_alloc(n * dim * sizeof(float));
+    float *queries = (float *)gv_alloc(q * dim * sizeof(float));
     if (!data || !queries) return 1;
     fill_random(data, n, dim);
     fill_random(queries, q, dim);
@@ -63,7 +63,7 @@ int main(int argc, char **argv) {
         }
     }
 
-    GV_SearchResult *res = (GV_SearchResult *)malloc(k * sizeof(GV_SearchResult));
+    GV_SearchResult *res = (GV_SearchResult *)gv_alloc(k * sizeof(GV_SearchResult));
     double t0 = now_ms();
     for (size_t qi = 0; qi < q; ++qi) {
         int found = db_search_ivfpq_opts(db, queries + qi * dim, k, res,
@@ -79,10 +79,10 @@ int main(int argc, char **argv) {
     printf("IVF-PQ benchmark: n=%zu dim=%zu q=%zu k=%zu nlist=%zu m=%zu nbits=%u nprobe=%zu rerank=%zu cosine=%d time=%.2fms qps=%.1f\n",
            n, dim, q, k, nlist, m, nbits, nprobe, rerank, use_cosine, t1 - t0, qps);
 
-    free(res);
+    gv_free(res);
     db_close(db);
-    free(data);
-    free(queries);
+    gv_free(data);
+    gv_free(queries);
     return 0;
 }
 

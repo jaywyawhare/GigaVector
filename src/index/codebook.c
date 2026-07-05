@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include "core/memory.h"
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -53,7 +54,7 @@ static void kmeans_subspace(float *codebook, const float *subvecs,
     size_t init_k = ksub < count ? ksub : count;
 
     /* Fisher-Yates partial shuffle to pick init_k unique indices. */
-    size_t *perm = (size_t *)malloc(count * sizeof(size_t));
+    size_t *perm = (size_t *)gv_alloc(count * sizeof(size_t));
     if (!perm) return;
     for (size_t i = 0; i < count; i++) perm[i] = i;
 
@@ -65,20 +66,20 @@ static void kmeans_subspace(float *codebook, const float *subvecs,
         memcpy(&codebook[i * dsub], &subvecs[perm[i] * dsub],
                dsub * sizeof(float));
     }
-    free(perm);
+    gv_free(perm);
 
     /* If fewer vectors than centroids, zero-fill the rest. */
     for (size_t k = init_k; k < ksub; k++) {
         memset(&codebook[k * dsub], 0, dsub * sizeof(float));
     }
 
-    uint32_t *assignments = (uint32_t *)malloc(count * sizeof(uint32_t));
-    float    *accum       = (float *)malloc(ksub * dsub * sizeof(float));
-    uint32_t *counts      = (uint32_t *)malloc(ksub * sizeof(uint32_t));
+    uint32_t *assignments = (uint32_t *)gv_alloc(count * sizeof(uint32_t));
+    float    *accum       = (float *)gv_alloc(ksub * dsub * sizeof(float));
+    uint32_t *counts      = (uint32_t *)gv_alloc(ksub * sizeof(uint32_t));
     if (!assignments || !accum || !counts) {
-        free(assignments);
-        free(accum);
-        free(counts);
+        gv_free(assignments);
+        gv_free(accum);
+        gv_free(counts);
         return;
     }
 
@@ -126,16 +127,16 @@ static void kmeans_subspace(float *codebook, const float *subvecs,
         }
     }
 
-    free(assignments);
-    free(accum);
-    free(counts);
+    gv_free(assignments);
+    gv_free(accum);
+    gv_free(counts);
 }
 
 GV_Codebook *codebook_create(size_t dimension, size_t m, uint8_t nbits) {
     if (dimension == 0 || m == 0 || nbits == 0 || nbits > 8) return NULL;
     if (dimension % m != 0) return NULL;
 
-    GV_Codebook *cb = (GV_Codebook *)calloc(1, sizeof(GV_Codebook));
+    GV_Codebook *cb = (GV_Codebook *)gv_calloc(1, sizeof(GV_Codebook));
     if (!cb) return NULL;
 
     cb->dimension = dimension;
@@ -146,9 +147,9 @@ GV_Codebook *codebook_create(size_t dimension, size_t m, uint8_t nbits) {
     cb->trained   = 0;
 
     size_t total_floats = cb->m * cb->ksub * cb->dsub;
-    cb->centroids = (float *)calloc(total_floats, sizeof(float));
+    cb->centroids = (float *)gv_calloc(total_floats, sizeof(float));
     if (!cb->centroids) {
-        free(cb);
+        gv_free(cb);
         return NULL;
     }
 
@@ -157,15 +158,15 @@ GV_Codebook *codebook_create(size_t dimension, size_t m, uint8_t nbits) {
 
 void codebook_destroy(GV_Codebook *cb) {
     if (!cb) return;
-    free(cb->centroids);
-    free(cb);
+    gv_free(cb->centroids);
+    gv_free(cb);
 }
 
 int codebook_train(GV_Codebook *cb, const float *data, size_t count,
                       size_t train_iters) {
     if (!cb || !data || count == 0 || train_iters == 0) return -1;
 
-    float *subvecs = (float *)malloc(count * cb->dsub * sizeof(float));
+    float *subvecs = (float *)gv_alloc(count * cb->dsub * sizeof(float));
     if (!subvecs) return -1;
 
     /* Seed the PRNG with something that varies across runs. */
@@ -183,7 +184,7 @@ int codebook_train(GV_Codebook *cb, const float *data, size_t count,
                         train_iters, &rng_state);
     }
 
-    free(subvecs);
+    gv_free(subvecs);
     cb->trained = 1;
     return 0;
 }
@@ -237,7 +238,7 @@ float codebook_distance_adc(const GV_Codebook *cb, const float *query,
      * to that centroid.  Then accumulate the entry corresponding to
      * each code.
      */
-    float *table = (float *)malloc(cb->m * cb->ksub * sizeof(float));
+    float *table = (float *)gv_alloc(cb->m * cb->ksub * sizeof(float));
     if (!table) return -1.0f;
 
     for (size_t mi = 0; mi < cb->m; mi++) {
@@ -254,7 +255,7 @@ float codebook_distance_adc(const GV_Codebook *cb, const float *query,
         dist_sq += table[mi * cb->ksub + codes[mi]];
     }
 
-    free(table);
+    gv_free(table);
     return sqrtf(dist_sq);
 }
 

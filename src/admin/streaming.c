@@ -9,6 +9,7 @@
  */
 
 #include "admin/streaming.h"
+#include "core/memory.h"
 #include "storage/database.h"
 
 #include <stdlib.h>
@@ -140,7 +141,7 @@ static void stream_process_embedded_batch(GV_StreamConsumer *consumer) {
     float *heap_vec = NULL;
     float *vec = stack_vec;
     if (dimension > GV_STREAM_STACK_VEC_CAP) {
-        heap_vec = (float *)malloc(dimension * sizeof(float));
+        heap_vec = (float *)gv_alloc(dimension * sizeof(float));
         vec = heap_vec;
         if (!vec) {
             consumer->state = GV_STREAM_ERROR;
@@ -149,9 +150,9 @@ static void stream_process_embedded_batch(GV_StreamConsumer *consumer) {
     }
 
     const size_t payload_bytes = dimension * sizeof(float);
-    unsigned char *payload = (unsigned char *)malloc(payload_bytes);
+    unsigned char *payload = (unsigned char *)gv_alloc(payload_bytes);
     if (!payload) {
-        free(heap_vec);
+        gv_free(heap_vec);
         consumer->state = GV_STREAM_ERROR;
         return;
     }
@@ -194,8 +195,8 @@ static void stream_process_embedded_batch(GV_StreamConsumer *consumer) {
         consumer->stats.vectors_ingested += 1;
     }
 
-    free(payload);
-    free(heap_vec);
+    gv_free(payload);
+    gv_free(heap_vec);
 
     consumer->stats.current_offset += (int64_t)batch;
     if (consumer->config.auto_commit) {
@@ -227,7 +228,7 @@ static void stream_process_kafka_batch(GV_StreamConsumer *consumer) {
     float *heap_vec = NULL;
     float *vec = stack_vec;
     if (dimension > GV_STREAM_STACK_VEC_CAP) {
-        heap_vec = malloc(dimension * sizeof(float));
+        heap_vec = gv_alloc(dimension * sizeof(float));
         if (!heap_vec) { consumer->state = GV_STREAM_ERROR; return; }
         vec = heap_vec;
     }
@@ -283,7 +284,7 @@ static void stream_process_kafka_batch(GV_StreamConsumer *consumer) {
                                                (const char **)mvals, mcount)
             : db_add_vector(db, vec, dimension);
 
-        if (mkeys) { for (size_t m = 0; m < mcount; m++) { free(mkeys[m]); free(mvals[m]); } free(mkeys); free(mvals); }
+        if (mkeys) { for (size_t m = 0; m < mcount; m++) { gv_free(mkeys[m]); gv_free(mvals[m]); } gv_free(mkeys); gv_free(mvals); }
 
         if (added != 0) {
             consumer->stats.messages_failed++;
@@ -300,7 +301,7 @@ static void stream_process_kafka_batch(GV_StreamConsumer *consumer) {
         consumer->committed_offset = consumer->stats.current_offset;
     }
 
-    free(heap_vec);
+    gv_free(heap_vec);
 }
 #endif /* HAVE_RDKAFKA */
 
@@ -368,7 +369,7 @@ static void *consumer_thread_func(void *arg) {
 GV_StreamConsumer *stream_create(GV_Database *db, const GV_StreamConfig *config) {
     if (!db) return NULL;
 
-    GV_StreamConsumer *consumer = calloc(1, sizeof(GV_StreamConsumer));
+    GV_StreamConsumer *consumer = gv_calloc(1, sizeof(GV_StreamConsumer));
     if (!consumer) return NULL;
 
     consumer->config = config ? *config : DEFAULT_CONFIG;
@@ -377,13 +378,13 @@ GV_StreamConsumer *stream_create(GV_Database *db, const GV_StreamConfig *config)
     consumer->extractor = default_extractor;
 
     if (pthread_mutex_init(&consumer->mutex, NULL) != 0) {
-        free(consumer);
+        gv_free(consumer);
         return NULL;
     }
 
     if (pthread_cond_init(&consumer->state_cond, NULL) != 0) {
         pthread_mutex_destroy(&consumer->mutex);
-        free(consumer);
+        gv_free(consumer);
         return NULL;
     }
 
@@ -480,7 +481,7 @@ void stream_destroy(GV_StreamConsumer *consumer) {
 
     pthread_cond_destroy(&consumer->state_cond);
     pthread_mutex_destroy(&consumer->mutex);
-    free(consumer);
+    gv_free(consumer);
 }
 
 int stream_start(GV_StreamConsumer *consumer) {

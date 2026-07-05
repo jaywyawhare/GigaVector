@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include "core/memory.h"
 #include <stdlib.h>
 #include <string.h>
 #include "admin/migration.h"
@@ -66,7 +67,7 @@ static int test_migration_take_index(void) {
     void *idx2 = migration_take_index(mig);
     ASSERT(idx2 == NULL, "second take_index should return NULL");
 
-    free(idx);
+    gv_free(idx);
     migration_destroy(mig);
     return 0;
 }
@@ -74,8 +75,8 @@ static int test_migration_take_index(void) {
 static int test_migration_cancel(void) {
     /* Create larger data set to give cancel a chance */
     size_t count = 100;
-    float *data = (float *)malloc(count * 4 * sizeof(float));
-    ASSERT(data != NULL, "malloc data");
+    float *data = (float *)gv_alloc(count * 4 * sizeof(float));
+    ASSERT(data != NULL, "gv_alloc data");
     for (size_t i = 0; i < count * 4; i++) {
         data[i] = (float)i * 0.01f;
     }
@@ -95,7 +96,7 @@ static int test_migration_cancel(void) {
            "status should be a valid migration state");
 
     migration_destroy(mig);
-    free(data);
+    gv_free(data);
     return 0;
 }
 

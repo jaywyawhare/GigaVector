@@ -1,4 +1,5 @@
 #include <math.h>
+#include "core/memory.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -277,7 +278,7 @@ static inline void prefetch_L2(const void *addr) {
 void *gv_hnsw_create(size_t dimension, const GV_HNSWConfig *config, GV_SoAStorage *soa_storage) {
     if (dimension == 0) return NULL;
 
-    GV_HNSWIndex *index = (GV_HNSWIndex *)calloc(1, sizeof(GV_HNSWIndex));
+    GV_HNSWIndex *index = (GV_HNSWIndex *)gv_calloc(1, sizeof(GV_HNSWIndex));
     if (!index) return NULL;
 
     index->dimension = dimension;
@@ -295,22 +296,22 @@ void *gv_hnsw_create(size_t dimension, const GV_HNSWConfig *config, GV_SoAStorag
     index->count = 0;
     index->nodes_capacity = 1024;
 
-    index->nodes = (GV_HNSWNode *)calloc(index->nodes_capacity, sizeof(GV_HNSWNode));
-    if (!index->nodes) { free(index); return NULL; }
+    index->nodes = (GV_HNSWNode *)gv_calloc(index->nodes_capacity, sizeof(GV_HNSWNode));
+    if (!index->nodes) { gv_free(index); return NULL; }
 
     index->max_level_alloc = index->maxLevel + 1;
-    index->cum_nb_per_level = (size_t *)calloc(index->max_level_alloc + 1, sizeof(size_t));
-    if (!index->cum_nb_per_level) { free(index->nodes); free(index); return NULL; }
+    index->cum_nb_per_level = (size_t *)gv_calloc(index->max_level_alloc + 1, sizeof(size_t));
+    if (!index->cum_nb_per_level) { gv_free(index->nodes); gv_free(index); return NULL; }
     build_cum_nb_per_level(index);
 
     size_t nb_per_node_l0 = 2 * index->M;
     index->neighbors_capacity = index->nodes_capacity * nb_per_node_l0;
     index->neighbors_size = 0;
-    index->neighbors = (int32_t *)malloc(index->neighbors_capacity * sizeof(int32_t));
-    index->offsets = (size_t *)calloc(index->nodes_capacity, sizeof(size_t));
+    index->neighbors = (int32_t *)gv_alloc(index->neighbors_capacity * sizeof(int32_t));
+    index->offsets = (size_t *)gv_calloc(index->nodes_capacity, sizeof(size_t));
     if (!index->neighbors || !index->offsets) {
-        free(index->neighbors); free(index->offsets);
-        free(index->cum_nb_per_level); free(index->nodes); free(index);
+        gv_free(index->neighbors); gv_free(index->offsets);
+        gv_free(index->cum_nb_per_level); gv_free(index->nodes); gv_free(index);
         return NULL;
     }
     memset(index->neighbors, 0xFF, index->neighbors_capacity * sizeof(int32_t));
@@ -321,47 +322,47 @@ void *gv_hnsw_create(size_t dimension, const GV_HNSWConfig *config, GV_SoAStorag
     } else {
         index->soa_storage = soa_storage_create(dimension, 1024);
         if (!index->soa_storage) {
-            free(index->neighbors); free(index->offsets);
-            free(index->cum_nb_per_level); free(index->nodes); free(index);
+            gv_free(index->neighbors); gv_free(index->offsets);
+            gv_free(index->cum_nb_per_level); gv_free(index->nodes); gv_free(index);
             return NULL;
         }
         index->soa_storage_owned = 1;
     }
 
     index->visited_capacity = index->nodes_capacity;
-    index->visited_epoch = (uint32_t *)calloc(index->visited_capacity, sizeof(uint32_t));
+    index->visited_epoch = (uint32_t *)gv_calloc(index->visited_capacity, sizeof(uint32_t));
     if (!index->visited_epoch) {
         if (index->soa_storage_owned) soa_storage_destroy(index->soa_storage);
-        free(index->neighbors); free(index->offsets);
-        free(index->cum_nb_per_level); free(index->nodes); free(index);
+        gv_free(index->neighbors); gv_free(index->offsets);
+        gv_free(index->cum_nb_per_level); gv_free(index->nodes); gv_free(index);
         return NULL;
     }
     index->current_epoch = 0;
 
     index->search_buf_size = 2 * index->efSearch;
-    index->search_dis = (float *)malloc(index->search_buf_size * sizeof(float));
-    index->search_ids = (size_t *)malloc(index->search_buf_size * sizeof(size_t));
-    index->search_proc = (uint8_t *)malloc(index->search_buf_size * sizeof(uint8_t));
+    index->search_dis = (float *)gv_alloc(index->search_buf_size * sizeof(float));
+    index->search_ids = (size_t *)gv_alloc(index->search_buf_size * sizeof(size_t));
+    index->search_proc = (uint8_t *)gv_alloc(index->search_buf_size * sizeof(uint8_t));
     if (!index->search_dis || !index->search_ids || !index->search_proc) {
-        free(index->search_dis); free(index->search_ids); free(index->search_proc);
-        free(index->visited_epoch);
+        gv_free(index->search_dis); gv_free(index->search_ids); gv_free(index->search_proc);
+        gv_free(index->visited_epoch);
         if (index->soa_storage_owned) soa_storage_destroy(index->soa_storage);
-        free(index->neighbors); free(index->offsets);
-        free(index->cum_nb_per_level); free(index->nodes); free(index);
+        gv_free(index->neighbors); gv_free(index->offsets);
+        gv_free(index->cum_nb_per_level); gv_free(index->nodes); gv_free(index);
         return NULL;
     }
 
     index->insert_buf_size = index->efConstruction;
-    index->insert_dis = (float *)malloc(index->insert_buf_size * sizeof(float));
-    index->insert_ids = (size_t *)malloc(index->insert_buf_size * sizeof(size_t));
-    index->insert_proc = (uint8_t *)malloc(index->insert_buf_size * sizeof(uint8_t));
+    index->insert_dis = (float *)gv_alloc(index->insert_buf_size * sizeof(float));
+    index->insert_ids = (size_t *)gv_alloc(index->insert_buf_size * sizeof(size_t));
+    index->insert_proc = (uint8_t *)gv_alloc(index->insert_buf_size * sizeof(uint8_t));
     if (!index->insert_dis || !index->insert_ids || !index->insert_proc) {
-        free(index->insert_dis); free(index->insert_ids); free(index->insert_proc);
-        free(index->search_dis); free(index->search_ids); free(index->search_proc);
-        free(index->visited_epoch);
+        gv_free(index->insert_dis); gv_free(index->insert_ids); gv_free(index->insert_proc);
+        gv_free(index->search_dis); gv_free(index->search_ids); gv_free(index->search_proc);
+        gv_free(index->visited_epoch);
         if (index->soa_storage_owned) soa_storage_destroy(index->soa_storage);
-        free(index->neighbors); free(index->offsets);
-        free(index->cum_nb_per_level); free(index->nodes); free(index);
+        gv_free(index->neighbors); gv_free(index->offsets);
+        gv_free(index->cum_nb_per_level); gv_free(index->nodes); gv_free(index);
         return NULL;
     }
 
@@ -376,12 +377,12 @@ int gv_hnsw_reserve(void *index_ptr, size_t n) {
     /* Grow nodes + offsets */
     if (total > index->nodes_capacity) {
         size_t new_cap = total + (total >> 2); /* 25% headroom */
-        GV_HNSWNode *new_nodes = (GV_HNSWNode *)realloc(index->nodes, new_cap * sizeof(GV_HNSWNode));
+        GV_HNSWNode *new_nodes = (GV_HNSWNode *)gv_realloc(index->nodes, new_cap * sizeof(GV_HNSWNode));
         if (!new_nodes) return -1;
         memset(new_nodes + index->nodes_capacity, 0, (new_cap - index->nodes_capacity) * sizeof(GV_HNSWNode));
         index->nodes = new_nodes;
 
-        size_t *new_off = (size_t *)realloc(index->offsets, new_cap * sizeof(size_t));
+        size_t *new_off = (size_t *)gv_realloc(index->offsets, new_cap * sizeof(size_t));
         if (!new_off) return -1;
         index->offsets = new_off;
 
@@ -391,7 +392,7 @@ int gv_hnsw_reserve(void *index_ptr, size_t n) {
     /* Grow visited_epoch */
     if (total > index->visited_capacity) {
         size_t new_cap = total + (total >> 2);
-        uint32_t *new_vis = (uint32_t *)realloc(index->visited_epoch, new_cap * sizeof(uint32_t));
+        uint32_t *new_vis = (uint32_t *)gv_realloc(index->visited_epoch, new_cap * sizeof(uint32_t));
         if (!new_vis) return -1;
         memset(new_vis + index->visited_capacity, 0, (new_cap - index->visited_capacity) * sizeof(uint32_t));
         index->visited_epoch = new_vis;
@@ -404,7 +405,7 @@ int gv_hnsw_reserve(void *index_ptr, size_t n) {
     size_t nb_needed = index->neighbors_size + n * nb_per_node;
     if (nb_needed > index->neighbors_capacity) {
         size_t new_cap = nb_needed + (nb_needed >> 2);
-        int32_t *new_nb = (int32_t *)realloc(index->neighbors, new_cap * sizeof(int32_t));
+        int32_t *new_nb = (int32_t *)gv_realloc(index->neighbors, new_cap * sizeof(int32_t));
         if (!new_nb) return -1;
         memset(new_nb + index->neighbors_capacity, 0xFF, (new_cap - index->neighbors_capacity) * sizeof(int32_t));
         index->neighbors = new_nb;
@@ -416,14 +417,14 @@ int gv_hnsw_reserve(void *index_ptr, size_t n) {
         GV_SoAStorage *s = index->soa_storage;
         if (total > s->capacity) {
             size_t new_cap = total + (total >> 2);
-            float *new_data = (float *)realloc(s->data, new_cap * s->dimension * sizeof(float));
+            float *new_data = (float *)gv_realloc(s->data, new_cap * s->dimension * sizeof(float));
             if (!new_data) return -1;
             s->data = new_data;
-            GV_Metadata **new_meta = (GV_Metadata **)realloc(s->metadata, new_cap * sizeof(GV_Metadata *));
+            GV_Metadata **new_meta = (GV_Metadata **)gv_realloc(s->metadata, new_cap * sizeof(GV_Metadata *));
             if (!new_meta) return -1;
             memset(new_meta + s->capacity, 0, (new_cap - s->capacity) * sizeof(GV_Metadata *));
             s->metadata = new_meta;
-            int *new_del = (int *)realloc(s->deleted, new_cap * sizeof(int));
+            int *new_del = (int *)gv_realloc(s->deleted, new_cap * sizeof(int));
             if (!new_del) return -1;
             memset(new_del + s->capacity, 0, (new_cap - s->capacity) * sizeof(int));
             s->deleted = new_del;
@@ -443,7 +444,7 @@ static int alloc_node_neighbors(GV_HNSWIndex *index, size_t node_idx, size_t lev
     if (new_size > index->neighbors_capacity) {
         size_t new_cap = index->neighbors_capacity * 2;
         if (new_cap < new_size) new_cap = new_size;
-        int32_t *new_nb = (int32_t *)realloc(index->neighbors, new_cap * sizeof(int32_t));
+        int32_t *new_nb = (int32_t *)gv_realloc(index->neighbors, new_cap * sizeof(int32_t));
         if (!new_nb) return -1;
         /* Fill new capacity with -1 sentinel */
         memset(new_nb + index->neighbors_capacity, 0xFF, (new_cap - index->neighbors_capacity) * sizeof(int32_t));
@@ -655,16 +656,16 @@ static int hnsw_insert_impl(GV_HNSWIndex *index, size_t vector_index, size_t dim
 
     if (node_idx >= index->nodes_capacity) {
         size_t new_cap = index->nodes_capacity * 2;
-        GV_HNSWNode *new_nodes = (GV_HNSWNode *)realloc(index->nodes, new_cap * sizeof(GV_HNSWNode));
+        GV_HNSWNode *new_nodes = (GV_HNSWNode *)gv_realloc(index->nodes, new_cap * sizeof(GV_HNSWNode));
         if (!new_nodes) { soa_storage_mark_deleted(index->soa_storage, vector_index); return -1; }
         index->nodes = new_nodes;
         memset(index->nodes + index->nodes_capacity, 0, (new_cap - index->nodes_capacity) * sizeof(GV_HNSWNode));
 
-        size_t *new_off = (size_t *)realloc(index->offsets, new_cap * sizeof(size_t));
+        size_t *new_off = (size_t *)gv_realloc(index->offsets, new_cap * sizeof(size_t));
         if (!new_off) { soa_storage_mark_deleted(index->soa_storage, vector_index); return -1; }
         index->offsets = new_off;
 
-        uint32_t *new_vis = (uint32_t *)realloc(index->visited_epoch, new_cap * sizeof(uint32_t));
+        uint32_t *new_vis = (uint32_t *)gv_realloc(index->visited_epoch, new_cap * sizeof(uint32_t));
         if (!new_vis) { soa_storage_mark_deleted(index->soa_storage, vector_index); return -1; }
         memset(new_vis + index->visited_capacity, 0, (new_cap - index->visited_capacity) * sizeof(uint32_t));
         index->visited_epoch = new_vis;
@@ -957,9 +958,9 @@ int gv_hnsw_search(void *index_ptr, const GV_Vector *query, size_t k,
 
     size_t buf_need = ef;
     if (buf_need > index->search_buf_size) {
-        float *nd = (float *)realloc(index->search_dis, buf_need * sizeof(float));
-        size_t *ni = (size_t *)realloc(index->search_ids, buf_need * sizeof(size_t));
-        uint8_t *np = (uint8_t *)realloc(index->search_proc, buf_need * sizeof(uint8_t));
+        float *nd = (float *)gv_realloc(index->search_dis, buf_need * sizeof(float));
+        size_t *ni = (size_t *)gv_realloc(index->search_ids, buf_need * sizeof(size_t));
+        uint8_t *np = (uint8_t *)gv_realloc(index->search_proc, buf_need * sizeof(uint8_t));
         if (!nd || !ni || !np) {
             if (nd) index->search_dis = nd;
             if (ni) index->search_ids = ni;
@@ -1130,10 +1131,10 @@ int gv_hnsw_search(void *index_ptr, const GV_Vector *query, size_t k,
             if (!meta_val || !filter_value || strcmp(meta_val, filter_value) != 0) continue;
         }
 
-        GV_Vector *result_vec = (GV_Vector *)malloc(sizeof(GV_Vector));
+        GV_Vector *result_vec = (GV_Vector *)gv_alloc(sizeof(GV_Vector));
         if (!result_vec) continue;
-        result_vec->data = (float *)malloc(soa_dim * sizeof(float));
-        if (!result_vec->data) { free(result_vec); continue; }
+        result_vec->data = (float *)gv_alloc(soa_dim * sizeof(float));
+        if (!result_vec->data) { gv_free(result_vec); continue; }
         memcpy(result_vec->data, node_data, soa_dim * sizeof(float));
         result_vec->dimension = soa_dim;
         result_vec->metadata = metadata_copy(node_meta);
@@ -1155,20 +1156,20 @@ void gv_hnsw_destroy(void *index_ptr) {
         if (index->nodes[i].binary_vector)
             binary_vector_destroy(index->nodes[i].binary_vector);
     }
-    free(index->nodes);
-    free(index->neighbors);
-    free(index->offsets);
-    free(index->cum_nb_per_level);
+    gv_free(index->nodes);
+    gv_free(index->neighbors);
+    gv_free(index->offsets);
+    gv_free(index->cum_nb_per_level);
     if (index->soa_storage && index->soa_storage_owned)
         soa_storage_destroy(index->soa_storage);
-    free(index->visited_epoch);
-    free(index->search_dis);
-    free(index->search_ids);
-    free(index->search_proc);
-    free(index->insert_dis);
-    free(index->insert_ids);
-    free(index->insert_proc);
-    free(index);
+    gv_free(index->visited_epoch);
+    gv_free(index->search_dis);
+    gv_free(index->search_ids);
+    gv_free(index->search_proc);
+    gv_free(index->insert_dis);
+    gv_free(index->insert_ids);
+    gv_free(index->insert_proc);
+    gv_free(index);
 }
 
 size_t gv_hnsw_count(const void *index_ptr) {
@@ -1258,10 +1259,10 @@ static int read_metadata(FILE *in, GV_Vector *vec) {
     for (uint32_t i = 0; i < count; ++i) {
         uint32_t kl = 0, vl = 0;
         char *key = NULL, *value = NULL;
-        if (read_u32(in, &kl) != 0 || read_str(in, &key, kl) != 0) { free(key); return -1; }
-        if (read_u32(in, &vl) != 0 || read_str(in, &value, vl) != 0) { free(key); free(value); return -1; }
-        if (vector_set_metadata(vec, key, value) != 0) { free(key); free(value); return -1; }
-        free(key); free(value);
+        if (read_u32(in, &kl) != 0 || read_str(in, &key, kl) != 0) { gv_free(key); return -1; }
+        if (read_u32(in, &vl) != 0 || read_str(in, &value, vl) != 0) { gv_free(key); gv_free(value); return -1; }
+        if (vector_set_metadata(vec, key, value) != 0) { gv_free(key); gv_free(value); return -1; }
+        gv_free(key); gv_free(value);
     }
     return 0;
 }
@@ -1328,13 +1329,13 @@ int gv_hnsw_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version,
     /* Grow if needed */
     if (count > hnsw->nodes_capacity) {
         size_t nc = (size_t)count;
-        GV_HNSWNode *nn = (GV_HNSWNode *)realloc(hnsw->nodes, nc * sizeof(GV_HNSWNode));
+        GV_HNSWNode *nn = (GV_HNSWNode *)gv_realloc(hnsw->nodes, nc * sizeof(GV_HNSWNode));
         if (!nn) { gv_hnsw_destroy(idx); return -1; }
         hnsw->nodes = nn;
-        size_t *no = (size_t *)realloc(hnsw->offsets, nc * sizeof(size_t));
+        size_t *no = (size_t *)gv_realloc(hnsw->offsets, nc * sizeof(size_t));
         if (!no) { gv_hnsw_destroy(idx); return -1; }
         hnsw->offsets = no;
-        uint32_t *nv = (uint32_t *)realloc(hnsw->visited_epoch, nc * sizeof(uint32_t));
+        uint32_t *nv = (uint32_t *)gv_realloc(hnsw->visited_epoch, nc * sizeof(uint32_t));
         if (!nv) { gv_hnsw_destroy(idx); return -1; }
         memset(nv + hnsw->visited_capacity, 0, (nc - hnsw->visited_capacity) * sizeof(uint32_t));
         hnsw->visited_epoch = nv;
@@ -1347,19 +1348,19 @@ int gv_hnsw_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version,
         uint32_t lev = 0;
         if (read_u32(in, &lev) != 0) { gv_hnsw_destroy(idx); return -1; }
 
-        float *vd = (float *)malloc(dimension * sizeof(float));
+        float *vd = (float *)gv_alloc(dimension * sizeof(float));
         if (!vd) { gv_hnsw_destroy(idx); return -1; }
-        if (read_floats(in, vd, dimension) != 0) { free(vd); gv_hnsw_destroy(idx); return -1; }
+        if (read_floats(in, vd, dimension) != 0) { gv_free(vd); gv_hnsw_destroy(idx); return -1; }
 
         GV_Metadata *meta = NULL;
         if (version >= 2) {
             GV_Vector tmp = {.data = vd, .dimension = dimension, .metadata = NULL};
-            if (read_metadata(in, &tmp) != 0) { free(vd); gv_hnsw_destroy(idx); return -1; }
+            if (read_metadata(in, &tmp) != 0) { gv_free(vd); gv_hnsw_destroy(idx); return -1; }
             meta = tmp.metadata;
         }
 
         size_t vi = soa_storage_add(hnsw->soa_storage, vd, meta);
-        free(vd);
+        gv_free(vd);
         if (vi == (size_t)-1) { gv_hnsw_destroy(idx); return -1; }
 
         hnsw->nodes[i].vector_index = vi;
@@ -1411,11 +1412,11 @@ int gv_hnsw_range_search(void *index_ptr, const GV_Vector *query, float radius,
         query->dimension != index->dimension || !query->data) return -1;
     if (index->count == 0 || index->entry_point == SIZE_MAX) return 0;
 
-    GV_SearchResult *tmp = (GV_SearchResult *)malloc(max_results * sizeof(GV_SearchResult));
+    GV_SearchResult *tmp = (GV_SearchResult *)gv_alloc(max_results * sizeof(GV_SearchResult));
     if (!tmp) return -1;
 
     int n = gv_hnsw_search(index_ptr, query, max_results, tmp, distance_type, filter_key, filter_value);
-    if (n <= 0) { free(tmp); return n; }
+    if (n <= 0) { gv_free(tmp); return n; }
 
     size_t out = 0;
     for (int i = 0; i < n; ++i) {
@@ -1425,6 +1426,6 @@ int gv_hnsw_range_search(void *index_ptr, const GV_Vector *query, float radius,
             if (tmp[i].vector) vector_destroy((GV_Vector *)tmp[i].vector);
         }
     }
-    free(tmp);
+    gv_free(tmp);
     return (int)out;
 }

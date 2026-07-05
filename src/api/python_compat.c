@@ -1,4 +1,5 @@
 #include "admin/cluster.h"
+#include "core/memory.h"
 #include "admin/namespace.h"
 #include "admin/replication.h"
 #include "admin/shard.h"
@@ -1738,8 +1739,6 @@ int gv_posting_catalog_materialize_head(GV_PostingCatalog *cat, uint64_t head_id
 void gv_posting_head_view_free(GV_PostingHeadView *view) {
   posting_head_view_free(view);
 }
-
-void gv_free(void *ptr) { free(ptr); }
 
 /* ── SQL engine wrappers ──────────────────────────────────────────────────── */
 

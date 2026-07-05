@@ -13,6 +13,7 @@
  */
 
 #include "admin/sso.h"
+#include "core/memory.h"
 #include "core/utils.h"
 
 #include <stdlib.h>
@@ -111,7 +112,7 @@ static int http_post_form(const char *url, const char *post_fields,
 GV_SSOManager *sso_create(const GV_SSOConfig *config) {
     if (!config) return NULL;
 
-    GV_SSOManager *mgr = calloc(1, sizeof(GV_SSOManager));
+    GV_SSOManager *mgr = gv_calloc(1, sizeof(GV_SSOManager));
     if (!mgr) return NULL;
 
     mgr->config = *config;
@@ -125,7 +126,7 @@ GV_SSOManager *sso_create(const GV_SSOConfig *config) {
     }
 
     if (pthread_mutex_init(&mgr->mutex, NULL) != 0) {
-        free(mgr);
+        gv_free(mgr);
         return NULL;
     }
 
@@ -136,7 +137,7 @@ void sso_destroy(GV_SSOManager *mgr) {
     if (!mgr) return;
 
     pthread_mutex_destroy(&mgr->mutex);
-    free(mgr);
+    gv_free(mgr);
 }
 
 /* OIDC Discovery */
@@ -189,7 +190,7 @@ int sso_discover(GV_SSOManager *mgr) {
     }
 
     pthread_mutex_unlock(&mgr->mutex);
-    free(response);
+    gv_free(response);
 
     return ok ? 0 : -1;
 }
@@ -268,11 +269,11 @@ GV_SSOToken *sso_exchange_code(GV_SSOManager *mgr, const char *auth_code) {
     char id_token[BASE64_DECODE_MAX];
     if (json_extract_string(response, "id_token",
                             id_token, sizeof(id_token)) != 0) {
-        free(response);
+        gv_free(response);
         return NULL;
     }
 
-    free(response);
+    gv_free(response);
 
     /* Decode and validate the JWT */
     GV_SSOToken *token = decode_jwt_claims(id_token);
@@ -362,11 +363,11 @@ GV_SSOToken *sso_refresh_token(GV_SSOManager *mgr, const char *refresh_token) {
     char id_token[BASE64_DECODE_MAX];
     if (json_extract_string(response, "id_token",
                             id_token, sizeof(id_token)) != 0) {
-        free(response);
+        gv_free(response);
         return NULL;
     }
 
-    free(response);
+    gv_free(response);
 
     GV_SSOToken *token = decode_jwt_claims(id_token);
     if (!token) return NULL;
@@ -379,16 +380,16 @@ GV_SSOToken *sso_refresh_token(GV_SSOManager *mgr, const char *refresh_token) {
 void sso_free_token(GV_SSOToken *token) {
     if (!token) return;
 
-    free(token->subject);
-    free(token->email);
-    free(token->name);
+    gv_free(token->subject);
+    gv_free(token->email);
+    gv_free(token->name);
 
     for (size_t i = 0; i < token->group_count; i++) {
-        free(token->groups[i]);
+        gv_free(token->groups[i]);
     }
-    free(token->groups);
+    gv_free(token->groups);
 
-    free(token);
+    gv_free(token);
 }
 
 /* Group Checking */
@@ -408,7 +409,7 @@ int sso_has_group(const GV_SSOToken *token, const char *group) {
 /* Token Allocation */
 
 static GV_SSOToken *alloc_token(void) {
-    GV_SSOToken *token = calloc(1, sizeof(GV_SSOToken));
+    GV_SSOToken *token = gv_calloc(1, sizeof(GV_SSOToken));
     return token;
 }
 
@@ -416,7 +417,7 @@ static GV_SSOToken *alloc_token(void) {
 
 /**
  * Split a comma-separated string into an array of trimmed strings.
- * Caller must free each element and the array itself.
+ * Caller must gv_free each element and the array itself.
  */
 static char **split_csv(const char *csv, size_t *count) {
     *count = 0;
@@ -428,7 +429,7 @@ static char **split_csv(const char *csv, size_t *count) {
         if (*p == ',') capacity++;
     }
 
-    char **result = calloc(capacity, sizeof(char *));
+    char **result = gv_calloc(capacity, sizeof(char *));
     if (!result) return NULL;
 
     const char *start = csv;
@@ -447,7 +448,7 @@ static char **split_csv(const char *csv, size_t *count) {
 
         size_t len = (size_t)(trim - start + 1);
         if (len > 0 && trim >= start) {
-            result[idx] = malloc(len + 1);
+            result[idx] = gv_alloc(len + 1);
             if (result[idx]) {
                 memcpy(result[idx], start, len);
                 result[idx][len] = '\0';
@@ -481,9 +482,9 @@ static int check_group_in_list(const char *csv_list, const char *group) {
         if (groups[i] && strcmp(groups[i], group) == 0) {
             found = 1;
         }
-        free(groups[i]);
+        gv_free(groups[i]);
     }
-    free(groups);
+    gv_free(groups);
 
     return found;
 }
@@ -720,7 +721,7 @@ static int json_extract_string_array(const char *json, const char *key,
     pos++; /* skip '[' */
 
     /* Allocate space for strings */
-    char **arr = calloc(MAX_GROUPS, sizeof(char *));
+    char **arr = gv_calloc(MAX_GROUPS, sizeof(char *));
     if (!arr) return -1;
 
     size_t idx = 0;
@@ -749,7 +750,7 @@ static int json_extract_string_array(const char *json, const char *key,
         }
 
         size_t len = (size_t)(end - pos);
-        arr[idx] = malloc(len + 1);
+        arr[idx] = gv_alloc(len + 1);
         if (arr[idx]) {
             memcpy(arr[idx], pos, len);
             arr[idx][len] = '\0';
@@ -1171,16 +1172,16 @@ static GV_SSOToken *parse_saml_assertion(const char *b64_assertion) {
     /* Decode base64 (SAML uses standard base64, not URL-safe) */
     size_t in_len = strlen(b64_assertion);
     size_t max_decoded = (in_len * 3) / 4 + 4;
-    unsigned char *decoded = malloc(max_decoded);
+    unsigned char *decoded = gv_alloc(max_decoded);
     if (!decoded) return NULL;
 
     size_t decoded_len = max_decoded;
     if (base64url_decode(b64_assertion, in_len,
                          decoded, &decoded_len) != 0) {
         /* Try treating '+' as '-' and '/' as '_' for standard base64 */
-        char *urlsafe = malloc(in_len + 1);
+        char *urlsafe = gv_alloc(in_len + 1);
         if (!urlsafe) {
-            free(decoded);
+            gv_free(decoded);
             return NULL;
         }
         for (size_t i = 0; i < in_len; i++) {
@@ -1193,11 +1194,11 @@ static GV_SSOToken *parse_saml_assertion(const char *b64_assertion) {
         decoded_len = max_decoded;
         if (base64url_decode(urlsafe, in_len,
                              decoded, &decoded_len) != 0) {
-            free(urlsafe);
-            free(decoded);
+            gv_free(urlsafe);
+            gv_free(decoded);
             return NULL;
         }
-        free(urlsafe);
+        gv_free(urlsafe);
     }
 
     /* Null-terminate for string operations */
@@ -1208,7 +1209,7 @@ static GV_SSOToken *parse_saml_assertion(const char *b64_assertion) {
 
     GV_SSOToken *token = alloc_token();
     if (!token) {
-        free(decoded);
+        gv_free(decoded);
         return NULL;
     }
 
@@ -1257,7 +1258,7 @@ static GV_SSOToken *parse_saml_assertion(const char *b64_assertion) {
         } \
         if (cnt > MAX_GROUPS) cnt = MAX_GROUPS; \
         if (cnt > 0) { \
-            (dest_arr) = calloc(cnt, sizeof(char *)); \
+            (dest_arr) = gv_calloc(cnt, sizeof(char *)); \
             if ((dest_arr)) { \
                 pp = ae; size_t ix = 0; \
                 while (pp < ae_end && ix < cnt) { \
@@ -1311,7 +1312,7 @@ static GV_SSOToken *parse_saml_assertion(const char *b64_assertion) {
         }
     }
 
-    free(decoded);
+    gv_free(decoded);
     return token;
 }
 
@@ -1331,7 +1332,7 @@ static size_t curl_write_cb(void *ptr, size_t size, size_t nmemb, void *userdata
     if (buf->size + total >= buf->capacity) {
         size_t new_cap = buf->capacity ? buf->capacity * 2 : 4096;
         while (new_cap < buf->size + total + 1) new_cap *= 2;
-        char *new_data = realloc(buf->data, new_cap);
+        char *new_data = gv_realloc(buf->data, new_cap);
         if (!new_data) return 0;
         buf->data = new_data;
         buf->capacity = new_cap;
@@ -1368,7 +1369,7 @@ static int http_get(const char *url, int verify_ssl,
     CURLcode res = curl_easy_perform(curl);
 
     if (res != CURLE_OK) {
-        free(buf.data);
+        gv_free(buf.data);
         curl_easy_cleanup(curl);
         return -1;
     }
@@ -1378,7 +1379,7 @@ static int http_get(const char *url, int verify_ssl,
     curl_easy_cleanup(curl);
 
     if (http_code < 200 || http_code >= 300) {
-        free(buf.data);
+        gv_free(buf.data);
         return -1;
     }
 
@@ -1419,7 +1420,7 @@ static int http_post_form(const char *url, const char *post_fields,
     curl_slist_free_all(headers);
 
     if (res != CURLE_OK) {
-        free(buf.data);
+        gv_free(buf.data);
         curl_easy_cleanup(curl);
         return -1;
     }
@@ -1429,7 +1430,7 @@ static int http_post_form(const char *url, const char *post_fields,
     curl_easy_cleanup(curl);
 
     if (http_code < 200 || http_code >= 300) {
-        free(buf.data);
+        gv_free(buf.data);
         return -1;
     }
 

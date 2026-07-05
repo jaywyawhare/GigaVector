@@ -4,6 +4,7 @@
  */
 
 #include "api/typed_metadata.h"
+#include "core/memory.h"
 #include "core/utils.h"
 
 #include <stdlib.h>
@@ -86,7 +87,7 @@ int typed_array_push(GV_TypedValue *array, const GV_TypedValue *item) {
     /* Grow capacity if needed */
     if (array->data.array_val.count >= array->data.array_val.capacity) {
         size_t new_cap = array->data.array_val.capacity == 0 ? 4 : array->data.array_val.capacity * 2;
-        GV_TypedValue *new_items = realloc(array->data.array_val.items, new_cap * sizeof(GV_TypedValue));
+        GV_TypedValue *new_items = gv_realloc(array->data.array_val.items, new_cap * sizeof(GV_TypedValue));
         if (!new_items) {
             return -1;
         }
@@ -138,11 +139,11 @@ int typed_object_set(GV_TypedValue *object, const char *key, const GV_TypedValue
     /* Grow capacity if needed */
     if (object->data.object_val.count >= object->data.object_val.capacity) {
         size_t new_cap = object->data.object_val.capacity == 0 ? 4 : object->data.object_val.capacity * 2;
-        char **new_keys = realloc(object->data.object_val.keys, new_cap * sizeof(char *));
-        GV_TypedValue *new_values = realloc(object->data.object_val.values, new_cap * sizeof(GV_TypedValue));
+        char **new_keys = gv_realloc(object->data.object_val.keys, new_cap * sizeof(char *));
+        GV_TypedValue *new_values = gv_realloc(object->data.object_val.values, new_cap * sizeof(GV_TypedValue));
         if (!new_keys || !new_values) {
-            free(new_keys);
-            free(new_values);
+            gv_free(new_keys);
+            gv_free(new_values);
             return -1;
         }
         object->data.object_val.keys = new_keys;
@@ -354,25 +355,25 @@ void typed_value_free(GV_TypedValue *value) {
 
     switch (value->type) {
         case GV_META_TYPE_STRING:
-            free(value->data.string_val);
+            gv_free(value->data.string_val);
             value->data.string_val = NULL;
             break;
         case GV_META_TYPE_ARRAY:
             for (size_t i = 0; i < value->data.array_val.count; i++) {
                 typed_value_free(&value->data.array_val.items[i]);
             }
-            free(value->data.array_val.items);
+            gv_free(value->data.array_val.items);
             value->data.array_val.items = NULL;
             value->data.array_val.count = 0;
             value->data.array_val.capacity = 0;
             break;
         case GV_META_TYPE_OBJECT:
             for (size_t i = 0; i < value->data.object_val.count; i++) {
-                free(value->data.object_val.keys[i]);
+                gv_free(value->data.object_val.keys[i]);
                 typed_value_free(&value->data.object_val.values[i]);
             }
-            free(value->data.object_val.keys);
-            free(value->data.object_val.values);
+            gv_free(value->data.object_val.keys);
+            gv_free(value->data.object_val.values);
             value->data.object_val.keys = NULL;
             value->data.object_val.values = NULL;
             value->data.object_val.count = 0;
@@ -415,7 +416,7 @@ GV_TypedValue typed_value_copy(const GV_TypedValue *src) {
             dst.data.array_val.count = src->data.array_val.count;
             dst.data.array_val.capacity = src->data.array_val.count;
             if (src->data.array_val.count > 0) {
-                dst.data.array_val.items = malloc(dst.data.array_val.capacity * sizeof(GV_TypedValue));
+                dst.data.array_val.items = gv_alloc(dst.data.array_val.capacity * sizeof(GV_TypedValue));
                 if (!dst.data.array_val.items) {
                     dst.data.array_val.count = 0;
                     dst.data.array_val.capacity = 0;
@@ -430,11 +431,11 @@ GV_TypedValue typed_value_copy(const GV_TypedValue *src) {
             dst.data.object_val.count = src->data.object_val.count;
             dst.data.object_val.capacity = src->data.object_val.count;
             if (src->data.object_val.count > 0) {
-                dst.data.object_val.keys = malloc(dst.data.object_val.capacity * sizeof(char *));
-                dst.data.object_val.values = malloc(dst.data.object_val.capacity * sizeof(GV_TypedValue));
+                dst.data.object_val.keys = gv_alloc(dst.data.object_val.capacity * sizeof(char *));
+                dst.data.object_val.values = gv_alloc(dst.data.object_val.capacity * sizeof(GV_TypedValue));
                 if (!dst.data.object_val.keys || !dst.data.object_val.values) {
-                    free(dst.data.object_val.keys);
-                    free(dst.data.object_val.values);
+                    gv_free(dst.data.object_val.keys);
+                    gv_free(dst.data.object_val.values);
                     dst.data.object_val.keys = NULL;
                     dst.data.object_val.values = NULL;
                     dst.data.object_val.count = 0;
@@ -454,9 +455,9 @@ GV_TypedValue typed_value_copy(const GV_TypedValue *src) {
 
 void typed_metadata_free(GV_TypedMetadata *meta) {
     if (!meta) return;
-    free(meta->key);
+    gv_free(meta->key);
     typed_value_free(&meta->value);
-    free(meta);
+    gv_free(meta);
 }
 
 void typed_metadata_free_all(GV_TypedMetadata *head) {
@@ -487,7 +488,7 @@ static int ensure_capacity(uint8_t **buf, size_t *cap, size_t needed, size_t cur
     if (current + needed <= *cap) return 0;
     size_t new_cap = *cap == 0 ? 256 : *cap * 2;
     while (new_cap < current + needed) new_cap *= 2;
-    uint8_t *new_buf = realloc(*buf, new_cap);
+    uint8_t *new_buf = gv_realloc(*buf, new_cap);
     if (!new_buf) return -1;
     *buf = new_buf;
     *cap = new_cap;
@@ -573,7 +574,7 @@ int typed_value_serialize(const GV_TypedValue *value, uint8_t **buf, size_t *len
     size_t cap = 0;
 
     if (serialize_value(value, buf, len, &cap) < 0) {
-        free(*buf);
+        gv_free(*buf);
         *buf = NULL;
         *len = 0;
         return -1;
@@ -599,7 +600,7 @@ static int deserialize_value(const uint8_t *buf, size_t len, size_t *pos, GV_Typ
             uint32_t str_len;
             memcpy(&str_len, buf + *pos, 4); *pos += 4;
             if (*pos + str_len > len) return -1;
-            out->data.string_val = malloc(str_len + 1);
+            out->data.string_val = gv_alloc(str_len + 1);
             if (!out->data.string_val) return -1;
             memcpy(out->data.string_val, buf + *pos, str_len);
             out->data.string_val[str_len] = '\0';
@@ -630,7 +631,7 @@ static int deserialize_value(const uint8_t *buf, size_t len, size_t *pos, GV_Typ
             out->data.array_val.count = count;
             out->data.array_val.capacity = count;
             if (count > 0) {
-                out->data.array_val.items = malloc(count * sizeof(GV_TypedValue));
+                out->data.array_val.items = gv_alloc(count * sizeof(GV_TypedValue));
                 if (!out->data.array_val.items) return -1;
                 for (uint32_t i = 0; i < count; i++) {
                     if (deserialize_value(buf, len, pos, &out->data.array_val.items[i]) < 0) {
@@ -648,15 +649,15 @@ static int deserialize_value(const uint8_t *buf, size_t len, size_t *pos, GV_Typ
             out->data.object_val.count = count;
             out->data.object_val.capacity = count;
             if (count > 0) {
-                out->data.object_val.keys = malloc(count * sizeof(char *));
-                out->data.object_val.values = malloc(count * sizeof(GV_TypedValue));
+                out->data.object_val.keys = gv_alloc(count * sizeof(char *));
+                out->data.object_val.values = gv_alloc(count * sizeof(GV_TypedValue));
                 if (!out->data.object_val.keys || !out->data.object_val.values) return -1;
                 for (uint32_t i = 0; i < count; i++) {
                     if (*pos + 4 > len) return -1;
                     uint32_t key_len;
                     memcpy(&key_len, buf + *pos, 4); *pos += 4;
                     if (*pos + key_len > len) return -1;
-                    out->data.object_val.keys[i] = malloc(key_len + 1);
+                    out->data.object_val.keys[i] = gv_alloc(key_len + 1);
                     if (!out->data.object_val.keys[i]) return -1;
                     memcpy(out->data.object_val.keys[i], buf + *pos, key_len);
                     out->data.object_val.keys[i][key_len] = '\0';
@@ -700,7 +701,7 @@ int typed_metadata_serialize(const GV_TypedMetadata *meta, uint8_t **buf, size_t
 
     /* Serialize value */
     if (serialize_value(&meta->value, buf, len, &cap) < 0) {
-        free(*buf);
+        gv_free(*buf);
         *buf = NULL;
         *len = 0;
         return -1;
@@ -719,12 +720,12 @@ GV_TypedMetadata *typed_metadata_deserialize(const uint8_t *buf, size_t len) {
     memcpy(&key_len, buf + pos, 4); pos += 4;
     if (pos + key_len > len) return NULL;
 
-    GV_TypedMetadata *meta = calloc(1, sizeof(GV_TypedMetadata));
+    GV_TypedMetadata *meta = gv_calloc(1, sizeof(GV_TypedMetadata));
     if (!meta) return NULL;
 
-    meta->key = malloc(key_len + 1);
+    meta->key = gv_alloc(key_len + 1);
     if (!meta->key) {
-        free(meta);
+        gv_free(meta);
         return NULL;
     }
     memcpy(meta->key, buf + pos, key_len);
@@ -733,8 +734,8 @@ GV_TypedMetadata *typed_metadata_deserialize(const uint8_t *buf, size_t len) {
 
     /* Deserialize value */
     if (deserialize_value(buf, len, &pos, &meta->value) < 0) {
-        free(meta->key);
-        free(meta);
+        gv_free(meta->key);
+        gv_free(meta);
         return NULL;
     }
 
@@ -776,7 +777,7 @@ char *typed_to_string(const GV_TypedValue *value) {
 GV_TypedMetadata *typed_from_string_metadata(const char *key, const char *value) {
     if (!key) return NULL;
 
-    GV_TypedMetadata *meta = calloc(1, sizeof(GV_TypedMetadata));
+    GV_TypedMetadata *meta = gv_calloc(1, sizeof(GV_TypedMetadata));
     if (!meta) return NULL;
 
     meta->key = gv_dup_cstr(key);

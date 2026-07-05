@@ -18,8 +18,8 @@ static void benchmark_euclidean(void) {
     printf("=== Euclidean Distance Benchmark ===\n");
     printf("Dimension: %d, Iterations: %d\n\n", DIMENSION, ITERATIONS);
 
-    float *a_data = (float *)malloc(DIMENSION * sizeof(float));
-    float *b_data = (float *)malloc(DIMENSION * sizeof(float));
+    float *a_data = (float *)gv_alloc(DIMENSION * sizeof(float));
+    float *b_data = (float *)gv_alloc(DIMENSION * sizeof(float));
     
     for (size_t i = 0; i < DIMENSION; ++i) {
         a_data[i] = (float)(i % 100) / 10.0f;
@@ -50,16 +50,16 @@ static void benchmark_euclidean(void) {
     printf("Average time per operation: %.4f microseconds\n\n", 
            (elapsed / ITERATIONS) * 1000.0);
 
-    free(a_data);
-    free(b_data);
+    gv_free(a_data);
+    gv_free(b_data);
 }
 
 static void benchmark_cosine(void) {
     printf("=== Cosine Similarity Benchmark ===\n");
     printf("Dimension: %d, Iterations: %d\n\n", DIMENSION, ITERATIONS);
 
-    float *a_data = (float *)malloc(DIMENSION * sizeof(float));
-    float *b_data = (float *)malloc(DIMENSION * sizeof(float));
+    float *a_data = (float *)gv_alloc(DIMENSION * sizeof(float));
+    float *b_data = (float *)gv_alloc(DIMENSION * sizeof(float));
     
     for (size_t i = 0; i < DIMENSION; ++i) {
         a_data[i] = (float)(i % 100) / 10.0f;
@@ -90,8 +90,8 @@ static void benchmark_cosine(void) {
     printf("Average time per operation: %.4f microseconds\n\n", 
            (elapsed / ITERATIONS) * 1000.0);
 
-    free(a_data);
-    free(b_data);
+    gv_free(a_data);
+    gv_free(b_data);
 }
 
 static void benchmark_different_dimensions(void) {
@@ -104,8 +104,8 @@ static void benchmark_different_dimensions(void) {
     
     for (int d = 0; d < num_dims; ++d) {
         int dim = dims[d];
-        float *a_data = (float *)malloc(dim * sizeof(float));
-        float *b_data = (float *)malloc(dim * sizeof(float));
+        float *a_data = (float *)gv_alloc(dim * sizeof(float));
+        float *b_data = (float *)gv_alloc(dim * sizeof(float));
         
         for (int i = 0; i < dim; ++i) {
             a_data[i] = (float)(i % 100) / 10.0f;
@@ -139,8 +139,8 @@ static void benchmark_different_dimensions(void) {
                dim, elapsed, (iterations / elapsed) * 1000.0, 
                (elapsed / iterations) * 1000.0);
 
-        free(a_data);
-        free(b_data);
+        gv_free(a_data);
+        gv_free(b_data);
     }
     printf("\n");
 }

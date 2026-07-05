@@ -53,7 +53,7 @@ GV_ReplTransportHooks repl_sim_transport_hooks(struct GV_ReplSim *sim);
 
 /**
  * Parse one replication wire frame from a buffer (same layout as TCP messages).
- * On success, @p *payload is heap-allocated; caller must free().
+ * On success, @p *payload is heap-allocated; caller must gv_free().
  */
 int repl_parse_frame_buffer(const uint8_t *data, size_t len, size_t max_bytes,
                             uint8_t *msg_type, uint32_t *request_id,

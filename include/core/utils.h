@@ -8,32 +8,12 @@
 #include <math.h>
 
 #include "core/types.h"
-
-/**
- * @brief Duplicate a C string using heap allocation.
- *
- * This is a project-local replacement for `strdup(3)` to avoid portability and
- * feature-test-macro issues across platforms.
- *
- * @param s Input string; may be NULL.
- * @return Newly allocated copy of @p s, or NULL if @p s is NULL or allocation fails.
- */
-static inline char *gv_strdup(const char *s) {
-    if (!s) return NULL;
-    size_t len = strlen(s) + 1;
-    char *copy = (char *)malloc(len);
-    if (!copy) return NULL;
-    memcpy(copy, s, len);
-    return copy;
-}
+#include "core/memory.h"
 
 /**
  * @brief Duplicate a C string using heap allocation.
  *
  * Alias for `gv_strdup()` kept for readability at call sites.
- *
- * @param s Input string; may be NULL.
- * @return Newly allocated copy of @p s, or NULL if @p s is NULL or allocation fails.
  */
 static inline char *gv_dup_cstr(const char *s) {
     return gv_strdup(s);
@@ -97,14 +77,14 @@ static inline int write_str(FILE *f, const char *s, uint32_t len) {
 static inline int read_str(FILE *f, char **s, uint32_t len) {
     *s = NULL;
     if (len == 0) {
-        *s = (char *)malloc(1);
+        *s = (char *)gv_alloc(1);
         if (!*s) return -1;
         (*s)[0] = '\0';
         return 0;
     }
-    char *buf = (char *)malloc(len + 1);
+    char *buf = (char *)gv_alloc(len + 1);
     if (!buf) return -1;
-    if (fread(buf, 1, len, f) != len) { free(buf); return -1; }
+    if (fread(buf, 1, len, f) != len) { gv_free(buf); return -1; }
     buf[len] = '\0';
     *s = buf;
     return 0;
@@ -162,9 +142,9 @@ static inline int write_string(FILE *f, const char *s) {
 static inline char *read_string(FILE *f) {
     uint32_t len;
     if (read_u32(f, &len) != 0) return NULL;
-    char *s = (char *)malloc((size_t)len + 1);
+    char *s = (char *)gv_alloc((size_t)len + 1);
     if (!s) return NULL;
-    if (len > 0 && fread(s, 1, len, f) != len) { free(s); return NULL; }
+    if (len > 0 && fread(s, 1, len, f) != len) { gv_free(s); return NULL; }
     s[len] = '\0';
     return s;
 }
@@ -218,20 +198,18 @@ static inline GV_Metadata *metadata_copy(GV_Metadata *src) {
     GV_Metadata *head = NULL, *tail = NULL;
     GV_Metadata *current = src;
     while (current != NULL) {
-        GV_Metadata *new_meta = (GV_Metadata *)malloc(sizeof(GV_Metadata));
+        GV_Metadata *new_meta = (GV_Metadata *)gv_alloc(sizeof(GV_Metadata));
         if (new_meta == NULL) {
-            while (head) { GV_Metadata *n = head->next; free(head->key); free(head->value); free(head); head = n; }
+            while (head) { GV_Metadata *n = head->next; gv_free(head->key); gv_free(head->value); gv_free(head); head = n; }
             return NULL;
         }
-        new_meta->key = (char *)malloc(strlen(current->key) + 1);
-        new_meta->value = (char *)malloc(strlen(current->value) + 1);
+        new_meta->key = gv_dup_cstr(current->key);
+        new_meta->value = gv_dup_cstr(current->value);
         if (!new_meta->key || !new_meta->value) {
-            free(new_meta->key); free(new_meta->value); free(new_meta);
-            while (head) { GV_Metadata *n = head->next; free(head->key); free(head->value); free(head); head = n; }
+            gv_free(new_meta->key); gv_free(new_meta->value); gv_free(new_meta);
+            while (head) { GV_Metadata *n = head->next; gv_free(head->key); gv_free(head->value); gv_free(head); head = n; }
             return NULL;
         }
-        strcpy(new_meta->key, current->key);
-        strcpy(new_meta->value, current->value);
         new_meta->next = NULL;
         if (!head) { head = tail = new_meta; } else { tail->next = new_meta; tail = new_meta; }
         current = current->next;

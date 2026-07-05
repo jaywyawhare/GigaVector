@@ -12,6 +12,7 @@
  */
 
 #include "multimodal/late_interaction.h"
+#include "core/memory.h"
 #include "core/heap.h"
 #include "core/utils.h"
 
@@ -135,7 +136,7 @@ typedef struct {
 GV_MIN_HEAP_DEFINE(li_heap, GV_LIHeapItem)
 
 static float *li_compute_avg(const float *tokens, size_t num_tokens, size_t dim) {
-    float *avg = (float *)calloc(dim, sizeof(float));
+    float *avg = (float *)gv_calloc(dim, sizeof(float));
     if (!avg) return NULL;
 
     for (size_t t = 0; t < num_tokens; t++) {
@@ -191,7 +192,7 @@ static int li_grow_pool(GV_LateInteractionIndex *idx, size_t needed_tokens) {
         new_cap = new_cap < 1024 ? new_cap * 2 : new_cap + new_cap / 2;
     }
 
-    float *new_pool = (float *)realloc(idx->token_pool,
+    float *new_pool = (float *)gv_realloc(idx->token_pool,
                                        new_cap * idx->config.token_dimension * sizeof(float));
     if (!new_pool) return -1;
 
@@ -204,7 +205,7 @@ static int li_grow_docs(GV_LateInteractionIndex *idx) {
     if (idx->doc_count < idx->doc_capacity) return 0;
 
     size_t new_cap = idx->doc_capacity * 2;
-    GV_LIDocMeta *new_docs = (GV_LIDocMeta *)realloc(idx->docs,
+    GV_LIDocMeta *new_docs = (GV_LIDocMeta *)gv_realloc(idx->docs,
                                                        new_cap * sizeof(GV_LIDocMeta));
     if (!new_docs) return -1;
 
@@ -233,26 +234,26 @@ GV_LateInteractionIndex *late_interaction_create(const GV_LateInteractionConfig 
     if (cfg.max_query_tokens == 0) cfg.max_query_tokens = 32;
     if (cfg.candidate_pool  == 0) cfg.candidate_pool  = 1000;
 
-    GV_LateInteractionIndex *idx = (GV_LateInteractionIndex *)calloc(
+    GV_LateInteractionIndex *idx = (GV_LateInteractionIndex *)gv_calloc(
         1, sizeof(GV_LateInteractionIndex));
     if (!idx) return NULL;
 
     idx->config = cfg;
 
     idx->pool_capacity = GV_LI_INITIAL_POOL_CAPACITY;
-    idx->token_pool = (float *)malloc(
+    idx->token_pool = (float *)gv_alloc(
         idx->pool_capacity * cfg.token_dimension * sizeof(float));
     if (!idx->token_pool) {
-        free(idx);
+        gv_free(idx);
         return NULL;
     }
     idx->pool_used = 0;
 
     idx->doc_capacity = GV_LI_INITIAL_DOC_CAPACITY;
-    idx->docs = (GV_LIDocMeta *)calloc(idx->doc_capacity, sizeof(GV_LIDocMeta));
+    idx->docs = (GV_LIDocMeta *)gv_calloc(idx->doc_capacity, sizeof(GV_LIDocMeta));
     if (!idx->docs) {
-        free(idx->token_pool);
-        free(idx);
+        gv_free(idx->token_pool);
+        gv_free(idx);
         return NULL;
     }
     idx->doc_count     = 0;
@@ -260,9 +261,9 @@ GV_LateInteractionIndex *late_interaction_create(const GV_LateInteractionConfig 
     idx->active_tokens = 0;
 
     if (pthread_rwlock_init(&idx->rwlock, NULL) != 0) {
-        free(idx->docs);
-        free(idx->token_pool);
-        free(idx);
+        gv_free(idx->docs);
+        gv_free(idx->token_pool);
+        gv_free(idx);
         return NULL;
     }
 
@@ -273,13 +274,13 @@ void late_interaction_destroy(GV_LateInteractionIndex *index) {
     if (!index) return;
 
     for (size_t i = 0; i < index->doc_count; i++) {
-        free(index->docs[i].avg_embedding);
+        gv_free(index->docs[i].avg_embedding);
     }
 
-    free(index->docs);
-    free(index->token_pool);
+    gv_free(index->docs);
+    gv_free(index->token_pool);
     pthread_rwlock_destroy(&index->rwlock);
-    free(index);
+    gv_free(index);
 }
 
 int late_interaction_add_doc(GV_LateInteractionIndex *index,
@@ -341,7 +342,7 @@ int late_interaction_delete(GV_LateInteractionIndex *index, size_t doc_index) {
     index->active_docs--;
     index->active_tokens -= index->docs[doc_index].num_tokens;
 
-    free(index->docs[doc_index].avg_embedding);
+    gv_free(index->docs[doc_index].avg_embedding);
     index->docs[doc_index].avg_embedding = NULL;
 
     pthread_rwlock_unlock(&index->rwlock);
@@ -377,9 +378,9 @@ int late_interaction_search(const GV_LateInteractionIndex *index,
     size_t   num_candidates = 0;
 
     if (skip_first_stage) {
-        candidates = (size_t *)malloc(index->active_docs * sizeof(size_t));
+        candidates = (size_t *)gv_alloc(index->active_docs * sizeof(size_t));
         if (!candidates) {
-            free(avg_query);
+            gv_free(avg_query);
             pthread_rwlock_unlock((pthread_rwlock_t *)&index->rwlock);
             return -1;
         }
@@ -391,10 +392,10 @@ int late_interaction_search(const GV_LateInteractionIndex *index,
     } else {
         /* Use a min-heap of size pool_size to keep the top-scoring candidates
          * by average-embedding dot product. */
-        GV_LIHeapItem *stage1_heap = (GV_LIHeapItem *)malloc(
+        GV_LIHeapItem *stage1_heap = (GV_LIHeapItem *)gv_alloc(
             pool_size * sizeof(GV_LIHeapItem));
         if (!stage1_heap) {
-            free(avg_query);
+            gv_free(avg_query);
             pthread_rwlock_unlock((pthread_rwlock_t *)&index->rwlock);
             return -1;
         }
@@ -408,27 +409,27 @@ int late_interaction_search(const GV_LateInteractionIndex *index,
         }
 
         num_candidates = heap_size;
-        candidates = (size_t *)malloc(num_candidates * sizeof(size_t));
+        candidates = (size_t *)gv_alloc(num_candidates * sizeof(size_t));
         if (!candidates) {
-            free(stage1_heap);
-            free(avg_query);
+            gv_free(stage1_heap);
+            gv_free(avg_query);
             pthread_rwlock_unlock((pthread_rwlock_t *)&index->rwlock);
             return -1;
         }
         for (size_t i = 0; i < num_candidates; i++) {
             candidates[i] = stage1_heap[i].doc_idx;
         }
-        free(stage1_heap);
+        gv_free(stage1_heap);
     }
 
-    free(avg_query);
+    gv_free(avg_query);
 
     size_t effective_k = k < num_candidates ? k : num_candidates;
 
-    GV_LIHeapItem *result_heap = (GV_LIHeapItem *)malloc(
+    GV_LIHeapItem *result_heap = (GV_LIHeapItem *)gv_alloc(
         effective_k * sizeof(GV_LIHeapItem));
     if (!result_heap) {
-        free(candidates);
+        gv_free(candidates);
         pthread_rwlock_unlock((pthread_rwlock_t *)&index->rwlock);
         return -1;
     }
@@ -445,7 +446,7 @@ int late_interaction_search(const GV_LateInteractionIndex *index,
         li_heap_push(result_heap, &result_heap_size, effective_k, (GV_LIHeapItem){score, di});
     }
 
-    free(candidates);
+    gv_free(candidates);
 
     int n = (int)result_heap_size;
     for (int i = n - 1; i >= 0; i--) {
@@ -459,7 +460,7 @@ int late_interaction_search(const GV_LateInteractionIndex *index,
         }
     }
 
-    free(result_heap);
+    gv_free(result_heap);
 
     pthread_rwlock_unlock((pthread_rwlock_t *)&index->rwlock);
     return n;
@@ -595,14 +596,14 @@ GV_LateInteractionIndex *late_interaction_load(const char *filepath) {
         size_t floats = (size_t)num_tokens * dim;
         float *tokens = NULL;
         if (floats > 0) {
-            tokens = (float *)malloc(floats * sizeof(float));
+            tokens = (float *)gv_alloc(floats * sizeof(float));
             if (!tokens) {
                 late_interaction_destroy(idx);
                 fclose(fp);
                 return NULL;
             }
             if (fread(tokens, sizeof(float), floats, fp) != floats) {
-                free(tokens);
+                gv_free(tokens);
                 late_interaction_destroy(idx);
                 fclose(fp);
                 return NULL;
@@ -613,7 +614,7 @@ GV_LateInteractionIndex *late_interaction_load(const char *filepath) {
          * Since we are the sole owner at this point (just created the index),
          * this is safe. */
         int rc = late_interaction_add_doc(idx, tokens, (size_t)num_tokens);
-        free(tokens);
+        gv_free(tokens);
 
         if (rc != 0) {
             late_interaction_destroy(idx);
