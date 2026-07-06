@@ -108,8 +108,7 @@ jobs:
 
       - name: Run Python tests
         timeout-minutes: 10
-        shell: bash
-        run: python -m unittest discover -s python/tests -v
+        run: python -m unittest discover -s python/tests -v 2>&1; exit $LASTEXITCODE
 
       - name: Lint and type-check Python (Linux only)
         if: matrix.os == 'ubuntu-latest'

@@ -51,6 +51,10 @@ GV_Arena *gv_tls_arena(void) {
         gv_free(arena);
         return NULL;
     }
+    /* Prevent growth: a growing arena would realloc its base and invalidate
+       all previously returned arena pointers held by the caller.  Oversized
+       requests simply fall back to heap via gv_tls_alloc_or_heap. */
+    arena->flags |= GV_ARENA_STATIC;
     pthread_setspecific(gv_tls_arena_key, arena);
     return arena;
 }
@@ -154,6 +158,7 @@ GV_Arena *gv_tls_arena(void) {
         gv_free(arena);
         return NULL;
     }
+    arena->flags |= GV_ARENA_STATIC;
     FlsSetValue(gv_tls_arena_fls, arena);
     return arena;
 }
