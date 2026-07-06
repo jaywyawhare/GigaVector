@@ -108,6 +108,7 @@ jobs:
 
       - name: Run Python tests
         timeout-minutes: 10
+        shell: bash
         run: python -m unittest discover -s python/tests -v
 
       - name: Lint and type-check Python (Linux only)
