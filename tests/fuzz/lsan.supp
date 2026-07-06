@@ -1,0 +1,11 @@
+# LeakSanitizer suppressions for fuzz runs.
+#
+# The thread-local bump arena (GV_Arena, allocated in gv_tls_arena) is a
+# deliberate per-thread cache that lives for the lifetime of the thread. On
+# normal thread exit it is freed by the pthread TLS destructor; on process exit
+# an atexit handler frees the main thread's arena. libFuzzer, however,
+# terminates via _Exit(), which runs LSan's leak check BEFORE atexit handlers
+# fire, so the main thread's still-reachable arena is reported. This is not a
+# real leak, only a shutdown-ordering artifact of the fuzzing driver.
+leak:gv_arena_init
+leak:gv_tls_arena

@@ -322,6 +322,7 @@ endif
 	$(FUZZ_CC) $(FUZZ_CFLAGS) tests/fuzz/fuzz_posting_segment.c $(FUZZ_LDFLAGS) -o $(FUZZ_DIR)/fuzz_posting_segment
 	@echo "Built fuzzers in $(FUZZ_DIR)"
 
+fuzz-run: export LSAN_OPTIONS = suppressions=$(abspath tests/fuzz/lsan.supp)
 fuzz-run: fuzz
 	@echo "Running fuzz_wal_apply..."
 	@$(FUZZ_DIR)/fuzz_wal_apply tests/fuzz/corpus/wal -max_total_time=30 -rss_limit_mb=512 -print_final_stats=1
