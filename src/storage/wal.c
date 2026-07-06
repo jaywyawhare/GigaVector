@@ -140,6 +140,10 @@ static int wal_vec_read_body(FILE *f, uint32_t expected_dim, WalVecScratch *rec)
             wal_vec_scratch_release(rec);
             return -1;
         }
+        memset(rec->keys,       0, (size_t)rec->meta_count * sizeof(char *));
+        memset(rec->values,     0, (size_t)rec->meta_count * sizeof(char *));
+        memset(rec->key_on_heap, 0, (size_t)rec->meta_count * sizeof(int));
+        memset(rec->val_on_heap, 0, (size_t)rec->meta_count * sizeof(int));
         for (uint32_t i = 0; i < rec->meta_count; ++i) {
             rec->keys[i] = wal_read_string(f, &rec->key_on_heap[i]);
             rec->values[i] = wal_read_string(f, &rec->val_on_heap[i]);
@@ -222,6 +226,10 @@ static int wal_vec_read_from_buffer(const uint8_t *record, size_t len, size_t *p
             wal_vec_scratch_release(rec);
             return -1;
         }
+        memset(rec->keys,       0, (size_t)rec->meta_count * sizeof(char *));
+        memset(rec->values,     0, (size_t)rec->meta_count * sizeof(char *));
+        memset(rec->key_on_heap, 0, (size_t)rec->meta_count * sizeof(int));
+        memset(rec->val_on_heap, 0, (size_t)rec->meta_count * sizeof(int));
         for (uint32_t i = 0; i < rec->meta_count; ++i) {
             if (wal_buf_read_string(record, len, pos, &rec->keys[i],
                                     &rec->key_on_heap[i]) != 0 ||

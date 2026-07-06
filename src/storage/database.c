@@ -43,13 +43,13 @@ static ssize_t getline(char **lineptr, size_t *n, FILE *stream) {
     size_t len = 0;
     if (!*lineptr || *n == 0) {
         *n = 128;
-        *lineptr = (char *)gv_alloc(*n);
+        *lineptr = (char *)malloc(*n);
         if (!*lineptr) return -1;
     }
     while ((c = fgetc(stream)) != EOF) {
         if (len + 2 > *n) {
             size_t newn = *n * 2;
-            char *tmp = (char *)gv_realloc(*lineptr, newn);
+            char *tmp = (char *)realloc(*lineptr, newn);
             if (!tmp) return -1;
             *lineptr = tmp;
             *n = newn;
