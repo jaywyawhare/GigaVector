@@ -23,10 +23,11 @@ static void gv_tls_arena_key_create(void) {
     (void)pthread_key_create(&gv_tls_arena_key, gv_tls_arena_key_destroy);
 }
 
-/* Free the calling thread's TLS arena on library unload so LSan doesn't
-   report the 64 KiB backing buffer as a leak in fuzzer/ASAN builds. */
-__attribute__((destructor))
-static void gv_tls_scope_fini(void) {
+/* Frees the calling thread's TLS arena.  Registered via atexit() so it runs
+   before LSan's own atexit check (LIFO order: atexit runs after main returns
+   but before shared-library unload, while __attribute__((destructor)) on a
+   shared library runs during unload — after LSan). */
+static void gv_tls_scope_atexit(void) {
     pthread_once(&gv_tls_arena_once, gv_tls_arena_key_create);
     GV_Arena *arena = (GV_Arena *)pthread_getspecific(gv_tls_arena_key);
     if (arena != NULL) {
@@ -35,6 +36,9 @@ static void gv_tls_scope_fini(void) {
         gv_free(arena);
     }
 }
+
+static pthread_once_t gv_tls_atexit_once = PTHREAD_ONCE_INIT;
+static void gv_tls_register_atexit(void) { atexit(gv_tls_scope_atexit); }
 
 GV_Arena *gv_tls_arena(void) {
     pthread_once(&gv_tls_arena_once, gv_tls_arena_key_create);
@@ -56,6 +60,7 @@ GV_Arena *gv_tls_arena(void) {
        requests simply fall back to heap via gv_tls_alloc_or_heap. */
     arena->flags |= GV_ARENA_STATIC;
     pthread_setspecific(gv_tls_arena_key, arena);
+    pthread_once(&gv_tls_atexit_once, gv_tls_register_atexit);
     return arena;
 }
 

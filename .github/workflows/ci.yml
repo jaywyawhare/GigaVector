@@ -108,7 +108,11 @@ jobs:
 
       - name: Run Python tests
         timeout-minutes: 10
-        run: python -m unittest discover -s python/tests -v 2>&1; exit $LASTEXITCODE
+        run: |
+          $out = python -m unittest discover -s python/tests -v 2>&1 | Out-String
+          Write-Host $out
+          if ($out -match "FAILED" -or -not ($out -match "OK")) { exit 1 }
+          exit 0
 
       - name: Lint and type-check Python (Linux only)
         if: matrix.os == 'ubuntu-latest'
