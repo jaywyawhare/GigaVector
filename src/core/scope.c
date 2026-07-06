@@ -4,6 +4,18 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* libFuzzer terminates via _Exit() which bypasses atexit handlers; LSan hooks
+   _Exit() and still runs its check before the atexit handlers fire.  Mark TLS
+   arena allocations as intentionally not freed so LSan ignores them.  pthread
+   TLS destructors (and the atexit fallback for the main thread) still free the
+   memory for non-fuzzer runs. */
+#if defined(__has_feature) && __has_feature(address_sanitizer)
+#  include <sanitizer/lsan_interface.h>
+#  define GV_LSAN_IGNORE(p) __lsan_ignore_object(p)
+#else
+#  define GV_LSAN_IGNORE(p) ((void)(p))
+#endif
+
 #ifndef _WIN32
 #include <pthread.h>
 
@@ -59,6 +71,8 @@ GV_Arena *gv_tls_arena(void) {
        all previously returned arena pointers held by the caller.  Oversized
        requests simply fall back to heap via gv_tls_alloc_or_heap. */
     arena->flags |= GV_ARENA_STATIC;
+    GV_LSAN_IGNORE(arena->base);
+    GV_LSAN_IGNORE(arena);
     pthread_setspecific(gv_tls_arena_key, arena);
     pthread_once(&gv_tls_atexit_once, gv_tls_register_atexit);
     return arena;
@@ -164,6 +178,8 @@ GV_Arena *gv_tls_arena(void) {
         return NULL;
     }
     arena->flags |= GV_ARENA_STATIC;
+    GV_LSAN_IGNORE(arena->base);
+    GV_LSAN_IGNORE(arena);
     FlsSetValue(gv_tls_arena_fls, arena);
     return arena;
 }

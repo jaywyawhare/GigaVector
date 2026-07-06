@@ -108,6 +108,7 @@ jobs:
 
       - name: Run Python tests
         timeout-minutes: 10
+        shell: pwsh
         run: |
           $out = python -m unittest discover -s python/tests -v 2>&1 | Out-String
           Write-Host $out
