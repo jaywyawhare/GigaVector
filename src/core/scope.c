@@ -9,7 +9,16 @@
    arena allocations as intentionally not freed so LSan ignores them.  pthread
    TLS destructors (and the atexit fallback for the main thread) still free the
    memory for non-fuzzer runs. */
-#if defined(__has_feature) && __has_feature(address_sanitizer)
+#if defined(__has_feature)
+/* Clang */
+#  if __has_feature(address_sanitizer)
+#    include <sanitizer/lsan_interface.h>
+#    define GV_LSAN_IGNORE(p) __lsan_ignore_object(p)
+#  else
+#    define GV_LSAN_IGNORE(p) ((void)(p))
+#  endif
+#elif defined(__SANITIZE_ADDRESS__)
+/* GCC */
 #  include <sanitizer/lsan_interface.h>
 #  define GV_LSAN_IGNORE(p) __lsan_ignore_object(p)
 #else
