@@ -96,15 +96,16 @@ static int ivfflat_kmeans(const float *data, size_t count, size_t dim,
             counts[c]++;
         }
 
+        /* Write back only clusters that received at least one point, directly
+         * into out_centroids. Empty clusters (counts[c]==0) keep their previous
+         * centroid instead of being reset to all-zeros. */
         for (size_t c = 0; c < k; c++) {
             if (counts[c] > 0) {
                 for (size_t d = 0; d < dim; d++) {
-                    new_centroids[c * dim + d] /= (float)counts[c];
+                    out_centroids[c * dim + d] = new_centroids[c * dim + d] / (float)counts[c];
                 }
             }
         }
-
-        memcpy(out_centroids, new_centroids, k * dim * sizeof(float));
     }
 
     gv_free(assign);
@@ -826,7 +827,26 @@ int ivfflat_retrain(void *index, size_t iters) {
     memcpy(idx->centroids, new_centroids, idx->config.nlist * idx->dimension * sizeof(float));
     free(new_centroids);
 
-    /* Clear all posting lists (keep entries, just unlink from lists) */
+    /* Free soft-deleted entries (which are not relinked) before clearing the
+     * lists, otherwise they and their vectors leak on every retrain. Live
+     * entries are captured in ptrs[] and will be relinked, so only free the
+     * deleted ones here. Uses the same free calls as ivfflat_destroy. */
+    for (size_t c = 0; c < idx->config.nlist; c++) {
+        GV_IVFFlatEntry *e = idx->lists[c];
+        while (e) {
+            GV_IVFFlatEntry *next = e->next;
+            if (e->deleted) {
+                if (e->vector) {
+                    vector_destroy(e->vector);
+                }
+                gv_free(e);
+            }
+            e = next;
+        }
+    }
+
+    /* Clear all posting lists (live entries are held in ptrs[] and relinked
+     * below; deleted entries were just freed). */
     for (size_t c = 0; c < idx->config.nlist; c++) {
         idx->lists[c] = NULL;
         idx->list_sizes[c] = 0;
@@ -854,6 +874,9 @@ int ivfflat_retrain(void *index, size_t iters) {
         idx->lists[best_c] = e;
         idx->list_sizes[best_c]++;
     }
+
+    /* Deleted entries were freed above, so only the live ones remain. */
+    idx->total_count = live;
 
     free(buf);
     free(ptrs);

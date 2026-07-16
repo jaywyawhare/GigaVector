@@ -494,4 +494,5 @@ int ivfdisk_maintenance_run(GV_IVFDiskIndex *index,
         if (stats) *stats = local_stats;
         return 0;
     }
+    return -1; /* unreachable: GV_WITH_ARENA body always returns; satisfies -Wreturn-type */
 }

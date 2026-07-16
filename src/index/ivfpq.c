@@ -273,11 +273,14 @@ static int ivfpq_kmeans(float *data, size_t n, size_t dim, size_t k, size_t iter
             for (size_t j = 0; j < dim; ++j) newc[c * dim + j] += v[j];
             counts[c]++;
         }
+        /* Write back only clusters that received at least one point, directly
+         * into out_centroids. Empty clusters (counts[c]==0) keep their previous
+         * centroid instead of being reset to all-zeros. */
         for (size_t c = 0; c < k; ++c) {
             if (counts[c] == 0) continue;
-            for (size_t j = 0; j < dim; ++j) newc[c * dim + j] /= (float)counts[c];
+            for (size_t j = 0; j < dim; ++j)
+                out_centroids[c * dim + j] = newc[c * dim + j] / (float)counts[c];
         }
-        memcpy(out_centroids, newc, k * dim * sizeof(float));
     }
 
     gv_free(assign);

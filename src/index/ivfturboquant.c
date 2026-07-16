@@ -115,15 +115,16 @@ static int ivfturboquant_kmeans(const float *data, size_t count, size_t dim,
             counts[c]++;
         }
 
+        /* Write back only clusters that received at least one point, directly
+         * into out_centroids. Empty clusters (counts[c]==0) keep their previous
+         * centroid instead of being reset to all-zeros. */
         for (size_t c = 0; c < k; c++) {
             if (counts[c] > 0) {
                 for (size_t d = 0; d < dim; d++) {
-                    new_centroids[c * dim + d] /= (float)counts[c];
+                    out_centroids[c * dim + d] = new_centroids[c * dim + d] / (float)counts[c];
                 }
             }
         }
-
-        memcpy(out_centroids, new_centroids, k * dim * sizeof(float));
     }
 
     gv_free(assign);
