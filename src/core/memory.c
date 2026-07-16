@@ -84,6 +84,7 @@ void gv_memory_init(GV_Memory *mem) {
         return;
     }
     memset(mem, 0, sizeof(*mem));
+    pthread_mutex_init(&mem->lock, NULL);
 }
 
 void gv_memory_fini(GV_Memory *mem) {
@@ -94,10 +95,13 @@ void gv_memory_fini(GV_Memory *mem) {
         gv_free(mem->owned[i].ptr);
     }
     gv_free(mem->owned);
+    /* Destroy the lock AFTER freeing tracked allocations, then zero the pool. */
+    pthread_mutex_destroy(&mem->lock);
     memset(mem, 0, sizeof(*mem));
 }
 
-static int gv_memory_track(GV_Memory *mem, void *ptr, size_t size) {
+/* Lock-free core: caller MUST hold mem->lock. */
+static int gv_memory_track_locked(GV_Memory *mem, void *ptr, size_t size) {
     if (mem == NULL || ptr == NULL) {
         return -1;
     }
@@ -118,7 +122,8 @@ static int gv_memory_track(GV_Memory *mem, void *ptr, size_t size) {
     return 0;
 }
 
-static size_t gv_memory_untrack(GV_Memory *mem, void *ptr) {
+/* Lock-free core: caller MUST hold mem->lock. */
+static size_t gv_memory_untrack_locked(GV_Memory *mem, void *ptr) {
     if (mem == NULL || ptr == NULL) {
         return 0;
     }
@@ -150,7 +155,10 @@ void *gv_db_alloc(GV_Database *db, size_t size) {
     if (ptr == NULL) {
         return NULL;
     }
-    if (gv_memory_track(&db->memory_pool, ptr, size) != 0) {
+    pthread_mutex_lock(&db->memory_pool.lock);
+    int rc = gv_memory_track_locked(&db->memory_pool, ptr, size);
+    pthread_mutex_unlock(&db->memory_pool.lock);
+    if (rc != 0) {
         gv_free(ptr);
         return NULL;
     }
@@ -177,35 +185,46 @@ void gv_db_free(GV_Database *db, void *ptr) {
     if (db == NULL || ptr == NULL) {
         return;
     }
-    gv_memory_untrack(&db->memory_pool, ptr);
+    pthread_mutex_lock(&db->memory_pool.lock);
+    gv_memory_untrack_locked(&db->memory_pool, ptr);
     gv_free(ptr);
+    pthread_mutex_unlock(&db->memory_pool.lock);
 }
 
 void *gv_db_realloc(GV_Database *db, void *ptr, size_t size) {
     if (db == NULL || size == 0) {
         return NULL;
     }
+    /* Hold the pool lock across untrack -> realloc -> retrack so owned[]/counts/
+     * pool_bytes stay consistent. db_check_resource_limits acquires only
+     * resource_mutex and always releases it before returning, so nesting it
+     * here is safe (no path takes resource_mutex then memory_pool.lock). */
+    pthread_mutex_lock(&db->memory_pool.lock);
     size_t old_size = 0;
     if (ptr != NULL) {
-        old_size = gv_memory_untrack(&db->memory_pool, ptr);
+        old_size = gv_memory_untrack_locked(&db->memory_pool, ptr);
     }
     size_t delta = size > old_size ? size - old_size : 0;
     if (delta > 0 && db_check_resource_limits(db, 0, delta) != 0) {
         if (ptr != NULL) {
-            (void)gv_memory_track(&db->memory_pool, ptr, old_size);
+            (void)gv_memory_track_locked(&db->memory_pool, ptr, old_size);
         }
+        pthread_mutex_unlock(&db->memory_pool.lock);
         return NULL;
     }
     void *next = gv_realloc(ptr, size);
     if (next == NULL) {
         if (ptr != NULL) {
-            (void)gv_memory_track(&db->memory_pool, ptr, old_size);
+            (void)gv_memory_track_locked(&db->memory_pool, ptr, old_size);
         }
+        pthread_mutex_unlock(&db->memory_pool.lock);
         return NULL;
     }
-    if (gv_memory_track(&db->memory_pool, next, size) != 0) {
+    if (gv_memory_track_locked(&db->memory_pool, next, size) != 0) {
         gv_free(next);
+        pthread_mutex_unlock(&db->memory_pool.lock);
         return NULL;
     }
+    pthread_mutex_unlock(&db->memory_pool.lock);
     return next;
 }
