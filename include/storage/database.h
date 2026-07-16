@@ -116,6 +116,7 @@ typedef struct GV_Database {
     double deleted_ratio_threshold;    /**< Ratio of deleted vectors to trigger compaction (default: 0.1). */
     GV_ResourceLimits resource_limits; /**< Resource limits configuration. */
     size_t current_memory_bytes;       /**< Current estimated memory usage in bytes. */
+    uint64_t generation;               /**< Monotonically incremented on every mutation (add/delete/update/upsert). */
     size_t current_concurrent_ops;     /**< Current number of concurrent operations. */
     pthread_mutex_t resource_mutex;     /**< Mutex for resource tracking. */
     GV_LatencyHistogram insert_latency_hist; /**< Insert operation latency histogram. */

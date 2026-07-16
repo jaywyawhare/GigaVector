@@ -144,6 +144,7 @@ static void db_attach_soa_storage(GV_Database *db) {
 }
 
 static void db_init_common_fields(GV_Database *db) {
+    db->generation = 0;
     db->compaction_running = 0;
     pthread_mutex_init(&db->compaction_mutex, NULL);
     pthread_cond_init(&db->compaction_cond, NULL);
@@ -2762,6 +2763,7 @@ int db_add_vector(GV_Database *db, const float *data, size_t dimension) {
     size_t ts_slot_0 = db->count; /* 0-based slot for this vector */
     db->count += 1;
     db->total_inserts += 1;
+    db->generation += 1;
     db_update_memory_usage(db);
     if (db->tiering_enabled && db->tiered_storage) {
         tiered_storage_record_insert(db->tiered_storage, ts_slot_0, start_time_us);
@@ -3013,6 +3015,7 @@ int db_add_vector_with_metadata(GV_Database *db, const float *data, size_t dimen
     if (db->tiering_enabled && db->tiered_storage) {
         tiered_storage_record_insert(db->tiered_storage, ts_slot_1, start_time_us);
     }
+    db->generation += 1;
     pthread_rwlock_unlock(&db->rwlock);
 
     uint64_t end_time_us = db_get_time_us();
@@ -3059,6 +3062,7 @@ int db_add_sparse_vector(GV_Database *db, const uint32_t *indices, const float *
     }
     db->count += 1;
     db->total_inserts += 1;
+    db->generation += 1;
     pthread_rwlock_unlock(&db->rwlock);
     return 0;
 }
@@ -3363,6 +3367,7 @@ int db_add_vector_with_rich_metadata(GV_Database *db, const float *data, size_t 
     size_t ts_slot_2 = db->count;
     db->count += 1;
     db->total_inserts += 1;
+    db->generation += 1;
     db_update_memory_usage(db);
     if (db->tiering_enabled && db->tiered_storage) {
         tiered_storage_record_insert(db->tiered_storage, ts_slot_2, start_time_us);
@@ -4520,6 +4525,7 @@ int db_delete_vector_by_index(GV_Database *db, size_t vector_index) {
             }
             db->total_wal_records += 1;
         }
+        db->generation += 1;
     }
 
     pthread_rwlock_unlock(&db->rwlock);
@@ -4639,6 +4645,9 @@ int db_update_vector(GV_Database *db, size_t vector_index, const float *new_data
             return -1;
         }
         db->total_wal_records += 1;
+    }
+    if (status == 0) {
+        db->generation += 1;
     }
 
     pthread_rwlock_unlock(&db->rwlock);
