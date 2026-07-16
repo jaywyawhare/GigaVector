@@ -163,6 +163,7 @@ static int test_basic_search(void) {
     cfg.codebook        = cb;
     cfg.codes           = codes;
     cfg.code_stride     = stride;
+    cfg.codes_count     = NVECS;
     cfg.oversample_factor = 4;
 
     float query[DIM];
@@ -220,6 +221,7 @@ static int test_result_count_le_k(void) {
     cfg.codebook = cb;
     cfg.codes    = codes;
     cfg.code_stride = stride;
+    cfg.codes_count = NVECS;
     cfg.oversample_factor = 2;
 
     float q[DIM] = {0.5f, -0.3f, 0.1f, 0.8f, -0.6f, 0.2f, -0.9f, 0.4f};
@@ -352,6 +354,7 @@ static int test_phased_pipeline_quant(void) {
     quant_phase.params.quant.codebook    = cb;
     quant_phase.params.quant.codes       = codes;
     quant_phase.params.quant.code_stride = stride;
+    quant_phase.params.quant.codes_count = NVECS;
     ASSERT(pipeline_add_phase(pipe, &quant_phase) >= 0, "add RERANK_QUANT phase ok");
 
     float query[DIM];
