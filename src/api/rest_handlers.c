@@ -982,18 +982,30 @@ GV_HttpResponse *rest_handle_save(const GV_HandlerContext *ctx,
                                        "Database not available");
     }
 
-    const char *filepath = NULL;
+    const char *req_path = NULL;
+    GV_JsonValue *body = NULL;
 
     if (request->body && request->body_length > 0) {
         GV_JsonError error;
-        GV_JsonValue *body = rest_parse_body(request, &error);
+        body = rest_parse_body(request, &error);
         if (body) {
-            filepath = json_get_string_path(body, "filepath");
-            json_free(body);
+            req_path = json_get_string_path(body, "filepath");
         }
     }
 
-    int result = db_save(ctx->db, filepath);
+    /* Path traversal / arbitrary write defense: confine the request-supplied
+     * path under the configured data directory. Deny by default. */
+    const char *base_dir = (ctx->config && ctx->config->data_dir)
+                               ? ctx->config->data_dir : "./data";
+    char confined[1024];
+    if (server_confine_save_path(base_dir, req_path, confined, sizeof(confined)) != 0) {
+        if (body) json_free(body);
+        return rest_response_error(GV_HTTP_400_BAD_REQUEST, "invalid_path",
+                                       "Invalid or unsafe save path");
+    }
+    if (body) json_free(body);
+
+    int result = db_save(ctx->db, confined);
     if (result != 0) {
         return rest_response_error(GV_HTTP_500_INTERNAL_ERROR, "save_failed",
                                        "Save operation failed");
@@ -1001,8 +1013,7 @@ GV_HttpResponse *rest_handle_save(const GV_HandlerContext *ctx,
 
     GV_JsonValue *obj = json_object();
     json_object_set(obj, "success", json_bool(true));
-    json_object_set(obj, "filepath", json_string(filepath ? filepath :
-                                                        (ctx->db->filepath ? ctx->db->filepath : "")));
+    json_object_set(obj, "filepath", json_string(confined));
 
     return rest_response_json(obj);
 }

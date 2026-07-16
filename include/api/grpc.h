@@ -34,6 +34,7 @@ typedef enum {
     GV_MSG_HEALTH = 9,
     GV_MSG_SAVE = 10,
     GV_MSG_IVFDISK_TRAIN = 11,
+    GV_MSG_AUTH = 12,   /* Auth handshake. Payload = raw shared-secret token bytes. */
     GV_MSG_RESPONSE = 128
 } GV_GrpcMsgType;
 
@@ -44,7 +45,16 @@ typedef struct {
     size_t max_message_bytes;       /* Max message size (default: 16MB) */
     size_t thread_pool_size;        /* Worker threads (default: 4) */
     int enable_compression;         /* Enable message compression */
+    const char *auth_token;         /* Optional shared-secret token (default: NULL).
+                                     * When set, clients must send a GV_MSG_AUTH
+                                     * handshake with this token before any other
+                                     * message type is accepted. */
+    const char *data_dir;           /* Base dir that SAVE output is confined to
+                                     * (default: GV_GRPC_DEFAULT_DATA_DIR). */
 } GV_GrpcConfig;
+
+/* Default confinement base directory for the gRPC SAVE handler. */
+#define GV_GRPC_DEFAULT_DATA_DIR "./data"
 
 /* Wire format: [4-byte length][1-byte type][payload] */
 typedef struct {

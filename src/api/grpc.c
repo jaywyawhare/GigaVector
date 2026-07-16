@@ -8,6 +8,7 @@
  */
 
 #include "api/grpc.h"
+#include "api/server.h"   /* server_confine_save_path() shared confinement helper */
 #include "core/memory.h"
 #include "storage/database.h"
 
@@ -32,7 +33,9 @@ static const GV_GrpcConfig DEFAULT_GRPC_CONFIG = {
     .max_connections = 256,
     .max_message_bytes = 16777216,
     .thread_pool_size = 4,
-    .enable_compression = 0
+    .enable_compression = 0,
+    .auth_token = NULL,
+    .data_dir = GV_GRPC_DEFAULT_DATA_DIR
 };
 
 static void write_u32_be(uint8_t *buf, uint32_t val) {
@@ -79,6 +82,7 @@ GV_GrpcServer *grpc_create(GV_Database *db, const GV_GrpcConfig *config) {
     if (server->config.max_connections == 0) server->config.max_connections = 256;
     if (server->config.max_message_bytes == 0) server->config.max_message_bytes = 16777216;
     if (server->config.thread_pool_size == 0) server->config.thread_pool_size = 4;
+    if (!server->config.data_dir) server->config.data_dir = GV_GRPC_DEFAULT_DATA_DIR;
     return server;
 }
 
@@ -273,6 +277,7 @@ int grpc_fuzz_dispatch_message(GV_GrpcServer *server, int response_fd,
 
 #include "core/arena.h"
 #include "core/scope.h"
+#include "security/crypto.h"
 
 #define GV_GRPC_SEARCH_ARENA_BYTES   (64u * 1024u)
 #define GV_GRPC_BATCH_SEARCH_ARENA_BYTES (256u * 1024u)
@@ -430,8 +435,16 @@ static const GV_GrpcConfig DEFAULT_GRPC_CONFIG = {
     .max_connections = 256,
     .max_message_bytes = 16777216,  /* 16MB */
     .thread_pool_size = 4,
-    .enable_compression = 0
+    .enable_compression = 0,
+    .auth_token = NULL,
+    .data_dir = GV_GRPC_DEFAULT_DATA_DIR
 };
+
+/* Bound attacker-controlled batch dimensions to sane maxima (mirrors the
+ * search-side GV_GRPC_MAX_SEARCH_K guards) so that count*dimension*4 cannot
+ * overflow size_t on the batch-add path. */
+#define GV_GRPC_MAX_BATCH_COUNT     16777216u   /* 16M vectors per batch */
+#define GV_GRPC_MAX_DIMENSION       65536u      /* 64K dimensions */
 
 void grpc_config_init(GV_GrpcConfig *config) {
     if (!config) return;
@@ -835,7 +848,26 @@ static void handle_batch_add(GV_GrpcServer *server, int fd,
     uint32_t count = read_u32_be(msg->payload);
     uint32_t dimension = read_u32_be(msg->payload + 4);
 
+    /* Overflow-checked validation (mirrors handle_batch_search / handle_search).
+     * Bound count and dimension, then verify count*dimension and the subsequent
+     * *4 + 8 byte computation cannot overflow size_t before using them. */
+    if (count == 0 || count > GV_GRPC_MAX_BATCH_COUNT ||
+        dimension == 0 || dimension > GV_GRPC_MAX_DIMENSION) {
+        send_error_response(fd, msg->request_id, -1, "invalid batch add params");
+        GV_ATOMIC_INC(&server->errors);
+        return;
+    }
+    if ((size_t)dimension > SIZE_MAX / (size_t)count) {
+        send_error_response(fd, msg->request_id, -1, "batch add size overflow");
+        GV_ATOMIC_INC(&server->errors);
+        return;
+    }
     size_t total_floats = (size_t)count * (size_t)dimension;
+    if (total_floats > (SIZE_MAX - 8) / sizeof(float)) {
+        send_error_response(fd, msg->request_id, -1, "batch add size overflow");
+        GV_ATOMIC_INC(&server->errors);
+        return;
+    }
     size_t expected = 8 + total_floats * sizeof(float);
     if (msg->payload_len < expected) {
         send_error_response(fd, msg->request_id, -1, "incomplete batch data");
@@ -1015,25 +1047,35 @@ static void handle_health(GV_GrpcServer *server, int fd,
 static void handle_save(GV_GrpcServer *server, int fd,
                          const GV_GrpcMessage *msg) {
     GV_WITH_ARENA(scratch, GV_GRPC_INSERT_ARENA_BYTES) {
-        const char *filepath = NULL;
+        const char *req_path = NULL;
         char *filepath_buf = NULL;
         if (msg->payload_len > 0) {
             filepath_buf = gv_arena_alloc(&scratch, msg->payload_len + 1, 1);
             if (filepath_buf) {
                 memcpy(filepath_buf, msg->payload, msg->payload_len);
                 filepath_buf[msg->payload_len] = '\0';
-                filepath = filepath_buf;
+                req_path = filepath_buf;
             }
         }
 
-        int rc = db_save(server->db, filepath);
-
-        uint8_t resp[4];
-        write_u32_be(resp, (uint32_t)rc);
-        send_message(fd, GV_MSG_RESPONSE, msg->request_id, resp, 4);
-
-        if (rc != 0) {
+        /* Path traversal / arbitrary write defense: confine the client-supplied
+         * path under the configured (or default) data directory. Deny by default. */
+        const char *base_dir = server->config.data_dir
+                                   ? server->config.data_dir : GV_GRPC_DEFAULT_DATA_DIR;
+        char confined[1024];
+        if (server_confine_save_path(base_dir, req_path, confined, sizeof(confined)) != 0) {
+            send_error_response(fd, msg->request_id, -1, "invalid or unsafe save path");
             GV_ATOMIC_INC(&server->errors);
+        } else {
+            int rc = db_save(server->db, confined);
+
+            uint8_t resp[4];
+            write_u32_be(resp, (uint32_t)rc);
+            send_message(fd, GV_MSG_RESPONSE, msg->request_id, resp, 4);
+
+            if (rc != 0) {
+                GV_ATOMIC_INC(&server->errors);
+            }
         }
     }
 }
@@ -1097,10 +1139,52 @@ static void handle_ivfdisk_train(GV_GrpcServer *server, int fd,
 }
 
 /**
+ * @brief Validate a GV_MSG_AUTH handshake payload against the configured token.
+ *
+ * The AUTH payload is the raw token bytes (no framing beyond the wire frame).
+ * Comparison is constant-time. Sends a status response (0 = ok, -1 = rejected).
+ *
+ * @return 1 if the token matches, 0 otherwise.
+ */
+static int grpc_check_auth_message(GV_GrpcServer *server, int fd,
+                                   const GV_GrpcMessage *msg) {
+    const char *token = server->config.auth_token;
+    size_t token_len = token ? strlen(token) : 0;
+
+    int ok = 0;
+    if (token && msg->msg_type == GV_MSG_AUTH &&
+        msg->payload_len == token_len &&
+        crypto_constant_time_compare(
+            msg->payload ? msg->payload : (const unsigned char *)"",
+            (const unsigned char *)token, token_len) == 0) {
+        ok = 1;
+    }
+
+    if (ok) {
+        uint8_t resp[4];
+        write_u32_be(resp, 0);
+        send_message(fd, GV_MSG_RESPONSE, msg->request_id, resp, 4);
+    } else {
+        send_error_response(fd, msg->request_id, -1, "authentication required");
+        GV_ATOMIC_INC(&server->errors);
+    }
+    return ok;
+}
+
+/**
  * @brief Process one decoded message (shared by handle_connection and fuzz harness).
  */
 static void dispatch_message(GV_GrpcServer *server, int fd, const GV_GrpcMessage *msg) {
     switch (msg->msg_type) {
+        case GV_MSG_AUTH:
+            /* An AUTH message reaching dispatch (i.e. no token configured or
+             * already authenticated) is a no-op acknowledgement. */
+            {
+                uint8_t resp[4];
+                write_u32_be(resp, 0);
+                send_message(fd, GV_MSG_RESPONSE, msg->request_id, resp, 4);
+            }
+            break;
         case GV_MSG_ADD_VECTOR:
             handle_add_vector(server, fd, msg);
             break;
@@ -1152,6 +1236,12 @@ static void handle_connection(GV_GrpcServer *server, int client_fd) {
     int flag = 1;
     setsockopt(client_fd, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag));
 
+    /* Auth handshake: when auth_token is configured the FIRST message on the
+     * connection must be a valid GV_MSG_AUTH; anything else closes the
+     * connection. When no token is configured the connection starts already
+     * authenticated (legacy behavior). */
+    int authenticated = (server->config.auth_token == NULL);
+
     while (!server->stop_requested) {
         gv_tls_arena_reset();
         GV_GrpcMessage msg;
@@ -1165,6 +1255,21 @@ static void handle_connection(GV_GrpcServer *server, int client_fd) {
 
         GV_ATOMIC_INC(&server->total_requests);
         GV_ATOMIC_ADD(&server->bytes_received, 4 + msg.length);
+
+        if (!authenticated) {
+            /* Require a valid AUTH handshake before any other message type. */
+            int ok = grpc_check_auth_message(server, client_fd, &msg);
+            if (!ok) {
+                grpc_wire_message_release(&msg);
+                break;  /* Reject and close on bad/missing credentials. */
+            }
+            authenticated = 1;
+            uint64_t elapsed_us0 = grpc_now_us() - start_us;
+            GV_ATOMIC_ADD(&server->total_latency_us, elapsed_us0);
+            GV_ATOMIC_INC(&server->latency_samples);
+            grpc_wire_message_release(&msg);
+            continue;
+        }
 
         dispatch_message(server, client_fd, &msg);
 
@@ -1357,6 +1462,9 @@ GV_GrpcServer *grpc_create(GV_Database *db, const GV_GrpcConfig *config) {
     if (server->config.thread_pool_size == 0) {
         server->config.thread_pool_size = 4;
     }
+    if (!server->config.data_dir) {
+        server->config.data_dir = GV_GRPC_DEFAULT_DATA_DIR;
+    }
 
     if (pthread_mutex_init(&server->stats_mutex, NULL) != 0) {
         gv_free(server);
@@ -1422,6 +1530,11 @@ int grpc_start(GV_GrpcServer *server) {
     server->running = 1;
     fprintf(stderr, "[GV_Grpc] Started binary protocol server on %s:%u\n",
             server->config.bind_address, server->config.port);
+    if (!server->config.auth_token) {
+        fprintf(stderr, "[GV_Grpc] WARNING: no auth_token configured - "
+                        "add/update/delete/search/SAVE are exposed without "
+                        "authentication.\n");
+    }
 
     return GV_GRPC_OK;
 }

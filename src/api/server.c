@@ -139,8 +139,71 @@ static const GV_ServerConfig DEFAULT_CONFIG = {
     .enable_logging = 1,
     .api_key = NULL,
     .max_requests_per_second = 0,  /* unlimited */
-    .rate_limit_burst = 10
+    .rate_limit_burst = 10,
+    .data_dir = "./data",          /* /save output confined here */
+    .allow_unauthenticated = 0     /* fail closed by default */
 };
+
+/* Path Confinement */
+
+/**
+ * @brief Deny-by-default save-path confinement helper.
+ *
+ * Rejects absolute paths, ".." components, and NUL/newline bytes; confines the
+ * result under @p base_dir. Does not resolve symlinks (rejects rather than
+ * canonicalizes). Shared with the gRPC handler via server.h.
+ */
+int server_confine_save_path(const char *base_dir, const char *rel_path,
+                             char *out, size_t out_size) {
+    if (!base_dir || base_dir[0] == '\0' || !out || out_size == 0) {
+        return -1;
+    }
+
+    /* Empty/NULL request path -> confine the base directory's default name. */
+    const char *rel = (rel_path && rel_path[0] != '\0') ? rel_path : "snapshot.gvdb";
+
+    size_t rel_len = strlen(rel);
+
+    /* Reject NUL (implicit via strlen) and newline/control smuggling. */
+    for (size_t i = 0; i < rel_len; i++) {
+        unsigned char c = (unsigned char)rel[i];
+        if (c == '\n' || c == '\r') {
+            return -1;
+        }
+    }
+
+    /* Reject absolute paths (POSIX '/' and Windows drive/backslash roots). */
+    if (rel[0] == '/' || rel[0] == '\\') {
+        return -1;
+    }
+    if (rel_len >= 2 && rel[1] == ':') {
+        return -1;  /* e.g. C:\... */
+    }
+
+    /* Reject any ".." path component (handles both '/' and '\\' separators). */
+    const char *p = rel;
+    while (*p) {
+        const char *seg = p;
+        while (*p && *p != '/' && *p != '\\') {
+            p++;
+        }
+        size_t seg_len = (size_t)(p - seg);
+        if (seg_len == 2 && seg[0] == '.' && seg[1] == '.') {
+            return -1;
+        }
+        if (*p) {
+            p++;  /* skip separator */
+        }
+    }
+
+    /* Join base_dir + "/" + rel, bounded by out_size. */
+    int n = snprintf(out, out_size, "%s/%s", base_dir, rel);
+    if (n < 0 || (size_t)n >= out_size) {
+        return -1;  /* truncation -> reject */
+    }
+
+    return 0;
+}
 
 void server_config_init(GV_ServerConfig *config) {
     if (!config) return;
@@ -224,11 +287,42 @@ static void add_cors_headers(struct MHD_Response *response, const GV_Server *ser
 }
 
 /**
- * @brief Check API key authentication.
+ * @brief Classify a request as mutating/administrative (write path).
+ *
+ * These endpoints require authentication unless explicitly opted out via
+ * config.allow_unauthenticated. Read-only endpoints (health/stats/GET) are
+ * not gated here so they remain reachable for liveness probes.
  */
-static int check_auth(const GV_Server *server, struct MHD_Connection *connection) {
+static int is_mutating_request(const char *url, const char *method) {
+    if (!url || !method) {
+        return 1;  /* Unknown -> treat as mutating (fail closed). */
+    }
+    /* Any non-read HTTP method mutates. */
+    if (strcmp(method, "GET") != 0 &&
+        strcmp(method, "HEAD") != 0 &&
+        strcmp(method, "OPTIONS") != 0) {
+        return 1;
+    }
+    return 0;
+}
+
+/**
+ * @brief Check API key authentication.
+ *
+ * Fail-closed policy: when no api_key is configured, mutating/administrative
+ * endpoints are rejected unless config.allow_unauthenticated is set. When an
+ * api_key IS configured, all endpoints require a matching key (constant-time
+ * compare), regardless of the opt-in flag.
+ */
+static int check_auth(const GV_Server *server, struct MHD_Connection *connection,
+                      const char *url, const char *method) {
     if (!server->config.api_key) {
-        return 1;  /* No auth required */
+        /* No credential configured. Read-only requests are allowed; mutating
+         * or administrative requests are denied unless explicitly opted in. */
+        if (is_mutating_request(url, method) && !server->config.allow_unauthenticated) {
+            return 0;  /* Fail closed. */
+        }
+        return 1;
     }
 
     const char *auth = MHD_lookup_connection_value(connection, MHD_HEADER_KIND, "X-API-Key");
@@ -345,7 +439,7 @@ static enum MHD_Result answer_to_connection(void *cls,
 #endif /* HAVE_MICROHTTPD */
 
     /* Check authentication */
-    if (!check_auth(server, connection)) {
+    if (!check_auth(server, connection, url, method)) {
         const char *error_json = "{\"error\":\"Unauthorized\",\"message\":\"Invalid or missing API key\"}";
         struct MHD_Response *response = MHD_create_response_from_buffer(
             strlen(error_json), (void *)error_json, MHD_RESPMEM_PERSISTENT);
