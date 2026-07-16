@@ -129,9 +129,15 @@ static GV_DiskPageCache *posting_active_cache(const GV_PostingCatalog *cat)
     return cat->shared_cache ? cat->shared_cache : cat->page_cache;
 }
 
-static void posting_cache_make_key(char *key, size_t keylen, const char *path)
+/* Build the page-cache key "post:<path>" into key[0..keylen).  Returns 0 on
+ * success, -1 if the result was truncated.  A truncated key is dangerous
+ * because two distinct long paths could collapse to the same key and alias
+ * each other's cached bytes, so callers must treat truncation as "no cache". */
+static int posting_cache_make_key(char *key, size_t keylen, const char *path)
 {
-    snprintf(key, keylen, "post:%s", path);
+    int n = snprintf(key, keylen, "post:%s", path);
+    if (n < 0 || (size_t)n >= keylen) return -1;
+    return 0;
 }
 
 static size_t posting_entry_stride(uint8_t payload_type, size_t dimension, uint32_t pq_m)
@@ -319,35 +325,6 @@ static int posting_parse_seg_info(const uint8_t *hdr, size_t file_len, size_t se
                                                 sector_size);
     }
     info->entry_stride = posting_entry_stride(info->payload_type, info->dimension, info->pq_m);
-    return 0;
-}
-
-static int posting_validate_segment_header(const uint8_t *hdr, size_t file_len,
-                                           size_t sector_size, size_t max_dimension,
-                                           uint64_t *head_id_out, uint64_t *sequence_out,
-                                           uint32_t *entry_count_out, uint32_t *dimension_out,
-                                           size_t *entries_offset_out)
-{
-    (void)head_id_out;
-    (void)sequence_out;
-    (void)entry_count_out;
-    (void)dimension_out;
-    (void)entries_offset_out;
-    PostingSegInfo info;
-    if (posting_parse_seg_info(hdr, file_len, sector_size, max_dimension, &info) != 0) return -1;
-
-    size_t entries_size = (size_t)info.entry_count * info.entry_stride;
-    if (info.entries_offset > file_len || entries_size > file_len - info.entries_offset) return -1;
-
-    uint32_t entries_crc = 0;
-    memcpy(&entries_crc, hdr + 32, 4);
-    if (entries_crc != posting_crc32(hdr + info.entries_offset, entries_size)) return -1;
-
-    if (head_id_out) memcpy(head_id_out, hdr + 8, 8);
-    if (sequence_out) memcpy(sequence_out, hdr + 16, 8);
-    if (entry_count_out) *entry_count_out = info.entry_count;
-    if (dimension_out) *dimension_out = info.dimension;
-    if (entries_offset_out) *entries_offset_out = info.entries_offset;
     return 0;
 }
 
@@ -575,9 +552,9 @@ static int posting_segment_read_file_cached(GV_PostingCatalog *cat, const char *
     if (cache) {
         GV_DiskPageCacheStats stats;
         gv_disk_page_cache_get_stats(cache, &stats);
-        if (stats.max_bytes > 0) {
-            char key[1024];
-            posting_cache_make_key(key, sizeof(key), path);
+        char key[1024];
+        if (stats.max_bytes > 0 &&
+            posting_cache_make_key(key, sizeof(key), path) == 0) {
             size_t len = 0;
             const uint8_t *cached = gv_disk_page_cache_lookup(cache, key, &len);
             if (cached && len > 0) {
@@ -1368,8 +1345,9 @@ static int posting_catalog_drop_head_segments(GV_PostingCatalog *cat, uint64_t h
             GV_DiskPageCache *cache = posting_active_cache(cat);
             if (cache) {
                 char key[1024];
-                posting_cache_make_key(key, sizeof(key), abs_path);
-                gv_disk_page_cache_remove(cache, key);
+                if (posting_cache_make_key(key, sizeof(key), abs_path) == 0) {
+                    gv_disk_page_cache_remove(cache, key);
+                }
             }
         } else {
             kept[kept_n++] = cat->segments[i];

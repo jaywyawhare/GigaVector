@@ -552,8 +552,12 @@ float quant_distance(const GV_QuantCodebook *cb, const float *query,
         size_t hamming = 0;
         size_t full_u64 = code_bytes / 8;
         for (size_t i = 0; i < full_u64; i++) {
-            uint64_t a = ((const uint64_t *)qcodes)[i];
-            uint64_t b = ((const uint64_t *)codes)[i];
+            /* codes/qcodes may be unaligned (stride is (dim+7)/8, rarely a
+             * multiple of 8); copy into aligned temporaries to avoid a
+             * misaligned load (UB / faults on strict-alignment archs). */
+            uint64_t a, b;
+            memcpy(&a, qcodes + i * 8, sizeof(a));
+            memcpy(&b, codes + i * 8, sizeof(b));
             hamming += popcount64(a ^ b);
         }
         for (size_t i = full_u64 * 8; i < code_bytes; i++) {
@@ -663,8 +667,12 @@ float quant_distance_qq(const GV_QuantCodebook *cb,
         size_t full_u64 = code_bytes / 8;
 
         for (size_t i = 0; i < full_u64; i++) {
-            uint64_t a = ((const uint64_t *)codes_a)[i];
-            uint64_t b = ((const uint64_t *)codes_b)[i];
+            /* codes_a/codes_b may be unaligned (stride is (dim+7)/8, rarely a
+             * multiple of 8); copy into aligned temporaries to avoid a
+             * misaligned load (UB / faults on strict-alignment archs). */
+            uint64_t a, b;
+            memcpy(&a, codes_a + i * 8, sizeof(a));
+            memcpy(&b, codes_b + i * 8, sizeof(b));
             hamming += popcount64(a ^ b);
         }
         for (size_t i = full_u64 * 8; i < code_bytes; i++) {

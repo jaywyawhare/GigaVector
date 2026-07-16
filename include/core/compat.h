@@ -104,6 +104,12 @@ static inline int clock_gettime(clockid_t clk, struct timespec *ts) {
 
 /* __GNUC__ guard: MinGW provides O_* names via <fcntl.h> */
 #ifndef __GNUC__
+/* Prevent MSVC's <io.h> from also declaring the bare POSIX aliases
+ * (read/write/close/open); we provide our own shims below and do not want a
+ * clash with prototypes of identical names. */
+#ifndef _CRT_DECLARE_NONSTDC_NAMES
+#define _CRT_DECLARE_NONSTDC_NAMES 0
+#endif
 #include <io.h>
 #include <fcntl.h>
 #ifndef O_RDONLY
@@ -127,10 +133,34 @@ static inline int clock_gettime(clockid_t clk, struct timespec *ts) {
 #ifndef O_BINARY
 #define O_BINARY _O_BINARY
 #endif
+/*
+ * POSIX I/O shims for MSVC.
+ *
+ * The read/write/close shims were previously OBJECT-LIKE macros
+ * (#define read _read, etc.).  As bare object-like macros they leaked into
+ * every translation unit and textually replaced ANY identifier spelled
+ * read/write/close -- including struct member accesses like "x.read" and
+ * local variables -- breaking otherwise-valid code.  They are now
+ * "static inline" shim functions with the same names: a function name only
+ * participates in ordinary-identifier lookup, so "x.read" still refers to the
+ * struct member and is no longer clobbered.
+ *
+ * "open" stays a FUNCTION-LIKE macro: function-like macros only expand when
+ * the name is immediately followed by '(', so "x.open" is never rewritten --
+ * there is no leakage to fix there -- and keeping it a macro preserves the
+ * forced _O_BINARY flag and the optional-mode variadic call form.
+ *
+ * All of this is scoped to MSVC only (inside the _WIN32 and !__GNUC__ guards);
+ * POSIX/MinGW builds use the real system calls unchanged.
+ */
 #define open(path, flags, ...) _open((path), (flags) | _O_BINARY, ##__VA_ARGS__)
-#define close  _close
-#define read   _read
-#define write  _write
+static inline int close(int fd) { return _close(fd); }
+static inline int read(int fd, void *buf, unsigned int count) {
+    return _read(fd, buf, count);
+}
+static inline int write(int fd, const void *buf, unsigned int count) {
+    return _write(fd, buf, count);
+}
 #endif /* !__GNUC__ */
 
 #endif /* _WIN32 */

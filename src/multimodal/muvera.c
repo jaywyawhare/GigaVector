@@ -401,6 +401,25 @@ GV_MuveraEncoder *muvera_load(const char *path) {
         return NULL;
     }
 
+    /* Sanity-bound the individual fields before doing any allocation sized
+     * from them, and reject corrupt files whose declared output_dimension is
+     * inconsistent with num_projections * NUM_BUCKETS * reduced_dim.  Without
+     * this check a corrupt header could make muvera_encode write past the
+     * caller-supplied output buffer (which is sized to output_dimension). */
+    {
+        const uint64_t GV_MUVERA_MAX_FIELD = (uint64_t)1 << 24; /* 16M cap */
+        if (td > GV_MUVERA_MAX_FIELD || np > GV_MUVERA_MAX_FIELD ||
+            od > GV_MUVERA_MAX_FIELD || rd > GV_MUVERA_MAX_FIELD) {
+            fclose(fp);
+            return NULL;
+        }
+        /* np * NUM_BUCKETS * rd cannot overflow given the caps above. */
+        if (od != np * (uint64_t)GV_MUVERA_NUM_BUCKETS * rd) {
+            fclose(fp);
+            return NULL;
+        }
+    }
+
     GV_MuveraEncoder *enc = (GV_MuveraEncoder *)gv_calloc(1, sizeof(GV_MuveraEncoder));
     if (!enc) { fclose(fp); return NULL; }
 
