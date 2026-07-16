@@ -14,6 +14,7 @@
 #include "search/importance.h"
 #include "schema/metadata.h"
 #include "storage/database.h"
+#include "schema/vector.h"
 #include "storage/soa_storage.h"
 #include "multimodal/llm.h"
 #include "features/context_graph.h"
@@ -916,6 +917,7 @@ int memory_search(GV_MemoryLayer *layer, const float *query_embedding,
         gv_free(search_results);
         return -1;
     }
+    int fetched = count; /* db_search populated `fetched` owned vectors to free later */
 
     /* Build importance contexts for reranking */
     GV_ImportanceContext *contexts = (GV_ImportanceContext *)gv_calloc(count, sizeof(GV_ImportanceContext));
@@ -1019,6 +1021,12 @@ int memory_search(GV_MemoryLayer *layer, const float *query_embedding,
         count = (int)out_count;
     }
 
+    /* db_search returns owned result vectors; free them (only borrowed above). */
+    for (int i = 0; i < fetched; i++) {
+        if (search_results[i].vector) {
+            vector_destroy((GV_Vector *)search_results[i].vector);
+        }
+    }
     gv_free(search_results);
     gv_free(contexts);
     gv_free(importance_results);

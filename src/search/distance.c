@@ -489,3 +489,35 @@ float distance(const GV_Vector *a, const GV_Vector *b, GV_DistanceType type) {
     }
 }
 
+float distance_scalar(const GV_Vector *a, const GV_Vector *b, GV_DistanceType type) {
+    if (a == NULL || b == NULL || a->data == NULL || b->data == NULL) {
+        return -1.0f;
+    }
+    if (a->dimension != b->dimension || a->dimension == 0) {
+        return -1.0f;
+    }
+
+    switch (type) {
+        case GV_DISTANCE_EUCLIDEAN:
+            return distance_euclidean_scalar(a->data, b->data, a->dimension);
+        case GV_DISTANCE_MANHATTAN:
+            return distance_manhattan_scalar(a->data, b->data, a->dimension);
+        case GV_DISTANCE_DOT_PRODUCT:
+            return -vector_dot_scalar(a->data, b->data, a->dimension);
+        case GV_DISTANCE_COSINE: {
+            float dot = vector_dot_scalar(a->data, b->data, a->dimension);
+            float norm_a = vector_norm_scalar(a->data, a->dimension);
+            float norm_b = vector_norm_scalar(b->data, b->dimension);
+            if (norm_a == 0.0f || norm_b == 0.0f) {
+                return 1.0f;
+            }
+            return 1.0f - (dot / (norm_a * norm_b));
+        }
+        case GV_DISTANCE_HAMMING:
+            /* Hamming has no SIMD variant; distance() is already scalar. */
+            return distance_hamming(a, b);
+        default:
+            return -1.0f;
+    }
+}
+

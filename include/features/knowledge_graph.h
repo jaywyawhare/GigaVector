@@ -26,6 +26,7 @@ extern "C" {
 #endif
 
 typedef struct GV_KnowledgeGraph GV_KnowledgeGraph;
+struct GV_Database; /* fwd decl: KG can resolve entity similarity via db_search */
 
 /**
  * @brief Key-value property node (singly-linked list).
@@ -500,6 +501,58 @@ int kg_get_entity_types(const GV_KnowledgeGraph *kg, char **out_types,
  */
 int kg_get_predicates(const GV_KnowledgeGraph *kg, char **out_predicates,
                           size_t max_count);
+
+/**
+ * @brief Collect all entity IDs (up to max_count). Used by query engines that
+ *        must enumerate unlabeled nodes.
+ * @return Number written, or -1 on error.
+ */
+int kg_all_entity_ids(const GV_KnowledgeGraph *kg, uint64_t *out_ids, size_t max_count);
+
+/* ---- Combined-DB integration (Phase 1) ---- */
+
+/**
+ * @brief Attach a vector database so entity similarity resolves via db_search
+ *        instead of the KG's private embedding store ("vectors as a predicate").
+ *
+ * When attached, entities added WITH an embedding are mirrored into the DB under
+ * the id "kgent:{entity_id}", and kg_search_similar delegates to db_search. Pass
+ * NULL to detach. The KG does not own the database. In combined-pipeline mode,
+ * add entities WITHOUT embeddings so vectors live only in the DB (no duplication).
+ *
+ * @param kg  Knowledge graph handle.
+ * @param db  Vector database to attach, or NULL to detach.
+ */
+void kg_attach_vector_db(GV_KnowledgeGraph *kg, struct GV_Database *db);
+
+/**
+ * @brief Add a relation carrying a chunk_id facet (provenance for the shared join).
+ *
+ * Convenience over kg_add_relation + kg_set_relation_prop(rel, "chunk_id", ...).
+ * @return relation_id (>0), or 0 on failure.
+ */
+uint64_t kg_add_relation_with_chunk(GV_KnowledgeGraph *kg, uint64_t subject,
+                                     const char *predicate, uint64_t object,
+                                     float weight, const char *chunk_id);
+
+/**
+ * @brief Query all triples whose relation carries the given chunk_id facet.
+ *
+ * The cross-layer join primitive: given a chunk_id, return its graph facts.
+ * @return Number of triples written, or -1 on error.
+ */
+int kg_query_triples_by_chunk(const GV_KnowledgeGraph *kg, const char *chunk_id,
+                              GV_KGTriple *out, size_t max_count);
+
+/**
+ * @brief Reverse-edge query: triples where @p object is the object of @p predicate.
+ *
+ * Thin convenience over kg_query_triples using the existing object index
+ * ("who relates to X via p?"). @p predicate may be NULL (any).
+ * @return Number of triples written, or -1 on error.
+ */
+int kg_query_reverse(const GV_KnowledgeGraph *kg, uint64_t object,
+                     const char *predicate, GV_KGTriple *out, size_t max_count);
 
 /**
  * @brief Save the knowledge graph to a binary file (magic "GVKG").

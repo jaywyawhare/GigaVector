@@ -95,7 +95,9 @@ int flat_search(void *index, const GV_Vector *query, size_t k,
         }
 
         tmp_vec.data = (float *)soa_storage_get_data(idx->storage, i);
-        float dist = distance(query, &tmp_vec, distance_type);
+        float dist = idx->config.use_simd
+                         ? distance(query, &tmp_vec, distance_type)
+                         : distance_scalar(query, &tmp_vec, distance_type);
 
         flat_heap_push(heap, &heap_size, k, (GV_FlatHeapItem){dist, i});
     }
@@ -167,7 +169,9 @@ int flat_range_search(void *index, const GV_Vector *query, float radius,
         }
 
         tmp_vec.data = (float *)soa_storage_get_data(idx->storage, i);
-        float dist = distance(query, &tmp_vec, distance_type);
+        float dist = idx->config.use_simd
+                         ? distance(query, &tmp_vec, distance_type)
+                         : distance_scalar(query, &tmp_vec, distance_type);
 
         if (dist <= radius) {
             GV_Vector view;

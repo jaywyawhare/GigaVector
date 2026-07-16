@@ -81,6 +81,20 @@ float distance_hamming(const GV_Vector *a, const GV_Vector *b);
  */
 float distance(const GV_Vector *a, const GV_Vector *b, GV_DistanceType type);
 
+/**
+ * @brief Calculate distance using the scalar (non-SIMD) implementation.
+ *
+ * Same result as ::distance but forces the portable scalar code path,
+ * bypassing SIMD dispatch. Used when an index is configured with SIMD
+ * disabled (e.g. GV_FlatConfig.use_simd == 0) for deterministic math.
+ *
+ * @param a First vector; must be non-NULL.
+ * @param b Second vector; must be non-NULL.
+ * @param type Distance metric to use.
+ * @return Distance value (interpretation depends on metric), or negative on error.
+ */
+float distance_scalar(const GV_Vector *a, const GV_Vector *b, GV_DistanceType type);
+
 #ifdef __cplusplus
 }
 #endif

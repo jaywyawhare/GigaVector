@@ -349,7 +349,6 @@ int sparse_index_search(const GV_SparseIndex *index, const GV_SparseVector *quer
 }
 
 int sparse_index_save(const GV_SparseIndex *index, FILE *out, uint32_t version) {
-    (void)version;
     if (index == NULL || out == NULL) {
         return -1;
     }
@@ -377,13 +376,19 @@ int sparse_index_save(const GV_SparseIndex *index, FILE *out, uint32_t version) 
         if (write_metadata(out, sv->metadata) != 0) {
             return -1;
         }
+
+        /* v5+: persist the soft-delete flag so deletes survive save/load. */
+        if (version >= 5) {
+            if (write_u32(out, (uint32_t)(index->deleted[vid] != 0)) != 0) {
+                return -1;
+            }
+        }
     }
     return 0;
 }
 
 int sparse_index_load(GV_SparseIndex **index_out, FILE *in,
                          size_t dimension, size_t count, uint32_t version) {
-    (void)version;
     if (index_out == NULL || in == NULL || dimension == 0) {
         return -1;
     }
@@ -441,10 +446,24 @@ int sparse_index_load(GV_SparseIndex **index_out, FILE *in,
             return -1;
         }
 
+        /* v5+: restore the soft-delete flag (written after metadata). */
+        uint32_t was_deleted = 0;
+        if (version >= 5) {
+            if (read_u32(in, &was_deleted) != 0) {
+                sparse_vector_destroy(sv);
+                sparse_index_destroy(idx);
+                return -1;
+            }
+        }
+
         if (sparse_index_add(idx, sv) != 0) {
             sparse_vector_destroy(sv);
             sparse_index_destroy(idx);
             return -1;
+        }
+        /* sparse_index_add appended at slot (idx->count - 1). */
+        if (was_deleted) {
+            idx->deleted[idx->count - 1] = 1;
         }
     }
 

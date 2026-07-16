@@ -170,6 +170,7 @@ static GV_DistanceType parse_distance_type(const char *str) {
     if (strcmp(str, "cosine") == 0) return GV_DISTANCE_COSINE;
     if (strcmp(str, "dot_product") == 0) return GV_DISTANCE_DOT_PRODUCT;
     if (strcmp(str, "manhattan") == 0) return GV_DISTANCE_MANHATTAN;
+    if (strcmp(str, "hamming") == 0) return GV_DISTANCE_HAMMING;
     return GV_DISTANCE_EUCLIDEAN;
 }
 

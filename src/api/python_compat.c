@@ -29,6 +29,20 @@
 #include "storage/snapshot.h"
 #include "storage/wal.h"
 #include "storage/posting_list.h"
+#include "features/geo.h"
+#include "features/cypher.h"
+#include "features/recommend.h"
+#include "features/json_index.h"
+#include "specialized/dedup.h"
+#include "specialized/conditional.h"
+#include "specialized/named_vectors.h"
+#include "admin/ttl.h"
+#include "admin/timetravel.h"
+#include "admin/webhook.h"
+#include "admin/cdc.h"
+#include "admin/versioning.h"
+#include "admin/tracing.h"
+#include "admin/migration.h"
 
 #include <stdlib.h>
 
@@ -1973,4 +1987,174 @@ int gv_graph_save(const GV_GraphDB *g, const char *path) {
   return graph_save(g, path);
 }
 
+/* =========================================================================
+ * Python-ABI forwarder wrappers (audit section B): thin gv_* shims for
+ * feature modules whose _ffi.py declarations previously had no C symbol.
+ * ========================================================================= */
+
+/* ---- geo ---- */
+GV_GeoIndex *gv_geo_create(void) { return geo_create(); }
+void gv_geo_destroy(GV_GeoIndex *index) { geo_destroy(index); }
+int gv_geo_insert(GV_GeoIndex *index, size_t point_index, double lat, double lng) { return geo_insert(index, point_index, lat, lng); }
+int gv_geo_update(GV_GeoIndex *index, size_t point_index, double lat, double lng) { return geo_update(index, point_index, lat, lng); }
+int gv_geo_remove(GV_GeoIndex *index, size_t point_index) { return geo_remove(index, point_index); }
+int gv_geo_radius_search(const GV_GeoIndex *index, double lat, double lng, double radius_km, GV_GeoResult *results, size_t max_results) { return geo_radius_search(index, lat, lng, radius_km, results, max_results); }
+int gv_geo_bbox_search(const GV_GeoIndex *index, const GV_GeoBBox *bbox, GV_GeoResult *results, size_t max_results) { return geo_bbox_search(index, bbox, results, max_results); }
+int gv_geo_get_candidates(const GV_GeoIndex *index, double lat, double lng, double radius_km, size_t *out_indices, size_t max_count) { return geo_get_candidates(index, lat, lng, radius_km, out_indices, max_count); }
+double gv_geo_distance_km(double lat1, double lng1, double lat2, double lng2) { return geo_distance_km(lat1, lng1, lat2, lng2); }
+size_t gv_geo_count(const GV_GeoIndex *index) { return geo_count(index); }
+int gv_geo_save(const GV_GeoIndex *index, const char *filepath) { return geo_save(index, filepath); }
+GV_GeoIndex *gv_geo_load(const char *filepath) { return geo_load(filepath); }
+
+/* ---- recommend ---- */
+void gv_recommend_config_init(GV_RecommendConfig *config) { recommend_config_init(config); }
+int gv_recommend_by_id(const GV_Database *db, const size_t *positive_ids, size_t positive_count, const size_t *negative_ids, size_t negative_count, size_t k, const GV_RecommendConfig *config, GV_RecommendResult *results) { return recommend_by_id(db, positive_ids, positive_count, negative_ids, negative_count, k, config, results); }
+int gv_recommend_by_vector(const GV_Database *db, const float *positive_vectors, size_t positive_count, const float *negative_vectors, size_t negative_count, size_t dimension, size_t k, const GV_RecommendConfig *config, GV_RecommendResult *results) { return recommend_by_vector(db, positive_vectors, positive_count, negative_vectors, negative_count, dimension, k, config, results); }
+int gv_recommend_discover(const GV_Database *db, const float *target, const float *context, size_t dimension, size_t k, const GV_RecommendConfig *config, GV_RecommendResult *results) { return recommend_discover(db, target, context, dimension, k, config, results); }
+
+/* ---- json_index ---- */
+GV_JSONPathIndex *gv_json_index_create(void) { return json_index_create(); }
+void gv_json_index_destroy(GV_JSONPathIndex *idx) { json_index_destroy(idx); }
+int gv_json_index_add_path(GV_JSONPathIndex *idx, const GV_JSONPathConfig *config) { return json_index_add_path(idx, config); }
+int gv_json_index_remove_path(GV_JSONPathIndex *idx, const char *path) { return json_index_remove_path(idx, path); }
+int gv_json_index_insert(GV_JSONPathIndex *idx, size_t vector_index, const char *json_str) { return json_index_insert(idx, vector_index, json_str); }
+int gv_json_index_remove(GV_JSONPathIndex *idx, size_t vector_index) { return json_index_remove(idx, vector_index); }
+int gv_json_index_lookup_string(const GV_JSONPathIndex *idx, const char *path, const char *value, size_t *out_indices, size_t max_count) { return json_index_lookup_string(idx, path, value, out_indices, max_count); }
+int gv_json_index_lookup_int_range(const GV_JSONPathIndex *idx, const char *path, int64_t min_val, int64_t max_val, size_t *out_indices, size_t max_count) { return json_index_lookup_int_range(idx, path, min_val, max_val, out_indices, max_count); }
+int gv_json_index_lookup_float_range(const GV_JSONPathIndex *idx, const char *path, double min_val, double max_val, size_t *out_indices, size_t max_count) { return json_index_lookup_float_range(idx, path, min_val, max_val, out_indices, max_count); }
+size_t gv_json_index_count(const GV_JSONPathIndex *idx, const char *path) { return json_index_count(idx, path); }
+int gv_json_index_save(const GV_JSONPathIndex *idx, const char *path_file) { return json_index_save(idx, path_file); }
+GV_JSONPathIndex *gv_json_index_load(const char *path_file) { return json_index_load(path_file); }
+
+/* ---- dedup ---- */
+GV_DedupIndex *gv_dedup_create(size_t dimension, const GV_DedupConfig *config) { return dedup_create(dimension, config); }
+void gv_dedup_destroy(GV_DedupIndex *dedup) { dedup_destroy(dedup); }
+int gv_dedup_check(GV_DedupIndex *dedup, const float *data, size_t dimension) { return dedup_check(dedup, data, dimension); }
+int gv_dedup_insert(GV_DedupIndex *dedup, const float *data, size_t dimension) { return dedup_insert(dedup, data, dimension); }
+int gv_dedup_scan(GV_DedupIndex *dedup, GV_DedupResult *results, size_t max_results) { return dedup_scan(dedup, results, max_results); }
+size_t gv_dedup_count(const GV_DedupIndex *dedup) { return dedup_count(dedup); }
+void gv_dedup_clear(GV_DedupIndex *dedup) { dedup_clear(dedup); }
+
+/* ---- conditional (gv_cond_*) ---- */
+GV_CondManager *gv_cond_create(void *db) { return cond_create(db); }
+void gv_cond_destroy(GV_CondManager *mgr) { cond_destroy(mgr); }
+uint64_t gv_cond_get_version(const GV_CondManager *mgr, size_t index) { return cond_get_version(mgr, index); }
+
+/* ---- named_vectors ---- */
+GV_NamedVectorStore *gv_named_vectors_create(void) { return named_vectors_create(); }
+void gv_named_vectors_destroy(GV_NamedVectorStore *store) { named_vectors_destroy(store); }
+int gv_named_vectors_add_field(GV_NamedVectorStore *store, const GV_VectorFieldConfig *config) { return named_vectors_add_field(store, config); }
+int gv_named_vectors_remove_field(GV_NamedVectorStore *store, const char *name) { return named_vectors_remove_field(store, name); }
+size_t gv_named_vectors_field_count(const GV_NamedVectorStore *store) { return named_vectors_field_count(store); }
+int gv_named_vectors_get_field(const GV_NamedVectorStore *store, const char *name, GV_VectorFieldConfig *out) { return named_vectors_get_field(store, name, out); }
+int gv_named_vectors_insert(GV_NamedVectorStore *store, size_t point_id, const GV_NamedVector *vectors, size_t vector_count) { return named_vectors_insert(store, point_id, vectors, vector_count); }
+int gv_named_vectors_update(GV_NamedVectorStore *store, size_t point_id, const GV_NamedVector *vectors, size_t vector_count) { return named_vectors_update(store, point_id, vectors, vector_count); }
+int gv_named_vectors_delete(GV_NamedVectorStore *store, size_t point_id) { return named_vectors_delete(store, point_id); }
+int gv_named_vectors_search(const GV_NamedVectorStore *store, const char *field_name, const float *query, size_t k, GV_NamedSearchResult *results) { return named_vectors_search(store, field_name, query, k, results); }
+const float *gv_named_vectors_get(const GV_NamedVectorStore *store, size_t point_id, const char *field_name) { return named_vectors_get(store, point_id, field_name); }
+size_t gv_named_vectors_count(const GV_NamedVectorStore *store) { return named_vectors_count(store); }
+int gv_named_vectors_save(const GV_NamedVectorStore *store, const char *filepath) { return named_vectors_save(store, filepath); }
+GV_NamedVectorStore *gv_named_vectors_load(const char *filepath) { return named_vectors_load(filepath); }
+
+/* ---- ttl ---- */
+void gv_ttl_config_init(GV_TTLConfig *config){ ttl_config_init(config); }
+GV_TTLManager *gv_ttl_create(const GV_TTLConfig *config){ return ttl_create(config); }
+void gv_ttl_destroy(GV_TTLManager *mgr){ ttl_destroy(mgr); }
+int gv_ttl_set(GV_TTLManager *mgr, size_t vector_index, uint64_t ttl_seconds){ return ttl_set(mgr, vector_index, ttl_seconds); }
+int gv_ttl_set_absolute(GV_TTLManager *mgr, size_t vector_index, uint64_t expire_at_unix){ return ttl_set_absolute(mgr, vector_index, expire_at_unix); }
+int gv_ttl_get(const GV_TTLManager *mgr, size_t vector_index, uint64_t *expire_at){ return ttl_get(mgr, vector_index, expire_at); }
+int gv_ttl_remove(GV_TTLManager *mgr, size_t vector_index){ return ttl_remove(mgr, vector_index); }
+int gv_ttl_is_expired(const GV_TTLManager *mgr, size_t vector_index){ return ttl_is_expired(mgr, vector_index); }
+int gv_ttl_get_remaining(const GV_TTLManager *mgr, size_t vector_index, uint64_t *remaining_seconds){ return ttl_get_remaining(mgr, vector_index, remaining_seconds); }
+int gv_ttl_cleanup_expired(GV_TTLManager *mgr, GV_Database *db){ return ttl_cleanup_expired(mgr, db); }
+int gv_ttl_start_background_cleanup(GV_TTLManager *mgr, GV_Database *db){ return ttl_start_background_cleanup(mgr, db); }
+void gv_ttl_stop_background_cleanup(GV_TTLManager *mgr){ ttl_stop_background_cleanup(mgr); }
+int gv_ttl_is_background_cleanup_running(const GV_TTLManager *mgr){ return ttl_is_background_cleanup_running(mgr); }
+int gv_ttl_get_stats(const GV_TTLManager *mgr, GV_TTLStats *stats){ return ttl_get_stats(mgr, stats); }
+int gv_ttl_set_bulk(GV_TTLManager *mgr, const size_t *indices, size_t count, uint64_t ttl_seconds){ return ttl_set_bulk(mgr, indices, count, ttl_seconds); }
+int gv_ttl_get_expiring_before(const GV_TTLManager *mgr, uint64_t before_unix, size_t *indices, size_t max_indices){ return ttl_get_expiring_before(mgr, before_unix, indices, max_indices); }
+
+/* ---- timetravel (gv_tt_*) ---- */
+void gv_tt_config_init(GV_TimeTravelConfig *config){ tt_config_init(config); }
+GV_TimeTravelManager *gv_tt_create(const GV_TimeTravelConfig *config){ return tt_create(config); }
+void gv_tt_destroy(GV_TimeTravelManager *mgr){ tt_destroy(mgr); }
+uint64_t gv_tt_record_insert(GV_TimeTravelManager *mgr, size_t index, const float *vector, size_t dimension){ return tt_record_insert(mgr, index, vector, dimension); }
+uint64_t gv_tt_record_update(GV_TimeTravelManager *mgr, size_t index, const float *old_vector, const float *new_vector, size_t dimension){ return tt_record_update(mgr, index, old_vector, new_vector, dimension); }
+uint64_t gv_tt_record_delete(GV_TimeTravelManager *mgr, size_t index, const float *vector, size_t dimension){ return tt_record_delete(mgr, index, vector, dimension); }
+int gv_tt_query_at_version(const GV_TimeTravelManager *mgr, uint64_t version_id, size_t index, float *output, size_t dimension){ return tt_query_at_version(mgr, version_id, index, output, dimension); }
+int gv_tt_query_at_timestamp(const GV_TimeTravelManager *mgr, uint64_t timestamp, size_t index, float *output, size_t dimension){ return tt_query_at_timestamp(mgr, timestamp, index, output, dimension); }
+size_t gv_tt_count_at_version(const GV_TimeTravelManager *mgr, uint64_t version_id){ return tt_count_at_version(mgr, version_id); }
+uint64_t gv_tt_current_version(const GV_TimeTravelManager *mgr){ return tt_current_version(mgr); }
+int gv_tt_list_versions(const GV_TimeTravelManager *mgr, GV_VersionEntry *out, size_t max_count){ return tt_list_versions(mgr, out, max_count); }
+int gv_tt_gc(GV_TimeTravelManager *mgr){ return tt_gc(mgr); }
+int gv_tt_save(const GV_TimeTravelManager *mgr, const char *path){ return tt_save(mgr, path); }
+GV_TimeTravelManager *gv_tt_load(const char *path){ return tt_load(path); }
+
+/* ---- webhook ---- */
+GV_WebhookManager *gv_webhook_create(void){ return webhook_create(); }
+void gv_webhook_destroy(GV_WebhookManager *mgr){ webhook_destroy(mgr); }
+int gv_webhook_register(GV_WebhookManager *mgr, const char *webhook_id, const GV_WebhookConfig *config){ return webhook_register(mgr, webhook_id, config); }
+int gv_webhook_unregister(GV_WebhookManager *mgr, const char *webhook_id){ return webhook_unregister(mgr, webhook_id); }
+int gv_webhook_pause(GV_WebhookManager *mgr, const char *webhook_id){ return webhook_pause(mgr, webhook_id); }
+int gv_webhook_resume(GV_WebhookManager *mgr, const char *webhook_id){ return webhook_resume(mgr, webhook_id); }
+int gv_webhook_list(const GV_WebhookManager *mgr, char ***out_ids, size_t *out_count){ return webhook_list(mgr, out_ids, out_count); }
+void gv_webhook_free_list(char **ids, size_t count){ webhook_free_list(ids, count); }
+int gv_webhook_fire(GV_WebhookManager *mgr, const GV_Event *event){ return webhook_fire(mgr, event); }
+int gv_webhook_get_stats(const GV_WebhookManager *mgr, GV_WebhookStats *stats){ return webhook_get_stats(mgr, stats); }
+
+/* ---- cdc ---- */
+void gv_cdc_config_init(GV_CDCConfig *config){ cdc_config_init(config); }
+GV_CDCStream *gv_cdc_create(const GV_CDCConfig *config){ return cdc_create(config); }
+void gv_cdc_destroy(GV_CDCStream *stream){ cdc_destroy(stream); }
+int gv_cdc_publish(GV_CDCStream *stream, const GV_CDCEvent *event){ return cdc_publish(stream, event); }
+int gv_cdc_unsubscribe(GV_CDCStream *stream, int subscriber_id){ return cdc_unsubscribe(stream, subscriber_id); }
+int gv_cdc_poll(GV_CDCStream *stream, GV_CDCCursor *cursor, GV_CDCEvent *events, size_t max_events){ return cdc_poll(stream, cursor, events, max_events); }
+GV_CDCCursor gv_cdc_get_cursor(const GV_CDCStream *stream){ return cdc_get_cursor(stream); }
+GV_CDCCursor gv_cdc_cursor_from_sequence(uint64_t seq){ return cdc_cursor_from_sequence(seq); }
+size_t gv_cdc_pending_count(const GV_CDCStream *stream, const GV_CDCCursor *cursor){ return cdc_pending_count(stream, cursor); }
+
+/* ---- versioning ---- */
+GV_VersionManager *gv_version_manager_create(size_t max_versions){ return version_manager_create(max_versions); }
+void gv_version_manager_destroy(GV_VersionManager *mgr){ version_manager_destroy(mgr); }
+uint64_t gv_version_create(GV_VersionManager *mgr, const float *data, size_t count, size_t dimension, const char *label){ return version_create(mgr, data, count, dimension, label); }
+int gv_version_list(const GV_VersionManager *mgr, GV_VersionInfo *infos, size_t max_infos){ return version_list(mgr, infos, max_infos); }
+int gv_version_count(const GV_VersionManager *mgr){ return version_count(mgr); }
+int gv_version_get_info(const GV_VersionManager *mgr, uint64_t version_id, GV_VersionInfo *info){ return version_get_info(mgr, version_id, info); }
+float *gv_version_get_data(const GV_VersionManager *mgr, uint64_t version_id, size_t *count_out, size_t *dimension_out){ return version_get_data(mgr, version_id, count_out, dimension_out); }
+int gv_version_delete(GV_VersionManager *mgr, uint64_t version_id){ return version_delete(mgr, version_id); }
+int gv_version_compare(const GV_VersionManager *mgr, uint64_t v1, uint64_t v2, size_t *added, size_t *removed, size_t *modified){ return version_compare(mgr, v1, v2, added, removed, modified); }
+
+/* ---- tracing ---- */
+GV_QueryTrace *gv_trace_begin(void){ return trace_begin(); }
+void gv_trace_end(GV_QueryTrace *trace){ trace_end(trace); }
+void gv_trace_destroy(GV_QueryTrace *trace){ trace_destroy(trace); }
+void gv_trace_span_start(GV_QueryTrace *trace, const char *name){ trace_span_start(trace, name); }
+void gv_trace_span_end(GV_QueryTrace *trace){ trace_span_end(trace); }
+void gv_trace_span_add(GV_QueryTrace *trace, const char *name, uint64_t duration_us){ trace_span_add(trace, name, duration_us); }
+void gv_trace_set_metadata(GV_QueryTrace *trace, const char *metadata){ trace_set_metadata(trace, metadata); }
+char *gv_trace_to_json(const GV_QueryTrace *trace){ return trace_to_json(trace); }
+uint64_t gv_trace_get_time_us(void){ return trace_get_time_us(); }
+
+/* ---- change notification: attach CDC / webhook sinks to a database ---- */
+void gv_db_set_cdc_stream(GV_Database *db, GV_CDCStream *stream){ db_set_cdc_stream(db, stream); }
+GV_CDCStream *gv_db_get_cdc_stream(const GV_Database *db){ return db_get_cdc_stream(db); }
+void gv_db_set_webhook_manager(GV_Database *db, GV_WebhookManager *mgr){ db_set_webhook_manager(db, mgr); }
+GV_WebhookManager *gv_db_get_webhook_manager(const GV_Database *db){ return db_get_webhook_manager(db); }
+
+/* ---- migration ---- */
+GV_Migration *gv_migration_start(const float *source_data, size_t count, size_t dimension, int new_index_type, const void *new_index_config){ return migration_start(source_data, count, dimension, new_index_type, new_index_config); }
+int gv_migration_get_info(const GV_Migration *mig, GV_MigrationInfo *info){ return migration_get_info(mig, info); }
+int gv_migration_wait(GV_Migration *mig){ return migration_wait(mig); }
+int gv_migration_cancel(GV_Migration *mig){ return migration_cancel(mig); }
+void *gv_migration_take_index(GV_Migration *mig){ return migration_take_index(mig); }
+void gv_migration_destroy(GV_Migration *mig){ migration_destroy(mig); }
+
 GV_GraphDB *gv_graph_load(const char *path) { return graph_load(path); }
+
+/* ---- cypher ---- */
+GV_CypherEngine *gv_cypher_create(GV_KnowledgeGraph *kg) { return cypher_create(kg); }
+void gv_cypher_destroy(GV_CypherEngine *eng) { cypher_destroy(eng); }
+int gv_cypher_set_parameter(GV_CypherEngine *eng, const char *name, const char *value) { return cypher_set_parameter(eng, name, value); }
+int gv_cypher_execute(GV_CypherEngine *eng, const char *query, GV_CypherResult *result) { return cypher_execute(eng, query, result); }
+void gv_cypher_free_result(GV_CypherResult *result) { cypher_free_result(result); }
+const char *gv_cypher_last_error(const GV_CypherEngine *eng) { return cypher_last_error(eng); }

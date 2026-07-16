@@ -533,9 +533,9 @@ int rabitq_load(void **index_ptr, FILE *in, size_t dimension,
     }
 
     if (idx->owns_storage) {
-        soa_storage_destroy(idx->storage);
-        idx->storage = NULL;
-        if (soa_storage_load(idx->storage, in, (uint32_t)dim) != 0) {
+        /* Load into the storage created by rabitq_create (it grows/resets in
+         * place). Must NOT null it first: soa_storage_load rejects NULL. */
+        if (soa_storage_load(idx->storage, in, version) != 0) {
             rabitq_destroy(idx);
             return -1;
         }

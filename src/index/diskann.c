@@ -114,6 +114,7 @@ struct GV_DiskANNIndex {
     size_t build_beam_width;
     size_t search_beam_width;
     size_t sector_size;
+    size_t pq_dim;           /* Configured PQ subquantizer count (0 = auto) */
 
     /* Graph */
     DiskANN_Node *nodes;
@@ -870,12 +871,14 @@ GV_DiskANNIndex *diskann_create(size_t dimension, const GV_DiskANNConfig *config
         index->build_beam_width = config->build_beam_width > 0 ? config->build_beam_width : DISKANN_DEFAULT_BUILD_BW;
         index->search_beam_width = config->search_beam_width > 0 ? config->search_beam_width : DISKANN_DEFAULT_SEARCH_BW;
         index->sector_size = gv_disk_normalize_sector_size(config->sector_size);
+        index->pq_dim = config->pq_dim;
     } else {
         index->max_degree = DISKANN_DEFAULT_DEGREE;
         index->alpha = DISKANN_DEFAULT_ALPHA;
         index->build_beam_width = DISKANN_DEFAULT_BUILD_BW;
         index->search_beam_width = DISKANN_DEFAULT_SEARCH_BW;
         index->sector_size = gv_disk_default_sector_size();
+        index->pq_dim = 0;
     }
 
     size_t vec_bytes = dimension * sizeof(float);
@@ -967,8 +970,8 @@ int diskann_build(GV_DiskANNIndex *index, const float *data, size_t count, size_
 
     index->medoid = diskann_compute_medoid(data, count, dimension);
 
-    size_t pq_dim = 0;
-    /* Determine pq_dim: auto or from config is already handled in pq_train */
+    /* Use the configured pq_dim (0 = auto, resolved inside diskann_pq_train). */
+    size_t pq_dim = index->pq_dim;
     if (diskann_pq_train(&index->pq, data, count, dimension, pq_dim) != 0) {
         /* PQ training failed; continue without PQ (slower but functional) */
     }

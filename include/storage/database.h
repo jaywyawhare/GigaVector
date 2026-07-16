@@ -26,10 +26,18 @@
 #include "multimodal/metadata_index.h"
 #include "storage/tiered_storage.h"
 #include "admin/otlp.h"
+#include "specialized/point_id.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* Optional change-notification sinks (see admin/cdc.h, admin/webhook.h).
+ * Forward-declared here so a database can hold them without a hard include;
+ * the typedefs match the canonical ones in those headers (C11 permits the
+ * identical redefinition). */
+typedef struct GV_CDCStream GV_CDCStream;
+typedef struct GV_WebhookManager GV_WebhookManager;
 
 typedef enum {
     GV_INDEX_TYPE_KDTREE  = 0,
@@ -151,6 +159,9 @@ typedef struct GV_Database {
     GV_OtlpConfig otlp_config;          /**< OpenTelemetry OTLP exporter configuration. */
     struct GV_ABTest *ab_test;           /**< Active A/B test state, or NULL. */
     pthread_mutex_t ab_mutex;            /**< Mutex protecting ab_test access. */
+    GV_CDCStream *cdc_stream;          /**< Optional CDC sink; NULL unless attached. Notified on insert/update/delete. */
+    GV_WebhookManager *webhook_mgr;    /**< Optional webhook/change-stream sink; NULL unless attached. */
+    GV_PointIDMap *id_map;             /**< String primary-key (chunk_id) -> internal index. Persisted to a "{filepath}.ids" sidecar. */
 } GV_Database;
 
 typedef struct {
@@ -534,6 +545,89 @@ int db_delete_vector_by_index(GV_Database *db, size_t vector_index);
  * @return 0 on success, -1 on invalid arguments or vector not found.
  */
 int db_update_vector(GV_Database *db, size_t vector_index, const float *new_data, size_t dimension);
+
+/**
+ * @brief Attach (or detach) a CDC stream that receives insert/update/delete events.
+ *
+ * The database does not own the stream; the caller keeps it alive and destroys
+ * it. Pass NULL to detach. Events are not emitted during WAL replay. Thread
+ * safety: set this before concurrent mutations (e.g. right after db_open).
+ *
+ * @param db     Database.
+ * @param stream CDC stream to attach, or NULL to detach.
+ */
+void db_set_cdc_stream(GV_Database *db, GV_CDCStream *stream);
+
+/** @brief Return the attached CDC stream, or NULL. */
+GV_CDCStream *db_get_cdc_stream(const GV_Database *db);
+
+/**
+ * @brief Attach (or detach) a webhook/change-stream manager that receives
+ *        insert/update/delete events. Not owned by the database; pass NULL to
+ *        detach. Events are not emitted during WAL replay.
+ *
+ * @param db  Database.
+ * @param mgr Webhook manager to attach, or NULL to detach.
+ */
+void db_set_webhook_manager(GV_Database *db, GV_WebhookManager *mgr);
+
+/** @brief Return the attached webhook manager, or NULL. */
+GV_WebhookManager *db_get_webhook_manager(const GV_Database *db);
+
+/* ---- Identity seam: string primary key (chunk_id) support ---- */
+
+/**
+ * @brief Add a vector keyed by a string id (e.g. a chunk_id).
+ *
+ * Inserts the vector and records string_id -> internal index in the database's
+ * id map. The id is also stored in the vector's metadata under key "chunk_id".
+ * @return 0 on success, -1 on error.
+ */
+int db_add_vector_with_id(GV_Database *db, const char *string_id,
+                          const float *data, size_t dimension);
+
+/**
+ * @brief Add a vector keyed by a string id, with additional metadata pairs.
+ *
+ * As db_add_vector_with_id, plus n caller-supplied key/value metadata pairs.
+ * @return 0 on success, -1 on error.
+ */
+int db_add_vector_with_id_meta(GV_Database *db, const char *string_id,
+                               const float *data, size_t dimension,
+                               const char *const *keys, const char *const *vals,
+                               size_t n);
+
+/**
+ * @brief Resolve a string id to its internal vector index.
+ * @return 0 and sets *out_index on success, -1 if not found.
+ */
+int db_get_index_by_id(const GV_Database *db, const char *string_id, size_t *out_index);
+
+/**
+ * @brief Reverse of db_get_index_by_id: internal index -> string id.
+ * @return The id string (internal pointer, do NOT free), or NULL if not mapped.
+ */
+const char *db_get_id_by_index(const GV_Database *db, size_t index);
+
+/**
+ * @brief Read a metadata value for a stored vector by index and key.
+ * @return The value string (internal pointer, do NOT free), or NULL if absent.
+ */
+const char *db_get_metadata_value(const GV_Database *db, size_t index,
+                                  const char *key);
+
+/**
+ * @brief Delete the vector identified by a string id (and remove the mapping).
+ * @return 0 on success, -1 on error / not found.
+ */
+int db_delete_by_id(GV_Database *db, const char *string_id);
+
+/**
+ * @brief Delete every vector whose id begins with "{doc_id}:" (cascading
+ *        document delete over the id map).
+ * @return the number of vectors deleted, or -1 on error.
+ */
+int db_delete_by_doc(GV_Database *db, const char *doc_id);
 
 /**
  * @brief Update metadata for a vector in the database by its index.

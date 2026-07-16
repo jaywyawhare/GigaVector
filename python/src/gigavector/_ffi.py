@@ -2779,6 +2779,13 @@ void gv_cdc_destroy(GV_CDCStream *stream);
 int gv_cdc_publish(GV_CDCStream *stream, const GV_CDCEvent *event);
 int gv_cdc_subscribe(GV_CDCStream *stream, uint32_t event_mask, void *callback, void *user_data);
 int gv_cdc_unsubscribe(GV_CDCStream *stream, int subscriber_id);
+
+/* Attach CDC / webhook sinks to a database so mutations emit change events.
+ * (Declared here, after both opaque typedefs are known.) */
+void gv_db_set_cdc_stream(GV_Database *db, GV_CDCStream *stream);
+GV_CDCStream *gv_db_get_cdc_stream(const GV_Database *db);
+void gv_db_set_webhook_manager(GV_Database *db, GV_WebhookManager *mgr);
+GV_WebhookManager *gv_db_get_webhook_manager(const GV_Database *db);
 int gv_cdc_poll(GV_CDCStream *stream, GV_CDCCursor *cursor, GV_CDCEvent *events, size_t max_events);
 GV_CDCCursor gv_cdc_get_cursor(const GV_CDCStream *stream);
 GV_CDCCursor gv_cdc_cursor_from_sequence(uint64_t seq);
@@ -3176,6 +3183,23 @@ typedef struct {
 void gv_kg_config_init(GV_KGConfig *config);
 GV_KnowledgeGraph *gv_kg_create(const GV_KGConfig *config);
 void gv_kg_destroy(GV_KnowledgeGraph *kg);
+
+/* ---- cypher (query language over the knowledge graph) ---- */
+typedef struct {
+    char **column_names;
+    size_t column_count;
+    char **column_values;
+    size_t row_count;
+    size_t nodes_created;
+    size_t relationships_created;
+} GV_CypherResult;
+typedef struct GV_CypherEngine GV_CypherEngine;
+GV_CypherEngine *gv_cypher_create(GV_KnowledgeGraph *kg);
+void gv_cypher_destroy(GV_CypherEngine *eng);
+int gv_cypher_set_parameter(GV_CypherEngine *eng, const char *name, const char *value);
+int gv_cypher_execute(GV_CypherEngine *eng, const char *query, GV_CypherResult *result);
+void gv_cypher_free_result(GV_CypherResult *result);
+const char *gv_cypher_last_error(const GV_CypherEngine *eng);
 
 uint64_t gv_kg_add_entity(GV_KnowledgeGraph *kg, const char *name, const char *type, const float *embedding, size_t dimension);
 int gv_kg_remove_entity(GV_KnowledgeGraph *kg, uint64_t entity_id);

@@ -10,6 +10,10 @@
 #include "features/knowledge_graph.h"
 #include "core/memory.h"
 #include "core/utils.h"
+#include "core/types.h"
+#include "storage/database.h"
+#include "search/distance.h"
+#include "schema/vector.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -107,6 +111,8 @@ struct GV_KnowledgeGraph {
     uint64_t  *embedding_entity_ids;
     size_t     embedding_count;
     size_t     embedding_cap;
+
+    GV_Database *vdb;                /* optional: resolve entity similarity via db_search */
 
     pthread_rwlock_t rwlock;
 };
@@ -770,6 +776,14 @@ uint64_t kg_add_entity(GV_KnowledgeGraph *kg, const char *name,
         }
     }
 
+    /* Vectors-as-a-predicate: if a vector DB is attached, mirror the embedding
+     * there under "kgent:{id}" so similarity resolves via db_search. */
+    if (kg->vdb != NULL && embedding && dimension > 0) {
+        char kid[48];
+        snprintf(kid, sizeof(kid), "kgent:%llu", (unsigned long long)eid);
+        db_add_vector_with_id(kg->vdb, kid, embedding, dimension);
+    }
+
     size_t bucket = (size_t)kg_hash_uint64(eid, kg->entity_bucket_count);
     node->next = kg->entity_buckets[bucket];
     kg->entity_buckets[bucket] = node;
@@ -1095,12 +1109,99 @@ void kg_free_triples(GV_KGTriple *triples, size_t count) {
     }
 }
 
+/* ---- Combined-DB integration (Phase 1) ---- */
+
+void kg_attach_vector_db(GV_KnowledgeGraph *kg, struct GV_Database *db) {
+    if (!kg) return;
+    pthread_rwlock_wrlock(&kg->rwlock);
+    kg->vdb = db;
+    pthread_rwlock_unlock(&kg->rwlock);
+}
+
+int kg_all_entity_ids(const GV_KnowledgeGraph *kg, uint64_t *out_ids, size_t max_count) {
+    if (!kg || !out_ids || max_count == 0) return -1;
+    pthread_rwlock_rdlock((pthread_rwlock_t *)&kg->rwlock);
+    size_t found = 0;
+    for (size_t i = 0; i < kg->entity_bucket_count && found < max_count; i++) {
+        for (KG_EntityNode *n = kg->entity_buckets[i]; n && found < max_count; n = n->next) {
+            out_ids[found++] = n->entity.entity_id;
+        }
+    }
+    pthread_rwlock_unlock((pthread_rwlock_t *)&kg->rwlock);
+    return (int)found;
+}
+
+uint64_t kg_add_relation_with_chunk(GV_KnowledgeGraph *kg, uint64_t subject,
+                                    const char *predicate, uint64_t object,
+                                    float weight, const char *chunk_id) {
+    uint64_t rid = kg_add_relation(kg, subject, predicate, object, weight);
+    if (rid != 0 && chunk_id != NULL) {
+        kg_set_relation_prop(kg, rid, "chunk_id", chunk_id);
+    }
+    return rid;
+}
+
+int kg_query_triples_by_chunk(const GV_KnowledgeGraph *kg, const char *chunk_id,
+                              GV_KGTriple *out, size_t max_count) {
+    if (!kg || !chunk_id || !out || max_count == 0) return -1;
+    pthread_rwlock_rdlock((pthread_rwlock_t *)&kg->rwlock);
+    size_t found = 0;
+    for (size_t b = 0; b < kg->relation_bucket_count && found < max_count; b++) {
+        for (KG_RelationNode *n = kg->relation_buckets[b];
+             n && found < max_count; n = n->next) {
+            GV_KGProp *p = kg_prop_find(n->relation.properties, "chunk_id");
+            if (p && p->value && strcmp(p->value, chunk_id) == 0) {
+                kg_fill_triple(kg, &n->relation, &out[found++]);
+            }
+        }
+    }
+    pthread_rwlock_unlock((pthread_rwlock_t *)&kg->rwlock);
+    return (int)found;
+}
+
+int kg_query_reverse(const GV_KnowledgeGraph *kg, uint64_t object,
+                     const char *predicate, GV_KGTriple *out, size_t max_count) {
+    /* Reuse the object index via kg_query_triples with the object bound. */
+    return kg_query_triples(kg, NULL, predicate, &object, out, max_count);
+}
+
 int kg_search_similar(const GV_KnowledgeGraph *kg,
                           const float *query_embedding, size_t dimension,
                           size_t k, GV_KGSearchResult *results) {
     if (!kg || !query_embedding || !results || k == 0) return -1;
     if (kg->config.embedding_dimension == 0) return 0;
     if (dimension != kg->config.embedding_dimension) return -1;
+
+    /* If a vector DB is attached, resolve similarity via db_search (filtering to
+     * entity vectors keyed "kgent:", which may be interleaved with chunks). */
+    GV_Database *vdb = kg->vdb;
+    if (vdb != NULL) {
+        size_t over = k * 8;
+        if (over < 32) over = 32;
+        GV_SearchResult *sr = (GV_SearchResult *)gv_alloc(over * sizeof(GV_SearchResult));
+        if (!sr) return -1;
+        int n_sr = db_search(vdb, query_embedding, over, sr, GV_DISTANCE_COSINE);
+        if (n_sr < 0) { gv_free(sr); return -1; }
+        size_t out = 0;
+        pthread_rwlock_rdlock((pthread_rwlock_t *)&kg->rwlock);
+        for (int i = 0; i < n_sr && out < k; i++) {
+            const char *sid = db_get_id_by_index(vdb, sr[i].id);
+            if (!sid || strncmp(sid, "kgent:", 6) != 0) continue;
+            uint64_t eid = strtoull(sid + 6, NULL, 10);
+            KG_EntityNode *en = kg_find_entity_node(kg, eid);
+            results[out].entity_id  = eid;
+            results[out].name       = en ? gv_dup_cstr(en->entity.name) : NULL;
+            results[out].type       = en ? gv_dup_cstr(en->entity.type) : NULL;
+            results[out].similarity = 1.0f - sr[i].distance; /* cosine distance -> similarity */
+            out++;
+        }
+        pthread_rwlock_unlock((pthread_rwlock_t *)&kg->rwlock);
+        /* db_search hands back owned result vectors — free all of them. */
+        for (int i = 0; i < n_sr; i++)
+            if (sr[i].vector) vector_destroy((GV_Vector *)sr[i].vector);
+        gv_free(sr);
+        return (int)out;
+    }
 
     pthread_rwlock_rdlock((pthread_rwlock_t *)&kg->rwlock);
 

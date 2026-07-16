@@ -96,6 +96,9 @@ static ssize_t getline(char **lineptr, size_t *n, FILE *stream) {
 #include "specialized/optimizer.h"
 #include "index/ivf_retrain.h"
 #include "storage/tiered_storage.h"
+#include "admin/cdc.h"
+#include "admin/webhook.h"
+#include "specialized/point_id.h"
 
 #include <math.h>
 #ifndef _WIN32
@@ -187,6 +190,210 @@ static void db_init_common_fields(GV_Database *db) {
     db->tiered_storage       = NULL;
     db->ab_test = NULL;
     pthread_mutex_init(&db->ab_mutex, NULL);
+    db->cdc_stream = NULL;
+    db->webhook_mgr = NULL;
+    db->id_map = point_id_create(1024);  /* NULL-safe: all id-map ops tolerate NULL */
+}
+
+/*
+ * Emit an insert/update/delete change notification to the optionally-attached
+ * CDC stream and/or webhook manager. No-op during WAL replay or when no sink is
+ * attached. Must be called AFTER releasing db->rwlock: cdc_publish/webhook_fire
+ * notify subscriber callbacks synchronously, which may re-enter the database.
+ * vector_data is NULL for deletes; it is deep-copied by cdc_publish.
+ */
+static void db_emit_change(GV_Database *db, GV_CDCEventType cdc_type,
+                           GV_EventType wh_type, size_t vector_index,
+                           const float *vector_data, size_t dimension) {
+    if (db->wal_replaying) return;
+    if (db->cdc_stream == NULL && db->webhook_mgr == NULL) return;
+
+    uint64_t ts_ns = db_get_time_us() * 1000ULL;
+
+    if (db->cdc_stream != NULL) {
+        GV_CDCEvent ev;
+        memset(&ev, 0, sizeof(ev));
+        ev.type = cdc_type;
+        ev.vector_index = vector_index;
+        ev.timestamp = ts_ns;
+        ev.vector_data = vector_data;
+        ev.dimension = (vector_data != NULL) ? dimension : 0;
+        ev.metadata_json = NULL;
+        cdc_publish(db->cdc_stream, &ev);
+    }
+    if (db->webhook_mgr != NULL) {
+        GV_Event ev;
+        memset(&ev, 0, sizeof(ev));
+        ev.event_type = wh_type;
+        ev.vector_index = vector_index;
+        ev.timestamp = ts_ns;
+        ev.collection = NULL;
+        webhook_fire(db->webhook_mgr, &ev);
+    }
+}
+
+void db_set_cdc_stream(GV_Database *db, GV_CDCStream *stream) {
+    if (db != NULL) db->cdc_stream = stream;
+}
+
+GV_CDCStream *db_get_cdc_stream(const GV_Database *db) {
+    return db != NULL ? db->cdc_stream : NULL;
+}
+
+void db_set_webhook_manager(GV_Database *db, GV_WebhookManager *mgr) {
+    if (db != NULL) db->webhook_mgr = mgr;
+}
+
+GV_WebhookManager *db_get_webhook_manager(const GV_Database *db) {
+    return db != NULL ? db->webhook_mgr : NULL;
+}
+
+/* ---------------------------------------------------------------------------
+ * Identity seam (Phase 0): string primary key (chunk_id) -> internal index.
+ * The chunk_id string is stored both in the vector's metadata (key "chunk_id")
+ * and in db->id_map, which is persisted to a "{filepath}.ids" sidecar.
+ * ------------------------------------------------------------------------- */
+
+int db_add_vector_with_id_meta(GV_Database *db, const char *string_id,
+                               const float *data, size_t dimension,
+                               const char *const *keys, const char *const *vals,
+                               size_t n) {
+    if (db == NULL || string_id == NULL || data == NULL) {
+        return -1;
+    }
+    /* Prepend {chunk_id: string_id} to the caller's metadata pairs. */
+    size_t total = n + 1;
+    const char **k = (const char **)gv_alloc(total * sizeof(char *));
+    const char **v = (const char **)gv_alloc(total * sizeof(char *));
+    if (k == NULL || v == NULL) {
+        gv_free((void *)k);
+        gv_free((void *)v);
+        return -1;
+    }
+    k[0] = "chunk_id";
+    v[0] = string_id;
+    for (size_t i = 0; i < n; ++i) {
+        k[i + 1] = keys[i];
+        v[i + 1] = vals[i];
+    }
+    int rc = db_add_vector_with_rich_metadata(db, data, dimension, k, v, total);
+    gv_free((void *)k);
+    gv_free((void *)v);
+    if (rc != 0) {
+        return rc;
+    }
+    /* Vector was appended at logical index count-1 (same convention as CDC
+     * events). The document-ingest path is sequential per document, so this is
+     * race-free there; concurrent multi-writer id mapping is a Phase-3 concern. */
+    pthread_rwlock_rdlock(&db->rwlock);
+    size_t idx = db->count - 1;
+    pthread_rwlock_unlock(&db->rwlock);
+    if (db->id_map != NULL) {
+        point_id_set(db->id_map, string_id, idx);
+    }
+    return 0;
+}
+
+int db_add_vector_with_id(GV_Database *db, const char *string_id,
+                          const float *data, size_t dimension) {
+    return db_add_vector_with_id_meta(db, string_id, data, dimension, NULL, NULL, 0);
+}
+
+int db_get_index_by_id(const GV_Database *db, const char *string_id, size_t *out_index) {
+    if (db == NULL || db->id_map == NULL || string_id == NULL || out_index == NULL) {
+        return -1;
+    }
+    return point_id_get(db->id_map, string_id, out_index);
+}
+
+const char *db_get_id_by_index(const GV_Database *db, size_t index) {
+    if (db == NULL || db->id_map == NULL) {
+        return NULL;
+    }
+    return point_id_reverse_lookup(db->id_map, index);
+}
+
+const char *db_get_metadata_value(const GV_Database *db, size_t index,
+                                  const char *key) {
+    if (db == NULL || db->soa_storage == NULL || key == NULL) {
+        return NULL;
+    }
+    GV_Metadata *m = soa_storage_get_metadata(db->soa_storage, index);
+    for (; m != NULL; m = m->next) {
+        if (m->key != NULL && strcmp(m->key, key) == 0) {
+            return m->value;
+        }
+    }
+    return NULL;
+}
+
+int db_delete_by_id(GV_Database *db, const char *string_id) {
+    if (db == NULL || db->id_map == NULL || string_id == NULL) {
+        return -1;
+    }
+    size_t idx = 0;
+    if (point_id_get(db->id_map, string_id, &idx) != 0) {
+        return -1;
+    }
+    int rc = db_delete_vector_by_index(db, idx);
+    if (rc == 0) {
+        point_id_remove(db->id_map, string_id);
+    }
+    return rc;
+}
+
+typedef struct {
+    const char *prefix;
+    size_t prefix_len;
+    char **ids;
+    size_t count;
+    size_t cap;
+} DbDocScanCtx;
+
+static int db_doc_scan_cb(const char *id, size_t index, void *ctx) {
+    (void)index;
+    DbDocScanCtx *c = (DbDocScanCtx *)ctx;
+    if (strncmp(id, c->prefix, c->prefix_len) != 0) {
+        return 0;
+    }
+    if (c->count == c->cap) {
+        size_t ncap = c->cap ? c->cap * 2 : 8;
+        char **ni = (char **)gv_realloc(c->ids, ncap * sizeof(char *));
+        if (ni == NULL) {
+            return -1;
+        }
+        c->ids = ni;
+        c->cap = ncap;
+    }
+    c->ids[c->count] = gv_dup_cstr(id);
+    if (c->ids[c->count] == NULL) {
+        return -1;
+    }
+    c->count++;
+    return 0;
+}
+
+int db_delete_by_doc(GV_Database *db, const char *doc_id) {
+    if (db == NULL || db->id_map == NULL || doc_id == NULL) {
+        return -1;
+    }
+    char prefix[64];
+    int pn = snprintf(prefix, sizeof(prefix), "%s:", doc_id);
+    if (pn < 0 || (size_t)pn >= (int)sizeof(prefix)) {
+        return -1;
+    }
+    /* Collect matching ids first (can't mutate the map mid-iteration). */
+    DbDocScanCtx ctx = { prefix, (size_t)pn, NULL, 0, 0 };
+    point_id_iterate(db->id_map, db_doc_scan_cb, &ctx);
+    int deleted = 0;
+    for (size_t i = 0; i < ctx.count; ++i) {
+        if (db_delete_by_id(db, ctx.ids[i]) == 0) {
+            deleted++;
+        }
+        gv_free(ctx.ids[i]);
+    }
+    gv_free(ctx.ids);
+    return deleted;
 }
 
 static int db_write_header(FILE *out, uint32_t dimension, uint64_t count, uint32_t version) {
@@ -369,9 +576,10 @@ GV_IndexType index_suggest_with_budget(size_t dimension, size_t expected_count,
         size_t estimated = expected_count * bpv;
         size_t threshold = (size_t)((double)max_memory_bytes * GV_INDEX_SUGGEST_RAM_THRESHOLD_RATIO);
         if (estimated > threshold) {
-            if (dimension >= 64 && expected_count >= 1000000) {
-                return GV_INDEX_TYPE_DISKANN;
-            }
+            /* Both large-scale cases map to IVFDISK: it is fully wired through
+             * db_open/save/load/add/search. DISKANN is a standalone API not
+             * openable via db_open, so suggesting it here would hand callers an
+             * index type db_open cannot build (silently-dead database). */
             return GV_INDEX_TYPE_IVFDISK;
         }
     }
@@ -861,6 +1069,15 @@ GV_Database *db_open(const char *filepath, size_t dimension, GV_IndexType index_
                     gv_free(db);
                     return NULL;
                 }
+            } else if (index_type == GV_INDEX_TYPE_RABITQ) {
+                GV_RaBitQConfig cfg = {.seed = 42, .rerank_factor = 4};
+                db->hnsw_index = rabitq_create(dimension, &cfg, db->soa_storage);
+                if (db->hnsw_index == NULL) {
+                    gv_free(db->filepath);
+                    gv_free(db->wal_path);
+                    gv_free(db);
+                    return NULL;
+                }
             } else if (index_type == GV_INDEX_TYPE_IVFPQ) {
                 GV_IVFPQConfig cfg = {.nlist = 64, .m = 8, .nbits = 8, .nprobe = 4, .train_iters = 15};
                 db->hnsw_index = gv_ivfpq_create(dimension, &cfg);
@@ -921,7 +1138,7 @@ GV_Database *db_open(const char *filepath, size_t dimension, GV_IndexType index_
 
     db->dimension = (size_t)file_dim;
 
-    if (file_version != 1 && file_version != 2 && file_version != 3 && file_version != 4) {
+    if (file_version != 1 && file_version != 2 && file_version != 3 && file_version != 4 && file_version != 5) {
         fclose(in);
         if (db->hnsw_index) gv_hnsw_destroy(db->hnsw_index);
         gv_free(db->filepath);
@@ -1209,6 +1426,21 @@ GV_Database *db_open(const char *filepath, size_t dimension, GV_IndexType index_
             return NULL;
         }
     }
+
+    /* Load the chunk_id -> index map sidecar if present ("{filepath}.ids"). */
+    if (filepath != NULL) {
+        char ids_path[1024];
+        int w = snprintf(ids_path, sizeof(ids_path), "%s.ids", filepath);
+        if (w > 0 && (size_t)w < (int)sizeof(ids_path)) {
+            GV_PointIDMap *loaded = point_id_load(ids_path);
+            if (loaded != NULL) {
+                if (db->id_map != NULL) {
+                    point_id_destroy(db->id_map);
+                }
+                db->id_map = loaded;
+            }
+        }
+    }
     return db;
 
 load_fail:
@@ -1267,6 +1499,9 @@ void db_close(GV_Database *db) {
     }
     if (db->metadata_index != NULL) {
         metadata_index_destroy(db->metadata_index);
+    }
+    if (db->id_map != NULL) {
+        point_id_destroy(db->id_map);
     }
     if (db->compaction_running) {
         db_stop_background_compaction(db);
@@ -1391,7 +1626,7 @@ static GV_Database *db_open_from_memory_impl(const void *data, size_t size,
     }
     db->dimension = (size_t)file_dim;
 
-    if (file_version != 1 && file_version != 2 && file_version != 3 && file_version != 4) {
+    if (file_version != 1 && file_version != 2 && file_version != 3 && file_version != 4 && file_version != 5) {
         fclose(in);
         pthread_rwlock_destroy(&db->rwlock);
         pthread_mutex_destroy(&db->wal_mutex);
@@ -2419,7 +2654,10 @@ GV_Database *db_open_with_lsh_config(const char *filepath, size_t dimension,
     }
     db_attach_soa_storage(db);
 
-    if (config != NULL) {
+    if (index_type == GV_INDEX_TYPE_RABITQ) {
+        GV_RaBitQConfig rq_cfg = {.seed = 42, .rerank_factor = 4};
+        db->hnsw_index = rabitq_create(dimension, &rq_cfg, db->soa_storage);
+    } else if (config != NULL) {
         db->hnsw_index = lsh_create(dimension, config, db->soa_storage);
     } else {
         GV_LSHConfig default_cfg = {.num_tables = 8, .num_hash_bits = 16, .seed = 42};
@@ -2768,7 +3006,10 @@ int db_add_vector(GV_Database *db, const float *data, size_t dimension) {
     if (db->tiering_enabled && db->tiered_storage) {
         tiered_storage_record_insert(db->tiered_storage, ts_slot_0, start_time_us);
     }
+    size_t emit_index = db->count - 1;
     pthread_rwlock_unlock(&db->rwlock);
+
+    db_emit_change(db, GV_CDC_INSERT, GV_EVENT_INSERT, emit_index, data, dimension);
 
     /* IVF incremental retrain: check drift after threshold is reached */
     if (db->retrain_enabled &&
@@ -3016,7 +3257,10 @@ int db_add_vector_with_metadata(GV_Database *db, const float *data, size_t dimen
         tiered_storage_record_insert(db->tiered_storage, ts_slot_1, start_time_us);
     }
     db->generation += 1;
+    size_t emit_index = db->count - 1;
     pthread_rwlock_unlock(&db->rwlock);
+
+    db_emit_change(db, GV_CDC_INSERT, GV_EVENT_INSERT, emit_index, data, dimension);
 
     uint64_t end_time_us = db_get_time_us();
     uint64_t latency_us = end_time_us - start_time_us;
@@ -3063,7 +3307,11 @@ int db_add_sparse_vector(GV_Database *db, const uint32_t *indices, const float *
     db->count += 1;
     db->total_inserts += 1;
     db->generation += 1;
+    size_t emit_index = db->count - 1;
     pthread_rwlock_unlock(&db->rwlock);
+
+    /* Sparse insert: no dense payload to attach (event still fires). */
+    db_emit_change(db, GV_CDC_INSERT, GV_EVENT_INSERT, emit_index, NULL, 0);
     return 0;
 }
 
@@ -3372,7 +3620,10 @@ int db_add_vector_with_rich_metadata(GV_Database *db, const float *data, size_t 
     if (db->tiering_enabled && db->tiered_storage) {
         tiered_storage_record_insert(db->tiered_storage, ts_slot_2, start_time_us);
     }
+    size_t emit_index = db->count - 1;
     pthread_rwlock_unlock(&db->rwlock);
+
+    db_emit_change(db, GV_CDC_INSERT, GV_EVENT_INSERT, emit_index, data, dimension);
 
     uint64_t end_time_us = db_get_time_us();
     uint64_t latency_us = end_time_us - start_time_us;
@@ -3452,6 +3703,7 @@ int db_add_vectors(GV_Database *db, const float *data, size_t count, size_t dime
         pthread_rwlock_wrlock(&db->rwlock);
         gv_hnsw_reserve(db->hnsw_index, count);
 
+        size_t emit_start = db->count;
         for (size_t i = 0; i < count; ++i) {
             const float *vec = data + i * dimension;
             int status = gv_hnsw_insert_raw(db->hnsw_index, vec, dimension);
@@ -3465,6 +3717,11 @@ int db_add_vectors(GV_Database *db, const float *data, size_t count, size_t dime
 
         db_update_memory_usage(db);
         pthread_rwlock_unlock(&db->rwlock);
+
+        for (size_t i = 0; i < count; ++i) {
+            db_emit_change(db, GV_CDC_INSERT, GV_EVENT_INSERT, emit_start + i,
+                           data + i * dimension, dimension);
+        }
         return 0;
     }
 
@@ -3517,7 +3774,8 @@ int db_save(const GV_Database *db, const char *filepath) {
         return -1;
     }
 
-    const uint32_t version = 4;
+    /* v5 adds the per-vector deleted flag to the sparse-index payload. */
+    const uint32_t version = 5;
     int status = db_write_header(out, (uint32_t)db->dimension, db->count, version);
     if (status == 0) {
         uint32_t index_type_u32 = (uint32_t)db->index_type;
@@ -3602,6 +3860,17 @@ int db_save(const GV_Database *db, const char *filepath) {
     } else if (db->wal_path != NULL && status == 0) {
         /* Fallback: if WAL handle is NULL but path exists, use reset */
         wal_reset(db->wal_path);
+    }
+
+    /* Persist the chunk_id -> index map to a "{filepath}.ids" sidecar
+     * (best-effort; auxiliary to the main file). */
+    if (status == 0 && filepath != NULL && db->id_map != NULL &&
+        point_id_count(db->id_map) > 0) {
+        char ids_path[1024];
+        int w = snprintf(ids_path, sizeof(ids_path), "%s.ids", filepath);
+        if (w > 0 && (size_t)w < (int)sizeof(ids_path)) {
+            point_id_save(db->id_map, ids_path);
+        }
     }
 
     pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
@@ -4529,6 +4798,10 @@ int db_delete_vector_by_index(GV_Database *db, size_t vector_index) {
     }
 
     pthread_rwlock_unlock(&db->rwlock);
+
+    if (status == 0) {
+        db_emit_change(db, GV_CDC_DELETE, GV_EVENT_DELETE, vector_index, NULL, 0);
+    }
     return status;
 }
 
@@ -4651,6 +4924,10 @@ int db_update_vector(GV_Database *db, size_t vector_index, const float *new_data
     }
 
     pthread_rwlock_unlock(&db->rwlock);
+
+    if (status == 0) {
+        db_emit_change(db, GV_CDC_UPDATE, GV_EVENT_UPDATE, vector_index, new_data, dimension);
+    }
     return status;
 }
 
@@ -4880,6 +5157,26 @@ int db_update_vector_metadata(GV_Database *db, size_t vector_index,
  * This function compacts the SoA storage arrays by removing all deleted vectors
  * and updating vector indices in the indexes.
  */
+/* Context + callback for remapping db->id_map (chunk_id -> internal index)
+ * through a compaction old->new index_map.  Entries whose vector was compacted
+ * away (new index == (size_t)-1) are dropped. */
+struct db_compact_id_remap_ctx {
+    GV_PointIDMap *dst;
+    const size_t  *index_map;
+    size_t         old_count;
+};
+
+static int db_compact_remap_id_cb(const char *id, size_t old_index, void *vctx) {
+    struct db_compact_id_remap_ctx *ctx = (struct db_compact_id_remap_ctx *)vctx;
+    if (old_index < ctx->old_count) {
+        size_t new_index = ctx->index_map[old_index];
+        if (new_index != (size_t)-1) {
+            point_id_set(ctx->dst, id, new_index);
+        }
+    }
+    return 0; /* continue iteration */
+}
+
 static int db_compact_soa_storage(GV_Database *db) {
     if (db == NULL || db->soa_storage == NULL) {
         return -1;
@@ -5043,6 +5340,22 @@ static int db_compact_soa_storage(GV_Database *db) {
             }
             metadata_index_destroy(old_index);
         }
+    }
+
+    /* Remap the external chunk_id -> internal-index map (id_map) to the new
+     * indices, dropping entries whose vector was compacted away.  Without this,
+     * every chunk_id would resolve to the wrong vector after compaction. */
+    if (db->id_map != NULL && point_id_count(db->id_map) > 0) {
+        GV_PointIDMap *remapped = point_id_create(point_id_count(db->id_map));
+        if (remapped != NULL) {
+            struct db_compact_id_remap_ctx ctx = {
+                remapped, index_map, new_count + deleted_count
+            };
+            point_id_iterate(db->id_map, db_compact_remap_id_cb, &ctx);
+            point_id_destroy(db->id_map);
+            db->id_map = remapped;
+        }
+        /* On OOM keep the old (now-stale) map rather than dropping all ids. */
     }
 
     gv_tls_free_or_heap(index_map, map_on_heap);
