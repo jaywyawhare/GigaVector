@@ -51,13 +51,11 @@ int db_search_with_threshold(const void *db, const float *query_data, size_t k,
 
     const GV_Database *database = (const GV_Database *)db;
 
+    /* Heap-allocate: db_search() resets the TLS scratch arena on entry, which
+     * would clobber a TLS-allocated results buffer. */
     GV_SearchResult *search_results =
-        (GV_SearchResult *)gv_tls_calloc(k, sizeof(GV_SearchResult));
-    int search_results_on_heap = 0;
-    if (!search_results) {
-        search_results = (GV_SearchResult *)gv_calloc(k, sizeof(GV_SearchResult));
-        search_results_on_heap = 1;
-    }
+        (GV_SearchResult *)gv_calloc(k, sizeof(GV_SearchResult));
+    int search_results_on_heap = 1;
     if (!search_results) return -1;
 
     int found = db_search(database, query_data, k, search_results,

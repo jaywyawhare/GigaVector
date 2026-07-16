@@ -171,13 +171,11 @@ int hybrid_search_with_stats(GV_HybridSearcher *searcher, const float *query_vec
 
     /* Allocate candidates (max 2 * prefetch_k) */
     size_t max_candidates = prefetch_k * 2;
-    int candidates_on_heap = 0;
-    CandidateEntry *candidates = (CandidateEntry *)gv_tls_calloc(
+    /* Heap-allocate: db_search()/bm25_search reset the TLS scratch arena, which
+     * would clobber this accumulator (it must survive across both searches). */
+    int candidates_on_heap = 1;
+    CandidateEntry *candidates = (CandidateEntry *)gv_calloc(
         max_candidates, sizeof(CandidateEntry));
-    if (!candidates) {
-        candidates = gv_calloc(max_candidates, sizeof(CandidateEntry));
-        candidates_on_heap = 1;
-    }
     if (!candidates) {
         pthread_mutex_unlock(&searcher->mutex);
         return -1;
@@ -189,13 +187,10 @@ int hybrid_search_with_stats(GV_HybridSearcher *searcher, const float *query_vec
     if (query_vector) {
         double vec_start = get_time_ms();
 
-        int vec_on_heap = 0;
-        GV_SearchResult *vec_results = (GV_SearchResult *)gv_tls_calloc(
+        /* Heap-allocate: db_search() resets the TLS scratch arena on entry. */
+        int vec_on_heap = 1;
+        GV_SearchResult *vec_results = (GV_SearchResult *)gv_calloc(
             prefetch_k, sizeof(GV_SearchResult));
-        if (!vec_results) {
-            vec_results = gv_alloc(prefetch_k * sizeof(GV_SearchResult));
-            vec_on_heap = 1;
-        }
         if (vec_results) {
             int vec_found = db_search(searcher->db, query_vector, prefetch_k,
                                           vec_results, cfg->distance_type);
