@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <pthread.h>
 
 #include "core/types.h"
 #include "search/distance.h"
@@ -41,6 +42,22 @@ typedef struct GV_ABTest {
     uint64_t creation_time_us;  /**< Monotonic creation timestamp (microseconds). */
     uint64_t route_counter;     /**< Monotonically increasing counter used for routing. */
     GV_Database *shadow_db;     /**< Shadow database (owned; freed on destroy). */
+
+    /*
+     * In-flight search accounting (protected by db->ab_mutex).
+     *
+     * gv_db_ab_test_search increments `inflight` under ab_mutex before it
+     * releases the lock to run a (possibly shadow) search, and decrements it
+     * under ab_mutex afterwards, signalling `inflight_cv`. gv_db_ab_test_stop
+     * detaches the test (db->ab_test = NULL) and then waits on `inflight_cv`
+     * until `inflight == 0` before destroying it, so the shadow_db can never
+     * be freed while a concurrent search still dereferences it (fixes the
+     * use-after-free). `cv_inited` records whether inflight_cv was
+     * initialised, so destroy can safely tear it down.
+     */
+    int             inflight;    /**< Number of in-flight searches on this test. */
+    pthread_cond_t  inflight_cv; /**< Signalled when a search finishes. */
+    int             cv_inited;   /**< Non-zero once inflight_cv is initialised. */
 } GV_ABTest;
 
 /* -------------------------------------------------------------------------

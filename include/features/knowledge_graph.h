@@ -326,12 +326,36 @@ void kg_free_search_results(GV_KGSearchResult *results, size_t count);
 /**
  * @brief Resolve an entity: find an existing match or create a new one.
  *
+ * Returns the full 64-bit entity_id. Entity IDs start at 1, so 0 is
+ * reserved as the "error"/"not found" sentinel. Prefer this over
+ * kg_resolve_entity() which narrows the id to int.
+ *
  * @param kg         Knowledge graph handle.
  * @param name       Entity name.
  * @param type       Entity type.
  * @param embedding  Optional embedding (NULL to skip similarity check).
  * @param dimension  Embedding dimension.
  * @return entity_id of the resolved (existing or newly created) entity, or 0 on error.
+ */
+uint64_t kg_resolve_entity_id(GV_KnowledgeGraph *kg, const char *name,
+                          const char *type, const float *embedding,
+                          size_t dimension);
+
+/**
+ * @brief Resolve an entity, returning the id narrowed to int (legacy API).
+ *
+ * Kept for backwards-compatible callers that expect an int return. Because
+ * entity IDs are 64-bit, a full id may not fit in an int; rather than
+ * silently truncating (which could corrupt the id or alias a different
+ * entity), this clamps any id that does not fit in a non-negative int to
+ * INT_MAX. New code should call kg_resolve_entity_id() instead.
+ *
+ * @param kg         Knowledge graph handle.
+ * @param name       Entity name.
+ * @param type       Entity type.
+ * @param embedding  Optional embedding (NULL to skip similarity check).
+ * @param dimension  Embedding dimension.
+ * @return entity_id clamped to [0, INT_MAX], or 0 on error.
  */
 int kg_resolve_entity(GV_KnowledgeGraph *kg, const char *name,
                           const char *type, const float *embedding,

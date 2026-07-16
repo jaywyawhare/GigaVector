@@ -161,10 +161,57 @@ oom:
 char *otlp_build_metrics_json(const struct GV_Database *db) {
     if (!db) return NULL;
 
+    /*
+     * Snapshot all observability fields into locals under
+     * observability_mutex so we get a consistent, non-torn view even while
+     * db_record_latency() concurrently mutates them. The histogram buckets
+     * and boundaries are deep-copied because they are read in loops below
+     * (outside the lock). Uses the same const-cast-to-lock pattern as
+     * db_stats.c.
+     */
+    pthread_mutex_t *lock = (pthread_mutex_t *)&db->observability_mutex;
+    pthread_mutex_lock(lock);
+
+    uint64_t snap_total_inserts  = db->total_inserts;
+    uint64_t snap_total_queries  = db->total_queries;
+    double   snap_current_qps    = db->current_qps;
+    double   snap_current_ips    = db->current_ips;
+
+    size_t   hist_bucket_count   = db->search_latency_hist.bucket_count;
+    uint64_t hist_total_samples  = db->search_latency_hist.total_samples;
+    uint64_t hist_sum_latency_us = db->search_latency_hist.sum_latency_us;
+
+    uint64_t *hist_buckets    = NULL;
+    double   *hist_boundaries = NULL;
+    int hist_valid = 0;
+    if (hist_bucket_count > 0 &&
+        db->search_latency_hist.buckets != NULL &&
+        db->search_latency_hist.bucket_boundaries != NULL) {
+        hist_buckets    = malloc(hist_bucket_count * sizeof(uint64_t));
+        hist_boundaries = malloc(hist_bucket_count * sizeof(double));
+        if (hist_buckets && hist_boundaries) {
+            memcpy(hist_buckets, db->search_latency_hist.buckets,
+                   hist_bucket_count * sizeof(uint64_t));
+            memcpy(hist_boundaries, db->search_latency_hist.bucket_boundaries,
+                   hist_bucket_count * sizeof(double));
+            hist_valid = 1;
+        }
+    }
+
+    pthread_mutex_unlock(lock);
+
+    if (hist_bucket_count > 0 && !hist_valid) {
+        /* Copy allocation failed; free partials and skip histogram export. */
+        free(hist_buckets);
+        free(hist_boundaries);
+        hist_buckets = NULL;
+        hist_boundaries = NULL;
+    }
+
     size_t cap = 2048;
     size_t len = 0;
     char *buf = malloc(cap);
-    if (!buf) return NULL;
+    if (!buf) goto oom;
     buf[0] = '\0';
 
     /* OTLP ExportMetricsServiceRequest (JSON mapping) */
@@ -182,7 +229,7 @@ char *otlp_build_metrics_json(const struct GV_Database *db) {
                     "\"description\":\"Total vectors inserted\","
                     "\"gauge\":{\"dataPoints\":["
                     "{\"asInt\":\"%" PRIu64 "\"}]}}",
-                    db->total_inserts) != 0)
+                    snap_total_inserts) != 0)
         goto oom;
 
     /* total_queries gauge */
@@ -191,7 +238,7 @@ char *otlp_build_metrics_json(const struct GV_Database *db) {
                     "\"description\":\"Total search queries\","
                     "\"gauge\":{\"dataPoints\":["
                     "{\"asInt\":\"%" PRIu64 "\"}]}}",
-                    db->total_queries) != 0)
+                    snap_total_queries) != 0)
         goto oom;
 
     /* current_qps gauge */
@@ -200,7 +247,7 @@ char *otlp_build_metrics_json(const struct GV_Database *db) {
                     "\"description\":\"Current queries per second\","
                     "\"gauge\":{\"dataPoints\":["
                     "{\"asDouble\":%.4f}]}}",
-                    db->current_qps) != 0)
+                    snap_current_qps) != 0)
         goto oom;
 
     /* current_ips gauge */
@@ -209,32 +256,57 @@ char *otlp_build_metrics_json(const struct GV_Database *db) {
                     "\"description\":\"Current inserts per second\","
                     "\"gauge\":{\"dataPoints\":["
                     "{\"asDouble\":%.4f}]}}",
-                    db->current_ips) != 0)
+                    snap_current_ips) != 0)
         goto oom;
 
-    /* search latency histogram buckets */
-    if (db->search_latency_hist.bucket_count > 0 &&
-        db->search_latency_hist.buckets != NULL) {
+    /*
+     * search latency histogram
+     *
+     * OTLP requires len(bucketCounts) == len(explicitBounds) + 1, where the
+     * final bucketCounts entry is the implicit (+Inf) overflow bucket. Our
+     * histogram has `hist_bucket_count` non-cumulative bucket counts, where
+     * buckets[i] counts samples in (boundaries[i-1], boundaries[i]] and the
+     * last bucket also absorbs anything above boundaries[count-2]. We
+     * therefore export the first (count-1) boundaries as explicitBounds and
+     * all `count` bucket counts as bucketCounts, so the last count serves as
+     * the +Inf overflow bucket. This satisfies the length invariant and the
+     * non-cumulative bucketCounts semantics OTLP expects.
+     */
+    if (hist_valid && hist_bucket_count > 0) {
 
         if (buf_append(&buf, &len, &cap,
                        ",{\"name\":\"gigavector.search_latency_us\","
                        "\"description\":\"Search latency histogram in microseconds\","
-                       "\"histogram\":{\"dataPoints\":[{\"count\":\"") != 0)
+                       "\"histogram\":{\"aggregationTemporality\":2,"
+                       "\"dataPoints\":[{\"count\":\"") != 0)
             goto oom;
 
         if (buf_appendf(&buf, &len, &cap,
                         "%" PRIu64 "\",\"sum\":%.4f,\"bucketCounts\":[",
-                        db->search_latency_hist.total_samples,
-                        (double)db->search_latency_hist.sum_latency_us) != 0)
+                        hist_total_samples,
+                        (double)hist_sum_latency_us) != 0)
             goto oom;
 
-        for (size_t i = 0; i < db->search_latency_hist.bucket_count; i++) {
+        /* bucketCounts: all `hist_bucket_count` counts (last == +Inf bucket) */
+        for (size_t i = 0; i < hist_bucket_count; i++) {
             if (i > 0) {
                 if (buf_append(&buf, &len, &cap, ",") != 0) goto oom;
             }
             if (buf_appendf(&buf, &len, &cap,
                             "\"%" PRIu64 "\"",
-                            db->search_latency_hist.buckets[i]) != 0)
+                            hist_buckets[i]) != 0)
+                goto oom;
+        }
+
+        /* explicitBounds: first (hist_bucket_count - 1) boundaries */
+        if (buf_append(&buf, &len, &cap, "],\"explicitBounds\":[") != 0)
+            goto oom;
+
+        for (size_t i = 0; i + 1 < hist_bucket_count; i++) {
+            if (i > 0) {
+                if (buf_append(&buf, &len, &cap, ",") != 0) goto oom;
+            }
+            if (buf_appendf(&buf, &len, &cap, "%.4f", hist_boundaries[i]) != 0)
                 goto oom;
         }
 
@@ -243,9 +315,13 @@ char *otlp_build_metrics_json(const struct GV_Database *db) {
 
     if (buf_append(&buf, &len, &cap, "]}]}]}") != 0) goto oom;
 
+    free(hist_buckets);
+    free(hist_boundaries);
     return buf;
 
 oom:
+    free(hist_buckets);
+    free(hist_boundaries);
     free(buf);
     return NULL;
 }
