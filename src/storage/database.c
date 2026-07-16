@@ -93,6 +93,7 @@ static ssize_t getline(char **lineptr, size_t *n, FILE *stream) {
 #include "core/utils.h"
 #include "search/filter.h"
 #include "specialized/optimizer.h"
+#include "index/ivf_retrain.h"
 
 #include <math.h>
 #ifndef _WIN32
@@ -165,6 +166,16 @@ static void db_init_common_fields(GV_Database *db) {
     memset(&db->recall_metrics, 0, sizeof(GV_RecallMetrics));
     pthread_mutex_init(&db->observability_mutex, NULL);
     gv_memory_init(&db->memory_pool);
+
+    /* IVF incremental retraining defaults */
+    db->retrain_enabled = 0;
+    db->retrain_drift_threshold = 0.15f;
+    db->retrain_min_new_vectors = 50000;
+    db->inserts_since_retrain = 0;
+    db->last_retrain_drift = 1.0f;
+    db->initial_inertia = 0.0f;
+    db->retrain_running = 0;
+    pthread_mutex_init(&db->retrain_mutex, NULL);
 }
 
 static int db_write_header(FILE *out, uint32_t dimension, uint64_t count, uint32_t version) {
@@ -1248,6 +1259,9 @@ void db_close(GV_Database *db) {
     pthread_mutex_destroy(&db->compaction_mutex);
     pthread_cond_destroy(&db->compaction_cond);
     pthread_mutex_destroy(&db->resource_mutex);
+    /* Stop any in-flight IVF retrain thread */
+    ivf_retrain_stop(db);
+    pthread_mutex_destroy(&db->retrain_mutex);
     if (db->insert_latency_hist.buckets != NULL) {
         gv_db_free(db, db->insert_latency_hist.buckets);
         gv_db_free(db, db->insert_latency_hist.bucket_boundaries);
@@ -2722,6 +2736,27 @@ int db_add_vector(GV_Database *db, const float *data, size_t dimension) {
     db->total_inserts += 1;
     db_update_memory_usage(db);
     pthread_rwlock_unlock(&db->rwlock);
+
+    /* IVF incremental retrain: check drift after threshold is reached */
+    if (db->retrain_enabled &&
+        (db->index_type == GV_INDEX_TYPE_IVFFLAT ||
+         db->index_type == GV_INDEX_TYPE_IVFPQ   ||
+         db->index_type == GV_INDEX_TYPE_IVFSQ8  ||
+         db->index_type == GV_INDEX_TYPE_IVFTURBOQUANT)) {
+        pthread_mutex_lock(&db->retrain_mutex);
+        db->inserts_since_retrain++;
+        size_t ins = db->inserts_since_retrain;
+        size_t min_vecs = db->retrain_min_new_vectors;
+        int already_running = db->retrain_running;
+        pthread_mutex_unlock(&db->retrain_mutex);
+
+        if (ins >= min_vecs && !already_running) {
+            float drift = ivf_retrain_check_drift(db);
+            if (drift > 0.0f && drift > 1.0f + db->retrain_drift_threshold) {
+                ivf_retrain_trigger(db);
+            }
+        }
+    }
 
     uint64_t end_time_us = db_get_time_us();
     uint64_t latency_us = end_time_us - start_time_us;

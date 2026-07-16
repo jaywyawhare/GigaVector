@@ -6,6 +6,7 @@
 #include <stdint.h>
 
 #include "index/ivfflat.h"
+#include "index/ivf_base.h"
 #include "search/distance.h"
 #include "schema/vector.h"
 #include "schema/metadata.h"
@@ -734,5 +735,127 @@ int ivfflat_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version)
     }
 
     *index_ptr = index;
+    return 0;
+}
+
+float ivfflat_compute_inertia(const void *index) {
+    if (!index) return -1.0f;
+    const GV_IVFFlatIndex *idx = (const GV_IVFFlatIndex *)index;
+    if (!idx->trained) return -1.0f;
+
+    double sum = 0.0;
+    size_t count = 0;
+
+    for (size_t c = 0; c < idx->config.nlist; c++) {
+        const float *centroid = idx->centroids + c * idx->dimension;
+        const GV_IVFFlatEntry *entry = idx->lists[c];
+        while (entry) {
+            if (!entry->deleted) {
+                float dist = 0.0f;
+                for (size_t d = 0; d < idx->dimension; d++) {
+                    float diff = entry->vector->data[d] - centroid[d];
+                    dist += diff * diff;
+                }
+                sum += dist;
+                count++;
+            }
+            entry = entry->next;
+        }
+    }
+
+    if (count == 0) return 0.0f;
+    return (float)(sum / (double)count);
+}
+
+int ivfflat_retrain(void *index, size_t iters) {
+    if (!index) return -1;
+    GV_IVFFlatIndex *idx = (GV_IVFFlatIndex *)index;
+    if (!idx->trained) return -1;
+
+    /* Collect all live vectors into a flat buffer */
+    size_t live = 0;
+    for (size_t c = 0; c < idx->config.nlist; c++) {
+        const GV_IVFFlatEntry *e = idx->lists[c];
+        while (e) {
+            if (!e->deleted) live++;
+            e = e->next;
+        }
+    }
+
+    if (live < idx->config.nlist) return -1;
+
+    float *buf = (float *)malloc(live * idx->dimension * sizeof(float));
+    GV_IVFFlatEntry **ptrs = (GV_IVFFlatEntry **)malloc(live * sizeof(GV_IVFFlatEntry *));
+    if (!buf || !ptrs) {
+        free(buf);
+        free(ptrs);
+        return -1;
+    }
+
+    size_t pos = 0;
+    for (size_t c = 0; c < idx->config.nlist; c++) {
+        GV_IVFFlatEntry *e = idx->lists[c];
+        while (e) {
+            if (!e->deleted) {
+                memcpy(buf + pos * idx->dimension, e->vector->data,
+                       idx->dimension * sizeof(float));
+                ptrs[pos] = e;
+                pos++;
+            }
+            e = e->next;
+        }
+    }
+
+    /* Run Lloyd's k-means on live vectors to get new centroids */
+    float *new_centroids = (float *)malloc(idx->config.nlist * idx->dimension * sizeof(float));
+    if (!new_centroids) {
+        free(buf);
+        free(ptrs);
+        return -1;
+    }
+
+    if (ivf_train_centroids(buf, live, idx->dimension, idx->config.nlist,
+                            iters, new_centroids) != 0) {
+        free(buf);
+        free(ptrs);
+        free(new_centroids);
+        return -1;
+    }
+
+    /* Swap centroids */
+    memcpy(idx->centroids, new_centroids, idx->config.nlist * idx->dimension * sizeof(float));
+    free(new_centroids);
+
+    /* Clear all posting lists (keep entries, just unlink from lists) */
+    for (size_t c = 0; c < idx->config.nlist; c++) {
+        idx->lists[c] = NULL;
+        idx->list_sizes[c] = 0;
+    }
+
+    /* Reassign all live vectors to new centroids */
+    for (size_t i = 0; i < live; i++) {
+        GV_IVFFlatEntry *e = ptrs[i];
+        const float *vec = e->vector->data;
+        float best_dist = 1e30f;
+        size_t best_c = 0;
+        for (size_t c = 0; c < idx->config.nlist; c++) {
+            float dist = 0.0f;
+            const float *centroid = idx->centroids + c * idx->dimension;
+            for (size_t d = 0; d < idx->dimension; d++) {
+                float diff = vec[d] - centroid[d];
+                dist += diff * diff;
+            }
+            if (dist < best_dist) {
+                best_dist = dist;
+                best_c = c;
+            }
+        }
+        e->next = idx->lists[best_c];
+        idx->lists[best_c] = e;
+        idx->list_sizes[best_c]++;
+    }
+
+    free(buf);
+    free(ptrs);
     return 0;
 }
