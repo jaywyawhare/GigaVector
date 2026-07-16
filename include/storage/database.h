@@ -148,6 +148,8 @@ typedef struct GV_Database {
     size_t hot_max_vectors;             /**< Maximum hot-tier vector count (0 = unlimited). */
     GV_TieredStorageManager *tiered_storage; /**< Tiered storage manager; NULL if disabled. */
     GV_OtlpConfig otlp_config;          /**< OpenTelemetry OTLP exporter configuration. */
+    struct GV_ABTest *ab_test;           /**< Active A/B test state, or NULL. */
+    pthread_mutex_t ab_mutex;            /**< Mutex protecting ab_test access. */
 } GV_Database;
 
 typedef struct {
