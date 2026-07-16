@@ -100,25 +100,16 @@ static int compare_candidates_desc(const void *a, const void *b) {
 /**
  * @brief Recover the SoA storage index from a GV_SearchResult.
  *
- * GV_SearchResult.vector->data points into contiguous SoA storage at
- * offset (index * dimension).  We recover the index by pointer arithmetic.
+ * The index layer sets GV_SearchResult.id to the SoA storage index of the
+ * matched vector. db_search results hold freshly heap-copied vectors that
+ * are unrelated to the contiguous SoA storage, so the index cannot be
+ * reconstructed by pointer arithmetic on sr->vector->data. Use the id field
+ * directly (mirrors quant_rerank.c).
  */
 static size_t result_to_soa_index(const GV_Database *db, const GV_SearchResult *sr) {
-    if (!sr || !sr->vector || !sr->vector->data) return (size_t)-1;
-
-    size_t dim = database_dimension(db);
-    if (dim == 0) return (size_t)-1;
-
-    const float *base = database_get_vector(db, 0);
-    if (!base) return (size_t)-1;
-
-    ptrdiff_t diff = sr->vector->data - base;
-    if (diff < 0) return (size_t)-1;
-
-    size_t idx = (size_t)diff / dim;
-    if (idx >= database_count(db)) return (size_t)-1;
-
-    return idx;
+    (void)db;
+    if (!sr) return (size_t)-1;
+    return sr->id;
 }
 
 GV_Pipeline *pipeline_create(const void *db) {
@@ -205,13 +196,12 @@ static int execute_ann_phase(const GV_Database *db,
     size_t fetch_k = config->output_k;
     if (fetch_k == 0) fetch_k = 100;
 
+    /* NOTE: db_search() resets the TLS scratch arena on entry, so this results
+     * buffer must NOT live in that arena (it would be clobbered by db_search's
+     * own scratch). Allocate it on the heap. */
     GV_SearchResult *search_res =
-        (GV_SearchResult *)gv_tls_calloc(fetch_k, sizeof(GV_SearchResult));
-    int search_on_heap = 0;
-    if (!search_res) {
-        search_res = gv_calloc(fetch_k, sizeof(GV_SearchResult));
-        search_on_heap = 1;
-    }
+        (GV_SearchResult *)gv_calloc(fetch_k, sizeof(GV_SearchResult));
+    int search_on_heap = 1;
     if (!search_res) return -1;
 
     GV_DistanceType dist = (GV_DistanceType)config->params.ann.distance_type;
@@ -226,6 +216,8 @@ static int execute_ann_phase(const GV_Database *db,
     Candidate *candidates = (Candidate *)gv_tls_alloc_or_heap(
         (size_t)found * sizeof(Candidate), sizeof(Candidate), &candidates_on_heap);
     if (!candidates) {
+        /* Free each result's owned vector (data+metadata) before the array. */
+        gv_search_results_free(search_res, (size_t)found);
         gv_tls_free_or_heap(search_res, search_on_heap);
         return -1;
     }
@@ -241,6 +233,8 @@ static int execute_ann_phase(const GV_Database *db,
         valid++;
     }
 
+    /* Free each result's owned vector (data+metadata), then the array. */
+    gv_search_results_free(search_res, (size_t)found);
     gv_tls_free_or_heap(search_res, search_on_heap);
 
     if (valid == 0) {
@@ -492,9 +486,13 @@ static int execute_rerank_quant_phase(const GV_Database *db,
     const GV_QuantCodebook *cb    = config->params.quant.codebook;
     const uint8_t          *codes = config->params.quant.codes;
     size_t                  stride = config->params.quant.code_stride;
+    size_t                  codes_count = config->params.quant.codes_count;
 
     size_t valid = 0;
     for (size_t i = 0; i < count; i++) {
+        /* Guard against candidates whose SoA id was inserted after the codes
+         * array was encoded — indexing past codes_count would read OOB. */
+        if (candidates[i].index >= codes_count) continue;
         const uint8_t *code = codes + candidates[i].index * stride;
         float refined = quant_distance(cb, query, dim, code);
         if (refined < 0.0f) continue; /* skip on error */

@@ -1495,7 +1495,24 @@ GV_DiskANNIndex *diskann_load(const char *filepath, const GV_DiskANNConfig *conf
         if (read_u64(f, &pq_dsub) != 0) goto fail;
         if (read_u64(f, &pq_ksub) != 0) goto fail;
 
-        size_t cb_size = (size_t)(pq_m * pq_ksub * pq_dsub);
+        /* Validate untrusted file fields against sane bounds and guard every
+         * multiplication against overflow before allocating, otherwise a
+         * crafted file can wrap the size computation and cause an under-alloc
+         * followed by an out-of-bounds write in read_floats. */
+        if (pq_m == 0 || pq_dsub == 0 || pq_ksub == 0) goto fail;
+        /* PQ codes are single bytes, so ksub is at most 256; m*dsub must equal
+         * the vector dimension. Reject absurd values up front. */
+        if (pq_ksub > 256) goto fail;
+        if (pq_m > dimension || pq_dsub > dimension) goto fail;
+
+        uint64_t cb64 = pq_m;
+        if (cb64 > (uint64_t)SIZE_MAX / pq_ksub) goto fail;
+        cb64 *= pq_ksub;
+        if (cb64 > (uint64_t)SIZE_MAX / pq_dsub) goto fail;
+        cb64 *= pq_dsub;
+        if (cb64 > (uint64_t)SIZE_MAX / sizeof(float)) goto fail;
+
+        size_t cb_size = (size_t)cb64;
         pq_codebooks = (float *)gv_alloc(cb_size * sizeof(float));
         if (!pq_codebooks) goto fail;
         if (read_floats(f, pq_codebooks, cb_size) != 0) {
@@ -1528,7 +1545,14 @@ GV_DiskANNIndex *diskann_load(const char *filepath, const GV_DiskANNConfig *conf
         if (read_u64(f, &temp_nodes[i].neighbor_count) != 0) goto fail_temp;
 
         if (temp_nodes[i].neighbor_count > 0) {
-            temp_nodes[i].neighbors = (size_t *)gv_alloc((size_t)temp_nodes[i].neighbor_count * sizeof(size_t));
+            /* Guard the untrusted neighbor_count against overflow before the
+             * multiplication so a crafted file cannot wrap the allocation size
+             * and trigger an under-alloc / out-of-bounds write below. Also
+             * bound it to a sane maximum relative to the node count. */
+            uint64_t nc = temp_nodes[i].neighbor_count;
+            if (nc > count) goto fail_temp;
+            if (nc > (uint64_t)SIZE_MAX / sizeof(size_t)) goto fail_temp;
+            temp_nodes[i].neighbors = (size_t *)gv_alloc((size_t)nc * sizeof(size_t));
             if (!temp_nodes[i].neighbors) goto fail_temp;
 
             for (size_t j = 0; j < (size_t)temp_nodes[i].neighbor_count; j++) {

@@ -211,21 +211,31 @@ int rabitq_insert(void *index, GV_Vector *vector) {
     GV_RaBitQIndex *idx = (GV_RaBitQIndex *)index;
     if (vector->dimension != idx->dim) return -1;
 
-    /* Grow codes / deleted arrays if needed. */
+    /* Grow codes / deleted arrays if needed. Commit each successful realloc
+     * back into the struct IMMEDIATELY so the struct never points at a freed
+     * block, and only advance idx->cap once BOTH arrays have grown to keep the
+     * capacity consistent with the smaller of the two allocations. */
     if (idx->count >= idx->cap) {
+        size_t old_cap = idx->cap;
         size_t new_cap = idx->cap == 0 ? 256 : idx->cap * 2;
+
         uint64_t *nc = (uint64_t *)gv_realloc(idx->codes,
             new_cap * idx->code_words * sizeof(uint64_t));
-        uint8_t  *nd = (uint8_t  *)gv_realloc(idx->deleted_arr,
-            new_cap * sizeof(uint8_t));
-        if (!nc || !nd) {
-            if (nc) idx->codes       = nc;
-            if (nd) idx->deleted_arr = nd;
+        if (!nc) {
             return -1;
         }
-        idx->codes       = nc;
+        idx->codes = nc;
+
+        uint8_t *nd = (uint8_t *)gv_realloc(idx->deleted_arr,
+            new_cap * sizeof(uint8_t));
+        if (!nd) {
+            /* idx->codes is already grown and committed; leave idx->cap at
+             * old_cap so the two arrays stay consistent. Retry on next insert. */
+            return -1;
+        }
         idx->deleted_arr = nd;
-        memset(idx->deleted_arr + idx->cap, 0, new_cap - idx->cap);
+
+        memset(idx->deleted_arr + old_cap, 0, new_cap - old_cap);
         idx->cap = new_cap;
     }
 
@@ -235,16 +245,19 @@ int rabitq_insert(void *index, GV_Vector *vector) {
     vector->metadata = NULL;
     vector_destroy(vector);
 
-    /* Compute binarised code: normalise → RHT → binarise. */
+    /* Compute binarised code: normalise → RHT → binarise. Use heap buffers
+     * (not a VLA) so large dim cannot overflow the stack. */
     float *tmp = (float *)gv_alloc(idx->padded_dim * sizeof(float));
     if (!tmp) return -1;  /* vector already committed to storage */
 
-    float norm_buf[idx->dim];  /* VLA – dim is runtime but bounded by caller */
+    float *norm_buf = (float *)gv_alloc(idx->dim * sizeof(float));
+    if (!norm_buf) { gv_free(tmp); return -1; }
     memcpy(norm_buf, soa_storage_get_data(idx->storage, vi),
            idx->dim * sizeof(float));
     l2_normalize(norm_buf, idx->dim);
     rht(norm_buf, tmp, idx->dim, idx->padded_dim, idx->signs);
     binarize(tmp, idx->codes + vi * idx->code_words, idx->padded_dim);
+    gv_free(norm_buf);
     gv_free(tmp);
 
     idx->count++;
@@ -419,12 +432,16 @@ int rabitq_update(void *index, size_t vector_index,
     if (vector_index < idx->cap) {
         float *tmp = (float *)gv_alloc(idx->padded_dim * sizeof(float));
         if (tmp) {
-            float norm_buf[idx->dim];
-            memcpy(norm_buf, new_data, idx->dim * sizeof(float));
-            l2_normalize(norm_buf, idx->dim);
-            rht(norm_buf, tmp, idx->dim, idx->padded_dim, idx->signs);
-            binarize(tmp, idx->codes + vector_index * idx->code_words,
-                     idx->padded_dim);
+            /* Heap buffer instead of a VLA so large dim can't overflow the stack. */
+            float *norm_buf = (float *)gv_alloc(idx->dim * sizeof(float));
+            if (norm_buf) {
+                memcpy(norm_buf, new_data, idx->dim * sizeof(float));
+                l2_normalize(norm_buf, idx->dim);
+                rht(norm_buf, tmp, idx->dim, idx->padded_dim, idx->signs);
+                binarize(tmp, idx->codes + vector_index * idx->code_words,
+                         idx->padded_dim);
+                gv_free(norm_buf);
+            }
             gv_free(tmp);
         }
     }

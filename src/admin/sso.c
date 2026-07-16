@@ -275,7 +275,21 @@ GV_SSOToken *sso_exchange_code(GV_SSOManager *mgr, const char *auth_code) {
 
     gv_free(response);
 
-    /* Decode and validate the JWT */
+    /*
+     * Verify the id_token signature BEFORE trusting any claim (fail closed).
+     * Only HS256 (shared client_secret) is supported here; verify_jwt_signature
+     * pins alg==HS256 so an RS256 id_token is rejected rather than being
+     * mis-verified as HMAC.  Without a configured secret we cannot verify and
+     * must reject.
+     */
+    if (!mgr->config.client_secret || !mgr->config.client_secret[0]) {
+        return NULL;
+    }
+    if (verify_jwt_signature(id_token, mgr->config.client_secret) != 0) {
+        return NULL;
+    }
+
+    /* Decode and validate the JWT (also enforces exp/nbf). */
     GV_SSOToken *token = decode_jwt_claims(id_token);
     if (!token) return NULL;
 
@@ -291,25 +305,28 @@ GV_SSOToken *sso_validate_token(GV_SSOManager *mgr, const char *token_string) {
     GV_SSOToken *token = NULL;
 
     if (mgr->config.provider == GV_SSO_OIDC) {
-        /* Verify JWT signature if client_secret is configured (HS256) */
-        if (mgr->config.client_secret && mgr->config.client_secret[0]) {
-            if (verify_jwt_signature(token_string, mgr->config.client_secret) != 0) {
-                return NULL;  /* Signature verification failed */
-            }
+        /*
+         * Fail closed: NEVER accept a token on a decode-only path.  A shared
+         * secret (HS256) MUST be configured and the signature MUST verify
+         * before we trust any claim.  If no secret is configured we cannot
+         * verify the token, so we reject.
+         *
+         * (This verifier only supports HS256.  RS256/JWKS is not implemented
+         * here; verify_jwt_signature() pins alg==HS256 and rejects RS256,
+         * preventing an RS256 token from being silently HMAC-checked.)
+         */
+        if (!mgr->config.client_secret || !mgr->config.client_secret[0]) {
+            return NULL;  /* no verification key configured -> deny */
+        }
+        if (verify_jwt_signature(token_string, mgr->config.client_secret) != 0) {
+            return NULL;  /* signature / algorithm verification failed */
         }
 
-        /* JWT validation path */
+        /* Signature verified; decode_jwt_claims also enforces exp/nbf. */
         token = decode_jwt_claims(token_string);
         if (!token) return NULL;
-
-        /* Check expiry */
-        uint64_t now = (uint64_t)time(NULL);
-        if (token->expires_at > 0 && token->expires_at < now) {
-            sso_free_token(token);
-            return NULL;
-        }
     } else if (mgr->config.provider == GV_SSO_SAML) {
-        /* SAML assertion path */
+        /* SAML assertion path (validates signature policy + time window). */
         token = parse_saml_assertion(token_string);
         if (!token) return NULL;
     } else {
@@ -368,6 +385,15 @@ GV_SSOToken *sso_refresh_token(GV_SSOManager *mgr, const char *refresh_token) {
     }
 
     gv_free(response);
+
+    /* Verify the refreshed id_token signature before trusting claims
+     * (fail closed; HS256-only, RS256 rejected via alg pin). */
+    if (!mgr->config.client_secret || !mgr->config.client_secret[0]) {
+        return NULL;
+    }
+    if (verify_jwt_signature(id_token, mgr->config.client_secret) != 0) {
+        return NULL;
+    }
 
     GV_SSOToken *token = decode_jwt_claims(id_token);
     if (!token) return NULL;
@@ -967,8 +993,36 @@ static int hmac_sha256(const unsigned char *key, size_t key_len,
     return 0;
 }
 
+/*
+ * Parse a JWT header segment and confirm its "alg" is exactly "HS256".
+ * This verifier only implements HS256; any other alg ("none", "RS256",
+ * "ES256", ...) MUST be rejected to prevent alg-confusion / downgrade
+ * forgery (e.g. RS256->HS256 where the RSA public key is abused as an HMAC
+ * secret, or alg:none which requires no signature at all).
+ * Returns 0 iff alg == "HS256", -1 otherwise (fail closed on any error).
+ */
+static int jwt_header_is_hs256(const char *jwt, const char *dot1) {
+    size_t header_b64_len = (size_t)(dot1 - jwt);
+    if (header_b64_len == 0) return -1;
+
+    unsigned char decoded[1024];
+    size_t decoded_len = sizeof(decoded);
+    if (base64url_decode(jwt, header_b64_len, decoded, &decoded_len) != 0) {
+        return -1;
+    }
+    if (decoded_len >= sizeof(decoded)) decoded_len = sizeof(decoded) - 1;
+    decoded[decoded_len] = '\0';
+
+    char alg[64];
+    if (json_extract_string((const char *)decoded, "alg", alg, sizeof(alg)) != 0) {
+        return -1;  /* missing alg -> reject */
+    }
+    return (strcmp(alg, "HS256") == 0) ? 0 : -1;
+}
+
 /**
  * Verify the HMAC-SHA256 (HS256) signature of a JWT.
+ * Also pins the JWT header "alg" to HS256 (rejecting none/RS256/etc.).
  * Returns 0 on success, -1 on verification failure.
  */
 static int verify_jwt_signature(const char *jwt, const char *secret) {
@@ -978,6 +1032,9 @@ static int verify_jwt_signature(const char *jwt, const char *secret) {
     if (!dot1) return -1;
     const char *dot2 = strchr(dot1 + 1, '.');
     if (!dot2) return -1;
+
+    /* Pin the algorithm before doing any signature work. */
+    if (jwt_header_is_hs256(jwt, dot1) != 0) return -1;
 
     /* The signed payload is header.payload (everything before the second dot) */
     size_t signed_len = (size_t)(dot2 - jwt);
@@ -1061,7 +1118,32 @@ static GV_SSOToken *decode_jwt_claims(const char *jwt) {
     }
 
     json_extract_uint64(payload_json, "iat", &token->issued_at);
-    json_extract_uint64(payload_json, "exp", &token->expires_at);
+
+    /* A MISSING exp is treated as invalid (fail closed): a token without an
+     * expiry must not be accepted as never-expiring. */
+    if (json_extract_uint64(payload_json, "exp", &token->expires_at) != 0 ||
+        token->expires_at == 0) {
+        sso_free_token(token);
+        return NULL;
+    }
+
+    /* Enforce standard temporal claims here so every decode path is safe,
+     * regardless of caller.  Allow a small clock-skew tolerance. */
+    {
+        const uint64_t skew = 60;
+        uint64_t now = (uint64_t)time(NULL);
+        if (token->expires_at + skew < now) {
+            sso_free_token(token);
+            return NULL;  /* expired */
+        }
+        uint64_t nbf = 0;
+        if (json_extract_uint64(payload_json, "nbf", &nbf) == 0) {
+            if (nbf > now + skew) {
+                sso_free_token(token);
+                return NULL;  /* not yet valid */
+            }
+        }
+    }
 
     /* Extract groups claim (may be absent) */
     json_extract_string_array(payload_json, "groups",
@@ -1207,6 +1289,64 @@ static GV_SSOToken *parse_saml_assertion(const char *b64_assertion) {
 
     const char *xml = (const char *)decoded;
 
+    /*
+     * ---- SAML signature policy (FAIL CLOSED) ----
+     *
+     * A SAML assertion is a bearer credential that can grant admin
+     * (populate_admin_flag scrapes group attributes below).  We must NOT
+     * trust any scraped field unless the assertion's XML-DSig signature has
+     * been verified against a configured, trusted IdP certificate.
+     *
+     * Constraints of this build:
+     *   - The SSO config struct (GV_SSOConfig, in include/admin/sso.h, which
+     *     this module may not modify) currently has NO field for a trusted IdP
+     *     signing certificate/public key, and NO saml_allow_unsigned toggle.
+     *   - Full XML-DSig canonicalization (exc-c14n) + digest + RSA verify is
+     *     not implemented here.
+     *
+     * Because no trusted verification key can be configured, we CANNOT verify
+     * the signature, and therefore we REJECT by default.  We also reject
+     * assertions that carry no <ds:Signature> at all.  A single, clearly named
+     * compile-time escape hatch (GV_SAML_ALLOW_UNSIGNED, default undefined) is
+     * provided for isolated development only; it is NEVER on by default and
+     * must be explicitly compiled in.
+     *
+     * LIMITATION (documented): once GV_SSOConfig gains an idp_cert field and an
+     * XML-DSig verifier is available (OpenSSL is present in TLS builds via
+     * GV_HAVE_OPENSSL), the block below should call that verifier instead of
+     * failing closed.  Until then, verified==0 always and we deny.
+     */
+    {
+        int verified = 0;
+
+        /* Detect presence of a signature element (informational only; a
+         * present-but-unverifiable signature is still rejected). */
+        int has_signature =
+            (strstr(xml, "<Signature") != NULL ||
+             strstr(xml, "<ds:Signature") != NULL ||
+             strstr(xml, ":Signature") != NULL);
+        (void)has_signature;
+
+        /*
+         * No trusted IdP cert is configurable in this build, and no XML-DSig
+         * verifier is wired up here, so verification is impossible -> verified
+         * stays 0.  (Placeholder for a future
+         *   verified = saml_verify_xmldsig(xml, decoded_len, idp_cert);
+         * once the plumbing exists.)
+         */
+
+#ifdef GV_SAML_ALLOW_UNSIGNED
+        /* INSECURE development escape hatch. Accepts unsigned/unverified
+         * assertions. Do NOT define this in production builds. */
+        verified = 1;
+#endif
+
+        if (!verified) {
+            gv_free(decoded);
+            return NULL;  /* fail closed: unverified assertion rejected */
+        }
+    }
+
     GV_SSOToken *token = alloc_token();
     if (!token) {
         gv_free(decoded);
@@ -1309,6 +1449,42 @@ static GV_SSOToken *parse_saml_assertion(const char *b64_assertion) {
         if (not_after) {
             not_after += strlen("NotOnOrAfter=\"");
             token->expires_at = parse_iso8601(not_after);
+        }
+    }
+
+    /*
+     * ---- Enforce the assertion validity window (FAIL CLOSED) ----
+     *
+     * Reject if:
+     *   - the Conditions/NotBefore/NotOnOrAfter window is missing (we require
+     *     an explicit window; a window-less assertion is treated as invalid),
+     *   - now < NotBefore (not yet valid), or
+     *   - now >= NotOnOrAfter (expired),
+     * with a small clock-skew tolerance.
+     *
+     * token->issued_at holds NotBefore and token->expires_at holds
+     * NotOnOrAfter (parse_iso8601 returns 0 on failure).
+     */
+    {
+        const uint64_t skew = 60;  /* seconds of allowed clock skew */
+        uint64_t now = (uint64_t)time(NULL);
+
+        if (token->issued_at == 0 || token->expires_at == 0) {
+            gv_free(decoded);
+            sso_free_token(token);
+            return NULL;  /* missing/unparseable validity window -> deny */
+        }
+        /* now < NotBefore - skew  => not yet valid */
+        if (now + skew < token->issued_at) {
+            gv_free(decoded);
+            sso_free_token(token);
+            return NULL;
+        }
+        /* now >= NotOnOrAfter + skew => expired */
+        if (now >= token->expires_at + skew) {
+            gv_free(decoded);
+            sso_free_token(token);
+            return NULL;
         }
     }
 

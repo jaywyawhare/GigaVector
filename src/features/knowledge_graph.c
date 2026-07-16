@@ -20,6 +20,7 @@
 #include <stdio.h>
 #include <time.h>
 #include <pthread.h>
+#include <limits.h>
 
 #define KG_MAGIC         "GVKG"
 #define KG_MAGIC_LEN     4
@@ -1315,7 +1316,7 @@ void kg_free_search_results(GV_KGSearchResult *results, size_t count) {
     }
 }
 
-int kg_resolve_entity(GV_KnowledgeGraph *kg, const char *name,
+uint64_t kg_resolve_entity_id(GV_KnowledgeGraph *kg, const char *name,
                           const char *type, const float *embedding,
                           size_t dimension) {
     if (!kg || !name || !type) return 0;
@@ -1329,7 +1330,7 @@ int kg_resolve_entity(GV_KnowledgeGraph *kg, const char *name,
                 strcmp(n->entity.type, type) == 0) {
                 uint64_t eid = n->entity.entity_id;
                 pthread_rwlock_unlock(&kg->rwlock);
-                return (int)eid;
+                return eid;
             }
         }
     }
@@ -1356,13 +1357,27 @@ int kg_resolve_entity(GV_KnowledgeGraph *kg, const char *name,
 
         if (best_sim >= kg->config.similarity_threshold && best_id != 0) {
             pthread_rwlock_unlock(&kg->rwlock);
-            return (int)best_id;
+            return best_id;
         }
     }
 
     pthread_rwlock_unlock(&kg->rwlock);
     uint64_t new_id = kg_add_entity(kg, name, type, embedding, dimension);
-    return (int)new_id;
+    return new_id;
+}
+
+/*
+ * Legacy int-returning wrapper. Entity IDs are 64-bit and may not fit in an
+ * int; rather than silently truncating (which historically corrupted large
+ * ids), clamp any value that does not fit a non-negative int to INT_MAX.
+ * 0 remains the error/not-found sentinel (entity IDs start at 1).
+ */
+int kg_resolve_entity(GV_KnowledgeGraph *kg, const char *name,
+                          const char *type, const float *embedding,
+                          size_t dimension) {
+    uint64_t id = kg_resolve_entity_id(kg, name, type, embedding, dimension);
+    if (id > (uint64_t)INT_MAX) return INT_MAX;
+    return (int)id;
 }
 
 int kg_find_duplicates(const GV_KnowledgeGraph *kg, float threshold,

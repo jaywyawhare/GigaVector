@@ -1,0 +1,1 @@
+DELETE FROM vectors WHERE color = 'blue'

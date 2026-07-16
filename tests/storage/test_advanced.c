@@ -103,7 +103,7 @@ static int test_index_suggest(void) {
     ASSERT(idx == GV_INDEX_TYPE_HNSW || idx == GV_INDEX_TYPE_IVFPQ, "high dim large dataset");
 
     idx = index_suggest_with_budget(128, 2000000, 128u * 1024u * 1024u, 0);
-    ASSERT(idx == GV_INDEX_TYPE_DISKANN, "very large high-D over budget suggests DiskANN");
+    ASSERT(idx == GV_INDEX_TYPE_IVFDISK, "very large high-D over budget suggests IVFDisk (db_open-buildable; DISKANN is not)");
 
     idx = index_suggest_with_budget(64, 500000, 32u * 1024u * 1024u, 0);
     ASSERT(idx == GV_INDEX_TYPE_IVFDISK, "large collection over budget suggests IVFDisk");

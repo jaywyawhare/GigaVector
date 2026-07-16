@@ -27,6 +27,8 @@ struct GV_SparseIndex {
     double avg_doc_len;
     int use_bm25;                /* non-zero to use BM25 scoring */
     int *deleted;                /* Deletion flags: 1 if deleted, 0 if active */
+    size_t live_count;           /* Number of non-deleted vectors (effective N) */
+    double total_doc_len;        /* Sum of doc_len over live vectors */
 };
 
 static int sparse_read_metadata(FILE *in, GV_SparseVector *sv) {
@@ -154,27 +156,38 @@ int sparse_index_add(GV_SparseIndex *index, GV_SparseVector *vector) {
         return -1;
     }
     if (index->count == index->capacity) {
+        size_t oldcap = index->capacity;
         size_t newcap = index->capacity * 2;
+
+        /* Grow each array, committing every successful realloc back into the
+         * struct IMMEDIATELY so the struct never points at a freed block.
+         * gv_realloc returns a valid pointer on success and leaves the old
+         * block intact on failure, so we never free a buffer we intend to
+         * keep. On partial failure the arrays we did grow stay committed
+         * (they simply have spare capacity) and we return -1 without touching
+         * index->capacity so the effective capacity stays at oldcap. */
         GV_SparseVector **tmp_vec =
             (GV_SparseVector **)gv_realloc(index->vectors, newcap * sizeof(GV_SparseVector *));
         if (!tmp_vec) {
             return -1;
         }
+        index->vectors = tmp_vec;
+
         double *tmp_len = (double *)gv_realloc(index->doc_len, newcap * sizeof(double));
-        int *tmp_deleted = (int *)gv_realloc(index->deleted, newcap * sizeof(int));
-        if (!tmp_len || !tmp_deleted) {
-            /* keep old arrays intact */
-            if (tmp_vec) gv_free(tmp_vec);
-            if (tmp_len) gv_free(tmp_len);
-            if (tmp_deleted) gv_free(tmp_deleted);
+        if (!tmp_len) {
             return -1;
         }
-        /* zero-init new doc_len and deleted regions */
-        memset(tmp_len + index->capacity, 0, (newcap - index->capacity) * sizeof(double));
-        memset(tmp_deleted + index->capacity, 0, (newcap - index->capacity) * sizeof(int));
-        index->vectors = tmp_vec;
         index->doc_len = tmp_len;
+
+        int *tmp_deleted = (int *)gv_realloc(index->deleted, newcap * sizeof(int));
+        if (!tmp_deleted) {
+            return -1;
+        }
         index->deleted = tmp_deleted;
+
+        /* zero-init new doc_len and deleted regions */
+        memset(index->doc_len + oldcap, 0, (newcap - oldcap) * sizeof(double));
+        memset(index->deleted + oldcap, 0, (newcap - oldcap) * sizeof(int));
         index->capacity = newcap;
     }
 
@@ -206,15 +219,16 @@ int sparse_index_add(GV_SparseIndex *index, GV_SparseVector *vector) {
     index->doc_len[vid] = dl > 0.0 ? dl : 0.0;
     index->deleted[vid] = 0;
 
-    /* update average document length incrementally */
     index->count++;
-    if (index->count == 1) {
-        index->avg_doc_len = index->doc_len[vid];
-    } else {
-        index->avg_doc_len =
-            ((index->avg_doc_len * (double)(index->count - 1)) + index->doc_len[vid]) /
-            (double)index->count;
-    }
+
+    /* Maintain BM25 aggregates over LIVE documents only. live_count is the
+     * effective N used by search; avg_doc_len is derived from the running
+     * total_doc_len so deletes can adjust it consistently. */
+    index->live_count++;
+    index->total_doc_len += index->doc_len[vid];
+    index->avg_doc_len = index->live_count > 0
+                             ? index->total_doc_len / (double)index->live_count
+                             : 0.0;
 
     return 0;
 }
@@ -252,7 +266,9 @@ int sparse_index_search(const GV_SparseIndex *index, const GV_SparseVector *quer
         if (index->use_bm25) {
             /* BM25-style scoring: treat value as term frequency */
             double df = index->df[dim];
-            double N = (double)index->count;
+            /* Use the effective (live) document count as N so soft-deleted
+             * documents don't skew the IDF term. */
+            double N = (double)index->live_count;
             if (df <= 0.0 || N <= 0.0) {
                 continue;
             }
@@ -481,6 +497,33 @@ int sparse_index_delete(GV_SparseIndex *index, size_t vector_index) {
     }
 
     index->deleted[vector_index] = 1;
+
+    /* Subtract this document's contribution from the BM25 aggregates so
+     * scoring stays consistent (df, effective N, and avg_doc_len). The
+     * postings themselves are left in place but are skipped at search time via
+     * the deleted[] flag. Guard against underflow. */
+    GV_SparseVector *sv = index->vectors[vector_index];
+    if (sv != NULL) {
+        for (size_t i = 0; i < sv->nnz; ++i) {
+            uint32_t dim = sv->entries[i].index;
+            if (dim >= index->dimension) continue;
+            if (index->df[dim] > 0.0) {
+                index->df[dim] -= 1.0;
+            }
+        }
+    }
+
+    if (index->live_count > 0) {
+        index->live_count--;
+    }
+    index->total_doc_len -= index->doc_len[vector_index];
+    if (index->total_doc_len < 0.0) {
+        index->total_doc_len = 0.0;
+    }
+    index->avg_doc_len = index->live_count > 0
+                             ? index->total_doc_len / (double)index->live_count
+                             : 0.0;
+
     return 0;
 }
 
@@ -528,10 +571,16 @@ int sparse_index_update(GV_SparseIndex *index, size_t vector_index, GV_SparseVec
     }
     index->doc_len[vector_index] = new_dl > 0.0 ? new_dl : 0.0;
 
-    /* Update average document length */
-    if (index->count > 0) {
-        index->avg_doc_len = ((index->avg_doc_len * (double)index->count) - old_dl + index->doc_len[vector_index]) / (double)index->count;
+    /* Update the running total over live documents and recompute avg_doc_len.
+     * The document being updated is live (deleted was checked above), so its
+     * old length is part of total_doc_len. */
+    index->total_doc_len += index->doc_len[vector_index] - old_dl;
+    if (index->total_doc_len < 0.0) {
+        index->total_doc_len = 0.0;
     }
+    index->avg_doc_len = index->live_count > 0
+                             ? index->total_doc_len / (double)index->live_count
+                             : 0.0;
 
     /* Add new vector to postings and update document frequency */
     for (size_t i = 0; i < new_vector->nnz; ++i) {

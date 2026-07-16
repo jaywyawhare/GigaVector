@@ -18,10 +18,14 @@
 #define INSERTS_PER_THREAD 64
 #define SEARCHES_PER_THREAD 32
 
+#define N_SEED 32
+
 typedef struct {
     GV_Database *db;
     int thread_id;
     int result;
+    int searches_with_results;  /* number of searches that returned >= 1 result */
+    int invalid_result;         /* set if any returned result was malformed */
 } ThreadArg;
 
 static void *insert_worker(void *arg) {
@@ -45,7 +49,15 @@ static void *search_worker(void *arg) {
         float q[4] = {(float)i * 0.01f, 0.0f, 0.0f, 0.0f};
         GV_SearchResult res[3];
         int n = db_search(a->db, q, 3, res, GV_DISTANCE_EUCLIDEAN);
-        (void)n;
+        if (n > 0) {
+            a->searches_with_results++;
+            for (int j = 0; j < n && j < 3; j++) {
+                /* A valid result must have a finite, non-negative distance. */
+                if (!(res[j].distance >= 0.0f) || res[j].distance != res[j].distance) {
+                    a->invalid_result = 1;
+                }
+            }
+        }
         gv_search_results_free(res, (size_t)(n > 0 ? n : 0));
     }
     a->result = 0;
@@ -57,7 +69,7 @@ static int test_concurrent_insert_search(void) {
     if (db == NULL) return 0;
 
     /* Seed with some initial data so searches have something to find */
-    for (int i = 0; i < 32; i++) {
+    for (int i = 0; i < N_SEED; i++) {
         float v[4] = {(float)i * 0.01f, (float)i * 0.02f,
                       (float)i * 0.03f, (float)i * 0.04f};
         db_add_vector(db, v, 4);
@@ -78,6 +90,8 @@ static int test_concurrent_insert_search(void) {
         search_args[i].db = db;
         search_args[i].thread_id = i;
         search_args[i].result = 0;
+        search_args[i].searches_with_results = 0;
+        search_args[i].invalid_result = 0;
         pthread_create(&search_threads[i], NULL, search_worker, &search_args[i]);
     }
 
@@ -88,6 +102,22 @@ static int test_concurrent_insert_search(void) {
 
     for (int i = 0; i < N_INSERT_THREADS; i++)
         ASSERT(insert_args[i].result == 0, "insert thread succeeded");
+
+    /* Correctness: every vector inserted must be accounted for. */
+    size_t expected = (size_t)N_SEED +
+                      (size_t)N_INSERT_THREADS * (size_t)INSERTS_PER_THREAD;
+    size_t actual = database_count(db);
+    ASSERT(actual == expected, "final vector count equals seed + all inserts");
+
+    /* Correctness: searches must return valid, non-empty results. The seed
+       data alone (present before any thread starts) guarantees matches. */
+    int total_hits = 0;
+    for (int i = 0; i < N_SEARCH_THREADS; i++) {
+        ASSERT(search_args[i].invalid_result == 0,
+               "search results must have finite non-negative distances");
+        total_hits += search_args[i].searches_with_results;
+    }
+    ASSERT(total_hits > 0, "searches must return at least one non-empty result");
 
     db_close(db);
     return 0;

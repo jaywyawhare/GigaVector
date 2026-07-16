@@ -36,6 +36,7 @@ typedef struct {
     GV_QuantCodebook *codebook;   /**< Trained quantization codebook. */
     const uint8_t    *codes;      /**< Flat array: one code_stride-byte block per vector. */
     size_t            code_stride; /**< Bytes per encoded vector (from quant_code_size()). */
+    size_t            codes_count; /**< Number of encoded vectors in codes[]; candidates with a SoA id >= this are skipped to prevent OOB reads. */
     size_t            oversample_factor; /**< Stage-1 retrieves oversample_factor*k candidates. */
     int               distance_type;     /**< GV_DistanceType for stage-1 ANN search. */
 } GV_QuantRerankConfig;

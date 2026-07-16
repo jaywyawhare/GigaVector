@@ -12,16 +12,6 @@
 
 #define GV_SOA_SAVE_MAGIC 0x534F4153u /* "SOAS" */
 
-static void *soa_alloc(GV_SoAStorage *storage, size_t size) {
-    GV_Database *db = storage != NULL ? storage->owner_db : NULL;
-    return gv_pool_alloc(db, size);
-}
-
-static void *soa_calloc(GV_SoAStorage *storage, size_t nmemb, size_t size) {
-    GV_Database *db = storage != NULL ? storage->owner_db : NULL;
-    return gv_pool_calloc(db, nmemb, size);
-}
-
 static void *soa_realloc(GV_SoAStorage *storage, void *ptr, size_t size) {
     GV_Database *db = storage != NULL ? storage->owner_db : NULL;
     return gv_pool_realloc(db, ptr, size);
@@ -83,6 +73,20 @@ static int soa_storage_grow(GV_SoAStorage *storage, size_t min_capacity)
     uint64_t *tmp_ts = (uint64_t *)realloc(storage->insert_timestamps,
                                             new_capacity * sizeof(uint64_t));
     if (!tmp_data || !tmp_meta || !tmp_del || !tmp_ts) {
+        /* Partial-failure recovery.  realloc leaves the ORIGINAL block intact
+         * on failure, so any array that failed still points at a valid buffer
+         * of the OLD capacity.  For the arrays that succeeded we adopt the
+         * (larger) new pointer so the enlarged block is not leaked -- note the
+         * arena-managed arrays use soa_realloc while insert_timestamps uses
+         * plain realloc; both return a fresh pointer that must be retained.
+         *
+         * Crucially we DO NOT advance storage->capacity: it must stay at the
+         * old value so the struct remains self-consistent.  The succeeded
+         * arrays are merely larger than capacity claims (harmless -- the extra
+         * tail is never indexed because all access is bounded by capacity, and
+         * that tail was never zero-initialised).  A later grow retry recomputes
+         * new_capacity from this unchanged capacity and re-reallocs every
+         * array, so no capacity/allocation desync is possible. */
         if (tmp_data) storage->data = tmp_data;
         if (tmp_meta) storage->metadata = tmp_meta;
         if (tmp_del) storage->deleted = tmp_del;

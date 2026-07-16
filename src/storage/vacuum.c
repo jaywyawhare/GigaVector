@@ -163,31 +163,20 @@ static int vacuum_run_internal(GV_VacuumManager *mgr) {
     size_t old_count = storage->count;
     size_t new_count = old_count - deleted_count;
     size_t bytes_reclaimed = deleted_count * dim * sizeof(float);
+    size_t vectors_compacted = new_count;
 
-    /* Allocate compacted arrays */
-    float *new_data = NULL;
-    GV_Metadata **new_metadata = NULL;
-    int *new_deleted = NULL;
-    if (storage->owner_db != NULL) {
-        new_data = (float *)gv_db_alloc(storage->owner_db, new_count * dim * sizeof(float));
-        new_metadata = (GV_Metadata **)gv_db_calloc(storage->owner_db, new_count, sizeof(GV_Metadata *));
-        new_deleted = (int *)gv_db_calloc(storage->owner_db, new_count, sizeof(int));
-    } else {
-        new_data = (float *)gv_alloc(new_count * dim * sizeof(float));
-        new_metadata = (GV_Metadata **)gv_calloc(new_count, sizeof(GV_Metadata *));
-        new_deleted = (int *)gv_calloc(new_count, sizeof(int));
-    }
-
-    if (new_data == NULL || new_metadata == NULL || new_deleted == NULL) {
-        if (storage->owner_db != NULL) {
-            if (new_data != NULL) gv_db_free(storage->owner_db, new_data);
-            if (new_metadata != NULL) gv_db_free(storage->owner_db, new_metadata);
-            if (new_deleted != NULL) gv_db_free(storage->owner_db, new_deleted);
-        } else {
-            gv_free(new_data);
-            gv_free(new_metadata);
-            gv_free(new_deleted);
-        }
+    /*
+     * Delegate the actual renumber + full index/metadata rebuild to the single
+     * correct implementation in database.c. Its own partial per-index-type
+     * logic previously left HNSW / IVF / FLAT / metadata_index stale after a
+     * vacuum;
+     * db_compact_soa_storage_locked() rebuilds the primary index and the
+     * metadata_index consistently with the renumbered SoA indices.
+     *
+     * We already hold the write lock, matching that routine's contract, so we
+     * do NOT double-lock here.
+     */
+    if (db_compact_soa_storage_locked(db) != 0) {
         pthread_rwlock_unlock(&db->rwlock);
 
         pthread_mutex_lock(&mgr->mutex);
@@ -199,86 +188,8 @@ static int vacuum_run_internal(GV_VacuumManager *mgr) {
         return -1;
     }
 
-    /*
-     * Batch-process: copy active vectors into compacted arrays.
-     * For low-priority, we release the write lock and yield between batches
-     * to avoid starving readers.  However, since we are building new arrays
-     * and have not swapped them yet, we can safely drop the lock only BEFORE
-     * the swap.  To keep the implementation simple and correct, we do the
-     * full scan under the write lock but insert micro-yields via usleep.
-     */
-    size_t batch_size = mgr->config.batch_size;
-    int low_priority = (mgr->config.priority == 0);
-    size_t vectors_compacted = 0;
-    size_t new_idx = 0;
-    size_t batch_counter = 0;
-
-    for (size_t old_idx = 0; old_idx < old_count; ++old_idx) {
-        if (storage->deleted[old_idx] == 0) {
-            /* Copy vector data */
-            memcpy(new_data + (new_idx * dim),
-                   storage->data + (old_idx * dim),
-                   dim * sizeof(float));
-            new_metadata[new_idx] = storage->metadata[old_idx];
-            storage->metadata[old_idx] = NULL; /* Transfer ownership */
-            new_deleted[new_idx] = 0;
-            new_idx++;
-            vectors_compacted++;
-        } else {
-            /* Free metadata for deleted vectors */
-            GV_Metadata *md = storage->metadata[old_idx];
-            while (md != NULL) {
-                GV_Metadata *next = md->next;
-                gv_free(md->key);
-                gv_free(md->value);
-                gv_free(md);
-                md = next;
-            }
-            storage->metadata[old_idx] = NULL;
-        }
-
-        batch_counter++;
-        if (batch_counter >= batch_size && low_priority) {
-            batch_counter = 0;
-            /* Yield to allow other threads to proceed */
-            usleep(100); /* 100 microseconds */
-        }
-    }
-
-    /* Swap arrays */
-    if (storage->owner_db != NULL) {
-        gv_db_free(storage->owner_db, storage->data);
-        gv_db_free(storage->owner_db, storage->metadata);
-        gv_db_free(storage->owner_db, storage->deleted);
-    } else {
-        gv_free(storage->data);
-        gv_free(storage->metadata);
-        gv_free(storage->deleted);
-    }
-
-    storage->data = new_data;
-    storage->metadata = new_metadata;
-    storage->deleted = new_deleted;
-    storage->count = new_count;
-    storage->capacity = new_count;
-
-    /* Update database vector count */
+    /* Keep the database's public vector count in sync with the compacted SoA. */
     db->count = new_count;
-
-    /* Rebuild index structures to reflect new positions.
-     * Use db_compact() approach: rebuild KD-tree or HNSW from scratch.
-     * Since we already hold the write lock and have compacted storage,
-     * we rebuild the primary index in-place. */
-    if (db->index_type == GV_INDEX_TYPE_KDTREE && db->root != NULL) {
-        kdtree_destroy_recursive(db->root);
-        db->root = NULL;
-        for (size_t i = 0; i < new_count; ++i) {
-            kdtree_insert(&db->root, storage, i, 0);
-        }
-    }
-    /* For HNSW, IVFPQ, and other index types the caller should trigger a
-     * separate index rebuild or use db_compact() which already handles
-     * those cases.  The vacuum module focuses on SoA storage defragmentation. */
 
     double frag_after = vacuum_compute_fragmentation(db);
 

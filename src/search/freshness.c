@@ -121,6 +121,7 @@ static int freshness_search_impl(const GV_Database *db,
     }
 
     if (nfound < 0) {
+        gv_search_results_free(raw, (size_t)fetch_k);
         free(raw);
         return -1;
     }
@@ -132,6 +133,7 @@ static int freshness_search_impl(const GV_Database *db,
     GV_FreshnessResult *tmp = (GV_FreshnessResult *)malloc(
         (size_t)nfound * sizeof(GV_FreshnessResult));
     if (!tmp) {
+        gv_search_results_free(raw, (size_t)nfound);
         free(raw);
         return -1;
     }
@@ -160,6 +162,8 @@ static int freshness_search_impl(const GV_Database *db,
         tmp[i].insert_timestamp_ms = ts;
     }
 
+    /* Free each result's owned vector (data+metadata), then the array. */
+    gv_search_results_free(raw, (size_t)nfound);
     free(raw);
 
     /* Sort descending by final_score. */

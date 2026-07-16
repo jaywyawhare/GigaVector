@@ -138,15 +138,19 @@ int ivf_retrain_trigger(GV_Database *db) {
 void ivf_retrain_stop(GV_Database *db) {
     if (!db) return;
 
+    /* Atomically claim the join under the mutex: capture the thread handle and
+     * clear retrain_running so a concurrent caller sees "not running" and does
+     * not attempt to join the same pthread_t (which is undefined behaviour).
+     * Only the caller that observed running != 0 performs the join, outside
+     * the lock, using the captured handle. */
     pthread_mutex_lock(&db->retrain_mutex);
-    int running = db->retrain_running;
+    int should_join = db->retrain_running;
+    pthread_t thread = db->retrain_thread;
+    db->retrain_running = 0;
     pthread_mutex_unlock(&db->retrain_mutex);
 
-    if (running) {
-        pthread_join(db->retrain_thread, NULL);
-        pthread_mutex_lock(&db->retrain_mutex);
-        db->retrain_running = 0;
-        pthread_mutex_unlock(&db->retrain_mutex);
+    if (should_join) {
+        pthread_join(thread, NULL);
     }
 }
 

@@ -1159,6 +1159,82 @@ GV_Database *db_open(const char *filepath, size_t dimension, GV_IndexType index_
         }
     }
 
+    /* Verify the trailing whole-file CRC BEFORE parsing the (untrusted) index
+     * payload, so a corrupt file is rejected without allocating/parsing based
+     * on attacker-controlled bytes. Versions < 3 predate the CRC and are
+     * skipped for backward compatibility. */
+    if (file_version >= 3) {
+        long resume_pos = ftell(in);
+        if (resume_pos < 0) {
+            fclose(in);
+            if (db->hnsw_index) gv_hnsw_destroy(db->hnsw_index);
+            gv_free(db->filepath);
+            gv_free(db->wal_path);
+            gv_free(db);
+            return NULL;
+        }
+        if (fseek(in, 0, SEEK_END) != 0) {
+            fclose(in);
+            if (db->hnsw_index) gv_hnsw_destroy(db->hnsw_index);
+            gv_free(db->filepath);
+            gv_free(db->wal_path);
+            gv_free(db);
+            return NULL;
+        }
+        long end_pos = ftell(in);
+        if (end_pos < 4 || fseek(in, end_pos - (long)sizeof(uint32_t), SEEK_SET) != 0) {
+            fclose(in);
+            if (db->hnsw_index) gv_hnsw_destroy(db->hnsw_index);
+            gv_free(db->filepath);
+            gv_free(db->wal_path);
+            gv_free(db);
+            return NULL;
+        }
+        uint32_t stored_crc = 0;
+        if (read_uint32(in, &stored_crc) != 0 || fseek(in, 0, SEEK_SET) != 0) {
+            fclose(in);
+            if (db->hnsw_index) gv_hnsw_destroy(db->hnsw_index);
+            gv_free(db->filepath);
+            gv_free(db->wal_path);
+            gv_free(db);
+            return NULL;
+        }
+        uint32_t crc = gv_crc32_init();
+        char crcbuf[65536];
+        long remaining = end_pos - (long)sizeof(uint32_t);
+        while (remaining > 0) {
+            size_t chunk = (remaining > (long)sizeof(crcbuf)) ? sizeof(crcbuf) : (size_t)remaining;
+            if (fread(crcbuf, 1, chunk, in) != chunk) {
+                fclose(in);
+                if (db->hnsw_index) gv_hnsw_destroy(db->hnsw_index);
+                gv_free(db->filepath);
+                gv_free(db->wal_path);
+                gv_free(db);
+                return NULL;
+            }
+            crc = gv_crc32_update(crc, crcbuf, chunk);
+            remaining -= (long)chunk;
+        }
+        crc = gv_crc32_finish(crc);
+        if (crc != stored_crc) {
+            fclose(in);
+            if (db->hnsw_index) gv_hnsw_destroy(db->hnsw_index);
+            gv_free(db->filepath);
+            gv_free(db->wal_path);
+            gv_free(db);
+            return NULL;
+        }
+        /* CRC valid: rewind to where index parsing should resume. */
+        if (fseek(in, resume_pos, SEEK_SET) != 0) {
+            fclose(in);
+            if (db->hnsw_index) gv_hnsw_destroy(db->hnsw_index);
+            gv_free(db->filepath);
+            gv_free(db->wal_path);
+            gv_free(db);
+            return NULL;
+        }
+    }
+
     if (file_index_type != db->index_type) {
         fclose(in);
         if (db->hnsw_index) gv_hnsw_destroy(db->hnsw_index);
@@ -1349,44 +1425,13 @@ GV_Database *db_open(const char *filepath, size_t dimension, GV_IndexType index_
         return NULL;
     }
 
-    if (file_version >= 3) {
-        if (fseek(in, 0, SEEK_END) != 0) {
-            goto load_fail;
-        }
-        long end_pos = ftell(in);
-        if (end_pos < 4) {
-            goto load_fail;
-        }
-        if (fseek(in, end_pos - (long)sizeof(uint32_t), SEEK_SET) != 0) {
-            goto load_fail;
-        }
-        uint32_t stored_crc = 0;
-        if (read_uint32(in, &stored_crc) != 0) {
-            goto load_fail;
-        }
-        if (fseek(in, 0, SEEK_SET) != 0) {
-            goto load_fail;
-        }
-        uint32_t crc = gv_crc32_init();
-        char buf[65536];
-        long remaining = end_pos - (long)sizeof(uint32_t);
-        while (remaining > 0) {
-            size_t chunk = (remaining > (long)sizeof(buf)) ? sizeof(buf) : (size_t)remaining;
-            if (fread(buf, 1, chunk, in) != chunk) {
-                goto load_fail;
-            }
-            crc = gv_crc32_update(crc, buf, chunk);
-            remaining -= (long)chunk;
-        }
-        crc = gv_crc32_finish(crc);
-        if (crc != stored_crc) {
-            goto load_fail;
-        }
-    }
+    /* Whole-file CRC was already verified before index parsing (see above). */
 
     if (fclose(in) != 0) {
+        in = NULL;  /* stream already closed; avoid double fclose in load_fail */
         goto load_fail;
     }
+    in = NULL;
 
     if (db->index_type == GV_INDEX_TYPE_KDTREE) {
         db->count = file_count;
@@ -1645,6 +1690,47 @@ static GV_Database *db_open_from_memory_impl(const void *data, size_t size,
         }
     }
 
+    /* Verify the trailing whole-file CRC BEFORE parsing the (untrusted) index
+     * payload. Versions < 3 predate the CRC and are skipped. */
+    if (file_version >= 3) {
+        long resume_pos = ftell(in);
+        long end_pos = -1;
+        uint32_t stored_crc = 0;
+        int crc_ok = (resume_pos >= 0) &&
+                     (fseek(in, 0, SEEK_END) == 0) &&
+                     ((end_pos = ftell(in)) >= 4) &&
+                     (fseek(in, end_pos - (long)sizeof(uint32_t), SEEK_SET) == 0) &&
+                     (read_uint32(in, &stored_crc) == 0) &&
+                     (fseek(in, 0, SEEK_SET) == 0);
+        if (crc_ok) {
+            uint32_t crc = gv_crc32_init();
+            char crcbuf[65536];
+            long remaining = end_pos - (long)sizeof(uint32_t);
+            while (remaining > 0) {
+                size_t chunk = (remaining > (long)sizeof(crcbuf)) ? sizeof(crcbuf) : (size_t)remaining;
+                if (fread(crcbuf, 1, chunk, in) != chunk) {
+                    crc_ok = 0;
+                    break;
+                }
+                crc = gv_crc32_update(crc, crcbuf, chunk);
+                remaining -= (long)chunk;
+            }
+            if (crc_ok) {
+                crc = gv_crc32_finish(crc);
+                if (crc != stored_crc || fseek(in, resume_pos, SEEK_SET) != 0) {
+                    crc_ok = 0;
+                }
+            }
+        }
+        if (!crc_ok) {
+            fclose(in);
+            pthread_rwlock_destroy(&db->rwlock);
+            pthread_mutex_destroy(&db->wal_mutex);
+            gv_free(db);
+            return NULL;
+        }
+    }
+
     if (file_index_type != (uint32_t)db->index_type) {
         fclose(in);
         pthread_rwlock_destroy(&db->rwlock);
@@ -1806,117 +1892,7 @@ static GV_Database *db_open_from_memory_impl(const void *data, size_t size,
         return NULL;
     }
 
-    if (file_version >= 3) {
-        if (fseek(in, 0, SEEK_END) != 0) {
-            fclose(in);
-            if (db->index_type == GV_INDEX_TYPE_KDTREE) {
-                kdtree_destroy_recursive(db->root);
-            } else if (db->index_type == GV_INDEX_TYPE_HNSW) {
-                if (db->hnsw_index) gv_hnsw_destroy(db->hnsw_index);
-            } else if (db->index_type == GV_INDEX_TYPE_IVFPQ) {
-                if (db->hnsw_index) gv_ivfpq_destroy(db->hnsw_index);
-            }
-            pthread_rwlock_destroy(&db->rwlock);
-            pthread_mutex_destroy(&db->wal_mutex);
-            gv_free(db);
-            return NULL;
-        }
-        long end_pos = ftell(in);
-        if (end_pos < 4) {
-            fclose(in);
-            if (db->index_type == GV_INDEX_TYPE_KDTREE) {
-                kdtree_destroy_recursive(db->root);
-            } else if (db->index_type == GV_INDEX_TYPE_HNSW) {
-                if (db->hnsw_index) gv_hnsw_destroy(db->hnsw_index);
-            } else if (db->index_type == GV_INDEX_TYPE_IVFPQ) {
-                if (db->hnsw_index) gv_ivfpq_destroy(db->hnsw_index);
-            }
-            pthread_rwlock_destroy(&db->rwlock);
-            pthread_mutex_destroy(&db->wal_mutex);
-            gv_free(db);
-            return NULL;
-        }
-        if (fseek(in, end_pos - (long)sizeof(uint32_t), SEEK_SET) != 0) {
-            fclose(in);
-            if (db->index_type == GV_INDEX_TYPE_KDTREE) {
-                kdtree_destroy_recursive(db->root);
-            } else if (db->index_type == GV_INDEX_TYPE_HNSW) {
-                if (db->hnsw_index) gv_hnsw_destroy(db->hnsw_index);
-            } else if (db->index_type == GV_INDEX_TYPE_IVFPQ) {
-                if (db->hnsw_index) gv_ivfpq_destroy(db->hnsw_index);
-            }
-            pthread_rwlock_destroy(&db->rwlock);
-            pthread_mutex_destroy(&db->wal_mutex);
-            gv_free(db);
-            return NULL;
-        }
-        uint32_t stored_crc = 0;
-        if (read_uint32(in, &stored_crc) != 0) {
-            fclose(in);
-            if (db->index_type == GV_INDEX_TYPE_KDTREE) {
-                kdtree_destroy_recursive(db->root);
-            } else if (db->index_type == GV_INDEX_TYPE_HNSW) {
-                if (db->hnsw_index) gv_hnsw_destroy(db->hnsw_index);
-            } else if (db->index_type == GV_INDEX_TYPE_IVFPQ) {
-                if (db->hnsw_index) gv_ivfpq_destroy(db->hnsw_index);
-            }
-            pthread_rwlock_destroy(&db->rwlock);
-            pthread_mutex_destroy(&db->wal_mutex);
-            gv_free(db);
-            return NULL;
-        }
-        if (fseek(in, 0, SEEK_SET) != 0) {
-            fclose(in);
-            if (db->index_type == GV_INDEX_TYPE_KDTREE) {
-                kdtree_destroy_recursive(db->root);
-            } else if (db->index_type == GV_INDEX_TYPE_HNSW) {
-                if (db->hnsw_index) gv_hnsw_destroy(db->hnsw_index);
-            } else if (db->index_type == GV_INDEX_TYPE_IVFPQ) {
-                if (db->hnsw_index) gv_ivfpq_destroy(db->hnsw_index);
-            }
-            pthread_rwlock_destroy(&db->rwlock);
-            pthread_mutex_destroy(&db->wal_mutex);
-            gv_free(db);
-            return NULL;
-        }
-        uint32_t crc = gv_crc32_init();
-        char buf[65536];
-        long remaining = end_pos - (long)sizeof(uint32_t);
-        while (remaining > 0) {
-            size_t chunk = (remaining > (long)sizeof(buf)) ? sizeof(buf) : (size_t)remaining;
-            if (fread(buf, 1, chunk, in) != chunk) {
-                fclose(in);
-                if (db->index_type == GV_INDEX_TYPE_KDTREE) {
-                    kdtree_destroy_recursive(db->root);
-                } else if (db->index_type == GV_INDEX_TYPE_HNSW) {
-                    if (db->hnsw_index) gv_hnsw_destroy(db->hnsw_index);
-                } else if (db->index_type == GV_INDEX_TYPE_IVFPQ) {
-                    if (db->hnsw_index) gv_ivfpq_destroy(db->hnsw_index);
-                }
-                pthread_rwlock_destroy(&db->rwlock);
-                pthread_mutex_destroy(&db->wal_mutex);
-                gv_free(db);
-                return NULL;
-            }
-            crc = gv_crc32_update(crc, buf, chunk);
-            remaining -= (long)chunk;
-        }
-        crc = gv_crc32_finish(crc);
-        if (crc != stored_crc) {
-            fclose(in);
-            if (db->index_type == GV_INDEX_TYPE_KDTREE) {
-                kdtree_destroy_recursive(db->root);
-            } else if (db->index_type == GV_INDEX_TYPE_HNSW) {
-                if (db->hnsw_index) gv_hnsw_destroy(db->hnsw_index);
-            } else if (db->index_type == GV_INDEX_TYPE_IVFPQ) {
-                if (db->hnsw_index) gv_ivfpq_destroy(db->hnsw_index);
-            }
-            pthread_rwlock_destroy(&db->rwlock);
-            pthread_mutex_destroy(&db->wal_mutex);
-            gv_free(db);
-            return NULL;
-        }
-    }
+    /* Whole-file CRC was already verified before index parsing (see above). */
 
     fclose(in);
 
@@ -3025,7 +3001,19 @@ int db_add_vector(GV_Database *db, const float *data, size_t dimension) {
         pthread_mutex_unlock(&db->retrain_mutex);
 
         if (ins >= min_vecs && !already_running) {
+            /* Read the index inertia under the read lock so we do not touch
+             * posting lists while the background retrain thread mutates them
+             * under the write lock (which would be a data race / UAF). The
+             * rdlock blocks until any in-flight retrain releases its wrlock,
+             * so the index is quiescent while we compute drift. */
+            pthread_rwlock_rdlock(&db->rwlock);
             float drift = ivf_retrain_check_drift(db);
+            pthread_rwlock_unlock(&db->rwlock);
+
+            /* Trigger the retrain WITHOUT holding rwlock, since the retrain
+             * thread needs the write lock. ivf_retrain_trigger re-checks
+             * retrain_running under retrain_mutex, so a concurrently started
+             * retrain will not be double-triggered. */
             if (drift > 0.0f && drift > 1.0f + db->retrain_drift_threshold) {
                 ivf_retrain_trigger(db);
             }
@@ -3751,26 +3739,30 @@ int db_add_vectors_with_metadata(GV_Database *db, const float *data,
     return 0;
 }
 
-int db_save(const GV_Database *db, const char *filepath) {
+/* Internal save routine. Caller MUST hold db->rwlock (read or write). Writes to
+ * a temporary file and atomically renames it over out_path on success so a
+ * crash mid-save cannot destroy the existing snapshot. */
+static int db_save_locked(const GV_Database *db, const char *filepath) {
     if (db == NULL) {
         return -1;
     }
 
-    pthread_rwlock_rdlock((pthread_rwlock_t *)&db->rwlock);
     const char *out_path = filepath != NULL ? filepath : db->filepath;
     if (out_path == NULL) {
-        pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
         return -1;
     }
 
     if (db->dimension == 0 || db->dimension > UINT32_MAX) {
-        pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
         return -1;
     }
 
-    FILE *out = fopen(out_path, "wb");
+    char temp_path[1024];
+    if (snprintf(temp_path, sizeof(temp_path), "%s.tmp", out_path) >= (int)sizeof(temp_path)) {
+        return -1;
+    }
+
+    FILE *out = fopen(temp_path, "wb");
     if (out == NULL) {
-        pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
         return -1;
     }
 
@@ -3826,7 +3818,7 @@ int db_save(const GV_Database *db, const char *filepath) {
     }
 
     if (status == 0) {
-        FILE *rf = fopen(out_path, "rb");
+        FILE *rf = fopen(temp_path, "rb");
         if (rf == NULL) {
             status = -1;
         } else {
@@ -3842,7 +3834,7 @@ int db_save(const GV_Database *db, const char *filepath) {
             fclose(rf);
             if (status == 0) {
                 crc = gv_crc32_finish(crc);
-                FILE *af = fopen(out_path, "ab");
+                FILE *af = fopen(temp_path, "ab");
                 if (af == NULL || write_uint32(af, crc) != 0 || fclose(af) != 0) {
                     status = -1;
                 }
@@ -3850,14 +3842,26 @@ int db_save(const GV_Database *db, const char *filepath) {
         }
     }
 
-    if (db->wal != NULL && status == 0) {
+    /* Atomically publish the new snapshot; on any error leave the original
+     * file untouched and remove the temp file. */
+    if (status == 0) {
+        if (rename(temp_path, out_path) != 0) {
+            status = -1;
+        }
+    }
+    if (status != 0) {
+        unlink(temp_path);
+        return -1;
+    }
+
+    if (db->wal != NULL) {
         pthread_mutex_lock((pthread_mutex_t *)&db->wal_mutex);
         int truncate_status = wal_truncate(db->wal);
         if (truncate_status == 0) {
             ((GV_Database *)db)->total_wal_records = 0;
         }
         pthread_mutex_unlock((pthread_mutex_t *)&db->wal_mutex);
-    } else if (db->wal_path != NULL && status == 0) {
+    } else if (db->wal_path != NULL) {
         /* Fallback: if WAL handle is NULL but path exists, use reset */
         wal_reset(db->wal_path);
     }
@@ -3873,8 +3877,18 @@ int db_save(const GV_Database *db, const char *filepath) {
         }
     }
 
+    return 0;
+}
+
+int db_save(const GV_Database *db, const char *filepath) {
+    if (db == NULL) {
+        return -1;
+    }
+
+    pthread_rwlock_rdlock((pthread_rwlock_t *)&db->rwlock);
+    int status = db_save_locked(db, filepath);
     pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
-    return status == 0 ? 0 : -1;
+    return status;
 }
 
 int db_search(const GV_Database *db, const float *query_data, size_t k,
@@ -4696,103 +4710,101 @@ int db_delete_vector_by_index(GV_Database *db, size_t vector_index) {
 
     pthread_rwlock_wrlock(&db->rwlock);
 
+    /* Validate the target index for the active index type before mutating any
+     * state. This lets us append to the WAL first (durability) and only then
+     * apply the in-memory mutation. */
+    switch (db->index_type) {
+        case GV_INDEX_TYPE_KDTREE:
+            if (db->soa_storage == NULL || vector_index >= db->soa_storage->count) {
+                pthread_rwlock_unlock(&db->rwlock);
+                return -1;
+            }
+            break;
+        case GV_INDEX_TYPE_SPARSE:
+            if (db->sparse_index == NULL) {
+                pthread_rwlock_unlock(&db->rwlock);
+                return -1;
+            }
+            break;
+        case GV_INDEX_TYPE_HNSW:
+        case GV_INDEX_TYPE_IVFPQ:
+        case GV_INDEX_TYPE_FLAT:
+        case GV_INDEX_TYPE_IVFFLAT:
+        case GV_INDEX_TYPE_IVFSQ8:
+        case GV_INDEX_TYPE_IVFTURBOQUANT:
+        case GV_INDEX_TYPE_PQ:
+        case GV_INDEX_TYPE_LSH:
+        case GV_INDEX_TYPE_RABITQ:
+            if (db->hnsw_index == NULL) {
+                pthread_rwlock_unlock(&db->rwlock);
+                return -1;
+            }
+            break;
+        case GV_INDEX_TYPE_IVFDISK:
+            if (db->hnsw_index == NULL || db->soa_storage == NULL) {
+                pthread_rwlock_unlock(&db->rwlock);
+                return -1;
+            }
+            if (vector_index >= db->soa_storage->count ||
+                soa_storage_is_deleted(db->soa_storage, vector_index) == 1) {
+                pthread_rwlock_unlock(&db->rwlock);
+                return -1;
+            }
+            break;
+        default:
+            pthread_rwlock_unlock(&db->rwlock);
+            return -1;
+    }
+
+    /* WAL-first: append the delete record before mutating in-memory state so a
+     * WAL failure leaves the database unchanged. The WAL append is serialized
+     * with wal_mutex (acquired after rwlock, matching the insert path's
+     * ordering) so records from concurrent operations cannot interleave. */
+    if (db->wal != NULL) {
+        pthread_mutex_lock(&db->wal_mutex);
+        int wal_res = wal_append_delete(db->wal, vector_index);
+        pthread_mutex_unlock(&db->wal_mutex);
+        if (wal_res != 0) {
+            pthread_rwlock_unlock(&db->rwlock);
+            return -1;
+        }
+        db->total_wal_records += 1;
+    }
+
     int status = -1;
     if (db->index_type == GV_INDEX_TYPE_KDTREE) {
-        if (db->soa_storage == NULL || vector_index >= db->soa_storage->count) {
-            pthread_rwlock_unlock(&db->rwlock);
-            return -1;
-        }
         status = kdtree_delete(&(db->root), db->soa_storage, vector_index);
     } else if (db->index_type == GV_INDEX_TYPE_HNSW) {
-        if (db->hnsw_index == NULL) {
-            pthread_rwlock_unlock(&db->rwlock);
-            return -1;
-        }
         status = gv_hnsw_delete_by_vector_index(db->hnsw_index, vector_index);
     } else if (db->index_type == GV_INDEX_TYPE_IVFPQ) {
-        if (db->hnsw_index == NULL) {
-            pthread_rwlock_unlock(&db->rwlock);
-            return -1;
-        }
         status = gv_ivfpq_delete(db->hnsw_index, vector_index);
     } else if (db->index_type == GV_INDEX_TYPE_SPARSE) {
-        if (db->sparse_index == NULL) {
-            pthread_rwlock_unlock(&db->rwlock);
-            return -1;
-        }
         status = sparse_index_delete(db->sparse_index, vector_index);
     } else if (db->index_type == GV_INDEX_TYPE_FLAT) {
-        if (db->hnsw_index == NULL) {
-            pthread_rwlock_unlock(&db->rwlock);
-            return -1;
-        }
         status = flat_delete(db->hnsw_index, vector_index);
     } else if (db->index_type == GV_INDEX_TYPE_IVFFLAT) {
-        if (db->hnsw_index == NULL) {
-            pthread_rwlock_unlock(&db->rwlock);
-            return -1;
-        }
         status = ivfflat_delete(db->hnsw_index, vector_index);
     } else if (db->index_type == GV_INDEX_TYPE_IVFSQ8) {
-        if (db->hnsw_index == NULL) {
-            pthread_rwlock_unlock(&db->rwlock);
-            return -1;
-        }
         status = ivfsq8_delete(db->hnsw_index, vector_index);
     } else if (db->index_type == GV_INDEX_TYPE_IVFTURBOQUANT) {
-        if (db->hnsw_index == NULL) {
-            pthread_rwlock_unlock(&db->rwlock);
-            return -1;
-        }
         status = ivfturboquant_delete(db->hnsw_index, vector_index);
     } else if (db->index_type == GV_INDEX_TYPE_PQ) {
-        if (db->hnsw_index == NULL) {
-            pthread_rwlock_unlock(&db->rwlock);
-            return -1;
-        }
         status = pq_delete(db->hnsw_index, vector_index);
     } else if (db->index_type == GV_INDEX_TYPE_LSH) {
-        if (db->hnsw_index == NULL) {
-            pthread_rwlock_unlock(&db->rwlock);
-            return -1;
-        }
         status = lsh_delete(db->hnsw_index, vector_index);
     } else if (db->index_type == GV_INDEX_TYPE_RABITQ) {
-        if (db->hnsw_index == NULL) {
-            pthread_rwlock_unlock(&db->rwlock);
-            return -1;
-        }
         status = rabitq_delete(db->hnsw_index, vector_index);
     } else if (db->index_type == GV_INDEX_TYPE_IVFDISK) {
-        if (db->hnsw_index == NULL || db->soa_storage == NULL) {
-            pthread_rwlock_unlock(&db->rwlock);
-            return -1;
-        }
-        if (vector_index >= db->soa_storage->count ||
-            soa_storage_is_deleted(db->soa_storage, vector_index) == 1) {
-            pthread_rwlock_unlock(&db->rwlock);
-            return -1;
-        }
         const float *stored = soa_storage_get_data(db->soa_storage, vector_index);
         status = ivfdisk_delete((GV_IVFDiskIndex *)db->hnsw_index, vector_index, stored);
         if (status == 0) {
             status = soa_storage_mark_deleted(db->soa_storage, vector_index);
         }
-    } else {
-        pthread_rwlock_unlock(&db->rwlock);
-        return -1;
     }
 
     if (status == 0) {
         if (db->metadata_index != NULL) {
             metadata_index_remove_vector(db->metadata_index, vector_index);
-        }
-        if (db->wal != NULL) {
-            if (wal_append_delete(db->wal, vector_index) != 0) {
-                pthread_rwlock_unlock(&db->rwlock);
-                return -1;
-            }
-            db->total_wal_records += 1;
         }
         db->generation += 1;
     }
@@ -4812,16 +4824,66 @@ int db_update_vector(GV_Database *db, size_t vector_index, const float *new_data
 
     pthread_rwlock_wrlock(&db->rwlock);
 
+    /* Validate the target index for the active index type before mutating any
+     * state so we can append to the WAL first (durability). */
+    switch (db->index_type) {
+        case GV_INDEX_TYPE_KDTREE:
+            if (db->soa_storage == NULL || vector_index >= db->soa_storage->count) {
+                pthread_rwlock_unlock(&db->rwlock);
+                return -1;
+            }
+            if (soa_storage_is_deleted(db->soa_storage, vector_index) == 1) {
+                pthread_rwlock_unlock(&db->rwlock);
+                return -1;
+            }
+            break;
+        case GV_INDEX_TYPE_HNSW:
+        case GV_INDEX_TYPE_IVFPQ:
+        case GV_INDEX_TYPE_FLAT:
+        case GV_INDEX_TYPE_IVFFLAT:
+        case GV_INDEX_TYPE_IVFSQ8:
+        case GV_INDEX_TYPE_IVFTURBOQUANT:
+        case GV_INDEX_TYPE_PQ:
+        case GV_INDEX_TYPE_LSH:
+        case GV_INDEX_TYPE_RABITQ:
+            if (db->hnsw_index == NULL) {
+                pthread_rwlock_unlock(&db->rwlock);
+                return -1;
+            }
+            break;
+        case GV_INDEX_TYPE_IVFDISK:
+            if (db->hnsw_index == NULL || db->soa_storage == NULL) {
+                pthread_rwlock_unlock(&db->rwlock);
+                return -1;
+            }
+            if (vector_index >= db->soa_storage->count ||
+                soa_storage_is_deleted(db->soa_storage, vector_index) == 1) {
+                pthread_rwlock_unlock(&db->rwlock);
+                return -1;
+            }
+            break;
+        case GV_INDEX_TYPE_SPARSE:
+        default:
+            pthread_rwlock_unlock(&db->rwlock);
+            return -1;
+    }
+
+    /* WAL-first: append the update record before mutating in-memory state so a
+     * WAL failure leaves the database unchanged. Serialized with wal_mutex
+     * (acquired after rwlock, matching the insert path's ordering). */
+    if (db->wal != NULL) {
+        pthread_mutex_lock(&db->wal_mutex);
+        int wal_res = wal_append_update(db->wal, vector_index, new_data, dimension, NULL, NULL, 0);
+        pthread_mutex_unlock(&db->wal_mutex);
+        if (wal_res != 0) {
+            pthread_rwlock_unlock(&db->rwlock);
+            return -1;
+        }
+        db->total_wal_records += 1;
+    }
+
     int status = -1;
     if (db->index_type == GV_INDEX_TYPE_KDTREE) {
-        if (db->soa_storage == NULL || vector_index >= db->soa_storage->count) {
-            pthread_rwlock_unlock(&db->rwlock);
-            return -1;
-        }
-        if (soa_storage_is_deleted(db->soa_storage, vector_index) == 1) {
-            pthread_rwlock_unlock(&db->rwlock);
-            return -1;
-        }
         if (db->filepath == NULL) {
             // In-memory KDTREE: update only SOA storage
             status = soa_storage_update_data(db->soa_storage, vector_index, new_data);
@@ -4830,80 +4892,29 @@ int db_update_vector(GV_Database *db, size_t vector_index, const float *new_data
             status = kdtree_update(&(db->root), db->soa_storage, vector_index, new_data);
         }
     } else if (db->index_type == GV_INDEX_TYPE_HNSW) {
-        if (db->hnsw_index == NULL) {
-            pthread_rwlock_unlock(&db->rwlock);
-            return -1;
-        }
         status = gv_hnsw_update(db->hnsw_index, vector_index, new_data, dimension);
     } else if (db->index_type == GV_INDEX_TYPE_IVFPQ) {
-        if (db->hnsw_index == NULL) {
-            pthread_rwlock_unlock(&db->rwlock);
-            return -1;
-        }
         status = gv_ivfpq_update(db->hnsw_index, vector_index, new_data, dimension);
     } else if (db->index_type == GV_INDEX_TYPE_FLAT) {
-        if (db->hnsw_index == NULL) {
-            pthread_rwlock_unlock(&db->rwlock);
-            return -1;
-        }
         status = flat_update(db->hnsw_index, vector_index, new_data, dimension);
     } else if (db->index_type == GV_INDEX_TYPE_IVFFLAT) {
-        if (db->hnsw_index == NULL) {
-            pthread_rwlock_unlock(&db->rwlock);
-            return -1;
-        }
         status = ivfflat_update(db->hnsw_index, vector_index, new_data, dimension);
     } else if (db->index_type == GV_INDEX_TYPE_IVFSQ8) {
-        if (db->hnsw_index == NULL) {
-            pthread_rwlock_unlock(&db->rwlock);
-            return -1;
-        }
         status = ivfsq8_update(db->hnsw_index, vector_index, new_data, dimension);
     } else if (db->index_type == GV_INDEX_TYPE_IVFTURBOQUANT) {
-        if (db->hnsw_index == NULL) {
-            pthread_rwlock_unlock(&db->rwlock);
-            return -1;
-        }
         status = ivfturboquant_update(db->hnsw_index, vector_index, new_data, dimension);
     } else if (db->index_type == GV_INDEX_TYPE_PQ) {
-        if (db->hnsw_index == NULL) {
-            pthread_rwlock_unlock(&db->rwlock);
-            return -1;
-        }
         status = pq_update(db->hnsw_index, vector_index, new_data, dimension);
     } else if (db->index_type == GV_INDEX_TYPE_LSH) {
-        if (db->hnsw_index == NULL) {
-            pthread_rwlock_unlock(&db->rwlock);
-            return -1;
-        }
         status = lsh_update(db->hnsw_index, vector_index, new_data, dimension);
     } else if (db->index_type == GV_INDEX_TYPE_RABITQ) {
-        if (db->hnsw_index == NULL) {
-            pthread_rwlock_unlock(&db->rwlock);
-            return -1;
-        }
         status = rabitq_update(db->hnsw_index, vector_index, new_data, dimension);
     } else if (db->index_type == GV_INDEX_TYPE_IVFDISK) {
-        if (db->hnsw_index == NULL || db->soa_storage == NULL) {
-            pthread_rwlock_unlock(&db->rwlock);
-            return -1;
-        }
-        if (vector_index >= db->soa_storage->count ||
-            soa_storage_is_deleted(db->soa_storage, vector_index) == 1) {
-            pthread_rwlock_unlock(&db->rwlock);
-            return -1;
-        }
         status = soa_storage_update_data(db->soa_storage, vector_index, new_data);
         if (status == 0) {
             status = ivfdisk_update((GV_IVFDiskIndex *)db->hnsw_index, vector_index,
                                     new_data, dimension);
         }
-    } else if (db->index_type == GV_INDEX_TYPE_SPARSE) {
-        pthread_rwlock_unlock(&db->rwlock);
-        return -1;
-    } else {
-        pthread_rwlock_unlock(&db->rwlock);
-        return -1;
     }
 
     /* Refresh insertion timestamp on successful update. */
@@ -4912,13 +4923,7 @@ int db_update_vector(GV_Database *db, size_t vector_index, const float *new_data
         soa_storage_set_timestamp(db->soa_storage, vector_index, gv_time_now_ms());
     }
 
-    if (status == 0 && db->wal != NULL) {
-        if (wal_append_update(db->wal, vector_index, new_data, dimension, NULL, NULL, 0) != 0) {
-            pthread_rwlock_unlock(&db->rwlock);
-            return -1;
-        }
-        db->total_wal_records += 1;
-    }
+    /* WAL append already performed above (WAL-first). */
     if (status == 0) {
         db->generation += 1;
     }
@@ -5137,8 +5142,13 @@ int db_update_vector_metadata(GV_Database *db, size_t vector_index,
     }
 
     if (status == 0 && db->wal != NULL && vector_data != NULL) {
-        if (wal_append_update(db->wal, vector_index, vector_data, db->dimension,
-                                 metadata_keys, metadata_values, metadata_count) != 0) {
+        /* Serialize the WAL append with wal_mutex (acquired after rwlock) so it
+         * cannot interleave with concurrent inserts/deletes/updates. */
+        pthread_mutex_lock(&db->wal_mutex);
+        int wal_res = wal_append_update(db->wal, vector_index, vector_data, db->dimension,
+                                        metadata_keys, metadata_values, metadata_count);
+        pthread_mutex_unlock(&db->wal_mutex);
+        if (wal_res != 0) {
             pthread_rwlock_unlock(&db->rwlock);
             return -1;
         }
@@ -5177,7 +5187,7 @@ static int db_compact_remap_id_cb(const char *id, size_t old_index, void *vctx) 
     return 0; /* continue iteration */
 }
 
-static int db_compact_soa_storage(GV_Database *db) {
+int db_compact_soa_storage_locked(GV_Database *db) {
     if (db == NULL || db->soa_storage == NULL) {
         return -1;
     }
@@ -5384,23 +5394,11 @@ static int db_compact_wal(GV_Database *db) {
         return 0; /* WAL is below threshold */
     }
 
-    char temp_path[1024];
-    if (snprintf(temp_path, sizeof(temp_path), "%s.tmp", db->filepath) >= (int)sizeof(temp_path)) {
-        return -1;
-    }
-
-    int save_result = db_save(db, temp_path);
-    if (save_result == 0) {
-        if (rename(temp_path, db->filepath) == 0) {
-            if (db->wal != NULL) {
-                wal_truncate(db->wal);
-            }
-        } else {
-            unlink(temp_path);
-        }
-    } else {
-        unlink(temp_path);
-    }
+    /* db_compact (our only caller) already holds the write lock, so use the
+     * locked variant to avoid re-acquiring the non-recursive rwlock.
+     * db_save_locked performs its own temp-file + atomic rename and truncates
+     * the WAL on success. */
+    db_save_locked(db, db->filepath);
 
     return 0;
 }
@@ -5426,7 +5424,7 @@ int db_compact(GV_Database *db) {
             (double)deleted_count / (double)db->soa_storage->count : 0.0;
 
         if (deleted_ratio >= db->deleted_ratio_threshold) {
-            db_compact_soa_storage(db);
+            db_compact_soa_storage_locked(db);
         }
     }
 

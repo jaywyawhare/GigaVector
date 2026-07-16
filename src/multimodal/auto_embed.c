@@ -80,15 +80,6 @@ struct GV_AutoEmbedder {
     pthread_mutex_t      mutex;
 };
 
-static const char *ae_default_model(GV_AutoEmbedProvider provider) {
-    switch (provider) {
-    case GV_EMBED_PROVIDER_GOOGLE:
-        return "text-embedding-004";
-    default:
-        return "text-embedding-3-small";
-    }
-}
-
 static size_t ae_default_dimension(GV_AutoEmbedProvider provider) {
     switch (provider) {
     case GV_EMBED_PROVIDER_GOOGLE:
@@ -737,6 +728,18 @@ static int ae_parse_google_batch(const char *body, size_t count,
 #endif /* HAVE_CURL */
 
 #ifdef HAVE_CURL
+
+/* Provider default model name.  Only used by the HTTP request/URL builders,
+ * which are themselves compiled only under HAVE_CURL; defined here so the
+ * function is not flagged as unused when HAVE_CURL is not set. */
+static const char *ae_default_model(GV_AutoEmbedProvider provider) {
+    switch (provider) {
+    case GV_EMBED_PROVIDER_GOOGLE:
+        return "text-embedding-004";
+    default:
+        return "text-embedding-3-small";
+    }
+}
 
 /**
  * Resolve the endpoint URL for a single-text embedding call.

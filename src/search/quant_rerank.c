@@ -126,6 +126,9 @@ int quant_rerank_search(GV_Database *db, const float *query, size_t k,
     size_t valid = 0;
     for (int i = 0; i < found; i++) {
         size_t vid = search_res[i].id;
+        /* Skip candidates whose SoA id is beyond the encoded codes array
+         * (e.g. inserted after encoding) to avoid an OOB read. */
+        if (vid >= cfg->codes_count) continue;
         const uint8_t *code = cfg->codes + vid * cfg->code_stride;
         float refined = quant_distance(cfg->codebook, query, dim, code);
         if (refined < 0.0f) {
@@ -138,6 +141,8 @@ int quant_rerank_search(GV_Database *db, const float *query, size_t k,
         valid++;
     }
 
+    /* Free each result's owned vector (data+metadata), then the array. */
+    gv_search_results_free(search_res, (size_t)found);
     free(search_res);
 
     if (valid == 0) {
@@ -197,6 +202,8 @@ int gv_db_search_with_rerank(GV_Database *db, const float *query, size_t k,
         valid++;
     }
 
+    /* Free each result's owned vector (data+metadata), then the array. */
+    gv_search_results_free(search_res, (size_t)found);
     free(search_res);
 
     if (valid == 0) {

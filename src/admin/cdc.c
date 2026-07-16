@@ -334,9 +334,38 @@ int cdc_poll(GV_CDCStream *stream, GV_CDCCursor *cursor,
         out->type            = entry->type;
         out->vector_index    = entry->vector_index;
         out->timestamp       = entry->timestamp;
-        out->vector_data     = entry->vector_data;
         out->dimension       = entry->dimension;
-        out->metadata_json   = entry->metadata_json;
+        out->vector_data     = NULL;
+        out->metadata_json   = NULL;
+
+        /*
+         * Deep-copy the vector data and metadata out of the ring slot so the
+         * caller owns them. The ring slot's buffers may be freed/overwritten
+         * by a later cdc_publish() once we release the lock; returning the
+         * borrowed pointers would be a use-after-free for the consumer.
+         * The caller must release these with cdc_free_events().
+         *
+         * On allocation failure we stop copying and return the events
+         * gathered so far (leaving the cursor advanced only past those),
+         * rather than handing back a torn/borrowed event.
+         */
+        if (entry->vector_data && entry->dimension > 0) {
+            size_t nbytes = entry->dimension * sizeof(float);
+            float *vcopy = gv_alloc(nbytes);
+            if (!vcopy) break;
+            memcpy(vcopy, entry->vector_data, nbytes);
+            out->vector_data = vcopy;
+        }
+        if (entry->metadata_json) {
+            char *mcopy = gv_dup_cstr(entry->metadata_json);
+            if (!mcopy) {
+                /* Roll back the partial vector_data copy for this event. */
+                gv_free((void *)out->vector_data);
+                out->vector_data = NULL;
+                break;
+            }
+            out->metadata_json = mcopy;
+        }
         count++;
     }
 
@@ -347,6 +376,22 @@ int cdc_poll(GV_CDCStream *stream, GV_CDCCursor *cursor,
 
     pthread_mutex_unlock(&stream->mutex);
     return count;
+}
+
+void cdc_free_events(GV_CDCEvent *events, size_t count) {
+    if (!events) return;
+    for (size_t i = 0; i < count; i++) {
+        /*
+         * cdc_poll() deep-copies these buffers with gv_alloc/gv_dup_cstr and
+         * hands ownership to the caller. Free them and clear the pointers so
+         * a double free via a second call is harmless. The fields are const
+         * in the public struct, so cast away const to free.
+         */
+        gv_free((void *)events[i].vector_data);
+        gv_free((void *)events[i].metadata_json);
+        events[i].vector_data   = NULL;
+        events[i].metadata_json = NULL;
+    }
 }
 
 GV_CDCCursor cdc_get_cursor(const GV_CDCStream *stream) {

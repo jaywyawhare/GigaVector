@@ -926,6 +926,20 @@ void db_stop_background_compaction(GV_Database *db);
 int db_compact(GV_Database *db);
 
 /**
+ * @brief Internal: compact SoA storage in place, removing deleted vectors and
+ *        rebuilding all dependent structures (primary index and metadata_index)
+ *        with the renumbered vector indices.
+ *
+ * The caller MUST hold db->rwlock as a write lock. This is not part of the
+ * public API and is exposed only so the vacuum subsystem can share the single
+ * correct renumber+rebuild implementation.
+ *
+ * @param db Database instance; must be non-NULL and have SoA storage.
+ * @return 0 on success (including nothing-to-compact), -1 on error.
+ */
+int db_compact_soa_storage_locked(GV_Database *db);
+
+/**
  * @brief Set compaction interval in seconds.
  *
  * @param db Database instance; must be non-NULL.

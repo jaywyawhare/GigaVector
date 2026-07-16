@@ -110,27 +110,16 @@ static void normalize_scores(float *scores, size_t count) {
 /**
  * @brief Recover the SoA storage index from a GV_SearchResult.
  *
- * GV_SearchResult.vector->data points directly into SoA contiguous storage
- * at offset (index * dimension).  We recover the index by computing the
- * pointer difference from the base data pointer.
+ * db_search() results carry the SoA storage index in the `id` field.  (The
+ * `vector` payload is a fresh heap copy, so pointer arithmetic against SoA
+ * storage would be undefined behaviour and yield garbage indices.)
  *
  * Returns (size_t)-1 if the index cannot be determined.
  */
 static size_t result_to_soa_index(const GV_Database *db, const GV_SearchResult *sr) {
-    if (!sr || !sr->vector || !sr->vector->data) return (size_t)-1;
-
-    size_t dim = database_dimension(db);
-    if (dim == 0) return (size_t)-1;
-
-    const float *base = database_get_vector(db, 0);
-    if (!base) return (size_t)-1;
-
-    ptrdiff_t diff = sr->vector->data - base;
-    if (diff < 0) return (size_t)-1;
-
-    size_t idx = (size_t)diff / dim;
+    if (!sr) return (size_t)-1;
+    size_t idx = sr->id;
     if (idx >= database_count(db)) return (size_t)-1;
-
     return idx;
 }
 
@@ -292,13 +281,11 @@ int mmr_search(const void *db_ptr, const float *query, size_t dimension,
     size_t fetch_k = k * oversample;
     if (fetch_k < k) fetch_k = k; /* overflow guard */
 
+    /* Heap-allocate: db_search() resets the TLS scratch arena on entry, which
+     * would clobber a TLS-allocated results buffer (and its .vector copies). */
     GV_SearchResult *search_res =
-        (GV_SearchResult *)gv_tls_calloc(fetch_k, sizeof(GV_SearchResult));
-    int search_res_on_heap = 0;
-    if (!search_res) {
-        search_res = (GV_SearchResult *)gv_calloc(fetch_k, sizeof(GV_SearchResult));
-        search_res_on_heap = 1;
-    }
+        (GV_SearchResult *)gv_calloc(fetch_k, sizeof(GV_SearchResult));
+    int search_res_on_heap = 1;
     if (!search_res) return -1;
 
     int found = db_search(db, query, fetch_k, search_res, (GV_DistanceType)cfg.distance_type);

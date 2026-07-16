@@ -78,7 +78,27 @@ typedef struct {
     const char *api_key;               /**< Optional API key for authentication (default: NULL). */
     double max_requests_per_second;    /**< Rate limit: max requests/sec per client IP (0 = unlimited, default: 0). */
     size_t rate_limit_burst;           /**< Rate limit burst size (default: 10). */
+    const char *data_dir;              /**< Base directory that /save output is confined to (default: "./data"). */
+    int allow_unauthenticated;         /**< INSECURE opt-in: when non-zero, allow mutating/admin endpoints
+                                        *   without an api_key. Default 0 (fail closed). */
 } GV_ServerConfig;
+
+/**
+ * @brief Validate and confine a request-supplied save path under a base directory.
+ *
+ * Deny-by-default confinement helper shared by the REST and gRPC save handlers.
+ * Rejects absolute paths, any path containing a ".." component, and paths
+ * containing NUL or newline bytes. On success writes the joined path
+ * (base_dir + "/" + rel_path) into @p out.
+ *
+ * @param base_dir Confinement base directory (must be non-NULL/non-empty).
+ * @param rel_path Request-supplied relative path (NULL/empty means "use default").
+ * @param out Output buffer for the confined path.
+ * @param out_size Size of @p out.
+ * @return 0 on success (path accepted and written to @p out), -1 on rejection.
+ */
+int server_confine_save_path(const char *base_dir, const char *rel_path,
+                             char *out, size_t out_size);
 
 /**
  * @brief HTTP request context passed to handlers.

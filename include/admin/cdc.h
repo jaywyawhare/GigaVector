@@ -122,9 +122,11 @@ int cdc_unsubscribe(GV_CDCStream *stream, int subscriber_id);
  * @brief Poll for events starting from a cursor position.
  *
  * Copies up to @p max_events events into the caller-supplied buffer and
- * advances @p cursor past the returned events.  The caller must NOT free
- * the vector_data / metadata_json pointers in the returned events; those
- * point into the ring buffer and are valid only until the ring wraps.
+ * advances @p cursor past the returned events.  The vector_data and
+ * metadata_json pointers in the returned events are DEEP COPIES owned by
+ * the caller (not borrowed pointers into the ring buffer), so they remain
+ * valid after the ring wraps.  The caller MUST release each returned batch
+ * with cdc_free_events() to avoid leaking these buffers.
  *
  * @param stream     CDC stream.
  * @param cursor     In/out cursor (advanced on return).
@@ -134,6 +136,18 @@ int cdc_unsubscribe(GV_CDCStream *stream, int subscriber_id);
  */
 int cdc_poll(GV_CDCStream *stream, GV_CDCCursor *cursor,
                 GV_CDCEvent *events, size_t max_events);
+
+/**
+ * @brief Free the deep-copied buffers in events returned by cdc_poll().
+ *
+ * Frees the vector_data and metadata_json owned by each event and clears
+ * the pointers (so a repeated call is a no-op). Does not free the @p events
+ * array itself (which is caller-supplied storage).
+ *
+ * @param events Array of events previously filled by cdc_poll().
+ * @param count  Number of events returned by cdc_poll().
+ */
+void cdc_free_events(GV_CDCEvent *events, size_t count);
 
 /**
  * @brief Get a cursor pointing to the latest position in the stream.

@@ -505,6 +505,39 @@ static int jwt_extract_uint64(const char *json, const char *key, uint64_t *out) 
     return 0;
 }
 
+/*
+ * Parse the JWT header segment and verify that its "alg" claim is exactly
+ * the algorithm we are able to verify.  This verifier only implements HS256,
+ * so any other value (including "none", "RS256", "ES256", etc.) MUST be
+ * rejected.  Accepting a JWT whose header advertises a different algorithm
+ * than the one we actually check enables classic algorithm-confusion attacks
+ * (e.g. alg:none forgery, or RS256->HS256 downgrade where the public key is
+ * used as an HMAC secret).  Fail closed on any parse failure.
+ *
+ * Returns 0 if the header alg == "HS256", -1 otherwise.
+ */
+static int jwt_header_alg_is_hs256(const char *token, const char *dot1) {
+    unsigned char decoded[512];
+    size_t decoded_len = sizeof(decoded);
+    size_t header_b64_len = (size_t)(dot1 - token);
+    if (header_b64_len == 0) return -1;
+    if (base64url_decode(token, header_b64_len, decoded, &decoded_len) != 0) {
+        return -1;
+    }
+    if (decoded_len >= sizeof(decoded)) decoded_len = sizeof(decoded) - 1;
+    decoded[decoded_len] = '\0';
+
+    char alg[64] = {0};
+    if (jwt_extract_string((const char *)decoded, "alg", alg, sizeof(alg)) != 0) {
+        /* No alg present -> reject. */
+        return -1;
+    }
+    if (strcmp(alg, "HS256") != 0) {
+        return -1;
+    }
+    return 0;
+}
+
 GV_AuthResult auth_verify_jwt(GV_AuthManager *auth, const char *token,
                                   GV_Identity *identity) {
     if (!auth || !token) return GV_AUTH_MISSING;
@@ -517,6 +550,15 @@ GV_AuthResult auth_verify_jwt(GV_AuthManager *auth, const char *token,
     if (!dot2) return GV_AUTH_INVALID_FORMAT;
 
     if (auth->config.jwt.secret == NULL) {
+        return GV_AUTH_INVALID_SIGNATURE;
+    }
+
+    /*
+     * Pin the algorithm to HS256 (the only alg this verifier checks) BEFORE
+     * doing any signature work.  Rejects alg:none and any asymmetric alg to
+     * prevent algorithm-confusion / downgrade attacks.
+     */
+    if (jwt_header_alg_is_hs256(token, dot1) != 0) {
         return GV_AUTH_INVALID_SIGNATURE;
     }
 
@@ -598,13 +640,23 @@ GV_AuthResult auth_verify_jwt(GV_AuthManager *auth, const char *token,
 
     const char *payload_json = (const char *)decoded;
 
-    /* Check expiration */
+    /* Check expiration.  A MISSING exp is treated as invalid (fail closed):
+     * a token with no expiry must not be accepted as never-expiring. */
+    uint64_t now = (uint64_t)time(NULL);
+    uint64_t skew = auth->config.jwt.clock_skew_seconds > 0
+                    ? auth->config.jwt.clock_skew_seconds : 60;
     uint64_t exp_time = 0;
-    if (jwt_extract_uint64(payload_json, "exp", &exp_time) == 0) {
-        uint64_t now = (uint64_t)time(NULL);
-        uint64_t skew = auth->config.jwt.clock_skew_seconds > 0
-                        ? auth->config.jwt.clock_skew_seconds : 60;
-        if (exp_time + skew < now) {
+    if (jwt_extract_uint64(payload_json, "exp", &exp_time) != 0) {
+        return GV_AUTH_EXPIRED;
+    }
+    if (exp_time + skew < now) {
+        return GV_AUTH_EXPIRED;
+    }
+
+    /* Reject tokens that are not yet valid (nbf in the future). */
+    uint64_t nbf_time = 0;
+    if (jwt_extract_uint64(payload_json, "nbf", &nbf_time) == 0) {
+        if (nbf_time > now + skew) {
             return GV_AUTH_EXPIRED;
         }
     }
@@ -736,16 +788,24 @@ int auth_generate_jwt(GV_AuthManager *auth, const char *subject,
     }
 
     char payload[512];
-    snprintf(payload, sizeof(payload),
+    int payload_written = snprintf(payload, sizeof(payload),
              "{\"sub\":\"%s\",\"iat\":%llu,\"exp\":%llu}",
              safe_subject, (unsigned long long)now, (unsigned long long)exp);
+    if (payload_written < 0 || (size_t)payload_written >= sizeof(payload)) {
+        return -1;  /* payload truncated */
+    }
 
-    char payload_b64[512];
+    /* base64url of a <512 byte payload needs up to ceil(512/3)*4 + 1 bytes. */
+    char payload_b64[768];
     base64url_encode(payload, strlen(payload), payload_b64);
 
     /* Build signature input */
     char sig_input[1024];
-    snprintf(sig_input, sizeof(sig_input), "%s.%s", header_b64, payload_b64);
+    int sig_written = snprintf(sig_input, sizeof(sig_input), "%s.%s",
+                               header_b64, payload_b64);
+    if (sig_written < 0 || (size_t)sig_written >= sizeof(sig_input)) {
+        return -1;  /* signing input truncated */
+    }
 
     /* HMAC-SHA256 */
     unsigned char key_ipad[64], key_opad[64];
@@ -786,8 +846,13 @@ int auth_generate_jwt(GV_AuthManager *auth, const char *subject,
     char sig_b64[64];
     base64url_encode(signature, 32, sig_b64);
 
-    /* Combine */
-    snprintf(token_out, token_size, "%s.%s.%s", header_b64, payload_b64, sig_b64);
+    /* Combine — fail on truncation rather than emitting a malformed token. */
+    int written = snprintf(token_out, token_size, "%s.%s.%s",
+                           header_b64, payload_b64, sig_b64);
+    if (written < 0 || (size_t)written >= token_size) {
+        if (token_size > 0) token_out[0] = '\0';
+        return -1;  /* assembled token truncated */
+    }
 
     return 0;
 }

@@ -158,9 +158,36 @@ jobs:
       - name: Run tests under ASAN/UBSAN
         timeout-minutes: 10
         env:
-          ASAN_OPTIONS: detect_leaks=0:abort_on_error=1
+          ASAN_OPTIONS: detect_leaks=1:abort_on_error=1
+          LSAN_OPTIONS: suppressions=${{ github.workspace }}/tests/fuzz/lsan.supp
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
         run: ctest --test-dir build-san --output-on-failure --parallel --timeout 120
+
+  # ── ThreadSanitizer build (TSAN, Linux only) ────────────────────────────
+  tsan:
+    name: sanitizers (TSAN)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4.2.2
+
+      - name: Install dependencies
+        timeout-minutes: 10
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential clang \
+            libcurl4-openssl-dev \
+            libssl-dev \
+            libmicrohttpd-dev
+
+      - name: Build and run tests under ThreadSanitizer
+        timeout-minutes: 20
+        env:
+          CC: clang
+          TSAN_OPTIONS: halt_on_error=1
+        run: make test-tsan
 
   # ── libFuzzer + DST (clang, Linux only) ───────────────────────────────
   fuzz:

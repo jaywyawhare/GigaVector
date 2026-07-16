@@ -758,16 +758,12 @@ int rank_search(const void *db, const float *query, size_t dimension,
     if (fetch_k < k) fetch_k = k;
 
     /* Allocate search results buffer. */
+    /* Heap-allocate: db_search() resets the TLS scratch arena on entry, which
+     * would clobber a TLS-allocated results buffer. */
     GV_SearchResult *search_results =
-        (GV_SearchResult *)gv_tls_calloc(fetch_k, sizeof(GV_SearchResult));
-    int search_on_heap = 0;
-    if (!search_results) {
-        search_results =
-            (GV_SearchResult *)gv_alloc(fetch_k * sizeof(GV_SearchResult));
-        search_on_heap = 1;
-    }
+        (GV_SearchResult *)gv_calloc(fetch_k, sizeof(GV_SearchResult));
+    int search_on_heap = 1;
     if (!search_results) return -1;
-    memset(search_results, 0, fetch_k * sizeof(GV_SearchResult));
 
     /* Step 1: Oversample with db_search. */
     int found = db_search(database, query, fetch_k, search_results,

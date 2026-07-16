@@ -498,7 +498,13 @@ static void *repl_follower_thread_func(void *arg) {
             if (msg_type == REPL_MSG_WAL && payload_len >= 12) {
                 uint64_t entry_index = read_u64_be(payload);
                 uint32_t record_len = read_u32_be(payload + 8);
-                if ((size_t)(12 + record_len) <= payload_len) {
+                /*
+                 * Bound check written to avoid 32-bit unsigned overflow:
+                 * `12 + record_len` would wrap for record_len near UINT32_MAX
+                 * and spuriously pass. payload_len >= 12 is guaranteed by the
+                 * outer condition, so `payload_len - 12` cannot underflow.
+                 */
+                if (record_len <= payload_len - 12) {
                     repl_handle_wal_on_follower(mgr, entry_index, payload + 12, record_len);
                     uint8_t ack[8];
                     write_u64_be(ack, entry_index);

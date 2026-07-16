@@ -2,6 +2,7 @@
 #define GV_MEMORY_H
 
 #include <stddef.h>
+#include <pthread.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -17,6 +18,7 @@ typedef struct GV_Memory {
     size_t owned_count;
     size_t owned_cap;
     size_t pool_bytes;
+    pthread_mutex_t lock; /**< Serializes owned[]/counts/pool_bytes mutations. */
 } GV_Memory;
 
 void gv_memory_init(GV_Memory *mem);

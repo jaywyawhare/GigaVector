@@ -108,6 +108,7 @@ typedef struct {
             GV_QuantCodebook *codebook;   /**< Trained quantization codebook. */
             const uint8_t    *codes;      /**< Flat array of encoded vectors. */
             size_t            code_stride; /**< Bytes per encoded vector. */
+            size_t            codes_count; /**< Number of encoded vectors in codes[]; candidates with a SoA id >= this are skipped. */
         } quant;
     } params;
 } GV_PhaseConfig;

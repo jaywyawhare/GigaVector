@@ -20,6 +20,13 @@
 #pragma comment(lib, "bcrypt.lib")
 #endif
 
+#ifdef GV_HAVE_OPENSSL
+#include <openssl/evp.h>
+#endif
+
+/* AES-256-GCM authenticated tag length (bytes). */
+#define GCM_TAG_LEN 16
+
 /* Internal Structures */
 
 struct GV_CryptoContext {
@@ -367,8 +374,12 @@ int crypto_generate_salt(unsigned char *salt, size_t salt_len) {
 
 void crypto_wipe_key(GV_CryptoKey *key) {
     if (!key) return;
-    /* Secure wipe - write zeros then random */
-    memset(key, 0, sizeof(*key));
+    /*
+     * Secure wipe.  Rely SOLELY on the volatile write: a plain memset() to a
+     * buffer that is not read again afterwards is dead-store-eliminable and
+     * may be optimized away by the compiler.  Writing through a volatile
+     * pointer forces the store to actually happen.
+     */
     volatile unsigned char *p = (volatile unsigned char *)key;
     for (size_t i = 0; i < sizeof(*key); i++) {
         p[i] = 0;
@@ -377,10 +388,108 @@ void crypto_wipe_key(GV_CryptoKey *key) {
 
 /* Encryption/Decryption */
 
+#ifdef GV_HAVE_OPENSSL
+/*
+ * AES-256-GCM authenticated encryption using OpenSSL.
+ *
+ * Output layout (self-contained, since the public API has no separate tag
+ * parameter): [ciphertext bytes ...][16-byte GCM tag].
+ * The 96-bit nonce is taken from the first 12 bytes of key->iv.
+ * Returns 0 on success, -1 on failure.
+ */
+static int gcm_encrypt_openssl(const GV_CryptoKey *key,
+                               const unsigned char *plaintext, size_t plaintext_len,
+                               unsigned char *ciphertext, size_t *ciphertext_len) {
+    EVP_CIPHER_CTX *c = EVP_CIPHER_CTX_new();
+    if (!c) return -1;
+    int rc = -1;
+    int outl = 0;
+    size_t total = 0;
+
+    if (EVP_EncryptInit_ex(c, EVP_aes_256_gcm(), NULL, NULL, NULL) != 1) goto done;
+    /* 96-bit IV (default for GCM). */
+    if (EVP_CIPHER_CTX_ctrl(c, EVP_CTRL_GCM_SET_IVLEN, 12, NULL) != 1) goto done;
+    if (EVP_EncryptInit_ex(c, NULL, NULL, key->key, key->iv) != 1) goto done;
+
+    if (plaintext_len > 0) {
+        if (EVP_EncryptUpdate(c, ciphertext, &outl, plaintext,
+                              (int)plaintext_len) != 1) goto done;
+        total += (size_t)outl;
+    }
+    if (EVP_EncryptFinal_ex(c, ciphertext + total, &outl) != 1) goto done;
+    total += (size_t)outl;
+
+    if (EVP_CIPHER_CTX_ctrl(c, EVP_CTRL_GCM_GET_TAG, GCM_TAG_LEN,
+                            ciphertext + total) != 1) goto done;
+    total += GCM_TAG_LEN;
+
+    *ciphertext_len = total;
+    rc = 0;
+done:
+    EVP_CIPHER_CTX_free(c);
+    return rc;
+}
+
+static int gcm_decrypt_openssl(const GV_CryptoKey *key,
+                               const unsigned char *ciphertext, size_t ciphertext_len,
+                               unsigned char *plaintext, size_t *plaintext_len) {
+    if (ciphertext_len < GCM_TAG_LEN) return -1;
+    size_t ct_len = ciphertext_len - GCM_TAG_LEN;
+    const unsigned char *tag = ciphertext + ct_len;
+
+    EVP_CIPHER_CTX *c = EVP_CIPHER_CTX_new();
+    if (!c) return -1;
+    int rc = -1;
+    int outl = 0;
+    size_t total = 0;
+
+    if (EVP_DecryptInit_ex(c, EVP_aes_256_gcm(), NULL, NULL, NULL) != 1) goto done;
+    if (EVP_CIPHER_CTX_ctrl(c, EVP_CTRL_GCM_SET_IVLEN, 12, NULL) != 1) goto done;
+    if (EVP_DecryptInit_ex(c, NULL, NULL, key->key, key->iv) != 1) goto done;
+
+    if (ct_len > 0) {
+        if (EVP_DecryptUpdate(c, plaintext, &outl, ciphertext,
+                              (int)ct_len) != 1) goto done;
+        total += (size_t)outl;
+    }
+    /* Set expected tag, then finalize: fails if authentication is invalid. */
+    if (EVP_CIPHER_CTX_ctrl(c, EVP_CTRL_GCM_SET_TAG, GCM_TAG_LEN,
+                            (void *)tag) != 1) goto done;
+    if (EVP_DecryptFinal_ex(c, plaintext + total, &outl) != 1) goto done;
+    total += (size_t)outl;
+
+    *plaintext_len = total;
+    rc = 0;
+done:
+    EVP_CIPHER_CTX_free(c);
+    return rc;
+}
+#endif /* GV_HAVE_OPENSSL */
+
 int crypto_encrypt(GV_CryptoContext *ctx, const GV_CryptoKey *key,
                        const unsigned char *plaintext, size_t plaintext_len,
                        unsigned char *ciphertext, size_t *ciphertext_len) {
     if (!ctx || !key || !plaintext || !ciphertext || !ciphertext_len) return -1;
+
+    /*
+     * Dispatch on the configured algorithm.  GCM is authenticated; CBC in this
+     * portable build is unauthenticated (no MAC).  We must never silently do
+     * unauthenticated CBC when the caller asked for authenticated GCM.
+     */
+    if (ctx->config.algorithm == GV_CRYPTO_AES_256_GCM) {
+#ifdef GV_HAVE_OPENSSL
+        return gcm_encrypt_openssl(key, plaintext, plaintext_len,
+                                   ciphertext, ciphertext_len);
+#else
+        /* Authenticated GCM is unavailable without OpenSSL: fail closed
+         * rather than fall back to unauthenticated CBC. */
+        (void)plaintext_len;
+        return -1;
+#endif
+    }
+    if (ctx->config.algorithm != GV_CRYPTO_AES_256_CBC) {
+        return -1;  /* unknown/unsupported algorithm */
+    }
 
     /* Expand key */
     unsigned char roundkeys[240];
@@ -427,6 +536,20 @@ int crypto_decrypt(GV_CryptoContext *ctx, const GV_CryptoKey *key,
                        const unsigned char *ciphertext, size_t ciphertext_len,
                        unsigned char *plaintext, size_t *plaintext_len) {
     if (!ctx || !key || !ciphertext || !plaintext || !plaintext_len) return -1;
+
+    if (ctx->config.algorithm == GV_CRYPTO_AES_256_GCM) {
+#ifdef GV_HAVE_OPENSSL
+        /* Authenticated: fails if the tag does not verify. */
+        return gcm_decrypt_openssl(key, ciphertext, ciphertext_len,
+                                   plaintext, plaintext_len);
+#else
+        return -1;  /* GCM unsupported without OpenSSL: fail closed */
+#endif
+    }
+    if (ctx->config.algorithm != GV_CRYPTO_AES_256_CBC) {
+        return -1;  /* unknown/unsupported algorithm */
+    }
+
     if (ciphertext_len == 0 || ciphertext_len % 16 != 0) return -1;
 
     /* Expand key */
@@ -739,6 +862,19 @@ int crypto_hmac_sha256(const unsigned char *key, size_t key_len,
     return 0;
 }
 
+/*
+ * Constant-time byte comparison.
+ *
+ * Compares exactly `len` bytes of `a` and `b` in time independent of WHERE
+ * they first differ (no early exit), to avoid leaking secret contents via a
+ * timing side channel — important when comparing MACs/tags/tokens.
+ *
+ * Return semantics (unchanged): 0 iff the two buffers are equal over `len`
+ * bytes; non-zero otherwise.  Note this is the OPPOSITE polarity of memcmp's
+ * "0 == equal but non-zero conveys ordering"; here non-zero only means
+ * "differ".  Callers must treat only 0 as a match.  Note also that `len`
+ * itself is not secret: this does not hide the length being compared.
+ */
 int crypto_constant_time_compare(const unsigned char *a,
                                      const unsigned char *b, size_t len) {
     unsigned char result = 0;

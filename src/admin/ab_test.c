@@ -61,10 +61,24 @@ GV_ABTest *ab_test_create(GV_Database *db, const char *name, int type_b, float s
     test->latency_sum_b  = 0.0;
     test->route_counter  = 0;
     test->creation_time_us = ab_now_us();
+    test->inflight       = 0;
+    test->cv_inited      = 0;
+
+    /*
+     * Condition variable used to let gv_db_ab_test_stop() wait for in-flight
+     * searches to drain before the shadow_db is freed (guards against UAF).
+     * Paired with db->ab_mutex at use sites.
+     */
+    if (pthread_cond_init(&test->inflight_cv, NULL) != 0) {
+        free(test);
+        return NULL;
+    }
+    test->cv_inited = 1;
 
     /* Create the shadow database with the same dimension but different type. */
     GV_Database *shadow = db_open(NULL, db->dimension, (GV_IndexType)type_b);
     if (!shadow) {
+        pthread_cond_destroy(&test->inflight_cv);
         free(test);
         return NULL;
     }
@@ -179,9 +193,19 @@ void ab_test_destroy(GV_ABTest *test) {
     if (!test) {
         return;
     }
+    /*
+     * Callers must ensure no searches are in flight before destroying:
+     * either the test was never published to db->ab_test (error paths in
+     * gv_db_ab_test_start), or gv_db_ab_test_stop has already drained
+     * inflight to 0 under db->ab_mutex.
+     */
     if (test->shadow_db) {
         db_close(test->shadow_db);
         test->shadow_db = NULL;
+    }
+    if (test->cv_inited) {
+        pthread_cond_destroy(&test->inflight_cv);
+        test->cv_inited = 0;
     }
     free(test);
 }
@@ -233,24 +257,41 @@ int gv_db_ab_test_search(GV_Database *db, const float *query, size_t k,
         return db_search(db, query, k, results, distance_type);
     }
 
-    int which = ab_test_route(db);
+    /*
+     * Capture the test and its shadow_db into locals WHILE holding ab_mutex,
+     * and register this search as in-flight (inflight++). gv_db_ab_test_stop
+     * detaches db->ab_test and then blocks until inflight drains to 0 before
+     * calling ab_test_destroy, so `test` and `test->shadow_db` captured here
+     * remain valid for the duration of the search below (no use-after-free).
+     */
+    GV_ABTest *test    = (GV_ABTest *)db->ab_test;
+    int which          = ab_test_route(db);
+    GV_Database *target = (which == 1) ? test->shadow_db : db;
+    test->inflight++;
     pthread_mutex_unlock(&db->ab_mutex);
 
     uint64_t t0 = ab_now_us();
-    int found;
-    if (which == 1) {
-        /* Shadow index (B). */
-        GV_ABTest *test = (GV_ABTest *)db->ab_test;
-        found = db_search(test->shadow_db, query, k, results, distance_type);
-    } else {
-        /* Primary index (A). */
-        found = db_search(db, query, k, results, distance_type);
-    }
+    int found = db_search(target, query, k, results, distance_type);
     uint64_t t1 = ab_now_us();
     double latency_us = (double)(t1 - t0);
 
+    /*
+     * Record stats and release the in-flight reference on the SAME test we
+     * captured (db->ab_test may already be NULL if a stop is racing). Signal
+     * the waiter so a pending stop can proceed once inflight hits 0.
+     */
     pthread_mutex_lock(&db->ab_mutex);
-    ab_test_record(db, which, latency_us);
+    if (which == 1) {
+        test->queries_b++;
+        test->latency_sum_b += latency_us;
+    } else {
+        test->queries_a++;
+        test->latency_sum_a += latency_us;
+    }
+    test->inflight--;
+    if (test->inflight == 0) {
+        pthread_cond_broadcast(&test->inflight_cv);
+    }
     pthread_mutex_unlock(&db->ab_mutex);
 
     return found;
@@ -272,7 +313,23 @@ void gv_db_ab_test_stop(GV_Database *db) {
     }
     pthread_mutex_lock(&db->ab_mutex);
     GV_ABTest *test = (GV_ABTest *)db->ab_test;
+
+    /*
+     * Detach the test first so no NEW search can start on it (new searches
+     * observe db->ab_test == NULL and fall back to the primary index). Then
+     * wait for any searches that already incremented inflight to complete,
+     * so we never free shadow_db out from under a running search (UAF fix).
+     * inflight and inflight_cv are both protected by db->ab_mutex.
+     */
     db->ab_test = NULL;
+
+    if (test) {
+        while (test->inflight > 0) {
+            pthread_cond_wait(&test->inflight_cv, &db->ab_mutex);
+        }
+    }
     pthread_mutex_unlock(&db->ab_mutex);
+
+    /* Safe to destroy: detached and drained. */
     ab_test_destroy(test);
 }

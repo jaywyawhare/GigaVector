@@ -70,7 +70,7 @@ bench-ivfdisk-full: $(BENCH_DIR)/bench_ivfdisk
 
 $(BIN_DIR)/main: $(MAIN_OBJ) $(STATIC_LIB)
 	@mkdir -p $(BIN_DIR)
-	$(CC) $(CFLAGS) $(MAIN_OBJ) $(LDFLAGS) -L$(LIB_DIR) -l$(LIB_NAME) -o $@
+	$(CC) $(CFLAGS) $(MAIN_OBJ) $(STATIC_LIB) $(LDFLAGS) -o $@
 	@echo "Built main executable: $@"
 
 .PHONY: lib
@@ -320,6 +320,9 @@ endif
 	$(FUZZ_CC) $(FUZZ_CFLAGS) tests/fuzz/fuzz_grpc_frame.c $(FUZZ_LDFLAGS) -o $(FUZZ_DIR)/fuzz_grpc_frame
 	$(FUZZ_CC) $(FUZZ_CFLAGS) tests/fuzz/fuzz_grpc_dispatch.c $(FUZZ_LDFLAGS) -o $(FUZZ_DIR)/fuzz_grpc_dispatch
 	$(FUZZ_CC) $(FUZZ_CFLAGS) tests/fuzz/fuzz_posting_segment.c $(FUZZ_LDFLAGS) -o $(FUZZ_DIR)/fuzz_posting_segment
+	$(FUZZ_CC) $(FUZZ_CFLAGS) tests/fuzz/fuzz_json.c $(FUZZ_LDFLAGS) -o $(FUZZ_DIR)/fuzz_json
+	$(FUZZ_CC) $(FUZZ_CFLAGS) tests/fuzz/fuzz_filter_expr.c $(FUZZ_LDFLAGS) -o $(FUZZ_DIR)/fuzz_filter_expr
+	$(FUZZ_CC) $(FUZZ_CFLAGS) tests/fuzz/fuzz_sql.c $(FUZZ_LDFLAGS) -o $(FUZZ_DIR)/fuzz_sql
 	@echo "Built fuzzers in $(FUZZ_DIR)"
 
 fuzz-run: export LSAN_OPTIONS = suppressions=$(abspath tests/fuzz/lsan.supp)
@@ -340,6 +343,15 @@ fuzz-run: fuzz
 	@echo "Running fuzz_wal_replay (empty seed corpus; full-file replay)..."
 	@mkdir -p tests/fuzz/corpus/wal_replay_empty
 	@$(FUZZ_DIR)/fuzz_wal_replay tests/fuzz/corpus/wal_replay_empty -runs=5000 -max_len=8192 -rss_limit_mb=512 -print_final_stats=1
+	@echo "Running fuzz_json..."
+	@mkdir -p tests/fuzz/corpus/json
+	@$(FUZZ_DIR)/fuzz_json tests/fuzz/corpus/json -max_total_time=30 -rss_limit_mb=512 -print_final_stats=1
+	@echo "Running fuzz_filter_expr..."
+	@mkdir -p tests/fuzz/corpus/filter_expr
+	@$(FUZZ_DIR)/fuzz_filter_expr tests/fuzz/corpus/filter_expr -max_total_time=30 -rss_limit_mb=512 -print_final_stats=1
+	@echo "Running fuzz_sql..."
+	@mkdir -p tests/fuzz/corpus/sql
+	@$(FUZZ_DIR)/fuzz_sql tests/fuzz/corpus/sql -max_total_time=30 -rss_limit_mb=512 -print_final_stats=1
 
 fuzz-corpus: lib
 	@bash tests/fuzz/gen_corpus.sh
