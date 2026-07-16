@@ -537,6 +537,51 @@ static int wal_skip_ivfdisk_append_record(FILE *f, int has_crc)
     return 0;
 }
 
+/*
+ * Decide whether a failure while reading the record that began at file offset
+ * `record_start` represents a torn TRAILING record (the common case after an
+ * unclean shutdown) rather than corruption in the middle of the log.
+ *
+ * `short_read` must be non-zero when the failure was a truncated read (fread
+ * returned fewer bytes than requested), which unambiguously means the file
+ * ended mid-record -> torn tail. For a CRC mismatch on a fully-read record,
+ * pass short_read == 0: it is a torn tail only if no bytes follow the record
+ * (i.e. we are already at EOF); otherwise a valid record follows and the
+ * mismatch indicates mid-log corruption.
+ *
+ * Returns 1 if this is a torn trailing record (replay should stop and succeed),
+ * 0 if it is mid-log corruption (replay should fail).
+ *
+ * On a torn tail, the log is truncated to `record_start` so the partial/corrupt
+ * bytes are discarded and the next open starts from a clean boundary.
+ */
+static int wal_is_torn_tail(FILE *f, long record_start, int short_read) {
+    if (!short_read) {
+        /* CRC mismatch: torn tail only if nothing follows this record. */
+        long cur = ftell(f);
+        if (cur < 0) return 0;
+        if (fseek(f, 0, SEEK_END) != 0) return 0;
+        long end = ftell(f);
+        if (end != cur) {
+            /* More data follows the bad record -> mid-log corruption. */
+            (void)fseek(f, cur, SEEK_SET);
+            return 0;
+        }
+    }
+
+    /* Torn trailing record: truncate the log back to the last good boundary. */
+    if (record_start >= 0) {
+        if (fflush(f) == 0) {
+#ifndef _WIN32
+            (void)ftruncate(fileno(f), (off_t)record_start);
+#else
+            (void)_chsize_s(_fileno(f), (long long)record_start);
+#endif
+        }
+    }
+    return 1;
+}
+
 int wal_replay(const char *path, size_t expected_dimension,
                   int (*on_insert)(void *ctx, const float *data, size_t dimension,
                                    const char *metadata_key, const char *metadata_value),
@@ -580,6 +625,9 @@ int wal_replay(const char *path, size_t expected_dimension,
     int has_crc = (version >= 2);
 
     while (1) {
+        /* Offset of the record we are about to read; the last good boundary. */
+        long record_start = ftell(f);
+
         uint8_t type = 0;
         if (read_u8(f, &type) != 0) {
             if (feof(f)) break;
@@ -590,6 +638,8 @@ int wal_replay(const char *path, size_t expected_dimension,
         if (type == GV_WAL_TYPE_DELETE) {
             uint64_t index_u64 = 0;
             if (fread(&index_u64, sizeof(uint64_t), 1, f) != 1) {
+                /* Short read: truncated trailing record -> stop successfully. */
+                if (wal_is_torn_tail(f, record_start, 1)) break;
                 fclose(f);
                 return -1;
             }
@@ -600,7 +650,9 @@ int wal_replay(const char *path, size_t expected_dimension,
                 crc = gv_crc32_update(crc, &index_u64, sizeof(uint64_t));
                 crc = gv_crc32_finish(crc);
                 uint32_t stored_crc = 0;
-                if (read_u32(f, &stored_crc) != 0 || stored_crc != crc) {
+                int rres = read_u32(f, &stored_crc);
+                if (rres != 0 || stored_crc != crc) {
+                    if (wal_is_torn_tail(f, record_start, rres != 0)) break;
                     fclose(f);
                     return -1;
                 }
@@ -611,6 +663,8 @@ int wal_replay(const char *path, size_t expected_dimension,
 
         if (type == GV_WAL_TYPE_IVFDISK_APPEND) {
             if (wal_skip_ivfdisk_append_record(f, has_crc) != 0) {
+                /* Truncated trailing ivfdisk record -> torn tail. */
+                if (wal_is_torn_tail(f, record_start, 1)) break;
                 fclose(f);
                 return -1;
             }
@@ -621,11 +675,13 @@ int wal_replay(const char *path, size_t expected_dimension,
             gv_tls_arena_reset();
             uint64_t index_u64 = 0;
             if (fread(&index_u64, sizeof(uint64_t), 1, f) != 1) {
+                if (wal_is_torn_tail(f, record_start, 1)) break;
                 fclose(f);
                 return -1;
             }
             WalVecScratch rec;
             if (wal_vec_read_body(f, (uint32_t)expected_dimension, &rec) != 0) {
+                if (wal_is_torn_tail(f, record_start, 1)) break;
                 fclose(f);
                 return -1;
             }
@@ -650,8 +706,10 @@ int wal_replay(const char *path, size_t expected_dimension,
                 }
                 crc = gv_crc32_finish(crc);
                 uint32_t stored_crc = 0;
-                if (read_u32(f, &stored_crc) != 0 || stored_crc != crc) {
+                int rres = read_u32(f, &stored_crc);
+                if (rres != 0 || stored_crc != crc) {
                     wal_vec_scratch_release(&rec);
+                    if (wal_is_torn_tail(f, record_start, rres != 0)) break;
                     fclose(f);
                     return -1;
                 }
@@ -667,6 +725,7 @@ int wal_replay(const char *path, size_t expected_dimension,
             gv_tls_arena_reset();
             WalVecScratch rec;
             if (wal_vec_read_body(f, (uint32_t)expected_dimension, &rec) != 0) {
+                if (wal_is_torn_tail(f, record_start, 1)) break;
                 fclose(f);
                 return -1;
             }
@@ -690,8 +749,10 @@ int wal_replay(const char *path, size_t expected_dimension,
                 }
                 crc = gv_crc32_finish(crc);
                 uint32_t stored_crc = 0;
-                if (read_u32(f, &stored_crc) != 0 || stored_crc != crc) {
+                int rres = read_u32(f, &stored_crc);
+                if (rres != 0 || stored_crc != crc) {
                     wal_vec_scratch_release(&rec);
+                    if (wal_is_torn_tail(f, record_start, rres != 0)) break;
                     fclose(f);
                     return -1;
                 }
@@ -712,6 +773,9 @@ int wal_replay(const char *path, size_t expected_dimension,
                 return -1;
             }
         } else {
+            /* Unknown record type. If it is the very last byte in the file it
+             * is a torn trailing record; otherwise the log is corrupt. */
+            if (wal_is_torn_tail(f, record_start, 0)) break;
             fclose(f);
             return -1;
         }
@@ -771,6 +835,9 @@ int wal_replay_rich(const char *path, size_t expected_dimension,
     int has_crc = (version >= 2);
 
     while (1) {
+        /* Offset of the record we are about to read; the last good boundary. */
+        long record_start = ftell(f);
+
         uint8_t type = 0;
         if (read_u8(f, &type) != 0) {
             if (feof(f)) break;
@@ -781,6 +848,7 @@ int wal_replay_rich(const char *path, size_t expected_dimension,
         if (type == GV_WAL_TYPE_DELETE) {
             uint64_t index_u64 = 0;
             if (fread(&index_u64, sizeof(uint64_t), 1, f) != 1) {
+                if (wal_is_torn_tail(f, record_start, 1)) break;
                 fclose(f);
                 return -1;
             }
@@ -791,7 +859,9 @@ int wal_replay_rich(const char *path, size_t expected_dimension,
                 crc = gv_crc32_update(crc, &index_u64, sizeof(uint64_t));
                 crc = gv_crc32_finish(crc);
                 uint32_t stored_crc = 0;
-                if (read_u32(f, &stored_crc) != 0 || stored_crc != crc) {
+                int rres = read_u32(f, &stored_crc);
+                if (rres != 0 || stored_crc != crc) {
+                    if (wal_is_torn_tail(f, record_start, rres != 0)) break;
                     fclose(f);
                     return -1;
                 }
@@ -811,6 +881,7 @@ int wal_replay_rich(const char *path, size_t expected_dimension,
                 fread(&vector_id, sizeof(uint64_t), 1, f) != 1 ||
                 read_u32(f, &dim) != 0 ||
                 dim != (uint32_t)expected_dimension) {
+                if (wal_is_torn_tail(f, record_start, 1)) break;
                 fclose(f);
                 return -1;
             }
@@ -819,6 +890,7 @@ int wal_replay_rich(const char *path, size_t expected_dimension,
             if (!buf) { fclose(f); return -1; }
             if (read_floats(f, buf, dim) != 0) {
                 wal_scratch_release(buf, buf_on_heap);
+                if (wal_is_torn_tail(f, record_start, 1)) break;
                 fclose(f);
                 return -1;
             }
@@ -832,8 +904,10 @@ int wal_replay_rich(const char *path, size_t expected_dimension,
                 crc = gv_crc32_update(crc, buf, dim * sizeof(float));
                 crc = gv_crc32_finish(crc);
                 uint32_t stored_crc = 0;
-                if (read_u32(f, &stored_crc) != 0 || stored_crc != crc) {
+                int rres = read_u32(f, &stored_crc);
+                if (rres != 0 || stored_crc != crc) {
                     wal_scratch_release(buf, buf_on_heap);
+                    if (wal_is_torn_tail(f, record_start, rres != 0)) break;
                     fclose(f);
                     return -1;
                 }
@@ -855,11 +929,13 @@ int wal_replay_rich(const char *path, size_t expected_dimension,
             gv_tls_arena_reset();
             uint64_t index_u64 = 0;
             if (fread(&index_u64, sizeof(uint64_t), 1, f) != 1) {
+                if (wal_is_torn_tail(f, record_start, 1)) break;
                 fclose(f);
                 return -1;
             }
             WalVecScratch rec;
             if (wal_vec_read_body(f, (uint32_t)expected_dimension, &rec) != 0) {
+                if (wal_is_torn_tail(f, record_start, 1)) break;
                 fclose(f);
                 return -1;
             }
@@ -884,8 +960,10 @@ int wal_replay_rich(const char *path, size_t expected_dimension,
                 }
                 crc = gv_crc32_finish(crc);
                 uint32_t stored_crc = 0;
-                if (read_u32(f, &stored_crc) != 0 || stored_crc != crc) {
+                int rres = read_u32(f, &stored_crc);
+                if (rres != 0 || stored_crc != crc) {
                     wal_vec_scratch_release(&rec);
+                    if (wal_is_torn_tail(f, record_start, rres != 0)) break;
                     fclose(f);
                     return -1;
                 }
@@ -907,6 +985,7 @@ int wal_replay_rich(const char *path, size_t expected_dimension,
             gv_tls_arena_reset();
             WalVecScratch rec;
             if (wal_vec_read_body(f, (uint32_t)expected_dimension, &rec) != 0) {
+                if (wal_is_torn_tail(f, record_start, 1)) break;
                 fclose(f);
                 return -1;
             }
@@ -930,8 +1009,10 @@ int wal_replay_rich(const char *path, size_t expected_dimension,
                 }
                 crc = gv_crc32_finish(crc);
                 uint32_t stored_crc = 0;
-                if (read_u32(f, &stored_crc) != 0 || stored_crc != crc) {
+                int rres = read_u32(f, &stored_crc);
+                if (rres != 0 || stored_crc != crc) {
                     wal_vec_scratch_release(&rec);
+                    if (wal_is_torn_tail(f, record_start, rres != 0)) break;
                     fclose(f);
                     return -1;
                 }
@@ -947,6 +1028,8 @@ int wal_replay_rich(const char *path, size_t expected_dimension,
                 return -1;
             }
         } else {
+            /* Unknown record type: torn trailing byte or mid-log corruption. */
+            if (wal_is_torn_tail(f, record_start, 0)) break;
             fclose(f);
             return -1;
         }

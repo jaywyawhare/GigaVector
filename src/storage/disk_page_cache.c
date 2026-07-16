@@ -51,14 +51,22 @@ static void disk_page_cache_unlink(GV_DiskPageCache *cache, DiskPageCacheNode *n
     node->lru_prev = node->lru_next = NULL;
 }
 
-static void disk_page_cache_touch(GV_DiskPageCache *cache, DiskPageCacheNode *node)
+/* Link a node that is NOT currently in the LRU list at the head (most-recent). */
+static void disk_page_cache_push_front(GV_DiskPageCache *cache, DiskPageCacheNode *node)
 {
-    disk_page_cache_unlink(cache, node);
     node->lru_prev = NULL;
     node->lru_next = cache->lru_head;
     if (cache->lru_head) cache->lru_head->lru_prev = node;
     cache->lru_head = node;
     if (!cache->lru_tail) cache->lru_tail = node;
+}
+
+/* Move an existing (already-linked) node to the head. Must not be called on a
+ * node that is not in the list — unlink() would corrupt head/tail otherwise. */
+static void disk_page_cache_touch(GV_DiskPageCache *cache, DiskPageCacheNode *node)
+{
+    disk_page_cache_unlink(cache, node);
+    disk_page_cache_push_front(cache, node);
 }
 
 static void disk_page_cache_node_free(DiskPageCacheNode *node)
@@ -179,7 +187,7 @@ int gv_disk_page_cache_insert(GV_DiskPageCache *cache, const char *key,
     node->hash = hash;
     node->hash_next = cache->buckets[bucket];
     cache->buckets[bucket] = node;
-    disk_page_cache_touch(cache, node);
+    disk_page_cache_push_front(cache, node);  /* new node: link without unlink */
     cache->count++;
     cache->used_bytes += len;
     disk_page_cache_evict(cache);
