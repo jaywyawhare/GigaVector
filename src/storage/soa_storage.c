@@ -8,6 +8,7 @@
 #include "core/memory.h"
 #include "core/utils.h"
 #include "storage/database.h"
+#include "core/sim_time.h"
 
 #define GV_SOA_SAVE_MAGIC 0x534F4153u /* "SOAS" */
 
@@ -79,10 +80,13 @@ static int soa_storage_grow(GV_SoAStorage *storage, size_t min_capacity)
     GV_Metadata **tmp_meta =
         (GV_Metadata **)soa_realloc(storage, storage->metadata, new_capacity * sizeof(GV_Metadata *));
     int *tmp_del = (int *)soa_realloc(storage, storage->deleted, new_capacity * sizeof(int));
-    if (!tmp_data || !tmp_meta || !tmp_del) {
+    uint64_t *tmp_ts = (uint64_t *)realloc(storage->insert_timestamps,
+                                            new_capacity * sizeof(uint64_t));
+    if (!tmp_data || !tmp_meta || !tmp_del || !tmp_ts) {
         if (tmp_data) storage->data = tmp_data;
         if (tmp_meta) storage->metadata = tmp_meta;
         if (tmp_del) storage->deleted = tmp_del;
+        if (tmp_ts) storage->insert_timestamps = tmp_ts;
         return -1;
     }
     if (new_capacity > storage->capacity) {
@@ -90,10 +94,13 @@ static int soa_storage_grow(GV_SoAStorage *storage, size_t min_capacity)
                (new_capacity - storage->capacity) * sizeof(GV_Metadata *));
         memset(tmp_del + storage->capacity, 0,
                (new_capacity - storage->capacity) * sizeof(int));
+        memset(tmp_ts + storage->capacity, 0,
+               (new_capacity - storage->capacity) * sizeof(uint64_t));
     }
     storage->data = tmp_data;
     storage->metadata = tmp_meta;
     storage->deleted = tmp_del;
+    storage->insert_timestamps = tmp_ts;
     storage->capacity = new_capacity;
     return 0;
 }
@@ -133,6 +140,15 @@ GV_SoAStorage *soa_storage_create(size_t dimension, size_t initial_capacity) {
 
     storage->deleted = (int *)gv_calloc(storage->capacity, sizeof(int));
     if (storage->deleted == NULL) {
+        gv_free(storage->metadata);
+        gv_free(storage->data);
+        gv_free(storage);
+        return NULL;
+    }
+
+    storage->insert_timestamps = (uint64_t *)calloc(storage->capacity, sizeof(uint64_t));
+    if (storage->insert_timestamps == NULL) {
+        gv_free(storage->deleted);
         gv_free(storage->metadata);
         gv_free(storage->data);
         gv_free(storage);
@@ -205,6 +221,8 @@ void soa_storage_destroy(GV_SoAStorage *storage) {
         storage->deleted = NULL;
         storage->owner_db = NULL;
     }
+    /* insert_timestamps is a plain-heap array (never arena-owned); free unconditionally. */
+    free(storage->insert_timestamps);
     gv_free(storage);
 }
 
@@ -224,6 +242,7 @@ size_t soa_storage_add(GV_SoAStorage *storage, const float *data, GV_Metadata *m
     memcpy(dest, data, storage->dimension * sizeof(float));
     storage->metadata[index] = metadata;
     storage->deleted[index] = 0;
+    storage->insert_timestamps[index] = gv_time_now_ms();
     storage->count++;
 
     return index;
@@ -310,6 +329,13 @@ int soa_storage_update_metadata(GV_SoAStorage *storage, size_t index, GV_Metadat
     return 0;
 }
 
+int soa_storage_set_timestamp(GV_SoAStorage *storage, size_t index, uint64_t timestamp_ms)
+{
+    if (storage == NULL || index >= storage->count) return -1;
+    storage->insert_timestamps[index] = timestamp_ms;
+    return 0;
+}
+
 int soa_storage_save(const GV_SoAStorage *storage, FILE *out, uint32_t version)
 {
     if (!storage || !out) return -1;
@@ -364,6 +390,8 @@ int soa_storage_load(GV_SoAStorage *storage, FILE *in, uint32_t version)
             return -1;
         }
         if (soa_read_metadata(in, &storage->metadata[i]) != 0) return -1;
+        /* Timestamps are not persisted; initialize to 0 (oldest). */
+        storage->insert_timestamps[i] = 0;
     }
     return 0;
 }
