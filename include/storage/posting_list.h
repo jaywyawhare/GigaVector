@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #include "storage/disk_layout.h"
+#include "core/id_bitmap.h"
 
 struct GV_DiskPageCache;
 
@@ -63,7 +64,8 @@ typedef enum {
 
 typedef struct {
     uint64_t vector_id;
-    uint8_t version;
+    uint32_t version;        /**< Per-vector update counter (32-bit; 0 = unset). */
+    uint64_t commit_ts;      /**< Monotonic commit timestamp for MVCC snapshot reads. */
     uint8_t flags;
     uint8_t payload_type;
     size_t dimension;
@@ -74,7 +76,8 @@ typedef struct {
 
 typedef struct {
     uint64_t vector_id;
-    uint8_t version;
+    uint32_t version;        /**< Per-vector update counter (32-bit; 0 = unset). */
+    uint64_t commit_ts;      /**< Optional commit timestamp; 0 lets the catalog assign one. */
     uint8_t flags;
     const float *data;       /**< Required for FLOAT / SQ8 source vectors. */
     const uint8_t *codes;    /**< Required for PQ when pre-encoded. */
@@ -153,6 +156,22 @@ int posting_catalog_head_stats(GV_PostingCatalog *cat, uint64_t head_id,
 int posting_catalog_compact_head(GV_PostingCatalog *cat, uint64_t head_id,
                                  size_t dimension, int use_sq8);
 
+/**
+ * Incremental rollup: compact @p head_id only when it has accumulated at least
+ * @p min_segments delta segments (min 2).  A head already condensed to a single
+ * segment is skipped in O(1), avoiding redundant full rewrites.
+ */
+int posting_catalog_maybe_rollup_head(GV_PostingCatalog *cat, uint64_t head_id,
+                                      size_t dimension, int use_sq8, size_t min_segments);
+
+/**
+ * Build a compact bitmap of the head's live (non-tombstoned, latest-version)
+ * vector ids without materializing payloads.  On success *out owns a new
+ * GV_IdBitmap (free with gv_id_bitmap_free); on failure *out is NULL.
+ * Intended for IVF multi-probe set intersection/union across probed heads.
+ */
+int posting_catalog_head_live_ids(GV_PostingCatalog *cat, uint64_t head_id, GV_IdBitmap **out);
+
 /** Replace all segments for @p head_id with a single segment containing @p entries. */
 int posting_catalog_rewrite_head(GV_PostingCatalog *cat, uint64_t head_id,
                                  const GV_PostingWriteEntry *entries, size_t entry_count,
@@ -185,6 +204,7 @@ int posting_segment_encode_ex(uint64_t head_id, uint64_t sequence,
                               const GV_PostingWriteEntry *entries, size_t entry_count,
                               size_t dimension, size_t sector_size,
                               const GV_PostingSegmentParams *params,
+                              uint64_t commit_ts,
                               uint8_t **out_buf, size_t *out_len);
 
 #ifdef __cplusplus

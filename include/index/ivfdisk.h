@@ -102,9 +102,9 @@ int ivfdisk_head_checkpoint_if_needed(GV_IVFDiskIndex *index);
 int ivfdisk_head_wal_replay(GV_IVFDiskIndex *index);
 
 int ivfdisk_maint_tombstone(GV_IVFDiskIndex *index, uint64_t head_id, size_t vector_id,
-                            uint8_t version, const float *data);
+                            uint32_t version, const float *data);
 int ivfdisk_maint_append(GV_IVFDiskIndex *index, uint64_t head_id, const float *data,
-                         size_t vector_id, uint8_t version);
+                         size_t vector_id, uint32_t version);
 void ivfdisk_maint_inc_split(GV_IVFDiskIndex *index);
 void ivfdisk_maint_inc_merge(GV_IVFDiskIndex *index);
 void ivfdisk_maint_inc_defrag(GV_IVFDiskIndex *index);

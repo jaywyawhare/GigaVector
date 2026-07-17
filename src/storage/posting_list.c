@@ -16,6 +16,7 @@
 
 #include "core/compat.h"
 #include "core/utils.h"
+#include "core/id_bitmap.h"
 #include "storage/disk_page_cache.h"
 #include "storage/mmap.h"
 
@@ -30,10 +31,18 @@
 
 #define GV_POSTING_SEG_MAGIC       "GVPS"
 #define GV_POSTING_CAT_MAGIC       "GVPC"
-#define GV_POSTING_CAT_VERSION     1u
+#define GV_POSTING_CAT_VERSION     2u   /* v2 persists commit_counter after seg_count */
 #define GV_POSTING_SEG_FMT_V1      1u
 #define GV_POSTING_SEG_FMT_V2      2u
+#define GV_POSTING_SEG_FMT_V3      3u   /* 24-byte entry hdr: id + flags + u32 version + u64 commit_ts */
 #define GV_POSTING_SEG_HDR_SIZE    64u
+/* Per-entry header size: V1/V2 = 16 (id8, ver1, flags1, dim4), V3 = 24
+ * (id8, flags1, pad3, version-u32, commit_ts-u64). */
+#define GV_POSTING_ENTRY_HDR_V12   16u
+#define GV_POSTING_ENTRY_HDR_V3    24u
+/* Soft cap on encoded segment payload bytes before append splits into multiple
+ * segments (Dgraph-style bounded posting-list parts). */
+#define GV_POSTING_MAX_SEGMENT_BYTES (2u * 1024u * 1024u)
 #define GV_POSTING_CAT_HDR_SIZE    16u
 #define GV_POSTING_HDR_PAYLOAD_OFF 40u
 #define GV_POSTING_HDR_PQ_M_OFF    44u
@@ -57,6 +66,7 @@ struct GV_PostingCatalog {
     GV_DiskPageCache *shared_cache;
     int auto_live_count;
     int reconcile_depth;
+    uint64_t commit_counter;   /**< Monotonic MVCC commit timestamp source. */
 };
 
 typedef struct {
@@ -140,13 +150,26 @@ static int posting_cache_make_key(char *key, size_t keylen, const char *path)
     return 0;
 }
 
-static size_t posting_entry_stride(uint8_t payload_type, size_t dimension, uint32_t pq_m)
+static size_t posting_payload_bytes(uint8_t payload_type, size_t dimension, uint32_t pq_m)
 {
     switch (payload_type) {
-    case GV_POSTING_PAYLOAD_SQ8: return 16u + dimension;
-    case GV_POSTING_PAYLOAD_PQ:  return 16u + pq_m;
-    default:                     return 16u + dimension * sizeof(float);
+    case GV_POSTING_PAYLOAD_SQ8: return dimension;
+    case GV_POSTING_PAYLOAD_PQ:  return pq_m;
+    default:                     return dimension * sizeof(float);
     }
+}
+
+static size_t posting_entry_hdr_bytes(uint32_t format_version)
+{
+    return (format_version >= GV_POSTING_SEG_FMT_V3) ? GV_POSTING_ENTRY_HDR_V3
+                                                     : GV_POSTING_ENTRY_HDR_V12;
+}
+
+static size_t posting_entry_stride_fmt(uint32_t format_version, uint8_t payload_type,
+                                       size_t dimension, uint32_t pq_m)
+{
+    return posting_entry_hdr_bytes(format_version) +
+           posting_payload_bytes(payload_type, dimension, pq_m);
 }
 
 static size_t posting_extension_bytes(uint8_t payload_type, size_t dimension, uint32_t pq_m)
@@ -267,7 +290,7 @@ static void posting_write_segment_header(uint8_t *hdr, uint64_t head_id, uint64_
 {
     memset(hdr, 0, GV_POSTING_SEG_HDR_SIZE);
     memcpy(hdr, GV_POSTING_SEG_MAGIC, 4);
-    uint32_t version = GV_POSTING_SEG_FMT_V2;
+    uint32_t version = GV_POSTING_SEG_FMT_V3;
     memcpy(hdr + 4, &version, 4);
     memcpy(hdr + 8, &head_id, 8);
     memcpy(hdr + 16, &sequence, 8);
@@ -293,7 +316,8 @@ static int posting_parse_seg_info(const uint8_t *hdr, size_t file_len, size_t se
     memset(info, 0, sizeof(*info));
     memcpy(&info->format_version, hdr + 4, 4);
     if (info->format_version != GV_POSTING_SEG_FMT_V1 &&
-        info->format_version != GV_POSTING_SEG_FMT_V2) {
+        info->format_version != GV_POSTING_SEG_FMT_V2 &&
+        info->format_version != GV_POSTING_SEG_FMT_V3) {
         return -1;
     }
 
@@ -324,7 +348,8 @@ static int posting_parse_seg_info(const uint8_t *hdr, size_t file_len, size_t se
         info->entries_offset = posting_align_up(GV_POSTING_SEG_HDR_SIZE + info->extension_bytes,
                                                 sector_size);
     }
-    info->entry_stride = posting_entry_stride(info->payload_type, info->dimension, info->pq_m);
+    info->entry_stride = posting_entry_stride_fmt(info->format_version, info->payload_type,
+                                                  info->dimension, info->pq_m);
     return 0;
 }
 
@@ -334,17 +359,28 @@ static int posting_visit_entry(PostingParseCtx *pc, size_t off)
     memset(&entry, 0, sizeof(entry));
     const uint8_t *data = pc->seg_data;
     memcpy(&entry.vector_id, data + off, 8);
-    entry.version = data[off + 8];
-    entry.flags = data[off + 9];
+
+    if (pc->info.format_version >= GV_POSTING_SEG_FMT_V3) {
+        /* V3: id8 | flags1 | pad3 | version-u32 @12 | commit_ts-u64 @16 | payload @24 */
+        entry.flags = data[off + 8];
+        memcpy(&entry.version, data + off + 12, 4);
+        memcpy(&entry.commit_ts, data + off + 16, 8);
+    } else {
+        /* V1/V2: id8 | version-u8 @8 | flags1 @9 | dim-u32 @12 | payload @16 */
+        entry.version = data[off + 8];
+        entry.flags = data[off + 9];
+        entry.commit_ts = 0;
+    }
     entry.dimension = pc->info.dimension;
     entry.payload_type = pc->info.payload_type;
 
+    size_t payload_off = off + posting_entry_hdr_bytes(pc->info.format_version);
     switch (pc->info.payload_type) {
     case GV_POSTING_PAYLOAD_FLOAT:
-        entry.data = posting_bytes_as_floats(data + off + 16);
+        entry.data = posting_bytes_as_floats(data + payload_off);
         break;
     case GV_POSTING_PAYLOAD_SQ8:
-        entry.codes = data + off + 16;
+        entry.codes = data + payload_off;
         entry.code_len = pc->info.dimension;
         if (pc->sq8_min && pc->sq8_max && pc->scratch) {
             posting_sq8_dequant_row(entry.codes, pc->info.dimension,
@@ -353,7 +389,7 @@ static int posting_visit_entry(PostingParseCtx *pc, size_t off)
         }
         break;
     case GV_POSTING_PAYLOAD_PQ:
-        entry.codes = data + off + 16;
+        entry.codes = data + payload_off;
         entry.code_len = pc->info.pq_m;
         if (pc->pq_codebook && pc->scratch && entry.codes) {
             posting_pq_dequant_row(entry.codes, pc->info.pq_m, pc->info.dimension,
@@ -431,13 +467,14 @@ int posting_segment_encode(uint64_t head_id, uint64_t sequence,
 {
     GV_PostingSegmentParams params = { .payload_type = GV_POSTING_PAYLOAD_FLOAT };
     return posting_segment_encode_ex(head_id, sequence, entries, entry_count, dimension,
-                                     sector_size, &params, out_buf, out_len);
+                                     sector_size, &params, 0, out_buf, out_len);
 }
 
 int posting_segment_encode_ex(uint64_t head_id, uint64_t sequence,
                               const GV_PostingWriteEntry *entries, size_t entry_count,
                               size_t dimension, size_t sector_size,
                               const GV_PostingSegmentParams *params,
+                              uint64_t commit_ts,
                               uint8_t **out_buf, size_t *out_len)
 {
     if (!out_buf || !out_len || dimension == 0) return -1;
@@ -455,7 +492,7 @@ int posting_segment_encode_ex(uint64_t head_id, uint64_t sequence,
 
     size_t extension = posting_extension_bytes(payload_type, dimension, pq_m);
     size_t entries_offset = posting_align_up(GV_POSTING_SEG_HDR_SIZE + extension, sector_size);
-    size_t entry_stride = posting_entry_stride(payload_type, dimension, pq_m);
+    size_t entry_stride = posting_entry_stride_fmt(GV_POSTING_SEG_FMT_V3, payload_type, dimension, pq_m);
     size_t entries_size = entry_count * entry_stride;
     size_t total = posting_align_up(entries_offset + entries_size, sector_size);
 
@@ -476,24 +513,26 @@ int posting_segment_encode_ex(uint64_t head_id, uint64_t sequence,
 
     size_t off = entries_offset;
     for (size_t i = 0; i < entry_count; ++i) {
+        /* V3 entry: id8 | flags1 | pad3 | version-u32 @12 | commit_ts-u64 @16 | payload @24 */
         memcpy(buf + off, &entries[i].vector_id, 8);
-        buf[off + 8] = entries[i].version;
-        buf[off + 9] = entries[i].flags;
-        uint32_t dim_u32 = (uint32_t)dimension;
-        memcpy(buf + off + 12, &dim_u32, 4);
+        buf[off + 8] = entries[i].flags;
+        memcpy(buf + off + 12, &entries[i].version, 4);
+        uint64_t cts = entries[i].commit_ts ? entries[i].commit_ts : commit_ts;
+        memcpy(buf + off + 16, &cts, 8);
 
+        uint8_t *payload = buf + off + GV_POSTING_ENTRY_HDR_V3;
         switch (payload_type) {
         case GV_POSTING_PAYLOAD_FLOAT:
             if (!entries[i].data) { gv_free(buf); gv_free(sq8_min); return -1; }
-            memcpy(buf + off + 16, entries[i].data, dimension * sizeof(float));
+            memcpy(payload, entries[i].data, dimension * sizeof(float));
             break;
         case GV_POSTING_PAYLOAD_SQ8:
             if (!entries[i].data) { gv_free(buf); gv_free(sq8_min); return -1; }
-            posting_sq8_quant_row(entries[i].data, dimension, sq8_min, sq8_max, buf + off + 16);
+            posting_sq8_quant_row(entries[i].data, dimension, sq8_min, sq8_max, payload);
             break;
         case GV_POSTING_PAYLOAD_PQ:
             if (!entries[i].codes) { gv_free(buf); gv_free(sq8_min); return -1; }
-            memcpy(buf + off + 16, entries[i].codes, pq_m);
+            memcpy(payload, entries[i].codes, pq_m);
             break;
         }
         off += entry_stride;
@@ -565,9 +604,10 @@ static int posting_segment_read_file_cached(GV_PostingCatalog *cat, const char *
             uint8_t *buf = NULL;
             if (posting_read_file_bytes(path, &buf, &len) != 0) return -1;
             int rc = posting_segment_parse_buffer_impl(buf, len, cat->sector_size, 0, fn, ctx);
-            if (gv_disk_page_cache_insert(cache, key, buf, len) != 0) {
-                gv_free(buf);
-            }
+            /* The cache stores its own copy of the bytes, so we always own and
+             * must free `buf` regardless of whether the insert succeeded. */
+            (void)gv_disk_page_cache_insert(cache, key, buf, len);
+            gv_free(buf);
             return rc;
         }
     }
@@ -613,6 +653,7 @@ static int posting_catalog_write_file(const GV_PostingCatalog *cat, const char *
     if (posting_buf_append(&buf, &len, &cap, &version, 4) != 0) goto fail;
     uint64_t seg_count = (uint64_t)cat->segment_count;
     if (posting_buf_append(&buf, &len, &cap, &seg_count, 8) != 0) goto fail;
+    if (posting_buf_append(&buf, &len, &cap, &cat->commit_counter, 8) != 0) goto fail;
 
     for (size_t i = 0; i < cat->segment_count; ++i) {
         const PostingSegmentRef *ref = &cat->segments[i];
@@ -685,7 +726,8 @@ int posting_catalog_load(GV_PostingCatalog *cat)
     }
     uint32_t version = 0;
     uint64_t segment_count = 0;
-    if (read_u32(f, &version) != 0 || version != GV_POSTING_CAT_VERSION ||
+    if (read_u32(f, &version) != 0 ||
+        (version != 1u && version != GV_POSTING_CAT_VERSION) ||
         read_u64(f, &segment_count) != 0) {
         fclose(f);
         return -1;
@@ -712,6 +754,12 @@ int posting_catalog_load(GV_PostingCatalog *cat)
 
     const uint8_t *p = body + GV_POSTING_CAT_HDR_SIZE;
     const uint8_t *end = body + body_len;
+    cat->commit_counter = 0;
+    if (version >= 2u) {
+        if ((size_t)(end - p) < 8) { gv_free(body); return -1; }
+        memcpy(&cat->commit_counter, p, 8);
+        p += 8;
+    }
     for (uint64_t i = 0; i < segment_count; ++i) {
         if ((size_t)(end - p) < 30) { gv_free(body); return -1; }
         PostingSegmentRef ref;
@@ -853,20 +901,19 @@ int posting_catalog_append_segment(GV_PostingCatalog *cat, uint64_t head_id,
     return posting_catalog_append_segment_ex(cat, head_id, entries, entry_count, dimension, &params);
 }
 
-int posting_catalog_append_segment_ex(GV_PostingCatalog *cat, uint64_t head_id,
-                                      const GV_PostingWriteEntry *entries, size_t entry_count,
-                                      size_t dimension, const GV_PostingSegmentParams *params)
+/* Encode + durably write one segment for `head_id`, stamped with `commit_ts`,
+ * and register it in the catalog.  Does NOT persist the catalog index (the
+ * caller saves once after all segments of a batch are written). */
+static int posting_catalog_write_segment(GV_PostingCatalog *cat, uint64_t head_id,
+                                         const GV_PostingWriteEntry *entries, size_t entry_count,
+                                         size_t dimension, const GV_PostingSegmentParams *local,
+                                         uint64_t commit_ts)
 {
-    if (!cat || dimension == 0 || (entry_count > 0 && !entries)) return -1;
-
-    GV_PostingSegmentParams local = { .payload_type = GV_POSTING_PAYLOAD_FLOAT };
-    if (params) local = *params;
-
     uint64_t sequence = posting_next_sequence(cat, head_id);
     uint8_t *seg_buf = NULL;
     size_t seg_len = 0;
     if (posting_segment_encode_ex(head_id, sequence, entries, entry_count, dimension,
-                                  cat->sector_size, &local, &seg_buf, &seg_len) != 0) {
+                                  cat->sector_size, local, commit_ts, &seg_buf, &seg_len) != 0) {
         return -1;
     }
 
@@ -914,6 +961,44 @@ int posting_catalog_append_segment_ex(GV_PostingCatalog *cat, uint64_t head_id,
         remove(abs_path);
         return -1;
     }
+    return 0;
+}
+
+int posting_catalog_append_segment_ex(GV_PostingCatalog *cat, uint64_t head_id,
+                                      const GV_PostingWriteEntry *entries, size_t entry_count,
+                                      size_t dimension, const GV_PostingSegmentParams *params)
+{
+    if (!cat || dimension == 0 || (entry_count > 0 && !entries)) return -1;
+
+    GV_PostingSegmentParams local = { .payload_type = GV_POSTING_PAYLOAD_FLOAT };
+    if (params) local = *params;
+
+    /* One append() is one logical commit → one MVCC timestamp shared by all of
+     * this batch's (possibly split) segments. */
+    uint64_t commit_ts = ++cat->commit_counter;
+
+    /* Bound each segment's size (Dgraph-style split into parts): cap the number
+     * of entries so the encoded payload stays under GV_POSTING_MAX_SEGMENT_BYTES. */
+    size_t stride = posting_entry_stride_fmt(GV_POSTING_SEG_FMT_V3, (uint8_t)local.payload_type,
+                                             dimension, local.pq_m);
+    size_t max_per_seg = (stride && GV_POSTING_MAX_SEGMENT_BYTES > stride)
+                             ? (GV_POSTING_MAX_SEGMENT_BYTES / stride) : 1;
+    if (max_per_seg == 0) max_per_seg = 1;
+
+    if (entry_count == 0) {
+        if (posting_catalog_write_segment(cat, head_id, entries, 0, dimension, &local, commit_ts) != 0)
+            return -1;
+    } else {
+        for (size_t start = 0; start < entry_count; start += max_per_seg) {
+            size_t n = entry_count - start;
+            if (n > max_per_seg) n = max_per_seg;
+            if (posting_catalog_write_segment(cat, head_id, entries + start, n, dimension,
+                                              &local, commit_ts) != 0) {
+                return -1;
+            }
+        }
+    }
+
     qsort(cat->segments, cat->segment_count, sizeof(PostingSegmentRef), posting_segment_ref_cmp);
     return posting_catalog_save(cat);
 }
@@ -977,7 +1062,7 @@ int posting_catalog_visit_head(GV_PostingCatalog *cat, uint64_t head_id,
 
 typedef struct {
     uint64_t vector_id;
-    uint8_t version;
+    uint32_t version;
     uint8_t flags;
     size_t dimension;
     float *data;
@@ -1118,7 +1203,7 @@ size_t posting_catalog_head_live_count(GV_PostingCatalog *cat, uint64_t head_id)
 
 typedef struct {
     uint64_t vector_id;
-    uint8_t version;
+    uint32_t version;
     size_t segment_index;
 } TaggedEntry;
 
@@ -1378,6 +1463,14 @@ int posting_catalog_compact_head(GV_PostingCatalog *cat, uint64_t head_id,
 {
     if (!cat || dimension == 0) return -1;
 
+    /* Incremental rollup: a head already condensed to a single segment has no
+     * delta segments to merge, so skip the O(head) materialize + rewrite
+     * entirely.  Any tombstones inside remain filtered at read time, so this is
+     * safe and makes repeated maintenance passes over clean heads O(1). */
+    if (posting_catalog_segment_count_for_head(cat, head_id) <= 1) {
+        return 0;
+    }
+
     GV_PostingHeadView view;
     memset(&view, 0, sizeof(view));
     if (posting_catalog_materialize_head(cat, head_id, &view) != 0) return -1;
@@ -1426,6 +1519,90 @@ int posting_catalog_compact_head(GV_PostingCatalog *cat, uint64_t head_id,
     gv_free(writes);
     posting_head_view_free(&view);
     return rc;
+}
+
+int posting_catalog_maybe_rollup_head(GV_PostingCatalog *cat, uint64_t head_id,
+                                      size_t dimension, int use_sq8, size_t min_segments)
+{
+    if (!cat) return -1;
+    if (min_segments < 2) min_segments = 2;
+    /* Incremental trigger: only pay the rollup cost once enough delta segments
+     * have accumulated for this head. */
+    if (posting_catalog_segment_count_for_head(cat, head_id) < min_segments) return 0;
+    return posting_catalog_compact_head(cat, head_id, dimension, use_sq8);
+}
+
+/* --- Live-id bitmap: a compact set of a head's live vector ids, built without
+ * materializing payloads.  Enables IVF multi-probe set intersect/union. --- */
+
+typedef struct {
+    uint64_t vector_id;
+    uint32_t version;
+    uint8_t flags;
+} PostingIdVer;
+
+typedef struct {
+    PostingIdVer *items;
+    size_t count;
+    size_t cap;
+} PostingIdVerCollect;
+
+static int posting_idver_visit(void *ctx, const GV_PostingEntry *entry)
+{
+    PostingIdVerCollect *c = (PostingIdVerCollect *)ctx;
+    if (c->count >= c->cap) {
+        size_t nc = c->cap ? c->cap * 2 : 64;
+        PostingIdVer *tmp = (PostingIdVer *)gv_realloc(c->items, nc * sizeof(PostingIdVer));
+        if (!tmp) return -1;
+        c->items = tmp;
+        c->cap = nc;
+    }
+    c->items[c->count].vector_id = entry->vector_id;
+    c->items[c->count].version = entry->version;
+    c->items[c->count].flags = entry->flags;
+    c->count++;
+    return 0;
+}
+
+static int posting_idver_cmp(const void *a, const void *b)
+{
+    const PostingIdVer *ea = (const PostingIdVer *)a;
+    const PostingIdVer *eb = (const PostingIdVer *)b;
+    if (ea->vector_id != eb->vector_id) return (ea->vector_id < eb->vector_id) ? -1 : 1;
+    if (ea->version != eb->version) return (ea->version < eb->version) ? -1 : 1;
+    return 0;
+}
+
+int posting_catalog_head_live_ids(GV_PostingCatalog *cat, uint64_t head_id, GV_IdBitmap **out)
+{
+    if (!cat || !out) return -1;
+    *out = NULL;
+
+    PostingIdVerCollect c;
+    memset(&c, 0, sizeof(c));
+    if (posting_catalog_visit_head_impl(cat, head_id, posting_idver_visit, &c) != 0) {
+        gv_free(c.items);
+        return -1;
+    }
+
+    GV_IdBitmap *bm = gv_id_bitmap_create();
+    if (!bm) { gv_free(c.items); return -1; }
+    if (c.count == 0) { gv_free(c.items); *out = bm; return 0; }
+
+    /* Sort by (vector_id, version); the last occurrence of each id wins. */
+    qsort(c.items, c.count, sizeof(PostingIdVer), posting_idver_cmp);
+    for (size_t i = 0; i < c.count; ++i) {
+        if (i + 1 < c.count && c.items[i].vector_id == c.items[i + 1].vector_id) continue;
+        if (c.items[i].flags & GV_POSTING_FLAG_DELETED) continue; /* tombstoned */
+        if (gv_id_bitmap_add(bm, c.items[i].vector_id) != 0) {
+            gv_id_bitmap_free(bm);
+            gv_free(c.items);
+            return -1;
+        }
+    }
+    gv_free(c.items);
+    *out = bm;
+    return 0;
 }
 
 int posting_catalog_rewrite_head(GV_PostingCatalog *cat, uint64_t head_id,

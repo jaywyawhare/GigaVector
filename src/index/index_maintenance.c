@@ -322,7 +322,7 @@ static size_t maint_reassign_head(GV_IVFDiskIndex *index, uint64_t head_id)
         if (best == head_id) continue;
 
         size_t vid = (size_t)view.entries[i].vector_id;
-        uint8_t new_ver = (uint8_t)(view.entries[i].version + 1);
+        uint32_t new_ver = view.entries[i].version + 1;
 
         if (ivfdisk_maint_tombstone(index, head_id, vid, new_ver, vec) != 0 ||
             ivfdisk_maint_append(index, best, vec, vid, new_ver) != 0) {

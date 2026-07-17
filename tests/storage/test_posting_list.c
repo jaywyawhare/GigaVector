@@ -5,6 +5,7 @@
 #include <math.h>
 
 #include "storage/posting_list.h"
+#include "core/id_bitmap.h"
 #include "core/utils.h"
 #include "../test_tmp.h"
 
@@ -33,6 +34,7 @@ static int posting_test_count_visit(void *ctx, const GV_PostingEntry *entry)
 static int test_posting_segment_encode_parse(void)
 {
     GV_PostingWriteEntry entries[2];
+    memset(entries, 0, sizeof(entries));   /* zero commit_ts and any padding */
     float v0[4] = {1.f, 0.f, 0.f, 0.f};
     float v1[4] = {0.f, 1.f, 0.f, 0.f};
     entries[0].vector_id = 10;
@@ -67,6 +69,7 @@ static int test_posting_catalog_append_and_load(void)
 
     float vec[8] = {0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f, 0.7f, 0.8f};
     GV_PostingWriteEntry e;
+    memset(&e, 0, sizeof(e));   /* zero commit_ts and any padding */
     e.vector_id = 42;
     e.version = 1;
     e.flags = 0;
@@ -329,25 +332,44 @@ static int test_posting_segment_cache(void)
     return 0;
 }
 
+/* Hand-craft a legacy V1 segment (16-byte entries: id8|ver1|flags1|dim4|float
+ * payload@16) and verify the current parser still reads it (backward-compat).
+ * The encoder now emits V3, so a real V1 buffer must be built manually. */
 static int test_posting_v1_segment_compat(void)
 {
-    float v[4] = {0.25f, 0.5f, 0.75f, 1.f};
-    GV_PostingWriteEntry e = { .vector_id = 9, .version = 1, .flags = 0, .data = v };
-    uint8_t *buf = NULL;
-    size_t len = 0;
-    ASSERT(posting_segment_encode(0, 0, &e, 1, 4, 4096, &buf, &len) == 0, "encode v2 float");
+    const size_t dim = 4, sector = 4096;              /* parser uses the default sector */
+    const size_t entries_off = 4096;                  /* align_up(64, 4096) */
+    const size_t payload = dim * sizeof(float);       /* 16 */
+    const size_t stride = 16 + payload;               /* V1 entry stride = 32 */
+    const size_t total = ((entries_off + stride) + sector - 1) / sector * sector;
 
-    uint32_t v1 = 1;
-    memcpy(buf + 4, &v1, 4);
-    uint32_t hdr_crc = posting_test_crc32(buf, 36);
-    memcpy(buf + 36, &hdr_crc, 4);
+    uint8_t *buf = (uint8_t *)calloc(1, total);
+    ASSERT(buf, "alloc v1 buffer");
+
+    memcpy(buf, "GVPS", 4);
+    uint32_t ver = 1; memcpy(buf + 4, &ver, 4);       /* format version V1 */
+    uint32_t ec = 1;  memcpy(buf + 24, &ec, 4);       /* entry_count */
+    uint32_t d = (uint32_t)dim; memcpy(buf + 28, &d, 4);
+
+    uint8_t *ent = buf + entries_off;
+    uint64_t vid = 9; memcpy(ent, &vid, 8);
+    ent[8] = 1;                                       /* V1 version (u8) */
+    ent[9] = 0;                                       /* flags */
+    memcpy(ent + 12, &d, 4);                          /* per-entry dim (V1/V2) */
+    float v[4] = {0.25f, 0.5f, 0.75f, 1.f};
+    memcpy(ent + 16, v, payload);
+
+    uint32_t ecrc = posting_test_crc32(buf + entries_off, stride);
+    memcpy(buf + 32, &ecrc, 4);                       /* entries_crc (part of header) */
+    uint32_t hcrc = posting_test_crc32(buf, 36);
+    memcpy(buf + 36, &hcrc, 4);                       /* header_crc over [0,36) */
 
     size_t count = 0;
-    ASSERT(posting_segment_parse_buffer(buf, len, 8, posting_test_count_visit, &count) == 0,
-           "parse downgraded v1 header");
+    ASSERT(posting_segment_parse_buffer(buf, total, 8, posting_test_count_visit, &count) == 0,
+           "parse hand-crafted v1 segment");
     ASSERT(count == 1, "v1 compat entry");
 
-    gv_free(buf);
+    free(buf);
     return 0;
 }
 
@@ -375,7 +397,7 @@ static int test_posting_pq_payload(void)
 
     uint8_t *buf = NULL;
     size_t len = 0;
-    ASSERT(posting_segment_encode_ex(0, 0, &e, 1, dim, 4096, &params, &buf, &len) == 0, "encode pq");
+    ASSERT(posting_segment_encode_ex(0, 0, &e, 1, dim, 4096, &params, 0, &buf, &len) == 0, "encode pq");
 
     size_t count = 0;
     ASSERT(posting_segment_parse_buffer(buf, len, dim, posting_test_count_visit, &count) == 0,
@@ -460,6 +482,166 @@ static int test_posting_auto_live_count_on_read(void)
     return 0;
 }
 
+/* #4: version is 32-bit now — values > 255 must survive encode/parse. */
+static int test_posting_version_wide(void)
+{
+    char dir[512];
+    if (gv_test_make_temp_path(dir, sizeof(dir), "gv_posting_vwide", "") != 0) return 0;
+    GV_PostingCatalog *cat = posting_catalog_open(dir, 4096);
+    ASSERT(cat != NULL, "open");
+
+    float v[4] = {1.f, 2.f, 3.f, 4.f};
+    GV_PostingWriteEntry e = { .vector_id = 7, .version = 300000u, .flags = 0, .data = v };
+    ASSERT(posting_catalog_append_segment(cat, 1, &e, 1, 4) == 0, "append version 300000");
+
+    GV_PostingHeadView view;
+    memset(&view, 0, sizeof(view));
+    ASSERT(posting_catalog_materialize_head(cat, 1, &view) == 0, "materialize");
+    ASSERT(view.count == 1, "one entry");
+    ASSERT(view.entries[0].version == 300000u, "wide version preserved (no u8 wrap)");
+    posting_head_view_free(&view);
+    posting_catalog_close(cat);
+    return 0;
+}
+
+/* #5: appends are stamped with a monotonic commit_ts. */
+static int posting_commit_ts_visit(void *ctx, const GV_PostingEntry *e)
+{
+    if (e->commit_ts != 0) (*(size_t *)ctx)++;
+    return 0;
+}
+static int test_posting_commit_ts(void)
+{
+    char dir[512];
+    if (gv_test_make_temp_path(dir, sizeof(dir), "gv_posting_cts", "") != 0) return 0;
+    GV_PostingCatalog *cat = posting_catalog_open(dir, 4096);
+    ASSERT(cat != NULL, "open");
+
+    float v[4] = {1.f, 2.f, 3.f, 4.f};
+    GV_PostingWriteEntry e = { .vector_id = 3, .version = 1, .flags = 0, .data = v };
+    ASSERT(posting_catalog_append_segment(cat, 9, &e, 1, 4) == 0, "append");
+
+    size_t stamped = 0;
+    ASSERT(posting_catalog_visit_head(cat, 9, posting_commit_ts_visit, &stamped) == 0, "visit");
+    ASSERT(stamped == 1, "entry carries a non-zero commit_ts");
+    posting_catalog_close(cat);
+    return 0;
+}
+
+/* #3: a large batch is split into multiple bounded segments. */
+static int test_posting_segment_split(void)
+{
+    char dir[512];
+    if (gv_test_make_temp_path(dir, sizeof(dir), "gv_posting_split", "") != 0) return 0;
+    GV_PostingCatalog *cat = posting_catalog_open(dir, 4096);
+    ASSERT(cat != NULL, "open");
+
+    const size_t dim = 64;                 /* stride ~24+256 = 280 bytes/entry */
+    const size_t n = 20000;                /* ~5.6 MB > 2 MB cap → must split */
+    GV_PostingWriteEntry *batch = (GV_PostingWriteEntry *)gv_calloc(n, sizeof(GV_PostingWriteEntry));
+    float *data = (float *)gv_calloc(n * dim, sizeof(float));
+    ASSERT(batch && data, "alloc");
+    for (size_t i = 0; i < n; ++i) {
+        batch[i].vector_id = (uint64_t)(i + 1);
+        batch[i].version = 1;
+        batch[i].data = data + i * dim;
+        data[i * dim] = (float)i;
+    }
+    ASSERT(posting_catalog_append_segment(cat, 3, batch, n, dim) == 0, "bulk append");
+    ASSERT(posting_catalog_segment_count_for_head(cat, 3) > 1, "large append split into >1 segment");
+
+    /* Content still fully materializes. */
+    GV_PostingHeadView view;
+    memset(&view, 0, sizeof(view));
+    ASSERT(posting_catalog_materialize_head(cat, 3, &view) == 0, "materialize");
+    ASSERT(view.count == n, "all entries readable across split segments");
+    posting_head_view_free(&view);
+
+    gv_free(batch);
+    gv_free(data);
+    posting_catalog_close(cat);
+    return 0;
+}
+
+/* #2: compacting a head condenses its segments; re-compacting a single-segment
+ * head is an O(1) no-op that leaves it at one segment. */
+static int test_posting_incremental_rollup(void)
+{
+    char dir[512];
+    if (gv_test_make_temp_path(dir, sizeof(dir), "gv_posting_roll", "") != 0) return 0;
+    GV_PostingCatalog *cat = posting_catalog_open(dir, 4096);
+    ASSERT(cat != NULL, "open");
+
+    float v[4] = {1.f, 0.f, 0.f, 0.f};
+    for (uint64_t id = 1; id <= 3; ++id) {
+        GV_PostingWriteEntry e = { .vector_id = id, .version = 1, .flags = 0, .data = v };
+        ASSERT(posting_catalog_append_segment(cat, 4, &e, 1, 4) == 0, "append");
+    }
+    ASSERT(posting_catalog_segment_count_for_head(cat, 4) == 3, "three delta segments");
+
+    ASSERT(posting_catalog_compact_head(cat, 4, 4, 0) == 0, "compact");
+    ASSERT(posting_catalog_segment_count_for_head(cat, 4) == 1, "rolled up to one segment");
+
+    /* Re-compact: incremental skip leaves it untouched. */
+    ASSERT(posting_catalog_compact_head(cat, 4, 4, 0) == 0, "re-compact no-op");
+    ASSERT(posting_catalog_segment_count_for_head(cat, 4) == 1, "still one segment");
+
+    /* maybe_rollup honours the min-segments trigger. */
+    GV_PostingWriteEntry e2 = { .vector_id = 9, .version = 1, .flags = 0, .data = v };
+    ASSERT(posting_catalog_append_segment(cat, 4, &e2, 1, 4) == 0, "append delta");
+    ASSERT(posting_catalog_maybe_rollup_head(cat, 4, 4, 0, 5) == 0, "below trigger");
+    ASSERT(posting_catalog_segment_count_for_head(cat, 4) == 2, "not rolled up below trigger");
+    ASSERT(posting_catalog_maybe_rollup_head(cat, 4, 4, 0, 2) == 0, "at trigger");
+    ASSERT(posting_catalog_segment_count_for_head(cat, 4) == 1, "rolled up at trigger");
+
+    posting_catalog_close(cat);
+    return 0;
+}
+
+/* #1: per-head live-id bitmap (tombstones excluded) + set intersection. */
+static int test_posting_live_ids_bitmap(void)
+{
+    char dir[512];
+    if (gv_test_make_temp_path(dir, sizeof(dir), "gv_posting_bm", "") != 0) return 0;
+    GV_PostingCatalog *cat = posting_catalog_open(dir, 4096);
+    ASSERT(cat != NULL, "open");
+
+    float v[4] = {1.f, 2.f, 3.f, 4.f};
+    /* head 1: ids {1,2,3}, then delete 2 */
+    for (uint64_t id = 1; id <= 3; ++id) {
+        GV_PostingWriteEntry e = { .vector_id = id, .version = 1, .flags = 0, .data = v };
+        ASSERT(posting_catalog_append_segment(cat, 1, &e, 1, 4) == 0, "append h1");
+    }
+    GV_PostingWriteEntry del = { .vector_id = 2, .version = 2, .flags = GV_POSTING_FLAG_DELETED, .data = v };
+    ASSERT(posting_catalog_append_segment(cat, 1, &del, 1, 4) == 0, "tombstone 2");
+    /* head 2: ids {2,3,4} */
+    for (uint64_t id = 2; id <= 4; ++id) {
+        GV_PostingWriteEntry e = { .vector_id = id, .version = 1, .flags = 0, .data = v };
+        ASSERT(posting_catalog_append_segment(cat, 2, &e, 1, 4) == 0, "append h2");
+    }
+
+    GV_IdBitmap *b1 = NULL, *b2 = NULL;
+    ASSERT(posting_catalog_head_live_ids(cat, 1, &b1) == 0 && b1, "live ids h1");
+    ASSERT(posting_catalog_head_live_ids(cat, 2, &b2) == 0 && b2, "live ids h2");
+
+    ASSERT(gv_id_bitmap_cardinality(b1) == 2, "h1 live = {1,3}");
+    ASSERT(gv_id_bitmap_contains(b1, 1) && !gv_id_bitmap_contains(b1, 2) &&
+           gv_id_bitmap_contains(b1, 3), "h1 membership (2 tombstoned)");
+    ASSERT(gv_id_bitmap_cardinality(b2) == 3, "h2 live = {2,3,4}");
+
+    /* Multi-probe intersection: only id 3 is live in both. */
+    GV_IdBitmap *inter = gv_id_bitmap_and(b1, b2);
+    ASSERT(inter, "intersect");
+    ASSERT(gv_id_bitmap_cardinality(inter) == 1 && gv_id_bitmap_contains(inter, 3),
+           "intersection = {3}");
+
+    gv_id_bitmap_free(b1);
+    gv_id_bitmap_free(b2);
+    gv_id_bitmap_free(inter);
+    posting_catalog_close(cat);
+    return 0;
+}
+
 int main(void)
 {
     struct { const char *name; int (*fn)(void); } tests[] = {
@@ -478,6 +660,11 @@ int main(void)
         { "v1 segment compat", test_posting_v1_segment_compat },
         { "pq payload", test_posting_pq_payload },
         { "pq materialize", test_posting_pq_materialize },
+        { "version wide (>255)", test_posting_version_wide },
+        { "commit_ts stamped", test_posting_commit_ts },
+        { "segment split", test_posting_segment_split },
+        { "incremental rollup", test_posting_incremental_rollup },
+        { "live-id bitmap", test_posting_live_ids_bitmap },
     };
 
     int rc = 0;

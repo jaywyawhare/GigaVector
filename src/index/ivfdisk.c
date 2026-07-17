@@ -40,7 +40,7 @@ typedef struct {
 typedef struct {
     uint64_t head_id;
     uint64_t secondary_head_id;
-    uint8_t version;
+    uint32_t version;
     uint8_t deleted;
 } IVFDiskVectorLoc;
 
@@ -270,7 +270,7 @@ static int ivfdisk_ensure_loc(GV_IVFDiskIndex *idx, size_t vector_id)
 
 static void ivfdisk_record_loc(GV_IVFDiskIndex *idx, size_t vector_id,
                                uint64_t head_id, uint64_t secondary_head_id,
-                               uint8_t version, int deleted)
+                               uint32_t version, int deleted)
 {
     if (ivfdisk_ensure_loc(idx, vector_id) != 0) return;
     idx->vector_locs[vector_id].head_id = head_id;
@@ -401,7 +401,7 @@ static int ivfdisk_collect_visit(void *ctx, const GV_PostingEntry *entry)
 
 static int ivfdisk_append_entry(GV_IVFDiskIndex *index, uint64_t head_id,
                                 const float *data, size_t dimension, size_t vector_id,
-                                uint8_t version, uint8_t flags, int bump_total)
+                                uint32_t version, uint8_t flags, int bump_total)
 {
     GV_PostingWriteEntry entry = {
         .vector_id = (uint64_t)vector_id,
@@ -556,9 +556,9 @@ int ivfdisk_insert_routed(GV_IVFDiskIndex *index, const float *data, size_t dime
     size_t nh = ivfdisk_pick_insert_heads(index, data, heads, 2);
     if (nh == 0) return -1;
 
-    uint8_t version = 1;
+    uint32_t version = 1;
     if (vector_id < index->vector_loc_cap && index->vector_locs[vector_id].version > 0) {
-        version = (uint8_t)(index->vector_locs[vector_id].version + 1);
+        version = index->vector_locs[vector_id].version + 1;
     }
 
     for (size_t i = 0; i < nh; ++i) {
@@ -593,9 +593,9 @@ int ivfdisk_insert_to_head(GV_IVFDiskIndex *index, uint64_t head_id, const float
     if (!index || !data || dimension != index->dimension || !index->trained) return -1;
     if (head_id >= index->config.nlist) return -1;
 
-    uint8_t version = 1;
+    uint32_t version = 1;
     if (vector_id < index->vector_loc_cap && index->vector_locs[vector_id].version > 0) {
-        version = (uint8_t)(index->vector_locs[vector_id].version + 1);
+        version = index->vector_locs[vector_id].version + 1;
     }
 
     if (ivfdisk_append_entry(index, head_id, data, dimension, vector_id, version, 0, 0) != 0) {
@@ -606,7 +606,7 @@ int ivfdisk_insert_to_head(GV_IVFDiskIndex *index, uint64_t head_id, const float
 }
 
 static int ivfdisk_tombstone_head(GV_IVFDiskIndex *index, uint64_t head_id, size_t vector_id,
-                                  uint8_t version, const float *payload)
+                                  uint32_t version, const float *payload)
 {
     return ivfdisk_append_entry(index, head_id, payload, index->dimension, vector_id,
                                 version, GV_POSTING_FLAG_DELETED, 0);
@@ -622,7 +622,7 @@ int ivfdisk_delete(GV_IVFDiskIndex *index, size_t vector_id, const float *data)
     }
 
     IVFDiskVectorLoc *loc = &index->vector_locs[vector_id];
-    uint8_t new_ver = (uint8_t)(loc->version + 1);
+    uint32_t new_ver = loc->version + 1;
     float zeros[1] = {0.f};
     const float *payload = data ? data : zeros;
 
@@ -649,7 +649,7 @@ int ivfdisk_update(GV_IVFDiskIndex *index, size_t vector_id, const float *new_da
     }
 
     IVFDiskVectorLoc *loc = &index->vector_locs[vector_id];
-    uint8_t new_ver = (uint8_t)(loc->version + 1);
+    uint32_t new_ver = loc->version + 1;
     float zeros[1] = {0.f};
 
     if (loc->secondary_head_id != GV_IVFDISK_NO_SECONDARY_HEAD) {
@@ -1277,13 +1277,13 @@ const char *ivfdisk_data_dir_path(const GV_IVFDiskIndex *index)
 }
 
 int ivfdisk_maint_tombstone(GV_IVFDiskIndex *index, uint64_t head_id, size_t vector_id,
-                            uint8_t version, const float *data)
+                            uint32_t version, const float *data)
 {
     return ivfdisk_tombstone_head(index, head_id, vector_id, version, data);
 }
 
 int ivfdisk_maint_append(GV_IVFDiskIndex *index, uint64_t head_id, const float *data,
-                         size_t vector_id, uint8_t version)
+                         size_t vector_id, uint32_t version)
 {
     return ivfdisk_append_entry(index, head_id, data, index->dimension, vector_id, version, 0, 0);
 }
