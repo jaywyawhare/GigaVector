@@ -410,6 +410,48 @@ int kg_get_neighbors(const GV_KnowledgeGraph *kg, uint64_t entity_id,
                          uint64_t *out_ids, size_t max_count);
 
 /**
+ * @brief A single adjacency hop, resolved by direct pointer dereference.
+ *
+ * All fields reference graph-internal storage; @p predicate is an interior
+ * pointer (do NOT free) valid until the graph is next mutated.
+ */
+typedef struct {
+    uint64_t    relation_id;   /**< Edge (relation) id. */
+    uint64_t    neighbor_id;   /**< Entity id at the far end of the edge. */
+    const char *predicate;     /**< Edge predicate label (interior pointer). */
+    float       weight;        /**< Edge weight. */
+    int         outgoing;      /**< 1 = edge leaves this node; 0 = enters it. */
+} GV_KGHop;
+
+/**
+ * @brief Visitor callback for kg_for_each_hop; return non-zero to stop early.
+ */
+typedef int (*GV_KGHopVisitor)(const GV_KGHop *hop, void *ctx);
+
+/**
+ * @brief Visit an entity's adjacency in O(degree) with zero allocation.
+ *
+ * Each hop is produced by dereferencing pre-linked edge pointers — no hashing,
+ * no id->node resolution, no triple materialisation, no string copies. This is
+ * the constant-time-per-hop primitive the Cypher engine uses to expand pattern
+ * edges; a k-hop path is k pointer walks rather than k index probes.
+ *
+ * The graph read-lock is held for the duration of the call, so the visitor MUST
+ * NOT re-enter the graph or mutate it; collect what you need and process after.
+ *
+ * @param kg         Knowledge graph handle.
+ * @param entity_id  Centre entity.
+ * @param dir        1 = outgoing only, -1 = incoming only, 0 = both.
+ * @param predicate  Optional predicate filter (NULL = any).
+ * @param visit      Callback invoked per matching hop.
+ * @param ctx        Opaque pointer forwarded to @p visit.
+ * @return Number of hops visited, or -1 on error.
+ */
+int kg_for_each_hop(const GV_KnowledgeGraph *kg, uint64_t entity_id,
+                    int dir, const char *predicate,
+                    GV_KGHopVisitor visit, void *ctx);
+
+/**
  * @brief BFS traversal from a start entity.
  *
  * @param kg         Knowledge graph handle.

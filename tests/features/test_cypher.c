@@ -125,6 +125,21 @@ int main(void) {
     ASSERT(r.row_count == 4, "4 nodes total (Alice,Bob,Carol,Acme)");
     cypher_free_result(&r);
 
+    /* ---- edge direction over the O(1) adjacency ---- */
+    /* Reverse pattern: who KNOWS Carol?  (Bob-KNOWS->Carol) — uses incoming adjacency. */
+    ASSERT(q(cy, "MATCH (c:Person {name:'Carol'})<-[:KNOWS]-(x) RETURN x.name ORDER BY x.name", &r) == 0
+           && r.row_count == 1 && strcmp(cell(&r,0,0),"Bob")==0, "reverse <-[:KNOWS]- Carol -> Bob");
+    cypher_free_result(&r);
+    /* Undirected: Bob's KNOWS neighbours in either direction (Alice in, Carol out). */
+    ASSERT(q(cy, "MATCH (b:Person {name:'Bob'})-[:KNOWS]-(x) RETURN x.name ORDER BY x.name", &r) == 0
+           && r.row_count == 2 && strcmp(cell(&r,0,0),"Alice")==0 && strcmp(cell(&r,1,0),"Carol")==0,
+           "undirected -[:KNOWS]- Bob -> Alice,Carol");
+    cypher_free_result(&r);
+    /* Reverse multi-hop chain: Carol <- Bob <- Alice. */
+    ASSERT(q(cy, "MATCH (c {name:'Carol'})<-[:KNOWS]-(b)<-[:KNOWS]-(a) RETURN a.name", &r) == 0
+           && r.row_count == 1 && strcmp(cell(&r,0,0),"Alice")==0, "reverse 2-hop -> Alice");
+    cypher_free_result(&r);
+
     /* ---- variable-length paths ---- */
     ASSERT(q(cy, "MATCH (a {name:'Alice'})-[:KNOWS*1..2]->(x) RETURN x.name ORDER BY x.name", &r) == 0
            && r.row_count == 2 && strcmp(cell(&r,0,0),"Bob")==0 && strcmp(cell(&r,1,0),"Carol")==0,

@@ -24,7 +24,6 @@
 #define CY_MAXSET   16
 #define CY_MAXDEL   16
 #define CY_MAXORD   8
-#define CY_QBUF     8192
 #define CY_ERR      256
 #define CY_MAX_RECURSION_DEPTH 256   /* cap on nested expr/pattern productions (DoS guard) */
 #define CY_MAX_TOKENS  4096          /* cap on total token count (mirrors GV_SQL_MAX_TOKENS) */
@@ -766,6 +765,49 @@ static int cy_in_arr(const uint64_t *a, int n, uint64_t x) {
     for (int i = 0; i < n; i++) if (a[i] == x) return 1;
     return 0;
 }
+
+/*
+ * O(1)-per-hop edge expansion.
+ *
+ * Each pattern edge is expanded by walking the endpoint's pre-linked adjacency
+ * arrays via kg_for_each_hop — a pure pointer dereference per neighbour, with no
+ * hashing, id->node resolution, triple materialisation or string copies. A hop
+ * yields the neighbour id and an interior pointer to the edge predicate (valid
+ * for the read-only lifetime of the match), which is all the traversal needs.
+ */
+typedef struct { uint64_t id; const char *pred; } CyHop;
+typedef struct {
+    CyHop *buf;
+    int    n;
+    int    cap;
+    int    oom;
+} CyHopVec;
+
+static int cy_hop_collect(const GV_KGHop *h, void *ctx) {
+    CyHopVec *v = (CyHopVec *)ctx;
+    if (v->n >= v->cap) {
+        int nc = v->cap ? v->cap * 2 : 16;
+        CyHop *tmp = (CyHop *)gv_realloc(v->buf, (size_t)nc * sizeof(CyHop));
+        if (!tmp) { v->oom = 1; return 1; /* stop */ }
+        v->buf = tmp;
+        v->cap = nc;
+    }
+    v->buf[v->n].id = h->neighbor_id;
+    v->buf[v->n].pred = h->predicate;
+    v->n++;
+    return 0;
+}
+
+/* Gather the neighbours of `id` over an edge of `type`/`dir` into `vec`
+ * (constant work per neighbour). Returns 0, or -1 on allocation failure. */
+static int cy_expand(GV_KnowledgeGraph *kg, uint64_t id, const char *type,
+                     int dir, CyHopVec *vec) {
+    vec->buf = NULL; vec->n = 0; vec->cap = 0; vec->oom = 0;
+    /* dir: 1=outgoing, -1=incoming, 0=both — maps directly onto kg_for_each_hop. */
+    kg_for_each_hop(kg, id, dir, type, cy_hop_collect, vec);
+    return vec->oom ? -1 : 0;
+}
+
 /* BFS: collect nodes reachable from `start` in [minh,maxh] hops via rel type/dir. */
 static void cy_varlen_endpoints(GV_KnowledgeGraph *kg, uint64_t start, const char *type,
                                 int dir, int minh, int maxh, uint64_t *out, int *nout, int cap) {
@@ -775,22 +817,16 @@ static void cy_varlen_endpoints(GV_KnowledgeGraph *kg, uint64_t start, const cha
     for (int depth = 1; depth <= maxh && ncur > 0; depth++) {
         uint64_t next[1024]; int nnext = 0;
         for (int i = 0; i < ncur; i++) {
-            uint64_t id = cur[i];
-            GV_KGTriple *tr = (GV_KGTriple *)gv_alloc(CY_QBUF * sizeof(GV_KGTriple));
-            if (!tr) continue;
-            int tn = 0;
-            if (dir == 1) tn = kg_query_triples(kg, &id, type, NULL, tr, CY_QBUF);
-            else if (dir == -1) tn = kg_query_triples(kg, NULL, type, &id, tr, CY_QBUF);
-            else { tn = kg_query_triples(kg, &id, type, NULL, tr, CY_QBUF);
-                   if (tn >= 0 && (size_t)tn < CY_QBUF) tn += kg_query_triples(kg, NULL, type, &id, tr + tn, CY_QBUF - tn); }
-            for (int ti = 0; ti < tn; ti++) {
-                uint64_t other = (tr[ti].subject_id == id) ? tr[ti].object_id : tr[ti].subject_id;
+            CyHopVec vec;
+            if (cy_expand(kg, cur[i], type, dir, &vec) != 0) { gv_free(vec.buf); continue; }
+            for (int ti = 0; ti < vec.n; ti++) {
+                uint64_t other = vec.buf[ti].id;
                 if (!cy_in_arr(visited, nvis, other)) {
                     if (nvis < 8192) visited[nvis++] = other;
                     if (nnext < 1024) next[nnext++] = other;
                 }
             }
-            kg_free_triples(tr, tn); gv_free(tr);
+            gv_free(vec.buf);
         }
         if (depth >= minh)
             for (int i = 0; i < nnext; i++)
@@ -832,29 +868,23 @@ static void dfs(GV_CypherEngine *eng, const Pattern *p, size_t idx, uint64_t for
             continue;
         }
 
-        GV_KGTriple *tr = (GV_KGTriple *)gv_alloc(CY_QBUF * sizeof(GV_KGTriple));
-        if (!tr) { row_free(&row2); continue; }
-        int tn = 0;
-        /* Collect neighbor triples honoring direction. */
-        if (r->dir == 1) tn = kg_query_triples(eng->kg, &id, r->type, NULL, tr, CY_QBUF);
-        else if (r->dir == -1) tn = kg_query_triples(eng->kg, NULL, r->type, &id, tr, CY_QBUF);
-        else { /* undirected: both */
-            tn = kg_query_triples(eng->kg, &id, r->type, NULL, tr, CY_QBUF);
-            if (tn >= 0 && (size_t)tn < CY_QBUF)
-                tn += kg_query_triples(eng->kg, NULL, r->type, &id, tr + tn, CY_QBUF - tn);
+        /* Expand this edge via O(1)-per-hop adjacency (pointer deref, no copy). */
+        CyHopVec vec;
+        if (cy_expand(eng->kg, id, r->type, r->dir, &vec) != 0) {
+            gv_free(vec.buf); row_free(&row2); continue;
         }
-        for (int ti = 0; ti < tn; ti++) {
-            uint64_t other = (tr[ti].subject_id == id) ? tr[ti].object_id : tr[ti].subject_id;
+        for (int ti = 0; ti < vec.n; ti++) {
+            uint64_t other = vec.buf[ti].id;
+            const char *pred = vec.buf[ti].pred;
             /* rel var conflict check */
             Bind *rb = row_find(&row2, r->var);
-            if (rb && rb->is_rel && rb->pred && strcmp(rb->pred, tr[ti].predicate) != 0) continue;
+            if (rb && rb->is_rel && rb->pred && strcmp(rb->pred, pred) != 0) continue;
             Row row3 = row_copy(&row2);
-            if (r->var && !rb) row_bind_rel(&row3, r->var, tr[ti].predicate);
+            if (r->var && !rb) row_bind_rel(&row3, r->var, pred);
             dfs(eng, p, idx + 1, other, &row3, out);
             row_free(&row3);
         }
-        kg_free_triples(tr, tn);
-        gv_free(tr);
+        gv_free(vec.buf);
         row_free(&row2);
     }
 }

@@ -71,9 +71,37 @@ static void kg_idlist_free(KG_IdList *list) {
     list->capacity = 0;
 }
 
+struct KG_RelationNode; /* fwd decl for adjacency edges */
+
+/*
+ * A materialised adjacency edge. Each edge stores *raw pointers* to the
+ * relation node and to the entity node at the far end, so following a hop is a
+ * pure pointer dereference — no hashing, no id->node lookup, no triple copy.
+ *
+ * The referenced nodes live in the entity/relation hash tables, which use
+ * separate-chaining: nodes are heap-allocated once and never moved for the
+ * lifetime of the graph, so these pointers stay valid until the node is
+ * removed. Every code path that frees a relation node also unlinks the edges
+ * that reference it (kg_unlink_adjacency), so a dangling edge is never observed.
+ */
+typedef struct KG_Edge {
+    struct KG_RelationNode *rel;      /* the relation (edge) */
+    struct KG_EntityNode   *neighbor; /* entity at the far end of the edge */
+} KG_Edge;
+
 typedef struct KG_EntityNode {
     GV_KGEntity             entity;
     struct KG_EntityNode   *next;
+
+    /* Direct adjacency: O(1)-per-hop traversal via pointer dereference.
+     * out_edges: relations where this node is the subject (this -> neighbor).
+     * in_edges:  relations where this node is the object  (neighbor -> this). */
+    KG_Edge                *out_edges;
+    size_t                  out_count;
+    size_t                  out_cap;
+    KG_Edge                *in_edges;
+    size_t                  in_count;
+    size_t                  in_cap;
 } KG_EntityNode;
 
 typedef struct KG_RelationNode {
@@ -203,6 +231,82 @@ static KG_RelationNode *kg_find_relation_node(const GV_KnowledgeGraph *kg,
         if (n->relation.relation_id == relation_id) return n;
     }
     return NULL;
+}
+
+/* ---- Direct adjacency (constant-time hops) ------------------------------ */
+
+static int kg_edge_push(KG_Edge **arr, size_t *count, size_t *cap,
+                        KG_RelationNode *rel, KG_EntityNode *neighbor) {
+    if (*count >= *cap) {
+        size_t nc = (*cap == 0) ? 4 : (*cap * 2);
+        KG_Edge *tmp = (KG_Edge *)gv_realloc(*arr, nc * sizeof(KG_Edge));
+        if (!tmp) return -1;
+        *arr = tmp;
+        *cap = nc;
+    }
+    (*arr)[*count].rel = rel;
+    (*arr)[*count].neighbor = neighbor;
+    (*count)++;
+    return 0;
+}
+
+static void kg_edge_remove_by_rel(KG_Edge *arr, size_t *count,
+                                  const KG_RelationNode *rel) {
+    for (size_t i = 0; i < *count; i++) {
+        if (arr[i].rel == rel) {
+            arr[i] = arr[*count - 1]; /* order is irrelevant; swap-remove is O(1) */
+            (*count)--;
+            return;
+        }
+    }
+}
+
+/* Link a freshly created relation into both endpoints' adjacency arrays.
+ * subj/obj must be the entity nodes for rel->subject_id / rel->object_id.
+ * A self-loop (subj == obj) is correctly recorded as both an out and in edge. */
+static void kg_link_adjacency(KG_EntityNode *subj, KG_EntityNode *obj,
+                              KG_RelationNode *rel) {
+    if (!subj || !obj || !rel) return;
+    kg_edge_push(&subj->out_edges, &subj->out_count, &subj->out_cap, rel, obj);
+    kg_edge_push(&obj->in_edges, &obj->in_count, &obj->in_cap, rel, subj);
+}
+
+/* Unlink a relation from both endpoints' adjacency arrays before it is freed. */
+static void kg_unlink_adjacency(const GV_KnowledgeGraph *kg,
+                                const KG_RelationNode *rel) {
+    KG_EntityNode *subj = kg_find_entity_node(kg, rel->relation.subject_id);
+    KG_EntityNode *obj = kg_find_entity_node(kg, rel->relation.object_id);
+    if (subj) kg_edge_remove_by_rel(subj->out_edges, &subj->out_count, rel);
+    if (obj) kg_edge_remove_by_rel(obj->in_edges, &obj->in_count, rel);
+}
+
+static void kg_entity_adjacency_free(KG_EntityNode *n) {
+    gv_free(n->out_edges);
+    gv_free(n->in_edges);
+    n->out_edges = n->in_edges = NULL;
+    n->out_count = n->out_cap = 0;
+    n->in_count = n->in_cap = 0;
+}
+
+/* Rebuild every node's adjacency from the relation table. O(entities + edges).
+ * Used after bulk load and after structural rewrites (merge) where incremental
+ * maintenance would be error-prone. */
+static void kg_rebuild_adjacency(GV_KnowledgeGraph *kg) {
+    for (size_t b = 0; b < kg->entity_bucket_count; b++) {
+        for (KG_EntityNode *n = kg->entity_buckets[b]; n; n = n->next) {
+            n->out_count = 0;
+            n->in_count = 0;
+        }
+    }
+    for (size_t b = 0; b < kg->relation_bucket_count; b++) {
+        for (KG_RelationNode *rn = kg->relation_buckets[b]; rn; rn = rn->next) {
+            KG_EntityNode *subj = kg_find_entity_node(kg,
+                                      rn->relation.subject_id);
+            KG_EntityNode *obj = kg_find_entity_node(kg,
+                                     rn->relation.object_id);
+            kg_link_adjacency(subj, obj, rn);
+        }
+    }
 }
 
 static KG_IndexEntry *kg_index_find(KG_IndexEntry **table,
@@ -386,6 +490,9 @@ static int kg_remove_relation_internal(GV_KnowledgeGraph *kg,
             uint64_t pred_hash = kg_hash_string(n->relation.predicate);
             kg_index_remove_id(kg->predicate_index, kg->spo_bucket_count,
                                pred_hash, relation_id);
+
+            /* Drop the edge from both endpoints' adjacency before freeing it. */
+            kg_unlink_adjacency(kg, n);
 
             if (prev) prev->next = n->next;
             else kg->relation_buckets[idx] = n->next;
@@ -703,6 +810,7 @@ void kg_destroy(GV_KnowledgeGraph *kg) {
         KG_EntityNode *n = kg->entity_buckets[i];
         while (n) {
             KG_EntityNode *next = n->next;
+            kg_entity_adjacency_free(n);
             kg_entity_data_free(&n->entity);
             gv_free(n);
             n = next;
@@ -816,6 +924,7 @@ int kg_remove_entity(GV_KnowledgeGraph *kg, uint64_t entity_id) {
         if (n->entity.entity_id == entity_id) {
             if (prev) prev->next = n->next;
             else kg->entity_buckets[bucket] = n->next;
+            kg_entity_adjacency_free(n);
             kg_entity_data_free(&n->entity);
             gv_free(n);
             kg->entity_count--;
@@ -911,8 +1020,9 @@ uint64_t kg_add_relation(GV_KnowledgeGraph *kg, uint64_t subject,
 
     pthread_rwlock_wrlock(&kg->rwlock);
 
-    if (!kg_find_entity_node(kg, subject) ||
-        !kg_find_entity_node(kg, object)) {
+    KG_EntityNode *subj_node = kg_find_entity_node(kg, subject);
+    KG_EntityNode *obj_node = kg_find_entity_node(kg, object);
+    if (!subj_node || !obj_node) {
         pthread_rwlock_unlock(&kg->rwlock);
         return 0;
     }
@@ -960,6 +1070,9 @@ uint64_t kg_add_relation(GV_KnowledgeGraph *kg, uint64_t subject,
                                                 kg->spo_bucket_count,
                                                 pred_hash);
     if (pe) kg_idlist_push(&pe->list, rid);
+
+    /* Wire the new edge into both endpoints for O(1) pointer-deref hops. */
+    kg_link_adjacency(subj_node, obj_node, node);
 
     pthread_rwlock_unlock(&kg->rwlock);
     return rid;
@@ -1468,6 +1581,7 @@ int kg_merge_entities(GV_KnowledgeGraph *kg, uint64_t keep_id,
         if (n->entity.entity_id == merge_id) {
             if (prev) prev->next = n->next;
             else kg->entity_buckets[bucket] = n->next;
+            kg_entity_adjacency_free(n);
             kg_entity_data_free(&n->entity);
             gv_free(n);
             kg->entity_count--;
@@ -1475,6 +1589,10 @@ int kg_merge_entities(GV_KnowledgeGraph *kg, uint64_t keep_id,
         }
         prev = n;
     }
+
+    /* Relations were re-pointed from merge_id to keep_id in place; rebuild the
+     * adjacency so every edge references the surviving node. */
+    kg_rebuild_adjacency(kg);
 
     pthread_rwlock_unlock(&kg->rwlock);
     return 0;
@@ -1546,47 +1664,95 @@ int kg_predict_links(const GV_KnowledgeGraph *kg, uint64_t entity_id,
     return (int)result_count;
 }
 
+int kg_for_each_hop(const GV_KnowledgeGraph *kg, uint64_t entity_id,
+                    int dir, const char *predicate,
+                    GV_KGHopVisitor visit, void *ctx) {
+    if (!kg || !visit) return -1;
+
+    pthread_rwlock_rdlock((pthread_rwlock_t *)&kg->rwlock);
+
+    KG_EntityNode *node = kg_find_entity_node(kg, entity_id);
+    if (!node) {
+        pthread_rwlock_unlock((pthread_rwlock_t *)&kg->rwlock);
+        return 0;
+    }
+
+    int count = 0;
+    GV_KGHop hop;
+
+    /* Outgoing: this node is the subject. Pure pointer dereference per edge. */
+    if (dir >= 0) {
+        for (size_t i = 0; i < node->out_count; i++) {
+            const KG_Edge *e = &node->out_edges[i];
+            const GV_KGRelation *r = &e->rel->relation;
+            if (predicate && strcmp(r->predicate, predicate) != 0) continue;
+            hop.relation_id = r->relation_id;
+            hop.neighbor_id = e->neighbor->entity.entity_id;
+            hop.predicate = r->predicate;
+            hop.weight = r->weight;
+            hop.outgoing = 1;
+            count++;
+            if (visit(&hop, ctx)) {
+                pthread_rwlock_unlock((pthread_rwlock_t *)&kg->rwlock);
+                return count;
+            }
+        }
+    }
+
+    /* Incoming: this node is the object. */
+    if (dir <= 0) {
+        for (size_t i = 0; i < node->in_count; i++) {
+            const KG_Edge *e = &node->in_edges[i];
+            const GV_KGRelation *r = &e->rel->relation;
+            if (predicate && strcmp(r->predicate, predicate) != 0) continue;
+            hop.relation_id = r->relation_id;
+            hop.neighbor_id = e->neighbor->entity.entity_id;
+            hop.predicate = r->predicate;
+            hop.weight = r->weight;
+            hop.outgoing = 0;
+            count++;
+            if (visit(&hop, ctx)) {
+                pthread_rwlock_unlock((pthread_rwlock_t *)&kg->rwlock);
+                return count;
+            }
+        }
+    }
+
+    pthread_rwlock_unlock((pthread_rwlock_t *)&kg->rwlock);
+    return count;
+}
+
 int kg_get_neighbors(const GV_KnowledgeGraph *kg, uint64_t entity_id,
                          uint64_t *out_ids, size_t max_count) {
     if (!kg || !out_ids || max_count == 0) return -1;
 
     pthread_rwlock_rdlock((pthread_rwlock_t *)&kg->rwlock);
 
-    if (!kg_find_entity_node(kg, entity_id)) {
+    KG_EntityNode *node = kg_find_entity_node(kg, entity_id);
+    if (!node) {
         pthread_rwlock_unlock((pthread_rwlock_t *)&kg->rwlock);
         return -1;
     }
 
     size_t found = 0;
 
-    KG_IndexEntry *se = kg_index_find(kg->subject_index,
-                                       kg->spo_bucket_count, entity_id);
-    if (se) {
-        for (size_t i = 0; i < se->list.count && found < max_count; i++) {
-            KG_RelationNode *rn = kg_find_relation_node(kg, se->list.ids[i]);
-            if (!rn) continue;
-            uint64_t nbr = rn->relation.object_id;
-            int dup = 0;
-            for (size_t j = 0; j < found; j++) {
-                if (out_ids[j] == nbr) { dup = 1; break; }
-            }
-            if (!dup) out_ids[found++] = nbr;
+    /* Outgoing neighbours (object side), then incoming (subject side), via the
+     * direct adjacency arrays — no id->node hash lookups. */
+    for (size_t i = 0; i < node->out_count && found < max_count; i++) {
+        uint64_t nbr = node->out_edges[i].neighbor->entity.entity_id;
+        int dup = 0;
+        for (size_t j = 0; j < found; j++) {
+            if (out_ids[j] == nbr) { dup = 1; break; }
         }
+        if (!dup) out_ids[found++] = nbr;
     }
-
-    KG_IndexEntry *oe = kg_index_find(kg->object_index,
-                                       kg->spo_bucket_count, entity_id);
-    if (oe) {
-        for (size_t i = 0; i < oe->list.count && found < max_count; i++) {
-            KG_RelationNode *rn = kg_find_relation_node(kg, oe->list.ids[i]);
-            if (!rn) continue;
-            uint64_t nbr = rn->relation.subject_id;
-            int dup = 0;
-            for (size_t j = 0; j < found; j++) {
-                if (out_ids[j] == nbr) { dup = 1; break; }
-            }
-            if (!dup) out_ids[found++] = nbr;
+    for (size_t i = 0; i < node->in_count && found < max_count; i++) {
+        uint64_t nbr = node->in_edges[i].neighbor->entity.entity_id;
+        int dup = 0;
+        for (size_t j = 0; j < found; j++) {
+            if (out_ids[j] == nbr) { dup = 1; break; }
         }
+        if (!dup) out_ids[found++] = nbr;
     }
 
     pthread_rwlock_unlock((pthread_rwlock_t *)&kg->rwlock);
@@ -2479,6 +2645,9 @@ GV_KnowledgeGraph *kg_load(const char *path) {
                                                     pred_hash);
         if (pe) kg_idlist_push(&pe->list, rid);
     }
+
+    /* Entities and relations are fully loaded; wire up direct adjacency. */
+    kg_rebuild_adjacency(kg);
 
     fclose(fp);
     return kg;
