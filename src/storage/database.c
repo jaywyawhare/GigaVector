@@ -68,6 +68,7 @@ static ssize_t getline(char **lineptr, size_t *n, FILE *stream) {
 #include "core/types.h"
 #include "core/scope.h"
 #include "core/memory.h"
+#include "core/log.h"
 
 #include "storage/database.h"
 #include "storage/db_internal.h"
@@ -402,6 +403,7 @@ int db_delete_by_doc(GV_Database *db, const char *doc_id) {
 static int db_write_header(FILE *out, uint32_t dimension, uint64_t count, uint32_t version) {
     const uint32_t magic = 0x47564442; /* "GVDB" in hex */
     if (fwrite(&magic, sizeof(uint32_t), 1, out) != 1) {
+        GV_LOG_ERROR("db_write_header: failed to write magic (errno=%d)", errno);
         return -1;
     }
     if (fwrite(&version, sizeof(uint32_t), 1, out) != 1) {
@@ -426,6 +428,8 @@ static int db_read_header(FILE *in, uint32_t *dimension_out, uint64_t *count_out
         return -1;
     }
     if (magic != 0x47564442 /* "GVDB" */) {
+        GV_LOG_ERROR("db_read_header: bad magic 0x%08x (expected 0x47564442) - not a GigaVector snapshot or corrupt file",
+                     magic);
         return -1;
     }
     if (fread(dimension_out, sizeof(uint32_t), 1, in) != 1) {
@@ -449,9 +453,13 @@ static int db_read_header(FILE *in, uint32_t *dimension_out, uint64_t *count_out
         size_t elems = 0;
         size_t bytes = 0;
         if (__builtin_mul_overflow((size_t)count, (size_t)dim, &elems)) {
+            GV_LOG_ERROR("db_read_header: corrupt snapshot - count=%llu * dim=%u overflows size_t",
+                         (unsigned long long)count, dim);
             return -1;
         }
         if (__builtin_mul_overflow(elems, sizeof(float), &bytes)) {
+            GV_LOG_ERROR("db_read_header: corrupt snapshot - element count %zu * sizeof(float) overflows size_t",
+                         elems);
             return -1;
         }
 
@@ -471,6 +479,8 @@ static int db_read_header(FILE *in, uint32_t *dimension_out, uint64_t *count_out
                 if (end >= 0 && (uint64_t)end >= (uint64_t)cur) {
                     uint64_t remaining = (uint64_t)end - (uint64_t)cur;
                     if (count > remaining) {
+                        GV_LOG_ERROR("db_read_header: corrupt snapshot - header count=%llu exceeds %llu remaining file bytes",
+                                     (unsigned long long)count, (unsigned long long)remaining);
                         return -1;
                     }
                 }
@@ -817,6 +827,8 @@ static int db_replay_wal(GV_Database *db) {
     if (db->wal == NULL) {
         db->wal = wal_open(db->wal_path, db->dimension, (uint32_t)db->index_type);
         if (db->wal == NULL) {
+            GV_LOG_ERROR("db_replay_wal: wal_open failed for '%s' (errno=%d)",
+                         db->wal_path, errno);
             return -1;
         }
     }
@@ -828,6 +840,8 @@ static int db_replay_wal(GV_Database *db) {
                              db, (uint32_t)db->index_type);
     db->wal_replaying = 0;
     if (rc != 0) {
+        GV_LOG_ERROR("db_replay_wal: WAL replay of '%s' failed (rc=%d) - recovery incomplete",
+                     db->wal_path, rc);
         return -1;
     }
     db_refresh_count(db);
@@ -846,11 +860,15 @@ GV_Database *db_open(const char *filepath, size_t dimension, GV_IndexType index_
      * maximum valid enumerator. */
     if ((int)index_type < (int)GV_INDEX_TYPE_KDTREE ||
         (int)index_type > (int)GV_INDEX_TYPE_RABITQ) {
+        GV_LOG_ERROR("db_open: index_type %d out of valid range [%d,%d]",
+                     (int)index_type, (int)GV_INDEX_TYPE_KDTREE, (int)GV_INDEX_TYPE_RABITQ);
         return NULL;
     }
 
     GV_Database *db = (GV_Database *)gv_alloc(sizeof(GV_Database));
     if (db == NULL) {
+        GV_LOG_ERROR("db_open: allocation of GV_Database (%zu bytes) failed for '%s'",
+                     sizeof(GV_Database), filepath ? filepath : "(in-memory)");
         return NULL;
     }
 
@@ -1090,10 +1108,13 @@ GV_Database *db_open(const char *filepath, size_t dimension, GV_IndexType index_
             if (db->wal_path != NULL) {
                 db->wal = wal_open(db->wal_path, db->dimension, (uint32_t)db->index_type);
                 if (db->wal == NULL) {
+                    GV_LOG_ERROR("db_open: wal_open failed for '%s' (errno=%d)",
+                                 db->wal_path, errno);
                     db_free_open_failure(db);
                     return NULL;
                 }
                 if (db_replay_wal(db) != 0) {
+                    GV_LOG_ERROR("db_open: WAL replay failed for new db from '%s'", filepath);
                     wal_close(db->wal);
                     db->wal = NULL;
                     db_free_open_failure(db);
@@ -1105,6 +1126,7 @@ GV_Database *db_open(const char *filepath, size_t dimension, GV_IndexType index_
         /* fopen failed with errno != ENOENT. db->hnsw_index is NULL here; route
          * through the helper so soa_storage (created above for some index
          * types) is not leaked. */
+        GV_LOG_ERROR("db_open: fopen('%s', \"rb\") failed (errno=%d)", filepath, errno);
         db_free_open_failure(db);
         return NULL;
     }
@@ -1117,12 +1139,16 @@ GV_Database *db_open(const char *filepath, size_t dimension, GV_IndexType index_
          * guarded by filepath==NULL and did not run on this load path), so
          * db_free_open_failure's db_destroy_indexes is a no-op; the helper also
          * frees soa_storage which the old manual cleanup leaked. */
+        GV_LOG_ERROR("db_open: failed to read/validate header of '%s' (truncated or corrupt)",
+                     filepath);
         fclose(in);
         db_free_open_failure(db);
         return NULL;
     }
 
     if (dimension != 0 && dimension != (size_t)file_dim) {
+        GV_LOG_ERROR("db_open: dimension mismatch for '%s' - requested %zu but file has %u",
+                     filepath, dimension, file_dim);
         fclose(in);
         db_free_open_failure(db);
         return NULL;
@@ -1134,6 +1160,8 @@ GV_Database *db_open(const char *filepath, size_t dimension, GV_IndexType index_
         /* db->hnsw_index is NULL on the load path (create branches guarded by
          * filepath==NULL); db_free_open_failure is a safe no-op for indexes and
          * frees soa_storage that the old manual cleanup leaked. */
+        GV_LOG_ERROR("db_open: unsupported snapshot version %u in '%s' (supported: 1-5)",
+                     file_version, filepath);
         fclose(in);
         db_free_open_failure(db);
         return NULL;
@@ -1191,6 +1219,8 @@ GV_Database *db_open(const char *filepath, size_t dimension, GV_IndexType index_
         }
         crc = gv_crc32_finish(crc);
         if (crc != stored_crc) {
+            GV_LOG_ERROR("db_open: CRC mismatch in '%s' - computed 0x%08x, stored 0x%08x (corrupt snapshot)",
+                         filepath, crc, stored_crc);
             fclose(in);
             db_free_open_failure(db);
             return NULL;
@@ -1206,6 +1236,8 @@ GV_Database *db_open(const char *filepath, size_t dimension, GV_IndexType index_
     if (file_index_type != db->index_type) {
         /* db->hnsw_index is NULL on the load path; helper is a safe no-op for
          * indexes and frees soa_storage. */
+        GV_LOG_ERROR("db_open: index-type mismatch for '%s' - file has %u, requested %d",
+                     filepath, file_index_type, (int)db->index_type);
         fclose(in);
         db_free_open_failure(db);
         return NULL;
@@ -2639,6 +2671,7 @@ int db_set_wal(GV_Database *db, const char *wal_path) {
     }
     db->wal = wal_open(db->wal_path, db->dimension, (uint32_t)db->index_type);
     if (db->wal == NULL) {
+        GV_LOG_ERROR("db_set_wal: wal_open failed for '%s' (errno=%d)", wal_path, errno);
         gv_free(db->wal_path);
         db->wal_path = NULL;
         return -1;
@@ -2939,6 +2972,8 @@ int db_add_vector(GV_Database *db, const float *data, size_t dimension) {
         }
         pthread_mutex_unlock(&db->wal_mutex);
         if (wal_res != 0) {
+            GV_LOG_ERROR("db_add_vector: wal_append_insert failed (rc=%d) - insert not durable",
+                         wal_res);
             pthread_rwlock_unlock(&db->rwlock);
             db_decrement_concurrent_ops(db);
             return -1;
@@ -3209,6 +3244,8 @@ int db_add_vector_with_metadata(GV_Database *db, const float *data, size_t dimen
         }
         pthread_mutex_unlock(&db->wal_mutex);
         if (wal_res != 0) {
+            GV_LOG_ERROR("db_add_vector_with_metadata: wal_append_insert failed (rc=%d) - insert not durable",
+                         wal_res);
             pthread_rwlock_unlock(&db->rwlock);
             return -1;
         }
@@ -3581,6 +3618,8 @@ int db_add_vector_with_rich_metadata(GV_Database *db, const float *data, size_t 
         }
         pthread_mutex_unlock(&db->wal_mutex);
         if (wal_res != 0) {
+            GV_LOG_ERROR("db_add_vector_with_rich_metadata: wal_append_insert_rich failed (rc=%d) - insert not durable",
+                         wal_res);
             pthread_rwlock_unlock(&db->rwlock);
             db_decrement_concurrent_ops(db);
             return -1;
@@ -3757,6 +3796,7 @@ static int db_save_locked(const GV_Database *db, const char *filepath) {
 
     FILE *out = fopen(temp_path, "wb");
     if (out == NULL) {
+        GV_LOG_ERROR("db_save: fopen('%s', \"wb\") failed (errno=%d)", temp_path, errno);
         return -1;
     }
 
@@ -3807,7 +3847,13 @@ static int db_save_locked(const GV_Database *db, const char *filepath) {
         }
     }
 
+    if (status != 0) {
+        GV_LOG_ERROR("db_save: serialization of index (type %d) to '%s' failed",
+                     (int)db->index_type, temp_path);
+    }
     if (fclose(out) != 0) {
+        GV_LOG_ERROR("db_save: fclose of '%s' failed (errno=%d) - data may not be flushed",
+                     temp_path, errno);
         status = -1;
     }
 
@@ -3850,6 +3896,8 @@ static int db_save_locked(const GV_Database *db, const char *filepath) {
             } else {
 #ifndef _WIN32
                 if (fsync(fileno(sf)) != 0) {
+                    GV_LOG_ERROR("db_save: fsync of '%s' failed (errno=%d) - snapshot not durable",
+                                 temp_path, errno);
                     status = -1;
                 }
 #else
@@ -3868,6 +3916,8 @@ static int db_save_locked(const GV_Database *db, const char *filepath) {
      * file untouched and remove the temp file. */
     if (status == 0) {
         if (rename(temp_path, out_path) != 0) {
+            GV_LOG_ERROR("db_save: rename('%s' -> '%s') failed (errno=%d) - snapshot not published",
+                         temp_path, out_path, errno);
             status = -1;
         }
     }
@@ -3909,9 +3959,13 @@ static int db_save_locked(const GV_Database *db, const char *filepath) {
         }
         int dfd = open(dir_path, O_RDONLY | O_DIRECTORY);
         if (dfd < 0) {
+            GV_LOG_ERROR("db_save: open('%s', O_DIRECTORY) failed (errno=%d) - cannot fsync dir for rename durability",
+                         dir_path, errno);
             status = -1;
         } else {
             if (fsync(dfd) != 0) {
+                GV_LOG_ERROR("db_save: fsync of directory '%s' failed (errno=%d) - rename may not be durable; WAL retained",
+                             dir_path, errno);
                 status = -1;
             }
             close(dfd);
@@ -3953,6 +4007,8 @@ static int db_save_locked(const GV_Database *db, const char *filepath) {
         if (w <= 0 || (size_t)w >= sizeof(ids_path)) {
             status = -1;
         } else if (point_id_save(db->id_map, ids_path) != 0) {
+            GV_LOG_ERROR("db_save: point_id_save to '%s' failed - chunk_id->index map not persisted",
+                         ids_path);
             status = -1;
         }
     }
@@ -4868,6 +4924,8 @@ int db_delete_vector_by_index(GV_Database *db, size_t vector_index) {
         int wal_res = wal_append_delete(db->wal, vector_index);
         pthread_mutex_unlock(&db->wal_mutex);
         if (wal_res != 0) {
+            GV_LOG_ERROR("db_delete_vector_by_index: wal_append_delete(index=%zu) failed (rc=%d) - delete not durable",
+                         vector_index, wal_res);
             pthread_rwlock_unlock(&db->rwlock);
             return -1;
         }
@@ -4979,6 +5037,8 @@ int db_update_vector(GV_Database *db, size_t vector_index, const float *new_data
         int wal_res = wal_append_update(db->wal, vector_index, new_data, dimension, NULL, NULL, 0);
         pthread_mutex_unlock(&db->wal_mutex);
         if (wal_res != 0) {
+            GV_LOG_ERROR("db_update_vector: wal_append_update(index=%zu) failed (rc=%d) - update not durable",
+                         vector_index, wal_res);
             pthread_rwlock_unlock(&db->rwlock);
             return -1;
         }

@@ -39,7 +39,19 @@ typedef struct {
                                           *   as an override).  May be NULL. */
     const char *redirect_uri;       /**< OAuth2 redirect URI. */
     const char *saml_metadata_url;  /**< SAML IdP metadata URL. */
-    const char *saml_entity_id;     /**< SAML service provider entity ID. */
+    const char *saml_entity_id;     /**< SAML service provider entity ID.  When
+                                     *   set, it is enforced as the required
+                                     *   <Audience> of the signed assertion. */
+    const char *saml_idp_cert_pem;  /**< Trusted IdP signing certificate/key for
+                                     *   SAML XML-DSig verification: a PEM-encoded
+                                     *   X.509 certificate (-----BEGIN
+                                     *   CERTIFICATE-----) OR a PEM-encoded public
+                                     *   key.  This is the ONLY trust anchor: an
+                                     *   <X509Certificate> embedded in the
+                                     *   assertion's signature is honored only if
+                                     *   it equals this configured cert.  When
+                                     *   NULL/empty, SAML assertions are rejected
+                                     *   (fail closed).  May be NULL. */
     int verify_ssl;                 /**< Verify TLS certificates (default: 1). */
     size_t token_ttl;               /**< Token time-to-live in seconds (default: 3600). */
     const char *allowed_groups;     /**< Comma-separated list of allowed groups. */

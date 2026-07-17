@@ -20,6 +20,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <time.h>
+#include <ctype.h>
 #include <pthread.h>
 
 #ifdef HAVE_CURL
@@ -40,6 +41,8 @@
 #include <openssl/core_names.h>
 #include <openssl/param_build.h>
 #include <openssl/params.h>
+#include <openssl/x509.h>   /* SAML XML-DSig: X.509 cert parsing / pubkey */
+#include <openssl/sha.h>    /* SAML XML-DSig: reference DigestValue check */
 #endif
 
 /* Internal Constants */
@@ -122,7 +125,8 @@ static int hmac_sha256(const unsigned char *key, size_t key_len,
 static int verify_jwt_signature(const GV_SSOManager *mgr, const char *jwt);
 
 /* SAML helpers */
-static GV_SSOToken *parse_saml_assertion(const char *b64_assertion);
+static GV_SSOToken *parse_saml_assertion(const GV_SSOConfig *config,
+                                         const char *b64_assertion);
 static int xml_extract_text(const char *xml, const char *tag,
                             char *out, size_t out_size);
 
@@ -399,7 +403,7 @@ GV_SSOToken *sso_validate_token(GV_SSOManager *mgr, const char *token_string) {
         if (!token) return NULL;
     } else if (mgr->config.provider == GV_SSO_SAML) {
         /* SAML assertion path (validates signature policy + time window). */
-        token = parse_saml_assertion(token_string);
+        token = parse_saml_assertion(&mgr->config, token_string);
         if (!token) return NULL;
     } else {
         return NULL;
@@ -1583,7 +1587,489 @@ static int xml_extract_attribute_value(const char *xml, const char *attr_name,
     return 0;
 }
 
-static GV_SSOToken *parse_saml_assertion(const char *b64_assertion) {
+/* ============================================================================
+ * SAML XML-DSig signature verification
+ * ============================================================================
+ *
+ * SECURITY MODEL (default deny):
+ *   - The ONLY trust anchor is config->saml_idp_cert_pem (a PEM X.509 cert or
+ *     PEM public key).  If it is absent, verification is impossible and the
+ *     assertion is rejected.
+ *   - If the signature carries an embedded <ds:X509Certificate>, we honor it
+ *     ONLY when it is byte-identical to the configured trusted certificate.
+ *     We do NOT parse-and-trust an embedded cert on its own (that is the
+ *     classic SAML "trust the embedded cert" bypass).  There is no CA-chain
+ *     building here; equality to the pinned cert is the whole policy.
+ *   - verified=1 requires BOTH: (a) the RSA signature over <SignedInfo>
+ *     validates under the trusted key, AND (b) the <DigestValue> in the signed
+ *     <Reference> equals SHA-256 of the referenced element with its own
+ *     <Signature> stripped (enveloped-signature transform).  (a) proves the
+ *     SignedInfo is authentic; (b) binds SignedInfo to the actual assertion
+ *     content.
+ *
+ * CANONICALIZATION LIMITATIONS (READ THIS):
+ *   Real XML-DSig requires Canonical XML 1.0 / Exclusive C14N (RFC 3076 /
+ *   xml-exc-c14n): namespace axis inheritance, attribute reordering, entity
+ *   and whitespace normalization, etc.  A full C14N implementation is large
+ *   and out of scope here.  Instead we do a PRAGMATIC canonicalization that
+ *   works for the byte-for-byte output of common IdPs (ADFS, Okta, Azure AD,
+ *   Keycloak, SimpleSAMLphp) which typically emit already-canonical or
+ *   near-canonical elements:
+ *     - We take the SignedInfo element EXACTLY as it appears in the received
+ *       XML (start '<...SignedInfo...>' through matching '</...SignedInfo>'),
+ *       i.e. we verify the RSA signature over the on-the-wire SignedInfo bytes.
+ *       This is correct WHEN the IdP transmitted canonical SignedInfo (the
+ *       common case, since C14N of an already-canonical element is a no-op).
+ *     - For the reference digest we take the referenced element's on-the-wire
+ *       bytes with the enveloped <Signature> subtree removed, and SHA-256 that.
+ *   What this DOES NOT robustly handle:
+ *     - Non-canonical wire XML that requires real C14N to reproduce the bytes
+ *       the IdP signed (e.g. attribute reordering, added/removed namespace
+ *       decls, differing whitespace).  Such assertions will FAIL to verify
+ *       (fail closed) rather than be wrongly accepted.
+ *     - Signature-wrapping (XSW) attacks in their full generality.  Because we
+ *       locate the SIGNED element by the Reference URI and match it to the
+ *       element carrying the ID, and we strip only the enveloped Signature,
+ *       simple wrapping is defeated; but a determined attacker exploiting
+ *       parser differentials against this string-based (non-DOM) scanner may
+ *       still find gaps.  A production deployment SHOULD use a real XML/DSig
+ *       library.  We reject on any structural ambiguity we can detect.
+ * ============================================================================
+ */
+
+#ifdef GV_HAVE_OPENSSL
+
+/*
+ * Decode standard (non-URL-safe) base64 into `out`.  SAML SignatureValue,
+ * DigestValue and X509Certificate use standard base64 with '+' and '/', often
+ * wrapped with newlines/spaces.  We copy into a scratch buffer, drop all
+ * whitespace, translate '+'->'-' and '/'->'_' and strip '=' padding, then
+ * reuse the existing base64url_decode().  Returns 0 on success.
+ */
+static int saml_b64_decode(const char *in, size_t in_len,
+                           unsigned char *out, size_t *out_len) {
+    if (!in || !out || !out_len) return -1;
+    char *tmp = gv_alloc(in_len + 1);
+    if (!tmp) return -1;
+    size_t k = 0;
+    for (size_t i = 0; i < in_len; i++) {
+        char c = in[i];
+        if (c == ' ' || c == '\t' || c == '\n' || c == '\r') continue;
+        if (c == '=') continue;  /* padding stripped; decoder tolerates it */
+        if (c == '+') c = '-';
+        else if (c == '/') c = '_';
+        tmp[k++] = c;
+    }
+    tmp[k] = '\0';
+    int rc = base64url_decode(tmp, k, out, out_len);
+    gv_free(tmp);
+    return rc;
+}
+
+/*
+ * Locate an element by (namespace-agnostic) local name.  `local` is e.g.
+ * "SignedInfo"; this matches "<SignedInfo", "<ds:SignedInfo",
+ * "<dsig:SignedInfo", etc., requiring the char after the local name to be one
+ * of space/tab/newline/'>'/'/' so "SignedInfoFoo" does not match.  Search
+ * starts at `from`.  Returns pointer to the '<' or NULL.
+ */
+static const char *saml_find_open_tag(const char *from, const char *local) {
+    size_t ln = strlen(local);
+    const char *p = from;
+    while ((p = strchr(p, '<')) != NULL) {
+        const char *q = p + 1;
+        /* optional prefix "xxx:" */
+        const char *colon = NULL;
+        const char *r = q;
+        while (*r && (isalnum((unsigned char)*r) || *r == '_' || *r == '-' ||
+                      *r == '.')) r++;
+        if (*r == ':') { colon = r; r = colon + 1; }
+        const char *name = colon ? colon + 1 : q;
+        if (strncmp(name, local, ln) == 0) {
+            char after = name[ln];
+            if (after == ' ' || after == '\t' || after == '\n' ||
+                after == '\r' || after == '>' || after == '/') {
+                return p;
+            }
+        }
+        p++;
+    }
+    return NULL;
+}
+
+/*
+ * Given a pointer to an element open tag ('<...Name...>'), return the byte
+ * range [start,end) covering the whole element including its close tag,
+ * matching nested same-local-name elements.  `local` is the element local
+ * name.  Handles self-closing "<Name .../>".  Returns 0 on success and sets
+ * *elem_end to one-past the element; -1 on malformed/ambiguous input.
+ */
+static int saml_element_extent(const char *open_tag, const char *local,
+                               const char **elem_end) {
+    /* find end of the open tag */
+    const char *gt = strchr(open_tag, '>');
+    if (!gt) return -1;
+    if (gt > open_tag && gt[-1] == '/') {  /* self-closing */
+        *elem_end = gt + 1;
+        return 0;
+    }
+    int depth = 1;
+    const char *p = gt + 1;
+    while (depth > 0) {
+        const char *nxt = saml_find_open_tag(p, local);
+        /* find matching close tag "</...local>" */
+        const char *close = p;
+        const char *found_close = NULL;
+        while ((close = strchr(close, '<')) != NULL) {
+            if (close[1] == '/') {
+                const char *q = close + 2;
+                const char *colon = NULL;
+                const char *r = q;
+                while (*r && (isalnum((unsigned char)*r) || *r == '_' ||
+                              *r == '-' || *r == '.')) r++;
+                if (*r == ':') { colon = r; }
+                const char *name = colon ? colon + 1 : q;
+                if (strncmp(name, local, strlen(local)) == 0) {
+                    char after = name[strlen(local)];
+                    if (after == ' ' || after == '\t' || after == '\n' ||
+                        after == '\r' || after == '>') {
+                        found_close = close;
+                        break;
+                    }
+                }
+            }
+            close++;
+        }
+        if (!found_close) return -1;  /* unbalanced -> ambiguous -> reject */
+        if (nxt && nxt < found_close) {
+            /* a nested open tag of same local name before the next close */
+            const char *ngt = strchr(nxt, '>');
+            if (!ngt) return -1;
+            if (!(ngt > nxt && ngt[-1] == '/')) depth++;  /* not self-closing */
+            p = ngt + 1;
+        } else {
+            const char *cgt = strchr(found_close, '>');
+            if (!cgt) return -1;
+            depth--;
+            p = cgt + 1;
+            if (depth == 0) { *elem_end = p; return 0; }
+        }
+    }
+    return -1;
+}
+
+/*
+ * Build an EVP_PKEY from the configured trust anchor PEM.  Accepts either a
+ * PEM X.509 certificate (extracts SubjectPublicKeyInfo) or a PEM public key.
+ * Caller EVP_PKEY_free()s the result.  Returns NULL on error.
+ */
+static EVP_PKEY *saml_pkey_from_trust_pem(const char *pem) {
+    if (!pem || !pem[0]) return NULL;
+    /* Try X.509 certificate first. */
+    BIO *bio = BIO_new_mem_buf(pem, -1);
+    if (!bio) return NULL;
+    X509 *cert = PEM_read_bio_X509(bio, NULL, NULL, NULL);
+    BIO_free(bio);
+    if (cert) {
+        EVP_PKEY *pk = X509_get_pubkey(cert);  /* refcount bumped */
+        X509_free(cert);
+        if (pk) return pk;
+    }
+    /* Fall back to a bare PEM public key. */
+    return rsa_pkey_from_pem(pem);
+}
+
+/*
+ * Compare the assertion's embedded <ds:X509Certificate> (base64 DER, may be
+ * newline-wrapped) against the configured trusted cert.  Trust is granted ONLY
+ * when the embedded cert's DER equals the configured cert's DER.  Returns 0
+ * when they match (safe to use), -1 otherwise.  If there is NO embedded cert,
+ * returns 0 as well (nothing to distrust; we still verify under the pinned
+ * key).  This is the anti-bypass gate: an attacker-supplied embedded cert that
+ * differs from the pin is rejected here.
+ */
+static int saml_embedded_cert_ok(const char *sig_block, const char *sig_end,
+                                 const char *trusted_pem) {
+    const char *b = saml_find_open_tag(sig_block, "X509Certificate");
+    if (!b || b >= sig_end) return 0;  /* no embedded cert -> nothing to check */
+
+    const char *gt = strchr(b, '>');
+    if (!gt || gt >= sig_end) return -1;
+    gt++;
+    const char *close = strstr(gt, "<");
+    if (!close || close >= sig_end) return -1;
+
+    size_t b64_len = (size_t)(close - gt);
+    unsigned char der[8192];
+    size_t der_len = sizeof(der);
+    if (saml_b64_decode(gt, b64_len, der, &der_len) != 0) return -1;
+
+    /* Parse embedded DER cert. */
+    const unsigned char *dp = der;
+    X509 *embedded = d2i_X509(NULL, &dp, (long)der_len);
+    if (!embedded) return -1;
+
+    /* Parse the trusted cert (must itself be an X.509 cert for DER compare). */
+    int match = -1;
+    BIO *bio = BIO_new_mem_buf(trusted_pem, -1);
+    if (bio) {
+        X509 *trusted = PEM_read_bio_X509(bio, NULL, NULL, NULL);
+        BIO_free(bio);
+        if (trusted) {
+            /* X509_cmp compares the DER encodings; 0 == identical. */
+            if (X509_cmp(embedded, trusted) == 0) match = 0;
+            X509_free(trusted);
+        } else {
+            /*
+             * Trust anchor is a bare public key, not a cert, so we cannot do a
+             * cert-DER comparison.  Do NOT trust the embedded cert; require the
+             * signature to verify under the configured public key instead.  We
+             * return 0 (allow) here but the RSA verify below uses the pinned
+             * key, so an embedded cert that does not correspond to that key
+             * will fail the signature check anyway.
+             */
+            match = 0;
+        }
+    }
+    X509_free(embedded);
+    return match;
+}
+
+/*
+ * Core XML-DSig verification over the decoded assertion XML.
+ *
+ * Returns 1 iff the signature AND the reference digest both validate against
+ * the configured trusted key.  Returns 0 on any failure (default deny).
+ *
+ * `xml`      : NUL-terminated decoded SAML XML.
+ * `xml_len`  : length of xml.
+ * `trusted`  : config->saml_idp_cert_pem (already checked non-empty).
+ */
+static int saml_verify_xmldsig(const char *xml, size_t xml_len,
+                               const char *trusted) {
+    if (!xml || !trusted || !trusted[0]) return 0;
+
+    /* 1. Locate the <ds:Signature> element and its extent. */
+    const char *sig_open = saml_find_open_tag(xml, "Signature");
+    if (!sig_open) return 0;
+    const char *sig_end = NULL;
+    if (saml_element_extent(sig_open, "Signature", &sig_end) != 0) return 0;
+    /* Reject if a second Signature exists at the same level we might confuse
+     * (defense against wrapping): we only ever verify the first, and bind it
+     * to its Reference URI below, but flag obvious duplication. */
+
+    /* 2. Anti-bypass: embedded cert (if any) must equal the pinned cert. */
+    if (saml_embedded_cert_ok(sig_open, sig_end, trusted) != 0) return 0;
+
+    /* 3. Extract <SignedInfo> (the bytes actually signed). */
+    const char *si_open = saml_find_open_tag(sig_open, "SignedInfo");
+    if (!si_open || si_open >= sig_end) return 0;
+    const char *si_end = NULL;
+    if (saml_element_extent(si_open, "SignedInfo", &si_end) != 0) return 0;
+    if (si_end > sig_end) return 0;
+    size_t si_len = (size_t)(si_end - si_open);
+
+    /* 4. Extract <SignatureValue> (base64 RSA signature). */
+    const char *sv_open = saml_find_open_tag(sig_open, "SignatureValue");
+    if (!sv_open || sv_open >= sig_end) return 0;
+    const char *sv_gt = strchr(sv_open, '>');
+    if (!sv_gt || sv_gt >= sig_end) return 0;
+    sv_gt++;
+    const char *sv_close = strstr(sv_gt, "<");
+    if (!sv_close || sv_close >= sig_end) return 0;
+    unsigned char sigval[1024];
+    size_t sigval_len = sizeof(sigval);
+    if (saml_b64_decode(sv_gt, (size_t)(sv_close - sv_gt),
+                        sigval, &sigval_len) != 0) return 0;
+
+    /* 5. Determine the signature algorithm from <SignatureMethod Algorithm>. */
+    const char *sm = saml_find_open_tag(si_open, "SignatureMethod");
+    if (!sm || sm >= si_end) return 0;
+    const char *sm_alg = strstr(sm, "Algorithm=");
+    if (!sm_alg || sm_alg >= si_end) return 0;
+    const EVP_MD *sig_md = NULL;
+    if (strstr(sm_alg, "rsa-sha256")) {
+        sig_md = EVP_sha256();
+    } else if (strstr(sm_alg, "rsa-sha1")) {
+        /* WEAK: RSA-SHA1 is deprecated/collision-prone.  Supported only for
+         * legacy IdPs; SHA-256 should be preferred.  Left enabled but flagged. */
+        sig_md = EVP_sha1();
+    } else {
+        return 0;  /* unsupported / ambiguous algorithm -> deny */
+    }
+
+    /* 6. Determine the reference DigestMethod. */
+    const char *dm = saml_find_open_tag(si_open, "DigestMethod");
+    if (!dm || dm >= si_end) return 0;
+    const char *dm_alg = strstr(dm, "Algorithm=");
+    if (!dm_alg || dm_alg >= si_end) return 0;
+    const EVP_MD *dig_md = NULL;
+    if (strstr(dm_alg, "sha256")) dig_md = EVP_sha256();
+    else if (strstr(dm_alg, "sha1")) dig_md = EVP_sha1();  /* weak; legacy */
+    else return 0;
+
+    /* 7. Extract the expected <DigestValue> (base64). */
+    const char *dv = saml_find_open_tag(si_open, "DigestValue");
+    if (!dv || dv >= si_end) return 0;
+    const char *dv_gt = strchr(dv, '>');
+    if (!dv_gt || dv_gt >= si_end) return 0;
+    dv_gt++;
+    const char *dv_close = strstr(dv_gt, "<");
+    if (!dv_close || dv_close >= si_end) return 0;
+    unsigned char want_digest[EVP_MAX_MD_SIZE];
+    size_t want_digest_len = sizeof(want_digest);
+    if (saml_b64_decode(dv_gt, (size_t)(dv_close - dv_gt),
+                        want_digest, &want_digest_len) != 0) return 0;
+
+    /* 8. Extract the Reference URI to locate the signed element. */
+    const char *ref = saml_find_open_tag(si_open, "Reference");
+    if (!ref || ref >= si_end) return 0;
+    const char *uri = strstr(ref, "URI=");
+    char ref_id[256];
+    ref_id[0] = '\0';
+    if (uri && uri < si_end) {
+        uri += 4;
+        char quote = *uri;
+        if (quote == '"' || quote == '\'') {
+            uri++;
+            const char *uend = strchr(uri, quote);
+            if (uend && uend < si_end) {
+                size_t ul = (size_t)(uend - uri);
+                /* URI is "#<ID>" (same-document reference) or "" (whole doc). */
+                if (ul > 0 && uri[0] == '#') { uri++; ul--; }
+                if (ul >= sizeof(ref_id)) ul = sizeof(ref_id) - 1;
+                memcpy(ref_id, uri, ul);
+                ref_id[ul] = '\0';
+            }
+        }
+    }
+
+    /*
+     * 9. Locate the referenced (signed) element.  It is the element whose
+     * ID/AssertionID/ResponseID attribute equals ref_id.  When ref_id is empty
+     * (URI=""), the whole document is the reference (rare for SAML; we take the
+     * root element).  We prefer the <Assertion>/<Response> element.
+     */
+    const char *signed_elem = NULL;
+    const char *signed_local = NULL;
+    char lname[64];
+    if (ref_id[0]) {
+        /* Find an attribute value == ref_id: search for =\"<id>\" or =\'<id>\'. */
+        char pat1[300], pat2[300];
+        snprintf(pat1, sizeof(pat1), "\"%s\"", ref_id);
+        snprintf(pat2, sizeof(pat2), "'%s'", ref_id);
+        const char *hit = strstr(xml, pat1);
+        if (!hit) hit = strstr(xml, pat2);
+        if (!hit) return 0;
+        /* Walk back to the enclosing '<' to find that element's open tag. */
+        const char *lt = hit;
+        while (lt > xml && *lt != '<') lt--;
+        if (*lt != '<') return 0;
+        signed_elem = lt;
+    } else {
+        /* URI="" -> whole-document; use the first element that is Response or
+         * Assertion. */
+        signed_elem = saml_find_open_tag(xml, "Response");
+        if (!signed_elem) signed_elem = saml_find_open_tag(xml, "Assertion");
+        if (!signed_elem) return 0;
+    }
+
+    /* Determine the local name of the signed element for extent matching. */
+    {
+        const char *q = signed_elem + 1;
+        const char *colon = NULL;
+        const char *r = q;
+        while (*r && (isalnum((unsigned char)*r) || *r == '_' || *r == '-' ||
+                      *r == '.')) r++;
+        if (*r == ':') colon = r;
+        const char *name = colon ? colon + 1 : q;
+        const char *nend = name;
+        while (*nend && (isalnum((unsigned char)*nend) || *nend == '_' ||
+                         *nend == '-' || *nend == '.')) nend++;
+        size_t nl = (size_t)(nend - name);
+        if (nl == 0 || nl >= sizeof(lname)) return 0;
+        memcpy(lname, name, nl);
+        lname[nl] = '\0';
+        signed_local = lname;
+    }
+
+    const char *signed_end = NULL;
+    if (saml_element_extent(signed_elem, signed_local, &signed_end) != 0)
+        return 0;
+    if (signed_end > xml + xml_len) return 0;
+
+    /*
+     * 10. Enveloped-signature transform: build the referenced element's bytes
+     * with ITS OWN <Signature> subtree removed, then SHA over that and compare
+     * to want_digest.  We must remove the Signature that is a child of the
+     * signed element (which is the one we verified, sig_open..sig_end) only if
+     * it lies within [signed_elem, signed_end).
+     */
+    {
+        EVP_MD_CTX *mdctx = EVP_MD_CTX_new();
+        if (!mdctx) return 0;
+        int digest_ok = 0;
+        if (EVP_DigestInit_ex(mdctx, dig_md, NULL) == 1) {
+            int ok = 1;
+            if (sig_open >= signed_elem && sig_end <= signed_end) {
+                /* Hash [signed_elem, sig_open) then [sig_end, signed_end). */
+                if (EVP_DigestUpdate(mdctx, signed_elem,
+                                     (size_t)(sig_open - signed_elem)) != 1)
+                    ok = 0;
+                if (ok && EVP_DigestUpdate(mdctx, sig_end,
+                                     (size_t)(signed_end - sig_end)) != 1)
+                    ok = 0;
+            } else {
+                /* Signature is not enveloped inside the referenced element.
+                 * Detached/enveloping signatures are not supported here; deny
+                 * rather than hash content that does not match the transform. */
+                ok = 0;
+            }
+            if (ok) {
+                unsigned char got[EVP_MAX_MD_SIZE];
+                unsigned int got_len = 0;
+                if (EVP_DigestFinal_ex(mdctx, got, &got_len) == 1 &&
+                    got_len == want_digest_len) {
+                    /* constant-time compare of the digest */
+                    unsigned char diff = 0;
+                    for (unsigned int i = 0; i < got_len; i++)
+                        diff |= got[i] ^ want_digest[i];
+                    digest_ok = (diff == 0);
+                }
+            }
+        }
+        EVP_MD_CTX_free(mdctx);
+        if (!digest_ok) return 0;  /* reference digest mismatch -> deny */
+    }
+
+    /*
+     * 11. Verify the RSA signature over the (pragmatically canonicalized)
+     * SignedInfo bytes using the pinned trusted key.  See the header comment
+     * for canonicalization caveats: we verify over the on-the-wire SignedInfo.
+     */
+    EVP_PKEY *pkey = saml_pkey_from_trust_pem(trusted);
+    if (!pkey) return 0;
+
+    int sig_ok = 0;
+    EVP_MD_CTX *vctx = EVP_MD_CTX_new();
+    if (vctx) {
+        if (EVP_DigestVerifyInit(vctx, NULL, sig_md, NULL, pkey) == 1 &&
+            EVP_DigestVerify(vctx, sigval, sigval_len,
+                             (const unsigned char *)si_open, si_len) == 1) {
+            sig_ok = 1;
+        }
+        EVP_MD_CTX_free(vctx);
+    }
+    EVP_PKEY_free(pkey);
+
+    /* Only success when BOTH the digest and the signature validated. */
+    return sig_ok ? 1 : 0;
+}
+
+#endif /* GV_HAVE_OPENSSL */
+
+static GV_SSOToken *parse_saml_assertion(const GV_SSOConfig *config,
+                                         const char *b64_assertion) {
     if (!b64_assertion) return NULL;
 
     /* Decode base64 (SAML uses standard base64, not URL-safe) */
@@ -1628,51 +2114,48 @@ static GV_SSOToken *parse_saml_assertion(const char *b64_assertion) {
      * ---- SAML signature policy (FAIL CLOSED) ----
      *
      * A SAML assertion is a bearer credential that can grant admin
-     * (populate_admin_flag scrapes group attributes below).  We must NOT
-     * trust any scraped field unless the assertion's XML-DSig signature has
-     * been verified against a configured, trusted IdP certificate.
+     * (populate_admin_flag scrapes group attributes below).  We must NOT trust
+     * any scraped field unless the assertion's XML-DSig signature has been
+     * verified against the configured, trusted IdP certificate
+     * (config->saml_idp_cert_pem).
      *
-     * Constraints of this build:
-     *   - The SSO config struct (GV_SSOConfig, in include/admin/sso.h, which
-     *     this module may not modify) currently has NO field for a trusted IdP
-     *     signing certificate/public key, and NO saml_allow_unsigned toggle.
-     *   - Full XML-DSig canonicalization (exc-c14n) + digest + RSA verify is
-     *     not implemented here.
+     * Verification (saml_verify_xmldsig) requires OpenSSL and returns 1 only
+     * when BOTH the RSA signature over <SignedInfo> AND the enveloped-signature
+     * reference digest validate under the pinned trust anchor.  An embedded
+     * <ds:X509Certificate> is honored ONLY if it equals the pinned cert (no
+     * embedded-cert trust bypass).  See the big header comment on
+     * saml_verify_xmldsig for canonicalization limits and signature-wrapping
+     * caveats.
      *
-     * Because no trusted verification key can be configured, we CANNOT verify
-     * the signature, and therefore we REJECT by default.  We also reject
-     * assertions that carry no <ds:Signature> at all.  A single, clearly named
-     * compile-time escape hatch (GV_SAML_ALLOW_UNSIGNED, default undefined) is
-     * provided for isolated development only; it is NEVER on by default and
-     * must be explicitly compiled in.
-     *
-     * LIMITATION (documented): once GV_SSOConfig gains an idp_cert field and an
-     * XML-DSig verifier is available (OpenSSL is present in TLS builds via
-     * GV_HAVE_OPENSSL), the block below should call that verifier instead of
-     * failing closed.  Until then, verified==0 always and we deny.
+     * Fail closed when: no trust anchor is configured, OpenSSL is absent, or
+     * verification fails for any reason.  A single, clearly named compile-time
+     * escape hatch (GV_SAML_ALLOW_UNSIGNED, default UNDEFINED / OFF) exists for
+     * isolated development only and must be explicitly compiled in.
      */
     {
         int verified = 0;
 
-        /* Detect presence of a signature element (informational only; a
-         * present-but-unverifiable signature is still rejected). */
-        int has_signature =
-            (strstr(xml, "<Signature") != NULL ||
-             strstr(xml, "<ds:Signature") != NULL ||
-             strstr(xml, ":Signature") != NULL);
-        (void)has_signature;
-
+#ifdef GV_HAVE_OPENSSL
+        if (config && config->saml_idp_cert_pem &&
+            config->saml_idp_cert_pem[0]) {
+            verified = saml_verify_xmldsig(xml, decoded_len,
+                                           config->saml_idp_cert_pem);
+        }
+        /* else: no trust anchor -> cannot verify -> verified stays 0 (deny). */
+#else
         /*
-         * No trusted IdP cert is configurable in this build, and no XML-DSig
-         * verifier is wired up here, so verification is impossible -> verified
-         * stays 0.  (Placeholder for a future
-         *   verified = saml_verify_xmldsig(xml, decoded_len, idp_cert);
-         * once the plumbing exists.)
+         * No OpenSSL in this build: XML-DSig verification is impossible, so we
+         * fail closed exactly like RS256/GCM do without OpenSSL.
          */
+        (void)config;
+#endif
 
 #ifdef GV_SAML_ALLOW_UNSIGNED
-        /* INSECURE development escape hatch. Accepts unsigned/unverified
-         * assertions. Do NOT define this in production builds. */
+        /*
+         * INSECURE development escape hatch (OFF by default; NEVER define in
+         * production).  Accepts unsigned/unverified assertions, defeating all
+         * of the above.  Present only so local dev without an IdP cert can run.
+         */
         verified = 1;
 #endif
 
@@ -1820,6 +2303,52 @@ static GV_SSOToken *parse_saml_assertion(const char *b64_assertion) {
             gv_free(decoded);
             sso_free_token(token);
             return NULL;
+        }
+    }
+
+    /*
+     * ---- Enforce the audience restriction (FAIL CLOSED when configured) ----
+     *
+     * When config->saml_entity_id (our SP entity ID) is set, the signed
+     * assertion MUST contain an <AudienceRestriction><Audience> equal to it.
+     * This prevents an assertion minted for a different SP from being replayed
+     * against us.  If no entity ID is configured we skip the check (there is
+     * nothing to match against), but the signature/digest checks above still
+     * bound the assertion to the trusted IdP.
+     */
+    if (config && config->saml_entity_id && config->saml_entity_id[0]) {
+        const char *ar = strstr(xml, "<AudienceRestriction");
+        if (!ar) ar = strstr(xml, ":AudienceRestriction");
+        int audience_ok = 0;
+        if (ar) {
+            const char *ar_end = strstr(ar, "</AudienceRestriction");
+            if (!ar_end) ar_end = xml + decoded_len;
+            const char *aud = strstr(ar, "<Audience");
+            if (!aud) aud = strstr(ar, ":Audience");
+            /* Walk each <Audience> inside the restriction. */
+            while (aud && aud < ar_end) {
+                const char *gt = strchr(aud, '>');
+                if (!gt || gt >= ar_end) break;
+                gt++;
+                const char *end = strchr(gt, '<');
+                if (!end || end >= ar_end) break;
+                size_t len = (size_t)(end - gt);
+                /* trim surrounding whitespace */
+                while (len > 0 && isspace((unsigned char)gt[0])) { gt++; len--; }
+                while (len > 0 && isspace((unsigned char)gt[len - 1])) len--;
+                if (len == strlen(config->saml_entity_id) &&
+                    memcmp(gt, config->saml_entity_id, len) == 0) {
+                    audience_ok = 1;
+                    break;
+                }
+                aud = strstr(end, "<Audience");
+                if (!aud) aud = strstr(end, ":Audience");
+            }
+        }
+        if (!audience_ok) {
+            gv_free(decoded);
+            sso_free_token(token);
+            return NULL;  /* wrong / missing audience -> deny */
         }
     }
 

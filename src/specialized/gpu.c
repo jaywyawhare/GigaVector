@@ -324,15 +324,81 @@ int gpu_index_add(GV_GPUIndex *index, const float *vectors, size_t count) {
 int gpu_index_remove(GV_GPUIndex *index, const size_t *indices, size_t count) {
     if (!index || !indices || count == 0) return -1;
 
-    /* Mark indices for removal (simple implementation - compact later) */
-    /* For now, just set vectors to zero */
+    /*
+     * Real removal via swap-remove compaction. The storage is a set of parallel
+     * arrays (vectors, norms) with no id->slot mapping and no deleted flag, so the
+     * cheapest correct removal is to move the last live element into each removed
+     * slot and shrink index->count. Because gpu_knn_search / gpu_index_search only
+     * ever scan the first index->count entries, shrinking count guarantees removed
+     * vectors are no longer searchable.
+     *
+     * Build a boolean removal mask first so that (a) duplicate/out-of-range indices
+     * in the caller's list are handled once, and (b) a slot that would be filled by
+     * a swap is not itself pending removal (we always pull from a live tail slot).
+     */
+    unsigned char *removed = gv_calloc(index->count, sizeof(unsigned char));
+    if (!removed) return -1;
+
     for (size_t i = 0; i < count; i++) {
         if (indices[i] < index->count) {
-            memset(index->vectors + indices[i] * index->dimension, 0,
-                   index->dimension * sizeof(float));
-            index->norms[indices[i]] = 0;
+            removed[indices[i]] = 1;
         }
     }
+
+    size_t dim = index->dimension;
+    size_t new_count = index->count;
+
+    /*
+     * Walk from the front. When we find a removed slot, pull a live element from the
+     * tail into it. The tail pointer (new_count) only ever shrinks, and we skip tail
+     * elements that are themselves removed. Slots >= new_count become dead.
+     */
+    for (size_t i = 0; i < new_count; i++) {
+        if (!removed[i]) continue;
+
+        /* Shrink the tail past any trailing removed elements. */
+        while (new_count > i + 1 && removed[new_count - 1]) {
+            new_count--;
+        }
+
+        if (new_count == i + 1) {
+            /* Only trailing removed elements remain; drop slot i as well. */
+            new_count = i;
+            break;
+        }
+
+        /* Move the last live element into slot i. */
+        size_t last = new_count - 1;
+        memcpy(index->vectors + i * dim,
+               index->vectors + last * dim,
+               dim * sizeof(float));
+        index->norms[i] = index->norms[last];
+        /* Slot i now holds a live element; the moved-from tail slot is retired. */
+        removed[i] = 0;
+        new_count--;
+    }
+
+    index->count = new_count;
+    index->memory_usage = index->count * (dim * sizeof(float) + sizeof(float));
+
+    gv_free(removed);
+
+#ifdef HAVE_CUDA
+    if (index->ctx->cuda_available && index->d_vectors) {
+        /* Re-upload the compacted host arrays to the device. */
+        size_t new_data_size = index->count * dim * sizeof(float);
+        size_t new_norms_size = index->count * sizeof(float);
+        if (new_data_size > 0) {
+            cudaMemcpy(index->d_vectors, index->vectors, new_data_size,
+                       cudaMemcpyHostToDevice);
+            if (index->d_norms) {
+                cudaMemcpy(index->d_norms, index->norms, new_norms_size,
+                           cudaMemcpyHostToDevice);
+            }
+        }
+        index->ctx->stats.device_memory_used = new_data_size + new_norms_size;
+    }
+#endif
 
     return 0;
 }
@@ -903,21 +969,106 @@ int gpu_train_ivfpq(GV_GPUContext *ctx, const float *vectors,
         }
     }
 
-    /* Initialize PQ codebooks (simplified) */
-    size_t subdim = dimension / num_subquantizers;
-    size_t codes_per_sub = 1 << bits_per_subquantizer;
-
-    for (size_t s = 0; s < num_subquantizers; s++) {
-        for (size_t c = 0; c < codes_per_sub && c < num_vectors; c++) {
-            memcpy(codebooks + (s * codes_per_sub + c) * subdim,
-                   vectors + c * dimension + s * subdim,
-                   subdim * sizeof(float));
-        }
-    }
-
     gv_free(assignments);
     gv_free(counts);
     gv_free(new_centroids);
+
+    /*
+     * Train PQ codebooks properly: one independent k-means per subquantizer.
+     * This mirrors pq_train / pq_train_subquantizer in src/index/pq.c. Each vector
+     * is split into num_subquantizers contiguous subvectors of length subdim; for
+     * each subquantizer we run k-means with codes_per_sub (= 2^bits) clusters over
+     * that subvector slice across the whole training set, and the resulting
+     * sub-centroids are the sub-codebook. codebooks layout is preserved:
+     * codebooks[(s * codes_per_sub + c) * subdim + d].
+     */
+    size_t subdim = dimension / num_subquantizers;
+    size_t codes_per_sub = (size_t)1 << bits_per_subquantizer;
+
+    /* Contiguous copy of one subquantizer's slice across all training vectors. */
+    float *subvecs = gv_alloc(num_vectors * subdim * sizeof(float));
+    size_t *sub_assign = gv_alloc(num_vectors * sizeof(size_t));
+    float *sub_new = gv_calloc(codes_per_sub * subdim, sizeof(float));
+    size_t *sub_counts = gv_calloc(codes_per_sub, sizeof(size_t));
+
+    if (!subvecs || !sub_assign || !sub_new || !sub_counts) {
+        gv_free(subvecs);
+        gv_free(sub_assign);
+        gv_free(sub_new);
+        gv_free(sub_counts);
+        return -1;
+    }
+
+    for (size_t s = 0; s < num_subquantizers; s++) {
+        float *subcodebook = codebooks + s * codes_per_sub * subdim;
+
+        /* Gather this subquantizer's subvectors contiguously. */
+        for (size_t v = 0; v < num_vectors; v++) {
+            memcpy(subvecs + v * subdim,
+                   vectors + v * dimension + s * subdim,
+                   subdim * sizeof(float));
+        }
+
+        /* Initialize sub-centroids by spreading picks across the training set. */
+        for (size_t c = 0; c < codes_per_sub && c < num_vectors; c++) {
+            size_t idx = (c * num_vectors) / codes_per_sub;
+            memcpy(subcodebook + c * subdim, subvecs + idx * subdim,
+                   subdim * sizeof(float));
+        }
+        /* Zero any centroids beyond the available training points. */
+        for (size_t c = num_vectors; c < codes_per_sub; c++) {
+            memset(subcodebook + c * subdim, 0, subdim * sizeof(float));
+        }
+
+        /* k-means over this subquantizer's subvectors. */
+        for (int iter = 0; iter < 10; iter++) {
+            /* Assign each subvector to its nearest sub-centroid. */
+            for (size_t v = 0; v < num_vectors; v++) {
+                float min_dist = FLT_MAX;
+                size_t best = 0;
+                const float *sv = subvecs + v * subdim;
+                for (size_t c = 0; c < codes_per_sub; c++) {
+                    const float *cc = subcodebook + c * subdim;
+                    float d2 = 0.0f;
+                    for (size_t d = 0; d < subdim; d++) {
+                        float diff = sv[d] - cc[d];
+                        d2 += diff * diff;
+                    }
+                    if (d2 < min_dist) {
+                        min_dist = d2;
+                        best = c;
+                    }
+                }
+                sub_assign[v] = best;
+            }
+
+            /* Recompute sub-centroids as the mean of their assigned subvectors. */
+            memset(sub_new, 0, codes_per_sub * subdim * sizeof(float));
+            memset(sub_counts, 0, codes_per_sub * sizeof(size_t));
+            for (size_t v = 0; v < num_vectors; v++) {
+                size_t c = sub_assign[v];
+                sub_counts[c]++;
+                const float *sv = subvecs + v * subdim;
+                float *nc = sub_new + c * subdim;
+                for (size_t d = 0; d < subdim; d++) {
+                    nc[d] += sv[d];
+                }
+            }
+            for (size_t c = 0; c < codes_per_sub; c++) {
+                if (sub_counts[c] > 0) {
+                    float *nc = sub_new + c * subdim;
+                    for (size_t d = 0; d < subdim; d++) {
+                        subcodebook[c * subdim + d] = nc[d] / (float)sub_counts[c];
+                    }
+                }
+            }
+        }
+    }
+
+    gv_free(subvecs);
+    gv_free(sub_assign);
+    gv_free(sub_new);
+    gv_free(sub_counts);
 
     return 0;
 }
