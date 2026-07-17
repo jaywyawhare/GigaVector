@@ -32,7 +32,7 @@ endif
 
 SRC_FILES   := $(shell find $(SRC_DIR) -name "*.c")
 MAIN_FILE   := main.c
-BENCH_FILES := benchmarks/benchmark_simd.c benchmarks/benchmark_compare.c benchmarks/benchmark_ivfpq.c benchmarks/benchmark_ivfpq_recall.c benchmarks/bench_ivfdisk.c
+BENCH_FILES := benchmarks/benchmark_simd.c benchmarks/benchmark_compare.c benchmarks/benchmark_ivfpq.c benchmarks/benchmark_ivfpq_recall.c benchmarks/bench_ivfdisk.c benchmarks/bench_hnsw_build.c
 TEST_DIR    := tests
 
 PYTHON_DIR  := python
@@ -57,6 +57,11 @@ run: $(BIN_DIR)/main
 .PHONY: bench
 bench: $(BENCH_DIR)/benchmark_simd $(BENCH_DIR)/benchmark_compare $(BENCH_DIR)/benchmark_ivfpq $(BENCH_DIR)/benchmark_ivfpq_recall $(BENCH_DIR)/bench_ivfdisk
 	@echo "Benchmarks built in $(BENCH_DIR)"
+
+.PHONY: bench-hnsw-build
+bench-hnsw-build: $(BENCH_DIR)/bench_hnsw_build
+	@echo "=== HNSW build benchmark (20k x 128) ==="
+	@LD_LIBRARY_PATH=$(LIB_DIR) $(BENCH_DIR)/bench_hnsw_build 20000 128
 
 .PHONY: bench-ivfdisk
 bench-ivfdisk: $(BENCH_DIR)/bench_ivfdisk
@@ -115,6 +120,11 @@ $(BENCH_DIR)/benchmark_%: benchmarks/benchmark_%.c $(STATIC_LIB)
 	@echo "Built benchmark: $@"
 
 $(BENCH_DIR)/bench_ivfdisk: benchmarks/bench_ivfdisk.c $(STATIC_LIB)
+	@mkdir -p $(BENCH_DIR)
+	$(CC) $(CFLAGS) $< -L$(LIB_DIR) -l$(LIB_NAME) $(LDFLAGS) -o $@
+	@echo "Built benchmark: $@"
+
+$(BENCH_DIR)/bench_hnsw_build: benchmarks/bench_hnsw_build.c $(STATIC_LIB)
 	@mkdir -p $(BENCH_DIR)
 	$(CC) $(CFLAGS) $< -L$(LIB_DIR) -l$(LIB_NAME) $(LDFLAGS) -o $@
 	@echo "Built benchmark: $@"

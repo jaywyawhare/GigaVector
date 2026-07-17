@@ -120,6 +120,15 @@ float batch_data[1000 * 128];  // 1000 vectors of 128 dimensions
 rc = gv_db_add_vectors(db, batch_data, 1000, 128);
 ```
 
+Prefer `gv_db_add_vectors` over a loop of `gv_db_add_vector` when loading many
+vectors at once: for HNSW indexes it reserves capacity for the whole batch and
+uses the raw-insert path, avoiding repeated reallocation and per-vector
+allocation (see
+[Fast Index Construction](performance.md#fast-index-construction-bulk-loading)).
+It returns `0` on full success and `-1` if any vector fails; a failed batch may
+leave earlier vectors committed, so insert one at a time if you need the exact
+committed count.
+
 ### Searching
 
 ```c

@@ -133,6 +133,38 @@ GigaVector supports multiple index types, each optimized for different scenarios
   - 1 hop: Fast, good recall
   - 2 hops: Better recall, slower
 
+#### Fast Index Construction (Bulk Loading)
+
+HNSW build time is dominated by the per-vector graph search, but two easy
+wins avoid unnecessary overhead when loading a known number of vectors:
+
+1. **Pre-reserve capacity.** Growing the node, neighbor, and vector-storage
+   arrays one insert at a time triggers repeated reallocation and copying.
+   Call `gv_hnsw_reserve(index, n)` once before inserting `n` vectors so every
+   backing array is sized up front.
+2. **Insert raw data.** `gv_hnsw_insert_raw(index, data, dimension)` copies the
+   float array straight into SoA storage, skipping the `GV_Vector` allocation
+   that `gv_hnsw_insert` performs.
+
+At the database layer, `gv_db_add_vectors()` already applies both optimizations
+automatically for HNSW indexes (it reserves for the whole batch, then uses the
+raw insert path), so prefer it over a loop of `gv_db_add_vector()` calls:
+
+```c
+// Fast: one reservation, raw inserts, single write-lock acquisition.
+int rc = gv_db_add_vectors(db, data, count, dimension);
+// rc == 0 on full success; -1 if any insert failed (partial commit may remain).
+```
+
+Notes:
+- The fast batch path is used when the index is HNSW, no WAL is attached, and
+  cosine normalization is off; otherwise it falls back to per-vector inserts.
+- `gv_db_add_vectors` returns `-1` if any vector fails but does **not** roll
+  back already-committed vectors. Callers that need the exact committed count
+  should insert one at a time.
+- Reserving is a hint, not a hard cap: further inserts beyond `n` still grow
+  the index normally.
+
 ### IVFPQ Parameters
 
 #### `nlist` (Number of coarse centroids)
@@ -317,6 +349,10 @@ printf("Memory usage: %zu bytes\n", memory_bytes);
 **HNSW:**
 - Search latency: 0.1-5ms (1M-1B vectors)
 - Insertion: 0.1-1ms per vector
+- Bulk build: ~0.5ms per vector at 20K x 128, M=16, efConstruction=200
+  (single thread, AVX2); scales roughly with `efConstruction * M` and grows
+  slowly with index size. Use `gv_db_add_vectors()` / `gv_hnsw_reserve()` to hit
+  this path -- see [Fast Index Construction](#fast-index-construction-bulk-loading).
 - Memory: Moderate overhead (M * 8 bytes per vector)
 - Recall: 95-99% (with proper efSearch tuning)
 
@@ -350,7 +386,16 @@ make bench
 
 # Run recall benchmarks
 ./build/bench/benchmark_ivfpq_recall
+
+# Measure HNSW build throughput and recall@10 (args: N [dim])
+make bench-hnsw-build                 # default 20000 x 128
+./build/bench/bench_hnsw_build 50000 256
 ```
+
+The `bench_hnsw_build` tool builds an index from random vectors, reports
+insert throughput (`us/ins`), and prints recall@10 against a brute-force
+ground truth so construction changes can be checked for both speed and
+quality.
 
 ### Expected Performance Improvements
 

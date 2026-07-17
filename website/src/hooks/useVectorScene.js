@@ -45,7 +45,7 @@ export function useVectorScene() {
       transparent: true,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
-      uniforms: { uColor: { value: new THREE.Color(0.5, 0.5, 0.55) } },
+      uniforms: { uColor: { value: new THREE.Color(0.44, 0.63, 0.72) } },
       vertexShader: `
         attribute float size;
         varying float vDist;

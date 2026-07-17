@@ -416,23 +416,15 @@ int gv_hnsw_reserve(void *index_ptr, size_t n) {
         index->neighbors_capacity = new_cap;
     }
 
-    /* Pre-allocate SoA storage */
+    /* Pre-allocate SoA storage. Route through soa_storage_reserve so every
+     * parallel array (data, metadata, deleted, insert_timestamps) grows
+     * consistently -- hand-rolling the realloc here previously bumped capacity
+     * without growing insert_timestamps, causing an out-of-bounds write in
+     * soa_storage_add once the reserved slots were filled. */
     if (index->soa_storage_owned && index->soa_storage) {
-        GV_SoAStorage *s = index->soa_storage;
-        if (total > s->capacity) {
-            size_t new_cap = total + (total >> 2);
-            float *new_data = (float *)gv_realloc(s->data, new_cap * s->dimension * sizeof(float));
-            if (!new_data) return -1;
-            s->data = new_data;
-            GV_Metadata **new_meta = (GV_Metadata **)gv_realloc(s->metadata, new_cap * sizeof(GV_Metadata *));
-            if (!new_meta) return -1;
-            memset(new_meta + s->capacity, 0, (new_cap - s->capacity) * sizeof(GV_Metadata *));
-            s->metadata = new_meta;
-            int *new_del = (int *)gv_realloc(s->deleted, new_cap * sizeof(int));
-            if (!new_del) return -1;
-            memset(new_del + s->capacity, 0, (new_cap - s->capacity) * sizeof(int));
-            s->deleted = new_del;
-            s->capacity = new_cap;
+        if (total > index->soa_storage->capacity) {
+            size_t new_cap = total + (total >> 2); /* 25% headroom */
+            if (soa_storage_reserve(index->soa_storage, new_cap) != 0) return -1;
         }
     }
 
@@ -639,6 +631,39 @@ static inline size_t mmheap_pop_min(float *dis, size_t *ids, uint8_t *proc,
     return ids[best_pos];
 }
 
+/* (distance, source-index) pair for ordering construction candidates. */
+typedef struct { float d; uint32_t src; } GV_CandKV;
+
+/* True if a orders after b: greater distance, ties broken by higher src.
+ * Tie-breaking on src reproduces the old selection sort's "first minimum
+ * wins" behaviour so the resulting candidate order is byte-identical. */
+static inline int candkv_gt(const GV_CandKV *a, const GV_CandKV *b) {
+    return (a->d > b->d) || (a->d == b->d && a->src > b->src);
+}
+
+static inline void candkv_sift_down(GV_CandKV *a, size_t root, size_t n) {
+    for (;;) {
+        size_t child = 2 * root + 1;
+        if (child >= n) break;
+        if (child + 1 < n && candkv_gt(&a[child + 1], &a[child])) child++;
+        if (!candkv_gt(&a[child], &a[root])) break;
+        GV_CandKV t = a[root]; a[root] = a[child]; a[child] = t;
+        root = child;
+    }
+}
+
+/* Ascending heapsort by (distance, src). O(n log n) replacement for the
+ * previous O(extract_need * n) selection sort used to order the construction
+ * candidate set. */
+static void candkv_sort_asc(GV_CandKV *a, size_t n) {
+    if (n < 2) return;
+    for (size_t start = n / 2; start-- > 0; ) candkv_sift_down(a, start, n);
+    for (size_t end = n; end-- > 1; ) {
+        GV_CandKV t = a[0]; a[0] = a[end]; a[end] = t;
+        candkv_sift_down(a, 0, end);
+    }
+}
+
 static int hnsw_insert_impl(GV_HNSWIndex *index, size_t vector_index, size_t dimension);
 
 int gv_hnsw_insert(void *index_ptr, GV_Vector *vector) {
@@ -824,25 +849,21 @@ static int hnsw_insert_impl(GV_HNSWIndex *index, size_t vector_index, size_t dim
         size_t extract_need = max_nbrs * 3;
         if (extract_need > heap_k) extract_need = heap_k;
 
-        float tmp_dis2[512];
-        size_t tmp_ids2[512];
         size_t copy_n = (heap_k < 512) ? heap_k : 512;
-        memcpy(tmp_dis2, heap_dis, copy_n * sizeof(float));
-        memcpy(tmp_ids2, heap_ids, copy_n * sizeof(size_t));
+        GV_CandKV kv[512];
+        for (size_t i = 0; i < copy_n; ++i) {
+            kv[i].d = heap_dis[i];
+            kv[i].src = (uint32_t)i;
+        }
+        candkv_sort_asc(kv, copy_n);
 
         GV_HNSWCandidate sorted_cands[128];
-        size_t cand_count = 0;
-        for (size_t e = 0; e < extract_need && e < 128; ++e) {
-            float best_d = FLT_MAX;
-            size_t best_i = SIZE_MAX;
-            for (size_t i = 0; i < copy_n; ++i) {
-                if (tmp_dis2[i] < best_d) { best_d = tmp_dis2[i]; best_i = i; }
-            }
-            if (best_i == SIZE_MAX) break;
-            sorted_cands[cand_count].node_idx = tmp_ids2[best_i];
-            sorted_cands[cand_count].distance = best_d;
-            cand_count++;
-            tmp_dis2[best_i] = FLT_MAX;
+        size_t cand_count = extract_need;
+        if (cand_count > copy_n) cand_count = copy_n;
+        if (cand_count > 128) cand_count = 128;
+        for (size_t e = 0; e < cand_count; ++e) {
+            sorted_cands[e].node_idx = heap_ids[kv[e].src];
+            sorted_cands[e].distance = kv[e].d;
         }
 
         size_t sel_buf[64];
