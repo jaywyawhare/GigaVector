@@ -2,6 +2,7 @@
 
 #include "index/rabitq.h"
 #include "core/memory.h"
+#include "core/utils.h"
 #include "schema/vector.h"
 #include "schema/metadata.h"
 #include "storage/soa_storage.h"
@@ -483,21 +484,24 @@ int rabitq_save(const void *index, FILE *out, uint32_t version) {
     uint64_t cap   = (uint64_t)idx->cap;
     uint64_t cw    = (uint64_t)idx->code_words;
 
-    if (fwrite(&magic, sizeof magic, 1, out) != 1) return -1;
-    if (fwrite(&dim,   sizeof dim,   1, out) != 1) return -1;
-    if (fwrite(&seed,  sizeof seed,  1, out) != 1) return -1;
-    if (fwrite(&rf,    sizeof rf,    1, out) != 1) return -1;
-    if (fwrite(&cnt,   sizeof cnt,   1, out) != 1) return -1;
-    if (fwrite(&cap,   sizeof cap,   1, out) != 1) return -1;
-    if (fwrite(&cw,    sizeof cw,    1, out) != 1) return -1;
+    if (write_u32(out, magic) != 0) return -1;
+    if (write_u64(out, dim)    != 0) return -1;
+    if (write_u64(out, seed)   != 0) return -1;
+    if (write_u64(out, rf)     != 0) return -1;
+    if (write_u64(out, cnt)    != 0) return -1;
+    if (write_u64(out, cap)    != 0) return -1;
+    if (write_u64(out, cw)     != 0) return -1;
 
+    /* Packed binary codes: bit-packed quantization data, left as raw words
+     * (no bulk-u64 helper; treated as opaque packed codes per format). */
     if (idx->cap > 0 && idx->codes) {
         if (fwrite(idx->codes, sizeof(uint64_t),
                    idx->cap * idx->code_words, out) !=
             idx->cap * idx->code_words) return -1;
     }
+    /* Per-slot deletion flags are a byte array -> already byte-portable. */
     if (idx->cap > 0 && idx->deleted_arr) {
-        if (fwrite(idx->deleted_arr, 1, idx->cap, out) != idx->cap) return -1;
+        if (write_bytes(out, idx->deleted_arr, idx->cap) != 0) return -1;
     }
 
     /* Save soa_storage (owns-storage case only — shared storage saved by DB). */
@@ -512,16 +516,16 @@ int rabitq_load(void **index_ptr, FILE *in, size_t dimension,
     if (!index_ptr || !in) return -1;
 
     uint32_t magic = 0;
-    if (fread(&magic, sizeof magic, 1, in) != 1 || magic != RABITQ_MAGIC)
+    if (read_u32(in, &magic) != 0 || magic != RABITQ_MAGIC)
         return -1;
 
     uint64_t dim, seed, rf, cnt, cap, cw;
-    if (fread(&dim,  sizeof dim,  1, in) != 1) return -1;
-    if (fread(&seed, sizeof seed, 1, in) != 1) return -1;
-    if (fread(&rf,   sizeof rf,   1, in) != 1) return -1;
-    if (fread(&cnt,  sizeof cnt,  1, in) != 1) return -1;
-    if (fread(&cap,  sizeof cap,  1, in) != 1) return -1;
-    if (fread(&cw,   sizeof cw,   1, in) != 1) return -1;
+    if (read_u64(in, &dim)  != 0) return -1;
+    if (read_u64(in, &seed) != 0) return -1;
+    if (read_u64(in, &rf)   != 0) return -1;
+    if (read_u64(in, &cnt)  != 0) return -1;
+    if (read_u64(in, &cap)  != 0) return -1;
+    if (read_u64(in, &cw)   != 0) return -1;
 
     if (dimension != 0 && (size_t)dim != dimension) return -1;
 
@@ -541,7 +545,7 @@ int rabitq_load(void **index_ptr, FILE *in, size_t dimension,
             rabitq_destroy(idx);
             return -1;
         }
-        if (fread(idx->deleted_arr, 1, (size_t)cap, in) != (size_t)cap) {
+        if (read_bytes(in, idx->deleted_arr, (size_t)cap) != 0) {
             rabitq_destroy(idx);
             return -1;
         }

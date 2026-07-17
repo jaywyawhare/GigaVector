@@ -481,6 +481,94 @@ typedef struct {
     uint64_t last_active;
 } TenantRecord;
 
+/*
+ * Struct serialization is done field-by-field with the portable little-endian
+ * helpers in core/utils.h. The original code used raw fwrite(&struct) which
+ * embedded compiler padding bytes; to keep the on-disk layout byte-identical to
+ * the previous native x86-64 format, the padding bytes (always zero, since the
+ * structs were memset to 0 before writing) are reproduced explicitly via
+ * zero-filled write_bytes/read_bytes calls at the same offsets.
+ */
+static const uint8_t TIERED_ZERO_PAD[8] = {0};
+
+/* TieredFileHeader on disk: magic[6], pad[2], version u32, tenant_count u32. */
+static int write_tiered_header(FILE *fp, uint32_t version, uint32_t tenant_count) {
+    if (write_bytes(fp, TIERED_MAGIC, TIERED_MAGIC_LEN) != 0) return -1;
+    if (write_bytes(fp, TIERED_ZERO_PAD, 2) != 0) return -1;  /* alignment padding */
+    if (write_u32(fp, version) != 0) return -1;
+    if (write_u32(fp, tenant_count) != 0) return -1;
+    return 0;
+}
+
+static int read_tiered_header(FILE *fp, char magic_out[TIERED_MAGIC_LEN],
+                              uint32_t *version, uint32_t *tenant_count) {
+    uint8_t pad[2];
+    if (read_bytes(fp, magic_out, TIERED_MAGIC_LEN) != 0) return -1;
+    if (read_bytes(fp, pad, 2) != 0) return -1;  /* alignment padding */
+    if (read_u32(fp, version) != 0) return -1;
+    if (read_u32(fp, tenant_count) != 0) return -1;
+    return 0;
+}
+
+/* GV_TieredTenantConfig on disk: 4x size_t thresholds, 2x int, 2x size_t. */
+static int write_tiered_config(FILE *fp, const GV_TieredTenantConfig *cfg) {
+    if (write_size(fp, cfg->thresholds.shared_max_vectors)      != 0) return -1;
+    if (write_size(fp, cfg->thresholds.dedicated_max_vectors)   != 0) return -1;
+    if (write_size(fp, cfg->thresholds.shared_max_memory_mb)    != 0) return -1;
+    if (write_size(fp, cfg->thresholds.dedicated_max_memory_mb) != 0) return -1;
+    if (write_u32(fp, (uint32_t)(int32_t)cfg->auto_promote)     != 0) return -1;
+    if (write_u32(fp, (uint32_t)(int32_t)cfg->auto_demote)      != 0) return -1;
+    if (write_size(fp, cfg->max_shared_tenants)                 != 0) return -1;
+    if (write_size(fp, cfg->max_total_tenants)                  != 0) return -1;
+    return 0;
+}
+
+static int read_tiered_config(FILE *fp, GV_TieredTenantConfig *cfg) {
+    uint32_t ap, ad;
+    if (read_size(fp, &cfg->thresholds.shared_max_vectors)      != 0) return -1;
+    if (read_size(fp, &cfg->thresholds.dedicated_max_vectors)   != 0) return -1;
+    if (read_size(fp, &cfg->thresholds.shared_max_memory_mb)    != 0) return -1;
+    if (read_size(fp, &cfg->thresholds.dedicated_max_memory_mb) != 0) return -1;
+    if (read_u32(fp, &ap) != 0) return -1;
+    if (read_u32(fp, &ad) != 0) return -1;
+    cfg->auto_promote = (int)(int32_t)ap;
+    cfg->auto_demote  = (int)(int32_t)ad;
+    if (read_size(fp, &cfg->max_shared_tenants) != 0) return -1;
+    if (read_size(fp, &cfg->max_total_tenants)  != 0) return -1;
+    return 0;
+}
+
+/* TenantRecord on disk: tenant_id[128], tier u32, pad[4], 4x uint64. */
+static int write_tenant_record(FILE *fp, const TenantEntry *e) {
+    if (write_bytes(fp, e->tenant_id, TENANT_ID_MAX_LEN) != 0) return -1;
+    if (write_u32(fp, (uint32_t)e->tier) != 0) return -1;
+    if (write_bytes(fp, TIERED_ZERO_PAD, 4) != 0) return -1;  /* alignment padding */
+    if (write_u64(fp, (uint64_t)e->vector_count) != 0) return -1;
+    if (write_u64(fp, (uint64_t)e->memory_bytes) != 0) return -1;
+    if (write_u64(fp, e->created_at) != 0) return -1;
+    if (write_u64(fp, e->last_active) != 0) return -1;
+    return 0;
+}
+
+static int read_tenant_record(FILE *fp, TenantEntry *e) {
+    uint8_t pad[4];
+    uint32_t tier;
+    uint64_t vector_count, memory_bytes, created_at, last_active;
+    if (read_bytes(fp, e->tenant_id, TENANT_ID_MAX_LEN) != 0) return -1;
+    if (read_u32(fp, &tier) != 0) return -1;
+    if (read_bytes(fp, pad, 4) != 0) return -1;  /* alignment padding */
+    if (read_u64(fp, &vector_count) != 0) return -1;
+    if (read_u64(fp, &memory_bytes) != 0) return -1;
+    if (read_u64(fp, &created_at) != 0) return -1;
+    if (read_u64(fp, &last_active) != 0) return -1;
+    e->tier         = (GV_TenantTier)tier;
+    e->vector_count = (size_t)vector_count;
+    e->memory_bytes = (size_t)memory_bytes;
+    e->created_at   = created_at;
+    e->last_active  = last_active;
+    return 0;
+}
+
 int tiered_save(const GV_TieredManager *mgr, const char *path) {
     if (!mgr || !path) return -1;
 
@@ -492,30 +580,16 @@ int tiered_save(const GV_TieredManager *mgr, const char *path) {
         return -1;
     }
 
-    TieredFileHeader hdr;
-    memset(&hdr, 0, sizeof(hdr));
-    memcpy(hdr.magic, TIERED_MAGIC, TIERED_MAGIC_LEN);
-    hdr.version      = TIERED_VERSION;
-    hdr.tenant_count = (uint32_t)mgr->tenant_count;
+    if (write_tiered_header(fp, TIERED_VERSION,
+                            (uint32_t)mgr->tenant_count) != 0) goto fail;
 
-    if (fwrite(&hdr, sizeof(hdr), 1, fp) != 1) goto fail;
-
-    if (fwrite(&mgr->config, sizeof(GV_TieredTenantConfig), 1, fp) != 1) goto fail;
+    if (write_tiered_config(fp, &mgr->config) != 0) goto fail;
 
     for (size_t i = 0; i < HASH_BUCKETS; i++) {
         for (TenantEntry *e = mgr->buckets[i]; e; e = e->next) {
             if (!e->active) continue;
 
-            TenantRecord rec;
-            memset(&rec, 0, sizeof(rec));
-            memcpy(rec.tenant_id, e->tenant_id, TENANT_ID_MAX_LEN);
-            rec.tier         = (uint32_t)e->tier;
-            rec.vector_count = (uint64_t)e->vector_count;
-            rec.memory_bytes = (uint64_t)e->memory_bytes;
-            rec.created_at   = e->created_at;
-            rec.last_active  = e->last_active;
-
-            if (fwrite(&rec, sizeof(rec), 1, fp) != 1) goto fail;
+            if (write_tenant_record(fp, e) != 0) goto fail;
         }
     }
 
@@ -535,40 +609,35 @@ GV_TieredManager *tiered_load(const char *path) {
     FILE *fp = fopen(path, "rb");
     if (!fp) return NULL;
 
-    TieredFileHeader hdr;
-    if (fread(&hdr, sizeof(hdr), 1, fp) != 1) goto fail;
+    char magic[TIERED_MAGIC_LEN];
+    uint32_t version = 0;
+    uint32_t tenant_count = 0;
+    if (read_tiered_header(fp, magic, &version, &tenant_count) != 0) goto fail;
 
-    if (memcmp(hdr.magic, TIERED_MAGIC, TIERED_MAGIC_LEN) != 0) goto fail;
-    if (hdr.version != TIERED_VERSION) goto fail;
+    if (memcmp(magic, TIERED_MAGIC, TIERED_MAGIC_LEN) != 0) goto fail;
+    if (version != TIERED_VERSION) goto fail;
 
     GV_TieredTenantConfig config;
-    if (fread(&config, sizeof(config), 1, fp) != 1) goto fail;
+    if (read_tiered_config(fp, &config) != 0) goto fail;
 
     GV_TieredManager *mgr = tiered_create(&config);
     if (!mgr) goto fail;
 
-    for (uint32_t i = 0; i < hdr.tenant_count; i++) {
-        TenantRecord rec;
-        if (fread(&rec, sizeof(rec), 1, fp) != 1) {
-            tiered_destroy(mgr);
-            goto fail;
-        }
-
-        rec.tenant_id[TENANT_ID_MAX_LEN - 1] = '\0';
-
+    for (uint32_t i = 0; i < tenant_count; i++) {
         TenantEntry *entry = gv_calloc(1, sizeof(TenantEntry));
         if (!entry) {
             tiered_destroy(mgr);
             goto fail;
         }
 
-        memcpy(entry->tenant_id, rec.tenant_id, TENANT_ID_MAX_LEN);
-        entry->active       = 1;
-        entry->tier         = (GV_TenantTier)rec.tier;
-        entry->vector_count = (size_t)rec.vector_count;
-        entry->memory_bytes = (size_t)rec.memory_bytes;
-        entry->created_at   = rec.created_at;
-        entry->last_active  = rec.last_active;
+        if (read_tenant_record(fp, entry) != 0) {
+            gv_free(entry);
+            tiered_destroy(mgr);
+            goto fail;
+        }
+
+        entry->tenant_id[TENANT_ID_MAX_LEN - 1] = '\0';
+        entry->active = 1;
         qps_tracker_init(&entry->qps);
 
         size_t idx = hash_tenant_id(entry->tenant_id);

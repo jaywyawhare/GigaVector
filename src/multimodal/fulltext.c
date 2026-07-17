@@ -1549,60 +1549,60 @@ int ft_save(const GV_FTIndex *idx, const char *path) {
     if (idx->config.enable_stemming)    flags |= 0x01;
     if (idx->config.enable_phrase_match) flags |= 0x02;
     if (idx->config.use_blockmax_wand)  flags |= 0x04;
-    fwrite(&lang, sizeof(lang), 1, fp);
-    fwrite(&flags, sizeof(flags), 1, fp);
+    write_u32(fp, lang);
+    write_u32(fp, flags);
     uint64_t bs = (uint64_t)idx->config.block_size;
-    fwrite(&bs, sizeof(bs), 1, fp);
+    write_u64(fp, bs);
 
     uint64_t td = (uint64_t)idx->total_documents;
     uint64_t tt = (uint64_t)idx->total_terms;
     uint64_t tl = (uint64_t)idx->total_doc_length;
-    fwrite(&td, sizeof(td), 1, fp);
-    fwrite(&tt, sizeof(tt), 1, fp);
-    fwrite(&tl, sizeof(tl), 1, fp);
+    write_u64(fp, td);
+    write_u64(fp, tt);
+    write_u64(fp, tl);
 
     for (size_t i = 0; i < FT_DOC_HASH_BUCKETS; i++) {
         FT_DocInfo *di = idx->doc_buckets[i];
         while (di) {
             uint64_t did = (uint64_t)di->doc_id;
             uint64_t dl = (uint64_t)di->doc_length;
-            fwrite(&did, sizeof(did), 1, fp);
-            fwrite(&dl, sizeof(dl), 1, fp);
+            write_u64(fp, did);
+            write_u64(fp, dl);
             di = di->next;
         }
     }
     uint64_t sentinel = UINT64_MAX;
-    fwrite(&sentinel, sizeof(sentinel), 1, fp);
+    write_u64(fp, sentinel);
 
     for (size_t i = 0; i < FT_TERM_HASH_BUCKETS; i++) {
         FT_PostingList *pl = idx->term_buckets[i];
         while (pl) {
             uint32_t term_len = (uint32_t)strlen(pl->term);
-            fwrite(&term_len, sizeof(term_len), 1, fp);
+            write_u32(fp, term_len);
             fwrite(pl->term, 1, term_len, fp);
 
             uint64_t pcount = (uint64_t)pl->count;
-            fwrite(&pcount, sizeof(pcount), 1, fp);
+            write_u64(fp, pcount);
 
             for (size_t j = 0; j < pl->count; j++) {
                 FT_Posting *p = &pl->postings[j];
                 uint64_t did = (uint64_t)p->doc_id;
                 uint64_t tf = (uint64_t)p->term_freq;
-                fwrite(&did, sizeof(did), 1, fp);
-                fwrite(&tf, sizeof(tf), 1, fp);
+                write_u64(fp, did);
+                write_u64(fp, tf);
 
                 uint64_t pcnt = (uint64_t)p->pos.count;
-                fwrite(&pcnt, sizeof(pcnt), 1, fp);
+                write_u64(fp, pcnt);
                 for (size_t k = 0; k < p->pos.count; k++) {
                     uint64_t pos = (uint64_t)p->pos.positions[k];
-                    fwrite(&pos, sizeof(pos), 1, fp);
+                    write_u64(fp, pos);
                 }
             }
             pl = pl->next;
         }
     }
     uint32_t zero = 0;
-    fwrite(&zero, sizeof(zero), 1, fp);
+    write_u32(fp, zero);
 
     pthread_rwlock_unlock((pthread_rwlock_t *)&idx->rwlock);
     fclose(fp);
@@ -1623,9 +1623,9 @@ GV_FTIndex *ft_load(const char *path) {
 
     uint32_t lang, flags;
     uint64_t bs;
-    if (fread(&lang, sizeof(lang), 1, fp) != 1 ||
-        fread(&flags, sizeof(flags), 1, fp) != 1 ||
-        fread(&bs, sizeof(bs), 1, fp) != 1) {
+    if (read_u32(fp, &lang) != 0 ||
+        read_u32(fp, &flags) != 0 ||
+        read_u64(fp, &bs) != 0) {
         fclose(fp);
         return NULL;
     }
@@ -1642,9 +1642,9 @@ GV_FTIndex *ft_load(const char *path) {
     if (!idx) { fclose(fp); return NULL; }
 
     uint64_t td, tt, tl;
-    if (fread(&td, sizeof(td), 1, fp) != 1 ||
-        fread(&tt, sizeof(tt), 1, fp) != 1 ||
-        fread(&tl, sizeof(tl), 1, fp) != 1) {
+    if (read_u64(fp, &td) != 0 ||
+        read_u64(fp, &tt) != 0 ||
+        read_u64(fp, &tl) != 0) {
         ft_destroy(idx);
         fclose(fp);
         return NULL;
@@ -1652,11 +1652,11 @@ GV_FTIndex *ft_load(const char *path) {
 
     while (1) {
         uint64_t did;
-        if (fread(&did, sizeof(did), 1, fp) != 1) break;
+        if (read_u64(fp, &did) != 0) break;
         if (did == UINT64_MAX) break;
 
         uint64_t dl;
-        if (fread(&dl, sizeof(dl), 1, fp) != 1) break;
+        if (read_u64(fp, &dl) != 0) break;
 
         FT_DocInfo *di = ft_get_or_create_doc_info(idx, (size_t)did);
         if (di) {
@@ -1667,7 +1667,7 @@ GV_FTIndex *ft_load(const char *path) {
 
     while (1) {
         uint32_t term_len;
-        if (fread(&term_len, sizeof(term_len), 1, fp) != 1) break;
+        if (read_u32(fp, &term_len) != 0) break;
         if (term_len == 0) break;
 
         char *term = gv_alloc((size_t)term_len + 1);
@@ -1676,7 +1676,7 @@ GV_FTIndex *ft_load(const char *path) {
         term[term_len] = '\0';
 
         uint64_t pcount;
-        if (fread(&pcount, sizeof(pcount), 1, fp) != 1) { gv_free(term); break; }
+        if (read_u64(fp, &pcount) != 0) { gv_free(term); break; }
 
         FT_PostingList *pl = ft_get_or_create_posting_list(idx, term);
         gv_free(term);
@@ -1691,9 +1691,9 @@ GV_FTIndex *ft_load(const char *path) {
 
         for (uint64_t j = 0; j < pcount; j++) {
             uint64_t did, tf, pcnt;
-            if (fread(&did, sizeof(did), 1, fp) != 1) goto done;
-            if (fread(&tf, sizeof(tf), 1, fp) != 1) goto done;
-            if (fread(&pcnt, sizeof(pcnt), 1, fp) != 1) goto done;
+            if (read_u64(fp, &did) != 0) goto done;
+            if (read_u64(fp, &tf) != 0) goto done;
+            if (read_u64(fp, &pcnt) != 0) goto done;
 
             FT_Posting *p = &pl->postings[pl->count];
             memset(p, 0, sizeof(*p));
@@ -1706,7 +1706,7 @@ GV_FTIndex *ft_load(const char *path) {
                 p->pos.capacity = (size_t)pcnt;
                 for (uint64_t k = 0; k < pcnt; k++) {
                     uint64_t pos;
-                    if (fread(&pos, sizeof(pos), 1, fp) != 1) goto done;
+                    if (read_u64(fp, &pos) != 0) goto done;
                     p->pos.positions[p->pos.count++] = (size_t)pos;
                 }
             }

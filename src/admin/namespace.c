@@ -665,7 +665,7 @@ int namespace_manager_load_all(GV_NamespaceManager *mgr) {
                 /* Skip magic bytes and version, read dimension */
                 fseek(db_fp, 8, SEEK_SET);  /* After magic(4) + version(4) */
                 uint32_t dim_from_file = 0;
-                if (fread(&dim_from_file, sizeof(uint32_t), 1, db_fp) == 1) {
+                if (read_u32(db_fp, &dim_from_file) == 0) {
                     if (dim_from_file > 0 && dim_from_file <= 65536) {
                         config.dimension = dim_from_file;
                     }

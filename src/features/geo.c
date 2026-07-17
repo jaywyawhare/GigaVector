@@ -10,6 +10,7 @@
 #include <pthread.h>
 
 #include "features/geo.h"
+#include "core/utils.h"
 
 /* Constants */
 
@@ -450,8 +451,7 @@ int geo_save(const GV_GeoIndex *index, const char *filepath)
 
     pthread_rwlock_rdlock((pthread_rwlock_t *)&index->rwlock);
 
-    uint64_t count = (uint64_t)index->count;
-    if (fwrite(&count, sizeof(uint64_t), 1, fp) != 1) {
+    if (write_u64(fp, (uint64_t)index->count) != 0) {
         pthread_rwlock_unlock((pthread_rwlock_t *)&index->rwlock);
         fclose(fp);
         return -1;
@@ -460,10 +460,9 @@ int geo_save(const GV_GeoIndex *index, const char *filepath)
     for (size_t i = 0; i < GV_GEO_HASH_BUCKETS; i++) {
         const GV_GeoEntry *entry = index->buckets[i].head;
         while (entry != NULL) {
-            uint64_t pi = (uint64_t)entry->point_index;
-            if (fwrite(&pi, sizeof(uint64_t), 1, fp) != 1 ||
-                fwrite(&entry->lat, sizeof(double), 1, fp) != 1 ||
-                fwrite(&entry->lng, sizeof(double), 1, fp) != 1) {
+            if (write_u64(fp, (uint64_t)entry->point_index) != 0 ||
+                write_f64(fp, entry->lat) != 0 ||
+                write_f64(fp, entry->lng) != 0) {
                 pthread_rwlock_unlock((pthread_rwlock_t *)&index->rwlock);
                 fclose(fp);
                 return -1;
@@ -489,7 +488,7 @@ GV_GeoIndex *geo_load(const char *filepath)
     }
 
     uint64_t count;
-    if (fread(&count, sizeof(uint64_t), 1, fp) != 1) {
+    if (read_u64(fp, &count) != 0) {
         fclose(fp);
         return NULL;
     }
@@ -503,9 +502,9 @@ GV_GeoIndex *geo_load(const char *filepath)
     for (uint64_t i = 0; i < count; i++) {
         uint64_t pi;
         double lat, lng;
-        if (fread(&pi, sizeof(uint64_t), 1, fp) != 1 ||
-            fread(&lat, sizeof(double), 1, fp) != 1 ||
-            fread(&lng, sizeof(double), 1, fp) != 1) {
+        if (read_u64(fp, &pi) != 0 ||
+            read_f64(fp, &lat) != 0 ||
+            read_f64(fp, &lng) != 0) {
             geo_destroy(index);
             fclose(fp);
             return NULL;

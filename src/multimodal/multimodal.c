@@ -553,11 +553,11 @@ int media_save_index(const GV_MediaStore *store, const char *path) {
     /* Write magic and version */
     fwrite(MEDIA_INDEX_MAGIC, 1, MEDIA_INDEX_MAGIC_LEN, fp);
     uint32_t version = MEDIA_INDEX_VERSION;
-    fwrite(&version, sizeof(version), 1, fp);
+    write_u32(fp, version);
 
     /* Write entry count */
     uint64_t count = (uint64_t)store->count;
-    fwrite(&count, sizeof(count), 1, fp);
+    write_u64(fp, count);
 
     /* Write each entry */
     for (size_t i = 0; i < store->num_buckets; i++) {
@@ -567,35 +567,35 @@ int media_save_index(const GV_MediaStore *store, const char *path) {
 
             /* vector_index */
             uint64_t vi = (uint64_t)e->vector_index;
-            fwrite(&vi, sizeof(vi), 1, fp);
+            write_u64(fp, vi);
 
             /* type */
             uint32_t t = (uint32_t)e->type;
-            fwrite(&t, sizeof(t), 1, fp);
+            write_u32(fp, t);
 
             /* hash (64 bytes, no null) */
             fwrite(e->hash, 1, 64, fp);
 
             /* filename_len + filename */
             uint32_t fn_len = e->filename ? (uint32_t)strlen(e->filename) : 0;
-            fwrite(&fn_len, sizeof(fn_len), 1, fp);
+            write_u32(fp, fn_len);
             if (fn_len > 0) {
                 fwrite(e->filename, 1, fn_len, fp);
             }
 
             /* file_size */
             uint64_t fs = (uint64_t)e->file_size;
-            fwrite(&fs, sizeof(fs), 1, fp);
+            write_u64(fp, fs);
 
             /* mime_type_len + mime_type */
             uint32_t mt_len = e->mime_type ? (uint32_t)strlen(e->mime_type) : 0;
-            fwrite(&mt_len, sizeof(mt_len), 1, fp);
+            write_u32(fp, mt_len);
             if (mt_len > 0) {
                 fwrite(e->mime_type, 1, mt_len, fp);
             }
 
             /* created_at */
-            fwrite(&e->created_at, sizeof(e->created_at), 1, fp);
+            write_u64(fp, (uint64_t)e->created_at);
 
             node = node->next;
         }
@@ -623,7 +623,7 @@ GV_MediaStore *media_load_index(const char *index_path,
 
     /* Read and verify version */
     uint32_t version;
-    if (fread(&version, sizeof(version), 1, fp) != 1 ||
+    if (read_u32(fp, &version) != 0 ||
         version != MEDIA_INDEX_VERSION) {
         fclose(fp);
         return NULL;
@@ -631,7 +631,7 @@ GV_MediaStore *media_load_index(const char *index_path,
 
     /* Read count */
     uint64_t count;
-    if (fread(&count, sizeof(count), 1, fp) != 1) {
+    if (read_u64(fp, &count) != 0) {
         fclose(fp);
         return NULL;
     }
@@ -658,12 +658,12 @@ GV_MediaStore *media_load_index(const char *index_path,
 
         /* vector_index */
         uint64_t vi;
-        if (fread(&vi, sizeof(vi), 1, fp) != 1) goto load_error;
+        if (read_u64(fp, &vi) != 0) goto load_error;
         node->entry.vector_index = (size_t)vi;
 
         /* type */
         uint32_t t;
-        if (fread(&t, sizeof(t), 1, fp) != 1) goto load_error;
+        if (read_u32(fp, &t) != 0) goto load_error;
         node->entry.type = (GV_MediaType)t;
 
         /* hash */
@@ -672,7 +672,7 @@ GV_MediaStore *media_load_index(const char *index_path,
 
         /* filename */
         uint32_t fn_len;
-        if (fread(&fn_len, sizeof(fn_len), 1, fp) != 1) goto load_error;
+        if (read_u32(fp, &fn_len) != 0) goto load_error;
         if (fn_len > 0) {
             node->entry.filename = gv_alloc(fn_len + 1);
             if (!node->entry.filename) goto load_error;
@@ -682,12 +682,12 @@ GV_MediaStore *media_load_index(const char *index_path,
 
         /* file_size */
         uint64_t fs;
-        if (fread(&fs, sizeof(fs), 1, fp) != 1) goto load_error;
+        if (read_u64(fp, &fs) != 0) goto load_error;
         node->entry.file_size = (size_t)fs;
 
         /* mime_type */
         uint32_t mt_len;
-        if (fread(&mt_len, sizeof(mt_len), 1, fp) != 1) goto load_error;
+        if (read_u32(fp, &mt_len) != 0) goto load_error;
         if (mt_len > 0) {
             node->entry.mime_type = gv_alloc(mt_len + 1);
             if (!node->entry.mime_type) goto load_error;
@@ -696,7 +696,7 @@ GV_MediaStore *media_load_index(const char *index_path,
         }
 
         /* created_at */
-        if (fread(&node->entry.created_at, sizeof(node->entry.created_at), 1, fp) != 1) {
+        if (read_u64(fp, &node->entry.created_at) != 0) {
             goto load_error;
         }
 

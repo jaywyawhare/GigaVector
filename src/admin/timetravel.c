@@ -11,6 +11,7 @@
 
 #include "admin/timetravel.h"
 #include "core/memory.h"
+#include "core/utils.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -597,43 +598,18 @@ int tt_gc(GV_TimeTravelManager *mgr)
 
 /* Persistence Helpers */
 
-static int write_uint64(FILE *f, uint64_t v)
-{
-    return fwrite(&v, sizeof(v), 1, f) == 1 ? 0 : -1;
-}
-
-static int read_uint64(FILE *f, uint64_t *v)
-{
-    return fread(v, sizeof(*v), 1, f) == 1 ? 0 : -1;
-}
-
-static int write_size(FILE *f, size_t v)
-{
-    uint64_t tmp = (uint64_t)v;
-    return write_uint64(f, tmp);
-}
-
-static int read_size(FILE *f, size_t *v)
-{
-    uint64_t tmp;
-    if (read_uint64(f, &tmp) != 0)
-        return -1;
-    *v = (size_t)tmp;
-    return 0;
-}
-
+/* Signed int is serialized through the same-width unsigned LE helper. */
 static int write_int(FILE *f, int v)
 {
-    int32_t tmp = (int32_t)v;
-    return fwrite(&tmp, sizeof(tmp), 1, f) == 1 ? 0 : -1;
+    return write_u32(f, (uint32_t)(int32_t)v);
 }
 
 static int read_int(FILE *f, int *v)
 {
-    int32_t tmp;
-    if (fread(&tmp, sizeof(tmp), 1, f) != 1)
+    uint32_t tmp;
+    if (read_u32(f, &tmp) != 0)
         return -1;
-    *v = (int)tmp;
+    *v = (int)(int32_t)tmp;
     return 0;
 }
 
@@ -656,7 +632,7 @@ int tt_save(const GV_TimeTravelManager *mgr, const char *path)
 
     /* File version */
     uint32_t file_ver = TT_FILE_VERSION;
-    if (fwrite(&file_ver, sizeof(file_ver), 1, f) != 1)
+    if (write_u32(f, file_ver) != 0)
         goto fail;
 
     /* Config */
@@ -666,7 +642,7 @@ int tt_save(const GV_TimeTravelManager *mgr, const char *path)
     if (write_size(f, mgr->config.gc_keep_count)   != 0) goto fail;
 
     /* State */
-    if (write_uint64(f, mgr->next_version)         != 0) goto fail;
+    if (write_u64(f, mgr->next_version)            != 0) goto fail;
     if (write_size(f, mgr->current_vector_count)   != 0) goto fail;
     if (write_size(f, mgr->log_count)              != 0) goto fail;
 
@@ -674,8 +650,8 @@ int tt_save(const GV_TimeTravelManager *mgr, const char *path)
     for (size_t i = 0; i < mgr->log_count; i++) {
         const TT_ChangeRecord *rec = &mgr->log[i];
 
-        if (write_uint64(f, rec->version_id) != 0) goto fail;
-        if (write_uint64(f, rec->timestamp)  != 0) goto fail;
+        if (write_u64(f, rec->version_id)    != 0) goto fail;
+        if (write_u64(f, rec->timestamp)     != 0) goto fail;
         if (write_int(f, (int)rec->type)     != 0) goto fail;
         if (write_size(f, rec->index)        != 0) goto fail;
         if (write_size(f, rec->dimension)    != 0) goto fail;
@@ -684,16 +660,14 @@ int tt_save(const GV_TimeTravelManager *mgr, const char *path)
         /* Flags indicating presence of old_data and new_data */
         uint8_t has_old = rec->old_data ? 1 : 0;
         uint8_t has_new = rec->new_data ? 1 : 0;
-        if (fwrite(&has_old, 1, 1, f) != 1) goto fail;
-        if (fwrite(&has_new, 1, 1, f) != 1) goto fail;
+        if (write_u8(f, has_old) != 0) goto fail;
+        if (write_u8(f, has_new) != 0) goto fail;
 
         if (has_old) {
-            size_t bytes = rec->dimension * sizeof(float);
-            if (fwrite(rec->old_data, 1, bytes, f) != bytes) goto fail;
+            if (write_floats(f, rec->old_data, rec->dimension) != 0) goto fail;
         }
         if (has_new) {
-            size_t bytes = rec->dimension * sizeof(float);
-            if (fwrite(rec->new_data, 1, bytes, f) != bytes) goto fail;
+            if (write_floats(f, rec->new_data, rec->dimension) != 0) goto fail;
         }
     }
 
@@ -725,7 +699,7 @@ GV_TimeTravelManager *tt_load(const char *path)
 
     /* Read file version */
     uint32_t file_ver;
-    if (fread(&file_ver, sizeof(file_ver), 1, f) != 1)
+    if (read_u32(f, &file_ver) != 0)
         goto fail_early;
     if (file_ver != TT_FILE_VERSION)
         goto fail_early;
@@ -743,7 +717,7 @@ GV_TimeTravelManager *tt_load(const char *path)
         goto fail_early;
 
     /* Read state */
-    if (read_uint64(f, &mgr->next_version)       != 0) goto fail;
+    if (read_u64(f, &mgr->next_version)          != 0) goto fail;
     if (read_size(f, &mgr->current_vector_count)  != 0) goto fail;
 
     size_t record_count;
@@ -757,8 +731,8 @@ GV_TimeTravelManager *tt_load(const char *path)
         TT_ChangeRecord *rec = &mgr->log[mgr->log_count];
         memset(rec, 0, sizeof(*rec));
 
-        if (read_uint64(f, &rec->version_id) != 0) goto fail;
-        if (read_uint64(f, &rec->timestamp)  != 0) goto fail;
+        if (read_u64(f, &rec->version_id) != 0) goto fail;
+        if (read_u64(f, &rec->timestamp)  != 0) goto fail;
 
         int type_int;
         if (read_int(f, &type_int)           != 0) goto fail;
@@ -769,20 +743,20 @@ GV_TimeTravelManager *tt_load(const char *path)
         if (read_size(f, &rec->vector_count) != 0) goto fail;
 
         uint8_t has_old, has_new;
-        if (fread(&has_old, 1, 1, f) != 1) goto fail;
-        if (fread(&has_new, 1, 1, f) != 1) goto fail;
+        if (read_u8(f, &has_old) != 0) goto fail;
+        if (read_u8(f, &has_new) != 0) goto fail;
 
         if (has_old) {
             size_t bytes = rec->dimension * sizeof(float);
             rec->old_data = gv_alloc(bytes);
             if (!rec->old_data) goto fail;
-            if (fread(rec->old_data, 1, bytes, f) != bytes) goto fail;
+            if (read_floats(f, rec->old_data, rec->dimension) != 0) goto fail;
         }
         if (has_new) {
             size_t bytes = rec->dimension * sizeof(float);
             rec->new_data = gv_alloc(bytes);
             if (!rec->new_data) goto fail;
-            if (fread(rec->new_data, 1, bytes, f) != bytes) goto fail;
+            if (read_floats(f, rec->new_data, rec->dimension) != 0) goto fail;
         }
 
         mgr->log_count++;

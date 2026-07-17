@@ -1009,45 +1009,50 @@ int gv_ivfpq_save(const void *index_ptr, FILE *out, uint32_t version) {
     const GV_IVFPQIndex *idx = (const GV_IVFPQIndex *)index_ptr;
     if (idx == NULL || out == NULL) return -1;
     uint32_t crc = crc32_init();
-    if (fwrite(&idx->dimension, sizeof(size_t), 1, out) != 1) return -1;
+    /* All multi-byte scalars go through the portable-LE helpers; the CRC is
+     * still computed over the in-memory scalar bytes (identical on LE hosts),
+     * so existing files keep verifying. size_t values are serialized as a
+     * fixed 8-byte on-disk value via write_size. */
+    if (write_size(out, idx->dimension) != 0) return -1;
     crc = crc32_update(crc, &idx->dimension, sizeof(size_t));
-    if (fwrite(&idx->nlist, sizeof(size_t), 1, out) != 1) return -1;
+    if (write_size(out, idx->nlist) != 0) return -1;
     crc = crc32_update(crc, &idx->nlist, sizeof(size_t));
-    if (fwrite(&idx->m, sizeof(size_t), 1, out) != 1) return -1;
+    if (write_size(out, idx->m) != 0) return -1;
     crc = crc32_update(crc, &idx->m, sizeof(size_t));
-    if (fwrite(&idx->nbits, sizeof(uint8_t), 1, out) != 1) return -1;
+    if (write_u8(out, idx->nbits) != 0) return -1;
     crc = crc32_update(crc, &idx->nbits, sizeof(uint8_t));
-    if (fwrite(&idx->nprobe, sizeof(size_t), 1, out) != 1) return -1;
+    if (write_size(out, idx->nprobe) != 0) return -1;
     crc = crc32_update(crc, &idx->nprobe, sizeof(size_t));
-    if (fwrite(&idx->train_iters, sizeof(size_t), 1, out) != 1) return -1;
+    if (write_size(out, idx->train_iters) != 0) return -1;
     crc = crc32_update(crc, &idx->train_iters, sizeof(size_t));
-    if (fwrite(&idx->default_rerank, sizeof(size_t), 1, out) != 1) return -1;
+    if (write_size(out, idx->default_rerank) != 0) return -1;
     crc = crc32_update(crc, &idx->default_rerank, sizeof(size_t));
-    if (fwrite(&idx->use_cosine, sizeof(int), 1, out) != 1) return -1;
+    if (write_u32(out, (uint32_t)idx->use_cosine) != 0) return -1;
     crc = crc32_update(crc, &idx->use_cosine, sizeof(int));
-    if (fwrite(&idx->oversampling_factor, sizeof(float), 1, out) != 1) return -1;
+    if (write_f32(out, idx->oversampling_factor) != 0) return -1;
     crc = crc32_update(crc, &idx->oversampling_factor, sizeof(float));
-    if (fwrite(&idx->trained, sizeof(int), 1, out) != 1) return -1;
+    if (write_u32(out, (uint32_t)idx->trained) != 0) return -1;
     crc = crc32_update(crc, &idx->trained, sizeof(int));
     if (idx->trained) {
         size_t coarse_sz = idx->nlist * idx->dimension;
         size_t pq_sz = idx->m * idx->codebook_size * idx->subdim;
-        if (fwrite(idx->coarse, sizeof(float), coarse_sz, out) != coarse_sz) return -1;
+        if (write_floats(out, idx->coarse, coarse_sz) != 0) return -1;
         crc = crc32_update(crc, idx->coarse, coarse_sz * sizeof(float));
-        if (fwrite(idx->pq, sizeof(float), pq_sz, out) != pq_sz) return -1;
+        if (write_floats(out, idx->pq, pq_sz) != 0) return -1;
         crc = crc32_update(crc, idx->pq, pq_sz * sizeof(float));
     }
-    if (fwrite(&idx->count, sizeof(size_t), 1, out) != 1) return -1;
+    if (write_size(out, idx->count) != 0) return -1;
     crc = crc32_update(crc, &idx->count, sizeof(size_t));
     for (size_t i = 0; i < idx->nlist; ++i) {
         GV_IVFPQList *list = &idx->lists[i];
-        if (fwrite(&list->count, sizeof(size_t), 1, out) != 1) return -1;
+        if (write_size(out, list->count) != 0) return -1;
         crc = crc32_update(crc, &list->count, sizeof(size_t));
         for (size_t e = 0; e < list->count; ++e) {
             GV_IVFPQEntry *ent = &list->entries[e];
-        if (fwrite(ent->codes, sizeof(uint8_t), idx->m, out) != idx->m) return -1;
+            /* Packed PQ codes are a byte array -> already byte-portable. */
+            if (write_bytes(out, ent->codes, idx->m) != 0) return -1;
             crc = crc32_update(crc, ent->codes, idx->m * sizeof(uint8_t));
-            if (fwrite(ent->vector->data, sizeof(float), ent->vector->dimension, out) != ent->vector->dimension) return -1;
+            if (write_floats(out, ent->vector->data, ent->vector->dimension) != 0) return -1;
             crc = crc32_update(crc, ent->vector->data, ent->vector->dimension * sizeof(float));
             const GV_Metadata *meta = ent->vector->metadata;
             uint32_t mcount = 0;
@@ -1067,7 +1072,7 @@ int gv_ivfpq_save(const void *index_ptr, FILE *out, uint32_t version) {
         }
     }
     crc = crc32_finish(crc);
-    if (fwrite(&crc, sizeof(uint32_t), 1, out) != 1) return -1;
+    if (write_u32(out, crc) != 0) return -1;
     return 0;
 }
 
@@ -1079,29 +1084,40 @@ int gv_ivfpq_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version
     int trained = 0, use_cosine = 0;
     float oversampling_factor = 1.0f;
     uint32_t crc = crc32_init();
-    if (fread(&dim, sizeof(size_t), 1, in) != 1) return -1;
+    /* Read matching the save order via portable-LE helpers. Scalars are read
+     * into their native-width variables and the CRC is updated over those
+     * in-memory bytes, so files written on an LE host still verify. */
+    if (read_size(in, &dim) != 0) return -1;
     crc = crc32_update(crc, &dim, sizeof(size_t));
     if (dim != dimension) return -1;
-    if (fread(&nlist, sizeof(size_t), 1, in) != 1) return -1;
+    if (read_size(in, &nlist) != 0) return -1;
     crc = crc32_update(crc, &nlist, sizeof(size_t));
-    if (fread(&m, sizeof(size_t), 1, in) != 1) return -1;
+    if (read_size(in, &m) != 0) return -1;
     crc = crc32_update(crc, &m, sizeof(size_t));
-    if (fread(&nbits, sizeof(uint8_t), 1, in) != 1) return -1;
+    if (read_u8(in, &nbits) != 0) return -1;
     crc = crc32_update(crc, &nbits, sizeof(uint8_t));
-    if (fread(&nprobe, sizeof(size_t), 1, in) != 1) return -1;
+    if (read_size(in, &nprobe) != 0) return -1;
     crc = crc32_update(crc, &nprobe, sizeof(size_t));
-    if (fread(&train_iters, sizeof(size_t), 1, in) != 1) return -1;
+    if (read_size(in, &train_iters) != 0) return -1;
     crc = crc32_update(crc, &train_iters, sizeof(size_t));
-    if (fread(&default_rerank, sizeof(size_t), 1, in) != 1) return -1;
+    if (read_size(in, &default_rerank) != 0) return -1;
     crc = crc32_update(crc, &default_rerank, sizeof(size_t));
-    if (fread(&use_cosine, sizeof(int), 1, in) != 1) return -1;
+    {
+        uint32_t u = 0;
+        if (read_u32(in, &u) != 0) return -1;
+        use_cosine = (int)u;
+    }
     crc = crc32_update(crc, &use_cosine, sizeof(int));
-    if (fread(&oversampling_factor, sizeof(float), 1, in) != 1) {
+    if (read_f32(in, &oversampling_factor) != 0) {
         oversampling_factor = 1.0f;
     } else {
         crc = crc32_update(crc, &oversampling_factor, sizeof(float));
     }
-    if (fread(&trained, sizeof(int), 1, in) != 1) return -1;
+    {
+        uint32_t u = 0;
+        if (read_u32(in, &u) != 0) return -1;
+        trained = (int)u;
+    }
     crc = crc32_update(crc, &trained, sizeof(int));
 
     GV_IVFPQConfig cfg = {.nlist = nlist, .m = m, .nbits = nbits, .nprobe = nprobe, .train_iters = train_iters, .default_rerank = default_rerank, .use_cosine = use_cosine, .oversampling_factor = oversampling_factor};
@@ -1135,19 +1151,19 @@ int gv_ivfpq_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version
             gv_ivfpq_destroy(idx_ptr);
             return -1;
         }
-        if (fread(idx->coarse, sizeof(float), coarse_sz, in) != coarse_sz) {
+        if (read_floats(in, idx->coarse, coarse_sz) != 0) {
             gv_ivfpq_destroy(idx_ptr);
             return -1;
         }
         crc = crc32_update(crc, idx->coarse, coarse_sz * sizeof(float));
-        if (fread(idx->pq, sizeof(float), pq_sz, in) != pq_sz) {
+        if (read_floats(in, idx->pq, pq_sz) != 0) {
             gv_ivfpq_destroy(idx_ptr);
             return -1;
         }
         crc = crc32_update(crc, idx->pq, pq_sz * sizeof(float));
     }
     size_t total = 0;
-    if (fread(&total, sizeof(size_t), 1, in) != 1) {
+    if (read_size(in, &total) != 0) {
         gv_ivfpq_destroy(idx_ptr);
         return -1;
     }
@@ -1155,7 +1171,7 @@ int gv_ivfpq_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version
     size_t loaded_total = 0;
     for (size_t i = 0; i < idx->nlist; ++i) {
         size_t lcount = 0;
-        if (fread(&lcount, sizeof(size_t), 1, in) != 1) {
+        if (read_size(in, &lcount) != 0) {
             gv_ivfpq_destroy(idx_ptr);
             return -1;
         }
@@ -1177,7 +1193,7 @@ int gv_ivfpq_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version
                 gv_ivfpq_destroy(idx_ptr);
                 return -1;
             }
-            if (fread(ent->codes, sizeof(uint8_t), idx->m, in) != idx->m) {
+            if (read_bytes(in, ent->codes, idx->m) != 0) {
                 gv_ivfpq_destroy(idx_ptr);
                 return -1;
             }
@@ -1190,7 +1206,7 @@ int gv_ivfpq_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version
                 gv_ivfpq_destroy(idx_ptr);
                 return -1;
             }
-            if (fread(vec->data, sizeof(float), dim, in) != dim) {
+            if (read_floats(in, vec->data, dim) != 0) {
                 vector_destroy(vec);
                 gv_ivfpq_destroy(idx_ptr);
                 return -1;
@@ -1264,7 +1280,7 @@ int gv_ivfpq_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version
     }
     idx->count = total;
     uint32_t stored_crc = 0;
-    if (fread(&stored_crc, sizeof(uint32_t), 1, in) != 1) {
+    if (read_u32(in, &stored_crc) != 0) {
         gv_ivfpq_destroy(idx_ptr);
         return -1;
     }

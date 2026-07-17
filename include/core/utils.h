@@ -52,12 +52,42 @@ static inline size_t hash_u64(uint64_t id, size_t bucket_count) {
     return hash % bucket_count;
 }
 
+/*
+ * Portable serialization primitives. All multi-byte scalars are written in
+ * little-endian byte order and all floats/doubles via an IEEE-754 bit-cast, so
+ * files are interchangeable across CPU endianness and 32/64-bit builds. On a
+ * little-endian host (x86-64, ARM-LE — the common targets) the emitted bytes
+ * are identical to the previous native fwrite(&v) layout, so existing on-disk
+ * files remain readable. size_t is normalized to a fixed 8-byte value on disk.
+ */
+#if defined(__BYTE_ORDER__) && defined(__ORDER_LITTLE_ENDIAN__)
+#  define GV_LITTLE_ENDIAN (__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__)
+#else
+#  define GV_LITTLE_ENDIAN 1  /* assume LE; the byte-wise scalar helpers are correct either way */
+#endif
+
+static inline int write_u16(FILE *f, uint16_t v) {
+    uint8_t b[2] = { (uint8_t)v, (uint8_t)(v >> 8) };
+    return fwrite(b, 1, 2, f) == 2 ? 0 : -1;
+}
+
+static inline int read_u16(FILE *f, uint16_t *v) {
+    uint8_t b[2];
+    if (!v || fread(b, 1, 2, f) != 2) return -1;
+    *v = (uint16_t)(b[0] | ((uint16_t)b[1] << 8));
+    return 0;
+}
+
 static inline int write_u32(FILE *f, uint32_t v) {
-    return fwrite(&v, sizeof(uint32_t), 1, f) == 1 ? 0 : -1;
+    uint8_t b[4] = { (uint8_t)v, (uint8_t)(v >> 8), (uint8_t)(v >> 16), (uint8_t)(v >> 24) };
+    return fwrite(b, 1, 4, f) == 4 ? 0 : -1;
 }
 
 static inline int read_u32(FILE *f, uint32_t *v) {
-    return (v && fread(v, sizeof(uint32_t), 1, f) == 1) ? 0 : -1;
+    uint8_t b[4];
+    if (!v || fread(b, 1, 4, f) != 4) return -1;
+    *v = (uint32_t)b[0] | ((uint32_t)b[1] << 8) | ((uint32_t)b[2] << 16) | ((uint32_t)b[3] << 24);
+    return 0;
 }
 
 static inline int write_u8(FILE *f, uint8_t v) {
@@ -91,27 +121,65 @@ static inline int read_str(FILE *f, char **s, uint32_t len) {
 }
 
 static inline int write_u64(FILE *f, uint64_t v) {
-    return fwrite(&v, sizeof(uint64_t), 1, f) == 1 ? 0 : -1;
+    uint8_t b[8];
+    for (int i = 0; i < 8; ++i) b[i] = (uint8_t)(v >> (8 * i));
+    return fwrite(b, 1, 8, f) == 8 ? 0 : -1;
 }
 
 static inline int read_u64(FILE *f, uint64_t *v) {
-    return (v && fread(v, sizeof(uint64_t), 1, f) == 1) ? 0 : -1;
+    uint8_t b[8];
+    if (!v || fread(b, 1, 8, f) != 8) return -1;
+    uint64_t r = 0;
+    for (int i = 0; i < 8; ++i) r |= (uint64_t)b[i] << (8 * i);
+    *v = r;
+    return 0;
 }
 
 static inline int write_f32(FILE *f, float v) {
-    return fwrite(&v, sizeof(float), 1, f) == 1 ? 0 : -1;
+    uint32_t u;
+    memcpy(&u, &v, sizeof(u));
+    return write_u32(f, u);
 }
 
 static inline int read_f32(FILE *f, float *v) {
-    return (v && fread(v, sizeof(float), 1, f) == 1) ? 0 : -1;
+    uint32_t u;
+    if (read_u32(f, &u) != 0) return -1;
+    if (v) memcpy(v, &u, sizeof(u));
+    return 0;
+}
+
+static inline int write_f64(FILE *f, double v) {
+    uint64_t u;
+    memcpy(&u, &v, sizeof(u));
+    return write_u64(f, u);
+}
+
+static inline int read_f64(FILE *f, double *v) {
+    uint64_t u;
+    if (read_u64(f, &u) != 0) return -1;
+    if (v) memcpy(v, &u, sizeof(u));
+    return 0;
 }
 
 static inline int write_floats(FILE *f, const float *data, size_t count) {
+#if GV_LITTLE_ENDIAN
     return fwrite(data, sizeof(float), count, f) == count ? 0 : -1;
+#else
+    for (size_t i = 0; i < count; ++i)
+        if (write_f32(f, data[i]) != 0) return -1;
+    return 0;
+#endif
 }
 
 static inline int read_floats(FILE *f, float *data, size_t count) {
-    return (data && fread(data, sizeof(float), count, f) == count) ? 0 : -1;
+    if (!data) return -1;
+#if GV_LITTLE_ENDIAN
+    return fread(data, sizeof(float), count, f) == count ? 0 : -1;
+#else
+    for (size_t i = 0; i < count; ++i)
+        if (read_f32(f, &data[i]) != 0) return -1;
+    return 0;
+#endif
 }
 
 static inline int write_bytes(FILE *f, const void *data, size_t count) {
@@ -122,12 +190,17 @@ static inline int read_bytes(FILE *f, void *data, size_t count) {
     return (data && fread(data, 1, count, f) == count) ? 0 : -1;
 }
 
+/* size_t is normalized to a fixed 8-byte on-disk value for 32/64-bit portability. */
 static inline int write_size(FILE *f, size_t v) {
-    return fwrite(&v, sizeof(size_t), 1, f) == 1 ? 0 : -1;
+    return write_u64(f, (uint64_t)v);
 }
 
 static inline int read_size(FILE *f, size_t *v) {
-    return (v && fread(v, sizeof(size_t), 1, f) == 1) ? 0 : -1;
+    uint64_t u;
+    if (read_u64(f, &u) != 0) return -1;
+    if (u > (uint64_t)SIZE_MAX) return -1;  /* value exceeds this platform's size_t */
+    if (v) *v = (size_t)u;
+    return 0;
 }
 
 /* Write a string with automatic strlen. */

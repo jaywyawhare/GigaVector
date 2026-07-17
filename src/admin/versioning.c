@@ -9,6 +9,7 @@
 #include <stdint.h>
 
 #include "admin/versioning.h"
+#include "core/utils.h"
 
 /* Internal types */
 
@@ -242,31 +243,7 @@ int version_compare(const GV_VersionManager *mgr, uint64_t v1, uint64_t v2,
     return total_diff;
 }
 
-/* Persistence helpers */
-
-static int write_uint64(FILE *out, uint64_t v)
-{
-    return fwrite(&v, sizeof(v), 1, out) == 1 ? 0 : -1;
-}
-
-static int read_uint64(FILE *in, uint64_t *v)
-{
-    return fread(v, sizeof(*v), 1, in) == 1 ? 0 : -1;
-}
-
-static int write_size(FILE *out, size_t v)
-{
-    uint64_t tmp = (uint64_t)v;
-    return write_uint64(out, tmp);
-}
-
-static int read_size(FILE *in, size_t *v)
-{
-    uint64_t tmp;
-    if (read_uint64(in, &tmp) != 0) return -1;
-    *v = (size_t)tmp;
-    return 0;
-}
+/* Persistence helpers: portable little-endian scalars via core/utils.h. */
 
 int version_save(const GV_VersionManager *mgr, FILE *out)
 {
@@ -276,22 +253,22 @@ int version_save(const GV_VersionManager *mgr, FILE *out)
     size_t act = (size_t)active_count(mgr);
     if (write_size(out, act)              != 0) return -1;
     if (write_size(out, mgr->max_versions) != 0) return -1;
-    if (write_uint64(out, mgr->next_id)   != 0) return -1;
+    if (write_u64(out, mgr->next_id)      != 0) return -1;
 
     for (size_t i = 0; i < mgr->entry_count; i++) {
         const GV_VersionEntry *e = &mgr->entries[i];
         if (!e->active) continue;
 
-        if (write_uint64(out, e->version_id)   != 0) return -1;
-        if (write_uint64(out, e->timestamp_us)  != 0) return -1;
-        if (write_size(out, e->count)           != 0) return -1;
-        if (write_size(out, e->dimension)       != 0) return -1;
+        if (write_u64(out, e->version_id)    != 0) return -1;
+        if (write_u64(out, e->timestamp_us)  != 0) return -1;
+        if (write_size(out, e->count)        != 0) return -1;
+        if (write_size(out, e->dimension)    != 0) return -1;
 
-        if (fwrite(e->label, 1, sizeof(e->label), out) != sizeof(e->label)) return -1;
+        if (write_bytes(out, e->label, sizeof(e->label)) != 0) return -1;
 
-        size_t data_bytes = e->count * e->dimension * sizeof(float);
-        if (data_bytes > 0) {
-            if (fwrite(e->data, 1, data_bytes, out) != data_bytes) return -1;
+        size_t total_floats = e->count * e->dimension;
+        if (total_floats > 0) {
+            if (write_floats(out, e->data, total_floats) != 0) return -1;
         }
     }
 
@@ -307,7 +284,7 @@ int version_load(GV_VersionManager **mgr_ptr, FILE *in)
 
     if (read_size(in, &act)     != 0) return -1;
     if (read_size(in, &max_ver) != 0) return -1;
-    if (read_uint64(in, &next)  != 0) return -1;
+    if (read_u64(in, &next)     != 0) return -1;
 
     GV_VersionManager *mgr = version_manager_create(max_ver);
     if (!mgr) return -1;
@@ -322,18 +299,18 @@ int version_load(GV_VersionManager **mgr_ptr, FILE *in)
         GV_VersionEntry *e = &mgr->entries[mgr->entry_count];
         memset(e, 0, sizeof(*e));
 
-        if (read_uint64(in, &e->version_id)  != 0) goto fail;
-        if (read_uint64(in, &e->timestamp_us) != 0) goto fail;
-        if (read_size(in, &e->count)          != 0) goto fail;
-        if (read_size(in, &e->dimension)      != 0) goto fail;
+        if (read_u64(in, &e->version_id)   != 0) goto fail;
+        if (read_u64(in, &e->timestamp_us) != 0) goto fail;
+        if (read_size(in, &e->count)       != 0) goto fail;
+        if (read_size(in, &e->dimension)   != 0) goto fail;
 
-        if (fread(e->label, 1, sizeof(e->label), in) != sizeof(e->label)) goto fail;
+        if (read_bytes(in, e->label, sizeof(e->label)) != 0) goto fail;
 
-        size_t data_bytes = e->count * e->dimension * sizeof(float);
-        if (data_bytes > 0) {
-            e->data = gv_alloc(data_bytes);
+        size_t total_floats = e->count * e->dimension;
+        if (total_floats > 0) {
+            e->data = gv_alloc(total_floats * sizeof(float));
             if (!e->data) goto fail;
-            if (fread(e->data, 1, data_bytes, in) != data_bytes) goto fail;
+            if (read_floats(in, e->data, total_floats) != 0) goto fail;
         }
 
         e->active = 1;

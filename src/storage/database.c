@@ -402,17 +402,17 @@ int db_delete_by_doc(GV_Database *db, const char *doc_id) {
 
 static int db_write_header(FILE *out, uint32_t dimension, uint64_t count, uint32_t version) {
     const uint32_t magic = 0x47564442; /* "GVDB" in hex */
-    if (fwrite(&magic, sizeof(uint32_t), 1, out) != 1) {
+    if (write_u32(out, magic) != 0) {
         GV_LOG_ERROR("db_write_header: failed to write magic (errno=%d)", errno);
         return -1;
     }
-    if (fwrite(&version, sizeof(uint32_t), 1, out) != 1) {
+    if (write_u32(out, version) != 0) {
         return -1;
     }
-    if (fwrite(&dimension, sizeof(uint32_t), 1, out) != 1) {
+    if (write_u32(out, dimension) != 0) {
         return -1;
     }
-    if (fwrite(&count, sizeof(uint64_t), 1, out) != 1) {
+    if (write_u64(out, count) != 0) {
         return -1;
     }
     return 0;
@@ -421,10 +421,10 @@ static int db_write_header(FILE *out, uint32_t dimension, uint64_t count, uint32
 static int db_read_header(FILE *in, uint32_t *dimension_out, uint64_t *count_out, uint32_t *version_out) {
     uint32_t magic = 0;
     uint32_t version = 0;
-    if (fread(&magic, sizeof(uint32_t), 1, in) != 1) {
+    if (read_u32(in, &magic) != 0) {
         return -1;
     }
-    if (fread(&version, sizeof(uint32_t), 1, in) != 1) {
+    if (read_u32(in, &version) != 0) {
         return -1;
     }
     if (magic != 0x47564442 /* "GVDB" */) {
@@ -432,10 +432,10 @@ static int db_read_header(FILE *in, uint32_t *dimension_out, uint64_t *count_out
                      magic);
         return -1;
     }
-    if (fread(dimension_out, sizeof(uint32_t), 1, in) != 1) {
+    if (read_u32(in, dimension_out) != 0) {
         return -1;
     }
-    if (fread(count_out, sizeof(uint64_t), 1, in) != 1) {
+    if (read_u64(in, count_out) != 0) {
         return -1;
     }
 
@@ -499,11 +499,11 @@ static int db_read_header(FILE *in, uint32_t *dimension_out, uint64_t *count_out
 }
 
 static int write_uint32(FILE *out, uint32_t value) {
-    return (fwrite(&value, sizeof(uint32_t), 1, out) == 1) ? 0 : -1;
+    return write_u32(out, value);
 }
 
 static int read_uint32(FILE *in, uint32_t *value) {
-    return (value != NULL && fread(value, sizeof(uint32_t), 1, in) == 1) ? 0 : -1;
+    return (value != NULL && read_u32(in, value) == 0) ? 0 : -1;
 }
 
 

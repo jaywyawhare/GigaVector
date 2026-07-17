@@ -7,6 +7,7 @@
 
 #include "storage/snapshot.h"
 #include "core/memory.h"
+#include "core/utils.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -249,7 +250,7 @@ int snapshot_save(const GV_SnapshotManager *mgr, FILE *out)
         return -1;
     }
     uint32_t version = SNAPSHOT_VERSION;
-    if (fwrite(&version, sizeof(version), 1, out) != 1) {
+    if (write_u32(out, version) != 0) {
         return -1;
     }
 
@@ -260,13 +261,13 @@ int snapshot_save(const GV_SnapshotManager *mgr, FILE *out)
         }
     }
 
-    if (fwrite(&active_count, sizeof(active_count), 1, out) != 1) {
+    if (write_size(out, active_count) != 0) {
         return -1;
     }
-    if (fwrite(&mgr->max_snapshots, sizeof(mgr->max_snapshots), 1, out) != 1) {
+    if (write_size(out, mgr->max_snapshots) != 0) {
         return -1;
     }
-    if (fwrite(&mgr->next_id, sizeof(mgr->next_id), 1, out) != 1) {
+    if (write_u64(out, mgr->next_id) != 0) {
         return -1;
     }
 
@@ -276,16 +277,16 @@ int snapshot_save(const GV_SnapshotManager *mgr, FILE *out)
             continue;
         }
 
-        if (fwrite(&e->snapshot_id, sizeof(e->snapshot_id), 1, out) != 1) {
+        if (write_u64(out, e->snapshot_id) != 0) {
             return -1;
         }
-        if (fwrite(&e->timestamp_us, sizeof(e->timestamp_us), 1, out) != 1) {
+        if (write_u64(out, e->timestamp_us) != 0) {
             return -1;
         }
-        if (fwrite(&e->vector_count, sizeof(e->vector_count), 1, out) != 1) {
+        if (write_size(out, e->vector_count) != 0) {
             return -1;
         }
-        if (fwrite(&e->dimension, sizeof(e->dimension), 1, out) != 1) {
+        if (write_size(out, e->dimension) != 0) {
             return -1;
         }
         if (fwrite(e->label, 1, sizeof(e->label), out) != sizeof(e->label)) {
@@ -294,7 +295,7 @@ int snapshot_save(const GV_SnapshotManager *mgr, FILE *out)
 
         size_t total_floats = e->vector_count * e->dimension;
         if (total_floats > 0) {
-            if (fwrite(e->data, sizeof(float), total_floats, out) != total_floats) {
+            if (write_floats(out, e->data, total_floats) != 0) {
                 return -1;
             }
         }
@@ -318,7 +319,7 @@ int snapshot_load(GV_SnapshotManager **mgr_ptr, FILE *in)
     }
 
     uint32_t version;
-    if (fread(&version, sizeof(version), 1, in) != 1) {
+    if (read_u32(in, &version) != 0) {
         return -1;
     }
     if (version != SNAPSHOT_VERSION) {
@@ -329,13 +330,13 @@ int snapshot_load(GV_SnapshotManager **mgr_ptr, FILE *in)
     size_t max_snapshots;
     uint64_t next_id;
 
-    if (fread(&active_count, sizeof(active_count), 1, in) != 1) {
+    if (read_size(in, &active_count) != 0) {
         return -1;
     }
-    if (fread(&max_snapshots, sizeof(max_snapshots), 1, in) != 1) {
+    if (read_size(in, &max_snapshots) != 0) {
         return -1;
     }
-    if (fread(&next_id, sizeof(next_id), 1, in) != 1) {
+    if (read_u64(in, &next_id) != 0) {
         return -1;
     }
 
@@ -354,19 +355,19 @@ int snapshot_load(GV_SnapshotManager **mgr_ptr, FILE *in)
         GV_SnapshotEntry *e = &mgr->entries[mgr->count];
         memset(e, 0, sizeof(*e));
 
-        if (fread(&e->snapshot_id, sizeof(e->snapshot_id), 1, in) != 1) {
+        if (read_u64(in, &e->snapshot_id) != 0) {
             snapshot_manager_destroy(mgr);
             return -1;
         }
-        if (fread(&e->timestamp_us, sizeof(e->timestamp_us), 1, in) != 1) {
+        if (read_u64(in, &e->timestamp_us) != 0) {
             snapshot_manager_destroy(mgr);
             return -1;
         }
-        if (fread(&e->vector_count, sizeof(e->vector_count), 1, in) != 1) {
+        if (read_size(in, &e->vector_count) != 0) {
             snapshot_manager_destroy(mgr);
             return -1;
         }
-        if (fread(&e->dimension, sizeof(e->dimension), 1, in) != 1) {
+        if (read_size(in, &e->dimension) != 0) {
             snapshot_manager_destroy(mgr);
             return -1;
         }
@@ -382,7 +383,7 @@ int snapshot_load(GV_SnapshotManager **mgr_ptr, FILE *in)
                 snapshot_manager_destroy(mgr);
                 return -1;
             }
-            if (fread(e->data, sizeof(float), total_floats, in) != total_floats) {
+            if (read_floats(in, e->data, total_floats) != 0) {
                 snapshot_manager_destroy(mgr);
                 return -1;
             }

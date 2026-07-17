@@ -6,6 +6,7 @@
 #include <errno.h>
 
 #include "api/schema.h"
+#include "core/utils.h"
 
 #define GV_SCHEMA_MAGIC "GVSC"
 #define GV_SCHEMA_MAGIC_LEN 4
@@ -365,30 +366,26 @@ int schema_save(const GV_Schema *schema, FILE *out) {
         return -1;
 
     /* Version */
-    uint32_t version = schema->version;
-    if (fwrite(&version, sizeof(version), 1, out) != 1) return -1;
+    if (write_u32(out, schema->version) != 0) return -1;
 
     /* Field count */
-    uint32_t fc = (uint32_t)schema->field_count;
-    if (fwrite(&fc, sizeof(fc), 1, out) != 1) return -1;
+    if (write_u32(out, (uint32_t)schema->field_count) != 0) return -1;
 
     /* Each field */
     for (size_t i = 0; i < schema->field_count; i++) {
         const GV_SchemaField *f = &schema->fields[i];
 
         /* name (64 bytes, zero-padded) */
-        if (fwrite(f->name, 1, sizeof(f->name), out) != sizeof(f->name)) return -1;
+        if (write_bytes(out, f->name, sizeof(f->name)) != 0) return -1;
 
         /* type */
-        uint32_t type = (uint32_t)f->type;
-        if (fwrite(&type, sizeof(type), 1, out) != 1) return -1;
+        if (write_u32(out, (uint32_t)f->type) != 0) return -1;
 
         /* required */
-        uint32_t req = (uint32_t)f->required;
-        if (fwrite(&req, sizeof(req), 1, out) != 1) return -1;
+        if (write_u32(out, (uint32_t)f->required) != 0) return -1;
 
         /* default_value (256 bytes, zero-padded) */
-        if (fwrite(f->default_value, 1, sizeof(f->default_value), out) != sizeof(f->default_value))
+        if (write_bytes(out, f->default_value, sizeof(f->default_value)) != 0)
             return -1;
     }
 
@@ -405,11 +402,11 @@ GV_Schema *schema_load(FILE *in) {
 
     /* Version */
     uint32_t version;
-    if (fread(&version, sizeof(version), 1, in) != 1) return NULL;
+    if (read_u32(in, &version) != 0) return NULL;
 
     /* Field count */
     uint32_t fc;
-    if (fread(&fc, sizeof(fc), 1, in) != 1) return NULL;
+    if (read_u32(in, &fc) != 0) return NULL;
 
     GV_Schema *schema = schema_create(version);
     if (!schema) return NULL;
@@ -420,13 +417,13 @@ GV_Schema *schema_load(FILE *in) {
         uint32_t req;
         char default_value[256];
 
-        if (fread(name, 1, sizeof(name), in) != sizeof(name)) goto fail;
+        if (read_bytes(in, name, sizeof(name)) != 0) goto fail;
         name[sizeof(name) - 1] = '\0';
 
-        if (fread(&type, sizeof(type), 1, in) != 1) goto fail;
-        if (fread(&req, sizeof(req), 1, in) != 1) goto fail;
+        if (read_u32(in, &type) != 0) goto fail;
+        if (read_u32(in, &req) != 0) goto fail;
 
-        if (fread(default_value, 1, sizeof(default_value), in) != sizeof(default_value)) goto fail;
+        if (read_bytes(in, default_value, sizeof(default_value)) != 0) goto fail;
         default_value[sizeof(default_value) - 1] = '\0';
 
         if (type > GV_SCHEMA_BOOL) goto fail;

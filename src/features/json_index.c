@@ -758,12 +758,10 @@ int json_index_save(const GV_JSONPathIndex *idx, const char *path_file) {
 
     /* Header */
     fwrite(GV_JPI_MAGIC, 1, GV_JPI_MAGIC_LEN, fp);
-    uint32_t version = GV_JPI_VERSION;
-    fwrite(&version, sizeof(version), 1, fp);
+    write_u32(fp, (uint32_t)GV_JPI_VERSION);
 
     /* Path count */
-    uint32_t pc = (uint32_t)idx->path_count;
-    fwrite(&pc, sizeof(pc), 1, fp);
+    write_u32(fp, (uint32_t)idx->path_count);
 
     /* Each path */
     for (size_t i = 0; i < idx->path_count; i++) {
@@ -771,55 +769,45 @@ int json_index_save(const GV_JSONPathIndex *idx, const char *path_file) {
 
         /* Path string (length-prefixed) */
         uint32_t path_len = (uint32_t)strlen(pi->path);
-        fwrite(&path_len, sizeof(path_len), 1, fp);
+        write_u32(fp, path_len);
         fwrite(pi->path, 1, path_len, fp);
 
         /* Type */
-        uint32_t type = (uint32_t)pi->type;
-        fwrite(&type, sizeof(type), 1, fp);
+        write_u32(fp, (uint32_t)pi->type);
 
         /* Entry count and entries */
         switch (pi->type) {
             case GV_JP_STRING: {
-                uint64_t cnt = (uint64_t)pi->data.str.count;
-                fwrite(&cnt, sizeof(cnt), 1, fp);
+                write_u64(fp, (uint64_t)pi->data.str.count);
                 for (size_t j = 0; j < pi->data.str.count; j++) {
                     uint32_t slen = (uint32_t)strlen(pi->data.str.entries[j].value);
-                    fwrite(&slen, sizeof(slen), 1, fp);
+                    write_u32(fp, slen);
                     fwrite(pi->data.str.entries[j].value, 1, slen, fp);
-                    uint64_t vi = (uint64_t)pi->data.str.entries[j].vector_index;
-                    fwrite(&vi, sizeof(vi), 1, fp);
+                    write_u64(fp, (uint64_t)pi->data.str.entries[j].vector_index);
                 }
                 break;
             }
             case GV_JP_INT: {
-                uint64_t cnt = (uint64_t)pi->data.int_data.count;
-                fwrite(&cnt, sizeof(cnt), 1, fp);
+                write_u64(fp, (uint64_t)pi->data.int_data.count);
                 for (size_t j = 0; j < pi->data.int_data.count; j++) {
-                    fwrite(&pi->data.int_data.entries[j].value, sizeof(int64_t), 1, fp);
-                    uint64_t vi = (uint64_t)pi->data.int_data.entries[j].vector_index;
-                    fwrite(&vi, sizeof(vi), 1, fp);
+                    write_u64(fp, (uint64_t)pi->data.int_data.entries[j].value);
+                    write_u64(fp, (uint64_t)pi->data.int_data.entries[j].vector_index);
                 }
                 break;
             }
             case GV_JP_FLOAT: {
-                uint64_t cnt = (uint64_t)pi->data.float_data.count;
-                fwrite(&cnt, sizeof(cnt), 1, fp);
+                write_u64(fp, (uint64_t)pi->data.float_data.count);
                 for (size_t j = 0; j < pi->data.float_data.count; j++) {
-                    fwrite(&pi->data.float_data.entries[j].value, sizeof(double), 1, fp);
-                    uint64_t vi = (uint64_t)pi->data.float_data.entries[j].vector_index;
-                    fwrite(&vi, sizeof(vi), 1, fp);
+                    write_f64(fp, pi->data.float_data.entries[j].value);
+                    write_u64(fp, (uint64_t)pi->data.float_data.entries[j].vector_index);
                 }
                 break;
             }
             case GV_JP_BOOL: {
-                uint64_t cnt = (uint64_t)pi->data.bool_data.count;
-                fwrite(&cnt, sizeof(cnt), 1, fp);
+                write_u64(fp, (uint64_t)pi->data.bool_data.count);
                 for (size_t j = 0; j < pi->data.bool_data.count; j++) {
-                    uint8_t bval = pi->data.bool_data.entries[j].value ? 1 : 0;
-                    fwrite(&bval, sizeof(bval), 1, fp);
-                    uint64_t vi = (uint64_t)pi->data.bool_data.entries[j].vector_index;
-                    fwrite(&vi, sizeof(vi), 1, fp);
+                    write_u8(fp, pi->data.bool_data.entries[j].value ? 1 : 0);
+                    write_u64(fp, (uint64_t)pi->data.bool_data.entries[j].vector_index);
                 }
                 break;
             }
@@ -847,14 +835,14 @@ GV_JSONPathIndex *json_index_load(const char *path_file) {
 
     /* Verify version */
     uint32_t version;
-    if (fread(&version, sizeof(version), 1, fp) != 1 || version != GV_JPI_VERSION) {
+    if (read_u32(fp, &version) != 0 || version != GV_JPI_VERSION) {
         fclose(fp);
         return NULL;
     }
 
     /* Path count */
     uint32_t pc;
-    if (fread(&pc, sizeof(pc), 1, fp) != 1 || pc > GV_JSON_INDEX_MAX_PATHS) {
+    if (read_u32(fp, &pc) != 0 || pc > GV_JSON_INDEX_MAX_PATHS) {
         fclose(fp);
         return NULL;
     }
@@ -868,7 +856,7 @@ GV_JSONPathIndex *json_index_load(const char *path_file) {
     for (uint32_t i = 0; i < pc; i++) {
         /* Path string */
         uint32_t path_len;
-        if (fread(&path_len, sizeof(path_len), 1, fp) != 1 ||
+        if (read_u32(fp, &path_len) != 0 ||
             path_len >= GV_JPI_PATH_MAXLEN) {
             json_index_destroy(idx);
             fclose(fp);
@@ -887,7 +875,7 @@ GV_JSONPathIndex *json_index_load(const char *path_file) {
 
         /* Type */
         uint32_t type;
-        if (fread(&type, sizeof(type), 1, fp) != 1) {
+        if (read_u32(fp, &type) != 0) {
             json_index_destroy(idx);
             fclose(fp);
             return NULL;
@@ -896,7 +884,7 @@ GV_JSONPathIndex *json_index_load(const char *path_file) {
 
         /* Entry count */
         uint64_t cnt;
-        if (fread(&cnt, sizeof(cnt), 1, fp) != 1) {
+        if (read_u64(fp, &cnt) != 0) {
             json_index_destroy(idx);
             fclose(fp);
             return NULL;
@@ -919,7 +907,7 @@ GV_JSONPathIndex *json_index_load(const char *path_file) {
 
                 for (uint64_t j = 0; j < cnt; j++) {
                     uint32_t slen;
-                    if (fread(&slen, sizeof(slen), 1, fp) != 1) {
+                    if (read_u32(fp, &slen) != 0) {
                         json_index_destroy(idx);
                         fclose(fp);
                         return NULL;
@@ -939,7 +927,7 @@ GV_JSONPathIndex *json_index_load(const char *path_file) {
                     s[slen] = '\0';
 
                     uint64_t vi;
-                    if (fread(&vi, sizeof(vi), 1, fp) != 1) {
+                    if (read_u64(fp, &vi) != 0) {
                         gv_free(s);
                         json_index_destroy(idx);
                         fclose(fp);
@@ -964,15 +952,15 @@ GV_JSONPathIndex *json_index_load(const char *path_file) {
                 pi->data.int_data.count = 0;
 
                 for (uint64_t j = 0; j < cnt; j++) {
-                    int64_t val;
+                    uint64_t uval;
                     uint64_t vi;
-                    if (fread(&val, sizeof(val), 1, fp) != 1 ||
-                        fread(&vi, sizeof(vi), 1, fp) != 1) {
+                    if (read_u64(fp, &uval) != 0 ||
+                        read_u64(fp, &vi) != 0) {
                         json_index_destroy(idx);
                         fclose(fp);
                         return NULL;
                     }
-                    pi->data.int_data.entries[pi->data.int_data.count].value = val;
+                    pi->data.int_data.entries[pi->data.int_data.count].value = (int64_t)uval;
                     pi->data.int_data.entries[pi->data.int_data.count].vector_index = (size_t)vi;
                     pi->data.int_data.count++;
                 }
@@ -992,8 +980,8 @@ GV_JSONPathIndex *json_index_load(const char *path_file) {
                 for (uint64_t j = 0; j < cnt; j++) {
                     double val;
                     uint64_t vi;
-                    if (fread(&val, sizeof(val), 1, fp) != 1 ||
-                        fread(&vi, sizeof(vi), 1, fp) != 1) {
+                    if (read_f64(fp, &val) != 0 ||
+                        read_u64(fp, &vi) != 0) {
                         json_index_destroy(idx);
                         fclose(fp);
                         return NULL;
@@ -1018,8 +1006,8 @@ GV_JSONPathIndex *json_index_load(const char *path_file) {
                 for (uint64_t j = 0; j < cnt; j++) {
                     uint8_t bval;
                     uint64_t vi;
-                    if (fread(&bval, sizeof(bval), 1, fp) != 1 ||
-                        fread(&vi, sizeof(vi), 1, fp) != 1) {
+                    if (read_u8(fp, &bval) != 0 ||
+                        read_u64(fp, &vi) != 0) {
                         json_index_destroy(idx);
                         fclose(fp);
                         return NULL;

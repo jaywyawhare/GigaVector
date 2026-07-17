@@ -530,7 +530,7 @@ int point_id_save(const GV_PointIDMap *map, const char *filepath)
 
     /* Write entry count. */
     size_t count = map->count;
-    if (fwrite(&count, sizeof(size_t), 1, fp) != 1) {
+    if (write_size(fp, count) != 0) {
         goto fail;
     }
 
@@ -542,13 +542,13 @@ int point_id_save(const GV_PointIDMap *map, const char *filepath)
         }
 
         size_t slen = strlen(e->string_id);
-        if (fwrite(&slen, sizeof(size_t), 1, fp) != 1) {
+        if (write_size(fp, slen) != 0) {
             goto fail;
         }
         if (slen > 0 && fwrite(e->string_id, 1, slen, fp) != slen) {
             goto fail;
         }
-        if (fwrite(&e->internal_index, sizeof(size_t), 1, fp) != 1) {
+        if (write_size(fp, e->internal_index) != 0) {
             goto fail;
         }
     }
@@ -602,7 +602,7 @@ GV_PointIDMap *point_id_load(const char *filepath)
     }
 
     size_t count = 0;
-    if (fread(&count, sizeof(size_t), 1, fp) != 1) {
+    if (read_size(fp, &count) != 0) {
         fclose(fp);
         return NULL;
     }
@@ -617,7 +617,7 @@ GV_PointIDMap *point_id_load(const char *filepath)
 
     for (size_t i = 0; i < count; i++) {
         size_t slen = 0;
-        if (fread(&slen, sizeof(size_t), 1, fp) != 1) {
+        if (read_size(fp, &slen) != 0) {
             goto fail;
         }
 
@@ -638,7 +638,7 @@ GV_PointIDMap *point_id_load(const char *filepath)
         id_buf[slen] = '\0';
 
         size_t internal_index = 0;
-        if (fread(&internal_index, sizeof(size_t), 1, fp) != 1) {
+        if (read_size(fp, &internal_index) != 0) {
             gv_free(id_buf);
             goto fail;
         }

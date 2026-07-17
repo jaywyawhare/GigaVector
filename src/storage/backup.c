@@ -153,17 +153,17 @@ GV_BackupResult *backup_create(GV_Database *db, const char *backup_path,
     header.dimension = db->dimension;
     header.index_type = db->index_type;
 
-#define FWRITE1(field) \
-    if (fwrite(&header.field, sizeof(header.field), 1, fp) != 1) { \
+#define FWRITE_HDR(expr) \
+    if ((expr) != 0) { \
         fclose(fp); remove(tmp_path); return create_result(0, "Failed to write backup header"); \
     }
-    FWRITE1(version)
-    FWRITE1(flags)
-    FWRITE1(created_at)
-    FWRITE1(vector_count)
-    FWRITE1(dimension)
-    FWRITE1(index_type)
-#undef FWRITE1
+    FWRITE_HDR(write_u32(fp, header.version))
+    FWRITE_HDR(write_u32(fp, header.flags))
+    FWRITE_HDR(write_u64(fp, header.created_at))
+    FWRITE_HDR(write_u64(fp, header.vector_count))
+    FWRITE_HDR(write_u32(fp, header.dimension))
+    FWRITE_HDR(write_u32(fp, header.index_type))
+#undef FWRITE_HDR
 
     /* Placeholder for sizes and checksum (will update at end) */
     long sizes_pos = ftell(fp);
@@ -173,8 +173,8 @@ GV_BackupResult *backup_create(GV_Database *db, const char *backup_path,
         return create_result(0, "Failed to get file position");
     }
     uint64_t zero = 0;
-    if (fwrite(&zero, sizeof(zero), 1, fp) != 1 ||
-        fwrite(&zero, sizeof(zero), 1, fp) != 1) {
+    if (write_u64(fp, zero) != 0 ||
+        write_u64(fp, zero) != 0) {
         fclose(fp); remove(tmp_path); return create_result(0, "Failed to write backup placeholders");
     }
     char checksum_placeholder[64] = {0};
@@ -191,7 +191,7 @@ GV_BackupResult *backup_create(GV_Database *db, const char *backup_path,
         const float *vector = database_get_vector(db, i);
 
         if (vector) {
-            if (fwrite(vector, 1, vector_size, fp) != vector_size) {
+            if (write_floats(fp, vector, dimension) != 0) {
                 fclose(fp);
                 remove(tmp_path);
                 return create_result(0, "Failed to write vector data (disk full?)");
@@ -204,9 +204,9 @@ GV_BackupResult *backup_create(GV_Database *db, const char *backup_path,
                 remove(tmp_path);
                 return create_result(0, "Failed to allocate zero-vector buffer");
             }
-            size_t zw = fwrite(zeros, 1, vector_size, fp);
+            int zw = write_floats(fp, zeros, dimension);
             gv_free(zeros);
-            if (zw != vector_size) {
+            if (zw != 0) {
                 fclose(fp);
                 remove(tmp_path);
                 return create_result(0, "Failed to write placeholder vector (disk full?)");
@@ -256,8 +256,8 @@ GV_BackupResult *backup_create(GV_Database *db, const char *backup_path,
         return create_result(0, "Failed to get file position after writing vectors");
     }
     fseek(fp, sizes_pos, SEEK_SET);
-    fwrite(&data_size, sizeof(data_size), 1, fp);
-    fwrite(&zero, sizeof(zero), 1, fp);
+    write_u64(fp, data_size);
+    write_u64(fp, zero);
     fseek(fp, end_pos, SEEK_SET);
 
     fclose(fp);
@@ -463,14 +463,14 @@ GV_BackupResult *backup_restore(const char *backup_path, const char *db_path,
     }
 
     GV_BackupHeader header;
-    if (fread(&header.version, sizeof(header.version), 1, fp) != 1 ||
-        fread(&header.flags, sizeof(header.flags), 1, fp) != 1 ||
-        fread(&header.created_at, sizeof(header.created_at), 1, fp) != 1 ||
-        fread(&header.vector_count, sizeof(header.vector_count), 1, fp) != 1 ||
-        fread(&header.dimension, sizeof(header.dimension), 1, fp) != 1 ||
-        fread(&header.index_type, sizeof(header.index_type), 1, fp) != 1 ||
-        fread(&header.original_size, sizeof(header.original_size), 1, fp) != 1 ||
-        fread(&header.compressed_size, sizeof(header.compressed_size), 1, fp) != 1 ||
+    if (read_u32(fp, &header.version) != 0 ||
+        read_u32(fp, &header.flags) != 0 ||
+        read_u64(fp, &header.created_at) != 0 ||
+        read_u64(fp, &header.vector_count) != 0 ||
+        read_u32(fp, &header.dimension) != 0 ||
+        read_u32(fp, &header.index_type) != 0 ||
+        read_u64(fp, &header.original_size) != 0 ||
+        read_u64(fp, &header.compressed_size) != 0 ||
         fread(header.checksum, 1, BACKUP_CHECKSUM_LEN, fp) != BACKUP_CHECKSUM_LEN) {
         fclose(fp);
         return create_result(0, "Backup file truncated — failed to read header");
@@ -492,7 +492,7 @@ GV_BackupResult *backup_restore(const char *backup_path, const char *db_path,
 
     uint64_t vectors_read = 0;
     while (vectors_read < header.vector_count) {
-        if (fread(buffer, 1, vector_size, fp) != vector_size) {
+        if (read_floats(fp, buffer, header.dimension) != 0) {
             break;
         }
 
@@ -584,7 +584,7 @@ GV_BackupResult *backup_restore_to_db(const char *backup_path,
 
     uint64_t vectors_read = 0;
     while (vectors_read < header.vector_count) {
-        if (fread(buffer, 1, vector_size, fp) != vector_size) {
+        if (read_floats(fp, buffer, header.dimension) != 0) {
             break;
         }
         db_add_vector(*db, buffer, header.dimension);
@@ -622,14 +622,14 @@ int backup_read_header(const char *backup_path, GV_BackupHeader *header) {
         return -1;
     }
 
-    if (fread(&header->version, sizeof(header->version), 1, fp) != 1 ||
-        fread(&header->flags, sizeof(header->flags), 1, fp) != 1 ||
-        fread(&header->created_at, sizeof(header->created_at), 1, fp) != 1 ||
-        fread(&header->vector_count, sizeof(header->vector_count), 1, fp) != 1 ||
-        fread(&header->dimension, sizeof(header->dimension), 1, fp) != 1 ||
-        fread(&header->index_type, sizeof(header->index_type), 1, fp) != 1 ||
-        fread(&header->original_size, sizeof(header->original_size), 1, fp) != 1 ||
-        fread(&header->compressed_size, sizeof(header->compressed_size), 1, fp) != 1 ||
+    if (read_u32(fp, &header->version) != 0 ||
+        read_u32(fp, &header->flags) != 0 ||
+        read_u64(fp, &header->created_at) != 0 ||
+        read_u64(fp, &header->vector_count) != 0 ||
+        read_u32(fp, &header->dimension) != 0 ||
+        read_u32(fp, &header->index_type) != 0 ||
+        read_u64(fp, &header->original_size) != 0 ||
+        read_u64(fp, &header->compressed_size) != 0 ||
         fread(header->checksum, 1, BACKUP_CHECKSUM_LEN, fp) != BACKUP_CHECKSUM_LEN) {
         fclose(fp);
         return -1;
@@ -837,12 +837,12 @@ static int read_backup_header(const char *path, GV_BackupHeader *header) {
         return -1;
     }
 
-    if (fread(&header->version, sizeof(header->version), 1, fp) != 1 ||
-        fread(&header->flags, sizeof(header->flags), 1, fp) != 1 ||
-        fread(&header->created_at, sizeof(header->created_at), 1, fp) != 1 ||
-        fread(&header->vector_count, sizeof(header->vector_count), 1, fp) != 1 ||
-        fread(&header->dimension, sizeof(header->dimension), 1, fp) != 1 ||
-        fread(&header->index_type, sizeof(header->index_type), 1, fp) != 1) {
+    if (read_u32(fp, &header->version) != 0 ||
+        read_u32(fp, &header->flags) != 0 ||
+        read_u64(fp, &header->created_at) != 0 ||
+        read_u64(fp, &header->vector_count) != 0 ||
+        read_u32(fp, &header->dimension) != 0 ||
+        read_u32(fp, &header->index_type) != 0) {
         fclose(fp);
         return -1;
     }
@@ -900,20 +900,20 @@ GV_BackupResult *backup_create_incremental(GV_Database *db, const char *backup_p
     header.dimension = db->dimension;
     header.index_type = db->index_type;
 
-    fwrite(&header.version, sizeof(header.version), 1, fp);
-    fwrite(&header.flags, sizeof(header.flags), 1, fp);
-    fwrite(&header.created_at, sizeof(header.created_at), 1, fp);
-    fwrite(&header.vector_count, sizeof(header.vector_count), 1, fp);
-    fwrite(&header.dimension, sizeof(header.dimension), 1, fp);
-    fwrite(&header.index_type, sizeof(header.index_type), 1, fp);
+    write_u32(fp, header.version);
+    write_u32(fp, header.flags);
+    write_u64(fp, header.created_at);
+    write_u64(fp, header.vector_count);
+    write_u32(fp, header.dimension);
+    write_u32(fp, header.index_type);
 
-    fwrite(&start_idx, sizeof(start_idx), 1, fp);
-    fwrite(&base_header.created_at, sizeof(base_header.created_at), 1, fp);
+    write_u64(fp, start_idx);
+    write_u64(fp, base_header.created_at);
 
     for (uint64_t i = start_idx; i < current_count; i++) {
         const float *vec = database_get_vector(db, (size_t)i);
         if (vec) {
-            fwrite(vec, sizeof(float), db->dimension, fp);
+            write_floats(fp, vec, db->dimension);
         }
     }
 
@@ -1036,7 +1036,7 @@ GV_BackupResult *backup_merge(const char *base_backup_path,
     gv_free(buffer);
 
     fseek(out_fp, BACKUP_MAGIC_LEN + sizeof(uint32_t) * 2 + sizeof(uint64_t), SEEK_SET);
-    if (fwrite(&total_vectors, sizeof(total_vectors), 1, out_fp) != 1) {
+    if (write_u64(out_fp, total_vectors) != 0) {
         fclose(out_fp);
         remove(output_path);
         return create_result(0, "Failed to write merged backup vector count");

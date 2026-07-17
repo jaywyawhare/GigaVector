@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include "core/bloom.h"
+#include "core/utils.h"
 
 struct GV_BloomFilter {
     uint8_t *bits;           /* Bit array (packed, 1 bit per position). */
@@ -218,26 +219,12 @@ void bloom_clear(GV_BloomFilter *bf)
     bf->count = 0;
 }
 
-static int write_size(FILE *out, size_t v)
-{
-    return (fwrite(&v, sizeof(size_t), 1, out) == 1) ? 0 : -1;
-}
-
-static int write_double(FILE *out, double v)
-{
-    return (fwrite(&v, sizeof(double), 1, out) == 1) ? 0 : -1;
-}
-
-static int read_size(FILE *in, size_t *v)
-{
-    return (v != NULL && fread(v, sizeof(size_t), 1, in) == 1) ? 0 : -1;
-}
-
-static int read_double(FILE *in, double *v)
-{
-    return (v != NULL && fread(v, sizeof(double), 1, in) == 1) ? 0 : -1;
-}
-
+/*
+ * Persistence uses the portable little-endian helpers in core/utils.h for the
+ * multi-byte scalar header fields (num_bits, num_hashes, count, target_fp_rate).
+ * The bit array itself is a raw byte buffer and is already byte-portable, so it
+ * is written/read verbatim via write_bytes/read_bytes.
+ */
 int bloom_save(const GV_BloomFilter *bf, FILE *out)
 {
     if (bf == NULL || out == NULL) {
@@ -253,12 +240,12 @@ int bloom_save(const GV_BloomFilter *bf, FILE *out)
     if (write_size(out, bf->count) != 0) {
         return -1;
     }
-    if (write_double(out, bf->target_fp_rate) != 0) {
+    if (write_f64(out, bf->target_fp_rate) != 0) {
         return -1;
     }
 
     size_t byte_count = (bf->num_bits + 7) / 8;
-    if (fwrite(bf->bits, 1, byte_count, out) != byte_count) {
+    if (write_bytes(out, bf->bits, byte_count) != 0) {
         return -1;
     }
 
@@ -287,7 +274,7 @@ int bloom_load(GV_BloomFilter **bf_ptr, FILE *in)
     if (read_size(in, &count) != 0) {
         return -1;
     }
-    if (read_double(in, &fp_rate) != 0) {
+    if (read_f64(in, &fp_rate) != 0) {
         return -1;
     }
 
@@ -312,7 +299,7 @@ int bloom_load(GV_BloomFilter **bf_ptr, FILE *in)
         return -1;
     }
 
-    if (fread(bf->bits, 1, byte_count, in) != byte_count) {
+    if (read_bytes(in, bf->bits, byte_count) != 0) {
         gv_free(bf->bits);
         gv_free(bf);
         return -1;

@@ -835,13 +835,13 @@ int ivfdisk_save(const GV_IVFDiskIndex *index, FILE *out, uint32_t version)
     if (write_u32(out, (uint32_t)index->trained) != 0) return -1;
     if (write_u32(out, (uint32_t)index->config.use_hnsw_head) != 0) return -1;
     if (write_u32(out, (uint32_t)index->config.use_sq8) != 0) return -1;
-    if (fwrite(&index->config.head_ratio, sizeof(float), 1, out) != 1) return -1;
-    if (fwrite(&index->config.border_ratio, sizeof(float), 1, out) != 1) return -1;
+    if (write_f32(out, index->config.head_ratio) != 0) return -1;
+    if (write_f32(out, index->config.border_ratio) != 0) return -1;
     if (write_u64(out, (uint64_t)index->total_count) != 0) return -1;
 
     if (index->trained) {
         size_t nfloats = index->config.nlist * index->dimension;
-        if (fwrite(index->centroids, sizeof(float), nfloats, out) != nfloats) return -1;
+        if (write_floats(out, index->centroids, nfloats) != 0) return -1;
     }
     return 0;
 }
@@ -871,8 +871,8 @@ int ivfdisk_load(GV_IVFDiskIndex **index_ptr, FILE *in, size_t dimension,
     if (read_u32(in, &trained) != 0) return -1;
     if (read_u32(in, &use_hnsw) != 0) return -1;
     if (read_u32(in, &use_sq8) != 0) return -1;
-    if (fread(&head_ratio, sizeof(float), 1, in) != 1) return -1;
-    if (fread(&border_ratio, sizeof(float), 1, in) != 1) {
+    if (read_f32(in, &head_ratio) != 0) return -1;
+    if (read_f32(in, &border_ratio) != 0) {
         border_ratio = 1.15f;
     }
     if (read_u64(in, &total_count) != 0) return -1;
@@ -902,7 +902,7 @@ int ivfdisk_load(GV_IVFDiskIndex **index_ptr, FILE *in, size_t dimension,
 
     if (trained) {
         size_t nfloats = idx->config.nlist * idx->dimension;
-        if (fread(idx->centroids, sizeof(float), nfloats, in) != nfloats) {
+        if (read_floats(in, idx->centroids, nfloats) != 0) {
             ivfdisk_destroy(idx);
             return -1;
         }
@@ -1003,13 +1003,13 @@ static int ivfdisk_head_wal_append(GV_IVFDiskIndex *index, uint8_t type,
     uint32_t crc = ivfdisk_crc32(payload, payload_len);
 
     int rc = 0;
-    if (fwrite(&magic, 4, 1, f) != 1 ||
-        fwrite(&ver, 4, 1, f) != 1 ||
-        fwrite(&dim, 4, 1, f) != 1 ||
-        fputc(type, f) == EOF ||
-        fwrite(&plen, 4, 1, f) != 1 ||
-        (payload_len > 0 && fwrite(payload, 1, payload_len, f) != payload_len) ||
-        fwrite(&crc, 4, 1, f) != 1) {
+    if (write_u32(f, magic) != 0 ||
+        write_u32(f, ver) != 0 ||
+        write_u32(f, dim) != 0 ||
+        write_u8(f, type) != 0 ||
+        write_u32(f, plen) != 0 ||
+        (payload_len > 0 && write_bytes(f, payload, payload_len) != 0) ||
+        write_u32(f, crc) != 0) {
         rc = -1;
     }
     if (fflush(f) != 0 || fclose(f) != 0) rc = -1;
@@ -1096,16 +1096,16 @@ int ivfdisk_head_checkpoint(GV_IVFDiskIndex *index)
     size_t nfloats = index->config.nlist * index->dimension;
 
     int rc = 0;
-    if (fwrite(&magic, 4, 1, f) != 1 ||
-        fwrite(&ver, 4, 1, f) != 1 ||
-        fwrite(&dim, 4, 1, f) != 1 ||
-        fwrite(&nlist, 8, 1, f) != 1 ||
-        fwrite(index->centroids, sizeof(float), nfloats, f) != nfloats) {
+    if (write_u32(f, magic) != 0 ||
+        write_u32(f, ver) != 0 ||
+        write_u32(f, dim) != 0 ||
+        write_u64(f, nlist) != 0 ||
+        write_floats(f, index->centroids, nfloats) != 0) {
         rc = -1;
     }
     if (rc == 0) {
         uint32_t crc = ivfdisk_crc32((const uint8_t *)index->centroids, nfloats * sizeof(float));
-        if (fwrite(&crc, 4, 1, f) != 1) rc = -1;
+        if (write_u32(f, crc) != 0) rc = -1;
     }
     if (fflush(f) != 0 || fclose(f) != 0) rc = -1;
     if (rc != 0) {
@@ -1159,10 +1159,10 @@ int ivfdisk_head_wal_replay(GV_IVFDiskIndex *index)
     if (ck) {
         uint32_t magic = 0, ver = 0, dim = 0;
         uint64_t nlist = 0;
-        if (fread(&magic, 4, 1, ck) != 1 || magic != GV_HEAD_CKPT_MAGIC ||
-            fread(&ver, 4, 1, ck) != 1 ||
-            fread(&dim, 4, 1, ck) != 1 || dim != index->dimension ||
-            fread(&nlist, 8, 1, ck) != 1 || nlist == 0) {
+        if (read_u32(ck, &magic) != 0 || magic != GV_HEAD_CKPT_MAGIC ||
+            read_u32(ck, &ver) != 0 ||
+            read_u32(ck, &dim) != 0 || dim != index->dimension ||
+            read_u64(ck, &nlist) != 0 || nlist == 0) {
             fclose(ck);
             return -1;
         }
@@ -1171,12 +1171,12 @@ int ivfdisk_head_wal_replay(GV_IVFDiskIndex *index)
             return -1;
         }
         size_t nfloats = (size_t)nlist * index->dimension;
-        if (fread(index->centroids, sizeof(float), nfloats, ck) != nfloats) {
+        if (read_floats(ck, index->centroids, nfloats) != 0) {
             fclose(ck);
             return -1;
         }
         uint32_t stored_crc = 0;
-        if (fread(&stored_crc, 4, 1, ck) != 1 ||
+        if (read_u32(ck, &stored_crc) != 0 ||
             stored_crc != ivfdisk_crc32((const uint8_t *)index->centroids, nfloats * sizeof(float))) {
             fclose(ck);
             return -1;
@@ -1189,27 +1189,29 @@ int ivfdisk_head_wal_replay(GV_IVFDiskIndex *index)
 
     for (;;) {
         uint32_t magic = 0, ver = 0, dim = 0, plen = 0, crc = 0;
-        if (fread(&magic, 4, 1, wal) != 1) break;
+        if (read_u32(wal, &magic) != 0) break;
         if (magic != GV_HEAD_WAL_MAGIC) {
             fclose(wal);
             return -1;
         }
+        /* type is a single byte; keep fgetc so its EOF return still terminates
+         * a truncated trailing record cleanly (read_u8 can't express that). */
         int type = fgetc(wal);
         if (type == EOF) break;
-        if (fread(&ver, 4, 1, wal) != 1 ||
-            fread(&dim, 4, 1, wal) != 1 || dim != index->dimension ||
-            fread(&plen, 4, 1, wal) != 1) {
+        if (read_u32(wal, &ver) != 0 ||
+            read_u32(wal, &dim) != 0 || dim != index->dimension ||
+            read_u32(wal, &plen) != 0) {
             fclose(wal);
             return -1;
         }
         uint8_t *payload = plen > 0 ? (uint8_t *)gv_alloc(plen) : NULL;
         if (plen > 0 && !payload) { fclose(wal); return -1; }
-        if (plen > 0 && fread(payload, 1, plen, wal) != plen) {
+        if (plen > 0 && read_bytes(wal, payload, plen) != 0) {
             gv_free(payload);
             fclose(wal);
             return -1;
         }
-        if (fread(&crc, 4, 1, wal) != 1 ||
+        if (read_u32(wal, &crc) != 0 ||
             (plen > 0 && crc != ivfdisk_crc32(payload, plen))) {
             gv_free(payload);
             fclose(wal);

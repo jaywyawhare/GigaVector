@@ -510,29 +510,24 @@ static void persist_event(GV_CDCStream *stream, const CDCRingEntry *entry) {
     size_t written = 0;
 
     /* seq_number: 8 */
-    uint64_t seq = entry->sequence_number;
-    written += fwrite(&seq, 1, 8, fp);
+    if (write_u64(fp, entry->sequence_number) == 0) written += 8;
 
     /* type: 4 */
-    uint32_t type = (uint32_t)entry->type;
-    written += fwrite(&type, 1, 4, fp);
+    if (write_u32(fp, (uint32_t)entry->type) == 0) written += 4;
 
     /* index: 8 */
-    uint64_t idx = (uint64_t)entry->vector_index;
-    written += fwrite(&idx, 1, 8, fp);
+    if (write_u64(fp, (uint64_t)entry->vector_index) == 0) written += 8;
 
     /* timestamp: 8 */
-    uint64_t ts = entry->timestamp;
-    written += fwrite(&ts, 1, 8, fp);
+    if (write_u64(fp, entry->timestamp) == 0) written += 8;
 
     /* dim: 8 */
-    uint64_t dim = (uint64_t)entry->dimension;
-    written += fwrite(&dim, 1, 8, fp);
+    if (write_u64(fp, (uint64_t)entry->dimension) == 0) written += 8;
 
     /* vector_data: dim * 4 */
     if (entry->vector_data && entry->dimension > 0) {
-        written += fwrite(entry->vector_data, sizeof(float),
-                          entry->dimension, fp) * sizeof(float);
+        if (write_floats(fp, entry->vector_data, entry->dimension) == 0)
+            written += entry->dimension * sizeof(float);
     }
 
     /* metadata_len: 4, metadata: N */
@@ -540,10 +535,11 @@ static void persist_event(GV_CDCStream *stream, const CDCRingEntry *entry) {
     if (entry->metadata_json) {
         meta_len = (uint32_t)strlen(entry->metadata_json);
     }
-    written += fwrite(&meta_len, 1, 4, fp);
+    if (write_u32(fp, meta_len) == 0) written += 4;
 
     if (meta_len > 0) {
-        written += fwrite(entry->metadata_json, 1, meta_len, fp);
+        if (write_bytes(fp, entry->metadata_json, meta_len) == 0)
+            written += meta_len;
     }
 
     fflush(fp);

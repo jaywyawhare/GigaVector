@@ -456,7 +456,7 @@ int wal_append_delete(GV_WAL *wal, size_t vector_index) {
     crc = gv_crc32_update(crc, &(uint8_t){GV_WAL_TYPE_DELETE}, sizeof(uint8_t));
     
     uint64_t index_u64 = (uint64_t)vector_index;
-    if (fwrite(&index_u64, sizeof(uint64_t), 1, wal->file) != 1) return -1;
+    if (write_u64(wal->file, index_u64) != 0) return -1;
     crc = gv_crc32_update(crc, &index_u64, sizeof(uint64_t));
 
     if (wal->version >= 2) {
@@ -481,9 +481,9 @@ int wal_append_update(GV_WAL *wal, size_t vector_index, const float *data, size_
     crc = gv_crc32_update(crc, &(uint8_t){GV_WAL_TYPE_UPDATE}, sizeof(uint8_t));
     
     uint64_t index_u64 = (uint64_t)vector_index;
-    if (fwrite(&index_u64, sizeof(uint64_t), 1, wal->file) != 1) return -1;
+    if (write_u64(wal->file, index_u64) != 0) return -1;
     crc = gv_crc32_update(crc, &index_u64, sizeof(uint64_t));
-    
+
     if (write_u32(wal->file, (uint32_t)dimension) != 0) return -1;
     uint32_t dim_u32 = (uint32_t)dimension;
     crc = gv_crc32_update(crc, &dim_u32, sizeof(uint32_t));
@@ -546,8 +546,8 @@ static int wal_skip_ivfdisk_append_record(FILE *f, int has_crc)
 {
     uint64_t head_id = 0, vector_id = 0;
     uint32_t dim = 0;
-    if (fread(&head_id, sizeof(uint64_t), 1, f) != 1) return -1;
-    if (fread(&vector_id, sizeof(uint64_t), 1, f) != 1) return -1;
+    if (read_u64(f, &head_id) != 0) return -1;
+    if (read_u64(f, &vector_id) != 0) return -1;
     if (read_u32(f, &dim) != 0) return -1;
     if (fseek(f, (long)(dim * sizeof(float)), SEEK_CUR) != 0) return -1;
     if (has_crc) {
@@ -659,7 +659,7 @@ int wal_replay(const char *path, size_t expected_dimension,
 
         if (type == GV_WAL_TYPE_DELETE) {
             uint64_t index_u64 = 0;
-            if (fread(&index_u64, sizeof(uint64_t), 1, f) != 1) {
+            if (read_u64(f, &index_u64) != 0) {
                 /* Short read: truncated trailing record -> stop successfully. */
                 if (wal_is_torn_tail(f, record_start, 1)) break;
                 fclose(f);
@@ -696,7 +696,7 @@ int wal_replay(const char *path, size_t expected_dimension,
         if (type == GV_WAL_TYPE_UPDATE) {
             gv_tls_arena_reset();
             uint64_t index_u64 = 0;
-            if (fread(&index_u64, sizeof(uint64_t), 1, f) != 1) {
+            if (read_u64(f, &index_u64) != 0) {
                 if (wal_is_torn_tail(f, record_start, 1)) break;
                 fclose(f);
                 return -1;
@@ -871,7 +871,7 @@ int wal_replay_rich(const char *path, size_t expected_dimension,
 
         if (type == GV_WAL_TYPE_DELETE) {
             uint64_t index_u64 = 0;
-            if (fread(&index_u64, sizeof(uint64_t), 1, f) != 1) {
+            if (read_u64(f, &index_u64) != 0) {
                 if (wal_is_torn_tail(f, record_start, 1)) break;
                 fclose(f);
                 return -1;
@@ -901,8 +901,8 @@ int wal_replay_rich(const char *path, size_t expected_dimension,
             gv_tls_arena_reset();
             uint64_t head_id = 0, vector_id = 0;
             uint32_t dim = 0;
-            if (fread(&head_id, sizeof(uint64_t), 1, f) != 1 ||
-                fread(&vector_id, sizeof(uint64_t), 1, f) != 1 ||
+            if (read_u64(f, &head_id) != 0 ||
+                read_u64(f, &vector_id) != 0 ||
                 read_u32(f, &dim) != 0 ||
                 dim != (uint32_t)expected_dimension) {
                 if (wal_is_torn_tail(f, record_start, 1)) break;
@@ -952,7 +952,7 @@ int wal_replay_rich(const char *path, size_t expected_dimension,
         if (type == GV_WAL_TYPE_UPDATE) {
             gv_tls_arena_reset();
             uint64_t index_u64 = 0;
-            if (fread(&index_u64, sizeof(uint64_t), 1, f) != 1) {
+            if (read_u64(f, &index_u64) != 0) {
                 if (wal_is_torn_tail(f, record_start, 1)) break;
                 fclose(f);
                 return -1;
