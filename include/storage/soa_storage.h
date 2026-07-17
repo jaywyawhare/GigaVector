@@ -152,6 +152,19 @@ int soa_storage_update_data(GV_SoAStorage *storage, size_t index, const float *d
  */
 int soa_storage_update_metadata(GV_SoAStorage *storage, size_t index, GV_Metadata *metadata);
 
+/**
+ * @brief Ensure storage can hold at least @p min_capacity vectors.
+ *
+ * Grows every parallel array (data, metadata, deleted, insert_timestamps)
+ * consistently and respects arena/db ownership. No-op if already large enough.
+ * Prefer this over hand-rolled reallocation of the individual arrays.
+ *
+ * @param storage Storage to grow; must be non-NULL.
+ * @param min_capacity Minimum capacity (number of vectors) to guarantee.
+ * @return 0 on success, -1 on invalid arguments or allocation failure.
+ */
+int soa_storage_reserve(GV_SoAStorage *storage, size_t min_capacity);
+
 int soa_storage_save(const GV_SoAStorage *storage, FILE *out, uint32_t version);
 int soa_storage_load(GV_SoAStorage *storage, FILE *in, uint32_t version);
 

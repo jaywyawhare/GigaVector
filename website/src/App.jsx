@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { Routes, Route, Outlet, Link } from 'react-router-dom'
 import Navbar from './components/Navbar'
 import Hero from './components/Hero'
@@ -10,6 +11,19 @@ import Footer from './components/Footer'
 import DocsPage from './components/DocsPage'
 
 function Landing() {
+  // On deep-link / refresh (e.g. /#performance) the target section doesn't
+  // exist when the browser first tries to jump, so scroll to it after mount.
+  useEffect(() => {
+    const id = window.location.hash.slice(1)
+    if (!id) return
+    const el = document.getElementById(id)
+    if (!el) return
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    requestAnimationFrame(() =>
+      el.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' })
+    )
+  }, [])
+
   return (
     <>
       <Hero />

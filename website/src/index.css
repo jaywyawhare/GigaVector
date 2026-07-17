@@ -34,6 +34,23 @@ body {
 
 a { color: inherit; text-decoration: none; }
 
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+/* Respect reduced-motion: drop hover translates/wipes that imply motion. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+  .btn:hover,
+  .btn.primary:hover { transform: none; }
+  .feat::before { display: none; }
+}
+
 /* ─── NAV ─── */
 .nav {
   position: fixed;
@@ -191,11 +208,45 @@ a { color: inherit; text-decoration: none; }
   overflow: hidden;
 }
 
+/* Accent glow behind the headline — gives the hero depth even when the
+   WebGL particle field is disabled (reduced-motion / no-GPU fallback). */
+.hero::before {
+  content: '';
+  position: absolute;
+  top: 40%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(880px, 92vw);
+  height: min(560px, 66vh);
+  background: radial-gradient(ellipse at center,
+    rgba(103, 232, 249, 0.12) 0%,
+    rgba(103, 232, 249, 0.05) 34%,
+    transparent 70%);
+  filter: blur(12px);
+  z-index: 0;
+  pointer-events: none;
+}
+
+/* Faint grid that fades out toward the edges. */
+.hero::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px);
+  background-size: 46px 46px;
+  -webkit-mask-image: radial-gradient(ellipse 78% 58% at 50% 40%, #000 15%, transparent 76%);
+  mask-image: radial-gradient(ellipse 78% 58% at 50% 40%, #000 15%, transparent 76%);
+}
+
 .hero-canvas {
   position: absolute;
   inset: 0;
   z-index: 0;
-  opacity: 0.4;
+  opacity: 0.5;
 }
 
 .hero-inner {
@@ -241,7 +292,11 @@ a { color: inherit; text-decoration: none; }
 
 .hero h1 em {
   font-style: italic;
-  color: var(--text-2);
+  background: linear-gradient(180deg, var(--accent) 0%, #a5b4fc 92%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
 }
 
 .hero-desc {
@@ -287,10 +342,17 @@ a { color: inherit; text-decoration: none; }
   background: var(--text);
   color: var(--bg);
   border-color: transparent;
+  box-shadow: 0 4px 20px rgba(255, 255, 255, 0.06);
 }
 
 .btn.primary:hover {
-  opacity: 0.9;
+  opacity: 1;
+  transform: translateY(-1px);
+  box-shadow: 0 8px 28px rgba(103, 232, 249, 0.22);
+}
+
+.btn:not(.primary):hover {
+  transform: translateY(-1px);
 }
 
 .hero-install {
@@ -301,13 +363,14 @@ a { color: inherit; text-decoration: none; }
   padding: 8px 20px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: transparent;
+  background: rgba(255, 255, 255, 0.02);
   transition: all 0.15s;
 }
 
 .hero-install:hover {
-  border-color: var(--border-hover);
-  color: var(--text-2);
+  border-color: rgba(103, 232, 249, 0.4);
+  color: var(--text);
+  background: rgba(103, 232, 249, 0.05);
 }
 
 .hero-fade {
@@ -375,13 +438,32 @@ section {
 }
 
 .feat {
+  position: relative;
   background: var(--bg);
   padding: 32px 28px;
   transition: background 0.2s;
 }
 
+/* Accent bar wipes in along the top edge on hover. */
+.feat::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, var(--accent), transparent 80%);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 0.3s ease;
+}
+
 .feat:hover {
   background: var(--bg-subtle);
+}
+
+.feat:hover::before {
+  transform: scaleX(1);
 }
 
 .feat-name {
@@ -389,6 +471,15 @@ section {
   font-weight: 600;
   margin-bottom: 8px;
   letter-spacing: -0.01em;
+  transition: color 0.2s;
+}
+
+.feat:hover .feat-name {
+  color: var(--accent);
+}
+
+.feat:hover .feat-tag {
+  border-color: var(--border-hover);
 }
 
 .feat-text {
@@ -513,6 +604,11 @@ section {
   letter-spacing: -0.02em;
   line-height: 1;
   margin-bottom: 6px;
+  background: linear-gradient(175deg, var(--text) 45%, var(--accent) 135%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
 }
 
 .num-label {
@@ -1234,7 +1330,11 @@ section {
 /* ─── DIVIDER ─── */
 .divider {
   height: 1px;
-  background: var(--border);
+  background: linear-gradient(90deg,
+    transparent,
+    var(--border-hover) 20%,
+    var(--border-hover) 80%,
+    transparent);
   max-width: 1000px;
   margin: 0 auto;
 }

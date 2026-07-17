@@ -109,6 +109,11 @@ static int soa_storage_grow(GV_SoAStorage *storage, size_t min_capacity)
     return 0;
 }
 
+int soa_storage_reserve(GV_SoAStorage *storage, size_t min_capacity) {
+    if (storage == NULL) return -1;
+    return soa_storage_grow(storage, min_capacity);
+}
+
 GV_SoAStorage *soa_storage_create(size_t dimension, size_t initial_capacity) {
     if (dimension == 0) {
         return NULL;
