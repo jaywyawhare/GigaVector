@@ -57,6 +57,18 @@ typedef enum {
     GV_SQL_TOK_UPDATE,
     GV_SQL_TOK_SET,
     GV_SQL_TOK_COUNT,
+    GV_SQL_TOK_OFFSET,
+    GV_SQL_TOK_IN,
+    GV_SQL_TOK_BETWEEN,
+    GV_SQL_TOK_IS,
+    GV_SQL_TOK_NULL,
+    GV_SQL_TOK_INSERT,
+    GV_SQL_TOK_INTO,
+    GV_SQL_TOK_VALUES,
+    GV_SQL_TOK_SUM,
+    GV_SQL_TOK_MIN,
+    GV_SQL_TOK_MAX,
+    GV_SQL_TOK_AVG,
     GV_SQL_TOK_ERROR
 } GV_SQLTokenType;
 
@@ -242,6 +254,18 @@ static GV_SQLToken sql_lexer_next(GV_SQLLexer *lx)
         if (sql_kw_match(lx->input + start, len, "UPDATE"))  { tok.type = GV_SQL_TOK_UPDATE;  return tok; }
         if (sql_kw_match(lx->input + start, len, "SET"))     { tok.type = GV_SQL_TOK_SET;     return tok; }
         if (sql_kw_match(lx->input + start, len, "COUNT"))   { tok.type = GV_SQL_TOK_COUNT;   return tok; }
+        if (sql_kw_match(lx->input + start, len, "OFFSET"))  { tok.type = GV_SQL_TOK_OFFSET;  return tok; }
+        if (sql_kw_match(lx->input + start, len, "IN"))      { tok.type = GV_SQL_TOK_IN;      return tok; }
+        if (sql_kw_match(lx->input + start, len, "BETWEEN")) { tok.type = GV_SQL_TOK_BETWEEN; return tok; }
+        if (sql_kw_match(lx->input + start, len, "IS"))      { tok.type = GV_SQL_TOK_IS;      return tok; }
+        if (sql_kw_match(lx->input + start, len, "NULL"))    { tok.type = GV_SQL_TOK_NULL;    return tok; }
+        if (sql_kw_match(lx->input + start, len, "INSERT"))  { tok.type = GV_SQL_TOK_INSERT;  return tok; }
+        if (sql_kw_match(lx->input + start, len, "INTO"))    { tok.type = GV_SQL_TOK_INTO;    return tok; }
+        if (sql_kw_match(lx->input + start, len, "VALUES"))  { tok.type = GV_SQL_TOK_VALUES;  return tok; }
+        if (sql_kw_match(lx->input + start, len, "SUM"))     { tok.type = GV_SQL_TOK_SUM;     return tok; }
+        if (sql_kw_match(lx->input + start, len, "MIN"))     { tok.type = GV_SQL_TOK_MIN;     return tok; }
+        if (sql_kw_match(lx->input + start, len, "MAX"))     { tok.type = GV_SQL_TOK_MAX;     return tok; }
+        if (sql_kw_match(lx->input + start, len, "AVG"))     { tok.type = GV_SQL_TOK_AVG;     return tok; }
 
         tok.text = sql_strndup(lx->input + start, len);
         tok.type = tok.text ? GV_SQL_TOK_IDENT : GV_SQL_TOK_ERROR;
@@ -342,8 +366,18 @@ static int sql_expect(GV_SQLTokenBuf *buf, GV_SQLTokenType type)
 typedef enum {
     GV_SQL_STMT_SELECT,
     GV_SQL_STMT_DELETE,
-    GV_SQL_STMT_UPDATE
+    GV_SQL_STMT_UPDATE,
+    GV_SQL_STMT_INSERT
 } GV_SQLStmtType;
+
+typedef enum {
+    GV_SQL_AGG_NONE = 0,
+    GV_SQL_AGG_COUNT,
+    GV_SQL_AGG_SUM,
+    GV_SQL_AGG_MIN,
+    GV_SQL_AGG_MAX,
+    GV_SQL_AGG_AVG
+} GV_SQLAggKind;
 
 typedef enum {
     GV_SQL_WHERE_CMP,
@@ -359,7 +393,11 @@ typedef enum {
     GV_SQL_CMP_LE,
     GV_SQL_CMP_GT,
     GV_SQL_CMP_GE,
-    GV_SQL_CMP_LIKE
+    GV_SQL_CMP_LIKE,
+    GV_SQL_CMP_IN,          /**< field IN (v1, v2, ...) */
+    GV_SQL_CMP_BETWEEN,     /**< field BETWEEN low AND high */
+    GV_SQL_CMP_IS_NULL,     /**< field IS NULL (metadata absent/empty) */
+    GV_SQL_CMP_IS_NOT_NULL  /**< field IS NOT NULL */
 } GV_SQLCmpOp;
 
 typedef struct GV_SQLWhere {
@@ -370,6 +408,15 @@ typedef struct GV_SQLWhere {
     char *value;
     double num_value;
     int is_numeric;
+    /* For BETWEEN: the upper bound (value is the lower bound) */
+    char *value2;
+    double num_value2;
+    int is_numeric2;
+    /* For IN: list of candidate values */
+    char **list_values;
+    double *list_nums;
+    int *list_is_numeric;
+    size_t list_count;
     /* For AND / OR */
     struct GV_SQLWhere *left;
     struct GV_SQLWhere *right;
@@ -394,7 +441,9 @@ typedef struct {
     char *table;
 
     /* SELECT-specific */
-    int is_count;        /**< 1 if SELECT COUNT(*) */
+    int is_count;        /**< 1 if SELECT COUNT(*) (kept for compat; agg_kind==COUNT) */
+    GV_SQLAggKind agg_kind;   /**< aggregate function for the projection, or NONE */
+    char *agg_column;    /**< column argument for SUM/MIN/MAX/AVG (NULL for COUNT(*)) */
     int select_star;     /**< 1 if SELECT * */
     char **select_columns;
     size_t select_column_count;
@@ -410,13 +459,19 @@ typedef struct {
     int has_order_ann;
     GV_SQLAnn order_ann;
 
-    /* LIMIT */
+    /* LIMIT / OFFSET */
     size_t limit;
     int has_limit;
+    size_t offset;
+    int has_offset;
 
-    /* UPDATE SET clauses */
+    /* UPDATE SET clauses (also reused for INSERT metadata columns) */
     GV_SQLSetClause *set_clauses;
     size_t set_count;
+
+    /* INSERT-specific */
+    float *insert_vector;    /**< dense vector literal for INSERT */
+    size_t insert_dim;       /**< dimension of insert_vector */
 } GV_SQLStmt;
 
 /* AST cleanup */
@@ -429,6 +484,13 @@ static void sql_where_free(GV_SQLWhere *w)
     sql_where_free(w->child);
     gv_free(w->field);
     gv_free(w->value);
+    gv_free(w->value2);
+    if (w->list_values) {
+        for (size_t i = 0; i < w->list_count; i++) gv_free(w->list_values[i]);
+        gv_free(w->list_values);
+    }
+    gv_free(w->list_nums);
+    gv_free(w->list_is_numeric);
     gv_free(w);
 }
 
@@ -436,6 +498,8 @@ static void sql_stmt_free(GV_SQLStmt *s)
 {
     if (!s) return;
     gv_free(s->table);
+    gv_free(s->agg_column);
+    gv_free(s->insert_vector);
     sql_where_free(s->where);
     gv_free(s->order_field);
     if (s->ann.query_vector) gv_free(s->ann.query_vector);
@@ -537,6 +601,110 @@ static int sql_parse_ann(GV_SQLTokenBuf *buf, GV_SQLAnn *ann)
 }
 
 /* parse_where primary: field CMP value | NOT expr | ( expr ) */
+/* Whether a token can serve as a scalar literal in a predicate value slot. */
+static int sql_tok_is_value(const GV_SQLToken *t)
+{
+    return t && (t->type == GV_SQL_TOK_STRING ||
+                 t->type == GV_SQL_TOK_NUMBER ||
+                 t->type == GV_SQL_TOK_IDENT);
+}
+
+/* field IN (v1, v2, ...) — takes ownership of `field`. */
+static GV_SQLWhere *sql_parse_in_list(GV_SQLTokenBuf *buf, char *field)
+{
+    sql_advance(buf); /* consume IN */
+    if (!sql_expect(buf, GV_SQL_TOK_LPAREN)) { gv_free(field); return NULL; }
+
+    GV_SQLWhere *node = (GV_SQLWhere *)gv_calloc(1, sizeof(GV_SQLWhere));
+    if (!node) { gv_free(field); return NULL; }
+    node->type = GV_SQL_WHERE_CMP;
+    node->op = GV_SQL_CMP_IN;
+    node->field = field;
+
+    size_t cap = 4;
+    node->list_values = (char **)gv_calloc(cap, sizeof(char *));
+    node->list_nums = (double *)gv_calloc(cap, sizeof(double));
+    node->list_is_numeric = (int *)gv_calloc(cap, sizeof(int));
+    if (!node->list_values || !node->list_nums || !node->list_is_numeric) {
+        sql_where_free(node); return NULL;
+    }
+    for (;;) {
+        GV_SQLToken *t = sql_peek(buf);
+        if (!sql_tok_is_value(t)) { sql_where_free(node); return NULL; }
+        if (node->list_count >= cap) {
+            size_t ncap = cap * 2;
+            char **nv = (char **)gv_realloc(node->list_values, ncap * sizeof(char *));
+            if (nv) node->list_values = nv;
+            double *nn = (double *)gv_realloc(node->list_nums, ncap * sizeof(double));
+            if (nn) node->list_nums = nn;
+            int *ni = (int *)gv_realloc(node->list_is_numeric, ncap * sizeof(int));
+            if (ni) node->list_is_numeric = ni;
+            if (!nv || !nn || !ni) { sql_where_free(node); return NULL; }
+            cap = ncap;
+        }
+        node->list_values[node->list_count] = gv_dup_cstr(t->text ? t->text : "");
+        if (!node->list_values[node->list_count]) { sql_where_free(node); return NULL; }
+        node->list_nums[node->list_count] = t->num_value;
+        node->list_is_numeric[node->list_count] = (t->type == GV_SQL_TOK_NUMBER) ? 1 : 0;
+        node->list_count++;
+        sql_advance(buf);
+        t = sql_peek(buf);
+        if (t && t->type == GV_SQL_TOK_COMMA) { sql_advance(buf); continue; }
+        break;
+    }
+    if (!sql_expect(buf, GV_SQL_TOK_RPAREN) || node->list_count == 0) {
+        sql_where_free(node); return NULL;
+    }
+    return node;
+}
+
+/* field BETWEEN low AND high — takes ownership of `field`. */
+static GV_SQLWhere *sql_parse_between(GV_SQLTokenBuf *buf, char *field)
+{
+    sql_advance(buf); /* consume BETWEEN */
+    GV_SQLWhere *node = (GV_SQLWhere *)gv_calloc(1, sizeof(GV_SQLWhere));
+    if (!node) { gv_free(field); return NULL; }
+    node->type = GV_SQL_WHERE_CMP;
+    node->op = GV_SQL_CMP_BETWEEN;
+    node->field = field;
+
+    GV_SQLToken *t = sql_peek(buf);
+    if (!sql_tok_is_value(t)) { sql_where_free(node); return NULL; }
+    node->value = gv_dup_cstr(t->text ? t->text : "");
+    node->num_value = t->num_value;
+    node->is_numeric = (t->type == GV_SQL_TOK_NUMBER);
+    if (!node->value) { sql_where_free(node); return NULL; }
+    sql_advance(buf);
+
+    if (!sql_expect(buf, GV_SQL_TOK_AND)) { sql_where_free(node); return NULL; }
+
+    t = sql_peek(buf);
+    if (!sql_tok_is_value(t)) { sql_where_free(node); return NULL; }
+    node->value2 = gv_dup_cstr(t->text ? t->text : "");
+    node->num_value2 = t->num_value;
+    node->is_numeric2 = (t->type == GV_SQL_TOK_NUMBER);
+    if (!node->value2) { sql_where_free(node); return NULL; }
+    sql_advance(buf);
+    return node;
+}
+
+/* field IS [NOT] NULL — takes ownership of `field`. */
+static GV_SQLWhere *sql_parse_is_null(GV_SQLTokenBuf *buf, char *field)
+{
+    sql_advance(buf); /* consume IS */
+    int negate = 0;
+    GV_SQLToken *t = sql_peek(buf);
+    if (t && t->type == GV_SQL_TOK_NOT) { negate = 1; sql_advance(buf); }
+    if (!sql_expect(buf, GV_SQL_TOK_NULL)) { gv_free(field); return NULL; }
+
+    GV_SQLWhere *node = (GV_SQLWhere *)gv_calloc(1, sizeof(GV_SQLWhere));
+    if (!node) { gv_free(field); return NULL; }
+    node->type = GV_SQL_WHERE_CMP;
+    node->op = negate ? GV_SQL_CMP_IS_NOT_NULL : GV_SQL_CMP_IS_NULL;
+    node->field = field;
+    return node;
+}
+
 static GV_SQLWhere *sql_parse_where_primary(GV_SQLTokenBuf *buf)
 {
     GV_SQLToken *tok = sql_peek(buf);
@@ -574,6 +742,11 @@ static GV_SQLWhere *sql_parse_where_primary(GV_SQLTokenBuf *buf)
 
     tok = sql_peek(buf);
     if (!tok) { gv_free(field); return NULL; }
+
+    /* Extended predicates: field IN (...) | field BETWEEN a AND b | field IS [NOT] NULL */
+    if (tok->type == GV_SQL_TOK_IN)      return sql_parse_in_list(buf, field);
+    if (tok->type == GV_SQL_TOK_BETWEEN) return sql_parse_between(buf, field);
+    if (tok->type == GV_SQL_TOK_IS)      return sql_parse_is_null(buf, field);
 
     GV_SQLCmpOp op;
     switch (tok->type) {
@@ -672,7 +845,7 @@ static GV_SQLStmt *sql_parse_select(GV_SQLTokenBuf *buf)
     GV_SQLToken *tok = sql_peek(buf);
     if (!tok) { sql_stmt_free(stmt); return NULL; }
 
-    /* SELECT COUNT(*) or SELECT * or SELECT field[,field...] */
+    /* SELECT COUNT(*) | SUM|MIN|MAX|AVG(col) | * | field[,field...] */
     if (tok->type == GV_SQL_TOK_COUNT) {
         sql_advance(buf);
         if (!sql_expect(buf, GV_SQL_TOK_LPAREN) ||
@@ -682,6 +855,21 @@ static GV_SQLStmt *sql_parse_select(GV_SQLTokenBuf *buf)
             return NULL;
         }
         stmt->is_count = 1;
+        stmt->agg_kind = GV_SQL_AGG_COUNT;
+    } else if (tok->type == GV_SQL_TOK_SUM || tok->type == GV_SQL_TOK_MIN ||
+               tok->type == GV_SQL_TOK_MAX || tok->type == GV_SQL_TOK_AVG) {
+        GV_SQLAggKind ak = (tok->type == GV_SQL_TOK_SUM) ? GV_SQL_AGG_SUM :
+                           (tok->type == GV_SQL_TOK_MIN) ? GV_SQL_AGG_MIN :
+                           (tok->type == GV_SQL_TOK_MAX) ? GV_SQL_AGG_MAX : GV_SQL_AGG_AVG;
+        sql_advance(buf);
+        if (!sql_expect(buf, GV_SQL_TOK_LPAREN)) { sql_stmt_free(stmt); return NULL; }
+        GV_SQLToken *ct = sql_peek(buf);
+        if (!ct || ct->type != GV_SQL_TOK_IDENT) { sql_stmt_free(stmt); return NULL; }
+        stmt->agg_column = gv_dup_cstr(ct->text);
+        if (!stmt->agg_column) { sql_stmt_free(stmt); return NULL; }
+        sql_advance(buf);
+        if (!sql_expect(buf, GV_SQL_TOK_RPAREN)) { sql_stmt_free(stmt); return NULL; }
+        stmt->agg_kind = ak;
     } else if (tok->type == GV_SQL_TOK_STAR) {
         sql_advance(buf);
         stmt->select_star = 1;
@@ -807,6 +995,17 @@ static GV_SQLStmt *sql_parse_select(GV_SQLTokenBuf *buf)
         sql_advance(buf);
     }
 
+    /* Optional OFFSET n (pagination; may appear with or without LIMIT) */
+    tok = sql_peek(buf);
+    if (tok && tok->type == GV_SQL_TOK_OFFSET) {
+        sql_advance(buf);
+        tok = sql_peek(buf);
+        if (!tok || tok->type != GV_SQL_TOK_NUMBER) { sql_stmt_free(stmt); return NULL; }
+        stmt->offset = (size_t)tok->num_value;
+        stmt->has_offset = 1;
+        sql_advance(buf);
+    }
+
     return stmt;
 }
 
@@ -903,6 +1102,114 @@ static GV_SQLStmt *sql_parse_update(GV_SQLTokenBuf *buf)
     return stmt;
 }
 
+/* parse_insert: INSERT INTO table [(col, ...)] VALUES (value, ...)
+ * Exactly one value must be a [f,f,...] vector literal (the embedding); any
+ * other positions are stored as string metadata using their column names
+ * (so scalar values require a preceding column list). */
+static GV_SQLStmt *sql_parse_insert(GV_SQLTokenBuf *buf)
+{
+    /* INSERT already consumed */
+    GV_SQLStmt *stmt = (GV_SQLStmt *)gv_calloc(1, sizeof(GV_SQLStmt));
+    if (!stmt) return NULL;
+    stmt->type = GV_SQL_STMT_INSERT;
+
+    if (!sql_expect(buf, GV_SQL_TOK_INTO)) { sql_stmt_free(stmt); return NULL; }
+    GV_SQLToken *tok = sql_peek(buf);
+    if (!tok || tok->type != GV_SQL_TOK_IDENT) { sql_stmt_free(stmt); return NULL; }
+    stmt->table = gv_dup_cstr(tok->text);
+    if (!stmt->table) { sql_stmt_free(stmt); return NULL; }
+    sql_advance(buf);
+
+    /* Optional column list */
+    char **cols = NULL;
+    size_t col_count = 0, col_cap = 0, meta_cap = 0;
+    tok = sql_peek(buf);
+    if (tok && tok->type == GV_SQL_TOK_LPAREN) {
+        sql_advance(buf);
+        for (;;) {
+            tok = sql_peek(buf);
+            if (!tok || tok->type != GV_SQL_TOK_IDENT) goto fail;
+            if (col_count >= col_cap) {
+                size_t nc = col_cap ? col_cap * 2 : 4;
+                char **t = (char **)gv_realloc(cols, nc * sizeof(char *));
+                if (!t) goto fail;
+                cols = t; col_cap = nc;
+            }
+            cols[col_count] = gv_dup_cstr(tok->text);
+            if (!cols[col_count]) goto fail;
+            col_count++;
+            sql_advance(buf);
+            tok = sql_peek(buf);
+            if (tok && tok->type == GV_SQL_TOK_COMMA) { sql_advance(buf); continue; }
+            break;
+        }
+        if (!sql_expect(buf, GV_SQL_TOK_RPAREN)) goto fail;
+    }
+
+    if (!sql_expect(buf, GV_SQL_TOK_VALUES)) goto fail;
+    if (!sql_expect(buf, GV_SQL_TOK_LPAREN)) goto fail;
+
+    size_t vpos = 0;
+    for (;;) {
+        tok = sql_peek(buf);
+        if (!tok) goto fail;
+        if (tok->type == GV_SQL_TOK_LBRACKET) {
+            if (stmt->insert_vector) goto fail; /* only one vector literal permitted */
+            sql_advance(buf);
+            float tmp[GV_SQL_MAX_QUERY_DIMS];
+            size_t n = 0;
+            while (sql_peek(buf) && sql_peek(buf)->type != GV_SQL_TOK_RBRACKET) {
+                GV_SQLToken *num = sql_peek(buf);
+                if (!num || num->type != GV_SQL_TOK_NUMBER || n >= GV_SQL_MAX_QUERY_DIMS) goto fail;
+                tmp[n++] = (float)num->num_value;
+                sql_advance(buf);
+                if (sql_peek(buf) && sql_peek(buf)->type == GV_SQL_TOK_COMMA) sql_advance(buf);
+            }
+            if (!sql_expect(buf, GV_SQL_TOK_RBRACKET) || n == 0) goto fail;
+            stmt->insert_vector = (float *)gv_alloc(n * sizeof(float));
+            if (!stmt->insert_vector) goto fail;
+            memcpy(stmt->insert_vector, tmp, n * sizeof(float));
+            stmt->insert_dim = n;
+        } else if (tok->type == GV_SQL_TOK_STRING || tok->type == GV_SQL_TOK_NUMBER ||
+                   tok->type == GV_SQL_TOK_IDENT) {
+            const char *cname = (vpos < col_count) ? cols[vpos] : NULL;
+            if (!cname) goto fail; /* scalar value with no column name to bind to */
+            if (stmt->set_count >= meta_cap) {
+                size_t nc = meta_cap ? meta_cap * 2 : 4;
+                GV_SQLSetClause *t = (GV_SQLSetClause *)gv_realloc(
+                    stmt->set_clauses, nc * sizeof(GV_SQLSetClause));
+                if (!t) goto fail;
+                stmt->set_clauses = t; meta_cap = nc;
+            }
+            stmt->set_clauses[stmt->set_count].field = gv_dup_cstr(cname);
+            stmt->set_clauses[stmt->set_count].value = gv_dup_cstr(tok->text ? tok->text : "");
+            if (!stmt->set_clauses[stmt->set_count].field ||
+                !stmt->set_clauses[stmt->set_count].value) goto fail;
+            stmt->set_count++;
+            sql_advance(buf);
+        } else {
+            goto fail;
+        }
+        vpos++;
+        tok = sql_peek(buf);
+        if (tok && tok->type == GV_SQL_TOK_COMMA) { sql_advance(buf); continue; }
+        break;
+    }
+    if (!sql_expect(buf, GV_SQL_TOK_RPAREN)) goto fail;
+    if (col_count && vpos != col_count) goto fail; /* column/value arity mismatch */
+    if (!stmt->insert_vector) goto fail;            /* a vector literal is required */
+
+    for (size_t i = 0; i < col_count; i++) gv_free(cols[i]);
+    gv_free(cols);
+    return stmt;
+
+fail:
+    for (size_t i = 0; i < col_count; i++) gv_free(cols[i]);
+    gv_free(cols);
+    sql_stmt_free(stmt);
+    return NULL;
+}
+
 /* Top-level parser */
 static GV_SQLStmt *sql_parse(GV_SQLTokenBuf *buf)
 {
@@ -919,9 +1226,12 @@ static GV_SQLStmt *sql_parse(GV_SQLTokenBuf *buf)
     case GV_SQL_TOK_UPDATE:
         sql_advance(buf);
         return sql_parse_update(buf);
+    case GV_SQL_TOK_INSERT:
+        sql_advance(buf);
+        return sql_parse_insert(buf);
     default:
         snprintf(buf->error, GV_SQL_ERROR_SIZE,
-                 "Expected SELECT, DELETE, or UPDATE; got '%s'",
+                 "Expected SELECT, INSERT, DELETE, or UPDATE; got '%s'",
                  tok->text ? tok->text : "(unknown)");
         return NULL;
     }
@@ -952,7 +1262,36 @@ static int sql_eval_where(const GV_SQLWhere *w, const GV_Vector *vec)
     }
     case GV_SQL_WHERE_CMP: {
         const char *meta_val = vector_get_metadata(vec, w->field);
-        if (!meta_val) return 0;
+
+        /* Presence predicates define their own behaviour when the field is absent. */
+        if (w->op == GV_SQL_CMP_IS_NULL)     return meta_val ? 0 : 1;
+        if (w->op == GV_SQL_CMP_IS_NOT_NULL) return meta_val ? 1 : 0;
+
+        if (!meta_val) return 0; /* every other predicate fails on an absent field */
+
+        if (w->op == GV_SQL_CMP_IN) {
+            for (size_t i = 0; i < w->list_count; i++) {
+                if (w->list_is_numeric[i]) {
+                    char *endptr = NULL;
+                    double v = strtod(meta_val, &endptr);
+                    if (endptr != meta_val && v == w->list_nums[i]) return 1;
+                } else if (strcmp(meta_val, w->list_values[i]) == 0) {
+                    return 1;
+                }
+            }
+            return 0;
+        }
+
+        if (w->op == GV_SQL_CMP_BETWEEN) {
+            if (w->is_numeric && w->is_numeric2) {
+                char *endptr = NULL;
+                double v = strtod(meta_val, &endptr);
+                if (endptr == meta_val) return 0;
+                return (v >= w->num_value && v <= w->num_value2) ? 1 : 0;
+            }
+            return (strcmp(meta_val, w->value) >= 0 &&
+                    strcmp(meta_val, w->value2) <= 0) ? 1 : 0;
+        }
 
         if (w->op == GV_SQL_CMP_LIKE) {
             /* Simple LIKE: treat '%' as wildcard prefix/suffix */
@@ -1082,15 +1421,6 @@ typedef struct {
     int has_distance;
 } GV_SQLRow;
 
-static size_t sql_vector_index_from_data(GV_Database *db, const float *vec_data)
-{
-    if (!db || !db->soa_storage || !vec_data) return 0;
-    const float *base = db->soa_storage->data;
-    if (!base || vec_data < base) return 0;
-    size_t offset = (size_t)(vec_data - base);
-    return offset / db->dimension;
-}
-
 static const GV_SQLAnn *sql_order_distance_ann(const GV_SQLStmt *stmt)
 {
     if (stmt->has_order_ann) return &stmt->order_ann;
@@ -1214,9 +1544,17 @@ static void sql_sort_rows(GV_Database *db, const GV_SQLStmt *stmt,
 static void sql_apply_row_limit(GV_SQLRow *rows, size_t *count,
                                 const GV_SQLStmt *stmt)
 {
-    if (!stmt->has_limit || *count <= stmt->limit) return;
-    *count = stmt->limit;
-    (void)rows;
+    /* OFFSET: drop the first `offset` rows (GV_SQLRow is POD, so shifting is safe). */
+    if (stmt->has_offset && stmt->offset > 0) {
+        if (stmt->offset >= *count) { *count = 0; return; }
+        size_t remaining = *count - stmt->offset;
+        memmove(rows, rows + stmt->offset, remaining * sizeof(GV_SQLRow));
+        *count = remaining;
+    }
+    /* LIMIT: cap the row count. */
+    if (stmt->has_limit && *count > stmt->limit) {
+        *count = stmt->limit;
+    }
 }
 
 static char *sql_dup_cell_value(GV_Database *db, const GV_SQLStmt *stmt,
@@ -1369,9 +1707,13 @@ static int sql_exec_ann(GV_SQLEngine *eng, const GV_SQLStmt *stmt, GV_SQLResult 
         int matched = 0;
         for (int i = 0; i < found && (size_t)matched < k; i++) {
             if (!all_sr[i].vector) continue;
-            if (sql_eval_where(stmt->where, all_sr[i].vector) == 1)
-                sr[matched++] = all_sr[i];
+            if (sql_eval_where(stmt->where, all_sr[i].vector) == 1) {
+                sr[matched] = all_sr[i];
+                all_sr[i].vector = NULL; /* ownership transferred to sr */
+                matched++;
+            }
         }
+        gv_search_results_free(all_sr, (size_t)found); /* free the unmatched result vectors */
         gv_free(all_sr);
         found = matched;
     } else {
@@ -1387,6 +1729,7 @@ static int sql_exec_ann(GV_SQLEngine *eng, const GV_SQLStmt *stmt, GV_SQLResult 
 
     GV_SQLRow *rows = (GV_SQLRow *)gv_calloc((size_t)found, sizeof(GV_SQLRow));
     if (!rows && found > 0) {
+        gv_search_results_free(sr, (size_t)found);
         gv_free(sr);
         sql_set_error(eng, "Out of memory");
         return -1;
@@ -1394,12 +1737,13 @@ static int sql_exec_ann(GV_SQLEngine *eng, const GV_SQLStmt *stmt, GV_SQLResult 
 
     size_t row_count = (size_t)found;
     for (size_t i = 0; i < row_count; i++) {
-        rows[i].index = sr[i].vector
-                            ? sql_vector_index_from_data(db, sr[i].vector->data)
-                            : 0;
+        /* db_search stores the SoA storage index in .id (the vector payload is a
+         * fresh heap copy, so pointer arithmetic against SoA would be invalid). */
+        rows[i].index = sr[i].id;
         rows[i].distance = sr[i].distance;
         rows[i].has_distance = 1;
     }
+    gv_search_results_free(sr, row_count); /* free owned result vectors */
     gv_free(sr);
 
     sql_sort_rows(db, stmt, rows, row_count);
@@ -1454,14 +1798,23 @@ static int sql_exec_where_scan(GV_SQLEngine *eng, const GV_SQLStmt *stmt,
 
 /* Executor: SELECT COUNT(*) */
 
-static int sql_exec_count(GV_SQLEngine *eng, const GV_SQLStmt *stmt, GV_SQLResult *result)
+/* Executor: aggregate projection — COUNT(*) / SUM / MIN / MAX / AVG(column).
+ * Produces a single-row, single-column result.  COUNT keeps its historical
+ * contract (result->indices[0] holds the count); every aggregate also exposes
+ * a formatted value in result->column_values[0]. */
+static int sql_exec_aggregate(GV_SQLEngine *eng, const GV_SQLStmt *stmt, GV_SQLResult *result)
 {
     GV_Database *db = eng->db;
     GV_SoAStorage *soa = db->soa_storage;
     if (!soa) { sql_set_error(eng, "Database has no storage"); return -1; }
 
     size_t total = soa->count;
-    size_t count = 0;
+    size_t matched = 0;     /* rows passing WHERE */
+    size_t numeric_n = 0;   /* rows with a numeric agg_column value */
+    double acc = 0.0;       /* SUM / AVG accumulator */
+    double best = 0.0;      /* MIN / MAX running value */
+    int have_best = 0;
+    int numeric_agg = (stmt->agg_kind != GV_SQL_AGG_COUNT && stmt->agg_kind != GV_SQL_AGG_NONE);
 
     for (size_t i = 0; i < total; i++) {
         if (soa_storage_is_deleted(soa, i)) continue;
@@ -1469,29 +1822,66 @@ static int sql_exec_count(GV_SQLEngine *eng, const GV_SQLStmt *stmt, GV_SQLResul
         if (stmt->where) {
             GV_Vector view;
             if (soa_storage_get_vector_view(soa, i, &view) != 0) continue;
-            if (sql_eval_where(stmt->where, &view) == 1)
-                count++;
-        } else {
-            count++;
+            if (sql_eval_where(stmt->where, &view) != 1) continue;
+        }
+        matched++;
+
+        if (numeric_agg && stmt->agg_column) {
+            char vbuf[4096];
+            if (sql_get_metadata_value(db, i, stmt->agg_column, vbuf, sizeof(vbuf)) != 0) continue;
+            char *endp = NULL;
+            double v = strtod(vbuf, &endp);
+            if (endp == vbuf) continue; /* non-numeric value: skipped like SQL NULLs */
+            numeric_n++;
+            acc += v;
+            if (!have_best || (stmt->agg_kind == GV_SQL_AGG_MIN && v < best) ||
+                              (stmt->agg_kind == GV_SQL_AGG_MAX && v > best)) {
+                best = v;
+                have_best = 1;
+            }
         }
     }
 
-    /* Build single-row result with count */
+    const char *col_name = "count";
+    double dval = 0.0;
+    int has_value = 1;
+    switch (stmt->agg_kind) {
+    case GV_SQL_AGG_SUM: col_name = "sum"; dval = acc; break;
+    case GV_SQL_AGG_AVG: col_name = "avg"; if (numeric_n) dval = acc / (double)numeric_n; else has_value = 0; break;
+    case GV_SQL_AGG_MIN: col_name = "min"; if (have_best) dval = best; else has_value = 0; break;
+    case GV_SQL_AGG_MAX: col_name = "max"; if (have_best) dval = best; else has_value = 0; break;
+    case GV_SQL_AGG_COUNT:
+    default: col_name = "count"; dval = (double)matched; break;
+    }
+
     memset(result, 0, sizeof(*result));
     result->row_count = 1;
     result->column_count = 1;
     result->column_names = (char **)gv_calloc(1, sizeof(char *));
-    if (result->column_names) {
-        result->column_names[0] = gv_dup_cstr("count");
-    }
-
+    result->column_values = (char **)gv_calloc(1, sizeof(char *));
     result->indices = (size_t *)gv_calloc(1, sizeof(size_t));
-    if (!result->indices || !result->column_names) {
+    if (!result->column_names || !result->column_values || !result->indices) {
         sql_free_result(result);
         sql_set_error(eng, "Out of memory");
         return -1;
     }
-    result->indices[0] = count;
+    result->column_names[0] = gv_dup_cstr(col_name);
+    char valbuf[64];
+    if (!has_value) {
+        result->column_values[0] = gv_dup_cstr("NULL");
+    } else if (stmt->agg_kind == GV_SQL_AGG_COUNT || stmt->agg_kind == GV_SQL_AGG_NONE) {
+        snprintf(valbuf, sizeof(valbuf), "%zu", matched);
+        result->column_values[0] = gv_dup_cstr(valbuf);
+    } else {
+        snprintf(valbuf, sizeof(valbuf), "%g", dval);
+        result->column_values[0] = gv_dup_cstr(valbuf);
+    }
+    result->indices[0] = matched; /* COUNT value; row count for other aggregates */
+    if (!result->column_names[0] || !result->column_values[0]) {
+        sql_free_result(result);
+        sql_set_error(eng, "Out of memory");
+        return -1;
+    }
     return 0;
 }
 
@@ -1608,6 +1998,62 @@ static int sql_exec_update(GV_SQLEngine *eng, const GV_SQLStmt *stmt, GV_SQLResu
     return 0;
 }
 
+/* Executor: INSERT */
+
+static int sql_exec_insert(GV_SQLEngine *eng, const GV_SQLStmt *stmt, GV_SQLResult *result)
+{
+    GV_Database *db = eng->db;
+    if (!stmt->insert_vector || stmt->insert_dim == 0) {
+        sql_set_error(eng, "INSERT requires a vector value");
+        return -1;
+    }
+    size_t dbdim = database_dimension(db);
+    if (dbdim != 0 && stmt->insert_dim != dbdim) {
+        sql_set_error(eng, "INSERT vector dimension %zu does not match database dimension %zu",
+                      stmt->insert_dim, dbdim);
+        return -1;
+    }
+
+    int rc;
+    if (stmt->set_count > 0) {
+        const char **keys = (const char **)gv_alloc(stmt->set_count * sizeof(char *));
+        const char **vals = (const char **)gv_alloc(stmt->set_count * sizeof(char *));
+        if (!keys || !vals) {
+            gv_free(keys); gv_free(vals);
+            sql_set_error(eng, "Out of memory");
+            return -1;
+        }
+        for (size_t i = 0; i < stmt->set_count; i++) {
+            keys[i] = stmt->set_clauses[i].field;
+            vals[i] = stmt->set_clauses[i].value;
+        }
+        rc = db_add_vector_with_rich_metadata(db, stmt->insert_vector, stmt->insert_dim,
+                                              keys, vals, stmt->set_count);
+        gv_free(keys);
+        gv_free(vals);
+    } else {
+        rc = db_add_vector(db, stmt->insert_vector, stmt->insert_dim);
+    }
+    if (rc < 0) {
+        sql_set_error(eng, "INSERT failed");
+        return -1;
+    }
+
+    memset(result, 0, sizeof(*result));
+    result->row_count = 1;
+    result->column_count = 1;
+    result->column_names = (char **)gv_calloc(1, sizeof(char *));
+    result->indices = (size_t *)gv_calloc(1, sizeof(size_t));
+    if (!result->column_names || !result->indices) {
+        sql_free_result(result);
+        sql_set_error(eng, "Out of memory");
+        return -1;
+    }
+    result->column_names[0] = gv_dup_cstr("inserted");
+    result->indices[0] = 1;
+    return 0;
+}
+
 /* Public API */
 
 GV_SQLEngine *sql_create(void *db)
@@ -1675,8 +2121,8 @@ int sql_execute(GV_SQLEngine *eng, const char *query, GV_SQLResult *result)
     int rc = -1;
     switch (stmt->type) {
     case GV_SQL_STMT_SELECT:
-        if (stmt->is_count) {
-            rc = sql_exec_count(eng, stmt, result);
+        if (stmt->agg_kind != GV_SQL_AGG_NONE) {
+            rc = sql_exec_aggregate(eng, stmt, result);
         } else if (stmt->has_ann) {
             rc = sql_exec_ann(eng, stmt, result);
         } else {
@@ -1688,6 +2134,9 @@ int sql_execute(GV_SQLEngine *eng, const char *query, GV_SQLResult *result)
         break;
     case GV_SQL_STMT_UPDATE:
         rc = sql_exec_update(eng, stmt, result);
+        break;
+    case GV_SQL_STMT_INSERT:
+        rc = sql_exec_insert(eng, stmt, result);
         break;
     }
 
@@ -1794,13 +2243,19 @@ int sql_explain(GV_SQLEngine *eng, const char *query, char *plan, size_t plan_si
 
     switch (stmt->type) {
     case GV_SQL_STMT_SELECT:
-        if (stmt->is_count) {
+        if (stmt->agg_kind != GV_SQL_AGG_NONE) {
+            const char *aggname =
+                stmt->agg_kind == GV_SQL_AGG_SUM ? "SUM" :
+                stmt->agg_kind == GV_SQL_AGG_MIN ? "MIN" :
+                stmt->agg_kind == GV_SQL_AGG_MAX ? "MAX" :
+                stmt->agg_kind == GV_SQL_AGG_AVG ? "AVG" : "COUNT";
             off += (size_t)snprintf(plan + off, plan_size - off,
-                "EXPLAIN: SELECT COUNT(*)\n"
+                "EXPLAIN: SELECT %s(%s)\n"
                 "  Strategy: FULL_SCAN\n"
                 "  Index: %s\n"
                 "  Estimated rows: %zu\n"
                 "  Filter: %s\n",
+                aggname, stmt->agg_column ? stmt->agg_column : "*",
                 index_name, total_vectors,
                 stmt->where ? "WHERE predicate (post-filter)" : "NONE");
         } else if (stmt->has_ann) {
@@ -1863,6 +2318,16 @@ int sql_explain(GV_SQLEngine *eng, const char *query, char *plan, size_t plan_si
             "  Filter: WHERE predicate\n"
             "  SET clauses: %zu\n",
             index_name, total_vectors, stmt->set_count);
+        break;
+
+    case GV_SQL_STMT_INSERT:
+        (void)snprintf(plan + off, plan_size - off,
+            "EXPLAIN: INSERT\n"
+            "  Strategy: SINGLE_ROW_INSERT\n"
+            "  Index: %s\n"
+            "  Vector dimension: %zu\n"
+            "  Metadata columns: %zu\n",
+            index_name, stmt->insert_dim, stmt->set_count);
         break;
     }
 

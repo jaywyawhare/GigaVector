@@ -353,6 +353,184 @@ static int test_order_by_vector_distance_desc(void) {
     return 0;
 }
 
+/* DB with a numeric "score" metadata field for aggregate/range tests. */
+static GV_Database *create_scored_db(void) {
+    GV_Database *db = db_open(NULL, DIM, GV_INDEX_TYPE_FLAT);
+    if (!db) return NULL;
+    const char *scores[] = {"10", "20", "30", "40"};
+    for (int i = 0; i < 4; i++) {
+        float v[DIM] = {(float)i, 0.0f, 0.0f, 0.0f};
+        db_add_vector_with_metadata(db, v, DIM, "score", scores[i]);
+    }
+    return db;
+}
+
+static int test_offset(void) {
+    GV_Database *db = create_test_db();
+    ASSERT(db != NULL, "create_test_db should succeed");
+    GV_SQLEngine *eng = sql_create(db);
+    ASSERT(eng != NULL, "sql engine create should succeed");
+    GV_SQLResult r;
+
+    memset(&r, 0, sizeof(r));
+    ASSERT(sql_execute(eng, "SELECT * FROM vectors LIMIT 2 OFFSET 1", &r) == 0, "LIMIT/OFFSET should succeed");
+    ASSERT(r.row_count == 2, "LIMIT 2 OFFSET 1 should yield 2 rows");
+    sql_free_result(&r);
+
+    memset(&r, 0, sizeof(r));
+    ASSERT(sql_execute(eng, "SELECT * FROM vectors OFFSET 3", &r) == 0, "OFFSET 3 should succeed");
+    ASSERT(r.row_count == 1, "OFFSET 3 of 4 rows should yield 1 row");
+    sql_free_result(&r);
+
+    memset(&r, 0, sizeof(r));
+    ASSERT(sql_execute(eng, "SELECT * FROM vectors OFFSET 10", &r) == 0, "OFFSET past end should succeed");
+    ASSERT(r.row_count == 0, "OFFSET beyond count should yield 0 rows");
+    sql_free_result(&r);
+
+    sql_destroy(eng); db_close(db);
+    return 0;
+}
+
+static int test_where_in(void) {
+    GV_Database *db = create_test_db();
+    GV_SQLEngine *eng = sql_create(db);
+    ASSERT(db && eng, "setup");
+    GV_SQLResult r;
+
+    memset(&r, 0, sizeof(r));
+    ASSERT(sql_execute(eng, "SELECT COUNT(*) FROM vectors WHERE category IN ('science','tech')", &r) == 0, "IN should succeed");
+    ASSERT(r.indices && r.indices[0] == 4, "IN two categories matches all 4");
+    sql_free_result(&r);
+
+    memset(&r, 0, sizeof(r));
+    ASSERT(sql_execute(eng, "SELECT COUNT(*) FROM vectors WHERE category IN ('science')", &r) == 0, "IN one should succeed");
+    ASSERT(r.indices && r.indices[0] == 2, "IN ('science') matches 2");
+    sql_free_result(&r);
+
+    memset(&r, 0, sizeof(r));
+    ASSERT(sql_execute(eng, "SELECT COUNT(*) FROM vectors WHERE category IN ('nope')", &r) == 0, "IN none should succeed");
+    ASSERT(r.indices && r.indices[0] == 0, "IN ('nope') matches 0");
+    sql_free_result(&r);
+
+    sql_destroy(eng); db_close(db);
+    return 0;
+}
+
+static int test_where_between(void) {
+    GV_Database *db = create_scored_db();
+    GV_SQLEngine *eng = sql_create(db);
+    ASSERT(db && eng, "setup");
+    GV_SQLResult r;
+
+    memset(&r, 0, sizeof(r));
+    ASSERT(sql_execute(eng, "SELECT COUNT(*) FROM vectors WHERE score BETWEEN 20 AND 30", &r) == 0, "BETWEEN should succeed");
+    ASSERT(r.indices && r.indices[0] == 2, "score BETWEEN 20 AND 30 matches 2 (20,30)");
+    sql_free_result(&r);
+
+    memset(&r, 0, sizeof(r));
+    ASSERT(sql_execute(eng, "SELECT COUNT(*) FROM vectors WHERE score BETWEEN 100 AND 200", &r) == 0, "BETWEEN empty should succeed");
+    ASSERT(r.indices && r.indices[0] == 0, "BETWEEN out of range matches 0");
+    sql_free_result(&r);
+
+    sql_destroy(eng); db_close(db);
+    return 0;
+}
+
+static int test_where_is_null(void) {
+    GV_Database *db = create_test_db();
+    /* add one vector with no category metadata */
+    float vn[DIM] = {9.0f, 9.0f, 9.0f, 9.0f};
+    db_add_vector(db, vn, DIM);
+    GV_SQLEngine *eng = sql_create(db);
+    ASSERT(db && eng, "setup");
+    GV_SQLResult r;
+
+    memset(&r, 0, sizeof(r));
+    ASSERT(sql_execute(eng, "SELECT COUNT(*) FROM vectors WHERE category IS NULL", &r) == 0, "IS NULL should succeed");
+    ASSERT(r.indices && r.indices[0] == 1, "one row lacks category");
+    sql_free_result(&r);
+
+    memset(&r, 0, sizeof(r));
+    ASSERT(sql_execute(eng, "SELECT COUNT(*) FROM vectors WHERE category IS NOT NULL", &r) == 0, "IS NOT NULL should succeed");
+    ASSERT(r.indices && r.indices[0] == 4, "four rows have category");
+    sql_free_result(&r);
+
+    sql_destroy(eng); db_close(db);
+    return 0;
+}
+
+static int test_aggregates(void) {
+    GV_Database *db = create_scored_db();
+    GV_SQLEngine *eng = sql_create(db);
+    ASSERT(db && eng, "setup");
+    GV_SQLResult r;
+
+    struct { const char *q; double want; } cases[] = {
+        {"SELECT SUM(score) FROM vectors", 100.0},
+        {"SELECT MIN(score) FROM vectors", 10.0},
+        {"SELECT MAX(score) FROM vectors", 40.0},
+        {"SELECT AVG(score) FROM vectors", 25.0},
+    };
+    for (int i = 0; i < 4; i++) {
+        memset(&r, 0, sizeof(r));
+        ASSERT(sql_execute(eng, cases[i].q, &r) == 0, "aggregate should succeed");
+        ASSERT(r.row_count == 1 && r.column_count == 1, "aggregate is single-cell");
+        ASSERT(r.column_values && r.column_values[0], "aggregate value present");
+        double got = atof(r.column_values[0]);
+        ASSERT(got == cases[i].want, "aggregate value matches expected");
+        sql_free_result(&r);
+    }
+
+    /* aggregate with WHERE filter */
+    memset(&r, 0, sizeof(r));
+    ASSERT(sql_execute(eng, "SELECT SUM(score) FROM vectors WHERE score >= 30", &r) == 0, "filtered SUM should succeed");
+    ASSERT(r.column_values && atof(r.column_values[0]) == 70.0, "SUM(score) where score>=30 == 70");
+    sql_free_result(&r);
+
+    sql_destroy(eng); db_close(db);
+    return 0;
+}
+
+static int test_insert(void) {
+    GV_Database *db = db_open(NULL, DIM, GV_INDEX_TYPE_FLAT);
+    GV_SQLEngine *eng = sql_create(db);
+    ASSERT(db && eng, "setup");
+    GV_SQLResult r;
+
+    /* INSERT with metadata column */
+    memset(&r, 0, sizeof(r));
+    ASSERT(sql_execute(eng,
+        "INSERT INTO vectors (vector, category) VALUES ([1.0,0.0,0.0,0.0], 'science')", &r) == 0,
+        "INSERT with metadata should succeed");
+    ASSERT(r.indices && r.indices[0] == 1, "one row inserted");
+    sql_free_result(&r);
+
+    /* bare vector INSERT (no metadata) */
+    memset(&r, 0, sizeof(r));
+    ASSERT(sql_execute(eng, "INSERT INTO vectors VALUES ([0.0,1.0,0.0,0.0])", &r) == 0,
+        "bare INSERT should succeed");
+    sql_free_result(&r);
+
+    /* verify count and that the metadata was stored */
+    memset(&r, 0, sizeof(r));
+    ASSERT(sql_execute(eng, "SELECT COUNT(*) FROM vectors", &r) == 0, "count should succeed");
+    ASSERT(r.indices && r.indices[0] == 2, "two rows after two inserts");
+    sql_free_result(&r);
+
+    memset(&r, 0, sizeof(r));
+    ASSERT(sql_execute(eng, "SELECT COUNT(*) FROM vectors WHERE category = 'science'", &r) == 0, "filter should succeed");
+    ASSERT(r.indices && r.indices[0] == 1, "inserted metadata is queryable");
+    sql_free_result(&r);
+
+    /* dimension mismatch is rejected */
+    memset(&r, 0, sizeof(r));
+    ASSERT(sql_execute(eng, "INSERT INTO vectors VALUES ([1.0,2.0])", &r) != 0,
+        "wrong-dimension INSERT should fail");
+
+    sql_destroy(eng); db_close(db);
+    return 0;
+}
+
 typedef int (*test_fn)(void);
 typedef struct { const char *name; test_fn fn; } TestCase;
 
@@ -374,6 +552,12 @@ int main(void) {
         {"Testing sql projection columns...", test_projection_columns},
         {"Testing sql ORDER BY metadata...", test_order_by_metadata},
         {"Testing sql ORDER BY vector_distance DESC...", test_order_by_vector_distance_desc},
+        {"Testing sql OFFSET...", test_offset},
+        {"Testing sql WHERE IN...", test_where_in},
+        {"Testing sql WHERE BETWEEN...", test_where_between},
+        {"Testing sql WHERE IS NULL...", test_where_is_null},
+        {"Testing sql aggregates SUM/MIN/MAX/AVG...", test_aggregates},
+        {"Testing sql INSERT...", test_insert},
     };
     int n = sizeof(tests) / sizeof(tests[0]);
     int passed = 0;

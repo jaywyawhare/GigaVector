@@ -1,0 +1,1 @@
+SELECT * FROM vectors WHERE category IN ('a','b') LIMIT 5 OFFSET 2

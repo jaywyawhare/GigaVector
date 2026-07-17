@@ -1,0 +1,1 @@
+SELECT COUNT(*) FROM vectors WHERE score BETWEEN 1 AND 9

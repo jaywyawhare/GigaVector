@@ -26,12 +26,24 @@ extern "C" {
  *   -- Column projection
  *   SELECT category, score FROM vectors WHERE category = 'science'
  *
- *   -- Metadata queries
+ *   -- Metadata queries (predicates: =, !=/<>, <, <=, >, >=, LIKE,
+ *   --                    IN (...), BETWEEN a AND b, IS [NOT] NULL; AND/OR/NOT)
  *   SELECT * FROM vectors WHERE score > 0.5 AND category = 'tech' LIMIT 100
- *   SELECT * FROM vectors WHERE category = 'tech' ORDER BY category ASC LIMIT 100
+ *   SELECT * FROM vectors WHERE category IN ('tech', 'science') LIMIT 100
+ *   SELECT * FROM vectors WHERE score BETWEEN 0.2 AND 0.8
+ *   SELECT * FROM vectors WHERE category IS NOT NULL
  *
- *   -- Count
+ *   -- Pagination
+ *   SELECT * FROM vectors ORDER BY category ASC LIMIT 20 OFFSET 40
+ *
+ *   -- Aggregates (single-cell result in column_values[0]; COUNT also in indices[0])
  *   SELECT COUNT(*) FROM vectors WHERE status = 'active'
+ *   SELECT SUM(score) FROM vectors
+ *   SELECT MIN(score), ... -- one aggregate per query: MIN/MAX/AVG/SUM(column)
+ *
+ *   -- Insert (exactly one [..] vector literal; other columns become metadata)
+ *   INSERT INTO vectors (vector, category) VALUES ([0.1,0.2,...], 'science')
+ *   INSERT INTO vectors VALUES ([0.1,0.2,...])
  *
  *   -- Delete
  *   DELETE FROM vectors WHERE category = 'old'

@@ -1,0 +1,1 @@
+SELECT AVG(score) FROM vectors WHERE category IS NOT NULL
