@@ -6,10 +6,64 @@
 #include "storage/disk_page_cache.h"
 #include "core/memory.h"
 
+#include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
 
 #define GV_DISK_PAGE_CACHE_BUCKETS 64u
+
+/*
+ * Per-thread scratch buffer used by gv_disk_page_cache_lookup() to return a
+ * private copy of a cached page. Because it is a copy, the returned pointer is
+ * immune to a concurrent eviction/free of the underlying cache entry, and it
+ * lets us keep the existing (borrowed-pointer) lookup signature that the
+ * non-editable callers depend on. The buffer is thread-local and is freed by a
+ * TLS destructor when the thread exits, so it does not leak. It is reused
+ * (grown as needed) across lookups on the same thread, which is why the
+ * returned pointer is only valid until the next lookup on that thread.
+ */
+typedef struct DiskPageLookupScratch {
+    uint8_t *data;
+    size_t cap;
+} DiskPageLookupScratch;
+
+static pthread_key_t g_scratch_key;
+static pthread_once_t g_scratch_once = PTHREAD_ONCE_INIT;
+
+static void disk_page_scratch_destroy(void *p)
+{
+    DiskPageLookupScratch *s = (DiskPageLookupScratch *)p;
+    if (!s) return;
+    gv_free(s->data);
+    gv_free(s);
+}
+
+static void disk_page_scratch_key_create(void)
+{
+    (void)pthread_key_create(&g_scratch_key, disk_page_scratch_destroy);
+}
+
+/* Return this thread's scratch buffer sized to at least @p len, or NULL on OOM. */
+static uint8_t *disk_page_scratch_get(size_t len)
+{
+    pthread_once(&g_scratch_once, disk_page_scratch_key_create);
+    DiskPageLookupScratch *s = (DiskPageLookupScratch *)pthread_getspecific(g_scratch_key);
+    if (!s) {
+        s = (DiskPageLookupScratch *)gv_calloc(1, sizeof(*s));
+        if (!s) return NULL;
+        if (pthread_setspecific(g_scratch_key, s) != 0) {
+            gv_free(s);
+            return NULL;
+        }
+    }
+    if (s->cap < len) {
+        uint8_t *tmp = (uint8_t *)gv_realloc(s->data, len);
+        if (!tmp) return NULL;
+        s->data = tmp;
+        s->cap = len;
+    }
+    return s->data;
+}
 
 typedef struct DiskPageCacheNode {
     char *key;
@@ -30,6 +84,7 @@ struct GV_DiskPageCache {
     size_t max_bytes;
     size_t hits;
     size_t misses;
+    pthread_mutex_t lock; /**< Serializes all mutations of the fields above. */
 };
 
 static uint32_t disk_page_cache_hash(const char *key)
@@ -96,6 +151,10 @@ GV_DiskPageCache *gv_disk_page_cache_create(size_t max_bytes)
 {
     GV_DiskPageCache *cache = (GV_DiskPageCache *)gv_calloc(1, sizeof(GV_DiskPageCache));
     if (!cache) return NULL;
+    if (pthread_mutex_init(&cache->lock, NULL) != 0) {
+        gv_free(cache);
+        return NULL;
+    }
     cache->max_bytes = max_bytes;
     return cache;
 }
@@ -103,6 +162,7 @@ GV_DiskPageCache *gv_disk_page_cache_create(size_t max_bytes)
 void gv_disk_page_cache_destroy(GV_DiskPageCache *cache)
 {
     if (!cache) return;
+    pthread_mutex_destroy(&cache->lock);
     for (size_t i = 0; i < GV_DISK_PAGE_CACHE_BUCKETS; ++i) {
         DiskPageCacheNode *node = cache->buckets[i];
         while (node) {
@@ -117,35 +177,59 @@ void gv_disk_page_cache_destroy(GV_DiskPageCache *cache)
 void gv_disk_page_cache_set_max_bytes(GV_DiskPageCache *cache, size_t max_bytes)
 {
     if (!cache) return;
+    pthread_mutex_lock(&cache->lock);
     cache->max_bytes = max_bytes;
-    disk_page_cache_evict(cache);
+    disk_page_cache_evict(cache); /* lock-free helper; called with lock held */
+    pthread_mutex_unlock(&cache->lock);
 }
 
 void gv_disk_page_cache_get_stats(const GV_DiskPageCache *cache, GV_DiskPageCacheStats *out)
 {
     if (!cache || !out) return;
+    /* The lock is a mutable implementation detail; take it even on the const
+     * handle so stats are read as a consistent snapshot w.r.t. writers. */
+    pthread_mutex_t *lock = (pthread_mutex_t *)&cache->lock;
+    pthread_mutex_lock(lock);
     memset(out, 0, sizeof(*out));
     out->cache_hits = cache->hits;
     out->cache_misses = cache->misses;
     out->cached_entries = cache->count;
     out->used_bytes = cache->used_bytes;
     out->max_bytes = cache->max_bytes;
+    pthread_mutex_unlock(lock);
 }
 
 const uint8_t *gv_disk_page_cache_lookup(GV_DiskPageCache *cache, const char *key, size_t *len_out)
 {
     if (!cache || !key) return NULL;
     uint32_t hash = disk_page_cache_hash(key);
+    pthread_mutex_lock(&cache->lock);
     for (DiskPageCacheNode *node = cache->buckets[hash % GV_DISK_PAGE_CACHE_BUCKETS];
          node; node = node->hash_next) {
         if (node->hash == hash && strcmp(node->key, key) == 0) {
+            /* Copy the entry's bytes into this thread's private scratch buffer
+             * WHILE HOLDING THE LOCK. The returned pointer aliases the scratch
+             * copy, not node->data, so it stays valid even if another thread
+             * evicts and frees this node immediately after we unlock. */
+            uint8_t *scratch = disk_page_scratch_get(node->len);
+            if (!scratch) {
+                /* Out of memory for the copy: treat as a miss rather than
+                 * returning a borrowed (unsafe) pointer. */
+                cache->misses++;
+                pthread_mutex_unlock(&cache->lock);
+                return NULL;
+            }
+            memcpy(scratch, node->data, node->len);
+            size_t len = node->len;
             cache->hits++;
             disk_page_cache_touch(cache, node);
-            if (len_out) *len_out = node->len;
-            return node->data;
+            pthread_mutex_unlock(&cache->lock);
+            if (len_out) *len_out = len;
+            return scratch;
         }
     }
     cache->misses++;
+    pthread_mutex_unlock(&cache->lock);
     return NULL;
 }
 
@@ -156,11 +240,15 @@ int gv_disk_page_cache_insert(GV_DiskPageCache *cache, const char *key,
 
     uint32_t hash = disk_page_cache_hash(key);
     uint32_t bucket = hash % GV_DISK_PAGE_CACHE_BUCKETS;
+    pthread_mutex_lock(&cache->lock);
     for (DiskPageCacheNode *node = cache->buckets[bucket]; node; node = node->hash_next) {
         if (node->hash == hash && strcmp(node->key, key) == 0) {
             if (node->len != len) {
                 uint8_t *tmp = (uint8_t *)gv_realloc(node->data, len);
-                if (!tmp) return -1;
+                if (!tmp) {
+                    pthread_mutex_unlock(&cache->lock);
+                    return -1;
+                }
                 cache->used_bytes -= node->len;
                 cache->used_bytes += len;
                 node->data = tmp;
@@ -169,16 +257,21 @@ int gv_disk_page_cache_insert(GV_DiskPageCache *cache, const char *key,
             memcpy(node->data, data, len);
             disk_page_cache_touch(cache, node);
             disk_page_cache_evict(cache);
+            pthread_mutex_unlock(&cache->lock);
             return 0;
         }
     }
 
     DiskPageCacheNode *node = (DiskPageCacheNode *)gv_calloc(1, sizeof(*node));
-    if (!node) return -1;
+    if (!node) {
+        pthread_mutex_unlock(&cache->lock);
+        return -1;
+    }
     node->key = (char *)gv_alloc(strlen(key) + 1);
     node->data = (uint8_t *)gv_alloc(len);
     if (!node->key || !node->data) {
         disk_page_cache_node_free(node);
+        pthread_mutex_unlock(&cache->lock);
         return -1;
     }
     memcpy(node->key, key, strlen(key) + 1);
@@ -191,6 +284,7 @@ int gv_disk_page_cache_insert(GV_DiskPageCache *cache, const char *key,
     cache->count++;
     cache->used_bytes += len;
     disk_page_cache_evict(cache);
+    pthread_mutex_unlock(&cache->lock);
     return 0;
 }
 
@@ -199,6 +293,7 @@ void gv_disk_page_cache_remove(GV_DiskPageCache *cache, const char *key)
     if (!cache || !key) return;
     uint32_t hash = disk_page_cache_hash(key);
     uint32_t bucket = hash % GV_DISK_PAGE_CACHE_BUCKETS;
+    pthread_mutex_lock(&cache->lock);
     DiskPageCacheNode **pp = &cache->buckets[bucket];
     while (*pp) {
         DiskPageCacheNode *node = *pp;
@@ -208,8 +303,10 @@ void gv_disk_page_cache_remove(GV_DiskPageCache *cache, const char *key)
             cache->used_bytes -= node->len;
             cache->count--;
             disk_page_cache_node_free(node);
+            pthread_mutex_unlock(&cache->lock);
             return;
         }
         pp = &node->hash_next;
     }
+    pthread_mutex_unlock(&cache->lock);
 }

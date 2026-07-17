@@ -964,6 +964,24 @@ static int posting_catalog_write_segment(GV_PostingCatalog *cat, uint64_t head_i
     return 0;
 }
 
+/* Undo the segments registered by this append batch (indices [from, count)):
+ * delete their on-disk files and drop their catalog refs, restoring
+ * segment_count so the catalog is left as if the batch never ran (all-or-nothing).
+ * The catalog is NOT saved here, so no partial state is persisted. */
+static void posting_catalog_rollback_batch(GV_PostingCatalog *cat, size_t from)
+{
+    for (size_t i = from; i < cat->segment_count; ++i) {
+        char abs_path[1024];
+        if (posting_join_path(abs_path, sizeof(abs_path), cat->base_dir,
+                              cat->segments[i].rel_path) == 0) {
+            remove(abs_path);
+        }
+        gv_free(cat->segments[i].rel_path);
+        cat->segments[i].rel_path = NULL;
+    }
+    cat->segment_count = from;
+}
+
 int posting_catalog_append_segment_ex(GV_PostingCatalog *cat, uint64_t head_id,
                                       const GV_PostingWriteEntry *entries, size_t entry_count,
                                       size_t dimension, const GV_PostingSegmentParams *params)
@@ -985,15 +1003,22 @@ int posting_catalog_append_segment_ex(GV_PostingCatalog *cat, uint64_t head_id,
                              ? (GV_POSTING_MAX_SEGMENT_BYTES / stride) : 1;
     if (max_per_seg == 0) max_per_seg = 1;
 
+    /* Remember where this batch's segments start so a mid-batch failure can roll
+     * back every segment durably written + registered so far (all-or-nothing). */
+    size_t batch_start = cat->segment_count;
+
     if (entry_count == 0) {
-        if (posting_catalog_write_segment(cat, head_id, entries, 0, dimension, &local, commit_ts) != 0)
+        if (posting_catalog_write_segment(cat, head_id, entries, 0, dimension, &local, commit_ts) != 0) {
+            posting_catalog_rollback_batch(cat, batch_start);
             return -1;
+        }
     } else {
         for (size_t start = 0; start < entry_count; start += max_per_seg) {
             size_t n = entry_count - start;
             if (n > max_per_seg) n = max_per_seg;
             if (posting_catalog_write_segment(cat, head_id, entries + start, n, dimension,
                                               &local, commit_ts) != 0) {
+                posting_catalog_rollback_batch(cat, batch_start);
                 return -1;
             }
         }
@@ -1063,6 +1088,7 @@ int posting_catalog_visit_head(GV_PostingCatalog *cat, uint64_t head_id,
 typedef struct {
     uint64_t vector_id;
     uint32_t version;
+    uint64_t commit_ts;
     uint8_t flags;
     size_t dimension;
     float *data;
@@ -1088,6 +1114,7 @@ static int posting_collect_visit(void *ctx, const GV_PostingEntry *entry)
     CollectedEntry *ce = &st->items[st->count++];
     ce->vector_id = entry->vector_id;
     ce->version = entry->version;
+    ce->commit_ts = entry->commit_ts;
     ce->flags = entry->flags;
     ce->dimension = entry->dimension;
     if (entry->data) {
@@ -1110,12 +1137,27 @@ static void posting_collect_free(CollectState *st)
     st->cap = 0;
 }
 
+/* Total order for dedup: primary sort is by vector_id (ascending) so equal-id
+ * entries are grouped.  Within a group the WINNER must sort LAST because the
+ * dedup keeps the last entry of each id run.  Winner precedence (most recent
+ * write wins, delete-wins on ties): higher version, then higher commit_ts, then
+ * a tombstone beats a live copy (delete-wins), then higher flags, and finally a
+ * stable ordering by data pointer so the result is fully deterministic even for
+ * otherwise-identical records. */
 static int posting_collected_cmp(const void *a, const void *b)
 {
     const CollectedEntry *ea = (const CollectedEntry *)a;
     const CollectedEntry *eb = (const CollectedEntry *)b;
     if (ea->vector_id != eb->vector_id) return (ea->vector_id < eb->vector_id) ? -1 : 1;
     if (ea->version != eb->version) return (ea->version < eb->version) ? -1 : 1;
+    if (ea->commit_ts != eb->commit_ts) return (ea->commit_ts < eb->commit_ts) ? -1 : 1;
+    /* delete-wins: on an exact (id, version, commit_ts) tie the tombstone wins,
+     * so it must sort last (larger). */
+    uint8_t da = (uint8_t)(ea->flags & GV_POSTING_FLAG_DELETED);
+    uint8_t db = (uint8_t)(eb->flags & GV_POSTING_FLAG_DELETED);
+    if (da != db) return (da < db) ? -1 : 1;
+    if (ea->flags != eb->flags) return (ea->flags < eb->flags) ? -1 : 1;
+    if (ea->data != eb->data) return (ea->data < eb->data) ? -1 : 1;
     return 0;
 }
 
@@ -1204,6 +1246,8 @@ size_t posting_catalog_head_live_count(GV_PostingCatalog *cat, uint64_t head_id)
 typedef struct {
     uint64_t vector_id;
     uint32_t version;
+    uint64_t commit_ts;
+    uint8_t flags;
     size_t segment_index;
 } TaggedEntry;
 
@@ -1231,17 +1275,30 @@ static int posting_tagged_visit_wrapper(void *ctx, const GV_PostingEntry *entry)
     tv->collect->items[tv->collect->count++] = (TaggedEntry){
         .vector_id = entry->vector_id,
         .version = entry->version,
+        .commit_ts = entry->commit_ts,
+        .flags = entry->flags,
         .segment_index = tv->segment_index
     };
     return 0;
 }
 
+/* Same total order as posting_collected_cmp so the tagged view agrees with the
+ * materialize/dedup view on which record wins for each vector_id.  The winner of
+ * an id group is the LAST element after sort; segment_index provides the final
+ * stable tiebreak (higher segment_index wins) so attribution is deterministic. */
 static int tagged_entry_cmp(const void *a, const void *b)
 {
     const TaggedEntry *ea = (const TaggedEntry *)a;
     const TaggedEntry *eb = (const TaggedEntry *)b;
     if (ea->vector_id != eb->vector_id) return (ea->vector_id < eb->vector_id) ? -1 : 1;
     if (ea->version != eb->version) return (ea->version < eb->version) ? -1 : 1;
+    if (ea->commit_ts != eb->commit_ts) return (ea->commit_ts < eb->commit_ts) ? -1 : 1;
+    uint8_t da = (uint8_t)(ea->flags & GV_POSTING_FLAG_DELETED);
+    uint8_t db = (uint8_t)(eb->flags & GV_POSTING_FLAG_DELETED);
+    if (da != db) return (da < db) ? -1 : 1;
+    if (ea->flags != eb->flags) return (ea->flags < eb->flags) ? -1 : 1;
+    if (ea->segment_index != eb->segment_index)
+        return (ea->segment_index < eb->segment_index) ? -1 : 1;
     return 0;
 }
 
@@ -1304,13 +1361,25 @@ static int posting_catalog_reconcile_head_live_counts(GV_PostingCatalog *cat,
         }
         if (collected.items[i].flags & GV_POSTING_FLAG_DELETED) continue;
 
+        /* Attribute the live count to the segment that actually holds the
+         * WINNING record for this vector_id, so per-segment live counts match
+         * what materialize considers live.  The winning record has the same
+         * (version, commit_ts, flags) as the deduped survivor; when the same
+         * (id, version, commit_ts) exists in multiple segments, tagged is sorted
+         * with the winner last, so we take the LAST matching tagged entry
+         * (highest segment_index) — mirroring the dedup tie-break. */
+        int found = 0;
+        size_t win_seg = 0;
         for (size_t t = 0; t < tagged.count; ++t) {
             if (tagged.items[t].vector_id == collected.items[i].vector_id &&
-                tagged.items[t].version == collected.items[i].version) {
-                seg_counts[tagged.items[t].segment_index]++;
-                break;
+                tagged.items[t].version == collected.items[i].version &&
+                tagged.items[t].commit_ts == collected.items[i].commit_ts &&
+                tagged.items[t].flags == collected.items[i].flags) {
+                win_seg = tagged.items[t].segment_index;
+                found = 1;
             }
         }
+        if (found) seg_counts[win_seg]++;
     }
     posting_collect_free(&collected);
 
@@ -1538,6 +1607,7 @@ int posting_catalog_maybe_rollup_head(GV_PostingCatalog *cat, uint64_t head_id,
 typedef struct {
     uint64_t vector_id;
     uint32_t version;
+    uint64_t commit_ts;
     uint8_t flags;
 } PostingIdVer;
 
@@ -1559,17 +1629,26 @@ static int posting_idver_visit(void *ctx, const GV_PostingEntry *entry)
     }
     c->items[c->count].vector_id = entry->vector_id;
     c->items[c->count].version = entry->version;
+    c->items[c->count].commit_ts = entry->commit_ts;
     c->items[c->count].flags = entry->flags;
     c->count++;
     return 0;
 }
 
+/* Same deterministic total order as posting_collected_cmp: within an id group
+ * the winner (highest version, then commit_ts, then delete-wins) sorts LAST,
+ * since head_live_ids keeps the last entry of each id run. */
 static int posting_idver_cmp(const void *a, const void *b)
 {
     const PostingIdVer *ea = (const PostingIdVer *)a;
     const PostingIdVer *eb = (const PostingIdVer *)b;
     if (ea->vector_id != eb->vector_id) return (ea->vector_id < eb->vector_id) ? -1 : 1;
     if (ea->version != eb->version) return (ea->version < eb->version) ? -1 : 1;
+    if (ea->commit_ts != eb->commit_ts) return (ea->commit_ts < eb->commit_ts) ? -1 : 1;
+    uint8_t da = (uint8_t)(ea->flags & GV_POSTING_FLAG_DELETED);
+    uint8_t db = (uint8_t)(eb->flags & GV_POSTING_FLAG_DELETED);
+    if (da != db) return (da < db) ? -1 : 1;
+    if (ea->flags != eb->flags) return (ea->flags < eb->flags) ? -1 : 1;
     return 0;
 }
 

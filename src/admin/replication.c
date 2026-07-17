@@ -19,6 +19,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
+#include <stdatomic.h>
 #include <time.h>
 #ifndef _WIN32
 #include <unistd.h>
@@ -66,7 +67,7 @@ struct GV_ReplicationManager {
     /* Threads */
     pthread_t replication_thread;
     int running;
-    int stop_requested;
+    _Atomic int stop_requested;
 
     pthread_rwlock_t rwlock;
     pthread_mutex_t election_mutex;
@@ -129,9 +130,9 @@ static void replication_embedded_followers_catch_up_locked(GV_ReplicationManager
 static void *replication_thread_func(void *arg) {
     GV_ReplicationManager *mgr = (GV_ReplicationManager *)arg;
 
-    while (!mgr->stop_requested) {
+    while (!atomic_load(&mgr->stop_requested)) {
         gv_time_sleep_ms(mgr->config.sync_interval_ms);
-        if (mgr->stop_requested) break;
+        if (atomic_load(&mgr->stop_requested)) break;
 
         pthread_rwlock_wrlock(&mgr->rwlock);
 
@@ -286,24 +287,30 @@ int replication_start(GV_ReplicationManager *mgr) {
         return -1;
     }
 
-    mgr->stop_requested = 0;
-    mgr->running = 1;
+    atomic_store(&mgr->stop_requested, 0);
 
     if (!mgr->transport) {
         mgr->transport = repl_transport_create(mgr);
     }
+
+    /*
+     * Create the worker thread and publish `running` while still holding the
+     * wrlock. This guarantees any thread that observes running==1 also
+     * observes a fully-initialized replication_thread handle, so a concurrent
+     * replication_stop() can never pthread_join() a garbage handle. On create
+     * failure we leave running==0 and bail out.
+     */
+    if (pthread_create(&mgr->replication_thread, NULL, replication_thread_func, mgr) != 0) {
+        pthread_rwlock_unlock(&mgr->rwlock);
+        return -1;
+    }
+    mgr->running = 1;
+
     GV_ReplTransport *transport = mgr->transport;
     pthread_rwlock_unlock(&mgr->rwlock);
 
     if (transport) {
         repl_transport_start(transport);
-    }
-
-    if (pthread_create(&mgr->replication_thread, NULL, replication_thread_func, mgr) != 0) {
-        pthread_rwlock_wrlock(&mgr->rwlock);
-        mgr->running = 0;
-        pthread_rwlock_unlock(&mgr->rwlock);
-        return -1;
     }
 
     return 0;
@@ -319,7 +326,7 @@ int replication_stop(GV_ReplicationManager *mgr) {
         return 0;
     }
 
-    mgr->stop_requested = 1;
+    atomic_store(&mgr->stop_requested, 1);
     GV_ReplTransport *transport = mgr->transport;
     pthread_rwlock_unlock(&mgr->rwlock);
 

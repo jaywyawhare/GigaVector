@@ -26,6 +26,8 @@
 #define CY_MAXORD   8
 #define CY_QBUF     8192
 #define CY_ERR      256
+#define CY_MAX_RECURSION_DEPTH 256   /* cap on nested expr/pattern productions (DoS guard) */
+#define CY_MAX_TOKENS  4096          /* cap on total token count (mirrors GV_SQL_MAX_TOKENS) */
 
 /* ============================================================ lexer */
 
@@ -36,7 +38,7 @@ typedef enum {
 } Tk;
 
 typedef struct { Tk t; char *s; } Tok;
-typedef struct { Tok *v; size_t n, cap, pos; char err[CY_ERR]; } Lex;
+typedef struct { Tok *v; size_t n, cap, pos; size_t depth; char err[CY_ERR]; } Lex;
 
 static char *sdup(const char *s, size_t n) {
     char *r = (char *)gv_alloc(n + 1);
@@ -44,14 +46,20 @@ static char *sdup(const char *s, size_t n) {
     return r;
 }
 static int push(Lex *lx, Tk t, const char *s, size_t n) {
+    if (lx->n >= CY_MAX_TOKENS) {
+        snprintf(lx->err, CY_ERR, "query too large (token limit exceeded)");
+        return -1;
+    }
     if (lx->n == lx->cap) {
         size_t nc = lx->cap ? lx->cap * 2 : 64;
         Tok *nv = (Tok *)gv_realloc(lx->v, nc * sizeof(Tok));
         if (!nv) return -1;
         lx->v = nv; lx->cap = nc;
     }
+    char *dup = (s && n) ? sdup(s, n) : NULL;
+    if (s && n && !dup) return -1;  /* OOM building token text — abort tokenize */
     lx->v[lx->n].t = t;
-    lx->v[lx->n].s = (s && n) ? sdup(s, n) : NULL;
+    lx->v[lx->n].s = dup;
     lx->n++;
     return 0;
 }
@@ -64,6 +72,7 @@ static int tokenize(Lex *lx, const char *q) {
     while (q[i]) {
         char c = q[i];
         if (isspace((unsigned char)c)) { i++; continue; }
+        if (lx->n >= CY_MAX_TOKENS) { snprintf(lx->err, CY_ERR, "query too large (token limit exceeded)"); return -1; }
         switch (c) {
             case '(': push(lx, T_LP, 0, 0); i++; continue;
             case ')': push(lx, T_RP, 0, 0); i++; continue;
@@ -300,8 +309,16 @@ static int parse_rel(Lex *lx, Rel *r) {
     else { snprintf(lx->err, CY_ERR, "expected '->' or '-'"); return rel_fail(r); }
     return 1;
 }
+static int parse_pattern_body(Lex *lx, Pattern *p);
 static int parse_pattern(Lex *lx, Pattern *p) {
     memset(p, 0, sizeof(*p));
+    if (lx->depth >= CY_MAX_RECURSION_DEPTH) { snprintf(lx->err, CY_ERR, "pattern nesting too deep"); return -1; }
+    lx->depth++;
+    int rc = parse_pattern_body(lx, p);
+    lx->depth--;
+    return rc;
+}
+static int parse_pattern_body(Lex *lx, Pattern *p) {
     if (parse_node(lx, &p->node[0])) return -1;
     p->nn = 1;
     for (;;) {
@@ -328,6 +345,8 @@ static void pattern_clear(Pattern *p) {
 static Expr *parse_or(Lex *lx);       /* boolean expr (for CASE WHEN) */
 static Opd *parse_add(Lex *lx);       /* value expr (arithmetic) */
 static Opd *parse_atom(Lex *lx);
+static Opd *parse_unary(Lex *lx);     /* recursion-depth-guarded wrapper */
+static Expr *parse_cmp(Lex *lx);      /* recursion-depth-guarded wrapper */
 /* primary = atom with postfix list indexing atom[expr] */
 static Opd *parse_primary(Lex *lx) {
     Opd *o = parse_atom(lx);
@@ -342,7 +361,7 @@ static Opd *parse_primary(Lex *lx) {
 }
 
 /* atom: literal | [list]|[comprehension] | func(args) | type(v) | CASE..END | var[.prop] | ( expr ) */
-static Opd *parse_atom(Lex *lx) {
+static Opd *parse_atom_impl(Lex *lx) {
     Opd *o = (Opd *)gv_calloc(1, sizeof(Opd));
     Tok *t = pk(lx);
     if (t->t == T_STRING || t->t == T_NUMBER) { o->k = OPD_LIT; o->lit = gv_dup_cstr(adv(lx)->s); return o; }
@@ -462,13 +481,24 @@ static Opd *parse_atom(Lex *lx) {
     }
     if (t->t != T_IDENT) { snprintf(lx->err, CY_ERR, "expected operand"); opd_clear(o); gv_free(o); return NULL; }
     o->var = gv_dup_cstr(adv(lx)->s);
+    if (!o->var) { snprintf(lx->err, CY_ERR, "out of memory"); opd_clear(o); gv_free(o); return NULL; }
     if (pk(lx)->t == T_DOT) { adv(lx);
         if (pk(lx)->t != T_IDENT) { snprintf(lx->err, CY_ERR, "expected property"); opd_clear(o); gv_free(o); return NULL; }
         o->k = OPD_PROP; o->prop = gv_dup_cstr(adv(lx)->s);
+        if (!o->prop) { snprintf(lx->err, CY_ERR, "out of memory"); opd_clear(o); gv_free(o); return NULL; }
     } else o->k = OPD_VAR;
     return o;
 }
-static Opd *parse_unary(Lex *lx) {
+/* Depth-guarded wrapper around the atom production. Every recursive value-expr
+ * cycle (grouping '(', lists/maps '[' '{', comprehensions, CASE) re-enters here. */
+static Opd *parse_atom(Lex *lx) {
+    if (lx->depth >= CY_MAX_RECURSION_DEPTH) { snprintf(lx->err, CY_ERR, "expression nesting too deep"); return NULL; }
+    lx->depth++;
+    Opd *o = parse_atom_impl(lx);
+    lx->depth--;
+    return o;
+}
+static Opd *parse_unary_impl(Lex *lx) {
     if (pk(lx)->t == T_DASH) {
         adv(lx);
         Opd *inner = parse_unary(lx);
@@ -477,6 +507,14 @@ static Opd *parse_unary(Lex *lx) {
         o->k = OPD_NEG; o->l = inner; return o;
     }
     return parse_primary(lx);
+}
+/* Depth-guarded wrapper: unary minus chains ('- - - ...') recurse through here. */
+static Opd *parse_unary(Lex *lx) {
+    if (lx->depth >= CY_MAX_RECURSION_DEPTH) { snprintf(lx->err, CY_ERR, "expression nesting too deep"); return NULL; }
+    lx->depth++;
+    Opd *o = parse_unary_impl(lx);
+    lx->depth--;
+    return o;
 }
 static Opd *parse_mul(Lex *lx) {
     Opd *l = parse_unary(lx);
@@ -511,7 +549,7 @@ static int parse_operand(Lex *lx, Opd *o) {
     return 0;
 }
 
-static Expr *parse_cmp(Lex *lx) {
+static Expr *parse_cmp_impl(Lex *lx) {
     if (pk(lx)->t == T_LP) {
         adv(lx);
         Expr *e = parse_or(lx);
@@ -568,6 +606,15 @@ static Expr *parse_cmp(Lex *lx) {
     if (parse_operand(lx, &e->b)) { expr_free(e); return NULL; }
     return e;
 }
+/* Depth-guarded wrapper: boolean grouping '(', 'NOT ...', and nested WHERE all
+ * re-enter the recursive-descent boolean cycle here. */
+static Expr *parse_cmp(Lex *lx) {
+    if (lx->depth >= CY_MAX_RECURSION_DEPTH) { snprintf(lx->err, CY_ERR, "expression nesting too deep"); return NULL; }
+    lx->depth++;
+    Expr *e = parse_cmp_impl(lx);
+    lx->depth--;
+    return e;
+}
 static Expr *parse_and(Lex *lx) {
     Expr *l = parse_cmp(lx);
     while (l && kw(pk(lx), "and")) {
@@ -616,8 +663,10 @@ static void row_free(Row *rw) {
 }
 static Row row_copy(const Row *s) {
     Row d; memset(&d, 0, sizeof(d));
-    d.b = (Bind *)gv_alloc(s->n ? s->n * sizeof(Bind) : sizeof(Bind));
-    d.cap = s->n ? s->n : 1;
+    size_t cap = s->n ? s->n : 1;
+    d.b = (Bind *)gv_alloc(cap * sizeof(Bind));
+    if (!d.b) { d.cap = 0; d.n = 0; return d; } /* OOM: degrade to empty row; cap==0 keeps binds consistent */
+    d.cap = cap;
     for (size_t i = 0; i < s->n; i++) {
         d.b[i].var = gv_dup_cstr(s->b[i].var);
         d.b[i].is_rel = s->b[i].is_rel;
@@ -635,21 +684,41 @@ static Bind *row_find(const Row *rw, const char *var) {
 }
 static void row_bind_node(Row *rw, const char *var, uint64_t id) {
     if (!var) return;
-    if (rw->n == rw->cap) { rw->cap = rw->cap ? rw->cap * 2 : 4; rw->b = (Bind *)gv_realloc(rw->b, rw->cap * sizeof(Bind)); }
+    if (rw->n == rw->cap) {
+        size_t nc = rw->cap ? rw->cap * 2 : 4;
+        Bind *nb = (Bind *)gv_realloc(rw->b, nc * sizeof(Bind));
+        if (!nb) return;  /* OOM: skip bind rather than deref NULL */
+        rw->b = nb; rw->cap = nc;
+    }
     rw->b[rw->n].var = gv_dup_cstr(var); rw->b[rw->n].is_rel = 0; rw->b[rw->n].is_val = 0; rw->b[rw->n].id = id; rw->b[rw->n].pred = NULL; rw->n++;
 }
 static void row_bind_rel(Row *rw, const char *var, const char *pred) {
     if (!var) return;
-    if (rw->n == rw->cap) { rw->cap = rw->cap ? rw->cap * 2 : 4; rw->b = (Bind *)gv_realloc(rw->b, rw->cap * sizeof(Bind)); }
+    if (rw->n == rw->cap) {
+        size_t nc = rw->cap ? rw->cap * 2 : 4;
+        Bind *nb = (Bind *)gv_realloc(rw->b, nc * sizeof(Bind));
+        if (!nb) return;  /* OOM: skip bind rather than deref NULL */
+        rw->b = nb; rw->cap = nc;
+    }
     rw->b[rw->n].var = gv_dup_cstr(var); rw->b[rw->n].is_rel = 1; rw->b[rw->n].is_val = 0; rw->b[rw->n].id = 0; rw->b[rw->n].pred = gv_dup_cstr(pred); rw->n++;
 }
 static void row_bind_val(Row *rw, const char *var, const char *val) {
     if (!var) return;
-    if (rw->n == rw->cap) { rw->cap = rw->cap ? rw->cap * 2 : 4; rw->b = (Bind *)gv_realloc(rw->b, rw->cap * sizeof(Bind)); }
+    if (rw->n == rw->cap) {
+        size_t nc = rw->cap ? rw->cap * 2 : 4;
+        Bind *nb = (Bind *)gv_realloc(rw->b, nc * sizeof(Bind));
+        if (!nb) return;  /* OOM: skip this bind rather than deref NULL */
+        rw->b = nb; rw->cap = nc;
+    }
     rw->b[rw->n].var = gv_dup_cstr(var); rw->b[rw->n].is_rel = 0; rw->b[rw->n].is_val = 1; rw->b[rw->n].id = 0; rw->b[rw->n].pred = gv_dup_cstr(val); rw->n++;
 }
 static void rs_add(RowSet *rs, Row rw) {
-    if (rs->n == rs->cap) { rs->cap = rs->cap ? rs->cap * 2 : 16; rs->r = (Row *)gv_realloc(rs->r, rs->cap * sizeof(Row)); }
+    if (rs->n == rs->cap) {
+        size_t nc = rs->cap ? rs->cap * 2 : 16;
+        Row *nr = (Row *)gv_realloc(rs->r, nc * sizeof(Row));
+        if (!nr) { row_free(&rw); return; }  /* OOM: drop the row (freeing it) rather than deref NULL */
+        rs->r = nr; rs->cap = nc;
+    }
     rs->r[rs->n++] = rw;
 }
 static void rs_free(RowSet *rs) { for (size_t i = 0; i < rs->n; i++) row_free(&rs->r[i]); gv_free(rs->r); rs->r = NULL; rs->n = rs->cap = 0; }
@@ -1048,14 +1117,14 @@ static char *val_of(GV_KnowledgeGraph *kg, const Opd *o, const Row *row) {
     Bind *b = row_find(row, o->var);
     if (!b) return gv_dup_cstr("");
     if (b->is_val) {
-        if (o->k == OPD_PROP && cy_is_map(b->pred)) return cy_map_get(b->pred, o->prop); /* map.key */
+        if (o->k == OPD_PROP && o->prop && cy_is_map(b->pred)) return cy_map_get(b->pred, o->prop); /* map.key */
         return gv_dup_cstr(o->k == OPD_PROP ? "" : (b->pred ? b->pred : ""));
     }
     if (o->k == OPD_TYPE || b->is_rel) return gv_dup_cstr(b->pred ? b->pred : "");
     const GV_KGEntity *e = kg_get_entity(kg, b->id);
     if (o->k == OPD_VAR) return gv_dup_cstr(e && e->name ? e->name : "");
-    if (strcmp(o->prop, "name") == 0) return gv_dup_cstr(e && e->name ? e->name : "");
-    const char *pv = kg_get_entity_prop(kg, b->id, o->prop);
+    if (o->prop && strcmp(o->prop, "name") == 0) return gv_dup_cstr(e && e->name ? e->name : "");
+    const char *pv = o->prop ? kg_get_entity_prop(kg, b->id, o->prop) : NULL;
     return gv_dup_cstr(pv ? pv : "");
 }
 static int is_num(const char *s, double *d) {

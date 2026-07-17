@@ -11,10 +11,12 @@
 #include <time.h>
 #ifndef _WIN32
 #include <unistd.h>
+#include <fcntl.h>
 #endif
 
 #ifdef _WIN32
 #include <windows.h>
+#include <io.h>
 #ifndef ssize_t
 typedef SSIZE_T ssize_t;
 #endif
@@ -95,6 +97,7 @@ static ssize_t getline(char **lineptr, size_t *n, FILE *stream) {
 #include "search/filter.h"
 #include "specialized/optimizer.h"
 #include "index/ivf_retrain.h"
+#include "admin/ab_test.h"
 #include "storage/tiered_storage.h"
 #include "admin/cdc.h"
 #include "admin/webhook.h"
@@ -1574,6 +1577,13 @@ void db_close(GV_Database *db) {
         tiered_storage_destroy(db->tiered_storage);
         db->tiered_storage = NULL;
     }
+    /* Tear down any running A/B test before destroying ab_mutex. If a caller
+     * ran gv_db_ab_test_start without a matching gv_db_ab_test_stop, the
+     * GV_ABTest struct, its condvar, and the entire shadow_db (vectors + index
+     * + WAL) would otherwise leak. gv_db_ab_test_stop detaches, drains
+     * in-flight searches, and destroys the shadow; it is a no-op when no test
+     * is active. It locks/unlocks ab_mutex itself, so must run before destroy. */
+    gv_db_ab_test_stop(db);
     pthread_mutex_destroy(&db->ab_mutex);
     gv_memory_fini(&db->memory_pool);
     gv_free(db->filepath);
@@ -2727,8 +2737,8 @@ int db_apply_wal_record(GV_Database *db, const uint8_t *record, size_t len) {
     if (db->wal != NULL) {
         pthread_mutex_lock(&db->wal_mutex);
         rc = wal_append_raw(db->wal, record, len);
-        pthread_mutex_unlock(&db->wal_mutex);
         if (rc == 0) db->total_wal_records += 1;
+        pthread_mutex_unlock(&db->wal_mutex);
     }
     return rc;
 }
@@ -2747,23 +2757,13 @@ int db_add_vector(GV_Database *db, const float *data, size_t dimension) {
 
     db_increment_concurrent_ops(db);
 
-    if (db->wal != NULL && db->wal_replaying == 0) {
-        pthread_mutex_lock(&db->wal_mutex);
-        int wal_res = wal_append_insert(db->wal, data, dimension, NULL, NULL);
-        pthread_mutex_unlock(&db->wal_mutex);
-        if (wal_res != 0) {
-            db_decrement_concurrent_ops(db);
-            return -1;
-        }
-        db->total_wal_records += 1;
-    }
-
     pthread_rwlock_wrlock(&db->rwlock);
 
     int status = -1;
     if (db->index_type == GV_INDEX_TYPE_KDTREE) {
         if (db->soa_storage == NULL) {
             pthread_rwlock_unlock(&db->rwlock);
+            db_decrement_concurrent_ops(db);
             return -1;
         }
         int normalized_on_heap = 0;
@@ -2771,6 +2771,7 @@ int db_add_vector(GV_Database *db, const float *data, size_t dimension) {
             dimension * sizeof(float), sizeof(float), &normalized_on_heap);
         if (normalized_data == NULL) {
             pthread_rwlock_unlock(&db->rwlock);
+            db_decrement_concurrent_ops(db);
             return -1;
         }
         memcpy(normalized_data, data, dimension * sizeof(float));
@@ -2791,6 +2792,7 @@ int db_add_vector(GV_Database *db, const float *data, size_t dimension) {
         gv_tls_free_or_heap(normalized_data, normalized_on_heap);
         if (vector_index == (size_t)-1) {
             pthread_rwlock_unlock(&db->rwlock);
+            db_decrement_concurrent_ops(db);
             return -1;
         }
         status = kdtree_insert(&(db->root), db->soa_storage, vector_index, 0);
@@ -2974,6 +2976,24 @@ int db_add_vector(GV_Database *db, const float *data, size_t dimension) {
         return -1;
     }
 
+    /* Append-after-apply: the in-memory insert succeeded, so now durably
+     * record it in the WAL. Doing this under the held write lock guarantees
+     * the WAL order matches the in-memory (positional) order, and that no
+     * phantom insert is ever durably recorded for an apply that failed. */
+    if (db->wal != NULL && db->wal_replaying == 0) {
+        pthread_mutex_lock(&db->wal_mutex);
+        int wal_res = wal_append_insert(db->wal, data, dimension, NULL, NULL);
+        if (wal_res == 0) {
+            db->total_wal_records += 1;
+        }
+        pthread_mutex_unlock(&db->wal_mutex);
+        if (wal_res != 0) {
+            pthread_rwlock_unlock(&db->rwlock);
+            db_decrement_concurrent_ops(db);
+            return -1;
+        }
+    }
+
     size_t ts_slot_0 = db->count; /* 0-based slot for this vector */
     db->count += 1;
     db->total_inserts += 1;
@@ -3048,23 +3068,13 @@ int db_add_vector_with_metadata(GV_Database *db, const float *data, size_t dimen
         return -1;
     }
 
-    if (db->wal != NULL && db->wal_replaying == 0) {
-        pthread_mutex_lock(&db->wal_mutex);
-        int wal_res = wal_append_insert(db->wal, data, dimension, metadata_key, metadata_value);
-        pthread_mutex_unlock(&db->wal_mutex);
-        if (wal_res != 0) {
-            db_decrement_concurrent_ops(db);
-            return -1;
-        }
-        db->total_wal_records += 1;
-    }
-
     pthread_rwlock_wrlock(&db->rwlock);
-    
+
     int status = -1;
     if (db->index_type == GV_INDEX_TYPE_KDTREE) {
         if (db->soa_storage == NULL) {
             pthread_rwlock_unlock(&db->rwlock);
+            db_decrement_concurrent_ops(db);
             return -1;
         }
         int normalized_on_heap = 0;
@@ -3238,6 +3248,21 @@ int db_add_vector_with_metadata(GV_Database *db, const float *data, size_t dimen
         return -1;
     }
 
+    /* Append-after-apply under the write lock: WAL order matches in-memory
+     * order, and no phantom insert is durably recorded for a failed apply. */
+    if (db->wal != NULL && db->wal_replaying == 0) {
+        pthread_mutex_lock(&db->wal_mutex);
+        int wal_res = wal_append_insert(db->wal, data, dimension, metadata_key, metadata_value);
+        if (wal_res == 0) {
+            db->total_wal_records += 1;
+        }
+        pthread_mutex_unlock(&db->wal_mutex);
+        if (wal_res != 0) {
+            pthread_rwlock_unlock(&db->rwlock);
+            return -1;
+        }
+    }
+
     size_t ts_slot_1 = db->count;
     db->count += 1;
     db->total_inserts += 1;
@@ -3315,18 +3340,8 @@ int db_add_vector_with_rich_metadata(GV_Database *db, const float *data, size_t 
     
     uint64_t start_time_us = db_get_time_us();
 
-    if (db->wal != NULL && db->wal_replaying == 0) {
-        pthread_mutex_lock(&db->wal_mutex);
-        int wal_res = wal_append_insert_rich(db->wal, data, dimension, metadata_keys, metadata_values, metadata_count);
-        pthread_mutex_unlock(&db->wal_mutex);
-        if (wal_res != 0) {
-            return -1;
-        }
-        db->total_wal_records += 1;
-    }
-
     pthread_rwlock_wrlock(&db->rwlock);
-    
+
     int status = -1;
     if (db->index_type == GV_INDEX_TYPE_KDTREE) {
         if (db->soa_storage == NULL) {
@@ -3600,6 +3615,25 @@ int db_add_vector_with_rich_metadata(GV_Database *db, const float *data, size_t 
         return -1;
     }
 
+    /* Append-after-apply under the write lock: the generic INSERT record is
+     * written only after the in-memory insert (and, for IVFDISK, its routed
+     * append records) succeeded. This keeps WAL order consistent with the
+     * positional in-memory order and prevents durably recording an insert
+     * that never applied. */
+    if (db->wal != NULL && db->wal_replaying == 0) {
+        pthread_mutex_lock(&db->wal_mutex);
+        int wal_res = wal_append_insert_rich(db->wal, data, dimension, metadata_keys, metadata_values, metadata_count);
+        if (wal_res == 0) {
+            db->total_wal_records += 1;
+        }
+        pthread_mutex_unlock(&db->wal_mutex);
+        if (wal_res != 0) {
+            pthread_rwlock_unlock(&db->rwlock);
+            db_decrement_concurrent_ops(db);
+            return -1;
+        }
+    }
+
     size_t ts_slot_2 = db->count;
     db->count += 1;
     db->total_inserts += 1;
@@ -3842,6 +3876,34 @@ static int db_save_locked(const GV_Database *db, const char *filepath) {
         }
     }
 
+    /* Durably flush the temp file's data to disk BEFORE the rename so that a
+     * crash after the rename cannot leave a renamed-but-empty file while the
+     * WAL (the only other copy) has already been truncated. We must re-open
+     * the temp file because the CRC append above already closed it. */
+    if (status == 0) {
+        FILE *sf = fopen(temp_path, "rb+");
+        if (sf == NULL) {
+            status = -1;
+        } else {
+            if (fflush(sf) != 0) {
+                status = -1;
+            } else {
+#ifndef _WIN32
+                if (fsync(fileno(sf)) != 0) {
+                    status = -1;
+                }
+#else
+                if (_commit(_fileno(sf)) != 0) {
+                    status = -1;
+                }
+#endif
+            }
+            if (fclose(sf) != 0) {
+                status = -1;
+            }
+        }
+    }
+
     /* Atomically publish the new snapshot; on any error leave the original
      * file untouched and remove the temp file. */
     if (status == 0) {
@@ -3853,6 +3915,55 @@ static int db_save_locked(const GV_Database *db, const char *filepath) {
         unlink(temp_path);
         return -1;
     }
+
+    /* fsync the containing directory so the rename (a directory metadata
+     * change) is durable. Without this, a crash could lose the rename even
+     * though the file data reached disk. POSIX only; on _WIN32 directory
+     * fsync semantics differ and rename durability is handled differently, so
+     * we omit it there. If the directory fsync fails we must NOT truncate the
+     * WAL, since the snapshot may not be durably published. */
+#ifndef _WIN32
+    {
+        char dir_path[1024];
+        size_t out_len = strlen(out_path);
+        const char *slash = NULL;
+        for (size_t i = out_len; i > 0; --i) {
+            if (out_path[i - 1] == '/') {
+                slash = &out_path[i - 1];
+                break;
+            }
+        }
+        if (slash == NULL) {
+            dir_path[0] = '.';
+            dir_path[1] = '\0';
+        } else if (slash == out_path) {
+            dir_path[0] = '/';
+            dir_path[1] = '\0';
+        } else {
+            size_t dlen = (size_t)(slash - out_path);
+            if (dlen >= sizeof(dir_path)) {
+                dlen = sizeof(dir_path) - 1;
+            }
+            memcpy(dir_path, out_path, dlen);
+            dir_path[dlen] = '\0';
+        }
+        int dfd = open(dir_path, O_RDONLY | O_DIRECTORY);
+        if (dfd < 0) {
+            status = -1;
+        } else {
+            if (fsync(dfd) != 0) {
+                status = -1;
+            }
+            close(dfd);
+        }
+    }
+    if (status != 0) {
+        /* Snapshot rename may not be durable: keep the WAL as the recovery
+         * source rather than truncating it. The renamed file is left in place
+         * (it is at least as good as the previous snapshot on the next open). */
+        return -1;
+    }
+#endif
 
     if (db->wal != NULL) {
         pthread_mutex_lock((pthread_mutex_t *)&db->wal_mutex);
@@ -5312,23 +5423,30 @@ int db_compact_soa_storage_locked(GV_Database *db) {
             
             db->hnsw_index = gv_hnsw_create(dimension, &config, storage);
             if (db->hnsw_index == NULL) {
-                return -1; /* Failed to create new index */
+                /* Failed to create new index. Free the compaction map before
+                 * bailing so we do not leak it; the storage is already
+                 * compacted but the index is now NULL (degraded). */
+                gv_tls_free_or_heap(index_map, map_on_heap);
+                return -1;
             }
-            
+
             for (size_t i = 0; i < new_count; ++i) {
                 GV_Vector temp_vec = {
                     .dimension = dimension,
                     .data = storage->data + (i * dimension),
                     .metadata = storage->metadata[i]
                 };
-                
+
                 if (gv_hnsw_insert(db->hnsw_index, &temp_vec) != 0) {
-                    /* On failure, clean up */
+                    /* On failure, clean up. Free the compaction map to avoid a
+                     * leak (it is heap-allocated when it overflowed the TLS
+                     * arena). */
                     gv_hnsw_destroy(db->hnsw_index);
                     db->hnsw_index = NULL;
+                    gv_tls_free_or_heap(index_map, map_on_heap);
                     return -1;
                 }
-                
+
                 temp_vec.metadata = NULL;
             }
         }

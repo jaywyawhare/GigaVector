@@ -20,6 +20,34 @@
     } \
 } while (0)
 
+/*
+ * Recursively remove every gv_ivfdisk_* temp dir this process created, so we
+ * stop leaking them in /tmp. Matches on the "gv_ivfdisk" stem + this pid,
+ * which gv_test_mkdtemp bakes into every dir name. Best-effort.
+ */
+#ifndef _WIN32
+#include <dirent.h>
+static void gv_ivfdisk_cleanup_tmp(void)
+{
+    const char *root = gv_test_tmp_root();
+    DIR *d = opendir(root);
+    if (!d) return;
+    char pidtag[32];
+    snprintf(pidtag, sizeof(pidtag), "_%lu_", gv_test_pid());
+    struct dirent *ent;
+    while ((ent = readdir(d)) != NULL) {
+        if (strncmp(ent->d_name, "gv_ivfdisk", 10) != 0) continue;
+        if (strstr(ent->d_name, pidtag) == NULL) continue;
+        char full[1024];
+        int n = snprintf(full, sizeof(full), "%s/%s", root, ent->d_name);
+        if (n > 0 && (size_t)n < sizeof(full)) gv_test_rmrf(full);
+    }
+    closedir(d);
+}
+#else
+static void gv_ivfdisk_cleanup_tmp(void) { }
+#endif
+
 static int test_ivfdisk_create_train_search(void)
 {
     char dir[512];
@@ -827,6 +855,7 @@ int main(void)
         fprintf(stderr, "Running %s...\n", tests[i].name);
         if (tests[i].fn() != 0) failed++;
     }
+    gv_ivfdisk_cleanup_tmp(); /* stop leaking gv_ivfdisk_* dirs in /tmp */
     if (failed) {
         fprintf(stderr, "%d test(s) failed\n", failed);
         return 1;

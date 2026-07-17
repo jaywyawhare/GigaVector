@@ -5,8 +5,47 @@
 
 #include "storage/database.h"
 
+/*
+ * Test-only allocation-failure injection. Always compiled in but disabled by
+ * default (fail_after < 0), so normal builds pay only one predictable compare
+ * per allocation. See include/core/memory.h for the contract.
+ *
+ * gv_alloc_fail_after: index of the allocation that should fail (0 = the very
+ *   next one), or < 0 when disarmed. gv_alloc_fail_count counts allocations
+ *   observed while armed. Not thread-synchronised — tests drive it from a
+ *   single thread.
+ */
+long gv_alloc_fail_after = -1;
+long gv_alloc_fail_count = 0;
+
+void gv_alloc_set_fail_after(long n) {
+    gv_alloc_fail_after = n;
+    gv_alloc_fail_count = 0;
+}
+
+void gv_alloc_reset_fail(void) {
+    gv_alloc_fail_after = -1;
+    gv_alloc_fail_count = 0;
+}
+
+/* Returns 1 if this allocation should be failed (and disarms injection). */
+static int gv_alloc_should_fail(void) {
+    if (gv_alloc_fail_after < 0) {
+        return 0; /* disabled: single predictable branch, zero behaviour change */
+    }
+    long idx = gv_alloc_fail_count++;
+    if (idx == gv_alloc_fail_after) {
+        gv_alloc_fail_after = -1; /* fire exactly once, then disarm */
+        return 1;
+    }
+    return 0;
+}
+
 void *gv_alloc(size_t size) {
     if (size == 0) {
+        return NULL;
+    }
+    if (gv_alloc_should_fail()) {
         return NULL;
     }
     return malloc(size);
@@ -19,12 +58,18 @@ void *gv_calloc(size_t nmemb, size_t size) {
     if (nmemb > SIZE_MAX / size) {
         return NULL;
     }
+    if (gv_alloc_should_fail()) {
+        return NULL;
+    }
     return calloc(nmemb, size);
 }
 
 void *gv_realloc(void *ptr, size_t size) {
     if (size == 0) {
         gv_free(ptr);
+        return NULL;
+    }
+    if (gv_alloc_should_fail()) {
         return NULL;
     }
     return realloc(ptr, size);

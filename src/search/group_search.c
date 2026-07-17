@@ -201,13 +201,15 @@ int group_search(const GV_Database *db, const float *query, size_t dimension,
         oversample = 40;
     }
 
-    int candidates_on_heap = 0;
-    GV_SearchResult *candidates = (GV_SearchResult *)gv_tls_alloc_or_heap(
-        oversample * sizeof(GV_SearchResult), sizeof(GV_SearchResult), &candidates_on_heap);
+    /* Heap-allocate: db_search() resets the TLS scratch arena on entry, which
+     * would clobber a TLS-allocated results buffer (and its .vector copies)
+     * since this buffer lives across the db_search call below. */
+    int candidates_on_heap = 1;
+    GV_SearchResult *candidates =
+        (GV_SearchResult *)gv_calloc(oversample, sizeof(GV_SearchResult));
     if (!candidates) {
         return -1;
     }
-    memset(candidates, 0, oversample * sizeof(GV_SearchResult));
 
     int found = db_search(db, query, oversample, candidates,
                           (GV_DistanceType)config->distance_type);

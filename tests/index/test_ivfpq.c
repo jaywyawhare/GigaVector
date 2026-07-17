@@ -41,7 +41,7 @@ static int test_ivfpq_basic(void) {
     GV_SearchResult res[1];
     int n = db_search(db, q, 1, res, GV_DISTANCE_EUCLIDEAN);
     ASSERT(n >= 0, "search after training");
-    
+    gv_search_results_free(res, n > 0 ? (size_t)n : 0);
     db_close(db);
     return 0;
 }
@@ -111,7 +111,7 @@ static int test_ivfpq_large_dataset(void) {
     GV_SearchResult res[5];
     int n = db_search(db, q, 5, res, GV_DISTANCE_EUCLIDEAN);
     ASSERT(n == 5, "search in large dataset");
-    
+    gv_search_results_free(res, n > 0 ? (size_t)n : 0);
     db_close(db);
     return 0;
 }
@@ -143,7 +143,7 @@ static int test_ivfpq_range_search(void) {
     GV_SearchResult res[10];
     int n = db_range_search(db, q, 1.0f, res, 10, GV_DISTANCE_EUCLIDEAN);
     ASSERT(n > 0, "range search found results");
-    
+    gv_search_results_free(res, n > 0 ? (size_t)n : 0);
     db_close(db);
     return 0;
 }
@@ -193,7 +193,7 @@ static int test_ivfpq_persistence(void) {
     GV_SearchResult res[1];
     int n = db_search(db2, q, 1, res, GV_DISTANCE_EUCLIDEAN);
     ASSERT(n >= 0, "search after reload");
-    
+    gv_search_results_free(res, n > 0 ? (size_t)n : 0);
     db_close(db2);
     remove(path);
     return 0;

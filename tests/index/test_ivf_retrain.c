@@ -196,9 +196,10 @@ static int test_retrain_non_ivf_type(void) {
     float drift = ivf_retrain_check_drift(db);
     ASSERT(drift < 0.0f); /* -1.0f expected */
 
-    /* trigger should fail gracefully */
+    /* trigger should fail gracefully: for non-IVF index types the retrain
+     * switch falls through to the default case which returns -1 (no-op). */
     int rc = gv_db_trigger_retrain(db);
-    ASSERT(rc != 0 || rc == 0); /* either is acceptable — should not crash */
+    ASSERT(rc == -1);
 
     db_close(db);
     return 0;

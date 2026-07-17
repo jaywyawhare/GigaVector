@@ -287,20 +287,32 @@ static void add_cors_headers(struct MHD_Response *response, const GV_Server *ser
 }
 
 /**
- * @brief Classify a request as mutating/administrative (write path).
+ * @brief Classify a request as a pure liveness/readiness probe.
  *
- * These endpoints require authentication unless explicitly opted out via
- * config.allow_unauthenticated. Read-only endpoints (health/stats/GET) are
- * not gated here so they remain reachable for liveness probes.
+ * These endpoints expose no vector data or administrative surface and must
+ * remain reachable without a credential so that health probes keep working
+ * in the fail-closed default. Everything else (including data-returning GETs
+ * such as GET /vectors/{id} and GET /stats) is NOT liveness and must be
+ * authenticated when no api_key is configured, unless the operator has
+ * explicitly opted into config.allow_unauthenticated.
+ *
+ * The allowlist is deliberately exact-match on the request path so that no
+ * data/admin endpoint can be reached by prefixing or suffixing a liveness
+ * path. Only the OPTIONS (CORS preflight) method is additionally exempt, as
+ * it carries no body and returns no data.
  */
-static int is_mutating_request(const char *url, const char *method) {
+static int is_liveness_request(const char *url, const char *method) {
     if (!url || !method) {
-        return 1;  /* Unknown -> treat as mutating (fail closed). */
+        return 0;  /* Unknown -> not liveness (fail closed). */
     }
-    /* Any non-read HTTP method mutates. */
-    if (strcmp(method, "GET") != 0 &&
-        strcmp(method, "HEAD") != 0 &&
-        strcmp(method, "OPTIONS") != 0) {
+    /* CORS preflight carries no data and needs no credential. */
+    if (strcmp(method, "OPTIONS") == 0) {
+        return 1;
+    }
+    /* Exact liveness allowlist. GET /health is the sole pure liveness probe;
+     * it returns only an aggregate status + count, no per-vector data. Match
+     * the router in rest_handlers.c (GET /health -> rest_handle_health). */
+    if (strcmp(method, "GET") == 0 && strcmp(url, "/health") == 0) {
         return 1;
     }
     return 0;
@@ -309,20 +321,25 @@ static int is_mutating_request(const char *url, const char *method) {
 /**
  * @brief Check API key authentication.
  *
- * Fail-closed policy: when no api_key is configured, mutating/administrative
- * endpoints are rejected unless config.allow_unauthenticated is set. When an
- * api_key IS configured, all endpoints require a matching key (constant-time
- * compare), regardless of the opt-in flag.
+ * Fail-closed policy: when no api_key is configured, every endpoint is denied
+ * except explicit liveness probes (GET /health and CORS preflight), unless
+ * config.allow_unauthenticated is set. This closes the leak where data GETs
+ * (GET /vectors/{id}, GET /stats) were previously served without a credential.
+ * When an api_key IS configured, all endpoints require a matching key
+ * (constant-time compare), regardless of the opt-in flag.
  */
 static int check_auth(const GV_Server *server, struct MHD_Connection *connection,
                       const char *url, const char *method) {
     if (!server->config.api_key) {
-        /* No credential configured. Read-only requests are allowed; mutating
-         * or administrative requests are denied unless explicitly opted in. */
-        if (is_mutating_request(url, method) && !server->config.allow_unauthenticated) {
-            return 0;  /* Fail closed. */
+        /* No credential configured. Deny everything except explicit liveness
+         * probes unless the operator has opted into unauthenticated access. */
+        if (server->config.allow_unauthenticated) {
+            return 1;
         }
-        return 1;
+        if (is_liveness_request(url, method)) {
+            return 1;
+        }
+        return 0;  /* Fail closed. */
     }
 
     const char *auth = MHD_lookup_connection_value(connection, MHD_HEADER_KIND, "X-API-Key");

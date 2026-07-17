@@ -53,15 +53,18 @@ static float compute_distance(const float *a, const float *b,
  * @brief Convert a raw distance value to a similarity score in [0, 1].
  *
  * The conversion depends on the distance metric:
- *   - Cosine: cosine similarity is in [-1, 1]; map to [0, 1] via (sim + 1) / 2.
+ *   - Cosine: distance_cosine returns cosine distance (1 - cos) in [0, 2];
+ *     map to similarity in [0, 1] via 1 - dist/2.
  *   - Dot product: distance returns -dot; similarity = -distance, clamped.
  *   - Euclidean/Manhattan/Hamming: similarity = 1 / (1 + distance).
  */
 static float distance_to_similarity(float dist, GV_DistanceType type) {
     switch (type) {
         case GV_DISTANCE_COSINE:
-            /* distance_cosine returns cosine similarity in [-1, 1] */
-            return (dist + 1.0f) / 2.0f;
+            /* distance_cosine returns cosine DISTANCE (1 - cos) in [0, 2].
+             * Map back to similarity in [0, 1]: identical vectors (dist 0) -> 1.0,
+             * opposite vectors (dist 2) -> 0.0. */
+            return 1.0f - dist / 2.0f;
 
         case GV_DISTANCE_DOT_PRODUCT:
             /* distance_dot_product returns -dot; higher dot = more similar */

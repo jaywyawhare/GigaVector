@@ -15,6 +15,7 @@
 #include <stdio.h>
 #include <errno.h>
 #include <pthread.h>
+#include <stdatomic.h>
 #include <time.h>
 
 #ifndef _WIN32
@@ -47,7 +48,7 @@ typedef struct {
 struct GV_ReplTransport {
     GV_ReplicationManager *mgr;
     int running;
-    int stop_requested;
+    _Atomic int stop_requested;
     GV_ReplTransportHooks hooks;
 
 #ifndef _WIN32
@@ -56,6 +57,8 @@ struct GV_ReplTransport {
     int accept_thread_started;
     pthread_t follower_thread;
     int follower_thread_started;
+    /* Guarded by conn_mutex: written by the follower thread and read/closed by
+     * the stop path. Must never be read, written, or closed without the lock. */
     int leader_fd;
     ReplConnection connections[REPL_MAX_CONNECTIONS];
     pthread_mutex_t conn_mutex;
@@ -373,7 +376,7 @@ static void repl_handle_client(GV_ReplTransport *transport, int fd) {
         return;
     }
 
-    while (!transport->stop_requested) {
+    while (!atomic_load(&transport->stop_requested)) {
         pthread_mutex_lock(&transport->conn_mutex);
         repl_flush_connection_pending(transport, &transport->connections[slot]);
         pthread_mutex_unlock(&transport->conn_mutex);
@@ -418,12 +421,12 @@ static void *repl_client_handler_thread(void *arg) {
 
 static void *repl_accept_thread_func(void *arg) {
     GV_ReplTransport *transport = (GV_ReplTransport *)arg;
-    while (!transport->stop_requested) {
+    while (!atomic_load(&transport->stop_requested)) {
         struct sockaddr_in client_addr;
         socklen_t client_len = sizeof(client_addr);
         int client_fd = accept(transport->listen_fd, (struct sockaddr *)&client_addr, &client_len);
         if (client_fd < 0) {
-            if (transport->stop_requested) break;
+            if (atomic_load(&transport->stop_requested)) break;
             usleep(100000);
             continue;
         }
@@ -457,14 +460,16 @@ static void *repl_follower_thread_func(void *arg) {
         return NULL;
     }
 
-    while (!transport->stop_requested) {
+    while (!atomic_load(&transport->stop_requested)) {
         int fd = repl_connect_host(host, port);
         if (fd < 0) {
             usleep(500000);
             continue;
         }
         repl_tune_socket(fd);
+        pthread_mutex_lock(&transport->conn_mutex);
         transport->leader_fd = fd;
+        pthread_mutex_unlock(&transport->conn_mutex);
 
         const char *node_id = replication_get_node_id(mgr);
         if (!node_id) node_id = "follower";
@@ -486,7 +491,7 @@ static void *repl_follower_thread_func(void *arg) {
         write_u64_be(catchup_payload, catchup_from);
         repl_send_message(fd, REPL_MSG_CATCHUP, 2, catchup_payload, sizeof(catchup_payload));
 
-        while (!transport->stop_requested) {
+        while (!atomic_load(&transport->stop_requested)) {
             uint8_t msg_type = 0;
             uint32_t req_id = 0;
             uint8_t *payload = NULL;
@@ -517,8 +522,18 @@ static void *repl_follower_thread_func(void *arg) {
             gv_free(payload);
         }
 
-        close(fd);
+        /*
+         * Close the leader fd exactly once. The stop path may concurrently
+         * capture-and-close leader_fd; whoever clears the sentinel first owns
+         * the close. Capture under the lock, clear it, then close outside.
+         */
+        pthread_mutex_lock(&transport->conn_mutex);
+        int own_fd = transport->leader_fd;
         transport->leader_fd = -1;
+        pthread_mutex_unlock(&transport->conn_mutex);
+        if (own_fd >= 0) {
+            close(own_fd);
+        }
         usleep(500000);
     }
     return NULL;
@@ -594,7 +609,7 @@ void repl_transport_destroy(GV_ReplTransport *transport) {
 
 int repl_transport_start(GV_ReplTransport *transport) {
     if (!transport || !transport->mgr || transport->running) return -1;
-    transport->stop_requested = 0;
+    atomic_store(&transport->stop_requested, 0);
     transport->running = 1;
 
 #ifndef _WIN32
@@ -619,7 +634,7 @@ int repl_transport_start(GV_ReplTransport *transport) {
 
 int repl_transport_stop(GV_ReplTransport *transport) {
     if (!transport || !transport->running) return 0;
-    transport->stop_requested = 1;
+    atomic_store(&transport->stop_requested, 1);
 
 #ifndef _WIN32
     if (transport->listen_fd >= 0) {
@@ -645,10 +660,19 @@ int repl_transport_stop(GV_ReplTransport *transport) {
         transport->accept_thread_started = 0;
     }
     if (transport->follower_thread_started) {
-        if (transport->leader_fd >= 0) {
-            shutdown(transport->leader_fd, SHUT_RDWR);
-            close(transport->leader_fd);
-            transport->leader_fd = -1;
+        /*
+         * Capture-and-clear leader_fd under the lock so we close it exactly
+         * once. The follower thread races to do the same; whoever clears the
+         * -1 sentinel first owns the shutdown/close, avoiding a double close
+         * of a descriptor that may have been reused by another thread.
+         */
+        pthread_mutex_lock(&transport->conn_mutex);
+        int leader_fd = transport->leader_fd;
+        transport->leader_fd = -1;
+        pthread_mutex_unlock(&transport->conn_mutex);
+        if (leader_fd >= 0) {
+            shutdown(leader_fd, SHUT_RDWR);
+            close(leader_fd);
         }
         pthread_join(transport->follower_thread, NULL);
         transport->follower_thread_started = 0;

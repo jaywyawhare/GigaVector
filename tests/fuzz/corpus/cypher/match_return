@@ -1,0 +1,1 @@
+MATCH (a:Person)-[r:KNOWS]->(b) RETURN a.name, type(r), b.name

@@ -212,6 +212,12 @@ jobs:
         timeout-minutes: 10
         run: make lib
 
+      # Feed corrupted WAL + snapshot bytes to the loaders and require a defined
+      # error (no crash / no silent-accept). A real exit code fails the build.
+      - name: Corrupt-input resilience (WAL + snapshot)
+        timeout-minutes: 10
+        run: make test-corrupt-resilience
+
       - name: Run DST oracles
         timeout-minutes: 10
         run: |

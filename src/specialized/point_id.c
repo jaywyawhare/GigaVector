@@ -12,6 +12,13 @@
 
 #include "specialized/point_id.h"
 
+#ifndef _WIN32
+#include <unistd.h>
+#else
+#include <io.h>
+#define fsync(fd) _commit(fd)
+#endif
+
 /* Constants */
 
 #define GV_POINTID_DEFAULT_CAPACITY 64
@@ -504,9 +511,18 @@ int point_id_save(const GV_PointIDMap *map, const char *filepath)
         return -1;
     }
 
+    /* Crash-atomic write: serialize to "<filepath>.tmp", fsync it, then rename
+     * over the final path.  This mirrors the main DB / posting-catalog save
+     * pattern so a crash mid-write can never leave a truncated final sidecar
+     * (which would silently corrupt chunk_id->index lookups on reload). */
+    char tmp_path[1024];
+    if (snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", filepath) >= (int)sizeof(tmp_path)) {
+        return -1;
+    }
+
     pthread_rwlock_rdlock((pthread_rwlock_t *)&map->rwlock);
 
-    FILE *fp = fopen(filepath, "wb");
+    FILE *fp = fopen(tmp_path, "wb");
     if (!fp) {
         pthread_rwlock_unlock((pthread_rwlock_t *)&map->rwlock);
         return -1;
@@ -537,13 +553,40 @@ int point_id_save(const GV_PointIDMap *map, const char *filepath)
         }
     }
 
-    fclose(fp);
+    /* Flush userspace buffers, then force the data to stable storage before the
+     * rename so the final file is never observed with a partial payload. */
+    if (fflush(fp) != 0 || fsync(fileno(fp)) != 0) {
+        goto fail;
+    }
+    if (fclose(fp) != 0) {
+        /* fp is consumed by fclose; do not fclose again. */
+        pthread_rwlock_unlock((pthread_rwlock_t *)&map->rwlock);
+        remove(tmp_path);
+        return -1;
+    }
+
+    /* Atomically publish the completed sidecar. */
+#ifndef _WIN32
+    if (rename(tmp_path, filepath) != 0) {
+        pthread_rwlock_unlock((pthread_rwlock_t *)&map->rwlock);
+        remove(tmp_path);
+        return -1;
+    }
+#else
+    if (MoveFileExA(tmp_path, filepath, MOVEFILE_REPLACE_EXISTING) == 0) {
+        pthread_rwlock_unlock((pthread_rwlock_t *)&map->rwlock);
+        remove(tmp_path);
+        return -1;
+    }
+#endif
+
     pthread_rwlock_unlock((pthread_rwlock_t *)&map->rwlock);
     return 0;
 
 fail:
     fclose(fp);
     pthread_rwlock_unlock((pthread_rwlock_t *)&map->rwlock);
+    remove(tmp_path);
     return -1;
 }
 

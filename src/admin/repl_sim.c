@@ -9,6 +9,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <pthread.h>
 
 #define REPL_SIM_MAX_MSGS 4096
 
@@ -20,6 +21,10 @@ typedef struct {
 } ReplSimMsg;
 
 struct GV_ReplSim {
+    /* Guards rng_state, faults, and the msgs queue against concurrent access
+     * from multiple transport threads (filter hooks run on worker threads).
+     * Without it the xorshift rng_state races, corrupting DST determinism. */
+    pthread_mutex_t lock;
     uint64_t rng_state;
     GV_ReplSimFaultConfig faults;
     ReplSimMsg msgs[REPL_SIM_MAX_MSGS];
@@ -50,6 +55,10 @@ static void repl_sim_free_msg(ReplSimMsg *msg) {
 GV_ReplSim *repl_sim_create(uint64_t rng_seed) {
     GV_ReplSim *sim = gv_calloc(1, sizeof(*sim));
     if (!sim) return NULL;
+    if (pthread_mutex_init(&sim->lock, NULL) != 0) {
+        gv_free(sim);
+        return NULL;
+    }
     sim->rng_state = rng_seed ? rng_seed : 0x475652454c4cULL;
     return sim;
 }
@@ -59,17 +68,22 @@ void repl_sim_destroy(GV_ReplSim *sim) {
     for (size_t i = 0; i < sim->msg_count; i++) {
         repl_sim_free_msg(&sim->msgs[i]);
     }
+    pthread_mutex_destroy(&sim->lock);
     gv_free(sim);
 }
 
 void repl_sim_set_faults(GV_ReplSim *sim, const GV_ReplSimFaultConfig *faults) {
     if (!sim || !faults) return;
+    pthread_mutex_lock(&sim->lock);
     sim->faults = *faults;
+    pthread_mutex_unlock(&sim->lock);
 }
 
 void repl_sim_heal(GV_ReplSim *sim) {
     if (!sim) return;
+    pthread_mutex_lock(&sim->lock);
     sim->faults.partitioned = 0;
+    pthread_mutex_unlock(&sim->lock);
 }
 
 static ReplSimMsg *repl_sim_find_msg(GV_ReplSim *sim, const char *follower_id, size_t *idx_out) {
@@ -99,8 +113,16 @@ static ReplSimMsg *repl_sim_find_msg(GV_ReplSim *sim, const char *follower_id, s
 int repl_sim_enqueue_wal(GV_ReplSim *sim, const char *follower_id,
                          uint64_t entry_index, const uint8_t *record, size_t record_len) {
     if (!sim || !follower_id || !record || record_len == 0) return -1;
-    if (sim->msg_count >= REPL_SIM_MAX_MSGS) return -1;
-    if (repl_sim_should_drop_enqueue(sim)) return -1;
+
+    pthread_mutex_lock(&sim->lock);
+    if (sim->msg_count >= REPL_SIM_MAX_MSGS) {
+        pthread_mutex_unlock(&sim->lock);
+        return -1;
+    }
+    if (repl_sim_should_drop_enqueue(sim)) {
+        pthread_mutex_unlock(&sim->lock);
+        return -1;
+    }
 
     ReplSimMsg *msg = &sim->msgs[sim->msg_count];
     msg->follower_id = gv_strdup(follower_id);
@@ -108,22 +130,32 @@ int repl_sim_enqueue_wal(GV_ReplSim *sim, const char *follower_id,
     msg->record = (uint8_t *)gv_alloc(record_len);
     if (!msg->follower_id || !msg->record) {
         repl_sim_free_msg(msg);
+        pthread_mutex_unlock(&sim->lock);
         return -1;
     }
     memcpy(msg->record, record, record_len);
     msg->record_len = record_len;
     sim->msg_count++;
+    pthread_mutex_unlock(&sim->lock);
     return 0;
 }
 
 int repl_sim_deliver_wal(GV_ReplSim *sim, const char *follower_id,
                          uint64_t *entry_index, uint8_t **record, size_t *record_len) {
     if (!sim || !follower_id || !entry_index || !record || !record_len) return -1;
-    if (sim->faults.partitioned) return -1;
+
+    pthread_mutex_lock(&sim->lock);
+    if (sim->faults.partitioned) {
+        pthread_mutex_unlock(&sim->lock);
+        return -1;
+    }
 
     size_t idx = 0;
     ReplSimMsg *msg = repl_sim_find_msg(sim, follower_id, &idx);
-    if (!msg) return -1;
+    if (!msg) {
+        pthread_mutex_unlock(&sim->lock);
+        return -1;
+    }
 
     if (sim->faults.drop_permille > 0 &&
         (repl_sim_rng_next(sim) % 1000U) < sim->faults.drop_permille) {
@@ -132,6 +164,7 @@ int repl_sim_deliver_wal(GV_ReplSim *sim, const char *follower_id,
             sim->msgs[idx] = sim->msgs[sim->msg_count - 1];
         }
         sim->msg_count--;
+        pthread_mutex_unlock(&sim->lock);
         return -1;
     }
 
@@ -145,6 +178,7 @@ int repl_sim_deliver_wal(GV_ReplSim *sim, const char *follower_id,
         sim->msgs[idx] = sim->msgs[sim->msg_count - 1];
     }
     sim->msg_count--;
+    pthread_mutex_unlock(&sim->lock);
     return 0;
 }
 
@@ -166,6 +200,7 @@ int repl_sim_flush_follower(GV_ReplSim *sim, const char *follower_id) {
 
 size_t repl_sim_pending_count(GV_ReplSim *sim, const char *follower_id) {
     if (!sim || !follower_id) return 0;
+    pthread_mutex_lock(&sim->lock);
     size_t n = 0;
     for (size_t i = 0; i < sim->msg_count; i++) {
         if (sim->msgs[i].follower_id &&
@@ -173,6 +208,7 @@ size_t repl_sim_pending_count(GV_ReplSim *sim, const char *follower_id) {
             n++;
         }
     }
+    pthread_mutex_unlock(&sim->lock);
     return n;
 }
 
@@ -182,12 +218,16 @@ static int repl_sim_filter_outbound(void *ctx, uint8_t msg_type,
     if (!sim || msg_type != 2 /* REPL_MSG_WAL */) return 0;
     (void)payload;
     (void)payload_len;
-    if (sim->faults.partitioned) return -1;
-    if (sim->faults.drop_permille > 0 &&
-        (repl_sim_rng_next(sim) % 1000U) < sim->faults.drop_permille) {
-        return -1;
+    pthread_mutex_lock(&sim->lock);
+    int rc = 0;
+    if (sim->faults.partitioned) {
+        rc = -1;
+    } else if (sim->faults.drop_permille > 0 &&
+               (repl_sim_rng_next(sim) % 1000U) < sim->faults.drop_permille) {
+        rc = -1;
     }
-    return 0;
+    pthread_mutex_unlock(&sim->lock);
+    return rc;
 }
 
 static int repl_sim_filter_inbound(void *ctx, uint8_t msg_type,
@@ -196,12 +236,16 @@ static int repl_sim_filter_inbound(void *ctx, uint8_t msg_type,
     if (!sim || msg_type != 2) return 0;
     (void)payload;
     (void)payload_len;
-    if (sim->faults.partitioned) return -1;
-    if (sim->faults.drop_permille > 0 &&
-        (repl_sim_rng_next(sim) % 1000U) < sim->faults.drop_permille) {
-        return -1;
+    pthread_mutex_lock(&sim->lock);
+    int rc = 0;
+    if (sim->faults.partitioned) {
+        rc = -1;
+    } else if (sim->faults.drop_permille > 0 &&
+               (repl_sim_rng_next(sim) % 1000U) < sim->faults.drop_permille) {
+        rc = -1;
     }
-    return 0;
+    pthread_mutex_unlock(&sim->lock);
+    return rc;
 }
 
 GV_ReplTransportHooks repl_sim_transport_hooks(GV_ReplSim *sim) {

@@ -196,6 +196,7 @@ int recommend_by_vector(const GV_Database *db,
     int result_count = convert_results(db, search_res, found,
                                        NULL, 0,
                                        k, results);
+    gv_search_results_free(search_res, (size_t)found);
     gv_free(search_res);
     return result_count;
 }
@@ -347,6 +348,7 @@ int recommend_by_id(const GV_Database *db,
     int result_count = convert_results(db, search_res, found,
                                        exclude_ids, exclude_count,
                                        k, results);
+    gv_search_results_free(search_res, (size_t)found);
     gv_free(search_res);
     gv_free(exclude_ids);
     return result_count;
@@ -403,6 +405,7 @@ int recommend_discover(const GV_Database *db,
     int result_count = convert_results(db, search_res, found,
                                        NULL, 0,
                                        k, results);
+    gv_search_results_free(search_res, (size_t)found);
     gv_free(search_res);
     return result_count;
 }

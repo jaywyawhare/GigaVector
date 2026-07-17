@@ -145,7 +145,7 @@ int main(int argc, char **argv) {
         }
 
         GV_PostingSegmentParams sq8 = { .payload_type = GV_POSTING_PAYLOAD_SQ8 };
-        if (posting_segment_encode_ex(0, 1, &pe, 1, 4, 4096, &sq8, &seg, &seg_len) == 0 && seg) {
+        if (posting_segment_encode_ex(0, 1, &pe, 1, 4, 4096, &sq8, 0, &seg, &seg_len) == 0 && seg) {
             char sq8_path[512];
             snprintf(sq8_path, sizeof(sq8_path),
                      "%s/tests/fuzz/corpus/posting/valid_sq8_segment.bin", root);

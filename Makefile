@@ -124,6 +124,14 @@ test-corrupt-wal: $(BIN_DIR)/main
 test-corrupt-snapshot: $(BIN_DIR)/main
 	@bash $(TEST_DIR)/corrupt_snapshot.sh $(DATA_DIR)/database.bin || true
 
+# Corrupt-input resilience: feed corrupted WAL + snapshot bytes to the loaders
+# and assert they return a defined error (no crash). Real exit code — a crash or
+# silent-accept fails the build (unlike the descriptive scripts above).
+.PHONY: test-corrupt-resilience
+test-corrupt-resilience: lib $(BUILD_DIR)/storage/test_corrupt_resilience$(EXE_EXT)
+	@echo "Running corrupt-WAL / corrupt-snapshot resilience check..."
+	@LD_LIBRARY_PATH=$(LIB_DIR):$$LD_LIBRARY_PATH $(BUILD_DIR)/storage/test_corrupt_resilience
+
 .PHONY: bench-ivfpq-suite
 bench-ivfpq-suite: $(BENCH_DIR)/benchmark_ivfpq $(BENCH_DIR)/benchmark_ivfpq_recall
 	@BIN_DIR=$(BENCH_DIR) bash $(TEST_DIR)/ivfpq_suite.sh
@@ -303,8 +311,8 @@ test-coverage-html: test-coverage
 # --- libFuzzer targets (clang + -fsanitize=fuzzer) ---
 FUZZ_DIR := $(BUILD_DIR)/fuzz
 FUZZ_CC  := $(shell command -v clang 2>/dev/null)
-FUZZ_CFLAGS := -O1 -g -Wall -Wextra -Iinclude -fsanitize=fuzzer,address -DFUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
-FUZZ_LDFLAGS := -fsanitize=fuzzer,address -L$(LIB_DIR) -l$(LIB_NAME) -lm -pthread -Wl,-rpath,$(abspath $(LIB_DIR))
+FUZZ_CFLAGS := -O1 -g -Wall -Wextra -Iinclude -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=undefined -DFUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
+FUZZ_LDFLAGS := -fsanitize=fuzzer,address,undefined -L$(LIB_DIR) -l$(LIB_NAME) -lm -pthread -Wl,-rpath,$(abspath $(LIB_DIR))
 
 .PHONY: fuzz fuzz-run fuzz-corpus
 fuzz: lib
@@ -323,6 +331,7 @@ endif
 	$(FUZZ_CC) $(FUZZ_CFLAGS) tests/fuzz/fuzz_json.c $(FUZZ_LDFLAGS) -o $(FUZZ_DIR)/fuzz_json
 	$(FUZZ_CC) $(FUZZ_CFLAGS) tests/fuzz/fuzz_filter_expr.c $(FUZZ_LDFLAGS) -o $(FUZZ_DIR)/fuzz_filter_expr
 	$(FUZZ_CC) $(FUZZ_CFLAGS) tests/fuzz/fuzz_sql.c $(FUZZ_LDFLAGS) -o $(FUZZ_DIR)/fuzz_sql
+	$(FUZZ_CC) $(FUZZ_CFLAGS) tests/fuzz/fuzz_cypher.c $(FUZZ_LDFLAGS) -o $(FUZZ_DIR)/fuzz_cypher
 	@echo "Built fuzzers in $(FUZZ_DIR)"
 
 fuzz-run: export LSAN_OPTIONS = suppressions=$(abspath tests/fuzz/lsan.supp)
@@ -352,6 +361,9 @@ fuzz-run: fuzz
 	@echo "Running fuzz_sql..."
 	@mkdir -p tests/fuzz/corpus/sql
 	@$(FUZZ_DIR)/fuzz_sql tests/fuzz/corpus/sql -max_total_time=30 -rss_limit_mb=512 -print_final_stats=1
+	@echo "Running fuzz_cypher..."
+	@mkdir -p tests/fuzz/corpus/cypher
+	@$(FUZZ_DIR)/fuzz_cypher tests/fuzz/corpus/cypher -max_total_time=30 -rss_limit_mb=512 -print_final_stats=1
 
 fuzz-corpus: lib
 	@bash tests/fuzz/gen_corpus.sh

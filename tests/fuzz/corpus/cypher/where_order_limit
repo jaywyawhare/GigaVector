@@ -1,0 +1,1 @@
+MATCH (n:Person) WHERE n.name = 'Alice' RETURN n.name ORDER BY n.name LIMIT 5

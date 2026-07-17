@@ -891,8 +891,27 @@ int gv_ivfpq_search(void *index_ptr, const GV_Vector *query, size_t k,
     size_t result_count = (found < k) ? found : k;
     for (size_t i = 0; i < result_count; ++i) {
         results[i].distance = bestd[i];
-        results[i].vector = beste[i] ? beste[i]->vector : NULL;
         results[i].id = beste[i] ? beste[i]->vector_index : 0;
+
+        /* Return an OWNED deep copy so callers can free result vectors without
+         * touching the index-owned vectors (which are freed in gv_ivfpq_destroy).
+         * Mirrors flat.c / ivfflat.c: copy data + metadata, NULL on alloc failure. */
+        if (beste[i] && beste[i]->vector && beste[i]->vector->data) {
+            GV_Vector *copy = vector_create_from_data(beste[i]->vector->dimension,
+                                                      beste[i]->vector->data);
+            if (copy) {
+                GV_Metadata *meta = beste[i]->vector->metadata;
+                while (meta) {
+                    if (meta->key && meta->value) {
+                        vector_set_metadata(copy, meta->key, meta->value);
+                    }
+                    meta = meta->next;
+                }
+            }
+            results[i].vector = copy;
+        } else {
+            results[i].vector = NULL;
+        }
     }
 
     if (probe_ids != probe_ids_stack) gv_free(probe_ids);
@@ -1371,7 +1390,24 @@ int gv_ivfpq_range_search(void *index_ptr, const GV_Vector *query, float radius,
                 dist = distance(query, candidates[i].vector, cosine ? GV_DISTANCE_COSINE : GV_DISTANCE_EUCLIDEAN);
             }
             if (dist <= radius) {
-                results[result_count].vector = candidates[i].vector;
+                /* Return an OWNED deep copy (see main search path); callers free
+                 * result vectors, so we must not hand back index-owned pointers. */
+                GV_Vector *src = candidates[i].vector;
+                if (src && src->data) {
+                    GV_Vector *copy = vector_create_from_data(src->dimension, src->data);
+                    if (copy) {
+                        GV_Metadata *meta = src->metadata;
+                        while (meta) {
+                            if (meta->key && meta->value) {
+                                vector_set_metadata(copy, meta->key, meta->value);
+                            }
+                            meta = meta->next;
+                        }
+                    }
+                    results[result_count].vector = copy;
+                } else {
+                    results[result_count].vector = NULL;
+                }
                 results[result_count].distance = dist;
                 results[result_count].id = candidates[i].entry ? candidates[i].entry->vector_index : 0;
                 result_count++;

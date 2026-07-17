@@ -73,6 +73,71 @@ static inline int gv_test_mkstemp(char *buf, size_t size, const char *stem) {
 #endif
 }
 
+/*
+ * Recursively remove a directory tree (or a single file). Portable: uses a
+ * manual directory walk (readdir + unlink/rmdir) on POSIX and FindFirstFile on
+ * Windows. Best-effort — ignores errors so it is safe to call in test teardown
+ * even if the path is already gone. Returns 0 on success, -1 on failure.
+ */
+#ifdef _WIN32
+#include <windows.h>
+static inline int gv_test_rmrf(const char *path) {
+    if (path == NULL || !*path) return 0;
+
+    DWORD attr = GetFileAttributesA(path);
+    if (attr == INVALID_FILE_ATTRIBUTES) return 0; /* already gone */
+    if (!(attr & FILE_ATTRIBUTE_DIRECTORY)) {
+        return DeleteFileA(path) ? 0 : -1;
+    }
+
+    char pattern[1024];
+    snprintf(pattern, sizeof(pattern), "%s\\*", path);
+    WIN32_FIND_DATAA fd;
+    HANDLE h = FindFirstFileA(pattern, &fd);
+    int rc = 0;
+    if (h != INVALID_HANDLE_VALUE) {
+        do {
+            if (strcmp(fd.cFileName, ".") == 0 || strcmp(fd.cFileName, "..") == 0)
+                continue;
+            char child[1024];
+            snprintf(child, sizeof(child), "%s\\%s", path, fd.cFileName);
+            if (gv_test_rmrf(child) != 0) rc = -1;
+        } while (FindNextFileA(h, &fd));
+        FindClose(h);
+    }
+    if (!RemoveDirectoryA(path)) rc = -1;
+    return rc;
+}
+#else
+#include <dirent.h>
+static inline int gv_test_rmrf(const char *path) {
+    if (path == NULL || !*path) return 0;
+
+    struct stat st;
+    if (lstat(path, &st) != 0) return 0; /* already gone */
+    if (!S_ISDIR(st.st_mode)) {
+        return unlink(path);
+    }
+
+    DIR *d = opendir(path);
+    int rc = 0;
+    if (d != NULL) {
+        struct dirent *ent;
+        while ((ent = readdir(d)) != NULL) {
+            if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0)
+                continue;
+            char child[1024];
+            int n = snprintf(child, sizeof(child), "%s/%s", path, ent->d_name);
+            if (n < 0 || (size_t)n >= sizeof(child)) { rc = -1; continue; }
+            if (gv_test_rmrf(child) != 0) rc = -1;
+        }
+        closedir(d);
+    }
+    if (rmdir(path) != 0) rc = -1;
+    return rc;
+}
+#endif
+
 static inline void gv_test_remove_db(const char *path) {
     if (path == NULL || !*path) {
         return;

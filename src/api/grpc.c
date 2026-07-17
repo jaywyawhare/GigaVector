@@ -1101,16 +1101,38 @@ static void handle_ivfdisk_train(GV_GrpcServer *server, int fd,
 
     uint32_t count = read_u32_be(msg->payload);
     uint32_t dimension = read_u32_be(msg->payload + 4);
-    size_t expected = 8 + (size_t)count * (size_t)dimension * sizeof(float);
-    if (count == 0 || msg->payload_len < expected) {
-        send_error_response(fd, msg->request_id, -1, "incomplete train data");
+
+    /* Overflow-checked validation (mirrors handle_batch_add). Bound count and
+     * dimension, verify count*dimension and the subsequent *4 + 8 byte
+     * computation cannot overflow size_t, and reject a dimension mismatch
+     * BEFORE computing the expected payload length. On a 32-bit size_t an
+     * unbounded count*dimension could otherwise wrap `expected` to a small
+     * value that passes the payload_len gate while the read loop runs OOB. */
+    if (count == 0 || count > GV_GRPC_MAX_BATCH_COUNT ||
+        dimension == 0 || dimension > GV_GRPC_MAX_DIMENSION) {
+        send_error_response(fd, msg->request_id, -1, "invalid train params");
         GV_ATOMIC_INC(&server->errors);
         return;
     }
-
-    size_t total_floats = (size_t)count * (size_t)dimension;
     if (dimension != (uint32_t)server->db->dimension) {
         send_error_response(fd, msg->request_id, -1, "dimension mismatch");
+        GV_ATOMIC_INC(&server->errors);
+        return;
+    }
+    if ((size_t)dimension > SIZE_MAX / (size_t)count) {
+        send_error_response(fd, msg->request_id, -1, "train size overflow");
+        GV_ATOMIC_INC(&server->errors);
+        return;
+    }
+    size_t total_floats = (size_t)count * (size_t)dimension;
+    if (total_floats > (SIZE_MAX - 8) / sizeof(float)) {
+        send_error_response(fd, msg->request_id, -1, "train size overflow");
+        GV_ATOMIC_INC(&server->errors);
+        return;
+    }
+    size_t expected = 8 + total_floats * sizeof(float);
+    if (msg->payload_len < expected) {
+        send_error_response(fd, msg->request_id, -1, "incomplete train data");
         GV_ATOMIC_INC(&server->errors);
         return;
     }

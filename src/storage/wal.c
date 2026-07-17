@@ -105,9 +105,29 @@ static void wal_vec_scratch_release(WalVecScratch *rec) {
     gv_tls_arena_reset();
 }
 
-static int wal_vec_read_body(FILE *f, uint32_t expected_dim, WalVecScratch *rec) {
+/*
+ * Reads a vector record body. On failure returns -1 and, via *short_read,
+ * distinguishes the failure mode so the caller can classify it correctly:
+ *   *short_read = 1  -> a true short read (EOF / truncated file). The record is
+ *                       a torn trailing record and the caller may safely stop.
+ *   *short_read = 0  -> a validation failure (bad dim, oversized meta_count, or
+ *                       a bad embedded string length). The bytes present are
+ *                       structurally invalid, so this is corruption, NOT a torn
+ *                       tail; the caller must run the "is there more data after
+ *                       this record?" check before deciding to truncate.
+ * *short_read is only meaningful when the function returns -1.
+ */
+static int wal_vec_read_body(FILE *f, uint32_t expected_dim, WalVecScratch *rec,
+                             int *short_read) {
+    if (short_read != NULL) *short_read = 1;
     memset(rec, 0, sizeof(*rec));
-    if (read_u32(f, &rec->dim) != 0 || rec->dim != expected_dim) {
+    if (read_u32(f, &rec->dim) != 0) {
+        /* Could not even read the dim field -> truncated. */
+        return -1;
+    }
+    if (rec->dim != expected_dim) {
+        /* Dim field is present but wrong -> validation failure (corruption). */
+        if (short_read != NULL) *short_read = 0;
         return -1;
     }
     rec->buf = (float *)wal_scratch_alloc((size_t)rec->dim * sizeof(float), &rec->buf_on_heap);
@@ -123,6 +143,8 @@ static int wal_vec_read_body(FILE *f, uint32_t expected_dim, WalVecScratch *rec)
         return -1;
     }
     if (rec->meta_count > 65536u) {
+        /* meta_count field is present but implausibly large -> corruption. */
+        if (short_read != NULL) *short_read = 0;
         wal_vec_scratch_release(rec);
         return -1;
     }
@@ -680,8 +702,9 @@ int wal_replay(const char *path, size_t expected_dimension,
                 return -1;
             }
             WalVecScratch rec;
-            if (wal_vec_read_body(f, (uint32_t)expected_dimension, &rec) != 0) {
-                if (wal_is_torn_tail(f, record_start, 1)) break;
+            int body_short = 1;
+            if (wal_vec_read_body(f, (uint32_t)expected_dimension, &rec, &body_short) != 0) {
+                if (wal_is_torn_tail(f, record_start, body_short)) break;
                 fclose(f);
                 return -1;
             }
@@ -724,8 +747,9 @@ int wal_replay(const char *path, size_t expected_dimension,
         if (type == GV_WAL_TYPE_INSERT) {
             gv_tls_arena_reset();
             WalVecScratch rec;
-            if (wal_vec_read_body(f, (uint32_t)expected_dimension, &rec) != 0) {
-                if (wal_is_torn_tail(f, record_start, 1)) break;
+            int body_short = 1;
+            if (wal_vec_read_body(f, (uint32_t)expected_dimension, &rec, &body_short) != 0) {
+                if (wal_is_torn_tail(f, record_start, body_short)) break;
                 fclose(f);
                 return -1;
             }
@@ -934,8 +958,9 @@ int wal_replay_rich(const char *path, size_t expected_dimension,
                 return -1;
             }
             WalVecScratch rec;
-            if (wal_vec_read_body(f, (uint32_t)expected_dimension, &rec) != 0) {
-                if (wal_is_torn_tail(f, record_start, 1)) break;
+            int body_short = 1;
+            if (wal_vec_read_body(f, (uint32_t)expected_dimension, &rec, &body_short) != 0) {
+                if (wal_is_torn_tail(f, record_start, body_short)) break;
                 fclose(f);
                 return -1;
             }
@@ -984,8 +1009,9 @@ int wal_replay_rich(const char *path, size_t expected_dimension,
         if (type == GV_WAL_TYPE_INSERT) {
             gv_tls_arena_reset();
             WalVecScratch rec;
-            if (wal_vec_read_body(f, (uint32_t)expected_dimension, &rec) != 0) {
-                if (wal_is_torn_tail(f, record_start, 1)) break;
+            int body_short = 1;
+            if (wal_vec_read_body(f, (uint32_t)expected_dimension, &rec, &body_short) != 0) {
+                if (wal_is_torn_tail(f, record_start, body_short)) break;
                 fclose(f);
                 return -1;
             }
@@ -1089,7 +1115,7 @@ int wal_dump(const char *path, size_t expected_dimension, uint32_t expected_inde
         if (type == GV_WAL_TYPE_INSERT) {
             gv_tls_arena_reset();
             WalVecScratch rec;
-            if (wal_vec_read_body(f, (uint32_t)expected_dimension, &rec) != 0) {
+            if (wal_vec_read_body(f, (uint32_t)expected_dimension, &rec, NULL) != 0) {
                 fclose(f);
                 return -1;
             }
