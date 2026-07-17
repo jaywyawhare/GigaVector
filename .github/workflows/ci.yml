@@ -288,3 +288,28 @@ jobs:
         with:
           name: cppcheck-report
           path: cppcheck-report.txt
+
+  # ── Strict-warnings build (-Werror, Linux only) ─────────────────────────
+  strict-warnings:
+    name: strict warnings (-Werror)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4.2.2
+
+      - name: Install dependencies
+        timeout-minutes: 10
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            libcurl4-openssl-dev \
+            libssl-dev \
+            libmicrohttpd-dev
+
+      # Builds the library with -Werror on top of -Wall -Wextra so any NEW
+      # warning fails CI. Opt-in target; not part of the default build.
+      - name: Build library with -Werror
+        timeout-minutes: 10
+        run: make strict

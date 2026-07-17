@@ -1167,6 +1167,10 @@ GV_Database *gv_replication_route_read(GV_ReplicationManager *mgr) {
   return replication_route_read(mgr);
 }
 
+int gv_replication_release_read(GV_ReplicationManager *mgr, GV_Database *db) {
+  return replication_release_read(mgr, db);
+}
+
 int gv_replication_set_max_read_lag(GV_ReplicationManager *mgr,
                                     uint64_t max_lag) {
   return replication_set_max_read_lag(mgr, max_lag);

@@ -912,7 +912,8 @@ static size_t cy_list_split(const char *s, char ***out) {
         e[n] = (char *)gv_alloc(l + 1);
         if (!e[n]) { for (size_t i = 0; i < n; i++) gv_free(e[i]); gv_free(e); return 0; }
         memcpy(e[n], p, l); e[n][l] = 0; n++;
-        if (!q) break; p = q + 1;
+        if (!q) break;
+        p = q + 1;
     }
     *out = e; return n;
 }
@@ -927,7 +928,8 @@ static char *cy_map_get(const char *s, const char *key) {
         const char *pe = strchr(kv + 1, CY_MPAIR);
         size_t vl = pe ? (size_t)(pe - (kv + 1)) : strlen(kv + 1);
         if (strlen(key) == kl && strncmp(p, key, kl) == 0) { char *r = gv_alloc(vl + 1); memcpy(r, kv + 1, vl); r[vl] = 0; return r; }
-        if (!pe) break; p = pe + 1;
+        if (!pe) break;
+        p = pe + 1;
     }
     return gv_dup_cstr("");
 }
@@ -969,7 +971,8 @@ static char *cy_finalize(char *v) {
             if (!first) { r[w++] = ','; r[w++] = ' '; } first = 0;
             memcpy(r + w, p, kl); w += kl; r[w++] = ':'; r[w++] = ' ';
             memcpy(r + w, kv + 1, vl); w += vl;
-            if (!pe) break; p = pe + 1;
+            if (!pe) break;
+            p = pe + 1;
         }
         r[w++] = '}'; r[w] = 0; gv_free(v); return r;
     }
@@ -1198,7 +1201,8 @@ static int eval_expr(GV_KnowledgeGraph *kg, const Expr *e, const Row *row) {
                 if (cy_is_list(bv)) {
                     char **el; size_t n = cy_list_split(bv, &el);
                     for (size_t i = 0; i < n && !res; i++) if (cmp_vals(a, el[i]) == 0) res = 1;
-                    for (size_t i = 0; i < n; i++) gv_free(el[i]); gv_free(el);
+                    for (size_t i = 0; i < n; i++) gv_free(el[i]);
+                    gv_free(el);
                 } else res = (cmp_vals(a, bv) == 0);
                 gv_free(bv); gv_free(a); return res;
             }
@@ -1651,7 +1655,8 @@ static int run(GV_CypherEngine *eng, Lex *lx, GV_CypherResult *res) {
                 } else {
                     for (size_t k = 0; k < ne; k++) { Row rw = row_copy(&src->r[i]); row_bind_val(&rw, uvar, el[k]); rs_add(&nr, rw); }
                 }
-                for (size_t k = 0; k < ne; k++) gv_free(el[k]); gv_free(el); gv_free(lv);
+                for (size_t k = 0; k < ne; k++) gv_free(el[k]);
+                gv_free(el); gv_free(lv);
             }
             if (own) rs_free(&seed);
             rs_free(&rows); rows = nr;
@@ -1692,7 +1697,8 @@ static int run(GV_CypherEngine *eng, Lex *lx, GV_CypherResult *res) {
                             Bind *b = row_find(&rows.r[i], wopd[c].var);
                             if (b) { if (b->is_rel) row_bind_rel(&nwr, b->var, b->pred);
                                      else if (b->is_val) row_bind_val(&nwr, b->var, b->pred);
-                                     else row_bind_node(&nwr, b->var, b->id); continue; }
+                                     else row_bind_node(&nwr, b->var, b->id);
+                                     continue; }
                         }
                         char *v = val_of(eng->kg, &wopd[c], &rows.r[i]);
                         const char *nm = walias[c] ? walias[c] : wopd[c].var ? wopd[c].var : "expr";
@@ -1730,7 +1736,8 @@ static int run(GV_CypherEngine *eng, Lex *lx, GV_CypherResult *res) {
                             char **el = NULL; size_t ne = 0;
                             for (size_t i = 0; i < rows.n; i++) if (grp[i]==gi) { el = (char**)gv_realloc(el,(ne+1)*sizeof(char*)); el[ne++] = val_of(eng->kg,&wopd[c],&rows.r[i]); }
                             char *enc = cy_list_encode(el, ne); row_bind_val(&nwr, nm, enc); gv_free(enc);
-                            for (size_t i=0;i<ne;i++) gv_free(el[i]); gv_free(el);
+                            for (size_t i=0;i<ne;i++) gv_free(el[i]);
+                            gv_free(el);
                         } else { double acc=0,mn=0,mx=0; size_t cn=0;
                             for (size_t i = 0; i < rows.n; i++) if (grp[i]==gi) { char *v=val_of(eng->kg,&wopd[c],&rows.r[i]); double d; if(is_num(v,&d)){ if(!cn){mn=mx=d;} else { if(d<mn)mn=d; if(d>mx)mx=d;} acc+=d; cn++; } gv_free(v); }
                             double ov = wagg[c]==AG_SUM?acc : wagg[c]==AG_AVG?(cn?acc/cn:0) : wagg[c]==AG_MIN?mn:mx;
@@ -1739,7 +1746,8 @@ static int run(GV_CypherEngine *eng, Lex *lx, GV_CypherResult *res) {
                     }
                     rs_add(&nr, nwr);
                 }
-                for (size_t i = 0; i < ng; i++) gv_free(gkey[i]); gv_free(gkey); gv_free(grp);
+                for (size_t i = 0; i < ng; i++) gv_free(gkey[i]);
+                gv_free(gkey); gv_free(grp);
             }
             rs_free(&rows); rows = nr;
             for (size_t i = 0; i < nw2; i++) { opd_clear(&wopd[i]); gv_free(walias[i]); }

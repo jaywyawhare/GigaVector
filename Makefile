@@ -76,6 +76,19 @@ $(BIN_DIR)/main: $(MAIN_OBJ) $(STATIC_LIB)
 .PHONY: lib
 lib: $(STATIC_LIB) $(SHARED_LIB)
 
+# Strict-warnings build: compile the library with -Werror on top of the existing
+# -Wall -Wextra so any NEW warning fails the build. Opt-in only (NOT the default
+# build), since pre-existing warnings elsewhere would otherwise break `make`.
+# Wired into CI as its own job.
+.PHONY: strict
+# -Wmaybe-uninitialized is excluded from -Werror: it is a well-known false-positive
+# source under -O2/-O3 (e.g. cypher.c run() where `no` is provably initialized to 0).
+strict: CFLAGS += -Werror -Wno-error=maybe-uninitialized
+strict:
+	@$(MAKE) clean
+	@$(MAKE) CFLAGS="$(CFLAGS)" lib
+	@echo "Strict-warnings build passed (-Werror -Wall -Wextra)"
+
 $(STATIC_LIB): $(LIB_OBJS)
 	@mkdir -p $(LIB_DIR)
 	ar rcs $@ $^
@@ -208,6 +221,7 @@ test-asan:
 	@echo "Running tests with AddressSanitizer..."
 	@for test in $(TEST_BINS); do \
 		echo "Running $$test with ASAN..."; \
+		ASAN_OPTIONS=detect_leaks=1 \
 		LD_LIBRARY_PATH=$(LIB_DIR):$$LD_LIBRARY_PATH $$test || exit 1; \
 	done
 	@echo "All ASAN tests passed"
@@ -234,6 +248,7 @@ test-ubsan:
 	@echo "Running tests with UndefinedBehaviorSanitizer..."
 	@for test in $(TEST_BINS); do \
 		echo "Running $$test with UBSAN..."; \
+		UBSAN_OPTIONS=halt_on_error=1 \
 		LD_LIBRARY_PATH=$(LIB_DIR):$$LD_LIBRARY_PATH $$test || exit 1; \
 	done
 	@echo "All UBSAN tests passed"
@@ -269,19 +284,19 @@ test-valgrind: lib $(BUILD_DIR)/storage/test_db
 # bound runtime.
 # Curated to binaries that are valgrind-clean today so the gate is meaningful
 # and green: any NEW leak fails CI.
-#   test_flat / test_corrupt_resilience are now clean and gated:
+#   test_flat / test_corrupt_resilience are clean and gated:
 #     - test_flat: tests free their owned search results (gv_search_results_free).
 #     - test_corrupt_resilience: the db_open_from_memory corrupt/truncated-input
 #       error paths now fully tear down the partially-built db.
-#   test_hnsw / test_db are NOT yet gated: they still hit a pre-existing LIBRARY
-#   leak in db_add_vector (database.c) — for the HNSW/IVFPQ/IVFFLAT/IVFSQ8/
-#   IVFTURBOQUANT index families, db_add_vector allocates a GV_Vector shell whose
-#   data is copied into soa_storage by *_insert(), but (unlike flat/pq/lsh/rabitq
-#   inserts) the shell is never freed on success. Add them here once that library
-#   ownership bug is fixed.
+#   test_db / test_hnsw are now gated too: the former db_add_vector HNSW-family
+#   GV_Vector-shell leak (data copied into soa_storage but the shell never freed
+#   on success for the HNSW/IVFPQ/IVFFLAT/IVFSQ8/IVFTURBOQUANT index families) is
+#   FIXED, and the whole suite is valgrind-clean.
 VALGRIND_CORE_TESTS := \
 	index/test_flat \
 	storage/test_corrupt_resilience \
+	storage/test_db \
+	index/test_hnsw \
 	index/test_ivfpq \
 	features/test_recommend \
 	search/test_group_search \
@@ -319,10 +334,13 @@ test-valgrind-core: lib $(VALGRIND_CORE_BINS)
 	done
 	@echo "All curated valgrind checks passed"
 
+# test-all is a superset of everything CI runs: the C/Python suites, all three
+# sanitizers, the DST oracles, corrupt-input resilience, and the curated
+# valgrind gate. A failure in any of these fails the target (valgrind is no
+# longer swallowed).
 .PHONY: test-all
-test-all: c-test python-test-comprehensive test-asan test-tsan test-ubsan
-	@echo "Running Valgrind tests (if available)..."
-	@-$(MAKE) test-valgrind || echo "Valgrind tests skipped (configuration issue or not available)"
+test-all: c-test python-test-comprehensive test-asan test-tsan test-ubsan \
+          dst-test test-corrupt-resilience test-valgrind-core
 	@echo "All tests and sanitizers completed"
 
 .PHONY: test-coverage
@@ -405,36 +423,42 @@ endif
 	$(FUZZ_CC) $(FUZZ_CFLAGS) tests/fuzz/fuzz_cypher.c $(FUZZ_LDFLAGS) -o $(FUZZ_DIR)/fuzz_cypher
 	@echo "Built fuzzers in $(FUZZ_DIR)"
 
+# Crash / leak / oom / timeout reproducers land under build/ (via
+# -artifact_prefix) instead of polluting the repo root.
+FUZZ_CRASH_DIR := $(FUZZ_DIR)/crashes
+FUZZ_ARTIFACT_PREFIX := -artifact_prefix=$(FUZZ_CRASH_DIR)/
+
 fuzz-run: export LSAN_OPTIONS = suppressions=$(abspath tests/fuzz/lsan.supp)
 fuzz-run: fuzz
+	@mkdir -p $(FUZZ_CRASH_DIR)
 	@echo "Running fuzz_wal_apply..."
-	@$(FUZZ_DIR)/fuzz_wal_apply tests/fuzz/corpus/wal -max_total_time=30 -rss_limit_mb=512 -print_final_stats=1
+	@$(FUZZ_DIR)/fuzz_wal_apply tests/fuzz/corpus/wal $(FUZZ_ARTIFACT_PREFIX) -max_total_time=30 -rss_limit_mb=512 -print_final_stats=1
 	@echo "Running fuzz_grpc_decode..."
-	@$(FUZZ_DIR)/fuzz_grpc_decode tests/fuzz/corpus/grpc -max_total_time=30 -rss_limit_mb=512 -print_final_stats=1
+	@$(FUZZ_DIR)/fuzz_grpc_decode tests/fuzz/corpus/grpc $(FUZZ_ARTIFACT_PREFIX) -max_total_time=30 -rss_limit_mb=512 -print_final_stats=1
 	@echo "Running fuzz_grpc_frame..."
-	@$(FUZZ_DIR)/fuzz_grpc_frame tests/fuzz/corpus/grpc -max_total_time=30 -rss_limit_mb=512 -print_final_stats=1
+	@$(FUZZ_DIR)/fuzz_grpc_frame tests/fuzz/corpus/grpc $(FUZZ_ARTIFACT_PREFIX) -max_total_time=30 -rss_limit_mb=512 -print_final_stats=1
 	@echo "Running fuzz_grpc_dispatch..."
-	@$(FUZZ_DIR)/fuzz_grpc_dispatch tests/fuzz/corpus/grpc -max_total_time=30 -rss_limit_mb=512 -print_final_stats=1
+	@$(FUZZ_DIR)/fuzz_grpc_dispatch tests/fuzz/corpus/grpc $(FUZZ_ARTIFACT_PREFIX) -max_total_time=30 -rss_limit_mb=512 -print_final_stats=1
 	@echo "Running fuzz_repl_frame..."
-	@$(FUZZ_DIR)/fuzz_repl_frame tests/fuzz/corpus/repl -max_total_time=30 -rss_limit_mb=512 -print_final_stats=1
+	@$(FUZZ_DIR)/fuzz_repl_frame tests/fuzz/corpus/repl $(FUZZ_ARTIFACT_PREFIX) -max_total_time=30 -rss_limit_mb=512 -print_final_stats=1
 	@echo "Running fuzz_posting_segment..."
 	@mkdir -p tests/fuzz/corpus/posting
-	@$(FUZZ_DIR)/fuzz_posting_segment tests/fuzz/corpus/posting -max_total_time=30 -rss_limit_mb=512 -print_final_stats=1
+	@$(FUZZ_DIR)/fuzz_posting_segment tests/fuzz/corpus/posting $(FUZZ_ARTIFACT_PREFIX) -max_total_time=30 -rss_limit_mb=512 -print_final_stats=1
 	@echo "Running fuzz_wal_replay (empty seed corpus; full-file replay)..."
 	@mkdir -p tests/fuzz/corpus/wal_replay_empty
-	@$(FUZZ_DIR)/fuzz_wal_replay tests/fuzz/corpus/wal_replay_empty -runs=5000 -max_len=8192 -rss_limit_mb=512 -print_final_stats=1
+	@$(FUZZ_DIR)/fuzz_wal_replay tests/fuzz/corpus/wal_replay_empty $(FUZZ_ARTIFACT_PREFIX) -runs=5000 -max_len=8192 -rss_limit_mb=512 -print_final_stats=1
 	@echo "Running fuzz_json..."
 	@mkdir -p tests/fuzz/corpus/json
-	@$(FUZZ_DIR)/fuzz_json tests/fuzz/corpus/json -max_total_time=30 -rss_limit_mb=512 -print_final_stats=1
+	@$(FUZZ_DIR)/fuzz_json tests/fuzz/corpus/json $(FUZZ_ARTIFACT_PREFIX) -max_total_time=30 -rss_limit_mb=512 -print_final_stats=1
 	@echo "Running fuzz_filter_expr..."
 	@mkdir -p tests/fuzz/corpus/filter_expr
-	@$(FUZZ_DIR)/fuzz_filter_expr tests/fuzz/corpus/filter_expr -max_total_time=30 -rss_limit_mb=512 -print_final_stats=1
+	@$(FUZZ_DIR)/fuzz_filter_expr tests/fuzz/corpus/filter_expr $(FUZZ_ARTIFACT_PREFIX) -max_total_time=30 -rss_limit_mb=512 -print_final_stats=1
 	@echo "Running fuzz_sql..."
 	@mkdir -p tests/fuzz/corpus/sql
-	@$(FUZZ_DIR)/fuzz_sql tests/fuzz/corpus/sql -max_total_time=30 -rss_limit_mb=512 -print_final_stats=1
+	@$(FUZZ_DIR)/fuzz_sql tests/fuzz/corpus/sql $(FUZZ_ARTIFACT_PREFIX) -max_total_time=30 -rss_limit_mb=512 -print_final_stats=1
 	@echo "Running fuzz_cypher..."
 	@mkdir -p tests/fuzz/corpus/cypher
-	@$(FUZZ_DIR)/fuzz_cypher tests/fuzz/corpus/cypher -max_total_time=30 -rss_limit_mb=512 -print_final_stats=1
+	@$(FUZZ_DIR)/fuzz_cypher tests/fuzz/corpus/cypher $(FUZZ_ARTIFACT_PREFIX) -max_total_time=30 -rss_limit_mb=512 -print_final_stats=1
 
 fuzz-corpus: lib
 	@bash tests/fuzz/gen_corpus.sh

@@ -975,6 +975,7 @@ class Database:
                         out.append(SearchHit(distance=float(res.distance), vector=vec, id=int(res.id)))
             except (AttributeError, TypeError, ValueError, RuntimeError, OSError):
                 continue
+        lib.gv_search_results_free(results, n)
         return out
 
     def search_with_filter_expr(self, query: Sequence[float], k: int,
@@ -1011,6 +1012,7 @@ class Database:
                                      vector=_copy_sparse_vector(res.sparse_vector, self.dimension), id=int(res.id)))
             elif not res.is_sparse and res.vector != ffi.NULL:
                 out.append(SearchHit(distance=float(res.distance), vector=_copy_vector(res.vector), id=int(res.id)))
+        lib.gv_search_results_free(results, n)
         return out
 
     def add_sparse_vector(self, indices: Sequence[int], values: Sequence[float],
@@ -1093,6 +1095,7 @@ class Database:
                                      vector=_copy_sparse_vector(res.sparse_vector, self.dimension), id=int(res.id)))
             elif not res.is_sparse and res.vector != ffi.NULL:
                 out.append(SearchHit(distance=float(res.distance), vector=_copy_vector(res.vector), id=int(res.id)))
+        lib.gv_search_results_free(results, n)
         return out
 
     def search_batch(self, queries: Iterable[Sequence[float]], k: int,
@@ -1119,6 +1122,7 @@ class Database:
                 if res.vector != ffi.NULL:
                     hits.append(SearchHit(distance=float(res.distance), vector=_copy_vector(res.vector), id=int(res.id)))
             out.append(hits)
+        lib.gv_search_results_free(results, n)
         return out
 
     def search_ivfpq_opts(self, query: Sequence[float], k: int,
@@ -1138,6 +1142,7 @@ class Database:
             if res.vector != ffi.NULL:
                 vec = _copy_vector(res.vector)
                 out.append(SearchHit(distance=float(res.distance), vector=vec, id=int(res.id)))
+        lib.gv_search_results_free(results, n)
         return out
 
     def record_latency(self, latency_us: int, is_insert: bool) -> None:
@@ -1269,6 +1274,7 @@ class Database:
             res = results[i]
             if res.vector != ffi.NULL:
                 out.append(SearchHit(distance=float(res.distance), vector=_copy_vector(res.vector), id=int(res.id)))
+        lib.gv_search_results_free(results, n)
         return out
 
     def export_json(self, filepath: str) -> int:
@@ -3993,7 +3999,9 @@ class Namespace:
         n = lib.gv_namespace_search(self._ns, query_buf, k, results, int(distance))
         if n < 0:
             raise RuntimeError("Namespace search failed")
-        return [SearchHit(distance=float(results[i].distance), vector=_copy_vector(results[i].vector), id=int(results[i].id)) for i in range(n)]
+        out = [SearchHit(distance=float(results[i].distance), vector=_copy_vector(results[i].vector), id=int(results[i].id)) for i in range(n)]
+        lib.gv_search_results_free(results, n)
+        return out
 
     def delete_vector(self, index: int) -> None:
         if lib.gv_namespace_delete_vector(self._ns, index) != 0:

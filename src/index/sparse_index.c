@@ -551,6 +551,30 @@ int sparse_index_delete(GV_SparseIndex *index, size_t vector_index) {
     return 0;
 }
 
+int sparse_index_set_metadata(GV_SparseIndex *index, size_t vector_index,
+                              const char *key, const char *value) {
+    if (index == NULL || key == NULL || value == NULL ||
+        vector_index >= index->count) {
+        return -1;
+    }
+    if (index->deleted != NULL && index->deleted[vector_index] != 0) {
+        return -1;
+    }
+    GV_SparseVector *sv = index->vectors[vector_index];
+    if (sv == NULL) {
+        return -1;
+    }
+    /* Attach onto the real GV_SparseVector::metadata field via a scratch
+     * GV_Vector (see sparse_read_metadata) to avoid the type-pun that would
+     * corrupt the ::entries slot. */
+    GV_Vector meta_holder = { 0, NULL, sv->metadata };
+    if (vector_set_metadata(&meta_holder, key, value) != 0) {
+        return -1;
+    }
+    sv->metadata = meta_holder.metadata;
+    return 0;
+}
+
 int sparse_index_update(GV_SparseIndex *index, size_t vector_index, GV_SparseVector *new_vector) {
     if (index == NULL || new_vector == NULL || vector_index >= index->count) {
         return -1;

@@ -46,15 +46,22 @@ gv_fault_*
 gv_live_*
 gv_grpc_ivf_*
 gv_vis_dst_*
+# libFuzzer crash-reproducer artifacts (dumped to CWD on a finding)
 oom-*
-diskann_data.bin
 crash-*
 leak-*
 timeout-*
 slow-unit-*
+# libFuzzer also writes minimized/odd byte-named reproducers to CWD; these are
+# now redirected to build/fuzz/crashes/ via -artifact_prefix, so ignore that dir.
+build/fuzz/crashes/
+
+diskann_data.bin
 tmp_test_*.bin
 tmp_test_*.bin.wal
 tmp_mmap_test.bin*
+tmp_*.bin
+test_*.db
 test_*_save.db*
 test_*_save.db.wal
 test_flat_save.db*

@@ -13,16 +13,28 @@
 #include "index/ivfflat.h"
 #include "index/pq.h"
 #include "index/lsh.h"
+#include "index/ivfpq.h"
+#include "index/ivfsq8.h"
+#include "index/ivfturboquant.h"
+#include "index/rabitq.h"
+#include "index/diskann.h"
 #include "schema/vector.h"
 #include "storage/soa_storage.h"
 
 /* Index type constants matching GV_IndexType enum used across the codebase */
-#define MIG_INDEX_KDTREE   0
-#define MIG_INDEX_HNSW     1
-#define MIG_INDEX_FLAT      4
-#define MIG_INDEX_IVFFLAT   5
-#define MIG_INDEX_PQ        6
-#define MIG_INDEX_LSH       7
+#define MIG_INDEX_KDTREE        0
+#define MIG_INDEX_HNSW          1
+#define MIG_INDEX_IVFPQ         2
+#define MIG_INDEX_SPARSE        3
+#define MIG_INDEX_FLAT          4
+#define MIG_INDEX_IVFFLAT       5
+#define MIG_INDEX_PQ            6
+#define MIG_INDEX_LSH           7
+#define MIG_INDEX_IVFSQ8        8
+#define MIG_INDEX_IVFTURBOQUANT 9
+#define MIG_INDEX_DISKANN       10
+#define MIG_INDEX_IVFDISK       11
+#define MIG_INDEX_RABITQ        12
 
 /* Batch size for progress updates and cancel checks */
 #define MIGRATION_BATCH_SIZE 100
@@ -241,6 +253,147 @@ static void *create_lsh_index(GV_Migration *mig)
                           (mig_destroy_fn)lsh_destroy, "LSH");
 }
 
+static void *create_ivfpq_index(GV_Migration *mig)
+{
+    /* Mirror database.c default IVF-PQ config. */
+    GV_IVFPQConfig cfg = {.nlist = 64, .m = 8, .nbits = 8, .nprobe = 4, .train_iters = 15};
+    const GV_IVFPQConfig *use_cfg =
+        mig->new_index_config ? (const GV_IVFPQConfig *)mig->new_index_config : &cfg;
+
+    void *index = gv_ivfpq_create(mig->dimension, use_cfg);
+    if (!index) {
+        migration_set_error(mig, "Failed to create IVF-PQ index");
+        return NULL;
+    }
+
+    if (gv_ivfpq_train(index, mig->source_data, mig->total_vectors) != 0) {
+        gv_ivfpq_destroy(index);
+        migration_set_error(mig, "Failed to train IVF-PQ index");
+        return NULL;
+    }
+
+    if (migration_is_cancelled(mig)) {
+        gv_ivfpq_destroy(index);
+        return NULL;
+    }
+
+    return populate_index(mig, index, (mig_insert_fn)gv_ivfpq_insert,
+                          (mig_destroy_fn)gv_ivfpq_destroy, "IVF-PQ");
+}
+
+static void *create_ivfsq8_index(GV_Migration *mig)
+{
+    /* Mirror database.c default IVF-SQ8 config. */
+    GV_IVFSQ8Config cfg = {
+        .nlist = 64, .nprobe = 4, .train_iters = 15, .use_cosine = 0,
+        .per_dimension = 0, .default_rerank = 200
+    };
+    const GV_IVFSQ8Config *use_cfg =
+        mig->new_index_config ? (const GV_IVFSQ8Config *)mig->new_index_config : &cfg;
+
+    void *index = ivfsq8_create(mig->dimension, use_cfg);
+    if (!index) {
+        migration_set_error(mig, "Failed to create IVF-SQ8 index");
+        return NULL;
+    }
+
+    if (ivfsq8_train(index, mig->source_data, mig->total_vectors) != 0) {
+        ivfsq8_destroy(index);
+        migration_set_error(mig, "Failed to train IVF-SQ8 index");
+        return NULL;
+    }
+
+    if (migration_is_cancelled(mig)) {
+        ivfsq8_destroy(index);
+        return NULL;
+    }
+
+    return populate_index(mig, index, (mig_insert_fn)ivfsq8_insert,
+                          (mig_destroy_fn)ivfsq8_destroy, "IVF-SQ8");
+}
+
+static void *create_ivfturboquant_index(GV_Migration *mig)
+{
+    /* Mirror database.c default IVF-TurboQuant config. */
+    GV_IVFTurboQuantConfig cfg = {
+        .nlist = 64, .nprobe = 4, .train_iters = 15, .use_cosine = 0,
+        .default_rerank = 200,
+        .turbo = {.bits = 8, .projections = mig->dimension / 4, .seed = 42,
+                  .use_qjl = 1, .rotation = GV_TURBOQUANT_ROTATION_AUTO}
+    };
+    if (cfg.turbo.projections == 0) cfg.turbo.projections = 2;
+    const GV_IVFTurboQuantConfig *use_cfg =
+        mig->new_index_config ? (const GV_IVFTurboQuantConfig *)mig->new_index_config : &cfg;
+
+    void *index = ivfturboquant_create(mig->dimension, use_cfg);
+    if (!index) {
+        migration_set_error(mig, "Failed to create IVF-TurboQuant index");
+        return NULL;
+    }
+
+    if (ivfturboquant_train(index, mig->source_data, mig->total_vectors) != 0) {
+        ivfturboquant_destroy(index);
+        migration_set_error(mig, "Failed to train IVF-TurboQuant index");
+        return NULL;
+    }
+
+    if (migration_is_cancelled(mig)) {
+        ivfturboquant_destroy(index);
+        return NULL;
+    }
+
+    return populate_index(mig, index, (mig_insert_fn)ivfturboquant_insert,
+                          (mig_destroy_fn)ivfturboquant_destroy, "IVF-TurboQuant");
+}
+
+static void *create_rabitq_index(GV_Migration *mig)
+{
+    /* Mirror database.c default RaBitQ config. Passing NULL soa_storage lets
+       RaBitQ create and own its internal storage, which its destroy frees. */
+    GV_RaBitQConfig cfg = {.seed = 42, .rerank_factor = 4};
+    const GV_RaBitQConfig *use_cfg =
+        mig->new_index_config ? (const GV_RaBitQConfig *)mig->new_index_config : &cfg;
+
+    /* RaBitQ needs no separate training step; codes are built on insert. */
+    void *index = rabitq_create(mig->dimension, use_cfg, NULL);
+    if (!index) {
+        migration_set_error(mig, "Failed to create RaBitQ index");
+        return NULL;
+    }
+    return populate_index(mig, index, (mig_insert_fn)rabitq_insert,
+                          (mig_destroy_fn)rabitq_destroy, "RaBitQ");
+}
+
+static void *create_diskann_index(GV_Migration *mig)
+{
+    /* DiskANN builds its Vamana graph in one shot from the raw source vectors
+       and uses a default on-disk data path when data_path is NULL. */
+    GV_DiskANNConfig cfg;
+    diskann_config_init(&cfg);
+    const GV_DiskANNConfig *use_cfg =
+        mig->new_index_config ? (const GV_DiskANNConfig *)mig->new_index_config : &cfg;
+
+    GV_DiskANNIndex *index = diskann_create(mig->dimension, use_cfg);
+    if (!index) {
+        migration_set_error(mig, "Failed to create DiskANN index");
+        return NULL;
+    }
+
+    if (migration_is_cancelled(mig)) {
+        diskann_destroy(index);
+        return NULL;
+    }
+
+    if (diskann_build(index, mig->source_data, mig->total_vectors, mig->dimension) != 0) {
+        diskann_destroy(index);
+        migration_set_error(mig, "Failed to build DiskANN index");
+        return NULL;
+    }
+
+    migration_update_progress(mig, mig->total_vectors);
+    return index;
+}
+
 /* migration thread entry point */
 static void *migration_thread_func(void *arg)
 {
@@ -272,6 +425,36 @@ static void *migration_thread_func(void *arg)
     case MIG_INDEX_LSH:
         new_index = create_lsh_index(mig);
         break;
+    case MIG_INDEX_IVFPQ:
+        new_index = create_ivfpq_index(mig);
+        break;
+    case MIG_INDEX_IVFSQ8:
+        new_index = create_ivfsq8_index(mig);
+        break;
+    case MIG_INDEX_IVFTURBOQUANT:
+        new_index = create_ivfturboquant_index(mig);
+        break;
+    case MIG_INDEX_RABITQ:
+        new_index = create_rabitq_index(mig);
+        break;
+    case MIG_INDEX_DISKANN:
+        new_index = create_diskann_index(mig);
+        break;
+    case MIG_INDEX_SPARSE: {
+        /* Sparse indexes operate on GV_SparseVector, not the dense float array
+           the migration path supplies. Migrating a dense source into a sparse
+           index has no well-defined semantics, so it is not supported here. */
+        migration_set_error(mig,
+            "Migration to SPARSE index not yet supported: requires sparse source vectors");
+        return NULL;
+    }
+    case MIG_INDEX_IVFDISK: {
+        /* IVFDisk requires an on-disk data directory (derived from a filepath),
+           which the in-memory migration path does not provide. */
+        migration_set_error(mig,
+            "Migration to IVFDISK index not yet supported: requires an on-disk data directory");
+        return NULL;
+    }
     default: {
         char buf[256];
         snprintf(buf, sizeof(buf), "Unsupported index type: %d", mig->new_index_type);
@@ -460,6 +643,21 @@ void migration_destroy(GV_Migration *mig)
             break;
         case MIG_INDEX_LSH:
             lsh_destroy(mig->new_index);
+            break;
+        case MIG_INDEX_IVFPQ:
+            gv_ivfpq_destroy(mig->new_index);
+            break;
+        case MIG_INDEX_IVFSQ8:
+            ivfsq8_destroy(mig->new_index);
+            break;
+        case MIG_INDEX_IVFTURBOQUANT:
+            ivfturboquant_destroy(mig->new_index);
+            break;
+        case MIG_INDEX_RABITQ:
+            rabitq_destroy(mig->new_index);
+            break;
+        case MIG_INDEX_DISKANN:
+            diskann_destroy((GV_DiskANNIndex *)mig->new_index);
             break;
         default:
             /* Unknown type -- best effort: do nothing to avoid double gv_free */

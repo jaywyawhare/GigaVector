@@ -715,6 +715,15 @@ int gv_ivfpq_search(void *index_ptr, const GV_Vector *query, size_t k,
     if (oversampled_k < k) oversampled_k = k;
     size_t rr_target = (rerank_top > 0) ? rerank_top : idx->default_rerank;
     if (rr_target > oversampled_k) oversampled_k = rr_target;
+    /* The cosine first pass is a non-residual IP approximation over the PQ
+     * reconstruction; reconstruction error (untouched here) makes it noisier
+     * than exact cosine, so widen the candidate pool to give the exact rerank
+     * enough true neighbours to recover. */
+    if (cosine) {
+        size_t cos_floor = k * 8;
+        if (cos_floor < k) cos_floor = k; /* overflow guard */
+        if (oversampled_k < cos_floor) oversampled_k = cos_floor;
+    }
 
     GV_IVFPQHeapItem heap_stack[IVFPQ_MAX_STACK_RERANK];
     GV_IVFPQHeapItem *heap = (oversampled_k <= IVFPQ_MAX_STACK_RERANK) ? heap_stack : (GV_IVFPQHeapItem *)gv_alloc(oversampled_k * sizeof(GV_IVFPQHeapItem));
@@ -739,28 +748,49 @@ int gv_ivfpq_search(void *index_ptr, const GV_Vector *query, size_t k,
         if (lid < 0) continue;
 
         const float *centroid = idx->coarse + lid * idx_dim;
-        for (size_t j = 0; j < idx_dim; ++j) {
-            qres[j] = qdata[j] - centroid[j];
+
+        /* Per-list constant term for the cosine (inner-product) LUT.
+         *
+         * Both stored vectors and the (normalized) query are unit vectors, so
+         * cosine distance = 1 - <q, v>. A vector reconstructs additively from
+         * its residual codes as  v ~= centroid + sum_m codebook_m[code_m].
+         * Inner product decomposes additively over that reconstruction:
+         *   <q, v> = <q, centroid> + sum_m <q_m, codebook_m[code_m]>.
+         * So the correct additive ADC score to MINIMIZE (dropping the constant
+         * +1) is  d = -<q, v> = -<q, centroid> - sum_m <q_m, code_m>.
+         * The -<q, centroid> part is a per-list constant included here so that
+         * candidates from different probed lists are ranked consistently; the
+         * per-subquantizer -<q_m, code_m> terms go in the LUT below (built on
+         * the NON-residual normalized query, using plain inner product — NOT
+         * the residual query and NOT a bogus per-subvector norm). */
+        float list_base = 0.0f;
+        if (cosine) {
+            for (size_t j = 0; j < idx_dim; ++j) list_base -= qdata[j] * centroid[j];
+        } else {
+            for (size_t j = 0; j < idx_dim; ++j) {
+                qres[j] = qdata[j] - centroid[j];
+            }
         }
 
-        /* Compute LUT from query residual (ADC).
-         * Use scalar L2 directly — subdim is small (4-16), runtime dispatch overhead dominates. */
+        /* Compute LUT.  L2 uses the query residual (ADC); cosine uses the
+         * non-residual normalized query with inner product (see note above).
+         * Use scalar math directly — subdim is small (4-16), runtime dispatch
+         * overhead dominates. */
         for (size_t m = 0; m < idx_m; ++m) {
             const float *cb = idx->pq + m * idx_cbsz * idx_subdim;
-            const float *subq = qres + m * idx_subdim;
             float *lut_row = lut + m * idx_cbsz;
             if (cosine) {
+                const float *subq = qdata + m * idx_subdim;
                 for (size_t c = 0; c < idx_cbsz; ++c) {
                     const float *code = cb + c * idx_subdim;
-                    float dot = 0.0f, cq = 0.0f;
+                    float dot = 0.0f;
                     for (size_t s = 0; s < idx_subdim; ++s) {
                         dot += subq[s] * code[s];
-                        cq += code[s] * code[s];
                     }
-                    float denom = sqrtf(cq);
-                    lut_row[c] = (denom > 0.0f) ? (1.0f - dot / denom) : 1.0f;
+                    lut_row[c] = -dot;
                 }
             } else {
+                const float *subq = qres + m * idx_subdim;
                 for (size_t c = 0; c < idx_cbsz; ++c) {
                     const float *code = cb + c * idx_subdim;
                     float d = 0.0f;
@@ -786,7 +816,7 @@ int gv_ivfpq_search(void *index_ptr, const GV_Vector *query, size_t k,
                     __builtin_prefetch(codes_soa + (e + 1), 0, 0);
                 }
                 const uint8_t *base = codes_soa + e;
-                float d = 0.0f;
+                float d = list_base;
                 size_t m = 0;
                 /* unroll by 4 for better ILP */
                 for (; m + 4 <= idx_m; m += 4) {
@@ -805,7 +835,7 @@ int gv_ivfpq_search(void *index_ptr, const GV_Vector *query, size_t k,
             for (size_t e = 0; e < lcount; ++e) {
                 GV_IVFPQEntry *ent = &list->entries[e];
                 if (ent->deleted != 0) continue;
-                float d = 0.0f;
+                float d = list_base;
                 size_t m = 0;
                 for (; m + 4 <= idx_m; m += 4) {
                     d += lut[(m + 0) * idx_cbsz + ent->codes[m + 0]];

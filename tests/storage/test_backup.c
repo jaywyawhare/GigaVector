@@ -143,7 +143,8 @@ static int test_header_struct(void) {
     memset(&header, 0, sizeof(header));
 
     header.version = GV_BACKUP_VERSION;
-    ASSERT(header.version == 1, "backup version should be 1");
+    ASSERT(header.version == GV_BACKUP_VERSION, "backup version matches current");
+    ASSERT(header.version >= GV_BACKUP_VERSION_MIN, "backup version >= min supported");
 
     header.vector_count = 1000;
     header.dimension = 128;

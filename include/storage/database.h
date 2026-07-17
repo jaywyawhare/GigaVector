@@ -760,7 +760,11 @@ int db_search_ivfpq_opts(const GV_Database *db, const float *query_data, size_t 
  * @param data Pointer to contiguous floats of size count * dimension.
  * @param count Number of vectors.
  * @param dimension Vector dimensionality (must match db->dimension).
- * @return 0 on success, -1 on error (no partial rollback).
+ * @return 0 if all `count` vectors were inserted. -1 on argument error or if a
+ *         mid-batch insert failed. NOTE: on a mid-batch failure the vectors
+ *         inserted before the failure are NOT rolled back and remain in the
+ *         database; callers needing the committed count should insert one at a
+ *         time (db_add_vector) to detect the exact failure point.
  */
 int db_add_vectors(GV_Database *db, const float *data, size_t count, size_t dimension);
 

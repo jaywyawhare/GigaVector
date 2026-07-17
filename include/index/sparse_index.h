@@ -108,6 +108,12 @@ int sparse_index_delete(GV_SparseIndex *index, size_t vector_index);
  */
 int sparse_index_update(GV_SparseIndex *index, size_t vector_index, GV_SparseVector *new_vector);
 
+/* Set/overwrite a single metadata key/value pair on a stored sparse vector in
+ * place (updates GV_SparseVector::metadata). Returns 0 on success, -1 on error
+ * (bad args, out-of-range or deleted vector). */
+int sparse_index_set_metadata(GV_SparseIndex *index, size_t vector_index,
+                              const char *key, const char *value);
+
 #ifdef __cplusplus
 }
 #endif

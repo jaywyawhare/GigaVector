@@ -235,6 +235,7 @@ static float tq_code_norm_sq(const GV_TurboQuantCode *code) {
 
 static float tq_qjl_inner_product(const GV_TurboQuantizer *q, const GV_TurboQuantCode *code,
                                   const float *qjl_projected) {
+    (void)q;
     if (code->projections == 0 || code->qjl_signs == NULL || qjl_projected == NULL) {
         return 0.0f;
     }

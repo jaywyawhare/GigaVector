@@ -64,6 +64,15 @@ struct GV_ReplicationManager {
     GV_MemoryLayer *follower_memories[MAX_REPLICAS];
     size_t round_robin_next;
 
+    /*
+     * Per-follower in-flight read pin count. Incremented under rwlock by
+     * replication_route_read_locked() just before a follower's GV_Database* is
+     * handed out; decremented by replication_release_read() when the caller is
+     * done. replication_remove_follower() blocks (on pin_cond) until the target
+     * slot's pin reaches 0 before freeing/reusing it, preventing use-after-free.
+     */
+    int follower_pin[MAX_REPLICAS];
+
     /* Threads */
     pthread_t replication_thread;
     int running;
@@ -72,6 +81,10 @@ struct GV_ReplicationManager {
     pthread_rwlock_t rwlock;
     pthread_mutex_t election_mutex;
     pthread_cond_t sync_cond;
+
+    /* Guards follower_pin[] transitions to zero and wakes remove_follower(). */
+    pthread_mutex_t pin_mutex;
+    pthread_cond_t pin_cond;
 
     GV_ReplTransport *transport;
     int dst_simulation_mode;
@@ -249,6 +262,27 @@ GV_ReplicationManager *replication_create(GV_Database *db, const GV_ReplicationC
         return NULL;
     }
 
+    if (pthread_mutex_init(&mgr->pin_mutex, NULL) != 0) {
+        pthread_cond_destroy(&mgr->sync_cond);
+        pthread_mutex_destroy(&mgr->election_mutex);
+        pthread_rwlock_destroy(&mgr->rwlock);
+        gv_free(mgr->node_id);
+        gv_free(mgr->leader_id);
+        gv_free(mgr);
+        return NULL;
+    }
+
+    if (pthread_cond_init(&mgr->pin_cond, NULL) != 0) {
+        pthread_mutex_destroy(&mgr->pin_mutex);
+        pthread_cond_destroy(&mgr->sync_cond);
+        pthread_mutex_destroy(&mgr->election_mutex);
+        pthread_rwlock_destroy(&mgr->rwlock);
+        gv_free(mgr->node_id);
+        gv_free(mgr->leader_id);
+        gv_free(mgr);
+        return NULL;
+    }
+
     return mgr;
 }
 
@@ -267,6 +301,8 @@ void replication_destroy(GV_ReplicationManager *mgr) {
         gv_free(mgr->replicas[i].address);
     }
 
+    pthread_cond_destroy(&mgr->pin_cond);
+    pthread_mutex_destroy(&mgr->pin_mutex);
     pthread_cond_destroy(&mgr->sync_cond);
     pthread_mutex_destroy(&mgr->election_mutex);
     pthread_rwlock_destroy(&mgr->rwlock);
@@ -429,6 +465,7 @@ int replication_add_follower(GV_ReplicationManager *mgr, const char *node_id,
 
     mgr->follower_dbs[mgr->replica_count] = NULL;
     mgr->follower_memories[mgr->replica_count] = NULL;
+    mgr->follower_pin[mgr->replica_count] = 0;
     mgr->replica_count++;
 
     pthread_rwlock_unlock(&mgr->rwlock);
@@ -438,29 +475,100 @@ int replication_add_follower(GV_ReplicationManager *mgr, const char *node_id,
 int replication_remove_follower(GV_ReplicationManager *mgr, const char *node_id) {
     if (!mgr || !node_id) return -1;
 
-    pthread_rwlock_wrlock(&mgr->rwlock);
+    /*
+     * Removal must not free/reuse a slot while a route_read() caller still holds
+     * a borrowed follower handle. We do this in two phases so we never block on
+     * the pin-drain condvar while holding the rwlock (which would deadlock the
+     * readers that need the rwlock to route/finish):
+     *
+     *   Phase 1 (rwlock): locate the slot and mark it disconnected so
+     *       replica_eligible_for_read() rejects it -> no NEW pins can be taken.
+     *   Phase 2 (pin_mutex): wait until the slot's in-flight pin count drains to
+     *       0, signalled by replication_release_read(). Then re-take the rwlock
+     *       to compact the arrays.
+     *
+     * We re-locate the node by id after the wait because the arrays could have
+     * been compacted by a concurrent removal in the interim.
+     */
+    for (;;) {
+        pthread_rwlock_wrlock(&mgr->rwlock);
 
-    for (size_t i = 0; i < mgr->replica_count; i++) {
-        if (strcmp(mgr->replicas[i].node_id, node_id) == 0) {
-            gv_free(mgr->replicas[i].node_id);
-            gv_free(mgr->replicas[i].address);
-
-            for (size_t j = i; j < mgr->replica_count - 1; j++) {
-                mgr->replicas[j] = mgr->replicas[j + 1];
-                mgr->follower_dbs[j] = mgr->follower_dbs[j + 1];
-                mgr->follower_memories[j] = mgr->follower_memories[j + 1];
+        size_t idx = mgr->replica_count;
+        for (size_t i = 0; i < mgr->replica_count; i++) {
+            if (mgr->replicas[i].node_id &&
+                strcmp(mgr->replicas[i].node_id, node_id) == 0) {
+                idx = i;
+                break;
             }
-            mgr->replica_count--;
-            mgr->follower_dbs[mgr->replica_count] = NULL;
-            mgr->follower_memories[mgr->replica_count] = NULL;
-
-            pthread_rwlock_unlock(&mgr->rwlock);
-            return 0;
         }
-    }
 
-    pthread_rwlock_unlock(&mgr->rwlock);
-    return -1;
+        if (idx == mgr->replica_count) {
+            pthread_rwlock_unlock(&mgr->rwlock);
+            return -1;
+        }
+
+        /* Prevent any new pins from being taken on this slot. */
+        mgr->replicas[idx].connected = 0;
+
+        if (mgr->follower_pin[idx] > 0) {
+            /*
+             * In-flight readers exist. Drop the rwlock (so release_read can run)
+             * and wait for the drain. release_read signals pin_cond under
+             * pin_mutex; we take pin_mutex, re-check under it, then wait.
+             */
+            pthread_rwlock_unlock(&mgr->rwlock);
+
+            pthread_mutex_lock(&mgr->pin_mutex);
+            /*
+             * Re-take the rwlock briefly to read the current pin count for this
+             * node under the pin_mutex, so we don't miss a wakeup. Order is
+             * always pin_mutex -> rwlock here; release_read never holds the
+             * rwlock while taking pin_mutex, so there is no lock-ordering cycle.
+             */
+            int draining = 1;
+            while (draining) {
+                pthread_rwlock_rdlock(&mgr->rwlock);
+                size_t cur = mgr->replica_count;
+                for (size_t i = 0; i < mgr->replica_count; i++) {
+                    if (mgr->replicas[i].node_id &&
+                        strcmp(mgr->replicas[i].node_id, node_id) == 0) {
+                        cur = i;
+                        break;
+                    }
+                }
+                int pinned = (cur < mgr->replica_count) ? mgr->follower_pin[cur] : 0;
+                pthread_rwlock_unlock(&mgr->rwlock);
+
+                if (pinned <= 0) {
+                    draining = 0;
+                } else {
+                    pthread_cond_wait(&mgr->pin_cond, &mgr->pin_mutex);
+                }
+            }
+            pthread_mutex_unlock(&mgr->pin_mutex);
+
+            /* Pins drained; loop to re-acquire the rwlock and re-locate/free. */
+            continue;
+        }
+
+        /* Pin count is 0 and no new pins possible: safe to free and compact. */
+        gv_free(mgr->replicas[idx].node_id);
+        gv_free(mgr->replicas[idx].address);
+
+        for (size_t j = idx; j < mgr->replica_count - 1; j++) {
+            mgr->replicas[j] = mgr->replicas[j + 1];
+            mgr->follower_dbs[j] = mgr->follower_dbs[j + 1];
+            mgr->follower_memories[j] = mgr->follower_memories[j + 1];
+            mgr->follower_pin[j] = mgr->follower_pin[j + 1];
+        }
+        mgr->replica_count--;
+        mgr->follower_dbs[mgr->replica_count] = NULL;
+        mgr->follower_memories[mgr->replica_count] = NULL;
+        mgr->follower_pin[mgr->replica_count] = 0;
+
+        pthread_rwlock_unlock(&mgr->rwlock);
+        return 0;
+    }
 }
 
 int replication_list_replicas(GV_ReplicationManager *mgr, GV_ReplicaInfo **replicas,
@@ -761,12 +869,21 @@ static int replica_eligible_for_read(const GV_ReplicationManager *mgr, size_t id
 typedef struct {
     GV_Database *db;
     GV_MemoryLayer *memory;
+    int pinned_slot;   /* Follower slot pinned for this route, or -1 (leader/none). */
 } GV_ReadRouteTarget;
 
+/*
+ * Select a target under mgr->rwlock (write lock). If a follower slot is chosen,
+ * its in-flight pin count is incremented before returning; the caller
+ * (replication_route_read) is then responsible for pairing that with
+ * replication_release_read() once done with the returned handle. When the leader
+ * is selected, no pin is taken (pinned_slot == -1).
+ */
 static void replication_route_read_locked(GV_ReplicationManager *mgr,
                                               GV_ReadRouteTarget *target) {
     target->db = mgr->db;
     target->memory = NULL;
+    target->pinned_slot = -1;
 
     if (mgr->read_policy == GV_READ_LEADER_ONLY) {
         return;
@@ -820,6 +937,10 @@ static void replication_route_read_locked(GV_ReplicationManager *mgr,
     size_t slot = eligible[chosen];
     target->db = mgr->follower_dbs[slot];
     target->memory = mgr->follower_memories[slot];
+    /* Pin the follower so remove_follower() cannot free it out from under the
+     * caller until replication_release_read() decrements this. */
+    mgr->follower_pin[slot]++;
+    target->pinned_slot = (int)slot;
 }
 
 /*
@@ -848,7 +969,52 @@ GV_Database *replication_route_read(GV_ReplicationManager *mgr) {
     pthread_rwlock_wrlock(&mgr->rwlock);
     replication_route_read_locked(mgr, &target);
     pthread_rwlock_unlock(&mgr->rwlock);
+    /*
+     * If a follower slot was pinned, the pin is intentionally held past the
+     * unlock: it keeps that follower alive for the caller, who MUST call
+     * replication_release_read(mgr, returned_db) when done. Leader targets take
+     * no pin and require no release.
+     */
     return target.db;
+}
+
+int replication_release_read(GV_ReplicationManager *mgr, GV_Database *db) {
+    if (!mgr || !db) return -1;
+
+    /* The leader DB is never pinned by route_read; releasing it is a no-op. */
+    if (db == mgr->db) return 0;
+
+    pthread_rwlock_wrlock(&mgr->rwlock);
+
+    int slot = -1;
+    for (size_t i = 0; i < mgr->replica_count; i++) {
+        if (mgr->follower_dbs[i] == db) {
+            slot = (int)i;
+            break;
+        }
+    }
+
+    if (slot < 0 || mgr->follower_pin[slot] <= 0) {
+        /* Unknown handle or nothing pinned: nothing to release. */
+        pthread_rwlock_unlock(&mgr->rwlock);
+        return -1;
+    }
+
+    int now = --mgr->follower_pin[slot];
+    pthread_rwlock_unlock(&mgr->rwlock);
+
+    /*
+     * If this was the last in-flight pin, wake any remove_follower() waiting for
+     * the slot to drain. We take pin_mutex (never while holding the rwlock) so a
+     * concurrent waiter that is between its pin re-check and pthread_cond_wait()
+     * cannot miss this signal. Signalling on every zero-transition is sufficient.
+     */
+    if (now == 0) {
+        pthread_mutex_lock(&mgr->pin_mutex);
+        pthread_cond_broadcast(&mgr->pin_cond);
+        pthread_mutex_unlock(&mgr->pin_mutex);
+    }
+    return 0;
 }
 
 GV_MemoryLayer *replication_route_read_memory(GV_ReplicationManager *mgr) {
@@ -857,6 +1023,19 @@ GV_MemoryLayer *replication_route_read_memory(GV_ReplicationManager *mgr) {
     GV_ReadRouteTarget target;
     pthread_rwlock_wrlock(&mgr->rwlock);
     replication_route_read_locked(mgr, &target);
+    /*
+     * This entry point returns a borrowed memory-layer pointer and has no
+     * paired release in its contract, so we must not leak the pin taken by
+     * route_read_locked(). Drop it here while still holding the rwlock: no
+     * remove_follower() drain can be in progress observing this slot (removal
+     * marks the slot disconnected under the rwlock, which makes it ineligible
+     * for selection above), so undoing the increment under the same lock leaves
+     * the pin count exactly as it was. (The pre-existing lifetime caveat for the
+     * returned memory pointer is unchanged by this fix.)
+     */
+    if (target.pinned_slot >= 0) {
+        mgr->follower_pin[target.pinned_slot]--;
+    }
     pthread_rwlock_unlock(&mgr->rwlock);
     return target.memory;
 }

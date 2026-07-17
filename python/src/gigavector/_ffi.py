@@ -17,7 +17,7 @@ ffi: FFIType = FFI()
 ffi.cdef(
     """
 typedef long long time_t;
-typedef enum { GV_INDEX_TYPE_KDTREE = 0, GV_INDEX_TYPE_HNSW = 1, GV_INDEX_TYPE_IVFPQ = 2, GV_INDEX_TYPE_SPARSE = 3, GV_INDEX_TYPE_FLAT = 4, GV_INDEX_TYPE_IVFFLAT = 5, GV_INDEX_TYPE_PQ = 6, GV_INDEX_TYPE_LSH = 7, GV_INDEX_TYPE_IVFSQ8 = 8, GV_INDEX_TYPE_IVFTURBOQUANT = 9, GV_INDEX_TYPE_DISKANN = 10, GV_INDEX_TYPE_IVFDISK = 11 } GV_IndexType;
+typedef enum { GV_INDEX_TYPE_KDTREE = 0, GV_INDEX_TYPE_HNSW = 1, GV_INDEX_TYPE_IVFPQ = 2, GV_INDEX_TYPE_SPARSE = 3, GV_INDEX_TYPE_FLAT = 4, GV_INDEX_TYPE_IVFFLAT = 5, GV_INDEX_TYPE_PQ = 6, GV_INDEX_TYPE_LSH = 7, GV_INDEX_TYPE_IVFSQ8 = 8, GV_INDEX_TYPE_IVFTURBOQUANT = 9, GV_INDEX_TYPE_DISKANN = 10, GV_INDEX_TYPE_IVFDISK = 11, GV_INDEX_TYPE_RABITQ = 12 } GV_IndexType;
 typedef enum { GV_DISTANCE_EUCLIDEAN = 0, GV_DISTANCE_COSINE = 1, GV_DISTANCE_DOT_PRODUCT = 2, GV_DISTANCE_MANHATTAN = 3, GV_DISTANCE_HAMMING = 4 } GV_DistanceType;
 
 typedef struct {
@@ -249,6 +249,7 @@ int gv_db_range_search_filtered(const GV_Database *db, const float *query_data, 
                                  GV_SearchResult *results, size_t max_results,
                                  GV_DistanceType distance_type,
                                  const char *filter_key, const char *filter_value);
+void gv_search_results_free(GV_SearchResult *results, size_t count);
 
 // Vector creation and metadata management
 GV_Vector *gv_vector_create_from_data(size_t dimension, const float *data);

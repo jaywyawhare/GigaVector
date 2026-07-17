@@ -397,7 +397,7 @@ int pq_range_search(void *index, const GV_Vector *query, float radius,
 
         for (size_t k_i = 0; k_i < idx->ksub; k_i++) {
             float dist = pq_subvec_distance_sq(query_subvec, &subcodebook[k_i * idx->dsub], idx->dsub);
-            distance_table[m_i * idx->ksub + k_i] = dist * dist;
+            distance_table[m_i * idx->ksub + k_i] = dist;
         }
     }
 

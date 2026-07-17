@@ -223,6 +223,32 @@ GV_BackupResult *backup_create(GV_Database *db, const char *backup_path,
         progress(count, count, user_data);
     }
 
+    /* v2 metadata section (appended AFTER the raw vectors so the vector layout
+     * stays byte-for-byte identical to v1).  We always write the meta_present
+     * marker; when include_metadata is off (or there is no SoA storage to read
+     * from) we write a zero marker and no records, yielding a valid v2 file with
+     * an empty metadata section.  When on, we emit exactly `count` records in
+     * vector-index order, each via write_metadata() — the same wire format the
+     * main snapshot uses (uint32 count + length-prefixed key/value pairs). */
+    uint32_t meta_present = (opts->include_metadata && db->soa_storage) ? 1u : 0u;
+    if (write_u32(fp, meta_present) != 0) {
+        fclose(fp);
+        remove(tmp_path);
+        return create_result(0, "Failed to write metadata marker (disk full?)");
+    }
+    if (meta_present) {
+        for (size_t i = 0; i < count; i++) {
+            /* soa_storage_get_metadata returns the vector's live GV_Metadata
+             * chain (NULL if none); write_metadata handles NULL as count 0. */
+            const GV_Metadata *meta = soa_storage_get_metadata(db->soa_storage, i);
+            if (write_metadata(fp, meta) != 0) {
+                fclose(fp);
+                remove(tmp_path);
+                return create_result(0, "Failed to write vector metadata (disk full?)");
+            }
+        }
+    }
+
     long end_pos = ftell(fp);
     if (end_pos < 0) {
         fclose(fp);
@@ -322,6 +348,79 @@ void backup_result_free(GV_BackupResult *result) {
     gv_free(result);
 }
 
+/* Read the v2 metadata section (positioned immediately after the raw vectors)
+ * and apply it to the just-restored database, per vector index.
+ *
+ * Backward compatibility: for v1 backups there is no metadata section, so this
+ * is a no-op (callers gate on header->version).  For v2 backups the section
+ * begins with a uint32 meta_present marker; when it is 0 (include_metadata was
+ * off, or the source had no metadata) there are no records to read.
+ *
+ * `fp` must be positioned at the start of the metadata section.  Returns 0 on
+ * success (including "nothing to apply"); a truncated/garbled section is
+ * treated as a soft failure — the vectors are already restored, so we simply
+ * stop applying metadata and return 0 rather than failing the whole restore. */
+static int backup_apply_metadata_section(FILE *fp, GV_Database *db,
+                                         uint32_t version, uint64_t vector_count) {
+    if (!fp || !db || version < 2) return 0;
+
+    uint32_t meta_present = 0;
+    if (read_u32(fp, &meta_present) != 0 || meta_present == 0) {
+        return 0;
+    }
+
+    for (uint64_t i = 0; i < vector_count; i++) {
+        uint32_t pair_count = 0;
+        if (read_u32(fp, &pair_count) != 0) {
+            return 0;  /* truncated; stop, keep what we have */
+        }
+        if (pair_count == 0) {
+            continue;  /* vector had no metadata */
+        }
+
+        char **keys = gv_calloc(pair_count, sizeof(char *));
+        char **vals = gv_calloc(pair_count, sizeof(char *));
+        if (!keys || !vals) {
+            gv_free(keys);
+            gv_free(vals);
+            return 0;
+        }
+
+        uint32_t got = 0;
+        for (; got < pair_count; got++) {
+            keys[got] = read_string(fp);
+            vals[got] = read_string(fp);
+            if (!keys[got] || !vals[got]) {
+                /* Truncated pair: free the dangling half and bail out below. */
+                gv_free(keys[got]);
+                gv_free(vals[got]);
+                keys[got] = NULL;
+                vals[got] = NULL;
+                break;
+            }
+        }
+
+        if (got > 0) {
+            db_update_vector_metadata(db, (size_t)i,
+                                      (const char *const *)keys,
+                                      (const char *const *)vals, got);
+        }
+
+        for (uint32_t j = 0; j < pair_count; j++) {
+            gv_free(keys[j]);
+            gv_free(vals[j]);
+        }
+        gv_free(keys);
+        gv_free(vals);
+
+        if (got < pair_count) {
+            return 0;  /* truncated record; stop applying further metadata */
+        }
+    }
+
+    return 0;
+}
+
 GV_BackupResult *backup_restore(const char *backup_path, const char *db_path,
                                     const GV_RestoreOptions *options,
                                     GV_BackupProgressCallback progress,
@@ -406,6 +505,14 @@ GV_BackupResult *backup_restore(const char *backup_path, const char *db_path,
     }
 
     gv_free(buffer);
+
+    /* fp is now positioned right after the raw vectors: for v2 backups the
+     * per-vector metadata section follows here.  Apply it before closing fp.
+     * Only meaningful when every declared vector was read back. */
+    if (vectors_read == header.vector_count) {
+        backup_apply_metadata_section(fp, db, header.version, header.vector_count);
+    }
+
     fclose(fp);
 
     if (progress) {
@@ -485,6 +592,13 @@ GV_BackupResult *backup_restore_to_db(const char *backup_path,
     }
 
     gv_free(buffer);
+
+    /* Apply the v2 per-vector metadata section (no-op for v1 or empty section)
+     * before closing the file — fp is positioned right after the raw vectors. */
+    if (vectors_read == header.vector_count) {
+        backup_apply_metadata_section(fp, *db, header.version, header.vector_count);
+    }
+
     fclose(fp);
 
     GV_BackupResult *result = create_result(1, NULL);
@@ -536,7 +650,10 @@ GV_BackupResult *backup_verify(const char *backup_path, const char *decryption_k
         return create_result(0, "Failed to read backup header");
     }
 
-    if (header.version != GV_BACKUP_VERSION) {
+    /* Accept the whole supported range so older (v1, no-metadata) backups still
+     * verify.  v2 appends a metadata section after the vectors; the checksum
+     * (computed over the entire file below) already covers those bytes. */
+    if (header.version < GV_BACKUP_VERSION_MIN || header.version > GV_BACKUP_VERSION) {
         return create_result(0, "Unsupported backup version");
     }
 

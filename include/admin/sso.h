@@ -31,7 +31,12 @@ typedef struct {
     int provider;                   /**< GV_SSOProvider value. */
     const char *issuer_url;         /**< OIDC issuer URL. */
     const char *client_id;          /**< OIDC client identifier. */
-    const char *client_secret;      /**< OIDC client secret. */
+    const char *client_secret;      /**< OIDC client secret (HS256 HMAC key). */
+    const char *oidc_rsa_public_key_pem; /**< Optional RS256 verification key:
+                                          *   a PEM-encoded RSA public key.  Used
+                                          *   when the id_token is signed with
+                                          *   RS256 and no JWKS is available (or
+                                          *   as an override).  May be NULL. */
     const char *redirect_uri;       /**< OAuth2 redirect URI. */
     const char *saml_metadata_url;  /**< SAML IdP metadata URL. */
     const char *saml_entity_id;     /**< SAML service provider entity ID. */

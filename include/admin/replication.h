@@ -279,10 +279,34 @@ GV_ReadPolicy replication_get_read_policy(GV_ReplicationManager *mgr);
  * returns the leader database. For other policies, may return a follower's
  * database if followers have registered their DB instances.
  *
+ * LIFETIME CONTRACT (pin/release): when this returns a *follower* database, that
+ * follower is pinned (an in-flight read count is incremented) so that
+ * replication_remove_follower() cannot free or reuse the slot while the returned
+ * handle is in use. The caller MUST pair every non-NULL return with exactly one
+ * call to replication_release_read(mgr, returned_db) once done reading. Calling
+ * replication_release_read() with the leader database (or NULL) is a harmless
+ * no-op, so callers may unconditionally release the handle they received.
+ * Failing to release leaks the pin and will make a future
+ * replication_remove_follower() for that node block indefinitely.
+ *
  * @param mgr Replication manager.
  * @return Database instance for reading, or NULL if no suitable replica found.
  */
 GV_Database *replication_route_read(GV_ReplicationManager *mgr);
+
+/**
+ * @brief Release a database handle previously returned by replication_route_read().
+ *
+ * Decrements the in-flight pin taken by replication_route_read() for the follower
+ * backing @p db, waking any replication_remove_follower() that is waiting for the
+ * slot to drain. Passing the leader database or NULL is a no-op that returns 0.
+ *
+ * @param mgr Replication manager.
+ * @param db  Handle returned by replication_route_read().
+ * @return 0 on success (including no-op leader/NULL releases), -1 if @p mgr is
+ *         NULL or @p db is not a currently-pinned follower handle.
+ */
+int replication_release_read(GV_ReplicationManager *mgr, GV_Database *db);
 
 /**
  * @brief Set the maximum acceptable lag for read replicas.

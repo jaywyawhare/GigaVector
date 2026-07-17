@@ -18,7 +18,21 @@ extern "C" {
 struct GV_Database;
 typedef struct GV_Database GV_Database;
 
-#define GV_BACKUP_VERSION 1
+/* Backup format versions.
+ *
+ * v1: header + raw vector payload only (per-vector metadata was dropped).
+ * v2: as v1, but after the raw vectors a metadata section is appended:
+ *       uint32_t meta_present;   // 1 if a per-vector metadata block follows, else 0
+ *       // when meta_present == 1, exactly `vector_count` metadata records, in
+ *       // vector-index order, each written via write_metadata() (core/utils.h):
+ *       //   uint32_t count; { length-prefixed key; length-prefixed value; } * count
+ *
+ * The raw-vector layout is byte-for-byte identical to v1, so existing consumers
+ * that only read vectors keep working. Readers accept BOTH versions: a v1 file
+ * simply has no trailing metadata section.
+ */
+#define GV_BACKUP_VERSION 2
+#define GV_BACKUP_VERSION_MIN 1
 
 typedef enum {
     GV_BACKUP_COMPRESS_NONE = 0,    /**< No compression. */

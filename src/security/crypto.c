@@ -618,7 +618,6 @@ int crypto_encrypt_file(GV_CryptoContext *ctx, const GV_CryptoKey *key,
         return -1;
     }
 
-    size_t total_read = 0;
     size_t nread;
     GV_CryptoKey working_key = *key;
 
@@ -637,8 +636,6 @@ int crypto_encrypt_file(GV_CryptoContext *ctx, const GV_CryptoKey *key,
         if (cipher_len >= 16) {
             memcpy(working_key.iv, cipher + cipher_len - 16, 16);
         }
-
-        total_read += nread;
     }
 
     gv_free(buffer);

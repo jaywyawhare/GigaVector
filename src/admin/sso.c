@@ -26,6 +26,22 @@
 #include <curl/curl.h>
 #endif
 
+/*
+ * RS256 (RSA-SHA256) JWT verification requires OpenSSL, using the same
+ * GV_HAVE_OPENSSL gate as src/security/crypto.c.  When built WITHOUT OpenSSL,
+ * RS256 fails closed (see verify_jwt_signature_rs256 below).
+ */
+#ifdef GV_HAVE_OPENSSL
+#include <openssl/evp.h>
+#include <openssl/pem.h>
+#include <openssl/rsa.h>
+#include <openssl/bn.h>
+#include <openssl/bio.h>
+#include <openssl/core_names.h>
+#include <openssl/param_build.h>
+#include <openssl/params.h>
+#endif
+
 /* Internal Constants */
 
 #define MAX_URL_LEN         2048
@@ -94,7 +110,16 @@ static uint64_t parse_iso8601(const char *ts);
 static int hmac_sha256(const unsigned char *key, size_t key_len,
                        const unsigned char *data, size_t data_len,
                        unsigned char *out, size_t *out_len);
-static int verify_jwt_signature(const char *jwt, const char *secret);
+
+/*
+ * Verify a JWT signature.  Dispatches on the JWT header "alg":
+ *   - HS256: HMAC-SHA256 over header.payload using config.client_secret.
+ *   - RS256: RSA-SHA256 (OpenSSL) using an RSA public key sourced from
+ *            config.oidc_rsa_public_key_pem and/or the JWKS endpoint.
+ * Any other alg ("none", "ES256", ...) is rejected (alg-confusion guard).
+ * Needs the manager for keys/JWKS/endpoints, so it takes it by const pointer.
+ */
+static int verify_jwt_signature(const GV_SSOManager *mgr, const char *jwt);
 
 /* SAML helpers */
 static GV_SSOToken *parse_saml_assertion(const char *b64_assertion);
@@ -333,15 +358,12 @@ GV_SSOToken *sso_exchange_code(GV_SSOManager *mgr, const char *auth_code) {
 
     /*
      * Verify the id_token signature BEFORE trusting any claim (fail closed).
-     * Only HS256 (shared client_secret) is supported here; verify_jwt_signature
-     * pins alg==HS256 so an RS256 id_token is rejected rather than being
-     * mis-verified as HMAC.  Without a configured secret we cannot verify and
-     * must reject.
+     * verify_jwt_signature() pins the header alg to exactly HS256 or RS256
+     * (rejecting none/ES256/etc.) and selects the right key: the shared
+     * client_secret for HS256, or an RSA public key (configured PEM and/or the
+     * discovered JWKS) for RS256.  It fails closed if no suitable key exists.
      */
-    if (!mgr->config.client_secret || !mgr->config.client_secret[0]) {
-        return NULL;
-    }
-    if (verify_jwt_signature(id_token, mgr->config.client_secret) != 0) {
+    if (verify_jwt_signature(mgr, id_token) != 0) {
         return NULL;
     }
 
@@ -362,19 +384,13 @@ GV_SSOToken *sso_validate_token(GV_SSOManager *mgr, const char *token_string) {
 
     if (mgr->config.provider == GV_SSO_OIDC) {
         /*
-         * Fail closed: NEVER accept a token on a decode-only path.  A shared
-         * secret (HS256) MUST be configured and the signature MUST verify
-         * before we trust any claim.  If no secret is configured we cannot
-         * verify the token, so we reject.
-         *
-         * (This verifier only supports HS256.  RS256/JWKS is not implemented
-         * here; verify_jwt_signature() pins alg==HS256 and rejects RS256,
-         * preventing an RS256 token from being silently HMAC-checked.)
+         * Fail closed: NEVER accept a token on a decode-only path.  The
+         * signature MUST verify before we trust any claim.  verify_jwt_signature()
+         * pins the alg to HS256 or RS256 and selects the matching key (shared
+         * secret for HS256, PEM/JWKS RSA public key for RS256); it returns
+         * non-zero when no suitable key is configured, so we deny.
          */
-        if (!mgr->config.client_secret || !mgr->config.client_secret[0]) {
-            return NULL;  /* no verification key configured -> deny */
-        }
-        if (verify_jwt_signature(token_string, mgr->config.client_secret) != 0) {
+        if (verify_jwt_signature(mgr, token_string) != 0) {
             return NULL;  /* signature / algorithm verification failed */
         }
 
@@ -461,11 +477,8 @@ GV_SSOToken *sso_refresh_token(GV_SSOManager *mgr, const char *refresh_token) {
     gv_free(response);
 
     /* Verify the refreshed id_token signature before trusting claims
-     * (fail closed; HS256-only, RS256 rejected via alg pin). */
-    if (!mgr->config.client_secret || !mgr->config.client_secret[0]) {
-        return NULL;
-    }
-    if (verify_jwt_signature(id_token, mgr->config.client_secret) != 0) {
+     * (fail closed; alg pinned to HS256/RS256, key selected per-alg). */
+    if (verify_jwt_signature(mgr, id_token) != 0) {
         return NULL;
     }
 
@@ -1068,14 +1081,20 @@ static int hmac_sha256(const unsigned char *key, size_t key_len,
 }
 
 /*
- * Parse a JWT header segment and confirm its "alg" is exactly "HS256".
- * This verifier only implements HS256; any other alg ("none", "RS256",
- * "ES256", ...) MUST be rejected to prevent alg-confusion / downgrade
- * forgery (e.g. RS256->HS256 where the RSA public key is abused as an HMAC
- * secret, or alg:none which requires no signature at all).
- * Returns 0 iff alg == "HS256", -1 otherwise (fail closed on any error).
+ * Parse a JWT header segment and extract its "alg" and (optionally) "kid".
+ *
+ * The alg is later pinned to exactly HS256 or RS256 by the dispatcher; any
+ * other alg ("none", "ES256", ...) MUST be rejected to prevent alg-confusion /
+ * downgrade forgery (e.g. RS256->HS256 where the RSA public key is abused as an
+ * HMAC secret, or alg:none which requires no signature at all).
+ *
+ * @param alg_out  receives the alg string (required, must be non-NULL).
+ * @param kid_out  receives the kid string, or "" if absent (may be NULL).
+ * Returns 0 on success, -1 on any parse error (fail closed).
  */
-static int jwt_header_is_hs256(const char *jwt, const char *dot1) {
+static int jwt_header_parse(const char *jwt, const char *dot1,
+                            char *alg_out, size_t alg_size,
+                            char *kid_out, size_t kid_size) {
     size_t header_b64_len = (size_t)(dot1 - jwt);
     if (header_b64_len == 0) return -1;
 
@@ -1087,43 +1106,29 @@ static int jwt_header_is_hs256(const char *jwt, const char *dot1) {
     if (decoded_len >= sizeof(decoded)) decoded_len = sizeof(decoded) - 1;
     decoded[decoded_len] = '\0';
 
-    char alg[64];
-    if (json_extract_string((const char *)decoded, "alg", alg, sizeof(alg)) != 0) {
+    if (json_extract_string((const char *)decoded, "alg", alg_out, alg_size) != 0) {
         return -1;  /* missing alg -> reject */
     }
-    return (strcmp(alg, "HS256") == 0) ? 0 : -1;
+    if (kid_out && kid_size > 0) {
+        if (json_extract_string((const char *)decoded, "kid",
+                                kid_out, kid_size) != 0) {
+            kid_out[0] = '\0';  /* kid is optional */
+        }
+    }
+    return 0;
 }
 
 /**
  * Verify the HMAC-SHA256 (HS256) signature of a JWT.
- * Also pins the JWT header "alg" to HS256 (rejecting none/RS256/etc.).
+ * The signed input is header.payload (everything before the second dot).
  * Returns 0 on success, -1 on verification failure.
  */
-static int verify_jwt_signature(const char *jwt, const char *secret) {
-    if (!jwt || !secret) return -1;
+static int verify_jwt_signature_hs256(const char *jwt, size_t signed_len,
+                                       const unsigned char *decoded_sig,
+                                       size_t decoded_sig_len,
+                                       const char *secret) {
+    if (!secret || !secret[0]) return -1;  /* no HMAC key -> fail closed */
 
-    const char *dot1 = strchr(jwt, '.');
-    if (!dot1) return -1;
-    const char *dot2 = strchr(dot1 + 1, '.');
-    if (!dot2) return -1;
-
-    /* Pin the algorithm before doing any signature work. */
-    if (jwt_header_is_hs256(jwt, dot1) != 0) return -1;
-
-    /* The signed payload is header.payload (everything before the second dot) */
-    size_t signed_len = (size_t)(dot2 - jwt);
-
-    /* Decode the signature segment */
-    const char *sig_start = dot2 + 1;
-    size_t sig_b64_len = strlen(sig_start);
-
-    unsigned char decoded_sig[256];
-    size_t decoded_sig_len = sizeof(decoded_sig);
-    if (base64url_decode(sig_start, sig_b64_len, decoded_sig, &decoded_sig_len) != 0) {
-        return -1;
-    }
-
-    /* Compute expected HMAC-SHA256 */
     unsigned char expected[32];
     size_t expected_len = 0;
     hmac_sha256((const unsigned char *)secret, strlen(secret),
@@ -1138,6 +1143,262 @@ static int verify_jwt_signature(const char *jwt, const char *secret) {
         diff |= decoded_sig[i] ^ expected[i];
     }
     return diff == 0 ? 0 : -1;
+}
+
+#ifdef GV_HAVE_OPENSSL
+/*
+ * Verify a raw RSA-SHA256 (RS256) signature over `signed_input` using an
+ * already-constructed EVP_PKEY.  Returns 0 iff the signature verifies.
+ */
+static int rs256_verify_with_pkey(EVP_PKEY *pkey,
+                                   const unsigned char *signed_input,
+                                   size_t signed_len,
+                                   const unsigned char *sig, size_t sig_len) {
+    if (!pkey) return -1;
+    EVP_MD_CTX *ctx = EVP_MD_CTX_new();
+    if (!ctx) return -1;
+
+    int ok = -1;
+    if (EVP_DigestVerifyInit(ctx, NULL, EVP_sha256(), NULL, pkey) == 1 &&
+        EVP_DigestVerify(ctx, sig, sig_len, signed_input, signed_len) == 1) {
+        ok = 0;
+    }
+    EVP_MD_CTX_free(ctx);
+    return ok;
+}
+
+/*
+ * Build an RSA public EVP_PKEY from a PEM-encoded public key string.
+ * Caller must EVP_PKEY_free() the result.  Returns NULL on error.
+ */
+static EVP_PKEY *rsa_pkey_from_pem(const char *pem) {
+    if (!pem || !pem[0]) return NULL;
+    BIO *bio = BIO_new_mem_buf(pem, -1);
+    if (!bio) return NULL;
+    EVP_PKEY *pkey = PEM_read_bio_PUBKEY(bio, NULL, NULL, NULL);
+    BIO_free(bio);
+    return pkey;
+}
+
+/*
+ * Build an RSA public EVP_PKEY from JWK modulus/exponent (base64url "n"/"e").
+ * Uses the OpenSSL 3.0 EVP_PKEY_fromdata API (no deprecated RSA_* calls).
+ * Caller must EVP_PKEY_free() the result.  Returns NULL on error.
+ */
+static EVP_PKEY *rsa_pkey_from_jwk(const char *n_b64, const char *e_b64) {
+    if (!n_b64 || !e_b64) return NULL;
+
+    unsigned char n_bin[1024];
+    unsigned char e_bin[16];
+    size_t n_len = sizeof(n_bin);
+    size_t e_len = sizeof(e_bin);
+    if (base64url_decode(n_b64, strlen(n_b64), n_bin, &n_len) != 0) return NULL;
+    if (base64url_decode(e_b64, strlen(e_b64), e_bin, &e_len) != 0) return NULL;
+
+    /* Convert the big-endian modulus/exponent to BIGNUMs. */
+    BIGNUM *bn_n = BN_bin2bn(n_bin, (int)n_len, NULL);
+    BIGNUM *bn_e = BN_bin2bn(e_bin, (int)e_len, NULL);
+    EVP_PKEY *pkey = NULL;
+    OSSL_PARAM_BLD *bld = NULL;
+    OSSL_PARAM *params = NULL;
+    EVP_PKEY_CTX *ctx = NULL;
+
+    if (!bn_n || !bn_e) goto done;
+
+    bld = OSSL_PARAM_BLD_new();
+    if (!bld) goto done;
+    if (OSSL_PARAM_BLD_push_BN(bld, "n", bn_n) != 1) goto done;
+    if (OSSL_PARAM_BLD_push_BN(bld, "e", bn_e) != 1) goto done;
+    params = OSSL_PARAM_BLD_to_param(bld);
+    if (!params) goto done;
+
+    ctx = EVP_PKEY_CTX_new_from_name(NULL, "RSA", NULL);
+    if (!ctx) goto done;
+    if (EVP_PKEY_fromdata_init(ctx) != 1) goto done;
+    if (EVP_PKEY_fromdata(ctx, &pkey, EVP_PKEY_PUBLIC_KEY, params) != 1) {
+        pkey = NULL;  /* fromdata may leave pkey unset on failure */
+    }
+
+done:
+    if (params) OSSL_PARAM_free(params);
+    if (bld) OSSL_PARAM_BLD_free(bld);
+    if (ctx) EVP_PKEY_CTX_free(ctx);
+    if (bn_n) BN_free(bn_n);
+    if (bn_e) BN_free(bn_e);
+    return pkey;
+}
+
+#ifdef HAVE_CURL
+/*
+ * Fetch the JWKS document, locate the key whose "kid" matches `want_kid`
+ * (or the first RSA key if no kid was present in the JWT header), extract its
+ * base64url "n" and "e", and build an RSA public EVP_PKEY.
+ * Returns NULL on any failure (including "no HTTP client / fetch failed").
+ */
+static EVP_PKEY *rsa_pkey_from_jwks(const char *jwks_uri, int verify_ssl,
+                                    const char *want_kid) {
+    if (!jwks_uri || !jwks_uri[0]) return NULL;
+
+    char *doc = NULL;
+    size_t doc_len = 0;
+    if (http_get(jwks_uri, verify_ssl, &doc, &doc_len) != 0) return NULL;
+    if (!doc) return NULL;
+
+    /*
+     * Minimal JWKS scan.  The document is {"keys":[{...},{...}]}.  We walk each
+     * object between successive '{' markers, matching kid (if requested) and
+     * reading n/e via the existing flat json_extract_string helper.  This is a
+     * pragmatic parser matching the style of the other JSON helpers in this
+     * file; it does not do full JSON parsing but is sufficient for JWKS.
+     */
+    EVP_PKEY *pkey = NULL;
+    const char *scan = doc;
+    while ((scan = strchr(scan, '{')) != NULL) {
+        /* Bound this object at the next '{' so json_extract_string does not
+         * accidentally read fields from a later key. */
+        const char *next_obj = strchr(scan + 1, '{');
+        size_t obj_len = next_obj ? (size_t)(next_obj - scan) : strlen(scan);
+        if (obj_len >= 8192) obj_len = 8191;
+
+        char obj[8192];
+        memcpy(obj, scan, obj_len);
+        obj[obj_len] = '\0';
+
+        char kty[16];
+        if (json_extract_string(obj, "kty", kty, sizeof(kty)) == 0 &&
+            strcmp(kty, "RSA") == 0) {
+            char kid[256];
+            if (json_extract_string(obj, "kid", kid, sizeof(kid)) != 0) {
+                kid[0] = '\0';
+            }
+            int kid_ok = (!want_kid || !want_kid[0] || kid[0] == '\0' ||
+                          strcmp(kid, want_kid) == 0);
+            if (kid_ok) {
+                char n_b64[1400];
+                char e_b64[64];
+                if (json_extract_string(obj, "n", n_b64, sizeof(n_b64)) == 0 &&
+                    json_extract_string(obj, "e", e_b64, sizeof(e_b64)) == 0) {
+                    pkey = rsa_pkey_from_jwk(n_b64, e_b64);
+                    if (pkey) break;
+                }
+            }
+        }
+        scan = next_obj ? next_obj : (scan + obj_len);
+    }
+
+    gv_free(doc);
+    return pkey;
+}
+#endif /* HAVE_CURL */
+
+/*
+ * Verify an RS256 JWT signature.  Sources the RSA public key from (in order):
+ *   1. the configured PEM public key (config.oidc_rsa_public_key_pem), then
+ *   2. the JWKS endpoint (only when built WITH libcurl), matching the header
+ *      kid to a JWKS entry's n/e.
+ * Returns 0 iff a key was obtained AND the signature verifies.
+ */
+static int verify_jwt_signature_rs256(const GV_SSOManager *mgr,
+                                       const char *jwt, size_t signed_len,
+                                       const unsigned char *decoded_sig,
+                                       size_t decoded_sig_len,
+                                       const char *kid) {
+    int result = -1;
+
+    /* 1. Configured PEM public key (works without libcurl). */
+    if (mgr->config.oidc_rsa_public_key_pem &&
+        mgr->config.oidc_rsa_public_key_pem[0]) {
+        EVP_PKEY *pkey = rsa_pkey_from_pem(mgr->config.oidc_rsa_public_key_pem);
+        if (pkey) {
+            result = rs256_verify_with_pkey(pkey, (const unsigned char *)jwt,
+                                            signed_len, decoded_sig,
+                                            decoded_sig_len);
+            EVP_PKEY_free(pkey);
+            if (result == 0) return 0;
+        }
+    }
+
+    /* 2. JWKS endpoint (requires an HTTP client; falls back to PEM otherwise). */
+#ifdef HAVE_CURL
+    if (mgr->endpoints.jwks_uri[0]) {
+        EVP_PKEY *pkey = rsa_pkey_from_jwks(mgr->endpoints.jwks_uri,
+                                            mgr->config.verify_ssl, kid);
+        if (pkey) {
+            result = rs256_verify_with_pkey(pkey, (const unsigned char *)jwt,
+                                            signed_len, decoded_sig,
+                                            decoded_sig_len);
+            EVP_PKEY_free(pkey);
+        }
+    }
+#else
+    (void)kid;  /* No HTTP client in this build: PEM is the only RS256 source. */
+#endif
+
+    return result;
+}
+#endif /* GV_HAVE_OPENSSL */
+
+/**
+ * Verify a JWT signature over header.payload.
+ *
+ * Pins the header "alg" to exactly HS256 or RS256 (rejecting "none", "ES256",
+ * and any other value) BEFORE doing signature work, preserving the existing
+ * alg-confusion / downgrade protection.  Then:
+ *   - HS256: HMAC-SHA256 with the shared client_secret (unchanged behaviour).
+ *   - RS256: RSA-SHA256 via OpenSSL, key from configured PEM and/or JWKS.
+ *
+ * When built WITHOUT OpenSSL (GV_HAVE_OPENSSL undefined), RS256 fails closed
+ * (returns -1), mirroring the GCM fail-closed pattern in src/security/crypto.c.
+ *
+ * Returns 0 on success, -1 on verification failure.
+ */
+static int verify_jwt_signature(const GV_SSOManager *mgr, const char *jwt) {
+    if (!mgr || !jwt) return -1;
+
+    const char *dot1 = strchr(jwt, '.');
+    if (!dot1) return -1;
+    const char *dot2 = strchr(dot1 + 1, '.');
+    if (!dot2) return -1;
+
+    /* Pin the algorithm before doing any signature work. */
+    char alg[64];
+    char kid[256];
+    if (jwt_header_parse(jwt, dot1, alg, sizeof(alg), kid, sizeof(kid)) != 0) {
+        return -1;
+    }
+
+    /* The signed payload is header.payload (everything before the second dot). */
+    size_t signed_len = (size_t)(dot2 - jwt);
+
+    /* Decode the signature segment. */
+    const char *sig_start = dot2 + 1;
+    size_t sig_b64_len = strlen(sig_start);
+
+    unsigned char decoded_sig[512];
+    size_t decoded_sig_len = sizeof(decoded_sig);
+    if (base64url_decode(sig_start, sig_b64_len,
+                         decoded_sig, &decoded_sig_len) != 0) {
+        return -1;
+    }
+
+    if (strcmp(alg, "HS256") == 0) {
+        return verify_jwt_signature_hs256(jwt, signed_len,
+                                          decoded_sig, decoded_sig_len,
+                                          mgr->config.client_secret);
+    }
+
+    if (strcmp(alg, "RS256") == 0) {
+#ifdef GV_HAVE_OPENSSL
+        return verify_jwt_signature_rs256(mgr, jwt, signed_len,
+                                          decoded_sig, decoded_sig_len, kid);
+#else
+        /* RS256 requires OpenSSL; fail closed when unavailable. */
+        return -1;
+#endif
+    }
+
+    /* Any other alg (none/ES256/...) is rejected. */
+    return -1;
 }
 
 /* JWT Decoding */
@@ -1468,7 +1729,7 @@ static GV_SSOToken *parse_saml_assertion(const char *b64_assertion) {
         const char *pp = ae; \
         while (pp < ae_end) { \
             const char *vs = strstr(pp, "<AttributeValue"); \
-            if (!vs || vs >= ae_end) break; cnt++; pp = vs + 1; \
+            if (!vs || vs >= ae_end) { break; } cnt++; pp = vs + 1; \
         } \
         if (cnt > MAX_GROUPS) cnt = MAX_GROUPS; \
         if (cnt > 0) { \
@@ -1479,7 +1740,7 @@ static GV_SSOToken *parse_saml_assertion(const char *b64_assertion) {
                     const char *vs = strstr(pp, "<AttributeValue"); \
                     if (!vs || vs >= ae_end) break; \
                     const char *gtp = strchr(vs, '>'); \
-                    if (!gtp || gtp >= ae_end) break; gtp++; \
+                    if (!gtp || gtp >= ae_end) { break; } gtp++; \
                     const char *ep = strchr(gtp, '<'); \
                     if (!ep || ep >= ae_end) break; \
                     size_t vl = (size_t)(ep - gtp); \

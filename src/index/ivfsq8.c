@@ -171,6 +171,7 @@ static GV_ScalarQuantVector *ivfsq8_quantize_vector(const float *data, const GV_
 static float ivfsq8_entry_distance(const GV_IVFSQ8Index *idx, const GV_Vector *query,
                                    const GV_IVFSQ8Entry *entry, GV_DistanceType distance_type,
                                    int exact) {
+    (void)idx;
     if (entry == NULL) {
         return -1.0f;
     }

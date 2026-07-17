@@ -374,7 +374,7 @@ int ivfflat_range_search(void *index, const GV_Vector *query, float radius,
 
     size_t found = 0;
 
-    for (size_t i = 0; i < idx->config.nprobe && found < max_results; i++) {
+    for (size_t i = 0; i < nprobe && found < max_results; i++) {
         size_t list_idx = probe_lists[i];
         GV_IVFFlatEntry *entry = idx->lists[list_idx];
 
