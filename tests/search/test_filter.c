@@ -148,7 +148,11 @@ static int test_filter_in_database(void) {
     GV_SearchResult res[3];
     int n = db_search_with_filter_expr(db, q, 3, res, GV_DISTANCE_EUCLIDEAN, "color == \"red\"");
     ASSERT(n > 0, "filtered search with expression");
-    
+
+    /* db_search_with_filter_expr transfers ownership of each matched result's
+     * fresh vector copy to the caller. */
+    gv_search_results_free(res, (size_t)n);
+
     db_close(db);
     return 0;
 }

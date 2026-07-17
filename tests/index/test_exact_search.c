@@ -53,6 +53,7 @@ static int test_exact_knn_basic(void) {
     ASSERT(rc > 0, "search returns results");
     ASSERT(results[0].distance <= results[1].distance, "results are sorted");
     ASSERT(results[0].id < 3, "result id is valid");
+    for (int i = 0; i < rc; i++) vector_destroy((GV_Vector *)results[i].vector);
     return 0;
 }
 
@@ -65,6 +66,7 @@ static int test_exact_knn_cosine(void) {
     int rc = exact_knn_search_vectors(vectors, 2, &query, 2, results, GV_DISTANCE_COSINE);
     ASSERT(rc > 0, "cosine search returns results");
     ASSERT(results[0].id < 2, "result id is valid");
+    for (int i = 0; i < rc; i++) vector_destroy((GV_Vector *)results[i].vector);
     return 0;
 }
 
@@ -75,6 +77,7 @@ static int test_exact_knn_k_limited(void) {
     GV_SearchResult results[5] = {0};
     int rc = exact_knn_search_vectors(vectors, 1, &query, 5, results, GV_DISTANCE_EUCLIDEAN);
     ASSERT(rc == 1, "returns at most count vectors");
+    for (int i = 0; i < rc; i++) vector_destroy((GV_Vector *)results[i].vector);
     return 0;
 }
 

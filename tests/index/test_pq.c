@@ -66,6 +66,7 @@ static int test_pq_train_insert_search(void) {
     int count = pq_search(index, qvec, 5, results, GV_DISTANCE_EUCLIDEAN, NULL, NULL);
     ASSERT(count > 0);
 
+    for (int i = 0; i < count; i++) vector_destroy((GV_Vector *)results[i].vector);
     vector_destroy(qvec);
     pq_destroy(index);
     return 0;
@@ -129,6 +130,7 @@ static int test_pq_range_search(void) {
         ASSERT(results[i].distance <= 100.0f);
     }
 
+    for (int i = 0; i < count; i++) vector_destroy((GV_Vector *)results[i].vector);
     vector_destroy(qvec);
     pq_destroy(index);
     return 0;
@@ -189,6 +191,7 @@ static int test_pq_db_integration(void) {
     int count = db_search(db, query, 5, results, GV_DISTANCE_EUCLIDEAN);
     ASSERT(count > 0);
 
+    gv_search_results_free(results, (size_t)count);
     db_close(db);
     return 0;
 }
@@ -225,6 +228,7 @@ static int test_pq_save_load(void) {
     int count = db_search(db2, query, 5, results, GV_DISTANCE_EUCLIDEAN);
     ASSERT(count > 0);
 
+    gv_search_results_free(results, (size_t)count);
     db_close(db2);
 
     unlink(filepath);

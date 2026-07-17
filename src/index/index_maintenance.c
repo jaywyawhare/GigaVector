@@ -412,10 +412,11 @@ int ivfdisk_maintenance_run(GV_IVFDiskIndex *index,
     if (!cat || !cfg) return -1;
 
     size_t nheads = ivfdisk_nlist(index);
+    int result = -1;
     GV_WITH_ARENA(scratch, 256u * 1024u) {
         MaintJob *jobs =
             (MaintJob *)gv_arena_calloc(&scratch, nheads * 2, sizeof(MaintJob));
-        if (!jobs) return -1;
+        if (!jobs) { result = -1; continue; }
         size_t job_n = 0;
 
         for (size_t h = 0; h < nheads; ++h) {
@@ -492,7 +493,7 @@ int ivfdisk_maintenance_run(GV_IVFDiskIndex *index,
         ivfdisk_head_checkpoint_if_needed(index);
 
         if (stats) *stats = local_stats;
-        return 0;
+        result = 0;
     }
-    return -1; /* unreachable: GV_WITH_ARENA body always returns; satisfies -Wreturn-type */
+    return result;
 }

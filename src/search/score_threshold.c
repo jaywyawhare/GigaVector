@@ -67,6 +67,10 @@ int db_search_with_threshold(const void *db, const float *query_data, size_t k,
         return -1;
     }
 
+    /* db_search returns fresh heap copies of each result vector owned by the
+     * caller; this API only surfaces index/distance, so free them all. */
+    gv_search_results_free(search_results, (size_t)found);
+
     size_t passed = 0;
     for (int i = 0; i < found; i++) {
         float dist = search_results[i].distance;

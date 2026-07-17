@@ -330,6 +330,9 @@ static int ivfdisk_select_probe_heads(const GV_IVFDiskIndex *idx, const float *q
         int found = gv_hnsw_search(idx->head_hnsw, &qv, probe, hres,
                                    GV_DISTANCE_EUCLIDEAN, NULL, NULL);
         if (found <= 0) {
+            for (size_t i = 0; i < probe; ++i) {
+                vector_destroy((GV_Vector *)hres[i].vector);
+            }
             gv_free(hres);
             return -1;
         }
@@ -338,6 +341,9 @@ static int ivfdisk_select_probe_heads(const GV_IVFDiskIndex *idx, const float *q
             heads[i].dist = hres[i].distance;
         }
         *out_probe = (size_t)found;
+        for (int i = 0; i < found; ++i) {
+            vector_destroy((GV_Vector *)hres[i].vector);
+        }
         gv_free(hres);
         return 0;
     }

@@ -64,12 +64,17 @@ static int sparse_read_metadata(FILE *in, GV_SparseVector *sv) {
             return -1;
         }
 
-        /* attach metadata onto the sparse vector; treat it as GV_Vector for API */
-        if (vector_set_metadata((GV_Vector *)sv, key, value) != 0) {
+        /* Attach onto the real sparse metadata field (offset 24). A raw
+         * (GV_Vector *)sv type-pun would target the ::entries slot (offset 16)
+         * and corrupt the entries pointer; use a scratch GV_Vector seeded with
+         * the current sparse metadata list instead. */
+        GV_Vector meta_holder = { 0, NULL, sv->metadata };
+        if (vector_set_metadata(&meta_holder, key, value) != 0) {
             gv_free(key);
             gv_free(value);
             return -1;
         }
+        sv->metadata = meta_holder.metadata;
 
         gv_free(key);
         gv_free(value);

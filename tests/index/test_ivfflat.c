@@ -83,6 +83,7 @@ static int test_ivfflat_train_insert_search(void) {
         }
     }
 
+    for (int i = 0; i < found; i++) vector_destroy((GV_Vector *)results[i].vector);
     vector_destroy(query);
     ivfflat_destroy(index);
     return 0;
@@ -165,6 +166,7 @@ static int test_ivfflat_range_search(void) {
         ASSERT(results[i].distance <= radius);
     }
 
+    for (int i = 0; i < found; i++) vector_destroy((GV_Vector *)results[i].vector);
     vector_destroy(query);
     ivfflat_destroy(index);
     return 0;
@@ -255,6 +257,7 @@ static int test_ivfflat_db_integration(void) {
         ASSERT(results[i].distance >= 0.0f);
     }
 
+    gv_search_results_free(results, (size_t)found);
     db_close(db);
     return 0;
 }
@@ -310,6 +313,8 @@ static int test_ivfflat_save_load(void) {
         ASSERT(diff < 1e-5f);
     }
 
+    gv_search_results_free(results_before, (size_t)found_before);
+    gv_search_results_free(results_after, (size_t)found_after);
     db_close(db2);
 
     unlink(filepath);

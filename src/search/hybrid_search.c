@@ -210,6 +210,9 @@ int hybrid_search_with_stats(GV_HybridSearcher *searcher, const float *query_vec
                     entry->vector_rank = i + 1;
                 }
             }
+            /* db_search returns fresh heap copies of each result vector that the
+             * caller owns; free them before releasing the results array. */
+            gv_search_results_free(vec_results, vec_found);
             gv_tls_free_or_heap(vec_results, vec_on_heap);
         }
 

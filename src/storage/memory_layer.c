@@ -823,14 +823,19 @@ char *memory_add_opts(GV_MemoryLayer *layer, const char *content,
         meta.consolidated = 0;
     }
     
+    /* If we synthesize the memory_id here, it's a transient dup owned by us;
+     * create_memory_metadata() re-duplicates it, so free ours afterwards. */
+    char *transient_memory_id = NULL;
     if (meta.memory_id == NULL) {
         meta.memory_id = gv_dup_cstr(memory_id);
+        transient_memory_id = meta.memory_id;
     }
     if (meta.timestamp == 0) {
         meta.timestamp = time(NULL);
     }
-    
+
     GV_Metadata *meta_list = create_memory_metadata(&meta);
+    gv_free(transient_memory_id);
     if (meta_list == NULL) {
         gv_free(memory_id);
         pthread_mutex_unlock(&layer->mutex);

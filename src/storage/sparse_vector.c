@@ -42,7 +42,12 @@ void sparse_vector_destroy(GV_SparseVector *sv) {
         gv_free(sv->entries);
     }
     if (sv->metadata != NULL) {
-        vector_clear_metadata((GV_Vector *)sv);
+        /* sv->metadata is at offset 24, not the GV_Vector::metadata offset (16,
+         * which aliases ::entries). Clear via a scratch GV_Vector holding the
+         * real sparse metadata list so we free the right chain. */
+        GV_Vector meta_holder = { 0, NULL, sv->metadata };
+        vector_clear_metadata(&meta_holder);
+        sv->metadata = NULL;
     }
     gv_free(sv);
 }

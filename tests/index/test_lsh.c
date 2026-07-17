@@ -9,7 +9,7 @@
 
 static int test_lsh_create_destroy(void) {
     const size_t dim = 8;
-    GV_LSHConfig config;
+    GV_LSHConfig config = {0};
     config.num_tables = 4;
     config.num_hash_bits = 8;
     config.seed = 42;
@@ -29,7 +29,7 @@ static int test_lsh_create_destroy(void) {
 static int test_lsh_insert_search(void) {
     const size_t dim = 8;
     const int num_vectors = 20;
-    GV_LSHConfig config;
+    GV_LSHConfig config = {0};
     config.num_tables = 4;
     config.num_hash_bits = 8;
     config.seed = 42;
@@ -66,6 +66,7 @@ static int test_lsh_insert_search(void) {
     int count = lsh_search(index, query, 5, results, GV_DISTANCE_EUCLIDEAN, NULL, NULL);
     ASSERT(count > 0);
 
+    for (int i = 0; i < count; i++) vector_destroy((GV_Vector *)results[i].vector);
     vector_destroy(query);
     lsh_destroy(index);
     soa_storage_destroy(storage);
@@ -76,7 +77,7 @@ static int test_lsh_insert_search(void) {
 static int test_lsh_range_search(void) {
     const size_t dim = 8;
     const int num_vectors = 20;
-    GV_LSHConfig config;
+    GV_LSHConfig config = {0};
     config.num_tables = 4;
     config.num_hash_bits = 8;
     config.seed = 42;
@@ -112,6 +113,7 @@ static int test_lsh_range_search(void) {
         ASSERT(results[i].distance <= 50.0f);
     }
 
+    for (int i = 0; i < count; i++) vector_destroy((GV_Vector *)results[i].vector);
     vector_destroy(query);
     lsh_destroy(index);
     soa_storage_destroy(storage);
@@ -121,7 +123,7 @@ static int test_lsh_range_search(void) {
 
 static int test_lsh_delete(void) {
     const size_t dim = 8;
-    GV_LSHConfig config;
+    GV_LSHConfig config = {0};
     config.num_tables = 4;
     config.num_hash_bits = 8;
     config.seed = 42;
@@ -156,7 +158,7 @@ static int test_lsh_delete(void) {
 
 static int test_lsh_update(void) {
     const size_t dim = 8;
-    GV_LSHConfig config;
+    GV_LSHConfig config = {0};
     config.num_tables = 4;
     config.num_hash_bits = 8;
     config.seed = 42;
@@ -211,6 +213,7 @@ static int test_lsh_db_integration(void) {
         ASSERT(results[i].distance >= 0.0f);
     }
 
+    gv_search_results_free(results, (size_t)count);
     db_close(db);
 
     return 0;
@@ -247,6 +250,7 @@ static int test_lsh_save_load(void) {
     int count = db_search(db2, query, 5, results, GV_DISTANCE_EUCLIDEAN);
     ASSERT(count > 0);
 
+    gv_search_results_free(results, (size_t)count);
     db_close(db2);
 
     unlink(filepath);
@@ -293,6 +297,7 @@ static int test_lsh_metadata_filter(void) {
         }
     }
 
+    gv_search_results_free(results, (size_t)count);
     db_close(db);
 
     return 0;

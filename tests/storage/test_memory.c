@@ -82,8 +82,11 @@ int test_memory_search(void) {
         query[i] = (float)i / 128.0f;
     }
     
-    memory_add(layer, "Memory 1", embedding1, NULL, NULL);
-    memory_add(layer, "Memory 2", embedding2, NULL, NULL);
+    /* memory_add returns a heap-allocated memory id the caller must free. */
+    char *mid1 = memory_add(layer, "Memory 1", embedding1, NULL, NULL);
+    char *mid2 = memory_add(layer, "Memory 2", embedding2, NULL, NULL);
+    gv_free(mid1);
+    gv_free(mid2);
     
     GV_MemoryResult results[10];
     int count = memory_search(layer, query, 10, results, GV_DISTANCE_COSINE);

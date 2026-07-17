@@ -42,7 +42,8 @@ static int test_open_from_memory(void) {
     GV_SearchResult res[1];
     int n = db_search(db2, q, 1, res, GV_DISTANCE_EUCLIDEAN);
     ASSERT(n == 1, "search from memory");
-    
+    gv_search_results_free(res, (size_t)(n > 0 ? n : 0));
+
     gv_free(data);
     db_close(db1);
     db_close(db2);
@@ -68,6 +69,7 @@ static int test_open_mmap(void) {
         GV_SearchResult res[1];
         int n = db_search(db2, q, 1, res, GV_DISTANCE_EUCLIDEAN);
         ASSERT(n == 1, "search from mmap");
+        gv_search_results_free(res, (size_t)(n > 0 ? n : 0));
         db_close(db2);
     }
     
@@ -88,7 +90,8 @@ static int test_cosine_normalized(void) {
     GV_SearchResult res[1];
     int n = db_search(db, q, 1, res, GV_DISTANCE_COSINE);
     ASSERT(n == 1, "cosine search with normalization");
-    
+    gv_search_results_free(res, (size_t)(n > 0 ? n : 0));
+
     db_close(db);
     return 0;
 }
@@ -133,7 +136,9 @@ static int test_ivfpq_opts(void) {
     GV_SearchResult res[1];
     int n = db_search_ivfpq_opts(db, q, 1, res, GV_DISTANCE_EUCLIDEAN, 4, 0);
     ASSERT(n == 1, "search with opts");
-    
+    /* gv_ivfpq_search returns OWNED deep copies (see ivfpq.c), so free them. */
+    gv_search_results_free(res, (size_t)(n > 0 ? n : 0));
+
     db_close(db);
     return 0;
 }
@@ -205,8 +210,9 @@ static int test_detailed_stats(void) {
     
     float q[3] = {1.0f, 2.0f, 3.0f};
     GV_SearchResult res[1];
-    db_search(db, q, 1, res, GV_DISTANCE_EUCLIDEAN);
-    
+    int sn = db_search(db, q, 1, res, GV_DISTANCE_EUCLIDEAN);
+    gv_search_results_free(res, (size_t)(sn > 0 ? sn : 0));
+
     GV_DetailedStats stats;
     if (db_get_detailed_stats(db, &stats) == 0) {
         ASSERT(stats.basic_stats.total_inserts >= 1, "detailed stats inserts");
@@ -279,7 +285,8 @@ static int test_add_vectors_with_metadata(void) {
     GV_SearchResult res[1];
     int n = db_search(db, q, 1, res, GV_DISTANCE_EUCLIDEAN);
     ASSERT(n == 1, "search batch added");
-    
+    gv_search_results_free(res, (size_t)(n > 0 ? n : 0));
+
     db_close(db);
     return 0;
 }

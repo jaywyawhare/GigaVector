@@ -70,6 +70,7 @@ static int test_rabitq_insert_search_roundtrip(void) {
     }
     ASSERT(found); /* the exact self-match must appear in the top-k */
 
+    for (int i = 0; i < count; i++) vector_destroy((GV_Vector *)results[i].vector);
     vector_destroy(query);
     rabitq_destroy(index);
     soa_storage_destroy(storage);
@@ -110,6 +111,7 @@ static int test_rabitq_recall(void) {
         for (int i = 0; i < count; i++) {
             if (results[i].id == (size_t)target) { hits++; break; }
         }
+        for (int i = 0; i < count; i++) vector_destroy((GV_Vector *)results[i].vector);
         vector_destroy(q);
     }
 
@@ -170,6 +172,7 @@ static int test_rabitq_db_integration(void) {
     int count = db_search(db, query, 5, results, GV_DISTANCE_COSINE);
     ASSERT(count > 0);
 
+    gv_search_results_free(results, (size_t)count);
     db_close(db);
     return 0;
 }

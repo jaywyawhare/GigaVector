@@ -286,7 +286,21 @@ VALGRIND_CORE_TESTS := \
 	features/test_recommend \
 	search/test_group_search \
 	search/test_mmr \
-	core/test_alloc_fail
+	core/test_alloc_fail \
+	index/test_ivfdisk \
+	index/test_exact_search \
+	index/test_ivfflat \
+	index/test_lsh \
+	index/test_pq \
+	index/test_rabitq \
+	search/test_hybrid_search \
+	search/test_score_threshold \
+	search/test_filter \
+	storage/test_sparse \
+	storage/test_advanced \
+	storage/test_memory \
+	storage/test_memory_consolidation \
+	storage/test_memory_links
 VALGRIND_CORE_BINS := $(patsubst %,$(BUILD_DIR)/%$(EXE_EXT),$(VALGRIND_CORE_TESTS))
 
 .PHONY: test-valgrind-core
