@@ -1591,6 +1591,62 @@ void db_close(GV_Database *db) {
     gv_free(db);
 }
 
+/* Fully tear down a partially-constructed db from db_open_from_memory_impl's
+ * error paths. Must be called only AFTER db_init_common_fields(db) has run (so
+ * the compaction/resource/observability mutexes and memory pool exist). Frees
+ * everything that may have been allocated so far — soa_storage (bound via
+ * gv_db_alloc), metadata_index, id_map, any loaded index — without touching the
+ * success path. */
+static void db_open_from_memory_cleanup(GV_Database *db) {
+    if (db == NULL) {
+        return;
+    }
+    if (db->index_type == GV_INDEX_TYPE_KDTREE) {
+        kdtree_destroy_recursive(db->root);
+    } else if (db->index_type == GV_INDEX_TYPE_HNSW) {
+        gv_hnsw_destroy(db->hnsw_index);
+    } else if (db->index_type == GV_INDEX_TYPE_IVFPQ) {
+        gv_ivfpq_destroy(db->hnsw_index);
+    } else if (db->index_type == GV_INDEX_TYPE_SPARSE) {
+        sparse_index_destroy(db->sparse_index);
+    } else if (db->index_type == GV_INDEX_TYPE_FLAT) {
+        flat_destroy(db->hnsw_index);
+    } else if (db->index_type == GV_INDEX_TYPE_IVFFLAT) {
+        ivfflat_destroy(db->hnsw_index);
+    } else if (db->index_type == GV_INDEX_TYPE_IVFSQ8) {
+        ivfsq8_destroy(db->hnsw_index);
+    } else if (db->index_type == GV_INDEX_TYPE_IVFTURBOQUANT) {
+        ivfturboquant_destroy(db->hnsw_index);
+    } else if (db->index_type == GV_INDEX_TYPE_PQ) {
+        pq_destroy(db->hnsw_index);
+    } else if (db->index_type == GV_INDEX_TYPE_LSH) {
+        lsh_destroy(db->hnsw_index);
+    } else if (db->index_type == GV_INDEX_TYPE_RABITQ) {
+        rabitq_destroy(db->hnsw_index);
+    } else if (db->index_type == GV_INDEX_TYPE_IVFDISK) {
+        ivfdisk_destroy((GV_IVFDiskIndex *)db->hnsw_index);
+    }
+    if (db->soa_storage != NULL) {
+        soa_storage_destroy(db->soa_storage);
+    }
+    if (db->metadata_index != NULL) {
+        metadata_index_destroy(db->metadata_index);
+    }
+    if (db->id_map != NULL) {
+        point_id_destroy(db->id_map);
+    }
+    pthread_mutex_destroy(&db->compaction_mutex);
+    pthread_cond_destroy(&db->compaction_cond);
+    pthread_mutex_destroy(&db->resource_mutex);
+    pthread_mutex_destroy(&db->retrain_mutex);
+    pthread_mutex_destroy(&db->observability_mutex);
+    pthread_mutex_destroy(&db->ab_mutex);
+    gv_memory_fini(&db->memory_pool);
+    pthread_rwlock_destroy(&db->rwlock);
+    pthread_mutex_destroy(&db->wal_mutex);
+    gv_free(db);
+}
+
 static GV_Database *db_open_from_memory_impl(const void *data, size_t size,
                                                 size_t dimension, GV_IndexType index_type,
                                                 const char *ivfdisk_data_dir) {
@@ -1644,10 +1700,7 @@ static GV_Database *db_open_from_memory_impl(const void *data, size_t size,
         index_type == GV_INDEX_TYPE_RABITQ || index_type == GV_INDEX_TYPE_IVFDISK) {
         db->soa_storage = soa_storage_create(dimension, 0);
         if (db->soa_storage == NULL) {
-            metadata_index_destroy(db->metadata_index);
-            pthread_rwlock_destroy(&db->rwlock);
-            pthread_mutex_destroy(&db->wal_mutex);
-            gv_free(db);
+            db_open_from_memory_cleanup(db);
             return NULL;
         }
         db_attach_soa_storage(db);
@@ -1655,9 +1708,7 @@ static GV_Database *db_open_from_memory_impl(const void *data, size_t size,
 
     FILE *in = fmemopen((void *)data, size, "rb");
     if (in == NULL) {
-        pthread_rwlock_destroy(&db->rwlock);
-        pthread_mutex_destroy(&db->wal_mutex);
-        gv_free(db);
+        db_open_from_memory_cleanup(db);
         return NULL;
     }
 
@@ -1666,26 +1717,20 @@ static GV_Database *db_open_from_memory_impl(const void *data, size_t size,
     uint32_t file_version = 0;
     if (db_read_header(in, &file_dim, &file_count, &file_version) != 0) {
         fclose(in);
-        pthread_rwlock_destroy(&db->rwlock);
-        pthread_mutex_destroy(&db->wal_mutex);
-        gv_free(db);
+        db_open_from_memory_cleanup(db);
         return NULL;
     }
 
     if (dimension != 0 && dimension != (size_t)file_dim) {
         fclose(in);
-        pthread_rwlock_destroy(&db->rwlock);
-        pthread_mutex_destroy(&db->wal_mutex);
-        gv_free(db);
+        db_open_from_memory_cleanup(db);
         return NULL;
     }
     db->dimension = (size_t)file_dim;
 
     if (file_version != 1 && file_version != 2 && file_version != 3 && file_version != 4 && file_version != 5) {
         fclose(in);
-        pthread_rwlock_destroy(&db->rwlock);
-        pthread_mutex_destroy(&db->wal_mutex);
-        gv_free(db);
+        db_open_from_memory_cleanup(db);
         return NULL;
     }
 
@@ -1693,9 +1738,7 @@ static GV_Database *db_open_from_memory_impl(const void *data, size_t size,
     if (file_version >= 2) {
         if (read_uint32(in, &file_index_type) != 0) {
             fclose(in);
-            pthread_rwlock_destroy(&db->rwlock);
-            pthread_mutex_destroy(&db->wal_mutex);
-            gv_free(db);
+            db_open_from_memory_cleanup(db);
             return NULL;
         }
     }
@@ -1734,34 +1777,26 @@ static GV_Database *db_open_from_memory_impl(const void *data, size_t size,
         }
         if (!crc_ok) {
             fclose(in);
-            pthread_rwlock_destroy(&db->rwlock);
-            pthread_mutex_destroy(&db->wal_mutex);
-            gv_free(db);
+            db_open_from_memory_cleanup(db);
             return NULL;
         }
     }
 
     if (file_index_type != (uint32_t)db->index_type) {
         fclose(in);
-        pthread_rwlock_destroy(&db->rwlock);
-        pthread_mutex_destroy(&db->wal_mutex);
-        gv_free(db);
+        db_open_from_memory_cleanup(db);
         return NULL;
     }
 
     if (db->index_type == GV_INDEX_TYPE_KDTREE) {
         if (db->soa_storage == NULL) {
             fclose(in);
-            pthread_rwlock_destroy(&db->rwlock);
-            pthread_mutex_destroy(&db->wal_mutex);
-            gv_free(db);
+            db_open_from_memory_cleanup(db);
             return NULL;
         }
         if (kdtree_load_recursive(&(db->root), db->soa_storage, in, db->dimension, file_version) != 0) {
             fclose(in);
-            pthread_rwlock_destroy(&db->rwlock);
-            pthread_mutex_destroy(&db->wal_mutex);
-            gv_free(db);
+            db_open_from_memory_cleanup(db);
             return NULL;
         }
         db_rebuild_metadata_index_from_soa(db);
@@ -1770,10 +1805,8 @@ static GV_Database *db_open_from_memory_impl(const void *data, size_t size,
         if (gv_hnsw_load(&loaded_index, in, db->dimension, file_version,
                          db->soa_storage) != 0) {
             fclose(in);
-        if (loaded_index) gv_hnsw_destroy(loaded_index);
-            pthread_rwlock_destroy(&db->rwlock);
-            pthread_mutex_destroy(&db->wal_mutex);
-            gv_free(db);
+            if (loaded_index) gv_hnsw_destroy(loaded_index);
+            db_open_from_memory_cleanup(db);
             return NULL;
         }
         db->hnsw_index = loaded_index;
@@ -1784,9 +1817,7 @@ static GV_Database *db_open_from_memory_impl(const void *data, size_t size,
         if (gv_ivfpq_load(&loaded_index, in, db->dimension, file_version) != 0) {
             fclose(in);
             if (loaded_index) gv_ivfpq_destroy(loaded_index);
-            pthread_rwlock_destroy(&db->rwlock);
-            pthread_mutex_destroy(&db->wal_mutex);
-            gv_free(db);
+            db_open_from_memory_cleanup(db);
             return NULL;
         }
         db->hnsw_index = loaded_index;
@@ -1795,9 +1826,7 @@ static GV_Database *db_open_from_memory_impl(const void *data, size_t size,
         GV_SparseIndex *loaded_index = NULL;
         if (sparse_index_load(&loaded_index, in, db->dimension, (size_t)file_count, file_version) != 0) {
             fclose(in);
-            pthread_rwlock_destroy(&db->rwlock);
-            pthread_mutex_destroy(&db->wal_mutex);
-            gv_free(db);
+            db_open_from_memory_cleanup(db);
             return NULL;
         }
         db->sparse_index = loaded_index;
@@ -1807,9 +1836,7 @@ static GV_Database *db_open_from_memory_impl(const void *data, size_t size,
         if (flat_load(&loaded_index, in, db->dimension, file_version) != 0) {
             fclose(in);
             if (loaded_index) flat_destroy(loaded_index);
-            pthread_rwlock_destroy(&db->rwlock);
-            pthread_mutex_destroy(&db->wal_mutex);
-            gv_free(db);
+            db_open_from_memory_cleanup(db);
             return NULL;
         }
         db->hnsw_index = loaded_index;
@@ -1819,9 +1846,7 @@ static GV_Database *db_open_from_memory_impl(const void *data, size_t size,
         if (ivfflat_load(&loaded_index, in, db->dimension, file_version) != 0) {
             fclose(in);
             if (loaded_index) ivfflat_destroy(loaded_index);
-            pthread_rwlock_destroy(&db->rwlock);
-            pthread_mutex_destroy(&db->wal_mutex);
-            gv_free(db);
+            db_open_from_memory_cleanup(db);
             return NULL;
         }
         db->hnsw_index = loaded_index;
@@ -1831,9 +1856,7 @@ static GV_Database *db_open_from_memory_impl(const void *data, size_t size,
         if (ivfsq8_load(&loaded_index, in, db->dimension, file_version) != 0) {
             fclose(in);
             if (loaded_index) ivfsq8_destroy(loaded_index);
-            pthread_rwlock_destroy(&db->rwlock);
-            pthread_mutex_destroy(&db->wal_mutex);
-            gv_free(db);
+            db_open_from_memory_cleanup(db);
             return NULL;
         }
         db->hnsw_index = loaded_index;
@@ -1843,9 +1866,7 @@ static GV_Database *db_open_from_memory_impl(const void *data, size_t size,
         if (ivfturboquant_load(&loaded_index, in, db->dimension, file_version) != 0) {
             fclose(in);
             if (loaded_index) ivfturboquant_destroy(loaded_index);
-            pthread_rwlock_destroy(&db->rwlock);
-            pthread_mutex_destroy(&db->wal_mutex);
-            gv_free(db);
+            db_open_from_memory_cleanup(db);
             return NULL;
         }
         db->hnsw_index = loaded_index;
@@ -1855,9 +1876,7 @@ static GV_Database *db_open_from_memory_impl(const void *data, size_t size,
         if (pq_load(&loaded_index, in, db->dimension, file_version) != 0) {
             fclose(in);
             if (loaded_index) pq_destroy(loaded_index);
-            pthread_rwlock_destroy(&db->rwlock);
-            pthread_mutex_destroy(&db->wal_mutex);
-            gv_free(db);
+            db_open_from_memory_cleanup(db);
             return NULL;
         }
         db->hnsw_index = loaded_index;
@@ -1867,9 +1886,7 @@ static GV_Database *db_open_from_memory_impl(const void *data, size_t size,
         if (lsh_load(&loaded_index, in, db->dimension, file_version) != 0) {
             fclose(in);
             if (loaded_index) lsh_destroy(loaded_index);
-            pthread_rwlock_destroy(&db->rwlock);
-            pthread_mutex_destroy(&db->wal_mutex);
-            gv_free(db);
+            db_open_from_memory_cleanup(db);
             return NULL;
         }
         db->hnsw_index = loaded_index;
@@ -1877,9 +1894,7 @@ static GV_Database *db_open_from_memory_impl(const void *data, size_t size,
     } else if (db->index_type == GV_INDEX_TYPE_IVFDISK) {
         if (db->soa_storage == NULL) {
             fclose(in);
-            pthread_rwlock_destroy(&db->rwlock);
-            pthread_mutex_destroy(&db->wal_mutex);
-            gv_free(db);
+            db_open_from_memory_cleanup(db);
             return NULL;
         }
         GV_IVFDiskIndex *loaded_index = NULL;
@@ -1887,18 +1902,14 @@ static GV_Database *db_open_from_memory_impl(const void *data, size_t size,
             soa_storage_load(db->soa_storage, in, file_version) != 0) {
             fclose(in);
             if (loaded_index) ivfdisk_destroy(loaded_index);
-            pthread_rwlock_destroy(&db->rwlock);
-            pthread_mutex_destroy(&db->wal_mutex);
-            gv_free(db);
+            db_open_from_memory_cleanup(db);
             return NULL;
         }
         db->hnsw_index = loaded_index;
         db->count = soa_storage_count(db->soa_storage);
     } else {
         fclose(in);
-        pthread_rwlock_destroy(&db->rwlock);
-        pthread_mutex_destroy(&db->wal_mutex);
-        gv_free(db);
+        db_open_from_memory_cleanup(db);
         return NULL;
     }
 
@@ -2806,9 +2817,10 @@ int db_add_vector(GV_Database *db, const float *data, size_t dimension) {
             db_normalize_vector(vector);
         }
         status = gv_hnsw_insert(db->hnsw_index, vector);
-        if (status != 0) {
-            vector_destroy(vector);
-        }
+        /* HNSW copies data into SoA and takes ownership of metadata (NULLing it on
+         * success, restoring it on failure); the GV_Vector shell is never stored, so
+         * free it either way to avoid orphaning the struct + data copy. */
+        vector_destroy(vector);
     } else if (db->index_type == GV_INDEX_TYPE_IVFPQ) {
         GV_Vector *vector = vector_create_from_data(dimension, data);
         if (vector == NULL) {
@@ -3158,9 +3170,9 @@ int db_add_vector_with_metadata(GV_Database *db, const float *data, size_t dimen
                 current = current->next;
             }
         }
-        if (status != 0) {
-            vector_destroy(vector);
-        }
+        /* HNSW does not store the shell; free it on success (metadata already
+         * transferred to SoA, so vector->metadata is NULL) and on failure. */
+        vector_destroy(vector);
     } else if (db->index_type == GV_INDEX_TYPE_IVFPQ) {
         GV_Vector *vector = vector_create_from_data(dimension, data);
         if (vector == NULL) {
@@ -3437,9 +3449,9 @@ int db_add_vector_with_rich_metadata(GV_Database *db, const float *data, size_t 
                 }
             }
         }
-        if (status != 0) {
-            vector_destroy(vector);
-        }
+        /* HNSW does not store the shell; free it on success (metadata already
+         * transferred to SoA, so vector->metadata is NULL) and on failure. */
+        vector_destroy(vector);
     } else if (db->index_type == GV_INDEX_TYPE_IVFPQ) {
         GV_Vector *vector = vector_create_from_data(dimension, data);
         if (vector == NULL) {

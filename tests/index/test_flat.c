@@ -62,6 +62,7 @@ static int test_flat_insert_search(void) {
                "results sorted by distance");
     }
 
+    gv_search_results_free(results, (size_t)n);
     vector_destroy(qv);
     flat_destroy(index);
     soa_storage_destroy(storage);
@@ -97,6 +98,7 @@ static int test_flat_exact_results(void) {
 
     ASSERT(results[0].distance < 1e-5f, "exact match has near-zero distance");
 
+    gv_search_results_free(results, (size_t)n);
     vector_destroy(qv);
     flat_destroy(index);
     soa_storage_destroy(storage);
@@ -138,6 +140,7 @@ static int test_flat_range_search(void) {
         ASSERT(results[i].distance <= 2.5f, "result within radius");
     }
 
+    gv_search_results_free(results, (size_t)n);
     vector_destroy(qv);
     flat_destroy(index);
     soa_storage_destroy(storage);
@@ -185,6 +188,7 @@ static int test_flat_delete(void) {
     }
     ASSERT(!found_deleted, "deleted vector not returned in search");
 
+    gv_search_results_free(results, (size_t)n);
     vector_destroy(qv);
     flat_destroy(index);
     soa_storage_destroy(storage);
@@ -215,6 +219,7 @@ static int test_flat_update(void) {
     int n = flat_search(index, qv, 1, results, GV_DISTANCE_EUCLIDEAN, NULL, NULL);
     ASSERT(n == 1, "search found 1 result");
     float dist_before = results[0].distance;
+    gv_search_results_free(results, (size_t)n);
     ASSERT(dist_before < 1e-5f, "exact match before update");
 
     float new_data[4] = {100.0f, 100.0f, 100.0f, 100.0f};
@@ -222,7 +227,9 @@ static int test_flat_update(void) {
 
     n = flat_search(index, qv, 1, results, GV_DISTANCE_EUCLIDEAN, NULL, NULL);
     ASSERT(n == 1, "search found 1 result after update");
-    ASSERT(results[0].distance > 1e-5f, "updated vector no longer matches original query");
+    float dist_after = results[0].distance;
+    gv_search_results_free(results, (size_t)n);
+    ASSERT(dist_after > 1e-5f, "updated vector no longer matches original query");
 
     vector_destroy(qv);
     flat_destroy(index);
@@ -257,6 +264,7 @@ static int test_flat_save_load(void) {
     ASSERT(n > 0, "search returned results after reload");
     ASSERT(results[0].distance < 1e-5f, "exact match found after reload");
 
+    gv_search_results_free(results, (size_t)n);
     db_close(db2);
     unlink(path);
     return 0;
@@ -285,6 +293,7 @@ static int test_flat_metadata_filter(void) {
      * the count should be at most 2 (only vectors with category A) */
     ASSERT(n <= 2, "filtered search returned at most 2 category-A results");
 
+    gv_search_results_free(results, (size_t)n);
     db_close(db);
     return 0;
 }

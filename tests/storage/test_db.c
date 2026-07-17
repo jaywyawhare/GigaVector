@@ -32,6 +32,7 @@ static int test_add_and_search(void) {
     ASSERT(n == 1, "search count");
     ASSERT(res[0].distance == 0.0f, "distance zero");
 
+    gv_search_results_free(res, (size_t)n);
     db_close(db);
     return 0;
 }
@@ -58,6 +59,7 @@ static int test_save_load_and_wal(void) {
     int n = db_search(db2, q, 1, res, GV_DISTANCE_EUCLIDEAN);
     ASSERT(n == 1, "search after reload");
     ASSERT(res[0].distance == 0.0f, "distance after reload");
+    gv_search_results_free(res, (size_t)n);
     db_close(db2);
 
     remove(path);
@@ -91,7 +93,8 @@ static int test_all_index_types(void) {
         GV_SearchResult res[1];
         int n = db_search(db, q, 1, res, GV_DISTANCE_EUCLIDEAN);
         ASSERT(n == 1, "search with index type");
-        
+
+        gv_search_results_free(res, (size_t)n);
         db_close(db);
     }
     return 0;
@@ -109,16 +112,20 @@ static int test_all_distance_metrics(void) {
     
     int n = db_search(db, q, 1, res, GV_DISTANCE_EUCLIDEAN);
     ASSERT(n == 1, "euclidean search");
-    
+    gv_search_results_free(res, (size_t)n);
+
     n = db_search(db, q, 1, res, GV_DISTANCE_COSINE);
     ASSERT(n == 1, "cosine search");
-    
+    gv_search_results_free(res, (size_t)n);
+
     n = db_search(db, q, 1, res, GV_DISTANCE_DOT_PRODUCT);
     ASSERT(n == 1, "dot product search");
-    
+    gv_search_results_free(res, (size_t)n);
+
     n = db_search(db, q, 1, res, GV_DISTANCE_MANHATTAN);
     ASSERT(n == 1, "manhattan search");
-    
+    gv_search_results_free(res, (size_t)n);
+
     db_close(db);
     return 0;
 }
@@ -138,7 +145,8 @@ static int test_rich_metadata(void) {
     ASSERT(n == 1, "search");
     ASSERT(res[0].vector != NULL, "result vector");
     ASSERT(res[0].vector->metadata != NULL, "result metadata");
-    
+
+    gv_search_results_free(res, (size_t)n);
     db_close(db);
     return 0;
 }
@@ -159,7 +167,8 @@ static int test_filtered_search(void) {
     GV_SearchResult res[2];
     int n = db_search_filtered(db, q, 2, res, GV_DISTANCE_EUCLIDEAN, "color", "red");
     ASSERT(n > 0, "filtered search");
-    
+
+    gv_search_results_free(res, (size_t)n);
     db_close(db);
     return 0;
 }
@@ -182,7 +191,9 @@ static int test_range_search(void) {
     GV_SearchResult res[10];
     int n = db_range_search(db, q, 2.5f, res, 10, GV_DISTANCE_EUCLIDEAN);
     ASSERT(n >= 3, "range search");
-    
+
+    /* KDTREE db_range_search returns non-owned views (kdtree_range_search frees
+     * its internal temp_views buffer); the caller must NOT free result vectors. */
     db_close(db);
     return 0;
 }
@@ -210,7 +221,8 @@ static int test_batch_operations(void) {
     GV_SearchResult results[3 * 2];
     int n = db_search_batch(db, queries, 3, 2, results, GV_DISTANCE_EUCLIDEAN);
     ASSERT(n == 6, "batch search");
-    
+
+    gv_search_results_free(results, (size_t)n);
     db_close(db);
     return 0;
 }
@@ -237,7 +249,8 @@ static int test_delete_vector(void) {
     GV_SearchResult res[3];
     int n = db_search(db, q, 3, res, GV_DISTANCE_EUCLIDEAN);
     ASSERT(n >= 0, "search after delete");
-    
+
+    if (n > 0) gv_search_results_free(res, (size_t)n);
     db_close(db);
     return 0;
 }
@@ -260,7 +273,8 @@ static int test_update_vector(void) {
     GV_SearchResult res[1];
     int n = db_search(db, q, 1, res, GV_DISTANCE_EUCLIDEAN);
     ASSERT(n >= 0, "search updated vector");
-    
+
+    if (n > 0) gv_search_results_free(res, (size_t)n);
     db_close(db);
     return 0;
 }
@@ -296,8 +310,9 @@ static int test_stats(void) {
     
     float q[2] = {1.0f, 2.0f};
     GV_SearchResult res[1];
-    db_search(db, q, 1, res, GV_DISTANCE_EUCLIDEAN);
-    
+    int sn = db_search(db, q, 1, res, GV_DISTANCE_EUCLIDEAN);
+    if (sn > 0) gv_search_results_free(res, (size_t)sn);
+
     db_get_stats(db, &stats);
     ASSERT(stats.total_queries >= 1, "stats total queries");
     
@@ -360,7 +375,8 @@ static int test_exact_search_threshold(void) {
     GV_SearchResult res[1];
     int n = db_search(db, q, 1, res, GV_DISTANCE_EUCLIDEAN);
     ASSERT(n == 1, "search with exact threshold");
-    
+
+    gv_search_results_free(res, (size_t)n);
     db_close(db);
     return 0;
 }

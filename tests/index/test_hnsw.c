@@ -35,7 +35,8 @@ static int test_hnsw_basic_insert_search(void) {
     if (n > 0 && res[0].vector != NULL) {
         ASSERT(res[0].distance >= 0.0f, "distance is non-negative");
     }
-    
+
+    gv_search_results_free(res, (size_t)n);
     db_close(db);
     return 0;
 }
@@ -59,7 +60,8 @@ static int test_hnsw_config(void) {
     GV_SearchResult res[1];
     int n = db_search(db, q, 1, res, GV_DISTANCE_EUCLIDEAN);
     ASSERT(n == 1, "search with custom config");
-    
+
+    gv_search_results_free(res, (size_t)n);
     db_close(db);
     return 0;
 }
@@ -89,6 +91,7 @@ static int test_hnsw_large_dataset(void) {
         ASSERT(res[0].distance < 1e-5f, "nearest neighbor is correct");
     }
 
+    gv_search_results_free(res, (size_t)n);
     db_close(db);
     return 0;
 }
@@ -111,7 +114,8 @@ static int test_hnsw_filtered_search(void) {
     GV_SearchResult res[2];
     int n = db_search_filtered(db, q, 2, res, GV_DISTANCE_EUCLIDEAN, "color", "red");
     ASSERT(n > 0, "filtered search returned results");
-    
+
+    gv_search_results_free(res, (size_t)n);
     db_close(db);
     return 0;
 }
@@ -136,7 +140,8 @@ static int test_hnsw_range_search(void) {
     GV_SearchResult res[10];
     int n = db_range_search(db, q, 2.5f, res, 10, GV_DISTANCE_EUCLIDEAN);
     ASSERT(n >= 0, "range search found vectors");
-    
+
+    if (n > 0) gv_search_results_free(res, (size_t)n);
     db_close(db);
     return 0;
 }
@@ -168,6 +173,7 @@ static int test_hnsw_persistence(void) {
         ASSERT(res[0].distance < 1e-5f, "nearest neighbor is exact match after reload");
     }
 
+    gv_search_results_free(res, (size_t)n);
     db_close(db2);
     remove(path);
     return 0;
@@ -187,13 +193,16 @@ static int test_hnsw_all_distances(void) {
     
     int n = db_search(db, q, 1, res, GV_DISTANCE_EUCLIDEAN);
     ASSERT(n == 1, "euclidean search");
-    
+    gv_search_results_free(res, (size_t)n);
+
     n = db_search(db, q, 1, res, GV_DISTANCE_COSINE);
     ASSERT(n == 1, "cosine search");
-    
+    gv_search_results_free(res, (size_t)n);
+
     n = db_search(db, q, 1, res, GV_DISTANCE_DOT_PRODUCT);
     ASSERT(n == 1, "dot product search");
-    
+    gv_search_results_free(res, (size_t)n);
+
     db_close(db);
     return 0;
 }

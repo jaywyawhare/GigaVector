@@ -268,11 +268,20 @@ test-valgrind: lib $(BUILD_DIR)/storage/test_db
 # build, and it is wired into CI as its own step. Kept to a reasonable set to
 # bound runtime.
 # Curated to binaries that are valgrind-clean today so the gate is meaningful
-# and green: any NEW leak fails CI. (test_flat / test_hnsw / test_db /
-# test_corrupt_resilience have pre-existing leaks — some in library error paths,
-# some in the tests' own returned-vector cleanup — and are intentionally left
-# out until those are fixed; adding them would make the gate perma-red.)
+# and green: any NEW leak fails CI.
+#   test_flat / test_corrupt_resilience are now clean and gated:
+#     - test_flat: tests free their owned search results (gv_search_results_free).
+#     - test_corrupt_resilience: the db_open_from_memory corrupt/truncated-input
+#       error paths now fully tear down the partially-built db.
+#   test_hnsw / test_db are NOT yet gated: they still hit a pre-existing LIBRARY
+#   leak in db_add_vector (database.c) — for the HNSW/IVFPQ/IVFFLAT/IVFSQ8/
+#   IVFTURBOQUANT index families, db_add_vector allocates a GV_Vector shell whose
+#   data is copied into soa_storage by *_insert(), but (unlike flat/pq/lsh/rabitq
+#   inserts) the shell is never freed on success. Add them here once that library
+#   ownership bug is fixed.
 VALGRIND_CORE_TESTS := \
+	index/test_flat \
+	storage/test_corrupt_resilience \
 	index/test_ivfpq \
 	features/test_recommend \
 	search/test_group_search \
