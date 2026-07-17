@@ -822,6 +822,25 @@ static void replication_route_read_locked(GV_ReplicationManager *mgr,
     target->memory = mgr->follower_memories[slot];
 }
 
+/*
+ * LIFETIME CONTRACT (read carefully — use-after-free hazard):
+ *
+ * This function selects a follower and returns its GV_Database* AFTER dropping
+ * mgr->rwlock. The returned pointer is therefore NOT pinned: once the lock is
+ * released, another thread may call replication_remove_follower() (or tear the
+ * manager down) and the owner of that follower may db_close()/free it. Using
+ * the returned pointer concurrently with such removal is a use-after-free.
+ *
+ * A proper fix (an atomic in-flight/refcount pinned here and released by the
+ * caller when done reading) requires a matching public "unpin" entry point in
+ * the replication header, which is out of scope for this change. Until that
+ * exists, callers MUST guarantee, by external synchronization, that no follower
+ * removal or manager teardown can race with their use of the returned handle
+ * (e.g. only remove followers while no reads are in flight). Note that
+ * replication_remove_follower() itself does NOT db_close the follower; it only
+ * drops the manager's reference, so the ultimate free is owned externally and
+ * that owner must honor the same ordering.
+ */
 GV_Database *replication_route_read(GV_ReplicationManager *mgr) {
     if (!mgr) return NULL;
 

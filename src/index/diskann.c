@@ -68,6 +68,9 @@ static ssize_t pwrite(int fd, const void *buf, size_t count, long long offset) {
 #define DISKANN_PQ_NBITS          8
 #define DISKANN_PQ_KSUB           256  /* 2^8 */
 #define DISKANN_INITIAL_CAPACITY  1024
+/* Number of sectors grouped into one cache page so a miss batches several
+ * adjacent vectors into a single fault (perf only; layout unaffected). */
+#define DISKANN_PAGE_SECTORS      16
 
 typedef struct {
     size_t m;            /* Number of sub-quantizers */
@@ -336,6 +339,24 @@ static float diskann_pq_distance(const DiskANN_PQ *pq, const float *query, const
         const float *subquery = &query[mi * pq->dsub];
         const float *centroid = &pq->codebooks[mi * pq->ksub * pq->dsub + code[mi] * pq->dsub];
         total += diskann_l2_distance(subquery, centroid, pq->dsub);
+    }
+    return total;
+}
+
+/*
+ * Approximate L2 distance between two vectors given only their PQ codes.
+ * For each sub-quantizer we look up the two assigned centroids and sum the
+ * squared distances between them. This lets pruning compare candidates
+ * without any disk reads when PQ is trained and both codes are present.
+ */
+static float diskann_pq_distance_codes(const DiskANN_PQ *pq,
+                                       const uint8_t *code_a, const uint8_t *code_b) {
+    float total = 0.0f;
+    for (size_t mi = 0; mi < pq->m; mi++) {
+        const float *cb = &pq->codebooks[mi * pq->ksub * pq->dsub];
+        const float *ca = &cb[code_a[mi] * pq->dsub];
+        const float *cbv = &cb[code_b[mi] * pq->dsub];
+        total += diskann_l2_distance(ca, cbv, pq->dsub);
     }
     return total;
 }
@@ -723,15 +744,30 @@ static int diskann_greedy_search(const GV_DiskANNIndex *index, const float *quer
                 }
             }
 
+            /*
+             * The candidate array is kept sorted ascending by distance. Rather
+             * than re-qsort the whole array on every insertion (quadratic),
+             * insert the new candidate into its sorted position by shifting the
+             * tail, which is linear per insertion and preserves the exact same
+             * ordering the previous qsort produced.
+             */
             if (cand_count < cand_cap) {
-                candidates[cand_count].index = neighbor;
-                candidates[cand_count].distance = dist;
+                size_t pos = cand_count;
+                while (pos > 0 && candidates[pos - 1].distance > dist) {
+                    candidates[pos] = candidates[pos - 1];
+                    pos--;
+                }
+                candidates[pos].index = neighbor;
+                candidates[pos].distance = dist;
                 cand_count++;
-                qsort(candidates, cand_count, sizeof(DiskANN_Candidate), diskann_cand_compare);
             } else if (dist < candidates[cand_count - 1].distance) {
-                candidates[cand_count - 1].index = neighbor;
-                candidates[cand_count - 1].distance = dist;
-                qsort(candidates, cand_count, sizeof(DiskANN_Candidate), diskann_cand_compare);
+                size_t pos = cand_count - 1;
+                while (pos > 0 && candidates[pos - 1].distance > dist) {
+                    candidates[pos] = candidates[pos - 1];
+                    pos--;
+                }
+                candidates[pos].index = neighbor;
+                candidates[pos].distance = dist;
             }
 
             if (cand_count > beam_width * 2) {
@@ -813,13 +849,11 @@ static void diskann_robust_prune(GV_DiskANNIndex *index, size_t node_id,
             if (index->pq.trained &&
                 index->nodes[candidates[i]].pq_code &&
                 index->nodes[candidates[j]].pq_code) {
-                /* Use PQ codes read into vec_a to compute approximate distance */
-                if (diskann_disk_read_vector(index, candidates[i], vec_a) == 0 &&
-                    diskann_disk_read_vector(index, candidates[j], vec_b) == 0) {
-                    inter_dist = diskann_l2_distance(vec_a, vec_b, index->dimension);
-                } else {
-                    continue;
-                }
+                /* Approximate the candidate-to-candidate distance directly from
+                 * the PQ codes, avoiding two disk reads per comparison. */
+                inter_dist = diskann_pq_distance_codes(&index->pq,
+                                                       index->nodes[candidates[i]].pq_code,
+                                                       index->nodes[candidates[j]].pq_code);
             } else {
                 if (diskann_disk_read_vector(index, candidates[i], vec_a) == 0 &&
                     diskann_disk_read_vector(index, candidates[j], vec_b) == 0) {
@@ -883,7 +917,20 @@ GV_DiskANNIndex *diskann_create(size_t dimension, const GV_DiskANNConfig *config
 
     size_t vec_bytes = dimension * sizeof(float);
     size_t slot_size = ((vec_bytes + index->sector_size - 1) / index->sector_size) * index->sector_size;
-    index->vectors_per_page = index->sector_size / slot_size;
+    /*
+     * A single vector already occupies at least one sector (slot_size), so
+     * sector_size/slot_size is always 1 and the page cache never batches.
+     * Instead build a multi-sector page (DISKANN_PAGE_SECTORS sectors) so a
+     * cache miss faults in several adjacent vectors at once, amortizing the
+     * pread cost. On-disk layout is unchanged: vectors_per_page only groups
+     * vectors that already live at global_vi*slot_size, so read results are
+     * identical -- this is purely a batching/perf change.
+     */
+    {
+        size_t page_bytes = DISKANN_PAGE_SECTORS * index->sector_size;
+        if (page_bytes < slot_size) page_bytes = slot_size;
+        index->vectors_per_page = page_bytes / slot_size;
+    }
     if (index->vectors_per_page == 0) index->vectors_per_page = 1;
 
     if (config && config->data_path) {

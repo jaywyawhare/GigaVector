@@ -10,6 +10,7 @@
 #include "storage/memory_layer.h"
 #include "storage/database.h"
 #include "schema/metadata.h"
+#include "schema/vector.h"
 #include "storage/soa_storage.h"
 
 static void l2_normalize(float *vector, size_t dimension) {
@@ -172,8 +173,17 @@ int memory_find_similar(GV_MemoryLayer *layer, double threshold,
                 }
             }
         }
+
+        /* db_search returns owned result vectors; free them before the
+         * buffer is reused on the next iteration (the inner loop may break
+         * early, so free the full result set unconditionally). */
+        for (int j = 0; j < count; j++) {
+            if (search_results[j].vector != NULL) {
+                vector_destroy((GV_Vector *)search_results[j].vector);
+            }
+        }
     }
-    
+
     gv_free(search_results);
     *actual_count = pair_idx;
     return 0;

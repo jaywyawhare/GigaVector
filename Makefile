@@ -146,6 +146,20 @@ EXE_EXT :=
 endif
 TEST_BINS := $(patsubst $(TEST_DIR)/%.c,$(BUILD_DIR)/%$(EXE_EXT),$(TEST_SRCS))
 
+# Deterministic simulation tests (DST). Globbed so new tests/dst/*.c can't drift
+# out of CI: `make dst-test` builds and runs every one.
+DST_SRCS := $(sort $(wildcard $(TEST_DIR)/dst/test_*.c))
+DST_BINS := $(patsubst $(TEST_DIR)/%.c,$(BUILD_DIR)/%$(EXE_EXT),$(DST_SRCS))
+
+.PHONY: dst-test
+dst-test: lib $(DST_BINS)
+	@echo "Running DST oracles..."
+	@for test in $(DST_BINS); do \
+		echo "Running $$test..."; \
+		LD_LIBRARY_PATH=$(LIB_DIR):$$LD_LIBRARY_PATH $$test || exit 1; \
+	done
+	@echo "All DST oracles passed"
+
 ASAN_FLAGS := -fsanitize=address -fno-omit-frame-pointer -g
 TSAN_FLAGS := -fsanitize=thread -fno-omit-frame-pointer -g
 MSAN_FLAGS := -fsanitize=memory -fno-omit-frame-pointer -g
@@ -247,6 +261,40 @@ test-valgrind: lib $(BUILD_DIR)/storage/test_db
 	else \
 		echo "Valgrind not found, skipping..."; \
 	fi
+
+# Curated valgrind run over memory-sensitive binaries. Unlike `test-valgrind`
+# (which runs a single binary and whose failure is swallowed by `test-all`),
+# this uses --error-exitcode=1 --leak-check=full so any leak/error fails the
+# build, and it is wired into CI as its own step. Kept to a reasonable set to
+# bound runtime.
+# Curated to binaries that are valgrind-clean today so the gate is meaningful
+# and green: any NEW leak fails CI. (test_flat / test_hnsw / test_db /
+# test_corrupt_resilience have pre-existing leaks — some in library error paths,
+# some in the tests' own returned-vector cleanup — and are intentionally left
+# out until those are fixed; adding them would make the gate perma-red.)
+VALGRIND_CORE_TESTS := \
+	index/test_ivfpq \
+	features/test_recommend \
+	search/test_group_search \
+	search/test_mmr \
+	core/test_alloc_fail
+VALGRIND_CORE_BINS := $(patsubst %,$(BUILD_DIR)/%$(EXE_EXT),$(VALGRIND_CORE_TESTS))
+
+.PHONY: test-valgrind-core
+test-valgrind-core: lib $(VALGRIND_CORE_BINS)
+	@echo "Running curated valgrind memory checks..."
+	@if ! command -v valgrind >/dev/null 2>&1; then \
+		echo "Valgrind not found, skipping..."; exit 0; \
+	fi
+	@for test in $(VALGRIND_CORE_BINS); do \
+		echo "==> valgrind $$test"; \
+		LD_LIBRARY_PATH=$(LIB_DIR):$$LD_LIBRARY_PATH \
+			valgrind --leak-check=full --error-exitcode=1 \
+			--errors-for-leak-kinds=definite,indirect \
+			$$test || exit 1; \
+		rm -rf $${TMPDIR:-/tmp}/gv_* 2>/dev/null || true; \
+	done
+	@echo "All curated valgrind checks passed"
 
 .PHONY: test-all
 test-all: c-test python-test-comprehensive test-asan test-tsan test-ubsan

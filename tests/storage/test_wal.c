@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "gigavector.h"
 #include "../test_tmp.h"
@@ -239,6 +240,70 @@ static int test_wal_replay_rich(void) {
     return 0;
 }
 
+/*
+ * WAL fsync-before-truncate ORDERING reinforcement.
+ *
+ * wal.c durably fsync()s appended records before any ftruncate() reclaims log
+ * space; the ordering guarantee is that a crash can only ever leave a *torn
+ * tail* (a partially-written trailing record), never a hole in the middle of a
+ * durably-acknowledged prefix. This test exercises that contract from the
+ * recovery side: it writes several complete records, then physically truncates
+ * the file in the MIDDLE of the last record (simulating a crash mid-append
+ * before the record was fsync'd/CRC-committed). Replay must recover the
+ * durable prefix and drop the torn trailing record — i.e. it must NOT fail the
+ * whole log and must NOT count the torn record. Mirrors the torn-tail pattern
+ * in tests/storage/test_corrupt_resilience.c.
+ */
+static int test_wal_fsync_truncate_ordering(void) {
+    char wal_path[256];
+    if (gv_test_make_temp_path(wal_path, sizeof(wal_path), "gv_wal_ordering", ".wal") != 0) return 0;
+    remove(wal_path);
+
+    GV_WAL *wal = wal_open(wal_path, 2, GV_INDEX_TYPE_KDTREE);
+    ASSERT(wal != NULL, "wal open");
+
+    /* Write several complete, durable records. */
+    const int N = 6;
+    for (int i = 0; i < N; i++) {
+        float v[2] = {(float)i, (float)(i + 1)};
+        ASSERT(wal_append_insert(wal, v, 2, "tag", "seed") == 0, "append insert");
+    }
+    wal_close(wal);
+
+    /* Sanity: a clean replay sees every durable record. */
+    int clean = 0;
+    ReplayCtx cctx = { .count = &clean };
+    ASSERT(wal_replay(wal_path, 2, on_insert_basic_cb, &cctx, GV_INDEX_TYPE_KDTREE) == 0,
+           "clean replay ok");
+    ASSERT(clean == N, "clean replay saw all records");
+
+    /* Measure file size, then truncate MID-record: drop the last few bytes so
+     * the trailing record is structurally incomplete (a torn tail, exactly the
+     * state the fsync-then-ftruncate ordering bounds a crash to). */
+    FILE *f = fopen(wal_path, "rb");
+    ASSERT(f != NULL, "open for size");
+    ASSERT(fseek(f, 0, SEEK_END) == 0, "seek end");
+    long sz = ftell(f);
+    fclose(f);
+    ASSERT(sz > 8, "wal non-trivial");
+
+    /* Cut off a handful of bytes from the end — inside the final record's
+     * payload/CRC region rather than on a clean record boundary. */
+    ASSERT(truncate(wal_path, sz - 5) == 0, "truncate mid-record");
+
+    /* Replay must RECOVER: succeed (defined result, no crash) and drop the
+     * torn trailing record. The durable prefix survives; the torn tail does not. */
+    int torn = 0;
+    ReplayCtx tctx = { .count = &torn };
+    int rc = wal_replay(wal_path, 2, on_insert_basic_cb, &tctx, GV_INDEX_TYPE_KDTREE);
+    ASSERT(rc == 0, "torn-tail replay recovers (no crash, defined result)");
+    ASSERT(torn < N, "torn trailing record dropped on recovery");
+    ASSERT(torn >= N - 1, "only the torn tail is dropped; durable prefix survives");
+
+    remove(wal_path);
+    return 0;
+}
+
 static int test_wal_in_database(void) {
     char db_path[256], wal_path[256];
     if (gv_test_make_temp_path(db_path, sizeof(db_path), "gv_wal_db", ".bin") != 0) return 0;
@@ -258,7 +323,9 @@ static int test_wal_in_database(void) {
     if (dump_result != 0) {
         db_disable_wal(db);
         db_close(db);
-        remove(db_path);
+        /* gv_test_remove_db also removes the "<db_path>.wal" sidecar that
+         * db_open() creates, which plain remove(db_path) would leak in /tmp. */
+        gv_test_remove_db(db_path);
         remove(wal_path);
         return 0;
     }
@@ -266,7 +333,7 @@ static int test_wal_in_database(void) {
     db_disable_wal(db);
     db_close(db);
 
-    remove(db_path);
+    gv_test_remove_db(db_path);
     remove(wal_path);
     return 0;
 }
@@ -283,6 +350,7 @@ int main(void) {
     rc |= test_wal_dump();
     rc |= test_wal_replay();
     rc |= test_wal_replay_rich();
+    rc |= test_wal_fsync_truncate_ordering();
     rc |= test_wal_in_database();
     return rc;
 }

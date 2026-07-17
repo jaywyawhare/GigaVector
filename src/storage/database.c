@@ -4246,7 +4246,11 @@ int db_search_batch(const GV_Database *db, const float *queries, size_t qcount, 
     size_t base = qcount / nthreads;
     size_t rem  = qcount % nthreads;
     size_t offset = 0;
-    size_t launched = 0;
+    /* Compact array of successfully-created thread handles to join. Using tids
+     * as a dense array (indexed by thread number, not chunk index) means we
+     * never join uninitialized slots and never leak a real thread on partial
+     * pthread_create failure. */
+    size_t njoin = 0;
 
     for (size_t t = 0; t < nthreads; t++) {
         size_t chunk = base + (t < rem ? 1 : 0);
@@ -4261,18 +4265,23 @@ int db_search_batch(const GV_Database *db, const float *queries, size_t qcount, 
         offset += chunk;
 
         if (chunk == 0) continue;
-        if (pthread_create(&tids[t], NULL, db_batch_search_worker, &jobs[t]) != 0) {
+        if (pthread_create(&tids[njoin], NULL, db_batch_search_worker, &jobs[t]) != 0) {
             jobs[t].error = 1;
-            /* run remaining queries on caller thread */
+            /* run this chunk on caller thread; do NOT record a thread handle */
             db_batch_search_worker(&jobs[t]);
         } else {
-            launched++;
+            njoin++;
         }
     }
 
-    int had_error = 0;
-    for (size_t t = 0; t < launched; t++) {
+    /* Join exactly the threads we created. jobs/results stay live until every
+     * real thread has been joined below. */
+    for (size_t t = 0; t < njoin; t++) {
         pthread_join(tids[t], NULL);
+    }
+
+    int had_error = 0;
+    for (size_t t = 0; t < nthreads; t++) {
         if (jobs[t].error) had_error = 1;
     }
 
@@ -5779,6 +5788,22 @@ typedef struct {
     /* ... rest not needed */
 } GV_IVFTurboQuantIndexPartial;
 
+/*
+ * Serializes the save/set/search/restore sequence that temporarily overrides
+ * shared index parameters (HNSW efSearch, IVF nprobe) for a single query.
+ *
+ * db_search() acquires db->rwlock (rdlock) internally, so we CANNOT wrap the
+ * sequence in wrlock(&db->rwlock): that non-recursive rwlock would deadlock
+ * when db_search re-locks it. There is also no dedicated mutex for this in the
+ * GV_Database struct (and its header is out of scope to edit). A file-scoped
+ * mutex makes the mutate+search+restore critical section mutually exclusive so
+ * concurrent callers cannot corrupt each other's params or leave the shared
+ * field permanently wrong. Trade-off: this serializes all param-override
+ * searches across every DB instance in the process; a per-DB mutex in the
+ * header would remove that coupling if finer granularity is needed.
+ */
+static pthread_mutex_t g_search_params_mutex = PTHREAD_MUTEX_INITIALIZER;
+
 int db_search_with_params(const GV_Database *db, const float *query_data, size_t k,
                               GV_SearchResult *results, GV_DistanceType distance_type,
                               const GV_SearchParams *params) {
@@ -5792,46 +5817,56 @@ int db_search_with_params(const GV_Database *db, const float *query_data, size_t
 
     if (db->index_type == GV_INDEX_TYPE_HNSW && params->ef_search > 0 && db->hnsw_index != NULL) {
         GV_HNSWIndexPartial *idx = (GV_HNSWIndexPartial *)db->hnsw_index;
+        pthread_mutex_lock(&g_search_params_mutex);
         size_t saved_ef = idx->efSearch;
         idx->efSearch = params->ef_search;
         int r = db_search(db, query_data, k, results, distance_type);
         idx->efSearch = saved_ef;
+        pthread_mutex_unlock(&g_search_params_mutex);
         return r;
     }
 
     if (db->index_type == GV_INDEX_TYPE_IVFFLAT && params->nprobe > 0 && db->hnsw_index != NULL) {
         GV_IVFFlatIndexPartial *idx = (GV_IVFFlatIndexPartial *)db->hnsw_index;
+        pthread_mutex_lock(&g_search_params_mutex);
         size_t saved_nprobe = idx->config.nprobe;
         idx->config.nprobe = params->nprobe;
         int r = db_search(db, query_data, k, results, distance_type);
         idx->config.nprobe = saved_nprobe;
+        pthread_mutex_unlock(&g_search_params_mutex);
         return r;
     }
 
     if (db->index_type == GV_INDEX_TYPE_IVFDISK && params->nprobe > 0 && db->hnsw_index != NULL) {
         GV_IVFDiskIndex *idx = (GV_IVFDiskIndex *)db->hnsw_index;
+        pthread_mutex_lock(&g_search_params_mutex);
         size_t saved_nprobe = ivfdisk_get_nprobe(idx);
         ivfdisk_set_nprobe(idx, params->nprobe);
         int r = db_search(db, query_data, k, results, distance_type);
         ivfdisk_set_nprobe(idx, saved_nprobe);
+        pthread_mutex_unlock(&g_search_params_mutex);
         return r;
     }
 
     if (db->index_type == GV_INDEX_TYPE_IVFSQ8 && params->nprobe > 0 && db->hnsw_index != NULL) {
         GV_IVFSQ8IndexPartial *idx = (GV_IVFSQ8IndexPartial *)db->hnsw_index;
+        pthread_mutex_lock(&g_search_params_mutex);
         size_t saved_nprobe = idx->config.nprobe;
         idx->config.nprobe = params->nprobe;
         int r = db_search(db, query_data, k, results, distance_type);
         idx->config.nprobe = saved_nprobe;
+        pthread_mutex_unlock(&g_search_params_mutex);
         return r;
     }
 
     if (db->index_type == GV_INDEX_TYPE_IVFTURBOQUANT && params->nprobe > 0 && db->hnsw_index != NULL) {
         GV_IVFTurboQuantIndexPartial *idx = (GV_IVFTurboQuantIndexPartial *)db->hnsw_index;
+        pthread_mutex_lock(&g_search_params_mutex);
         size_t saved_nprobe = idx->config.nprobe;
         idx->config.nprobe = params->nprobe;
         int r = db_search(db, query_data, k, results, distance_type);
         idx->config.nprobe = saved_nprobe;
+        pthread_mutex_unlock(&g_search_params_mutex);
         return r;
     }
 

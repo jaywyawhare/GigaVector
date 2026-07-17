@@ -13,6 +13,8 @@
 #include "schema/vector.h"
 #include "search/filter.h"
 
+#define GV_REST_MAX_K 65536u
+
 #define GV_REST_SEARCH_ARENA_BYTES (64u * 1024u)
 #define GV_REST_BATCH_ARENA_BYTES  (256u * 1024u)
 #define GV_REST_INSERT_ARENA_BYTES (1024u * 1024u)
@@ -604,6 +606,11 @@ GV_HttpResponse *rest_handle_search(const GV_HandlerContext *ctx,
         double k_num;
         size_t k = 10;
         if (k_val && json_get_number(k_val, &k_num) == GV_JSON_OK) {
+            if (k_num < 1 || k_num > (double)GV_REST_MAX_K) {
+                json_free(body);
+                return rest_response_error(GV_HTTP_400_BAD_REQUEST, "invalid_request",
+                                               "'k' must be between 1 and 65536");
+            }
             k = (size_t)k_num;
         }
 
@@ -774,6 +781,11 @@ GV_HttpResponse *rest_handle_search_range(const GV_HandlerContext *ctx,
         double max_num;
         size_t max_results = 100;
         if (max_val && json_get_number(max_val, &max_num) == GV_JSON_OK) {
+            if (max_num < 1 || max_num > (double)GV_REST_MAX_K) {
+                json_free(body);
+                return rest_response_error(GV_HTTP_400_BAD_REQUEST, "invalid_request",
+                                               "'max_results' must be between 1 and 65536");
+            }
             max_results = (size_t)max_num;
         }
 
@@ -880,6 +892,11 @@ GV_HttpResponse *rest_handle_search_batch(const GV_HandlerContext *ctx,
     double k_num;
     size_t k = 10;
     if (k_val && json_get_number(k_val, &k_num) == GV_JSON_OK) {
+        if (k_num < 1 || k_num > (double)GV_REST_MAX_K) {
+            json_free(body);
+            return rest_response_error(GV_HTTP_400_BAD_REQUEST, "invalid_request",
+                                           "'k' must be between 1 and 65536");
+        }
         k = (size_t)k_num;
     }
 
@@ -911,8 +928,16 @@ GV_HttpResponse *rest_handle_search_batch(const GV_HandlerContext *ctx,
             }
         }
 
+        size_t total_results;
+        if (__builtin_mul_overflow(qcount, k, &total_results) ||
+            total_results > (size_t)GV_REST_MAX_K) {
+            json_free(body);
+            return rest_response_error(GV_HTTP_400_BAD_REQUEST, "invalid_request",
+                                           "Batch result count (queries * k) exceeds maximum of 65536");
+        }
+
         GV_SearchResult *results = (GV_SearchResult *)gv_arena_calloc(
-            &scratch, qcount * k, sizeof(GV_SearchResult));
+            &scratch, total_results, sizeof(GV_SearchResult));
         if (!results) {
             json_free(body);
             return rest_response_error(GV_HTTP_500_INTERNAL_ERROR, "memory_error",

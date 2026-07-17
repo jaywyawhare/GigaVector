@@ -9,6 +9,7 @@
 #include "storage/database.h"
 #include "storage/wal.h"
 #include "core/utils.h"
+#include "security/crypto.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -87,6 +88,32 @@ static uint64_t read_u64_be(const uint8_t *buf) {
 }
 
 #ifndef _WIN32
+
+/*
+ * Optional replication shared secret.
+ *
+ * Backward-compatible auth: if the GV_REPL_SECRET environment variable is set
+ * and non-empty, the leader requires every connecting replica to present the
+ * same secret (appended to the HELLO frame after the node id) and rejects the
+ * connection otherwise, using a constant-time comparison. If the variable is
+ * unset/empty the transport behaves exactly as before (no auth), so existing
+ * deployments and tests are unaffected.
+ *
+ * The env var is read once on first use and cached; the returned pointer is
+ * either NULL (no secret) or a stable string owned by the environment.
+ */
+static const char *repl_shared_secret(void) {
+    static const char *cached = NULL;
+    static int initialized = 0;
+    if (!initialized) {
+        const char *s = getenv("GV_REPL_SECRET");
+        if (s && s[0] != '\0') {
+            cached = s;
+        }
+        initialized = 1;
+    }
+    return cached;
+}
 
 static int recv_exact(int fd, uint8_t *buf, size_t len) {
     size_t total = 0;
@@ -340,6 +367,28 @@ static void repl_handle_client(GV_ReplTransport *transport, int fd) {
     }
     memcpy(node_id, payload + 4, nid_len);
     node_id[nid_len] = '\0';
+
+    /*
+     * Optional shared-secret authentication (backward compatible). When a
+     * secret is configured, the replica must append exactly that secret to the
+     * HELLO frame after the node id. Reject any client that omits it or
+     * presents a wrong one, using a constant-time comparison. When no secret is
+     * configured this check is skipped and any trailing bytes are ignored,
+     * preserving the previous (unauthenticated) behavior.
+     */
+    const char *secret = repl_shared_secret();
+    if (secret) {
+        size_t secret_len = strlen(secret);
+        size_t offered_off = 4 + (size_t)nid_len;
+        size_t offered_len = payload_len - offered_off;
+        if (offered_len != secret_len ||
+            crypto_constant_time_compare((const unsigned char *)(payload + offered_off),
+                                         (const unsigned char *)secret, secret_len) != 0) {
+            gv_free(payload);
+            close(fd);
+            return;
+        }
+    }
     gv_free(payload);
 
     uint64_t catchup_from = 0;
@@ -474,14 +523,25 @@ static void *repl_follower_thread_func(void *arg) {
         const char *node_id = replication_get_node_id(mgr);
         if (!node_id) node_id = "follower";
         size_t nid_len = strlen(node_id);
-        uint8_t *hello = (uint8_t *)gv_alloc(4 + nid_len);
+        /*
+         * If a shared secret is configured, append it to the HELLO frame after
+         * the node id so the leader can authenticate this replica. When no
+         * secret is configured the frame is identical to before.
+         */
+        const char *secret = repl_shared_secret();
+        size_t secret_len = secret ? strlen(secret) : 0;
+        size_t hello_len = 4 + nid_len + secret_len;
+        uint8_t *hello = (uint8_t *)gv_alloc(hello_len);
         if (!hello) {
             close(fd);
             continue;
         }
         write_u32_be(hello, (uint32_t)nid_len);
         memcpy(hello + 4, node_id, nid_len);
-        repl_send_message(fd, REPL_MSG_HELLO, 1, hello, 4 + nid_len);
+        if (secret_len > 0) {
+            memcpy(hello + 4 + nid_len, secret, secret_len);
+        }
+        repl_send_message(fd, REPL_MSG_HELLO, 1, hello, hello_len);
         gv_free(hello);
 
         uint64_t catchup_from = 0;

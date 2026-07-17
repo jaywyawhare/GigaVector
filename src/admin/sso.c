@@ -107,6 +107,43 @@ static int http_get(const char *url, int verify_ssl,
 static int http_post_form(const char *url, const char *post_fields,
                           int verify_ssl, char **response, size_t *response_len);
 
+/* URL Encoding */
+
+/**
+ * Percent-encode @p src into @p dst for use in an
+ * application/x-www-form-urlencoded body.  Every byte that is not an RFC 3986
+ * unreserved character (A-Za-z0-9 - _ . ~) is emitted as %XX.  This prevents a
+ * client-supplied value (auth code, refresh token, ...) from injecting or
+ * overriding additional form parameters via characters such as '&' or '='.
+ *
+ * Writes at most @p dst_size bytes including the NUL terminator.  Returns 0 on
+ * success, -1 if the encoded output (worst case 3x the input) would not fit.
+ */
+static int url_encode(const char *src, char *dst, size_t dst_size) {
+    static const char hex[] = "0123456789ABCDEF";
+    if (!dst || dst_size == 0) return -1;
+    if (!src) src = "";
+
+    size_t o = 0;
+    for (const unsigned char *p = (const unsigned char *)src; *p; p++) {
+        unsigned char c = *p;
+        int unreserved = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                         (c >= '0' && c <= '9') ||
+                         c == '-' || c == '_' || c == '.' || c == '~';
+        if (unreserved) {
+            if (o + 1 >= dst_size) return -1;
+            dst[o++] = (char)c;
+        } else {
+            if (o + 3 >= dst_size) return -1;
+            dst[o++] = '%';
+            dst[o++] = hex[(c >> 4) & 0xF];
+            dst[o++] = hex[c & 0xF];
+        }
+    }
+    dst[o] = '\0';
+    return 0;
+}
+
 /* Lifecycle */
 
 GV_SSOManager *sso_create(const GV_SSOConfig *config) {
@@ -238,15 +275,34 @@ GV_SSOToken *sso_exchange_code(GV_SSOManager *mgr, const char *auth_code) {
         return NULL;
     }
 
-    /* Build POST body for token exchange */
-    char post_fields[MAX_URL_LEN];
-    snprintf(post_fields, sizeof(post_fields),
+    /*
+     * URL-encode every interpolated value before building the form body so a
+     * value containing '&'/'=' cannot inject or override form parameters.
+     * Each encode buffer is sized for the worst-case 3x expansion.
+     */
+    char enc_code[MAX_URL_LEN];
+    char enc_client_id[MAX_URL_LEN];
+    char enc_client_secret[MAX_URL_LEN];
+    char enc_redirect_uri[MAX_URL_LEN];
+    if (url_encode(auth_code, enc_code, sizeof(enc_code)) != 0 ||
+        url_encode(mgr->config.client_id, enc_client_id, sizeof(enc_client_id)) != 0 ||
+        url_encode(mgr->config.client_secret, enc_client_secret, sizeof(enc_client_secret)) != 0 ||
+        url_encode(mgr->config.redirect_uri, enc_redirect_uri, sizeof(enc_redirect_uri)) != 0) {
+        pthread_mutex_unlock(&mgr->mutex);
+        return NULL;
+    }
+
+    /* Build POST body for token exchange. Sized for worst-case 3x expansion of
+     * every encoded value plus the fixed parameter names. */
+    char post_fields[MAX_URL_LEN * 4];
+    int pf_written = snprintf(post_fields, sizeof(post_fields),
              "grant_type=authorization_code&code=%s"
              "&client_id=%s&client_secret=%s&redirect_uri=%s",
-             auth_code,
-             mgr->config.client_id ? mgr->config.client_id : "",
-             mgr->config.client_secret ? mgr->config.client_secret : "",
-             mgr->config.redirect_uri ? mgr->config.redirect_uri : "");
+             enc_code, enc_client_id, enc_client_secret, enc_redirect_uri);
+    if (pf_written < 0 || (size_t)pf_written >= sizeof(post_fields)) {
+        pthread_mutex_unlock(&mgr->mutex);
+        return NULL;
+    }
 
     char token_endpoint[MAX_ENDPOINT_LEN];
     strncpy(token_endpoint, mgr->endpoints.token_endpoint,
@@ -350,14 +406,32 @@ GV_SSOToken *sso_refresh_token(GV_SSOManager *mgr, const char *refresh_token) {
         return NULL;
     }
 
-    /* Build POST body for token refresh */
-    char post_fields[MAX_URL_LEN];
-    snprintf(post_fields, sizeof(post_fields),
+    /*
+     * URL-encode every interpolated value before building the form body so a
+     * value containing '&'/'=' cannot inject or override form parameters.
+     * Each encode buffer is sized for the worst-case 3x expansion.
+     */
+    char enc_refresh[MAX_URL_LEN];
+    char enc_client_id[MAX_URL_LEN];
+    char enc_client_secret[MAX_URL_LEN];
+    if (url_encode(refresh_token, enc_refresh, sizeof(enc_refresh)) != 0 ||
+        url_encode(mgr->config.client_id, enc_client_id, sizeof(enc_client_id)) != 0 ||
+        url_encode(mgr->config.client_secret, enc_client_secret, sizeof(enc_client_secret)) != 0) {
+        pthread_mutex_unlock(&mgr->mutex);
+        return NULL;
+    }
+
+    /* Build POST body for token refresh. Sized for worst-case 3x expansion of
+     * every encoded value plus the fixed parameter names. */
+    char post_fields[MAX_URL_LEN * 4];
+    int pf_written = snprintf(post_fields, sizeof(post_fields),
              "grant_type=refresh_token&refresh_token=%s"
              "&client_id=%s&client_secret=%s",
-             refresh_token,
-             mgr->config.client_id ? mgr->config.client_id : "",
-             mgr->config.client_secret ? mgr->config.client_secret : "");
+             enc_refresh, enc_client_id, enc_client_secret);
+    if (pf_written < 0 || (size_t)pf_written >= sizeof(post_fields)) {
+        pthread_mutex_unlock(&mgr->mutex);
+        return NULL;
+    }
 
     char token_endpoint[MAX_ENDPOINT_LEN];
     strncpy(token_endpoint, mgr->endpoints.token_endpoint,

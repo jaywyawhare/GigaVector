@@ -3,6 +3,10 @@
  * @brief Backup and restore implementation.
  */
 
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE   /* for fileno()/fsync() prototypes on glibc */
+#endif
+
 #include "storage/backup.h"
 #include "core/memory.h"
 #include "storage/database.h"
@@ -15,6 +19,11 @@
 #include <time.h>
 #include "core/compat.h"
 #include <sys/stat.h>
+#include <stdint.h>
+#ifndef _WIN32
+#include <unistd.h>   /* fsync, close, unlink */
+#include <fcntl.h>    /* open, O_RDONLY, O_DIRECTORY */
+#endif
 
 #define BACKUP_MAGIC "GVBAK"
 #define BACKUP_MAGIC_LEN 5
@@ -67,6 +76,39 @@ static double get_time_seconds(void) {
     return ts.tv_sec + ts.tv_nsec / 1e9;
 }
 
+/* fsync the directory containing `path` so a rename() into it is durable across
+ * a crash (mirrors db_save_locked in database.c).  POSIX only; a no-op on
+ * _WIN32 where rename durability is handled by the platform.  Returns 0 on
+ * success (or on non-POSIX), -1 on failure. */
+static int backup_fsync_parent_dir(const char *path) {
+#ifndef _WIN32
+    char dir_path[1024];
+    size_t len = strlen(path);
+    const char *slash = NULL;
+    for (size_t i = len; i > 0; --i) {
+        if (path[i - 1] == '/') { slash = &path[i - 1]; break; }
+    }
+    if (slash == NULL) {
+        dir_path[0] = '.'; dir_path[1] = '\0';
+    } else if (slash == path) {
+        dir_path[0] = '/'; dir_path[1] = '\0';
+    } else {
+        size_t dlen = (size_t)(slash - path);
+        if (dlen >= sizeof(dir_path)) dlen = sizeof(dir_path) - 1;
+        memcpy(dir_path, path, dlen);
+        dir_path[dlen] = '\0';
+    }
+    int dfd = open(dir_path, O_RDONLY | O_DIRECTORY);
+    if (dfd < 0) return -1;
+    int rc = fsync(dfd);
+    close(dfd);
+    return rc == 0 ? 0 : -1;
+#else
+    (void)path;
+    return 0;
+#endif
+}
+
 GV_BackupResult *backup_create(GV_Database *db, const char *backup_path,
                                    const GV_BackupOptions *options,
                                    GV_BackupProgressCallback progress,
@@ -78,13 +120,22 @@ GV_BackupResult *backup_create(GV_Database *db, const char *backup_path,
     double start_time = get_time_seconds();
     const GV_BackupOptions *opts = options ? options : &DEFAULT_BACKUP_OPTIONS;
 
-    FILE *fp = fopen(backup_path, "wb");
+    /* Durability: write to a temp file, fsync it, then atomically rename over the
+     * canonical backup path (mirrors db_save).  This ensures a crash or ENOSPC
+     * mid-write never corrupts an existing/canonical backup — the final path only
+     * appears once the new backup is complete and durable on disk. */
+    char tmp_path[1024];
+    if (snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", backup_path) >= (int)sizeof(tmp_path)) {
+        return create_result(0, "Backup path too long");
+    }
+
+    FILE *fp = fopen(tmp_path, "wb");
     if (!fp) {
         return create_result(0, "Failed to create backup file");
     }
 
     if (fwrite(BACKUP_MAGIC, 1, BACKUP_MAGIC_LEN, fp) != BACKUP_MAGIC_LEN) {
-        fclose(fp); return create_result(0, "Failed to write backup magic");
+        fclose(fp); remove(tmp_path); return create_result(0, "Failed to write backup magic");
     }
 
     GV_BackupHeader header;
@@ -104,7 +155,7 @@ GV_BackupResult *backup_create(GV_Database *db, const char *backup_path,
 
 #define FWRITE1(field) \
     if (fwrite(&header.field, sizeof(header.field), 1, fp) != 1) { \
-        fclose(fp); return create_result(0, "Failed to write backup header"); \
+        fclose(fp); remove(tmp_path); return create_result(0, "Failed to write backup header"); \
     }
     FWRITE1(version)
     FWRITE1(flags)
@@ -118,16 +169,17 @@ GV_BackupResult *backup_create(GV_Database *db, const char *backup_path,
     long sizes_pos = ftell(fp);
     if (sizes_pos < 0) {
         fclose(fp);
+        remove(tmp_path);
         return create_result(0, "Failed to get file position");
     }
     uint64_t zero = 0;
     if (fwrite(&zero, sizeof(zero), 1, fp) != 1 ||
         fwrite(&zero, sizeof(zero), 1, fp) != 1) {
-        fclose(fp); return create_result(0, "Failed to write backup placeholders");
+        fclose(fp); remove(tmp_path); return create_result(0, "Failed to write backup placeholders");
     }
     char checksum_placeholder[64] = {0};
     if (fwrite(checksum_placeholder, 1, BACKUP_CHECKSUM_LEN, fp) != BACKUP_CHECKSUM_LEN) {
-        fclose(fp); return create_result(0, "Failed to write checksum placeholder");
+        fclose(fp); remove(tmp_path); return create_result(0, "Failed to write checksum placeholder");
     }
 
     uint64_t data_size = 0;
@@ -141,6 +193,7 @@ GV_BackupResult *backup_create(GV_Database *db, const char *backup_path,
         if (vector) {
             if (fwrite(vector, 1, vector_size, fp) != vector_size) {
                 fclose(fp);
+                remove(tmp_path);
                 return create_result(0, "Failed to write vector data (disk full?)");
             }
             data_size += vector_size;
@@ -148,12 +201,14 @@ GV_BackupResult *backup_create(GV_Database *db, const char *backup_path,
             float *zeros = gv_calloc(dimension, sizeof(float));
             if (!zeros) {
                 fclose(fp);
+                remove(tmp_path);
                 return create_result(0, "Failed to allocate zero-vector buffer");
             }
             size_t zw = fwrite(zeros, 1, vector_size, fp);
             gv_free(zeros);
             if (zw != vector_size) {
                 fclose(fp);
+                remove(tmp_path);
                 return create_result(0, "Failed to write placeholder vector (disk full?)");
             }
             data_size += vector_size;
@@ -171,6 +226,7 @@ GV_BackupResult *backup_create(GV_Database *db, const char *backup_path,
     long end_pos = ftell(fp);
     if (end_pos < 0) {
         fclose(fp);
+        remove(tmp_path);
         return create_result(0, "Failed to get file position after writing vectors");
     }
     fseek(fp, sizes_pos, SEEK_SET);
@@ -180,14 +236,46 @@ GV_BackupResult *backup_create(GV_Database *db, const char *backup_path,
 
     fclose(fp);
 
+    /* Patch the checksum into the (still temp) file's header. */
     char checksum[65];
-    if (backup_compute_checksum(backup_path, checksum) == 0) {
-        fp = fopen(backup_path, "r+b");
+    if (backup_compute_checksum(tmp_path, checksum) == 0) {
+        fp = fopen(tmp_path, "r+b");
         if (fp) {
             fseek(fp, sizes_pos + 16, SEEK_SET);
             fwrite(checksum, 1, BACKUP_CHECKSUM_LEN, fp);
             fclose(fp);
         }
+    }
+
+    /* Durably flush the temp file before publishing it: fflush + fsync so a crash
+     * after the rename cannot leave a renamed-but-incomplete backup. */
+    {
+        FILE *sf = fopen(tmp_path, "rb+");
+        int sync_ok = 0;
+        if (sf) {
+            if (fflush(sf) == 0) {
+#ifndef _WIN32
+                sync_ok = (fsync(fileno(sf)) == 0);
+#else
+                sync_ok = 1;
+#endif
+            }
+            if (fclose(sf) != 0) sync_ok = 0;
+        }
+        if (!sync_ok) {
+            remove(tmp_path);
+            return create_result(0, "Failed to fsync backup file");
+        }
+    }
+
+    /* Atomically publish the completed backup, then fsync the directory so the
+     * rename itself is durable. */
+    if (rename(tmp_path, backup_path) != 0) {
+        remove(tmp_path);
+        return create_result(0, "Failed to publish backup file");
+    }
+    if (backup_fsync_parent_dir(backup_path) != 0) {
+        return create_result(0, "Failed to fsync backup directory");
     }
 
     if (opts->verify_after) {
@@ -533,8 +621,17 @@ GV_BackupResult *backup_verify(const char *backup_path, const char *decryption_k
     long file_size = ftell(fp);
     fclose(fp);
 
+    /* Overflow guard: vector_count (uint64) * dimension (uint32) * sizeof(float)
+     * can wrap around, producing a tiny expected_min that lets a truncated (or
+     * maliciously crafted) file pass the size check.  Reject any header whose
+     * declared payload cannot fit in size_t before doing the multiply. */
+    size_t per_vector = (size_t)header.dimension * sizeof(float);
+    if (header.dimension != 0 && header.vector_count != 0 &&
+        header.vector_count > (SIZE_MAX - BACKUP_HEADER_SIZE) / per_vector) {
+        return create_result(0, "Backup header declares an implausible size");
+    }
     size_t expected_min = BACKUP_HEADER_SIZE +
-                          header.vector_count * header.dimension * sizeof(float);
+                          (size_t)header.vector_count * per_vector;
 
     if (!(header.flags & BACKUP_FLAG_ENCRYPTED) && file_size < (long)expected_min) {
         return create_result(0, "Backup file appears truncated");
@@ -567,7 +664,13 @@ int backup_get_info(const char *backup_path, char *info_buf, size_t buf_size) {
     time_t created = (time_t)header.created_at;
     struct tm *tm_info = localtime(&created);
     char time_buf[64];
-    strftime(time_buf, sizeof(time_buf), "%Y-%m-%d %H:%M:%S", tm_info);
+    if (tm_info) {
+        strftime(time_buf, sizeof(time_buf), "%Y-%m-%d %H:%M:%S", tm_info);
+    } else {
+        /* localtime() can return NULL (e.g. out-of-range created_at); passing
+         * that to strftime is undefined behavior. */
+        snprintf(time_buf, sizeof(time_buf), "unknown");
+    }
 
     const char *index_type;
     switch (header.index_type) {
@@ -741,7 +844,14 @@ GV_BackupResult *backup_merge(const char *base_backup_path,
 
     size_t bytes;
     while ((bytes = fread(buffer, 1, BUFFER_SIZE, base_fp)) > 0) {
-        fwrite(buffer, 1, bytes, out_fp);
+        if (fwrite(buffer, 1, bytes, out_fp) != bytes) {
+            /* Silent truncation (e.g. ENOSPC) would corrupt the merged backup. */
+            fclose(base_fp);
+            fclose(out_fp);
+            gv_free(buffer);
+            remove(output_path);
+            return create_result(0, "Failed to write merged backup (disk full?)");
+        }
     }
     fclose(base_fp);
 
@@ -776,14 +886,29 @@ GV_BackupResult *backup_merge(const char *base_backup_path,
 
         fseek(inc_fp, header_size, SEEK_SET);
 
-        size_t vector_bytes = inc_header.vector_count * inc_header.dimension * sizeof(float);
+        /* Bound the multiplication: vector_count (uint64) * dimension (uint32) *
+         * sizeof(float) can overflow size_t.  A wrapped-around vector_bytes would
+         * copy the wrong amount of data; skip any incremental that can't fit. */
+        size_t inc_per_vector = (size_t)inc_header.dimension * sizeof(float);
+        if (inc_header.dimension != 0 && inc_header.vector_count != 0 &&
+            inc_header.vector_count > SIZE_MAX / inc_per_vector) {
+            fclose(inc_fp);
+            continue;
+        }
+        size_t vector_bytes = (size_t)inc_header.vector_count * inc_per_vector;
         size_t remaining = vector_bytes;
 
         while (remaining > 0) {
             size_t to_read = remaining < BUFFER_SIZE ? remaining : BUFFER_SIZE;
             bytes = fread(buffer, 1, to_read, inc_fp);
             if (bytes == 0) break;
-            fwrite(buffer, 1, bytes, out_fp);
+            if (fwrite(buffer, 1, bytes, out_fp) != bytes) {
+                fclose(inc_fp);
+                fclose(out_fp);
+                gv_free(buffer);
+                remove(output_path);
+                return create_result(0, "Failed to write merged backup (disk full?)");
+            }
             remaining -= bytes;
         }
 
@@ -794,7 +919,11 @@ GV_BackupResult *backup_merge(const char *base_backup_path,
     gv_free(buffer);
 
     fseek(out_fp, BACKUP_MAGIC_LEN + sizeof(uint32_t) * 2 + sizeof(uint64_t), SEEK_SET);
-    fwrite(&total_vectors, sizeof(total_vectors), 1, out_fp);
+    if (fwrite(&total_vectors, sizeof(total_vectors), 1, out_fp) != 1) {
+        fclose(out_fp);
+        remove(output_path);
+        return create_result(0, "Failed to write merged backup vector count");
+    }
 
     fclose(out_fp);
 
@@ -815,6 +944,14 @@ int backup_compute_checksum(const char *backup_path, char *checksum_out) {
     fseek(fp, 0, SEEK_END);
     long file_size = ftell(fp);
     fseek(fp, 0, SEEK_SET);
+
+    /* ftell() returns -1 on error; an empty file yields 0.  Either would lead to
+     * a negative/zero-sized gv_alloc (a huge alloc after the implicit conversion
+     * to size_t for -1) and an out-of-bounds auth_sha256 read.  Reject both. */
+    if (file_size <= 0) {
+        fclose(fp);
+        return -1;
+    }
 
     size_t checksum_offset = BACKUP_HEADER_FIXED_SIZE;
 

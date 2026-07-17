@@ -50,26 +50,16 @@ static void l2_normalize(float *vec, size_t dim) {
 /**
  * @brief Recover the SoA storage index from a GV_SearchResult.
  *
- * GV_SearchResult.vector->data points directly into SoA contiguous storage
- * at offset (index * dimension). We recover the index by computing the
- * pointer difference from the base data pointer obtained via
- * database_get_vector(db, 0).
+ * GV_SearchResult.id is the SoA storage index directly. (GV_SearchResult.vector
+ * is a freshly heap-allocated copy owned by the caller, NOT a pointer into SoA
+ * storage, so pointer arithmetic on it is invalid.)
  *
- * Returns (size_t)-1 if the index cannot be determined.
+ * Returns (size_t)-1 if the index is out of range.
  */
 static size_t result_to_index(const GV_Database *db, const GV_SearchResult *sr) {
-    if (!sr || !sr->vector || !sr->vector->data) return (size_t)-1;
+    if (!sr) return (size_t)-1;
 
-    size_t dim = database_dimension(db);
-    if (dim == 0) return (size_t)-1;
-
-    const float *base = database_get_vector(db, 0);
-    if (!base) return (size_t)-1;
-
-    ptrdiff_t diff = sr->vector->data - base;
-    if (diff < 0) return (size_t)-1;
-
-    size_t idx = (size_t)diff / dim;
+    size_t idx = sr->id;
     if (idx >= database_count(db)) return (size_t)-1;
 
     return idx;

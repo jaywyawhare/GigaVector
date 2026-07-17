@@ -895,6 +895,24 @@ char *memory_add_opts(GV_MemoryLayer *layer, const char *content,
     return memory_id;
 }
 
+/**
+ * @brief Free the owned result vectors returned by db_search.
+ *
+ * db_search fills each GV_SearchResult with a freshly heap-allocated vector
+ * copy (via vector_create_from_data) that the caller must destroy. This does
+ * NOT free the results array itself.
+ */
+static void memory_free_result_vectors(GV_SearchResult *results, int count) {
+    if (results == NULL || count <= 0) {
+        return;
+    }
+    for (int i = 0; i < count; i++) {
+        if (results[i].vector != NULL) {
+            vector_destroy((GV_Vector *)results[i].vector);
+        }
+    }
+}
+
 int memory_search(GV_MemoryLayer *layer, const float *query_embedding,
                       size_t k, GV_MemoryResult *results,
                       GV_DistanceType distance_type) {
@@ -925,6 +943,7 @@ int memory_search(GV_MemoryLayer *layer, const float *query_embedding,
     GV_MemoryResult *temp_results = (GV_MemoryResult *)gv_calloc(count, sizeof(GV_MemoryResult));
 
     if (contexts == NULL || importance_results == NULL || temp_results == NULL) {
+        memory_free_result_vectors(search_results, fetched);
         gv_free(search_results);
         gv_free(contexts);
         gv_free(importance_results);
@@ -1022,11 +1041,7 @@ int memory_search(GV_MemoryLayer *layer, const float *query_embedding,
     }
 
     /* db_search returns owned result vectors; free them (only borrowed above). */
-    for (int i = 0; i < fetched; i++) {
-        if (search_results[i].vector) {
-            vector_destroy((GV_Vector *)search_results[i].vector);
-        }
-    }
+    memory_free_result_vectors(search_results, fetched);
     gv_free(search_results);
     gv_free(contexts);
     gv_free(importance_results);
@@ -1423,10 +1438,11 @@ int memory_search_filtered(GV_MemoryLayer *layer, const float *query_embedding,
         
         results[valid_count].related = NULL;
         results[valid_count].related_count = 0;
-        
+
         valid_count++;
     }
-    
+
+    memory_free_result_vectors(search_results, count);
     gv_free(search_results);
     return (int)valid_count;
 }
@@ -1605,6 +1621,7 @@ int memory_search_advanced(GV_MemoryLayer *layer, const float *query_embedding,
     float *combined_scores = (float *)gv_calloc(count, sizeof(float));
 
     if (contexts == NULL || importance_results == NULL || temp_results == NULL || combined_scores == NULL) {
+        memory_free_result_vectors(search_results, count);
         gv_free(search_results);
         gv_free(contexts);
         gv_free(importance_results);
@@ -1695,6 +1712,7 @@ int memory_search_advanced(GV_MemoryLayer *layer, const float *query_embedding,
         valid_count++;
     }
 
+    memory_free_result_vectors(search_results, count);
     gv_free(search_results);
 
     if (valid_count == 0) {

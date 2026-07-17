@@ -1445,8 +1445,14 @@ int posting_catalog_head_stats(GV_PostingCatalog *cat, uint64_t head_id,
     return 0;
 }
 
-static int posting_catalog_drop_head_segments(GV_PostingCatalog *cat, uint64_t head_id,
-                                              char ***out_paths, size_t *out_count)
+/* Drop this head's segments (below `seq_below`, i.e. sequence < seq_below; pass
+ * UINT64_MAX to drop them all) from the catalog, returning their absolute file
+ * paths so the caller can unlink them *after* the catalog is persisted.  This
+ * mutates only the in-memory catalog; the caller must posting_catalog_save() to
+ * make the removal durable and only then unlink the returned paths. */
+static int posting_catalog_drop_head_segments_below(GV_PostingCatalog *cat, uint64_t head_id,
+                                                    uint64_t seq_below,
+                                                    char ***out_paths, size_t *out_count)
 {
     if (!cat) return -1;
 
@@ -1463,7 +1469,7 @@ static int posting_catalog_drop_head_segments(GV_PostingCatalog *cat, uint64_t h
     }
 
     for (size_t i = 0; i < cat->segment_count; ++i) {
-        if (cat->segments[i].head_id == head_id) {
+        if (cat->segments[i].head_id == head_id && cat->segments[i].sequence < seq_below) {
             char abs_path[1024];
             if (posting_join_path(abs_path, sizeof(abs_path), cat->base_dir,
                                   cat->segments[i].rel_path) != 0) {
@@ -1516,6 +1522,9 @@ static int posting_catalog_drop_head_segments(GV_PostingCatalog *cat, uint64_t h
     if (out_paths) {
         *out_paths = paths;
     } else {
+        /* No caller wants the paths back: this is only safe once the catalog is
+         * persisted, which the caller of this branch guarantees.  Retained for
+         * completeness; the durable compaction/rewrite paths pass out_paths. */
         for (size_t i = 0; i < path_n; ++i) {
             remove(paths[i]);
             gv_free(paths[i]);
@@ -1524,6 +1533,37 @@ static int posting_catalog_drop_head_segments(GV_PostingCatalog *cat, uint64_t h
         paths = NULL;
     }
     if (out_count) *out_count = path_n;
+    return 0;
+}
+
+/* Durably supersede this head's old segments after a new consolidated segment
+ * has been appended and made durable.  `keep_seq` is the sequence of the newly
+ * written segment (all strictly-lower sequences are old and get dropped).  Order
+ * is: drop old refs from the in-memory catalog → posting_catalog_save() so the
+ * catalog on disk no longer references them → only then unlink the old files.
+ * At every crash point the on-disk catalog references only durable files. */
+static int posting_catalog_supersede_old_head_segments(GV_PostingCatalog *cat,
+                                                        uint64_t head_id, uint64_t keep_seq)
+{
+    char **old_paths = NULL;
+    size_t old_count = 0;
+    if (posting_catalog_drop_head_segments_below(cat, head_id, keep_seq,
+                                                 &old_paths, &old_count) != 0) {
+        return -1;
+    }
+    if (posting_catalog_save(cat) != 0) {
+        /* Catalog still references the old segments on disk; leave the files in
+         * place so the next attempt can retry.  No data is lost. */
+        for (size_t i = 0; i < old_count; ++i) gv_free(old_paths[i]);
+        gv_free(old_paths);
+        return -1;
+    }
+    /* Catalog no longer references the old files: safe to unlink now. */
+    for (size_t i = 0; i < old_count; ++i) {
+        remove(old_paths[i]);
+        gv_free(old_paths[i]);
+    }
+    gv_free(old_paths);
     return 0;
 }
 
@@ -1544,50 +1584,60 @@ int posting_catalog_compact_head(GV_PostingCatalog *cat, uint64_t head_id,
     memset(&view, 0, sizeof(view));
     if (posting_catalog_materialize_head(cat, head_id, &view) != 0) return -1;
 
-    char **old_paths = NULL;
-    size_t old_count = 0;
-    if (posting_catalog_drop_head_segments(cat, head_id, &old_paths, &old_count) != 0) {
-        posting_head_view_free(&view);
-        return -1;
-    }
-    for (size_t i = 0; i < old_count; ++i) {
-        remove(old_paths[i]);
-        gv_free(old_paths[i]);
-    }
-    gv_free(old_paths);
+    /* Durability: write-new-then-delete-old.  We must NOT remove the old
+     * segment files until the consolidated segment + updated catalog are durable
+     * on disk.  Otherwise a crash after the remove() but before the new segment
+     * and catalog are persisted leaves a CRC-valid catalog referencing deleted
+     * files → head data lost.
+     *
+     * Note the old segments are still registered in the catalog while we append,
+     * so posting_next_sequence() derives a strictly higher sequence for the new
+     * consolidated segment(s): their filenames can never collide with an old one.
+     * `keep_seq` = next_sequence captured now is the lowest sequence any appended
+     * segment can receive; every old segment has a strictly lower sequence.  After
+     * the append (which durably writes the new segment and saves a catalog
+     * referencing both old + new), we drop the old refs and unlink the old files.
+     * If a crash happens in that window, the catalog references the old + new
+     * segments; reads merge them and the new segment's higher commit_ts wins, so
+     * no data is lost — the stale files are simply reclaimed on the next pass. */
+    uint64_t keep_seq = posting_next_sequence(cat, head_id);
+    int rc = 0;
+    if (view.count > 0) {
+        GV_PostingWriteEntry *writes =
+            (GV_PostingWriteEntry *)gv_calloc(view.count, sizeof(GV_PostingWriteEntry));
+        if (!writes) {
+            posting_head_view_free(&view);
+            return -1;
+        }
+        for (size_t i = 0; i < view.count; ++i) {
+            writes[i].vector_id = view.entries[i].vector_id;
+            writes[i].version = view.entries[i].version;
+            writes[i].flags = view.entries[i].flags;
+            writes[i].data = view.entries[i].data;
+        }
 
-    if (view.count == 0) {
-        posting_head_view_free(&view);
-        return posting_catalog_save(cat);
-    }
+        GV_PostingSegmentParams params = { .payload_type = GV_POSTING_PAYLOAD_FLOAT };
+        if (use_sq8) params.payload_type = GV_POSTING_PAYLOAD_SQ8;
 
-    GV_PostingWriteEntry *writes =
-        (GV_PostingWriteEntry *)gv_calloc(view.count, sizeof(GV_PostingWriteEntry));
-    if (!writes) {
-        posting_head_view_free(&view);
-        return -1;
-    }
-    for (size_t i = 0; i < view.count; ++i) {
-        writes[i].vector_id = view.entries[i].vector_id;
-        writes[i].version = view.entries[i].version;
-        writes[i].flags = view.entries[i].flags;
-        writes[i].data = view.entries[i].data;
-    }
+        if (params.payload_type == GV_POSTING_PAYLOAD_FLOAT) {
+            rc = posting_catalog_append_segment(cat, head_id, writes, view.count, dimension);
+        } else {
+            rc = posting_catalog_append_segment_ex(cat, head_id, writes, view.count,
+                                                   dimension, &params);
+        }
 
-    GV_PostingSegmentParams params = { .payload_type = GV_POSTING_PAYLOAD_FLOAT };
-    if (use_sq8) params.payload_type = GV_POSTING_PAYLOAD_SQ8;
-
-    int rc;
-    if (params.payload_type == GV_POSTING_PAYLOAD_FLOAT) {
-        rc = posting_catalog_append_segment(cat, head_id, writes, view.count, dimension);
-    } else {
-        rc = posting_catalog_append_segment_ex(cat, head_id, writes, view.count,
-                                               dimension, &params);
+        gv_free(writes);
     }
-
-    gv_free(writes);
     posting_head_view_free(&view);
-    return rc;
+    if (rc != 0) return rc;
+
+    /* New segment (if any) is now durable and referenced by the saved catalog.
+     * Only now is it safe to drop the superseded old segments: every old segment
+     * has sequence < keep_seq, while any just-appended segment has sequence >=
+     * keep_seq and is preserved.  When view.count == 0 nothing was appended, so
+     * this simply drops (and persists, then unlinks) all of the head's old
+     * segments. */
+    return posting_catalog_supersede_old_head_segments(cat, head_id, keep_seq);
 }
 
 int posting_catalog_maybe_rollup_head(GV_PostingCatalog *cat, uint64_t head_id,
@@ -1691,16 +1741,14 @@ int posting_catalog_rewrite_head(GV_PostingCatalog *cat, uint64_t head_id,
     if (!cat || dimension == 0) return -1;
     if (entry_count > 0 && !entries) return -1;
 
-    char **old_paths = NULL;
-    size_t old_count = 0;
-    if (posting_catalog_drop_head_segments(cat, head_id, &old_paths, &old_count) != 0) {
-        return -1;
-    }
-    for (size_t i = 0; i < old_count; ++i) {
-        remove(old_paths[i]);
-        gv_free(old_paths[i]);
-    }
-    gv_free(old_paths);
+    /* Durability: write-new-then-delete-old (see posting_catalog_compact_head).
+     * `entries` are caller-owned and independent of the old segment files, so we
+     * append the replacement segment(s) first — while the old segments are still
+     * registered, so their sequences stay below the new ones and filenames can't
+     * collide — then, only after the new segment(s) and catalog are durable, drop
+     * and unlink the superseded files.  A crash mid-way leaves a CRC-valid catalog
+     * that still references durable files (old and/or new); no data is lost. */
+    uint64_t keep_seq = posting_next_sequence(cat, head_id);
 
     int rc = 0;
     if (entry_count > 0) {
@@ -1712,11 +1760,13 @@ int posting_catalog_rewrite_head(GV_PostingCatalog *cat, uint64_t head_id,
             rc = posting_catalog_append_segment_ex(cat, head_id, entries, entry_count,
                                                    dimension, &params);
         }
-    } else if (posting_catalog_save(cat) != 0) {
-        rc = -1;
     }
+    if (rc != 0) return rc;
 
-    return rc;
+    /* New segment(s) (if any) durable and in the saved catalog: now supersede the
+     * old ones.  When entry_count == 0 nothing was appended and this drops,
+     * persists, then unlinks all of the head's old segments. */
+    return posting_catalog_supersede_old_head_segments(cat, head_id, keep_seq);
 }
 
 void posting_head_view_free(GV_PostingHeadView *view)

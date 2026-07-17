@@ -206,6 +206,25 @@ int sparse_index_add(GV_SparseIndex *index, GV_SparseVector *vector) {
 
         GV_SparsePosting *p = (GV_SparsePosting *)gv_alloc(sizeof(GV_SparsePosting));
         if (!p) {
+            /* Roll back every posting/df we already added for THIS vector so
+             * shared BM25 state stays consistent. Each posting we added is the
+             * current head of postings[dim] (we prepend), so pop the head for
+             * dim == entries[j].index and undo the matching df increment. */
+            for (size_t j = 0; j < i; ++j) {
+                uint32_t rdim = vector->entries[j].index;
+                if (rdim >= index->dimension) {
+                    continue;
+                }
+                GV_SparsePosting *head = index->postings[rdim];
+                if (head != NULL && head->vector_id == vid) {
+                    index->postings[rdim] = head->next;
+                    gv_free(head);
+                    index->df[rdim] -= 1.0;
+                }
+            }
+            /* vid was never committed (count not yet incremented); clear the
+             * speculative slot so it is not treated as a live vector. */
+            index->vectors[vid] = NULL;
             return -1;
         }
         p->vector_id = vid;

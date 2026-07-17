@@ -486,7 +486,11 @@ int gv_ivfpq_insert(void *index_ptr, GV_Vector *vector) {
     if (idx == NULL || vector == NULL || vector->dimension != idx->dimension || idx->trained == 0) {
         return -1;
     }
-    pthread_rwlock_rdlock(&idx->rwlock);
+    /* Insert grows per-list buffers (entries/codes_soa/count); take the
+     * write lock so it is exclusive against readers in gv_ivfpq_search,
+     * which walk those buffers under the rdlock only. Lock order
+     * (rwlock then per-list mutex) matches the update paths -> no deadlock. */
+    pthread_rwlock_wrlock(&idx->rwlock);
     if (idx->use_cosine) {
         float norm = 0.0f;
         for (size_t i = 0; i < idx->dimension; ++i) norm += vector->data[i] * vector->data[i];
@@ -1076,8 +1080,31 @@ int gv_ivfpq_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version
     GV_IVFPQIndex *idx = (GV_IVFPQIndex *)idx_ptr;
     idx->trained = trained;
     if (trained) {
-        size_t coarse_sz = idx->nlist * idx->dimension;
-        size_t pq_sz = idx->m * idx->codebook_size * idx->subdim;
+        /* Reject files whose (file-supplied) counts overflow the size_t
+         * element/byte computations used for the coarse/PQ arrays. Without
+         * this a crafted file can wrap the product, under-allocate in
+         * gv_ivfpq_create, and drive an out-of-bounds fread below. */
+        size_t coarse_sz;
+        size_t pq_sz;
+        if (idx->dimension != 0 && idx->nlist > SIZE_MAX / idx->dimension) {
+            gv_ivfpq_destroy(idx_ptr);
+            return -1;
+        }
+        coarse_sz = idx->nlist * idx->dimension;
+        if (idx->codebook_size != 0 && idx->m > SIZE_MAX / idx->codebook_size) {
+            gv_ivfpq_destroy(idx_ptr);
+            return -1;
+        }
+        pq_sz = idx->m * idx->codebook_size;
+        if (idx->subdim != 0 && pq_sz > SIZE_MAX / idx->subdim) {
+            gv_ivfpq_destroy(idx_ptr);
+            return -1;
+        }
+        pq_sz *= idx->subdim;
+        if (coarse_sz > SIZE_MAX / sizeof(float) || pq_sz > SIZE_MAX / sizeof(float)) {
+            gv_ivfpq_destroy(idx_ptr);
+            return -1;
+        }
         if (fread(idx->coarse, sizeof(float), coarse_sz, in) != coarse_sz) {
             gv_ivfpq_destroy(idx_ptr);
             return -1;
@@ -1550,14 +1577,20 @@ int gv_ivfpq_update(void *index_ptr, size_t entry_index, const float *new_data, 
                             float normalized = (new_data[i] - min_val) / range;
                             uint8_t quantized = (uint8_t)(normalized * max_quant + 0.5f);
                             if (quantized > max_quant) quantized = max_quant;
-                            size_t byte_idx = i * sqv->bits / 8;
-                            size_t bit_offset = (i * sqv->bits) % 8;
-                            if (sqv->bits == 8) {
-                                sqv->quantized[byte_idx] = quantized;
-                            } else {
-                                /* Handle bit packing for non-8-bit quantization */
-                                uint8_t mask = (1 << sqv->bits) - 1;
-                                sqv->quantized[byte_idx] = (sqv->quantized[byte_idx] & ~(mask << bit_offset)) | (quantized << bit_offset);
+                            if (sqv->bits == 4) {
+                                /* Match scalar_quantize/scalar_dequantize packing:
+                                 * byte_idx = i/2, high nibble for even i,
+                                 * value shifted by (4 - bit_offset). */
+                                size_t byte_idx = i / 2;
+                                size_t bit_offset = (i % 2) * 4;
+                                size_t shift = 4 - bit_offset;
+                                uint8_t mask = (uint8_t)(0x0F << shift);
+                                sqv->quantized[byte_idx] = (uint8_t)((sqv->quantized[byte_idx] & ~mask) |
+                                                                     ((quantized & 0x0F) << shift));
+                            } else if (sqv->bits == 8) {
+                                sqv->quantized[i] = quantized;
+                            } else if (sqv->bits == 16) {
+                                ((uint16_t *)sqv->quantized)[i] = (uint16_t)quantized;
                             }
                         }
                     }

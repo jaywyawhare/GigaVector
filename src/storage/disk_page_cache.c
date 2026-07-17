@@ -162,7 +162,8 @@ GV_DiskPageCache *gv_disk_page_cache_create(size_t max_bytes)
 void gv_disk_page_cache_destroy(GV_DiskPageCache *cache)
 {
     if (!cache) return;
-    pthread_mutex_destroy(&cache->lock);
+    /* Free the bucket chains first, then destroy the mutex LAST so we never
+     * tear down the lock while its protected data is still being walked. */
     for (size_t i = 0; i < GV_DISK_PAGE_CACHE_BUCKETS; ++i) {
         DiskPageCacheNode *node = cache->buckets[i];
         while (node) {
@@ -171,6 +172,7 @@ void gv_disk_page_cache_destroy(GV_DiskPageCache *cache)
             node = next;
         }
     }
+    pthread_mutex_destroy(&cache->lock);
     gv_free(cache);
 }
 

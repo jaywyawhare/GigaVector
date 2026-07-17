@@ -608,7 +608,19 @@ int ivfflat_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version)
     idx->next_id = (size_t)next_id;
 
     if (trained) {
+        /* Reject files whose (file-supplied) nlist*dimension overflows the
+         * size_t element/byte computation for the centroids array; otherwise
+         * a crafted file wraps the product, under-allocates in ivfflat_create,
+         * and the fread below writes out of bounds. */
+        if (idx->dimension != 0 && idx->config.nlist > SIZE_MAX / idx->dimension) {
+            ivfflat_destroy(index);
+            return -1;
+        }
         size_t centroid_floats = idx->config.nlist * idx->dimension;
+        if (centroid_floats > SIZE_MAX / sizeof(float)) {
+            ivfflat_destroy(index);
+            return -1;
+        }
         if (fread(idx->centroids, sizeof(float), centroid_floats, in) != centroid_floats) {
             ivfflat_destroy(index);
             return -1;

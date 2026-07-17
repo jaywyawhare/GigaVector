@@ -69,45 +69,53 @@ static void lex_free(Lex *lx) {
 }
 static int tokenize(Lex *lx, const char *q) {
     size_t i = 0;
+    /* PUSH aborts tokenization on any push() failure (token-limit or OOM);
+     * push() has already set lx->err in that case, but guard here too. */
+    #define PUSH(...) do { \
+        if (push(lx, __VA_ARGS__) != 0) { \
+            if (lx->err[0] == 0) snprintf(lx->err, CY_ERR, "out of memory tokenizing query"); \
+            return -1; \
+        } \
+    } while (0)
     while (q[i]) {
         char c = q[i];
         if (isspace((unsigned char)c)) { i++; continue; }
         if (lx->n >= CY_MAX_TOKENS) { snprintf(lx->err, CY_ERR, "query too large (token limit exceeded)"); return -1; }
         switch (c) {
-            case '(': push(lx, T_LP, 0, 0); i++; continue;
-            case ')': push(lx, T_RP, 0, 0); i++; continue;
-            case '[': push(lx, T_LB, 0, 0); i++; continue;
-            case ']': push(lx, T_RB, 0, 0); i++; continue;
-            case '{': push(lx, T_LC, 0, 0); i++; continue;
-            case '}': push(lx, T_RC, 0, 0); i++; continue;
-            case ':': push(lx, T_COLON, 0, 0); i++; continue;
-            case ',': push(lx, T_COMMA, 0, 0); i++; continue;
-            case '.': push(lx, T_DOT, 0, 0); i++; continue;
-            case '|': push(lx, T_PIPE, 0, 0); i++; continue;
-            case '*': push(lx, T_STAR, 0, 0); i++; continue;
-            case '+': push(lx, T_PLUS, 0, 0); i++; continue;
-            case '/': push(lx, T_SLASH, 0, 0); i++; continue;
-            case '%': push(lx, T_PERCENT, 0, 0); i++; continue;
+            case '(': PUSH(T_LP, 0, 0); i++; continue;
+            case ')': PUSH(T_RP, 0, 0); i++; continue;
+            case '[': PUSH(T_LB, 0, 0); i++; continue;
+            case ']': PUSH(T_RB, 0, 0); i++; continue;
+            case '{': PUSH(T_LC, 0, 0); i++; continue;
+            case '}': PUSH(T_RC, 0, 0); i++; continue;
+            case ':': PUSH(T_COLON, 0, 0); i++; continue;
+            case ',': PUSH(T_COMMA, 0, 0); i++; continue;
+            case '.': PUSH(T_DOT, 0, 0); i++; continue;
+            case '|': PUSH(T_PIPE, 0, 0); i++; continue;
+            case '*': PUSH(T_STAR, 0, 0); i++; continue;
+            case '+': PUSH(T_PLUS, 0, 0); i++; continue;
+            case '/': PUSH(T_SLASH, 0, 0); i++; continue;
+            case '%': PUSH(T_PERCENT, 0, 0); i++; continue;
             case '$': { size_t s = ++i; while (q[i] && (isalnum((unsigned char)q[i]) || q[i] == '_')) i++;
-                        push(lx, T_PARAM, q + s, i - s); continue; }
+                        PUSH(T_PARAM, q + s, i - s); continue; }
             case ';': i++; continue;
-            case '=': push(lx, T_EQ, 0, 0); i++; continue;
+            case '=': PUSH(T_EQ, 0, 0); i++; continue;
             case '<':
-                if (q[i+1] == '-') { push(lx, T_ARROW_L, 0, 0); i += 2; continue; }
-                if (q[i+1] == '>') { push(lx, T_NE, 0, 0); i += 2; continue; }
-                if (q[i+1] == '=') { push(lx, T_LE, 0, 0); i += 2; continue; }
-                push(lx, T_LT, 0, 0); i++; continue;
+                if (q[i+1] == '-') { PUSH(T_ARROW_L, 0, 0); i += 2; continue; }
+                if (q[i+1] == '>') { PUSH(T_NE, 0, 0); i += 2; continue; }
+                if (q[i+1] == '=') { PUSH(T_LE, 0, 0); i += 2; continue; }
+                PUSH(T_LT, 0, 0); i++; continue;
             case '>':
-                if (q[i+1] == '=') { push(lx, T_GE, 0, 0); i += 2; continue; }
-                push(lx, T_GT, 0, 0); i++; continue;
+                if (q[i+1] == '=') { PUSH(T_GE, 0, 0); i += 2; continue; }
+                PUSH(T_GT, 0, 0); i++; continue;
             case '-':
-                if (q[i+1] == '>') { push(lx, T_ARROW_R, 0, 0); i += 2; continue; }
-                push(lx, T_DASH, 0, 0); i++; continue;
+                if (q[i+1] == '>') { PUSH(T_ARROW_R, 0, 0); i += 2; continue; }
+                PUSH(T_DASH, 0, 0); i++; continue;
             case '\'': case '"': {
                 char qt = c; size_t s = i + 1, j = s;
                 while (q[j] && q[j] != qt) j++;
                 if (!q[j]) { snprintf(lx->err, CY_ERR, "unterminated string"); return -1; }
-                push(lx, T_STRING, q + s, j - s); i = j + 1; continue;
+                PUSH(T_STRING, q + s, j - s); i = j + 1; continue;
             }
             default: break;
         }
@@ -118,17 +126,18 @@ static int tokenize(Lex *lx, const char *q) {
                 i++;
                 while (q[i] && isdigit((unsigned char)q[i])) i++;
             }
-            push(lx, T_NUMBER, q + s, i - s); continue;
+            PUSH(T_NUMBER, q + s, i - s); continue;
         }
         if (isalpha((unsigned char)c) || c == '_') {
             size_t s = i;
             while (q[i] && (isalnum((unsigned char)q[i]) || q[i] == '_')) i++;
-            push(lx, T_IDENT, q + s, i - s); continue;
+            PUSH(T_IDENT, q + s, i - s); continue;
         }
         snprintf(lx->err, CY_ERR, "unexpected character '%c'", c);
         return -1;
     }
-    push(lx, T_EOF, 0, 0);
+    PUSH(T_EOF, 0, 0);
+    #undef PUSH
     return 0;
 }
 static Tok *pk(Lex *lx) { return &lx->v[lx->pos]; }
@@ -246,16 +255,23 @@ static int parse_props(Lex *lx, Node *n) {
     while (pk(lx)->t != T_RC) {
         if (n->np >= CY_MAXPROP) { snprintf(lx->err, CY_ERR, "too many properties"); return -1; }
         if (pk(lx)->t != T_IDENT) { snprintf(lx->err, CY_ERR, "expected property key"); return -1; }
-        n->pk[n->np] = gv_dup_cstr(adv(lx)->s);
-        if (eat(lx, T_COLON, "':'")) return -1;
+        char *key = gv_dup_cstr(adv(lx)->s);
+        if (!key) { snprintf(lx->err, CY_ERR, "out of memory"); return -1; }
+        if (eat(lx, T_COLON, "':'")) { gv_free(key); return -1; }
         Tok *v = pk(lx);
-        if (v->t == T_STRING || v->t == T_NUMBER) n->pv[n->np] = gv_dup_cstr(adv(lx)->s);
-        else if (v->t == T_PARAM) { const char *pv = cy_param_lookup(v->s); n->pv[n->np] = gv_dup_cstr(pv ? pv : ""); adv(lx); }
+        char *val = NULL;
+        if (v->t == T_STRING || v->t == T_NUMBER) val = gv_dup_cstr(adv(lx)->s);
+        else if (v->t == T_PARAM) { const char *pv = cy_param_lookup(v->s); val = gv_dup_cstr(pv ? pv : ""); adv(lx); }
         else if (v->t == T_IDENT) { /* variable reference (resolved at CREATE time), e.g. FOREACH loop var */
             char *nm = adv(lx)->s; size_t l = strlen(nm);
-            n->pv[n->np] = (char *)gv_alloc(l + 2); n->pv[n->np][0] = '\x04'; memcpy(n->pv[n->np] + 1, nm, l + 1);
+            val = (char *)gv_alloc(l + 2);
+            if (val) { val[0] = '\x04'; memcpy(val + 1, nm, l + 1); }
         }
-        else { snprintf(lx->err, CY_ERR, "expected property value"); return -1; }
+        else { gv_free(key); snprintf(lx->err, CY_ERR, "expected property value"); return -1; }
+        if (!val) { gv_free(key); snprintf(lx->err, CY_ERR, "out of memory"); return -1; }
+        /* Commit key+value together only once both allocations succeed. */
+        n->pk[n->np] = key;
+        n->pv[n->np] = val;
         n->np++;
         if (pk(lx)->t == T_COMMA) adv(lx); else break;
     }
@@ -873,6 +889,7 @@ static char *cy_list_encode(char **elems, size_t n) {
     size_t len = 1;
     for (size_t i = 0; i < n; i++) len += strlen(elems[i]) + 1;
     char *r = (char *)gv_alloc(len + 1);
+    if (!r) return NULL;
     r[0] = CY_LTAG; size_t p = 1;
     for (size_t i = 0; i < n; i++) { if (i) r[p++] = CY_LSEP; size_t l = strlen(elems[i]); memcpy(r + p, elems[i], l); p += l; }
     r[p] = 0; return r;
@@ -882,12 +899,19 @@ static size_t cy_list_split(const char *s, char ***out) {
     *out = NULL;
     if (!cy_is_list(s) || s[1] == 0) return 0;
     size_t cap = 8, n = 0; char **e = (char **)gv_alloc(cap * sizeof(char *));
+    if (!e) return 0;
     const char *p = s + 1;
     for (;;) {
         const char *q = strchr(p, CY_LSEP);
         size_t l = q ? (size_t)(q - p) : strlen(p);
-        if (n == cap) { cap *= 2; e = (char **)gv_realloc(e, cap * sizeof(char *)); }
-        e[n] = (char *)gv_alloc(l + 1); memcpy(e[n], p, l); e[n][l] = 0; n++;
+        if (n == cap) {
+            char **ne = (char **)gv_realloc(e, cap * 2 * sizeof(char *));
+            if (!ne) { for (size_t i = 0; i < n; i++) gv_free(e[i]); gv_free(e); return 0; }
+            e = ne; cap *= 2;
+        }
+        e[n] = (char *)gv_alloc(l + 1);
+        if (!e[n]) { for (size_t i = 0; i < n; i++) gv_free(e[i]); gv_free(e); return 0; }
+        memcpy(e[n], p, l); e[n][l] = 0; n++;
         if (!q) break; p = q + 1;
     }
     *out = e; return n;
@@ -913,8 +937,10 @@ static char *cy_map_get(const char *s, const char *key) {
 static int cy_is_path(const char *s) { return s && s[0] == CY_PTAG; }
 static char *cy_path_encode(char **nodes, size_t nn, char **rels, size_t nr) {
     char *nl = cy_list_encode(nodes, nn), *rl = cy_list_encode(rels, nr);
+    if (!nl || !rl) { gv_free(nl); gv_free(rl); return NULL; }
     size_t a = strlen(nl), b = strlen(rl);
     char *r = (char *)gv_alloc(1 + a + 1 + b + 1);
+    if (!r) { gv_free(nl); gv_free(rl); return NULL; }
     r[0] = CY_PTAG; memcpy(r + 1, nl, a); r[1 + a] = CY_PSEP; memcpy(r + 2 + a, rl, b); r[2 + a + b] = 0;
     gv_free(nl); gv_free(rl); return r;
 }
@@ -932,7 +958,9 @@ static char *cy_finalize(char *v) {
     if (cy_is_map(v)) { /* render {k: val, ...} */
         size_t len = 2; const char *p = v + 1;
         for (const char *c = p; *c; c++) len += 3;
-        char *r = (char *)gv_alloc(len + 1); size_t w = 0; r[w++] = '{';
+        char *r = (char *)gv_alloc(len + 1);
+        if (!r) return v;   /* OOM: pass encoded value through unchanged */
+        size_t w = 0; r[w++] = '{';
         int first = 1;
         while (*p) {
             const char *kv = strchr(p, CY_MKV); if (!kv) break;
@@ -948,7 +976,12 @@ static char *cy_finalize(char *v) {
     if (!cy_is_list(v)) return v;
     char **e; size_t n = cy_list_split(v, &e);
     size_t len = 2; for (size_t i = 0; i < n; i++) len += strlen(e[i]) + 2;
-    char *r = (char *)gv_alloc(len + 1); size_t p = 0;
+    char *r = (char *)gv_alloc(len + 1);
+    if (!r) {   /* OOM: free split elems and pass encoded value through */
+        for (size_t i = 0; i < n; i++) gv_free(e[i]);
+        gv_free(e); return v;
+    }
+    size_t p = 0;
     r[p++] = '[';
     for (size_t i = 0; i < n; i++) { if (i) { r[p++] = ','; r[p++] = ' '; } size_t l = strlen(e[i]); memcpy(r + p, e[i], l); p += l; gv_free(e[i]); }
     r[p++] = ']'; r[p] = 0;
@@ -982,10 +1015,11 @@ static char *val_of(GV_KnowledgeGraph *kg, const Opd *o, const Row *row) {
         }
         case OPD_LIST: {
             char **els = (char **)gv_alloc((o->nargs ? o->nargs : 1) * sizeof(char *));
+            if (!els) return gv_dup_cstr("");
             for (size_t i = 0; i < o->nargs; i++) els[i] = val_of(kg, o->args[i], row);
             char *r = cy_list_encode(els, o->nargs);
             for (size_t i = 0; i < o->nargs; i++) gv_free(els[i]);
-            gv_free(els); return r;
+            gv_free(els); return r ? r : gv_dup_cstr("");
         }
         case OPD_INDEX: {
             char *lv = val_of(kg, o->l, row), *iv = val_of(kg, o->r, row);

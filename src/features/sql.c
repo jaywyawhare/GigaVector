@@ -280,10 +280,14 @@ static GV_SQLToken sql_lexer_next(GV_SQLLexer *lx)
 
 /* Token buffer (pre-tokenise the full query) */
 
+/* Cap on nested WHERE-expression productions (recursion-depth DoS guard). */
+#define GV_SQL_MAX_RECURSION_DEPTH 256
+
 typedef struct {
     GV_SQLToken *tokens;
     size_t count;
     size_t pos;
+    size_t depth;   /* current WHERE-parse recursion depth (DoS guard) */
     char error[GV_SQL_ERROR_SIZE];
 } GV_SQLTokenBuf;
 
@@ -705,7 +709,25 @@ static GV_SQLWhere *sql_parse_is_null(GV_SQLTokenBuf *buf, char *field)
     return node;
 }
 
+static GV_SQLWhere *sql_parse_where_primary_body(GV_SQLTokenBuf *buf);
+
+/* Recursion-depth-guarded wrapper: all WHERE recursion funnels through
+ * sql_parse_where_primary (expr->and->primary, primary->NOT->primary,
+ * primary->'('->expr), so guarding here bounds total stack depth. */
 static GV_SQLWhere *sql_parse_where_primary(GV_SQLTokenBuf *buf)
+{
+    if (buf->depth >= GV_SQL_MAX_RECURSION_DEPTH) {
+        snprintf(buf->error, sizeof(buf->error),
+                 "WHERE expression nesting too deep");
+        return NULL;
+    }
+    buf->depth++;
+    GV_SQLWhere *node = sql_parse_where_primary_body(buf);
+    buf->depth--;
+    return node;
+}
+
+static GV_SQLWhere *sql_parse_where_primary_body(GV_SQLTokenBuf *buf)
 {
     GV_SQLToken *tok = sql_peek(buf);
     if (!tok) return NULL;
@@ -1355,6 +1377,54 @@ static int sql_eval_where(const GV_SQLWhere *w, const GV_Vector *vec)
 
 /* Metadata-to-JSON serialiser (lightweight, no dependency on json.h) */
 
+/* Ensure *buf has room for `extra` more bytes; grows via realloc.
+ * Returns 1 on success, 0 on OOM (buf is freed on failure by caller). */
+static int sql_json_reserve(char **buf, size_t *cap, size_t len, size_t extra)
+{
+    size_t needed = len + extra;
+    if (needed <= *cap) return 1;
+    size_t nc = *cap ? *cap : 256;
+    while (nc < needed) nc *= 2;
+    char *t = (char *)gv_realloc(*buf, nc);
+    if (!t) return 0;
+    *buf = t;
+    *cap = nc;
+    return 1;
+}
+
+/* Append `s` to the JSON buffer, escaping ", \, and control chars per RFC 8259.
+ * Returns 1 on success, 0 on OOM. */
+static int sql_json_append_escaped(char **buf, size_t *cap, size_t *len, const char *s)
+{
+    if (!s) return 1;
+    for (const unsigned char *p = (const unsigned char *)s; *p; p++) {
+        unsigned char c = *p;
+        /* Worst case one input byte expands to 6 output bytes (\u00XX). */
+        if (!sql_json_reserve(buf, cap, *len, 6)) return 0;
+        switch (c) {
+        case '"':  (*buf)[(*len)++] = '\\'; (*buf)[(*len)++] = '"';  break;
+        case '\\': (*buf)[(*len)++] = '\\'; (*buf)[(*len)++] = '\\'; break;
+        case '\b': (*buf)[(*len)++] = '\\'; (*buf)[(*len)++] = 'b';  break;
+        case '\f': (*buf)[(*len)++] = '\\'; (*buf)[(*len)++] = 'f';  break;
+        case '\n': (*buf)[(*len)++] = '\\'; (*buf)[(*len)++] = 'n';  break;
+        case '\r': (*buf)[(*len)++] = '\\'; (*buf)[(*len)++] = 'r';  break;
+        case '\t': (*buf)[(*len)++] = '\\'; (*buf)[(*len)++] = 't';  break;
+        default:
+            if (c < 0x20) {
+                static const char hex[] = "0123456789abcdef";
+                (*buf)[(*len)++] = '\\'; (*buf)[(*len)++] = 'u';
+                (*buf)[(*len)++] = '0';  (*buf)[(*len)++] = '0';
+                (*buf)[(*len)++] = hex[(c >> 4) & 0xF];
+                (*buf)[(*len)++] = hex[c & 0xF];
+            } else {
+                (*buf)[(*len)++] = (char)c;
+            }
+            break;
+        }
+    }
+    return 1;
+}
+
 static char *sql_metadata_to_json(const GV_Metadata *meta)
 {
     if (!meta) {
@@ -1373,27 +1443,25 @@ static char *sql_metadata_to_json(const GV_Metadata *meta)
     int first = 1;
     for (const GV_Metadata *m = meta; m; m = m->next) {
         if (!first) {
-            if (len + 2 > cap) { cap *= 2; char *t = gv_realloc(buf, cap); if (!t) { gv_free(buf); return NULL; } buf = t; }
+            if (!sql_json_reserve(&buf, &cap, len, 1)) { gv_free(buf); return NULL; }
             buf[len++] = ',';
         }
         first = 0;
 
-        /* "key":"value" */
-        size_t klen = m->key ? strlen(m->key) : 0;
-        size_t vlen = m->value ? strlen(m->value) : 0;
-        size_t needed = len + klen + vlen + 8; /* quotes, colon, etc */
-        if (needed > cap) { while (cap < needed) cap *= 2; char *t = gv_realloc(buf, cap); if (!t) { gv_free(buf); return NULL; } buf = t; }
-
+        /* "key":"value" — key and value escaped for valid JSON. */
+        if (!sql_json_reserve(&buf, &cap, len, 1)) { gv_free(buf); return NULL; }
         buf[len++] = '"';
-        if (m->key) { memcpy(buf + len, m->key, klen); len += klen; }
+        if (!sql_json_append_escaped(&buf, &cap, &len, m->key)) { gv_free(buf); return NULL; }
+        if (!sql_json_reserve(&buf, &cap, len, 3)) { gv_free(buf); return NULL; }
         buf[len++] = '"';
         buf[len++] = ':';
         buf[len++] = '"';
-        if (m->value) { memcpy(buf + len, m->value, vlen); len += vlen; }
+        if (!sql_json_append_escaped(&buf, &cap, &len, m->value)) { gv_free(buf); return NULL; }
+        if (!sql_json_reserve(&buf, &cap, len, 1)) { gv_free(buf); return NULL; }
         buf[len++] = '"';
     }
 
-    if (len + 2 > cap) { cap = len + 2; char *t = gv_realloc(buf, cap); if (!t) { gv_free(buf); return NULL; } buf = t; }
+    if (!sql_json_reserve(&buf, &cap, len, 2)) { gv_free(buf); return NULL; }
     buf[len++] = '}';
     buf[len] = '\0';
     return buf;

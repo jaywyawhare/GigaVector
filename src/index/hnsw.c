@@ -283,6 +283,10 @@ void *gv_hnsw_create(size_t dimension, const GV_HNSWConfig *config, GV_SoAStorag
 
     index->dimension = dimension;
     index->M = (config && config->M > 0) ? config->M : 16;
+    /* Level-0 max neighbors = 2*M and several hot paths use fixed-size
+     * int32_t/size_t scratch buffers of 64 (valid_nbs[64], sel_buf[64]).
+     * Clamp M so 2*M never exceeds 64 to avoid stack buffer overflow. */
+    if (index->M > 32) index->M = 32;
     index->efConstruction = (config && config->efConstruction > 0) ? config->efConstruction : 200;
     index->efSearch = (config && config->efSearch > 0) ? config->efSearch : 50;
     index->maxLevel = (config && config->maxLevel > 0) ? config->maxLevel : 16;

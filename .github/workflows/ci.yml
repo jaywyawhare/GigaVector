@@ -218,22 +218,42 @@ jobs:
         timeout-minutes: 10
         run: make test-corrupt-resilience
 
+      # dst-test globs tests/dst/*.c so new DST oracles can't drift out of CI.
       - name: Run DST oracles
         timeout-minutes: 10
-        run: |
-          make c-test-single TEST=dst/test_repl_oracle
-          make c-test-single TEST=dst/test_repl_oracle_ivfdisk
-          make c-test-single TEST=dst/test_repl_fault_dst
-          make c-test-single TEST=dst/test_repl_liveness_dst
-          make c-test-single TEST=dst/test_insert_visibility_dst
-          make c-test-single TEST=dst/test_ivfdisk_maintenance_dst
-          make c-test-single TEST=dst/test_grpc_frame_dst
+        run: make dst-test
 
       - name: Generate fuzz corpus and run fuzzers
         timeout-minutes: 10
         run: |
           make fuzz-corpus
           make fuzz-run
+
+  # ── Valgrind memcheck (curated, Linux only) ─────────────────────────────
+  valgrind:
+    name: valgrind (curated memcheck)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4.2.2
+
+      - name: Install dependencies
+        timeout-minutes: 10
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential valgrind \
+            libcurl4-openssl-dev \
+            libssl-dev \
+            libmicrohttpd-dev
+
+      # Runs valgrind with --error-exitcode=1 --leak-check=full over a curated
+      # set of memory-sensitive binaries. Any leak/error fails the build (unlike
+      # the legacy `test-valgrind`, which ran a single binary and was swallowed).
+      - name: Curated valgrind memcheck
+        timeout-minutes: 20
+        run: make test-valgrind-core
 
   # ── Static analysis (cppcheck, Linux only) ──────────────────────────────
   static-analysis:
