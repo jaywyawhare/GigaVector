@@ -405,11 +405,11 @@ function drawScatter() {
   }
 
   // Background
-  ctx.fillStyle = "#09090b";
+  ctx.fillStyle = "#0c1118";
   ctx.fillRect(0, 0, w, h);
 
   // Grid
-  ctx.strokeStyle = "#1f1f23";
+  ctx.strokeStyle = "#1e2b3b";
   ctx.lineWidth = 0.5;
   for (let g = 0; g <= 8; g++) {
     const gx = pad + ((w - pad * 2) * g) / 8;
@@ -443,7 +443,7 @@ function drawScatter() {
     const [px, py] = toS(pts[i][0], pts[i][1]);
     ctx.beginPath();
     ctx.arc(px, py, 4, 0, Math.PI * 2);
-    ctx.fillStyle = "#e11d48";
+    ctx.fillStyle = "#2ee6c8";
     ctx.fill();
     ctx.beginPath();
     ctx.arc(px, py, 4, 0, Math.PI * 2);
@@ -529,12 +529,12 @@ function drawScatterWithHighlights() {
     const [sx, sy] = toS(pts[scatterSelected][0], pts[scatterSelected][1]);
     ctx.beginPath();
     ctx.arc(sx, sy, 10, 0, Math.PI * 2);
-    ctx.strokeStyle = "#e11d48";
+    ctx.strokeStyle = "#2ee6c8";
     ctx.lineWidth = 2.5;
     ctx.stroke();
     ctx.beginPath();
     ctx.arc(sx, sy, 13, 0, Math.PI * 2);
-    ctx.strokeStyle = "rgba(225,29,72,0.2)";
+    ctx.strokeStyle = "rgba(46,230,200,0.22)";
     ctx.lineWidth = 3;
     ctx.stroke();
   }
@@ -547,7 +547,7 @@ function drawScatterWithHighlights() {
     const [sx, sy] = toS(pts[scatterHovered][0], pts[scatterHovered][1]);
     ctx.beginPath();
     ctx.arc(sx, sy, 8, 0, Math.PI * 2);
-    ctx.strokeStyle = "#e11d48";
+    ctx.strokeStyle = "#2ee6c8";
     ctx.lineWidth = 2;
     ctx.stroke();
     ctx.fillStyle = "#555";
@@ -784,7 +784,7 @@ function simGraph() {
   function drawGraphFrame() {
     const ctx = canvas.getContext("2d");
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.fillStyle = "#09090b";
+    ctx.fillStyle = "#0c1118";
     ctx.fillRect(0, 0, w, h);
 
     const hovNode = graphHovered >= 0 ? graphNodes[graphHovered] : null;
@@ -810,12 +810,12 @@ function simGraph() {
       ctx.beginPath();
       ctx.moveTo(a.x, a.y);
       ctx.lineTo(b.x, b.y);
-      ctx.strokeStyle = isHL ? "#e11d48" : "#d5d4cc";
+      ctx.strokeStyle = isHL ? "#2ee6c8" : "#d5d4cc";
       ctx.lineWidth = isHL ? 2 : 1;
       ctx.globalAlpha = hovNode || selNode ? (isHL ? 1 : 0.25) : 1;
       ctx.stroke();
       if (e.dist != null) {
-        ctx.fillStyle = isHL ? "#e11d48" : "#999990";
+        ctx.fillStyle = isHL ? "#2ee6c8" : "#999990";
         ctx.font = '9px "IBM Plex Mono"';
         ctx.textAlign = "center";
         ctx.fillText(e.dist.toFixed(2), (a.x + b.x) / 2, (a.y + b.y) / 2 - 5);
@@ -835,12 +835,12 @@ function simGraph() {
       if (isSel) {
         ctx.beginPath();
         ctx.arc(n.x, n.y, r + 6, 0, Math.PI * 2);
-        ctx.strokeStyle = "rgba(225,29,72,0.2)";
+        ctx.strokeStyle = "rgba(46,230,200,0.22)";
         ctx.lineWidth = 3;
         ctx.stroke();
         ctx.beginPath();
         ctx.arc(n.x, n.y, r + 3, 0, Math.PI * 2);
-        ctx.strokeStyle = "#e11d48";
+        ctx.strokeStyle = "#2ee6c8";
         ctx.lineWidth = 2.5;
         ctx.stroke();
       }
@@ -848,13 +848,13 @@ function simGraph() {
       if (isHov && !isSel) {
         ctx.beginPath();
         ctx.arc(n.x, n.y, r + 4, 0, Math.PI * 2);
-        ctx.strokeStyle = "#e11d48";
+        ctx.strokeStyle = "#2ee6c8";
         ctx.lineWidth = 2;
         ctx.stroke();
       }
       ctx.beginPath();
       ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
-      ctx.fillStyle = n.depth === 0 ? "#e11d48" : isSel ? "#e11d48" : "#555";
+      ctx.fillStyle = n.depth === 0 ? "#2ee6c8" : isSel ? "#2ee6c8" : "#555";
       ctx.fill();
       ctx.strokeStyle = "#fff";
       ctx.lineWidth = 2;
@@ -1139,9 +1139,9 @@ function drawLineChart(canvas, data, opts = {}) {
     mn -= 1;
     mx += 1;
   }
-  ctx.fillStyle = "#09090b";
+  ctx.fillStyle = "#0c1118";
   ctx.fillRect(0, 0, w, h);
-  ctx.strokeStyle = "#1f1f23";
+  ctx.strokeStyle = "#1e2b3b";
   ctx.lineWidth = 0.5;
   for (let i = 0; i <= 4; i++) {
     const y = pad.t + (ph * i) / 4;
@@ -1161,14 +1161,14 @@ function drawLineChart(canvas, data, opts = {}) {
       y = pad.t + ph - ((data[i] - mn) / (mx - mn)) * ph;
     ctx.lineTo(x, y);
   }
-  ctx.strokeStyle = opts.color || "#e11d48";
+  ctx.strokeStyle = opts.color || "#2ee6c8";
   ctx.lineWidth = 2;
   ctx.stroke();
   if (opts.fill) {
     ctx.lineTo(pad.l + pw, pad.t + ph);
     ctx.lineTo(pad.l, pad.t + ph);
     ctx.closePath();
-    ctx.fillStyle = opts.fillColor || "rgba(225,29,72,0.08)";
+    ctx.fillStyle = opts.fillColor || "rgba(46,230,200,0.10)";
     ctx.fill();
   }
   if (opts.label) {
@@ -1193,9 +1193,9 @@ function drawBarChart(canvas, labels, values, opts = {}) {
     pw = w - pad.l - pad.r,
     ph = h - pad.t - pad.b;
   const mx = Math.max(...values) * 1.15 || 1;
-  ctx.fillStyle = "#09090b";
+  ctx.fillStyle = "#0c1118";
   ctx.fillRect(0, 0, w, h);
-  ctx.strokeStyle = "#1f1f23";
+  ctx.strokeStyle = "#1e2b3b";
   ctx.lineWidth = 0.5;
   for (let i = 0; i <= 4; i++) {
     const y = pad.t + (ph * i) / 4;
@@ -1212,7 +1212,7 @@ function drawBarChart(canvas, labels, values, opts = {}) {
       y + 3,
     );
   }
-  const colors = opts.colors || ["#e11d48", "#555", "#0369a1", "#16a34a"];
+  const colors = opts.colors || ["#2ee6c8", "#555", "#0369a1", "#16a34a"];
   const gap = pw / (labels.length * 2 + 1),
     bw = gap * 1.5;
   for (let i = 0; i < labels.length; i++) {
@@ -1244,7 +1244,7 @@ function drawGauge(canvas, value, max, opts = {}) {
   canvas.style.height = `${h}px`;
   const ctx = canvas.getContext("2d");
   ctx.scale(dpr, dpr);
-  ctx.fillStyle = "#09090b";
+  ctx.fillStyle = "#0c1118";
   ctx.fillRect(0, 0, w, h);
   const cx = w / 2,
     cy = h * 0.6,
@@ -1252,7 +1252,7 @@ function drawGauge(canvas, value, max, opts = {}) {
   const pct = Math.min(value / (max || 1), 1);
   ctx.beginPath();
   ctx.arc(cx, cy, r, Math.PI, 2 * Math.PI);
-  ctx.strokeStyle = "#1f1f23";
+  ctx.strokeStyle = "#1e2b3b";
   ctx.lineWidth = 12;
   ctx.lineCap = "round";
   ctx.stroke();
@@ -1298,7 +1298,7 @@ async function refreshMonitoring() {
   document.getElementById("mon-mem").textContent = formatBytes(mem);
   document.getElementById("mon-health").textContent = d.health_status || "ok";
   drawLineChart(document.getElementById("mon-qps-chart"), monRing.qps, {
-    color: "#e11d48",
+    color: "#2ee6c8",
     fill: true,
     label: "Last 60 samples",
   });
@@ -1757,7 +1757,7 @@ function simGraphExplorer() {
   function draw() {
     const ctx = canvas.getContext("2d");
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.fillStyle = "#09090b";
+    ctx.fillStyle = "#0c1118";
     ctx.fillRect(0, 0, w, h);
     for (const e of geEdges) {
       const ai = idMap.get(e.source),
@@ -1775,7 +1775,7 @@ function simGraphExplorer() {
     for (const n of geNodes) {
       ctx.beginPath();
       ctx.arc(n.x, n.y, 6, 0, Math.PI * 2);
-      ctx.fillStyle = "#e11d48";
+      ctx.fillStyle = "#2ee6c8";
       ctx.fill();
       ctx.strokeStyle = "#fff";
       ctx.lineWidth = 2;
