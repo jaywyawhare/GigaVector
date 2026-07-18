@@ -9,6 +9,7 @@
 
 #include "features/knowledge_graph.h"
 #include "core/memory.h"
+#include "core/id_bitmap.h"
 #include "core/utils.h"
 #include "core/types.h"
 #include "storage/database.h"
@@ -474,6 +475,51 @@ static size_t kg_collect_relations_for_entity(const GV_KnowledgeGraph *kg,
 
     *out_ids = ids;
     return total;
+}
+
+/* ── Dgraph-style typed roaring sets ─────────────────────────────────────────
+ * Materialize typed relation / neighbor sets as roaring bitmaps (id_bitmap.h)
+ * so typed queries compose as set operations — the Dgraph model where a
+ * <predicate> is a UID set and a typed join is a bitmap AND. Callers own the
+ * returned bitmap (free with gv_id_bitmap_free) and combine several with
+ * gv_id_bitmap_and / gv_id_bitmap_or. */
+
+GV_IdBitmap *kg_predicate_relation_set(const GV_KnowledgeGraph *kg, const char *predicate) {
+    if (!kg || !predicate) return NULL;
+    GV_IdBitmap *bm = gv_id_bitmap_create();
+    if (!bm) return NULL;
+    pthread_rwlock_rdlock((pthread_rwlock_t *)&kg->rwlock);
+    uint64_t ph = kg_hash_string(predicate);
+    KG_IndexEntry *e = kg_index_find(kg->predicate_index, kg->spo_bucket_count, ph);
+    if (e) {
+        for (size_t i = 0; i < e->list.count; i++)
+            gv_id_bitmap_add(bm, e->list.ids[i]);
+    }
+    pthread_rwlock_unlock((pthread_rwlock_t *)&kg->rwlock);
+    return bm;
+}
+
+GV_IdBitmap *kg_entity_neighbor_set(const GV_KnowledgeGraph *kg, uint64_t entity_id,
+                                    int direction) {
+    if (!kg) return NULL;
+    GV_IdBitmap *bm = gv_id_bitmap_create();
+    if (!bm) return NULL;
+    pthread_rwlock_rdlock((pthread_rwlock_t *)&kg->rwlock);
+    KG_EntityNode *n = kg_find_entity_node(kg, entity_id);
+    if (n) {
+        if (direction == 0 || direction == 2) {  /* outgoing */
+            for (size_t i = 0; i < n->out_count; i++)
+                if (n->out_edges[i].neighbor)
+                    gv_id_bitmap_add(bm, n->out_edges[i].neighbor->entity.entity_id);
+        }
+        if (direction == 1 || direction == 2) {  /* incoming */
+            for (size_t i = 0; i < n->in_count; i++)
+                if (n->in_edges[i].neighbor)
+                    gv_id_bitmap_add(bm, n->in_edges[i].neighbor->entity.entity_id);
+        }
+    }
+    pthread_rwlock_unlock((pthread_rwlock_t *)&kg->rwlock);
+    return bm;
 }
 
 static int kg_remove_relation_internal(GV_KnowledgeGraph *kg,

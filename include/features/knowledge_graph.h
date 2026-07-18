@@ -21,6 +21,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "core/id_bitmap.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -408,6 +410,23 @@ int kg_predict_links(const GV_KnowledgeGraph *kg, uint64_t entity_id,
  */
 int kg_get_neighbors(const GV_KnowledgeGraph *kg, uint64_t entity_id,
                          uint64_t *out_ids, size_t max_count);
+
+/**
+ * @brief Roaring-bitmap set of relation IDs for a predicate (Dgraph-style
+ *        typed posting). Returns a new owned GV_IdBitmap (free with
+ *        gv_id_bitmap_free), or NULL on error; empty if the predicate is unused.
+ *        Compose several with gv_id_bitmap_and / gv_id_bitmap_or for typed joins.
+ */
+GV_IdBitmap *kg_predicate_relation_set(const GV_KnowledgeGraph *kg, const char *predicate);
+
+/**
+ * @brief Roaring-bitmap set of neighbour entity IDs of an entity.
+ * @param direction 0 = outgoing, 1 = incoming, 2 = both.
+ * @return New owned GV_IdBitmap (free with gv_id_bitmap_free), or NULL on error.
+ *         e.g. gv_id_bitmap_and(neighbors(A,2), neighbors(B,2)) = common neighbours.
+ */
+GV_IdBitmap *kg_entity_neighbor_set(const GV_KnowledgeGraph *kg, uint64_t entity_id,
+                                    int direction);
 
 /**
  * @brief A single adjacency hop, resolved by direct pointer dereference.

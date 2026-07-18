@@ -3,6 +3,8 @@
 
 #include <stddef.h>
 
+#include "core/id_bitmap.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -57,6 +59,17 @@ int metadata_index_remove(GV_MetadataIndex *index, const char *key, const char *
  */
 int metadata_index_query(const GV_MetadataIndex *index, const char *key, const char *value,
                             size_t *out_indices, size_t max_indices);
+
+/**
+ * @brief Get the roaring posting bitmap of vector indices for a key=value pair.
+ *
+ * Returns a BORROWED, read-only pointer to the internal posting (valid until the
+ * next mutation of this key=value entry), or NULL if the pair isn't indexed.
+ * Enables multi-filter queries as bitmap intersections: AND several postings
+ * with gv_id_bitmap_and(...) to get the candidate set directly.
+ */
+const GV_IdBitmap *metadata_index_query_bitmap(const GV_MetadataIndex *index,
+                                               const char *key, const char *value);
 
 /**
  * @brief Get the count of vector indices matching a key-value pair.

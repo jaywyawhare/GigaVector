@@ -1,36 +1,34 @@
+/**
+ * metadata_index.c — inverted index mapping metadata (key=value) → the set of
+ * vectors carrying it, used to accelerate filtered search.
+ *
+ * Posting lists are stored as roaring-lite bitmaps (GV_IdBitmap, core/id_bitmap.h),
+ * the Dgraph model: each posting is a compressed sorted UID set, so membership is
+ * O(1)-ish, dedup/growth is automatic, and multi-filter queries reduce to bitmap
+ * intersections (see metadata_index_query_bitmap + gv_id_bitmap_and).
+ */
 #include <stdlib.h>
 #include "core/memory.h"
 #include <string.h>
 #include <stdint.h>
 
 #include "multimodal/metadata_index.h"
+#include "core/id_bitmap.h"
 #include "core/utils.h"
 
 #define GV_METADATA_INDEX_HASH_SIZE 1024
-#define GV_METADATA_INDEX_LOAD_FACTOR 0.75
 
-/**
- * @brief Hash table entry for key-value pair.
- */
 typedef struct GV_MetadataKVEntry {
     char *key;
     char *value;
-    size_t *vector_indices;
-    size_t count;
-    size_t capacity;
-    struct GV_MetadataKVEntry *next;  /* For chaining */
+    GV_IdBitmap *ids;                 /* roaring posting: set of vector indices */
+    struct GV_MetadataKVEntry *next;  /* hash-chain */
 } GV_MetadataKVEntry;
 
-/**
- * @brief Hash table bucket.
- */
 typedef struct {
     GV_MetadataKVEntry *head;
 } GV_MetadataBucket;
 
-/**
- * @brief Metadata inverted index structure.
- */
 struct GV_MetadataIndex {
     GV_MetadataBucket *buckets;
     size_t bucket_count;
@@ -48,14 +46,12 @@ GV_MetadataIndex *metadata_index_create(void) {
     if (index == NULL) {
         return NULL;
     }
-
     index->bucket_count = GV_METADATA_INDEX_HASH_SIZE;
     index->buckets = (GV_MetadataBucket *)gv_calloc(index->bucket_count, sizeof(GV_MetadataBucket));
     if (index->buckets == NULL) {
         gv_free(index);
         return NULL;
     }
-
     index->total_entries = 0;
     return index;
 }
@@ -64,31 +60,19 @@ void metadata_index_destroy(GV_MetadataIndex *index) {
     if (index == NULL) {
         return;
     }
-
     if (index->buckets != NULL) {
-        size_t bucket_count = index->bucket_count;
-        if (bucket_count == 0 || bucket_count >= 1000000) {
-            gv_free(index->buckets);
-        } else {
-            for (size_t i = 0; i < bucket_count; ++i) {
-                GV_MetadataKVEntry *entry = index->buckets[i].head;
-                while (entry != NULL) {
-                    GV_MetadataKVEntry *next = entry->next;
-                    if (entry->key != NULL) {
-                        gv_free(entry->key);
-                    }
-                    if (entry->value != NULL) {
-                        gv_free(entry->value);
-                    }
-                    if (entry->vector_indices != NULL) {
-                        gv_free(entry->vector_indices);
-                    }
-                    gv_free(entry);
-                    entry = next;
-                }
+        for (size_t i = 0; i < index->bucket_count; ++i) {
+            GV_MetadataKVEntry *entry = index->buckets[i].head;
+            while (entry != NULL) {
+                GV_MetadataKVEntry *next = entry->next;
+                gv_free(entry->key);
+                gv_free(entry->value);
+                gv_id_bitmap_free(entry->ids);
+                gv_free(entry);
+                entry = next;
             }
-            gv_free(index->buckets);
         }
+        gv_free(index->buckets);
         index->buckets = NULL;
     }
     index->bucket_count = 0;
@@ -96,12 +80,11 @@ void metadata_index_destroy(GV_MetadataIndex *index) {
 }
 
 static GV_MetadataKVEntry *metadata_index_find_or_create(GV_MetadataIndex *index,
-                                                             const char *key, const char *value,
-                                                             int create) {
+                                                         const char *key, const char *value,
+                                                         int create) {
     if (index == NULL || key == NULL || value == NULL) {
         return NULL;
     }
-
     uint32_t hash = metadata_index_hash_pair(key, value);
     size_t bucket_idx = hash % index->bucket_count;
 
@@ -112,33 +95,21 @@ static GV_MetadataKVEntry *metadata_index_find_or_create(GV_MetadataIndex *index
         }
         entry = entry->next;
     }
-
     if (!create) {
         return NULL;
     }
 
-    entry = (GV_MetadataKVEntry *)gv_alloc(sizeof(GV_MetadataKVEntry));
+    entry = (GV_MetadataKVEntry *)gv_calloc(1, sizeof(GV_MetadataKVEntry));
     if (entry == NULL) {
         return NULL;
     }
-
-    entry->key = (char *)gv_alloc(strlen(key) + 1);
-    entry->value = (char *)gv_alloc(strlen(value) + 1);
-    if (entry->key == NULL || entry->value == NULL) {
+    entry->key = gv_dup_cstr(key);
+    entry->value = gv_dup_cstr(value);
+    entry->ids = gv_id_bitmap_create();
+    if (entry->key == NULL || entry->value == NULL || entry->ids == NULL) {
         gv_free(entry->key);
         gv_free(entry->value);
-        gv_free(entry);
-        return NULL;
-    }
-
-    memcpy(entry->key, key, strlen(key) + 1);
-    memcpy(entry->value, value, strlen(value) + 1);
-    entry->count = 0;
-    entry->capacity = 16;
-    entry->vector_indices = (size_t *)gv_alloc(entry->capacity * sizeof(size_t));
-    if (entry->vector_indices == NULL) {
-        gv_free(entry->key);
-        gv_free(entry->value);
+        gv_id_bitmap_free(entry->ids);
         gv_free(entry);
         return NULL;
     }
@@ -146,7 +117,6 @@ static GV_MetadataKVEntry *metadata_index_find_or_create(GV_MetadataIndex *index
     entry->next = index->buckets[bucket_idx].head;
     index->buckets[bucket_idx].head = entry;
     index->total_entries++;
-
     return entry;
 }
 
@@ -154,109 +124,82 @@ int metadata_index_add(GV_MetadataIndex *index, const char *key, const char *val
     if (index == NULL || key == NULL || value == NULL) {
         return -1;
     }
-
     GV_MetadataKVEntry *entry = metadata_index_find_or_create(index, key, value, 1);
     if (entry == NULL) {
         return -1;
     }
-
-    for (size_t i = 0; i < entry->count; ++i) {
-        if (entry->vector_indices[i] == vector_index) {
-            return 0; /* Already exists */
-        }
-    }
-
-    if (entry->count >= entry->capacity) {
-        if (entry->capacity > SIZE_MAX / 2 || entry->capacity * 2 > SIZE_MAX / sizeof(size_t)) return -1;
-        size_t new_capacity = entry->capacity * 2;
-        size_t *new_indices = (size_t *)gv_realloc(entry->vector_indices, new_capacity * sizeof(size_t));
-        if (new_indices == NULL) {
-            return -1;
-        }
-        entry->vector_indices = new_indices;
-        entry->capacity = new_capacity;
-    }
-
-    entry->vector_indices[entry->count++] = vector_index;
-    return 0;
+    /* the bitmap dedups + grows internally */
+    return gv_id_bitmap_add(entry->ids, (uint64_t)vector_index);
 }
 
 int metadata_index_remove(GV_MetadataIndex *index, const char *key, const char *value, size_t vector_index) {
     if (index == NULL || key == NULL || value == NULL) {
         return -1;
     }
-
     GV_MetadataKVEntry *entry = metadata_index_find_or_create(index, key, value, 0);
     if (entry == NULL) {
-        return 0; /* Entry doesn't exist, nothing to remove */
+        return 0; /* nothing to remove */
     }
+    gv_id_bitmap_remove(entry->ids, (uint64_t)vector_index);
+    return 0;
+}
 
-    for (size_t i = 0; i < entry->count; ++i) {
-        if (entry->vector_indices[i] == vector_index) {
-            for (size_t j = i; j < entry->count - 1; ++j) {
-                entry->vector_indices[j] = entry->vector_indices[j + 1];
-            }
-            entry->count--;
-            return 0;
-        }
-    }
+typedef struct {
+    size_t *out;
+    size_t  max;
+    size_t  n;
+} MetaQueryCtx;
 
-    return 0; /* Vector index not found, but that's okay */
+static int metadata_query_collect(uint64_t id, void *ctx) {
+    MetaQueryCtx *q = (MetaQueryCtx *)ctx;
+    if (q->n >= q->max) return 1;   /* stop iteration: output full */
+    q->out[q->n++] = (size_t)id;
+    return 0;
 }
 
 int metadata_index_query(const GV_MetadataIndex *index, const char *key, const char *value,
-                            size_t *out_indices, size_t max_indices) {
+                         size_t *out_indices, size_t max_indices) {
     if (index == NULL || key == NULL || value == NULL || out_indices == NULL || max_indices == 0) {
         return -1;
     }
-
     GV_MetadataKVEntry *entry = metadata_index_find_or_create((GV_MetadataIndex *)index, key, value, 0);
     if (entry == NULL) {
-        return 0; /* No matching entries */
+        return 0;
     }
+    MetaQueryCtx q = { out_indices, max_indices, 0 };
+    gv_id_bitmap_iterate(entry->ids, metadata_query_collect, &q);
+    return (int)q.n;
+}
 
-    size_t copy_count = (entry->count < max_indices) ? entry->count : max_indices;
-    for (size_t i = 0; i < copy_count; ++i) {
-        out_indices[i] = entry->vector_indices[i];
+const GV_IdBitmap *metadata_index_query_bitmap(const GV_MetadataIndex *index,
+                                               const char *key, const char *value) {
+    if (index == NULL || key == NULL || value == NULL) {
+        return NULL;
     }
-
-    return (int)copy_count;
+    GV_MetadataKVEntry *entry = metadata_index_find_or_create((GV_MetadataIndex *)index, key, value, 0);
+    return entry ? entry->ids : NULL;
 }
 
 size_t metadata_index_count(const GV_MetadataIndex *index, const char *key, const char *value) {
     if (index == NULL || key == NULL || value == NULL) {
         return 0;
     }
-
     GV_MetadataKVEntry *entry = metadata_index_find_or_create((GV_MetadataIndex *)index, key, value, 0);
     if (entry == NULL) {
         return 0;
     }
-
-    return entry->count;
+    return (size_t)gv_id_bitmap_cardinality(entry->ids);
 }
 
 int metadata_index_remove_vector(GV_MetadataIndex *index, size_t vector_index) {
     if (index == NULL) {
         return -1;
     }
-
     for (size_t i = 0; i < index->bucket_count; ++i) {
-        GV_MetadataKVEntry *entry = index->buckets[i].head;
-        while (entry != NULL) {
-            for (size_t j = 0; j < entry->count; ++j) {
-                if (entry->vector_indices[j] == vector_index) {
-                    for (size_t k = j; k < entry->count - 1; ++k) {
-                        entry->vector_indices[k] = entry->vector_indices[k + 1];
-                    }
-                    entry->count--;
-                    j--; /* Check same position again */
-                }
-            }
-            entry = entry->next;
+        for (GV_MetadataKVEntry *entry = index->buckets[i].head; entry != NULL; entry = entry->next) {
+            gv_id_bitmap_remove(entry->ids, (uint64_t)vector_index);
         }
     }
-
     return 0;
 }
 
@@ -265,48 +208,32 @@ int metadata_index_copy_vector(const GV_MetadataIndex *from_index, size_t from_v
     if (from_index == NULL || to_index == NULL) {
         return -1;
     }
-
     for (size_t i = 0; i < from_index->bucket_count; ++i) {
-        GV_MetadataKVEntry *entry = from_index->buckets[i].head;
-        while (entry != NULL) {
-            for (size_t j = 0; j < entry->count; ++j) {
-                if (entry->vector_indices[j] == from_vector_index) {
-                    if (metadata_index_add(to_index, entry->key, entry->value, to_vector_index) != 0) {
-                        return -1;
-                    }
+        for (GV_MetadataKVEntry *entry = from_index->buckets[i].head; entry != NULL; entry = entry->next) {
+            if (gv_id_bitmap_contains(entry->ids, (uint64_t)from_vector_index)) {
+                if (metadata_index_add(to_index, entry->key, entry->value, to_vector_index) != 0) {
+                    return -1;
                 }
             }
-            entry = entry->next;
         }
     }
-
     return 0;
 }
 
 int metadata_index_update(GV_MetadataIndex *index, size_t vector_index,
-                             const void *old_metadata, const void *new_metadata) {
+                          const void *old_metadata, const void *new_metadata) {
     if (index == NULL) {
         return -1;
     }
-
     if (old_metadata != NULL) {
-        GV_Metadata *old_meta = (GV_Metadata *)old_metadata;
-        GV_Metadata *current = old_meta;
-        while (current != NULL) {
-            metadata_index_remove(index, current->key, current->value, vector_index);
-            current = current->next;
+        for (GV_Metadata *cur = (GV_Metadata *)old_metadata; cur != NULL; cur = cur->next) {
+            metadata_index_remove(index, cur->key, cur->value, vector_index);
         }
     }
-
     if (new_metadata != NULL) {
-        GV_Metadata *new_meta = (GV_Metadata *)new_metadata;
-        GV_Metadata *current = new_meta;
-        while (current != NULL) {
-            metadata_index_add(index, current->key, current->value, vector_index);
-            current = current->next;
+        for (GV_Metadata *cur = (GV_Metadata *)new_metadata; cur != NULL; cur = cur->next) {
+            metadata_index_add(index, cur->key, cur->value, vector_index);
         }
     }
-
     return 0;
 }
-
