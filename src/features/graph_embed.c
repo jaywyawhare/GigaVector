@@ -8,6 +8,7 @@
  * graph and fully deterministic given `seed`.
  */
 #include "features/graph_algos.h"
+#include "features/graph_csr.h"
 #include "core/memory.h"
 
 #include <math.h>
@@ -165,20 +166,34 @@ int graph_fastrp(const GV_GraphDB *g, size_t dim, size_t iters,
         return 0;
     }
 
-    UndirAdj ua;
-    if (undir_build(g, ctx, &ua) != 0) { gv_ga_free(ctx); return -1; }
+    /* Undirected weighted CSR: symmetric adjacency A used for propagation. */
+    GV_CSR *A = gv_csr_build(g, ctx, GV_CSR_UNDIRECTED, 1);
+    if (!A) { gv_ga_free(ctx); return -1; }
 
-    /* Working matrices: cur = embed at hop t-1, nxt = embed at hop t,
-     * result = accumulated weighted sum, plus a normalized snapshot buffer. */
-    float *result = (float *)gv_calloc(N * dim, sizeof(float));
-    float *cur    = (float *)gv_alloc(N * dim * sizeof(float));
-    float *nxt    = (float *)gv_alloc(N * dim * sizeof(float));
-    float *norm   = (float *)gv_alloc(N * dim * sizeof(float));
-    uint64_t *ids = (uint64_t *)gv_alloc(N * sizeof(uint64_t));
-    if (!result || !cur || !nxt || !norm || !ids) {
-        gv_free(result); gv_free(cur); gv_free(nxt); gv_free(norm); gv_free(ids);
-        undir_free(&ua); gv_ga_free(ctx);
+    /* Working matrices: cur = embed at hop t-1, nxt = embed at hop t (both dense
+     * n×dim, double for the SpMM), result = accumulated weighted sum,
+     * plus a normalized snapshot buffer. deg = weighted degree per node. */
+    float  *result = (float *)gv_calloc(N * dim, sizeof(float));
+    double *cur    = (double *)gv_alloc(N * dim * sizeof(double));
+    double *nxt    = (double *)gv_alloc(N * dim * sizeof(double));
+    double *scaled = (double *)gv_alloc(N * dim * sizeof(double));
+    float  *norm   = (float *)gv_alloc(N * dim * sizeof(float));
+    double *invsd  = (double *)gv_alloc(N * sizeof(double)); /* 1/sqrt(deg) per row */
+    uint64_t *ids  = (uint64_t *)gv_alloc(N * sizeof(uint64_t));
+    if (!result || !cur || !nxt || !scaled || !norm || !invsd || !ids) {
+        gv_free(result); gv_free(cur); gv_free(nxt); gv_free(scaled);
+        gv_free(norm); gv_free(invsd); gv_free(ids);
+        gv_csr_free(A); gv_ga_free(ctx);
         return -1;
+    }
+
+    /* Weighted degree per node; invsd[i] = 1/sqrt(deg(i)), 0 for isolated nodes.
+     * Folding this scaling into cur before the SpMM and into nxt after it yields
+     * the symmetric normalization D^{-1/2} A D^{-1/2}. */
+    gv_csr_row_sums(A, invsd);
+    for (size_t i = 0; i < N; i++) {
+        double deg = invsd[i];
+        invsd[i] = (deg > 0.0) ? 1.0 / sqrt(deg) : 0.0;
     }
 
     /* Base embedding: very sparse random projection (s = 3).
@@ -191,46 +206,41 @@ int graph_fastrp(const GV_GraphDB *g, size_t dim, size_t iters,
         ids[i] = gv_ga_id(ctx, i);
         /* Per-node deterministic stream mixed from seed and the (stable) id. */
         uint64_t st = mix64(seed ^ (mix64(ids[i]) * 0x100000001B3ULL));
-        float *row = &cur[i * dim];
+        double *row = &cur[i * dim];
         for (size_t d = 0; d < dim; d++) {
             double u = xs64_unit(&st);
-            if (u < p_pos)      row[d] = (float)scale;
-            else if (u < p_neg) row[d] = (float)(-scale);
-            else                row[d] = 0.0f;
+            if (u < p_pos)      row[d] = scale;
+            else if (u < p_neg) row[d] = -scale;
+            else                row[d] = 0.0;
         }
     }
 
-    /* Precompute degrees (undirected). */
-    /* deg(i) = off[i+1]-off[i]; used for degree normalization. */
-
     for (size_t t = 0; t < iters; t++) {
-        /* Propagate: nxt[i] = sum over neighbors j of cur[j] / sqrt(deg(i)deg(j)).
-         * Symmetric normalization; isolated nodes (deg 0) get a zero row. */
+        /* Symmetric normalization D^{-1/2} A D^{-1/2} · cur, folded as:
+         *   scaled = D^{-1/2} · cur   (pre-scale rows)
+         *   nxt    = A · scaled       (SpMM)
+         *   nxt    = D^{-1/2} · nxt   (post-scale rows)
+         * Isolated nodes (deg 0 => invsd 0) get a zero row. */
         for (size_t i = 0; i < N; i++) {
-            float *nrow = &nxt[i * dim];
-            memset(nrow, 0, dim * sizeof(float));
-            size_t begin = ua.off[i], end = ua.off[i + 1];
-            size_t deg_i = end - begin;
-            if (deg_i == 0) continue;
-            double inv_sqrt_di = 1.0 / sqrt((double)deg_i);
-            for (size_t k = begin; k < end; k++) {
-                size_t j = ua.adj[k];
-                size_t deg_j = ua.off[j + 1] - ua.off[j];
-                if (deg_j == 0) continue; /* defensive; a neighbor has deg>=1 */
-                double coef = inv_sqrt_di / sqrt((double)deg_j);
-                const float *jrow = &cur[j * dim];
-                for (size_t d = 0; d < dim; d++)
-                    nrow[d] += (float)((double)jrow[d] * coef);
-            }
+            double si = invsd[i];
+            const double *crow = &cur[i * dim];
+            double *srow = &scaled[i * dim];
+            for (size_t d = 0; d < dim; d++) srow[d] = crow[d] * si;
+        }
+        gv_csr_spmm_dense(A, scaled, dim, nxt);
+        for (size_t i = 0; i < N; i++) {
+            double si = invsd[i];
+            double *nrow = &nxt[i * dim];
+            for (size_t d = 0; d < dim; d++) nrow[d] *= si;
         }
 
         /* L2-normalize this hop into `norm`, accumulate weighted into result. */
         double w = 1.0; /* default weight: uniform (mild, no decay). */
         if (weights) w = weights[t];
         for (size_t i = 0; i < N; i++) {
-            float *nrow = &nxt[i * dim];
-            float *snap = &norm[i * dim];
-            memcpy(snap, nrow, dim * sizeof(float));
+            double *nrow = &nxt[i * dim];
+            float  *snap = &norm[i * dim];
+            for (size_t d = 0; d < dim; d++) snap[d] = (float)nrow[d];
             l2_normalize_row(snap, dim);
             float *rrow = &result[i * dim];
             for (size_t d = 0; d < dim; d++)
@@ -238,7 +248,7 @@ int graph_fastrp(const GV_GraphDB *g, size_t dim, size_t iters,
         }
 
         /* Swap cur <- nxt for the next hop (propagate the un-normalized embed). */
-        float *tmp = cur; cur = nxt; nxt = tmp;
+        double *tmp = cur; cur = nxt; nxt = tmp;
     }
 
     /* Final L2-normalize each result row (guard zero norm). */
@@ -247,8 +257,10 @@ int graph_fastrp(const GV_GraphDB *g, size_t dim, size_t iters,
 
     gv_free(cur);
     gv_free(nxt);
+    gv_free(scaled);
     gv_free(norm);
-    undir_free(&ua);
+    gv_free(invsd);
+    gv_csr_free(A);
     gv_ga_free(ctx);
 
     out->node_ids = ids;

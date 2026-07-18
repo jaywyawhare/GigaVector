@@ -115,6 +115,33 @@ int graph_personalized_pagerank(const GV_GraphDB *g,
 int graph_article_rank(const GV_GraphDB *g, size_t iters, double damping,
                        GV_GraphNodeScores *out);
 
+/** HITS hubs & authorities via power iteration. Fills `hubs` and `authorities`
+ *  (either may be NULL to skip). iters default 100 if 0, tol default 1e-8 if <=0. */
+int graph_hits(const GV_GraphDB *g, size_t iters, double tol,
+               GV_GraphNodeScores *hubs, GV_GraphNodeScores *authorities);
+
+/* ── Matrix-native traversal (GraphBLAS-lite) ───────────────────────────────
+ * Reachability and activation expressed as sparse linear algebra over the CSR
+ * adjacency matrix (see graph_csr.h) — repeated boolean SpMV for variable-length
+ * reachability, weighted SpMV for spreading activation. */
+
+/** k-hop reachability from a seed set, via repeated boolean SpMV (matrix-based
+ *  variable-length path expansion). out->scores[i] = 1.0 if node i is reachable
+ *  from any of `sources` within `k` hops, else 0.0. directed!=0 follows edge
+ *  direction (forward), else undirected. k==0 marks only the sources. */
+int graph_khop_reachable(const GV_GraphDB *g, const uint64_t *sources, size_t num_sources,
+                         size_t k, int directed, GV_GraphNodeScores *out);
+
+/** Spreading activation via weighted SpMV: seeds start at activation 1.0 and
+ *  propagate for `iters` rounds — each round adds decay·(A·a) to the accumulated
+ *  activation (A = in-adjacency so activation flows along edges toward targets).
+ *  directed!=0 follows edges; weighted!=0 uses edge weights. out->scores = total
+ *  accumulated activation per node. This is the linear-algebra form of a
+ *  spreading-activation / personalized-diffusion query. */
+int graph_spread_activation(const GV_GraphDB *g, const uint64_t *seeds, size_t num_seeds,
+                            size_t iters, double decay, int directed, int weighted,
+                            GV_GraphNodeScores *out);
+
 /* ── Community detection / clustering ───────────────────────────────────────*/
 
 /** Label Propagation community detection (synchronous-ish, deterministic seed). */

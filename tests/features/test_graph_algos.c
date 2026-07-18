@@ -80,7 +80,22 @@ int main(void) {
     ASSERT(graph_pagerank_all(g, 100, 0.85, &sc) == 0 && sc.count == 7, "pagerank runs");
     double psum = 0; for (size_t i = 0; i < sc.count; i++) psum += sc.scores[i];
     ASSERT(fabs(psum - 1.0) < 1e-3, "pagerank sums to ~1");
+    /* node 4 receives rank from the triangle (via 3->4) but 6/7 are an isolated
+     * 2-cycle → CSR-backed PageRank must rank node 4 above node 6 */
+    ASSERT(score_of(&sc, id[4]) > score_of(&sc, id[6]), "CSR pagerank: node 4 > node 6");
     graph_node_scores_free(&sc);
+
+    /* HITS (CSR-backed) — hubs & authorities */
+    GV_GraphNodeScores hubs, auth;
+    ASSERT(graph_hits(g, 100, 1e-8, &hubs, &auth) == 0, "HITS runs");
+    ASSERT(hubs.count == 7 && auth.count == 7, "HITS shapes 7");
+    double hsum = 0; for (size_t i = 0; i < auth.count; i++) hsum += auth.scores[i] * auth.scores[i];
+    ASSERT(fabs(hsum - 1.0) < 1e-2, "HITS authority vector ~L2-normalized");
+    graph_node_scores_free(&hubs);
+    graph_node_scores_free(&auth);
+    /* HITS with one output skipped (NULL) must not crash/leak */
+    ASSERT(graph_hits(g, 50, 1e-8, NULL, &auth) == 0, "HITS with NULL hubs");
+    graph_node_scores_free(&auth);
 
     uint64_t src1[1] = { id[1] };
     ASSERT(graph_personalized_pagerank(g, src1, 1, 100, 0.85, &sc) == 0, "personalized PR runs");
@@ -135,6 +150,29 @@ int main(void) {
     /* max flow 1->4: single augmenting path through the 3->4 bridge, capacity 1 */
     double flow = graph_max_flow(g, id[1], id[4]);
     ASSERT(flow >= 0.99 && flow <= 1.01, "max flow 1->4 == 1");
+
+    /* ---- matrix-native traversal (GraphBLAS-lite) ---- */
+    uint64_t seed1[1] = { id[1] };
+    /* 1->2->3->4->5 is 4 hops; at k=3 node 4 is reached but node 5 is not yet */
+    ASSERT(graph_khop_reachable(g, seed1, 1, 3, 1, &sc) == 0, "k-hop reachable runs");
+    ASSERT(score_of(&sc, id[1]) == 1.0 && score_of(&sc, id[4]) == 1.0,
+           "nodes 1 and 4 reachable from 1 within 3 hops (directed)");
+    ASSERT(score_of(&sc, id[5]) == 0.0, "node 5 needs 4 hops, not reached at k=3");
+    ASSERT(score_of(&sc, id[6]) == 0.0, "node 6 NOT reachable from 1 (separate component)");
+    graph_node_scores_free(&sc);
+    ASSERT(graph_khop_reachable(g, seed1, 1, 4, 1, &sc) == 0, "4-hop reachable runs");
+    ASSERT(score_of(&sc, id[5]) == 1.0, "node 5 reachable from 1 within 4 hops");
+    graph_node_scores_free(&sc);
+
+    ASSERT(graph_khop_reachable(g, seed1, 1, 1, 1, &sc) == 0, "1-hop reachable runs");
+    ASSERT(score_of(&sc, id[2]) == 1.0 && score_of(&sc, id[4]) == 0.0,
+           "1 hop from node 1 reaches 2 but not 4");
+    graph_node_scores_free(&sc);
+
+    ASSERT(graph_spread_activation(g, seed1, 1, 4, 0.5, 1, 0, &sc) == 0, "spread activation runs");
+    ASSERT(score_of(&sc, id[1]) >= 1.0, "seed node keeps activation >= 1");
+    ASSERT(score_of(&sc, id[6]) == 0.0, "node 6 gets no activation from seed 1");
+    graph_node_scores_free(&sc);
 
     /* ---- link prediction ---- */
     /* nodes 1 and 3 both neighbor node 2 (undirected) → common neighbor >= 1 */
