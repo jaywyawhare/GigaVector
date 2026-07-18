@@ -408,6 +408,20 @@ size_t graph_node_count(const GV_GraphDB *g);
 size_t graph_edge_count(const GV_GraphDB *g);
 
 /**
+ * @brief Enumerate all node IDs in the graph.
+ *
+ * Fills out_ids (which must hold at least graph_node_count(g) entries) with
+ * every node ID. Order is unspecified but stable within a single call. Used as
+ * the enumeration primitive by the graph-algorithms layer (graph_algos.h).
+ *
+ * @param g Graph database; must be non-NULL.
+ * @param out_ids Output array; must be pre-allocated to >= graph_node_count(g).
+ * @param max_count Capacity of out_ids.
+ * @return Number of node IDs written, or -1 if max_count < node_count or on error.
+ */
+int graph_get_all_node_ids(const GV_GraphDB *g, uint64_t *out_ids, size_t max_count);
+
+/**
  * @brief Save the graph to a binary file.
  *
  * Format uses magic bytes "GVGR" followed by version, counts, and serialized

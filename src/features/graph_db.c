@@ -2057,3 +2057,22 @@ load_fail:
     graph_destroy(g);
     return NULL;
 }
+
+int graph_get_all_node_ids(const GV_GraphDB *g, uint64_t *out_ids, size_t max_count) {
+    if (!g || !out_ids) return -1;
+    pthread_rwlock_rdlock((pthread_rwlock_t *)&g->rwlock);
+    if (g->node_count > max_count) {
+        pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+        return -1;
+    }
+    size_t n = 0;
+    uint64_t *ids = collect_all_node_ids(g, &n);
+    if (!ids && n > 0) {
+        pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+        return -1;
+    }
+    for (size_t i = 0; i < n; i++) out_ids[i] = ids[i];
+    gv_free(ids);
+    pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+    return (int)n;
+}
