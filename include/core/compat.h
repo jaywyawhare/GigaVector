@@ -16,11 +16,6 @@ static inline unsigned int sleep(unsigned int sec) {
     return 0;
 }
 
-/* rand_r() is POSIX; MinGW/MSVC lack it. Reentrant LCG returning 0..RAND_MAX. */
-static inline int rand_r(unsigned int *seed) {
-    *seed = *seed * 1103515245u + 12345u;
-    return (int)((*seed >> 16) & 0x7FFF);
-}
 
 #ifndef getpid
 #define getpid() ((int)GetCurrentProcessId())
@@ -174,5 +169,12 @@ static inline int write(int fd, const void *buf, unsigned int count) {
 #if !defined(__GNUC__) && !defined(__clang__)
 #define __attribute__(x)
 #endif
+
+/* Portable reentrant PRNG (POSIX rand_r is unavailable on MinGW/MSVC). Returns
+ * a value in [0, 0x7FFF]; use in place of rand_r across the codebase. */
+static inline int gv_rand_r(unsigned int *seed) {
+    *seed = *seed * 1103515245u + 12345u;
+    return (int)((*seed >> 16) & 0x7FFF);
+}
 
 #endif /* GV_COMPAT_H */

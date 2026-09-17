@@ -865,7 +865,7 @@ GV_Database *db_open(const char *filepath, size_t dimension, GV_IndexType index_
         return NULL;
     }
 
-    GV_Database *db = (GV_Database *)gv_alloc(sizeof(GV_Database));
+    GV_Database *db = (GV_Database *)gv_calloc(1, sizeof(GV_Database));
     if (db == NULL) {
         GV_LOG_ERROR("db_open: allocation of GV_Database (%zu bytes) failed for '%s'",
                      sizeof(GV_Database), filepath ? filepath : "(in-memory)");
@@ -1632,7 +1632,7 @@ static GV_Database *db_open_from_memory_impl(const void *data, size_t size,
         return NULL;
     }
 
-    GV_Database *db = (GV_Database *)gv_alloc(sizeof(GV_Database));
+    GV_Database *db = (GV_Database *)gv_calloc(1, sizeof(GV_Database));
     if (db == NULL) {
         return NULL;
     }
@@ -1983,7 +1983,7 @@ GV_Database *db_open_with_hnsw_config(const char *filepath, size_t dimension,
         return NULL;
     }
 
-    GV_Database *db = (GV_Database *)gv_alloc(sizeof(GV_Database));
+    GV_Database *db = (GV_Database *)gv_calloc(1, sizeof(GV_Database));
     if (db == NULL) {
         return NULL;
     }
@@ -2072,7 +2072,7 @@ GV_Database *db_open_with_ivfpq_config(const char *filepath, size_t dimension,
         return NULL;
     }
 
-    GV_Database *db = (GV_Database *)gv_alloc(sizeof(GV_Database));
+    GV_Database *db = (GV_Database *)gv_calloc(1, sizeof(GV_Database));
     if (db == NULL) {
         return NULL;
     }
@@ -2156,7 +2156,7 @@ GV_Database *db_open_with_ivfflat_config(const char *filepath, size_t dimension,
         return NULL;
     }
 
-    GV_Database *db = (GV_Database *)gv_alloc(sizeof(GV_Database));
+    GV_Database *db = (GV_Database *)gv_calloc(1, sizeof(GV_Database));
     if (db == NULL) {
         return NULL;
     }
@@ -2235,7 +2235,7 @@ GV_Database *db_open_with_ivfdisk_config(const char *filepath, size_t dimension,
         return NULL;
     }
 
-    GV_Database *db = (GV_Database *)gv_alloc(sizeof(GV_Database));
+    GV_Database *db = (GV_Database *)gv_calloc(1, sizeof(GV_Database));
     if (db == NULL) {
         return NULL;
     }
@@ -2304,7 +2304,7 @@ GV_Database *db_open_with_ivfsq8_config(const char *filepath, size_t dimension,
         return NULL;
     }
 
-    GV_Database *db = (GV_Database *)gv_alloc(sizeof(GV_Database));
+    GV_Database *db = (GV_Database *)gv_calloc(1, sizeof(GV_Database));
     if (db == NULL) {
         return NULL;
     }
@@ -2388,7 +2388,7 @@ GV_Database *db_open_with_ivfturboquant_config(const char *filepath, size_t dime
         return NULL;
     }
 
-    GV_Database *db = (GV_Database *)gv_alloc(sizeof(GV_Database));
+    GV_Database *db = (GV_Database *)gv_calloc(1, sizeof(GV_Database));
     if (db == NULL) {
         return NULL;
     }
@@ -2481,7 +2481,7 @@ GV_Database *db_open_with_pq_config(const char *filepath, size_t dimension,
         return NULL;
     }
 
-    GV_Database *db = (GV_Database *)gv_alloc(sizeof(GV_Database));
+    GV_Database *db = (GV_Database *)gv_calloc(1, sizeof(GV_Database));
     if (db == NULL) {
         return NULL;
     }
@@ -2560,7 +2560,7 @@ GV_Database *db_open_with_lsh_config(const char *filepath, size_t dimension,
         return NULL;
     }
 
-    GV_Database *db = (GV_Database *)gv_alloc(sizeof(GV_Database));
+    GV_Database *db = (GV_Database *)gv_calloc(1, sizeof(GV_Database));
     if (db == NULL) {
         return NULL;
     }

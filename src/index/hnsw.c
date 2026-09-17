@@ -1,6 +1,6 @@
 #include <math.h>
 #include "core/memory.h"
-#include "core/compat.h"   /* rand_r shim on Windows */
+#include "core/compat.h"   /* gv_rand_r (portable PRNG) */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -77,7 +77,7 @@ typedef struct {
 
 static size_t calculate_level(GV_HNSWIndex *index) {
 #ifndef _WIN32
-    double r = (double)rand_r(&index->rand_seed) / ((double)RAND_MAX + 1.0);
+    double r = (double)gv_rand_r(&index->rand_seed) / 32768.0;
 #else
     double r = (double)rand() / ((double)RAND_MAX + 1.0);
 #endif

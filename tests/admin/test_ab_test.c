@@ -10,7 +10,7 @@
 
 #include "admin/ab_test.h"
 #include "storage/database.h"
-#include "core/compat.h"   /* rand_r shim on Windows */
+#include "core/compat.h"   /* gv_rand_r (portable PRNG) */
 
 #define ASSERT(cond, msg) \
     do { \
@@ -26,7 +26,7 @@
 
 static void make_random_vec(float *v, size_t dim, unsigned int *seed) {
     for (size_t i = 0; i < dim; i++) {
-        v[i] = ((float)(rand_r(seed) % 10000) / 10000.0f) - 0.5f;
+        v[i] = ((float)(gv_rand_r(seed) % 10000) / 10000.0f) - 0.5f;
     }
 }
 

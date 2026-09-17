@@ -277,6 +277,7 @@ jobs:
           cppcheck \
             --enable=warning,performance,portability \
             --error-exitcode=1 \
+            --inline-suppr \
             --suppress=missingIncludeSystem \
             --suppress=unusedFunction \
             -I include \

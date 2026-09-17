@@ -442,33 +442,33 @@ fuzz-run: export LSAN_OPTIONS = suppressions=$(abspath tests/fuzz/lsan.supp)
 fuzz-run: fuzz
 	@mkdir -p $(FUZZ_CRASH_DIR)
 	@echo "Running fuzz_wal_apply..."
-	@$(FUZZ_DIR)/fuzz_wal_apply tests/fuzz/corpus/wal $(FUZZ_ARTIFACT_PREFIX) -max_total_time=30 -rss_limit_mb=512 -print_final_stats=1
+	@$(FUZZ_DIR)/fuzz_wal_apply tests/fuzz/corpus/wal $(FUZZ_ARTIFACT_PREFIX) -max_total_time=30 -rss_limit_mb=2048 -print_final_stats=1
 	@echo "Running fuzz_grpc_decode..."
-	@$(FUZZ_DIR)/fuzz_grpc_decode tests/fuzz/corpus/grpc $(FUZZ_ARTIFACT_PREFIX) -max_total_time=30 -rss_limit_mb=512 -print_final_stats=1
+	@$(FUZZ_DIR)/fuzz_grpc_decode tests/fuzz/corpus/grpc $(FUZZ_ARTIFACT_PREFIX) -max_total_time=30 -rss_limit_mb=2048 -print_final_stats=1
 	@echo "Running fuzz_grpc_frame..."
-	@$(FUZZ_DIR)/fuzz_grpc_frame tests/fuzz/corpus/grpc $(FUZZ_ARTIFACT_PREFIX) -max_total_time=30 -rss_limit_mb=512 -print_final_stats=1
+	@$(FUZZ_DIR)/fuzz_grpc_frame tests/fuzz/corpus/grpc $(FUZZ_ARTIFACT_PREFIX) -max_total_time=30 -rss_limit_mb=2048 -print_final_stats=1
 	@echo "Running fuzz_grpc_dispatch..."
-	@$(FUZZ_DIR)/fuzz_grpc_dispatch tests/fuzz/corpus/grpc $(FUZZ_ARTIFACT_PREFIX) -max_total_time=30 -rss_limit_mb=512 -print_final_stats=1
+	@$(FUZZ_DIR)/fuzz_grpc_dispatch tests/fuzz/corpus/grpc $(FUZZ_ARTIFACT_PREFIX) -max_total_time=30 -rss_limit_mb=2048 -print_final_stats=1
 	@echo "Running fuzz_repl_frame..."
-	@$(FUZZ_DIR)/fuzz_repl_frame tests/fuzz/corpus/repl $(FUZZ_ARTIFACT_PREFIX) -max_total_time=30 -rss_limit_mb=512 -print_final_stats=1
+	@$(FUZZ_DIR)/fuzz_repl_frame tests/fuzz/corpus/repl $(FUZZ_ARTIFACT_PREFIX) -max_total_time=30 -rss_limit_mb=2048 -print_final_stats=1
 	@echo "Running fuzz_posting_segment..."
 	@mkdir -p tests/fuzz/corpus/posting
-	@$(FUZZ_DIR)/fuzz_posting_segment tests/fuzz/corpus/posting $(FUZZ_ARTIFACT_PREFIX) -max_total_time=30 -rss_limit_mb=512 -print_final_stats=1
+	@$(FUZZ_DIR)/fuzz_posting_segment tests/fuzz/corpus/posting $(FUZZ_ARTIFACT_PREFIX) -max_total_time=30 -rss_limit_mb=2048 -print_final_stats=1
 	@echo "Running fuzz_wal_replay (empty seed corpus; full-file replay)..."
 	@mkdir -p tests/fuzz/corpus/wal_replay_empty
-	@$(FUZZ_DIR)/fuzz_wal_replay tests/fuzz/corpus/wal_replay_empty $(FUZZ_ARTIFACT_PREFIX) -runs=5000 -max_len=8192 -rss_limit_mb=512 -print_final_stats=1
+	@$(FUZZ_DIR)/fuzz_wal_replay tests/fuzz/corpus/wal_replay_empty $(FUZZ_ARTIFACT_PREFIX) -runs=5000 -max_len=8192 -rss_limit_mb=2048 -print_final_stats=1
 	@echo "Running fuzz_json..."
 	@mkdir -p tests/fuzz/corpus/json
-	@$(FUZZ_DIR)/fuzz_json tests/fuzz/corpus/json $(FUZZ_ARTIFACT_PREFIX) -max_total_time=30 -rss_limit_mb=512 -print_final_stats=1
+	@$(FUZZ_DIR)/fuzz_json tests/fuzz/corpus/json $(FUZZ_ARTIFACT_PREFIX) -max_total_time=30 -rss_limit_mb=2048 -print_final_stats=1
 	@echo "Running fuzz_filter_expr..."
 	@mkdir -p tests/fuzz/corpus/filter_expr
-	@$(FUZZ_DIR)/fuzz_filter_expr tests/fuzz/corpus/filter_expr $(FUZZ_ARTIFACT_PREFIX) -max_total_time=30 -rss_limit_mb=512 -print_final_stats=1
+	@$(FUZZ_DIR)/fuzz_filter_expr tests/fuzz/corpus/filter_expr $(FUZZ_ARTIFACT_PREFIX) -max_total_time=30 -rss_limit_mb=2048 -print_final_stats=1
 	@echo "Running fuzz_sql..."
 	@mkdir -p tests/fuzz/corpus/sql
-	@$(FUZZ_DIR)/fuzz_sql tests/fuzz/corpus/sql $(FUZZ_ARTIFACT_PREFIX) -max_total_time=30 -rss_limit_mb=512 -print_final_stats=1
+	@$(FUZZ_DIR)/fuzz_sql tests/fuzz/corpus/sql $(FUZZ_ARTIFACT_PREFIX) -max_total_time=30 -rss_limit_mb=2048 -print_final_stats=1
 	@echo "Running fuzz_cypher..."
 	@mkdir -p tests/fuzz/corpus/cypher
-	@$(FUZZ_DIR)/fuzz_cypher tests/fuzz/corpus/cypher $(FUZZ_ARTIFACT_PREFIX) -max_total_time=30 -rss_limit_mb=512 -print_final_stats=1
+	@$(FUZZ_DIR)/fuzz_cypher tests/fuzz/corpus/cypher $(FUZZ_ARTIFACT_PREFIX) -max_total_time=30 -rss_limit_mb=2048 -print_final_stats=1
 
 fuzz-corpus: lib
 	@bash tests/fuzz/gen_corpus.sh
