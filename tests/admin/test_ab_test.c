@@ -10,6 +10,7 @@
 
 #include "admin/ab_test.h"
 #include "storage/database.h"
+#include "core/compat.h"   /* rand_r shim on Windows */
 
 #define ASSERT(cond, msg) \
     do { \

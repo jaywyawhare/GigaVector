@@ -1,5 +1,6 @@
 #include <math.h>
 #include "core/memory.h"
+#include "core/compat.h"   /* rand_r shim on Windows */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

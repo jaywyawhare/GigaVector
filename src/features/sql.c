@@ -312,7 +312,7 @@ static int sql_tokenize(GV_SQLTokenBuf *buf, const char *query)
         }
         GV_SQLToken tok = sql_lexer_next(&lx);
         if (tok.type == GV_SQL_TOK_ERROR) {
-            snprintf(buf->error, GV_SQL_ERROR_SIZE, "Tokenization error: %s", lx.error);
+            snprintf(buf->error, GV_SQL_ERROR_SIZE, "Tokenization error: %.1000s", lx.error);
             sql_token_free(&tok);
             return -1;
         }

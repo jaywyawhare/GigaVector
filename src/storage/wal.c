@@ -595,7 +595,9 @@ static int wal_is_torn_tail(FILE *f, long record_start, int short_read) {
     if (record_start >= 0) {
         if (fflush(f) == 0) {
 #ifndef _WIN32
-            (void)ftruncate(fileno(f), (off_t)record_start);
+            if (ftruncate(fileno(f), (off_t)record_start) != 0) {
+                /* best-effort truncation; recovery continues on failure */
+            }
 #else
             (void)_chsize_s(_fileno(f), (long long)record_start);
 #endif

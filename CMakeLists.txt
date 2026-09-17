@@ -52,6 +52,9 @@ if(WIN32 AND BUILD_SHARED_LIBS)
 endif()
 
 if(MINGW)
+    # Use MinGW's ANSI stdio so %zu/%z... format specifiers are recognised by
+    # both the CRT and gcc's -Wformat (avoids "unknown conversion type 'z'").
+    add_compile_definitions(__USE_MINGW_ANSI_STDIO=1)
     # Static-link libgcc (no transitive deps) and pthread.
     # curl, ssl, crypto etc. remain dynamic so delvewheel can bundle them all
     # (including their transitive deps: zlib, brotli, etc.) into the wheel.

@@ -370,6 +370,7 @@ static Opd *parse_primary(Lex *lx) {
         Opd *idx = parse_add(lx);
         if (!idx || eat(lx, T_RB, "']'")) { opd_clear(o); gv_free(o); if (idx) { opd_clear(idx); gv_free(idx); } return NULL; }
         Opd *w = (Opd *)gv_calloc(1, sizeof(Opd));
+        /* cppcheck-suppress nullPointerRedundantCheck */
         w->k = OPD_INDEX; w->l = o; w->r = idx; o = w;
     }
     return o;
@@ -539,6 +540,7 @@ static Opd *parse_mul(Lex *lx) {
         Opd *r = parse_unary(lx);
         if (!r) { opd_clear(l); gv_free(l); return NULL; }
         Opd *o = (Opd *)gv_calloc(1, sizeof(Opd));
+        /* cppcheck-suppress nullPointerRedundantCheck */
         o->k = OPD_BIN; o->binop = op; o->l = l; o->r = r; l = o;
     }
     return l;
@@ -551,6 +553,7 @@ static Opd *parse_add(Lex *lx) {
         Opd *r = parse_mul(lx);
         if (!r) { opd_clear(l); gv_free(l); return NULL; }
         Opd *o = (Opd *)gv_calloc(1, sizeof(Opd));
+        /* cppcheck-suppress nullPointerRedundantCheck */
         o->k = OPD_BIN; o->binop = op; o->l = l; o->r = r; l = o;
     }
     return l;
@@ -637,6 +640,7 @@ static Expr *parse_and(Lex *lx) {
         Expr *r = parse_cmp(lx);
         if (!r) { expr_free(l); return NULL; }
         Expr *e = (Expr *)gv_calloc(1, sizeof(Expr));
+        /* cppcheck-suppress nullPointerRedundantCheck */
         e->k = EX_AND; e->l = l; e->r = r; l = e;
     }
     return l;
@@ -648,6 +652,7 @@ static Expr *parse_or(Lex *lx) {
         Expr *r = parse_and(lx);
         if (!r) { expr_free(l); return NULL; }
         Expr *e = (Expr *)gv_calloc(1, sizeof(Expr));
+        /* cppcheck-suppress nullPointerRedundantCheck */
         e->k = EX_OR; e->l = l; e->r = r; l = e;
     }
     return l;
@@ -917,6 +922,7 @@ static char *fmt_num(double v) {
 static int cy_is_list(const char *s) { return s && s[0] == CY_LTAG; }
 static char *cy_list_encode(char **elems, size_t n) {
     size_t len = 1;
+    /* cppcheck-suppress uninitvar */
     for (size_t i = 0; i < n; i++) len += strlen(elems[i]) + 1;
     char *r = (char *)gv_alloc(len + 1);
     if (!r) return NULL;
@@ -1876,7 +1882,7 @@ static int run(GV_CypherEngine *eng, Lex *lx, GV_CypherResult *res) {
         Pattern p;
         if (parse_pattern(lx, &p)) { pattern_clear(&p); goto done; }
         /* optional ON CREATE SET / ON MATCH SET */
-        SetItem oc[8]; size_t noc = 0; SetItem om[8]; size_t nom = 0; int perr = 0;
+        SetItem oc[8] = {0}; size_t noc = 0; SetItem om[8] = {0}; size_t nom = 0; int perr = 0;
         while (kw(pk(lx), "on")) {
             adv(lx);
             int cr = kw(pk(lx), "create"), mt = kw(pk(lx), "match");

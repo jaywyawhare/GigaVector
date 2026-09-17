@@ -16,6 +16,12 @@ static inline unsigned int sleep(unsigned int sec) {
     return 0;
 }
 
+/* rand_r() is POSIX; MinGW/MSVC lack it. Reentrant LCG returning 0..RAND_MAX. */
+static inline int rand_r(unsigned int *seed) {
+    *seed = *seed * 1103515245u + 12345u;
+    return (int)((*seed >> 16) & 0x7FFF);
+}
+
 #ifndef getpid
 #define getpid() ((int)GetCurrentProcessId())
 #endif
