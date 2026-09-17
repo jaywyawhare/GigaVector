@@ -90,3 +90,6 @@ blog/
 .build/
 docs/
 test_gigavector.py
+
+# Apalache TLA+ model-checker run output (generated)
+_apalache-out/
