@@ -31,6 +31,7 @@ static int test_add_and_search(void) {
     int found = gv_db_search(db, vec, 1, results, GV_DISTANCE_EUCLIDEAN);
     ASSERT(found == 1, "should find 1 result");
     ASSERT(results[0].distance >= 0.0f, "euclidean distance should be non-negative");
+    gv_search_results_free(results, found);
 
     gv_db_close(db);
     return 0;

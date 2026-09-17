@@ -28,6 +28,7 @@ static int test_search_scratch_arena(void) {
             float q[4] = {1, 0, 0, 0};
             int n = db_search(db, q, 1, results, GV_DISTANCE_EUCLIDEAN);
             ASSERT(n == 1, "search hit");
+            gv_search_results_free(results, n);
             (void)gv_arena_used(&scratch);
         }
         gv_tls_arena_reset();

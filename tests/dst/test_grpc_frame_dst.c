@@ -88,6 +88,7 @@ static int test_grpc_frame_roundtrip_seeded(void) {
 
         GV_SearchResult results[8];
         int found = db_search(db, query, k, results, GV_DISTANCE_EUCLIDEAN);
+        if (found > 0) gv_search_results_free(results, found);
         gv_free(query);
         grpc_message_free(&msg);
         ASSERT(found > 0, "search finds vector");

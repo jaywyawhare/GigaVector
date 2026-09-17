@@ -53,6 +53,8 @@ GV_Transaction *gv_txn_begin(GV_MVCCManager *mgr);
 /**
  * @brief Commit a transaction, making its writes visible.
  *
+ * Terminal operation: on success the handle is freed and must not be reused.
+ *
  * @param txn Transaction handle; must be non-NULL.
  * @return 0 on success, -1 on error.
  */
@@ -60,6 +62,8 @@ int gv_txn_commit(GV_Transaction *txn);
 
 /**
  * @brief Roll back a transaction, discarding its writes.
+ *
+ * Terminal operation: on success the handle is freed and must not be reused.
  *
  * @param txn Transaction handle; must be non-NULL.
  * @return 0 on success, -1 on error.

@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "admin/migration.h"
+#include "storage/soa_storage.h"
 
 #define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while(0)
 
@@ -67,7 +68,9 @@ static int test_migration_take_index(void) {
     void *idx2 = migration_take_index(mig);
     ASSERT(idx2 == NULL, "second take_index should return NULL");
 
-    gv_free(idx);
+    /* KDTREE (type 0) migration yields a GV_SoAStorage; free it with its own
+     * destructor so the inner SoA arrays are released, not just the handle. */
+    soa_storage_destroy((GV_SoAStorage *)idx);
     migration_destroy(mig);
     return 0;
 }

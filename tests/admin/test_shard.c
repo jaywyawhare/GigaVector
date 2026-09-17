@@ -146,6 +146,7 @@ static int test_shard_get_info(void) {
     ASSERT(rc == 0, "get_info for existing shard should succeed");
     ASSERT(info.shard_id == 5, "shard_id should match");
     ASSERT(info.state == GV_SHARD_ACTIVE, "new shard should be ACTIVE");
+    gv_free(info.node_address);
 
     rc = shard_get_info(mgr, 999, &info);
     ASSERT(rc == -1, "get_info for non-existent shard should return -1");
@@ -167,12 +168,14 @@ static int test_shard_set_state(void) {
     memset(&info, 0, sizeof(info));
     shard_get_info(mgr, 1, &info);
     ASSERT(info.state == GV_SHARD_READONLY, "state should be READONLY after set");
+    gv_free(info.node_address);
 
     rc = shard_set_state(mgr, 1, GV_SHARD_MIGRATING);
     ASSERT(rc == 0, "set_state to MIGRATING should succeed");
 
     shard_get_info(mgr, 1, &info);
     ASSERT(info.state == GV_SHARD_MIGRATING, "state should be MIGRATING");
+    gv_free(info.node_address);
 
     rc = shard_set_state(mgr, 1, GV_SHARD_OFFLINE);
     ASSERT(rc == 0, "set_state to OFFLINE should succeed");

@@ -115,7 +115,9 @@ static int test_get_info(void) {
     ASSERT(strcmp(info.collection_name, "target_col") == 0,
            "collection_name should match");
 
-    /* Note: info fields are owned by the manager; we do not gv_free them here */
+    /* alias_get_info gv_dup_cstr's these strings; the caller owns them. */
+    gv_free(info.alias_name);
+    gv_free(info.collection_name);
     alias_manager_destroy(mgr);
     return 0;
 }

@@ -700,6 +700,7 @@ static void handle_search(GV_GrpcServer *server, int fd,
         size_t resp_len = 4 + (size_t)found * 8;
         uint8_t *resp = (uint8_t *)gv_arena_alloc(&scratch, resp_len, 4);
         if (!resp) {
+            gv_search_results_free(results, found);
             send_error_response(fd, msg->request_id, -1, "out of memory");
             GV_ATOMIC_INC(&server->errors);
             return;
@@ -710,6 +711,7 @@ static void handle_search(GV_GrpcServer *server, int fd,
             write_u32_be(resp + 4 + (size_t)i * 8, (uint32_t)results[i].id);
             write_float_be(resp + 4 + (size_t)i * 8 + 4, results[i].distance);
         }
+        gv_search_results_free(results, found);
 
         send_message(fd, GV_MSG_RESPONSE, msg->request_id, resp, resp_len);
     }

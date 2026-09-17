@@ -64,6 +64,7 @@ static int test_publish_and_poll(void) {
     ASSERT(polled[0].type == GV_CDC_INSERT, "polled event type should be INSERT");
     ASSERT(polled[0].vector_index == 42, "polled event vector_index should be 42");
 
+    cdc_free_events(polled, (size_t)n);
     cdc_destroy(stream);
     return 0;
 }
@@ -135,6 +136,7 @@ static int test_pending_count(void) {
     GV_CDCEvent buf[2];
     int polled = cdc_poll(stream, &cursor, buf, 2);
     ASSERT(polled == 2, "should poll 2 events");
+    cdc_free_events(buf, (size_t)polled);
 
     pending = cdc_pending_count(stream, &cursor);
     ASSERT(pending == 1, "should have 1 pending after polling 2");
@@ -174,6 +176,7 @@ static int test_multiple_event_types(void) {
     ASSERT(polled[1].type == GV_CDC_UPDATE, "second should be UPDATE");
     ASSERT(polled[2].type == GV_CDC_DELETE, "third should be DELETE");
 
+    cdc_free_events(polled, (size_t)n);
     cdc_destroy(stream);
     return 0;
 }

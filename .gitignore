@@ -4,6 +4,7 @@ build-cmake/
 build_warnings/
 build-audit/
 build-fix/
+build-san/
 build-san-test/
 build-win/
 build-win-cmake/

@@ -41,6 +41,30 @@ void     *gv_tls_alloc_or_heap(size_t size, size_t alignment, int *on_heap);
 void     *gv_tls_calloc_or_heap(size_t nmemb, size_t size, int *on_heap);
 void      gv_tls_free_or_heap(void *ptr, int on_heap);
 
+/*
+ * On GCC/Clang the arena carries __attribute__((cleanup)), so it is finalized
+ * even when the block is left early via return/break/goto (see
+ * test_arena_scope_dst). The control pointer drives a single iteration; cleanup
+ * — not the loop increment — performs finalization to avoid a double-fini. MSVC
+ * lacks cleanup attributes and keeps the loop-increment form (finalizes only on
+ * normal block exit).
+ */
+#if defined(__GNUC__) || defined(__clang__)
+#define GV_WITH_ARENA(arena, cap)                                              \
+    for (GV_Arena arena __attribute__((cleanup(gv_arena_fini))),               \
+             *_gv_scope_##arena =                                              \
+                 (GV_Arena *)((gv_arena_init(&(arena), (cap)), (void *)1));    \
+         _gv_scope_##arena;                                                    \
+         _gv_scope_##arena = NULL)
+
+#define GV_WITH_ARENA_STATIC(arena, backing, cap)                              \
+    for (GV_Arena arena __attribute__((cleanup(gv_arena_reset))),              \
+             *_gv_scope_##arena =                                              \
+                 (GV_Arena *)((gv_arena_init_static(&(arena), (backing), (cap)),\
+                               (void *)1));                                    \
+         _gv_scope_##arena;                                                    \
+         _gv_scope_##arena = NULL)
+#else
 #define GV_WITH_ARENA(arena, cap)                                              \
     for (GV_Arena arena, *_gv_scope_##arena =                                   \
             (GV_Arena *)((gv_arena_init(&(arena), (cap)), (void *)1));         \
@@ -53,6 +77,7 @@ void      gv_tls_free_or_heap(void *ptr, int on_heap);
                           (void *)1));                                         \
          _gv_scope_##arena;                                                    \
          gv_arena_reset(&(arena)), _gv_scope_##arena = NULL)
+#endif
 
 #define GV_WITH_DB(db, path, dim, idx)                                         \
     for (GV_Database *db = db_open((path), (dim), (idx)),                      \

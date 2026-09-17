@@ -133,7 +133,8 @@ static int test_metadata_in_database(void) {
     const char *tag = vector_get_metadata(res[0].vector, "tag");
     ASSERT(tag != NULL, "metadata tag exists");
     ASSERT(strcmp(tag, "test") == 0, "metadata tag value");
-    
+    gv_search_results_free(res, n);
+
     db_close(db);
     return 0;
 }

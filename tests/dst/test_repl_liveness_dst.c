@@ -83,7 +83,9 @@ static int test_repl_liveness_seeded(void) {
 
         GV_SearchResult out[4];
         int lh = db_search(leader, vec, 4, out, GV_DISTANCE_EUCLIDEAN);
+        if (lh > 0) gv_search_results_free(out, lh);
         int fh = db_search(follower, vec, 4, out, GV_DISTANCE_EUCLIDEAN);
+        if (fh > 0) gv_search_results_free(out, fh);
         ASSERT(lh > 0 && fh == lh, "search agreement after liveness heal");
 
         repl_sim_set_faults(sim, &partition);

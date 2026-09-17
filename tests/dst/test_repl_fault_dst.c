@@ -28,7 +28,9 @@
 
 static int leader_search_count(GV_Database *db, const float *query) {
     GV_SearchResult out[8];
-    return db_search(db, query, 8, out, GV_DISTANCE_EUCLIDEAN);
+    int n = db_search(db, query, 8, out, GV_DISTANCE_EUCLIDEAN);
+    if (n > 0) gv_search_results_free(out, n);
+    return n;
 }
 
 static int test_repl_fault_seeded(void) {

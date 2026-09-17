@@ -68,6 +68,7 @@ static int run_visibility_oracle(GV_Database *db, GV_IndexType index_type, GV_Ds
         ASSERT(results_contain_id(hits, found, inserted_id),
                "inserted vector visible in oversampled search");
 
+        if (found > 0) gv_search_results_free(hits, found);
         gv_free(hits);
     }
     return 0;

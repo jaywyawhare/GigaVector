@@ -89,7 +89,9 @@ static int test_tcp_wal_with_drop_hooks(void) {
     for (int i = 0; i < 80; i++) {
         float q[4] = {0.0f, 1.0f, 0.0f, 0.0f};
         GV_SearchResult out[1];
-        if (db_search(follower_db, q, 1, out, GV_DISTANCE_EUCLIDEAN) > 0) {
+        int n = db_search(follower_db, q, 1, out, GV_DISTANCE_EUCLIDEAN);
+        if (n > 0) {
+            gv_search_results_free(out, n);
             synced = 1;
             break;
         }

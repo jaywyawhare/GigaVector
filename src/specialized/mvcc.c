@@ -325,6 +325,11 @@ int gv_txn_commit(GV_Transaction *txn)
     mvcc_remove_active(mgr, txn->gv_txn_id);
 
     pthread_mutex_unlock(&mgr->mutex);
+
+    /* commit is terminal: the handle is consumed and must not be reused. */
+    gv_free(txn->added_indices);
+    gv_free(txn->deleted_indices);
+    gv_free(txn);
     return 0;
 }
 
@@ -362,6 +367,11 @@ int gv_txn_rollback(GV_Transaction *txn)
     mvcc_remove_active(mgr, txn->gv_txn_id);
 
     pthread_mutex_unlock(&mgr->mutex);
+
+    /* rollback is terminal: the handle is consumed and must not be reused. */
+    gv_free(txn->added_indices);
+    gv_free(txn->deleted_indices);
+    gv_free(txn);
     return 0;
 }
 
