@@ -193,7 +193,7 @@ static int test_db_ivfdisk_save_load(void)
 
     db_close(db);
     unlink(db_path);
-    char data_dir[512];
+    char data_dir[544];
     snprintf(data_dir, sizeof(data_dir), "%s.ivfdisk", db_path);
     /* posting catalog persists under data_dir; leave for /tmp cleanup */
     (void)data_dir;
@@ -429,7 +429,7 @@ static int test_db_ivfdisk_wal_replay(void)
     ASSERT(gv_test_mkstemp(db_path, sizeof(db_path), "gv_ivfdisk_wal") >= 0, "mkstemp db");
     unlink(db_path);
 
-    char wal_path[512];
+    char wal_path[544];
     snprintf(wal_path, sizeof(wal_path), "%s.wal", db_path);
     remove(wal_path);
 

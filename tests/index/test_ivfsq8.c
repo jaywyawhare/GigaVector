@@ -83,7 +83,7 @@ static int test_ivfsq8_train_insert_search(void) {
             ASSERT(results[i].distance >= results[i - 1].distance);
         }
         if (results[i].vector) {
-            vector_destroy(results[i].vector);
+            vector_destroy((GV_Vector *)results[i].vector);
         }
     }
 
@@ -127,7 +127,7 @@ static int test_ivfsq8_db_integration(void) {
     for (int i = 0; i < found; i++) {
         ASSERT(results[i].distance >= 0.0f);
         if (results[i].vector) {
-            vector_destroy(results[i].vector);
+            vector_destroy((GV_Vector *)results[i].vector);
         }
     }
 
@@ -172,7 +172,7 @@ static int test_ivfsq8_save_load(void) {
     for (int i = 0; i < found_before; i++) {
         saved_dist[i] = results_before[i].distance;
         if (results_before[i].vector) {
-            vector_destroy(results_before[i].vector);
+            vector_destroy((GV_Vector *)results_before[i].vector);
         }
     }
 
@@ -192,7 +192,7 @@ static int test_ivfsq8_save_load(void) {
         float diff = fabsf(saved_dist[i] - results_after[i].distance);
         ASSERT(diff < 1e-4f);
         if (results_after[i].vector) {
-            vector_destroy(results_after[i].vector);
+            vector_destroy((GV_Vector *)results_after[i].vector);
         }
     }
 

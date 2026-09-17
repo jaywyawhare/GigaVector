@@ -1625,6 +1625,12 @@ static int run_call(GV_CypherEngine *eng, Lex *lx, GV_CypherResult *res) {
     return 0;
 }
 
+/* GCC -O3 emits a false-positive maybe-uninitialized for `no` here (it is
+ * initialised to 0 at its declaration); the strict build already whitelists it. */
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
+#endif
 static int run(GV_CypherEngine *eng, Lex *lx, GV_CypherResult *res) {
     memset(res, 0, sizeof(*res));
     RowSet rows; memset(&rows, 0, sizeof(rows));
@@ -1991,6 +1997,9 @@ done:
     if (rc != 0 && lx->err[0] && !eng->err[0]) snprintf(eng->err, CY_ERR, "%s", lx->err);
     return rc;
 }
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 
 /* ======================================================= public API */
 

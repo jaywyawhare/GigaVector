@@ -132,7 +132,7 @@ static int test_retrain_basic(void) {
 
     /* Cleanup */
     for (int i = 0; i < found; i++) {
-        if (results[i].vector) vector_destroy(results[i].vector);
+        if (results[i].vector) vector_destroy((GV_Vector *)results[i].vector);
     }
 
     db_close(db);
