@@ -1960,6 +1960,10 @@ static int run(GV_CypherEngine *eng, Lex *lx, GV_CypherResult *res) {
     if (kw(pk(lx), "return")) {
         adv(lx);
         Ret items[CY_MAXRET]; size_t ni = 0; int distinct = 0; int star = 0;
+        /* Declared before the first `goto done_ret` so the cleanup below never
+         * reads an uninitialized `no`/`ords` (a forward goto would skip the
+         * initializer, leaving `no` indeterminate -> OOB on ords[]). */
+        Ord ords[CY_MAXORD]; size_t no = 0; long skip = -1, limit = -1;
         if (parse_return(lx, items, &ni, &distinct, &star)) goto done_ret;
         if (star && rows.n > 0) { /* RETURN * -> all bound variables */
             for (size_t bi = 0; bi < rows.r[0].n && ni < CY_MAXRET; bi++) {
@@ -1969,7 +1973,6 @@ static int run(GV_CypherEngine *eng, Lex *lx, GV_CypherResult *res) {
                 ni++;
             }
         }
-        Ord ords[CY_MAXORD]; size_t no = 0; long skip = -1, limit = -1;
         if (kw(pk(lx), "order")) { adv(lx);
             if (!kw(pk(lx), "by")) { snprintf(lx->err, CY_ERR, "expected BY"); goto done_ret; }
             adv(lx);
