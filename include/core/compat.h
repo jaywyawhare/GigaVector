@@ -192,12 +192,15 @@ static inline int write(int fd, const void *buf, unsigned int count) {
  * existing destination atomically; Win32 rename() fails when the target
  * exists, so route through MoveFileEx there. Use for temp-file publish. */
 #include <stdio.h>
+#include <errno.h>
 static inline int gv_rename_replace(const char *src, const char *dst) {
 #ifdef _WIN32
-    return MoveFileExA(src, dst,
-                       MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)
-               ? 0
-               : -1;
+    if (MoveFileExA(src, dst,
+                    MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        return 0;
+    }
+    errno = (int)GetLastError(); /* TEMP CI DIAG: surface Win32 error code */
+    return -1;
 #else
     return rename(src, dst);
 #endif
