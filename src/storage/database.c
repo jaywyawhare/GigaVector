@@ -3836,18 +3836,10 @@ static int db_save_locked(const GV_Database *db, const char *filepath) {
         } else if (db->index_type == GV_INDEX_TYPE_IVFDISK) {
             if (db->hnsw_index == NULL || db->soa_storage == NULL) {
                 status = -1;
-                GV_LOG_ERROR("db_save DIAG: ivfdisk null (hnsw=%p soa=%p)",
-                             (void *)db->hnsw_index, (void *)db->soa_storage);
             } else {
                 status = ivfdisk_save((const GV_IVFDiskIndex *)db->hnsw_index, out, version);
-                if (status != 0) {
-                    GV_LOG_ERROR("db_save DIAG: ivfdisk_save failed (errno=%d)", errno);
-                }
                 if (status == 0) {
                     status = soa_storage_save(db->soa_storage, out, version);
-                    if (status != 0) {
-                        GV_LOG_ERROR("db_save DIAG: soa_storage_save failed (errno=%d)", errno);
-                    }
                 }
             }
         } else {

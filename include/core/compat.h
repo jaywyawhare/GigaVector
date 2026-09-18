@@ -199,7 +199,7 @@ static inline int gv_rename_replace(const char *src, const char *dst) {
                     MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
         return 0;
     }
-    errno = (int)GetLastError(); /* TEMP CI DIAG: surface Win32 error code */
+    errno = (int)GetLastError(); /* surface the Win32 error to callers' logs */
     return -1;
 #else
     return rename(src, dst);

@@ -12,15 +12,6 @@
 #include "storage/posting_list.h"
 #include "storage/soa_storage.h"
 #include "../test_tmp.h"
-#include "core/log.h"
-
-/* TEMP CI DIAGNOSTIC: surface library GV_LOG_ERROR messages (with errno) to
- * stderr so a Windows CI run pinpoints the failing db_save step. */
-static void gv_diag_log_hook(int level, const char *file, int line,
-                             const char *msg, void *ctx) {
-    (void)ctx;
-    fprintf(stderr, "[gvlog l=%d %s:%d] %s\n", level, file, line, msg);
-}
 
 #define ASSERT(cond, msg) do { \
     if (!(cond)) { \
@@ -159,7 +150,9 @@ static int test_ivfdisk_save_load_roundtrip(void)
 static int test_db_ivfdisk_save_load(void)
 {
     char db_path[512];
-    ASSERT(gv_test_mkstemp(db_path, sizeof(db_path), "gv_db_ivfdisk") >= 0, "mkstemp db");
+    int db_fd = gv_test_mkstemp(db_path, sizeof(db_path), "gv_db_ivfdisk");
+    ASSERT(db_fd >= 0, "mkstemp db");
+    close(db_fd); /* Windows: unlink is denied while the fd is open. */
     unlink(db_path);
 
     const size_t dim = 4;
@@ -435,7 +428,9 @@ static int test_ivfdisk_head_ratio_enforced(void)
 static int test_db_ivfdisk_wal_replay(void)
 {
     char db_path[512];
-    ASSERT(gv_test_mkstemp(db_path, sizeof(db_path), "gv_ivfdisk_wal") >= 0, "mkstemp db");
+    int db_fd = gv_test_mkstemp(db_path, sizeof(db_path), "gv_ivfdisk_wal");
+    ASSERT(db_fd >= 0, "mkstemp db");
+    close(db_fd); /* Windows: unlink is denied while the fd is open. */
     unlink(db_path);
 
     char wal_path[544];
@@ -489,7 +484,9 @@ static int test_db_ivfdisk_wal_replay(void)
 static int test_db_ivfdisk_mmap_open(void)
 {
     char db_path[512];
-    ASSERT(gv_test_mkstemp(db_path, sizeof(db_path), "gv_ivfdisk_mmap") >= 0, "mkstemp db");
+    int db_fd = gv_test_mkstemp(db_path, sizeof(db_path), "gv_ivfdisk_mmap");
+    ASSERT(db_fd >= 0, "mkstemp db");
+    close(db_fd); /* Windows: unlink is denied while the fd is open. */
     unlink(db_path);
 
     const size_t dim = 4;
@@ -841,7 +838,6 @@ static int test_ivfdisk_head_checkpoint_timer(void)
 
 int main(void)
 {
-    gv_log_set_hook(gv_diag_log_hook, NULL); /* TEMP CI DIAGNOSTIC */
     struct { const char *name; int (*fn)(void); } tests[] = {
         { "create/train/search", test_ivfdisk_create_train_search },
         { "save/load roundtrip", test_ivfdisk_save_load_roundtrip },
