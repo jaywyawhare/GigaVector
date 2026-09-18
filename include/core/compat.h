@@ -32,6 +32,24 @@ static inline unsigned int sleep(unsigned int sec) {
 #define strtok_r(s,d,p) strtok_s((s),(d),(p))
 #endif
 
+/* strcasestr is a GNU/BSD extension absent on MinGW/MSVC; provide a portable
+ * case-insensitive substring search. POSIX platforms use the system version. */
+#include <ctype.h>
+#include <string.h>
+static inline char *strcasestr(const char *haystack, const char *needle) {
+    if (!*needle) return (char *)haystack;
+    for (; *haystack; haystack++) {
+        const char *h = haystack, *n = needle;
+        while (*h && *n &&
+               tolower((unsigned char)*h) == tolower((unsigned char)*n)) {
+            h++;
+            n++;
+        }
+        if (!*n) return (char *)haystack;
+    }
+    return NULL;
+}
+
 #ifndef __GNUC__
 #include <intrin.h>
 #define __builtin_popcount(x)  __popcnt(x)

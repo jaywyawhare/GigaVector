@@ -3,6 +3,7 @@
 #include <string.h>
 #include <strings.h>
 #include <stdlib.h>
+#include "core/compat.h"   /* strcasestr shim on MinGW/MSVC */
 #include "storage/database.h"
 #include "features/knowledge_graph.h"
 #include "storage/memory_layer.h"
