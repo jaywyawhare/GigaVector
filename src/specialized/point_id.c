@@ -567,7 +567,7 @@ int point_id_save(const GV_PointIDMap *map, const char *filepath)
 
     /* Atomically publish the completed sidecar. */
 #ifndef _WIN32
-    if (rename(tmp_path, filepath) != 0) {
+    if (gv_rename_replace(tmp_path, filepath) != 0) {
         pthread_rwlock_unlock((pthread_rwlock_t *)&map->rwlock);
         remove(tmp_path);
         return -1;

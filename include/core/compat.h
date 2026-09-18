@@ -188,6 +188,21 @@ static inline int write(int fd, const void *buf, unsigned int count) {
 #define __attribute__(x)
 #endif
 
+/* Atomically replace `dst` with `src`. POSIX rename() already replaces an
+ * existing destination atomically; Win32 rename() fails when the target
+ * exists, so route through MoveFileEx there. Use for temp-file publish. */
+#include <stdio.h>
+static inline int gv_rename_replace(const char *src, const char *dst) {
+#ifdef _WIN32
+    return MoveFileExA(src, dst,
+                       MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)
+               ? 0
+               : -1;
+#else
+    return rename(src, dst);
+#endif
+}
+
 /* Portable reentrant PRNG (POSIX rand_r is unavailable on MinGW/MSVC). Returns
  * a value in [0, 0x7FFF]; use in place of rand_r across the codebase. */
 static inline int gv_rand_r(unsigned int *seed) {

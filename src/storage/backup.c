@@ -296,7 +296,7 @@ GV_BackupResult *backup_create(GV_Database *db, const char *backup_path,
 
     /* Atomically publish the completed backup, then fsync the directory so the
      * rename itself is durable. */
-    if (rename(tmp_path, backup_path) != 0) {
+    if (gv_rename_replace(tmp_path, backup_path) != 0) {
         remove(tmp_path);
         return create_result(0, "Failed to publish backup file");
     }

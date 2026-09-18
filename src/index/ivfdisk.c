@@ -5,6 +5,7 @@
 
 #include "index/ivfdisk.h"
 #include "core/memory.h"
+#include "core/compat.h"   /* gv_rename_replace (atomic publish on Windows) */
 
 #include <float.h>
 #include <math.h>
@@ -1113,7 +1114,7 @@ int ivfdisk_head_checkpoint(GV_IVFDiskIndex *index)
         return -1;
     }
 #ifndef _WIN32
-    if (rename(tmp_path, ckpt_path) != 0) { remove(tmp_path); return -1; }
+    if (gv_rename_replace(tmp_path, ckpt_path) != 0) { remove(tmp_path); return -1; }
 #else
     if (MoveFileExA(tmp_path, ckpt_path, MOVEFILE_REPLACE_EXISTING) == 0) {
         remove(tmp_path);

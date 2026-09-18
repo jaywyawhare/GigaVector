@@ -697,7 +697,7 @@ int posting_catalog_save(GV_PostingCatalog *cat)
         return -1;
     }
 #ifndef _WIN32
-    if (rename(tmp_path, final_path) != 0) { remove(tmp_path); return -1; }
+    if (gv_rename_replace(tmp_path, final_path) != 0) { remove(tmp_path); return -1; }
 #else
     if (MoveFileExA(tmp_path, final_path, MOVEFILE_REPLACE_EXISTING) == 0) {
         remove(tmp_path);
@@ -942,7 +942,7 @@ static int posting_catalog_write_segment(GV_PostingCatalog *cat, uint64_t head_i
     gv_free(seg_buf);
 
 #ifndef _WIN32
-    if (rename(tmp_path, abs_path) != 0) { remove(tmp_path); return -1; }
+    if (gv_rename_replace(tmp_path, abs_path) != 0) { remove(tmp_path); return -1; }
 #else
     if (MoveFileExA(tmp_path, abs_path, MOVEFILE_REPLACE_EXISTING) == 0) {
         remove(tmp_path);

@@ -3915,7 +3915,7 @@ static int db_save_locked(const GV_Database *db, const char *filepath) {
     /* Atomically publish the new snapshot; on any error leave the original
      * file untouched and remove the temp file. */
     if (status == 0) {
-        if (rename(temp_path, out_path) != 0) {
+        if (gv_rename_replace(temp_path, out_path) != 0) {
             GV_LOG_ERROR("db_save: rename('%s' -> '%s') failed (errno=%d) - snapshot not published",
                          temp_path, out_path, errno);
             status = -1;
