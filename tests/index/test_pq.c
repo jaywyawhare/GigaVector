@@ -21,7 +21,7 @@ static void generate_training_data(float *data, size_t count, size_t dim) {
 }
 
 static int test_pq_create_destroy(void) {
-    GV_PQConfig config;
+    GV_PQConfig config = {0};
     config.m           = M;
     config.nbits       = 8;
     config.train_iters = 10;
@@ -34,7 +34,7 @@ static int test_pq_create_destroy(void) {
 }
 
 static int test_pq_train_insert_search(void) {
-    GV_PQConfig config;
+    GV_PQConfig config = {0};
     config.m           = M;
     config.nbits       = 8;
     config.train_iters = 10;
@@ -73,7 +73,7 @@ static int test_pq_train_insert_search(void) {
 }
 
 static int test_pq_is_trained(void) {
-    GV_PQConfig config;
+    GV_PQConfig config = {0};
     config.m           = M;
     config.nbits       = 8;
     config.train_iters = 10;
@@ -94,7 +94,7 @@ static int test_pq_is_trained(void) {
 }
 
 static int test_pq_range_search(void) {
-    GV_PQConfig config;
+    GV_PQConfig config = {0};
     config.m           = M;
     config.nbits       = 8;
     config.train_iters = 10;
@@ -137,7 +137,7 @@ static int test_pq_range_search(void) {
 }
 
 static int test_pq_delete_update(void) {
-    GV_PQConfig config;
+    GV_PQConfig config = {0};
     config.m           = M;
     config.nbits       = 8;
     config.train_iters = 10;
