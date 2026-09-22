@@ -153,30 +153,30 @@ else()
     message(WARNING "Install librdkafka-dev to enable real Kafka streaming ingestion")
 endif()
 
-# SIMD runtime dispatch — compile distance.c with AVX2/AVX512 flags when the
+# SIMD runtime dispatch — compile the SIMD sources with -mavx2 -mfma when the
 # compiler supports them, without forcing -march=native across the whole build.
+#
+# IMPORTANT: only AVX2 is enabled here, never AVX512. distance.c and hnsw.c
+# runtime-dispatch their *AVX2* kernels via cpu_has_feature(AVX2); there is no
+# AVX512 runtime gate. Passing -mavx512f lets GCC auto-vectorize the file's
+# non-dispatched functions (e.g. hnsw.c calculate_level) with AVX512, which
+# SIGILLs on the many CPUs (incl. most CI runners) that lack AVX512. -mavx2 is
+# safe here because AVX2 is baseline on every runner these binaries target, and
+# the fast kernels stay behind the runtime check regardless.
 include(CheckCCompilerFlag)
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang|AppleClang" AND NOT WIN32)
     check_c_compiler_flag(-mavx2 COMPILER_SUPPORTS_AVX2)
-    check_c_compiler_flag(-mavx512f COMPILER_SUPPORTS_AVX512F)
 
-    # distance.c AND hnsw.c both runtime-dispatch their AVX2 kernels via
-    # cpu_has_feature(), so compiling them with -mavx2 activates the fast path
-    # while staying safe on CPUs without AVX2 (falls back to scalar at runtime).
     set(GV_SIMD_SRCS
         "${CMAKE_CURRENT_SOURCE_DIR}/src/search/distance.c"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/index/hnsw.c")
 
-    if(COMPILER_SUPPORTS_AVX512F)
-        set_source_files_properties(${GV_SIMD_SRCS} PROPERTIES
-            COMPILE_FLAGS "-mavx2 -mfma -mavx512f")
-        message(STATUS "  SIMD (distance + hnsw): AVX512 enabled")
-    elseif(COMPILER_SUPPORTS_AVX2)
+    if(COMPILER_SUPPORTS_AVX2)
         set_source_files_properties(${GV_SIMD_SRCS} PROPERTIES
             COMPILE_FLAGS "-mavx2 -mfma")
         message(STATUS "  SIMD (distance + hnsw): AVX2 enabled")
     else()
-        message(STATUS "  SIMD: Scalar fallback (no AVX2/AVX512)")
+        message(STATUS "  SIMD: Scalar fallback (no AVX2)")
     endif()
 endif()
 
