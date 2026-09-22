@@ -6,7 +6,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#ifndef _WIN32
 #include <sys/wait.h>
+#endif
 
 int db_backup_to_sink(GV_Database *db, const char *object_name,
                       const GV_BackupOptions *options, const GV_BackupSink *sink) {

@@ -2,6 +2,7 @@
 #include "storage/bulk_import.h"
 #include "features/json.h"
 #include "core/memory.h"
+#include "core/compat.h"   /* getline() shim on Windows/MinGW */
 
 #include <stdio.h>
 #include <stdlib.h>

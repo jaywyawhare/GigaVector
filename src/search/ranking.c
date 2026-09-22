@@ -97,10 +97,10 @@ typedef enum {
     TOK_COMMA,      /**< ',' */
     TOK_EOF,        /**< End of input. */
     TOK_ERROR       /**< Lexer error. */
-} TokenType;
+} GV_RankTokenType;
 
 typedef struct {
-    TokenType type;
+    GV_RankTokenType type;
     double    num_val;
     char      ident[GV_RANK_MAX_IDENT];
 } Token;
@@ -413,7 +413,7 @@ static GV_RankNode *parse_term(Parser *p) {
     if (!left || p->has_error) return left;
 
     while (p->cur.type == TOK_STAR || p->cur.type == TOK_SLASH) {
-        TokenType op_tok = p->cur.type;
+        GV_RankTokenType op_tok = p->cur.type;
         next_token(p);
 
         GV_RankNode *right = parse_factor(p);
@@ -443,7 +443,7 @@ static GV_RankNode *parse_expr(Parser *p) {
     if (!left || p->has_error) return left;
 
     while (p->cur.type == TOK_PLUS || p->cur.type == TOK_MINUS) {
-        TokenType op_tok = p->cur.type;
+        GV_RankTokenType op_tok = p->cur.type;
         next_token(p);
 
         GV_RankNode *right = parse_term(p);

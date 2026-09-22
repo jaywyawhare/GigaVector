@@ -76,6 +76,20 @@ typedef struct {
     size_t insert_buf_size;
 } GV_HNSWIndex;
 
+/* Per-thread search scratch. gv_hnsw_search runs under the DB read (shared)
+ * lock, so concurrent searches would race on the per-index scratch
+ * (visited_epoch/current_epoch/search_buf). These thread-locals give every
+ * search thread its own visited table + beam heap, making concurrent searches
+ * race-free. Insert runs under the write (exclusive) lock and keeps using the
+ * per-index scratch. Buffers persist for the thread's lifetime (reachable at
+ * exit, so no LeakSanitizer failure) to avoid per-search malloc churn. */
+static _Thread_local uint32_t *ts_visited = NULL;
+static _Thread_local size_t    ts_visited_cap = 0;
+static _Thread_local uint32_t  ts_epoch = 0;
+static _Thread_local float     *ts_search_dis = NULL;
+static _Thread_local size_t    *ts_search_ids = NULL;
+static _Thread_local uint8_t   *ts_search_proc = NULL;
+static _Thread_local size_t     ts_search_buf_size = 0;
 
 static size_t calculate_level(GV_HNSWIndex *index) {
 #ifndef _WIN32
@@ -1020,33 +1034,46 @@ int gv_hnsw_search(void *index_ptr, const GV_Vector *query, size_t k,
         if (ef > 0 && ef <= SIZE_MAX / factor) ef *= factor;
     }
 
-    index->current_epoch++;
-    if (index->current_epoch == 0) {
-        memset(index->visited_epoch, 0, index->visited_capacity * sizeof(uint32_t));
-        index->current_epoch = 1;
-    }
-
-    size_t buf_need = ef;
-    if (buf_need > index->search_buf_size) {
-        float *nd = (float *)gv_realloc(index->search_dis, buf_need * sizeof(float));
-        size_t *ni = (size_t *)gv_realloc(index->search_ids, buf_need * sizeof(size_t));
-        uint8_t *np = (uint8_t *)gv_realloc(index->search_proc, buf_need * sizeof(uint8_t));
-        if (!nd || !ni || !np) {
-            if (nd) index->search_dis = nd;
-            if (ni) index->search_ids = ni;
-            if (np) index->search_proc = np;
+    /* Grow the per-thread visited table to cover every node index (matches the
+     * per-index visited_capacity, which is >= node count). */
+    if (index->visited_capacity > ts_visited_cap) {
+        uint32_t *nv = (uint32_t *)gv_realloc(ts_visited, index->visited_capacity * sizeof(uint32_t));
+        if (!nv) {
             if (query_binary) binary_vector_destroy(query_binary);
             return -1;
         }
-        index->search_dis = nd;
-        index->search_ids = ni;
-        index->search_proc = np;
-        index->search_buf_size = buf_need;
+        memset(nv + ts_visited_cap, 0, (index->visited_capacity - ts_visited_cap) * sizeof(uint32_t));
+        ts_visited = nv;
+        ts_visited_cap = index->visited_capacity;
     }
 
-    float *heap_dis = index->search_dis;
-    size_t *heap_ids = index->search_ids;
-    uint8_t *heap_proc = index->search_proc;
+    ts_epoch++;
+    if (ts_epoch == 0) {
+        memset(ts_visited, 0, ts_visited_cap * sizeof(uint32_t));
+        ts_epoch = 1;
+    }
+
+    size_t buf_need = ef;
+    if (buf_need > ts_search_buf_size) {
+        float *nd = (float *)gv_realloc(ts_search_dis, buf_need * sizeof(float));
+        size_t *ni = (size_t *)gv_realloc(ts_search_ids, buf_need * sizeof(size_t));
+        uint8_t *np = (uint8_t *)gv_realloc(ts_search_proc, buf_need * sizeof(uint8_t));
+        if (!nd || !ni || !np) {
+            if (nd) ts_search_dis = nd;
+            if (ni) ts_search_ids = ni;
+            if (np) ts_search_proc = np;
+            if (query_binary) binary_vector_destroy(query_binary);
+            return -1;
+        }
+        ts_search_dis = nd;
+        ts_search_ids = ni;
+        ts_search_proc = np;
+        ts_search_buf_size = buf_need;
+    }
+
+    float *heap_dis = ts_search_dis;
+    size_t *heap_ids = ts_search_ids;
+    uint8_t *heap_proc = ts_search_proc;
     size_t heap_k = 0;
 
     float cur_dist;
@@ -1057,7 +1084,7 @@ int gv_hnsw_search(void *index_ptr, const GV_Vector *query, size_t k,
     }
     mmheap_push(heap_dis, heap_ids, heap_proc, &heap_k, buf_need,
                 cur, cur_dist);
-    index->visited_epoch[cur] = index->current_epoch;
+    ts_visited[cur] = ts_epoch;
 
     for (;;) {
         float cand_dist;
@@ -1080,7 +1107,7 @@ int gv_hnsw_search(void *index_ptr, const GV_Vector *query, size_t k,
             int32_t nb = nbs[i];
             if (nb < 0) break;
             valid_nbs[jmax] = nb;
-            prefetch_L2(&index->visited_epoch[nb]);
+            prefetch_L2(&ts_visited[nb]);
             jmax++;
         }
 
@@ -1092,9 +1119,9 @@ int gv_hnsw_search(void *index_ptr, const GV_Vector *query, size_t k,
         for (size_t i = 0; i < jmax; ++i) {
             int32_t nb = valid_nbs[i];
             if (index->nodes[nb].deleted) continue;
-            if ((size_t)nb >= index->visited_capacity ||
-                index->visited_epoch[nb] == index->current_epoch) continue;
-            index->visited_epoch[nb] = index->current_epoch;
+            if ((size_t)nb >= ts_visited_cap ||
+                ts_visited[nb] == ts_epoch) continue;
+            ts_visited[nb] = ts_epoch;
 
             /* Prefetch next vector data */
             if (i + 1 < jmax) {

@@ -20,30 +20,7 @@
 #ifndef ssize_t
 typedef SSIZE_T ssize_t;
 #endif
-static ssize_t getline(char **lineptr, size_t *n, FILE *stream) {
-    if (!lineptr || !n || !stream) return -1;
-    int c;
-    size_t len = 0;
-    if (!*lineptr || *n == 0) {
-        *n = 128;
-        *lineptr = (char *)malloc(*n);
-        if (!*lineptr) return -1;
-    }
-    while ((c = fgetc(stream)) != EOF) {
-        if (len + 2 > *n) {
-            size_t newn = *n * 2;
-            char *tmp = (char *)realloc(*lineptr, newn);
-            if (!tmp) return -1;
-            *lineptr = tmp;
-            *n = newn;
-        }
-        (*lineptr)[len++] = (char)c;
-        if (c == '\n') break;
-    }
-    if (len == 0) return -1;
-    (*lineptr)[len] = '\0';
-    return (ssize_t)len;
-}
+/* getline() shim provided by core/compat.h (included above) on Windows/MinGW. */
 #endif
 
 #include "core/types.h"

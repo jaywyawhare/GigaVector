@@ -79,6 +79,39 @@ static inline int gettimeofday(struct timeval *tv, void *tz) {
 typedef SSIZE_T ssize_t;
 #endif
 
+/* getline() is POSIX and absent on MinGW/MSVC even with _GNU_SOURCE. Provide a
+ * portable shim: reads a line via fgetc, growing *lineptr with realloc. Returns
+ * the length (excluding the NUL), or -1 at EOF with nothing read. ssize_t is
+ * typedef'd just above for Windows. */
+#include <stdio.h>
+#include <stdlib.h>
+static inline ssize_t getline(char **lineptr, size_t *n, FILE *stream) {
+    if (!lineptr || !n || !stream) return -1;
+    if (!*lineptr || *n == 0) {
+        size_t cap = 128;
+        char *buf = (char *)realloc(*lineptr, cap);
+        if (!buf) return -1;
+        *lineptr = buf;
+        *n = cap;
+    }
+    size_t len = 0;
+    int c;
+    while ((c = fgetc(stream)) != EOF) {
+        if (len + 1 >= *n) {
+            size_t cap = *n * 2;
+            char *buf = (char *)realloc(*lineptr, cap);
+            if (!buf) return -1;
+            *lineptr = buf;
+            *n = cap;
+        }
+        (*lineptr)[len++] = (char)c;
+        if (c == '\n') break;
+    }
+    if (len == 0 && c == EOF) return -1;
+    (*lineptr)[len] = '\0';
+    return (ssize_t)len;
+}
+
 #include <sys/stat.h>
 #ifndef S_ISDIR
 #define S_ISDIR(m)  (((m) & _S_IFMT) == _S_IFDIR)

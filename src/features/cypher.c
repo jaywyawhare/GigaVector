@@ -2179,7 +2179,7 @@ static int run(GV_CypherEngine *eng, Lex *lx, GV_CypherResult *res) {
         Pattern p;
         if (parse_pattern(lx, &p)) { pattern_clear(&p); goto done; }
         /* optional ON CREATE SET / ON MATCH SET */
-        SetItem oc[8]; size_t noc = 0; SetItem om[8]; size_t nom = 0; int perr = 0;
+        SetItem oc[8] = {0}; size_t noc = 0; SetItem om[8] = {0}; size_t nom = 0; int perr = 0;
         while (kw(pk(lx), "on")) {
             adv(lx);
             int cr = kw(pk(lx), "create"), mt = kw(pk(lx), "match");
