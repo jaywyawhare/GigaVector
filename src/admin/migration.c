@@ -70,8 +70,7 @@ static void migration_set_error(GV_Migration *mig, const char *msg)
 {
     pthread_mutex_lock(&mig->mutex);
     mig->status = GV_MIGRATION_FAILED;
-    strncpy(mig->error_message, msg, sizeof(mig->error_message) - 1);
-    mig->error_message[sizeof(mig->error_message) - 1] = '\0';
+    snprintf(mig->error_message, sizeof(mig->error_message), "%s", msg);
     pthread_mutex_unlock(&mig->mutex);
 }
 
@@ -538,8 +537,7 @@ int migration_get_info(const GV_Migration *mig, GV_MigrationInfo *info)
         info->elapsed_us = 0;
     }
 
-    strncpy(info->error_message, m->error_message, sizeof(info->error_message) - 1);
-    info->error_message[sizeof(info->error_message) - 1] = '\0';
+    snprintf(info->error_message, sizeof(info->error_message), "%s", m->error_message);
 
     pthread_mutex_unlock(&m->mutex);
     return 0;

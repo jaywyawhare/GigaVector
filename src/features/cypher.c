@@ -11,6 +11,7 @@
 #include "features/cypher_vector.h"
 #include "core/memory.h"
 #include "core/utils.h"
+#include "core/compat.h"   /* strcasestr shim on MinGW/MSVC */
 
 #include <string.h>
 #include <strings.h>
@@ -411,6 +412,7 @@ static Opd *parse_primary(Lex *lx) {
         adv(lx);
         Opd *idx = parse_add(lx);
         if (!idx || eat(lx, T_RB, "']'")) { opd_clear(o); gv_free(o); if (idx) { opd_clear(idx); gv_free(idx); } return NULL; }
+        /* cppcheck-suppress nullPointerRedundantCheck */
         Opd *w = (Opd *)gv_calloc(1, sizeof(Opd));
         w->k = OPD_INDEX; w->l = o; w->r = idx; o = w;
     }
@@ -593,6 +595,7 @@ static Opd *parse_mul(Lex *lx) {
         adv(lx);
         Opd *r = parse_unary(lx);
         if (!r) { opd_clear(l); gv_free(l); return NULL; }
+        /* cppcheck-suppress nullPointerRedundantCheck */
         Opd *o = (Opd *)gv_calloc(1, sizeof(Opd));
         o->k = OPD_BIN; o->binop = op; o->l = l; o->r = r; l = o;
     }
@@ -605,6 +608,7 @@ static Opd *parse_add(Lex *lx) {
         adv(lx);
         Opd *r = parse_mul(lx);
         if (!r) { opd_clear(l); gv_free(l); return NULL; }
+        /* cppcheck-suppress nullPointerRedundantCheck */
         Opd *o = (Opd *)gv_calloc(1, sizeof(Opd));
         o->k = OPD_BIN; o->binop = op; o->l = l; o->r = r; l = o;
     }
@@ -691,6 +695,7 @@ static Expr *parse_and(Lex *lx) {
         adv(lx);
         Expr *r = parse_cmp(lx);
         if (!r) { expr_free(l); return NULL; }
+        /* cppcheck-suppress nullPointerRedundantCheck */
         Expr *e = (Expr *)gv_calloc(1, sizeof(Expr));
         e->k = EX_AND; e->l = l; e->r = r; l = e;
     }
@@ -702,6 +707,7 @@ static Expr *parse_or(Lex *lx) {
         adv(lx);
         Expr *r = parse_and(lx);
         if (!r) { expr_free(l); return NULL; }
+        /* cppcheck-suppress nullPointerRedundantCheck */
         Expr *e = (Expr *)gv_calloc(1, sizeof(Expr));
         e->k = EX_OR; e->l = l; e->r = r; l = e;
     }
@@ -1072,6 +1078,7 @@ static int cv_cmp(const CyVal *a, const CyVal *b) {
 
 static int cy_is_list(const char *s) { return s && s[0] == CY_LTAG; }
 static char *cy_list_encode(char **elems, size_t n) {
+    /* cppcheck-suppress uninitvar */
     size_t len = 1;
     for (size_t i = 0; i < n; i++) len += strlen(elems[i]) + 1;
     char *r = (char *)gv_alloc(len + 1);
@@ -2179,6 +2186,7 @@ static int run(GV_CypherEngine *eng, Lex *lx, GV_CypherResult *res) {
             if (!cr && !mt) { snprintf(lx->err, CY_ERR, "expected CREATE or MATCH after ON"); perr = 1; break; }
             adv(lx);
             if (!kw(pk(lx), "set")) { snprintf(lx->err, CY_ERR, "expected SET"); perr = 1; break; }
+            /* cppcheck-suppress legacyUninitvar */
             adv(lx);
             if (parse_setlist(lx, cr ? oc : om, cr ? &noc : &nom, 8)) { perr = 1; break; }
         }

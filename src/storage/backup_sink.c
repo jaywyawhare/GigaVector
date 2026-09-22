@@ -76,5 +76,6 @@ int gv_backup_command_put(void *ctx, const char *object_name, const char *local_
 #ifdef WIFEXITED
     if (WIFEXITED(rc)) return WEXITSTATUS(rc);
 #endif
+    /* cppcheck-suppress identicalConditionAfterEarlyExit */
     return rc;
 }

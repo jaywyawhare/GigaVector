@@ -61,7 +61,9 @@ static int db_search_raw(const GV_Database *db, const float *query_data, size_t 
     memset(results, 0, k * sizeof(GV_SearchResult));
 
     pthread_rwlock_rdlock((pthread_rwlock_t *)&db->rwlock);
-    ((GV_Database *)db)->total_queries += 1;
+    /* Concurrent searches share the read lock, so this counter must be bumped
+     * atomically (relaxed: it is a monotonic stat, not a synchronization point). */
+    __atomic_add_fetch(&((GV_Database *)db)->total_queries, 1, __ATOMIC_RELAXED);
 
     if (db->index_type == GV_INDEX_TYPE_KDTREE && db->root == NULL) {
         pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
@@ -238,7 +240,9 @@ int db_search_ivfpq_opts(const GV_Database *db, const float *query_data, size_t 
         return db_search(db, query_data, k, results, distance_type);
     }
     pthread_rwlock_rdlock((pthread_rwlock_t *)&db->rwlock);
-    ((GV_Database *)db)->total_queries += 1;
+    /* Concurrent searches share the read lock, so this counter must be bumped
+     * atomically (relaxed: it is a monotonic stat, not a synchronization point). */
+    __atomic_add_fetch(&((GV_Database *)db)->total_queries, 1, __ATOMIC_RELAXED);
     GV_Vector query_vec;
     query_vec.data = (float *)query_data;
     query_vec.dimension = db->dimension;
@@ -309,7 +313,9 @@ int db_search_batch(const GV_Database *db, const float *queries, size_t qcount, 
     }
     gv_tls_arena_reset();
     pthread_rwlock_rdlock((pthread_rwlock_t *)&db->rwlock);
-    ((GV_Database *)db)->total_queries += 1;
+    /* Concurrent searches share the read lock, so this counter must be bumped
+     * atomically (relaxed: it is a monotonic stat, not a synchronization point). */
+    __atomic_add_fetch(&((GV_Database *)db)->total_queries, 1, __ATOMIC_RELAXED);
 
     if (db->index_type == GV_INDEX_TYPE_KDTREE && db->root == NULL) {
         pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
@@ -420,7 +426,9 @@ int db_search_filtered(const GV_Database *db, const float *query_data, size_t k,
     memset(results, 0, k * sizeof(GV_SearchResult));
 
     pthread_rwlock_rdlock((pthread_rwlock_t *)&db->rwlock);
-    ((GV_Database *)db)->total_queries += 1;
+    /* Concurrent searches share the read lock, so this counter must be bumped
+     * atomically (relaxed: it is a monotonic stat, not a synchronization point). */
+    __atomic_add_fetch(&((GV_Database *)db)->total_queries, 1, __ATOMIC_RELAXED);
 
     if (db->index_type == GV_INDEX_TYPE_KDTREE && db->root == NULL) {
         pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
@@ -608,7 +616,9 @@ int db_search_with_filter_expr(const GV_Database *db, const float *query_data, s
     }
 
     pthread_rwlock_rdlock((pthread_rwlock_t *)&db->rwlock);
-    ((GV_Database *)db)->total_queries += 1;
+    /* Concurrent searches share the read lock, so this counter must be bumped
+     * atomically (relaxed: it is a monotonic stat, not a synchronization point). */
+    __atomic_add_fetch(&((GV_Database *)db)->total_queries, 1, __ATOMIC_RELAXED);
 
     if (db->index_type == GV_INDEX_TYPE_KDTREE && db->root == NULL) {
         pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);

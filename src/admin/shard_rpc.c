@@ -3,6 +3,75 @@
  * @brief TCP transport for distributed k-NN search (see shard_rpc.h).
  */
 
+#ifdef _WIN32
+/* This TCP transport relies on POSIX socket headers that are not available in
+ * the MinGW/Windows build environment.  The Python wheel uses the library
+ * directly (in-process) and never starts this network server, so provide an
+ * in-process stub that preserves the API contract so the library still links
+ * on Windows (the networked RPC features are never exercised there). */
+#include "admin/shard_rpc.h"
+#include "core/memory.h"
+#include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
+
+struct GV_ShardRpcServer { int _unused; };
+
+GV_ShardRpcServer *shard_rpc_serve(GV_ShardManager *mgr,
+                                   const char *bind_addr, uint16_t port) {
+    (void)mgr; (void)bind_addr; (void)port;
+    return NULL;
+}
+
+uint16_t shard_rpc_server_port(const GV_ShardRpcServer *server) {
+    (void)server;
+    return 0;
+}
+
+void shard_rpc_set_members_provider(GV_ShardRpcServer *server,
+                                    GV_MembersProviderFn fn, void *ctx) {
+    (void)server; (void)fn; (void)ctx;
+}
+
+int shard_rpc_fetch_members(const char *host, uint16_t port,
+                            char *out, size_t out_sz) {
+    (void)host; (void)port; (void)out; (void)out_sz;
+    return -1;
+}
+
+void shard_rpc_set_raft_handler(GV_ShardRpcServer *server,
+                                GV_RaftMsgHandler fn, void *ctx) {
+    (void)server; (void)fn; (void)ctx;
+}
+
+int shard_rpc_send_raft(const char *host, uint16_t port,
+                        const void *bytes, size_t len) {
+    (void)host; (void)port; (void)bytes; (void)len;
+    return -1;
+}
+
+void shard_rpc_server_stop(GV_ShardRpcServer *server) {
+    (void)server;
+}
+
+int shard_rpc_search(const char *host, uint16_t port,
+                     const float *query, size_t dim, size_t k,
+                     GV_DistanceType distance_type, GV_SearchResult *results) {
+    (void)host; (void)port; (void)query; (void)dim; (void)k;
+    (void)distance_type; (void)results;
+    return -1;
+}
+
+int shard_rpc_search_distributed(GV_ShardManager *mgr, const float *query,
+                                 size_t dim, size_t k,
+                                 GV_DistanceType distance_type,
+                                 GV_SearchResult *results) {
+    (void)mgr; (void)query; (void)dim; (void)k; (void)distance_type; (void)results;
+    return -1;
+}
+
+#else  /* POSIX implementation below */
+
 #include "admin/shard_rpc.h"
 #include "admin/shard.h"
 #include "schema/vector.h"
@@ -384,3 +453,5 @@ int shard_rpc_search_distributed(GV_ShardManager *mgr, const float *query,
     gv_free(all);
     return (int)kept;
 }
+
+#endif /* _WIN32 */

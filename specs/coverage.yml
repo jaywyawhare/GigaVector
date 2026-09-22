@@ -66,6 +66,10 @@ tiers:
         - storage/database.c
         - storage/db_resource.c
         - storage/db_stats.c
+        - storage/db_io.c
+        - storage/db_search.c
+        - storage/db_write.c
+        - storage/db_maintenance.c
     - ref: "memory_layer.qnt"
       why: "memory tier promotion/consolidation, no loss"
       files:
@@ -234,6 +238,20 @@ tiers:
       files:
         - storage/wal.c
   property:
+    - ref: "tests"
+      why: "distributed RPC transports, graph schema/property-index, vector-cypher and rerank/fusion kernels; covered by unit/differential tests, not formally verified"
+      files:
+        - admin/shard_rpc.c
+        - core/prop_value.c
+        - features/cypher_vector.c
+        - features/graph_distributed.c
+        - features/graph_prop_index.c
+        - features/graph_rpc.c
+        - features/graph_schema.c
+        - index/hnsw_filtered.c
+        - multimodal/payload_inverted.c
+        - search/cross_encoder_rerank.c
+        - search/sparse_dense_fusion.c
     - ref: "tests + harness_ann_index.c"
       why: "shares its contract with the representative verified in harness_ann_index.c, but is NOT itself symbolically executed -- covered by unit/differential tests only"
       files:

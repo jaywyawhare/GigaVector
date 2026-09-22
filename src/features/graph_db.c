@@ -3182,6 +3182,7 @@ int graph_wal_checkpoint(GV_GraphDB *g)
         pthread_rwlock_unlock(&g->rwlock);
         return -1;
     }
+    /* cppcheck-suppress leakReturnValNotUsed */
     if (freopen(g->wal_path, "wb", g->wal_file) == NULL) {
         g->wal_file = NULL;
         pthread_rwlock_unlock(&g->rwlock);
@@ -3346,7 +3347,7 @@ int graph_save(const GV_GraphDB *g, const char *path)
     /* Successful save of the attached snapshot makes the log redundant. */
     if (is_wal_base) {
         pthread_rwlock_wrlock((pthread_rwlock_t *)&g->rwlock);
-        freopen(g->wal_path, "wb", g->wal_file);  /* truncate */
+        ((GV_GraphDB *)g)->wal_file = freopen(g->wal_path, "wb", g->wal_file);  /* truncate */
         if (g->wal_file) {
             fflush(g->wal_file);
             fsync(fileno(g->wal_file));

@@ -3,6 +3,83 @@
  * @brief TCP transport for cross-partition graph traversal (see graph_rpc.h).
  */
 
+#ifdef _WIN32
+/* This TCP transport relies on POSIX socket headers that are not available in
+ * the MinGW/Windows build environment.  The Python wheel uses the library
+ * directly (in-process) and never starts this network server, so provide an
+ * in-process stub that preserves the API contract so the library still links
+ * on Windows (the networked RPC features are never exercised there). */
+#include "features/graph_rpc.h"
+#include "core/memory.h"
+#include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
+
+struct GV_GraphRpcServer { int _unused; };
+
+GV_GraphRpcServer *graph_rpc_serve(GV_GraphDB *partition,
+                                   const char *bind_addr, uint16_t port) {
+    (void)partition; (void)bind_addr; (void)port;
+    return NULL;
+}
+
+uint16_t graph_rpc_server_port(const GV_GraphRpcServer *server) {
+    (void)server;
+    return 0;
+}
+
+void graph_rpc_server_stop(GV_GraphRpcServer *server) {
+    (void)server;
+}
+
+int graph_rpc_neighbors(const char *host, uint16_t port, uint64_t node_id,
+                        const char *predicate, uint64_t *out, size_t max) {
+    (void)host; (void)port; (void)node_id; (void)predicate; (void)out; (void)max;
+    return -1;
+}
+
+int graph_dist_khop_net(const GV_GraphPartition *parts, size_t nparts,
+                        GV_GraphPlacementFn place, void *place_ctx,
+                        uint64_t start, size_t k, const char *predicate,
+                        uint64_t *out_ids, size_t max_out, size_t max_nodes) {
+    (void)parts; (void)nparts; (void)place; (void)place_ctx; (void)start;
+    (void)k; (void)predicate; (void)out_ids; (void)max_out; (void)max_nodes;
+    return -1;
+}
+
+int cypher_dist_match(const GV_GraphPartition *parts, size_t nparts,
+                      GV_GraphPlacementFn place, void *place_ctx,
+                      uint64_t start_id, const char *rel_type,
+                      size_t min_hops, size_t max_hops,
+                      uint64_t *out_ids, size_t max_out, size_t max_nodes) {
+    (void)parts; (void)nparts; (void)place; (void)place_ctx; (void)start_id;
+    (void)rel_type; (void)min_hops; (void)max_hops; (void)out_ids; (void)max_out;
+    (void)max_nodes;
+    return -1;
+}
+
+int cypher_dist_path(const GV_GraphPartition *parts, size_t nparts,
+                     GV_GraphPlacementFn place, void *place_ctx,
+                     uint64_t start_id, const GV_CypherSegment *segments,
+                     size_t n_segments, uint64_t *out_ids, size_t max_out,
+                     size_t max_nodes) {
+    (void)parts; (void)nparts; (void)place; (void)place_ctx; (void)start_id;
+    (void)segments; (void)n_segments; (void)out_ids; (void)max_out;
+    (void)max_nodes;
+    return -1;
+}
+
+int cypher_dist_query(const GV_GraphPartition *parts, size_t nparts,
+                      GV_GraphPlacementFn place, void *place_ctx,
+                      const char *query,
+                      uint64_t *out_ids, size_t max_out, size_t max_nodes) {
+    (void)parts; (void)nparts; (void)place; (void)place_ctx; (void)query;
+    (void)out_ids; (void)max_out; (void)max_nodes;
+    return -1;
+}
+
+#else  /* POSIX implementation below */
+
 #include "features/graph_rpc.h"
 #include "core/memory.h"
 #include "core/net_io.h"
@@ -352,3 +429,5 @@ int cypher_dist_query(const GV_GraphPartition *parts, size_t nparts,
     return cypher_dist_path(parts, nparts, place, place_ctx, start, segs, n_segs,
                             out_ids, max_out, max_nodes);
 }
+
+#endif /* _WIN32 */

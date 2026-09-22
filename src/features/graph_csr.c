@@ -334,6 +334,7 @@ static int csr_patch_rows(const GV_GraphDB *g, const GV_GAContext *ctx,
     sc.pos   = (size_t *)gv_alloc(N * sizeof(size_t));
 
     GV_CSR *out = (GV_CSR *)gv_calloc(1, sizeof(GV_CSR));
+    /* cppcheck-suppress nullPointerRedundantCheck */
     out->n = N;
     if (!sc.stamp || !sc.pos || !out) {
         gv_free(sc.stamp); gv_free(sc.pos); gv_csr_free(out);

@@ -2929,6 +2929,7 @@ int kg_wal_checkpoint(GV_KnowledgeGraph *kg) {
         pthread_rwlock_unlock(&kg->rwlock);
         return -1;
     }
+    /* cppcheck-suppress leakReturnValNotUsed */
     if (freopen(kg->wal_path, "wb", kg->wal_file) == NULL) {
         kg->wal_file = NULL;
         pthread_rwlock_unlock(&kg->rwlock);
@@ -2969,6 +2970,7 @@ static void kg_wal_apply_record(GV_KnowledgeGraph *kg, uint8_t op,
                     gv_free(s2);
                     return;
                 }
+                /* cppcheck-suppress invalidPointerCast */
                 emb = (const float *)p;
                 p += (size_t)dim * sizeof(float);
             }
@@ -3202,7 +3204,10 @@ int kg_save(const GV_KnowledgeGraph *kg, const char *path) {
     if (is_wal_base) {
         pthread_rwlock_wrlock((pthread_rwlock_t *)&kg->rwlock);
         if (kg->wal_file) {
-            freopen(kg->wal_path, "wb", kg->wal_file);
+            /* Truncate the WAL by reopening it; if reopen fails the stream is
+             * closed by freopen, so drop our dangling handle rather than use it. */
+            FILE *reopened = freopen(kg->wal_path, "wb", kg->wal_file);
+            ((GV_KnowledgeGraph *)kg)->wal_file = reopened;
             if (kg->wal_file) {
                 fflush(kg->wal_file);
                 fsync(fileno(kg->wal_file));

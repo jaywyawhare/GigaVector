@@ -111,7 +111,10 @@ void gv_log_emit(int level, const char *file, int line, const char *fmt, ...) {
     char buf[1024];
     va_list ap;
     va_start(ap, fmt);
-    int n = vsnprintf(buf, sizeof(buf), fmt != NULL ? fmt : "", ap);
+    /* Assign through a variable so a NULL fmt doesn't pass the string literal
+     * "" directly to vsnprintf (which trips -Wformat-zero-length). */
+    const char *safe_fmt = fmt != NULL ? fmt : "";
+    int n = vsnprintf(buf, sizeof(buf), safe_fmt, ap);
     va_end(ap);
     if (n < 0) {
         buf[0] = '\0'; /* Encoding error: emit an empty message rather than junk. */

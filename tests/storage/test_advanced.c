@@ -32,7 +32,7 @@ static int test_open_from_memory(void) {
     
     void *data = gv_alloc(size);
     ASSERT(data != NULL, "allocate memory");
-    fread(data, 1, size, f);
+    ASSERT(fread(data, 1, size, f) == (size_t)size, "read snapshot bytes");
     fclose(f);
     
     GV_Database *db2 = db_open_from_memory(data, size, 3, GV_INDEX_TYPE_KDTREE);

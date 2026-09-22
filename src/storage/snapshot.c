@@ -3,7 +3,7 @@
  * @brief Point-in-time snapshot implementation for GigaVector.
  */
 
-#define _POSIX_C_SOURCE 199309L
+#define _POSIX_C_SOURCE 200809L
 
 #include "storage/snapshot.h"
 #include "core/memory.h"
