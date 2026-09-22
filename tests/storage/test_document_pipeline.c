@@ -20,7 +20,6 @@ static void embed_text(const char *t, float *v) {
     for (int i = 0; i < 8; i++) v[i] = 0.0f;
     for (int i = 0; i < 8; i++) {
         const char *p = t;
-        /* case-insensitive substring count */
         size_t kl = strlen(KW[i]);
         while ((p = strcasestr(p, KW[i])) != NULL) { v[i] += 1.0f; p += kl; }
     }

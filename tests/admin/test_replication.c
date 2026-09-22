@@ -322,6 +322,60 @@ static int test_replication_register_follower_db(void) {
     return 0;
 }
 
+/*
+ * Raft election restriction: a candidate whose log is behind a registered
+ * follower must NOT win leadership (the follower withholds its vote), whereas an
+ * up-to-date candidate with the same follower does win. Guards against electing
+ * a stale leader that would truncate already-replicated entries.
+ */
+static int test_replication_election_restriction(void) {
+    /* --- stale candidate is denied --- */
+    GV_Database *ldb = db_open(NULL, 4, GV_INDEX_TYPE_FLAT);
+    GV_Database *fdb = db_open(NULL, 4, GV_INDEX_TYPE_FLAT);
+    ASSERT(ldb && fdb, "create databases");
+
+    GV_ReplicationConfig config;
+    replication_config_init(&config);
+    config.node_id = "stale-cand";
+    config.listen_address = "127.0.0.1:9110";
+
+    GV_ReplicationManager *mgr = replication_create(ldb, &config);
+    ASSERT(mgr != NULL, "create manager");
+    ASSERT(replication_add_follower(mgr, "f1", "192.168.1.40:9000") == 0, "add follower");
+    ASSERT(replication_register_follower_db(mgr, "f1", fdb) == 0, "register follower db");
+
+    /* Follower has replicated up to index 10; the candidate's log is empty (0). */
+    replication_replica_ack(mgr, "f1", 9); /* sets last_wal_position = 10 */
+    int rc = replication_request_leadership(mgr);
+    ASSERT(rc == -1, "stale candidate (log behind follower) is denied leadership");
+    ASSERT(replication_get_role(mgr) != GV_REPL_LEADER, "stale candidate did not become leader");
+
+    replication_destroy(mgr);
+    db_close(ldb);
+    db_close(fdb);
+
+    /* --- up-to-date candidate wins with the same follower set --- */
+    ldb = db_open(NULL, 4, GV_INDEX_TYPE_FLAT);
+    fdb = db_open(NULL, 4, GV_INDEX_TYPE_FLAT);
+    ASSERT(ldb && fdb, "create databases 2");
+    config.node_id = "fresh-cand";
+    config.listen_address = "127.0.0.1:9111";
+    mgr = replication_create(ldb, &config);
+    ASSERT(mgr != NULL, "create manager 2");
+    ASSERT(replication_add_follower(mgr, "f1", "192.168.1.41:9000") == 0, "add follower 2");
+    ASSERT(replication_register_follower_db(mgr, "f1", fdb) == 0, "register follower db 2");
+
+    /* Follower is not ahead (position 0); candidate log (0) is up-to-date. */
+    rc = replication_request_leadership(mgr);
+    ASSERT(rc == 0, "up-to-date candidate wins leadership");
+    ASSERT(replication_get_role(mgr) == GV_REPL_LEADER, "up-to-date candidate became leader");
+
+    replication_destroy(mgr);
+    db_close(ldb);
+    db_close(fdb);
+    return 0;
+}
+
 static int test_replication_route_read_memory(void) {
     GV_Database *leader_db = db_open(NULL, 4, GV_INDEX_TYPE_FLAT);
     ASSERT(leader_db != NULL, "create leader database");
@@ -459,6 +513,7 @@ int main(void) {
         {"Testing replication_get_lag...", test_replication_get_lag},
         {"Testing replication_step_down_and_request...", test_replication_step_down_and_request},
         {"Testing replication_register_follower_db...", test_replication_register_follower_db},
+        {"Testing replication_election_restriction...", test_replication_election_restriction},
         {"Testing replication_route_read_memory...", test_replication_route_read_memory},
         {"Testing replication_set_max_read_lag...", test_replication_set_max_read_lag},
         {"Testing replication_leader_append_and_sync...", test_replication_leader_append_and_sync},

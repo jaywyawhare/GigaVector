@@ -69,6 +69,10 @@ typedef enum {
     GV_SQL_TOK_MIN,
     GV_SQL_TOK_MAX,
     GV_SQL_TOK_AVG,
+    GV_SQL_TOK_GROUP,
+    GV_SQL_TOK_HAVING,
+    GV_SQL_TOK_DISTINCT,
+    GV_SQL_TOK_AS,
     GV_SQL_TOK_ERROR
 } GV_SQLTokenType;
 
@@ -266,6 +270,10 @@ static GV_SQLToken sql_lexer_next(GV_SQLLexer *lx)
         if (sql_kw_match(lx->input + start, len, "MIN"))     { tok.type = GV_SQL_TOK_MIN;     return tok; }
         if (sql_kw_match(lx->input + start, len, "MAX"))     { tok.type = GV_SQL_TOK_MAX;     return tok; }
         if (sql_kw_match(lx->input + start, len, "AVG"))     { tok.type = GV_SQL_TOK_AVG;     return tok; }
+        if (sql_kw_match(lx->input + start, len, "GROUP"))   { tok.type = GV_SQL_TOK_GROUP;   return tok; }
+        if (sql_kw_match(lx->input + start, len, "HAVING"))  { tok.type = GV_SQL_TOK_HAVING;  return tok; }
+        if (sql_kw_match(lx->input + start, len, "DISTINCT")){ tok.type = GV_SQL_TOK_DISTINCT;return tok; }
+        if (sql_kw_match(lx->input + start, len, "AS"))      { tok.type = GV_SQL_TOK_AS;      return tok; }
 
         tok.text = sql_strndup(lx->input + start, len);
         tok.type = tok.text ? GV_SQL_TOK_IDENT : GV_SQL_TOK_ERROR;
@@ -440,6 +448,14 @@ typedef struct {
     char *value;
 } GV_SQLSetClause;
 
+/* One output column of a (possibly grouped) SELECT: either a plain column
+ * (agg == GV_SQL_AGG_NONE) or an aggregate over `column` (NULL for COUNT(*)). */
+typedef struct {
+    GV_SQLAggKind agg;
+    char *column;
+    char *alias;
+} GV_SQLProjItem;
+
 typedef struct {
     GV_SQLStmtType type;
     char *table;
@@ -449,10 +465,23 @@ typedef struct {
     GV_SQLAggKind agg_kind;   /**< aggregate function for the projection, or NONE */
     char *agg_column;    /**< column argument for SUM/MIN/MAX/AVG (NULL for COUNT(*)) */
     int select_star;     /**< 1 if SELECT * */
+    int distinct;        /**< 1 if SELECT DISTINCT */
     char **select_columns;
     size_t select_column_count;
     int has_ann;
     GV_SQLAnn ann;
+
+    /* Generalized projection + GROUP BY (mixed columns & aggregates) */
+    GV_SQLProjItem *proj;
+    size_t proj_count;
+    char **group_by;
+    size_t group_by_count;
+    /* HAVING: a single aggregate comparison, e.g. HAVING COUNT(*) > 2 */
+    int has_having;
+    GV_SQLAggKind having_agg;
+    char *having_column;
+    GV_SQLTokenType having_op;   /* one of EQ/NE/LT/LE/GT/GE */
+    double having_value;
 
     /* WHERE clause */
     GV_SQLWhere *where;
@@ -513,6 +542,15 @@ static void sql_stmt_free(GV_SQLStmt *s)
             gv_free(s->select_columns[i]);
         gv_free(s->select_columns);
     }
+    if (s->proj) {
+        for (size_t i = 0; i < s->proj_count; i++) { gv_free(s->proj[i].column); gv_free(s->proj[i].alias); }
+        gv_free(s->proj);
+    }
+    if (s->group_by) {
+        for (size_t i = 0; i < s->group_by_count; i++) gv_free(s->group_by[i]);
+        gv_free(s->group_by);
+    }
+    gv_free(s->having_column);
     if (s->set_clauses) {
         for (size_t i = 0; i < s->set_count; i++) {
             gv_free(s->set_clauses[i].field);
@@ -856,7 +894,54 @@ static GV_SQLWhere *sql_parse_where_expr(GV_SQLTokenBuf *buf)
     return left;
 }
 
-/* parse_select: SELECT (* | COUNT(*)) FROM table [ANN(...)] [WHERE ...] [ORDER BY ...] [LIMIT n] */
+/* Parse one projection item: COUNT(*) | SUM|MIN|MAX|AVG(col) | column, with an
+ * optional `AS alias`. Returns 0 on success (filling *out), -1 on syntax error. */
+static int sql_parse_proj_item(GV_SQLTokenBuf *buf, GV_SQLProjItem *out)
+{
+    memset(out, 0, sizeof(*out));
+    GV_SQLToken *tok = sql_peek(buf);
+    if (!tok) return -1;
+    if (tok->type == GV_SQL_TOK_COUNT) {
+        sql_advance(buf);
+        if (!sql_expect(buf, GV_SQL_TOK_LPAREN) ||
+            !sql_expect(buf, GV_SQL_TOK_STAR) ||
+            !sql_expect(buf, GV_SQL_TOK_RPAREN)) return -1;
+        out->agg = GV_SQL_AGG_COUNT;
+    } else if (tok->type == GV_SQL_TOK_SUM || tok->type == GV_SQL_TOK_MIN ||
+               tok->type == GV_SQL_TOK_MAX || tok->type == GV_SQL_TOK_AVG) {
+        out->agg = (tok->type == GV_SQL_TOK_SUM) ? GV_SQL_AGG_SUM :
+                   (tok->type == GV_SQL_TOK_MIN) ? GV_SQL_AGG_MIN :
+                   (tok->type == GV_SQL_TOK_MAX) ? GV_SQL_AGG_MAX : GV_SQL_AGG_AVG;
+        sql_advance(buf);
+        if (!sql_expect(buf, GV_SQL_TOK_LPAREN)) return -1;
+        GV_SQLToken *ct = sql_peek(buf);
+        if (!ct || ct->type != GV_SQL_TOK_IDENT) return -1;
+        out->column = gv_dup_cstr(ct->text);
+        if (!out->column) return -1;
+        sql_advance(buf);
+        if (!sql_expect(buf, GV_SQL_TOK_RPAREN)) { gv_free(out->column); out->column = NULL; return -1; }
+    } else if (tok->type == GV_SQL_TOK_IDENT) {
+        out->agg = GV_SQL_AGG_NONE;
+        out->column = gv_dup_cstr(tok->text);
+        if (!out->column) return -1;
+        sql_advance(buf);
+    } else {
+        return -1;
+    }
+    tok = sql_peek(buf);
+    if (tok && tok->type == GV_SQL_TOK_AS) {
+        sql_advance(buf);
+        tok = sql_peek(buf);
+        if (!tok || tok->type != GV_SQL_TOK_IDENT) { gv_free(out->column); out->column = NULL; return -1; }
+        out->alias = gv_dup_cstr(tok->text);
+        if (!out->alias) { gv_free(out->column); out->column = NULL; return -1; }
+        sql_advance(buf);
+    }
+    return 0;
+}
+
+/* parse_select: SELECT [DISTINCT] (* | items) FROM table [ANN] [WHERE]
+ * [GROUP BY cols [HAVING agg op n]] [ORDER BY ...] [LIMIT n] [OFFSET n] */
 static GV_SQLStmt *sql_parse_select(GV_SQLTokenBuf *buf)
 {
     /* SELECT already consumed */
@@ -867,69 +952,58 @@ static GV_SQLStmt *sql_parse_select(GV_SQLTokenBuf *buf)
     GV_SQLToken *tok = sql_peek(buf);
     if (!tok) { sql_stmt_free(stmt); return NULL; }
 
-    /* SELECT COUNT(*) | SUM|MIN|MAX|AVG(col) | * | field[,field...] */
-    if (tok->type == GV_SQL_TOK_COUNT) {
+    /* Optional DISTINCT */
+    if (tok->type == GV_SQL_TOK_DISTINCT) {
+        stmt->distinct = 1;
         sql_advance(buf);
-        if (!sql_expect(buf, GV_SQL_TOK_LPAREN) ||
-            !sql_expect(buf, GV_SQL_TOK_STAR) ||
-            !sql_expect(buf, GV_SQL_TOK_RPAREN)) {
-            sql_stmt_free(stmt);
-            return NULL;
-        }
-        stmt->is_count = 1;
-        stmt->agg_kind = GV_SQL_AGG_COUNT;
-    } else if (tok->type == GV_SQL_TOK_SUM || tok->type == GV_SQL_TOK_MIN ||
-               tok->type == GV_SQL_TOK_MAX || tok->type == GV_SQL_TOK_AVG) {
-        GV_SQLAggKind ak = (tok->type == GV_SQL_TOK_SUM) ? GV_SQL_AGG_SUM :
-                           (tok->type == GV_SQL_TOK_MIN) ? GV_SQL_AGG_MIN :
-                           (tok->type == GV_SQL_TOK_MAX) ? GV_SQL_AGG_MAX : GV_SQL_AGG_AVG;
-        sql_advance(buf);
-        if (!sql_expect(buf, GV_SQL_TOK_LPAREN)) { sql_stmt_free(stmt); return NULL; }
-        GV_SQLToken *ct = sql_peek(buf);
-        if (!ct || ct->type != GV_SQL_TOK_IDENT) { sql_stmt_free(stmt); return NULL; }
-        stmt->agg_column = gv_dup_cstr(ct->text);
-        if (!stmt->agg_column) { sql_stmt_free(stmt); return NULL; }
-        sql_advance(buf);
-        if (!sql_expect(buf, GV_SQL_TOK_RPAREN)) { sql_stmt_free(stmt); return NULL; }
-        stmt->agg_kind = ak;
-    } else if (tok->type == GV_SQL_TOK_STAR) {
+        tok = sql_peek(buf);
+        if (!tok) { sql_stmt_free(stmt); return NULL; }
+    }
+
+    /* SELECT * | item[, item...] where item = COUNT(*)|AGG(col)|column [AS alias] */
+    if (tok->type == GV_SQL_TOK_STAR) {
         sql_advance(buf);
         stmt->select_star = 1;
-    } else if (tok->type == GV_SQL_TOK_IDENT) {
+    } else {
         size_t cap = 4;
-        stmt->select_columns = (char **)gv_calloc(cap, sizeof(char *));
-        if (!stmt->select_columns) { sql_stmt_free(stmt); return NULL; }
+        stmt->proj = (GV_SQLProjItem *)gv_calloc(cap, sizeof(GV_SQLProjItem));
+        if (!stmt->proj) { sql_stmt_free(stmt); return NULL; }
         for (;;) {
-            tok = sql_peek(buf);
-            if (!tok || tok->type != GV_SQL_TOK_IDENT) {
-                sql_stmt_free(stmt);
-                return NULL;
-            }
-            if (stmt->select_column_count >= cap) {
+            if (stmt->proj_count >= cap) {
                 cap *= 2;
-                char **tmp = (char **)gv_realloc(stmt->select_columns,
-                                              cap * sizeof(char *));
+                GV_SQLProjItem *tmp = (GV_SQLProjItem *)gv_realloc(stmt->proj, cap * sizeof(GV_SQLProjItem));
                 if (!tmp) { sql_stmt_free(stmt); return NULL; }
-                stmt->select_columns = tmp;
+                stmt->proj = tmp;
             }
-            stmt->select_columns[stmt->select_column_count] =
-                gv_dup_cstr(tok->text);
-            if (!stmt->select_columns[stmt->select_column_count]) {
-                sql_stmt_free(stmt);
-                return NULL;
-            }
-            stmt->select_column_count++;
-            sql_advance(buf);
+            if (sql_parse_proj_item(buf, &stmt->proj[stmt->proj_count]) != 0) { sql_stmt_free(stmt); return NULL; }
+            stmt->proj_count++;
             tok = sql_peek(buf);
-            if (tok && tok->type == GV_SQL_TOK_COMMA) {
-                sql_advance(buf);
-                continue;
-            }
+            if (tok && tok->type == GV_SQL_TOK_COMMA) { sql_advance(buf); continue; }
             break;
         }
-    } else {
-        sql_stmt_free(stmt);
-        return NULL;
+        /* Derive back-compat fields so the existing (non-grouped) executors work:
+         *  - all plain columns  -> select_columns[]  (projection scan)
+         *  - single aggregate   -> agg_kind/agg_column (scalar-aggregate path)
+         *  - anything mixed     -> only valid with GROUP BY (grouped executor). */
+        int all_plain = 1;
+        for (size_t i = 0; i < stmt->proj_count; i++)
+            if (stmt->proj[i].agg != GV_SQL_AGG_NONE) { all_plain = 0; break; }
+        if (all_plain) {
+            stmt->select_columns = (char **)gv_calloc(stmt->proj_count, sizeof(char *));
+            if (!stmt->select_columns) { sql_stmt_free(stmt); return NULL; }
+            for (size_t i = 0; i < stmt->proj_count; i++) {
+                stmt->select_columns[i] = gv_dup_cstr(stmt->proj[i].column);
+                if (!stmt->select_columns[i]) { sql_stmt_free(stmt); return NULL; }
+                stmt->select_column_count++;
+            }
+        } else if (stmt->proj_count == 1) {
+            stmt->agg_kind = stmt->proj[0].agg;
+            stmt->is_count = (stmt->proj[0].agg == GV_SQL_AGG_COUNT);
+            if (stmt->proj[0].column) {
+                stmt->agg_column = gv_dup_cstr(stmt->proj[0].column);
+                if (!stmt->agg_column) { sql_stmt_free(stmt); return NULL; }
+            }
+        }
     }
 
     /* FROM table */
@@ -957,6 +1031,61 @@ static GV_SQLStmt *sql_parse_select(GV_SQLTokenBuf *buf)
         sql_advance(buf);
         stmt->where = sql_parse_where_expr(buf);
         if (!stmt->where) { sql_stmt_free(stmt); return NULL; }
+    }
+
+    /* Optional GROUP BY col[, col...] [HAVING agg op number] */
+    tok = sql_peek(buf);
+    if (tok && tok->type == GV_SQL_TOK_GROUP) {
+        sql_advance(buf);
+        if (!sql_expect(buf, GV_SQL_TOK_BY)) { sql_stmt_free(stmt); return NULL; }
+        size_t cap = 4;
+        stmt->group_by = (char **)gv_calloc(cap, sizeof(char *));
+        if (!stmt->group_by) { sql_stmt_free(stmt); return NULL; }
+        for (;;) {
+            tok = sql_peek(buf);
+            if (!tok || tok->type != GV_SQL_TOK_IDENT) { sql_stmt_free(stmt); return NULL; }
+            if (stmt->group_by_count >= cap) {
+                cap *= 2;
+                char **tmp = (char **)gv_realloc(stmt->group_by, cap * sizeof(char *));
+                if (!tmp) { sql_stmt_free(stmt); return NULL; }
+                stmt->group_by = tmp;
+            }
+            stmt->group_by[stmt->group_by_count] = gv_dup_cstr(tok->text);
+            if (!stmt->group_by[stmt->group_by_count]) { sql_stmt_free(stmt); return NULL; }
+            stmt->group_by_count++;
+            sql_advance(buf);
+            tok = sql_peek(buf);
+            if (tok && tok->type == GV_SQL_TOK_COMMA) { sql_advance(buf); continue; }
+            break;
+        }
+        /* Optional HAVING <aggregate> <cmp> <number> */
+        tok = sql_peek(buf);
+        if (tok && tok->type == GV_SQL_TOK_HAVING) {
+            sql_advance(buf);
+            GV_SQLProjItem hi;
+            if (sql_parse_proj_item(buf, &hi) != 0) { sql_stmt_free(stmt); return NULL; }
+            if (hi.agg == GV_SQL_AGG_NONE) {
+                gv_free(hi.column); gv_free(hi.alias);
+                snprintf(buf->error, GV_SQL_ERROR_SIZE, "HAVING requires an aggregate");
+                sql_stmt_free(stmt); return NULL;
+            }
+            stmt->having_agg = hi.agg;
+            stmt->having_column = hi.column; hi.column = NULL;
+            gv_free(hi.alias);
+            tok = sql_peek(buf);
+            if (!tok || (tok->type != GV_SQL_TOK_EQ && tok->type != GV_SQL_TOK_NE &&
+                         tok->type != GV_SQL_TOK_LT && tok->type != GV_SQL_TOK_LE &&
+                         tok->type != GV_SQL_TOK_GT && tok->type != GV_SQL_TOK_GE)) {
+                sql_stmt_free(stmt); return NULL;
+            }
+            stmt->having_op = tok->type;
+            sql_advance(buf);
+            tok = sql_peek(buf);
+            if (!tok || tok->type != GV_SQL_TOK_NUMBER) { sql_stmt_free(stmt); return NULL; }
+            stmt->having_value = tok->num_value;
+            sql_advance(buf);
+            stmt->has_having = 1;
+        }
     }
 
     /* Optional ORDER BY field [ASC|DESC] */
@@ -1672,6 +1801,36 @@ static char *sql_default_column_name(const GV_SQLStmt *stmt, size_t idx,
     return gv_dup_cstr("metadata");
 }
 
+/* SELECT DISTINCT: drop rows whose projected column tuple duplicates an earlier
+ * kept row. Stable stream-compaction over the parallel result arrays. */
+static void sql_apply_distinct(GV_SQLResult *r)
+{
+    if (r->row_count < 2 || r->column_count == 0) return;
+    size_t cc = r->column_count, w = 0;
+    for (size_t i = 0; i < r->row_count; i++) {
+        int dup = 0;
+        for (size_t j = 0; j < w && !dup; j++) {
+            int same = 1;
+            for (size_t c = 0; c < cc; c++)
+                if (strcmp(r->column_values[i*cc+c], r->column_values[j*cc+c]) != 0) { same = 0; break; }
+            dup = same;
+        }
+        if (dup) {
+            for (size_t c = 0; c < cc; c++) gv_free(r->column_values[i*cc+c]);
+            if (r->metadata_jsons) gv_free(r->metadata_jsons[i]);
+        } else {
+            if (w != i) {
+                for (size_t c = 0; c < cc; c++) r->column_values[w*cc+c] = r->column_values[i*cc+c];
+                if (r->metadata_jsons) r->metadata_jsons[w] = r->metadata_jsons[i];
+                if (r->indices) r->indices[w] = r->indices[i];
+                if (r->distances) r->distances[w] = r->distances[i];
+            }
+            w++;
+        }
+    }
+    r->row_count = w;
+}
+
 static int sql_build_select_result(GV_SQLEngine *eng, const GV_SQLStmt *stmt,
                                    GV_SQLRow *rows, size_t row_count,
                                    int has_distances, GV_SQLResult *result)
@@ -1735,6 +1894,7 @@ static int sql_build_select_result(GV_SQLEngine *eng, const GV_SQLStmt *stmt,
             }
         }
     }
+    if (stmt->distinct) sql_apply_distinct(result);
     return 0;
 }
 
@@ -1950,6 +2110,229 @@ static int sql_exec_aggregate(GV_SQLEngine *eng, const GV_SQLStmt *stmt, GV_SQLR
         sql_set_error(eng, "Out of memory");
         return -1;
     }
+    return 0;
+}
+
+/* Executor: SELECT ... GROUP BY [HAVING].  Scans rows (respecting WHERE),
+ * buckets by the concatenated group-key, accumulates each projected aggregate
+ * per bucket, then emits one row per surviving group. Plain projected columns
+ * take their group's representative-row value. */
+typedef struct {
+    char *key;           /* concatenated group-key */
+    size_t rep;          /* representative (first) row index */
+    size_t count;        /* rows in group (COUNT(*)) */
+    double *acc;         /* per-proj SUM/AVG accumulator */
+    double *best;        /* per-proj MIN/MAX */
+    size_t *numn;        /* per-proj numeric-sample count */
+    int    *have;        /* per-proj MIN/MAX-seen flag */
+    /* HAVING accumulators (independent of projection) */
+    double h_acc, h_best; size_t h_numn; int h_have;
+} SqlGroup;
+
+static const char *sql_agg_label(GV_SQLAggKind a)
+{
+    switch (a) {
+    case GV_SQL_AGG_COUNT: return "count";
+    case GV_SQL_AGG_SUM:   return "sum";
+    case GV_SQL_AGG_MIN:   return "min";
+    case GV_SQL_AGG_MAX:   return "max";
+    case GV_SQL_AGG_AVG:   return "avg";
+    default:               return "value";
+    }
+}
+
+/* Fold one numeric sample into an aggregate accumulator group. */
+static void sql_agg_fold(GV_SQLAggKind a, double v, double *acc, double *best,
+                         size_t *numn, int *have)
+{
+    (*numn)++;
+    *acc += v;
+    if (!*have || (a == GV_SQL_AGG_MIN && v < *best) || (a == GV_SQL_AGG_MAX && v > *best)) {
+        *best = v; *have = 1;
+    }
+}
+
+/* Final scalar value of an aggregate over a group; has_value=0 => SQL NULL. */
+static double sql_agg_finalize(GV_SQLAggKind a, size_t count, double acc, double best,
+                               size_t numn, int have, int *has_value)
+{
+    *has_value = 1;
+    switch (a) {
+    case GV_SQL_AGG_COUNT: return (double)count;
+    case GV_SQL_AGG_SUM:   return acc;
+    case GV_SQL_AGG_AVG:   if (numn) return acc / (double)numn; *has_value = 0; return 0;
+    case GV_SQL_AGG_MIN:
+    case GV_SQL_AGG_MAX:   if (have) return best; *has_value = 0; return 0;
+    default:               return 0;
+    }
+}
+
+static int sql_having_pass(const GV_SQLStmt *stmt, const SqlGroup *g)
+{
+    if (!stmt->has_having) return 1;
+    int hv = 1;
+    double v = sql_agg_finalize(stmt->having_agg, g->count, g->h_acc, g->h_best,
+                                g->h_numn, g->h_have, &hv);
+    if (!hv) return 0;   /* NULL never satisfies a comparison */
+    double t = stmt->having_value;
+    switch (stmt->having_op) {
+    case GV_SQL_TOK_EQ: return v == t;
+    case GV_SQL_TOK_NE: return v != t;
+    case GV_SQL_TOK_LT: return v <  t;
+    case GV_SQL_TOK_LE: return v <= t;
+    case GV_SQL_TOK_GT: return v >  t;
+    case GV_SQL_TOK_GE: return v >= t;
+    default: return 1;
+    }
+}
+
+static void sql_group_free(SqlGroup *groups, size_t gn)
+{
+    for (size_t i = 0; i < gn; i++) {
+        gv_free(groups[i].key);
+        gv_free(groups[i].acc); gv_free(groups[i].best);
+        gv_free(groups[i].numn); gv_free(groups[i].have);
+    }
+    gv_free(groups);
+}
+
+static int sql_exec_group_by(GV_SQLEngine *eng, const GV_SQLStmt *stmt, GV_SQLResult *result)
+{
+    GV_Database *db = eng->db;
+    GV_SoAStorage *soa = db->soa_storage;
+    if (!soa) { sql_set_error(eng, "Database has no storage"); return -1; }
+
+    size_t pc = stmt->proj_count;
+    size_t gcap = 16, gn = 0;
+    SqlGroup *groups = (SqlGroup *)gv_calloc(gcap, sizeof(SqlGroup));
+    if (!groups) { sql_set_error(eng, "Out of memory"); return -1; }
+
+    size_t total = soa->count;
+    for (size_t i = 0; i < total; i++) {
+        if (soa_storage_is_deleted(soa, i)) continue;
+        GV_Vector view;
+        if (soa_storage_get_vector_view(soa, i, &view) != 0) continue;
+        if (stmt->where && sql_eval_where(stmt->where, &view) != 1) continue;
+
+        /* Build the group key from the GROUP BY columns. */
+        char key[4096]; size_t kl = 0; key[0] = '\0';
+        for (size_t gcx = 0; gcx < stmt->group_by_count; gcx++) {
+            char vb[512];
+            if (sql_get_metadata_value(db, i, stmt->group_by[gcx], vb, sizeof(vb)) != 0) vb[0] = '\0';
+            int wn = snprintf(key + kl, sizeof(key) - kl, "%s\x1f", vb);
+            if (wn > 0) kl += (size_t)wn;
+            if (kl >= sizeof(key)) { kl = sizeof(key) - 1; break; }
+        }
+
+        SqlGroup *g = NULL;
+        for (size_t j = 0; j < gn; j++) if (strcmp(groups[j].key, key) == 0) { g = &groups[j]; break; }
+        if (!g) {
+            if (gn >= gcap) {
+                gcap *= 2;
+                SqlGroup *tmp = (SqlGroup *)gv_realloc(groups, gcap * sizeof(SqlGroup));
+                if (!tmp) { sql_group_free(groups, gn); sql_set_error(eng, "Out of memory"); return -1; }
+                groups = tmp;
+            }
+            g = &groups[gn];
+            memset(g, 0, sizeof(*g));
+            g->key = gv_dup_cstr(key);
+            g->acc  = (double *)gv_calloc(pc ? pc : 1, sizeof(double));
+            g->best = (double *)gv_calloc(pc ? pc : 1, sizeof(double));
+            g->numn = (size_t *)gv_calloc(pc ? pc : 1, sizeof(size_t));
+            g->have = (int *)gv_calloc(pc ? pc : 1, sizeof(int));
+            if (!g->key || !g->acc || !g->best || !g->numn || !g->have) {
+                gv_free(g->key); gv_free(g->acc); gv_free(g->best); gv_free(g->numn); gv_free(g->have);
+                sql_group_free(groups, gn); sql_set_error(eng, "Out of memory"); return -1;
+            }
+            g->rep = i;
+            gn++;
+        }
+        g->count++;
+
+        /* Fold this row into each projected aggregate. */
+        for (size_t p = 0; p < pc; p++) {
+            if (stmt->proj[p].agg == GV_SQL_AGG_NONE || stmt->proj[p].agg == GV_SQL_AGG_COUNT) continue;
+            char vb[512];
+            if (sql_get_metadata_value(db, i, stmt->proj[p].column, vb, sizeof(vb)) != 0) continue;
+            char *ep = NULL; double v = strtod(vb, &ep);
+            if (ep == vb) continue;
+            sql_agg_fold(stmt->proj[p].agg, v, &g->acc[p], &g->best[p], &g->numn[p], &g->have[p]);
+        }
+        /* Fold into the HAVING aggregate (if it needs a column). */
+        if (stmt->has_having && stmt->having_agg != GV_SQL_AGG_COUNT && stmt->having_column) {
+            char vb[512];
+            if (sql_get_metadata_value(db, i, stmt->having_column, vb, sizeof(vb)) == 0) {
+                char *ep = NULL; double v = strtod(vb, &ep);
+                if (ep != vb) sql_agg_fold(stmt->having_agg, v, &g->h_acc, &g->h_best, &g->h_numn, &g->h_have);
+            }
+        }
+    }
+
+    /* Apply HAVING, then ORDER BY (by a group column via the representative row),
+     * then OFFSET/LIMIT — all over the group list. */
+    size_t *ord = (size_t *)gv_calloc(gn ? gn : 1, sizeof(size_t));
+    if (!ord) { sql_group_free(groups, gn); sql_set_error(eng, "Out of memory"); return -1; }
+    size_t on = 0;
+    for (size_t j = 0; j < gn; j++) if (sql_having_pass(stmt, &groups[j])) ord[on++] = j;
+
+    if (stmt->order_field) {
+        for (size_t a = 0; a + 1 < on; a++)
+            for (size_t b = a + 1; b < on; b++) {
+                GV_SQLRow ra = { groups[ord[a]].rep, 0.0f, 0 };
+                GV_SQLRow rb = { groups[ord[b]].rep, 0.0f, 0 };
+                if (sql_compare_rows(db, stmt, &ra, &rb) > 0) { size_t t = ord[a]; ord[a] = ord[b]; ord[b] = t; }
+            }
+    }
+    /* OFFSET/LIMIT on groups */
+    size_t start = 0;
+    if (stmt->has_offset && stmt->offset > 0) start = stmt->offset > on ? on : stmt->offset;
+    size_t emit = on - start;
+    if (stmt->has_limit && emit > stmt->limit) emit = stmt->limit;
+
+    /* Build the result set. */
+    memset(result, 0, sizeof(*result));
+    result->row_count = emit;
+    result->column_count = pc;
+    result->column_names = (char **)gv_calloc(pc ? pc : 1, sizeof(char *));
+    result->column_values = (char **)gv_calloc((emit ? emit : 1) * (pc ? pc : 1), sizeof(char *));
+    result->indices = (size_t *)gv_calloc(emit ? emit : 1, sizeof(size_t));
+    if (!result->column_names || !result->column_values || !result->indices) {
+        gv_free(ord); sql_group_free(groups, gn); sql_free_result(result);
+        sql_set_error(eng, "Out of memory"); return -1;
+    }
+    for (size_t p = 0; p < pc; p++) {
+        const char *nm = stmt->proj[p].alias ? stmt->proj[p].alias :
+                         stmt->proj[p].agg != GV_SQL_AGG_NONE ? sql_agg_label(stmt->proj[p].agg) :
+                         stmt->proj[p].column;
+        result->column_names[p] = gv_dup_cstr(nm ? nm : "");
+        if (!result->column_names[p]) { gv_free(ord); sql_group_free(groups, gn); sql_free_result(result); sql_set_error(eng, "Out of memory"); return -1; }
+    }
+    for (size_t r = 0; r < emit; r++) {
+        SqlGroup *g = &groups[ord[start + r]];
+        result->indices[r] = g->rep;
+        for (size_t p = 0; p < pc; p++) {
+            char *cell;
+            if (stmt->proj[p].agg == GV_SQL_AGG_NONE) {
+                char vb[4096];
+                if (sql_get_metadata_value(db, g->rep, stmt->proj[p].column, vb, sizeof(vb)) != 0) vb[0] = '\0';
+                cell = gv_dup_cstr(vb);
+            } else {
+                int hv = 1;
+                double dv = sql_agg_finalize(stmt->proj[p].agg, g->count, g->acc[p], g->best[p],
+                                             g->numn[p], g->have[p], &hv);
+                char vb[64];
+                if (!hv) snprintf(vb, sizeof(vb), "NULL");
+                else if (stmt->proj[p].agg == GV_SQL_AGG_COUNT) snprintf(vb, sizeof(vb), "%zu", g->count);
+                else snprintf(vb, sizeof(vb), "%g", dv);
+                cell = gv_dup_cstr(vb);
+            }
+            result->column_values[r * pc + p] = cell;
+            if (!cell) { gv_free(ord); sql_group_free(groups, gn); sql_free_result(result); sql_set_error(eng, "Out of memory"); return -1; }
+        }
+    }
+
+    gv_free(ord);
+    sql_group_free(groups, gn);
     return 0;
 }
 
@@ -2188,8 +2571,29 @@ int sql_execute(GV_SQLEngine *eng, const char *query, GV_SQLResult *result)
     /* Execute */
     int rc = -1;
     switch (stmt->type) {
-    case GV_SQL_STMT_SELECT:
-        if (stmt->agg_kind != GV_SQL_AGG_NONE) {
+    case GV_SQL_STMT_SELECT: {
+        /* A projection mixing aggregate and plain columns is only meaningful with
+         * GROUP BY. Without it, the parser populated neither select_columns nor
+         * agg_kind, so the where-scan path below would silently return raw rows.
+         * Reject it instead of producing a wrong result. */
+        int sel_has_agg = 0, sel_has_plain = 0;
+        for (size_t i = 0; i < stmt->proj_count; i++) {
+            if (stmt->proj[i].agg != GV_SQL_AGG_NONE) sel_has_agg = 1;
+            else sel_has_plain = 1;
+        }
+        /* Without GROUP BY the only valid aggregate form is a SINGLE aggregate
+         * (proj_count==1, handled by agg_kind). Any aggregate in a multi-column
+         * projection — mixed agg+plain OR multiple aggregates — leaves neither
+         * select_columns nor agg_kind set, so the where-scan path would silently
+         * return raw rows. Reject both. */
+        if (stmt->group_by_count == 0 && sel_has_agg && stmt->proj_count > 1) {
+            sql_set_error(eng, sel_has_plain
+                ? "aggregate and non-aggregate columns cannot be mixed without GROUP BY"
+                : "multiple aggregates without GROUP BY are not supported");
+            rc = -1;
+        } else if (stmt->group_by_count > 0) {
+            rc = sql_exec_group_by(eng, stmt, result);
+        } else if (stmt->agg_kind != GV_SQL_AGG_NONE) {
             rc = sql_exec_aggregate(eng, stmt, result);
         } else if (stmt->has_ann) {
             rc = sql_exec_ann(eng, stmt, result);
@@ -2197,6 +2601,7 @@ int sql_execute(GV_SQLEngine *eng, const char *query, GV_SQLResult *result)
             rc = sql_exec_where_scan(eng, stmt, result);
         }
         break;
+    }
     case GV_SQL_STMT_DELETE:
         rc = sql_exec_delete(eng, stmt, result);
         break;

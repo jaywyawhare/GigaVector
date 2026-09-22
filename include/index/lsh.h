@@ -26,7 +26,6 @@ void *lsh_create(size_t dimension, const GV_LSHConfig *config, GV_SoAStorage *so
  * @brief Perform the operation.
  *
  * @param index Index instance.
- * @param vector vector.
  * @return 0 on success, -1 on error.
  */
 int lsh_insert(void *index, GV_Vector *vector);
@@ -69,7 +68,6 @@ int lsh_delete(void *index, size_t vector_index);
  *
  * @param index Index instance.
  * @param vector_index Index value.
- * @param new_data new_data.
  * @param dimension Vector dimensionality.
  * @return 0 on success, -1 on error.
  */
@@ -80,7 +78,6 @@ int lsh_update(void *index, size_t vector_index, const float *new_data, size_t d
  *
  * @param index Index instance.
  * @param out Output buffer.
- * @param version version.
  * @return 0 on success, -1 on error.
  */
 int lsh_save(const void *index, FILE *out, uint32_t version);
@@ -88,10 +85,8 @@ int lsh_save(const void *index, FILE *out, uint32_t version);
 /**
  * @brief Load state from a file.
  *
- * @param index_ptr index_ptr.
  * @param in Input file stream.
  * @param dimension Vector dimensionality.
- * @param version version.
  * @return 0 on success, -1 on error.
  */
 int lsh_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version);

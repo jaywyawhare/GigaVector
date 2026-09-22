@@ -787,7 +787,7 @@ GV_BM25Index *bm25_load(const char *filepath) {
     if (index->total_documents != expected_docs) {
         /* Warning: document count mismatch */
     }
-    (void)expected_terms;  /* Suppress unused warning */
+    (void)expected_terms;
 
     return index;
 }

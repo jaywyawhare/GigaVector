@@ -28,10 +28,6 @@
 #define DIM   8
 #define NVECS 200
 
-/* ------------------------------------------------------------------ */
-/* Helpers                                                              */
-/* ------------------------------------------------------------------ */
-
 /** Fill a vector with reproducible pseudo-random floats in [-1, 1]. */
 static void fill_vector(float *v, size_t dim, unsigned seed) {
     for (size_t i = 0; i < dim; i++) {
@@ -84,10 +80,6 @@ static uint8_t *build_codes(const GV_Database *db,
     return codes;
 }
 
-/* ------------------------------------------------------------------ */
-/* Tests                                                                */
-/* ------------------------------------------------------------------ */
-
 static int test_config_init(void) {
     GV_QuantRerankConfig cfg;
     memset(&cfg, 0xFF, sizeof(cfg)); /* poison */
@@ -122,7 +114,6 @@ static int test_null_inputs(void) {
     ASSERT(quant_rerank_search(db, q, 5, &cfg, NULL) == -1,
            "NULL out should return -1");
 
-    /* cfg with no codebook should return -1 */
     ASSERT(quant_rerank_search(db, q, 5, &cfg, out) == -1,
            "cfg with NULL codebook should return -1");
 
@@ -376,10 +367,6 @@ static int test_phased_pipeline_quant(void) {
     db_close(db);
     return 0;
 }
-
-/* ------------------------------------------------------------------ */
-/* Test runner                                                           */
-/* ------------------------------------------------------------------ */
 
 typedef int (*test_fn)(void);
 typedef struct { const char *name; test_fn fn; } TestCase;

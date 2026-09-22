@@ -12,7 +12,6 @@ static int test_config_init(void) {
     GV_MMRConfig cfg;
     mmr_config_init(&cfg);
     ASSERT(fabs(cfg.lambda - 0.7f) < 0.01f, "lambda should default to 0.7");
-    /* distance_type default should be cosine (1) */
     ASSERT(cfg.distance_type == 1, "distance_type should default to COSINE (1)");
     return 0;
 }

@@ -106,7 +106,6 @@ int ivfflat_delete(void *index, size_t entry_index);
  *
  * @param index Index instance.
  * @param entry_index Index value.
- * @param new_data new_data.
  * @param dimension Vector dimensionality.
  * @return 0 on success, -1 on error.
  */
@@ -117,7 +116,6 @@ int ivfflat_update(void *index, size_t entry_index, const float *new_data, size_
  *
  * @param index Index instance.
  * @param out Output buffer.
- * @param version version.
  * @return 0 on success, -1 on error.
  */
 int ivfflat_save(const void *index, FILE *out, uint32_t version);
@@ -125,10 +123,8 @@ int ivfflat_save(const void *index, FILE *out, uint32_t version);
 /**
  * @brief Load state from a file.
  *
- * @param index_ptr index_ptr.
  * @param in Input file stream.
  * @param dimension Vector dimensionality.
- * @param version version.
  * @return 0 on success, -1 on error.
  */
 int ivfflat_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version);

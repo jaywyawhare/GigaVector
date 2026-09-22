@@ -18,11 +18,11 @@ static GV_Database *create_test_db(void) {
     float v3[] = {0.0f, 0.0f, 0.9f, 0.1f};
     float v4[] = {0.5f, 0.5f, 0.5f, 0.5f};
 
-    db_add_vector(db, v0, DIM);
-    db_add_vector(db, v1, DIM);
-    db_add_vector(db, v2, DIM);
-    db_add_vector(db, v3, DIM);
-    db_add_vector(db, v4, DIM);
+    { int _r = db_add_vector(db, v0, DIM); (void)_r; }
+    { int _r = db_add_vector(db, v1, DIM); (void)_r; }
+    { int _r = db_add_vector(db, v2, DIM); (void)_r; }
+    { int _r = db_add_vector(db, v3, DIM); (void)_r; }
+    { int _r = db_add_vector(db, v4, DIM); (void)_r; }
 
     return db;
 }

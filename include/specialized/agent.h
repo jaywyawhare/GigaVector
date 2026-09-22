@@ -173,8 +173,7 @@ void agent_free_result(GV_AgentResult *result);
 /**
  * @brief Set a value.
  *
- * @param agent agent.
- * @param schema_json schema_json.
+
  */
 void agent_set_schema_hint(GV_Agent *agent, const char *schema_json);
 

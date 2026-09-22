@@ -33,6 +33,21 @@ typedef struct GV_GAContext GV_GAContext;
 
 /** Build an algorithm context (snapshots the node set + id/index map). NULL on error/empty. */
 GV_GAContext *gv_ga_build(const GV_GraphDB *g);
+
+/** NOTE: a context pins the graph read snapshot for its whole lifetime.
+ *  Every algorithm running on it sees one consistent view and concurrent
+ *  writers block until gv_ga_free. Do NOT mutate the graph while any
+ *  context built from it is alive (same-thread mutation deadlocks the
+ *  rwlock); free the context first and build a new one after mutating. */
+
+/** Node/edge lookup through a pinned context (no extra locking; the context
+ *  holds the graph read snapshot). Falls back to locked lookup when the
+ *  context is not pinned. */
+const GV_GraphNode *gv_ga_node(const GV_GAContext *ctx, uint64_t node_id);
+const GV_GraphEdge *gv_ga_edge(const GV_GAContext *ctx, uint64_t edge_id);
+
+/** Non-zero while the context pins the graph read snapshot. */
+int gv_ga_pinned(const GV_GAContext *ctx);
 /** Number of nodes N in the context. */
 size_t   gv_ga_count(const GV_GAContext *ctx);
 /** node_id at dense index (idx < N). */
@@ -84,6 +99,13 @@ void graph_edge_set_free(GV_GraphEdgeSet *s);
  *  else unweighted BFS. directed!=0 respects edge direction. O(V*E) / O(V*E+V^2 log V). */
 int graph_betweenness_centrality(const GV_GraphDB *g, int weighted, int directed,
                                  GV_GraphNodeScores *out);
+
+/** Approximate (landmark) betweenness: exact Brandes from num_pivots uniformly
+ *  spaced pivot sources, scaled by N/K (Brandes' estimator). Parallel over
+ *  pivots; use for large graphs where exact Brandes is too slow. */
+int graph_betweenness_centrality_approx(const GV_GraphDB *g, int weighted,
+                                        int directed, size_t num_pivots,
+                                        GV_GraphNodeScores *out);
 
 /** Closeness centrality = (reachable-1) / sum(dist) per node (Wasserman-Faust
  *  normalized for disconnected graphs). weighted/directed as above. */
@@ -148,9 +170,18 @@ int graph_spread_activation(const GV_GraphDB *g, const uint64_t *seeds, size_t n
 int graph_label_propagation(const GV_GraphDB *g, size_t max_iters,
                             GV_GraphNodeLabels *out);
 
-/** Louvain modularity-maximizing community detection (one level of aggregation
- *  by default; iterates local moves to convergence). Treated as undirected. */
+/** Louvain modularity-maximizing community detection, multi-level: iterates
+ *  local moves then aggregates the graph, repeating until modularity stops
+ *  improving (at most max_levels aggregation rounds). Treated as undirected. */
 int graph_louvain(const GV_GraphDB *g, size_t max_passes, GV_GraphNodeLabels *out);
+
+/** Leiden community detection: multi-level Louvain where each aggregation is
+ *  preceded by a refinement phase that re-partitions communities into
+ *  internally-connected sub-communities (restricted local moving with a
+ *  cut-vertex guard), so every output community is guaranteed connected — the
+ * known Louvain failure mode of disconnected communities cannot occur.
+ * Deterministic. Treated as undirected. */
+int graph_leiden(const GV_GraphDB *g, size_t max_levels, GV_GraphNodeLabels *out);
 
 /** Per-node triangle count (undirected). Sets *total to the graph triangle count
  *  (each triangle counted once) when non-NULL. */

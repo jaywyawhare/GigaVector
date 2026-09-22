@@ -237,9 +237,7 @@ void test_openai_embedding_batch(void) {
 int main(void) {
     
     read_env_file(".env");
-    
-    // test_openai_embedding();
-    // test_openai_embedding_batch();
+
     test_google_embedding();
     test_google_embedding_batch();
     

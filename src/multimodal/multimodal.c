@@ -25,16 +25,12 @@
 #define mkdir(path, mode) _mkdir(path)
 #endif
 
-/* Constants */
-
 #define MEDIA_INDEX_MAGIC "GVMED"
 #define MEDIA_INDEX_MAGIC_LEN 5
 #define MEDIA_INDEX_VERSION 1
 
 #define HASH_TABLE_INITIAL_CAPACITY 256
 #define FILE_BUFFER_SIZE (64 * 1024)
-
-/* Internal Structures */
 
 /**
  * @brief Internal entry stored in the hash table.
@@ -59,8 +55,6 @@ struct GV_MediaStore {
     pthread_rwlock_t lock;          /**< Read-write lock for thread safety. */
 };
 
-/* Configuration */
-
 static const GV_MediaConfig DEFAULT_CONFIG = {
     .storage_dir = NULL,
     .max_blob_size_mb = 100,
@@ -73,13 +67,10 @@ void media_config_init(GV_MediaConfig *config) {
     *config = DEFAULT_CONFIG;
 }
 
-/* Internal Helpers */
-
 /**
  * @brief Compute bucket index from vector_index.
  */
 static size_t bucket_index(size_t vector_index, size_t num_buckets) {
-    /* Simple hash mixing */
     size_t h = vector_index;
     h ^= h >> 16;
     h *= 0x45d9f3b;
@@ -157,7 +148,6 @@ static int ensure_directory(const char *dir) {
     if (stat(dir, &st) == 0) {
         return S_ISDIR(st.st_mode) ? 0 : -1;
     }
-    /* Attempt to create (mode 0755) */
     return mkdir(dir, 0755);
 }
 
@@ -230,12 +220,9 @@ static void *read_entire_file(const char *path, size_t *out_size) {
     return buf;
 }
 
-/* Store Lifecycle */
-
 GV_MediaStore *media_create(const GV_MediaConfig *config) {
     if (!config || !config->storage_dir) return NULL;
 
-    /* Ensure storage directory exists */
     if (ensure_directory(config->storage_dir) != 0) return NULL;
 
     GV_MediaStore *store = gv_calloc(1, sizeof(GV_MediaStore));
@@ -248,7 +235,6 @@ GV_MediaStore *media_create(const GV_MediaConfig *config) {
         return NULL;
     }
 
-    /* Allocate hash table */
     store->num_buckets = HASH_TABLE_INITIAL_CAPACITY;
     store->buckets = gv_calloc(store->num_buckets, sizeof(GV_MediaNode *));
     if (!store->buckets) {
@@ -274,7 +260,6 @@ void media_destroy(GV_MediaStore *store) {
 
     pthread_rwlock_wrlock(&store->lock);
 
-    /* Free all nodes */
     for (size_t i = 0; i < store->num_buckets; i++) {
         GV_MediaNode *node = store->buckets[i];
         while (node) {
@@ -293,24 +278,19 @@ void media_destroy(GV_MediaStore *store) {
     gv_free(store);
 }
 
-/* Store Operations */
-
 int media_store_blob(GV_MediaStore *store, size_t vector_index,
                          GV_MediaType type, const void *data, size_t data_size,
                          const char *filename, const char *mime_type) {
     if (!store || !data || data_size == 0) return -1;
 
-    /* Enforce size limit */
     size_t max_bytes = store->config.max_blob_size_mb * 1024UL * 1024UL;
     if (data_size > max_bytes) return -1;
 
-    /* Compute SHA-256 hash */
     char hash_hex[65];
     if (compute_sha256_hex(data, data_size, hash_hex) != 0) return -1;
 
     pthread_rwlock_wrlock(&store->lock);
 
-    /* Check if this vector_index already has an entry */
     if (find_node(store, vector_index)) {
         pthread_rwlock_unlock(&store->lock);
         return -1;
@@ -333,7 +313,6 @@ int media_store_blob(GV_MediaStore *store, size_t vector_index,
         }
     }
 
-    /* Create metadata node */
     GV_MediaNode *node = gv_calloc(1, sizeof(GV_MediaNode));
     if (!node) {
         pthread_rwlock_unlock(&store->lock);
@@ -358,12 +337,10 @@ int media_store_file(GV_MediaStore *store, size_t vector_index,
                          GV_MediaType type, const char *file_path) {
     if (!store || !file_path) return -1;
 
-    /* Read the source file */
     size_t file_size = 0;
     void *data = read_entire_file(file_path, &file_size);
     if (!data) return -1;
 
-    /* Extract filename from path */
     const char *basename = path_basename(file_path);
 
     int rc = media_store_blob(store, vector_index, type,
@@ -384,7 +361,6 @@ int media_retrieve(const GV_MediaStore *store, size_t vector_index,
         return -1;
     }
 
-    /* Build path from hash */
     char blob_path[1024];
     if (build_blob_path(store, node->entry.hash, blob_path, sizeof(blob_path)) != 0) {
         pthread_rwlock_unlock((pthread_rwlock_t *)&store->lock);
@@ -393,7 +369,6 @@ int media_retrieve(const GV_MediaStore *store, size_t vector_index,
 
     pthread_rwlock_unlock((pthread_rwlock_t *)&store->lock);
 
-    /* Read file */
     size_t file_size = 0;
     void *data = read_entire_file(blob_path, &file_size);
     if (!data) return -1;
@@ -438,7 +413,7 @@ int media_get_info(const GV_MediaStore *store, size_t vector_index,
         return -1;
     }
 
-    /* Copy the entry; allocate fresh strings for the caller */
+    /* Allocate fresh strings for the caller to own. */
     entry->vector_index = node->entry.vector_index;
     entry->type = node->entry.type;
     entry->filename = node->entry.filename ? gv_dup_cstr(node->entry.filename) : NULL;
@@ -462,7 +437,6 @@ int media_delete(GV_MediaStore *store, size_t vector_index) {
 
     while (node) {
         if (node->entry.vector_index == vector_index) {
-            /* Unlink from chain */
             if (prev) {
                 prev->next = node->next;
             } else {
@@ -494,8 +468,6 @@ int media_delete(GV_MediaStore *store, size_t vector_index) {
     pthread_rwlock_unlock(&store->lock);
     return -1;
 }
-
-/* Query Operations */
 
 int media_exists(const GV_MediaStore *store, size_t vector_index) {
     if (!store) return -1;
@@ -537,8 +509,6 @@ size_t media_total_size(const GV_MediaStore *store) {
     return total;
 }
 
-/* Index Persistence */
-
 int media_save_index(const GV_MediaStore *store, const char *path) {
     if (!store || !path) return -1;
 
@@ -550,51 +520,42 @@ int media_save_index(const GV_MediaStore *store, const char *path) {
         return -1;
     }
 
-    /* Write magic and version */
     fwrite(MEDIA_INDEX_MAGIC, 1, MEDIA_INDEX_MAGIC_LEN, fp);
     uint32_t version = MEDIA_INDEX_VERSION;
     write_u32(fp, version);
 
-    /* Write entry count */
     uint64_t count = (uint64_t)store->count;
     write_u64(fp, count);
 
-    /* Write each entry */
     for (size_t i = 0; i < store->num_buckets; i++) {
         GV_MediaNode *node = store->buckets[i];
         while (node) {
             const GV_MediaEntry *e = &node->entry;
 
-            /* vector_index */
             uint64_t vi = (uint64_t)e->vector_index;
             write_u64(fp, vi);
 
-            /* type */
             uint32_t t = (uint32_t)e->type;
             write_u32(fp, t);
 
             /* hash (64 bytes, no null) */
             fwrite(e->hash, 1, 64, fp);
 
-            /* filename_len + filename */
             uint32_t fn_len = e->filename ? (uint32_t)strlen(e->filename) : 0;
             write_u32(fp, fn_len);
             if (fn_len > 0) {
                 fwrite(e->filename, 1, fn_len, fp);
             }
 
-            /* file_size */
             uint64_t fs = (uint64_t)e->file_size;
             write_u64(fp, fs);
 
-            /* mime_type_len + mime_type */
             uint32_t mt_len = e->mime_type ? (uint32_t)strlen(e->mime_type) : 0;
             write_u32(fp, mt_len);
             if (mt_len > 0) {
                 fwrite(e->mime_type, 1, mt_len, fp);
             }
 
-            /* created_at */
             write_u64(fp, (uint64_t)e->created_at);
 
             node = node->next;
@@ -613,7 +574,6 @@ GV_MediaStore *media_load_index(const char *index_path,
     FILE *fp = fopen(index_path, "rb");
     if (!fp) return NULL;
 
-    /* Read and verify magic */
     char magic[MEDIA_INDEX_MAGIC_LEN];
     if (fread(magic, 1, MEDIA_INDEX_MAGIC_LEN, fp) != MEDIA_INDEX_MAGIC_LEN ||
         memcmp(magic, MEDIA_INDEX_MAGIC, MEDIA_INDEX_MAGIC_LEN) != 0) {
@@ -621,7 +581,6 @@ GV_MediaStore *media_load_index(const char *index_path,
         return NULL;
     }
 
-    /* Read and verify version */
     uint32_t version;
     if (read_u32(fp, &version) != 0 ||
         version != MEDIA_INDEX_VERSION) {
@@ -629,14 +588,12 @@ GV_MediaStore *media_load_index(const char *index_path,
         return NULL;
     }
 
-    /* Read count */
     uint64_t count;
     if (read_u64(fp, &count) != 0) {
         fclose(fp);
         return NULL;
     }
 
-    /* Create store with the given storage_dir */
     GV_MediaConfig config;
     media_config_init(&config);
     config.storage_dir = storage_dir;
@@ -647,7 +604,6 @@ GV_MediaStore *media_load_index(const char *index_path,
         return NULL;
     }
 
-    /* Read entries */
     for (uint64_t i = 0; i < count; i++) {
         GV_MediaNode *node = gv_calloc(1, sizeof(GV_MediaNode));
         if (!node) {
@@ -656,21 +612,17 @@ GV_MediaStore *media_load_index(const char *index_path,
             return NULL;
         }
 
-        /* vector_index */
         uint64_t vi;
         if (read_u64(fp, &vi) != 0) goto load_error;
         node->entry.vector_index = (size_t)vi;
 
-        /* type */
         uint32_t t;
         if (read_u32(fp, &t) != 0) goto load_error;
         node->entry.type = (GV_MediaType)t;
 
-        /* hash */
         if (fread(node->entry.hash, 1, 64, fp) != 64) goto load_error;
         node->entry.hash[64] = '\0';
 
-        /* filename */
         uint32_t fn_len;
         if (read_u32(fp, &fn_len) != 0) goto load_error;
         if (fn_len > 0) {
@@ -680,12 +632,10 @@ GV_MediaStore *media_load_index(const char *index_path,
             node->entry.filename[fn_len] = '\0';
         }
 
-        /* file_size */
         uint64_t fs;
         if (read_u64(fp, &fs) != 0) goto load_error;
         node->entry.file_size = (size_t)fs;
 
-        /* mime_type */
         uint32_t mt_len;
         if (read_u32(fp, &mt_len) != 0) goto load_error;
         if (mt_len > 0) {
@@ -695,7 +645,6 @@ GV_MediaStore *media_load_index(const char *index_path,
             node->entry.mime_type[mt_len] = '\0';
         }
 
-        /* created_at */
         if (read_u64(fp, &node->entry.created_at) != 0) {
             goto load_error;
         }

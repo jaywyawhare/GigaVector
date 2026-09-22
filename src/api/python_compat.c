@@ -14,6 +14,7 @@
 #include "multimodal/learned_sparse.h"
 #include "search/phased_ranking.h"
 #include "index/kdtree.h"
+#include "index/diskann.h"
 #include "multimodal/bm25.h"
 #include "multimodal/embedding.h"
 #include "multimodal/llm.h"
@@ -23,6 +24,9 @@
 #include "specialized/gpu.h"
 #include "storage/backup.h"
 #include "storage/database.h"
+#include "storage/transaction.h"
+#include "storage/bulk_import.h"
+#include "search/recall.h"
 #include "storage/memory_extraction.h"
 #include "storage/memory_layer.h"
 #include "features/knowledge_graph.h"
@@ -91,6 +95,42 @@ int gv_db_save(const GV_Database *db, const char *filepath) {
   return db_save(db, filepath);
 }
 
+/* ---- transactions (MVCC) ---- */
+GV_DBTxn *gv_db_begin(GV_Database *db) { return db_begin(db); }
+int gv_db_txn_add_vector(GV_DBTxn *txn, const float *data, size_t dimension) {
+  return db_txn_add_vector(txn, data, dimension);
+}
+int gv_db_txn_delete(GV_DBTxn *txn, size_t vector_index) { return db_txn_delete(txn, vector_index); }
+int gv_db_txn_search(GV_DBTxn *txn, const float *query, size_t k,
+                     GV_SearchResult *results, GV_DistanceType metric) {
+  return db_txn_search(txn, query, k, results, metric);
+}
+int gv_db_commit(GV_DBTxn *txn) { return db_commit(txn); }
+int gv_db_rollback(GV_DBTxn *txn) { return db_rollback(txn); }
+uint64_t gv_db_txn_gc(GV_Database *db, uint64_t safe_below) { return db_txn_gc(db, safe_below); }
+
+/* ---- WiscKey value store (db-level opt-in KV separation) ---- */
+int gv_db_value_store_enable(GV_Database *db, const char *path) { return db_value_store_enable(db, path); }
+int gv_db_value_store_put(GV_Database *db, uint64_t key, const void *value, size_t len) { return db_value_store_put(db, key, value, len); }
+int gv_db_value_store_get(GV_Database *db, uint64_t key, void **value_out, size_t *len_out) { return db_value_store_get(db, key, value_out, len_out); }
+int gv_db_value_store_delete(GV_Database *db, uint64_t key) { return db_value_store_delete(db, key); }
+int gv_db_value_store_gc(GV_Database *db) { return db_value_store_gc(db); }
+
+/* ---- warm-up + recall eval + bulk import ---- */
+int gv_db_warmup(GV_Database *db) { return db_warmup(db); }
+double gv_db_evaluate_recall(const GV_Database *db, const float *queries, size_t nq,
+                             size_t dim, size_t k, GV_DistanceType metric) {
+  GV_RecallReport rep; if (db_evaluate_recall(db, queries, nq, dim, k, metric, &rep) != 0) return -1.0;
+  return rep.recall;
+}
+int gv_db_import_csv(GV_Database *db, const char *path, char delimiter,
+                     int has_header, int id_column) {
+  return db_import_csv(db, path, delimiter, has_header, id_column, NULL);
+}
+int gv_db_import_jsonl(GV_Database *db, const char *path) {
+  return db_import_jsonl(db, path, NULL);
+}
+
 int gv_db_search(const GV_Database *db, const float *query_data, size_t k,
                  GV_SearchResult *results, GV_DistanceType distance_type) {
   return db_search(db, query_data, k, results, distance_type);
@@ -154,8 +194,6 @@ int gv_replication_leader_append_wal(GV_ReplicationManager *mgr,
 
 int gv_wal_truncate(GV_WAL *wal) { return wal_truncate(wal); }
 
-/* ── Database: open variants ── */
-
 GV_Database *gv_db_open_with_ivfflat_config(const char *filepath,
                                             size_t dimension,
                                             GV_IndexType index_type,
@@ -206,8 +244,6 @@ GV_Database *gv_db_open_mmap(const char *filepath, size_t dimension,
   return db_open_mmap(filepath, dimension, index_type);
 }
 
-/* ── Database: misc ── */
-
 GV_IndexType gv_index_suggest(size_t dimension, size_t expected_count) {
   return index_suggest(dimension, expected_count);
 }
@@ -228,8 +264,6 @@ void gv_db_get_stats(const GV_Database *db, GV_DBStats *out) {
 void gv_db_set_cosine_normalized(GV_Database *db, int enabled) {
   db_set_cosine_normalized(db, enabled);
 }
-
-/* ── Database: vector CRUD ── */
 
 int gv_db_delete_vector_by_index(GV_Database *db, size_t vector_index) {
   return db_delete_vector_by_index(db, vector_index);
@@ -312,8 +346,6 @@ int gv_db_delete_vectors(GV_Database *db, const size_t *indices, size_t count) {
   return db_delete_vectors(db, indices, count);
 }
 
-/* ── Database: search ── */
-
 int gv_db_search_with_filter_expr(const GV_Database *db,
                                   const float *query_data, size_t k,
                                   GV_SearchResult *results,
@@ -368,8 +400,6 @@ int gv_db_scroll(const GV_Database *db, size_t offset, size_t limit,
   return db_scroll(db, offset, limit, results);
 }
 
-/* ── Database: exact search config ── */
-
 void gv_db_set_exact_search_threshold(GV_Database *db, size_t threshold) {
   db_set_exact_search_threshold(db, threshold);
 }
@@ -377,8 +407,6 @@ void gv_db_set_exact_search_threshold(GV_Database *db, size_t threshold) {
 void gv_db_set_force_exact_search(GV_Database *db, int enabled) {
   db_set_force_exact_search(db, enabled);
 }
-
-/* ── Database: resource limits ── */
 
 int gv_db_set_resource_limits(GV_Database *db,
                               const GV_ResourceLimits *limits) {
@@ -397,8 +425,6 @@ size_t gv_db_get_memory_usage(const GV_Database *db) {
 size_t gv_db_get_concurrent_operations(const GV_Database *db) {
   return db_get_concurrent_operations(db);
 }
-
-/* ── Database: compaction ── */
 
 int gv_db_start_background_compaction(GV_Database *db) {
   return db_start_background_compaction(db);
@@ -423,8 +449,6 @@ void gv_db_set_deleted_ratio_threshold(GV_Database *db, double ratio) {
   db_set_deleted_ratio_threshold(db, ratio);
 }
 
-/* ── Database: observability ── */
-
 int gv_db_get_detailed_stats(const GV_Database *db, GV_DetailedStats *out) {
   return db_get_detailed_stats(db, out);
 }
@@ -443,8 +467,6 @@ void gv_db_record_recall(GV_Database *db, double recall) {
   db_record_recall(db, recall);
 }
 
-/* ── Database: accessors ── */
-
 size_t gv_database_count(const GV_Database *db) { return database_count(db); }
 
 size_t gv_database_dimension(const GV_Database *db) {
@@ -455,8 +477,6 @@ const float *gv_database_get_vector(const GV_Database *db, size_t index) {
   return database_get_vector(db, index);
 }
 
-/* ── Database: JSON import/export ── */
-
 int gv_db_export_json(const GV_Database *db, const char *filepath) {
   return db_export_json(db, filepath);
 }
@@ -464,8 +484,6 @@ int gv_db_export_json(const GV_Database *db, const char *filepath) {
 int gv_db_import_json(GV_Database *db, const char *filepath) {
   return db_import_json(db, filepath);
 }
-
-/* ── Vector ── */
 
 GV_Vector *gv_vector_create_from_data(size_t dimension, const float *data) {
   return vector_create_from_data(dimension, data);
@@ -487,8 +505,6 @@ int gv_kdtree_insert(GV_KDNode **root, GV_Vector *point, size_t depth) {
   return -1;
 }
 
-/* ── WAL ── */
-
 int gv_wal_append_insert(GV_WAL *wal, const float *data, size_t dimension,
                          const char *metadata_key, const char *metadata_value) {
   return wal_append_insert(wal, data, dimension, metadata_key, metadata_value);
@@ -501,8 +517,6 @@ int gv_wal_append_insert_rich(GV_WAL *wal, const float *data, size_t dimension,
   return wal_append_insert_rich(wal, data, dimension, metadata_keys,
                                 metadata_values, metadata_count);
 }
-
-/* ── LLM ── */
 
 GV_LLM *gv_llm_create(const GV_LLMConfig *config) { return llm_create(config); }
 
@@ -532,8 +546,6 @@ const char *gv_llm_get_last_error(GV_LLM *llm) {
 const char *gv_llm_error_string(int error_code) {
   return llm_error_string(error_code);
 }
-
-/* ── Embedding ── */
 
 GV_EmbeddingService *
 gv_embedding_service_create(const GV_EmbeddingConfig *config) {
@@ -590,8 +602,6 @@ void gv_embedding_cache_stats(GV_EmbeddingCache *cache, size_t *size,
                               uint64_t *hits, uint64_t *misses) {
   embedding_cache_stats(cache, size, hits, misses);
 }
-
-/* ── Context graph ── */
 
 GV_ContextGraph *gv_context_graph_create(const GV_ContextGraphConfig *config) {
   return context_graph_create(config);
@@ -666,8 +676,6 @@ void gv_graph_query_result_free(GV_GraphQueryResult *result) {
 GV_ContextGraphConfig gv_context_graph_config_default(void) {
   return context_graph_config_default();
 }
-
-/* ── Memory layer ── */
 
 GV_MemoryLayerConfig gv_memory_layer_config_default(void) {
   return memory_layer_config_default();
@@ -814,8 +822,6 @@ void gv_memory_layer_free_context_entity_names(char **names, size_t count) {
   memory_layer_free_context_entity_names(names, count);
 }
 
-/* ── GPU ── */
-
 int gv_gpu_available(void) { return gpu_available(); }
 
 int gv_gpu_device_count(void) { return gpu_device_count(); }
@@ -920,8 +926,6 @@ int gv_gpu_get_stats(GV_GPUContext *ctx, GV_GPUStats *stats) {
 
 int gv_gpu_reset_stats(GV_GPUContext *ctx) { return gpu_reset_stats(ctx); }
 
-/* ── Server ── */
-
 void gv_server_config_init(GV_ServerConfig *config) {
   server_config_init(config);
 }
@@ -947,8 +951,6 @@ int gv_server_get_stats(const GV_Server *server, GV_ServerStats *stats) {
 uint16_t gv_server_get_port(const GV_Server *server) {
   return server_get_port(server);
 }
-
-/* ── Backup ── */
 
 void gv_backup_options_init(GV_BackupOptions *options) {
   backup_options_init(options);
@@ -1023,8 +1025,6 @@ GV_BackupResult *gv_backup_merge(const char *base_backup_path,
 int gv_backup_compute_checksum(const char *backup_path, char *checksum_out) {
   return backup_compute_checksum(backup_path, checksum_out);
 }
-
-/* ── Shard ── */
 
 void gv_shard_config_init(GV_ShardConfig *config) { shard_config_init(config); }
 
@@ -1103,8 +1103,6 @@ int gv_shard_migrate_vector_at(GV_ShardManager *mgr, uint32_t from_shard,
   return shard_migrate_vector_at(mgr, from_shard, to_shard, vector_index,
                                  out_new_index);
 }
-
-/* ── Replication (missing wrappers) ── */
 
 GV_ReplicationRole gv_replication_get_role(GV_ReplicationManager *mgr) {
   return replication_get_role(mgr);
@@ -1264,8 +1262,6 @@ const char *gv_db_wal_path(const GV_Database *db) {
   return db_wal_path(db);
 }
 
-/* ── Cluster ── */
-
 void gv_cluster_config_init(GV_ClusterConfig *config) {
   cluster_config_init(config);
 }
@@ -1317,8 +1313,6 @@ int gv_cluster_is_healthy(GV_Cluster *cluster) {
 int gv_cluster_wait_ready(GV_Cluster *cluster, uint32_t timeout_ms) {
   return cluster_wait_ready(cluster, timeout_ms);
 }
-
-/* ── Namespace ── */
 
 GV_NamespaceManager *gv_namespace_manager_create(const char *base_path) {
   return namespace_manager_create(base_path);
@@ -1412,8 +1406,6 @@ void gv_namespace_config_init(GV_NamespaceConfig *config) {
   namespace_config_init(config);
 }
 
-/* ── BloomFilter wrappers ─────────────────────────────────────────────────── */
-
 GV_BloomFilter *gv_bloom_create(size_t expected_items, double fp_rate) {
   return bloom_create(expected_items, fp_rate);
 }
@@ -1433,8 +1425,6 @@ int gv_bloom_check_string(const GV_BloomFilter *bf, const char *str) {
 size_t gv_bloom_count(const GV_BloomFilter *bf) { return bloom_count(bf); }
 double gv_bloom_fp_rate(const GV_BloomFilter *bf) { return bloom_fp_rate(bf); }
 void gv_bloom_clear(GV_BloomFilter *bf) { bloom_clear(bf); }
-
-/* ── BM25 wrappers ────────────────────────────────────────────────────────── */
 
 void gv_bm25_config_init(GV_BM25Config *config) { bm25_config_init(config); }
 GV_BM25Index *gv_bm25_create(const GV_BM25Config *config) {
@@ -1476,8 +1466,6 @@ int gv_bm25_save(const GV_BM25Index *index, const char *filepath) {
 }
 GV_BM25Index *gv_bm25_load(const char *filepath) { return bm25_load(filepath); }
 
-/* ── SnapshotManager wrappers ─────────────────────────────────────────────── */
-
 GV_SnapshotManager *gv_snapshot_manager_create(size_t max_snapshots) {
   return snapshot_manager_create(max_snapshots);
 }
@@ -1508,8 +1496,6 @@ int gv_snapshot_delete(GV_SnapshotManager *mgr, uint64_t snapshot_id) {
   return snapshot_delete(mgr, snapshot_id);
 }
 
-/* ── MMR wrappers ─────────────────────────────────────────────────────────── */
-
 void gv_mmr_config_init(GV_MMRConfig *config) { mmr_config_init(config); }
 int gv_mmr_rerank(const float *query, size_t dimension,
                   const float *candidates, const size_t *candidate_indices,
@@ -1523,8 +1509,6 @@ int gv_mmr_search(const void *db, const float *query, size_t dimension,
                   GV_MMRResult *results) {
   return mmr_search(db, query, dimension, k, oversample, config, results);
 }
-
-/* ── Knowledge graph wrappers ─────────────────────────────────────────────── */
 
 void gv_kg_config_init(GV_KGConfig *config) { kg_config_init(config); }
 
@@ -1597,6 +1581,63 @@ int gv_kg_query_triples(const GV_KnowledgeGraph *kg, const uint64_t *subject,
 
 void gv_kg_free_triples(GV_KGTriple *triples, size_t count) {
   kg_free_triples(triples, count);
+}
+
+uint64_t gv_kg_add_relation_with_chunk(GV_KnowledgeGraph *kg, uint64_t subject,
+                                       const char *predicate, uint64_t object,
+                                       float weight, const char *chunk_id) {
+  return kg_add_relation_with_chunk(kg, subject, predicate, object, weight,
+                                    chunk_id);
+}
+
+int gv_kg_query_triples_by_chunk(const GV_KnowledgeGraph *kg,
+                                 const char *chunk_id, GV_KGTriple *out,
+                                 size_t max_count) {
+  return kg_query_triples_by_chunk(kg, chunk_id, out, max_count);
+}
+
+int gv_kg_remove_relations_by_chunk(GV_KnowledgeGraph *kg,
+                                    const char *chunk_id) {
+  return kg_remove_relations_by_chunk(kg, chunk_id);
+}
+
+int gv_graph_wal_attach(GV_GraphDB *g, const char *snapshot_path) {
+  return graph_wal_attach(g, snapshot_path);
+}
+
+int gv_graph_wal_checkpoint(GV_GraphDB *g) {
+  return graph_wal_checkpoint(g);
+}
+
+uint64_t gv_graph_version(const GV_GraphDB *g) { return graph_version(g); }
+
+int gv_server_set_graphs(GV_Server *server, GV_KnowledgeGraph *kg,
+                         GV_GraphDB *graph) {
+  return server_set_graphs(server, kg, graph);
+}
+
+int gv_kg_wal_attach(GV_KnowledgeGraph *kg, const char *snapshot_path) {
+  return kg_wal_attach(kg, snapshot_path);
+}
+
+int gv_kg_wal_checkpoint(GV_KnowledgeGraph *kg) {
+  return kg_wal_checkpoint(kg);
+}
+
+int gv_kg_expand_context(const GV_KnowledgeGraph *kg, const uint64_t *seeds,
+                         size_t n_seeds, size_t radius, GV_KGTriple *out,
+                         size_t max_count) {
+  return kg_expand_context(kg, seeds, n_seeds, radius, out, max_count);
+}
+
+int gv_kg_remove_entity_prop(GV_KnowledgeGraph *kg, uint64_t entity_id,
+                             const char *key) {
+  return kg_remove_entity_prop(kg, entity_id, key);
+}
+
+int gv_kg_remove_relation_prop(GV_KnowledgeGraph *kg, uint64_t relation_id,
+                               const char *key) {
+  return kg_remove_relation_prop(kg, relation_id, key);
 }
 
 int gv_kg_search_similar(const GV_KnowledgeGraph *kg,
@@ -1758,8 +1799,6 @@ void gv_posting_head_view_free(GV_PostingHeadView *view) {
   posting_head_view_free(view);
 }
 
-/* ── SQL engine wrappers ──────────────────────────────────────────────────── */
-
 GV_SQLEngine *gv_sql_create(void *db) { return sql_create(db); }
 
 void gv_sql_destroy(GV_SQLEngine *eng) { sql_destroy(eng); }
@@ -1778,8 +1817,6 @@ int gv_sql_explain(GV_SQLEngine *eng, const char *query, char *plan,
                    size_t plan_size) {
   return sql_explain(eng, query, plan, plan_size);
 }
-
-/* ── Phased ranking pipeline wrappers ───────────────────────────────────── */
 
 GV_Pipeline *gv_pipeline_create(const void *db) { return pipeline_create(db); }
 
@@ -1809,8 +1846,6 @@ int gv_pipeline_get_stats(const GV_Pipeline *pipe, GV_PipelineStats *stats) {
 void gv_pipeline_free_stats(GV_PipelineStats *stats) {
   pipeline_free_stats(stats);
 }
-
-/* ── Learned sparse index wrappers ────────────────────────────────────────── */
 
 void gv_ls_config_init(GV_LearnedSparseConfig *config) {
   ls_config_init(config);
@@ -1857,8 +1892,6 @@ int gv_ls_save(const GV_LearnedSparseIndex *idx, const char *path) {
 }
 
 GV_LearnedSparseIndex *gv_ls_load(const char *path) { return ls_load(path); }
-
-/* ── Graph database wrappers ──────────────────────────────────────────────── */
 
 void gv_graph_config_init(GV_GraphDBConfig *config) {
   graph_config_init(config);
@@ -1996,7 +2029,6 @@ int gv_graph_save(const GV_GraphDB *g, const char *path) {
  * feature modules whose _ffi.py declarations previously had no C symbol.
  * ========================================================================= */
 
-/* ---- geo ---- */
 GV_GeoIndex *gv_geo_create(void) { return geo_create(); }
 void gv_geo_destroy(GV_GeoIndex *index) { geo_destroy(index); }
 int gv_geo_insert(GV_GeoIndex *index, size_t point_index, double lat, double lng) { return geo_insert(index, point_index, lat, lng); }
@@ -2010,13 +2042,11 @@ size_t gv_geo_count(const GV_GeoIndex *index) { return geo_count(index); }
 int gv_geo_save(const GV_GeoIndex *index, const char *filepath) { return geo_save(index, filepath); }
 GV_GeoIndex *gv_geo_load(const char *filepath) { return geo_load(filepath); }
 
-/* ---- recommend ---- */
 void gv_recommend_config_init(GV_RecommendConfig *config) { recommend_config_init(config); }
 int gv_recommend_by_id(const GV_Database *db, const size_t *positive_ids, size_t positive_count, const size_t *negative_ids, size_t negative_count, size_t k, const GV_RecommendConfig *config, GV_RecommendResult *results) { return recommend_by_id(db, positive_ids, positive_count, negative_ids, negative_count, k, config, results); }
 int gv_recommend_by_vector(const GV_Database *db, const float *positive_vectors, size_t positive_count, const float *negative_vectors, size_t negative_count, size_t dimension, size_t k, const GV_RecommendConfig *config, GV_RecommendResult *results) { return recommend_by_vector(db, positive_vectors, positive_count, negative_vectors, negative_count, dimension, k, config, results); }
 int gv_recommend_discover(const GV_Database *db, const float *target, const float *context, size_t dimension, size_t k, const GV_RecommendConfig *config, GV_RecommendResult *results) { return recommend_discover(db, target, context, dimension, k, config, results); }
 
-/* ---- json_index ---- */
 GV_JSONPathIndex *gv_json_index_create(void) { return json_index_create(); }
 void gv_json_index_destroy(GV_JSONPathIndex *idx) { json_index_destroy(idx); }
 int gv_json_index_add_path(GV_JSONPathIndex *idx, const GV_JSONPathConfig *config) { return json_index_add_path(idx, config); }
@@ -2030,7 +2060,6 @@ size_t gv_json_index_count(const GV_JSONPathIndex *idx, const char *path) { retu
 int gv_json_index_save(const GV_JSONPathIndex *idx, const char *path_file) { return json_index_save(idx, path_file); }
 GV_JSONPathIndex *gv_json_index_load(const char *path_file) { return json_index_load(path_file); }
 
-/* ---- dedup ---- */
 GV_DedupIndex *gv_dedup_create(size_t dimension, const GV_DedupConfig *config) { return dedup_create(dimension, config); }
 void gv_dedup_destroy(GV_DedupIndex *dedup) { dedup_destroy(dedup); }
 int gv_dedup_check(GV_DedupIndex *dedup, const float *data, size_t dimension) { return dedup_check(dedup, data, dimension); }
@@ -2039,12 +2068,34 @@ int gv_dedup_scan(GV_DedupIndex *dedup, GV_DedupResult *results, size_t max_resu
 size_t gv_dedup_count(const GV_DedupIndex *dedup) { return dedup_count(dedup); }
 void gv_dedup_clear(GV_DedupIndex *dedup) { dedup_clear(dedup); }
 
-/* ---- conditional (gv_cond_*) ---- */
 GV_CondManager *gv_cond_create(void *db) { return cond_create(db); }
 void gv_cond_destroy(GV_CondManager *mgr) { cond_destroy(mgr); }
 uint64_t gv_cond_get_version(const GV_CondManager *mgr, size_t index) { return cond_get_version(mgr, index); }
+/* Forwarders for the conditional-write API. cond_* return the GV_ConditionalResult
+ * enum; the Python layer treats it as int (the enum's underlying type). */
+int gv_cond_update_vector(GV_CondManager *mgr, size_t index, const float *new_data, size_t dimension,
+                          const GV_Condition *conditions, size_t condition_count) {
+    return (int)cond_update_vector(mgr, index, new_data, dimension, conditions, condition_count);
+}
+int gv_cond_update_metadata(GV_CondManager *mgr, size_t index, const char *key, const char *value,
+                            const GV_Condition *conditions, size_t condition_count) {
+    return (int)cond_update_metadata(mgr, index, key, value, conditions, condition_count);
+}
+int gv_cond_delete(GV_CondManager *mgr, size_t index,
+                   const GV_Condition *conditions, size_t condition_count) {
+    return (int)cond_delete(mgr, index, conditions, condition_count);
+}
+int gv_cond_batch_update(GV_CondManager *mgr, const size_t *indices, const float **vectors,
+                         const GV_Condition **conditions, const size_t *condition_counts,
+                         size_t batch_size, int *results) {
+    return cond_batch_update(mgr, indices, vectors, conditions, condition_counts, batch_size,
+                             (GV_ConditionalResult *)results);
+}
+int gv_cond_migrate_embedding(GV_CondManager *mgr, size_t index, const float *new_embedding,
+                              size_t dimension, uint64_t expected_version) {
+    return (int)cond_migrate_embedding(mgr, index, new_embedding, dimension, expected_version);
+}
 
-/* ---- named_vectors ---- */
 GV_NamedVectorStore *gv_named_vectors_create(void) { return named_vectors_create(); }
 void gv_named_vectors_destroy(GV_NamedVectorStore *store) { named_vectors_destroy(store); }
 int gv_named_vectors_add_field(GV_NamedVectorStore *store, const GV_VectorFieldConfig *config) { return named_vectors_add_field(store, config); }
@@ -2060,7 +2111,6 @@ size_t gv_named_vectors_count(const GV_NamedVectorStore *store) { return named_v
 int gv_named_vectors_save(const GV_NamedVectorStore *store, const char *filepath) { return named_vectors_save(store, filepath); }
 GV_NamedVectorStore *gv_named_vectors_load(const char *filepath) { return named_vectors_load(filepath); }
 
-/* ---- ttl ---- */
 void gv_ttl_config_init(GV_TTLConfig *config){ ttl_config_init(config); }
 GV_TTLManager *gv_ttl_create(const GV_TTLConfig *config){ return ttl_create(config); }
 void gv_ttl_destroy(GV_TTLManager *mgr){ ttl_destroy(mgr); }
@@ -2078,7 +2128,6 @@ int gv_ttl_get_stats(const GV_TTLManager *mgr, GV_TTLStats *stats){ return ttl_g
 int gv_ttl_set_bulk(GV_TTLManager *mgr, const size_t *indices, size_t count, uint64_t ttl_seconds){ return ttl_set_bulk(mgr, indices, count, ttl_seconds); }
 int gv_ttl_get_expiring_before(const GV_TTLManager *mgr, uint64_t before_unix, size_t *indices, size_t max_indices){ return ttl_get_expiring_before(mgr, before_unix, indices, max_indices); }
 
-/* ---- timetravel (gv_tt_*) ---- */
 void gv_tt_config_init(GV_TimeTravelConfig *config){ tt_config_init(config); }
 GV_TimeTravelManager *gv_tt_create(const GV_TimeTravelConfig *config){ return tt_create(config); }
 void gv_tt_destroy(GV_TimeTravelManager *mgr){ tt_destroy(mgr); }
@@ -2094,7 +2143,6 @@ int gv_tt_gc(GV_TimeTravelManager *mgr){ return tt_gc(mgr); }
 int gv_tt_save(const GV_TimeTravelManager *mgr, const char *path){ return tt_save(mgr, path); }
 GV_TimeTravelManager *gv_tt_load(const char *path){ return tt_load(path); }
 
-/* ---- webhook ---- */
 GV_WebhookManager *gv_webhook_create(void){ return webhook_create(); }
 void gv_webhook_destroy(GV_WebhookManager *mgr){ webhook_destroy(mgr); }
 int gv_webhook_register(GV_WebhookManager *mgr, const char *webhook_id, const GV_WebhookConfig *config){ return webhook_register(mgr, webhook_id, config); }
@@ -2105,19 +2153,20 @@ int gv_webhook_list(const GV_WebhookManager *mgr, char ***out_ids, size_t *out_c
 void gv_webhook_free_list(char **ids, size_t count){ webhook_free_list(ids, count); }
 int gv_webhook_fire(GV_WebhookManager *mgr, const GV_Event *event){ return webhook_fire(mgr, event); }
 int gv_webhook_get_stats(const GV_WebhookManager *mgr, GV_WebhookStats *stats){ return webhook_get_stats(mgr, stats); }
+int gv_webhook_subscribe(GV_WebhookManager *mgr, GV_EventType mask, void *cb, void *user_data){ return webhook_subscribe(mgr, mask, (GV_ChangeCallback)cb, user_data); }
+int gv_webhook_unsubscribe(GV_WebhookManager *mgr, void *cb){ return webhook_unsubscribe(mgr, (GV_ChangeCallback)cb); }
 
-/* ---- cdc ---- */
 void gv_cdc_config_init(GV_CDCConfig *config){ cdc_config_init(config); }
 GV_CDCStream *gv_cdc_create(const GV_CDCConfig *config){ return cdc_create(config); }
 void gv_cdc_destroy(GV_CDCStream *stream){ cdc_destroy(stream); }
 int gv_cdc_publish(GV_CDCStream *stream, const GV_CDCEvent *event){ return cdc_publish(stream, event); }
+int gv_cdc_subscribe(GV_CDCStream *stream, uint32_t event_mask, void *callback, void *user_data){ return cdc_subscribe(stream, event_mask, (GV_CDCCallback)callback, user_data); }
 int gv_cdc_unsubscribe(GV_CDCStream *stream, int subscriber_id){ return cdc_unsubscribe(stream, subscriber_id); }
 int gv_cdc_poll(GV_CDCStream *stream, GV_CDCCursor *cursor, GV_CDCEvent *events, size_t max_events){ return cdc_poll(stream, cursor, events, max_events); }
 GV_CDCCursor gv_cdc_get_cursor(const GV_CDCStream *stream){ return cdc_get_cursor(stream); }
 GV_CDCCursor gv_cdc_cursor_from_sequence(uint64_t seq){ return cdc_cursor_from_sequence(seq); }
 size_t gv_cdc_pending_count(const GV_CDCStream *stream, const GV_CDCCursor *cursor){ return cdc_pending_count(stream, cursor); }
 
-/* ---- versioning ---- */
 GV_VersionManager *gv_version_manager_create(size_t max_versions){ return version_manager_create(max_versions); }
 void gv_version_manager_destroy(GV_VersionManager *mgr){ version_manager_destroy(mgr); }
 uint64_t gv_version_create(GV_VersionManager *mgr, const float *data, size_t count, size_t dimension, const char *label){ return version_create(mgr, data, count, dimension, label); }
@@ -2128,7 +2177,6 @@ float *gv_version_get_data(const GV_VersionManager *mgr, uint64_t version_id, si
 int gv_version_delete(GV_VersionManager *mgr, uint64_t version_id){ return version_delete(mgr, version_id); }
 int gv_version_compare(const GV_VersionManager *mgr, uint64_t v1, uint64_t v2, size_t *added, size_t *removed, size_t *modified){ return version_compare(mgr, v1, v2, added, removed, modified); }
 
-/* ---- tracing ---- */
 GV_QueryTrace *gv_trace_begin(void){ return trace_begin(); }
 void gv_trace_end(GV_QueryTrace *trace){ trace_end(trace); }
 void gv_trace_destroy(GV_QueryTrace *trace){ trace_destroy(trace); }
@@ -2139,13 +2187,12 @@ void gv_trace_set_metadata(GV_QueryTrace *trace, const char *metadata){ trace_se
 char *gv_trace_to_json(const GV_QueryTrace *trace){ return trace_to_json(trace); }
 uint64_t gv_trace_get_time_us(void){ return trace_get_time_us(); }
 
-/* ---- change notification: attach CDC / webhook sinks to a database ---- */
+void gv_db_set_bulk_load(GV_Database *db, int on){ db_set_bulk_load(db, on); }
 void gv_db_set_cdc_stream(GV_Database *db, GV_CDCStream *stream){ db_set_cdc_stream(db, stream); }
 GV_CDCStream *gv_db_get_cdc_stream(const GV_Database *db){ return db_get_cdc_stream(db); }
 void gv_db_set_webhook_manager(GV_Database *db, GV_WebhookManager *mgr){ db_set_webhook_manager(db, mgr); }
 GV_WebhookManager *gv_db_get_webhook_manager(const GV_Database *db){ return db_get_webhook_manager(db); }
 
-/* ---- migration ---- */
 GV_Migration *gv_migration_start(const float *source_data, size_t count, size_t dimension, int new_index_type, const void *new_index_config){ return migration_start(source_data, count, dimension, new_index_type, new_index_config); }
 int gv_migration_get_info(const GV_Migration *mig, GV_MigrationInfo *info){ return migration_get_info(mig, info); }
 int gv_migration_wait(GV_Migration *mig){ return migration_wait(mig); }
@@ -2155,10 +2202,24 @@ void gv_migration_destroy(GV_Migration *mig){ migration_destroy(mig); }
 
 GV_GraphDB *gv_graph_load(const char *path) { return graph_load(path); }
 
-/* ---- cypher ---- */
 GV_CypherEngine *gv_cypher_create(GV_KnowledgeGraph *kg) { return cypher_create(kg); }
 void gv_cypher_destroy(GV_CypherEngine *eng) { cypher_destroy(eng); }
 int gv_cypher_set_parameter(GV_CypherEngine *eng, const char *name, const char *value) { return cypher_set_parameter(eng, name, value); }
 int gv_cypher_execute(GV_CypherEngine *eng, const char *query, GV_CypherResult *result) { return cypher_execute(eng, query, result); }
 void gv_cypher_free_result(GV_CypherResult *result) { cypher_free_result(result); }
 const char *gv_cypher_last_error(const GV_CypherEngine *eng) { return cypher_last_error(eng); }
+
+/* DiskANN forwarders — the Python DiskANNIndex binding calls these gv_-prefixed
+ * symbols (declared in _ffi.py) but only the unprefixed diskann_* functions
+ * existed, so every DiskANNIndex construction failed with an undefined symbol. */
+void gv_diskann_config_init(GV_DiskANNConfig *config) { diskann_config_init(config); }
+GV_DiskANNIndex *gv_diskann_create(size_t dimension, const GV_DiskANNConfig *config) { return diskann_create(dimension, config); }
+void gv_diskann_destroy(GV_DiskANNIndex *index) { diskann_destroy(index); }
+int gv_diskann_build(GV_DiskANNIndex *index, const float *data, size_t count, size_t dimension) { return diskann_build(index, data, count, dimension); }
+int gv_diskann_insert(GV_DiskANNIndex *index, const float *data, size_t dimension) { return diskann_insert(index, data, dimension); }
+int gv_diskann_search(const GV_DiskANNIndex *index, const float *query, size_t dimension, size_t k, GV_DiskANNResult *results) { return diskann_search(index, query, dimension, k, results); }
+int gv_diskann_delete(GV_DiskANNIndex *index, size_t vector_index) { return diskann_delete(index, vector_index); }
+int gv_diskann_get_stats(const GV_DiskANNIndex *index, GV_DiskANNStats *stats) { return diskann_get_stats(index, stats); }
+int gv_diskann_save(const GV_DiskANNIndex *index, const char *filepath) { return diskann_save(index, filepath); }
+GV_DiskANNIndex *gv_diskann_load(const char *filepath, const GV_DiskANNConfig *config) { return diskann_load(filepath, config); }
+size_t gv_diskann_count(const GV_DiskANNIndex *index) { return diskann_count(index); }

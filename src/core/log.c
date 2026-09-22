@@ -105,7 +105,7 @@ void gv_log_emit(int level, const char *file, int line, const char *fmt, ...) {
         return; /* No sink installed: stay silent (tests must stay quiet). */
     }
     if (level > max_level) {
-        return; /* Suppressed: less severe than the configured maximum. */
+        return;
     }
 
     char buf[1024];

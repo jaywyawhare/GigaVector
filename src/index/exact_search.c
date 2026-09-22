@@ -50,7 +50,6 @@ int exact_knn_search_vectors(GV_Vector *const *vectors, size_t count,
         if (filled < k) {
             GV_Vector *copy = vector_create_from_data(v->dimension, v->data);
             if (copy != NULL && v->metadata != NULL) {
-                // Deep copy metadata
                 GV_Metadata *src = v->metadata;
                 GV_Metadata **dst = &copy->metadata;
                 while (src != NULL) {
@@ -73,7 +72,13 @@ int exact_knn_search_vectors(GV_Vector *const *vectors, size_t count,
                     src = src->next;
                 }
             }
-            results[filled].vector = copy ? copy : v;
+            if (copy == NULL) {
+                /* OOM: skip this candidate rather than store the borrowed storage
+                 * vector `v`, which the caller would later vector_destroy() —
+                 * freeing storage-owned data (heap corruption). */
+                continue;
+            }
+            results[filled].vector = copy;
             results[filled].sparse_vector = NULL;
             results[filled].is_sparse = 0;
             results[filled].distance = dist;
@@ -91,7 +96,6 @@ int exact_knn_search_vectors(GV_Vector *const *vectors, size_t count,
         } else if (dist < results[k - 1].distance) {
             GV_Vector *copy = vector_create_from_data(v->dimension, v->data);
             if (copy != NULL && v->metadata != NULL) {
-                // Deep copy metadata
                 GV_Metadata *src = v->metadata;
                 GV_Metadata **dst = &copy->metadata;
                 while (src != NULL) {
@@ -114,7 +118,15 @@ int exact_knn_search_vectors(GV_Vector *const *vectors, size_t count,
                     src = src->next;
                 }
             }
-            results[k - 1].vector = copy ? copy : v;
+            if (copy == NULL) {
+                /* OOM: skip rather than leak the displaced copy or store the
+                 * borrowed storage vector `v` (which the caller would free). */
+                continue;
+            }
+            /* Free the owned copy currently occupying the worst slot before
+             * overwriting it, otherwise it leaks. */
+            if (results[k - 1].vector) vector_destroy((GV_Vector *)results[k - 1].vector);
+            results[k - 1].vector = copy;
             results[k - 1].sparse_vector = NULL;
             results[k - 1].is_sparse = 0;
             results[k - 1].distance = dist;
@@ -172,29 +184,27 @@ int exact_knn_search_kdtree(const GV_KDNode *root, const GV_SoAStorage *storage,
     if (!vec_ptrs) {
         return -1;
     }
+    /* One contiguous array of borrowed VIEW structs (data/metadata point into
+     * SoA storage and are owned by it — never freed here). This avoids the
+     * per-vector vector_create() path, which both leaked the shell's freshly
+     * allocated data buffer (overwritten by the borrowed pointer) and, on the
+     * OOM-cleanup path, vector_destroy()'d borrowed storage data. */
+    vec_views = (GV_Vector *)gv_calloc(total_count, sizeof(GV_Vector));
+    if (!vec_views) {
+        gv_free(vec_ptrs);
+        return -1;
+    }
     size_t collected = 0;
     if (root == NULL) {
-        // For in-memory databases, collect all vectors from SOA storage
+        // For in-memory databases, view all vectors from SOA storage
         for (size_t i = 0; i < total_count; i++) {
-            GV_Vector *vec = vector_create(storage->dimension);
-            if (vec == NULL) {
-                for (size_t j = 0; j < i; j++) {
-                    vector_destroy(vec_ptrs[j]);
-                }
-                gv_free(vec_ptrs);
-                return -1;
-            }
-            vec->data = (float *)soa_storage_get_data(storage, i);
-            vec->metadata = soa_storage_get_metadata(storage, i);
-            vec_ptrs[i] = vec;
+            vec_views[i].dimension = storage->dimension;
+            vec_views[i].data = (float *)soa_storage_get_data(storage, i);
+            vec_views[i].metadata = soa_storage_get_metadata(storage, i);
+            vec_ptrs[i] = &vec_views[i];
         }
         collected = total_count;
     } else {
-        vec_views = (GV_Vector *)gv_calloc(total_count, sizeof(GV_Vector));
-        if (!vec_views) {
-            gv_free(vec_ptrs);
-            return -1;
-        }
         exact_collect_kdtree(root, storage, vec_views, total_count, &collected);
         for (size_t i = 0; i < collected; i++) {
             vec_ptrs[i] = &vec_views[i];
@@ -202,9 +212,7 @@ int exact_knn_search_kdtree(const GV_KDNode *root, const GV_SoAStorage *storage,
     }
 
     int r = exact_knn_search_vectors(vec_ptrs, collected, query, k, results, distance_type);
-    if (root != NULL) {
-        gv_free(vec_views);
-    }
+    gv_free(vec_views);
     gv_free(vec_ptrs);
     return r;
 }

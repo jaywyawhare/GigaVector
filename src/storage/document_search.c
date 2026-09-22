@@ -86,7 +86,7 @@ int gv_search_document(GV_Database *db, GV_KnowledgeGraph *kg, GV_MemoryLayer *m
     if (!cands) return -1;
     size_t ncand = 0;
 
-    /* --- Embedding layer --- */
+    /* Embedding layer */
     if (query_embedding) {
         GV_SearchResult *sr = (GV_SearchResult *)gv_alloc(fan * sizeof(GV_SearchResult));
         if (sr) {
@@ -105,7 +105,7 @@ int gv_search_document(GV_Database *db, GV_KnowledgeGraph *kg, GV_MemoryLayer *m
         }
     }
 
-    /* --- Memory layer --- */
+    /* Memory layer */
     if (mem && query_embedding) {
         GV_MemoryResult *mr = (GV_MemoryResult *)gv_alloc(fan * sizeof(GV_MemoryResult));
         if (mr) {
@@ -129,7 +129,7 @@ int gv_search_document(GV_Database *db, GV_KnowledgeGraph *kg, GV_MemoryLayer *m
 
     if (ncand == 0) { gv_free(cands); return 0; }
 
-    /* --- Build enriched results: attach triplets, fuse scores --- */
+    /* Build enriched results: attach triplets, fuse scores */
     GV_EnrichedResult *res = (GV_EnrichedResult *)gv_alloc(ncand * sizeof(GV_EnrichedResult));
     if (!res) {
         for (size_t i = 0; i < ncand; i++)
@@ -176,9 +176,76 @@ int gv_search_document(GV_Database *db, GV_KnowledgeGraph *kg, GV_MemoryLayer *m
         e->memory_hit_count = (int)c->fact_count;
         c->facts = NULL; /* ownership transferred */
 
-        /* RRF fusion across the three layers */
-        double graph_rank = triplet_hits > 0 ? rrf(0) : 0.0;
+        /* RRF fusion across the three layers. The graph baseline for merely
+         * having triples is deliberately small (rrf(4)); the strong,
+         * query-dependent graph signal is added by the neighbour-expansion
+         * pass below. */
+        double graph_rank = triplet_hits > 0 ? rrf(4) : 0.0;
         e->score = (float)(rrf(c->vrank) + rrf(c->mrank) + graph_rank);
+        e->graph_neighbor_hits = 0;
+    }
+
+    /* ── GraphRAG entity-neighbour expansion ─────────────────────────────
+     * Seed from the entities of the top-scoring chunks, build the union of
+     * those entities plus their 1-hop KG neighbourhoods, and boost every
+     * chunk whose own entities fall inside that union. This makes the graph
+     * contribution query-dependent: a chunk is promoted when it discusses
+     * entities directly connected to (or identical with) the best-matching
+     * context — even if it shares no literal triple with them. */
+    if (kg && ncand > 1) {
+        enum { MAX_SEED_ENTITIES = 32 };
+        uint64_t seeds[MAX_SEED_ENTITIES];
+        size_t nseeds = 0;
+        /* Seed strictly from the best provisional match: expansion should
+         * reflect what the query actually retrieved, not the whole pool
+         * (seeding from every candidate would make the boost universal and
+         * therefore meaningless). */
+        for (size_t t = 0; t < res[0].triplet_count &&
+                           nseeds < MAX_SEED_ENTITIES; t++) {
+            uint64_t sid = res[0].triplets[t].subject_id;
+            uint64_t oid = res[0].triplets[t].object_id;
+            int seen_s = 0, seen_o = 0;
+            for (size_t s2 = 0; s2 < nseeds; s2++) {
+                if (seeds[s2] == sid) seen_s = 1;
+                if (seeds[s2] == oid) seen_o = 1;
+            }
+            if (!seen_s && sid != 0) seeds[nseeds++] = sid;
+            if (!seen_o && oid != 0 && nseeds < MAX_SEED_ENTITIES)
+                seeds[nseeds++] = oid;
+        }
+
+        if (nseeds > 0) {
+            GV_IdBitmap *ctx_set = gv_id_bitmap_create();
+            if (ctx_set) {
+                for (size_t s3 = 0; s3 < nseeds; s3++) {
+                    gv_id_bitmap_add(ctx_set, seeds[s3]);
+                    GV_IdBitmap *nb =
+                        kg_entity_neighbor_set(kg, seeds[s3], 2 /* both */);
+                    if (!nb) continue;
+                    gv_id_bitmap_or_into(ctx_set, nb);
+                    gv_id_bitmap_free(nb);
+                }
+                if (gv_id_bitmap_cardinality(ctx_set) > nseeds ||
+                    gv_id_bitmap_cardinality(ctx_set) > 0) {
+                    for (size_t i = 0; i < ncand; i++) {
+                        GV_EnrichedResult *e = &res[i];
+                        int hits = 0;
+                        for (size_t t = 0; t < e->triplet_count; t++) {
+                            if (gv_id_bitmap_contains(ctx_set,
+                                                      e->triplets[t].subject_id))
+                                hits++;
+                            if (gv_id_bitmap_contains(ctx_set,
+                                                      e->triplets[t].object_id))
+                                hits++;
+                        }
+                        e->graph_neighbor_hits = hits;
+                        if (hits > 0)
+                            e->score = (float)(e->score + rrf(0));
+                    }
+                }
+                gv_id_bitmap_free(ctx_set);
+            }
+        }
     }
 
     /* sort by fused score desc (simple insertion sort; ncand is small) */

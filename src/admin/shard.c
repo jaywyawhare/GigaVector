@@ -15,8 +15,6 @@
 #include <pthread.h>
 #include <time.h>
 
-/* Internal Structures */
-
 #define MAX_SHARDS 256
 #define VIRTUAL_NODES_DEFAULT 150
 
@@ -52,8 +50,6 @@ struct GV_ShardManager {
     pthread_rwlock_t rwlock;
 };
 
-/* Configuration */
-
 static const GV_ShardConfig DEFAULT_CONFIG = {
     .shard_count = 8,
     .virtual_nodes = VIRTUAL_NODES_DEFAULT,
@@ -66,25 +62,11 @@ void shard_config_init(GV_ShardConfig *config) {
     *config = DEFAULT_CONFIG;
 }
 
-/* Hash Functions */
-
-static uint32_t hash_key(const void *key, size_t len) {
-    /* FNV-1a hash */
-    uint32_t hash = 2166136261u;
-    const unsigned char *data = (const unsigned char *)key;
-    for (size_t i = 0; i < len; i++) {
-        hash ^= data[i];
-        hash *= 16777619u;
-    }
-    return hash;
-}
 
 static uint32_t hash_shard_vnode(uint32_t shard_id, uint32_t vnode) {
     uint64_t val = ((uint64_t)shard_id << 32) | vnode;
-    return hash_key(&val, sizeof(val));
+    return gv_fnv1a(&val, sizeof(val));
 }
-
-/* Ring Management */
 
 static int compare_vnodes(const void *a, const void *b) {
     const VirtualNode *va = (const VirtualNode *)a;
@@ -140,13 +122,14 @@ static uint32_t find_shard_in_ring(GV_ShardManager *mgr, uint32_t hash) {
     return mgr->ring[lo].shard_id;
 }
 
-/* Lifecycle */
-
 GV_ShardManager *shard_manager_create(const GV_ShardConfig *config) {
     GV_ShardManager *mgr = gv_calloc(1, sizeof(GV_ShardManager));
     if (!mgr) return NULL;
 
     mgr->config = config ? *config : DEFAULT_CONFIG;
+    /* Guard against a caller-supplied shard_count of 0, which would make the
+     * GV_SHARD_HASH modulo (vector_id % shard_count) a division by zero. */
+    if (mgr->config.shard_count == 0) mgr->config.shard_count = 1;
 
     if (pthread_rwlock_init(&mgr->rwlock, NULL) != 0) {
         gv_free(mgr);
@@ -168,14 +151,11 @@ void shard_manager_destroy(GV_ShardManager *mgr) {
     gv_free(mgr);
 }
 
-/* Shard Operations */
-
 int shard_add(GV_ShardManager *mgr, uint32_t shard_id, const char *node_address) {
     if (!mgr || !node_address) return -1;
 
     pthread_rwlock_wrlock(&mgr->rwlock);
 
-    /* Check if already exists */
     for (size_t i = 0; i < mgr->shard_count; i++) {
         if (mgr->shards[i].shard_id == shard_id) {
             pthread_rwlock_unlock(&mgr->rwlock);
@@ -215,7 +195,6 @@ int shard_remove(GV_ShardManager *mgr, uint32_t shard_id) {
         if (mgr->shards[i].shard_id == shard_id) {
             gv_free(mgr->shards[i].node_address);
 
-            /* Shift remaining */
             for (size_t j = i; j < mgr->shard_count - 1; j++) {
                 mgr->shards[j] = mgr->shards[j + 1];
             }
@@ -243,7 +222,7 @@ int shard_for_vector(GV_ShardManager *mgr, uint64_t vector_id) {
         shard_id = vector_id % mgr->config.shard_count;
     } else {
         /* Consistent hashing */
-        uint32_t hash = hash_key(&vector_id, sizeof(vector_id));
+        uint32_t hash = gv_fnv1a(&vector_id, sizeof(vector_id));
         shard_id = find_shard_in_ring(mgr, hash);
     }
 
@@ -256,7 +235,7 @@ int shard_for_key(GV_ShardManager *mgr, const void *key, size_t key_len) {
 
     pthread_rwlock_rdlock(&mgr->rwlock);
 
-    uint32_t hash = hash_key(key, key_len);
+    uint32_t hash = gv_fnv1a(key, key_len);
     int shard_id = find_shard_in_ring(mgr, hash);
 
     pthread_rwlock_unlock(&mgr->rwlock);
@@ -347,8 +326,6 @@ int shard_set_state(GV_ShardManager *mgr, uint32_t shard_id, GV_ShardState state
     pthread_rwlock_unlock(&mgr->rwlock);
     return -1;
 }
-
-/* Rebalancing */
 
 /**
  * @brief Internal structure for tracking rebalance moves.
@@ -441,54 +418,52 @@ static int migrate_vector_at_index(GV_Database *from_db, GV_Database *to_db, siz
 
 int shard_migrate_vector_at(GV_ShardManager *mgr, uint32_t from_shard, uint32_t to_shard,
                             size_t vector_index, size_t *out_new_index) {
+    if (!mgr) return -1;
+    /* Guard shards[] lookup and vector_count writes against concurrent shard
+     * add/remove (which reorder/compact the array). The per-DB migration below
+     * takes each database's own lock, independent of mgr->rwlock. */
+    pthread_rwlock_wrlock(&mgr->rwlock);
+
     ShardEntry *from = NULL;
     ShardEntry *to = NULL;
-
     for (size_t i = 0; i < mgr->shard_count; i++) {
         if (mgr->shards[i].shard_id == from_shard) from = &mgr->shards[i];
         if (mgr->shards[i].shard_id == to_shard) to = &mgr->shards[i];
     }
 
-    if (!from || !to || !from->local_db || !to->local_db) {
-        return -1;
+    int rc = 0;
+    if (!from || !to || !from->local_db || !to->local_db ||
+        from->local_db->dimension != to->local_db->dimension ||
+        vector_index >= database_count(from->local_db) ||
+        migrate_vector_at_index(from->local_db, to->local_db, vector_index, out_new_index) != 0) {
+        rc = -1;
+    } else {
+        from->vector_count = database_count(from->local_db);
+        to->vector_count = database_count(to->local_db);
     }
 
-    if (from->local_db->dimension != to->local_db->dimension) {
-        return -1;
-    }
-
-    if (vector_index >= database_count(from->local_db)) {
-        return -1;
-    }
-
-    if (migrate_vector_at_index(from->local_db, to->local_db, vector_index, out_new_index) != 0) {
-        return -1;
-    }
-
-    from->vector_count = database_count(from->local_db);
-    to->vector_count = database_count(to->local_db);
-    return 0;
+    pthread_rwlock_unlock(&mgr->rwlock);
+    return rc;
 }
 
 /**
  * @brief Perform actual vector migration between local shards.
  */
 int shard_migrate_vectors(GV_ShardManager *mgr, uint32_t from_shard, uint32_t to_shard, size_t count) {
+    if (!mgr) return -1;
+    pthread_rwlock_wrlock(&mgr->rwlock);
+
     ShardEntry *from = NULL;
     ShardEntry *to = NULL;
-
     for (size_t i = 0; i < mgr->shard_count; i++) {
         if (mgr->shards[i].shard_id == from_shard) from = &mgr->shards[i];
         if (mgr->shards[i].shard_id == to_shard) to = &mgr->shards[i];
     }
 
-    if (!from || !to || !from->local_db || !to->local_db) {
-        return -1;  /* Cannot migrate without local databases */
-    }
-
-    size_t dimension = from->local_db->dimension;
-    if (dimension != to->local_db->dimension) {
-        return -1;  /* Dimension mismatch */
+    if (!from || !to || !from->local_db || !to->local_db ||
+        from->local_db->dimension != to->local_db->dimension) {
+        pthread_rwlock_unlock(&mgr->rwlock);
+        return -1;  /* missing DBs or dimension mismatch */
     }
 
     /* Migrate vectors one at a time (could be batched for efficiency) */
@@ -509,6 +484,7 @@ int shard_migrate_vectors(GV_ShardManager *mgr, uint32_t from_shard, uint32_t to
         to->vector_count = database_count(to->local_db);
     }
 
+    pthread_rwlock_unlock(&mgr->rwlock);
     return (int)migrated;
 }
 
@@ -575,7 +551,6 @@ int shard_rebalance_start(GV_ShardManager *mgr) {
         }
     }
 
-    /* Perform migrations */
     size_t total_moves = 0;
     size_t completed_moves = 0;
 
@@ -656,8 +631,6 @@ int shard_rebalance_cancel(GV_ShardManager *mgr) {
     return 0;
 }
 
-/* Local Shard */
-
 int shard_attach_local(GV_ShardManager *mgr, uint32_t shard_id, GV_Database *db) {
     if (!mgr || !db) return -1;
 
@@ -691,4 +664,64 @@ GV_Database *shard_get_local_db(GV_ShardManager *mgr, uint32_t shard_id) {
 
     pthread_rwlock_unlock(&mgr->rwlock);
     return NULL;
+}
+
+/** @brief Ascending distance order for the distributed top-k merge. */
+static int shard_result_cmp(const void *a, const void *b) {
+    float da = ((const GV_SearchResult *)a)->distance;
+    float db = ((const GV_SearchResult *)b)->distance;
+    if (da < db) return -1;
+    if (da > db) return 1;
+    return 0;
+}
+
+size_t shard_merge_topk(GV_SearchResult *all, size_t total, size_t k,
+                        GV_SearchResult *out) {
+    if (total == 0) return 0;
+    qsort(all, total, sizeof(GV_SearchResult), shard_result_cmp);
+    size_t kept = total < k ? total : k;
+    /* Shallow copy transfers each kept result's owned .vector to the caller; the
+     * discarded tail is released so no candidate result leaks. */
+    memcpy(out, all, kept * sizeof(GV_SearchResult));
+    if (total > kept) gv_search_results_free(all + kept, total - kept);
+    return kept;
+}
+
+int shard_search(GV_ShardManager *mgr, const float *query_data, size_t k,
+                 GV_SearchResult *results, GV_DistanceType distance_type) {
+    if (!mgr || !query_data || !results || k == 0) return -1;
+
+    pthread_rwlock_rdlock(&mgr->rwlock);
+
+    size_t online = 0;
+    for (size_t i = 0; i < mgr->shard_count; i++) {
+        if (mgr->shards[i].local_db && mgr->shards[i].state != GV_SHARD_OFFLINE)
+            online++;
+    }
+    if (online == 0) {
+        pthread_rwlock_unlock(&mgr->rwlock);
+        return 0;
+    }
+
+    /* Each online shard can contribute up to k candidates before the merge. */
+    GV_SearchResult *all =
+        (GV_SearchResult *)gv_alloc(online * k * sizeof(GV_SearchResult));
+    if (!all) {
+        pthread_rwlock_unlock(&mgr->rwlock);
+        return -1;
+    }
+
+    size_t total = 0;
+    for (size_t i = 0; i < mgr->shard_count; i++) {
+        ShardEntry *e = &mgr->shards[i];
+        if (!e->local_db || e->state == GV_SHARD_OFFLINE) continue;
+        int n = db_search(e->local_db, query_data, k, all + total, distance_type);
+        if (n > 0) total += (size_t)n;
+    }
+
+    pthread_rwlock_unlock(&mgr->rwlock);
+
+    size_t kept = shard_merge_topk(all, total, k, results);
+    gv_free(all);
+    return (int)kept;
 }

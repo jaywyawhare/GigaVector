@@ -40,14 +40,12 @@ GV_QueryOptimizer *optimizer_create(void);
 /**
  * @brief Destroy an instance and free associated resources.
  *
- * @param opt opt.
  */
 void optimizer_destroy(GV_QueryOptimizer *opt);
 
 /**
  * @brief Perform the operation.
  *
- * @param opt opt.
  * @param stats Output statistics structure.
  */
 void optimizer_update_stats(GV_QueryOptimizer *opt, const GV_CollectionStats *stats);
@@ -62,16 +60,12 @@ void optimizer_record_result(GV_QueryOptimizer *opt, const GV_QueryPlan *plan,
 /**
  * @brief Perform the operation.
  *
- * @param opt opt.
- * @param k k.
  * @return Count value.
  */
 size_t optimizer_recommend_ef_search(const GV_QueryOptimizer *opt, size_t k);
 /**
  * @brief Perform the operation.
  *
- * @param opt opt.
- * @param k k.
  * @return Count value.
  */
 size_t optimizer_recommend_nprobe(const GV_QueryOptimizer *opt, size_t k);

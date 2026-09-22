@@ -6,6 +6,8 @@
  */
 
 #include "api/server.h"
+#include "features/knowledge_graph.h"
+#include "features/graph_db.h"
 #include "core/memory.h"
 #include "api/rest_handlers.h"
 #include "security/crypto.h"
@@ -20,8 +22,6 @@
 #ifdef HAVE_MICROHTTPD
 #include <microhttpd.h>
 #endif
-
-/* Rate Limiter */
 
 /**
  * @brief Token-bucket rate limiter state.
@@ -63,13 +63,11 @@ static int rate_limiter_allow(GV_RateLimiter *rl) {
     double elapsed_sec = (double)(now - rl->last_refill_us) / 1000000.0;
     rl->last_refill_us = now;
 
-    /* Refill tokens based on elapsed time */
     rl->tokens += elapsed_sec * rl->refill_rate;
     if (rl->tokens > rl->max_tokens) {
         rl->tokens = rl->max_tokens;
     }
 
-    /* Try to consume one token */
     if (rl->tokens >= 1.0) {
         rl->tokens -= 1.0;
         pthread_mutex_unlock(&rl->mutex);
@@ -82,8 +80,6 @@ static int rate_limiter_allow(GV_RateLimiter *rl) {
 
 #endif /* HAVE_MICROHTTPD */
 
-/* Internal Structures */
-
 /**
  * @brief Connection info for POST data accumulation.
  */
@@ -91,6 +87,7 @@ typedef struct {
     char *data;
     size_t size;
     size_t capacity;
+    char *query_string;   /* rebuilt from MHD GET args; freed with state */
 } GV_ConnectionInfo;
 
 /**
@@ -109,7 +106,6 @@ struct GV_Server {
     int running;
     time_t start_time;
 
-    /* Statistics */
     uint64_t total_requests;
     uint64_t active_connections;
     uint64_t total_bytes_sent;
@@ -117,15 +113,11 @@ struct GV_Server {
     uint64_t error_count;
     pthread_mutex_t stats_mutex;
 
-    /* Handler context */
     GV_HandlerContext handler_ctx;
 
-    /* Rate limiter */
     GV_RateLimiter rate_limiter;
     int rate_limit_enabled;
 };
-
-/* Default Configuration */
 
 static const GV_ServerConfig DEFAULT_CONFIG = {
     .port = 6969,
@@ -143,8 +135,6 @@ static const GV_ServerConfig DEFAULT_CONFIG = {
     .data_dir = "./data",          /* /save output confined here */
     .allow_unauthenticated = 0     /* fail closed by default */
 };
-
-/* Path Confinement */
 
 /**
  * @brief Deny-by-default save-path confinement helper.
@@ -210,8 +200,6 @@ void server_config_init(GV_ServerConfig *config) {
     *config = DEFAULT_CONFIG;
 }
 
-/* Error Strings */
-
 const char *server_error_string(int error) {
     switch (error) {
         case GV_SERVER_OK:
@@ -237,8 +225,6 @@ const char *server_error_string(int error) {
 
 #ifdef HAVE_MICROHTTPD
 
-/* HTTP Method Parsing */
-
 static GV_HttpMethod parse_method(const char *method) {
     if (!method) return GV_HTTP_GET;
     if (strcmp(method, "GET") == 0) return GV_HTTP_GET;
@@ -249,8 +235,6 @@ static GV_HttpMethod parse_method(const char *method) {
     if (strcmp(method, "HEAD") == 0) return GV_HTTP_HEAD;
     return GV_HTTP_GET;
 }
-
-/* libmicrohttpd Callbacks */
 
 /**
  * @brief Callback to gv_free connection info.
@@ -266,6 +250,7 @@ static void request_completed_callback(void *cls,
     GV_ConnectionInfo *con_info = *con_cls;
     if (con_info) {
         gv_free(con_info->data);
+        gv_free(con_info->query_string);
         gv_free(con_info);
     }
     *con_cls = NULL;
@@ -367,6 +352,39 @@ static int check_auth(const GV_Server *server, struct MHD_Connection *connection
 /**
  * @brief Main request handler callback.
  */
+/* MHD's url argument excludes the query string; rebuild one "k=v&k2=v2"
+ * buffer from the GET arguments so handlers can parse it generically. */
+typedef struct {
+    char *buf;
+    size_t len;
+    size_t cap;
+    int overflow;
+} QsBuilder;
+
+static enum MHD_Result qs_collect(void *cls, enum MHD_ValueKind kind,
+                                  const char *key, const char *value) {
+    (void)kind;
+    QsBuilder *b = (QsBuilder *)cls;
+    if (!key) return MHD_YES;
+    size_t klen = strlen(key);
+    size_t vlen = value ? strlen(value) : 0;
+    size_t need = b->len + klen + 1 + vlen + 2;
+    if (need > b->cap) {
+        size_t nc = b->cap ? b->cap : 256;
+        while (nc < need) nc *= 2;
+        char *nb = (char *)gv_realloc(b->buf, nc);
+        if (!nb) { b->overflow = 1; return MHD_YES; }
+        b->buf = nb;
+        b->cap = nc;
+    }
+    memcpy(b->buf + b->len, key, klen); b->len += klen;
+    b->buf[b->len++] = '=';
+    if (vlen) { memcpy(b->buf + b->len, value, vlen); b->len += vlen; }
+    b->buf[b->len++] = '&';
+    b->buf[b->len] = '\0';
+    return MHD_YES;
+}
+
 static enum MHD_Result answer_to_connection(void *cls,
                                              struct MHD_Connection *connection,
                                              const char *url,
@@ -380,7 +398,7 @@ static enum MHD_Result answer_to_connection(void *cls,
     GV_Server *server = (GV_Server *)cls;
     GV_ConnectionInfo *con_info;
 
-    /* First call: set up connection info */
+    /* First callback for this connection: allocate accumulation state. */
     if (*con_cls == NULL) {
         con_info = gv_calloc(1, sizeof(GV_ConnectionInfo));
         if (!con_info) {
@@ -396,13 +414,11 @@ static enum MHD_Result answer_to_connection(void *cls,
     if (*upload_data_size != 0) {
         size_t new_size = con_info->size + *upload_data_size;
 
-        /* Check size limit */
         if (new_size > server->config.max_request_body_bytes) {
             *upload_data_size = 0;
             return MHD_YES;
         }
 
-        /* Grow buffer if needed */
         if (new_size > con_info->capacity) {
             size_t new_cap = con_info->capacity == 0 ? 4096 : con_info->capacity * 2;
             while (new_cap < new_size) new_cap *= 2;
@@ -426,8 +442,7 @@ static enum MHD_Result answer_to_connection(void *cls,
         return MHD_YES;
     }
 
-    /* Handle OPTIONS for CORS preflight */
-    if (strcmp(method, "OPTIONS") == 0) {
+    if (strcmp(method, "OPTIONS") == 0) {  /* CORS preflight */
         struct MHD_Response *response = MHD_create_response_from_buffer(0, "", MHD_RESPMEM_PERSISTENT);
         add_cors_headers(response, server);
         enum MHD_Result ret = MHD_queue_response(connection, MHD_HTTP_NO_CONTENT, response);
@@ -436,7 +451,6 @@ static enum MHD_Result answer_to_connection(void *cls,
     }
 
 #ifdef HAVE_MICROHTTPD
-    /* Check rate limit */
     if (server->rate_limit_enabled && !rate_limiter_allow(&server->rate_limiter)) {
         const char *rate_json = "{\"error\":\"rate limit exceeded\"}";
         struct MHD_Response *response = MHD_create_response_from_buffer(
@@ -455,7 +469,6 @@ static enum MHD_Result answer_to_connection(void *cls,
     }
 #endif /* HAVE_MICROHTTPD */
 
-    /* Check authentication */
     if (!check_auth(server, connection, url, method)) {
         const char *error_json = "{\"error\":\"Unauthorized\",\"message\":\"Invalid or missing API key\"}";
         struct MHD_Response *response = MHD_create_response_from_buffer(
@@ -472,7 +485,6 @@ static enum MHD_Result answer_to_connection(void *cls,
         return ret;
     }
 
-    /* Build request structure */
     GV_HttpRequest request = {
         .method = parse_method(method),
         .url = url,
@@ -483,20 +495,25 @@ static enum MHD_Result answer_to_connection(void *cls,
         .authorization = MHD_lookup_connection_value(connection, MHD_HEADER_KIND, "Authorization")
     };
 
-    /* Skip '?' in query string */
-    if (request.query_string) {
-        request.query_string++;
+    {
+        QsBuilder qb = {NULL, 0, 0, 0};
+        MHD_get_connection_values(connection, MHD_GET_ARGUMENT_KIND,
+                                  qs_collect, &qb);
+        if (qb.buf && !qb.overflow && qb.len > 0) {
+            qb.buf[qb.len - 1] = '\0';   /* drop trailing '&' */
+            con_info->query_string = qb.buf;
+            ((GV_HttpRequest *)&request)->query_string = qb.buf;
+        } else {
+            gv_free(qb.buf);
+        }
     }
 
-    /* Log request */
     if (server->config.enable_logging) {
         fprintf(stderr, "[GV_Server] %s %s\n", method, url);
     }
 
-    /* Route and handle request */
     GV_HttpResponse *http_response = rest_route(&server->handler_ctx, &request);
 
-    /* Update stats */
     pthread_mutex_lock(&server->stats_mutex);
     server->total_requests++;
     if (http_response && http_response->status >= 400) {
@@ -504,7 +521,6 @@ static enum MHD_Result answer_to_connection(void *cls,
     }
     pthread_mutex_unlock(&server->stats_mutex);
 
-    /* Build HTTP response */
     struct MHD_Response *mhd_response;
     unsigned int status_code = GV_HTTP_500_INTERNAL_ERROR;
 
@@ -524,17 +540,14 @@ static enum MHD_Result answer_to_connection(void *cls,
             strlen(error), (void *)error, MHD_RESPMEM_PERSISTENT);
     }
 
-    /* Set headers */
     MHD_add_response_header(mhd_response, "Content-Type",
                             http_response && http_response->content_type ?
                             http_response->content_type : "application/json");
     add_cors_headers(mhd_response, server);
 
-    /* Queue response */
     enum MHD_Result ret = MHD_queue_response(connection, status_code, mhd_response);
     MHD_destroy_response(mhd_response);
 
-    /* Free response */
     rest_response_free(http_response);
 
     return ret;
@@ -542,7 +555,13 @@ static enum MHD_Result answer_to_connection(void *cls,
 
 #endif /* HAVE_MICROHTTPD */
 
-/* Server Lifecycle */
+int server_set_graphs(GV_Server *server, struct GV_KnowledgeGraph *kg,
+                      struct GV_GraphDB *graph) {
+    if (!server) return -1;
+    server->handler_ctx.kg = kg;
+    server->handler_ctx.graph = graph;
+    return 0;
+}
 
 GV_Server *server_create(GV_Database *db, const GV_ServerConfig *config) {
     if (!db) {
@@ -559,15 +578,15 @@ GV_Server *server_create(GV_Database *db, const GV_ServerConfig *config) {
     server->running = 0;
     server->daemon = NULL;
 
-    /* Initialize stats mutex */
     if (pthread_mutex_init(&server->stats_mutex, NULL) != 0) {
         gv_free(server);
         return NULL;
     }
 
-    /* Set up handler context */
     server->handler_ctx.db = db;
     server->handler_ctx.config = &server->config;
+    server->handler_ctx.kg = NULL;
+    server->handler_ctx.graph = NULL;
 
     return server;
 }
@@ -581,7 +600,6 @@ int server_start(GV_Server *server) {
         return GV_SERVER_ERROR_ALREADY_RUNNING;
     }
 
-    /* Initialize rate limiter if configured */
     if (server->config.max_requests_per_second > 0) {
         size_t burst = server->config.rate_limit_burst > 0 ? server->config.rate_limit_burst : 10;
         rate_limiter_init(&server->rate_limiter,
@@ -645,7 +663,6 @@ int server_stop(GV_Server *server) {
 
     server->running = 0;
 
-    /* Destroy rate limiter if it was enabled */
     if (server->rate_limit_enabled) {
         rate_limiter_destroy(&server->rate_limiter);
         server->rate_limit_enabled = 0;
@@ -678,8 +695,6 @@ int server_is_running(const GV_Server *server) {
     return server->running;
 }
 
-/* Server Information */
-
 int server_get_stats(const GV_Server *server, GV_ServerStats *stats) {
     if (!server || !stats) {
         return GV_SERVER_ERROR_NULL_POINTER;
@@ -693,7 +708,6 @@ int server_get_stats(const GV_Server *server, GV_ServerStats *stats) {
     stats->total_bytes_received = server->total_bytes_received;
     stats->error_count = server->error_count;
 
-    /* Calculate requests per second */
     if (server->running && server->start_time > 0) {
         time_t uptime = time(NULL) - server->start_time;
         if (uptime > 0) {

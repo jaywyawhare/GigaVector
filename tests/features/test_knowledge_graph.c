@@ -151,6 +151,55 @@ static int test_relations(void) {
     return 0;
 }
 
+static int test_relation_with_props(void) {
+    GV_KnowledgeGraph *kg = kg_create(NULL);
+    uint64_t alice = kg_add_entity(kg, "Alice", "Person", NULL, 0);
+    uint64_t company = kg_add_entity(kg, "Anthropic", "Company", NULL, 0);
+
+    GV_KGPropKV props[] = {
+        {"chunk_id", "doc_abc:0042"},
+        {"source",   "wiki"},
+        {NULL,       "skipped"},        /* NULL key -> skipped */
+    };
+    uint64_t rid = kg_add_relation_with_props(kg, alice, "works_at", company,
+                                              1.0f, props, 3);
+    ASSERT(rid > 0, "add relation with props");
+
+    /* chunk_id must be indexed exactly as via kg_set_relation_prop */
+    GV_KGTriple tri[4];
+    int n = kg_query_triples_by_chunk(kg, "doc_abc:0042", tri, 4);
+    ASSERT(n >= 1, "relation findable by chunk_id facet");
+    kg_free_triples(tri, (size_t)n);
+
+    /* Both real props present on the relation; NULL-key entry skipped */
+    const GV_KGRelation *rel = kg_get_relation(kg, rid);
+    ASSERT(rel != NULL, "get relation");
+    int seen_chunk = 0, seen_source = 0, count = 0;
+    for (GV_KGProp *p = rel->properties; p; p = p->next) {
+        count++;
+        if (strcmp(p->key, "chunk_id") == 0) {
+            char *v = gv_prop_to_string(p->value);
+            seen_chunk = v && strcmp(v, "doc_abc:0042") == 0;
+            free(v);
+        } else if (strcmp(p->key, "source") == 0) {
+            char *v = gv_prop_to_string(p->value);
+            seen_source = v && strcmp(v, "wiki") == 0;
+            free(v);
+        }
+    }
+    ASSERT(seen_chunk, "chunk_id prop stored");
+    ASSERT(seen_source, "source prop stored");
+    ASSERT(count == 2, "NULL-key prop was skipped");
+
+    /* NULL props array with n_props 0 still creates the relation */
+    uint64_t rid2 = kg_add_relation_with_props(kg, alice, "knows", company,
+                                               0.5f, NULL, 0);
+    ASSERT(rid2 > 0, "add relation with no props");
+
+    kg_destroy(kg);
+    return 0;
+}
+
 static int test_triple_queries(void) {
     GV_KnowledgeGraph *kg = kg_create(NULL);
     uint64_t alice = kg_add_entity(kg, "Alice", "Person", NULL, 0);
@@ -463,6 +512,7 @@ int main(void) {
         {"find entities",           test_find_entities},
         {"remove entity (cascade)", test_remove_entity},
         {"relations",               test_relations},
+        {"relation with props",     test_relation_with_props},
         {"triple queries (SPO)",    test_triple_queries},
         {"semantic search",         test_semantic_search},
         {"hybrid search",           test_hybrid_search},

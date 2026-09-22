@@ -29,7 +29,6 @@ typedef struct {
     int active;               /* 1 = active, 0 = paused */
 } GV_WebhookConfig;
 
-/* Change stream callback */
 typedef void (*GV_ChangeCallback)(const GV_Event *event, void *user_data);
 
 typedef struct GV_WebhookManager GV_WebhookManager;

@@ -1475,7 +1475,9 @@ static int posting_catalog_drop_head_segments_below(GV_PostingCatalog *cat, uint
                                   cat->segments[i].rel_path) != 0) {
                 for (size_t j = 0; j < path_n; ++j) gv_free(paths[j]);
                 gv_free(paths);
-                posting_free_segment_refs(kept, kept_n);
+                /* kept[] shallow-copies rel_path pointers still owned by
+                 * cat->segments (freed once at catalog close); free only the
+                 * kept array, not those aliased strings, and not twice. */
                 gv_free(kept);
                 return -1;
             }
@@ -1496,12 +1498,15 @@ static int posting_catalog_drop_head_segments_below(GV_PostingCatalog *cat, uint
             if (!paths[path_n]) {
                 for (size_t j = 0; j < path_n; ++j) gv_free(paths[j]);
                 gv_free(paths);
-                posting_free_segment_refs(kept, kept_n);
+                /* kept[] shallow-copies rel_path pointers still owned by
+                 * cat->segments (freed once at catalog close); free only the
+                 * kept array, not those aliased strings, and not twice. */
                 gv_free(kept);
                 return -1;
             }
             path_n++;
             gv_free(cat->segments[i].rel_path);
+            cat->segments[i].rel_path = NULL;  /* prevent double-free at close if a later iteration errors out */
             GV_DiskPageCache *cache = posting_active_cache(cat);
             if (cache) {
                 char key[1024];
@@ -1651,8 +1656,8 @@ int posting_catalog_maybe_rollup_head(GV_PostingCatalog *cat, uint64_t head_id,
     return posting_catalog_compact_head(cat, head_id, dimension, use_sq8);
 }
 
-/* --- Live-id bitmap: a compact set of a head's live vector ids, built without
- * materializing payloads.  Enables IVF multi-probe set intersect/union. --- */
+/* Live-id bitmap: a compact set of a head's live vector ids, built without
+ * materializing payloads.  Enables IVF multi-probe set intersect/union. */
 
 typedef struct {
     uint64_t vector_id;

@@ -101,6 +101,9 @@ static int nv_ensure_capacity(GV_NamedVectorStore *store, size_t required) {
     size_t new_cap = store->point_capacity;
     if (new_cap == 0) new_cap = GV_NV_INITIAL_POINT_CAP;
     while (new_cap < required) {
+        /* Clamp the doubling: past SIZE_MAX/2 it wraps to 0 and the loop spins
+         * forever (0 < required) on a crafted file-supplied `required`. */
+        if (new_cap > SIZE_MAX / 2) { new_cap = required; break; }
         new_cap *= 2;
     }
 
@@ -112,6 +115,13 @@ static int nv_ensure_capacity(GV_NamedVectorStore *store, size_t required) {
     for (size_t b = 0; b < GV_NV_FIELD_HASH_BUCKETS; b++) {
         GV_NVField *f = store->buckets[b];
         while (f) {
+            /* Guard new_cap * dimension * sizeof(float) against overflow (new_cap
+             * can be a large file-supplied point count on the load path). */
+            if (f->dimension != 0 &&
+                (new_cap > SIZE_MAX / f->dimension ||
+                 new_cap * f->dimension > SIZE_MAX / sizeof(float))) {
+                return -1;
+            }
             float *new_vecs = (float *)gv_realloc(f->vectors,
                                                new_cap * f->dimension * sizeof(float));
             if (!new_vecs) return -1;
@@ -214,6 +224,16 @@ int named_vectors_add_field(GV_NamedVectorStore *store, const GV_VectorFieldConf
     f->distance_type = config->distance_type;
 
     if (store->point_capacity > 0) {
+        /* Guard point_capacity * dimension (dimension is file-controlled on the
+         * load path): the product is computed here before gv_calloc, so a wrap
+         * would slip past gv_calloc's own overflow check and the per-point fread
+         * would then overrun the undersized buffer. */
+        if (f->dimension != 0 && store->point_capacity > SIZE_MAX / f->dimension) {
+            gv_free(f->name);
+            gv_free(f);
+            pthread_rwlock_unlock(&store->rwlock);
+            return -1;
+        }
         f->vectors = (float *)gv_calloc(store->point_capacity * f->dimension, sizeof(float));
         f->occupied = (uint8_t *)gv_calloc(store->point_capacity, sizeof(uint8_t));
         if (!f->vectors || !f->occupied) {
@@ -303,6 +323,13 @@ int named_vectors_insert(GV_NamedVectorStore *store, size_t point_id,
     if (!store || !vectors || vector_count == 0) return -1;
 
     pthread_rwlock_wrlock(&store->rwlock);
+
+    /* point_id + 1 would wrap to 0 at SIZE_MAX, making nv_ensure_capacity a no-op
+     * and the subsequent vectors[point_id*dimension] write go wildly OOB. */
+    if (point_id == SIZE_MAX) {
+        pthread_rwlock_unlock(&store->rwlock);
+        return -1;
+    }
 
     if (nv_ensure_capacity(store, point_id + 1) != 0) {
         pthread_rwlock_unlock(&store->rwlock);

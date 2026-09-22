@@ -7,7 +7,6 @@
 
 #include "specialized/optimizer.h"
 
-/* Internal structure */
 struct GV_QueryOptimizer {
     GV_CollectionStats stats;
 
@@ -23,8 +22,6 @@ struct GV_QueryOptimizer {
     size_t ef_search_cap;              /* Hard cap on ef_search */
     size_t nprobe_cap;                 /* Hard cap on nprobe */
 };
-
-/* Helpers */
 
 static double log2_safe(double x)
 {
@@ -54,7 +51,6 @@ static int is_ivf_disk_index(int index_type)
 /* ef_search recommendation (used internally and in public API) */
 static size_t compute_ef_search(const GV_QueryOptimizer *opt, size_t k)
 {
-    /* Base ef = max(k * 2, 50) */
     size_t ef = size_max(k * 2, 50);
 
     /* High-dimensional boost */
@@ -100,7 +96,6 @@ static size_t compute_nprobe(const GV_QueryOptimizer *opt)
     return nprobe;
 }
 
-/* Cost estimation helpers */
 static double estimate_ivfdisk_cost(const GV_CollectionStats *st, size_t k, size_t nprobe)
 {
     double lists = (double)nprobe;
@@ -121,15 +116,12 @@ static double estimate_index_cost(const GV_CollectionStats *st, size_t k, size_t
     return (double)k * (double)ef * (double)st->dimension * log_n;
 }
 
-/* Public API */
-
 GV_QueryOptimizer *optimizer_create(void)
 {
     GV_QueryOptimizer *opt = (GV_QueryOptimizer *)gv_calloc(1, sizeof(GV_QueryOptimizer));
     if (!opt)
         return NULL;
 
-    /* Sensible defaults */
     opt->exact_scan_threshold      = 1000;
     opt->selective_filter_threshold = 0.01;
     opt->ema_alpha                 = 0.1;

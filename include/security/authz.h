@@ -47,8 +47,10 @@ typedef struct {
 
 typedef struct {
     int allowed;                    /**< 1 if allowed, 0 if denied. */
-    const char *denied_reason;      /**< Reason for denial (if any). */
-    const char *matched_role;       /**< Role that granted access (if any). */
+    const char *denied_reason;      /**< Reason for denial (static string). */
+    char matched_role[64];          /**< Role that granted access (owned copy; a
+                                     *   borrowed pointer into RoleEntry.name would
+                                     *   dangle if the role were removed/redefined). */
 } GV_AuthzResult;
 
 typedef struct GV_AuthzManager GV_AuthzManager;

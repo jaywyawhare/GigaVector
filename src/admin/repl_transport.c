@@ -34,14 +34,24 @@
 #define REPL_MAX_MSG_BYTES (16 * 1024 * 1024)
 #define REPL_MAX_CONNECTIONS 32
 
+/* One queued WAL frame awaiting delivery to a follower. */
+typedef struct PendingWal {
+    uint8_t *data;
+    size_t   len;
+    uint32_t req_id;
+    struct PendingWal *next;
+} PendingWal;
+
 typedef struct {
     int fd;
     char *node_id;
     int active;
-    uint8_t *pending_wal;
-    size_t pending_wal_len;
-    uint32_t pending_wal_req_id;
-    int pending_wal_ready;
+    /* FIFO of pending WAL frames. A batch (or rapid appends) enqueues one frame
+     * per entry; a single-slot buffer would drop all but the last and leave the
+     * follower with a silent, permanent gap. */
+    PendingWal *wal_head;
+    PendingWal *wal_tail;
+    uint32_t last_wal_req_id;   /* req_id of the most recently flushed WAL frame */
     uint8_t pending_heartbeat[16];
     int pending_heartbeat_ready;
 } ReplConnection;
@@ -66,25 +76,13 @@ struct GV_ReplTransport {
 #endif
 };
 
-static void write_u32_be(uint8_t *buf, uint32_t val) {
-    buf[0] = (uint8_t)(val >> 24);
-    buf[1] = (uint8_t)(val >> 16);
-    buf[2] = (uint8_t)(val >> 8);
-    buf[3] = (uint8_t)(val);
-}
-
-static uint32_t read_u32_be(const uint8_t *buf) {
-    return ((uint32_t)buf[0] << 24) | ((uint32_t)buf[1] << 16) |
-           ((uint32_t)buf[2] << 8) | ((uint32_t)buf[3]);
-}
-
 static void write_u64_be(uint8_t *buf, uint64_t val) {
-    write_u32_be(buf, (uint32_t)(val >> 32));
-    write_u32_be(buf + 4, (uint32_t)(val & 0xFFFFFFFFu));
+    gv_put_u32_be(buf, (uint32_t)(val >> 32));
+    gv_put_u32_be(buf + 4, (uint32_t)(val & 0xFFFFFFFFu));
 }
 
 static uint64_t read_u64_be(const uint8_t *buf) {
-    return ((uint64_t)read_u32_be(buf) << 32) | read_u32_be(buf + 4);
+    return ((uint64_t)gv_get_u32_be(buf) << 32) | gv_get_u32_be(buf + 4);
 }
 
 #ifndef _WIN32
@@ -139,9 +137,9 @@ static int repl_send_message(int fd, uint8_t msg_type, uint32_t request_id,
                              const uint8_t *payload, size_t payload_len) {
     uint32_t length = (uint32_t)(5 + payload_len);
     uint8_t header[9];
-    write_u32_be(header, length);
+    gv_put_u32_be(header, length);
     header[4] = msg_type;
-    write_u32_be(header + 5, request_id);
+    gv_put_u32_be(header + 5, request_id);
     if (send_exact(fd, header, 9) != 0) return -1;
     if (payload_len > 0 && payload) {
         if (send_exact(fd, payload, payload_len) != 0) return -1;
@@ -153,13 +151,13 @@ static int repl_recv_message(int fd, uint8_t *msg_type, uint32_t *request_id,
                              uint8_t **payload, size_t *payload_len) {
     uint8_t header[4];
     if (recv_exact(fd, header, 4) != 0) return -1;
-    uint32_t length = read_u32_be(header);
+    uint32_t length = gv_get_u32_be(header);
     if (length < 5 || length > REPL_MAX_MSG_BYTES) return -1;
 
     uint8_t meta[5];
     if (recv_exact(fd, meta, 5) != 0) return -1;
     *msg_type = meta[0];
-    *request_id = read_u32_be(meta + 1);
+    *request_id = gv_get_u32_be(meta + 1);
     size_t plen = length - 5;
     *payload_len = plen;
     if (plen == 0) {
@@ -278,23 +276,27 @@ static void repl_tune_socket(int fd) {
 
 static void repl_clear_connection_pending(ReplConnection *conn) {
     if (!conn) return;
-    gv_free(conn->pending_wal);
-    conn->pending_wal = NULL;
-    conn->pending_wal_len = 0;
-    conn->pending_wal_req_id = 0;
-    conn->pending_wal_ready = 0;
+    PendingWal *p = conn->wal_head;
+    while (p) { PendingWal *n = p->next; gv_free(p->data); gv_free(p); p = n; }
+    conn->wal_head = NULL;
+    conn->wal_tail = NULL;
     conn->pending_heartbeat_ready = 0;
 }
 
 static void repl_flush_connection_pending(GV_ReplTransport *transport, ReplConnection *conn) {
     if (!conn || !conn->active || conn->fd < 0) return;
-    if (conn->pending_wal_ready) {
-        repl_transport_send(transport, conn->fd, REPL_MSG_WAL, conn->pending_wal_req_id,
-                            conn->pending_wal, conn->pending_wal_len);
-        conn->pending_wal_ready = 0;
+    /* Send every queued WAL frame in order (not just the latest). */
+    while (conn->wal_head) {
+        PendingWal *p = conn->wal_head;
+        conn->wal_head = p->next;
+        if (!conn->wal_head) conn->wal_tail = NULL;
+        repl_transport_send(transport, conn->fd, REPL_MSG_WAL, p->req_id, p->data, p->len);
+        conn->last_wal_req_id = p->req_id;
+        gv_free(p->data);
+        gv_free(p);
     }
     if (conn->pending_heartbeat_ready) {
-        repl_transport_send(transport, conn->fd, REPL_MSG_HEARTBEAT, conn->pending_wal_req_id + 1,
+        repl_transport_send(transport, conn->fd, REPL_MSG_HEARTBEAT, conn->last_wal_req_id + 1,
                           conn->pending_heartbeat, sizeof(conn->pending_heartbeat));
         conn->pending_heartbeat_ready = 0;
     }
@@ -332,7 +334,7 @@ static int repl_send_catchup(GV_ReplTransport *transport, int fd, GV_Database *d
             return -1;
         }
         write_u64_be(payload, i);
-        write_u32_be(payload + 8, (uint32_t)record_len);
+        gv_put_u32_be(payload + 8, (uint32_t)record_len);
         memcpy(payload + 12, record, record_len);
         gv_free(record);
 
@@ -359,7 +361,7 @@ static void repl_handle_client(GV_ReplTransport *transport, int fd) {
         close(fd);
         return;
     }
-    uint32_t nid_len = read_u32_be(payload);
+    uint32_t nid_len = gv_get_u32_be(payload);
     if (nid_len >= sizeof(node_id) || payload_len < 4 + nid_len) {
         gv_free(payload);
         close(fd);
@@ -536,7 +538,7 @@ static void *repl_follower_thread_func(void *arg) {
             close(fd);
             continue;
         }
-        write_u32_be(hello, (uint32_t)nid_len);
+        gv_put_u32_be(hello, (uint32_t)nid_len);
         memcpy(hello + 4, node_id, nid_len);
         if (secret_len > 0) {
             memcpy(hello + 4 + nid_len, secret, secret_len);
@@ -562,7 +564,7 @@ static void *repl_follower_thread_func(void *arg) {
 
             if (msg_type == REPL_MSG_WAL && payload_len >= 12) {
                 uint64_t entry_index = read_u64_be(payload);
-                uint32_t record_len = read_u32_be(payload + 8);
+                uint32_t record_len = gv_get_u32_be(payload + 8);
                 /*
                  * Bound check written to avoid 32-bit unsigned overflow:
                  * `12 + record_len` would wrap for record_len near UINT32_MAX
@@ -764,12 +766,12 @@ int repl_parse_frame_buffer(const uint8_t *data, size_t len, size_t max_bytes,
     *payload_len = 0;
     if (len < 9) return -1;
 
-    uint32_t length = read_u32_be(data);
+    uint32_t length = gv_get_u32_be(data);
     if (length < 5 || length > max_bytes) return -1;
     if (len < 4u + length) return -1;
 
     *msg_type = data[4];
-    *request_id = read_u32_be(data + 5);
+    *request_id = gv_get_u32_be(data + 5);
     size_t plen = length - 5;
     *payload_len = plen;
     if (plen == 0) return 0;
@@ -802,7 +804,7 @@ int repl_transport_broadcast_entry(GV_ReplTransport *transport, GV_Database *db,
         return -1;
     }
     write_u64_be(payload, entry_index);
-    write_u32_be(payload + 8, (uint32_t)record_len);
+    gv_put_u32_be(payload + 8, (uint32_t)record_len);
     memcpy(payload + 12, record, record_len);
     gv_free(record);
 
@@ -818,13 +820,16 @@ int repl_transport_broadcast_entry(GV_ReplTransport *transport, GV_Database *db,
     for (int i = 0; i < REPL_MAX_CONNECTIONS; i++) {
         if (!transport->connections[i].active) continue;
         ReplConnection *conn = &transport->connections[i];
-        gv_free(conn->pending_wal);
-        conn->pending_wal = (uint8_t *)gv_alloc(payload_len);
-        if (!conn->pending_wal) continue;
-        memcpy(conn->pending_wal, payload, payload_len);
-        conn->pending_wal_len = payload_len;
-        conn->pending_wal_req_id = (uint32_t)(entry_index + 1);
-        conn->pending_wal_ready = 1;
+        PendingWal *node = (PendingWal *)gv_alloc(sizeof(PendingWal));
+        if (!node) continue;
+        node->data = (uint8_t *)gv_alloc(payload_len);
+        if (!node->data) { gv_free(node); continue; }
+        memcpy(node->data, payload, payload_len);
+        node->len = payload_len;
+        node->req_id = (uint32_t)(entry_index + 1);
+        node->next = NULL;
+        if (conn->wal_tail) conn->wal_tail->next = node; else conn->wal_head = node;
+        conn->wal_tail = node;
         memcpy(conn->pending_heartbeat, heartbeat, sizeof(heartbeat));
         conn->pending_heartbeat_ready = 1;
     }

@@ -978,6 +978,43 @@ class Database:
         lib.gv_search_results_free(results, n)
         return out
 
+    # ---- warm-up / recall / bulk import / transactions ----
+
+    def warmup(self) -> None:
+        """Prefetch the backing data/WAL into the OS page cache to avoid cold-start latency."""
+        lib.gv_db_warmup(self._db)
+
+    def evaluate_recall(self, queries: Sequence[Sequence[float]], k: int = 10,
+                        distance: DistanceType = DistanceType.EUCLIDEAN) -> float:
+        """Mean recall@k of ANN search vs exact ground truth over the stored vectors."""
+        nq = len(queries)
+        if nq == 0:
+            return 0.0
+        flat = [float(x) for row in queries for x in row]
+        buf = ffi.new("float[]", flat)
+        return float(lib.gv_db_evaluate_recall(self._db, buf, nq, self.dimension, k, int(distance)))
+
+    def import_csv(self, path: str, delimiter: str = ",", has_header: bool = False,
+                   id_column: int = -1) -> int:
+        """Bulk-load vectors from a CSV file. Returns 0 on success, -1 on error."""
+        return int(lib.gv_db_import_csv(self._db, path.encode(), delimiter.encode()[0:1] or b",",
+                                        1 if has_header else 0, id_column))
+
+    def import_jsonl(self, path: str) -> int:
+        """Bulk-load vectors from a JSONL file (one {"vector":[...], "id":..., "metadata":{}} per line)."""
+        return int(lib.gv_db_import_jsonl(self._db, path.encode()))
+
+    def begin(self) -> "DBTransaction":
+        """Begin an MVCC transaction (snapshot isolation) over this database."""
+        handle = lib.gv_db_begin(self._db)
+        if handle == ffi.NULL:
+            raise RuntimeError("gv_db_begin failed")
+        return DBTransaction(self, handle)
+
+    def txn_gc(self, safe_below: int) -> int:
+        """Reclaim MVCC tombstones with delete-version < safe_below. Returns count reclaimed."""
+        return int(lib.gv_db_txn_gc(self._db, safe_below))
+
     def search_with_filter_expr(self, query: Sequence[float], k: int,
                                 distance: DistanceType = DistanceType.EUCLIDEAN,
                                 filter_expr: str | None = None) -> list[SearchHit]:
@@ -1471,8 +1508,11 @@ class LLM:
             self._llm, c_messages, len(messages), response_format_bytes, c_response
         )
 
-        for c_msg, _, _ in message_refs:
-            lib.gv_llm_message_free(c_msg)
+        # The message role/content buffers are CFFI-owned (allocated via ffi.new
+        # in _to_c_message and kept alive by message_refs). gv_llm_message_free
+        # calls free() on them, which would double-free once CFFI reclaims them.
+        # Just drop the references and let CFFI free them.
+        del message_refs
 
         if result != 0:
             error_msg = lib.gv_llm_get_last_error(self._llm)
@@ -1673,17 +1713,21 @@ class EmbeddingService:
         if result < 0:
             return [None] * len(texts)
 
+        # Success but NULL output array: return one None per input so callers can
+        # index the result positionally against `texts` (never a truncated list).
+        if embeddings_ptr[0] == ffi.NULL:
+            return [None] * len(texts)
+
         embeddings: list[Optional[Sequence[float]]] = []
-        if embeddings_ptr[0] != ffi.NULL:
-            for i in range(len(texts)):
-                if embeddings_ptr[0][i] != ffi.NULL and embedding_dims_ptr[0][i] > 0:
-                    emb: list[float] = [embeddings_ptr[0][i][j] for j in range(embedding_dims_ptr[0][i])]
-                    lib.gv_free(embeddings_ptr[0][i])
-                    embeddings.append(emb)
-                else:
-                    embeddings.append(None)
-            lib.gv_free(embeddings_ptr[0])
-            lib.gv_free(embedding_dims_ptr[0])
+        for i in range(len(texts)):
+            if embeddings_ptr[0][i] != ffi.NULL and embedding_dims_ptr[0][i] > 0:
+                emb: list[float] = [embeddings_ptr[0][i][j] for j in range(embedding_dims_ptr[0][i])]
+                lib.gv_free(embeddings_ptr[0][i])
+                embeddings.append(emb)
+            else:
+                embeddings.append(None)
+        lib.gv_free(embeddings_ptr[0])
+        lib.gv_free(embedding_dims_ptr[0])
 
         return embeddings
 
@@ -2244,7 +2288,11 @@ class MemoryLayer:
         opts[0].min_timestamp = min_timestamp
         opts[0].max_timestamp = max_timestamp
         opts[0].memory_type = memory_type
-        opts[0].source = source.encode() if source else ffi.NULL
+        # Keep the encoded source buffer alive across the C call (assigning a
+        # bare `bytes` to a `char *` field raises TypeError, and a temporary
+        # would dangle even if it didn't).
+        c_source = ffi.new("char[]", source.encode()) if source else ffi.NULL
+        opts[0].source = c_source
         c_idx = None
         if candidate_vector_indices:
             c_idx = ffi.new("size_t[]", list(candidate_vector_indices))
@@ -2507,7 +2555,7 @@ class GraphQueryResult:
 
 @dataclass
 class ContextGraphConfig:
-    llm: Optional[LLM] = None  # LLM instance
+    llm: Optional[LLM] = None
     similarity_threshold: float = 0.7
     enable_entity_extraction: bool = True
     enable_relationship_extraction: bool = True
@@ -2515,7 +2563,7 @@ class ContextGraphConfig:
     max_results: int = 100
     embedding_callback: Optional[Callable[[str], Sequence[float]]] = None
     embedding_dimension: int = 0
-    embedding_service: Optional[EmbeddingService] = None  # EmbeddingService instance
+    embedding_service: Optional[EmbeddingService] = None
 
     def _to_c_config(self) -> CData:
         """Convert to C configuration structure.
@@ -3117,6 +3165,8 @@ class ServerConfig:
     cors_origins: str = "*"
     enable_logging: bool = True
     api_key: str | None = None
+    allow_unauthenticated: bool = False
+    data_dir: str = "./data"
     enable_dashboard: bool = False
 
 
@@ -3152,6 +3202,9 @@ class Server:
                 c_config.api_key = self._api_key
             else:
                 c_config.api_key = ffi.NULL
+            c_config.allow_unauthenticated = 1 if config.allow_unauthenticated else 0
+            self._data_dir = ffi.new("char[]", config.data_dir.encode())
+            c_config.data_dir = self._data_dir
         self._server = lib.gv_server_create(db._db, c_config)
         if self._server == ffi.NULL:
             raise RuntimeError("Failed to create server")
@@ -3168,6 +3221,14 @@ class Server:
             lib.gv_server_destroy(self._server)
             self._server = ffi.NULL
             self._closed = True
+
+    def set_graphs(self, kg=None, graph=None) -> None:
+        """Expose optional KnowledgeGraph / GraphDB under /kg/* and /graph/*."""
+        lib.gv_server_set_graphs(
+            self._server,
+            kg._kg if kg is not None else ffi.NULL,
+            graph._g if graph is not None else ffi.NULL,
+        )
 
     def start(self) -> None:
         rc = lib.gv_server_start(self._server)
@@ -3273,7 +3334,11 @@ def backup_create(db: Database, backup_path: str, options: BackupOptions | None 
         c_options.include_wal = 1 if options.include_wal else 0
         c_options.include_metadata = 1 if options.include_metadata else 0
         c_options.verify_after = 1 if options.verify_after else 0
-        c_options.encryption_key = options.encryption_key.encode() if options.encryption_key else ffi.NULL
+        # Keep the encoded key buffer alive across the C call; a bare bytes
+        # cannot be assigned to a `char *` field and a temporary would dangle.
+        if options.encryption_key:
+            _enc_key = ffi.new("char[]", options.encryption_key.encode())
+            c_options.encryption_key = _enc_key
     result = lib.gv_backup_create(db._db, backup_path.encode(), c_options, ffi.NULL, ffi.NULL)
     if result == ffi.NULL:
         raise RuntimeError("Backup creation failed")
@@ -3295,7 +3360,9 @@ def backup_restore(backup_path: str, db_path: str, options: RestoreOptions | Non
     if options:
         c_options.overwrite = 1 if options.overwrite else 0
         c_options.verify_checksum = 1 if options.verify_checksum else 0
-        c_options.decryption_key = options.decryption_key.encode() if options.decryption_key else ffi.NULL
+        if options.decryption_key:
+            _dec_key = ffi.new("char[]", options.decryption_key.encode())
+            c_options.decryption_key = _dec_key
     result = lib.gv_backup_restore(backup_path.encode(), db_path.encode(), c_options, ffi.NULL, ffi.NULL)
     if result == ffi.NULL:
         raise RuntimeError("Restore failed")
@@ -3317,7 +3384,9 @@ def backup_restore_to_db(backup_path: str, options: RestoreOptions | None = None
     if options:
         c_options.overwrite = 1 if options.overwrite else 0
         c_options.verify_checksum = 1 if options.verify_checksum else 0
-        c_options.decryption_key = options.decryption_key.encode() if options.decryption_key else ffi.NULL
+        if options.decryption_key:
+            _dec_key = ffi.new("char[]", options.decryption_key.encode())
+            c_options.decryption_key = _dec_key
     db_ptr = ffi.new("GV_Database **")
     result = lib.gv_backup_restore_to_db(backup_path.encode(), c_options, db_ptr)
     if result == ffi.NULL or not result.success:
@@ -4791,6 +4860,72 @@ class TxnStatus(IntEnum):
     ABORTED = 2
 
 
+class DBTransaction:
+    """Database-level MVCC transaction (snapshot isolation) from ``Database.begin()``.
+
+    Reads see a consistent snapshot as of begin; writes are staged and applied
+    atomically at commit (write-write conflicts raise ``TransactionConflict``).
+    Usable as a context manager — commits on clean exit, rolls back on exception.
+    """
+    def __init__(self, db, handle):
+        self._db = db
+        self._txn = handle
+        self._done = False
+
+    def add_vector(self, vector: Sequence[float]) -> None:
+        buf = ffi.new("float[]", [float(x) for x in vector])
+        if lib.gv_db_txn_add_vector(self._txn, buf, len(vector)) != 0:
+            raise RuntimeError("txn add_vector failed")
+
+    def delete(self, vector_index: int) -> None:
+        if lib.gv_db_txn_delete(self._txn, vector_index) != 0:
+            raise RuntimeError("txn delete failed")
+
+    def search(self, query: Sequence[float], k: int,
+               distance: DistanceType = DistanceType.EUCLIDEAN) -> list[SearchHit]:
+        qbuf = ffi.new("float[]", [float(x) for x in query])
+        results = ffi.new("GV_SearchResult[]", k)
+        n = lib.gv_db_txn_search(self._txn, qbuf, k, results, int(distance))
+        if n < 0:
+            raise RuntimeError("txn search failed")
+        out: list[SearchHit] = []
+        for i in range(n):
+            res = results[i]
+            vec = _copy_vector(res.vector) if res.vector != ffi.NULL else None
+            out.append(SearchHit(distance=float(res.distance), vector=vec, id=int(res.id)))
+        lib.gv_search_results_free(results, n)
+        return out
+
+    def commit(self) -> None:
+        """Apply the transaction. Raises ``TransactionConflict`` on a write-write conflict."""
+        if self._done:
+            return
+        rc = lib.gv_db_commit(self._txn)   # 0 = ok, 1 = conflict
+        self._done = True
+        if rc == 1:
+            raise TransactionConflict("transaction aborted: write-write conflict")
+        if rc != 0:
+            raise RuntimeError("commit failed")
+
+    def rollback(self) -> None:
+        if not self._done:
+            lib.gv_db_rollback(self._txn)
+            self._done = True
+
+    def __enter__(self) -> "DBTransaction":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        if exc_type is not None:
+            self.rollback()
+        else:
+            self.commit()
+
+
+class TransactionConflict(RuntimeError):
+    """Raised when a transaction commit is rejected due to a write-write conflict."""
+
+
 class Transaction:
     def __init__(self, txn):
         self._txn = txn
@@ -5943,7 +6078,9 @@ class DiskANNIndex:
             c_cfg.build_beam_width = config.build_beam_width
             c_cfg.search_beam_width = config.search_beam_width
             if config.data_path:
-                self._data_path = config.data_path.encode()
+                # Keep the encoded path alive; a bare bytes can't be assigned to
+                # a `char *` cdata field (raises TypeError).
+                self._data_path = ffi.new("char[]", config.data_path.encode())
                 c_cfg.data_path = self._data_path
             c_cfg.cache_size_mb = config.cache_size_mb
         self._index = lib.gv_diskann_create(dimension, c_cfg)
@@ -8225,8 +8362,6 @@ class GraphDB:
         if hasattr(self, "_g") and self._g != ffi.NULL:
             lib.gv_graph_destroy(self._g)
 
-    # -- Node ops --
-
     def add_node(self, label: str) -> int:
         nid = lib.gv_graph_add_node(self._g, label.encode())
         if nid == 0:
@@ -8259,8 +8394,6 @@ class GraphDB:
         if n < 0:
             raise RuntimeError("Failed to find nodes by label")
         return [out[i] for i in range(n)]
-
-    # -- Edge ops --
 
     def add_edge(self, source: int, target: int, label: str, weight: float = 1.0) -> int:
         eid = lib.gv_graph_add_edge(self._g, source, target, label.encode(), weight)
@@ -8315,8 +8448,6 @@ class GraphDB:
             raise RuntimeError("Failed to get neighbors")
         return [out[i] for i in range(n)]
 
-    # -- Traversal --
-
     def bfs(self, start: int, max_depth: int = 10, max_count: int = 4096) -> List[int]:
         out = ffi.new("uint64_t[]", max_count)
         n = lib.gv_graph_bfs(self._g, start, max_depth, out, max_count)
@@ -8361,8 +8492,6 @@ class GraphDB:
             lib.gv_graph_free_path(paths + i)
         return results
 
-    # -- Analytics --
-
     def pagerank(self, node_id: int, iterations: int = 20, damping: float = 0.85) -> float:
         return lib.gv_graph_pagerank(self._g, node_id, iterations, damping)
 
@@ -8388,8 +8517,6 @@ class GraphDB:
     def clustering_coefficient(self, node_id: int) -> float:
         return lib.gv_graph_clustering_coefficient(self._g, node_id)
 
-    # -- Stats --
-
     @property
     def node_count(self) -> int:
         return lib.gv_graph_node_count(self._g)
@@ -8398,11 +8525,24 @@ class GraphDB:
     def edge_count(self) -> int:
         return lib.gv_graph_edge_count(self._g)
 
-    # -- Persistence --
-
     def save(self, path: str) -> None:
         if lib.gv_graph_save(self._g, path.encode()) != 0:
             raise RuntimeError("Failed to save graph")
+
+    @property
+    def version(self) -> int:
+        """Mutation counter; bumps on every committed change."""
+        return lib.gv_graph_version(self._g)
+
+    def wal_attach(self, snapshot_path: str) -> None:
+        """Enable fsync'd write-ahead logging against a snapshot path."""
+        if lib.gv_graph_wal_attach(self._g, snapshot_path.encode()) != 0:
+            raise RuntimeError("Failed to attach graph WAL")
+
+    def wal_checkpoint(self) -> None:
+        """Truncate and fsync the attached WAL."""
+        if lib.gv_graph_wal_checkpoint(self._g) != 0:
+            raise RuntimeError("Failed to checkpoint graph WAL")
 
     @classmethod
     def load(cls, path: str) -> "GraphDB":
@@ -8498,8 +8638,6 @@ class KnowledgeGraph:
         except Exception:
             pass
 
-    # -- Entity ops --
-
     def add_entity(self, name: str, type_: str, embedding: Optional[List[float]] = None) -> int:
         return call_with_retry(
             lambda: self._add_entity_once(name, type_, embedding),
@@ -8557,8 +8695,6 @@ class KnowledgeGraph:
             raise RuntimeError("Failed to find entities by name")
         return [out[i] for i in range(n)]
 
-    # -- Relation ops --
-
     def add_relation(self, subject: int, predicate: str, object_: int, weight: float = 1.0) -> int:
         return call_with_retry(
             lambda: self._add_relation_once(subject, predicate, object_, weight),
@@ -8576,6 +8712,80 @@ class KnowledgeGraph:
         if lib.gv_kg_remove_relation(self._kg, relation_id) != 0:
             raise RuntimeError(f"Failed to remove relation {relation_id}")
 
+    def add_relation_with_chunk(self, subject: int, predicate: str, object_: int,
+                                weight: float = 1.0, chunk_id: str = "") -> int:
+        rid = lib.gv_kg_add_relation_with_chunk(
+            self._kg, subject, predicate.encode(), object_, weight, chunk_id.encode())
+        if rid == 0:
+            raise RuntimeError("Failed to add relation")
+        return rid
+
+    def query_triples_by_chunk(self, chunk_id: str, max_count: int = 1024) -> List[KGTriple]:
+        out = ffi.new("GV_KGTriple[]", max_count)
+        n = lib.gv_kg_query_triples_by_chunk(self._kg, chunk_id.encode(), out, max_count)
+        if n < 0:
+            raise RuntimeError("Failed to query triples by chunk")
+        triples = [
+            KGTriple(
+                subject_id=out[i].subject_id,
+                subject_name=ffi.string(out[i].subject_name).decode() if out[i].subject_name != ffi.NULL else "",
+                predicate=ffi.string(out[i].predicate).decode() if out[i].predicate != ffi.NULL else "",
+                object_id=out[i].object_id,
+                object_name=ffi.string(out[i].object_name).decode() if out[i].object_name != ffi.NULL else "",
+                score=out[i].score,
+            )
+            for i in range(n)
+        ]
+        lib.gv_kg_free_triples(out, n)
+        return triples
+
+    def remove_relations_by_chunk(self, chunk_id: str) -> int:
+        n = lib.gv_kg_remove_relations_by_chunk(self._kg, chunk_id.encode())
+        if n < 0:
+            raise RuntimeError("Failed to remove relations by chunk")
+        return n
+
+    def wal_attach(self, snapshot_path: str) -> None:
+        """Enable fsync'd write-ahead logging against a snapshot path."""
+        if lib.gv_kg_wal_attach(self._kg, snapshot_path.encode()) != 0:
+            raise RuntimeError("Failed to attach KG WAL")
+
+    def wal_checkpoint(self) -> None:
+        """Truncate and fsync the attached WAL."""
+        if lib.gv_kg_wal_checkpoint(self._kg) != 0:
+            raise RuntimeError("Failed to checkpoint KG WAL")
+
+    def expand_context(self, seeds: List[int], radius: int,
+                       max_count: int = 1024) -> List[KGTriple]:
+        """Multi-hop expansion: triples within `radius` hops of any seed."""
+        seeds_arr = ffi.new("uint64_t[]", seeds)
+        out = ffi.new("GV_KGTriple[]", max_count)
+        n = lib.gv_kg_expand_context(self._kg, seeds_arr, len(seeds),
+                                     radius, out, max_count)
+        if n < 0:
+            raise RuntimeError("Failed to expand context")
+        triples = [
+            KGTriple(
+                subject_id=out[i].subject_id,
+                subject_name=ffi.string(out[i].subject_name).decode() if out[i].subject_name != ffi.NULL else "",
+                predicate=ffi.string(out[i].predicate).decode() if out[i].predicate != ffi.NULL else "",
+                object_id=out[i].object_id,
+                object_name=ffi.string(out[i].object_name).decode() if out[i].object_name != ffi.NULL else "",
+                score=out[i].score,
+            )
+            for i in range(n)
+        ]
+        lib.gv_kg_free_triples(out, n)
+        return triples
+
+    def remove_entity_prop(self, entity_id: int, key: str) -> None:
+        if lib.gv_kg_remove_entity_prop(self._kg, entity_id, key.encode()) != 0:
+            raise RuntimeError(f"Failed to remove entity property {key}")
+
+    def remove_relation_prop(self, relation_id: int, key: str) -> None:
+        if lib.gv_kg_remove_relation_prop(self._kg, relation_id, key.encode()) != 0:
+            raise RuntimeError(f"Failed to remove relation property {key}")
+
     def get_relation(self, relation_id: int):
         r = lib.gv_kg_get_relation(self._kg, relation_id)
         if r == ffi.NULL:
@@ -8591,8 +8801,6 @@ class KnowledgeGraph:
     def set_relation_prop(self, relation_id: int, key: str, value: str) -> None:
         if lib.gv_kg_set_relation_prop(self._kg, relation_id, key.encode(), value.encode()) != 0:
             raise RuntimeError(f"Failed to set relation property {key}")
-
-    # -- Triple queries --
 
     def query_triples(self, subject: Optional[int] = None, predicate: Optional[str] = None,
                       object_: Optional[int] = None, max_count: int = 1024) -> List[KGTriple]:
@@ -8616,8 +8824,6 @@ class KnowledgeGraph:
             ))
         lib.gv_kg_free_triples(out, n)
         return results
-
-    # -- Semantic search --
 
     def search_similar(self, query_embedding: List[float], k: int = 10) -> List[KGSearchResult]:
         c_emb = ffi.new("float[]", query_embedding)
@@ -8683,8 +8889,6 @@ class KnowledgeGraph:
         lib.gv_kg_free_search_results(out, n)
         return results
 
-    # -- Entity resolution --
-
     def resolve_entity(self, name: str, type_: str, embedding: Optional[List[float]] = None) -> int:
         if embedding:
             c_emb = ffi.new("float[]", embedding)
@@ -8714,8 +8918,6 @@ class KnowledgeGraph:
         if lib.gv_kg_merge_entities(self._kg, keep_id, merge_id) != 0:
             raise RuntimeError("Failed to merge entities")
 
-    # -- Link prediction --
-
     def predict_links(self, entity_id: int, k: int = 10) -> List[KGLinkPrediction]:
         out = ffi.new("GV_KGLinkPrediction[]", k)
         n = lib.gv_kg_predict_links(self._kg, entity_id, k, out)
@@ -8730,8 +8932,6 @@ class KnowledgeGraph:
                 confidence=p.confidence,
             ))
         return results
-
-    # -- Traversal --
 
     def get_neighbors(self, entity_id: int, max_count: int = 1024) -> List[int]:
         out = ffi.new("uint64_t[]", max_count)
@@ -8754,8 +8954,6 @@ class KnowledgeGraph:
             return None
         return [out[i] for i in range(n)]
 
-    # -- Subgraph --
-
     def extract_subgraph(self, center: int, radius: int = 2) -> KGSubgraph:
         sg = ffi.new("GV_KGSubgraph *")
         if lib.gv_kg_extract_subgraph(self._kg, center, radius, sg) != 0:
@@ -8766,8 +8964,6 @@ class KnowledgeGraph:
         )
         lib.gv_kg_free_subgraph(sg)
         return result
-
-    # -- Analytics --
 
     def get_stats(self) -> KGStats:
         stats = ffi.new("GV_KGStats *")
@@ -8808,8 +9004,6 @@ class KnowledgeGraph:
                 predicates.append(ffi.string(out[i]).decode())
                 lib.gv_free(out[i])
         return predicates
-
-    # -- Persistence --
 
     def save(self, path: str) -> None:
         if lib.gv_kg_save(self._kg, path.encode()) != 0:
@@ -9872,9 +10066,13 @@ class PostingCatalog:
         pq_m: int = 0,
         pq_codebook: Sequence[float] | None = None,
     ) -> None:
+        # Per-call keepalive: these buffers only need to outlive the synchronous
+        # append C call (which copies the data), so scope them locally instead of
+        # growing self._keepalive unboundedly across every append().
+        _ka: list = []
         dim = len(data)
         arr = ffi.new("float[]", list(data))
-        self._keepalive.append(arr)
+        _ka.append(arr)
         entry = ffi.new("GV_PostingWriteEntry *")
         entry.vector_id = vector_id
         entry.version = version
@@ -9884,12 +10082,12 @@ class PostingCatalog:
         code_arr = ffi.NULL
         if codes is not None:
             code_arr = ffi.new("uint8_t[]", [int(c) & 0xFF for c in codes])
-            self._keepalive.append(code_arr)
+            _ka.append(code_arr)
             entry.codes = code_arr
         else:
             entry.codes = ffi.NULL
 
-        self._keepalive.append(entry)
+        _ka.append(entry)
 
         if payload_type == PostingPayloadType.FLOAT:
             if lib.gv_posting_catalog_append_segment(
@@ -9902,13 +10100,13 @@ class PostingCatalog:
         params.payload_type = int(payload_type)
         params.pq_m = pq_m
         params.pq_codebook = ffi.NULL
-        self._keepalive.append(params)
+        _ka.append(params)
 
         if payload_type == PostingPayloadType.PQ:
             if not pq_codebook or pq_m <= 0:
                 raise ValueError("PQ append requires pq_m and pq_codebook")
             cb = ffi.new("float[]", list(pq_codebook))
-            self._keepalive.append(cb)
+            _ka.append(cb)
             params.pq_codebook = cb
             if codes is None:
                 raise ValueError("PQ append requires pre-encoded codes")

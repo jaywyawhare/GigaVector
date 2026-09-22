@@ -33,6 +33,7 @@ static int test_add_and_search(void) {
     ASSERT(results[0].distance >= 0.0f, "euclidean distance should be non-negative");
     gv_search_results_free(results, found);
 
+    gv_search_results_free(results, (size_t)found);
     gv_db_close(db);
     return 0;
 }

@@ -109,16 +109,10 @@ static int test_cypher_oom(void) {
         "MATCH (a:Person)-[r:KNOWS]->(b) RETURN a.name, type(r), b.name",
         "CREATE (c:Person {name:'Carol'})",
     };
-    /* NOTE: The Cypher engine (tokenizer + recursive-descent parser + executor)
-     * is not yet comprehensively OOM-safe: the tokenizer ignores push() failures
-     * and several parser/executor allocations are unchecked, so per-allocation
-     * failure injection can crash it. The central allocation helpers
-     * (row_copy, row_bind helpers, rs_add), the parser operand path, and the token
-     * text have been hardened, but full OOM-injection coverage of the query
-     * engine is tracked as a follow-up. Here we only assert the queries execute
-     * and free cleanly with no injection (sanity), rather than deep-injecting a
-     * not-yet-hardened engine. See test_sql_oom / test_ingest_oom for engines
-     * that ARE driven under injected failures. */
+    /* NOTE: the Cypher engine is not yet comprehensively OOM-safe (tokenizer ignores
+     * push() failures, some parser/executor allocations unchecked), so per-allocation
+     * injection can crash it — full coverage is a follow-up. Here we only sanity-check
+     * that queries execute and free cleanly with no injection. */
     for (size_t q = 0; q < sizeof(queries) / sizeof(queries[0]); q++) {
         GV_CypherResult result;
         memset(&result, 0, sizeof(result));

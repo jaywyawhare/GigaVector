@@ -34,8 +34,6 @@ uint64_t version_create(GV_VersionManager *mgr, const float *data,
  * @brief List items.
  *
  * @param mgr Manager instance.
- * @param infos infos.
- * @param max_infos max_infos.
  * @return 0 on success, -1 on error.
  */
 int version_list(const GV_VersionManager *mgr, GV_VersionInfo *infos, size_t max_infos);
@@ -83,7 +81,6 @@ int version_save(const GV_VersionManager *mgr, FILE *out);
 /**
  * @brief Load state from a file.
  *
- * @param mgr_ptr mgr_ptr.
  * @param in Input file stream.
  * @return 0 on success, -1 on error.
  */

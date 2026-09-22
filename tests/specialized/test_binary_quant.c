@@ -26,15 +26,10 @@ static int test_binary_quantize_basic(void) {
 }
 
 static int test_binary_bytes_needed(void) {
-    /* 8 dimensions -> 1 byte */
     ASSERT(binary_bytes_needed(8) == 1, "8 dims should need 1 byte");
-    /* 16 dimensions -> 2 bytes */
     ASSERT(binary_bytes_needed(16) == 2, "16 dims should need 2 bytes");
-    /* 1 dimension -> 1 byte (rounded up) */
     ASSERT(binary_bytes_needed(1) == 1, "1 dim should need 1 byte");
-    /* 9 dimensions -> 2 bytes (rounded up) */
     ASSERT(binary_bytes_needed(9) == 2, "9 dims should need 2 bytes");
-    /* 0 dimensions -> 0 bytes */
     ASSERT(binary_bytes_needed(0) == 0, "0 dims should need 0 bytes");
 
     return 0;
@@ -103,7 +98,7 @@ static int test_binary_vector_wrap(void) {
     uint8_t *bits = (uint8_t *)gv_calloc(nbytes, 1);
     ASSERT(bits != NULL, "gv_calloc failed");
 
-    bits[0] = 0xAA; /* 10101010 */
+    bits[0] = 0xAA;
 
     GV_BinaryVector *bv = binary_vector_wrap(bits, DIM);
     ASSERT(bv != NULL, "binary_vector_wrap returned NULL");
@@ -121,18 +116,13 @@ static int test_binary_destroy_null(void) {
 }
 
 static int test_binary_quantize_sign_threshold(void) {
-    /* Test that the sign threshold is exactly 0:
-       values >= 0 map to 1, values < 0 map to 0 */
+    /* Sign threshold is exactly 0: values >= 0 map to 1, values < 0 map to 0 */
     float data[8] = { 0.0f, -0.0001f, 0.0001f, -1.0f, 1.0f, 0.5f, -0.5f, 0.0f };
 
     GV_BinaryVector *bv = binary_quantize(data, 8);
     ASSERT(bv != NULL, "quantization failed");
 
-    /* Expected bits: 1,0,1,0,1,1,0,1 = 0xB5 (LSB first) or 0xAD (MSB first)
-       The exact encoding depends on bit order, but hamming distance
-       between this vector and an all-positive vector should tell us
-       how many negatives there are. */
-
+    /* Hamming distance vs an all-positive vector counts the negatives, independent of bit order */
     float all_pos[8] = { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f };
     GV_BinaryVector *bv_pos = binary_quantize(all_pos, 8);
     ASSERT(bv_pos != NULL, "quantization of all-positive failed");

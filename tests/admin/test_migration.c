@@ -68,8 +68,8 @@ static int test_migration_take_index(void) {
     void *idx2 = migration_take_index(mig);
     ASSERT(idx2 == NULL, "second take_index should return NULL");
 
-    /* KDTREE (type 0) migration yields a GV_SoAStorage; free it with its own
-     * destructor so the inner SoA arrays are released, not just the handle. */
+    /* type 0 == MIG_INDEX_KDTREE: the taken index is a GV_SoAStorage that owns
+     * internal arrays, so it must be released with soa_storage_destroy(). */
     soa_storage_destroy((GV_SoAStorage *)idx);
     migration_destroy(mig);
     return 0;

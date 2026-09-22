@@ -58,8 +58,6 @@ static inline int closedir(DIR *d) {
 #include <dirent.h>
 #endif
 
-/* Internal Structures */
-
 #define MAX_NAMESPACE_NAME 64
 #define MAX_NAMESPACES 256
 
@@ -87,15 +85,11 @@ struct GV_NamespaceManager {
     pthread_rwlock_t rwlock;
 };
 
-/* Configuration */
-
 void namespace_config_init(GV_NamespaceConfig *config) {
     if (!config) return;
     memset(config, 0, sizeof(*config));
     config->index_type = GV_NS_INDEX_HNSW;
 }
-
-/* Namespace Manager Lifecycle */
 
 GV_NamespaceManager *namespace_manager_create(const char *base_path) {
     GV_NamespaceManager *mgr = gv_calloc(1, sizeof(GV_NamespaceManager));
@@ -108,7 +102,6 @@ GV_NamespaceManager *namespace_manager_create(const char *base_path) {
 
     if (base_path) {
         mgr->base_path = gv_dup_cstr(base_path);
-        /* Create directory if it doesn't exist */
         mkdir(base_path, 0755);
     }
 
@@ -118,7 +111,6 @@ GV_NamespaceManager *namespace_manager_create(const char *base_path) {
 void namespace_manager_destroy(GV_NamespaceManager *mgr) {
     if (!mgr) return;
 
-    /* Close all namespaces */
     for (size_t i = 0; i < mgr->namespace_count; i++) {
         if (mgr->namespaces[i]) {
             pthread_mutex_destroy(&mgr->namespaces[i]->mutex);
@@ -134,8 +126,6 @@ void namespace_manager_destroy(GV_NamespaceManager *mgr) {
     gv_free(mgr->base_path);
     gv_free(mgr);
 }
-
-/* Internal Helpers */
 
 static GV_Namespace *find_namespace(GV_NamespaceManager *mgr, const char *name) {
     for (size_t i = 0; i < mgr->namespace_count; i++) {
@@ -246,8 +236,15 @@ static int read_manifest(const char *db_filepath, size_t *dimension,
     fseek(fp, 0, SEEK_END);
     long fsize = ftell(fp);
     fseek(fp, 0, SEEK_SET);
+    if (fsize < 0) {
+        /* ftell failure: without this guard fsize == -1 makes gv_alloc(0) and
+         * fread(...,(size_t)-1,...) / content[-1] run wild. */
+        fclose(fp);
+        gv_free(manifest_path);
+        return -1;
+    }
 
-    char *content = gv_alloc(fsize + 1);
+    char *content = gv_alloc((size_t)fsize + 1);
     if (!content) {
         fclose(fp);
         gv_free(manifest_path);
@@ -291,8 +288,6 @@ static int read_manifest(const char *db_filepath, size_t *dimension,
     gv_free(content);
     return 0;
 }
-
-/* Namespace Operations */
 
 GV_Namespace *namespace_create(GV_NamespaceManager *mgr, const GV_NamespaceConfig *config) {
     if (!mgr || !config || !config->name || config->dimension == 0) {
@@ -491,8 +486,6 @@ int namespace_exists(GV_NamespaceManager *mgr, const char *name) {
     return exists;
 }
 
-/* Vector Operations within Namespace */
-
 int namespace_add_vector(GV_Namespace *ns, const float *data, size_t dimension) {
     if (!ns || !ns->db || !data) return -1;
 
@@ -585,8 +578,6 @@ size_t namespace_count(const GV_Namespace *ns) {
 
     return count;
 }
-
-/* Persistence */
 
 int namespace_save(GV_Namespace *ns) {
     if (!ns || !ns->db) return -1;
@@ -682,8 +673,6 @@ int namespace_manager_load_all(GV_NamespaceManager *mgr) {
     closedir(dir);
     return loaded;
 }
-
-/* Utility */
 
 GV_Database *namespace_get_db(GV_Namespace *ns) {
     if (!ns) return NULL;

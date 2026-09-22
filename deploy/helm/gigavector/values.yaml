@@ -1,0 +1,36 @@
+replicaCount: 1
+
+image:
+  repository: gigavector
+  tag: ""            # defaults to .Chart.AppVersion
+  pullPolicy: IfNotPresent
+
+server:
+  port: 8080
+  dimension: 128
+  index: hnsw        # kdtree | hnsw | ivfpq | flat
+  threads: 4
+  # API key for authenticating mutating/admin endpoints. When empty and
+  # allowUnauthenticated is false, the server runs read-only for writers.
+  apiKey: ""
+  allowUnauthenticated: false
+
+persistence:
+  enabled: true
+  size: 10Gi
+  storageClass: ""   # "" uses the cluster default StorageClass
+
+service:
+  type: ClusterIP
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: "2"
+    memory: 4Gi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

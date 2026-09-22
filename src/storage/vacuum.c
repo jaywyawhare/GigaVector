@@ -18,8 +18,6 @@
 #include <errno.h>
 #include "core/compat.h"
 
-/* Internal Structures */
-
 struct GV_VacuumManager {
     GV_Database *db;
     GV_VacuumConfig config;
@@ -32,8 +30,6 @@ struct GV_VacuumManager {
     pthread_cond_t cond;
 };
 
-/* Time Helpers */
-
 static uint64_t vacuum_get_time_ms(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -45,8 +41,6 @@ static uint64_t vacuum_get_epoch_ms(void) {
     clock_gettime(CLOCK_REALTIME, &ts);
     return (uint64_t)ts.tv_sec * 1000ULL + (uint64_t)ts.tv_nsec / 1000000ULL;
 }
-
-/* Fragmentation Analysis */
 
 /**
  * @brief Count deleted vectors in the SoA storage.
@@ -85,8 +79,6 @@ static double vacuum_compute_fragmentation(const GV_Database *db) {
     size_t deleted = vacuum_count_deleted(db);
     return (double)deleted / (double)db->soa_storage->count;
 }
-
-/* Core Vacuum Logic */
 
 /**
  * @brief Perform a single vacuum pass with batch processing.
@@ -165,17 +157,10 @@ static int vacuum_run_internal(GV_VacuumManager *mgr) {
     size_t bytes_reclaimed = deleted_count * dim * sizeof(float);
     size_t vectors_compacted = new_count;
 
-    /*
-     * Delegate the actual renumber + full index/metadata rebuild to the single
-     * correct implementation in database.c. Its own partial per-index-type
-     * logic previously left HNSW / IVF / FLAT / metadata_index stale after a
-     * vacuum;
-     * db_compact_soa_storage_locked() rebuilds the primary index and the
-     * metadata_index consistently with the renumbered SoA indices.
-     *
-     * We already hold the write lock, matching that routine's contract, so we
-     * do NOT double-lock here.
-     */
+    /* Delegate renumber + full index/metadata rebuild to db_compact_soa_storage_locked()
+     * (the single correct impl); partial per-index-type logic here previously left
+     * HNSW/IVF/FLAT/metadata_index stale. We already hold the write lock its contract
+     * requires, so do NOT double-lock. */
     if (db_compact_soa_storage_locked(db) != 0) {
         pthread_rwlock_unlock(&db->rwlock);
 
@@ -210,8 +195,6 @@ static int vacuum_run_internal(GV_VacuumManager *mgr) {
 
     return 0;
 }
-
-/* Background Thread */
 
 static void *vacuum_thread_func(void *arg) {
     GV_VacuumManager *mgr = (GV_VacuumManager *)arg;
@@ -251,8 +234,6 @@ static void *vacuum_thread_func(void *arg) {
     pthread_mutex_unlock(&mgr->mutex);
     return NULL;
 }
-
-/* Public API */
 
 void vacuum_config_init(GV_VacuumConfig *config) {
     if (config == NULL) {

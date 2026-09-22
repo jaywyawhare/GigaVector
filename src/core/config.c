@@ -46,8 +46,7 @@ unsigned int cpu_detect_features(void) {
 #ifdef GV_ARCH_X86
     unsigned int eax, ebx, ecx, edx;
 
-    /* Leaf 1: SSE, SSE2, SSE3, SSE4.1, SSE4.2, AVX, FMA */
-    cpuid(1, 0, &eax, &ebx, &ecx, &edx);
+    cpuid(1, 0, &eax, &ebx, &ecx, &edx); /* leaf 1 */
 
     if (edx & (1u << 25)) features |= GV_CPU_FEATURE_SSE;
     if (edx & (1u << 26)) features |= GV_CPU_FEATURE_SSE2;
@@ -55,15 +54,10 @@ unsigned int cpu_detect_features(void) {
     if (ecx & (1u << 19)) features |= GV_CPU_FEATURE_SSE4_1;
     if (ecx & (1u << 20)) features |= GV_CPU_FEATURE_SSE4_2;
 
-    /*
-     * AVX/AVX-512 require OS XSAVE support in addition to CPUID bits.
-     * CPUID alone is not enough: in WSL2/Hyper-V the CPU may advertise AVX
-     * while the hypervisor has not enabled the YMM/ZMM save-restore state in
-     * XCR0.  Executing AVX instructions in that case raises SIGILL.
-     * The safe sequence is: check OSXSAVE (ecx bit 27), then call xgetbv to
-     * read XCR0, and only enable each feature if the OS has allocated the
-     * required extended register state.
-     */
+    /* AVX/AVX-512 need OS XSAVE state (XCR0), not just CPUID bits: in WSL2/Hyper-V
+     * the CPU may advertise AVX while YMM/ZMM save-restore is not enabled, so
+     * executing AVX would SIGILL. Check OSXSAVE, read XCR0 via xgetbv, and only
+     * enable a feature if the OS allocated the required extended register state. */
     int osxsave = (ecx & (1u << 27)) != 0;
     uint64_t xcr0 = 0;
     if (osxsave) {
@@ -80,7 +74,6 @@ unsigned int cpu_detect_features(void) {
     if ((ecx & (1u << 28)) && avx_os) features |= GV_CPU_FEATURE_AVX;
     if ((ecx & (1u << 12)) && avx_os) features |= GV_CPU_FEATURE_FMA;
 
-    /* Leaf 7: AVX2, AVX-512F */
     cpuid(0, 0, &eax, &ebx, &ecx, &edx); /* get max leaf */
     if (eax >= 7) {
         cpuid(7, 0, &eax, &ebx, &ecx, &edx);

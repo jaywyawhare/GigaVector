@@ -615,8 +615,20 @@ int ivfdisk_insert_to_head(GV_IVFDiskIndex *index, uint64_t head_id, const float
 static int ivfdisk_tombstone_head(GV_IVFDiskIndex *index, uint64_t head_id, size_t vector_id,
                                   uint32_t version, const float *payload)
 {
-    return ivfdisk_append_entry(index, head_id, payload, index->dimension, vector_id,
-                                version, GV_POSTING_FLAG_DELETED, 0);
+    /* append_entry copies index->dimension floats from payload. For a delete
+     * marker with no real data the caller passes NULL; synthesise a properly
+     * sized zero vector rather than let a short/1-element buffer be over-read. */
+    float *zbuf = NULL;
+    const float *p = payload;
+    if (!p) {
+        zbuf = (float *)gv_calloc(index->dimension, sizeof(float));
+        if (!zbuf) return -1;
+        p = zbuf;
+    }
+    int rc = ivfdisk_append_entry(index, head_id, p, index->dimension, vector_id,
+                                  version, GV_POSTING_FLAG_DELETED, 0);
+    gv_free(zbuf);
+    return rc;
 }
 
 int ivfdisk_delete(GV_IVFDiskIndex *index, size_t vector_id, const float *data)
@@ -630,8 +642,7 @@ int ivfdisk_delete(GV_IVFDiskIndex *index, size_t vector_id, const float *data)
 
     IVFDiskVectorLoc *loc = &index->vector_locs[vector_id];
     uint32_t new_ver = loc->version + 1;
-    float zeros[1] = {0.f};
-    const float *payload = data ? data : zeros;
+    const float *payload = data;  /* NULL → tombstone_head writes a zero vector */
 
     if (ivfdisk_tombstone_head(index, loc->head_id, vector_id, new_ver, payload) != 0) {
         return -1;
@@ -657,10 +668,10 @@ int ivfdisk_update(GV_IVFDiskIndex *index, size_t vector_id, const float *new_da
 
     IVFDiskVectorLoc *loc = &index->vector_locs[vector_id];
     uint32_t new_ver = loc->version + 1;
-    float zeros[1] = {0.f};
 
     if (loc->secondary_head_id != GV_IVFDISK_NO_SECONDARY_HEAD) {
-        if (ivfdisk_tombstone_head(index, loc->secondary_head_id, vector_id, new_ver, zeros) != 0) {
+        /* NULL payload → tombstone_head writes a correctly sized zero vector. */
+        if (ivfdisk_tombstone_head(index, loc->secondary_head_id, vector_id, new_ver, NULL) != 0) {
             return -1;
         }
     }
@@ -944,6 +955,14 @@ const GV_IVFDiskConfig *ivfdisk_get_config(const GV_IVFDiskIndex *index)
 static int ivfdisk_grow_centroids(GV_IVFDiskIndex *index, size_t new_nlist)
 {
     if (!index || new_nlist <= index->config.nlist) return 0;
+    /* Guard new_nlist * dimension * sizeof(float) against overflow: new_nlist is
+     * derived from a file-supplied head id on the WAL-replay path, so a crafted
+     * value could otherwise wrap to a small realloc that later writes overrun. */
+    if (index->dimension != 0 &&
+        (new_nlist > SIZE_MAX / index->dimension ||
+         new_nlist * index->dimension > SIZE_MAX / sizeof(float))) {
+        return -1;
+    }
     float *tmp = (float *)gv_realloc(index->centroids, new_nlist * index->dimension * sizeof(float));
     if (!tmp) return -1;
     memset(tmp + index->config.nlist * index->dimension, 0,
@@ -1228,6 +1247,9 @@ int ivfdisk_head_wal_replay(GV_IVFDiskIndex *index)
             uint64_t hid = 0;
             memcpy(&hid, payload, 8);
             if (type == GV_HEAD_WAL_ADD) {
+                /* Reject hid == UINT64_MAX: (size_t)hid + 1 would wrap to 0, making
+                 * grow a no-op and the memcpy below a wild write. */
+                if (hid == UINT64_MAX) { gv_free(payload); fclose(wal); return -1; }
                 if (hid >= index->config.nlist) {
                     if (ivfdisk_grow_centroids(index, (size_t)hid + 1) != 0) {
                         gv_free(payload);
@@ -1251,9 +1273,13 @@ int ivfdisk_head_wal_replay(GV_IVFDiskIndex *index)
             uint64_t src = 0, neu = 0;
             memcpy(&src, payload, 8);
             memcpy(&neu, payload + 8, 8);
-            (void)src;
-            if (neu >= index->config.nlist) {
-                if (ivfdisk_grow_centroids(index, (size_t)neu + 1) != 0) {
+            /* BOTH src and neu subscript centroids[] below — the old code grew for
+             * neu only and left src unchecked, so `centroids + src*dimension` was a
+             * controlled wild write. Grow to cover the larger; reject the +1 wrap. */
+            uint64_t maxc = src > neu ? src : neu;
+            if (maxc == UINT64_MAX) { gv_free(payload); fclose(wal); return -1; }
+            if (maxc >= index->config.nlist) {
+                if (ivfdisk_grow_centroids(index, (size_t)maxc + 1) != 0) {
                     gv_free(payload);
                     fclose(wal);
                     return -1;

@@ -75,7 +75,7 @@ int db_search_with_threshold(const void *db, const float *query_data, size_t k,
     for (int i = 0; i < found; i++) {
         float dist = search_results[i].distance;
         if (threshold_passes(dist, score_threshold, distance_type)) {
-            results[passed].index = (size_t)i;
+            results[passed].index = search_results[i].id;  /* real vector id, not the rank position */
             results[passed].distance = dist;
             passed++;
         }

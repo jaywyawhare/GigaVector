@@ -46,7 +46,6 @@ int group_search(const GV_Database *db, const float *query, size_t dimension,
 /**
  * @brief Perform the operation.
  *
- * @param result result.
  */
 void group_search_free_result(GV_GroupedResult *result);
 

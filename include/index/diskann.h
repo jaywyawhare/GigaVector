@@ -2,6 +2,7 @@
 #define GIGAVECTOR_GV_DISKANN_H
 #include <stddef.h>
 #include <stdint.h>
+#include "search/distance.h"
 
 struct GV_DiskPageCache;
 

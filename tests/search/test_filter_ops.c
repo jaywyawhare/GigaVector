@@ -89,8 +89,6 @@ static int test_update_metadata_by_filter(void) {
     const char *vals[] = {"yellow"};
     int updated = db_update_metadata_by_filter(db, "color == \"red\"",
                                                    keys, vals, 1);
-    /* db_update_metadata_by_filter returns the number of vectors whose
-       metadata was updated. There are exactly 2 red vectors. */
     ASSERT(updated == 2, "should update metadata on exactly 2 red vectors");
 
     int count = db_count_by_filter(db, "color == \"yellow\"");

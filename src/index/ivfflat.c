@@ -131,7 +131,6 @@ void *ivfflat_create(size_t dimension, const GV_IVFFlatConfig *config) {
         idx->config.use_cosine = 0;
     }
 
-    /* Ensure nprobe doesn't exceed nlist */
     if (idx->config.nprobe > idx->config.nlist) {
         idx->config.nprobe = idx->config.nlist;
     }
@@ -167,10 +166,15 @@ int ivfflat_train(void *index, const float *data, size_t count) {
 
     if (count < idx->config.nlist) return -1;
 
-    if (ivfflat_kmeans(data, count, idx->dimension, idx->config.nlist,
-                          idx->config.train_iters, idx->centroids) != 0) {
-        return -1;
-    }
+    /* Normalise the training set when cosine is configured (matches the other IVF
+     * variants) so use_cosine actually shapes the coarse centroids. */
+    float *train_buf = ivf_prepare_training_buffer(data, count, idx->dimension,
+                                                   idx->config.use_cosine);
+    if (!train_buf) return -1;
+    int rc = ivfflat_kmeans(train_buf, count, idx->dimension, idx->config.nlist,
+                            idx->config.train_iters, idx->centroids);
+    gv_free(train_buf);
+    if (rc != 0) return -1;
 
     idx->trained = 1;
     return 0;
@@ -184,21 +188,8 @@ int ivfflat_insert(void *index, GV_Vector *vector) {
     if (!idx->trained) return -1;
     if (vector->dimension != idx->dimension) return -1;
 
-    float best_dist = INFINITY;
-    size_t best_list = 0;
-
-    for (size_t i = 0; i < idx->config.nlist; i++) {
-        const float *centroid = idx->centroids + i * idx->dimension;
-        float dist = 0.0f;
-        for (size_t d = 0; d < idx->dimension; d++) {
-            float diff = vector->data[d] - centroid[d];
-            dist += diff * diff;
-        }
-        if (dist < best_dist) {
-            best_dist = dist;
-            best_list = i;
-        }
-    }
+    size_t best_list = ivf_nearest_centroid(vector->data, idx->centroids,
+                                            idx->config.nlist, idx->dimension);
 
     GV_IVFFlatEntry *entry = (GV_IVFFlatEntry *)gv_alloc(sizeof(GV_IVFFlatEntry));
     if (!entry) return -1;
@@ -297,13 +288,7 @@ int ivfflat_search(void *index, const GV_Vector *query, size_t k,
         GV_Vector *copy = vector_create_from_data(entry->vector->dimension,
                                                       entry->vector->data);
         if (copy) {
-            GV_Metadata *meta = entry->vector->metadata;
-            while (meta) {
-                if (meta->key && meta->value) {
-                    vector_set_metadata(copy, meta->key, meta->value);
-                }
-                meta = meta->next;
-            }
+            vector_copy_metadata(copy, entry->vector);
             results[i].vector = copy;
         } else {
             results[i].vector = NULL;
@@ -542,33 +527,7 @@ int ivfflat_save(const void *index, FILE *out, uint32_t version) {
 
         entry = idx->lists[i];
         while (entry) {
-            if (write_u32(out, (uint32_t)entry->id) != 0) return -1;
-            if (write_u32(out, (uint32_t)entry->deleted) != 0) return -1;
-
-            if (fwrite(entry->vector->data, sizeof(float), idx->dimension, out) != idx->dimension) {
-                return -1;
-            }
-
-            uint32_t meta_count = 0;
-            GV_Metadata *meta = entry->vector->metadata;
-            while (meta) {
-                meta_count++;
-                meta = meta->next;
-            }
-
-            if (write_u32(out, meta_count) != 0) return -1;
-
-            meta = entry->vector->metadata;
-            while (meta) {
-                uint32_t klen = meta->key ? (uint32_t)strlen(meta->key) : 0;
-                uint32_t vlen = meta->value ? (uint32_t)strlen(meta->value) : 0;
-
-                if (write_str(out, meta->key ? meta->key : "", klen) != 0) return -1;
-                if (write_str(out, meta->value ? meta->value : "", vlen) != 0) return -1;
-
-                meta = meta->next;
-            }
-
+            if (ivf_write_entry(out, entry->id, entry->deleted, entry->vector, idx->dimension) != 0) return -1;
             entry = entry->next;
         }
     }
@@ -680,50 +639,10 @@ int ivfflat_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version)
                 return -1;
             }
 
-            uint32_t meta_count = 0;
-            if (read_u32(in, &meta_count) != 0) {
+            if (read_metadata_into_vector(in, vec) != 0) {
                 vector_destroy(vec);
                 ivfflat_destroy(index);
                 return -1;
-            }
-
-            for (uint32_t m = 0; m < meta_count; m++) {
-                uint32_t klen = 0, vlen = 0;
-                char *key = NULL, *value = NULL;
-
-                if (read_u32(in, &klen) != 0) {
-                    vector_destroy(vec);
-                    ivfflat_destroy(index);
-                    return -1;
-                }
-                if (read_str(in, &key, klen) != 0) {
-                    vector_destroy(vec);
-                    ivfflat_destroy(index);
-                    return -1;
-                }
-                if (read_u32(in, &vlen) != 0) {
-                    gv_free(key);
-                    vector_destroy(vec);
-                    ivfflat_destroy(index);
-                    return -1;
-                }
-                if (read_str(in, &value, vlen) != 0) {
-                    gv_free(key);
-                    vector_destroy(vec);
-                    ivfflat_destroy(index);
-                    return -1;
-                }
-
-                if (vector_set_metadata(vec, key, value) != 0) {
-                    gv_free(key);
-                    gv_free(value);
-                    vector_destroy(vec);
-                    ivfflat_destroy(index);
-                    return -1;
-                }
-
-                gv_free(key);
-                gv_free(value);
             }
 
             GV_IVFFlatEntry *entry = (GV_IVFFlatEntry *)gv_alloc(sizeof(GV_IVFFlatEntry));
@@ -738,7 +657,6 @@ int ivfflat_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version)
             entry->deleted = (int)deleted;
             entry->next = NULL;
 
-            /* Append to maintain order */
             *tail = entry;
             tail = &entry->next;
 

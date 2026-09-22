@@ -26,10 +26,6 @@
         } \
     } while (0)
 
-/* -------------------------------------------------------------------------
- * Trace JSON tests
- * ---------------------------------------------------------------------- */
-
 static int test_build_trace_json_empty_spans(void) {
     GV_QueryTrace *trace = trace_begin();
     ASSERT(trace != NULL, "trace_begin should succeed");
@@ -84,10 +80,6 @@ static int test_build_trace_json_null(void) {
     return 0;
 }
 
-/* -------------------------------------------------------------------------
- * Metrics JSON tests
- * ---------------------------------------------------------------------- */
-
 static int test_build_metrics_json_basic(void) {
     GV_Database *db = db_open(NULL, 4, GV_INDEX_TYPE_FLAT);
     ASSERT(db != NULL, "db_open should succeed");
@@ -95,8 +87,8 @@ static int test_build_metrics_json_basic(void) {
     /* Insert a couple of vectors so metrics are non-trivial */
     float v1[4] = {1.0f, 0.0f, 0.0f, 0.0f};
     float v2[4] = {0.0f, 1.0f, 0.0f, 0.0f};
-    db_add_vector(db, v1, 4);
-    db_add_vector(db, v2, 4);
+    { int _r = db_add_vector(db, v1, 4); (void)_r; }
+    { int _r = db_add_vector(db, v2, 4); (void)_r; }
 
     char *json = otlp_build_metrics_json(db);
     ASSERT(json != NULL, "otlp_build_metrics_json should return non-NULL");
@@ -125,18 +117,12 @@ static int test_build_metrics_json_null(void) {
     return 0;
 }
 
-/* -------------------------------------------------------------------------
- * Config / public API tests
- * ---------------------------------------------------------------------- */
-
 static int test_set_otlp_endpoint(void) {
     GV_Database *db = db_open(NULL, 4, GV_INDEX_TYPE_FLAT);
     ASSERT(db != NULL, "db_open should succeed");
 
-    /* Initially disabled */
     ASSERT(db->otlp_config.enabled == 0, "OTLP should be disabled by default");
 
-    /* Enable */
     gv_db_set_otlp_endpoint(db, "http://localhost:4318/v1/traces");
     ASSERT(db->otlp_config.enabled == 1, "OTLP should be enabled after set");
     ASSERT(strcmp(db->otlp_config.endpoint,
@@ -201,10 +187,6 @@ static int test_otlp_export_trace_no_server(void) {
     trace_destroy(trace);
     return 0;
 }
-
-/* -------------------------------------------------------------------------
- * Test runner
- * ---------------------------------------------------------------------- */
 
 typedef int (*test_fn)(void);
 typedef struct { const char *name; test_fn fn; } TestCase;

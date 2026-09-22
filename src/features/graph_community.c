@@ -3,7 +3,8 @@
  * graph-algorithms layer (graph_algos.h):
  *
  *   - graph_label_propagation      Label Propagation (LPA), undirected
- *   - graph_louvain                Louvain modularity maximization, undirected/weighted
+ *   - graph_louvain                multi-level Louvain modularity maximization
+ *   - graph_leiden                 Leiden (Louvain + connectivity refinement)
  *   - graph_triangle_count         per-node & total undirected triangle counts
  *   - graph_kcore                  k-core decomposition (core numbers), undirected
  *   - graph_strongly_connected_components  Tarjan SCC (directed, iterative)
@@ -23,6 +24,10 @@
 #include <math.h>
 #include <string.h>
 #include <stdint.h>
+#include <pthread.h>
+#ifndef _WIN32
+#include <unistd.h>
+#endif
 #include <stdlib.h>
 
 /* ── Undirected CSR adjacency over the dense index ──────────────────────────
@@ -48,8 +53,8 @@ static void uadj_free(GV_UAdj *a) {
 }
 
 /* Weight of an edge ref (missing edge -> 1.0). */
-static double edge_weight(const GV_GraphDB *g, uint64_t edge_id) {
-    const GV_GraphEdge *e = graph_get_edge(g, edge_id);
+static double edge_weight(const GV_GAContext *ctx, uint64_t edge_id) {
+    const GV_GraphEdge *e = gv_ga_edge(ctx, edge_id);
     return e ? (double)e->weight : 1.0;
 }
 
@@ -62,6 +67,7 @@ static double edge_weight(const GV_GraphDB *g, uint64_t edge_id) {
  * weights summed, so the CSR neighbor list of each node is unique.
  */
 static int uadj_build(const GV_GraphDB *g, GV_GAContext *ctx, GV_UAdj *a) {
+    (void)g;
     memset(a, 0, sizeof(*a));
     size_t N = gv_ga_count(ctx);
     a->N = N;
@@ -85,7 +91,7 @@ static int uadj_build(const GV_GraphDB *g, GV_GAContext *ctx, GV_UAdj *a) {
     /* Pass 1: count deduplicated undirected neighbors per node -> off[u+1]. */
     for (size_t u = 0; u < N; u++) {
         uint64_t uid = gv_ga_id(ctx, u);
-        const GV_GraphNode *node = graph_get_node(g, uid);
+        const GV_GraphNode *node = gv_ga_node(ctx, uid);
         size_t cnt = 0;
         size_t pass = u + 1; /* nonzero, unique per node */
         if (node) {
@@ -119,14 +125,14 @@ static int uadj_build(const GV_GraphDB *g, GV_GAContext *ctx, GV_UAdj *a) {
     /* Pass 2: fill neighbor indices + summed weights. */
     for (size_t u = 0; u < N; u++) {
         uint64_t uid = gv_ga_id(ctx, u);
-        const GV_GraphNode *node = graph_get_node(g, uid);
+        const GV_GraphNode *node = gv_ga_node(ctx, uid);
         size_t local = 0;
         size_t pass = u + 1;
         if (node) {
             for (size_t e = 0; e < node->out_count; e++) {
                 size_t v = gv_ga_index(ctx, node->out_edges[e].neighbor_id);
                 if (v == (size_t)-1 || v == u) continue;
-                double w = edge_weight(g, node->out_edges[e].edge_id);
+                double w = edge_weight(ctx, node->out_edges[e].edge_id);
                 if (stamp[v] == pass) {
                     tmp_w[slot[v]] += w;
                 } else {
@@ -140,7 +146,7 @@ static int uadj_build(const GV_GraphDB *g, GV_GAContext *ctx, GV_UAdj *a) {
             for (size_t e = 0; e < node->in_count; e++) {
                 size_t v = gv_ga_index(ctx, node->in_edges[e].neighbor_id);
                 if (v == (size_t)-1 || v == u) continue;
-                double w = edge_weight(g, node->in_edges[e].edge_id);
+                double w = edge_weight(ctx, node->in_edges[e].edge_id);
                 if (stamp[v] == pass) {
                     tmp_w[slot[v]] += w;
                 } else {
@@ -297,116 +303,478 @@ int graph_label_propagation(const GV_GraphDB *g, size_t max_iters,
     return 0;
 }
 
-/* ── Louvain (undirected, weighted) ─────────────────────────────────────────
- * First-level local-moving modularity optimization to convergence. Each node
- * starts in its own community; repeatedly move each node (dense-index order) to
- * the neighboring community giving the largest positive modularity gain, using
- * the standard gain
- *     dQ = k_i_in - (Sigma_tot * k_i) / (2m)
- * (constant terms dropped) where k_i_in is the summed weight from node i to the
- * community, Sigma_tot is the total incident weight of the community, and k_i is
- * node i's weighted degree. Multi-level aggregation is optional and omitted;
- * labels are compacted to 0..K-1. */
-int graph_louvain(const GV_GraphDB *g, size_t max_passes, GV_GraphNodeLabels *out) {
+/* ── Multi-level modularity machinery (Louvain / Leiden) ────────────────────
+ * Both algorithms share the same level loop:
+ *   1. local moving: move nodes/supernodes to the neighboring community with
+ *      the largest positive modularity gain dQ = w_ic - Sigma_tot_c*k_i/(2m)
+ *      until stable,
+ *   2. (Leiden only) refinement: within each community, re-partition the nodes
+ *      into internally-connected sub-communities via restricted local moving
+ *      (a node may not leave its sub-community if it is a cut vertex of it),
+ *   3. aggregation: build the next-level graph over the refined partition and
+ *      repeat.
+ * Leiden's refinement guarantees aggregated communities stay connected —
+ * unlike plain Louvain, which can produce arbitrarily badly-connected
+ * communities. Everything is deterministic (dense-index order, ties broken
+ * toward smaller community ids).
+ *
+ * Level graphs are weighted CSR plus a self-loop weight array (aggregated
+ * internal edges). Self-loops contribute 2w to the weighted degree (two
+ * stubs), matching the standard modularity convention where 2m = sum(k). */
+
+typedef struct {
+    size_t *off;     /* N+1 offsets */
+    size_t *adj;     /* M neighbor ids */
+    double *wt;      /* M weights parallel to adj */
+    double *selfw;   /* per-node self-loop weight (0 at level 0) */
+    size_t  N;
+    size_t  M;
+} GV_LGraph;
+
+static void lgraph_free(GV_LGraph *lg) {
+    if (!lg) return;
+    gv_free(lg->off); gv_free(lg->adj); gv_free(lg->wt); gv_free(lg->selfw);
+    memset(lg, 0, sizeof(*lg));
+}
+
+static GV_LGraph lgraph_from_uadj(const GV_UAdj *ua) {
+    GV_LGraph lg;
+    lg.N = ua->N; lg.M = ua->M;
+    lg.off = NULL; lg.adj = NULL; lg.wt = NULL; lg.selfw = NULL;
+    if (ua->N == 0) return lg;
+    lg.off = (size_t *)gv_alloc((ua->N + 1) * sizeof(size_t));
+    lg.adj = (size_t *)gv_alloc((ua->M ? ua->M : 1) * sizeof(size_t));
+    lg.wt  = (double *)gv_alloc((ua->M ? ua->M : 1) * sizeof(double));
+    lg.selfw = (double *)gv_calloc(ua->N, sizeof(double));
+    if (!lg.off || !lg.adj || !lg.wt || !lg.selfw) {
+        lgraph_free(&lg);
+        return lg;
+    }
+    memcpy(lg.off, ua->off, (ua->N + 1) * sizeof(size_t));
+    memcpy(lg.adj, ua->adj, ua->M * sizeof(size_t));
+    memcpy(lg.wt,  ua->wt,  ua->M * sizeof(double));
+    return lg;
+}
+
+static void lgraph_init_singletons(const GV_LGraph *lg, int64_t *labels,
+                                   double *k, double *sigma, double *two_m) {
+    double tm = 0.0;
+    for (size_t i = 0; i < lg->N; i++) {
+        double ki = 2.0 * lg->selfw[i]; /* self-loop counts as two stubs */
+        for (size_t e = lg->off[i]; e < lg->off[i + 1]; e++) ki += lg->wt[e];
+        k[i] = ki;
+        sigma[i] = ki;
+        labels[i] = (int64_t)i;
+        tm += ki;
+    }
+    *two_m = tm;
+}
+
+/* One round of local moving over the whole graph. Returns 1 if any node moved. */
+static int local_move_round(const GV_LGraph *lg, int64_t *labels,
+                            double *k, double *sigma, double two_m,
+                            int64_t *cand, double *cw, size_t *cpos,
+                            size_t *cstamp) {
+    int moved = 0;
+    /* Stamp keys are unique per visitation (zeroed per round), so stale
+     * values from previous rounds can never alias. */
+    memset(cstamp, 0, lg->N * sizeof(size_t));
+    for (size_t u = 0; u < lg->N; u++) {
+        int64_t cur = labels[u];
+        sigma[cur] -= k[u];
+
+        size_t nc = 0;
+        size_t pass = u + 1;
+        for (size_t e = lg->off[u]; e < lg->off[u + 1]; e++) {
+            int64_t c = labels[lg->adj[e]];
+            size_t key = (size_t)c;
+            if (cstamp[key] == pass) {
+                cw[cpos[key]] += lg->wt[e];
+            } else {
+                cstamp[key] = pass;
+                cpos[key] = nc;
+                cand[nc] = c;
+                cw[nc] = lg->wt[e];
+                nc++;
+            }
+        }
+
+        /* Own-community edge weight includes the self-loop: it stays with u
+         * whichever community holds it, so it belongs in the baseline. */
+        double w_cur = lg->selfw[u];
+        if (cstamp[(size_t)cur] == pass) w_cur += cw[cpos[(size_t)cur]];
+        double best_gain = w_cur - sigma[cur] * k[u] / two_m;
+        int64_t best_c = cur;
+
+        for (size_t c = 0; c < nc; c++) {
+            int64_t cid = cand[c];
+            if (cid == cur) continue;
+            double gain = cw[c] - sigma[cid] * k[u] / two_m;
+            if (gain > best_gain || (gain == best_gain && cid < best_c)) {
+                best_gain = gain;
+                best_c = cid;
+            }
+        }
+
+        sigma[best_c] += k[u];
+        if (best_c != cur) { labels[u] = best_c; moved = 1; }
+    }
+    return moved;
+}
+
+/* ── Leiden refinement ───────────────────────────────────────────────────────
+ * Within each community of `comm`, re-partition nodes into sub-communities
+ * that are internally connected. Nodes start as singletons; restricted local
+ * moving merges sub-communities, but a node may only leave its current
+ * sub-community if it is NOT a cut vertex of it (checked by BFS over the
+ * sub-community minus the node), so every final sub-community is guaranteed
+ * connected. Output `sub` uses dense ids in [0, K). Returns the number of
+ * rounds run (moves stop early once a full pass makes no move). */
+static void refine_partitions(const GV_LGraph *lg, const int64_t *comm,
+                              int64_t *sub, size_t max_rounds,
+                              double *k, double *sigma,
+                              int64_t *cand, double *cw, size_t *cpos,
+                              size_t *cstamp, size_t *bfs_queue,
+                              size_t *bfs_stamp) {
+    const size_t N = lg->N;
+    double two_m = 0.0;
+    for (size_t i = 0; i < N; i++) {
+        double ki = 2.0 * lg->selfw[i];
+        for (size_t e = lg->off[i]; e < lg->off[i + 1]; e++) ki += lg->wt[e];
+        k[i] = ki;
+        sigma[i] = ki; /* singleton sub-communities */
+        sub[i] = (int64_t)i;
+        two_m += ki;
+    }
+    if (two_m <= 0.0) return;
+    memset(bfs_stamp, 0, N * sizeof(size_t));
+
+    for (size_t round = 0; round < max_rounds; round++) {
+        int moved = 0;
+        /* Zero per round so repeating stamp keys can never alias stale
+         * entries from earlier rounds. */
+        memset(cstamp, 0, N * sizeof(size_t));
+        memset(bfs_stamp, 0, N * sizeof(size_t));
+        for (size_t u = 0; u < N; u++) {
+            int64_t s = sub[u];
+            int64_t cu = comm[u];
+
+            /* Walk u's neighbors within u's own community: accumulate weight
+             * to u's current sub-community (`same_w`), and per other
+             * sub-community weights as merge candidates. */
+            size_t nc = 0;
+            size_t pass = N + u + 1;
+            double same_w = 0.0;
+            size_t same_deg = 0;
+            for (size_t e = lg->off[u]; e < lg->off[u + 1]; e++) {
+                size_t v = lg->adj[e];
+                if (comm[v] != cu) continue;
+                if (sub[v] == s) {
+                    same_w += lg->wt[e];
+                    same_deg++;
+                    continue;
+                }
+                int64_t t = sub[v];
+                size_t key = (size_t)t;
+                if (cstamp[key] == pass) {
+                    cw[cpos[key]] += lg->wt[e];
+                } else {
+                    cstamp[key] = pass;
+                    cpos[key] = nc;
+                    cand[nc] = t;
+                    cw[nc] = lg->wt[e];
+                    nc++;
+                }
+            }
+            if (nc == 0) continue;
+
+            /* Cut-vertex guard: if u has >= 2 neighbors inside its
+             * sub-community and removing u disconnects them, u must stay put
+             * (leaving would split s\{u}). */
+            if (same_deg >= 2) {
+                size_t first = (size_t)-1;
+                for (size_t e = lg->off[u]; e < lg->off[u + 1]; e++) {
+                    size_t v = lg->adj[e];
+                    if (comm[v] == cu && sub[v] == s) { first = v; break; }
+                }
+                if (first != (size_t)-1) {
+                    size_t bpass = N + u + 1;
+                    size_t qh = 0, qt = 0;
+                    bfs_stamp[first] = bpass;
+                    bfs_queue[qt++] = first;
+                    while (qh < qt) {
+                        size_t x = bfs_queue[qh++];
+                        for (size_t e = lg->off[x]; e < lg->off[x + 1]; e++) {
+                            size_t y = lg->adj[e];
+                            if (y == u || sub[y] != s || bfs_stamp[y] == bpass)
+                                continue;
+                            bfs_stamp[y] = bpass;
+                            bfs_queue[qt++] = y;
+                        }
+                    }
+                    int connected = 1;
+                    for (size_t e = lg->off[u]; e < lg->off[u + 1]; e++) {
+                        size_t v = lg->adj[e];
+                        if (comm[v] == cu && sub[v] == s &&
+                            bfs_stamp[v] != bpass) {
+                            connected = 0;
+                            break;
+                        }
+                    }
+                    if (!connected) continue;
+                }
+            }
+
+            /* Best strict-improvement target; baseline = staying in s. */
+            double base = same_w + lg->selfw[u] - sigma[s] * k[u] / two_m;
+            int64_t best_t = s;
+            double best_gain = base;
+            for (size_t c = 0; c < nc; c++) {
+                int64_t t = cand[c];
+                double gain = cw[c] - sigma[t] * k[u] / two_m;
+                if (gain > best_gain || (gain == best_gain && t < best_t)) {
+                    best_gain = gain;
+                    best_t = t;
+                }
+            }
+            if (best_t == s || best_gain <= base) continue;
+
+            sigma[s] -= k[u];
+            sigma[best_t] += k[u];
+            sub[u] = best_t;
+            moved = 1;
+        }
+        if (!moved) break;
+    }
+
+    /* Densify sub ids so downstream code can safely use them as indices. */
+    size_t cap = N * 2 + 1;
+    int64_t *map_key = (int64_t *)gv_alloc(cap * sizeof(int64_t));
+    size_t  *map_val = (size_t *)gv_alloc(cap * sizeof(size_t));
+    uint8_t *occ     = (uint8_t *)gv_calloc(cap, sizeof(uint8_t));
+    if (map_key && map_val && occ)
+        compact_labels(sub, N, map_key, map_val, occ, cap);
+    gv_free(map_key); gv_free(map_val); gv_free(occ);
+}
+
+/* Aggregate `lg` over dense partition `part` ([0,K)). Returns a fresh graph
+ * with K supernodes: parallel edges between supernode pairs are summed into
+ * one entry; internal edges become self-loop weight. */
+static int lgraph_aggregate(const GV_LGraph *lg, const int64_t *part,
+                            GV_LGraph *out) {
+    memset(out, 0, sizeof(*out));
+    size_t K = 0;
+    for (size_t i = 0; i < lg->N; i++)
+        if ((size_t)part[i] + 1 > K) K = (size_t)part[i] + 1;
+    if (K == 0) return 0;
+
+    out->N = K;
+    out->off = (size_t *)gv_calloc(K + 1, sizeof(size_t));
+    out->selfw = (double *)gv_calloc(K, sizeof(double));
+    if (!out->off || !out->selfw) { lgraph_free(out); return -1; }
+
+    /* Pass 1: count deduped neighbor entries per supernode row (+ selfw). */
+    size_t *slot  = (size_t *)gv_alloc(K * sizeof(size_t));
+    size_t *stamp = (size_t *)gv_calloc(K, sizeof(size_t));
+    if (!slot || !stamp) {
+        gv_free(slot); gv_free(stamp); lgraph_free(out);
+        return -1;
+    }
+    for (size_t u = 0; u < lg->N; u++) {
+        size_t pu = (size_t)part[u];
+        size_t pass = pu + 1;
+        for (size_t e = lg->off[u]; e < lg->off[u + 1]; e++) {
+            size_t pv = (size_t)part[lg->adj[e]];
+            if (pv == pu) { out->selfw[pu] += lg->wt[e]; continue; }
+            if (stamp[pv] != pass) { stamp[pv] = pass; out->off[pu + 1]++; }
+        }
+    }
+    for (size_t c = 0; c < K; c++) out->off[c + 1] += out->off[c];
+    out->M = out->off[K];
+
+    out->adj = (size_t *)gv_alloc((out->M ? out->M : 1) * sizeof(size_t));
+    out->wt  = (double *)gv_alloc((out->M ? out->M : 1) * sizeof(double));
+    if (!out->adj || !out->wt) {
+        gv_free(slot); gv_free(stamp); lgraph_free(out);
+        return -1;
+    }
+    memset(stamp, 0, K * sizeof(size_t));
+
+    /* Pass 2: fill rows (summing parallel edges). All nodes of one supernode
+     * share its pass stamp, so dedup spans the whole supernode; each row has
+     * its own fill cursor so nodes of the same supernode append instead of
+     * overwrite. */
+    size_t *fill = (size_t *)gv_calloc(K, sizeof(size_t));
+    if (!fill) {
+        gv_free(slot); gv_free(stamp); lgraph_free(out);
+        return -1;
+    }
+    for (size_t u = 0; u < lg->N; u++) {
+        size_t pu = (size_t)part[u];
+        size_t pass = pu + 1;
+        size_t base = out->off[pu];
+        for (size_t e = lg->off[u]; e < lg->off[u + 1]; e++) {
+            size_t pv = (size_t)part[lg->adj[e]];
+            if (pv == pu) continue;
+            if (stamp[pv] == pass) {
+                out->wt[base + slot[pv]] += lg->wt[e];
+            } else {
+                stamp[pv] = pass;
+                slot[pv] = fill[pu];
+                fill[pu]++;
+                out->adj[base + slot[pv]] = pv;
+                out->wt[base + slot[pv]] = lg->wt[e];
+            }
+        }
+    }
+    gv_free(fill); gv_free(slot); gv_free(stamp);
+
+    return 0;
+}
+
+/* Shared multi-level driver for Louvain (use_refine=0) and Leiden (=1).
+ *
+ * Level loop on graph G_l:
+ *   1. local moving from singleton communities until stable -> partition P_l;
+ *   2. Leiden: refine each community of P_l into connected sub-communities,
+ *      and the refined partition replaces P_l;
+ *   3. aggregate G_{l+1} over P_l; repeat unless P_l is all singletons or no
+ *      move happened anywhere.
+ *
+ * Every level's partition is recorded; the final label of an original node is
+ * obtained by composing partitions top-down: C(i) = P_L(...P_0(i)). */
+static int modularity_levels(const GV_GraphDB *g, size_t max_levels,
+                             int use_refine, GV_GraphNodeLabels *out) {
     if (!g || !out) return -1;
     memset(out, 0, sizeof(*out));
-    if (max_passes == 0) max_passes = 10;
+    if (max_levels == 0) max_levels = 10;
 
     GV_GAContext *ctx = gv_ga_build(g);
     if (!ctx) return -1;
     size_t N = gv_ga_count(ctx);
     if (N == 0) { gv_ga_free(ctx); return 0; }
 
-    GV_UAdj adj;
-    if (uadj_build(g, ctx, &adj) != 0) { gv_ga_free(ctx); return -1; }
+    GV_UAdj ua;
+    if (uadj_build(g, ctx, &ua) != 0) { gv_ga_free(ctx); return -1; }
 
     uint64_t *node_ids = (uint64_t *)gv_alloc(N * sizeof(uint64_t));
-    int64_t  *labels   = (int64_t *)gv_alloc(N * sizeof(int64_t)); /* community of node */
-    double   *k        = (double *)gv_alloc(N * sizeof(double));   /* weighted degree */
-    double   *sigma    = (double *)gv_alloc(N * sizeof(double));   /* Sigma_tot per community */
-    /* Per-node scratch: accumulate k_i_in per neighboring community, deduped by
-     * a stamp keyed by community id (community ids live in [0, N)). */
-    int64_t  *comm_cand = (int64_t *)gv_alloc((N ? N : 1) * sizeof(int64_t));
-    double   *comm_w    = (double *)gv_alloc((N ? N : 1) * sizeof(double));
-    size_t   *cpos      = (size_t *)gv_alloc(N * sizeof(size_t));
-    size_t   *cstamp    = (size_t *)gv_calloc(N, sizeof(size_t));
-    if (!node_ids || !labels || !k || !sigma ||
-        !comm_cand || !comm_w || !cpos || !cstamp) {
-        gv_free(node_ids); gv_free(labels); gv_free(k); gv_free(sigma);
-        gv_free(comm_cand); gv_free(comm_w); gv_free(cpos); gv_free(cstamp);
-        uadj_free(&adj); gv_ga_free(ctx);
-        return -1;
+    if (!node_ids) { uadj_free(&ua); gv_ga_free(ctx); return -1; }
+    for (size_t i = 0; i < N; i++) node_ids[i] = gv_ga_id(ctx, i);
+
+    /* Scratch sized for the largest (level-0) graph. Community/sub ids are
+     * always dense in [0, N), so stamps keyed by id fit. Refinement stamps
+     * use the offset N+u+1 so they can never collide with stale values. */
+    double   *k       = (double *)gv_alloc(N * sizeof(double));
+    double   *sigma   = (double *)gv_alloc(N * sizeof(double));
+    int64_t  *cand    = (int64_t *)gv_alloc(N * sizeof(int64_t));
+    double   *cw      = (double *)gv_alloc(N * sizeof(double));
+    size_t   *cpos    = (size_t *)gv_alloc(N * sizeof(size_t));
+    size_t   *cstamp  = (size_t *)gv_calloc(N, sizeof(size_t));
+    size_t   *bfs_q   = (size_t *)gv_alloc(N * sizeof(size_t));
+    size_t   *bfs_st  = (size_t *)gv_calloc(N, sizeof(size_t));
+    int64_t **parts   = (int64_t **)gv_calloc(max_levels + 1, sizeof(int64_t *));
+    int ok = k && sigma && cand && cw && cpos && cstamp && bfs_q && bfs_st &&
+             parts;
+
+    GV_LGraph cur;
+    memset(&cur, 0, sizeof(cur));
+    size_t nparts = 0;
+    int64_t *labels = NULL, *sub = NULL, *comm = NULL, *fold = NULL;
+
+    if (ok) {
+        cur = lgraph_from_uadj(&ua);
+        ok = cur.off != NULL;
+    }
+    if (ok) {
+        labels = (int64_t *)gv_alloc(cur.N * sizeof(int64_t));
+        sub    = (int64_t *)gv_alloc(cur.N * sizeof(int64_t));
+        comm   = (int64_t *)gv_alloc(cur.N * sizeof(int64_t));
+        ok = labels && sub && comm;
     }
 
-    double two_m = 0.0; /* 2m = sum of weighted degrees */
-    for (size_t u = 0; u < N; u++) {
-        node_ids[u] = gv_ga_id(ctx, u);
-        double deg = 0.0;
-        for (size_t e = adj.off[u]; e < adj.off[u + 1]; e++) deg += adj.wt[e];
-        k[u] = deg;
-        sigma[u] = deg;        /* each node alone in its community */
-        labels[u] = (int64_t)u;
-        two_m += deg;
-    }
+    if (ok) {
+        for (size_t lvl = 0; lvl < max_levels; lvl++) {
+            double two_m;
+            lgraph_init_singletons(&cur, labels, k, sigma, &two_m);
+            if (two_m <= 0.0) break; /* edgeless: singletons are optimal */
 
-    if (two_m > 0.0) {
-        size_t pass_no = 0;
-        for (; pass_no < max_passes; pass_no++) {
-            int moved = 0;
-            for (size_t u = 0; u < N; u++) {
-                int64_t cur = labels[u];
-                /* Remove u from its community. */
-                sigma[cur] -= k[u];
-
-                /* Accumulate weight from u to each neighboring community.
-                 * self-community weight is included (loops already stripped). */
-                size_t nc = 0;
-                size_t pass = u + 1;
-                for (size_t e = adj.off[u]; e < adj.off[u + 1]; e++) {
-                    int64_t c = labels[adj.adj[e]];
-                    size_t key = (size_t)c;
-                    if (cstamp[key] == pass) {
-                        comm_w[cpos[key]] += adj.wt[e];
-                    } else {
-                        cstamp[key] = pass;
-                        cpos[key] = nc;
-                        comm_cand[nc] = c;
-                        comm_w[nc] = adj.wt[e];
-                        nc++;
-                    }
-                }
-
-                /* Baseline: staying in `cur`. Gain relative to isolated node is
-                 *   w_to_c - sigma_c * k_u / (2m).
-                 * Choose the community maximizing this; tie -> smaller community
-                 * id, and prefer staying in `cur` for stability. */
-                double w_cur = 0.0;
-                if (cstamp[(size_t)cur] == pass) w_cur = comm_w[cpos[(size_t)cur]];
-                double best_gain = w_cur - sigma[cur] * k[u] / two_m;
-                int64_t best_c = cur;
-
-                for (size_t c = 0; c < nc; c++) {
-                    int64_t cid = comm_cand[c];
-                    if (cid == cur) continue;
-                    double gain = comm_w[c] - sigma[cid] * k[u] / two_m;
-                    if (gain > best_gain ||
-                        (gain == best_gain && cid < best_c)) {
-                        best_gain = gain;
-                        best_c = cid;
-                    }
-                }
-
-                /* Insert u into chosen community. */
-                sigma[best_c] += k[u];
-                if (best_c != cur) { labels[u] = best_c; moved = 1; }
+            int changed = 0;
+            for (;;) {
+                if (!local_move_round(&cur, labels, k, sigma, two_m,
+                                      cand, cw, cpos, cstamp))
+                    break;
+                changed = 1;
             }
-            if (!moved) break;
+
+            const int64_t *level_part = labels;
+            if (use_refine && changed) {
+                memcpy(comm, labels, cur.N * sizeof(int64_t));
+                refine_partitions(&cur, comm, sub, max_levels,
+                                  k, sigma, cand, cw, cpos, cstamp,
+                                  bfs_q, bfs_st);
+                level_part = sub;
+            } else if (!changed) {
+                parts[nparts] = (int64_t *)gv_alloc(cur.N * sizeof(int64_t));
+                if (!parts[nparts]) { ok = 0; break; }
+                memcpy(parts[nparts], labels, cur.N * sizeof(int64_t));
+                nparts++;
+                break; /* converged: further levels cannot improve */
+            }
+
+            /* Record this level's partition. */
+            parts[nparts] = (int64_t *)gv_alloc(cur.N * sizeof(int64_t));
+            if (!parts[nparts]) { ok = 0; break; }
+            memcpy(parts[nparts], level_part, cur.N * sizeof(int64_t));
+            nparts++;
+
+            /* All singletons -> aggregation cannot change anything. */
+            size_t K = 0;
+            for (size_t i = 0; i < cur.N; i++)
+                if ((size_t)level_part[i] + 1 > K) K = (size_t)level_part[i] + 1;
+            if (K == cur.N) break;
+
+            GV_LGraph next;
+            if (lgraph_aggregate(&cur, level_part, &next) != 0) { ok = 0; break; }
+            lgraph_free(&cur);
+            cur = next;
+
+            gv_free(labels); gv_free(sub); gv_free(comm);
+            labels = (int64_t *)gv_alloc(cur.N * sizeof(int64_t));
+            sub    = (int64_t *)gv_alloc(cur.N * sizeof(int64_t));
+            comm   = (int64_t *)gv_alloc(cur.N * sizeof(int64_t));
+            if (!labels || !sub || !comm) { ok = 0; break; }
         }
     }
 
-    gv_free(k); gv_free(sigma);
-    gv_free(comm_cand); gv_free(comm_w); gv_free(cpos); gv_free(cstamp);
-    uadj_free(&adj);
+    lgraph_free(&cur);
+    gv_free(k); gv_free(sigma); gv_free(cand); gv_free(cw);
+    gv_free(cpos); gv_free(cstamp); gv_free(bfs_q); gv_free(bfs_st);
+    gv_free(labels); gv_free(sub); gv_free(comm);
+    uadj_free(&ua);
+    gv_ga_free(ctx);
+
+    /* Compose partitions down to original nodes. With no recorded levels
+     * (edgeless graph) every node keeps its singleton label. */
+    fold = (int64_t *)gv_alloc((N ? N : 1) * sizeof(int64_t));
+    if (!ok || !fold) {
+        for (size_t l = 0; l < max_levels + 1; l++) gv_free(parts[l]);
+        gv_free(parts);
+        gv_free(fold);
+        gv_free(node_ids);
+        return -1;
+    }
+    if (nparts == 0) {
+        for (size_t i = 0; i < N; i++) fold[i] = (int64_t)i;
+    } else {
+        for (size_t i = 0; i < N; i++) {
+            int64_t c = parts[0][i];
+            for (size_t l = 1; l < nparts; l++)
+                c = parts[l][(size_t)c];
+            fold[i] = c;
+        }
+    }
+    for (size_t l = 0; l < max_levels + 1; l++) gv_free(parts[l]);
+    gv_free(parts);
 
     size_t cap = N * 2 + 1;
     int64_t *map_key = (int64_t *)gv_alloc(cap * sizeof(int64_t));
@@ -414,21 +782,33 @@ int graph_louvain(const GV_GraphDB *g, size_t max_passes, GV_GraphNodeLabels *ou
     uint8_t *occ     = (uint8_t *)gv_calloc(cap, sizeof(uint8_t));
     if (!map_key || !map_val || !occ) {
         gv_free(map_key); gv_free(map_val); gv_free(occ);
-        gv_free(node_ids); gv_free(labels);
-        gv_ga_free(ctx);
+        gv_free(fold); gv_free(node_ids);
         return -1;
     }
-    size_t K = compact_labels(labels, N, map_key, map_val, occ, cap);
+    size_t K = compact_labels(fold, N, map_key, map_val, occ, cap);
     gv_free(map_key); gv_free(map_val); gv_free(occ);
-    gv_ga_free(ctx);
 
     out->node_ids   = node_ids;
-    out->labels     = labels;
+    out->labels     = fold;
     out->count      = N;
     out->num_labels = K;
     return 0;
 }
 
+/** Louvain modularity-maximizing community detection, multi-level: iterates
+ *  local moves then aggregates the graph, repeating until modularity stops
+ *  improving (at most max_levels aggregations). Treated as undirected. */
+int graph_louvain(const GV_GraphDB *g, size_t max_levels, GV_GraphNodeLabels *out) {
+    return modularity_levels(g, max_levels, 0, out);
+}
+
+/** Leiden community detection: like multi-level Louvain but each aggregation
+ *  is preceded by a refinement phase that re-partitions communities into
+ *  internally-connected sub-communities (restricted local moving with a
+ *  cut-vertex guard), guaranteeing well-connected communities. Deterministic. */
+int graph_leiden(const GV_GraphDB *g, size_t max_levels, GV_GraphNodeLabels *out) {
+    return modularity_levels(g, max_levels, 1, out);
+}
 /* ── Triangle counting (undirected) ─────────────────────────────────────────
  * For each node, count triangles it participates in via neighbor-set
  * intersection. To count each triangle exactly once (before dividing), iterate
@@ -436,6 +816,64 @@ int graph_louvain(const GV_GraphDB *g, size_t max_passes, GV_GraphNodeLabels *ou
  * that edge {u,v}, count common neighbors w with w>v. Distribute +1 to u, v, w
  * per triangle so per-node scores are the true participation counts, and total
  * = sum(scores)/3. */
+/* Per-worker state: private mark stamps + partial participation counts so
+ * workers never share writable cache lines. */
+typedef struct {
+    size_t   *mark;
+    double   *partial;
+    uint64_t  triangles;
+} TriWorker;
+
+typedef struct {
+    const GV_GraphDB *g;
+    const GV_GAContext *ctx;
+    size_t N;
+    GV_UAdj *adj;
+    TriWorker *workers;
+    size_t next_node;            /* shared work counter */
+    int    ok;
+} TriJob;
+
+static void triangle_run_node(TriJob *job, size_t u, size_t t) {
+    GV_UAdj *adj = job->adj;
+    TriWorker *wk = &job->workers[t];
+    size_t pass = u + 1;
+    for (size_t e = adj->off[u]; e < adj->off[u + 1]; e++) wk->mark[adj->adj[e]] = pass;
+
+    for (size_t e = adj->off[u]; e < adj->off[u + 1]; e++) {
+        size_t v = adj->adj[e];
+        if (v <= u) continue;
+        for (size_t f = adj->off[v]; f < adj->off[v + 1]; f++) {
+            size_t x = adj->adj[f];
+            if (x <= v) continue;
+            if (wk->mark[x] == pass) {
+                /* triangle {u, v, x}: credit all three participants */
+                wk->partial[u]++;
+                wk->partial[v]++;
+                wk->partial[x]++;
+                wk->triangles++;
+            }
+        }
+    }
+}
+
+typedef struct {
+    TriJob *job;
+    size_t  slot;
+} TriSlotArg;
+
+static void *triangle_worker(void *arg) {
+    TriSlotArg *sa = (TriSlotArg *)arg;
+    TriJob *job = sa->job;
+    size_t t = sa->slot;
+    for (;;) {
+        size_t u = __atomic_fetch_add(&job->next_node, 1, __ATOMIC_RELAXED);
+        if (u >= job->N || !job->ok) break;
+        triangle_run_node(job, u, t);
+    }
+    return NULL;
+}
+
 int graph_triangle_count(const GV_GraphDB *g, GV_GraphNodeScores *out, uint64_t *total) {
     if (total) *total = 0;
     if (!g || !out) return -1;
@@ -449,45 +887,75 @@ int graph_triangle_count(const GV_GraphDB *g, GV_GraphNodeScores *out, uint64_t 
     GV_UAdj adj;
     if (uadj_build(g, ctx, &adj) != 0) { gv_ga_free(ctx); return -1; }
 
-    uint64_t *node_ids = (uint64_t *)gv_alloc(N * sizeof(uint64_t));
-    double   *scores   = (double *)gv_calloc(N, sizeof(double));
-    /* Membership marker for "is x a neighbor of the current node u", keyed by
-     * dense index and stamped per-u to avoid O(N) clears. */
-    size_t   *mark     = (size_t *)gv_calloc(N, sizeof(size_t));
-    if (!node_ids || !scores || !mark) {
-        gv_free(node_ids); gv_free(scores); gv_free(mark);
-        uadj_free(&adj); gv_ga_free(ctx);
-        return -1;
+    long ncpu_long =
+#ifndef _WIN32
+        sysconf(_SC_NPROCESSORS_ONLN);
+#else
+        1;
+#endif
+    if (ncpu_long < 1) ncpu_long = 1;
+    size_t nthreads = (size_t)ncpu_long;
+    if (nthreads > N) nthreads = N;
+
+    TriJob job;
+    memset(&job, 0, sizeof(job));
+    job.g = g; job.ctx = ctx; job.N = N; job.adj = &adj; job.ok = 1;
+
+    int ok = 1;
+    job.workers = (TriWorker *)gv_calloc(nthreads, sizeof(TriWorker));
+    pthread_t *threads = (pthread_t *)gv_calloc(nthreads, sizeof(pthread_t));
+    TriSlotArg *args = (TriSlotArg *)gv_calloc(nthreads, sizeof(TriSlotArg));
+    if (!job.workers || !threads || !args) ok = 0;
+
+    for (size_t t = 0; ok && t < nthreads; t++) {
+        job.workers[t].mark = (size_t *)gv_calloc(N, sizeof(size_t));
+        job.workers[t].partial = (double *)gv_calloc(N, sizeof(double));
+        if (!job.workers[t].mark || !job.workers[t].partial) { ok = 0; break; }
     }
-    for (size_t i = 0; i < N; i++) node_ids[i] = gv_ga_id(ctx, i);
+
+    if (ok) {
+        for (size_t t = 0; t < nthreads; t++) {
+            args[t].job = &job;
+            args[t].slot = t;
+            if (t == nthreads - 1) break;   /* main thread runs last slot */
+            if (pthread_create(&threads[t], NULL, triangle_worker,
+                               &args[t]) != 0) {
+                nthreads = t + 1;
+                break;
+            }
+        }
+        triangle_worker(&args[nthreads - 1]);
+        for (size_t t = 0; t < nthreads - 1; t++)
+            pthread_join(threads[t], NULL);
+    }
+
+    uint64_t *node_ids = (uint64_t *)gv_alloc((N ? N : 1) * sizeof(uint64_t));
+    double   *scores   = (double *)gv_calloc(N ? N : 1, sizeof(double));
+    if (!node_ids || !scores) ok = 0;
 
     uint64_t tri_total = 0;
-    for (size_t u = 0; u < N; u++) {
-        size_t pass = u + 1;
-        /* Mark u's neighbors. */
-        for (size_t e = adj.off[u]; e < adj.off[u + 1]; e++) mark[adj.adj[e]] = pass;
-
-        /* For each neighbor v>u, count common neighbors w>v. */
-        for (size_t e = adj.off[u]; e < adj.off[u + 1]; e++) {
-            size_t v = adj.adj[e];
-            if (v <= u) continue;
-            for (size_t f = adj.off[v]; f < adj.off[v + 1]; f++) {
-                size_t w = adj.adj[f];
-                if (w <= v) continue;
-                if (mark[w] == pass) {
-                    /* triangle {u, v, w} */
-                    scores[u] += 1.0;
-                    scores[v] += 1.0;
-                    scores[w] += 1.0;
-                    tri_total++;
-                }
-            }
+    if (ok && node_ids && scores) {
+        for (size_t i = 0; i < N; i++) node_ids[i] = gv_ga_id(ctx, i);
+        for (size_t t = 0; t < nthreads; t++) {
+            tri_total += job.workers[t].triangles;
+            for (size_t i = 0; i < N; i++) scores[i] += job.workers[t].partial[i];
         }
     }
 
-    gv_free(mark);
+    if (job.workers) {
+        for (size_t t = 0; t < nthreads; t++) {
+            gv_free(job.workers[t].mark);
+            gv_free(job.workers[t].partial);
+        }
+    }
+    gv_free(job.workers); gv_free(threads); gv_free(args);
     uadj_free(&adj);
     gv_ga_free(ctx);
+
+    if (!ok) {
+        gv_free(node_ids); gv_free(scores);
+        return -1;
+    }
 
     out->node_ids = node_ids;
     out->scores   = scores;
@@ -620,7 +1088,7 @@ int graph_strongly_connected_components(const GV_GraphDB *g, GV_GraphNodeLabels 
     size_t *doff = (size_t *)gv_calloc(N + 1, sizeof(size_t));
     if (!doff) { gv_ga_free(ctx); return -1; }
     for (size_t u = 0; u < N; u++) {
-        const GV_GraphNode *node = graph_get_node(g, gv_ga_id(ctx, u));
+        const GV_GraphNode *node = gv_ga_node(ctx, gv_ga_id(ctx, u));
         size_t cnt = 0;
         if (node) {
             for (size_t e = 0; e < node->out_count; e++) {
@@ -637,7 +1105,7 @@ int graph_strongly_connected_components(const GV_GraphDB *g, GV_GraphNodeLabels 
     size_t *dadj = (size_t *)gv_alloc((M ? M : 1) * sizeof(size_t));
     if (!dadj) { gv_free(doff); gv_ga_free(ctx); return -1; }
     for (size_t u = 0; u < N; u++) {
-        const GV_GraphNode *node = graph_get_node(g, gv_ga_id(ctx, u));
+        const GV_GraphNode *node = gv_ga_node(ctx, gv_ga_id(ctx, u));
         size_t w = doff[u];
         if (node) {
             for (size_t e = 0; e < node->out_count; e++) {

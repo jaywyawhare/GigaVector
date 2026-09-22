@@ -84,9 +84,7 @@ int test_specificity_proper_nouns(void) {
 }
 
 int test_specificity_vague_words(void) {
-    /* Test statistical specificity detection:
-     * - Pronoun-heavy text = less specific
-     * - Text with numbers, dates, proper nouns = more specific */
+    /* Statistical specificity: pronoun-heavy = less specific; numbers/dates/proper nouns = more specific */
     const char *vague = "It happened there and they did that with it.";
     const char *specific = "A database crash occurred in the production server at 3:45 PM.";
 
@@ -102,10 +100,7 @@ int test_specificity_vague_words(void) {
 }
 
 int test_salience_emotional(void) {
-    /* Test statistical salience detection based on structural features:
-     * - Emphasis markers (!, ?) indicate emotional/important content
-     * - ALL CAPS words indicate emphasis
-     * Note: We do NOT use keyword lists - purely structural analysis */
+    /* Salience is structural (!, ?, ALL CAPS), not keyword-based */
     const char *emotional = "I absolutely LOVE this new feature! It makes me SO happy!";
     const char *neutral = "The feature has been implemented according to specifications.";
 
@@ -121,11 +116,7 @@ int test_salience_emotional(void) {
 }
 
 int test_salience_sentence_emphasis(void) {
-    /* Test statistical salience detection based on structural emphasis:
-     * - Multiple exclamation marks indicate urgency/importance
-     * - Question marks indicate interactive content
-     * - ALL CAPS words indicate emphasis
-     * Note: Language-agnostic - works for any language with punctuation */
+    /* Salience from structural emphasis (punctuation, ALL CAPS) is language-agnostic */
     const char *emphasized = "This is URGENT! Please respond IMMEDIATELY! Is this clear?";
     const char *plain = "This is urgent. Please respond immediately. Is this clear.";
 
@@ -139,10 +130,7 @@ int test_salience_sentence_emphasis(void) {
 }
 
 int test_salience_important_markers(void) {
-    /* Test statistical salience detection:
-     * - Emphasis markers (!, ?, ALL CAPS) = more salient
-     * - Future tense markers (will, going to) = more salient
-     * - Superlatives (-est, -iest) = more salient */
+    /* Salience markers: emphasis (!, ?, ALL CAPS), future tense, superlatives */
     const char *important = "This is CRITICAL! You MUST back up the database before deployment!";
     const char *normal = "Back up the database before deployment.";
 

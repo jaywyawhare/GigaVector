@@ -1,8 +1,6 @@
 /**
  * test_graph_algos.c — exercises the graph data-science library (graph_algos.h)
- * on a small hand-computable graph, asserting known values where possible and
- * sanity-checking the rest. Every result is freed so the ASAN/valgrind CI runs
- * prove the algorithms are memory-safe.
+ * on a small hand-computable graph, asserting known values where possible.
  *
  * Test graph (directed, weight 1 unless noted):
  *   Triangle / 3-cycle:   1->2, 2->3, 3->1
@@ -121,6 +119,22 @@ int main(void) {
     ASSERT(graph_label_propagation(g, 100, &lb) == 0 && lb.count == 7, "label propagation runs");
     graph_node_labels_free(&lb);
     ASSERT(graph_louvain(g, 10, &lb) == 0 && lb.count == 7, "louvain runs");
+    /* disconnected pair {6,7} must stay one community, distinct from the rest */
+    ASSERT(label_of(&lb, id[6]) == label_of(&lb, id[7]), "louvain keeps {6,7}");
+    ASSERT(label_of(&lb, id[1]) != label_of(&lb, id[6]),
+           "louvain: triangle != isolated pair");
+    ASSERT(lb.num_labels >= 3, "louvain finds >= 3 communities");
+    graph_node_labels_free(&lb);
+
+    ASSERT(graph_leiden(g, 10, &lb) == 0 && lb.count == 7, "leiden runs");
+    ASSERT(label_of(&lb, id[1]) == label_of(&lb, id[2]) &&
+           label_of(&lb, id[2]) == label_of(&lb, id[3]), "leiden keeps triangle");
+    ASSERT(label_of(&lb, id[4]) == label_of(&lb, id[5]), "leiden keeps {4,5}");
+    ASSERT(label_of(&lb, id[6]) == label_of(&lb, id[7]), "leiden keeps {6,7}");
+    ASSERT(label_of(&lb, id[1]) != label_of(&lb, id[4]) &&
+           label_of(&lb, id[1]) != label_of(&lb, id[6]) &&
+           label_of(&lb, id[4]) != label_of(&lb, id[6]),
+           "leiden separates the three groups");
     graph_node_labels_free(&lb);
     ASSERT(graph_kcore(g, &lb) == 0 && lb.count == 7, "k-core runs");
     /* triangle nodes have core number >= 2 */

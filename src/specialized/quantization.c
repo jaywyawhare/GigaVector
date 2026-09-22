@@ -184,10 +184,6 @@ static size_t quant_levels(GV_QuantType type) {
     return 0;
 }
 
-/* Public API */
-
-/* Config init */
-
 void quant_config_init(GV_QuantConfig *config) {
     if (!config) return;
     config->type        = GV_QUANT_8BIT;
@@ -196,8 +192,6 @@ void quant_config_init(GV_QuantConfig *config) {
     config->rabitq_seed = 0;
 }
 
-/* Code size */
-
 size_t quant_code_size(const GV_QuantCodebook *cb, size_t dimension) {
     if (!cb || dimension == 0) return 0;
     size_t bpv = bits_per_value(cb->type);
@@ -205,16 +199,12 @@ size_t quant_code_size(const GV_QuantCodebook *cb, size_t dimension) {
     return (dimension * bpv + 7) / 8;
 }
 
-/* Memory ratio */
-
 float quant_memory_ratio(const GV_QuantCodebook *cb, size_t dimension) {
     if (!cb || dimension == 0) return 0.0f;
     size_t code_bytes = quant_code_size(cb, dimension);
     if (code_bytes == 0) return 0.0f;
     return (float)(dimension * sizeof(float)) / (float)code_bytes;
 }
-
-/* Training */
 
 GV_QuantCodebook *quant_train(const float *vectors, size_t count,
                                  size_t dimension,
@@ -229,7 +219,6 @@ GV_QuantCodebook *quant_train(const float *vectors, size_t count,
     cb->dimension = dimension;
     cb->ternary_threshold = 0.5f; /* default: half a std-dev */
 
-    /* Per-dimension statistics */
     cb->min_vals  = (float *)gv_alloc(dimension * sizeof(float));
     cb->max_vals  = (float *)gv_alloc(dimension * sizeof(float));
     cb->mean_vals = (float *)gv_alloc(dimension * sizeof(float));
@@ -239,7 +228,6 @@ GV_QuantCodebook *quant_train(const float *vectors, size_t count,
         return NULL;
     }
 
-    /* Initialise accumulators. */
     for (size_t d = 0; d < dimension; d++) {
         cb->min_vals[d]  = FLT_MAX;
         cb->max_vals[d]  = -FLT_MAX;
@@ -298,8 +286,6 @@ GV_QuantCodebook *quant_train(const float *vectors, size_t count,
     return cb;
 }
 
-/* Encoding helpers */
-
 /**
  * Quantise a single scalar value to an integer code [0, levels-1]
  * using the per-dimension min/max (asymmetric) or mean/std (symmetric).
@@ -339,8 +325,6 @@ static void get_quant_range(const GV_QuantCodebook *cb, size_t d,
         *hi = cb->mean_vals[d] + half;
     }
 }
-
-/* Encode */
 
 int quant_encode(const GV_QuantCodebook *cb, const float *vector,
                     size_t dimension, uint8_t *codes) {
@@ -442,8 +426,6 @@ int quant_encode(const GV_QuantCodebook *cb, const float *vector,
     gv_free(rotated);
     return 0;
 }
-
-/* Decode */
 
 int quant_decode(const GV_QuantCodebook *cb, const uint8_t *codes,
                     size_t dimension, float *output) {
@@ -617,6 +599,10 @@ float quant_distance(const GV_QuantCodebook *cb, const float *query,
             size_t byte_idx = bit_pos / 8;
             size_t shift = 6 - (bit_pos % 8);
             uint8_t q = (codes[byte_idx] >> shift) & 0x03;
+            /* For TERNARY levels==3 a 2-bit field can decode to 3 (only 0/1/2 are
+             * ever written); a corrupt/external code would index one past the
+             * per-dimension block. Clamp to the valid range. */
+            if (q >= levels) q = (uint8_t)(levels - 1);
             dist_sq += dist_table[d * levels + q];
         }
         break;
@@ -717,24 +703,19 @@ float quant_distance_qq(const GV_QuantCodebook *cb,
     return dist_sq;
 }
 
-/* Serialisation */
-
 int quant_codebook_save(const GV_QuantCodebook *cb, const char *path) {
     if (!cb || !path) return -1;
 
     FILE *f = fopen(path, "wb");
     if (!f) return -1;
 
-    /* Magic */
     if (write_u8(f, GV_QUANT_MAGIC_0) != 0) goto fail;
     if (write_u8(f, GV_QUANT_MAGIC_1) != 0) goto fail;
     if (write_u8(f, GV_QUANT_MAGIC_2) != 0) goto fail;
     if (write_u8(f, GV_QUANT_MAGIC_3) != 0) goto fail;
 
-    /* Version */
     if (write_u32(f, GV_QUANT_FILE_VERSION) != 0) goto fail;
 
-    /* Header */
     if (write_u32(f, (uint32_t)cb->type)      != 0) goto fail;
     if (write_u32(f, (uint32_t)cb->mode)       != 0) goto fail;
     if (write_u32(f, (uint32_t)cb->dimension)  != 0) goto fail;
@@ -742,14 +723,12 @@ int quant_codebook_save(const GV_QuantCodebook *cb, const char *path) {
     if (write_u64(f, cb->rabitq_seed)          != 0) goto fail;
     if (write_f32(f, cb->ternary_threshold)    != 0) goto fail;
 
-    /* Per-dimension arrays */
     size_t dim = cb->dimension;
     if (fwrite(cb->min_vals,  sizeof(float), dim, f) != dim) goto fail;
     if (fwrite(cb->max_vals,  sizeof(float), dim, f) != dim) goto fail;
     if (fwrite(cb->mean_vals, sizeof(float), dim, f) != dim) goto fail;
     if (fwrite(cb->std_vals,  sizeof(float), dim, f) != dim) goto fail;
 
-    /* Rotation matrix (if present) */
     if (cb->use_rabitq && cb->rotation) {
         size_t n = dim * dim;
         if (fwrite(cb->rotation, sizeof(float), n, f) != n) goto fail;
@@ -769,7 +748,6 @@ GV_QuantCodebook *quant_codebook_load(const char *path) {
     FILE *f = fopen(path, "rb");
     if (!f) return NULL;
 
-    /* Magic */
     uint8_t mag[4];
     if (read_u8(f, &mag[0]) != 0) goto fail;
     if (read_u8(f, &mag[1]) != 0) goto fail;
@@ -779,12 +757,10 @@ GV_QuantCodebook *quant_codebook_load(const char *path) {
         mag[2] != GV_QUANT_MAGIC_2 || mag[3] != GV_QUANT_MAGIC_3)
         goto fail;
 
-    /* Version */
     uint32_t version = 0;
     if (read_u32(f, &version) != 0) goto fail;
     if (version != GV_QUANT_FILE_VERSION) goto fail;
 
-    /* Header */
     uint32_t type_u32 = 0, mode_u32 = 0, dim_u32 = 0, rabitq_u32 = 0;
     uint64_t seed_u64 = 0;
     float    thresh_f = 0.0f;
@@ -823,10 +799,13 @@ GV_QuantCodebook *quant_codebook_load(const char *path) {
     if (fread(cb->mean_vals, sizeof(float), dim, f) != dim) { quant_codebook_destroy(cb); goto fail; }
     if (fread(cb->std_vals,  sizeof(float), dim, f) != dim) { quant_codebook_destroy(cb); goto fail; }
 
-    /* Rotation matrix */
     cb->rotation = NULL;
     if (cb->use_rabitq) {
+        /* Guard dim*dim and *sizeof(float) against overflow (dim is file-read):
+         * an undersized alloc would be overrun by the fread below. */
+        if (dim != 0 && dim > SIZE_MAX / dim) { quant_codebook_destroy(cb); goto fail; }
         size_t n = dim * dim;
+        if (n > SIZE_MAX / sizeof(float)) { quant_codebook_destroy(cb); goto fail; }
         cb->rotation = (float *)gv_alloc(n * sizeof(float));
         if (!cb->rotation) { quant_codebook_destroy(cb); goto fail; }
         if (fread(cb->rotation, sizeof(float), n, f) != n) {
@@ -842,8 +821,6 @@ fail:
     fclose(f);
     return NULL;
 }
-
-/* Destroy */
 
 void quant_codebook_destroy(GV_QuantCodebook *cb) {
     if (!cb) return;

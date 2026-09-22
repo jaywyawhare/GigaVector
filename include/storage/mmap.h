@@ -47,6 +47,19 @@ const void *mmap_data(const GV_MMap *mm);
  */
 size_t mmap_size(const GV_MMap *mm);
 
+/**
+ * @brief Warm a mapping into RAM: madvise(WILLNEED) then fault every page in.
+ *        Eliminates cold-start page faults on the first queries. Safe with NULL.
+ */
+void mmap_warmup(const GV_MMap *mm);
+
+/**
+ * @brief Prefetch a file into the OS page cache (posix_fadvise WILLNEED).
+ *        Used to warm on-disk index files (DiskANN/IVFDISK) before serving.
+ * @return 0 on success (or no-op where fadvise is unavailable), -1 on error.
+ */
+int gv_file_warmup(const char *path);
+
 #ifdef __cplusplus
 }
 #endif

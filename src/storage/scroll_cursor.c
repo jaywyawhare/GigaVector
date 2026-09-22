@@ -22,17 +22,9 @@
 #include "storage/db_internal.h"
 #include "core/types.h"
 
-/* -------------------------------------------------------------------------
- * Internal helpers
- * ---------------------------------------------------------------------- */
-
 static uint64_t sc_now_us(void) {
     return db_get_time_us();
 }
-
-/* -------------------------------------------------------------------------
- * Public API
- * ---------------------------------------------------------------------- */
 
 int gv_db_cursor_open(GV_Database *db, const float *query,
                       size_t page_size, GV_ScrollCursor *out)

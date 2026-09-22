@@ -5,6 +5,7 @@
 
 #include "storage/disk_page_cache.h"
 #include "core/memory.h"
+#include "core/utils.h"
 
 #include <pthread.h>
 #include <stdlib.h>
@@ -12,16 +13,9 @@
 
 #define GV_DISK_PAGE_CACHE_BUCKETS 64u
 
-/*
- * Per-thread scratch buffer used by gv_disk_page_cache_lookup() to return a
- * private copy of a cached page. Because it is a copy, the returned pointer is
- * immune to a concurrent eviction/free of the underlying cache entry, and it
- * lets us keep the existing (borrowed-pointer) lookup signature that the
- * non-editable callers depend on. The buffer is thread-local and is freed by a
- * TLS destructor when the thread exits, so it does not leak. It is reused
- * (grown as needed) across lookups on the same thread, which is why the
- * returned pointer is only valid until the next lookup on that thread.
- */
+/* Per-thread scratch buffer for lookup()'s private page copy: a copy keeps the
+ * borrowed-pointer signature safe against concurrent eviction/free, but the
+ * returned pointer is only valid until the next lookup on the same thread. */
 typedef struct DiskPageLookupScratch {
     uint8_t *data;
     size_t cap;
@@ -87,15 +81,6 @@ struct GV_DiskPageCache {
     pthread_mutex_t lock; /**< Serializes all mutations of the fields above. */
 };
 
-static uint32_t disk_page_cache_hash(const char *key)
-{
-    uint32_t h = 2166136261u;
-    for (const unsigned char *p = (const unsigned char *)key; *p; ++p) {
-        h ^= *p;
-        h *= 16777619u;
-    }
-    return h;
-}
 
 static void disk_page_cache_unlink(GV_DiskPageCache *cache, DiskPageCacheNode *node)
 {
@@ -204,7 +189,7 @@ void gv_disk_page_cache_get_stats(const GV_DiskPageCache *cache, GV_DiskPageCach
 const uint8_t *gv_disk_page_cache_lookup(GV_DiskPageCache *cache, const char *key, size_t *len_out)
 {
     if (!cache || !key) return NULL;
-    uint32_t hash = disk_page_cache_hash(key);
+    uint32_t hash = gv_fnv1a(key, strlen(key));
     pthread_mutex_lock(&cache->lock);
     for (DiskPageCacheNode *node = cache->buckets[hash % GV_DISK_PAGE_CACHE_BUCKETS];
          node; node = node->hash_next) {
@@ -240,7 +225,7 @@ int gv_disk_page_cache_insert(GV_DiskPageCache *cache, const char *key,
 {
     if (!cache || !key || !data || len == 0 || cache->max_bytes == 0) return -1;
 
-    uint32_t hash = disk_page_cache_hash(key);
+    uint32_t hash = gv_fnv1a(key, strlen(key));
     uint32_t bucket = hash % GV_DISK_PAGE_CACHE_BUCKETS;
     pthread_mutex_lock(&cache->lock);
     for (DiskPageCacheNode *node = cache->buckets[bucket]; node; node = node->hash_next) {
@@ -293,7 +278,7 @@ int gv_disk_page_cache_insert(GV_DiskPageCache *cache, const char *key,
 void gv_disk_page_cache_remove(GV_DiskPageCache *cache, const char *key)
 {
     if (!cache || !key) return;
-    uint32_t hash = disk_page_cache_hash(key);
+    uint32_t hash = gv_fnv1a(key, strlen(key));
     uint32_t bucket = hash % GV_DISK_PAGE_CACHE_BUCKETS;
     pthread_mutex_lock(&cache->lock);
     DiskPageCacheNode **pp = &cache->buckets[bucket];

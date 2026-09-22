@@ -6,6 +6,7 @@
 #include <pthread.h>
 
 #include "core/memory.h"
+#include "core/compat.h"
 #include "core/types.h"
 #include "index/kdtree.h"
 #include "storage/wal.h"
@@ -148,6 +149,7 @@ typedef struct GV_Database {
     float last_retrain_drift;          /**< Most-recent drift value from ivf_retrain_check_drift(). */
     float initial_inertia;             /**< Inertia recorded at training time (for drift ratio). */
     int retrain_running;               /**< 1 while background retrain thread is active. */
+    int retrain_thread_joinable;       /**< 1 when retrain_thread holds a live (unjoined) handle. */
     pthread_t retrain_thread;          /**< Background retrain thread handle. */
     pthread_mutex_t retrain_mutex;     /**< Mutex protecting retrain state fields. */
     /* Tiered storage */
@@ -155,13 +157,19 @@ typedef struct GV_Database {
     uint64_t hot_max_age_seconds;       /**< Age threshold (s) for HOT->WARM demotion (default 86400). */
     uint64_t warm_max_age_seconds;      /**< Age threshold (s) for WARM->COLD demotion (default 604800). */
     size_t hot_max_vectors;             /**< Maximum hot-tier vector count (0 = unlimited). */
+    uint64_t access_recency_window_seconds; /**< Phase 4: a vector accessed within this window is kept HOT regardless of age (0 = disabled). */
+    uint32_t hot_min_access_count;      /**< Phase 4: access count at/above which a vector is promoted at least one tier warmer (0 = disabled). */
     GV_TieredStorageManager *tiered_storage; /**< Tiered storage manager; NULL if disabled. */
+    struct GV_ValueStore *value_store;   /**< Opt-in WiscKey key-value separation store; NULL unless enabled. */
     GV_OtlpConfig otlp_config;          /**< OpenTelemetry OTLP exporter configuration. */
     struct GV_ABTest *ab_test;           /**< Active A/B test state, or NULL. */
     pthread_mutex_t ab_mutex;            /**< Mutex protecting ab_test access. */
     GV_CDCStream *cdc_stream;          /**< Optional CDC sink; NULL unless attached. Notified on insert/update/delete. */
     GV_WebhookManager *webhook_mgr;    /**< Optional webhook/change-stream sink; NULL unless attached. */
     GV_PointIDMap *id_map;             /**< String primary-key (chunk_id) -> internal index. Persisted to a "{filepath}.ids" sidecar. */
+    /* MVCC transactions */
+    uint64_t commit_version;           /**< Monotonic version stamped by each committed write txn (0 = no txns yet). */
+    pthread_mutex_t txn_mutex;         /**< Serializes transaction commits (single-writer commit point). */
 } GV_Database;
 
 typedef struct {
@@ -338,6 +346,18 @@ GV_Database *db_open_from_memory_ivfdisk(const void *data, size_t size,
 GV_Database *db_open_mmap(const char *filepath, size_t dimension, GV_IndexType index_type);
 
 /**
+ * @brief Warm the database's on-disk data into the OS page cache.
+ *
+ * Prefetches the backing data/snapshot file (and WAL) so the first queries after
+ * open — especially for mmap-opened or on-disk indexes (DiskANN/IVFDISK) — don't
+ * pay cold page-fault latency. In-memory databases are a no-op. Call after open,
+ * before serving traffic.
+ *
+ * @return 0 on success, -1 if @p db is NULL.
+ */
+int db_warmup(GV_Database *db);
+
+/**
  * @brief Release all resources held by the database, including its K-D tree.
  *
  * Safe to call with NULL; no action is taken.
@@ -354,7 +374,7 @@ void db_close(GV_Database *db);
  * @param dimension Number of components provided in @p data; must equal db->dimension.
  * @return 0 on success, -1 on invalid arguments or allocation failure.
  */
-int db_add_vector(GV_Database *db, const float *data, size_t dimension);
+GV_NODISCARD int db_add_vector(GV_Database *db, const float *data, size_t dimension);
 
 /**
  * @brief Add a vector with metadata to the database.
@@ -547,6 +567,39 @@ int db_delete_vector_by_index(GV_Database *db, size_t vector_index);
 int db_update_vector(GV_Database *db, size_t vector_index, const float *new_data, size_t dimension);
 
 /**
+ * @brief Toggle bulk-load mode: WAL group-commit (fsync every ~8192 records) instead
+ *        of fsync-per-insert. Dramatically speeds up building a persistent index.
+ *        Turning it off (or db_save/db_close) restores durable per-record fsync.
+ *        No-op for in-memory databases (no WAL).
+ * @param db Database.
+ * @param on 1 to enable bulk load, 0 to restore per-record durability.
+ */
+void db_set_bulk_load(GV_Database *db, int on);
+
+/**
+ * @brief Set HNSW efConstruction at runtime (build speed/recall knob). Lower is
+ *        faster to build with lower recall. No-op unless the DB uses HNSW.
+ * @return 0 on success, -1 if not an HNSW database.
+ */
+int db_set_ef_construction(GV_Database *db, size_t ef);
+
+/**
+ * @brief Build the HNSW graph over already-inserted vectors using @p num_threads
+ *        threads (0/1 = serial). Race-free batched parallel build. HNSW only.
+ * @return 0 on success, -1 on error.
+ */
+int db_hnsw_build_parallel(GV_Database *db, size_t num_threads);
+
+/**
+ * @brief Bulk-add vectors to a fresh HNSW database and build the graph in
+ *        parallel (stage into storage, then multi-threaded race-free build).
+ *        Much faster than inserting one-by-one. HNSW only; requires db->count==0.
+ * @return 0 on success, -1 on error.
+ */
+int db_add_vectors_parallel(GV_Database *db, const float *data, size_t count,
+                            size_t dimension, size_t num_threads);
+
+/**
  * @brief Attach (or detach) a CDC stream that receives insert/update/delete events.
  *
  * The database does not own the stream; the caller keeps it alive and destroys
@@ -574,7 +627,7 @@ void db_set_webhook_manager(GV_Database *db, GV_WebhookManager *mgr);
 /** @brief Return the attached webhook manager, or NULL. */
 GV_WebhookManager *db_get_webhook_manager(const GV_Database *db);
 
-/* ---- Identity seam: string primary key (chunk_id) support ---- */
+/* Identity seam: string primary key (chunk_id) support */
 
 /**
  * @brief Add a vector keyed by a string id (e.g. a chunk_id).
@@ -653,7 +706,7 @@ int db_update_vector_metadata(GV_Database *db, size_t vector_index,
  * @param filepath Output file path; if NULL, uses db->filepath.
  * @return 0 on success, -1 on invalid arguments or I/O failures.
  */
-int db_save(const GV_Database *db, const char *filepath);
+GV_NODISCARD int db_save(const GV_Database *db, const char *filepath);
 
 /**
  * @brief Search for k nearest neighbors to a query vector.
@@ -665,8 +718,22 @@ int db_save(const GV_Database *db, const char *filepath);
  * @param distance_type Distance metric to use.
  * @return Number of neighbors found (0 to k), or -1 on error.
  */
-int db_search(const GV_Database *db, const float *query_data, size_t k,
+GV_NODISCARD int db_search(const GV_Database *db, const float *query_data, size_t k,
                  GV_SearchResult *results, GV_DistanceType distance_type);
+
+/**
+ * @brief MVCC snapshot search: return only vectors visible at commit version @p snapshot.
+ *
+ * A vector is visible when it was created at/before @p snapshot and not deleted
+ * as of @p snapshot. Used by transactions for repeatable, non-blocking reads.
+ * For a database that has never committed a transaction this is identical to
+ * db_search (all version stamps are 0).
+ *
+ * @return Number of visible neighbours (0 to k), or -1 on error.
+ */
+int db_search_at_version(const GV_Database *db, const float *query_data, size_t k,
+                         GV_SearchResult *results, GV_DistanceType distance_type,
+                         uint64_t snapshot);
 
 /**
  * @brief Search for k nearest neighbors with metadata filtering.
@@ -928,6 +995,27 @@ void db_stop_background_compaction(GV_Database *db);
  * @return 0 on success, -1 on error.
  */
 int db_compact(GV_Database *db);
+
+/* ---- WiscKey key-value separation (opt-in blob store) ----
+ * A durable, GC-capable value store (see storage/value_store.h) attached to the
+ * database. Keys are uint64; values live in an append-only log while the key
+ * index stays in memory (rebuilt from the log on reopen). Useful for offloading
+ * large auxiliary payloads (documents, blobs) away from the dense vector store. */
+
+/** @brief Enable the value store, backing it with a log at @p path. @return 0 on success, -1 on error. */
+int db_value_store_enable(GV_Database *db, const char *path);
+/** @brief Put/replace a value for @p key. @return 0 on success, -1 on error or if not enabled. */
+int db_value_store_put(GV_Database *db, uint64_t key, const void *value, size_t len);
+/** @brief Get the value for @p key (caller frees *value_out). @return 0 on success, -1 otherwise. */
+int db_value_store_get(GV_Database *db, uint64_t key, void **value_out, size_t *len_out);
+/** @brief Delete @p key. @return 0 if removed, -1 otherwise. */
+int db_value_store_delete(GV_Database *db, uint64_t key);
+/** @brief Garbage-collect the value store's log. @return 0 on success, -1 otherwise. */
+int db_value_store_gc(GV_Database *db);
+
+/* Internal (transaction commit path): set a thread-local MVCC create_version
+ * stamp applied by the next db_add_vector call(s) on this thread. 0 clears it. */
+void db_set_commit_stamp(uint64_t stamp);
 
 /**
  * @brief Internal: compact SoA storage in place, removing deleted vectors and

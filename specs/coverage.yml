@@ -1,0 +1,376 @@
+# Verification coverage manifest.
+#
+# Every .c file under src/ must appear exactly once. scripts/check_coverage.py
+# fails the build if a file is added without a classification, so new code
+# cannot silently escape verification.
+#
+# Tiers:
+#   quint    - modelled by a Quint spec in specs/quint/ (design-level model checking)
+#   cbmc     - bounded proof over the real C, DISCHARGED. Only files whose
+#              harness actually returned VERIFICATION SUCCESSFUL appear here.
+#   cbmc-pending - a harness exists and is wired up, but does not currently
+#              discharge (INTRACTABLE / FAILED / ERROR / SKIP). This is honest
+#              work-in-progress, NOT verification, and is counted separately.
+#   property - statistical or algorithmic; covered by property/differential tests,
+#              NOT formally verified. Recorded so the gap is explicit.
+#   exempt   - deliberately out of scope, with a stated reason.
+
+tiers:
+  quint:
+    - ref: "ab_test.qnt"
+      why: "deterministic bucketing, stable assignment"
+      files:
+        - admin/ab_test.c
+        - specialized/conditional.c
+    - ref: "auth.qnt"
+      why: "token lifecycle, expiry, no privilege retention"
+      files:
+        - security/auth.c
+    - ref: "bulk_import.qnt"
+      why: "all-or-nothing batch, partial-failure visibility"
+      files:
+        - storage/bulk_import.c
+        - storage/document_ingest.c
+    - ref: "cache.qnt"
+      why: "cache coherence, no stale-after-invalidate"
+      files:
+        - admin/cache.c
+        - storage/disk_page_cache.c
+    - ref: "cdc.qnt"
+      why: "delivery prefix, no phantom event"
+      files:
+        - admin/cdc.c
+        - admin/streaming.c
+    - ref: "cluster.qnt"
+      why: "membership, quorum health"
+      files:
+        - admin/cluster.c
+    - ref: "consistency.qnt"
+      why: "session guarantees, bounded staleness"
+      files:
+        - search/consistency.c
+        - search/freshness.c
+    - ref: "dedup.qnt"
+      why: "id uniqueness, dedup idempotence"
+      files:
+        - specialized/dedup.c
+        - specialized/point_id.c
+    - ref: "index_swap.qnt"
+      why: "online rebuild, no lost insert"
+      files:
+        - index/index_maintenance.c
+        - index/ivf_retrain.c
+    - ref: "lock_order.qnt"
+      why: "lock hierarchy; also covered by scripts/check_lock_order.py"
+      files:
+        - storage/database.c
+        - storage/db_resource.c
+        - storage/db_stats.c
+    - ref: "memory_layer.qnt"
+      why: "memory tier promotion/consolidation, no loss"
+      files:
+        - storage/memory_consolidation.c
+        - storage/memory_extraction.c
+        - storage/memory_layer.c
+    - ref: "mvcc.qnt"
+      why: "visibility predicate, GC, rollback"
+      files:
+        - specialized/mvcc.c
+        - storage/transaction.c
+    - ref: "namespace.qnt"
+      why: "namespace/alias resolution, no dangling alias"
+      files:
+        - admin/namespace.c
+        - api/alias.c
+    - ref: "quota.qnt"
+      why: "check/record TOCTOU"
+      files:
+        - api/quota.c
+    - ref: "raft.qnt"
+      why: "consensus state machine; 5 Raft safety properties"
+      files:
+        - admin/raft.c
+    - ref: "rbac.qnt"
+      why: "deny-override, hierarchy acyclicity"
+      files:
+        - security/authz.c
+        - security/rbac.c
+    - ref: "replication.qnt"
+      why: "role/state machine, quorum commit, read routing"
+      files:
+        - admin/repl_sim.c
+        - admin/repl_transport.c
+        - admin/replication.c
+    - ref: "scroll_cursor.qnt"
+      why: "cursor stability, no skip/duplicate under concurrent writes"
+      files:
+        - storage/scroll_cursor.c
+    - ref: "shard_rebalance.qnt"
+      why: "ownership, copy-then-delete migration"
+      files:
+        - admin/migration.c
+        - admin/shard.c
+    - ref: "snapshot.qnt"
+      why: "consistent cut, restore round-trip"
+      files:
+        - storage/backup.c
+        - storage/backup_sink.c
+        - storage/snapshot.c
+    - ref: "tiered_storage.qnt"
+      why: "tier membership, promote/demote race"
+      files:
+        - schema/tiered_tenant.c
+        - storage/tiered_storage.c
+    - ref: "ttl.qnt"
+      why: "expiry check-then-act window"
+      files:
+        - admin/ttl.c
+    - ref: "versioning.qnt"
+      why: "version monotonicity, time-travel reads"
+      files:
+        - admin/timetravel.c
+        - admin/versioning.c
+    - ref: "vlog_gc.qnt"
+      why: "reclamation safety, reopen rebuild"
+      files:
+        - storage/vacuum.c
+        - storage/value_store.c
+        - storage/vlog.c
+    - ref: "webhook.qnt"
+      why: "at-least-once delivery, retry/backoff termination"
+      files:
+        - admin/webhook.c
+  cbmc:
+    - ref: "harness_arena.c"
+      why: "arena bump arithmetic: alignment honoured, allocations inside the arena and non-overlapping, oversized request fails instead of wrapping"
+      files:
+        - core/arena.c
+    - ref: "harness_crypto.c"
+      why: "encrypt/decrypt round-trip; decrypting arbitrary bytes rejects safely rather than overrunning an attacker-controlled length"
+      files:
+        - security/crypto.c
+    - ref: "harness_exact_search.c"
+      why: "exact k-NN really is exact -- sorted, deduped, k-bounded, no omitted closer candidate. The ground-truth oracle for every recall number"
+      files:
+        - index/exact_search.c
+    - ref: "harness_graph_csr.c"
+      why: "CSR row_ptr monotone, col_idx in range, SpMV/SpMM stay in bounds and inject no NaN"
+      files:
+        - features/graph_csr.c
+    - ref: "harness_metadata.c"
+      why: "set/get round-trip, key uniqueness (set replaces, never shadows), remove is complete, missing key returns NULL"
+      files:
+        - schema/metadata.c
+    - ref: "harness_posting.c"
+      why: "posting-segment decoder is memory-safe for an arbitrary byte string"
+      files:
+        - storage/posting_list.c
+    - ref: "harness_quant.c"
+      why: "quantise/dequantise stays in range and never yields NaN; declared byte size covers what the encoder writes"
+      files:
+        - storage/scalar_quant.c
+    - ref: "harness_sim_time.c"
+      why: "simulated clock is exactly monotone and reset is absolute -- DST replay and the Quint trace bridge both drive time through it"
+      files:
+        - core/sim_time.c
+    - ref: "harness_grpc_frame.c"
+      why: "wire-frame length prefix is attacker-controlled; a declared payload must fit the frame. Discharged on CBMC 6.11's --smt2 --fpa route (z3), where default bit-blasting was INTRACTABLE -- see INTRACTABILITY.md"
+      files:
+        - api/grpc.c
+    - ref: "harness_sparse.c"
+      why: "sparse indices stay sorted, unique and inside the declared dimension -- what every merge and dot product assumes"
+      files:
+        - storage/sparse_vector.c
+  cbmc-pending:
+    - ref: "harness_ann_index.c"
+      why: "harness exists but does not discharge (INTRACTABLE) -- ANN structure (not recall): k respected, every returned id addresses a real vector, no duplicates, ordered, distances finite"
+      files:
+        - core/memory.c
+        - index/hnsw.c
+        - search/distance.c
+        - storage/soa_storage.c
+    - ref: "harness_bloom.c"
+      why: "harness exists but does not discharge (SKIP) -- no false negatives (the one-sided-error contract everything built on it relies on); empty filter reports nothing present"
+      files:
+        - core/bloom.c
+    - ref: "harness_bm25.c"
+      why: "harness exists but does not discharge (INTRACTABLE) -- doc frequency never exceeds corpus size (negative IDF corrupts every score), scores never NaN, results best-first"
+      files:
+        - multimodal/bm25.c
+        - multimodal/tokenizer.c
+    - ref: "harness_compression.c"
+      why: "harness exists but does not discharge (INTRACTABLE) -- compress/decompress is the identity, compress_bound really bounds, decompressing arbitrary bytes is memory-safe"
+      files:
+        - storage/compression.c
+    - ref: "harness_filter.c"
+      why: "harness exists but does not discharge (INTRACTABLE) -- filter parsing is memory-safe for arbitrary text; evaluation is total and deterministic"
+      files:
+        - search/filter.c
+        - search/filter_ops.c
+    - ref: "harness_graph_db.c"
+      why: "harness exists but does not discharge (INTRACTABLE) -- adjacency consistency (edge visible from both endpoints, gone from both on removal) and shortest-path soundness"
+      files:
+        - features/graph_algos_util.c
+        - features/graph_db.c
+        - features/graph_path.c
+    - ref: "harness_id_bitmap.c"
+      why: "harness exists but does not discharge (INTRACTABLE) -- AND/OR commutativity and definition, add/remove/contains agreement across container promotion, clone fidelity, serialize round-trip"
+      files:
+        - core/id_bitmap.c
+    - ref: "harness_kdtree.c"
+      why: "harness exists but does not discharge (INTRACTABLE) -- k-d split invariant, axis cycling, index range -- a broken split prunes the wrong branch and reads as a recall regression"
+      files:
+        - index/kdtree.c
+    - ref: "harness_parsers.c"
+      why: "harness exists but does not discharge (INTRACTABLE) -- JSON parser is memory-safe for arbitrary text (shared surface with the libFuzzer targets)"
+      files:
+        - features/json.c
+    - ref: "harness_ranking.c"
+      why: "harness exists but does not discharge (SKIP) -- reranker structure: subset of candidates, no duplicates, k respected, scores never NaN, order non-increasing"
+      files:
+        - search/mmr.c
+    - ref: "harness_wal_record.c"
+      why: "harness exists but does not discharge (INTRACTABLE) -- WAL record decoder is memory-safe for an arbitrary byte string"
+      files:
+        - storage/wal.c
+  property:
+    - ref: "tests + harness_ann_index.c"
+      why: "shares its contract with the representative verified in harness_ann_index.c, but is NOT itself symbolically executed -- covered by unit/differential tests only"
+      files:
+        - index/diskann.c
+        - index/hnsw_opt.c
+        - index/ivf_base.c
+        - index/ivfdisk.c
+        - index/ivfflat.c
+        - index/ivfpq.c
+        - index/ivfsq8.c
+        - index/ivfturboquant.c
+        - index/lsh.c
+        - index/rabitq.c
+    - ref: "tests + harness_arena.c"
+      why: "shares its contract with the representative verified in harness_arena.c, but is NOT itself symbolically executed -- covered by unit/differential tests only"
+      files:
+        - core/buffer.c
+        - core/scope.c
+    - ref: "tests + harness_bm25.c"
+      why: "shares its contract with the representative verified in harness_bm25.c, but is NOT itself symbolically executed -- covered by unit/differential tests only"
+      files:
+        - multimodal/fulltext.c
+        - multimodal/late_interaction.c
+        - multimodal/learned_sparse.c
+    - ref: "tests + harness_compression.c"
+      why: "shares its contract with the representative verified in harness_compression.c, but is NOT itself symbolically executed -- covered by unit/differential tests only"
+      files:
+        - storage/chunker.c
+    - ref: "tests + harness_exact_search.c"
+      why: "shares its contract with the representative verified in harness_exact_search.c, but is NOT itself symbolically executed -- covered by unit/differential tests only"
+      files:
+        - index/flat.c
+    - ref: "tests + harness_geo.c"
+      why: "haversine properties cannot be discharged symbolically -- CBMC ships no libm bodies (asin/sin/cos/sqrt), so every assertion collapses to nondeterminism. Harness runs concretely via cbmc-smoke only"
+      files:
+        - features/geo.c
+    - ref: "tests + harness_graph_csr.c"
+      why: "shares its contract with the representative verified in harness_graph_csr.c, but is NOT itself symbolically executed -- covered by unit/differential tests only"
+      files:
+        - features/graph_centrality.c
+        - features/graph_community.c
+        - features/graph_embed.c
+        - features/graph_matrix.c
+    - ref: "tests + harness_graph_db.c"
+      why: "shares its contract with the representative verified in harness_graph_db.c, but is NOT itself symbolically executed -- covered by unit/differential tests only"
+      files:
+        - features/context_graph.c
+        - features/graph_classify.c
+        - features/graph_linkpred.c
+        - features/knowledge_graph.c
+        - features/recommend.c
+    - ref: "tests + harness_grpc_frame.c"
+      why: "shares its contract with the representative verified in harness_grpc_frame.c, but is NOT itself symbolically executed -- covered by unit/differential tests only"
+      files:
+        - api/python_compat.c
+        - api/rest_handlers.c
+        - api/server.c
+    - ref: "tests + harness_metadata.c"
+      why: "shares its contract with the representative verified in harness_metadata.c, but is NOT itself symbolically executed -- covered by unit/differential tests only"
+      files:
+        - api/schema.c
+        - api/typed_metadata.c
+        - schema/vector.c
+        - specialized/named_vectors.c
+    - ref: "tests + harness_parsers.c"
+      why: "shares its contract with the representative verified in harness_parsers.c, but is NOT itself symbolically executed -- covered by unit/differential tests only"
+      files:
+        - features/cypher.c
+        - features/json_index.c
+        - features/sql.c
+    - ref: "tests + harness_posting.c"
+      why: "shares its contract with the representative verified in harness_posting.c, but is NOT itself symbolically executed -- covered by unit/differential tests only"
+      files:
+        - multimodal/metadata_index.c
+        - multimodal/payload_index.c
+    - ref: "tests + harness_quant.c"
+      why: "shares its contract with the representative verified in harness_quant.c, but is NOT itself symbolically executed -- covered by unit/differential tests only"
+      files:
+        - index/codebook.c
+        - index/opq.c
+        - index/pq.c
+        - multimodal/muvera.c
+        - specialized/binary_quant.c
+        - specialized/quantization.c
+        - storage/turboquant.c
+    - ref: "tests + harness_ranking.c"
+      why: "shares its contract with the representative verified in harness_ranking.c, but is NOT itself symbolically executed -- covered by unit/differential tests only"
+      files:
+        - search/group_search.c
+        - search/hybrid_search.c
+        - search/phased_ranking.c
+        - search/quant_rerank.c
+        - search/ranking.c
+        - search/score_threshold.c
+    - ref: "tests + harness_soa.c"
+      why: "shares its contract with the representative verified in harness_soa.c, but is NOT itself symbolically executed -- covered by unit/differential tests only"
+      files:
+        - storage/compact_store.c
+        - storage/disk_layout.c
+        - storage/mmap.c
+    - ref: "tests + harness_sparse.c"
+      why: "shares its contract with the representative verified in harness_sparse.c, but is NOT itself symbolically executed -- covered by unit/differential tests only"
+      files:
+        - index/sparse_index.c
+    - ref: "tests/multimodal"
+      why: "scoring/serialisation behaviour covered by unit + property tests"
+      files:
+        - multimodal/auto_embed.c
+        - multimodal/embedding.c
+        - multimodal/multimodal.c
+        - multimodal/multivec.c
+        - specialized/agent.c
+        - specialized/optimizer.c
+        - storage/document_search.c
+    - ref: "tests/search"
+      why: "ranking quality is statistical; ordering invariants covered by unit tests"
+      files:
+        - search/importance.c
+        - search/recall.c
+  exempt:
+    - ref: "-"
+      why: "delegates to external identity/TLS providers; correctness is the provider's"
+      files:
+        - admin/sso.c
+        - security/tls.c
+    - ref: "-"
+      why: "observability and configuration plumbing; no state machine or memory-safety surface beyond compiler checks"
+      files:
+        - admin/otlp.c
+        - admin/tracing.c
+        - core/config.c
+        - core/log.c
+    - ref: "-"
+      why: "thin bindings to external runtimes (ONNX, LLM APIs, CUDA); no independently verifiable logic"
+      files:
+        - multimodal/inference.c
+        - multimodal/llm.c
+        - multimodal/onnx.c
+        - specialized/embedded.c
+        - specialized/gpu.c

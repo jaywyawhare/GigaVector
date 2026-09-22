@@ -1,0 +1,9 @@
+apiVersion: v2
+name: gigavector
+description: GigaVector multi-model (vector + graph) database server
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/jaywyawhare/GigaVector
+sources:
+  - https://github.com/jaywyawhare/GigaVector

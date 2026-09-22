@@ -153,24 +153,12 @@ static inline int clock_gettime(clockid_t clk, struct timespec *ts) {
 #define O_BINARY _O_BINARY
 #endif
 /*
- * POSIX I/O shims for MSVC.
- *
- * The read/write/close shims were previously OBJECT-LIKE macros
- * (#define read _read, etc.).  As bare object-like macros they leaked into
- * every translation unit and textually replaced ANY identifier spelled
- * read/write/close -- including struct member accesses like "x.read" and
- * local variables -- breaking otherwise-valid code.  They are now
- * "static inline" shim functions with the same names: a function name only
- * participates in ordinary-identifier lookup, so "x.read" still refers to the
- * struct member and is no longer clobbered.
- *
- * "open" stays a FUNCTION-LIKE macro: function-like macros only expand when
- * the name is immediately followed by '(', so "x.open" is never rewritten --
- * there is no leakage to fix there -- and keeping it a macro preserves the
- * forced _O_BINARY flag and the optional-mode variadic call form.
- *
- * All of this is scoped to MSVC only (inside the _WIN32 and !__GNUC__ guards);
- * POSIX/MinGW builds use the real system calls unchanged.
+ * POSIX I/O shims for MSVC (scoped to _WIN32 && !__GNUC__; POSIX/MinGW use real
+ * syscalls). read/write/close are static inline functions, NOT object-like
+ * macros: bare macros would textually clobber any identifier spelled read/write/
+ * close (e.g. struct member "x.read"), whereas a function name only participates
+ * in ordinary-identifier lookup. "open" stays a function-like macro (only expands
+ * before '(', so "x.open" is safe) to force _O_BINARY and keep the variadic mode.
  */
 #define open(path, flags, ...) _open((path), (flags) | _O_BINARY, ##__VA_ARGS__)
 static inline int close(int fd) { return _close(fd); }
@@ -212,5 +200,12 @@ static inline int gv_rand_r(unsigned int *seed) {
     *seed = *seed * 1103515245u + 12345u;
     return (int)((*seed >> 16) & 0x7FFF);
 }
+
+/* Warn when a function's return value is ignored (GCC/Clang; no-op elsewhere). */
+#if defined(__GNUC__) || defined(__clang__)
+#define GV_NODISCARD __attribute__((warn_unused_result))
+#else
+#define GV_NODISCARD
+#endif
 
 #endif /* GV_COMPAT_H */

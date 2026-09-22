@@ -57,6 +57,20 @@ typedef enum {
 GV_CSR *gv_csr_build(const GV_GraphDB *g, const GV_GAContext *ctx,
                      GV_CSRDir dir, int weighted);
 
+/**
+ * Cached build: same as gv_csr_build but memoized per (graph, version,
+ * orientation, weighted) and rebuilt only when graph_version() changed.
+ *
+ * The returned matrix is owned by the cache — do NOT free it, and do not
+ * hold it across graph mutations. Falls back to a fresh build on any
+ * internal inconsistency.
+ */
+GV_CSR *gv_csr_build_cached(const GV_GraphDB *g, const GV_GAContext *ctx,
+                            GV_CSRDir dir, int weighted);
+
+/** Drop every cached CSR (called implicitly on version change). */
+void gv_csr_cache_clear(void);
+
 /** Free a CSR matrix (safe on NULL). */
 void gv_csr_free(GV_CSR *m);
 

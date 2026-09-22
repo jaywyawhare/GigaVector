@@ -5,6 +5,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include "admin/replication.h"
+#include "schema/vector.h"
 #include "storage/database.h"
 #include "../test_tmp.h"
 
@@ -69,9 +70,8 @@ static int test_tcp_wal_replication(void) {
     for (int i = 0; i < 50; i++) {
         float q[4] = {1.0f, 0.0f, 0.0f, 0.0f};
         GV_SearchResult out[1];
-        int n = db_search(follower_db, q, 1, out, GV_DISTANCE_EUCLIDEAN);
-        if (n > 0) {
-            gv_search_results_free(out, n);
+        if (db_search(follower_db, q, 1, out, GV_DISTANCE_EUCLIDEAN) > 0) {
+            if (out[0].vector) vector_destroy((GV_Vector *)out[0].vector);
             synced = 1;
             break;
         }

@@ -278,7 +278,7 @@ int tiered_remove_tenant(GV_TieredManager *mgr, const char *tenant_id) {
     }
 
     pthread_rwlock_unlock(&mgr->rwlock);
-    return -1;  /* Not found */
+    return -1;
 }
 
 int tiered_promote(GV_TieredManager *mgr, const char *tenant_id,

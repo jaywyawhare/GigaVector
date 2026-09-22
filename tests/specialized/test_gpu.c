@@ -56,11 +56,7 @@ static int test_gpu_config_init_twice(void) {
 }
 
 static int test_gpu_create_no_gpu(void) {
-    /*
-     * gpu_create provides a CPU fallback context even when no GPU is
-     * available, so it may return a valid (non-NULL) context.  We verify
-     * that it does not crash and that the returned context can be cleaned up.
-     */
+    /* gpu_create provides a CPU fallback, so it may return a valid context even with no GPU */
     GV_GPUConfig config;
     gpu_config_init(&config);
     GV_GPUContext *ctx = gpu_create(&config);
@@ -94,11 +90,7 @@ static int test_gpu_get_device_info_invalid(void) {
     int rc = gpu_get_device_info(0, NULL);
     ASSERT(rc == -1, "get_device_info with NULL info should return -1");
 
-    /*
-     * Without CUDA, get_device_info returns CPU fallback info (rc=0)
-     * for any device_id.  With CUDA, invalid IDs would return -1.
-     * We just verify no crash and that info is populated.
-     */
+    /* Without CUDA, get_device_info returns CPU fallback info (rc=0) for any device_id; with CUDA, invalid IDs return -1 */
     rc = gpu_get_device_info(-1, &info);
     if (gpu_available()) {
         ASSERT(rc == -1, "get_device_info with device_id=-1 should return -1 with GPU");

@@ -90,8 +90,8 @@ void auth_destroy(GV_AuthManager *auth);
  * @param auth Auth manager.
  * @param description Human-readable description.
  * @param expires_at Expiration timestamp (0 = never).
- * @param key_out Output buffer for generated key (at least 64 bytes).
- * @param key_id_out Output buffer for key ID (at least 32 bytes).
+ * @param key_out Output buffer for generated key (at least 65 bytes: 64 hex + NUL).
+ * @param key_id_out Output buffer for key ID (at least 33 bytes: 32 hex + NUL).
  * @return 0 on success, -1 on error.
  */
 int auth_generate_api_key(GV_AuthManager *auth, const char *description,

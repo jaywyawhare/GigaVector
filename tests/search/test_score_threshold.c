@@ -16,15 +16,14 @@ static GV_Database *make_db(void) {
     float v1[] = {0.9f, 0.1f, 0.0f, 0.0f};
     float v2[] = {0.0f, 1.0f, 0.0f, 0.0f};
     float v3[] = {0.0f, 0.0f, 0.0f, 1.0f};
-    db_add_vector(db, v0, DIM);
-    db_add_vector(db, v1, DIM);
-    db_add_vector(db, v2, DIM);
-    db_add_vector(db, v3, DIM);
+    { int _r = db_add_vector(db, v0, DIM); (void)_r; }
+    { int _r = db_add_vector(db, v1, DIM); (void)_r; }
+    { int _r = db_add_vector(db, v2, DIM); (void)_r; }
+    { int _r = db_add_vector(db, v3, DIM); (void)_r; }
     return db;
 }
 
 static int test_threshold_passes_euclidean(void) {
-    /* For euclidean: distance <= threshold passes */
     ASSERT(threshold_passes(0.5f, 1.0f, GV_DISTANCE_EUCLIDEAN) == 1,
            "0.5 <= 1.0 should pass for euclidean");
     ASSERT(threshold_passes(1.5f, 1.0f, GV_DISTANCE_EUCLIDEAN) == 0,

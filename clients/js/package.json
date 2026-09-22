@@ -1,0 +1,15 @@
+{
+  "name": "gigavector",
+  "version": "0.1.0",
+  "description": "JavaScript/TypeScript client for the GigaVector HTTP API",
+  "type": "module",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "scripts": {
+    "test": "node --test"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  }
+}

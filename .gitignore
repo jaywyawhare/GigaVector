@@ -83,6 +83,15 @@ python/build/
 python/src/gigavector/libGigaVector.so
 python/src/gigavector/libGigaVector.a
 
+# Sanitizer / test run logs and scratch artifacts
+asan_test_*.log
+*.db.wal
+tmp_*.wal
+tmp_*.bin.wal
+
+# Formal-methods (Apalache/TLA+) output
+_apalache-out/
+
 # Frontend artifacts
 website/node_modules/
 website/.npm-cache/

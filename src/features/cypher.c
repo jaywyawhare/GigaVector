@@ -8,6 +8,7 @@
  * or apply updates.
  */
 #include "features/cypher.h"
+#include "features/cypher_vector.h"
 #include "core/memory.h"
 #include "core/utils.h"
 
@@ -28,7 +29,7 @@
 #define CY_MAX_RECURSION_DEPTH 256   /* cap on nested expr/pattern productions (DoS guard) */
 #define CY_MAX_TOKENS  4096          /* cap on total token count (mirrors GV_SQL_MAX_TOKENS) */
 
-/* ============================================================ lexer */
+/* lexer */
 
 typedef enum {
     T_EOF, T_LP, T_RP, T_LB, T_RB, T_LC, T_RC, T_COLON, T_COMMA, T_DOT,
@@ -147,13 +148,17 @@ static int eat(Lex *lx, Tk t, const char *w) {
     adv(lx); return 0;
 }
 
-/* ============================================================= AST */
+/* AST */
 
+#define CY_MAXLABEL 4
 typedef struct {
-    char *var; char *label;
+    char *var; char *label;                     /* label = first of labels[] (index probe) */
+    char *labels[CY_MAXLABEL]; size_t nlabels;  /* all labels; node must match every one */
     char *pk[CY_MAXPROP]; char *pv[CY_MAXPROP]; size_t np;
 } Node;
-typedef struct { char *var; char *type; int dir; int varlen; int minh, maxh; } Rel; /* dir 1 -> , -1 <- , 0 undirected */
+typedef struct { char *var; char *type; int dir; int varlen; int minh, maxh;
+                 char *types[8]; size_t ntypes;               /* rel-type alternation :A|B|... */
+                 char *pk[CY_MAXPROP]; char *pv[CY_MAXPROP]; size_t np; } Rel; /* dir 1 -> , -1 <- , 0 undirected */
 #define CY_VARLEN_MAX 8
 static const char *cy_param_lookup(const char *name); /* defined with the engine */
 typedef struct { Node node[CY_MAXNODE]; Rel rel[CY_MAXNODE]; size_t nn; } Pattern;
@@ -170,6 +175,7 @@ typedef struct Opd {
     char *lcvar; struct Opd *lclist; struct Expr *lcwhere; struct Opd *lcproj; /* list comprehension */
     Pattern *pcpat; struct Expr *pcwhere; struct Opd *pcproj;                  /* pattern comprehension */
     char **mk; size_t nmk;                                                     /* map literal keys (values in args) */
+    int littype;  /* OPD_LIT type: 0=string 1=integer 2=float 3=boolean 4=null */
 } Opd;
 /* Internal list encoding: tag byte then elements joined by 0x1f. */
 #define CY_LTAG '\x02'
@@ -181,7 +187,7 @@ typedef struct Opd {
 
 typedef enum { EX_OR, EX_AND, EX_NOT, EX_CMP, EX_EXISTS } ExK;
 typedef enum { C_EQ, C_NE, C_LT, C_GT, C_LE, C_GE, C_CONTAINS, C_STARTS, C_ENDS,
-               C_IN, C_ISNULL, C_ISNOTNULL } Cmp;
+               C_IN, C_ISNULL, C_ISNOTNULL, C_TRUTHY } Cmp;
 typedef struct Expr { ExK k; struct Expr *l, *r; Cmp op; Opd a, b;
                       char **inlist; size_t nin; Pattern *pat; } Expr;
 static void pattern_clear(Pattern *p);
@@ -189,12 +195,13 @@ static void pattern_clear(Pattern *p);
 typedef enum { AG_NONE, AG_COUNT, AG_COUNTSTAR, AG_COLLECT, AG_SUM, AG_AVG, AG_MIN, AG_MAX } Agg;
 typedef struct { Agg agg; Opd opd; char *alias; } Ret;
 typedef struct { Opd opd; int desc; } Ord;
-typedef struct { char *var; char *prop; char *val; } SetItem;
+typedef struct { char *var; char *prop; Opd *valexpr; } SetItem;
 
-/* ========================================================== parser */
+/* parser */
 
 static void node_clear(Node *n) {
     gv_free(n->var); gv_free(n->label);
+    for (size_t i = 0; i < n->nlabels; i++) gv_free(n->labels[i]);
     for (size_t i = 0; i < n->np; i++) { gv_free(n->pk[i]); gv_free(n->pv[i]); }
     memset(n, 0, sizeof(*n));
 }
@@ -223,6 +230,11 @@ static void opd_clear(Opd *o) {
     gv_free(o->mk);
     memset(o, 0, sizeof(*o));
 }
+static void setitem_free(SetItem *s) {
+    gv_free(s->var); gv_free(s->prop);
+    if (s->valexpr) { opd_clear(s->valexpr); gv_free(s->valexpr); }
+    s->var = s->prop = NULL; s->valexpr = NULL;
+}
 static Opd opd_copy(const Opd *s) {
     Opd d; memset(&d, 0, sizeof(d));
     d.k = s->k; d.binop = s->binop;
@@ -234,9 +246,19 @@ static Opd opd_copy(const Opd *s) {
         d.args = (Opd **)gv_alloc(s->nargs * sizeof(Opd *)); d.nargs = s->nargs;
         for (size_t i = 0; i < s->nargs; i++) { d.args[i] = (Opd *)gv_alloc(sizeof(Opd)); *d.args[i] = opd_copy(s->args[i]); }
     }
+    /* Copy map-literal keys alongside their values (in args): val_of()'s OPD_MAP
+     * branch reads mk[i], so a copy with nargs>0 but mk==NULL would NULL-deref. */
+    if (s->nmk) {
+        d.mk = (char **)gv_alloc(s->nmk * sizeof(char *)); d.nmk = s->nmk;
+        for (size_t i = 0; i < s->nmk; i++) d.mk[i] = s->mk[i] ? gv_dup_cstr(s->mk[i]) : NULL;
+    }
+    /* Copy the list-comprehension source/var: val_of() dereferences lclist, so an
+     * uncopied (NULL) lclist on a list-comp subject would NULL-deref. */
+    if (s->lcvar)  d.lcvar  = gv_dup_cstr(s->lcvar);
+    if (s->lclist) { d.lclist = (Opd *)gv_alloc(sizeof(Opd)); *d.lclist = opd_copy(s->lclist); }
     if (s->l) { d.l = (Opd *)gv_alloc(sizeof(Opd)); *d.l = opd_copy(s->l); }
     if (s->r) { d.r = (Opd *)gv_alloc(sizeof(Opd)); *d.r = opd_copy(s->r); }
-    return d; /* CASE subtrees not copied (subjects are simple in practice) */
+    return d; /* CASE/pattern-comprehension subtrees still not copied (unsupported as copied subjects) */
 }
 static void expr_free(Expr *e) {
     if (!e) return;
@@ -248,11 +270,15 @@ static void expr_free(Expr *e) {
     gv_free(e);
 }
 
-static int parse_props(Lex *lx, Node *n) {
+/* Parse a `{ key: value, ... }` map into parallel key/value arrays. Shared by
+ * node and relationship patterns. Values may be string/number literals, $params
+ * (substituted now), or bare identifiers (a '\x04'-tagged variable reference
+ * resolved at CREATE time, e.g. a FOREACH loop var). */
+static int parse_kv_props(Lex *lx, char **keys, char **vals, size_t *np, size_t cap) {
     if (pk(lx)->t != T_LC) return 0;
     adv(lx);
     while (pk(lx)->t != T_RC) {
-        if (n->np >= CY_MAXPROP) { snprintf(lx->err, CY_ERR, "too many properties"); return -1; }
+        if (*np >= cap) { snprintf(lx->err, CY_ERR, "too many properties"); return -1; }
         if (pk(lx)->t != T_IDENT) { snprintf(lx->err, CY_ERR, "expected property key"); return -1; }
         char *key = gv_dup_cstr(adv(lx)->s);
         if (!key) { snprintf(lx->err, CY_ERR, "out of memory"); return -1; }
@@ -269,12 +295,15 @@ static int parse_props(Lex *lx, Node *n) {
         else { gv_free(key); snprintf(lx->err, CY_ERR, "expected property value"); return -1; }
         if (!val) { gv_free(key); snprintf(lx->err, CY_ERR, "out of memory"); return -1; }
         /* Commit key+value together only once both allocations succeed. */
-        n->pk[n->np] = key;
-        n->pv[n->np] = val;
-        n->np++;
+        keys[*np] = key;
+        vals[*np] = val;
+        (*np)++;
         if (pk(lx)->t == T_COMMA) adv(lx); else break;
     }
     return eat(lx, T_RC, "'}'");
+}
+static int parse_props(Lex *lx, Node *n) {
+    return parse_kv_props(lx, n->pk, n->pv, &n->np, CY_MAXPROP);
 }
 static int parse_node(Lex *lx, Node *n) {
     memset(n, 0, sizeof(*n));
@@ -282,15 +311,23 @@ static int parse_node(Lex *lx, Node *n) {
     if (pk(lx)->t == T_IDENT) n->var = gv_dup_cstr(adv(lx)->s);
     while (pk(lx)->t == T_COLON) { adv(lx);
         if (pk(lx)->t != T_IDENT) { snprintf(lx->err, CY_ERR, "expected label"); node_clear(n); return -1; }
-        /* keep the first label; ignore additional (multi-label) for filtering */
+        /* first label -> n->label (fast type index); all labels -> n->labels[]
+         * so a node with multiple labels must match ALL of them. */
         char *lab = gv_dup_cstr(adv(lx)->s);
-        if (!n->label) n->label = lab; else gv_free(lab);
+        if (!n->label) n->label = gv_dup_cstr(lab);
+        if (n->nlabels < CY_MAXLABEL) n->labels[n->nlabels++] = lab; else gv_free(lab);
     }
     if (parse_props(lx, n)) { node_clear(n); return -1; }
     if (eat(lx, T_RP, "')'")) { node_clear(n); return -1; }
     return 0;
 }
-static int rel_fail(Rel *r) { gv_free(r->var); gv_free(r->type); r->var = r->type = NULL; return -1; }
+static void rel_clear(Rel *r) {
+    gv_free(r->var); gv_free(r->type);
+    for (size_t i = 0; i < r->ntypes; i++) gv_free(r->types[i]);
+    for (size_t i = 0; i < r->np; i++) { gv_free(r->pk[i]); gv_free(r->pv[i]); }
+    memset(r, 0, sizeof(*r));
+}
+static int rel_fail(Rel *r) { rel_clear(r); return -1; }
 static int parse_rel(Lex *lx, Rel *r) {
     memset(r, 0, sizeof(*r));
     Tk t = pk(lx)->t;
@@ -301,8 +338,12 @@ static int parse_rel(Lex *lx, Rel *r) {
     if (pk(lx)->t == T_COLON) { adv(lx);
         if (pk(lx)->t != T_IDENT) { snprintf(lx->err, CY_ERR, "expected relationship type"); return rel_fail(r); }
         r->type = gv_dup_cstr(adv(lx)->s);
-        /* rel type alternation :A|B — keep the first (best-effort) */
-        while (pk(lx)->t == T_PIPE) { adv(lx); if (pk(lx)->t == T_IDENT) adv(lx); }
+        r->types[r->ntypes++] = gv_dup_cstr(r->type);
+        /* rel type alternation :A|B|... — match ANY listed type */
+        while (pk(lx)->t == T_PIPE) { adv(lx);
+            if (pk(lx)->t == T_COLON) adv(lx);   /* tolerate :A|:B form */
+            if (pk(lx)->t == T_IDENT) { char *tt = gv_dup_cstr(adv(lx)->s); if (r->ntypes < 8) r->types[r->ntypes++] = tt; else gv_free(tt); }
+        }
     }
     if (pk(lx)->t == T_STAR) {
         adv(lx);
@@ -317,6 +358,7 @@ static int parse_rel(Lex *lx, Rel *r) {
         if (r->maxh > CY_VARLEN_MAX) r->maxh = CY_VARLEN_MAX;
         if (r->minh < 1) r->minh = 1;
     }
+    if (parse_kv_props(lx, r->pk, r->pv, &r->np, CY_MAXPROP)) return rel_fail(r);
     if (eat(lx, T_RB, "']'")) return rel_fail(r);
     if (r->dir == -1) { if (eat(lx, T_DASH, "'-'")) return rel_fail(r); }
     else if (pk(lx)->t == T_ARROW_R) { r->dir = 1; adv(lx); }
@@ -341,7 +383,7 @@ static int parse_pattern_body(Lex *lx, Pattern *p) {
         int hr = parse_rel(lx, &r);
         if (hr < 0) return -1;
         if (hr == 0) break;
-        if (p->nn >= CY_MAXNODE) { snprintf(lx->err, CY_ERR, "pattern too long"); gv_free(r.var); gv_free(r.type); return -1; }
+        if (p->nn >= CY_MAXNODE) { snprintf(lx->err, CY_ERR, "pattern too long"); rel_clear(&r); return -1; }
         p->rel[p->nn - 1] = r;
         if (parse_node(lx, &p->node[p->nn])) return -1;
         p->nn++;
@@ -351,7 +393,7 @@ static int parse_pattern_body(Lex *lx, Pattern *p) {
 static void pattern_clear(Pattern *p) {
     for (size_t i = 0; i < p->nn; i++) {
         node_clear(&p->node[i]);
-        if (i + 1 < p->nn) { gv_free(p->rel[i].var); gv_free(p->rel[i].type); }
+        if (i + 1 < p->nn) rel_clear(&p->rel[i]);
     }
     memset(p, 0, sizeof(*p));
 }
@@ -370,7 +412,6 @@ static Opd *parse_primary(Lex *lx) {
         Opd *idx = parse_add(lx);
         if (!idx || eat(lx, T_RB, "']'")) { opd_clear(o); gv_free(o); if (idx) { opd_clear(idx); gv_free(idx); } return NULL; }
         Opd *w = (Opd *)gv_calloc(1, sizeof(Opd));
-        /* cppcheck-suppress nullPointerRedundantCheck */
         w->k = OPD_INDEX; w->l = o; w->r = idx; o = w;
     }
     return o;
@@ -380,7 +421,20 @@ static Opd *parse_primary(Lex *lx) {
 static Opd *parse_atom_impl(Lex *lx) {
     Opd *o = (Opd *)gv_calloc(1, sizeof(Opd));
     Tok *t = pk(lx);
-    if (t->t == T_STRING || t->t == T_NUMBER) { o->k = OPD_LIT; o->lit = gv_dup_cstr(adv(lx)->s); return o; }
+    if (t->t == T_STRING || t->t == T_NUMBER) {
+        o->k = OPD_LIT;
+        if (t->t == T_NUMBER) o->littype = strchr(t->s, '.') ? 2 : 1; /* float vs integer */
+        else o->littype = 0; /* string */
+        o->lit = gv_dup_cstr(adv(lx)->s);
+        return o;
+    }
+    if (t->t == T_IDENT && (kw(t, "true") || kw(t, "false") || kw(t, "null"))) {
+        o->k = OPD_LIT;
+        if (kw(t, "null")) { o->littype = 4; o->lit = gv_dup_cstr(""); }
+        else { o->littype = 3; o->lit = gv_dup_cstr(kw(t, "true") ? "1" : "0"); }
+        adv(lx);
+        return o;
+    }
     if (t->t == T_PARAM) { o->k = OPD_PARAM; o->var = gv_dup_cstr(adv(lx)->s); return o; }
     if (t->t == T_LB) {
         adv(lx);
@@ -540,7 +594,6 @@ static Opd *parse_mul(Lex *lx) {
         Opd *r = parse_unary(lx);
         if (!r) { opd_clear(l); gv_free(l); return NULL; }
         Opd *o = (Opd *)gv_calloc(1, sizeof(Opd));
-        /* cppcheck-suppress nullPointerRedundantCheck */
         o->k = OPD_BIN; o->binop = op; o->l = l; o->r = r; l = o;
     }
     return l;
@@ -553,7 +606,6 @@ static Opd *parse_add(Lex *lx) {
         Opd *r = parse_mul(lx);
         if (!r) { opd_clear(l); gv_free(l); return NULL; }
         Opd *o = (Opd *)gv_calloc(1, sizeof(Opd));
-        /* cppcheck-suppress nullPointerRedundantCheck */
         o->k = OPD_BIN; o->binop = op; o->l = l; o->r = r; l = o;
     }
     return l;
@@ -620,7 +672,7 @@ static Expr *parse_cmp_impl(Lex *lx) {
     else if (kw(op, "contains")) { e->op = C_CONTAINS; adv(lx); }
     else if (kw(op, "starts")) { adv(lx); if (!kw(pk(lx), "with")) { snprintf(lx->err, CY_ERR, "expected WITH"); expr_free(e); return NULL; } adv(lx); e->op = C_STARTS; }
     else if (kw(op, "ends")) { adv(lx); if (!kw(pk(lx), "with")) { snprintf(lx->err, CY_ERR, "expected WITH"); expr_free(e); return NULL; } adv(lx); e->op = C_ENDS; }
-    else { snprintf(lx->err, CY_ERR, "expected comparison operator"); expr_free(e); return NULL; }
+    else { e->op = C_TRUTHY; return e; }  /* bare operand in boolean context: truthiness test */
     if (parse_operand(lx, &e->b)) { expr_free(e); return NULL; }
     return e;
 }
@@ -640,7 +692,6 @@ static Expr *parse_and(Lex *lx) {
         Expr *r = parse_cmp(lx);
         if (!r) { expr_free(l); return NULL; }
         Expr *e = (Expr *)gv_calloc(1, sizeof(Expr));
-        /* cppcheck-suppress nullPointerRedundantCheck */
         e->k = EX_AND; e->l = l; e->r = r; l = e;
     }
     return l;
@@ -652,13 +703,12 @@ static Expr *parse_or(Lex *lx) {
         Expr *r = parse_and(lx);
         if (!r) { expr_free(l); return NULL; }
         Expr *e = (Expr *)gv_calloc(1, sizeof(Expr));
-        /* cppcheck-suppress nullPointerRedundantCheck */
         e->k = EX_OR; e->l = l; e->r = r; l = e;
     }
     return l;
 }
 
-/* ========================================================== engine */
+/* engine */
 
 struct GV_CypherEngine {
     GV_KnowledgeGraph *kg; char err[CY_ERR];
@@ -697,6 +747,20 @@ static Row row_copy(const Row *s) {
     d.n = s->n;
     return d;
 }
+/* Structural equality of two rows' bindings (same vars, same bound values in
+ * order) — used to enforce WITH DISTINCT. */
+static int row_proj_eq(const Row *a, const Row *b) {
+    if (a->n != b->n) return 0;
+    for (size_t i = 0; i < a->n; i++) {
+        const Bind *x = &a->b[i], *y = &b->b[i];
+        if ((x->var == NULL) != (y->var == NULL)) return 0;
+        if (x->var && strcmp(x->var, y->var) != 0) return 0;
+        if (x->is_rel != y->is_rel || x->is_val != y->is_val) return 0;
+        if (x->is_val || x->is_rel) { if (strcmp(x->pred ? x->pred : "", y->pred ? y->pred : "") != 0) return 0; }
+        if (!x->is_val && x->id != y->id) return 0;
+    }
+    return 1;
+}
 static Bind *row_find(const Row *rw, const char *var) {
     if (!var) return NULL;
     for (size_t i = 0; i < rw->n; i++) if (rw->b[i].var && strcmp(rw->b[i].var, var) == 0) return &rw->b[i];
@@ -712,7 +776,7 @@ static void row_bind_node(Row *rw, const char *var, uint64_t id) {
     }
     rw->b[rw->n].var = gv_dup_cstr(var); rw->b[rw->n].is_rel = 0; rw->b[rw->n].is_val = 0; rw->b[rw->n].id = id; rw->b[rw->n].pred = NULL; rw->n++;
 }
-static void row_bind_rel(Row *rw, const char *var, const char *pred) {
+static void row_bind_rel(Row *rw, const char *var, const char *pred, uint64_t rel_id) {
     if (!var) return;
     if (rw->n == rw->cap) {
         size_t nc = rw->cap ? rw->cap * 2 : 4;
@@ -720,7 +784,7 @@ static void row_bind_rel(Row *rw, const char *var, const char *pred) {
         if (!nb) return;  /* OOM: skip bind rather than deref NULL */
         rw->b = nb; rw->cap = nc;
     }
-    rw->b[rw->n].var = gv_dup_cstr(var); rw->b[rw->n].is_rel = 1; rw->b[rw->n].is_val = 0; rw->b[rw->n].id = 0; rw->b[rw->n].pred = gv_dup_cstr(pred); rw->n++;
+    rw->b[rw->n].var = gv_dup_cstr(var); rw->b[rw->n].is_rel = 1; rw->b[rw->n].is_val = 0; rw->b[rw->n].id = rel_id; rw->b[rw->n].pred = gv_dup_cstr(pred); rw->n++;
 }
 static void row_bind_val(Row *rw, const char *var, const char *val) {
     if (!var) return;
@@ -743,10 +807,39 @@ static void rs_add(RowSet *rs, Row rw) {
 }
 static void rs_free(RowSet *rs) { for (size_t i = 0; i < rs->n; i++) row_free(&rs->r[i]); gv_free(rs->r); rs->r = NULL; rs->n = rs->cap = 0; }
 
+/* Value of a relationship property, or NULL. Walks the relation's property bag. */
+static const char *cy_rel_prop(GV_KnowledgeGraph *kg, uint64_t rel_id, const char *key) {
+    const GV_KGRelation *rr = kg_get_relation(kg, rel_id);
+    if (!rr) return NULL;
+    for (const GV_KGProp *p = rr->properties; p; p = p->next)
+        if (p->key && strcmp(p->key, key) == 0) return p->value.type == GV_PROP_STRING ? p->value.as.s : NULL;
+    return NULL;
+}
+/* For alternation, kg_for_each_hop can't OR types, so scan all edges (NULL) and
+ * filter here; for 0/1 types the hop layer already filtered. */
+static const char *rel_scan_type(const Rel *r) { return r->ntypes > 1 ? NULL : r->type; }
+static int rel_type_match(const Rel *r, const char *pred) {
+    if (r->ntypes <= 1) return 1;
+    if (!pred) return 0;
+    for (size_t i = 0; i < r->ntypes; i++) if (r->types[i] && strcmp(r->types[i], pred) == 0) return 1;
+    return 0;
+}
+/* A matched edge satisfies the pattern's inline relationship-property constraints. */
+static int rel_ok(GV_KnowledgeGraph *kg, const Rel *r, uint64_t rel_id) {
+    for (size_t i = 0; i < r->np; i++) {
+        const char *pv = cy_rel_prop(kg, rel_id, r->pk[i]);
+        if (!pv || strcmp(pv, r->pv[i]) != 0) return 0;
+    }
+    return 1;
+}
 static int node_ok(GV_KnowledgeGraph *kg, const Node *n, uint64_t id) {
     const GV_KGEntity *e = kg_get_entity(kg, id);
     if (!e) return 0;
     if (n->label && (!e->type || strcmp(e->type, n->label) != 0)) return 0;
+    /* multi-label: entity type must equal every requested label (they must all
+     * be identical in this single-type model, so extras beyond the first must match too). */
+    for (size_t i = 0; i < n->nlabels; i++)
+        if (n->labels[i] && (!e->type || strcmp(e->type, n->labels[i]) != 0)) return 0;
     for (size_t i = 0; i < n->np; i++) {
         if (strcmp(n->pk[i], "name") == 0) { if (!e->name || strcmp(e->name, n->pv[i]) != 0) return 0; }
         else { const char *pv = kg_get_entity_prop(kg, id, n->pk[i]); if (!pv || strcmp(pv, n->pv[i]) != 0) return 0; }
@@ -780,7 +873,7 @@ static int cy_in_arr(const uint64_t *a, int n, uint64_t x) {
  * yields the neighbour id and an interior pointer to the edge predicate (valid
  * for the read-only lifetime of the match), which is all the traversal needs.
  */
-typedef struct { uint64_t id; const char *pred; } CyHop;
+typedef struct { uint64_t id; uint64_t rel_id; const char *pred; } CyHop;
 typedef struct {
     CyHop *buf;
     int    n;
@@ -798,6 +891,7 @@ static int cy_hop_collect(const GV_KGHop *h, void *ctx) {
         v->cap = nc;
     }
     v->buf[v->n].id = h->neighbor_id;
+    v->buf[v->n].rel_id = h->relation_id;
     v->buf[v->n].pred = h->predicate;
     v->n++;
     return 0;
@@ -814,17 +908,23 @@ static int cy_expand(GV_KnowledgeGraph *kg, uint64_t id, const char *type,
 }
 
 /* BFS: collect nodes reachable from `start` in [minh,maxh] hops via rel type/dir. */
-static void cy_varlen_endpoints(GV_KnowledgeGraph *kg, uint64_t start, const char *type,
+static void cy_varlen_endpoints(GV_KnowledgeGraph *kg, const Rel *r, uint64_t start,
                                 int dir, int minh, int maxh, uint64_t *out, int *nout, int cap) {
     *nout = 0;
+    const char *scan_type = rel_scan_type(r);  /* NULL for alternation; filtered per hop below */
     uint64_t cur[1024]; int ncur = 0; cur[ncur++] = start;
     uint64_t visited[8192]; int nvis = 0; visited[nvis++] = start;
     for (int depth = 1; depth <= maxh && ncur > 0; depth++) {
         uint64_t next[1024]; int nnext = 0;
         for (int i = 0; i < ncur; i++) {
             CyHopVec vec;
-            if (cy_expand(kg, cur[i], type, dir, &vec) != 0) { gv_free(vec.buf); continue; }
+            if (cy_expand(kg, cur[i], scan_type, dir, &vec) != 0) { gv_free(vec.buf); continue; }
             for (int ti = 0; ti < vec.n; ti++) {
+                /* Apply the SAME per-hop filters as the single-hop path: without
+                 * these a varlen edge like [:A|B {p:'x'}*1..2] traversed every
+                 * edge type and ignored inline relationship-property constraints. */
+                if (!rel_type_match(r, vec.buf[ti].pred)) continue;
+                if (!rel_ok(kg, r, vec.buf[ti].rel_id)) continue;
                 uint64_t other = vec.buf[ti].id;
                 if (!cy_in_arr(visited, nvis, other)) {
                     if (nvis < 8192) visited[nvis++] = other;
@@ -863,7 +963,7 @@ static void dfs(GV_CypherEngine *eng, const Pattern *p, size_t idx, uint64_t for
         /* Variable-length path: expand endpoints reachable in [minh,maxh] hops. */
         if (r->varlen) {
             uint64_t ends[512]; int nends = 0;
-            cy_varlen_endpoints(eng->kg, id, r->type, r->dir, r->minh, r->maxh, ends, &nends, 512);
+            cy_varlen_endpoints(eng->kg, r, id, r->dir, r->minh, r->maxh, ends, &nends, 512);
             for (int ei = 0; ei < nends; ei++) {
                 Row row3 = row_copy(&row2);
                 dfs(eng, p, idx + 1, ends[ei], &row3, out);
@@ -875,17 +975,20 @@ static void dfs(GV_CypherEngine *eng, const Pattern *p, size_t idx, uint64_t for
 
         /* Expand this edge via O(1)-per-hop adjacency (pointer deref, no copy). */
         CyHopVec vec;
-        if (cy_expand(eng->kg, id, r->type, r->dir, &vec) != 0) {
+        if (cy_expand(eng->kg, id, rel_scan_type(r), r->dir, &vec) != 0) {
             gv_free(vec.buf); row_free(&row2); continue;
         }
         for (int ti = 0; ti < vec.n; ti++) {
             uint64_t other = vec.buf[ti].id;
             const char *pred = vec.buf[ti].pred;
+            uint64_t rel_id = vec.buf[ti].rel_id;
+            if (!rel_type_match(r, pred)) continue;              /* alternation :A|B filter */
+            if (!rel_ok(eng->kg, r, rel_id)) continue;           /* inline rel-property filter */
             /* rel var conflict check */
             Bind *rb = row_find(&row2, r->var);
             if (rb && rb->is_rel && rb->pred && strcmp(rb->pred, pred) != 0) continue;
             Row row3 = row_copy(&row2);
-            if (r->var && !rb) row_bind_rel(&row3, r->var, pred);
+            if (r->var && !rb) row_bind_rel(&row3, r->var, pred, rel_id);
             dfs(eng, p, idx + 1, other, &row3, out);
             row_free(&row3);
         }
@@ -909,7 +1012,7 @@ static RowSet match_pattern(GV_CypherEngine *eng, const Pattern *p, RowSet *in, 
     return out;
 }
 
-/* ==================================================== value eval */
+/* value eval */
 
 static int eval_expr(GV_KnowledgeGraph *kg, const Expr *e, const Row *row);
 static int is_num(const char *s, double *d);
@@ -919,10 +1022,57 @@ static char *fmt_num(double v) {
     else snprintf(b, sizeof(b), "%g", v);
     return gv_dup_cstr(b);
 }
+/* ---- Typed value layer (Cypher scalar type system) ----
+ * The engine renders values to strings for output/lists/grouping, but predicate
+ * evaluation and arithmetic use a tagged CyVal so that NULL is distinct from the
+ * empty string (three-valued logic), integers divide as integers, and booleans
+ * are a first-class type. KG properties are schemaless strings that still coerce
+ * to numbers in numeric contexts (preserving existing behaviour). */
+typedef enum { CT_NULL, CT_INT, CT_FLOAT, CT_BOOL, CT_STR } CyType;
+typedef struct { CyType t; long long i; double f; char *s; } CyVal;
+static CyVal eval_val(GV_KnowledgeGraph *kg, const Opd *o, const Row *row);
+
+static CyVal cv_null(void)      { CyVal v; v.t = CT_NULL; v.i = 0; v.f = 0; v.s = NULL; return v; }
+static CyVal cv_int(long long x){ CyVal v = cv_null(); v.t = CT_INT;   v.i = x; v.f = (double)x; return v; }
+static CyVal cv_float(double x) { CyVal v = cv_null(); v.t = CT_FLOAT; v.f = x; return v; }
+static CyVal cv_bool(int x)     { CyVal v = cv_null(); v.t = CT_BOOL;  v.i = x ? 1 : 0; return v; }
+static CyVal cv_str(char *own)  { CyVal v = cv_null(); v.t = CT_STR;   v.s = own; return v; } /* takes ownership */
+static void  cv_free(CyVal *v)  { if (v->t == CT_STR) { gv_free(v->s); v->s = NULL; } }
+
+/* Numeric view: 1 if v is a number (int/float/bool, or numeric string). */
+static int cv_num(const CyVal *v, double *d) {
+    switch (v->t) {
+        case CT_INT:   *d = (double)v->i; return 1;
+        case CT_FLOAT: *d = v->f; return 1;
+        case CT_BOOL:  *d = (double)v->i; return 1;
+        case CT_STR:   return is_num(v->s, d);
+        default:       return 0;
+    }
+}
+/* Render to display string (untagged); caller owns the result. */
+static char *cv_render(const CyVal *v) {
+    switch (v->t) {
+        case CT_NULL:  return gv_dup_cstr("");
+        case CT_INT:   { char b[32]; snprintf(b, sizeof(b), "%lld", v->i); return gv_dup_cstr(b); }
+        case CT_FLOAT: return fmt_num(v->f);
+        case CT_BOOL:  return gv_dup_cstr(v->i ? "true" : "false");
+        case CT_STR:   return gv_dup_cstr(v->s ? v->s : "");
+    }
+    return gv_dup_cstr("");
+}
+/* Type-aware three-way comparison mirroring cmp_vals (numeric coercion else strcmp). */
+static int cv_cmp(const CyVal *a, const CyVal *b) {
+    double da, db;
+    if (cv_num(a, &da) && cv_num(b, &db)) return (da < db) ? -1 : (da > db) ? 1 : 0;
+    char *as = cv_render(a), *bs = cv_render(b);
+    int r = strcmp(as, bs);
+    gv_free(as); gv_free(bs);
+    return (r < 0) ? -1 : (r > 0) ? 1 : 0;
+}
+
 static int cy_is_list(const char *s) { return s && s[0] == CY_LTAG; }
 static char *cy_list_encode(char **elems, size_t n) {
     size_t len = 1;
-    /* cppcheck-suppress uninitvar */
     for (size_t i = 0; i < n; i++) len += strlen(elems[i]) + 1;
     char *r = (char *)gv_alloc(len + 1);
     if (!r) return NULL;
@@ -1028,25 +1178,12 @@ static char *cy_finalize(char *v) {
 }
 static char *val_of(GV_KnowledgeGraph *kg, const Opd *o, const Row *row) {
     switch (o->k) {
-        case OPD_LIT: return gv_dup_cstr(o->lit ? o->lit : "");
+        case OPD_LIT:
+            if (o->littype == 4) return gv_dup_cstr("");                                  /* null -> empty display */
+            if (o->littype == 3) return gv_dup_cstr(o->lit && o->lit[0] == '1' ? "true" : "false");
+            return gv_dup_cstr(o->lit ? o->lit : "");
         case OPD_PARAM: { const char *v = cy_param_lookup(o->var); return gv_dup_cstr(v ? v : ""); }
-        case OPD_NEG: { char *v = val_of(kg, o->l, row); double d = 0; is_num(v, &d); gv_free(v); return fmt_num(-d); }
-        case OPD_BIN: {
-            char *av = val_of(kg, o->l, row), *bv = val_of(kg, o->r, row);
-            if (o->binop == '+') { /* numeric add, else string concat */
-                double da, db;
-                if (is_num(av, &da) && is_num(bv, &db)) { gv_free(av); gv_free(bv); return fmt_num(da + db); }
-                size_t la = strlen(av), lb = strlen(bv);
-                char *r = (char *)gv_alloc(la + lb + 1); memcpy(r, av, la); memcpy(r + la, bv, lb + 1);
-                gv_free(av); gv_free(bv); return r;
-            }
-            double da = 0, db = 0; is_num(av, &da); is_num(bv, &db);
-            gv_free(av); gv_free(bv);
-            double r = 0;
-            switch (o->binop) { case '-': r = da - db; break; case '*': r = da * db; break;
-                case '/': r = db != 0 ? da / db : 0; break; case '%': r = db != 0 ? (double)((long long)da % (long long)db) : 0; break; }
-            return fmt_num(r);
-        }
+        case OPD_NEG: case OPD_BIN: { CyVal v = eval_val(kg, o, row); char *s = cv_render(&v); cv_free(&v); return s; }
         case OPD_CASE: {
             for (size_t i = 0; i < o->ncase; i++)
                 if (eval_expr(kg, o->cw[i], row)) return val_of(kg, o->ct[i], row);
@@ -1167,8 +1304,13 @@ static char *val_of(GV_KnowledgeGraph *kg, const Opd *o, const Row *row) {
             else if (strcasecmp(fn, "sqrt") == 0) { double d = 0; is_num(a0, &d); res = fmt_num(d > 0 ? sqrt(d) : 0); }
             else if (strcasecmp(fn, "sign") == 0) { double d = 0; is_num(a0, &d); res = fmt_num(d > 0 ? 1 : d < 0 ? -1 : 0); }
             else if (strcasecmp(fn, "coalesce") == 0) {
-                res = a0; a0 = NULL;
-                for (size_t i = 1; res && res[0] == '\0' && i < o->nargs; i++) { gv_free(res); res = val_of(kg, o->args[i], row); }
+                gv_free(a0); a0 = NULL; res = NULL;
+                for (size_t i = 0; i < o->nargs; i++) {
+                    CyVal cv = eval_val(kg, o->args[i], row);
+                    if (cv.t != CT_NULL) { res = cv_render(&cv); cv_free(&cv); break; }
+                    cv_free(&cv);
+                }
+                if (!res) res = gv_dup_cstr("");
             }
             else if (strcasecmp(fn, "substring") == 0) {
                 double st = 0, ln = -1; if (o->nargs > 1) { char *s1 = val_of(kg, o->args[1], row); is_num(s1, &st); gv_free(s1); }
@@ -1180,6 +1322,27 @@ static char *val_of(GV_KnowledgeGraph *kg, const Opd *o, const Row *row) {
             else if (strcasecmp(fn, "id") == 0) { Bind *b = o->nargs ? row_find(row, o->args[0]->var) : NULL; res = fmt_num(b ? (double)b->id : 0); }
             else if (strcasecmp(fn, "labels") == 0) { Bind *b = o->nargs ? row_find(row, o->args[0]->var) : NULL; const GV_KGEntity *e = b ? kg_get_entity(kg, b->id) : NULL; res = gv_dup_cstr(e && e->type ? e->type : ""); }
             else if (strcasecmp(fn, "type") == 0) { Bind *b = o->nargs ? row_find(row, o->args[0]->var) : NULL; res = gv_dup_cstr(b && b->pred ? b->pred : ""); }
+            /* vector_distance(prop, $query) / vector_distance(prop, $query, 'cosine') */
+            else if (strcasecmp(fn, "vector_distance") == 0 ||
+                     strcasecmp(fn, "vector_distance_l2") == 0 ||
+                     strcasecmp(fn, "vector_distance_cosine") == 0 ||
+                     strcasecmp(fn, "vector_distance_dot") == 0 ||
+                     strcasecmp(fn, "vector_distance_hamming") == 0) {
+                char *query_val = o->nargs > 1 ? val_of(kg, o->args[1], row) : gv_dup_cstr("");
+                const char *metric = NULL;
+                if (strcasecmp(fn, "vector_distance_l2") == 0) metric = "l2";
+                else if (strcasecmp(fn, "vector_distance_cosine") == 0) metric = "cosine";
+                else if (strcasecmp(fn, "vector_distance_dot") == 0) metric = "dot";
+                else if (strcasecmp(fn, "vector_distance_hamming") == 0) metric = "hamming";
+                char *metric_buf = NULL;
+                if (!metric && o->nargs > 2) {
+                    metric_buf = val_of(kg, o->args[2], row);
+                    metric = metric_buf;
+                }
+                res = cypher_eval_vector_distance(a0, query_val, metric);
+                gv_free(query_val);
+                gv_free(metric_buf);
+            }
             else res = a0 ? gv_dup_cstr(a0) : gv_dup_cstr("");
             gv_free(a0);
             return res ? res : gv_dup_cstr("");
@@ -1193,7 +1356,16 @@ static char *val_of(GV_KnowledgeGraph *kg, const Opd *o, const Row *row) {
         if (o->k == OPD_PROP && o->prop && cy_is_map(b->pred)) return cy_map_get(b->pred, o->prop); /* map.key */
         return gv_dup_cstr(o->k == OPD_PROP ? "" : (b->pred ? b->pred : ""));
     }
-    if (o->k == OPD_TYPE || b->is_rel) return gv_dup_cstr(b->pred ? b->pred : "");
+    if (b->is_rel) {
+        /* r.prop -> relationship property; r / type(r) -> the type label */
+        if (o->k == OPD_PROP && o->prop) {
+            if (strcmp(o->prop, "type") == 0) return gv_dup_cstr(b->pred ? b->pred : "");
+            const char *rv = cy_rel_prop(kg, b->id, o->prop);
+            return gv_dup_cstr(rv ? rv : "");
+        }
+        return gv_dup_cstr(b->pred ? b->pred : "");
+    }
+    if (o->k == OPD_TYPE) return gv_dup_cstr(b->pred ? b->pred : "");
     const GV_KGEntity *e = kg_get_entity(kg, b->id);
     if (o->k == OPD_VAR) return gv_dup_cstr(e && e->name ? e->name : "");
     if (o->prop && strcmp(o->prop, "name") == 0) return gv_dup_cstr(e && e->name ? e->name : "");
@@ -1212,6 +1384,79 @@ static int cmp_vals(const char *a, const char *b) {
     if (is_num(a, &da) && is_num(b, &db)) return (da < db) ? -1 : (da > db) ? 1 : 0;
     return strcmp(a, b);
 }
+/* Typed scalar evaluation. Handles literals, arithmetic, type-conversion
+ * functions, CASE and VAR/PROP resolution with NULL-on-absence. Compound values
+ * (lists/maps/paths) and untyped functions fall back to the string renderer. */
+static CyVal eval_val(GV_KnowledgeGraph *kg, const Opd *o, const Row *row) {
+    switch (o->k) {
+        case OPD_LIT:
+            switch (o->littype) {
+                case 1: return cv_int(strtoll(o->lit ? o->lit : "0", NULL, 10));
+                case 2: return cv_float(o->lit ? strtod(o->lit, NULL) : 0);
+                case 3: return cv_bool(o->lit && o->lit[0] == '1');
+                case 4: return cv_null();
+                default: return cv_str(gv_dup_cstr(o->lit ? o->lit : ""));
+            }
+        case OPD_PARAM: { const char *v = cy_param_lookup(o->var); return v ? cv_str(gv_dup_cstr(v)) : cv_null(); }
+        case OPD_NEG: {
+            CyVal a = eval_val(kg, o->l, row); double d = 0; int isn = cv_num(&a, &d);
+            CyType t = a.t; cv_free(&a);
+            if (!isn) return cv_null();
+            return (t == CT_INT || t == CT_BOOL) ? cv_int(-(long long)d) : cv_float(-d);
+        }
+        case OPD_BIN: {
+            CyVal a = eval_val(kg, o->l, row), b = eval_val(kg, o->r, row);
+            if (a.t == CT_NULL || b.t == CT_NULL) { cv_free(&a); cv_free(&b); return cv_null(); }
+            double da = 0, db = 0; int na = cv_num(&a, &da), nb = cv_num(&b, &db);
+            if (o->binop == '+' && !(na && nb)) { /* string concatenation */
+                char *as = cv_render(&a), *bs = cv_render(&b);
+                size_t la = strlen(as), lb = strlen(bs);
+                char *r = (char *)gv_alloc(la + lb + 1); memcpy(r, as, la); memcpy(r + la, bs, lb + 1);
+                gv_free(as); gv_free(bs); cv_free(&a); cv_free(&b); return cv_str(r);
+            }
+            int bothint = (a.t == CT_INT || a.t == CT_BOOL) && (b.t == CT_INT || b.t == CT_BOOL);
+            cv_free(&a); cv_free(&b);
+            if (!(na && nb)) return cv_null();
+            switch (o->binop) {
+                case '+': return bothint ? cv_int((long long)da + (long long)db) : cv_float(da + db);
+                case '-': return bothint ? cv_int((long long)da - (long long)db) : cv_float(da - db);
+                case '*': return bothint ? cv_int((long long)da * (long long)db) : cv_float(da * db);
+                case '/': if (bothint) { long long dd = (long long)db; return cv_int(dd ? (long long)da / dd : 0); }
+                          return cv_float(db != 0 ? da / db : 0);
+                case '%': { long long dd = (long long)db; return cv_int(dd ? (long long)da % dd : 0); }
+            }
+            return cv_null();
+        }
+        case OPD_CASE:
+            for (size_t i = 0; i < o->ncase; i++)
+                if (eval_expr(kg, o->cw[i], row)) return eval_val(kg, o->ct[i], row);
+            return o->celse ? eval_val(kg, o->celse, row) : cv_null();
+        case OPD_FUNC: {
+            const char *fn = o->fname;
+            if (strcasecmp(fn, "tointeger") == 0) { CyVal a = o->nargs ? eval_val(kg, o->args[0], row) : cv_null(); double d = 0; int n = cv_num(&a, &d); cv_free(&a); return n ? cv_int((long long)d) : cv_null(); }
+            if (strcasecmp(fn, "tofloat") == 0)   { CyVal a = o->nargs ? eval_val(kg, o->args[0], row) : cv_null(); double d = 0; int n = cv_num(&a, &d); cv_free(&a); return n ? cv_float(d) : cv_null(); }
+            if (strcasecmp(fn, "tostring") == 0)  { CyVal a = o->nargs ? eval_val(kg, o->args[0], row) : cv_null(); char *s = cv_render(&a); cv_free(&a); return cv_str(s); }
+            if (strcasecmp(fn, "toboolean") == 0) {
+                CyVal a = o->nargs ? eval_val(kg, o->args[0], row) : cv_null(); CyVal r;
+                if (a.t == CT_BOOL) r = cv_bool((int)a.i);
+                else { char *s = cv_render(&a); r = (strcasecmp(s, "true") == 0) ? cv_bool(1) : (strcasecmp(s, "false") == 0) ? cv_bool(0) : cv_null(); gv_free(s); }
+                cv_free(&a); return r;
+            }
+            break; /* other functions: render via string path below */
+        }
+        case OPD_VAR: case OPD_PROP: case OPD_TYPE: {
+            /* Resolve via the string renderer; an empty render means absent/NULL.
+             * The KG stores "missing" as "" (REMOVE has no delete API), so an empty
+             * string and an absent property are one and the same here. */
+            char *s = val_of(kg, o, row);
+            if (!s || !s[0]) { gv_free(s); return cv_null(); }
+            return cv_str(s);
+        }
+        default: break;
+    }
+    /* Compound values and untyped functions: evaluate as a rendered string. */
+    return cv_str(val_of(kg, o, row));
+}
 static int eval_expr(GV_KnowledgeGraph *kg, const Expr *e, const Row *row) {
     if (!e) return 1;
     switch (e->k) {
@@ -1228,42 +1473,65 @@ static int eval_expr(GV_KnowledgeGraph *kg, const Expr *e, const Row *row) {
             return res;
         }
         case EX_CMP: {
-            char *a = val_of(kg, &e->a, row);
+            CyVal a = eval_val(kg, &e->a, row);
             int res = 0;
-            if (e->op == C_ISNULL)    { res = (a[0] == '\0'); gv_free(a); return res; }
-            if (e->op == C_ISNOTNULL) { res = (a[0] != '\0'); gv_free(a); return res; }
+            if (e->op == C_ISNULL)    { res = (a.t == CT_NULL); cv_free(&a); return res; }
+            if (e->op == C_ISNOTNULL) { res = (a.t != CT_NULL); cv_free(&a); return res; }
+            if (e->op == C_TRUTHY) {
+                /* Bare operand: true boolean, non-zero number, or non-empty string. */
+                switch (a.t) {
+                    case CT_NULL:  res = 0; break;
+                    case CT_BOOL:  res = (a.i != 0); break;
+                    case CT_INT:   res = (a.i != 0); break;
+                    case CT_FLOAT: res = (a.f != 0); break;
+                    default:       res = (a.s && a.s[0]); break;
+                }
+                cv_free(&a); return res;
+            }
             if (e->op == C_IN) {
-                char *bv = val_of(kg, &e->b, row);
+                CyVal b = eval_val(kg, &e->b, row);
+                char *bv = cv_render(&b);
                 if (cy_is_list(bv)) {
                     char **el; size_t n = cy_list_split(bv, &el);
-                    for (size_t i = 0; i < n && !res; i++) if (cmp_vals(a, el[i]) == 0) res = 1;
+                    for (size_t i = 0; i < n && !res; i++) {
+                        CyVal ev; ev.t = CT_STR; ev.i = 0; ev.f = 0; ev.s = el[i]; /* borrowed */
+                        if (a.t != CT_NULL && cv_cmp(&a, &ev) == 0) res = 1;
+                    }
                     for (size_t i = 0; i < n; i++) gv_free(el[i]);
                     gv_free(el);
-                } else res = (cmp_vals(a, bv) == 0);
-                gv_free(bv); gv_free(a); return res;
+                } else res = (a.t != CT_NULL && b.t != CT_NULL && cv_cmp(&a, &b) == 0);
+                gv_free(bv); cv_free(&b); cv_free(&a); return res;
             }
-            char *b = val_of(kg, &e->b, row);
-            int c;
+            CyVal b = eval_val(kg, &e->b, row);
+            if (e->op == C_CONTAINS || e->op == C_STARTS || e->op == C_ENDS) {
+                if (a.t != CT_NULL && b.t != CT_NULL) {
+                    char *as = cv_render(&a), *bs = cv_render(&b);
+                    if (e->op == C_CONTAINS) res = strstr(as, bs) != NULL;
+                    else if (e->op == C_STARTS) res = strncmp(as, bs, strlen(bs)) == 0;
+                    else { size_t la = strlen(as), lb = strlen(bs); res = la >= lb && strcmp(as + la - lb, bs) == 0; }
+                    gv_free(as); gv_free(bs);
+                }
+                cv_free(&a); cv_free(&b); return res;
+            }
+            /* Three-valued logic: a comparison with NULL is never true. */
+            if (a.t == CT_NULL || b.t == CT_NULL) { cv_free(&a); cv_free(&b); return 0; }
+            int c = cv_cmp(&a, &b);
+            cv_free(&a); cv_free(&b);
             switch (e->op) {
-                case C_EQ: res = cmp_vals(a, b) == 0; break;
-                case C_NE: res = cmp_vals(a, b) != 0; break;
-                case C_LT: res = cmp_vals(a, b) < 0; break;
-                case C_GT: res = cmp_vals(a, b) > 0; break;
-                case C_LE: res = cmp_vals(a, b) <= 0; break;
-                case C_GE: res = cmp_vals(a, b) >= 0; break;
-                case C_CONTAINS: res = strstr(a, b) != NULL; break;
-                case C_STARTS: c = (int)strlen(b); res = strncmp(a, b, c) == 0; break;
-                case C_ENDS: { size_t la = strlen(a), lb = strlen(b); res = la >= lb && strcmp(a + la - lb, b) == 0; break; }
-                default: break;
+                case C_EQ: return c == 0;
+                case C_NE: return c != 0;
+                case C_LT: return c < 0;
+                case C_GT: return c > 0;
+                case C_LE: return c <= 0;
+                case C_GE: return c >= 0;
+                default: return 0;
             }
-            gv_free(a); gv_free(b);
-            return res;
         }
     }
     return 0;
 }
 
-/* ================================================== projection */
+/* projection */
 
 typedef struct { char **cells; size_t n, cap; } Cells;
 static void cells_add(Cells *c, char *v) {
@@ -1467,7 +1735,7 @@ static int build_projection(GV_CypherEngine *eng, RowSet *rows, Ret *items, size
     return 0;
 }
 
-/* ==================================================== RETURN parse */
+/* RETURN parse */
 
 static Agg agg_of(const Tok *t) {
     if (kw(t, "count")) return AG_COUNT;
@@ -1510,7 +1778,7 @@ static int parse_return(Lex *lx, Ret *items, size_t *ni, int *distinct, int *sta
     return 0;
 }
 
-/* ==================================================== CREATE/MERGE */
+/* CREATE/MERGE */
 
 /* Resolve a prop value: a '\x04'-prefixed value is a variable reference into sym. */
 static char *resolve_pv(GV_CypherEngine *eng, Row *sym, const char *pv) {
@@ -1548,26 +1816,36 @@ static void create_pattern(GV_CypherEngine *eng, const Pattern *p, Row *sym, GV_
             const Rel *r = &p->rel[i - 1];
             uint64_t s = (r->dir == -1) ? id : prev;
             uint64_t o = (r->dir == -1) ? prev : id;
-            if (kg_add_relation(eng->kg, s, r->type ? r->type : "RELATED", o, 1.0f) != 0)
+            const char *rtype = r->type ? r->type : "RELATED";
+            uint64_t rid = kg_add_relation(eng->kg, s, rtype, o, 1.0f);
+            if (rid != 0) {
                 res->relationships_created++;
+                for (size_t k = 0; k < r->np; k++) {   /* inline relationship properties */
+                    char *v = resolve_pv(eng, sym, r->pv[k]);
+                    kg_set_relation_prop(eng->kg, rid, r->pk[k], v);
+                    gv_free(v);
+                }
+                if (r->var && !row_find(sym, r->var)) row_bind_rel(sym, r->var, rtype, rid);
+            }
         }
         prev = id;
     }
 }
 
-/* ==================================================== executor */
+/* executor */
 
-/* Parse `var.prop = value [, ...]` into a SetItem list. */
+/* Parse `var.prop = expr [, ...]` into a SetItem list. The value is a full value
+ * expression (arithmetic, property refs, functions), evaluated per-row at apply. */
 static int parse_setlist(Lex *lx, SetItem *out, size_t *n, size_t cap) {
     for (;;) {
         if (*n >= cap) { snprintf(lx->err, CY_ERR, "too many SET items"); return -1; }
         if (pk(lx)->t != T_IDENT) { snprintf(lx->err, CY_ERR, "expected variable in SET"); return -1; }
-        out[*n].var = gv_dup_cstr(adv(lx)->s);
-        if (eat(lx, T_DOT, "'.'")) { out[*n].prop = out[*n].val = NULL; return -1; }
+        out[*n].var = gv_dup_cstr(adv(lx)->s); out[*n].prop = NULL; out[*n].valexpr = NULL;
+        if (eat(lx, T_DOT, "'.'")) { setitem_free(&out[*n]); return -1; }
         out[*n].prop = (pk(lx)->t == T_IDENT) ? gv_dup_cstr(adv(lx)->s) : NULL;
-        if (eat(lx, T_EQ, "'='")) { out[*n].val = NULL; return -1; }
-        if (pk(lx)->t != T_STRING && pk(lx)->t != T_NUMBER) { snprintf(lx->err, CY_ERR, "expected value in SET"); out[*n].val = NULL; return -1; }
-        out[*n].val = gv_dup_cstr(adv(lx)->s);
+        if (eat(lx, T_EQ, "'='")) { setitem_free(&out[*n]); return -1; }
+        out[*n].valexpr = parse_add(lx);
+        if (!out[*n].valexpr) { snprintf(lx->err, CY_ERR, "expected value in SET"); setitem_free(&out[*n]); return -1; }
         (*n)++;
         if (pk(lx)->t == T_COMMA) { adv(lx); continue; }
         break;
@@ -1577,8 +1855,11 @@ static int parse_setlist(Lex *lx, SetItem *out, size_t *n, size_t cap) {
 static void apply_sets(GV_CypherEngine *eng, Row *row, SetItem *s, size_t n) {
     for (size_t i = 0; i < n; i++) {
         Bind *b = row_find(row, s[i].var);
-        if (b && !b->is_rel && !b->is_val && s[i].prop && s[i].val)
-            kg_set_entity_prop(eng->kg, b->id, s[i].prop, s[i].val);
+        if (!b || !s[i].prop || !s[i].valexpr) continue;
+        char *v = val_of(eng->kg, s[i].valexpr, row);
+        if (b->is_rel)        kg_set_relation_prop(eng->kg, b->id, s[i].prop, v ? v : "");
+        else if (!b->is_val)  kg_set_entity_prop(eng->kg, b->id, s[i].prop, v ? v : "");
+        gv_free(v);
     }
 }
 static long parse_int(Lex *lx) {
@@ -1707,7 +1988,8 @@ static int run(GV_CypherEngine *eng, Lex *lx, GV_CypherResult *res) {
         }
         if (kw(pk(lx), "with")) {
             adv(lx);
-            if (kw(pk(lx), "distinct")) adv(lx); /* DISTINCT best-effort (no dedup) */
+            int wdistinct = 0;
+            if (kw(pk(lx), "distinct")) { wdistinct = 1; adv(lx); }
             /* WITH item [AS alias] , ... [WHERE expr] — supports aggregation. */
             Opd wopd[CY_MAXRET]; char *walias[CY_MAXRET]; Agg wagg[CY_MAXRET]; size_t nw2 = 0;
             int werr = 0, anyagg = 0;
@@ -1737,7 +2019,7 @@ static int run(GV_CypherEngine *eng, Lex *lx, GV_CypherResult *res) {
                     for (size_t c = 0; c < nw2; c++) {
                         if (wopd[c].k == OPD_VAR && !walias[c]) {
                             Bind *b = row_find(&rows.r[i], wopd[c].var);
-                            if (b) { if (b->is_rel) row_bind_rel(&nwr, b->var, b->pred);
+                            if (b) { if (b->is_rel) row_bind_rel(&nwr, b->var, b->pred, b->id);
                                      else if (b->is_val) row_bind_val(&nwr, b->var, b->pred);
                                      else row_bind_node(&nwr, b->var, b->id);
                                      continue; }
@@ -1745,6 +2027,11 @@ static int run(GV_CypherEngine *eng, Lex *lx, GV_CypherResult *res) {
                         char *v = val_of(eng->kg, &wopd[c], &rows.r[i]);
                         const char *nm = walias[c] ? walias[c] : wopd[c].var ? wopd[c].var : "expr";
                         row_bind_val(&nwr, nm, v); gv_free(v);
+                    }
+                    if (wdistinct) {   /* WITH DISTINCT: skip a row equal to one already emitted */
+                        int dup = 0;
+                        for (size_t e = 0; e < nr.n && !dup; e++) if (row_proj_eq(&nr.r[e], &nwr)) dup = 1;
+                        if (dup) { row_free(&nwr); continue; }
                     }
                     rs_add(&nr, nwr);
                 }
@@ -1769,7 +2056,7 @@ static int run(GV_CypherEngine *eng, Lex *lx, GV_CypherResult *res) {
                         const char *nm = walias[c] ? walias[c] : wopd[c].var ? wopd[c].var : "agg";
                         if (wagg[c] == AG_NONE) {
                             if (wopd[c].k == OPD_VAR && !walias[c]) { Bind *b = row_find(&rows.r[first], wopd[c].var);
-                                if (b) { if (b->is_rel) row_bind_rel(&nwr,b->var,b->pred); else if (b->is_val) row_bind_val(&nwr,b->var,b->pred); else row_bind_node(&nwr,b->var,b->id); continue; } }
+                                if (b) { if (b->is_rel) row_bind_rel(&nwr,b->var,b->pred,b->id); else if (b->is_val) row_bind_val(&nwr,b->var,b->pred); else row_bind_node(&nwr,b->var,b->id); continue; } }
                             char *v = val_of(eng->kg, &wopd[c], &rows.r[first]); row_bind_val(&nwr, nm, v); gv_free(v);
                         } else if (wagg[c] == AG_COUNTSTAR || wagg[c] == AG_COUNT) {
                             size_t cnt = 0; for (size_t i = 0; i < rows.n; i++) if (grp[i] == gi) cnt++;
@@ -1819,9 +2106,9 @@ static int run(GV_CypherEngine *eng, Lex *lx, GV_CypherResult *res) {
             int inner_create = 0; Pattern fp; memset(&fp, 0, sizeof(fp));
             SetItem fsets[CY_MAXSET]; size_t fns = 0;
             if (kw(pk(lx), "create")) { adv(lx); inner_create = 1; if (parse_pattern(lx, &fp)) { pattern_clear(&fp); gv_free(fvar); opd_clear(&flist); goto done; } }
-            else if (kw(pk(lx), "set")) { adv(lx); if (parse_setlist(lx, fsets, &fns, CY_MAXSET)) { for (size_t i=0;i<fns;i++){gv_free(fsets[i].var);gv_free(fsets[i].prop);gv_free(fsets[i].val);} gv_free(fvar); opd_clear(&flist); goto done; } }
+            else if (kw(pk(lx), "set")) { adv(lx); if (parse_setlist(lx, fsets, &fns, CY_MAXSET)) { for (size_t i=0;i<fns;i++) setitem_free(&fsets[i]); gv_free(fvar); opd_clear(&flist); goto done; } }
             else { snprintf(lx->err, CY_ERR, "FOREACH body must be CREATE or SET"); gv_free(fvar); opd_clear(&flist); goto done; }
-            if (eat(lx, T_RP, "')'")) { if (inner_create) pattern_clear(&fp); for (size_t i=0;i<fns;i++){gv_free(fsets[i].var);gv_free(fsets[i].prop);gv_free(fsets[i].val);} gv_free(fvar); opd_clear(&flist); goto done; }
+            if (eat(lx, T_RP, "')'")) { if (inner_create) pattern_clear(&fp); for (size_t i=0;i<fns;i++) setitem_free(&fsets[i]); gv_free(fvar); opd_clear(&flist); goto done; }
             /* execute side effects per input row per list element (rows pass through unchanged) */
             RowSet seed; memset(&seed, 0, sizeof(seed)); int own = 0; RowSet *src = &rows;
             if (rows.n == 0) { Row e; memset(&e, 0, sizeof(e)); rs_add(&seed, e); src = &seed; own = 1; }
@@ -1838,7 +2125,7 @@ static int run(GV_CypherEngine *eng, Lex *lx, GV_CypherResult *res) {
             }
             if (own) rs_free(&seed);
             if (inner_create) pattern_clear(&fp);
-            for (size_t i = 0; i < fns; i++) { gv_free(fsets[i].var); gv_free(fsets[i].prop); gv_free(fsets[i].val); }
+            for (size_t i = 0; i < fns; i++) setitem_free(&fsets[i]);
             gv_free(fvar); opd_clear(&flist);
             continue;
         }
@@ -1848,7 +2135,7 @@ static int run(GV_CypherEngine *eng, Lex *lx, GV_CypherResult *res) {
     /* Terminal clause */
     if (kw(pk(lx), "remove")) {
         adv(lx);
-        /* REMOVE var.prop [, ...] — best-effort clears the property (no delete API). */
+        /* REMOVE var.prop [, ...] — deletes the property outright. */
         for (;;) {
             if (pk(lx)->t != T_IDENT) { snprintf(lx->err, CY_ERR, "expected variable in REMOVE"); goto done; }
             char *rv = gv_dup_cstr(adv(lx)->s);
@@ -1856,7 +2143,10 @@ static int run(GV_CypherEngine *eng, Lex *lx, GV_CypherResult *res) {
             if (pk(lx)->t == T_DOT) { adv(lx); if (pk(lx)->t == T_IDENT) rp = gv_dup_cstr(adv(lx)->s); }
             for (size_t i = 0; i < rows.n; i++) {
                 Bind *b = row_find(&rows.r[i], rv);
-                if (b && !b->is_rel && !b->is_val && rp) kg_set_entity_prop(eng->kg, b->id, rp, "");
+                if (b && rp && !b->is_val) {
+                    if (b->is_rel) kg_remove_relation_prop(eng->kg, b->id, rp);
+                    else           kg_remove_entity_prop(eng->kg, b->id, rp);
+                }
             }
             gv_free(rv); gv_free(rp);
             if (pk(lx)->t == T_COMMA) { adv(lx); continue; }
@@ -1882,7 +2172,7 @@ static int run(GV_CypherEngine *eng, Lex *lx, GV_CypherResult *res) {
         Pattern p;
         if (parse_pattern(lx, &p)) { pattern_clear(&p); goto done; }
         /* optional ON CREATE SET / ON MATCH SET */
-        SetItem oc[8] = {0}; size_t noc = 0; SetItem om[8] = {0}; size_t nom = 0; int perr = 0;
+        SetItem oc[8]; size_t noc = 0; SetItem om[8]; size_t nom = 0; int perr = 0;
         while (kw(pk(lx), "on")) {
             adv(lx);
             int cr = kw(pk(lx), "create"), mt = kw(pk(lx), "match");
@@ -1905,38 +2195,18 @@ static int run(GV_CypherEngine *eng, Lex *lx, GV_CypherResult *res) {
             rs_free(&m);
             rc = 0;
         }
-        for (size_t i = 0; i < noc; i++) { gv_free(oc[i].var); gv_free(oc[i].prop); gv_free(oc[i].val); }
-        for (size_t i = 0; i < nom; i++) { gv_free(om[i].var); gv_free(om[i].prop); gv_free(om[i].val); }
+        for (size_t i = 0; i < noc; i++) setitem_free(&oc[i]);
+        for (size_t i = 0; i < nom; i++) setitem_free(&om[i]);
         pattern_clear(&p);
         goto done;
     }
     if (kw(pk(lx), "set")) {
         adv(lx);
         SetItem sets[CY_MAXSET]; size_t ns = 0;
-        for (;;) {
-            if (ns >= CY_MAXSET) { snprintf(lx->err, CY_ERR, "too many SET items"); goto done; }
-            if (pk(lx)->t != T_IDENT) { snprintf(lx->err, CY_ERR, "expected variable in SET"); goto done; }
-            sets[ns].var = gv_dup_cstr(adv(lx)->s);
-            if (eat(lx, T_DOT, "'.'")) { sets[ns].prop = NULL; sets[ns].val = NULL; goto set_fail; }
-            sets[ns].prop = (pk(lx)->t == T_IDENT) ? gv_dup_cstr(adv(lx)->s) : NULL;
-            if (eat(lx, T_EQ, "'='")) { sets[ns].val = NULL; goto set_fail; }
-            if (pk(lx)->t != T_STRING && pk(lx)->t != T_NUMBER) { snprintf(lx->err, CY_ERR, "expected value in SET"); sets[ns].val = NULL; goto set_fail; }
-            sets[ns].val = gv_dup_cstr(adv(lx)->s);
-            ns++;
-            if (pk(lx)->t == T_COMMA) { adv(lx); continue; }
-            break;
-        }
-        for (size_t i = 0; i < rows.n; i++)
-            for (size_t s = 0; s < ns; s++) {
-                Bind *b = row_find(&rows.r[i], sets[s].var);
-                if (b && !b->is_rel && sets[s].prop && sets[s].val)
-                    kg_set_entity_prop(eng->kg, b->id, sets[s].prop, sets[s].val);
-            }
-        for (size_t s = 0; s < ns; s++) { gv_free(sets[s].var); gv_free(sets[s].prop); gv_free(sets[s].val); }
+        if (parse_setlist(lx, sets, &ns, CY_MAXSET)) { for (size_t s = 0; s < ns; s++) setitem_free(&sets[s]); goto done; }
+        for (size_t i = 0; i < rows.n; i++) apply_sets(eng, &rows.r[i], sets, ns);
+        for (size_t s = 0; s < ns; s++) setitem_free(&sets[s]);
         rc = 0; goto done;
-    set_fail:
-        for (size_t s = 0; s <= ns; s++) { if (s < CY_MAXSET) { gv_free(sets[s].var); gv_free(sets[s].prop); gv_free(sets[s].val); } }
-        goto done;
     }
     if (kw(pk(lx), "detach")) { adv(lx); if (!kw(pk(lx), "delete")) { snprintf(lx->err, CY_ERR, "expected DELETE"); goto done; } }
     if (kw(pk(lx), "delete")) {
@@ -1960,9 +2230,6 @@ static int run(GV_CypherEngine *eng, Lex *lx, GV_CypherResult *res) {
     if (kw(pk(lx), "return")) {
         adv(lx);
         Ret items[CY_MAXRET]; size_t ni = 0; int distinct = 0; int star = 0;
-        /* Declared before the first `goto done_ret` so the cleanup below never
-         * reads an uninitialized `no`/`ords` (a forward goto would skip the
-         * initializer, leaving `no` indeterminate -> OOB on ords[]). */
         Ord ords[CY_MAXORD]; size_t no = 0; long skip = -1, limit = -1;
         if (parse_return(lx, items, &ni, &distinct, &star)) goto done_ret;
         if (star && rows.n > 0) { /* RETURN * -> all bound variables */
@@ -2010,7 +2277,7 @@ done:
 #pragma GCC diagnostic pop
 #endif
 
-/* ======================================================= public API */
+/* public API */
 
 GV_CypherEngine *cypher_create(GV_KnowledgeGraph *kg) {
     if (!kg) return NULL;
@@ -2039,9 +2306,78 @@ int cypher_set_parameter(GV_CypherEngine *eng, const char *name, const char *val
     return 0;
 }
 
+/* Build a one-row plan description for "EXPLAIN <query>": the clause pipeline
+ * plus, per MATCH pattern, whether label/name predicates resolve through the
+ * KG's type/name hash indexes or fall back to scans. */
+static int cypher_explain(GV_CypherEngine *eng, const char *query,
+                          GV_CypherResult *result) {
+    (void)eng;
+    memset(result, 0, sizeof(*result));
+    static const char *clauses[] = {
+        "MATCH", "OPTIONAL", "UNWIND", "WITH", "WHERE",
+        "CREATE", "MERGE", "SET", "REMOVE", "DELETE", "FOREACH",
+        "RETURN", "CALL", NULL
+    };
+    char plan[2048];
+    size_t len = 0;
+#define PLAN_APPEND(s_) do { \
+        size_t n_ = strlen(s_); \
+        if (len + n_ < sizeof(plan)) { memcpy(plan + len, (s_), n_); len += n_; } \
+    } while (0)
+
+    const char *p = query + 7;   /* skip "EXPLAIN" */
+    while (*p == ' ' || *p == '\n' || *p == '\r' || *p == '\t') p++;
+    int first_clause = 1;
+    for (const char **cl = clauses; *cl; cl++) {
+        const char *hit = strcasestr(p, *cl);
+        if (!hit) continue;
+        if (!first_clause) PLAN_APPEND(" -> ");
+        PLAN_APPEND(*cl);
+        first_clause = 0;
+        /* MATCH patterns with a :Label resolve via the type index. */
+        if (strcmp(*cl, "MATCH") == 0 || strcmp(*cl, "OPTIONAL") == 0) {
+            const char *q = hit + strlen(*cl);
+            const char *lbl = strchr(q, ':');
+            const char *stop = strstr(q, "RETURN");
+            if (lbl && (!stop || lbl < stop)) {
+                PLAN_APPEND(" [label predicate -> type_index lookup]");
+            } else {
+                PLAN_APPEND(" [full enumeration]");
+            }
+        }
+    }
+    if (first_clause) PLAN_APPEND("(no recognized clauses)");
+#undef PLAN_APPEND
+    plan[len] = '\0';
+
+    result->column_count = 1;
+    result->column_names = (char **)gv_calloc(1, sizeof(char *));
+    result->column_values = (char **)gv_calloc(1, sizeof(char *));
+    if (!result->column_names || !result->column_values) {
+        gv_free(result->column_names); gv_free(result->column_values);
+        memset(result, 0, sizeof(*result));
+        return -1;
+    }
+    result->column_names[0] = gv_dup_cstr("plan");
+    result->column_values[0] = gv_dup_cstr(plan);
+    if (!result->column_names[0] || !result->column_values[0]) {
+        cypher_free_result(result);
+        return -1;
+    }
+    result->row_count = 1;
+    return 0;
+}
+
 int cypher_execute(GV_CypherEngine *eng, const char *query, GV_CypherResult *result) {
     if (!eng || !query || !result) return -1;
     eng->err[0] = 0;
+
+    /* EXPLAIN prefix: describe the plan without executing. */
+    if (strncasecmp(query, "EXPLAIN", 7) == 0 &&
+        (query[7] == ' ' || query[7] == '\n' || query[7] == '\r' || query[7] == '\t')) {
+        return cypher_explain(eng, query, result);
+    }
+
     Lex lx; memset(&lx, 0, sizeof(lx));
     if (tokenize(&lx, query)) { snprintf(eng->err, CY_ERR, "%s", lx.err); lex_free(&lx); return -1; }
     Tok *first = pk(&lx);

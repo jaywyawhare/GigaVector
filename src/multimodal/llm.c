@@ -11,6 +11,7 @@
 #endif
 
 #include "multimodal/llm.h"
+#include "multimodal/http_buffer.h"
 #include "features/json.h"
 
 #define MAX_RESPONSE_SIZE (1024 * 1024)  // 1MB max response
@@ -24,7 +25,6 @@ struct GV_LLM {
     char *last_error;   // Last error message
 };
 
-// Secure memory clearing
 static void secure_memclear(void *ptr, size_t len) {
     if (ptr == NULL) return;
     volatile unsigned char *p = (volatile unsigned char *)ptr;
@@ -33,7 +33,6 @@ static void secure_memclear(void *ptr, size_t len) {
     }
 }
 
-// Set error message
 static void set_error(struct GV_LLM *llm, const char *format, ...) {
     if (llm == NULL) return;
     if (llm->last_error) {
@@ -48,7 +47,6 @@ static void set_error(struct GV_LLM *llm, const char *format, ...) {
     va_end(args);
 }
 
-// Validate API key format
 static int validate_api_key(const char *api_key, GV_LLMProvider provider) {
     if (api_key == NULL || strlen(api_key) < 10) {
         return 0;
@@ -71,7 +69,6 @@ static int validate_api_key(const char *api_key, GV_LLMProvider provider) {
     }
 }
 
-// Validate URL format
 static int validate_url(const char *url) {
     if (url == NULL) return 0;
     // Basic URL validation: must start with http:// or https://
@@ -80,44 +77,6 @@ static int validate_url(const char *url) {
 
 #ifdef HAVE_CURL
 
-struct ResponseBuffer {
-    char *data;
-    size_t size;
-    size_t capacity;
-};
-
-static size_t write_callback(void *contents, size_t size, size_t nmemb, void *userp) {
-    size_t realsize = size * nmemb;
-    struct ResponseBuffer *buf = (struct ResponseBuffer *)userp;
-    
-    // Enforce MAX_RESPONSE_SIZE limit
-    if (buf->size + realsize > MAX_RESPONSE_SIZE) {
-        return 0;  // Stop reading
-    }
-    
-    if (buf->size + realsize >= buf->capacity) {
-        size_t new_capacity = buf->capacity * 2;
-        if (new_capacity < buf->size + realsize + 1) {
-            new_capacity = buf->size + realsize + 1;
-        }
-        // Don't exceed MAX_RESPONSE_SIZE
-        if (new_capacity > MAX_RESPONSE_SIZE) {
-            new_capacity = MAX_RESPONSE_SIZE;
-        }
-        char *new_data = (char *)gv_realloc(buf->data, new_capacity);
-        if (new_data == NULL) {
-            return 0;
-        }
-        buf->data = new_data;
-        buf->capacity = new_capacity;
-    }
-    
-    memcpy(buf->data + buf->size, contents, realsize);
-    buf->size += realsize;
-    buf->data[buf->size] = '\0';
-    
-    return realsize;
-}
 
 static size_t json_escape_size(const char *str) {
     size_t size = 0;
@@ -138,47 +97,9 @@ static size_t json_escape_size(const char *str) {
     return size;
 }
 
-static void json_escape_append(char *dest, const char *src) {
-    for (const char *p = src; *p; p++) {
-        switch (*p) {
-            case '"':
-                *dest++ = '\\'; *dest++ = '"';
-                break;
-            case '\\':
-                *dest++ = '\\'; *dest++ = '\\';
-                break;
-            case '\n':
-                *dest++ = '\\'; *dest++ = 'n';
-                break;
-            case '\r':
-                *dest++ = '\\'; *dest++ = 'r';
-                break;
-            case '\t':
-                *dest++ = '\\'; *dest++ = 't';
-                break;
-            case '\b':
-                *dest++ = '\\'; *dest++ = 'b';
-                break;
-            case '\f':
-                *dest++ = '\\'; *dest++ = 'f';
-                break;
-            default:
-                if ((unsigned char)*p < 0x20) {
-                    // Unicode escape for control characters
-                    snprintf(dest, 7, "\\u%04x", (unsigned char)*p);
-                    dest += 6;
-                } else {
-                    *dest++ = *p;
-                }
-                break;
-        }
-    }
-    *dest = '\0';
-}
 
 static char *build_openai_request(const GV_LLMConfig *config, const GV_LLMMessage *messages, 
                                    size_t message_count, const char *response_format) {
-    // Calculate required size
     size_t total_size = 256;  // Base JSON structure
     const char *model = config->model ? config->model : "gpt-4o-mini";
     total_size += strlen(model);
@@ -231,7 +152,7 @@ static char *build_openai_request(const GV_LLMConfig *config, const GV_LLMMessag
             gv_free(json);
             return NULL;
         }
-        json_escape_append(escaped, content);
+        gv_json_escape(escaped, content_escaped_size + 1, content);
         written = snprintf(json + pos, total_size - pos, "%s", escaped);
         if (written < 0 || (size_t)written >= total_size - pos) {
             gv_free(escaped);
@@ -287,9 +208,8 @@ static char *build_openai_request(const GV_LLMConfig *config, const GV_LLMMessag
 static char *build_gemini_request(const GV_LLMConfig *config, const GV_LLMMessage *messages,
                                   size_t message_count, const char *response_format) {
     // Gemini API format: {"contents": [{"parts": [{"text": "..."}]}]}
-    // Calculate required size
     size_t total_size = 256;  // Base JSON structure
-    
+
     for (size_t i = 0; i < message_count; i++) {
         total_size += 64;  // Structure overhead
         const char *content = messages[i].content ? messages[i].content : "";
@@ -337,7 +257,7 @@ static char *build_gemini_request(const GV_LLMConfig *config, const GV_LLMMessag
             gv_free(json);
             return NULL;
         }
-        json_escape_append(escaped, content);
+        gv_json_escape(escaped, content_escaped_size + 1, content);
         written = snprintf(json + pos, total_size - pos, "%s", escaped);
         if (written < 0 || (size_t)written >= total_size - pos) {
             gv_free(escaped);
@@ -361,8 +281,7 @@ static char *build_gemini_request(const GV_LLMConfig *config, const GV_LLMMessag
         return NULL;
     }
     pos += written;
-    
-    // Add generation config
+
     char temp_str[32];
     snprintf(temp_str, sizeof(temp_str), "%.2f", config->temperature > 0 ? config->temperature : 0.7);
     written = snprintf(json + pos, total_size - pos, ",\"generationConfig\":{\"temperature\":%s", temp_str);
@@ -401,7 +320,6 @@ static char *build_gemini_request(const GV_LLMConfig *config, const GV_LLMMessag
 
 static char *build_anthropic_request(const GV_LLMConfig *config, const GV_LLMMessage *messages,
                                      size_t message_count, const char *response_format) {
-    // Calculate required size
     size_t total_size = 256;  // Base JSON structure
     const char *model = config->model ? config->model : "claude-3-haiku-20240307";
     total_size += strlen(model);
@@ -471,7 +389,7 @@ static char *build_anthropic_request(const GV_LLMConfig *config, const GV_LLMMes
             gv_free(json);
             return NULL;
         }
-        json_escape_append(escaped, content);
+        gv_json_escape(escaped, content_escaped_size + 1, content);
         written = snprintf(json + pos, total_size - pos, "%s", escaped);
         if (written < 0 || (size_t)written >= total_size - pos) {
             gv_free(escaped);
@@ -498,7 +416,6 @@ static char *build_anthropic_request(const GV_LLMConfig *config, const GV_LLMMes
 }
 
 static int parse_openai_response(const char *response_json, GV_LLMResponse *out) {
-    // Parse JSON using proper JSON parser
     GV_JsonError err;
     GV_JsonValue *root = json_parse(response_json, &err);
     if (root == NULL) {
@@ -519,7 +436,6 @@ static int parse_openai_response(const char *response_json, GV_LLMResponse *out)
         return -1;
     }
 
-    // Extract optional fields
     out->finish_reason = 0;
     GV_JsonValue *finish = json_get_path(root, "choices.0.finish_reason");
     if (finish && json_is_string(finish)) {
@@ -575,7 +491,6 @@ static int parse_openai_response(const char *response_json, GV_LLMResponse *out)
 }
 
 static int parse_gemini_response(const char *response_json, GV_LLMResponse *out) {
-    // Parse JSON using proper JSON parser
     GV_JsonError err;
     GV_JsonValue *root = json_parse(response_json, &err);
     if (root == NULL) {
@@ -596,7 +511,6 @@ static int parse_gemini_response(const char *response_json, GV_LLMResponse *out)
         return -1;
     }
 
-    // Extract optional fields
     out->finish_reason = 0;
     GV_JsonValue *finish = json_get_path(root, "candidates.0.finishReason");
     if (finish && json_is_string(finish)) {
@@ -649,7 +563,6 @@ static int parse_gemini_response(const char *response_json, GV_LLMResponse *out)
 }
 
 static int parse_anthropic_response(const char *response_json, GV_LLMResponse *out) {
-    // Parse JSON using proper JSON parser
     GV_JsonError err;
     GV_JsonValue *root = json_parse(response_json, &err);
     if (root == NULL) {
@@ -692,7 +605,6 @@ static int parse_anthropic_response(const char *response_json, GV_LLMResponse *o
         return -1;
     }
 
-    // Extract optional fields
     out->finish_reason = 0;
     GV_JsonValue *stop_reason = json_object_get(root, "stop_reason");
     if (stop_reason && json_is_string(stop_reason)) {
@@ -777,12 +689,10 @@ GV_LLM *llm_create(const GV_LLMConfig *config) {
         return NULL;
     }
     
-    // Validate API key format
     if (!validate_api_key(config->api_key, config->provider)) {
         return NULL;
     }
-    
-    // Validate base_url if provided
+
     if (config->base_url != NULL && !validate_url(config->base_url)) {
         return NULL;
     }
@@ -801,8 +711,7 @@ GV_LLM *llm_create(const GV_LLMConfig *config) {
     memset(llm, 0, sizeof(GV_LLM));
     llm->config = *config;
     llm->last_error = NULL;
-    
-    // Copy strings
+
     if (config->api_key) {
         llm->config.api_key = gv_dup_cstr(config->api_key);
         if (llm->config.api_key == NULL) {
@@ -852,7 +761,6 @@ GV_LLM *llm_create(const GV_LLMConfig *config) {
     
     return llm;
 #else
-    // No CURL support - return NULL
     return NULL;
 #endif
 }
@@ -912,8 +820,7 @@ int llm_generate_response(GV_LLM *llm, const GV_LLMMessage *messages, size_t mes
     char *request_json = NULL;
     const char *url = NULL;
     const char *auth_header = NULL;
-    
-    // Build request based on provider
+
     switch (llm->config.provider) {
         case GV_LLM_PROVIDER_OPENAI:
             request_json = build_openai_request(&llm->config, messages, message_count, response_format);
@@ -962,10 +869,11 @@ int llm_generate_response(GV_LLM *llm, const GV_LLMMessage *messages, size_t mes
         return GV_LLM_ERROR_MEMORY_ALLOCATION;
     }
     
-    struct ResponseBuffer buf;
+    GV_HttpBuffer buf;
     buf.data = (char *)gv_alloc(4096);
     buf.size = 0;
     buf.capacity = 4096;
+    buf.max_size = MAX_RESPONSE_SIZE;
     if (buf.data == NULL) {
         gv_free(request_json);
         set_error(llm, "Failed to allocate response buffer");
@@ -974,13 +882,11 @@ int llm_generate_response(GV_LLM *llm, const GV_LLMMessage *messages, size_t mes
     
     struct curl_slist *headers = NULL;
     headers = curl_slist_append(headers, "Content-Type: application/json");
-    
-    // Add provider-specific headers
+
     if (llm->config.provider == GV_LLM_PROVIDER_ANTHROPIC) {
         headers = curl_slist_append(headers, "anthropic-version: 2023-06-01");
     }
-    
-    // Add authentication header
+
     if (llm->config.api_key == NULL) {
         gv_free(buf.data);
         gv_free(request_json);
@@ -1001,7 +907,7 @@ int llm_generate_response(GV_LLM *llm, const GV_LLMMessage *messages, size_t mes
     curl_easy_setopt(curl, CURLOPT_URL, url);
     curl_easy_setopt(curl, CURLOPT_POSTFIELDS, request_json);
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, gv_http_write_callback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buf);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, llm->config.timeout_seconds > 0 ? 
                      llm->config.timeout_seconds : DEFAULT_TIMEOUT);
@@ -1022,16 +928,13 @@ int llm_generate_response(GV_LLM *llm, const GV_LLMMessage *messages, size_t mes
         }
     }
     
-    // Check if response was truncated
     if (buf.size >= MAX_RESPONSE_SIZE) {
         gv_free(buf.data);
         set_error(llm, "Response exceeds maximum size (%d bytes)", MAX_RESPONSE_SIZE);
         return GV_LLM_ERROR_RESPONSE_TOO_LARGE;
     }
     
-    // Check for error responses first
     if (strstr(buf.data, "\"error\"") != NULL) {
-        // Try to extract error message
         const char *error_msg = strstr(buf.data, "\"message\":\"");
         if (error_msg) {
             error_msg += 11;  // Skip past "\"message\":\""
@@ -1053,7 +956,6 @@ int llm_generate_response(GV_LLM *llm, const GV_LLMMessage *messages, size_t mes
         return GV_LLM_ERROR_INVALID_RESPONSE;
     }
     
-    // Parse response based on provider
     int parse_result = GV_LLM_ERROR_PARSE_FAILED;
     switch (llm->config.provider) {
         case GV_LLM_PROVIDER_OPENAI:
@@ -1086,7 +988,6 @@ int llm_generate_response(GV_LLM *llm, const GV_LLMMessage *messages, size_t mes
     
     return GV_LLM_SUCCESS;
 #else
-    // No CURL support
     (void)response_format;
     if (llm) {
         set_error(llm, "CURL support not compiled in");

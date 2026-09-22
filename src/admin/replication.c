@@ -9,6 +9,7 @@
  */
 
 #include "admin/replication.h"
+#include "admin/raft.h"
 #include "core/memory.h"
 #include "admin/repl_transport.h"
 #include "storage/database.h"
@@ -47,6 +48,7 @@ struct GV_ReplicationManager {
     uint64_t term;
     char *leader_id;
     char *voted_for;
+    uint64_t last_leader_contact;   /* last time a leader heartbeat/WAL was received (sec) */
 
     /* Replicas */
     ReplicaEntry replicas[MAX_REPLICAS];
@@ -88,7 +90,31 @@ struct GV_ReplicationManager {
 
     GV_ReplTransport *transport;
     int dst_simulation_mode;
+
+    /* Optional Raft consensus driver (opt-in via replication_enable_raft). When
+     * set, leadership/term follow the raft core rather than the ad-hoc election.
+     * Messages between peers are delivered through per-manager inboxes drained on
+     * replication_raft_tick, so a send never re-enters a peer's raft under lock. */
+    GV_Raft *raft;
+    int raft_self_id;
+    GV_ReplicationManager *raft_peers[MAX_REPLICAS];
+    int raft_peer_ids[MAX_REPLICAS];
+    size_t raft_peer_count;
+    struct RaftInboxMsg *raft_inbox_head;
+    struct RaftInboxMsg *raft_inbox_tail;
+    pthread_mutex_t raft_mutex;   /* guards the raft core */
+    pthread_mutex_t raft_inbox_mutex;  /* leaf lock guarding the inbox queue only */
 };
+
+/* A raft message queued for in-process delivery to a peer manager. */
+typedef struct RaftInboxMsg {
+    int from;
+    GV_RaftMsg msg;
+    GV_RaftEntry *entries;   /* owned deep copy for AppendEntries */
+    struct RaftInboxMsg *next;
+} RaftInboxMsg;
+
+static void repl_raft_free_inbox_msg(RaftInboxMsg *qm);
 
 static const GV_ReplicationConfig DEFAULT_CONFIG = {
     .node_id = NULL,
@@ -140,6 +166,29 @@ static void replication_embedded_followers_catch_up_locked(GV_ReplicationManager
     }
 }
 
+/*
+ * Raft election restriction (safety §5.4.1): a voter grants its vote to a
+ * candidate only if the candidate's log is at least as up-to-date as the
+ * voter's own. Here the candidate's position is mgr->wal_position and each
+ * in-process follower's replicated position is replicas[i].last_wal_position;
+ * a follower whose log is ahead of the candidate withholds its vote, which
+ * prevents electing a leader that would truncate already-replicated entries.
+ * Remote-only replicas (no registered DB) cannot be polled in-process and are
+ * not counted. Returns 1 if a quorum of the cluster has granted the vote.
+ * Caller must hold mgr->rwlock.
+ */
+static int replication_candidate_has_quorum_locked(const GV_ReplicationManager *mgr) {
+    size_t votes = 1; /* self-vote */
+    for (size_t i = 0; i < mgr->replica_count; i++) {
+        if (mgr->follower_dbs[i] == NULL) continue;
+        if (mgr->wal_position >= mgr->replicas[i].last_wal_position) {
+            votes++; /* follower's log is not ahead — it grants the vote */
+        }
+    }
+    size_t quorum = (mgr->replica_count + 1) / 2 + 1;
+    return votes >= quorum;
+}
+
 static void *replication_thread_func(void *arg) {
     GV_ReplicationManager *mgr = (GV_ReplicationManager *)arg;
 
@@ -162,7 +211,10 @@ static void *replication_thread_func(void *arg) {
                     mgr->replicas[i].last_heartbeat = now;
                 }
             }
-        } else if (mgr->role == GV_REPL_FOLLOWER) {
+        } else if (!mgr->raft && mgr->role == GV_REPL_FOLLOWER) {
+            /* Ad-hoc election is the default only when Raft is not driving this
+             * manager. With Raft enabled, role/term transitions come solely from
+             * replication_raft_tick(); running this timeout here would fight it. */
             uint64_t timeout_sec = mgr->config.election_timeout_ms / 1000;
             if (timeout_sec == 0) timeout_sec = 3;  /* Default 3 seconds */
 
@@ -187,20 +239,21 @@ static void *replication_thread_func(void *arg) {
                         mgr->voted_for = mgr->node_id ? gv_dup_cstr(mgr->node_id) : NULL;
                     }
                 }
-            }
-        } else if (mgr->role == GV_REPL_CANDIDATE) {
-            /* Count in-process registered follower DBs as automatic votes: they
-             * are co-located and can trivially accept this node as leader.
-             * Remote-only replicas (follower_dbs[i] == NULL) cannot be asked
-             * without a wire protocol, so they are not counted. */
-            size_t votes = 1; /* self-vote */
-            for (size_t i = 0; i < mgr->replica_count; i++) {
-                if (mgr->follower_dbs[i] != NULL) {
-                    votes++;
+            } else if (mgr->config.leader_address && mgr->last_leader_contact > 0) {
+                /* TCP follower (connected to a leader_address, no in-process leader
+                 * replica): detect leader failure from the last heartbeat/WAL frame
+                 * received over the wire, then stand for election. */
+                if (now > mgr->last_leader_contact &&
+                    (now - mgr->last_leader_contact) > timeout_sec) {
+                    mgr->role = GV_REPL_CANDIDATE;
+                    mgr->term++;
+                    gv_free(mgr->voted_for);
+                    mgr->voted_for = mgr->node_id ? gv_dup_cstr(mgr->node_id) : NULL;
                 }
             }
-            size_t quorum = (mgr->replica_count + 1) / 2 + 1;
-            if (votes >= quorum) {
+        } else if (!mgr->raft && mgr->role == GV_REPL_CANDIDATE) {
+            /* Tally votes under the Raft election restriction (see helper). */
+            if (replication_candidate_has_quorum_locked(mgr)) {
                 mgr->role = GV_REPL_LEADER;
                 gv_free(mgr->leader_id);
                 mgr->leader_id = mgr->node_id ? gv_dup_cstr(mgr->node_id) : NULL;
@@ -283,6 +336,9 @@ GV_ReplicationManager *replication_create(GV_Database *db, const GV_ReplicationC
         return NULL;
     }
 
+    pthread_mutex_init(&mgr->raft_mutex, NULL);
+    pthread_mutex_init(&mgr->raft_inbox_mutex, NULL);
+
     return mgr;
 }
 
@@ -300,6 +356,16 @@ void replication_destroy(GV_ReplicationManager *mgr) {
         gv_free(mgr->replicas[i].node_id);
         gv_free(mgr->replicas[i].address);
     }
+
+    /* Tear down the raft driver and drain any undelivered inbox messages. */
+    if (mgr->raft) { raft_destroy(mgr->raft); mgr->raft = NULL; }
+    {
+        RaftInboxMsg *p = mgr->raft_inbox_head;
+        while (p) { RaftInboxMsg *n = p->next; repl_raft_free_inbox_msg(p); p = n; }
+        mgr->raft_inbox_head = mgr->raft_inbox_tail = NULL;
+    }
+    pthread_mutex_destroy(&mgr->raft_mutex);
+    pthread_mutex_destroy(&mgr->raft_inbox_mutex);
 
     pthread_cond_destroy(&mgr->pin_cond);
     pthread_mutex_destroy(&mgr->pin_mutex);
@@ -418,14 +484,7 @@ int replication_request_leadership(GV_ReplicationManager *mgr) {
     gv_free(mgr->voted_for);
     mgr->voted_for = gv_dup_cstr(mgr->node_id);
 
-    size_t votes = 1;
-    for (size_t i = 0; i < mgr->replica_count; i++) {
-        if (mgr->follower_dbs[i] != NULL) {
-            votes++;
-        }
-    }
-    size_t quorum = (mgr->replica_count + 1) / 2 + 1;
-    if (votes >= quorum) {
+    if (replication_candidate_has_quorum_locked(mgr)) {
         mgr->role = GV_REPL_LEADER;
         gv_free(mgr->leader_id);
         mgr->leader_id = gv_dup_cstr(mgr->node_id);
@@ -635,7 +694,12 @@ int replication_sync_commit(GV_ReplicationManager *mgr, uint32_t timeout_ms) {
         return 0;
     }
 
-    size_t required_acks = (mgr->replica_count / 2) + 1;
+    /* Cluster-majority durability. Cluster size is replica_count + 1 (the leader
+     * already holds the write), so the follower acks needed are majority(N+1) - 1
+     * = (replica_count + 1) / 2 — not a majority of followers alone (which would
+     * require ALL of 2 followers and hang if one is down). */
+    size_t required_acks = (mgr->replica_count + 1) / 2;
+    if (required_acks == 0) required_acks = 1;
     if (required_acks > mgr->replica_count) {
         required_acks = mgr->replica_count;
     }
@@ -725,7 +789,7 @@ int replication_wait_sync(GV_ReplicationManager *mgr, size_t max_lag, uint32_t t
             return 0;
         }
 
-        usleep(10000);  /* 10ms */
+        gv_time_sleep_ms(10);   /* sim-time aware (matches the deadline clock) */
     }
 
     return -1;  /* Timeout - not all replicas synced */
@@ -944,23 +1008,18 @@ static void replication_route_read_locked(GV_ReplicationManager *mgr,
 }
 
 /*
- * LIFETIME CONTRACT (read carefully — use-after-free hazard):
+ * LIFETIME CONTRACT:
  *
- * This function selects a follower and returns its GV_Database* AFTER dropping
- * mgr->rwlock. The returned pointer is therefore NOT pinned: once the lock is
- * released, another thread may call replication_remove_follower() (or tear the
- * manager down) and the owner of that follower may db_close()/free it. Using
- * the returned pointer concurrently with such removal is a use-after-free.
- *
- * A proper fix (an atomic in-flight/refcount pinned here and released by the
- * caller when done reading) requires a matching public "unpin" entry point in
- * the replication header, which is out of scope for this change. Until that
- * exists, callers MUST guarantee, by external synchronization, that no follower
- * removal or manager teardown can race with their use of the returned handle
- * (e.g. only remove followers while no reads are in flight). Note that
- * replication_remove_follower() itself does NOT db_close the follower; it only
- * drops the manager's reference, so the ultimate free is owned externally and
- * that owner must honor the same ordering.
+ * When a follower slot is selected, this function PINS it (follower_pin[slot]++
+ * under mgr->rwlock) before returning, and the pin is deliberately held past the
+ * unlock so the follower stays alive for the caller. The caller MUST balance a
+ * non-NULL follower return with replication_release_read(mgr, returned_db) when
+ * done; replication_remove_follower() blocks on pin_cond until all pins drain,
+ * so it cannot free a follower with a read in flight. Leader targets are not
+ * pinned and need no release. (replication_remove_follower() does not itself
+ * db_close the follower — the ultimate free is owned externally — but it will
+ * not return while pinned, so the drain ordering is enforced here, not by the
+ * caller.)
  */
 GV_Database *replication_route_read(GV_ReplicationManager *mgr) {
     if (!mgr) return NULL;
@@ -1113,7 +1172,7 @@ int replication_replica_ack(GV_ReplicationManager *mgr, const char *node_id,
             if (entry_index + 1 > mgr->replicas[i].last_wal_position) {
                 mgr->replicas[i].last_wal_position = entry_index + 1;
             }
-            mgr->replicas[i].last_heartbeat = (uint64_t)time(NULL);
+            mgr->replicas[i].last_heartbeat = gv_time_now_sec();
             mgr->replicas[i].connected = 1;
             mgr->replicas[i].state = GV_REPL_STREAMING;
             break;
@@ -1145,10 +1204,173 @@ void replication_get_positions(const GV_ReplicationManager *mgr,
     pthread_rwlock_unlock((pthread_rwlock_t *)&mgr->rwlock);
 }
 
+/* ---- Raft consensus integration (opt-in) ---------------------------------- */
+
+static GV_ReplicationManager *repl_raft_find_peer(GV_ReplicationManager *mgr, int id) {
+    for (size_t i = 0; i < mgr->raft_peer_count; i++)
+        if (mgr->raft_peer_ids[i] == id) return mgr->raft_peers[i];
+    return NULL;
+}
+
+/* raft send callback (ctx = sending manager): enqueue a deep copy to the peer's
+ * inbox under the peer's leaf inbox lock — never the peer's raft lock — so a
+ * send can't re-enter or deadlock a peer that is mid-tick. */
+static void repl_raft_send(void *ctx, int to, const GV_RaftMsg *msg) {
+    GV_ReplicationManager *mgr = (GV_ReplicationManager *)ctx;
+    GV_ReplicationManager *peer = repl_raft_find_peer(mgr, to);
+    if (!peer) return;
+    RaftInboxMsg *qm = (RaftInboxMsg *)gv_calloc(1, sizeof(RaftInboxMsg));
+    if (!qm) return;
+    qm->from = mgr->raft_self_id;
+    qm->msg = *msg;
+    qm->next = NULL;
+    if (msg->type == GV_RAFT_MSG_APPEND_ENTRIES && msg->n_entries > 0) {
+        qm->entries = (GV_RaftEntry *)gv_calloc(msg->n_entries, sizeof(GV_RaftEntry));
+        if (!qm->entries) { gv_free(qm); return; }
+        for (size_t i = 0; i < msg->n_entries; i++) {
+            qm->entries[i].term = msg->entries[i].term;
+            qm->entries[i].len = msg->entries[i].len;
+            qm->entries[i].data = NULL;
+            if (msg->entries[i].len) {
+                qm->entries[i].data = gv_alloc(msg->entries[i].len);
+                if (!qm->entries[i].data) {
+                    /* Drop the whole message on OOM rather than enqueue an entry
+                     * with len>0 and data==NULL (which raft_step would memcpy from). */
+                    qm->msg.n_entries = i;   /* only [0,i) were fully copied */
+                    repl_raft_free_inbox_msg(qm);
+                    return;
+                }
+                memcpy(qm->entries[i].data, msg->entries[i].data, msg->entries[i].len);
+            }
+        }
+        qm->msg.entries = qm->entries;
+    }
+    pthread_mutex_lock(&peer->raft_inbox_mutex);
+    if (peer->raft_inbox_tail) peer->raft_inbox_tail->next = qm; else peer->raft_inbox_head = qm;
+    peer->raft_inbox_tail = qm;
+    pthread_mutex_unlock(&peer->raft_inbox_mutex);
+}
+
+/* raft apply callback: a committed entry advances the replication commit position. */
+static void repl_raft_apply(void *ctx, uint64_t index, const void *data, size_t len) {
+    (void)data; (void)len;
+    GV_ReplicationManager *mgr = (GV_ReplicationManager *)ctx;
+    pthread_rwlock_wrlock(&mgr->rwlock);
+    if (index > mgr->commit_position) mgr->commit_position = index;
+    pthread_rwlock_unlock(&mgr->rwlock);
+}
+
+static void repl_raft_free_inbox_msg(RaftInboxMsg *qm) {
+    if (qm->entries) {
+        for (size_t i = 0; i < qm->msg.n_entries; i++) gv_free(qm->entries[i].data);
+        gv_free(qm->entries);
+    }
+    gv_free(qm);
+}
+
+/* Reflect raft leadership/term into the replication role. Caller holds raft_mutex. */
+static void repl_raft_sync_role(GV_ReplicationManager *mgr) {
+    GV_RaftRole rr = raft_role(mgr->raft);
+    uint64_t rterm = raft_current_term(mgr->raft);
+    pthread_rwlock_wrlock(&mgr->rwlock);
+    mgr->role = (rr == GV_RAFT_LEADER) ? GV_REPL_LEADER
+              : (rr == GV_RAFT_CANDIDATE) ? GV_REPL_CANDIDATE : GV_REPL_FOLLOWER;
+    mgr->term = rterm;
+    if (rr == GV_RAFT_LEADER) {
+        gv_free(mgr->leader_id);
+        mgr->leader_id = mgr->node_id ? gv_dup_cstr(mgr->node_id) : NULL;
+    }
+    pthread_rwlock_unlock(&mgr->rwlock);
+}
+
+int replication_enable_raft(GV_ReplicationManager *mgr, int self_id,
+                            const int *peer_ids, size_t n_peers) {
+    if (!mgr || (n_peers > 0 && !peer_ids)) return -1;
+    pthread_mutex_lock(&mgr->raft_mutex);
+    if (mgr->raft) { pthread_mutex_unlock(&mgr->raft_mutex); return -1; }
+    GV_RaftConfig cfg; raft_config_init(&cfg);
+    GV_RaftCallbacks cb; memset(&cb, 0, sizeof(cb));
+    cb.send = repl_raft_send; cb.apply = repl_raft_apply; cb.ctx = mgr;
+    GV_Raft *r = raft_create(self_id, peer_ids, n_peers, &cfg, &cb);
+    /* Publish mgr->raft under rwlock: the replication worker reads it (the
+     * !mgr->raft election gating) under rwlock, so writing it under raft_mutex
+     * alone would be a torn/racy read. Order raft_mutex -> rwlock matches the
+     * global lock hierarchy. */
+    pthread_rwlock_wrlock(&mgr->rwlock);
+    mgr->raft = r;
+    mgr->raft_self_id = self_id;
+    pthread_rwlock_unlock(&mgr->rwlock);
+    int ok = r != NULL;
+    pthread_mutex_unlock(&mgr->raft_mutex);
+    return ok ? 0 : -1;
+}
+
+int replication_register_raft_peer(GV_ReplicationManager *mgr, int peer_id,
+                                   GV_ReplicationManager *peer) {
+    if (!mgr || !peer) return -1;
+    /* The send callback reads the peer arrays while holding raft_mutex (during a
+     * tick/step); take the same lock here so a late registration can't race a
+     * concurrent send. Registration is still expected to be setup-only. */
+    pthread_mutex_lock(&mgr->raft_mutex);
+    if (mgr->raft_peer_count >= MAX_REPLICAS) { pthread_mutex_unlock(&mgr->raft_mutex); return -1; }
+    mgr->raft_peer_ids[mgr->raft_peer_count] = peer_id;
+    mgr->raft_peers[mgr->raft_peer_count] = peer;
+    mgr->raft_peer_count++;
+    pthread_mutex_unlock(&mgr->raft_mutex);
+    return 0;
+}
+
+int replication_raft_tick(GV_ReplicationManager *mgr, uint32_t ms) {
+    if (!mgr) return -1;
+    pthread_mutex_lock(&mgr->raft_mutex);
+    if (!mgr->raft) { pthread_mutex_unlock(&mgr->raft_mutex); return -1; }
+    raft_tick(mgr->raft, ms);
+    /* Drain the inbox (snapshot under the leaf lock) then step each message. */
+    pthread_mutex_lock(&mgr->raft_inbox_mutex);
+    RaftInboxMsg *head = mgr->raft_inbox_head;
+    mgr->raft_inbox_head = NULL;
+    mgr->raft_inbox_tail = NULL;
+    pthread_mutex_unlock(&mgr->raft_inbox_mutex);
+    while (head) {
+        RaftInboxMsg *next = head->next;
+        raft_step(mgr->raft, head->from, &head->msg);
+        repl_raft_free_inbox_msg(head);
+        head = next;
+    }
+    repl_raft_sync_role(mgr);
+    pthread_mutex_unlock(&mgr->raft_mutex);
+    return 0;
+}
+
+int replication_raft_submit(GV_ReplicationManager *mgr, const void *data, size_t len) {
+    if (!mgr) return -1;
+    pthread_mutex_lock(&mgr->raft_mutex);
+    if (!mgr->raft) { pthread_mutex_unlock(&mgr->raft_mutex); return -1; }
+    int rc = raft_submit(mgr->raft, data, len, NULL);
+    pthread_mutex_unlock(&mgr->raft_mutex);
+    return rc;
+}
+
 void replication_note_leader_heartbeat(GV_ReplicationManager *mgr) {
     if (!mgr) return;
     pthread_rwlock_wrlock(&mgr->rwlock);
     mgr->role = GV_REPL_FOLLOWER;
+    mgr->last_leader_contact = gv_time_now_sec();  /* drives TCP-follower failure detection */
+    /* Refresh the leader replica's heartbeat so the follower election-timeout path
+     * (which keys off leader_id -> replica.last_heartbeat) sees the node as alive.
+     * NOTE: a node started as a follower has leader_id == NULL until a handshake
+     * establishes it; full TCP-follower failure detection additionally needs the
+     * leader's node id carried in the heartbeat (or the Raft core wired in). */
+    if (mgr->leader_id) {
+        uint64_t now = gv_time_now_sec();
+        for (size_t i = 0; i < mgr->replica_count; i++) {
+            if (mgr->replicas[i].node_id &&
+                strcmp(mgr->replicas[i].node_id, mgr->leader_id) == 0) {
+                mgr->replicas[i].last_heartbeat = now;
+                break;
+            }
+        }
+    }
     pthread_rwlock_unlock(&mgr->rwlock);
 }
 

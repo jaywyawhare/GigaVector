@@ -45,7 +45,6 @@ def fix_wheel(wheel_path: Path) -> None:
             # If both exist, refuse to guess merges.
             raise RuntimeError(f"platlib already exists in wheel: {platlib_dir}")
 
-        # Move purelib -> platlib
         platlib_dir.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(purelib_dir), str(platlib_dir))
 

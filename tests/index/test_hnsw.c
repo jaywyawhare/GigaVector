@@ -72,7 +72,6 @@ static int test_hnsw_large_dataset(void) {
         return 0;
     }
 
-    /* Insert 100 vectors: v[i] = {i*0.08, i*0.08+0.01, ...} */
     for (int i = 0; i < 100; i++) {
         float v[8];
         for (int j = 0; j < 8; j++) {

@@ -43,10 +43,7 @@ int kdtree_insert(GV_KDNode **root, GV_SoAStorage *storage, size_t vector_index,
 /**
  * @brief Perform the operation.
  *
- * @param node node.
- * @param storage storage.
  * @param out Output buffer.
- * @param version version.
  * @return 0 on success, -1 on error.
  */
 int kdtree_save_recursive(const GV_KDNode *node, const GV_SoAStorage *storage, FILE *out, uint32_t version);
@@ -67,11 +64,8 @@ int kdtree_save_recursive(const GV_KDNode *node, const GV_SoAStorage *storage, F
 /**
  * @brief Perform the operation.
  *
- * @param root root.
- * @param storage storage.
  * @param in Input file stream.
  * @param dimension Vector dimensionality.
- * @param version version.
  * @return 0 on success, -1 on error.
  */
 int kdtree_load_recursive(GV_KDNode **root, GV_SoAStorage *storage, FILE *in, size_t dimension, uint32_t version);
@@ -177,10 +171,7 @@ int kdtree_delete(GV_KDNode **root, GV_SoAStorage *storage, size_t vector_index)
 /**
  * @brief Update an item.
  *
- * @param root root.
- * @param storage storage.
  * @param vector_index Index value.
- * @param new_data new_data.
  * @return 0 on success, -1 on error.
  */
 int kdtree_update(GV_KDNode **root, GV_SoAStorage *storage, size_t vector_index, const float *new_data);

@@ -92,6 +92,7 @@ static int test_grpc_frame_roundtrip_seeded(void) {
         gv_free(query);
         grpc_message_free(&msg);
         ASSERT(found > 0, "search finds vector");
+        gv_search_results_free(results, (size_t)found);
     }
 
     grpc_destroy(server);

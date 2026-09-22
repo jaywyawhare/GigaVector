@@ -19,6 +19,7 @@ typedef struct {
     size_t m;           /**< Number of sub-quantizers (must divide dimension). */
     uint8_t nbits;      /**< Bits per sub-quantizer code (typically 8). */
     size_t train_iters; /**< K-means iterations for codebook training. */
+    int use_opq;        /**< Learn an OPQ rotation before PQ for higher recall (default 0). */
 } GV_PQConfig;
 
 void *pq_create(size_t dimension, const GV_PQConfig *config);
@@ -55,6 +56,16 @@ int pq_range_search(void *index, const GV_Vector *query, float radius,
  * @return 1 if true, 0 if false, -1 on error.
  */
 int pq_is_trained(const void *index);
+
+/**
+ * @brief Mean per-vector PQ reconstruction error over stored entries.
+ *
+ * The sum of squared distances between each (rotated, if OPQ) sub-vector and its
+ * chosen codebook centroid, averaged over vectors. This is the quantity OPQ
+ * minimises — a lower value means higher-fidelity codes (and thus recall) at the
+ * same bit budget. Returns -1.0 if the index is untrained or empty.
+ */
+double pq_avg_quantization_error(const void *index);
 /**
  * @brief Destroy an instance and free associated resources.
  *

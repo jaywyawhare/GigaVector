@@ -20,8 +20,6 @@
 #include <pthread.h>
 #include "core/compat.h"
 
-/* * Internal Structures */
-
 /**
  * @brief Per-vector version tracking entry.
  */
@@ -43,8 +41,6 @@ struct GV_CondManager {
     GV_VersionSlot *slots;         /**< Dynamic array of version slots indexed by vector index. */
     size_t slot_count;             /**< Number of allocated slots. */
 };
-
-/* * Helpers */
 
 /**
  * @brief Get current time in microseconds since epoch.
@@ -75,7 +71,6 @@ static int ensure_slot_capacity(GV_CondManager *mgr, size_t index)
     GV_VersionSlot *tmp = gv_realloc(mgr->slots, new_count * sizeof(GV_VersionSlot));
     if (!tmp) return -1;
 
-    /* Zero-initialize newly allocated region */
     memset(tmp + mgr->slot_count, 0,
            (new_count - mgr->slot_count) * sizeof(GV_VersionSlot));
 
@@ -205,8 +200,6 @@ static void bump_version(GV_CondManager *mgr, size_t index)
     mgr->slots[index].updated_at = now_microseconds();
 }
 
-/* * Lifecycle */
-
 GV_CondManager *cond_create(void *db)
 {
     if (!db) return NULL;
@@ -228,8 +221,6 @@ void cond_destroy(GV_CondManager *mgr)
     gv_free(mgr);
 }
 
-/* * Conditional Vector Update */
-
 GV_ConditionalResult cond_update_vector(GV_CondManager *mgr, size_t index,
                                             const float *new_data, size_t dimension,
                                             const GV_Condition *conditions,
@@ -239,45 +230,37 @@ GV_ConditionalResult cond_update_vector(GV_CondManager *mgr, size_t index,
 
     GV_Database *db = mgr->db;
 
-    /* Validate dimension */
     if (dimension != db->dimension) return GV_COND_FAILED;
 
-    /* Acquire write lock */
     pthread_rwlock_wrlock(&db->rwlock);
 
-    /* Validate index bounds */
     if (!db->soa_storage || index >= db->soa_storage->count) {
         pthread_rwlock_unlock(&db->rwlock);
         return GV_COND_NOT_FOUND;
     }
 
-    /* Ensure version tracking capacity */
     if (ensure_slot_capacity(mgr, index) != 0) {
         pthread_rwlock_unlock(&db->rwlock);
         return GV_COND_FAILED;
     }
 
-    /* Evaluate conditions */
     GV_ConditionalResult result = evaluate_all(mgr, index, conditions, condition_count);
     if (result != GV_COND_OK) {
         pthread_rwlock_unlock(&db->rwlock);
         return result;
     }
 
-    /* Apply mutation */
     if (soa_storage_update_data(db->soa_storage, index, new_data) != 0) {
         pthread_rwlock_unlock(&db->rwlock);
         return GV_COND_FAILED;
     }
 
-    /* Bump version */
     bump_version(mgr, index);
 
     pthread_rwlock_unlock(&db->rwlock);
     return GV_COND_OK;
 }
 
-/* * Conditional Metadata Update */
 
 GV_ConditionalResult cond_update_metadata(GV_CondManager *mgr, size_t index,
                                               const char *key, const char *value,
@@ -288,29 +271,24 @@ GV_ConditionalResult cond_update_metadata(GV_CondManager *mgr, size_t index,
 
     GV_Database *db = mgr->db;
 
-    /* Acquire write lock */
     pthread_rwlock_wrlock(&db->rwlock);
 
-    /* Validate index bounds */
     if (!db->soa_storage || index >= db->soa_storage->count) {
         pthread_rwlock_unlock(&db->rwlock);
         return GV_COND_NOT_FOUND;
     }
 
-    /* Ensure version tracking capacity */
     if (ensure_slot_capacity(mgr, index) != 0) {
         pthread_rwlock_unlock(&db->rwlock);
         return GV_COND_FAILED;
     }
 
-    /* Evaluate conditions */
     GV_ConditionalResult result = evaluate_all(mgr, index, conditions, condition_count);
     if (result != GV_COND_OK) {
         pthread_rwlock_unlock(&db->rwlock);
         return result;
     }
 
-    /* Build new metadata: clone existing list, then set/update the key */
     GV_Metadata *existing = soa_storage_get_metadata(db->soa_storage, index);
 
     /* Clone existing metadata into a temporary GV_Vector for set_metadata */
@@ -338,7 +316,6 @@ GV_ConditionalResult cond_update_metadata(GV_CondManager *mgr, size_t index,
         tail = &node->next;
     }
 
-    /* Update or insert the target key */
     int found = 0;
     for (GV_Metadata *cur = new_list; cur; cur = cur->next) {
         if (strcmp(cur->key, key) == 0) {
@@ -383,14 +360,12 @@ GV_ConditionalResult cond_update_metadata(GV_CondManager *mgr, size_t index,
         return GV_COND_FAILED;
     }
 
-    /* Bump version */
     bump_version(mgr, index);
 
     pthread_rwlock_unlock(&db->rwlock);
     return GV_COND_OK;
 }
 
-/* * Conditional Delete */
 
 GV_ConditionalResult cond_delete(GV_CondManager *mgr, size_t index,
                                      const GV_Condition *conditions,
@@ -400,42 +375,34 @@ GV_ConditionalResult cond_delete(GV_CondManager *mgr, size_t index,
 
     GV_Database *db = mgr->db;
 
-    /* Acquire write lock */
     pthread_rwlock_wrlock(&db->rwlock);
 
-    /* Validate index bounds */
     if (!db->soa_storage || index >= db->soa_storage->count) {
         pthread_rwlock_unlock(&db->rwlock);
         return GV_COND_NOT_FOUND;
     }
 
-    /* Ensure version tracking capacity */
     if (ensure_slot_capacity(mgr, index) != 0) {
         pthread_rwlock_unlock(&db->rwlock);
         return GV_COND_FAILED;
     }
 
-    /* Evaluate conditions */
     GV_ConditionalResult result = evaluate_all(mgr, index, conditions, condition_count);
     if (result != GV_COND_OK) {
         pthread_rwlock_unlock(&db->rwlock);
         return result;
     }
 
-    /* Apply deletion */
     if (soa_storage_mark_deleted(db->soa_storage, index) != 0) {
         pthread_rwlock_unlock(&db->rwlock);
         return GV_COND_FAILED;
     }
 
-    /* Bump version */
     bump_version(mgr, index);
 
     pthread_rwlock_unlock(&db->rwlock);
     return GV_COND_OK;
 }
-
-/* * Version Queries */
 
 uint64_t cond_get_version(const GV_CondManager *mgr, size_t index)
 {
@@ -452,8 +419,6 @@ uint64_t cond_get_version(const GV_CondManager *mgr, size_t index)
     pthread_rwlock_unlock(&mgr->db->rwlock);
     return ver;
 }
-
-/* * Batch Operations */
 
 int cond_batch_update(GV_CondManager *mgr,
                           const size_t *indices,
@@ -478,19 +443,16 @@ int cond_batch_update(GV_CondManager *mgr,
     for (size_t i = 0; i < batch_size; i++) {
         size_t idx = indices[i];
 
-        /* Bounds check */
         if (!db->soa_storage || idx >= db->soa_storage->count) {
             results[i] = GV_COND_NOT_FOUND;
             continue;
         }
 
-        /* Ensure slot capacity */
         if (ensure_slot_capacity(mgr, idx) != 0) {
             results[i] = GV_COND_FAILED;
             continue;
         }
 
-        /* Evaluate conditions */
         GV_ConditionalResult r = evaluate_all(mgr, idx,
                                                conditions[i],
                                                condition_counts[i]);
@@ -499,13 +461,18 @@ int cond_batch_update(GV_CondManager *mgr,
             continue;
         }
 
-        /* Apply mutation */
+        /* Guard the per-element vector: the single-item path checks it, but the
+         * batch path fed it straight to update_data, dereferencing a NULL entry. */
+        if (!vectors[i]) {
+            results[i] = GV_COND_FAILED;
+            continue;
+        }
+
         if (soa_storage_update_data(db->soa_storage, idx, vectors[i]) != 0) {
             results[i] = GV_COND_FAILED;
             continue;
         }
 
-        /* Bump version */
         bump_version(mgr, idx);
         results[i] = GV_COND_OK;
         success_count++;
@@ -520,8 +487,6 @@ int cond_batch_update(GV_CondManager *mgr,
     return success_count;
 }
 
-/* * Convenience Wrappers */
-
 GV_ConditionalResult cond_migrate_embedding(GV_CondManager *mgr, size_t index,
                                                 const float *new_embedding,
                                                 size_t dimension,
@@ -529,7 +494,6 @@ GV_ConditionalResult cond_migrate_embedding(GV_CondManager *mgr, size_t index,
 {
     if (!mgr || !new_embedding) return GV_COND_FAILED;
 
-    /* Build a VERSION_EQ condition for the expected version */
     GV_Condition cond;
     memset(&cond, 0, sizeof(cond));
     cond.type = GV_COND_VERSION_EQ;

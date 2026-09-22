@@ -181,6 +181,7 @@ static float diskann_l2_distance(const float *a, const float *b, size_t dim) {
 typedef struct {
     size_t index;
     float distance;
+    int expanded;      /* greedy search: already expanded its neighbors */
 } DiskANN_Candidate;
 
 static int diskann_cand_compare(const void *a, const void *b) {
@@ -510,6 +511,35 @@ static void diskann_page_cache_store(GV_DiskANNIndex *index, size_t page_id, con
     diskann_cache_put(&index->cache, page_id, data);
 }
 
+static void diskann_cache_remove(DiskANN_Cache *cache, size_t page_id) {
+    size_t bi = diskann_cache_bucket(page_id);
+    DiskANN_CachePage **pp = &cache->buckets[bi];
+    while (*pp) {
+        DiskANN_CachePage *cur = *pp;
+        if (cur->page_id == page_id) {
+            *pp = cur->hash_next;
+            diskann_cache_lru_remove(cache, cur);
+            gv_free(cur->data);
+            gv_free(cur);
+            cache->count--;
+            return;
+        }
+        pp = &cur->hash_next;
+    }
+}
+
+/* Drop any cached copy of a page so the next read re-fetches it from disk.
+ * Must be called after any write that changes the page's on-disk contents. */
+static void diskann_page_cache_invalidate(GV_DiskANNIndex *index, size_t page_id) {
+    if (index->shared_page_cache) {
+        char key[128];
+        snprintf(key, sizeof(key), "dann:%p:%zu", (void *)index, page_id);
+        gv_disk_page_cache_remove(index->shared_page_cache, key);
+        return;
+    }
+    diskann_cache_remove(&index->cache, page_id);
+}
+
 static void diskann_cache_destroy(DiskANN_Cache *cache) {
     for (size_t i = 0; i < DISKANN_CACHE_BUCKETS; i++) {
         DiskANN_CachePage *cur = cache->buckets[i];
@@ -553,6 +583,11 @@ static int diskann_disk_write_vector(GV_DiskANNIndex *index, size_t vec_index, c
         written += (size_t)ret;
     }
 
+    /* Invalidate the cached page holding this vector so a subsequent read does
+     * not return the stale pre-write contents. */
+    if (index->vectors_per_page > 0) {
+        diskann_page_cache_invalidate(index, vec_index / index->vectors_per_page);
+    }
     return 0;
 }
 
@@ -707,21 +742,31 @@ static int diskann_greedy_search(const GV_DiskANNIndex *index, const float *quer
 
     candidates[0].index = start;
     candidates[0].distance = start_dist;
+    candidates[0].expanded = 0;
     cand_count = 1;
     seen[start / 64] |= (1ULL << (start % 64));
 
     size_t result_count = 0;
-    size_t explore_idx = 0;
 
-    while (explore_idx < cand_count) {
+    /*
+     * Greedy best-first search over the distance-sorted candidate array. A
+     * per-candidate `expanded` flag (not a moving cursor) is required because
+     * inserting a closer candidate shifts the array: a cursor would re-expand
+     * nodes (duplicate results) or skip inserted ones (lost recall).
+     */
+    while (result_count < max_visited) {
+        size_t explore_idx = cand_count;
+        for (size_t i = 0; i < cand_count; i++) {
+            if (!candidates[i].expanded) { explore_idx = i; break; }
+        }
+        if (explore_idx == cand_count) break; /* nothing left to expand */
+
         size_t curr = candidates[explore_idx].index;
-        explore_idx++;
+        candidates[explore_idx].expanded = 1;
 
         if (index->nodes[curr].deleted) continue;
 
-        if (result_count < max_visited) {
-            visited[result_count++] = curr;
-        }
+        visited[result_count++] = curr;
 
         const DiskANN_Node *node = &index->nodes[curr];
         for (size_t ni = 0; ni < node->neighbor_count; ni++) {
@@ -759,6 +804,7 @@ static int diskann_greedy_search(const GV_DiskANNIndex *index, const float *quer
                 }
                 candidates[pos].index = neighbor;
                 candidates[pos].distance = dist;
+                candidates[pos].expanded = 0;
                 cand_count++;
             } else if (dist < candidates[cand_count - 1].distance) {
                 size_t pos = cand_count - 1;
@@ -768,6 +814,7 @@ static int diskann_greedy_search(const GV_DiskANNIndex *index, const float *quer
                 }
                 candidates[pos].index = neighbor;
                 candidates[pos].distance = dist;
+                candidates[pos].expanded = 0;
             }
 
             if (cand_count > beam_width * 2) {

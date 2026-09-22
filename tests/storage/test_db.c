@@ -192,8 +192,11 @@ static int test_range_search(void) {
     int n = db_range_search(db, q, 2.5f, res, 10, GV_DISTANCE_EUCLIDEAN);
     ASSERT(n >= 3, "range search");
 
-    /* KDTREE db_range_search returns non-owned views (kdtree_range_search frees
-     * its internal temp_views buffer); the caller must NOT free result vectors. */
+    /* db_range_search returns caller-owned heap copies of each result vector
+     * (matching db_search and the REST/gRPC range handlers); free them. */
+    for (int i = 0; i < n; i++) {
+        if (res[i].vector) vector_destroy((GV_Vector *)res[i].vector);
+    }
     db_close(db);
     return 0;
 }

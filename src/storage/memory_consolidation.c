@@ -221,8 +221,11 @@ char *memory_merge(GV_MemoryLayer *layer, const char *memory_id_1,
     }
     
     GV_MemoryResult mem1, mem2;
-    if (memory_get(layer, memory_id_1, &mem1) != 0 ||
-        memory_get(layer, memory_id_2, &mem2) != 0) {
+    if (memory_get(layer, memory_id_1, &mem1) != 0) {
+        return NULL;
+    }
+    if (memory_get(layer, memory_id_2, &mem2) != 0) {
+        memory_result_free(&mem1);  /* don't leak the first result on second failure */
         return NULL;
     }
     
@@ -334,8 +337,11 @@ int memory_update_from_new(GV_MemoryLayer *layer,
     }
     
     GV_MemoryResult existing, new_mem;
-    if (memory_get(layer, existing_memory_id, &existing) != 0 ||
-        memory_get(layer, new_memory_id, &new_mem) != 0) {
+    if (memory_get(layer, existing_memory_id, &existing) != 0) {
+        return -1;
+    }
+    if (memory_get(layer, new_memory_id, &new_mem) != 0) {
+        memory_result_free(&existing);  /* don't leak the first result on second failure */
         return -1;
     }
     

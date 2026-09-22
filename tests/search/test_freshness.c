@@ -35,13 +35,11 @@
 
 static int test_freshness_score_exp(void)
 {
-    /* A vector inserted at time 0 with now = half_life should score ~0.5 */
-    double half_life_ms = 1000.0; /* 1 second */
+    double half_life_ms = 1000.0;
     float score = freshness_score(0, (uint64_t)half_life_ms,
                                   half_life_ms, GV_RANK_DECAY_EXP);
     ASSERT(fabsf(score - 0.5f) < 0.01f, "exp decay at 1 half-life should be ~0.5");
 
-    /* A vector inserted right now should score ~1.0 */
     float score_new = freshness_score(1000, 1000, half_life_ms, GV_RANK_DECAY_EXP);
     ASSERT(fabsf(score_new - 1.0f) < 0.01f, "freshness at age 0 should be ~1.0");
 
@@ -66,15 +64,10 @@ static int test_freshness_score_linear(void)
     float score_new = freshness_score(0, 0, half_life_ms, GV_RANK_DECAY_LINEAR);
     ASSERT(fabsf(score_new - 1.0f) < 0.01f, "linear freshness at age 0 should be ~1.0");
 
-    /* Very old vector should score 0 */
     float score_old = freshness_score(0, 1000000, half_life_ms, GV_RANK_DECAY_LINEAR);
     ASSERT(score_old == 0.0f, "very old vector should score 0 with linear decay");
     return 0;
 }
-
-/* ---------------------------------------------------------------------------
- * Test: freshness_blend()
- * ------------------------------------------------------------------------ */
 
 static int test_freshness_blend(void)
 {
@@ -83,10 +76,6 @@ static int test_freshness_blend(void)
     ASSERT(fabsf(blended - 0.74f) < 0.001f, "blend calculation should be correct");
     return 0;
 }
-
-/* ---------------------------------------------------------------------------
- * Test: db_search_with_freshness() — newer vectors rank higher
- * ------------------------------------------------------------------------ */
 
 static int test_newer_vectors_rank_higher(void)
 {
@@ -151,10 +140,7 @@ static int test_newer_vectors_rank_higher(void)
     return 0;
 }
 
-/* ---------------------------------------------------------------------------
- * Test: freshness_weight=0 should behave like normal search
- * ------------------------------------------------------------------------ */
-
+/* freshness_weight=0 should behave like normal search */
 static int test_zero_freshness_weight(void)
 {
     gv_sim_time_set_mode(GV_TIME_SIM);
@@ -184,10 +170,6 @@ static int test_zero_freshness_weight(void)
     gv_sim_time_set_mode(GV_TIME_WALL);
     return 0;
 }
-
-/* ---------------------------------------------------------------------------
- * Test: filtered search with freshness
- * ------------------------------------------------------------------------ */
 
 static int test_filtered_freshness(void)
 {
@@ -221,7 +203,6 @@ static int test_filtered_freshness(void)
     int n = db_search_filtered_with_freshness(db, query, 3, &params,
                                                "type", "A", results);
     ASSERT(n > 0, "filtered freshness search should return results");
-    /* All results should be type=A vectors (indices 0-2). */
     for (int i = 0; i < n; ++i) {
         ASSERT(results[i].index < 3, "filtered results should only be type=A vectors");
     }
@@ -231,10 +212,7 @@ static int test_filtered_freshness(void)
     return 0;
 }
 
-/* ---------------------------------------------------------------------------
- * Test: timestamp is refreshed on update
- * ------------------------------------------------------------------------ */
-
+/* timestamp is refreshed on update */
 static int test_timestamp_refresh_on_update(void)
 {
     gv_sim_time_set_mode(GV_TIME_SIM);
@@ -261,10 +239,6 @@ static int test_timestamp_refresh_on_update(void)
     gv_sim_time_set_mode(GV_TIME_WALL);
     return 0;
 }
-
-/* ---------------------------------------------------------------------------
- * Main
- * ------------------------------------------------------------------------ */
 
 typedef int (*test_fn)(void);
 

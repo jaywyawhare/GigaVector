@@ -19,15 +19,12 @@
 #define fsync(fd) _commit(fd)
 #endif
 
-/* Constants */
-
 #define GV_POINTID_DEFAULT_CAPACITY 64
 #define GV_POINTID_LOAD_FACTOR      0.7
 #define GV_POINTID_UUID_LEN         36   /* "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx" */
 #define GV_POINTID_UUID_BUF_MIN     37   /* UUID + NUL */
 
 /* FNV-1a 64-bit hash */
-
 #define FNV_OFFSET_BASIS UINT64_C(14695981039346656037)
 #define FNV_PRIME        UINT64_C(1099511628211)
 
@@ -42,8 +39,6 @@ static uint64_t fnv1a_hash(const char *str)
     return hash;
 }
 
-/* Hash-table entry */
-
 typedef struct {
     char    *string_id;      /* Owned copy of the user string.  NULL if empty. */
     size_t   internal_index; /* Associated internal vector index. */
@@ -51,14 +46,10 @@ typedef struct {
     int      occupied;       /* 1 = live entry, 0 = empty / tombstone. */
 } GV_PointIDEntry;
 
-/* Reverse-lookup array */
-
 typedef struct {
     char  **ids;       /* Array of pointers into forward-table string_id's. */
     size_t  capacity;  /* Allocated slots. */
 } GV_ReverseMap;
-
-/* Map structure */
 
 struct GV_PointIDMap {
     GV_PointIDEntry *buckets;       /* Open-addressing hash table. */
@@ -67,8 +58,6 @@ struct GV_PointIDMap {
     GV_ReverseMap    reverse;       /* index -> string_id pointer. */
     pthread_rwlock_t rwlock;        /* Reader-writer lock. */
 };
-
-/* Helper: next power of two >= n (minimum 1) */
 
 static size_t next_pow2(size_t n)
 {
@@ -84,8 +73,6 @@ static size_t next_pow2(size_t n)
 #endif
     return n + 1;
 }
-
-/* Internal: find bucket for a key (open addressing, linear probing) */
 
 /**
  * @brief Locate the bucket for @p key, or the first empty slot.
@@ -122,16 +109,19 @@ static int find_bucket(const GV_PointIDEntry *buckets, size_t capacity,
     return 0;
 }
 
-/* Internal: grow the reverse-lookup array if needed */
-
 static int reverse_ensure(GV_ReverseMap *rev, size_t needed_index)
 {
     if (needed_index < rev->capacity) {
         return 0;
     }
 
+    /* needed_index == SIZE_MAX can't be represented as a capacity (needs +1). */
+    if (needed_index == SIZE_MAX) return -1;
     size_t new_cap = rev->capacity == 0 ? 64 : rev->capacity;
     while (new_cap <= needed_index) {
+        /* Guard the doubling: past SIZE_MAX/2 it wraps to 0 and the loop spins
+         * forever (0 <= needed_index). Clamp to exactly what's needed instead. */
+        if (new_cap > SIZE_MAX / 2) { new_cap = needed_index + 1; break; }
         new_cap *= 2;
     }
 
@@ -147,8 +137,6 @@ static int reverse_ensure(GV_ReverseMap *rev, size_t needed_index)
     rev->capacity = new_cap;
     return 0;
 }
-
-/* Internal: resize the hash table */
 
 static int map_resize(GV_PointIDMap *map, size_t new_capacity)
 {
@@ -178,8 +166,6 @@ static int map_resize(GV_PointIDMap *map, size_t new_capacity)
     map->capacity = new_capacity;
     return 0;
 }
-
-/* Public API: Create / Destroy */
 
 GV_PointIDMap *point_id_create(size_t initial_capacity)
 {
@@ -219,7 +205,6 @@ void point_id_destroy(GV_PointIDMap *map)
         return;
     }
 
-    /* Free all owned string copies. */
     for (size_t i = 0; i < map->capacity; i++) {
         if (map->buckets[i].occupied) {
             gv_free(map->buckets[i].string_id);
@@ -231,8 +216,6 @@ void point_id_destroy(GV_PointIDMap *map)
     pthread_rwlock_destroy(&map->rwlock);
     gv_free(map);
 }
-
-/* Public API: Map Operations */
 
 int point_id_set(GV_PointIDMap *map, const char *string_id, size_t internal_index)
 {
@@ -255,7 +238,6 @@ int point_id_set(GV_PointIDMap *map, const char *string_id, size_t internal_inde
     int      found = find_bucket(map->buckets, map->capacity, string_id, hash, &idx);
 
     if (found) {
-        /* Update existing entry. */
         size_t old_index = map->buckets[idx].internal_index;
 
         /* Clear old reverse pointer if it pointed to this string. */
@@ -265,7 +247,6 @@ int point_id_set(GV_PointIDMap *map, const char *string_id, size_t internal_inde
 
         map->buckets[idx].internal_index = internal_index;
 
-        /* Update reverse map. */
         if (reverse_ensure(&map->reverse, internal_index) == 0) {
             map->reverse.ids[internal_index] = map->buckets[idx].string_id;
         }
@@ -274,7 +255,6 @@ int point_id_set(GV_PointIDMap *map, const char *string_id, size_t internal_inde
         return 0;
     }
 
-    /* New entry. */
     char *id_copy = gv_dup_cstr(string_id);
     if (!id_copy) {
         pthread_rwlock_unlock(&map->rwlock);
@@ -287,7 +267,6 @@ int point_id_set(GV_PointIDMap *map, const char *string_id, size_t internal_inde
     map->buckets[idx].occupied       = 1;
     map->count++;
 
-    /* Update reverse map. */
     if (reverse_ensure(&map->reverse, internal_index) == 0) {
         map->reverse.ids[internal_index] = id_copy;
     }
@@ -336,13 +315,11 @@ int point_id_remove(GV_PointIDMap *map, const char *string_id)
         return -1;
     }
 
-    /* Clear reverse mapping. */
     size_t rev_idx = map->buckets[idx].internal_index;
     if (rev_idx < map->reverse.capacity && map->reverse.ids[rev_idx] == map->buckets[idx].string_id) {
         map->reverse.ids[rev_idx] = NULL;
     }
 
-    /* Free the owned string. */
     gv_free(map->buckets[idx].string_id);
 
     /* Mark as empty.  To maintain linear-probing correctness we must
@@ -351,7 +328,6 @@ int point_id_remove(GV_PointIDMap *map, const char *string_id)
     map->buckets[idx].occupied  = 0;
     map->count--;
 
-    /* Rehash the cluster following the deleted slot. */
     size_t mask = map->capacity - 1;
     size_t probe = (idx + 1) & mask;
     while (map->buckets[probe].occupied) {
@@ -360,13 +336,11 @@ int point_id_remove(GV_PointIDMap *map, const char *string_id)
         map->buckets[probe].occupied  = 0;
         map->count--;
 
-        /* Re-insert tmp. */
         size_t new_idx;
         find_bucket(map->buckets, map->capacity, tmp.string_id, tmp.hash, &new_idx);
         map->buckets[new_idx] = tmp;
         map->count++;
 
-        /* Fix reverse pointer if needed. */
         if (tmp.internal_index < map->reverse.capacity) {
             map->reverse.ids[tmp.internal_index] = map->buckets[new_idx].string_id;
         }
@@ -394,8 +368,6 @@ int point_id_has(const GV_PointIDMap *map, const char *string_id)
     return found ? 1 : 0;
 }
 
-/* Public API: Reverse Lookup */
-
 const char *point_id_reverse_lookup(const GV_PointIDMap *map, size_t internal_index)
 {
     if (!map) {
@@ -413,8 +385,6 @@ const char *point_id_reverse_lookup(const GV_PointIDMap *map, size_t internal_in
     return result;
 }
 
-/* Public API: UUID v4 Generation */
-
 int point_id_generate_uuid(char *buf, size_t buf_size)
 {
     if (!buf || buf_size < GV_POINTID_UUID_BUF_MIN) {
@@ -424,7 +394,6 @@ int point_id_generate_uuid(char *buf, size_t buf_size)
     uint8_t bytes[16];
     int have_random = 0;
 
-    /* Attempt /dev/urandom first. */
     FILE *fp = fopen("/dev/urandom", "rb");
     if (fp) {
         if (fread(bytes, 1, 16, fp) == 16) {
@@ -460,8 +429,6 @@ int point_id_generate_uuid(char *buf, size_t buf_size)
 
     return 0;
 }
-
-/* Public API: Iteration */
 
 size_t point_id_count(const GV_PointIDMap *map)
 {
@@ -503,8 +470,6 @@ int point_id_iterate(const GV_PointIDMap *map,
     return 0;
 }
 
-/* Public API: Save / Load */
-
 int point_id_save(const GV_PointIDMap *map, const char *filepath)
 {
     if (!map || !filepath) {
@@ -528,13 +493,11 @@ int point_id_save(const GV_PointIDMap *map, const char *filepath)
         return -1;
     }
 
-    /* Write entry count. */
     size_t count = map->count;
     if (write_size(fp, count) != 0) {
         goto fail;
     }
 
-    /* Write each live entry: string_len, string_id bytes, internal_index. */
     for (size_t i = 0; i < map->capacity; i++) {
         const GV_PointIDEntry *e = &map->buckets[i];
         if (!e->occupied) {
@@ -609,6 +572,7 @@ GV_PointIDMap *point_id_load(const char *filepath)
 
     /* Pick a capacity that keeps the load factor healthy. */
     size_t needed = (size_t)((double)count / GV_POINTID_LOAD_FACTOR) + 1;
+
     GV_PointIDMap *map = point_id_create(needed);
     if (!map) {
         fclose(fp);

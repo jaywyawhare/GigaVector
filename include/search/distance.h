@@ -14,7 +14,8 @@ typedef enum {
     GV_DISTANCE_COSINE = 1,
     GV_DISTANCE_DOT_PRODUCT = 2,
     GV_DISTANCE_MANHATTAN = 3,
-    GV_DISTANCE_HAMMING = 4
+    GV_DISTANCE_HAMMING = 4,
+    GV_DISTANCE_JACCARD = 5   /**< 1 - Tanimoto coefficient; exact binary Jaccard for {0,1} vectors. */
 } GV_DistanceType;
 
 /**
@@ -70,6 +71,17 @@ float distance_manhattan(const GV_Vector *a, const GV_Vector *b);
  * @return Hamming distance (non-negative integer as float), or -1.0f on invalid arguments.
  */
 float distance_hamming(const GV_Vector *a, const GV_Vector *b);
+
+/**
+ * @brief Jaccard/Tanimoto distance: 1 - dot(a,b) / (|a|^2 + |b|^2 - dot(a,b)).
+ *
+ * The continuous Tanimoto coefficient generalises the Jaccard index; for binary
+ * {0,1} vectors it is exactly 1 - |A∩B|/|A∪B|. Two all-zero vectors are treated
+ * as identical (distance 0). Used for fingerprints, one-hot, and sparse-set vectors.
+ *
+ * @return Distance in [0, 1] (0 = identical), or -1.0f on invalid arguments.
+ */
+float distance_jaccard(const GV_Vector *a, const GV_Vector *b);
 
 /**
  * @brief Calculate distance using the specified metric type.

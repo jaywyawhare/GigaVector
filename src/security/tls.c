@@ -8,6 +8,7 @@
  * of the server can still operate in plain-HTTP mode.
  */
 
+#include <limits.h>
 #include "security/tls.h"
 #include "core/memory.h"
 #include "core/utils.h"
@@ -15,8 +16,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
-
-/* OpenSSL Implementation */
 
 #ifdef GV_HAVE_OPENSSL
 
@@ -26,13 +25,11 @@
 #include <openssl/x509v3.h>
 #include <openssl/pem.h>
 
-/* internal context */
 struct GV_TLSContext {
     SSL_CTX    *ssl_ctx;
     char       *cert_path;   /* kept for cert_days_remaining */
 };
 
-/* helpers */
 static void tls_log_errors(const char *prefix) {
     unsigned long err;
     while ((err = ERR_get_error()) != 0) {
@@ -42,7 +39,6 @@ static void tls_log_errors(const char *prefix) {
     }
 }
 
-/* public API */
 int tls_is_available(void) {
     return 1;
 }
@@ -78,13 +74,11 @@ GV_TLSContext *tls_create(const GV_TLSConfig *config) {
         return NULL;
     }
 
-    /* minimum protocol version */
     long min_ver = (config->min_version == GV_TLS_1_3)
                        ? TLS1_3_VERSION
                        : TLS1_2_VERSION;
     SSL_CTX_set_min_proto_version(ssl_ctx, min_ver);
 
-    /* cipher suites */
     if (config->cipher_list) {
         if (SSL_CTX_set_cipher_list(ssl_ctx, config->cipher_list) != 1) {
             tls_log_errors("SSL_CTX_set_cipher_list");
@@ -93,7 +87,6 @@ GV_TLSContext *tls_create(const GV_TLSConfig *config) {
         }
     }
 
-    /* certificate & key */
     if (SSL_CTX_use_certificate_chain_file(ssl_ctx, config->cert_file) != 1) {
         tls_log_errors("SSL_CTX_use_certificate_chain_file");
         SSL_CTX_free(ssl_ctx);
@@ -113,7 +106,6 @@ GV_TLSContext *tls_create(const GV_TLSConfig *config) {
         return NULL;
     }
 
-    /* mutual TLS (optional) */
     if (config->verify_client) {
         SSL_CTX_set_verify(ssl_ctx,
                            SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT,
@@ -128,7 +120,6 @@ GV_TLSContext *tls_create(const GV_TLSConfig *config) {
         }
     }
 
-    /* build wrapper */
     GV_TLSContext *ctx = gv_calloc(1, sizeof(GV_TLSContext));
     if (!ctx) {
         SSL_CTX_free(ssl_ctx);
@@ -159,7 +150,6 @@ const char *tls_version_string(const GV_TLSContext *ctx) {
     return ver;
 }
 
-/* connection-level operations */
 int tls_accept(GV_TLSContext *ctx, int client_fd, void **tls_conn) {
     if (!ctx || !tls_conn || client_fd < 0) return -1;
 
@@ -190,10 +180,11 @@ int tls_accept(GV_TLSContext *ctx, int client_fd, void **tls_conn) {
 
 int tls_read(void *tls_conn, void *buf, size_t len) {
     if (!tls_conn || !buf || len == 0) return -1;
+    if (len > INT_MAX) len = INT_MAX;  /* (int)len must not truncate/go negative */
     int n = SSL_read((SSL *)tls_conn, buf, (int)len);
     if (n <= 0) {
         int err = SSL_get_error((SSL *)tls_conn, n);
-        if (err == SSL_ERROR_ZERO_RETURN) return 0;  /* clean shutdown */
+        if (err == SSL_ERROR_ZERO_RETURN) return 0;
         return -1;
     }
     return n;
@@ -201,6 +192,7 @@ int tls_read(void *tls_conn, void *buf, size_t len) {
 
 int tls_write(void *tls_conn, const void *buf, size_t len) {
     if (!tls_conn || !buf || len == 0) return -1;
+    if (len > INT_MAX) len = INT_MAX;  /* (int)len must not truncate/go negative */
     int n = SSL_write((SSL *)tls_conn, buf, (int)len);
     if (n <= 0) return -1;
     return n;
@@ -213,11 +205,14 @@ void tls_close_conn(void *tls_conn) {
     SSL_free(ssl);
 }
 
-/* certificate info */
 int tls_get_peer_cn(void *tls_conn, char *buf, size_t buf_size) {
     if (!tls_conn || !buf || buf_size == 0) return -1;
 
     SSL *ssl = (SSL *)tls_conn;
+    /* Only return a CN from a cert that actually verified against the trust store.
+     * With verify_client=0 a self-signed client cert is accepted at the SSL layer,
+     * so returning its (attacker-chosen) CN as an identity would be unsafe. */
+    if (SSL_get_verify_result(ssl) != X509_V_OK) return -1;
     X509 *cert = SSL_get_peer_certificate(ssl);
     if (!cert) return -1;
 
@@ -263,8 +258,6 @@ int tls_cert_days_remaining(const GV_TLSContext *ctx) {
     if (day_diff < 0) return 0;
     return day_diff;
 }
-
-/* Stub Implementation (no OpenSSL) */
 
 #else /* !GV_HAVE_OPENSSL */
 

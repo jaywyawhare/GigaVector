@@ -13,8 +13,6 @@
 #include <math.h>
 #include <float.h>
 
-/* Configuration Defaults */
-
 static const GV_RecommendConfig DEFAULT_CONFIG = {
     .positive_weight = 1.0f,
     .negative_weight = 0.5f,
@@ -27,8 +25,6 @@ void recommend_config_init(GV_RecommendConfig *config) {
     if (!config) return;
     *config = DEFAULT_CONFIG;
 }
-
-/* Internal Helpers */
 
 /**
  * @brief L2-normalize a vector in place.
@@ -87,7 +83,6 @@ static int convert_results(const GV_Database *db,
         size_t idx = result_to_index(db, &search_res[i]);
         if (idx == (size_t)-1) continue;
 
-        /* Check exclusion list */
         int excluded = 0;
         if (exclude_ids && exclude_count > 0) {
             for (size_t e = 0; e < exclude_count; e++) {
@@ -106,8 +101,6 @@ static int convert_results(const GV_Database *db,
     return (int)written;
 }
 
-/* recommend_by_vector */
-
 int recommend_by_vector(const GV_Database *db,
                             const float *positive_vectors, size_t positive_count,
                             const float *negative_vectors, size_t negative_count,
@@ -125,11 +118,10 @@ int recommend_by_vector(const GV_Database *db,
         cfg = DEFAULT_CONFIG;
     }
 
-    /* Allocate query vector: positive centroid minus weighted negative centroid */
+    /* query = positive centroid minus weighted negative centroid */
     float *query = (float *)gv_calloc(dimension, sizeof(float));
     if (!query) return -1;
 
-    /* Compute positive centroid (element-wise average, weighted) */
     for (size_t p = 0; p < positive_count; p++) {
         const float *vec = positive_vectors + p * dimension;
         for (size_t d = 0; d < dimension; d++) {
@@ -141,7 +133,6 @@ int recommend_by_vector(const GV_Database *db,
         query[d] *= pos_scale;
     }
 
-    /* Subtract weighted negative centroid */
     if (negative_vectors && negative_count > 0) {
         float *neg_centroid = (float *)gv_calloc(dimension, sizeof(float));
         if (!neg_centroid) {
@@ -161,10 +152,9 @@ int recommend_by_vector(const GV_Database *db,
         gv_free(neg_centroid);
     }
 
-    /* L2-normalize the query vector */
     l2_normalize(query, dimension);
 
-    /* Determine search count: oversample to allow for filtering */
+    /* oversample to allow for filtering */
     size_t search_k = k * cfg.oversample;
     if (search_k < k) search_k = k; /* overflow guard */
 
@@ -182,7 +172,6 @@ int recommend_by_vector(const GV_Database *db,
         return -1;
     }
 
-    /* Convert to recommend results (no exclusion for raw-vector path) */
     int result_count = convert_results(db, search_res, found,
                                        NULL, 0,
                                        k, results);
@@ -190,8 +179,6 @@ int recommend_by_vector(const GV_Database *db,
     gv_free(search_res);
     return result_count;
 }
-
-/* recommend_by_id */
 
 int recommend_by_id(const GV_Database *db,
                         const size_t *positive_ids, size_t positive_count,
@@ -211,7 +198,6 @@ int recommend_by_id(const GV_Database *db,
     size_t dim = database_dimension(db);
     if (dim == 0) return -1;
 
-    /* Fetch positive vectors */
     float *pos_buf = (float *)gv_alloc(positive_count * dim * sizeof(float));
     if (!pos_buf) return -1;
 
@@ -224,7 +210,6 @@ int recommend_by_id(const GV_Database *db,
         memcpy(pos_buf + i * dim, vec, dim * sizeof(float));
     }
 
-    /* Fetch negative vectors */
     float *neg_buf = NULL;
     if (negative_ids && negative_count > 0) {
         neg_buf = (float *)gv_alloc(negative_count * dim * sizeof(float));
@@ -243,7 +228,7 @@ int recommend_by_id(const GV_Database *db,
         }
     }
 
-    /* Build exclusion set from input IDs if configured */
+    /* exclusion set from input IDs (avoids recommending the seeds back) */
     size_t *exclude_ids = NULL;
     size_t exclude_count = 0;
     if (cfg.exclude_input) {
@@ -260,7 +245,6 @@ int recommend_by_id(const GV_Database *db,
         }
     }
 
-    /* Compute the recommendation query vector */
     float *query = (float *)gv_calloc(dim, sizeof(float));
     if (!query) {
         gv_free(pos_buf);
@@ -269,7 +253,6 @@ int recommend_by_id(const GV_Database *db,
         return -1;
     }
 
-    /* Positive centroid */
     for (size_t p = 0; p < positive_count; p++) {
         const float *vec = pos_buf + p * dim;
         for (size_t d = 0; d < dim; d++) {
@@ -281,7 +264,6 @@ int recommend_by_id(const GV_Database *db,
         query[d] *= pos_scale;
     }
 
-    /* Subtract negative centroid */
     if (neg_buf && negative_count > 0) {
         float *neg_centroid = (float *)gv_calloc(dim, sizeof(float));
         if (!neg_centroid) {
@@ -307,10 +289,9 @@ int recommend_by_id(const GV_Database *db,
     gv_free(pos_buf);
     gv_free(neg_buf);
 
-    /* L2-normalize */
     l2_normalize(query, dim);
 
-    /* Oversample to compensate for exclusion filtering */
+    /* oversample to compensate for exclusion filtering */
     size_t search_k = k;
     if (cfg.exclude_input && exclude_count > 0) {
         search_k = (k + exclude_count) * cfg.oversample;
@@ -344,8 +325,6 @@ int recommend_by_id(const GV_Database *db,
     return result_count;
 }
 
-/* recommend_discover */
-
 int recommend_discover(const GV_Database *db,
                            const float *target, const float *context,
                            size_t dimension, size_t k, const GV_RecommendConfig *config,
@@ -362,7 +341,7 @@ int recommend_discover(const GV_Database *db,
         cfg = DEFAULT_CONFIG;
     }
 
-    /* Compute direction vector: target - context */
+    /* query = direction target - context */
     float *direction = (float *)gv_alloc(dimension * sizeof(float));
     if (!direction) return -1;
 
@@ -370,10 +349,8 @@ int recommend_discover(const GV_Database *db,
         direction[d] = target[d] - context[d];
     }
 
-    /* L2-normalize the direction */
     l2_normalize(direction, dimension);
 
-    /* Search using the direction as query */
     size_t search_k = k * cfg.oversample;
     if (search_k < k) search_k = k; /* overflow guard */
 
@@ -391,7 +368,6 @@ int recommend_discover(const GV_Database *db,
         return -1;
     }
 
-    /* Convert results (no exclusion for discover) */
     int result_count = convert_results(db, search_res, found,
                                        NULL, 0,
                                        k, results);

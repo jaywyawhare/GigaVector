@@ -10,6 +10,7 @@
 
 #include "storage/database.h"
 #include "storage/tiered_storage.h"
+#include "schema/vector.h"
 
 #define ASSERT(cond, msg) \
     do { \
@@ -18,10 +19,6 @@
             return -1; \
         } \
     } while (0)
-
-/* ------------------------------------------------------------------ */
-/* Helpers                                                             */
-/* ------------------------------------------------------------------ */
 
 static GV_Database *make_db(size_t dim) {
     return db_open(NULL, dim, GV_INDEX_TYPE_FLAT);
@@ -40,10 +37,6 @@ static int insert_n(GV_Database *db, size_t n, size_t dim) {
     free(v);
     return 0;
 }
-
-/* ------------------------------------------------------------------ */
-/* Test: manager lifecycle                                             */
-/* ------------------------------------------------------------------ */
 
 static int test_manager_lifecycle(void) {
     GV_TieredStorageManager *mgr = tiered_storage_create(16);
@@ -64,10 +57,6 @@ static int test_manager_lifecycle(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
-/* Test: set_insert_time / boundary checks                             */
-/* ------------------------------------------------------------------ */
-
 static int test_set_insert_time(void) {
     GV_TieredStorageManager *mgr = tiered_storage_create(4);
     ASSERT(mgr != NULL, "create");
@@ -82,10 +71,6 @@ static int test_set_insert_time(void) {
     tiered_storage_destroy(mgr);
     return 0;
 }
-
-/* ------------------------------------------------------------------ */
-/* Test: tier classification with simulated time                       */
-/* ------------------------------------------------------------------ */
 
 static int test_tier_classification(void) {
     const size_t DIM = 4;
@@ -136,10 +121,6 @@ static int test_tier_classification(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
-/* Test: tiering stats                                                  */
-/* ------------------------------------------------------------------ */
-
 static int test_tiering_stats(void) {
     const size_t DIM = 4;
     GV_Database *db = make_db(DIM);
@@ -168,10 +149,6 @@ static int test_tiering_stats(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
-/* Test: tiering disabled returns error                                 */
-/* ------------------------------------------------------------------ */
-
 static int test_tiering_disabled(void) {
     const size_t DIM = 4;
     GV_Database *db = make_db(DIM);
@@ -191,10 +168,6 @@ static int test_tiering_disabled(void) {
     db_close(db);
     return 0;
 }
-
-/* ------------------------------------------------------------------ */
-/* Test: tiering config wires into insert recording                    */
-/* ------------------------------------------------------------------ */
 
 static int test_insert_records_timestamp(void) {
     const size_t DIM = 4;
@@ -219,10 +192,6 @@ static int test_insert_records_timestamp(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
-/* Test: db_close properly cleans up tiered storage                    */
-/* ------------------------------------------------------------------ */
-
 static int test_db_close_cleanup(void) {
     const size_t DIM = 4;
     GV_Database *db = make_db(DIM);
@@ -234,9 +203,93 @@ static int test_db_close_cleanup(void) {
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
-/* main                                                                */
-/* ------------------------------------------------------------------ */
+static uint64_t now_us_(void) {
+    struct timeval tv; gettimeofday(&tv, NULL);
+    return (uint64_t)tv.tv_sec * 1000000ULL + (uint64_t)tv.tv_usec;
+}
+
+/* Phase 4: a recently-accessed but old vector is promoted back to HOT. */
+static int test_recency_promotion(void) {
+    const size_t DIM = 4;
+    GV_Database *db = make_db(DIM);
+    ASSERT(db != NULL, "create db");
+    ASSERT(insert_n(db, 2, DIM) == 0, "insert 2 vectors");
+    ASSERT(gv_db_set_tiering_config(db, 1, 5, 0) == 0, "age thresholds hot=1s warm=5s");
+    ASSERT(gv_db_set_access_tiering_policy(db, 30, 0) == 0, "recency window 30s");
+
+    uint64_t now = now_us_();
+    /* Both vectors are old enough to be COLD by age alone. */
+    tiered_storage_set_insert_time(db->tiered_storage, 0, now - 10000000ULL);
+    tiered_storage_set_insert_time(db->tiered_storage, 1, now - 10000000ULL);
+
+    GV_StorageTier tier;
+    ASSERT(gv_db_get_vector_tier(db, 0, &tier) == 0 && tier == GV_TIER_COLD, "vec 0 COLD by age");
+
+    /* Access vec 0 now -> recency promotion to HOT; vec 1 untouched stays COLD. */
+    ASSERT(gv_db_record_vector_access(db, 0) == 0, "record access vec 0");
+    ASSERT(gv_db_get_vector_tier(db, 0, &tier) == 0 && tier == GV_TIER_HOT, "vec 0 promoted HOT by recency");
+    ASSERT(gv_db_get_vector_tier(db, 1, &tier) == 0 && tier == GV_TIER_COLD, "vec 1 still COLD");
+
+    db_close(db);
+    return 0;
+}
+
+/* Phase 4: a frequently-accessed vector is promoted one tier warmer than its age. */
+static int test_frequency_promotion(void) {
+    const size_t DIM = 4;
+    GV_Database *db = make_db(DIM);
+    ASSERT(db != NULL, "create db");
+    ASSERT(insert_n(db, 2, DIM) == 0, "insert 2 vectors");
+    ASSERT(gv_db_set_tiering_config(db, 1, 5, 0) == 0, "age thresholds hot=1s warm=5s");
+    /* Frequency threshold 3; NO recency window (so recency doesn't mask the test). */
+    ASSERT(gv_db_set_access_tiering_policy(db, 0, 3) == 0, "freq threshold 3, no recency");
+
+    uint64_t now = now_us_();
+    tiered_storage_set_insert_time(db->tiered_storage, 0, now - 10000000ULL); /* COLD by age */
+    tiered_storage_set_insert_time(db->tiered_storage, 1, now - 10000000ULL);
+
+    /* Record 3 accesses but backdate last-access outside any recency window (there is none). */
+    for (int i = 0; i < 3; i++) ASSERT(gv_db_record_vector_access(db, 0) == 0, "access vec 0");
+
+    GV_StorageTier tier;
+    ASSERT(gv_db_get_vector_tier(db, 0, &tier) == 0 && tier == GV_TIER_WARM,
+           "vec 0 COLD->WARM by frequency (>=3 accesses)");
+    ASSERT(gv_db_get_vector_tier(db, 1, &tier) == 0 && tier == GV_TIER_COLD, "vec 1 stays COLD");
+
+    uint32_t cnt = 0; uint64_t last = 0;
+    ASSERT(tiered_storage_get_access(db->tiered_storage, 0, &cnt, &last) == 0 && cnt == 3 && last > 0,
+           "access stats recorded (count=3)");
+
+    db_close(db);
+    return 0;
+}
+
+/* Phase 4: db_search records accesses for returned vectors (read-path hook). */
+static int test_search_records_access(void) {
+    const size_t DIM = 4;
+    GV_Database *db = make_db(DIM);
+    ASSERT(db != NULL, "create db");
+    ASSERT(gv_db_set_tiering_config(db, 3600, 86400, 0) == 0, "enable tiering");
+    ASSERT(gv_db_set_access_tiering_policy(db, 60, 0) == 0, "recency 60s");
+    ASSERT(insert_n(db, 5, DIM) == 0, "insert 5 vectors");
+
+    float q[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    GV_SearchResult results[3];
+    int n = db_search(db, q, 3, results, GV_DISTANCE_EUCLIDEAN);
+    ASSERT(n > 0, "search returns hits");
+
+    /* At least one returned vector now has a non-zero access count. */
+    int any = 0;
+    for (int i = 0; i < n; i++) {
+        uint32_t cnt = 0;
+        if (tiered_storage_get_access(db->tiered_storage, results[i].id, &cnt, NULL) == 0 && cnt > 0) any = 1;
+        if (results[i].vector) vector_destroy((GV_Vector *)results[i].vector);
+    }
+    ASSERT(any, "search recorded at least one access");
+
+    db_close(db);
+    return 0;
+}
 
 typedef struct {
     const char *name;
@@ -252,6 +305,9 @@ int main(void) {
         {"tiering_disabled",        test_tiering_disabled},
         {"insert_records_timestamp",test_insert_records_timestamp},
         {"db_close_cleanup",        test_db_close_cleanup},
+        {"recency_promotion",       test_recency_promotion},
+        {"frequency_promotion",     test_frequency_promotion},
+        {"search_records_access",   test_search_records_access},
     };
     size_t ntests = sizeof(tests) / sizeof(tests[0]);
     int passed = 0, failed = 0;

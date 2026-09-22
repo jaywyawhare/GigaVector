@@ -26,6 +26,8 @@ typedef struct {
     GV_Metadata **metadata;        /**< Array of metadata pointers, one per vector (may be NULL). */
     int *deleted;                  /**< Array of deletion flags: 1 if deleted, 0 if active. */
     uint64_t *insert_timestamps;   /**< Parallel array of insertion timestamps (ms since epoch). */
+    uint64_t *create_version;      /**< MVCC: commit version that created each vector (0 = pre-txn, visible always). */
+    uint64_t *delete_version;      /**< MVCC: commit version that deleted each vector (0 = live). */
     struct GV_Database *owner_db;  /**< When set, allocations use gv_db_alloc/realloc. */
 } GV_SoAStorage;
 
@@ -128,6 +130,14 @@ int soa_storage_mark_deleted(GV_SoAStorage *storage, size_t index);
  * @return 1 if deleted, 0 if active, -1 on invalid arguments.
  */
 int soa_storage_is_deleted(const GV_SoAStorage *storage, size_t index);
+
+/** @brief MVCC create/delete commit version for a vector (0 if none / out of range). */
+uint64_t soa_storage_create_version(const GV_SoAStorage *storage, size_t index);
+uint64_t soa_storage_delete_version(const GV_SoAStorage *storage, size_t index);
+
+/** @brief Stamp the MVCC create/delete commit version for a vector. */
+void soa_storage_set_create_version(GV_SoAStorage *storage, size_t index, uint64_t version);
+void soa_storage_set_delete_version(GV_SoAStorage *storage, size_t index, uint64_t version);
 
 /**
  * @brief Update vector data at a given index.

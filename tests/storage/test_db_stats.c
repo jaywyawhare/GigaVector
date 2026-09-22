@@ -93,7 +93,7 @@ static int test_health_check(void) {
     /* Add vectors; still healthy (no deletions). */
     for (int i = 0; i < 10; i++) {
         float v[DIM] = {(float)i, 0.0f, 0.0f, 0.0f};
-        db_add_vector(db, v, DIM);
+        { int _r = db_add_vector(db, v, DIM); (void)_r; }
     }
     ASSERT(db_health_check(db) == 0, "db with only live vectors is healthy");
 
@@ -107,7 +107,7 @@ static int test_basic_stats_reflected(void) {
 
     for (int i = 0; i < 5; i++) {
         float v[DIM] = {(float)i, 1.0f, 2.0f, 3.0f};
-        db_add_vector(db, v, DIM);
+        { int _r = db_add_vector(db, v, DIM); (void)_r; }
     }
 
     GV_DetailedStats stats;

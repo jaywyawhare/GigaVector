@@ -117,6 +117,34 @@ void mmap_close(GV_MMap *mm) {
 
 #endif /* _WIN32 */
 
+void mmap_warmup(const GV_MMap *mm) {
+    if (!mm || !mm->addr || mm->size == 0) return;
+#ifndef _WIN32
+    madvise(mm->addr, mm->size, MADV_WILLNEED);  /* advisory async readahead */
+#endif
+    /* Force residency now by faulting in one byte per 4 KiB page. */
+    volatile const unsigned char *p = (const unsigned char *)mm->addr;
+    unsigned char sink = 0;
+    for (size_t off = 0; off < mm->size; off += 4096) sink ^= p[off];
+    (void)sink;
+}
+
+int gv_file_warmup(const char *path) {
+#ifdef _WIN32
+    (void)path;   /* rely on the OS cache manager; no portable fadvise */
+    return 0;
+#else
+    if (!path) return -1;
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) return -1;
+#ifdef POSIX_FADV_WILLNEED
+    posix_fadvise(fd, 0, 0, POSIX_FADV_WILLNEED);  /* kernel reads file into page cache */
+#endif
+    close(fd);
+    return 0;
+#endif
+}
+
 const void *mmap_data(const GV_MMap *mm) {
     return mm ? mm->addr : NULL;
 }

@@ -216,9 +216,9 @@ static int test_handle_stats(void) {
     float v1[] = {1.0f, 0.0f, 0.0f, 0.0f};
     float v2[] = {0.0f, 1.0f, 0.0f, 0.0f};
     float v3[] = {0.0f, 0.0f, 1.0f, 0.0f};
-    db_add_vector(db, v1, TEST_DIM);
-    db_add_vector(db, v2, TEST_DIM);
-    db_add_vector(db, v3, TEST_DIM);
+    { int _r = db_add_vector(db, v1, TEST_DIM); (void)_r; }
+    { int _r = db_add_vector(db, v2, TEST_DIM); (void)_r; }
+    { int _r = db_add_vector(db, v3, TEST_DIM); (void)_r; }
 
     GV_ServerConfig scfg;
     GV_HandlerContext ctx = create_test_ctx(db, &scfg);

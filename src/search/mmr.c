@@ -22,8 +22,6 @@
 #include <math.h>
 #include <float.h>
 
-/* Configuration Defaults */
-
 static const GV_MMRConfig DEFAULT_CONFIG = {
     .lambda        = 0.7f,
     .distance_type = 1       /* GV_DISTANCE_COSINE */
@@ -33,8 +31,6 @@ void mmr_config_init(GV_MMRConfig *config) {
     if (!config) return;
     *config = DEFAULT_CONFIG;
 }
-
-/* Internal Helpers */
 
 /**
  * @brief Compute distance between two raw float vectors using distance().
@@ -125,8 +121,6 @@ static size_t result_to_soa_index(const GV_Database *db, const GV_SearchResult *
     if (idx >= database_count(db)) return (size_t)-1;
     return idx;
 }
-
-/* mmr_rerank */
 
 int mmr_rerank(const float *query, size_t dimension,
                   const float *candidates, const size_t *candidate_indices,
@@ -258,8 +252,6 @@ int mmr_rerank(const float *query, size_t dimension,
 
     return (int)selected_count;
 }
-
-/* mmr_search */
 
 int mmr_search(const void *db_ptr, const float *query, size_t dimension,
                   size_t k, size_t oversample, const GV_MMRConfig *config,

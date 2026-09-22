@@ -12,8 +12,6 @@
 #define GV_SCHEMA_MAGIC_LEN 4
 #define GV_SCHEMA_INITIAL_CAPACITY 8
 
-/* Helpers */
-
 static const char *schema_type_to_string(GV_SchemaFieldType type) {
     switch (type) {
         case GV_SCHEMA_STRING: return "string";
@@ -42,12 +40,7 @@ static int schema_find_field_index(const GV_Schema *schema, const char *name) {
     return -1;
 }
 
-/* Append a string to a dynamically growing buffer.
- * *buf   - pointer to the buffer (may be reallocated)
- * *len   - current length of content in *buf (excluding NUL)
- * *cap   - current allocated capacity of *buf
- * src    - NUL-terminated string to append
- * Returns 0 on success, -1 on allocation failure. */
+/* Append src to a dynamically growing buffer; returns -1 on allocation failure. */
 static int buf_append(char **buf, size_t *len, size_t *cap, const char *src) {
     size_t src_len = strlen(src);
     while (*len + src_len + 1 > *cap) {
@@ -91,8 +84,6 @@ static int buf_append_json_string(char **buf, size_t *len, size_t *cap, const ch
     return 0;
 }
 
-/* Create / Destroy / Copy */
-
 GV_Schema *schema_create(uint32_t version) {
     GV_Schema *schema = (GV_Schema *)gv_calloc(1, sizeof(GV_Schema));
     if (!schema) return NULL;
@@ -132,16 +123,12 @@ GV_Schema *schema_copy(const GV_Schema *schema) {
     return copy;
 }
 
-/* Field management */
-
 int schema_add_field(GV_Schema *schema, const char *name, GV_SchemaFieldType type,
                          int required, const char *default_value) {
     if (!schema || !name) return -1;
 
-    /* Reject duplicate names */
     if (schema_find_field_index(schema, name) >= 0) return -1;
 
-    /* Grow array if needed */
     if (schema->field_count >= schema->field_capacity) {
         size_t new_cap = schema->field_capacity * 2;
         GV_SchemaField *tmp = (GV_SchemaField *)gv_realloc(
@@ -172,7 +159,6 @@ int schema_remove_field(GV_Schema *schema, const char *name) {
     int idx = schema_find_field_index(schema, name);
     if (idx < 0) return -1;
 
-    /* Close the gap by shifting subsequent fields forward */
     size_t remaining = schema->field_count - (size_t)idx - 1;
     if (remaining > 0) {
         memmove(&schema->fields[idx], &schema->fields[idx + 1],
@@ -196,8 +182,6 @@ size_t schema_field_count(const GV_Schema *schema) {
     if (!schema) return 0;
     return schema->field_count;
 }
-
-/* Validation */
 
 static int schema_validate_int(const char *value) {
     if (!value || *value == '\0') return 0;
@@ -228,7 +212,6 @@ static int schema_validate_bool(const char *value) {
 static int schema_validate_value(GV_SchemaFieldType type, const char *value) {
     switch (type) {
         case GV_SCHEMA_STRING:
-            /* Any string is valid */
             return 1;
         case GV_SCHEMA_INT:
             return schema_validate_int(value);
@@ -245,7 +228,7 @@ int schema_validate(const GV_Schema *schema, const char *const *keys,
                         const char *const *values, size_t count) {
     if (!schema) return -1;
 
-    /* 1. Check that every required field is present in keys[] */
+    /* Every required field must be present in keys[]. */
     for (size_t i = 0; i < schema->field_count; i++) {
         if (!schema->fields[i].required) continue;
 
@@ -261,7 +244,7 @@ int schema_validate(const GV_Schema *schema, const char *const *keys,
         }
     }
 
-    /* 2. For each provided key, check schema membership and validate type */
+    /* For each provided key that is in the schema, validate its type. */
     for (size_t k = 0; k < count; k++) {
         if (!keys[k]) continue;
 
@@ -270,7 +253,6 @@ int schema_validate(const GV_Schema *schema, const char *const *keys,
             continue;
         }
 
-        /* Validate the value matches the expected type */
         const char *val = values ? values[k] : NULL;
         if (val && !schema_validate_value(field->type, val)) {
             return -1;
@@ -280,29 +262,24 @@ int schema_validate(const GV_Schema *schema, const char *const *keys,
     return 0;
 }
 
-/* Schema diff */
-
 int schema_diff(const GV_Schema *old_schema, const GV_Schema *new_schema,
                     GV_SchemaDiff *diffs, size_t max_diffs) {
     if (!old_schema || !new_schema || !diffs || max_diffs == 0) return -1;
 
     size_t diff_count = 0;
 
-    /* Fields in new_schema that are not in old_schema => added.
-     * Fields in both but with different types => type_changed. */
+    /* new-only fields => added; fields in both with differing types => type_changed. */
     for (size_t i = 0; i < new_schema->field_count && diff_count < max_diffs; i++) {
         const char *name = new_schema->fields[i].name;
         int old_idx = schema_find_field_index(old_schema, name);
 
         if (old_idx < 0) {
-            /* Added */
             GV_SchemaDiff *d = &diffs[diff_count++];
             memset(d, 0, sizeof(*d));
             snprintf(d->name, sizeof(d->name), "%s", name);
             d->added = 1;
             d->new_type = new_schema->fields[i].type;
         } else {
-            /* Present in both -- check type */
             GV_SchemaFieldType ot = old_schema->fields[old_idx].type;
             GV_SchemaFieldType nt = new_schema->fields[i].type;
             if (ot != nt) {
@@ -316,7 +293,7 @@ int schema_diff(const GV_Schema *old_schema, const GV_Schema *new_schema,
         }
     }
 
-    /* Fields in old_schema that are not in new_schema => removed */
+    /* old-only fields => removed. */
     for (size_t i = 0; i < old_schema->field_count && diff_count < max_diffs; i++) {
         const char *name = old_schema->fields[i].name;
         if (schema_find_field_index(new_schema, name) < 0) {
@@ -331,8 +308,6 @@ int schema_diff(const GV_Schema *old_schema, const GV_Schema *new_schema,
     return (int)diff_count;
 }
 
-/* Compatibility check */
-
 int schema_is_compatible(const GV_Schema *old_schema, const GV_Schema *new_schema) {
     if (!old_schema || !new_schema) return -1;
 
@@ -340,51 +315,37 @@ int schema_is_compatible(const GV_Schema *old_schema, const GV_Schema *new_schem
     for (size_t i = 0; i < old_schema->field_count; i++) {
         if (!old_schema->fields[i].required) continue;
         if (schema_find_field_index(new_schema, old_schema->fields[i].name) < 0) {
-            return -1;  /* Required field was removed -- incompatible */
+            return -1;
         }
     }
 
     /* Rule 2: No type change on existing fields. */
     for (size_t i = 0; i < old_schema->field_count; i++) {
         int new_idx = schema_find_field_index(new_schema, old_schema->fields[i].name);
-        if (new_idx < 0) continue;  /* Field removed (handled by Rule 1 for required) */
+        if (new_idx < 0) continue;  /* Removal handled by Rule 1 for required fields. */
         if (old_schema->fields[i].type != new_schema->fields[new_idx].type) {
-            return -1;  /* Type changed -- incompatible */
+            return -1;
         }
     }
 
-    return 0;  /* Compatible */
+    return 0;
 }
-
-/* Persistence -- binary save / load */
 
 int schema_save(const GV_Schema *schema, FILE *out) {
     if (!schema || !out) return -1;
 
-    /* Magic */
     if (fwrite(GV_SCHEMA_MAGIC, 1, GV_SCHEMA_MAGIC_LEN, out) != GV_SCHEMA_MAGIC_LEN)
         return -1;
 
-    /* Version */
     if (write_u32(out, schema->version) != 0) return -1;
-
-    /* Field count */
     if (write_u32(out, (uint32_t)schema->field_count) != 0) return -1;
 
-    /* Each field */
     for (size_t i = 0; i < schema->field_count; i++) {
         const GV_SchemaField *f = &schema->fields[i];
 
-        /* name (64 bytes, zero-padded) */
         if (write_bytes(out, f->name, sizeof(f->name)) != 0) return -1;
-
-        /* type */
         if (write_u32(out, (uint32_t)f->type) != 0) return -1;
-
-        /* required */
         if (write_u32(out, (uint32_t)f->required) != 0) return -1;
-
-        /* default_value (256 bytes, zero-padded) */
         if (write_bytes(out, f->default_value, sizeof(f->default_value)) != 0)
             return -1;
     }
@@ -395,16 +356,13 @@ int schema_save(const GV_Schema *schema, FILE *out) {
 GV_Schema *schema_load(FILE *in) {
     if (!in) return NULL;
 
-    /* Read and validate magic */
     char magic[GV_SCHEMA_MAGIC_LEN];
     if (fread(magic, 1, GV_SCHEMA_MAGIC_LEN, in) != GV_SCHEMA_MAGIC_LEN) return NULL;
     if (memcmp(magic, GV_SCHEMA_MAGIC, GV_SCHEMA_MAGIC_LEN) != 0) return NULL;
 
-    /* Version */
     uint32_t version;
     if (read_u32(in, &version) != 0) return NULL;
 
-    /* Field count */
     uint32_t fc;
     if (read_u32(in, &fc) != 0) return NULL;
 
@@ -441,8 +399,6 @@ fail:
     return NULL;
 }
 
-/* JSON serialization */
-
 char *schema_to_json(const GV_Schema *schema) {
     if (!schema) return NULL;
 
@@ -451,12 +407,10 @@ char *schema_to_json(const GV_Schema *schema) {
     size_t cap = 0;
     char tmp[64];
 
-    /* Opening brace and version */
     if (buf_append(&buf, &len, &cap, "{\"version\":") != 0) goto fail;
     snprintf(tmp, sizeof(tmp), "%u", (unsigned)schema->version);
     if (buf_append(&buf, &len, &cap, tmp) != 0) goto fail;
 
-    /* Fields array */
     if (buf_append(&buf, &len, &cap, ",\"fields\":[") != 0) goto fail;
 
     for (size_t i = 0; i < schema->field_count; i++) {
@@ -466,28 +420,22 @@ char *schema_to_json(const GV_Schema *schema) {
             if (buf_append(&buf, &len, &cap, ",") != 0) goto fail;
         }
 
-        /* { "name": "..." */
         if (buf_append(&buf, &len, &cap, "{\"name\":") != 0) goto fail;
         if (buf_append_json_string(&buf, &len, &cap, f->name) != 0) goto fail;
 
-        /* , "type": "..." */
         if (buf_append(&buf, &len, &cap, ",\"type\":") != 0) goto fail;
         if (buf_append_json_string(&buf, &len, &cap, schema_type_to_string(f->type)) != 0)
             goto fail;
 
-        /* , "required": true/false */
         if (buf_append(&buf, &len, &cap, ",\"required\":") != 0) goto fail;
         if (buf_append(&buf, &len, &cap, f->required ? "true" : "false") != 0) goto fail;
 
-        /* , "default": "..." */
         if (buf_append(&buf, &len, &cap, ",\"default\":") != 0) goto fail;
         if (buf_append_json_string(&buf, &len, &cap, f->default_value) != 0) goto fail;
 
-        /* } */
         if (buf_append(&buf, &len, &cap, "}") != 0) goto fail;
     }
 
-    /* Close fields array and root object */
     if (buf_append(&buf, &len, &cap, "]}") != 0) goto fail;
 
     return buf;

@@ -30,9 +30,6 @@ static void make_random_vec(float *v, size_t dim, unsigned int *seed) {
     }
 }
 
-/* -------------------------------------------------------------------------
- * test_ab_test_start_stop
- * ---------------------------------------------------------------------- */
 static int test_ab_test_start_stop(void) {
     GV_Database *db = db_open(NULL, DIM, GV_INDEX_TYPE_HNSW);
     ASSERT(db != NULL, "db_open should succeed");
@@ -53,9 +50,6 @@ static int test_ab_test_start_stop(void) {
     return 0;
 }
 
-/* -------------------------------------------------------------------------
- * test_ab_test_copies_vectors
- * ---------------------------------------------------------------------- */
 static int test_ab_test_copies_vectors(void) {
     GV_Database *db = db_open(NULL, DIM, GV_INDEX_TYPE_HNSW);
     ASSERT(db != NULL, "db_open should succeed");
@@ -81,9 +75,6 @@ static int test_ab_test_copies_vectors(void) {
     return 0;
 }
 
-/* -------------------------------------------------------------------------
- * test_ab_test_routing
- * ---------------------------------------------------------------------- */
 static int test_ab_test_routing(void) {
     GV_Database *db = db_open(NULL, DIM, GV_INDEX_TYPE_HNSW);
     ASSERT(db != NULL, "db_open should succeed");
@@ -92,7 +83,7 @@ static int test_ab_test_routing(void) {
     float vec[DIM];
     for (int i = 0; i < N_TRAIN; i++) {
         make_random_vec(vec, DIM, &seed);
-        db_add_vector(db, vec, DIM);
+        { int _r = db_add_vector(db, vec, DIM); (void)_r; }
     }
 
     /* Use 50% split. */
@@ -128,9 +119,6 @@ static int test_ab_test_routing(void) {
     return 0;
 }
 
-/* -------------------------------------------------------------------------
- * test_ab_test_report_fields
- * ---------------------------------------------------------------------- */
 static int test_ab_test_report_fields(void) {
     GV_Database *db = db_open(NULL, DIM, GV_INDEX_TYPE_FLAT);
     ASSERT(db != NULL, "db_open should succeed");
@@ -139,7 +127,7 @@ static int test_ab_test_report_fields(void) {
     float vec[DIM];
     for (int i = 0; i < 10; i++) {
         make_random_vec(vec, DIM, &seed);
-        db_add_vector(db, vec, DIM);
+        { int _r = db_add_vector(db, vec, DIM); (void)_r; }
     }
 
     int rc = gv_db_ab_test_start(db, "mytest", GV_INDEX_TYPE_FLAT, 0.3f);
@@ -171,9 +159,6 @@ static int test_ab_test_report_fields(void) {
     return 0;
 }
 
-/* -------------------------------------------------------------------------
- * test_ab_test_no_active_test
- * ---------------------------------------------------------------------- */
 static int test_ab_test_no_active_test(void) {
     GV_Database *db = db_open(NULL, DIM, GV_INDEX_TYPE_FLAT);
     ASSERT(db != NULL, "db_open should succeed");
@@ -190,9 +175,6 @@ static int test_ab_test_no_active_test(void) {
     return 0;
 }
 
-/* -------------------------------------------------------------------------
- * test_ab_test_zero_split
- * ---------------------------------------------------------------------- */
 static int test_ab_test_zero_split(void) {
     GV_Database *db = db_open(NULL, DIM, GV_INDEX_TYPE_FLAT);
     ASSERT(db != NULL, "db_open should succeed");
@@ -201,7 +183,7 @@ static int test_ab_test_zero_split(void) {
     float vec[DIM];
     for (int i = 0; i < 10; i++) {
         make_random_vec(vec, DIM, &seed);
-        db_add_vector(db, vec, DIM);
+        { int _r = db_add_vector(db, vec, DIM); (void)_r; }
     }
 
     /* 0% split: all traffic goes to A. */
@@ -225,9 +207,6 @@ static int test_ab_test_zero_split(void) {
     return 0;
 }
 
-/* -------------------------------------------------------------------------
- * test_ab_test_full_split
- * ---------------------------------------------------------------------- */
 static int test_ab_test_full_split(void) {
     GV_Database *db = db_open(NULL, DIM, GV_INDEX_TYPE_FLAT);
     ASSERT(db != NULL, "db_open should succeed");
@@ -236,7 +215,7 @@ static int test_ab_test_full_split(void) {
     float vec[DIM];
     for (int i = 0; i < 10; i++) {
         make_random_vec(vec, DIM, &seed);
-        db_add_vector(db, vec, DIM);
+        { int _r = db_add_vector(db, vec, DIM); (void)_r; }
     }
 
     /* 100% split: all traffic goes to B. */
@@ -259,10 +238,6 @@ static int test_ab_test_full_split(void) {
     db_close(db);
     return 0;
 }
-
-/* -------------------------------------------------------------------------
- * Main
- * ---------------------------------------------------------------------- */
 
 typedef int (*test_fn)(void);
 typedef struct { const char *name; test_fn fn; } TestCase;

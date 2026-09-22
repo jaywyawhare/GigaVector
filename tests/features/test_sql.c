@@ -440,7 +440,7 @@ static int test_where_is_null(void) {
     GV_Database *db = create_test_db();
     /* add one vector with no category metadata */
     float vn[DIM] = {9.0f, 9.0f, 9.0f, 9.0f};
-    db_add_vector(db, vn, DIM);
+    { int _r = db_add_vector(db, vn, DIM); (void)_r; }
     GV_SQLEngine *eng = sql_create(db);
     ASSERT(db && eng, "setup");
     GV_SQLResult r;
@@ -531,6 +531,112 @@ static int test_insert(void) {
     return 0;
 }
 
+/* Dataset with two metadata columns (category, score) for GROUP BY / DISTINCT. */
+static GV_Database *create_grouped_db(void) {
+    GV_Database *db = db_open(NULL, DIM, GV_INDEX_TYPE_FLAT);
+    if (!db) return NULL;
+    struct { const char *cat; const char *score; } rows[] = {
+        {"science","10"}, {"tech","20"}, {"science","30"}, {"tech","40"}, {"science","5"},
+    };
+    for (int i = 0; i < 5; i++) {
+        float v[DIM] = {(float)i, 0.0f, 0.0f, 0.0f};
+        const char *keys[] = {"category", "score"};
+        const char *vals[] = {rows[i].cat, rows[i].score};
+        db_add_vector_with_rich_metadata(db, v, DIM, keys, vals, 2);
+    }
+    return db;
+}
+
+/* find the result row whose column `col` equals `v`; -1 if absent */
+static int sql_row_with(const GV_SQLResult *r, size_t col, const char *v) {
+    for (size_t i = 0; i < r->row_count; i++)
+        if (strcmp(r->column_values[i * r->column_count + col], v) == 0) return (int)i;
+    return -1;
+}
+
+static int test_group_by(void) {
+    GV_Database *db = create_grouped_db();
+    GV_SQLEngine *eng = sql_create(db);
+    ASSERT(db && eng, "setup");
+    GV_SQLResult r;
+
+    /* GROUP BY category, COUNT(*) */
+    memset(&r, 0, sizeof(r));
+    ASSERT(sql_execute(eng, "SELECT category, COUNT(*) FROM vectors GROUP BY category ORDER BY category", &r) == 0,
+           "GROUP BY COUNT should succeed");
+    ASSERT(r.row_count == 2 && r.column_count == 2, "two groups, two columns");
+    int si = sql_row_with(&r, 0, "science"), ti = sql_row_with(&r, 0, "tech");
+    ASSERT(si >= 0 && ti >= 0, "both groups present");
+    ASSERT(strcmp(r.column_values[si*2+1], "3") == 0, "science count 3");
+    ASSERT(strcmp(r.column_values[ti*2+1], "2") == 0, "tech count 2");
+    sql_free_result(&r);
+
+    /* GROUP BY category, SUM(score) */
+    memset(&r, 0, sizeof(r));
+    ASSERT(sql_execute(eng, "SELECT category, SUM(score) FROM vectors GROUP BY category", &r) == 0, "GROUP BY SUM");
+    si = sql_row_with(&r, 0, "science"); ti = sql_row_with(&r, 0, "tech");
+    ASSERT(atof(r.column_values[si*2+1]) == 45.0, "science SUM 45");
+    ASSERT(atof(r.column_values[ti*2+1]) == 60.0, "tech SUM 60");
+    sql_free_result(&r);
+
+    /* GROUP BY category, AVG(score) */
+    memset(&r, 0, sizeof(r));
+    ASSERT(sql_execute(eng, "SELECT category, AVG(score) FROM vectors GROUP BY category", &r) == 0, "GROUP BY AVG");
+    si = sql_row_with(&r, 0, "science"); ti = sql_row_with(&r, 0, "tech");
+    ASSERT(atof(r.column_values[si*2+1]) == 15.0, "science AVG 15");
+    ASSERT(atof(r.column_values[ti*2+1]) == 30.0, "tech AVG 30");
+    sql_free_result(&r);
+
+    /* multiple aggregates + AS alias */
+    memset(&r, 0, sizeof(r));
+    ASSERT(sql_execute(eng, "SELECT category, MIN(score) AS lo, MAX(score) AS hi FROM vectors GROUP BY category", &r) == 0,
+           "GROUP BY MIN/MAX");
+    ASSERT(r.column_count == 3 && strcmp(r.column_names[1], "lo") == 0 && strcmp(r.column_names[2], "hi") == 0,
+           "aliases applied");
+    si = sql_row_with(&r, 0, "science"); ti = sql_row_with(&r, 0, "tech");
+    ASSERT(atof(r.column_values[si*3+1]) == 5.0 && atof(r.column_values[si*3+2]) == 30.0, "science min5 max30");
+    ASSERT(atof(r.column_values[ti*3+1]) == 20.0 && atof(r.column_values[ti*3+2]) == 40.0, "tech min20 max40");
+    sql_free_result(&r);
+
+    /* HAVING */
+    memset(&r, 0, sizeof(r));
+    ASSERT(sql_execute(eng, "SELECT category, COUNT(*) FROM vectors GROUP BY category HAVING COUNT(*) > 2", &r) == 0,
+           "HAVING should succeed");
+    ASSERT(r.row_count == 1 && strcmp(r.column_values[0], "science") == 0, "HAVING keeps only science");
+    sql_free_result(&r);
+
+    memset(&r, 0, sizeof(r));
+    ASSERT(sql_execute(eng, "SELECT category, SUM(score) FROM vectors GROUP BY category HAVING SUM(score) >= 60", &r) == 0,
+           "HAVING SUM should succeed");
+    ASSERT(r.row_count == 1 && strcmp(r.column_values[0], "tech") == 0, "HAVING SUM>=60 keeps tech");
+    sql_free_result(&r);
+
+    sql_destroy(eng); db_close(db);
+    return 0;
+}
+
+static int test_distinct(void) {
+    GV_Database *db = create_grouped_db();
+    GV_SQLEngine *eng = sql_create(db);
+    ASSERT(db && eng, "setup");
+    GV_SQLResult r;
+
+    memset(&r, 0, sizeof(r));
+    ASSERT(sql_execute(eng, "SELECT DISTINCT category FROM vectors", &r) == 0, "DISTINCT should succeed");
+    ASSERT(r.row_count == 2, "two distinct categories");
+    ASSERT(sql_row_with(&r, 0, "science") >= 0 && sql_row_with(&r, 0, "tech") >= 0, "both categories present");
+    sql_free_result(&r);
+
+    /* non-distinct baseline returns all 5 */
+    memset(&r, 0, sizeof(r));
+    ASSERT(sql_execute(eng, "SELECT category FROM vectors", &r) == 0, "non-distinct should succeed");
+    ASSERT(r.row_count == 5, "all five rows without DISTINCT");
+    sql_free_result(&r);
+
+    sql_destroy(eng); db_close(db);
+    return 0;
+}
+
 typedef int (*test_fn)(void);
 typedef struct { const char *name; test_fn fn; } TestCase;
 
@@ -557,6 +663,8 @@ int main(void) {
         {"Testing sql WHERE BETWEEN...", test_where_between},
         {"Testing sql WHERE IS NULL...", test_where_is_null},
         {"Testing sql aggregates SUM/MIN/MAX/AVG...", test_aggregates},
+        {"Testing sql GROUP BY / HAVING...", test_group_by},
+        {"Testing sql DISTINCT...", test_distinct},
         {"Testing sql INSERT...", test_insert},
     };
     int n = sizeof(tests) / sizeof(tests[0]);

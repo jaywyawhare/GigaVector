@@ -96,6 +96,13 @@ GV_Namespace *namespace_create(GV_NamespaceManager *mgr, const GV_NamespaceConfi
  * @param mgr Namespace manager.
  * @param name Namespace name.
  * @return Namespace handle, or NULL if not found.
+ *
+ * LIFETIME CONTRACT: the returned handle is owned by the manager and is valid
+ * only until that namespace is deleted. namespace_delete() destroys the handle
+ * (mutex + db + struct), so a handle obtained here MUST NOT be used concurrently
+ * with, or after, a namespace_delete() of the same name — doing so is a
+ * use-after-free. Callers that delete namespaces concurrently with use must
+ * provide their own synchronization guaranteeing no in-flight use during delete.
  */
 GV_Namespace *namespace_get(GV_NamespaceManager *mgr, const char *name);
 

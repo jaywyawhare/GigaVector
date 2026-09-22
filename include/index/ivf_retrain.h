@@ -42,10 +42,6 @@ int ivf_retrain_trigger(GV_Database *db);
  */
 void ivf_retrain_stop(GV_Database *db);
 
-/* ------------------------------------------------------------------ */
-/* Public API — also declared in gigavector.h via this header          */
-/* ------------------------------------------------------------------ */
-
 /**
  * @brief Configure automatic IVF retraining for a database.
  *

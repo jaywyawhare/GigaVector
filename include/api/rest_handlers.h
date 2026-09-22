@@ -23,6 +23,8 @@ extern "C" {
 typedef struct {
     GV_Database *db;                   /**< Database instance. */
     const GV_ServerConfig *config;     /**< Server configuration. */
+    struct GV_KnowledgeGraph *kg;      /**< Optional knowledge graph (may be NULL). */
+    struct GV_GraphDB *graph;          /**< Optional property graph (may be NULL). */
 } GV_HandlerContext;
 
 /**
@@ -318,3 +320,27 @@ GV_HttpResponse *rest_route(const GV_HandlerContext *ctx,
 #endif
 
 #endif /* GIGAVECTOR_GV_REST_HANDLERS_H */
+
+
+/* ── Graph & knowledge-graph endpoints (require server_set_graphs) ────── */
+
+/** GET /graph/stats — node/edge counts and mutation version. */
+GV_HttpResponse *rest_handle_graph_stats(const GV_HandlerContext *ctx,
+                                         const GV_HttpRequest *request);
+
+/** POST /kg/expand  body: {"seeds": [id, ...], "radius": N} → triples. */
+GV_HttpResponse *rest_handle_kg_expand(const GV_HandlerContext *ctx,
+                                       const GV_HttpRequest *request);
+
+/** POST /graph/wal/attach and POST /kg/wal/attach body: {"path": "..."}.
+ *  Paths are confined to the server data_dir like /save. */
+GV_HttpResponse *rest_handle_graph_wal_attach(const GV_HandlerContext *ctx,
+                                              const GV_HttpRequest *request);
+GV_HttpResponse *rest_handle_kg_wal_attach(const GV_HandlerContext *ctx,
+                                           const GV_HttpRequest *request);
+
+/** POST /graph/wal/checkpoint and POST /kg/wal/checkpoint. */
+GV_HttpResponse *rest_handle_graph_wal_checkpoint(const GV_HandlerContext *ctx,
+                                                  const GV_HttpRequest *request);
+GV_HttpResponse *rest_handle_kg_wal_checkpoint(const GV_HandlerContext *ctx,
+                                               const GV_HttpRequest *request);

@@ -19,8 +19,6 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-/* ── Neighborhood construction ──────────────────────────────────────────────*/
-
 /** A sorted, deduplicated undirected neighborhood N(x). */
 typedef struct {
     uint64_t *ids;   /**< Ascending, unique, excludes x itself (may be NULL if count==0). */
@@ -105,8 +103,8 @@ static size_t nbhd_union_size(const GV_Nbhd *a, const GV_Nbhd *b, size_t inter) 
 }
 
 /** Undirected degree deg(c) = |N(c)|. */
-static size_t undirected_degree(const GV_GraphDB *g, uint64_t id) {
-    const GV_GraphNode *node = graph_get_node(g, id);
+static size_t undirected_degree(const GV_GAContext *ctx, uint64_t id) {
+    const GV_GraphNode *node = gv_ga_node(ctx, id);
     if (!node) return 0;
     GV_Nbhd n;
     if (nbhd_build(node, id, &n) != 0) return 0; /* alloc failure → treat as 0 */
@@ -115,20 +113,18 @@ static size_t undirected_degree(const GV_GraphDB *g, uint64_t id) {
     return deg;
 }
 
-/* ── Pairwise measures ──────────────────────────────────────────────────────*/
-
 /**
  * Common scaffold: fetch both nodes, build both neighborhoods.
  * Returns 0 on success (na/nb populated), -1 if a or b is absent (caller returns
  * -1.0), -2 on allocation failure (caller returns 0.0 — read-only best effort).
  */
-static int prep_pair(const GV_GraphDB *g, uint64_t a, uint64_t b,
+static int prep_pair(const GV_GAContext *ctx, uint64_t a, uint64_t b,
                      GV_Nbhd *na, GV_Nbhd *nb) {
     na->ids = NULL; na->count = 0;
     nb->ids = NULL; nb->count = 0;
 
-    const GV_GraphNode *pa = graph_get_node(g, a);
-    const GV_GraphNode *pb = graph_get_node(g, b);
+    const GV_GraphNode *pa = gv_ga_node(ctx, a);
+    const GV_GraphNode *pb = gv_ga_node(ctx, b);
     if (!pa || !pb) return -1;
 
     if (nbhd_build(pa, a, na) != 0) return -2;
@@ -136,9 +132,9 @@ static int prep_pair(const GV_GraphDB *g, uint64_t a, uint64_t b,
     return 0;
 }
 
-double graph_common_neighbors(const GV_GraphDB *g, uint64_t a, uint64_t b) {
+static double common_neighbors_impl(const GV_GAContext *ctx, uint64_t a, uint64_t b) {
     GV_Nbhd na, nb;
-    int rc = prep_pair(g, a, b, &na, &nb);
+    int rc = prep_pair(ctx, a, b, &na, &nb);
     if (rc == -1) return -1.0;
     if (rc == -2) return 0.0;
     double v = (double)nbhd_intersection_size(&na, &nb);
@@ -146,9 +142,18 @@ double graph_common_neighbors(const GV_GraphDB *g, uint64_t a, uint64_t b) {
     return v;
 }
 
-double graph_total_neighbors(const GV_GraphDB *g, uint64_t a, uint64_t b) {
+double graph_common_neighbors(const GV_GraphDB *g, uint64_t a, uint64_t b) {
+    if (!g) return -1.0;
+    GV_GAContext *ctx = gv_ga_build(g);
+    if (!ctx) return -1.0;
+    double v = common_neighbors_impl(ctx, a, b);
+    gv_ga_free(ctx);
+    return v;
+}
+
+static double total_neighbors_impl(const GV_GAContext *ctx, uint64_t a, uint64_t b) {
     GV_Nbhd na, nb;
-    int rc = prep_pair(g, a, b, &na, &nb);
+    int rc = prep_pair(ctx, a, b, &na, &nb);
     if (rc == -1) return -1.0;
     if (rc == -2) return 0.0;
     size_t inter = nbhd_intersection_size(&na, &nb);
@@ -157,9 +162,18 @@ double graph_total_neighbors(const GV_GraphDB *g, uint64_t a, uint64_t b) {
     return v;
 }
 
-double graph_preferential_attachment(const GV_GraphDB *g, uint64_t a, uint64_t b) {
+double graph_total_neighbors(const GV_GraphDB *g, uint64_t a, uint64_t b) {
+    if (!g) return -1.0;
+    GV_GAContext *ctx = gv_ga_build(g);
+    if (!ctx) return -1.0;
+    double v = total_neighbors_impl(ctx, a, b);
+    gv_ga_free(ctx);
+    return v;
+}
+
+static double preferential_attachment_impl(const GV_GAContext *ctx, uint64_t a, uint64_t b) {
     GV_Nbhd na, nb;
-    int rc = prep_pair(g, a, b, &na, &nb);
+    int rc = prep_pair(ctx, a, b, &na, &nb);
     if (rc == -1) return -1.0;
     if (rc == -2) return 0.0;
     double v = (double)na.count * (double)nb.count;
@@ -167,9 +181,18 @@ double graph_preferential_attachment(const GV_GraphDB *g, uint64_t a, uint64_t b
     return v;
 }
 
-double graph_jaccard_similarity(const GV_GraphDB *g, uint64_t a, uint64_t b) {
+double graph_preferential_attachment(const GV_GraphDB *g, uint64_t a, uint64_t b) {
+    if (!g) return -1.0;
+    GV_GAContext *ctx = gv_ga_build(g);
+    if (!ctx) return -1.0;
+    double v = preferential_attachment_impl(ctx, a, b);
+    gv_ga_free(ctx);
+    return v;
+}
+
+static double jaccard_similarity_impl(const GV_GAContext *ctx, uint64_t a, uint64_t b) {
     GV_Nbhd na, nb;
-    int rc = prep_pair(g, a, b, &na, &nb);
+    int rc = prep_pair(ctx, a, b, &na, &nb);
     if (rc == -1) return -1.0;
     if (rc == -2) return 0.0;
     size_t inter = nbhd_intersection_size(&na, &nb);
@@ -179,9 +202,18 @@ double graph_jaccard_similarity(const GV_GraphDB *g, uint64_t a, uint64_t b) {
     return v;
 }
 
-double graph_cosine_neighborhood(const GV_GraphDB *g, uint64_t a, uint64_t b) {
+double graph_jaccard_similarity(const GV_GraphDB *g, uint64_t a, uint64_t b) {
+    if (!g) return -1.0;
+    GV_GAContext *ctx = gv_ga_build(g);
+    if (!ctx) return -1.0;
+    double v = jaccard_similarity_impl(ctx, a, b);
+    gv_ga_free(ctx);
+    return v;
+}
+
+static double cosine_neighborhood_impl(const GV_GAContext *ctx, uint64_t a, uint64_t b) {
     GV_Nbhd na, nb;
-    int rc = prep_pair(g, a, b, &na, &nb);
+    int rc = prep_pair(ctx, a, b, &na, &nb);
     if (rc == -1) return -1.0;
     if (rc == -2) return 0.0;
     double v = 0.0;
@@ -193,12 +225,21 @@ double graph_cosine_neighborhood(const GV_GraphDB *g, uint64_t a, uint64_t b) {
     return v;
 }
 
+double graph_cosine_neighborhood(const GV_GraphDB *g, uint64_t a, uint64_t b) {
+    if (!g) return -1.0;
+    GV_GAContext *ctx = gv_ga_build(g);
+    if (!ctx) return -1.0;
+    double v = cosine_neighborhood_impl(ctx, a, b);
+    gv_ga_free(ctx);
+    return v;
+}
+
 /**
  * Walk the intersection of N(a) and N(b), invoking a weighting term for each
  * common neighbor c. `weight_for_deg` returns the contribution given deg(c);
  * a return of 0.0 (used for skipped nodes) simply adds nothing.
  */
-static double intersection_degree_sum(const GV_GraphDB *g,
+static double intersection_degree_sum(const GV_GAContext *ctx,
                                       const GV_Nbhd *a, const GV_Nbhd *b,
                                       double (*weight_for_deg)(size_t deg)) {
     size_t i = 0, j = 0;
@@ -209,7 +250,7 @@ static double intersection_degree_sum(const GV_GraphDB *g,
         } else if (a->ids[i] > b->ids[j]) {
             j++;
         } else {
-            size_t deg = undirected_degree(g, a->ids[i]);
+            size_t deg = undirected_degree(ctx, a->ids[i]);
             acc += weight_for_deg(deg);
             i++; j++;
         }
@@ -229,39 +270,55 @@ static double resource_alloc_term(size_t deg) {
     return 1.0 / (double)deg;
 }
 
-double graph_adamic_adar(const GV_GraphDB *g, uint64_t a, uint64_t b) {
+static double adamic_adar_impl(const GV_GAContext *ctx, uint64_t a, uint64_t b) {
     GV_Nbhd na, nb;
-    int rc = prep_pair(g, a, b, &na, &nb);
+    int rc = prep_pair(ctx, a, b, &na, &nb);
     if (rc == -1) return -1.0;
     if (rc == -2) return 0.0;
-    double v = intersection_degree_sum(g, &na, &nb, adamic_adar_term);
+    double v = intersection_degree_sum(ctx, &na, &nb, adamic_adar_term);
+    nbhd_free(&na); nbhd_free(&nb);
+    return v;
+}
+
+double graph_adamic_adar(const GV_GraphDB *g, uint64_t a, uint64_t b) {
+    if (!g) return -1.0;
+    GV_GAContext *ctx = gv_ga_build(g);
+    if (!ctx) return -1.0;
+    double v = adamic_adar_impl(ctx, a, b);
+    gv_ga_free(ctx);
+    return v;
+}
+
+static double resource_allocation_impl(const GV_GAContext *ctx, uint64_t a, uint64_t b) {
+    GV_Nbhd na, nb;
+    int rc = prep_pair(ctx, a, b, &na, &nb);
+    if (rc == -1) return -1.0;
+    if (rc == -2) return 0.0;
+    double v = intersection_degree_sum(ctx, &na, &nb, resource_alloc_term);
     nbhd_free(&na); nbhd_free(&nb);
     return v;
 }
 
 double graph_resource_allocation(const GV_GraphDB *g, uint64_t a, uint64_t b) {
-    GV_Nbhd na, nb;
-    int rc = prep_pair(g, a, b, &na, &nb);
-    if (rc == -1) return -1.0;
-    if (rc == -2) return 0.0;
-    double v = intersection_degree_sum(g, &na, &nb, resource_alloc_term);
-    nbhd_free(&na); nbhd_free(&nb);
+    if (!g) return -1.0;
+    GV_GAContext *ctx = gv_ga_build(g);
+    if (!ctx) return -1.0;
+    double v = resource_allocation_impl(ctx, a, b);
+    gv_ga_free(ctx);
     return v;
 }
 
-/* ── Top-k similar ──────────────────────────────────────────────────────────*/
-
-/** Dispatch a measure by enum over an already-existing pair of node IDs. */
-static double measure_pair(const GV_GraphDB *g, uint64_t a, uint64_t b,
+/** Dispatch a measure by enum over a pinned context (no nested snapshots). */
+static double measure_pair(const GV_GAContext *ctx, uint64_t a, uint64_t b,
                            GV_GraphSimMeasure measure) {
     switch (measure) {
-        case GV_GSIM_JACCARD:                return graph_jaccard_similarity(g, a, b);
-        case GV_GSIM_COSINE:                 return graph_cosine_neighborhood(g, a, b);
-        case GV_GSIM_COMMON_NEIGHBORS:       return graph_common_neighbors(g, a, b);
-        case GV_GSIM_ADAMIC_ADAR:            return graph_adamic_adar(g, a, b);
-        case GV_GSIM_RESOURCE_ALLOCATION:    return graph_resource_allocation(g, a, b);
-        case GV_GSIM_PREFERENTIAL_ATTACHMENT:return graph_preferential_attachment(g, a, b);
-        default:                             return graph_jaccard_similarity(g, a, b);
+        case GV_GSIM_JACCARD:                return jaccard_similarity_impl(ctx, a, b);
+        case GV_GSIM_COSINE:                 return cosine_neighborhood_impl(ctx, a, b);
+        case GV_GSIM_COMMON_NEIGHBORS:       return common_neighbors_impl(ctx, a, b);
+        case GV_GSIM_ADAMIC_ADAR:            return adamic_adar_impl(ctx, a, b);
+        case GV_GSIM_RESOURCE_ALLOCATION:    return resource_allocation_impl(ctx, a, b);
+        case GV_GSIM_PREFERENTIAL_ATTACHMENT:return preferential_attachment_impl(ctx, a, b);
+        default:                             return jaccard_similarity_impl(ctx, a, b);
     }
 }
 
@@ -287,7 +344,7 @@ static int cmp_scored_desc(const void *pa, const void *pb) {
  * `*out_ids`/`*out_count`. Returns 0 on success (possibly empty), -1 on alloc
  * failure.
  */
-static int build_candidates(const GV_GraphDB *g, uint64_t node,
+static int build_candidates(const GV_GAContext *ctx, uint64_t node,
                             const GV_Nbhd *nself,
                             uint64_t **out_ids, size_t *out_count) {
     *out_ids = NULL;
@@ -296,7 +353,7 @@ static int build_candidates(const GV_GraphDB *g, uint64_t node,
     /* Upper bound on raw candidate count = sum of neighbor degrees (out+in). */
     size_t cap = 0;
     for (size_t i = 0; i < nself->count; i++) {
-        const GV_GraphNode *nb = graph_get_node(g, nself->ids[i]);
+        const GV_GraphNode *nb = gv_ga_node(ctx, nself->ids[i]);
         if (nb) cap += nb->out_count + nb->in_count;
     }
     if (cap == 0) return 0;
@@ -306,7 +363,7 @@ static int build_candidates(const GV_GraphDB *g, uint64_t node,
 
     size_t n = 0;
     for (size_t i = 0; i < nself->count; i++) {
-        const GV_GraphNode *nb = graph_get_node(g, nself->ids[i]);
+        const GV_GraphNode *nb = gv_ga_node(ctx, nself->ids[i]);
         if (!nb) continue;
         for (size_t k = 0; k < nb->out_count; k++) {
             uint64_t cid = nb->out_edges[k].neighbor_id;
@@ -340,31 +397,37 @@ int graph_topk_similar(const GV_GraphDB *g, uint64_t node, GV_GraphSimMeasure me
     out->node_ids = NULL;
     out->scores = NULL;
     out->count = 0;
+    if (!g) return -1;
 
-    const GV_GraphNode *self = graph_get_node(g, node);
-    if (!self) return 0;
+    /* One pinned snapshot for candidate generation AND scoring. */
+    GV_GAContext *ctx = gv_ga_build(g);
+    if (!ctx) return -1;
+
+    const GV_GraphNode *self = gv_ga_node(ctx, node);
+    if (!self) { gv_ga_free(ctx); return 0; }
 
     /* Self neighborhood drives 2-hop candidate generation. */
     GV_Nbhd nself;
-    if (nbhd_build(self, node, &nself) != 0) return -1;
+    if (nbhd_build(self, node, &nself) != 0) { gv_ga_free(ctx); return -1; }
     if (nself.count == 0) {
         nbhd_free(&nself);
-        return 0; /* no neighbors → no candidates */
+        gv_ga_free(ctx);
+        return 0; /* no neighbors -> no candidates */
     }
 
     uint64_t *cands = NULL;
     size_t ncands = 0;
-    int rc = build_candidates(g, node, &nself, &cands, &ncands);
+    int rc = build_candidates(ctx, node, &nself, &cands, &ncands);
     nbhd_free(&nself);
-    if (rc != 0) return -1;
-    if (ncands == 0) return 0;
+    if (rc != 0) { gv_ga_free(ctx); return -1; }
+    if (ncands == 0) { gv_ga_free(ctx); return 0; }
 
     GV_ScoredNode *scored = gv_alloc(ncands * sizeof(*scored));
-    if (!scored) { gv_free(cands); return -1; }
+    if (!scored) { gv_free(cands); gv_ga_free(ctx); return -1; }
 
     size_t found = 0;
     for (size_t i = 0; i < ncands; i++) {
-        double s = measure_pair(g, node, cands[i], measure);
+        double s = measure_pair(ctx, node, cands[i], measure);
         /* Candidates all share a neighbor with `node`; -1.0 (absent) shouldn't
          * occur here, but guard anyway. */
         if (s < 0.0) continue;
@@ -376,6 +439,7 @@ int graph_topk_similar(const GV_GraphDB *g, uint64_t node, GV_GraphSimMeasure me
 
     if (found == 0) {
         gv_free(scored);
+        gv_ga_free(ctx);
         return 0;
     }
 
@@ -384,6 +448,7 @@ int graph_topk_similar(const GV_GraphDB *g, uint64_t node, GV_GraphSimMeasure me
     size_t take = (k < found) ? k : found;
     if (take == 0) {
         gv_free(scored);
+        gv_ga_free(ctx);
         return 0;
     }
 
@@ -393,6 +458,7 @@ int graph_topk_similar(const GV_GraphDB *g, uint64_t node, GV_GraphSimMeasure me
         gv_free(ids);
         gv_free(scr);
         gv_free(scored);
+        gv_ga_free(ctx);
         return -1;
     }
 
@@ -401,6 +467,7 @@ int graph_topk_similar(const GV_GraphDB *g, uint64_t node, GV_GraphSimMeasure me
         scr[i] = scored[i].score;
     }
     gv_free(scored);
+    gv_ga_free(ctx);
 
     out->node_ids = ids;
     out->scores = scr;

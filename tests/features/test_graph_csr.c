@@ -1,9 +1,6 @@
 /**
  * test_graph_csr.c — unit tests for the GraphBLAS-lite CSR layer (graph_csr.h):
- * build (out/in/undirected, boolean/weighted) + the SpMV / SpMM / row-sums /
- * boolean-reachability kernels, checked against hand-computed values. Run under
- * ASAN/valgrind to prove the kernels + build are memory-safe.
- *
+ * build + SpMV/SpMM/row-sums/bool-reachability kernels vs hand-computed values.
  * Graph: a -w2-> b -w3-> c   (3 nodes, 2 weighted directed edges)
  */
 #include <stdio.h>

@@ -10,6 +10,7 @@
 #include "features/graph_algos.h"
 #include "features/graph_csr.h"
 #include "core/memory.h"
+#include "core/utils.h"
 
 #include <math.h>
 #include <string.h>
@@ -30,14 +31,10 @@ static inline double xs64_unit(uint64_t *s) {
     return (double)(xs64(s) >> 11) * (1.0 / 9007199254740992.0);
 }
 
-/* Seed mixing (splitmix64 finalizer) — avoids the all-zero xorshift fixed point
- * and decorrelates seeds derived from small integers. */
+/* Seed mixing via gv_mix64, but never hand the xorshift PRNG a zero state. */
 static inline uint64_t mix64(uint64_t z) {
-    z += 0x9E3779B97F4A7C15ULL;
-    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
-    z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
-    z = z ^ (z >> 31);
-    return z ? z : 0x9E3779B97F4A7C15ULL; /* never hand xorshift a zero state */
+    uint64_t m = gv_mix64(z);
+    return m ? m : 0x9E3779B97F4A7C15ULL;
 }
 
 /* ── Undirected adjacency (dense indices) ───────────────────────────────────
@@ -61,6 +58,7 @@ static void undir_free(UndirAdj *ua) {
 }
 
 static int undir_build(const GV_GraphDB *g, const GV_GAContext *ctx, UndirAdj *ua) {
+    (void)g;
     size_t N = gv_ga_count(ctx);
     ua->off = NULL;
     ua->adj = NULL;
@@ -80,7 +78,7 @@ static int undir_build(const GV_GraphDB *g, const GV_GAContext *ctx, UndirAdj *u
     size_t total = 0;
     for (size_t i = 0; i < N; i++) {
         uint64_t id = gv_ga_id(ctx, i);
-        const GV_GraphNode *node = graph_get_node(g, id);
+        const GV_GraphNode *node = gv_ga_node(ctx, id);
         size_t cnt = 0;
         if (node) {
             for (size_t e = 0; e < node->out_count; e++) {
@@ -113,7 +111,7 @@ static int undir_build(const GV_GraphDB *g, const GV_GAContext *ctx, UndirAdj *u
     /* Pass 2: fill neighbor indices (same dedup, same order). */
     for (size_t i = 0; i < N; i++) {
         uint64_t id = gv_ga_id(ctx, i);
-        const GV_GraphNode *node = graph_get_node(g, id);
+        const GV_GraphNode *node = gv_ga_node(ctx, id);
         size_t w = ua->off[i];
         if (node) {
             for (size_t e = 0; e < node->out_count; e++) {
@@ -141,8 +139,6 @@ static void l2_normalize_row(float *row, size_t dim) {
     double inv = 1.0 / sqrt(ss);
     for (size_t d = 0; d < dim; d++) row[d] = (float)((double)row[d] * inv);
 }
-
-/* ── FastRP ─────────────────────────────────────────────────────────────────*/
 
 int graph_fastrp(const GV_GraphDB *g, size_t dim, size_t iters,
                  const double *weights, uint64_t seed, GV_GraphEmbeddings *out) {
@@ -269,8 +265,6 @@ int graph_fastrp(const GV_GraphDB *g, size_t dim, size_t iters,
     out->dim = dim;
     return 0;
 }
-
-/* ── node2vec biased random walks ───────────────────────────────────────────*/
 
 /* Is dense index `x` a neighbor of node `t`? Linear scan of t's neighbor list.
  * Adequate: node2vec transition scan already visits every neighbor of v, and

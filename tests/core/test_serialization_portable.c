@@ -32,7 +32,7 @@ static long slurp(FILE *f, uint8_t *buf, size_t cap) {
 static int test_le_byte_layout(void) {
     uint8_t buf[64];
 
-    { /* u16 */
+    {
         FILE *f = tmpfile(); ASSERT(f, "tmpfile u16");
         ASSERT(write_u16(f, 0x1122) == 0, "write_u16");
         long n = slurp(f, buf, sizeof(buf));
@@ -40,7 +40,7 @@ static int test_le_byte_layout(void) {
         ASSERT(buf[0] == 0x22 && buf[1] == 0x11, "u16 little-endian bytes");
         fclose(f);
     }
-    { /* u32 */
+    {
         FILE *f = tmpfile(); ASSERT(f, "tmpfile u32");
         ASSERT(write_u32(f, 0x11223344u) == 0, "write_u32");
         long n = slurp(f, buf, sizeof(buf));
@@ -48,7 +48,7 @@ static int test_le_byte_layout(void) {
         ASSERT(buf[0]==0x44 && buf[1]==0x33 && buf[2]==0x22 && buf[3]==0x11, "u32 little-endian bytes");
         fclose(f);
     }
-    { /* u64 */
+    {
         FILE *f = tmpfile(); ASSERT(f, "tmpfile u64");
         ASSERT(write_u64(f, 0x0102030405060708ull) == 0, "write_u64");
         long n = slurp(f, buf, sizeof(buf));

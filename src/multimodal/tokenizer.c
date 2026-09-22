@@ -75,7 +75,7 @@ static int add_token(GV_TokenList *list, const char *start, size_t len,
                      size_t position, size_t offset_start, size_t offset_end,
                      const GV_TokenizerConfig *config) {
     if (len < config->min_token_length || len > config->max_token_length) {
-        return 0;  /* Skip but not an error */
+        return 0;
     }
 
     if (list->count >= list->capacity) {
@@ -96,7 +96,7 @@ static int add_token(GV_TokenList *list, const char *start, size_t len,
 
     if (config->remove_stopwords && is_stopword(text)) {
         gv_free(text);
-        return 0;  /* Skip stopword */
+        return 0;
     }
 
     GV_Token *token = &list->tokens[list->count++];

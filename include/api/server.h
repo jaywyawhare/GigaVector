@@ -152,6 +152,18 @@ typedef struct GV_Server GV_Server;
  */
 GV_Server *server_create(GV_Database *db, const GV_ServerConfig *config);
 
+struct GV_KnowledgeGraph;
+struct GV_GraphDB;
+
+/**
+ * @brief Attach optional graph handles served under /graph/ and /kg/ routes.
+ *
+ * Both handles are optional (pass NULL to leave unexposed). Must be called
+ * before server_start(). The server does not own either handle.
+ */
+int server_set_graphs(GV_Server *server, struct GV_KnowledgeGraph *kg,
+                      struct GV_GraphDB *graph);
+
 /**
  * @brief Start the HTTP server.
  *
@@ -231,11 +243,6 @@ const char *server_error_string(int error);
  * - api_key: NULL
  *
  * @param config Configuration structure to initialize.
- */
-/**
- * @brief Initialize a configuration structure with default values.
- *
- * @param config Configuration to apply/output.
  */
 void server_config_init(GV_ServerConfig *config);
 

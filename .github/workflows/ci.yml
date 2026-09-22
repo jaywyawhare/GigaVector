@@ -198,6 +198,18 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4.2.2
 
+      # Accumulating fuzz corpus. The cache dir is passed as the fuzzer's
+      # FIRST (writable) corpus dir via CORPUS_CACHE, so every run keeps the
+      # inputs discovered by previous runs and coverage grows monotonically
+      # instead of resetting to the committed seeds each time.
+      - name: Restore accumulated fuzz corpus
+        uses: actions/cache/restore@v4
+        with:
+          path: build/fuzz/corpus-cache
+          key: fuzz-corpus-${{ github.run_id }}
+          restore-keys: |
+            fuzz-corpus-
+
       - name: Install dependencies
         timeout-minutes: 10
         run: |
@@ -224,10 +236,142 @@ jobs:
         run: make dst-test
 
       - name: Generate fuzz corpus and run fuzzers
-        timeout-minutes: 10
+        timeout-minutes: 15
         run: |
           make fuzz-corpus
-          make fuzz-run
+          make fuzz-run CORPUS_CACHE=build/fuzz/corpus-cache
+
+      # Persist whatever the run added; the mutable cache entry is rewritten
+      # by the save step below (keyed on this run_id).
+      - name: Save accumulated fuzz corpus
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: build/fuzz/corpus-cache
+          key: fuzz-corpus-${{ github.run_id }}
+
+      # Crash / leak / OOM reproducers land in build/fuzz/crashes via
+      # -artifact_prefix. Upload them so the failing input is attached to the
+      # run instead of lost with the ephemeral workspace.
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashes
+          path: build/fuzz/crashes/
+          if-no-files-found: ignore
+
+  # ── Formal verification: Quint specs, CBMC harnesses, lock order ───────
+  #
+  # Split by cost. formal-lint / quint-typecheck / quint-test / cbmc-smoke are
+  # seconds and gate every push; quint-verify runs Apalache (JVM + Z3) and
+  # cbmc runs bounded proofs, so both are scheduled/dispatch only.
+  # See docs/formal_verification_plan.md.
+  formal:
+    name: formal (Quint + CBMC + lock order)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4.2.2
+
+      - name: Set up Node (Quint CLI)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Set up Java (Apalache backend)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Quint
+        run: npm install -g @informalsystems/quint
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libcurl4-openssl-dev libssl-dev libmicrohttpd-dev
+
+      - name: Build library
+        run: make lib
+
+      # No toolchain needed: parses docs/lock_ordering.md and checks every lock
+      # acquisition in src/ against it. Includes a self-test, so a broken
+      # checker fails loudly instead of passing vacuously.
+      - name: Lock-order static check
+        run: make formal-lint
+
+      # Every .c file under src/ must carry a verification classification, and
+      # every classification must resolve to an artifact that exists. New code
+      # cannot merge unverified-and-unclassified, and the manifest cannot
+      # over-claim coverage it does not have.
+      - name: Verification coverage manifest
+        run: |
+          pip install pyyaml
+          make formal-coverage
+
+      # Globs specs/quint/*.qnt so a new spec cannot drift out of CI.
+      - name: Typecheck all Quint specs
+        run: make quint-typecheck
+
+      # Scenario runs and regression witnesses, including the counterexample
+      # that motivated the raft.c distinct-voter fix.
+      - name: Quint scenario tests
+        run: make quint-test
+
+      # Compile + concretely run the CBMC harnesses. Cheap gate that keeps them
+      # from bit-rotting even when cbmc itself is not installed.
+      # Vacuity gate: every spec must still be able to reach a named
+      # interesting state. A dead model passes every invariant trivially.
+      - name: Quint vacuity check
+        run: make quint-witness
+
+      - name: CBMC harness smoke
+        run: make cbmc-smoke
+
+      # Replay Quint-generated ITF traces against the real C implementation.
+      - name: ITF trace replay vs. C
+        run: |
+          pip install cffi
+          make quint-replay
+
+      # Apalache symbolic model checking. Bounded (--max-steps): a pass means
+      # no counterexample within the bound, not a proof.
+      - name: Quint model checking (Apalache)
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        timeout-minutes: 25
+        run: make quint-verify
+
+      # UNBOUNDED proofs: inductive invariants hold in every initial state, are
+      # preserved by every step, and imply the target -- so they hold for ALL
+      # reachable states, with no step bound. Fast enough to gate on PRs.
+      - name: Quint inductive invariants (unbounded)
+        timeout-minutes: 15
+        run: make quint-induct
+
+      # REAL bounded proofs over the C. Distinct from cbmc-smoke above, which
+      # only runs each harness once concretely. run_cbmc.py reports
+      # PROVED/FAILED/INTRACTABLE separately -- INTRACTABLE is not a proof.
+      # z3 is required by harnesses declaring CBMC-SOLVER (e.g. grpc_frame's
+      # --smt2 --fpa route); run_cbmc.py skips those cleanly if it is absent.
+      - name: CBMC bounded proofs
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        timeout-minutes: 40
+        run: |
+          # Pin the exact solver build the grpc_frame proof was discharged
+          # with locally (apt z3 lags and SMT2 float theory behaviour varies
+          # by version). run_cbmc.py skips CBMC-SOLVER harnesses if this
+          # fails, so a broken download degrades to SKIP, not ERROR.
+          curl -sSL -o /tmp/z3.zip \
+            https://github.com/Z3Prover/z3/releases/download/z3-5.1.0/z3-5.1.0-x64-glibc-2.39.zip \
+            && unzip -o /tmp/z3.zip -d /tmp/z3 \
+            && sudo cp /tmp/z3/z3-5.1.0-x64-glibc-2.39/bin/z3 /usr/local/bin/
+          curl -sSL -o /tmp/cbmc.deb \
+            https://github.com/diffblue/cbmc/releases/download/cbmc-6.11.0/ubuntu-24.04-cbmc-6.11.0-Linux.deb
+          sudo dpkg -i /tmp/cbmc.deb || sudo apt-get -f install -y
+          make cbmc CBMC_TIMEOUT=300
 
   # ── Valgrind memcheck (curated, Linux only) ─────────────────────────────
   valgrind:
@@ -314,3 +458,73 @@ jobs:
       - name: Build library with -Werror
         timeout-minutes: 10
         run: make strict
+
+  # ── Coverage gate (Linux only) ──────────────────────────────────────────
+  coverage-gate:
+    name: coverage gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4.2.2
+
+      - name: Install dependencies
+        timeout-minutes: 10
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            libcurl4-openssl-dev \
+            libssl-dev \
+            libmicrohttpd-dev \
+            lcov
+
+      # Fails the job when line coverage drops below COVERAGE_MIN_LINES.
+      # Ratchet this up as coverage improves; do not lower it.
+      - name: Run tests with coverage and enforce threshold
+        timeout-minutes: 50
+        env:
+          COVERAGE_MIN_LINES: "40"
+        run: |
+          make test-coverage
+          lcov --summary build/coverage.info --fail-under-lines "$COVERAGE_MIN_LINES"
+
+  # ── clang-tidy (Linux only, report-only) ────────────────────────────────
+  clang-tidy:
+    name: static analysis (clang-tidy)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    continue-on-error: true   # report-only until existing findings are triaged
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4.2.2
+
+      - name: Install dependencies
+        timeout-minutes: 10
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            clang-tidy \
+            libcurl4-openssl-dev \
+            libssl-dev \
+            libmicrohttpd-dev
+
+      # cert-* + clang-analyzer-* catch the bug classes IMPROVEMENTS.md called
+      # out (unsafe strcpy, unchecked returns). Report-only for now so the
+      # existing backlog doesn't block PRs; flip continue-on-error once clean.
+      - name: Run clang-tidy
+        timeout-minutes: 30
+        run: |
+          set -o pipefail
+          find src -name '*.c' | sort | xargs \
+            clang-tidy --quiet \
+            --checks='-*,cert-*,clang-analyzer-*' \
+            -- -Iinclude -std=c11 -D_GNU_SOURCE 2>&1 | tee clang-tidy-report.txt
+
+      - name: Upload clang-tidy report
+        if: always()
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: clang-tidy-report
+          path: clang-tidy-report.txt

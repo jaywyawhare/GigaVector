@@ -401,6 +401,32 @@ GV_ReplicationRole replication_get_role_for_transport(const GV_ReplicationManage
 /** Access TCP transport for hook installation (may be NULL before start). */
 GV_ReplTransport *replication_get_transport(GV_ReplicationManager *mgr);
 
+/* ---- Raft consensus driver (opt-in) ----
+ * Drive this manager's leadership with the real Raft core (leader election + log
+ * replication with the Raft safety rules) instead of the ad-hoc election. Peers
+ * are registered by integer id; messages are delivered in-process and applied on
+ * replication_raft_tick(). mgr->role/term then follow the raft state.
+ *
+ * TEARDOWN CONTRACT: peers reference each other's inboxes for in-process message
+ * delivery, so a tick on one manager may write into a peer's inbox. Before
+ * destroying ANY manager in a raft group, quiesce the whole group — stop calling
+ * replication_raft_tick()/submit() on every member — then destroy them. Destroying
+ * one while another is still ticking is a use-after-free of the destroyed inbox. */
+
+/** Create the raft core for this manager. @p peer_ids lists the OTHER nodes. */
+int replication_enable_raft(GV_ReplicationManager *mgr, int self_id,
+                            const int *peer_ids, size_t n_peers);
+
+/** Register a peer manager for in-process raft message delivery (by peer id). */
+int replication_register_raft_peer(GV_ReplicationManager *mgr, int peer_id,
+                                   GV_ReplicationManager *peer);
+
+/** Advance the raft clock by @p ms, deliver queued messages, and sync the role. */
+int replication_raft_tick(GV_ReplicationManager *mgr, uint32_t ms);
+
+/** Leader-only: submit a command to the raft log for replication. 0 if accepted. */
+int replication_raft_submit(GV_ReplicationManager *mgr, const void *data, size_t len);
+
 #ifdef __cplusplus
 }
 #endif

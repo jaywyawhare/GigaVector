@@ -45,7 +45,7 @@ static GV_MemoryType detect_type_from_keywords(const char *content) {
     }
     
     for (size_t i = 0; i < len; i++) {
-        lower_content[i] = tolower(content[i]);
+        lower_content[i] = (char)tolower((unsigned char)content[i]);
     }
     lower_content[len] = '\0';
     
@@ -89,7 +89,7 @@ int memory_extract_candidates_from_conversation(const char *conversation,
     size_t candidate_idx = 0;
     
     while (start < end && candidate_idx < max_candidates) {
-        while (start < end && (isspace(*start) || ispunct(*start))) {
+        while (start < end && (isspace((unsigned char)*start) || ispunct((unsigned char)*start))) {
             start++;
         }
         
@@ -259,21 +259,18 @@ static int parse_facts_json(const char *json_response, GV_MemoryCandidate *candi
                             size_t max_candidates, size_t *actual_count) {
     *actual_count = 0;
 
-    // Parse JSON using proper JSON parser
     GV_JsonError err;
     GV_JsonValue *root = json_parse(json_response, &err);
     if (root == NULL) {
         return 0;  // Return 0 (no facts) on parse failure, not error
     }
 
-    // Look for "facts" array
     GV_JsonValue *facts_array = json_object_get(root, "facts");
     if (facts_array == NULL || !json_is_array(facts_array)) {
         json_free(root);
         return 0;
     }
 
-    // Extract each fact from the array
     size_t array_len = json_array_length(facts_array);
     for (size_t i = 0; i < array_len && *actual_count < max_candidates; i++) {
         GV_JsonValue *fact_val = json_array_get(facts_array, i);
@@ -324,8 +321,7 @@ int memory_extract_candidates_from_conversation_llm(GV_LLM *llm,
     }
     
     *actual_count = 0;
-    
-    // Build prompt
+
     const char *base_prompt = custom_prompt ? custom_prompt :
         (is_agent_memory ? get_default_agent_extraction_prompt() :
                            get_default_user_extraction_prompt());
@@ -337,8 +333,7 @@ int memory_extract_candidates_from_conversation_llm(GV_LLM *llm,
     }
     
     snprintf(full_prompt, prompt_len, "%s%s", base_prompt, conversation);
-    
-    // Create messages
+
     GV_LLMMessage *messages = (GV_LLMMessage *)gv_alloc(sizeof(GV_LLMMessage));
     if (messages == NULL) {
         gv_free(full_prompt);
@@ -354,7 +349,6 @@ int memory_extract_candidates_from_conversation_llm(GV_LLM *llm,
         return -1;
     }
     
-    // Generate LLM response
     GV_LLMResponse response;
     int result = llm_generate_response(llm, messages, 1, "json_object", &response);
     
@@ -374,10 +368,8 @@ int memory_extract_candidates_from_conversation_llm(GV_LLM *llm,
         return -1;
     }
     
-    // Parse JSON response
     result = parse_facts_json(response.content, candidates, max_candidates, actual_count);
-    
-    // Set extraction context for all candidates
+
     if (conversation_id) {
         for (size_t i = 0; i < *actual_count; i++) {
             candidates[i].extraction_context = gv_dup_cstr(conversation_id);

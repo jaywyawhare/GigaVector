@@ -24,8 +24,6 @@
 #include "search/distance.h"
 #include "storage/soa_storage.h"
 
-/* Constants */
-
 #define INF_DEFAULT_DIMENSION     1536
 #define INF_GOOGLE_DIMENSION      768
 #define INF_DEFAULT_CACHE_SIZE    10000
@@ -36,8 +34,6 @@
 /** Reserved metadata key for user-supplied JSON metadata. */
 #define INF_META_KEY_META          "_meta"
 
-/* Engine structure */
-
 struct GV_InferenceEngine {
     GV_Database       *db;            /**< Backing vector database (not owned). */
     GV_AutoEmbedder   *embedder;      /**< Auto-embedding handle (owned). */
@@ -45,8 +41,6 @@ struct GV_InferenceEngine {
     size_t             dimension;      /**< Embedding dimension. */
     pthread_mutex_t    mutex;          /**< Serializes all public operations. */
 };
-
-/* Provider string to enum mapping */
 
 /**
  * Map a provider name string to the corresponding GV_AutoEmbedProvider
@@ -58,7 +52,6 @@ static GV_AutoEmbedProvider inf_resolve_provider(const char *name) {
     if (strcmp(name, "google") == 0)      return GV_EMBED_PROVIDER_GOOGLE;
     if (strcmp(name, "huggingface") == 0)  return GV_EMBED_PROVIDER_HUGGINGFACE;
 
-    /* Default / "openai" */
     return GV_EMBED_PROVIDER_OPENAI;
 }
 
@@ -75,8 +68,6 @@ static size_t inf_default_dimension(const char *provider) {
     }
     return INF_DEFAULT_DIMENSION;
 }
-
-/* Metadata helpers */
 
 /**
  * Build a metadata key/value array that stores the original text and
@@ -158,7 +149,6 @@ static int inf_populate_result(const GV_Database *db,
     out->distance = sr->distance;
     out->index    = inf_resolve_index(db, sr);
 
-    /* Retrieve metadata from SoA storage */
     out->text          = NULL;
     out->metadata_json = NULL;
 
@@ -172,8 +162,6 @@ static int inf_populate_result(const GV_Database *db,
     }
     return 0;
 }
-
-/* Lifecycle */
 
 void inference_config_init(GV_InferenceConfig *config) {
     if (!config) return;
@@ -199,13 +187,11 @@ GV_InferenceEngine *inference_create(void *db,
     eng->dimension     = config->dimension > 0 ? config->dimension
                                                 : inf_default_dimension(provider);
 
-    /* Initialize the mutex */
     if (pthread_mutex_init(&eng->mutex, NULL) != 0) {
         gv_free(eng);
         return NULL;
     }
 
-    /* Configure auto-embedder */
     GV_AutoEmbedConfig ae_cfg;
     auto_embed_config_init(&ae_cfg);
 
@@ -236,15 +222,12 @@ void inference_destroy(GV_InferenceEngine *eng) {
     gv_free(eng);
 }
 
-/* Insert -- single */
-
 int inference_add(GV_InferenceEngine *eng, const char *text,
                      const char *metadata_json) {
     if (!eng || !text) return -1;
 
     pthread_mutex_lock(&eng->mutex);
 
-    /* Embed the text */
     size_t dim = 0;
     float *vec = auto_embed_text(eng->embedder, text, &dim);
     if (!vec) {
@@ -252,12 +235,11 @@ int inference_add(GV_InferenceEngine *eng, const char *text,
         return -1;
     }
 
-    /* Build metadata key/value pairs */
     const char *keys[2];
     const char *values[2];
     size_t meta_count = inf_build_metadata(text, metadata_json, keys, values);
 
-    /* Record the index before insertion (it will be the current count) */
+    /* Record the index before insertion (it will be the current count). */
     size_t new_index = database_count(eng->db);
 
     int rc = db_add_vector_with_rich_metadata(
@@ -269,8 +251,6 @@ int inference_add(GV_InferenceEngine *eng, const char *text,
 
     return rc == 0 ? (int)new_index : -1;
 }
-
-/* Insert -- batch */
 
 int inference_add_batch(GV_InferenceEngine *eng, const char **texts,
                            const char **metadata_jsons, size_t count) {
@@ -315,15 +295,12 @@ int inference_add_batch(GV_InferenceEngine *eng, const char **texts,
     return failures == 0 ? 0 : -1;
 }
 
-/* Search -- unfiltered */
-
 int inference_search(GV_InferenceEngine *eng, const char *query_text,
                         size_t k, GV_InferenceResult *results) {
     if (!eng || !query_text || k == 0 || !results) return -1;
 
     pthread_mutex_lock(&eng->mutex);
 
-    /* Embed the query */
     size_t dim = 0;
     float *vec = auto_embed_text(eng->embedder, query_text, &dim);
     if (!vec) {
@@ -331,7 +308,6 @@ int inference_search(GV_InferenceEngine *eng, const char *query_text,
         return -1;
     }
 
-    /* Allocate temporary search results */
     GV_SearchResult *sr = (GV_SearchResult *)gv_calloc(k, sizeof(GV_SearchResult));
     if (!sr) {
         gv_free(vec);
@@ -349,7 +325,6 @@ int inference_search(GV_InferenceEngine *eng, const char *query_text,
         return -1;
     }
 
-    /* Convert to inference results */
     int count = found > (int)k ? (int)k : found;
     for (int i = 0; i < count; i++) {
         memset(&results[i], 0, sizeof(results[i]));
@@ -361,8 +336,6 @@ int inference_search(GV_InferenceEngine *eng, const char *query_text,
     return count;
 }
 
-/* Search -- filtered */
-
 int inference_search_filtered(GV_InferenceEngine *eng,
                                  const char *query_text, size_t k,
                                  const char *filter_expr,
@@ -371,7 +344,6 @@ int inference_search_filtered(GV_InferenceEngine *eng,
 
     pthread_mutex_lock(&eng->mutex);
 
-    /* Embed the query */
     size_t dim = 0;
     float *vec = auto_embed_text(eng->embedder, query_text, &dim);
     if (!vec) {
@@ -379,7 +351,6 @@ int inference_search_filtered(GV_InferenceEngine *eng,
         return -1;
     }
 
-    /* Allocate temporary search results */
     GV_SearchResult *sr = (GV_SearchResult *)gv_calloc(k, sizeof(GV_SearchResult));
     if (!sr) {
         gv_free(vec);
@@ -398,7 +369,6 @@ int inference_search_filtered(GV_InferenceEngine *eng,
         return -1;
     }
 
-    /* Convert to inference results */
     int count = found > (int)k ? (int)k : found;
     for (int i = 0; i < count; i++) {
         memset(&results[i], 0, sizeof(results[i]));
@@ -410,15 +380,12 @@ int inference_search_filtered(GV_InferenceEngine *eng,
     return count;
 }
 
-/* Upsert */
-
 int inference_upsert(GV_InferenceEngine *eng, size_t index,
                         const char *text, const char *metadata_json) {
     if (!eng || !text) return -1;
 
     pthread_mutex_lock(&eng->mutex);
 
-    /* Embed the new text */
     size_t dim = 0;
     float *vec = auto_embed_text(eng->embedder, text, &dim);
     if (!vec) {
@@ -426,7 +393,6 @@ int inference_upsert(GV_InferenceEngine *eng, size_t index,
         return -1;
     }
 
-    /* Build metadata key/value pairs */
     const char *keys[2];
     const char *values[2];
     size_t meta_count = inf_build_metadata(text, metadata_json, keys, values);
@@ -439,8 +405,6 @@ int inference_upsert(GV_InferenceEngine *eng, size_t index,
     pthread_mutex_unlock(&eng->mutex);
     return rc;
 }
-
-/* Result cleanup */
 
 void inference_free_results(GV_InferenceResult *results, size_t count) {
     if (!results) return;

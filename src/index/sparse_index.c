@@ -101,6 +101,7 @@ GV_SparseIndex *sparse_index_create(size_t dimension) {
     }
     idx->postings = (GV_SparsePosting **)gv_calloc(dimension, sizeof(GV_SparsePosting *));
     if (!idx->postings) {
+        gv_free(idx->deleted);
         gv_free(idx->vectors);
         gv_free(idx);
         return NULL;
@@ -108,6 +109,7 @@ GV_SparseIndex *sparse_index_create(size_t dimension) {
     idx->df = (double *)gv_calloc(dimension, sizeof(double));
     if (!idx->df) {
         gv_free(idx->postings);
+        gv_free(idx->deleted);
         gv_free(idx->vectors);
         gv_free(idx);
         return NULL;
@@ -116,6 +118,7 @@ GV_SparseIndex *sparse_index_create(size_t dimension) {
     if (!idx->doc_len) {
         gv_free(idx->df);
         gv_free(idx->postings);
+        gv_free(idx->deleted);
         gv_free(idx->vectors);
         gv_free(idx);
         return NULL;
@@ -237,7 +240,6 @@ int sparse_index_add(GV_SparseIndex *index, GV_SparseVector *vector) {
         p->next = index->postings[dim];
         index->postings[dim] = p;
 
-        /* update document frequency for this dimension */
         index->df[dim] += 1.0;
     }
     index->doc_len[vid] = dl > 0.0 ? dl : 0.0;

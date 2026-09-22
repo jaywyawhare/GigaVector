@@ -69,8 +69,10 @@ struct GV_LateInteractionIndex {
     pthread_rwlock_t rwlock;
 };
 
+#ifndef __AVX2__
 /**
- * @brief Scalar dot product fallback.
+ * @brief Scalar dot product fallback (used only on non-AVX2 builds; li_dot()
+ *        calls the AVX2 path when available, leaving this otherwise unused).
  */
 static float li_dot_scalar(const float *a, const float *b, size_t dim) {
     float sum = 0.0f;
@@ -79,6 +81,7 @@ static float li_dot_scalar(const float *a, const float *b, size_t dim) {
     }
     return sum;
 }
+#endif
 
 #ifdef __AVX2__
 /**

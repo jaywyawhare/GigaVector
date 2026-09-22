@@ -33,7 +33,6 @@ void consistency_destroy(GV_ConsistencyManager *mgr);
  * @brief Set a value.
  *
  * @param mgr Manager instance.
- * @param level level.
  * @return 0 on success, -1 on error.
  */
 int consistency_set_default(GV_ConsistencyManager *mgr, GV_ConsistencyLevel level);
@@ -59,8 +58,7 @@ uint64_t consistency_new_session(GV_ConsistencyManager *mgr);
  * @brief Perform the operation.
  *
  * @param mgr Manager instance.
- * @param session_token session_token.
- * @param write_position write_position.
+
  * @return 0 on success, -1 on error.
  */
 int consistency_update_session(GV_ConsistencyManager *mgr, uint64_t session_token, uint64_t write_position);
@@ -68,7 +66,6 @@ int consistency_update_session(GV_ConsistencyManager *mgr, uint64_t session_toke
  * @brief Get a value.
  *
  * @param mgr Manager instance.
- * @param session_token session_token.
  * @return Value.
  */
 uint64_t consistency_get_session_position(const GV_ConsistencyManager *mgr, uint64_t session_token);
@@ -94,14 +91,12 @@ GV_ConsistencyConfig consistency_eventual(void);
 /**
  * @brief Perform the operation.
  *
- * @param max_staleness_ms max_staleness_ms.
  * @return Result value.
  */
 GV_ConsistencyConfig consistency_bounded(uint64_t max_staleness_ms);
 /**
  * @brief Perform the operation.
  *
- * @param token token.
  * @return Result value.
  */
 GV_ConsistencyConfig consistency_session(uint64_t token);

@@ -5,16 +5,11 @@
 
 #include "storage/database.h"
 
-/*
- * Test-only allocation-failure injection. Always compiled in but disabled by
- * default (fail_after < 0), so normal builds pay only one predictable compare
- * per allocation. See include/core/memory.h for the contract.
- *
- * gv_alloc_fail_after: index of the allocation that should fail (0 = the very
- *   next one), or < 0 when disarmed. gv_alloc_fail_count counts allocations
- *   observed while armed. Not thread-synchronised — tests drive it from a
- *   single thread.
- */
+/* Test-only allocation-failure injection (see include/core/memory.h contract).
+ * Disabled by default (fail_after < 0), so normal builds pay one predictable
+ * compare per allocation. fail_after = index of the allocation to fail (0 = the
+ * next one), < 0 when disarmed. Not thread-synchronised — tests drive it single-
+ * threaded. */
 long gv_alloc_fail_after = -1;
 long gv_alloc_fail_count = 0;
 

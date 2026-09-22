@@ -563,3 +563,42 @@ gv_graph_destroy(g);
 ---
 
 For best practices on resource management, error handling, and batch operations, see the [Python Bindings Guide](python_bindings.md) and [C API Guide](c_api_guide.md). For troubleshooting, see [Troubleshooting](troubleshooting.md).
+
+## Graph Durability and Transactions
+
+```python
+from gigavector import GraphDB, KnowledgeGraph
+
+g = GraphDB()
+g.wal_attach("social.gvgr")     # fsync'd op-log at social.gvgr.wal
+a = g.add_node("Person")
+g.save("social.gvgr")           # checkpoint: truncates the WAL
+
+kg = KnowledgeGraph()
+kg.wal_attach("kg.gvkg")        # same durability story for entities/relations/props
+```
+
+After a crash, `GraphDB.load(path)` / `KnowledgeGraph.load(path)` replay the
+WAL over the last saved snapshot automatically.
+
+### Atomic write batches
+
+Staged write transactions apply all-or-nothing and hit the WAL with one fsync:
+
+```c
+GV_GraphWriteTxn *t = graph_write_txn_begin(g);
+uint64_t a = graph_write_txn_add_node(t, "Person");
+uint64_t b = graph_write_txn_add_node(t, "Person");
+graph_write_txn_add_edge(t, a, b, "KNOWS", 1.0f);  /* staged nodes OK */
+graph_write_txn_commit(t);                         /* or abort() */
+```
+
+### Multi-hop retrieval (GraphRAG-style)
+
+```python
+triples = kg.expand_context(seeds=[entity_id], radius=2)
+```
+
+Returns every triple whose subject/object is within `radius` hops of any seed,
+deduplicated — use it to enrich RAG answers with structured facts around the
+entities your vector hits mention.

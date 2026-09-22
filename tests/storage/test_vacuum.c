@@ -13,10 +13,10 @@ static GV_Database *create_test_db(void) {
     float v2[4] = {0.0f, 1.0f, 0.0f, 0.0f};
     float v3[4] = {0.0f, 0.0f, 1.0f, 0.0f};
     float v4[4] = {0.0f, 0.0f, 0.0f, 1.0f};
-    db_add_vector(db, v1, 4);
-    db_add_vector(db, v2, 4);
-    db_add_vector(db, v3, 4);
-    db_add_vector(db, v4, 4);
+    { int _r = db_add_vector(db, v1, 4); (void)_r; }
+    { int _r = db_add_vector(db, v2, 4); (void)_r; }
+    { int _r = db_add_vector(db, v3, 4); (void)_r; }
+    { int _r = db_add_vector(db, v4, 4); (void)_r; }
     return db;
 }
 

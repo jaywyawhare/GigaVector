@@ -203,8 +203,8 @@ static void test_handle_stats(void) {
 
     float vec1[] = {1.0f, 2.0f, 3.0f, 4.0f};
     float vec2[] = {5.0f, 6.0f, 7.0f, 8.0f};
-    db_add_vector(db, vec1, TEST_DIM);
-    db_add_vector(db, vec2, TEST_DIM);
+    { int _r = db_add_vector(db, vec1, TEST_DIM); (void)_r; }
+    { int _r = db_add_vector(db, vec2, TEST_DIM); (void)_r; }
 
     GV_HandlerContext ctx = { .db = db, .config = NULL };
     GV_HttpRequest request = { .method = GV_HTTP_GET, .url = "/stats" };

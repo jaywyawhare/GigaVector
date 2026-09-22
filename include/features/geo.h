@@ -31,8 +31,6 @@ void geo_destroy(GV_GeoIndex *index);
  *
  * @param index Index instance.
  * @param point_index Index value.
- * @param lat lat.
- * @param lng lng.
  * @return 0 on success, -1 on error.
  */
 int geo_insert(GV_GeoIndex *index, size_t point_index, double lat, double lng);
@@ -41,8 +39,6 @@ int geo_insert(GV_GeoIndex *index, size_t point_index, double lat, double lng);
  *
  * @param index Index instance.
  * @param point_index Index value.
- * @param lat lat.
- * @param lng lng.
  * @return 0 on success, -1 on error.
  */
 int geo_update(GV_GeoIndex *index, size_t point_index, double lat, double lng);
@@ -69,10 +65,7 @@ int geo_get_candidates(const GV_GeoIndex *index, double lat, double lng,
 /**
  * @brief Perform the operation.
  *
- * @param lat1 lat1.
- * @param lng1 lng1.
- * @param lat2 lat2.
- * @param lng2 lng2.
+
  * @return Result value.
  */
 double geo_distance_km(double lat1, double lng1, double lat2, double lng2);

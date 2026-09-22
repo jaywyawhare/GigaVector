@@ -239,12 +239,15 @@ int lsh_insert(void *index, GV_Vector *vector) {
         uint32_t bucket_idx = hash % lsh->num_buckets;
 
         if (bucket_add(&lsh->tables[t][bucket_idx], vector_index) != 0) {
-            vector_destroy(vector);
+            /* Do NOT destroy here: the caller frees the vector on a non-zero
+             * return (see the storage-add-failure path above), so destroying it
+             * would double-free. vector->metadata is already NULL (ownership
+             * moved to storage), so the caller's vector_destroy is safe. */
             return -1;
         }
     }
 
-    vector_destroy(vector);
+    vector_destroy(vector);  /* destroy only on full success */
     return 0;
 }
 
@@ -742,7 +745,6 @@ int lsh_save(const void *index, FILE *out, uint32_t version) {
 
     size_t total_planes = lsh->config.num_tables * lsh->config.num_hash_bits;
 
-    /* Write offsets array */
     if (write_floats(out, lsh->offsets, total_planes) != 0) {
         return -1;
     }

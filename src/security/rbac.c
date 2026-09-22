@@ -13,15 +13,11 @@
 #include <stdio.h>
 #include <pthread.h>
 
-/* Internal Constants */
-
 #define MAX_ROLES 64
 #define MAX_RULES_PER_ROLE 32
 #define MAX_USERS 256
 #define MAX_ROLES_PER_USER 16
 #define MAX_INHERITANCE_DEPTH 16
-
-/* Internal Structures */
 
 /**
  * @brief Internal rule entry for a single resource-permission pair.
@@ -62,8 +58,6 @@ struct GV_RBACManager {
 
     pthread_rwlock_t rwlock;
 };
-
-/* Internal Helpers */
 
 /**
  * @brief Find a role by name (caller must hold at least a read lock).
@@ -147,8 +141,6 @@ static void write_json_string(FILE *fp, const char *s) {
     fputc('"', fp);
 }
 
-/* Simple JSON-like Text Parser Helpers (for rbac_load) */
-
 /**
  * @brief Skip whitespace characters.
  */
@@ -186,6 +178,10 @@ static char *parse_string(const char **pp) {
         char c = **pp;
         if (c == '\\') {
             (*pp)++;
+            /* A backslash immediately before the terminating NUL is a truncated
+             * escape; without this guard we'd consume the NUL as a literal and
+             * then step *past* it (line below), reading out of bounds. */
+            if (**pp == '\0') { gv_free(buf); return NULL; }
             switch (**pp) {
                 case '"':  c = '"';  break;
                 case '\\': c = '\\'; break;
@@ -252,8 +248,6 @@ static char *parse_key(const char **pp) {
     return key;
 }
 
-/* Lifecycle */
-
 GV_RBACManager *rbac_create(void) {
     GV_RBACManager *mgr = gv_calloc(1, sizeof(GV_RBACManager));
     if (!mgr) return NULL;
@@ -269,7 +263,6 @@ GV_RBACManager *rbac_create(void) {
 void rbac_destroy(GV_RBACManager *mgr) {
     if (!mgr) return;
 
-    /* Free roles */
     for (size_t i = 0; i < mgr->role_count; i++) {
         gv_free(mgr->roles[i].name);
         for (size_t j = 0; j < mgr->roles[i].rule_count; j++) {
@@ -277,7 +270,6 @@ void rbac_destroy(GV_RBACManager *mgr) {
         }
     }
 
-    /* Free users */
     for (size_t i = 0; i < mgr->user_count; i++) {
         gv_free(mgr->users[i].user_id);
         for (size_t j = 0; j < mgr->users[i].role_count; j++) {
@@ -289,20 +281,16 @@ void rbac_destroy(GV_RBACManager *mgr) {
     gv_free(mgr);
 }
 
-/* Role Management */
-
 int rbac_create_role(GV_RBACManager *mgr, const char *role_name) {
     if (!mgr || !role_name) return -1;
 
     pthread_rwlock_wrlock(&mgr->rwlock);
 
-    /* Check duplicate */
     if (find_role_index(mgr, role_name) >= 0) {
         pthread_rwlock_unlock(&mgr->rwlock);
         return -1;
     }
 
-    /* Check capacity */
     if (mgr->role_count >= MAX_ROLES) {
         pthread_rwlock_unlock(&mgr->rwlock);
         return -1;
@@ -333,7 +321,6 @@ int rbac_delete_role(GV_RBACManager *mgr, const char *role_name) {
         return -1;
     }
 
-    /* Free role data */
     gv_free(mgr->roles[idx].name);
     for (size_t j = 0; j < mgr->roles[idx].rule_count; j++) {
         gv_free(mgr->roles[idx].rules[j].resource);
@@ -351,7 +338,6 @@ int rbac_delete_role(GV_RBACManager *mgr, const char *role_name) {
         }
     }
 
-    /* Shift remaining roles */
     for (size_t k = (size_t)idx; k < mgr->role_count - 1; k++) {
         mgr->roles[k] = mgr->roles[k + 1];
     }
@@ -387,7 +373,6 @@ int rbac_add_rule(GV_RBACManager *mgr, const char *role_name,
         }
     }
 
-    /* Add new rule */
     if (role->rule_count >= MAX_RULES_PER_ROLE) {
         pthread_rwlock_unlock(&mgr->rwlock);
         return -1;
@@ -422,7 +407,6 @@ int rbac_remove_rule(GV_RBACManager *mgr, const char *role_name,
     for (size_t i = 0; i < role->rule_count; i++) {
         if (strcmp(role->rules[i].resource, resource) == 0) {
             gv_free(role->rules[i].resource);
-            /* Shift remaining rules */
             for (size_t k = i; k < role->rule_count - 1; k++) {
                 role->rules[k] = role->rules[k + 1];
             }
@@ -474,7 +458,6 @@ int rbac_set_inheritance(GV_RBACManager *mgr, const char *role_name,
     int depth = 0;
     while (cur >= 0 && depth < MAX_INHERITANCE_DEPTH) {
         if (cur == child_idx) {
-            /* Cycle detected */
             pthread_rwlock_unlock(&mgr->rwlock);
             return -1;
         }
@@ -488,21 +471,17 @@ int rbac_set_inheritance(GV_RBACManager *mgr, const char *role_name,
     return 0;
 }
 
-/* User-Role Assignment */
-
 int rbac_assign_role(GV_RBACManager *mgr, const char *user_id,
                          const char *role_name) {
     if (!mgr || !user_id || !role_name) return -1;
 
     pthread_rwlock_wrlock(&mgr->rwlock);
 
-    /* Verify role exists */
     if (find_role_index(mgr, role_name) < 0) {
         pthread_rwlock_unlock(&mgr->rwlock);
         return -1;
     }
 
-    /* Find or create user */
     UserEntry *user = find_user(mgr, user_id);
     if (!user) {
         if (mgr->user_count >= MAX_USERS) {
@@ -519,7 +498,6 @@ int rbac_assign_role(GV_RBACManager *mgr, const char *user_id,
         mgr->user_count++;
     }
 
-    /* Check if already assigned */
     for (size_t i = 0; i < user->role_count; i++) {
         if (strcmp(user->role_names[i], role_name) == 0) {
             pthread_rwlock_unlock(&mgr->rwlock);
@@ -527,7 +505,6 @@ int rbac_assign_role(GV_RBACManager *mgr, const char *user_id,
         }
     }
 
-    /* Add role */
     if (user->role_count >= MAX_ROLES_PER_USER) {
         pthread_rwlock_unlock(&mgr->rwlock);
         return -1;
@@ -603,8 +580,6 @@ int rbac_get_user_roles(const GV_RBACManager *mgr, const char *user_id,
     return 0;
 }
 
-/* Authorization Check */
-
 int rbac_check(const GV_RBACManager *mgr, const char *user_id,
                    const char *resource, GV_Permission required) {
     if (!mgr || !user_id || !resource) return 0;
@@ -617,7 +592,6 @@ int rbac_check(const GV_RBACManager *mgr, const char *user_id,
         return 0;
     }
 
-    /* For each assigned role, check if it (or its ancestors) grant access */
     for (size_t i = 0; i < user->role_count; i++) {
         int role_idx = find_role_index(mgr, user->role_names[i]);
         if (role_idx < 0) continue;
@@ -631,8 +605,6 @@ int rbac_check(const GV_RBACManager *mgr, const char *user_id,
     pthread_rwlock_unlock((pthread_rwlock_t *)&mgr->rwlock);
     return 0;
 }
-
-/* List Roles / Free Helpers */
 
 int rbac_list_roles(const GV_RBACManager *mgr, char ***out_names,
                         size_t *out_count) {
@@ -670,27 +642,20 @@ void rbac_free_string_list(char **list, size_t count) {
     gv_free(list);
 }
 
-/* Built-in Roles */
-
 int rbac_init_defaults(GV_RBACManager *mgr) {
     if (!mgr) return -1;
 
-    /* admin: ALL permissions on all resources */
     if (rbac_create_role(mgr, "admin") != 0) return -1;
     if (rbac_add_rule(mgr, "admin", "*", GV_PERM_ALL) != 0) return -1;
 
-    /* writer: READ | WRITE on all resources */
     if (rbac_create_role(mgr, "writer") != 0) return -1;
     if (rbac_add_rule(mgr, "writer", "*", GV_PERM_READ | GV_PERM_WRITE) != 0) return -1;
 
-    /* reader: READ on all resources */
     if (rbac_create_role(mgr, "reader") != 0) return -1;
     if (rbac_add_rule(mgr, "reader", "*", GV_PERM_READ) != 0) return -1;
 
     return 0;
 }
-
-/* Save (JSON-like text format) */
 
 int rbac_save(const GV_RBACManager *mgr, const char *filepath) {
     if (!mgr || !filepath) return -1;
@@ -705,7 +670,6 @@ int rbac_save(const GV_RBACManager *mgr, const char *filepath) {
 
     fprintf(fp, "{\n");
 
-    /* Roles */
     fprintf(fp, "  \"roles\": [\n");
     for (size_t i = 0; i < mgr->role_count; i++) {
         const RoleEntry *role = &mgr->roles[i];
@@ -723,7 +687,6 @@ int rbac_save(const GV_RBACManager *mgr, const char *filepath) {
         }
         fprintf(fp, ",\n");
 
-        /* Rules */
         fprintf(fp, "      \"rules\": [\n");
         for (size_t j = 0; j < role->rule_count; j++) {
             fprintf(fp, "        { \"resource\": ");
@@ -740,7 +703,6 @@ int rbac_save(const GV_RBACManager *mgr, const char *filepath) {
     }
     fprintf(fp, "  ],\n");
 
-    /* Users */
     fprintf(fp, "  \"users\": [\n");
     for (size_t i = 0; i < mgr->user_count; i++) {
         const UserEntry *user = &mgr->users[i];
@@ -770,15 +732,12 @@ int rbac_save(const GV_RBACManager *mgr, const char *filepath) {
     return 0;
 }
 
-/* Load (JSON-like text format) */
-
 GV_RBACManager *rbac_load(const char *filepath) {
     if (!filepath) return NULL;
 
     FILE *fp = fopen(filepath, "r");
     if (!fp) return NULL;
 
-    /* Read entire file */
     fseek(fp, 0, SEEK_END);
     long fsize = ftell(fp);
     if (fsize <= 0) { fclose(fp); return NULL; }
@@ -801,10 +760,8 @@ GV_RBACManager *rbac_load(const char *filepath) {
     char *inherit_names[MAX_ROLES];
     memset(inherit_names, 0, sizeof(inherit_names));
 
-    /* Expect top-level object */
     if (expect_char(&p, '{') != 0) goto fail;
 
-    /* Parse top-level keys */
     while (*p) {
         skip_ws(&p);
         if (*p == '}') break;
@@ -816,7 +773,6 @@ GV_RBACManager *rbac_load(const char *filepath) {
         if (strcmp(key, "roles") == 0) {
             gv_free(key);
 
-            /* Parse roles array */
             if (expect_char(&p, '[') != 0) goto fail;
 
             while (*p) {
@@ -824,13 +780,11 @@ GV_RBACManager *rbac_load(const char *filepath) {
                 if (*p == ']') { p++; break; }
                 if (*p == ',') { p++; continue; }
 
-                /* Parse role object */
                 if (expect_char(&p, '{') != 0) goto fail;
 
                 char *role_name = NULL;
                 char *inherits = NULL;
 
-                /* Temporary storage for rules during parsing */
                 char *rule_resources[MAX_RULES_PER_ROLE];
                 uint32_t rule_permissions[MAX_RULES_PER_ROLE];
                 size_t rule_count = 0;
@@ -850,14 +804,15 @@ GV_RBACManager *rbac_load(const char *filepath) {
 
                     if (strcmp(rkey, "name") == 0) {
                         gv_free(rkey);
+                        gv_free(role_name);  /* free prior value if "name" is duplicated */
                         role_name = parse_string(&p);
                     } else if (strcmp(rkey, "inherits") == 0) {
                         gv_free(rkey);
+                        gv_free(inherits);   /* free prior value if "inherits" is duplicated */
                         inherits = parse_string(&p);
                     } else if (strcmp(rkey, "rules") == 0) {
                         gv_free(rkey);
 
-                        /* Parse rules array */
                         if (expect_char(&p, '[') != 0) {
                             gv_free(role_name);
                             gv_free(inherits);
@@ -869,7 +824,6 @@ GV_RBACManager *rbac_load(const char *filepath) {
                             if (*p == ']') { p++; break; }
                             if (*p == ',') { p++; continue; }
 
-                            /* Parse rule object */
                             if (expect_char(&p, '{') != 0) {
                                 gv_free(role_name);
                                 gv_free(inherits);
@@ -896,6 +850,7 @@ GV_RBACManager *rbac_load(const char *filepath) {
 
                                 if (strcmp(rrkey, "resource") == 0) {
                                     gv_free(rrkey);
+                                    gv_free(res);  /* free prior value if "resource" is duplicated */
                                     res = parse_string(&p);
                                 } else if (strcmp(rrkey, "permissions") == 0) {
                                     gv_free(rrkey);
@@ -903,8 +858,7 @@ GV_RBACManager *rbac_load(const char *filepath) {
                                     perms = (v >= 0) ? (uint32_t)v : 0;
                                 } else {
                                     gv_free(rrkey);
-                                    /* Skip unknown value */
-                                    parse_string(&p);
+                                    gv_free(parse_string(&p));  /* skip + free unknown value (was leaked) */
                                 }
                             }
 
@@ -918,13 +872,11 @@ GV_RBACManager *rbac_load(const char *filepath) {
                         }
                     } else {
                         gv_free(rkey);
-                        /* Skip unknown value */
                         skip_ws(&p);
                         if (*p == '"') {
                             char *tmp = parse_string(&p);
                             gv_free(tmp);
                         } else if (*p == '[') {
-                            /* Skip array: find matching ] */
                             int depth = 1;
                             p++;
                             while (*p && depth > 0) {
@@ -970,7 +922,6 @@ GV_RBACManager *rbac_load(const char *filepath) {
         } else if (strcmp(key, "users") == 0) {
             gv_free(key);
 
-            /* Parse users array */
             if (expect_char(&p, '[') != 0) goto fail;
 
             while (*p) {
@@ -978,7 +929,6 @@ GV_RBACManager *rbac_load(const char *filepath) {
                 if (*p == ']') { p++; break; }
                 if (*p == ',') { p++; continue; }
 
-                /* Parse user object */
                 if (expect_char(&p, '{') != 0) goto fail;
 
                 char *uid = NULL;
@@ -1033,7 +983,6 @@ GV_RBACManager *rbac_load(const char *filepath) {
                     }
                 }
 
-                /* Add user to manager */
                 if (uid && mgr->user_count < MAX_USERS) {
                     size_t ui = mgr->user_count;
                     mgr->users[ui].user_id = uid;
@@ -1054,7 +1003,6 @@ GV_RBACManager *rbac_load(const char *filepath) {
             }
         } else {
             gv_free(key);
-            /* Skip unknown top-level value */
             skip_ws(&p);
             if (*p == '"') {
                 char *tmp = parse_string(&p);

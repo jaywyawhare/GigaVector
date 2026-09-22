@@ -42,7 +42,6 @@ GV_Migration *migration_start(const float *source_data, size_t count,
 /**
  * @brief Retrieve information.
  *
- * @param mig mig.
  * @param info Output information structure.
  * @return 0 on success, -1 on error.
  */
@@ -50,14 +49,12 @@ int migration_get_info(const GV_Migration *mig, GV_MigrationInfo *info);
 /**
  * @brief Perform the operation.
  *
- * @param mig mig.
  * @return 0 on success, -1 on error.
  */
 int migration_wait(GV_Migration *mig);
 /**
  * @brief Perform the operation.
  *
- * @param mig mig.
  * @return 0 on success, -1 on error.
  */
 int migration_cancel(GV_Migration *mig);
@@ -68,7 +65,6 @@ void *migration_take_index(GV_Migration *mig);
 /**
  * @brief Destroy an instance and free associated resources.
  *
- * @param mig mig.
  */
 void migration_destroy(GV_Migration *mig);
 

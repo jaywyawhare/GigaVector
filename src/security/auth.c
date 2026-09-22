@@ -4,6 +4,7 @@
  */
 
 #include "security/auth.h"
+#include "security/crypto.h"
 #include "core/memory.h"
 #include "core/utils.h"
 
@@ -19,8 +20,6 @@
 #include <bcrypt.h>
 #pragma comment(lib, "bcrypt.lib")
 #endif
-
-/* Internal Structures */
 
 #define MAX_API_KEYS 256
 #define KEY_ID_LEN 16
@@ -48,8 +47,6 @@ struct GV_AuthManager {
     size_t key_count;
     pthread_rwlock_t rwlock;
 };
-
-/* Simple SHA-256 Implementation (for portability) */
 
 /* Minimal SHA-256 - in production, use OpenSSL or similar */
 
@@ -166,8 +163,6 @@ static void sha256_final(SHA256_CTX *ctx, uint8_t hash[]) {
     }
 }
 
-/* Hashing Utilities */
-
 int auth_sha256(const void *data, size_t len, unsigned char *hash_out) {
     if (!data || !hash_out) return -1;
 
@@ -188,29 +183,6 @@ void auth_to_hex(const unsigned char *hash, size_t hash_len, char *hex_out) {
     hex_out[hash_len * 2] = '\0';
 }
 
-/* Random Generation */
-
-static int generate_random_bytes(unsigned char *buf, size_t len) {
-#if defined(_WIN32)
-    NTSTATUS st = BCryptGenRandom(NULL, (PUCHAR)buf, (ULONG)len, BCRYPT_USE_SYSTEM_PREFERRED_RNG);
-    if (BCRYPT_SUCCESS(st)) return 0;
-#elif defined(__linux__)
-    ssize_t r = getrandom(buf, len, 0);
-    if (r >= 0 && (size_t)r == len) return 0;
-#endif
-#if !defined(_WIN32)
-    FILE *fp = fopen("/dev/urandom", "rb");
-    if (fp) {
-        size_t n = fread(buf, 1, len, fp);
-        fclose(fp);
-        if (n == len) return 0;
-    }
-#endif
-    fprintf(stderr, "GigaVector auth: FATAL: could not obtain cryptographic randomness\n");
-    return -1;
-}
-
-/* Configuration */
 
 static const GV_AuthConfig DEFAULT_CONFIG = {
     .type = GV_AUTH_NONE,
@@ -227,8 +199,6 @@ void auth_config_init(GV_AuthConfig *config) {
     if (!config) return;
     *config = DEFAULT_CONFIG;
 }
-
-/* Lifecycle */
 
 GV_AuthManager *auth_create(const GV_AuthConfig *config) {
     GV_AuthManager *auth = gv_calloc(1, sizeof(GV_AuthManager));
@@ -255,8 +225,6 @@ void auth_destroy(GV_AuthManager *auth) {
     gv_free(auth);
 }
 
-/* API Key Management */
-
 int auth_generate_api_key(GV_AuthManager *auth, const char *description,
                               uint64_t expires_at, char *key_out, char *key_id_out) {
     if (!auth || !key_out || !key_id_out) return -1;
@@ -268,16 +236,14 @@ int auth_generate_api_key(GV_AuthManager *auth, const char *description,
         return -1;
     }
 
-    /* Generate random key ID and key */
     unsigned char key_id_bytes[KEY_ID_LEN];
     unsigned char key_bytes[KEY_LEN];
-    if (generate_random_bytes(key_id_bytes, KEY_ID_LEN) != 0 ||
-        generate_random_bytes(key_bytes, KEY_LEN) != 0) {
+    if (gv_secure_random_bytes(key_id_bytes, KEY_ID_LEN) != 0 ||
+        gv_secure_random_bytes(key_bytes, KEY_LEN) != 0) {
         pthread_rwlock_unlock(&auth->rwlock);
         return -1;
     }
 
-    /* Convert to hex */
     auth_to_hex(key_id_bytes, KEY_ID_LEN, key_id_out);
     auth_to_hex(key_bytes, KEY_LEN, key_out);
 
@@ -285,7 +251,6 @@ int auth_generate_api_key(GV_AuthManager *auth, const char *description,
     unsigned char hash[HASH_LEN];
     auth_sha256(key_bytes, KEY_LEN, hash);
 
-    /* Store the key entry */
     APIKeyEntry *entry = &auth->keys[auth->key_count];
     strncpy(entry->key_id, key_id_out, sizeof(entry->key_id) - 1);
     auth_to_hex(hash, HASH_LEN, entry->key_hash);
@@ -384,13 +349,10 @@ void auth_free_api_keys(GV_APIKey *keys, size_t count) {
     gv_free(keys);
 }
 
-/* Authentication */
-
 GV_AuthResult auth_verify_api_key(GV_AuthManager *auth, const char *api_key,
                                       GV_Identity *identity) {
     if (!auth || !api_key) return GV_AUTH_MISSING;
 
-    /* Convert key hex string to bytes */
     size_t key_len = strlen(api_key);
     if (key_len != KEY_LEN * 2) return GV_AUTH_INVALID_FORMAT;
 
@@ -403,7 +365,6 @@ GV_AuthResult auth_verify_api_key(GV_AuthManager *auth, const char *api_key,
         key_bytes[i] = (unsigned char)byte;
     }
 
-    /* Hash the key */
     unsigned char hash[HASH_LEN];
     auth_sha256(key_bytes, KEY_LEN, hash);
     char hash_hex[HASH_LEN * 2 + 1];
@@ -441,57 +402,7 @@ GV_AuthResult auth_verify_api_key(GV_AuthManager *auth, const char *api_key,
     return GV_AUTH_INVALID_KEY;
 }
 
-/* Base64 URL decoding for JWT verification */
-static int b64url_decode_val(char c) {
-    if (c >= 'A' && c <= 'Z') return c - 'A';
-    if (c >= 'a' && c <= 'z') return c - 'a' + 26;
-    if (c >= '0' && c <= '9') return c - '0' + 52;
-    if (c == '-') return 62;
-    if (c == '_') return 63;
-    return -1;
-}
-
-static int base64url_decode(const char *in, size_t in_len,
-                            unsigned char *out, size_t *out_len) {
-    if (!in || !out || !out_len) return -1;
-    /* Strip padding */
-    while (in_len > 0 && in[in_len - 1] == '=') in_len--;
-
-    size_t j = 0, i = 0;
-    while (i < in_len) {
-        int sextet[4] = {0, 0, 0, 0};
-        size_t n = 0;
-        for (n = 0; n < 4 && i < in_len; n++, i++) {
-            sextet[n] = b64url_decode_val(in[i]);
-            if (sextet[n] < 0) return -1;
-        }
-        uint32_t triple = ((uint32_t)sextet[0] << 18) | ((uint32_t)sextet[1] << 12) |
-                          ((uint32_t)sextet[2] << 6) | (uint32_t)sextet[3];
-        if (n >= 2) out[j++] = (unsigned char)((triple >> 16) & 0xFF);
-        if (n >= 3) out[j++] = (unsigned char)((triple >> 8) & 0xFF);
-        if (n >= 4) out[j++] = (unsigned char)(triple & 0xFF);
-    }
-    *out_len = j;
-    return 0;
-}
-
 /* Minimal JSON string extraction for JWT claims */
-static int jwt_extract_string(const char *json, const char *key, char *out, size_t out_size) {
-    char pattern[128];
-    snprintf(pattern, sizeof(pattern), "\"%s\"", key);
-    const char *pos = strstr(json, pattern);
-    if (!pos) return -1;
-    pos += strlen(pattern);
-    while (*pos == ' ' || *pos == ':') pos++;
-    if (*pos != '"') return -1;
-    pos++;
-    size_t i = 0;
-    while (*pos && *pos != '"' && i < out_size - 1) {
-        out[i++] = *pos++;
-    }
-    out[i] = '\0';
-    return 0;
-}
 
 static int jwt_extract_uint64(const char *json, const char *key, uint64_t *out) {
     char pattern[128];
@@ -521,14 +432,14 @@ static int jwt_header_alg_is_hs256(const char *token, const char *dot1) {
     size_t decoded_len = sizeof(decoded);
     size_t header_b64_len = (size_t)(dot1 - token);
     if (header_b64_len == 0) return -1;
-    if (base64url_decode(token, header_b64_len, decoded, &decoded_len) != 0) {
+    if (crypto_base64url_decode(token, header_b64_len, decoded, &decoded_len) != 0) {
         return -1;
     }
     if (decoded_len >= sizeof(decoded)) decoded_len = sizeof(decoded) - 1;
     decoded[decoded_len] = '\0';
 
     char alg[64] = {0};
-    if (jwt_extract_string((const char *)decoded, "alg", alg, sizeof(alg)) != 0) {
+    if (gv_json_extract_string((const char *)decoded, "alg", alg, sizeof(alg)) != 0) {
         /* No alg present -> reject. */
         return -1;
     }
@@ -562,10 +473,8 @@ GV_AuthResult auth_verify_jwt(GV_AuthManager *auth, const char *token,
         return GV_AUTH_INVALID_SIGNATURE;
     }
 
-    /* Verify HMAC-SHA256 signature */
     size_t signed_len = (size_t)(dot2 - token);
 
-    /* Compute expected signature */
     unsigned char key_ipad[64], key_opad[64];
     memset(key_ipad, 0x36, 64);
     memset(key_opad, 0x5c, 64);
@@ -603,13 +512,12 @@ GV_AuthResult auth_verify_jwt(GV_AuthManager *auth, const char *token,
     sha256_update(&ctx, inner_hash, 32);
     sha256_final(&ctx, expected_sig);
 
-    /* Decode actual signature from token */
     const char *sig_start = dot2 + 1;
     size_t sig_b64_len = strlen(sig_start);
     unsigned char actual_sig[64];
     size_t actual_sig_len = sizeof(actual_sig);
 
-    if (base64url_decode(sig_start, sig_b64_len, actual_sig, &actual_sig_len) != 0) {
+    if (crypto_base64url_decode(sig_start, sig_b64_len, actual_sig, &actual_sig_len) != 0) {
         return GV_AUTH_INVALID_FORMAT;
     }
 
@@ -617,22 +525,16 @@ GV_AuthResult auth_verify_jwt(GV_AuthManager *auth, const char *token,
         return GV_AUTH_INVALID_SIGNATURE;
     }
 
-    /* Constant-time comparison */
-    unsigned char diff = 0;
-    for (size_t i = 0; i < 32; i++) {
-        diff |= actual_sig[i] ^ expected_sig[i];
-    }
-    if (diff != 0) {
+    if (crypto_constant_time_compare(actual_sig, expected_sig, 32) != 0) {
         return GV_AUTH_INVALID_SIGNATURE;
     }
 
-    /* Decode payload to extract claims */
     const char *payload_start = dot1 + 1;
     size_t payload_b64_len = (size_t)(dot2 - payload_start);
 
     unsigned char decoded[4096];
     size_t decoded_len = sizeof(decoded);
-    if (base64url_decode(payload_start, payload_b64_len, decoded, &decoded_len) != 0) {
+    if (crypto_base64url_decode(payload_start, payload_b64_len, decoded, &decoded_len) != 0) {
         return GV_AUTH_INVALID_FORMAT;
     }
     if (decoded_len >= sizeof(decoded)) decoded_len = sizeof(decoded) - 1;
@@ -661,32 +563,30 @@ GV_AuthResult auth_verify_jwt(GV_AuthManager *auth, const char *token,
         }
     }
 
-    /* Check issuer if configured */
+    /* Fail CLOSED: when an issuer is configured, a token that omits "iss" (or
+     * carries a non-matching one) must be rejected — otherwise dropping the claim
+     * bypasses issuer scoping entirely. */
     if (auth->config.jwt.issuer) {
         char iss[256] = {0};
-        if (jwt_extract_string(payload_json, "iss", iss, sizeof(iss)) == 0) {
-            if (strcmp(iss, auth->config.jwt.issuer) != 0) {
-                return GV_AUTH_INVALID_SIGNATURE;
-            }
+        if (gv_json_extract_string(payload_json, "iss", iss, sizeof(iss)) != 0 ||
+            strcmp(iss, auth->config.jwt.issuer) != 0) {
+            return GV_AUTH_INVALID_SIGNATURE;
         }
     }
 
-    /* Check audience if configured */
     if (auth->config.jwt.audience) {
         char aud[256] = {0};
-        if (jwt_extract_string(payload_json, "aud", aud, sizeof(aud)) == 0) {
-            if (strcmp(aud, auth->config.jwt.audience) != 0) {
-                return GV_AUTH_INVALID_SIGNATURE;
-            }
+        if (gv_json_extract_string(payload_json, "aud", aud, sizeof(aud)) != 0 ||
+            strcmp(aud, auth->config.jwt.audience) != 0) {
+            return GV_AUTH_INVALID_SIGNATURE;
         }
     }
 
-    /* Populate identity */
     if (identity) {
         memset(identity, 0, sizeof(*identity));
 
         char sub[256] = {0};
-        if (jwt_extract_string(payload_json, "sub", sub, sizeof(sub)) == 0) {
+        if (gv_json_extract_string(payload_json, "sub", sub, sizeof(sub)) == 0) {
             identity->subject = gv_dup_cstr(sub);
         } else {
             identity->subject = gv_dup_cstr("unknown");
@@ -734,9 +634,6 @@ void auth_free_identity(GV_Identity *identity) {
     memset(identity, 0, sizeof(*identity));
 }
 
-/* JWT Generation */
-
-/* Base64url encoding */
 static const char base64url_chars[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
 static size_t base64url_encode(const void *data, size_t len, char *out) {
@@ -762,7 +659,6 @@ int auth_generate_jwt(GV_AuthManager *auth, const char *subject,
     if (!auth || !subject || !token_out || token_size < 256) return -1;
     if (!auth->config.jwt.secret) return -1;
 
-    /* Build header */
     const char *header = "{\"alg\":\"HS256\",\"typ\":\"JWT\"}";
     char header_b64[128];
     base64url_encode(header, strlen(header), header_b64);
@@ -799,7 +695,6 @@ int auth_generate_jwt(GV_AuthManager *auth, const char *subject,
     char payload_b64[768];
     base64url_encode(payload, strlen(payload), payload_b64);
 
-    /* Build signature input */
     char sig_input[1024];
     int sig_written = snprintf(sig_input, sizeof(sig_input), "%s.%s",
                                header_b64, payload_b64);
@@ -807,7 +702,6 @@ int auth_generate_jwt(GV_AuthManager *auth, const char *subject,
         return -1;  /* signing input truncated */
     }
 
-    /* HMAC-SHA256 */
     unsigned char key_ipad[64], key_opad[64];
     memset(key_ipad, 0x36, 64);
     memset(key_opad, 0x5c, 64);
@@ -856,8 +750,6 @@ int auth_generate_jwt(GV_AuthManager *auth, const char *subject,
 
     return 0;
 }
-
-/* Utility */
 
 const char *auth_result_string(GV_AuthResult result) {
     switch (result) {

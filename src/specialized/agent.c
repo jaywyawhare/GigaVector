@@ -29,8 +29,6 @@
 #include "multimodal/embedding.h"
 #include "storage/soa_storage.h"
 
-/* Constants */
-
 #define AGENT_MAX_PROMPT_SIZE      (16 * 1024)
 #define AGENT_MAX_USER_MSG_SIZE    (8 * 1024)
 #define AGENT_MAX_FILTER_SIZE      1024
@@ -41,8 +39,6 @@
 #define AGENT_DEFAULT_TEMPERATURE  0.0f
 #define AGENT_DEFAULT_MAX_RETRIES  2
 #define AGENT_OVERSAMPLE_FACTOR    4
-
-/* Internal Agent Structure */
 
 struct GV_Agent {
     GV_AgentType type;
@@ -55,8 +51,6 @@ struct GV_Agent {
     int max_retries;
     pthread_mutex_t mutex;
 };
-
-/* Prompt Templates */
 
 static const char *QUERY_AGENT_SYSTEM_PROMPT =
     "You are a vector database query assistant for GigaVector. "
@@ -106,8 +100,6 @@ static const char *PERSONALIZE_AGENT_SYSTEM_PROMPT =
     "}\n\n"
     "A boost > 1.0 promotes matching results; boost < 1.0 demotes them.\n"
     "Always respond with valid JSON only, no markdown fences.";
-
-/* Internal Helpers */
 
 /**
  * @brief Map provider string to GV_LLMProvider enum.
@@ -161,7 +153,6 @@ static char *build_system_prompt(GV_AgentType type, const char *override,
         }
     }
 
-    /* Calculate buffer size: base prompt + db info + schema */
     size_t needed = strlen(base_prompt) + 512;
     if (schema_json) {
         needed += strlen(schema_json) + 128;
@@ -173,7 +164,6 @@ static char *build_system_prompt(GV_AgentType type, const char *override,
     size_t pos = 0;
     int written;
 
-    /* Copy base prompt */
     written = snprintf(prompt + pos, needed - pos, "%s", base_prompt);
     if (written < 0 || (size_t)written >= needed - pos) {
         gv_free(prompt);
@@ -181,7 +171,6 @@ static char *build_system_prompt(GV_AgentType type, const char *override,
     }
     pos += (size_t)written;
 
-    /* Append database context */
     if (db != NULL) {
         const char *index_name;
         switch (db->index_type) {
@@ -207,7 +196,6 @@ static char *build_system_prompt(GV_AgentType type, const char *override,
         }
     }
 
-    /* Append schema hint */
     if (schema_json != NULL) {
         written = snprintf(prompt + pos, needed - pos,
                            "\n\nAvailable metadata fields:\n%s", schema_json);
@@ -311,8 +299,6 @@ static const char *json_get_string_or_null(const GV_JsonValue *obj, const char *
     return json_get_string(val);
 }
 
-/* Lifecycle */
-
 GV_Agent *agent_create(const void *db, const GV_AgentConfig *config) {
     if (db == NULL || config == NULL) return NULL;
     if (config->api_key == NULL) return NULL;
@@ -323,7 +309,6 @@ GV_Agent *agent_create(const void *db, const GV_AgentConfig *config) {
     agent->type = (GV_AgentType)config->agent_type;
     agent->db = (GV_Database *)db;  /* Cast away const; mutations only in transform agent. */
 
-    /* Configure LLM */
     GV_LLMConfig llm_cfg;
     memset(&llm_cfg, 0, sizeof(llm_cfg));
     llm_cfg.provider = provider_from_string(config->llm_provider);
@@ -358,7 +343,6 @@ GV_Agent *agent_create(const void *db, const GV_AgentConfig *config) {
     agent->schema_json = NULL;
     agent->embed_svc = NULL;
 
-    /* Build system prompt */
     agent->system_prompt = build_system_prompt(agent->type, config->system_prompt_override,
                                                NULL, agent->db);
     if (agent->system_prompt == NULL) {
@@ -388,8 +372,6 @@ void agent_destroy(GV_Agent *agent) {
     gv_free(agent);
 }
 
-/* Schema Hints */
-
 void agent_set_schema_hint(GV_Agent *agent, const char *schema_json) {
     if (agent == NULL || schema_json == NULL) return;
 
@@ -398,15 +380,12 @@ void agent_set_schema_hint(GV_Agent *agent, const char *schema_json) {
     gv_free(agent->schema_json);
     agent->schema_json = gv_dup_cstr(schema_json);
 
-    /* Rebuild system prompt with the new schema */
     gv_free(agent->system_prompt);
     agent->system_prompt = build_system_prompt(agent->type, NULL,
                                                agent->schema_json, agent->db);
 
     pthread_mutex_unlock(&agent->mutex);
 }
-
-/* Query Agent */
 
 GV_AgentResult *agent_query(GV_Agent *agent, const char *natural_language_query, size_t k) {
     GV_AgentResult *result = alloc_result();
@@ -421,19 +400,16 @@ GV_AgentResult *agent_query(GV_Agent *agent, const char *natural_language_query,
 
     pthread_mutex_lock(&agent->mutex);
 
-    /* Build user message */
     char user_msg[AGENT_MAX_USER_MSG_SIZE];
     snprintf(user_msg, sizeof(user_msg),
              "Query: \"%s\"\nReturn at most %zu results.", natural_language_query, k);
 
-    /* Call LLM */
     char *llm_response = llm_call_with_retry(agent, agent->system_prompt, user_msg);
     if (llm_response == NULL) {
         pthread_mutex_unlock(&agent->mutex);
         return result_error(result, "LLM call failed after retries");
     }
 
-    /* Parse JSON response */
     GV_JsonError json_err;
     GV_JsonValue *root = json_parse(llm_response, &json_err);
     if (root == NULL) {
@@ -444,7 +420,6 @@ GV_AgentResult *agent_query(GV_Agent *agent, const char *natural_language_query,
         return result;
     }
 
-    /* Extract fields */
     const char *search_text = json_get_string_or_null(root, "search_text");
     const char *filter_str  = json_get_string_or_null(root, "filter");
     double resp_k           = json_get_number_or(root, "k", (double)k);
@@ -455,15 +430,12 @@ GV_AgentResult *agent_query(GV_Agent *agent, const char *natural_language_query,
 
     GV_DistanceType dist_type = distance_from_string(dist_str);
 
-    /* Save response text */
     result->response_text = gv_dup_cstr(llm_response);
 
-    /* Save generated filter */
     if (filter_str != NULL) {
         result->generated_filter = gv_dup_cstr(filter_str);
     }
 
-    /* Embed the search text to obtain a query vector */
     float *query_vec = NULL;
     size_t embed_dim = 0;
 
@@ -502,7 +474,6 @@ GV_AgentResult *agent_query(GV_Agent *agent, const char *natural_language_query,
     json_free(root);
     gv_free(llm_response);
 
-    /* Execute the search if we have a query vector */
     if (query_vec != NULL && embed_dim == agent->db->dimension) {
         GV_SearchResult *sr = (GV_SearchResult *)gv_calloc(effective_k, sizeof(GV_SearchResult));
         if (sr == NULL) {
@@ -527,7 +498,6 @@ GV_AgentResult *agent_query(GV_Agent *agent, const char *natural_language_query,
             return result_error(result, "database search failed");
         }
 
-        /* Convert SearchResult to indices + distances */
         result->result_count = (size_t)found;
         result->result_indices = (size_t *)gv_alloc((size_t)found * sizeof(size_t));
         result->result_distances = (float *)gv_alloc((size_t)found * sizeof(float));
@@ -567,8 +537,6 @@ GV_AgentResult *agent_query(GV_Agent *agent, const char *natural_language_query,
     return result;
 }
 
-/* Transformation Agent */
-
 GV_AgentResult *agent_transform(GV_Agent *agent, const char *natural_language_instruction) {
     GV_AgentResult *result = alloc_result();
     if (result == NULL) return NULL;
@@ -582,18 +550,15 @@ GV_AgentResult *agent_transform(GV_Agent *agent, const char *natural_language_in
 
     pthread_mutex_lock(&agent->mutex);
 
-    /* Build user message */
     char user_msg[AGENT_MAX_USER_MSG_SIZE];
     snprintf(user_msg, sizeof(user_msg), "Instruction: \"%s\"", natural_language_instruction);
 
-    /* Call LLM */
     char *llm_response = llm_call_with_retry(agent, agent->system_prompt, user_msg);
     if (llm_response == NULL) {
         pthread_mutex_unlock(&agent->mutex);
         return result_error(result, "LLM call failed after retries");
     }
 
-    /* Parse JSON response */
     GV_JsonError json_err;
     GV_JsonValue *root = json_parse(llm_response, &json_err);
     if (root == NULL) {
@@ -628,9 +593,7 @@ GV_AgentResult *agent_transform(GV_Agent *agent, const char *natural_language_in
         return result_error(result, "failed to parse filter expression: %s", filter_str);
     }
 
-    /* Execute the operation */
     if (strcmp(operation, "delete") == 0) {
-        /* Walk all vectors and delete those matching the filter */
         size_t total = database_count(agent->db);
         size_t deleted = 0;
 
@@ -643,13 +606,11 @@ GV_AgentResult *agent_transform(GV_Agent *agent, const char *natural_language_in
                 const float *vec_data = database_get_vector(agent->db, i);
                 if (vec_data == NULL) continue;
 
-                /* Build a temporary vector for filter evaluation */
                 GV_Vector tmp_vec;
                 tmp_vec.dimension = agent->db->dimension;
                 tmp_vec.data = (float *)vec_data;
                 tmp_vec.metadata = NULL;
 
-                /* Retrieve metadata from SoA storage if available */
                 if (agent->db->soa_storage != NULL) {
                     tmp_vec.metadata = soa_storage_get_metadata(agent->db->soa_storage, i);
                 }
@@ -673,7 +634,6 @@ GV_AgentResult *agent_transform(GV_Agent *agent, const char *natural_language_in
         result->success = 1;
 
     } else if (strcmp(operation, "update") == 0) {
-        /* Extract update_metadata from the response */
         GV_JsonValue *update_obj = json_object_get(root, "update_metadata");
 
         size_t total = database_count(agent->db);
@@ -694,7 +654,6 @@ GV_AgentResult *agent_transform(GV_Agent *agent, const char *natural_language_in
 
             if (filter_eval(filter, &tmp_vec) != 1) continue;
 
-            /* Apply metadata updates */
             if (update_obj != NULL && json_is_object(update_obj)) {
                 size_t n_keys = json_object_length(update_obj);
                 if (n_keys > 0) {
@@ -754,8 +713,6 @@ GV_AgentResult *agent_transform(GV_Agent *agent, const char *natural_language_in
     return result;
 }
 
-/* Personalization Agent */
-
 /**
  * @brief Compare helper for qsort: sort by adjusted distance ascending.
  */
@@ -787,7 +744,6 @@ GV_AgentResult *agent_personalize(GV_Agent *agent, const char *query,
 
     pthread_mutex_lock(&agent->mutex);
 
-    /* Build user message with query and profile */
     size_t msg_size = strlen(query) + strlen(user_profile_json) + 256;
     char *user_msg = (char *)gv_alloc(msg_size);
     if (user_msg == NULL) {
@@ -798,7 +754,6 @@ GV_AgentResult *agent_personalize(GV_Agent *agent, const char *query,
              "Query: \"%s\"\nUser profile:\n%s\nReturn at most %zu results.",
              query, user_profile_json, k);
 
-    /* Call LLM */
     char *llm_response = llm_call_with_retry(agent, agent->system_prompt, user_msg);
     gv_free(user_msg);
     if (llm_response == NULL) {
@@ -806,7 +761,6 @@ GV_AgentResult *agent_personalize(GV_Agent *agent, const char *query,
         return result_error(result, "LLM call failed after retries");
     }
 
-    /* Parse JSON response */
     GV_JsonError json_err;
     GV_JsonValue *root = json_parse(llm_response, &json_err);
     if (root == NULL) {
@@ -830,7 +784,6 @@ GV_AgentResult *agent_personalize(GV_Agent *agent, const char *query,
 
     gv_free(llm_response);
 
-    /* Embed search text */
     float *query_vec = NULL;
     size_t embed_dim = 0;
 
@@ -901,10 +854,8 @@ GV_AgentResult *agent_personalize(GV_Agent *agent, const char *query,
         return result_error(result, "database search failed");
     }
 
-    /* Parse personalization adjustments */
     GV_JsonValue *adjustments = json_object_get(root, "adjustments");
 
-    /* Build personalized entries */
     PersonalizedEntry *entries = (PersonalizedEntry *)gv_alloc((size_t)found * sizeof(PersonalizedEntry));
     if (entries == NULL) {
         gv_free(sr);
@@ -928,7 +879,6 @@ GV_AgentResult *agent_personalize(GV_Agent *agent, const char *query,
             entries[i].index = 0;
         }
 
-        /* Apply boost/demote adjustments based on metadata matches */
         if (adjustments != NULL && json_is_array(adjustments)) {
             GV_Metadata *meta = sr[i].vector ? sr[i].vector->metadata : NULL;
             size_t adj_count = json_array_length(adjustments);
@@ -943,7 +893,6 @@ GV_AgentResult *agent_personalize(GV_Agent *agent, const char *query,
 
                 if (field == NULL || value == NULL) continue;
 
-                /* Check if vector metadata matches the field/value */
                 GV_Metadata *m = meta;
                 while (m != NULL) {
                     if (m->key != NULL && m->value != NULL &&
@@ -964,10 +913,8 @@ GV_AgentResult *agent_personalize(GV_Agent *agent, const char *query,
     gv_free(sr);
     json_free(root);
 
-    /* Sort by adjusted distance */
     qsort(entries, (size_t)found, sizeof(PersonalizedEntry), personalized_cmp);
 
-    /* Take top k */
     size_t final_count = ((size_t)found < k) ? (size_t)found : k;
     result->result_indices = (size_t *)gv_alloc(final_count * sizeof(size_t));
     result->result_distances = (float *)gv_alloc(final_count * sizeof(float));
@@ -994,8 +941,6 @@ GV_AgentResult *agent_personalize(GV_Agent *agent, const char *query,
     pthread_mutex_unlock(&agent->mutex);
     return result;
 }
-
-/* Result Cleanup */
 
 void agent_free_result(GV_AgentResult *result) {
     if (result == NULL) return;

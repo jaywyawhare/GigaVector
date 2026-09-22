@@ -16,6 +16,7 @@
 #endif
 
 #include "multimodal/embedding.h"
+#include "multimodal/http_buffer.h"
 #include "core/utils.h"
 
 #define MAX_RESPONSE_SIZE (10 * 1024 * 1024)  // 10MB for batch responses
@@ -155,14 +156,14 @@ int embedding_cache_get(GV_EmbeddingCache *cache,
             *embedding = entry->embedding;
             
             pthread_mutex_unlock(&cache->mutex);
-            return 1;  /* Found */
+            return 1;
         }
         entry = entry->next;
     }
     
     cache->misses++;
     pthread_mutex_unlock(&cache->mutex);
-    return 0;  /* Not found */
+    return 0;
 }
 
 int embedding_cache_put(GV_EmbeddingCache *cache,
@@ -329,43 +330,6 @@ void embedding_config_free(GV_EmbeddingConfig *config) {
 
 #ifdef HAVE_CURL
 
-struct ResponseBuffer {
-    char *data;
-    size_t size;
-    size_t capacity;
-};
-
-static size_t write_callback(void *contents, size_t size, size_t nmemb, void *userp) {
-    size_t realsize = size * nmemb;
-    struct ResponseBuffer *buf = (struct ResponseBuffer *)userp;
-    
-    if (buf->size + realsize > MAX_RESPONSE_SIZE) {
-        return 0;
-    }
-    
-    if (buf->size + realsize >= buf->capacity) {
-        size_t new_capacity = buf->capacity * 2;
-        if (new_capacity < buf->size + realsize + 1) {
-            new_capacity = buf->size + realsize + 1;
-        }
-        if (new_capacity > MAX_RESPONSE_SIZE) {
-            new_capacity = MAX_RESPONSE_SIZE;
-        }
-        char *new_data = (char *)gv_realloc(buf->data, new_capacity);
-        if (new_data == NULL) {
-            return 0;
-        }
-        buf->data = new_data;
-        buf->capacity = new_capacity;
-    }
-    
-    memcpy(buf->data + buf->size, contents, realsize);
-    buf->size += realsize;
-    buf->data[buf->size] = '\0';
-    
-    return realsize;
-}
-
 static int generate_huggingface_embedding(GV_EmbeddingService *service,
                                          const char *text,
                                          size_t *embedding_dim,
@@ -405,8 +369,18 @@ static int parse_openai_embedding_response(const char *json, float **embedding, 
         if (*p == ',') count++;
         p++;
     }
+    /* Reject an empty array "[]": the count++ below assumes a trailing element
+     * after the last comma, which for empty content would fabricate a 1-element
+     * vector with an unwritten (uninitialized) float and report success. */
+    int has_content = 0;
+    for (const char *q = embedding_start; *q && *q != ']'; q++) {
+        if (*q != ' ' && *q != '\t' && *q != '\n' && *q != '\r') { has_content = 1; break; }
+    }
+    if (!has_content) {
+        return -1;
+    }
     count++;
-    
+
     if (count == 0) {
         return -1;
     }
@@ -433,21 +407,6 @@ static int parse_openai_embedding_response(const char *json, float **embedding, 
     return 0;
 }
 
-static size_t json_escape_into(char *dst, size_t dst_size, const char *src) {
-    size_t w = 0;
-    for (; *src && w + 6 < dst_size; src++) {
-        switch (*src) {
-            case '"':  dst[w++] = '\\'; dst[w++] = '"'; break;
-            case '\\': dst[w++] = '\\'; dst[w++] = '\\'; break;
-            case '\n': dst[w++] = '\\'; dst[w++] = 'n'; break;
-            case '\r': dst[w++] = '\\'; dst[w++] = 'r'; break;
-            case '\t': dst[w++] = '\\'; dst[w++] = 't'; break;
-            default:   dst[w++] = *src; break;
-        }
-    }
-    dst[w] = '\0';
-    return w;
-}
 
 static int generate_openai_embedding(GV_EmbeddingService *service,
                                      const char *text,
@@ -459,7 +418,7 @@ static int generate_openai_embedding(GV_EmbeddingService *service,
     }
 
     char escaped_text[3072];
-    json_escape_into(escaped_text, sizeof(escaped_text), text);
+    gv_json_escape(escaped_text, sizeof(escaped_text), text);
 
     char request_json[4096];
     const char *model = service->config.model ? service->config.model : "text-embedding-3-small";
@@ -477,10 +436,11 @@ static int generate_openai_embedding(GV_EmbeddingService *service,
     
     const char *url = service->config.base_url ? service->config.base_url : "https://api.openai.com/v1/embeddings";
     
-    struct ResponseBuffer buf;
+    GV_HttpBuffer buf;
     buf.data = (char *)gv_alloc(4096);
     buf.size = 0;
     buf.capacity = 4096;
+    buf.max_size = MAX_RESPONSE_SIZE;
     if (buf.data == NULL) {
         return -1;
     }
@@ -495,7 +455,7 @@ static int generate_openai_embedding(GV_EmbeddingService *service,
     curl_easy_setopt(curl, CURLOPT_URL, url);
     curl_easy_setopt(curl, CURLOPT_POSTFIELDS, request_json);
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, gv_http_write_callback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buf);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, service->config.timeout_seconds > 0 ?
                      service->config.timeout_seconds : DEFAULT_TIMEOUT);
@@ -620,10 +580,11 @@ static int generate_google_embedding(GV_EmbeddingService *service,
         }
     }
     
-    struct ResponseBuffer buf;
+    GV_HttpBuffer buf;
     buf.data = (char *)gv_alloc(4096);
     buf.size = 0;
     buf.capacity = 4096;
+    buf.max_size = MAX_RESPONSE_SIZE;
     if (buf.data == NULL) {
         return -1;
     }
@@ -638,7 +599,7 @@ static int generate_google_embedding(GV_EmbeddingService *service,
     curl_easy_setopt(curl, CURLOPT_URL, url);
     curl_easy_setopt(curl, CURLOPT_POSTFIELDS, request_json);
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, gv_http_write_callback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buf);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, service->config.timeout_seconds > 0 ?
                      service->config.timeout_seconds : DEFAULT_TIMEOUT);
@@ -743,10 +704,11 @@ static int generate_google_embedding_batch(GV_EmbeddingService *service,
         }
     }
     
-    struct ResponseBuffer buf;
+    GV_HttpBuffer buf;
     buf.data = (char *)gv_alloc(262144);
     buf.size = 0;
     buf.capacity = 262144;
+    buf.max_size = MAX_RESPONSE_SIZE;
     if (buf.data == NULL) {
         gv_free(request_json);
         return -1;
@@ -762,7 +724,7 @@ static int generate_google_embedding_batch(GV_EmbeddingService *service,
     curl_easy_setopt(curl, CURLOPT_URL, url);
     curl_easy_setopt(curl, CURLOPT_POSTFIELDS, request_json);
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, gv_http_write_callback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buf);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, service->config.timeout_seconds > 0 ?
                      service->config.timeout_seconds : DEFAULT_TIMEOUT);
@@ -912,10 +874,11 @@ static int generate_huggingface_embedding(GV_EmbeddingService *service,
         url = full_url;
     }
     
-    struct ResponseBuffer buf;
+    GV_HttpBuffer buf;
     buf.data = (char *)gv_alloc(4096);
     buf.size = 0;
     buf.capacity = 4096;
+    buf.max_size = MAX_RESPONSE_SIZE;
     if (buf.data == NULL) {
         return -1;
     }
@@ -932,7 +895,7 @@ static int generate_huggingface_embedding(GV_EmbeddingService *service,
     curl_easy_setopt(curl, CURLOPT_URL, url);
     curl_easy_setopt(curl, CURLOPT_POSTFIELDS, request_json);
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, gv_http_write_callback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buf);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, service->config.timeout_seconds > 0 ?
                      service->config.timeout_seconds : DEFAULT_TIMEOUT);
@@ -1005,10 +968,11 @@ static int generate_huggingface_embedding_batch(GV_EmbeddingService *service,
         url = full_url;
     }
     
-    struct ResponseBuffer buf;
+    GV_HttpBuffer buf;
     buf.data = (char *)gv_alloc(8192);
     buf.size = 0;
     buf.capacity = 8192;
+    buf.max_size = MAX_RESPONSE_SIZE;
     if (buf.data == NULL) {
         gv_free(request_json);
         return -1;
@@ -1026,7 +990,7 @@ static int generate_huggingface_embedding_batch(GV_EmbeddingService *service,
     curl_easy_setopt(curl, CURLOPT_URL, url);
     curl_easy_setopt(curl, CURLOPT_POSTFIELDS, request_json);
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, gv_http_write_callback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buf);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, service->config.timeout_seconds > 0 ?
                      service->config.timeout_seconds : DEFAULT_TIMEOUT);
@@ -1148,10 +1112,11 @@ static int generate_openai_embedding_batch(GV_EmbeddingService *service,
     
     const char *url = service->config.base_url ? service->config.base_url : "https://api.openai.com/v1/embeddings";
     
-    struct ResponseBuffer buf;
+    GV_HttpBuffer buf;
     buf.data = (char *)gv_alloc(8192);
     buf.size = 0;
     buf.capacity = 8192;
+    buf.max_size = MAX_RESPONSE_SIZE;
     if (buf.data == NULL) {
         gv_free(request_json);
         return -1;
@@ -1167,7 +1132,7 @@ static int generate_openai_embedding_batch(GV_EmbeddingService *service,
     curl_easy_setopt(curl, CURLOPT_URL, url);
     curl_easy_setopt(curl, CURLOPT_POSTFIELDS, request_json);
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, gv_http_write_callback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buf);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, service->config.timeout_seconds > 0 ?
                      service->config.timeout_seconds : DEFAULT_TIMEOUT);
@@ -1335,8 +1300,7 @@ int embedding_generate(GV_EmbeddingService *service,
             return 0;
         }
     }
-    
-    /* Generate embedding */
+
     int result = -1;
     
 #ifdef HAVE_CURL
@@ -1382,8 +1346,13 @@ int embedding_generate_batch(GV_EmbeddingService *service,
         service->config.provider == GV_EMBEDDING_PROVIDER_CUSTOM) {
         int batch_result = generate_openai_embedding_batch(service, texts, text_count,
                                                           embedding_dims, embeddings);
-        if (batch_result == 0) {
-            success_count = text_count;
+        /* The batch call returns the count parsed (>=0) on success, -1 on error
+         * — never 0-means-success. The old `== 0` check therefore treated every
+         * successful batch as failure (re-running per item, leaking the batch's
+         * already-allocated vectors) and treated a 0-count as full success with
+         * uninitialized outputs. Mirror the Google branch's >= 0 convention. */
+        if (batch_result >= 0) {
+            success_count = (size_t)batch_result;
         } else {
             for (size_t i = 0; i < text_count; i++) {
                 if (embedding_generate(service, texts[i], &(*embedding_dims)[i],

@@ -125,24 +125,6 @@ class TestAPI(unittest.TestCase):
             self.assertAlmostEqual(results[0][0].distance, 0.1, places=3)
             self.assertAlmostEqual(results[1][0].distance, 0.1, places=3)
 
-    # def test_error_handling(self):
-    #     with Database.open(None, dimension=2, index=IndexType.KDTREE) as db:
-    #         # Wrong dimension for add_vector
-    #         with self.assertRaises(ValueError):
-    #             db.add_vector([1.0])
-    #         with self.assertRaises(ValueError):
-    #             db.add_vector([1.0, 2.0, 3.0])
-
-    #         # Wrong dimension for search
-    #         with self.assertRaises(ValueError):
-    #             db.search([1.0], k=1)
-    #         with self.assertRaises(ValueError):
-    #             db.search([1.0, 2.0, 3.0], k=1)
-
-    #         # Invalid k
-    #         with self.assertRaises(RuntimeError):
-    #             db.search([1.0, 2.0], k=0)
-
     def test_index_type_smoke(self):
         # Use dimension 8 so IVFPQ (default m=8) can initialize.
         dim = 8

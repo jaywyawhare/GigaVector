@@ -164,6 +164,14 @@ int wal_dump(const char *path, size_t expected_dimension, uint32_t expected_inde
 void wal_close(GV_WAL *wal);
 
 /**
+ * @brief Set the fsync interval in records (group commit).
+ * 1 (default) fsyncs every record (crash-durable). A larger interval fsyncs only
+ * every N records — much faster for bulk loads at the cost of power-loss durability
+ * for the last <N records. Forces a durable flush of anything currently pending.
+ */
+void wal_set_sync_interval(GV_WAL *wal, size_t interval);
+
+/**
  * @brief Truncate the WAL file (used after successful checkpoint/save).
  *
  * @param path WAL file path.

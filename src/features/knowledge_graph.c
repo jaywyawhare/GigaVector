@@ -8,6 +8,7 @@
  */
 
 #include "features/knowledge_graph.h"
+#include "gv_wal_codec.h"
 #include "core/memory.h"
 #include "core/id_bitmap.h"
 #include "core/utils.h"
@@ -22,6 +23,12 @@
 #include <time.h>
 #include <pthread.h>
 #include <limits.h>
+#ifndef _WIN32
+#include <unistd.h>
+#else
+#include <io.h>
+#define fsync(fd) _commit(fd)
+#endif
 
 #define KG_MAGIC         "GVKG"
 #define KG_MAGIC_LEN     4
@@ -135,6 +142,9 @@ struct GV_KnowledgeGraph {
     KG_IndexEntry **subject_index;
     KG_IndexEntry **object_index;
     KG_IndexEntry **predicate_index;
+    KG_IndexEntry **chunk_index;     /* hash(chunk_id) -> relation_ids */
+    KG_IndexEntry **name_index;      /* hash(name) -> entity_ids */
+    KG_IndexEntry **type_index;      /* hash(type) -> entity_ids */
     size_t          spo_bucket_count;
 
     float     *all_embeddings;       /* dim * embedding_cap floats */
@@ -144,8 +154,49 @@ struct GV_KnowledgeGraph {
 
     GV_Database *vdb;                /* optional: resolve entity similarity via db_search */
 
+    /* Write-ahead log: mutations are appended + fsync'd before the mutating
+     * call returns; kg_load replays the log over the last snapshot. */
+    FILE *wal_file;
+    char *wal_path;
+    int   wal_replaying;
+
     pthread_rwlock_t rwlock;
 };
+
+/* ── WAL record format (little-endian, framed via gv_wal_codec.h) ────────
+ *   1 ADD_ENTITY      u64 id, str name, str type, u8 has_emb, u32 dim,
+ *                     dim*float (only when has_emb)
+ *   2 REMOVE_ENTITY   u64 id
+ *   3 ADD_RELATION    u64 id, u64 subject, str predicate, u64 object, f32 weight
+ *   4 REMOVE_RELATION u64 id
+ *   5 SET_ENTITY_PROP u64 id, str key, str value
+ *   6 SET_RELATION_PROP u64 id, str key, str value */
+#define KG_WAL_OP_ADD_ENTITY      1
+#define KG_WAL_OP_REMOVE_ENTITY   2
+#define KG_WAL_OP_ADD_RELATION    3
+#define KG_WAL_OP_REMOVE_RELATION 4
+#define KG_WAL_OP_SET_ENTITY_PROP 5
+#define KG_WAL_OP_SET_RELATION_PROP 6
+#define KG_WAL_OP_REMOVE_ENTITY_PROP 7
+#define KG_WAL_OP_REMOVE_RELATION_PROP 8
+
+static void kg_wal_close(GV_KnowledgeGraph *kg)
+{
+    if (kg->wal_file) {
+        fclose(kg->wal_file);
+        kg->wal_file = NULL;
+    }
+    gv_free(kg->wal_path);
+    kg->wal_path = NULL;
+}
+
+/* Append+fsync one record. Called with the write lock held or during
+ * single-threaded replay. Returns 0 on success. */
+static int kg_wal_append(GV_KnowledgeGraph *kg, const GV_WalBuf *b)
+{
+    if (!kg->wal_file || kg->wal_replaying) return 0;
+    return gv_wal_append_frame(kg->wal_file, b);
+}
 
 static uint64_t kg_hash_uint64(uint64_t key, size_t buckets) {
     /* Splitmix-style finaliser */
@@ -166,15 +217,47 @@ static uint64_t kg_hash_string(const char *str) {
     return h;
 }
 
+/** @brief Hash of a property value's string form (used for chunk-index keying). */
+static uint64_t kg_prop_hash(GV_PropValue v) {
+    char *s = gv_prop_to_string(v);
+    uint64_t h = kg_hash_string(s ? s : "");
+    gv_free(s);
+    return h;
+}
+
+/** @brief True when a property value's string form equals @p s. */
+static int kg_prop_str_eq(GV_PropValue v, const char *s) {
+    char *ps = gv_prop_to_string(v);
+    int eq = ps && s && strcmp(ps, s) == 0;
+    gv_free(ps);
+    return eq;
+}
+
 static uint64_t kg_now_epoch(void) {
     return (uint64_t)time(NULL);
+}
+
+static int kg_prop_remove(GV_KGProp **head, size_t *count, const char *key) {
+    GV_KGProp *prev = NULL;
+    for (GV_KGProp *p = *head; p; prev = p, p = p->next) {
+        if (strcmp(p->key, key) == 0) {
+            if (prev) prev->next = p->next;
+            else *head = p->next;
+            gv_free(p->key);
+            gv_prop_free(&p->value);
+            gv_free(p);
+            (*count)--;
+            return 0;
+        }
+    }
+    return -1;
 }
 
 static void kg_prop_free_list(GV_KGProp *head) {
     while (head) {
         GV_KGProp *next = head->next;
         gv_free(head->key);
-        gv_free(head->value);
+        gv_prop_free(&head->value);
         gv_free(head);
         head = next;
     }
@@ -191,19 +274,18 @@ static int kg_prop_set(GV_KGProp **head, size_t *count,
                        const char *key, const char *value) {
     GV_KGProp *existing = kg_prop_find(*head, key);
     if (existing) {
-        char *dup = gv_dup_cstr(value);
-        if (!dup) return -1;
-        gv_free(existing->value);
-        existing->value = dup;
+        GV_PropValue newval = gv_prop_parse(value, GV_PROP_STRING);
+        gv_prop_free(&existing->value);
+        existing->value = newval;
         return 0;
     }
     GV_KGProp *node = (GV_KGProp *)gv_calloc(1, sizeof(GV_KGProp));
     if (!node) return -1;
     node->key = gv_dup_cstr(key);
-    node->value = gv_dup_cstr(value);
-    if (!node->key || !node->value) {
+    node->value = gv_prop_string(value);
+    if (!node->key || node->value.type == GV_PROP_NULL) {
         gv_free(node->key);
-        gv_free(node->value);
+        gv_prop_free(&node->value);
         gv_free(node);
         return -1;
     }
@@ -234,7 +316,7 @@ static KG_RelationNode *kg_find_relation_node(const GV_KnowledgeGraph *kg,
     return NULL;
 }
 
-/* ---- Direct adjacency (constant-time hops) ------------------------------ */
+/* Direct adjacency (constant-time hops) */
 
 static int kg_edge_push(KG_Edge **arr, size_t *count, size_t *cap,
                         KG_RelationNode *rel, KG_EntityNode *neighbor) {
@@ -343,6 +425,21 @@ static void kg_index_remove_id(KG_IndexEntry **table, size_t buckets,
     if (e) kg_idlist_remove(&e->list, relation_id);
 }
 
+/* hash(string)-keyed index maintenance shared by the name/type/chunk indexes */
+static void kg_str_index_add(GV_KnowledgeGraph *kg, KG_IndexEntry **table,
+                             size_t buckets, const char *s, uint64_t id) {
+    (void)kg;
+    if (!s) return;
+    KG_IndexEntry *e = kg_index_get_or_create(table, buckets, kg_hash_string(s));
+    if (e) kg_idlist_push(&e->list, id);
+}
+
+static void kg_str_index_remove(KG_IndexEntry **table, size_t buckets,
+                                const char *s, uint64_t id) {
+    if (!s) return;
+    kg_index_remove_id(table, buckets, kg_hash_string(s), id);
+}
+
 static void kg_index_free_table(KG_IndexEntry **table, size_t buckets) {
     if (!table) return;
     for (size_t i = 0; i < buckets; i++) {
@@ -443,11 +540,12 @@ static size_t kg_collect_relations_for_entity(const GV_KnowledgeGraph *kg,
     if (se) {
         for (size_t i = 0; i < se->list.count; i++) {
             if (total >= cap) {
-                cap *= 2;
+                size_t new_cap = cap * 2;
                 uint64_t *tmp = (uint64_t *)gv_realloc(ids,
-                                                      cap * sizeof(uint64_t));
+                                                      new_cap * sizeof(uint64_t));
                 if (!tmp) break;
                 ids = tmp;
+                cap = new_cap;  /* only after success; else a later block writes OOB */
             }
             ids[total++] = se->list.ids[i];
         }
@@ -463,11 +561,12 @@ static size_t kg_collect_relations_for_entity(const GV_KnowledgeGraph *kg,
             }
             if (dup) continue;
             if (total >= cap) {
-                cap *= 2;
+                size_t new_cap = cap * 2;
                 uint64_t *tmp = (uint64_t *)gv_realloc(ids,
-                                                      cap * sizeof(uint64_t));
+                                                      new_cap * sizeof(uint64_t));
                 if (!tmp) break;
                 ids = tmp;
+                cap = new_cap;  /* only after success; else a later block writes OOB */
             }
             ids[total++] = oe->list.ids[i];
         }
@@ -477,7 +576,7 @@ static size_t kg_collect_relations_for_entity(const GV_KnowledgeGraph *kg,
     return total;
 }
 
-/* ── Dgraph-style typed roaring sets ─────────────────────────────────────────
+/* Dgraph-style typed roaring sets:
  * Materialize typed relation / neighbor sets as roaring bitmaps (id_bitmap.h)
  * so typed queries compose as set operations — the Dgraph model where a
  * <predicate> is a UID set and a typed join is a bitmap AND. Callers own the
@@ -536,6 +635,12 @@ static int kg_remove_relation_internal(GV_KnowledgeGraph *kg,
             uint64_t pred_hash = kg_hash_string(n->relation.predicate);
             kg_index_remove_id(kg->predicate_index, kg->spo_bucket_count,
                                pred_hash, relation_id);
+
+            GV_KGProp *cp = kg_prop_find(n->relation.properties, "chunk_id");
+            if (cp && cp->value.type == GV_PROP_STRING && cp->value.as.s) {
+                kg_index_remove_id(kg->chunk_index, kg->spo_bucket_count,
+                                   kg_hash_string(cp->value.as.s), relation_id);
+            }
 
             /* Drop the edge from both endpoints' adjacency before freeing it. */
             kg_unlink_adjacency(kg, n);
@@ -832,7 +937,14 @@ GV_KnowledgeGraph *kg_create(const GV_KGConfig *config) {
                                                  sizeof(KG_IndexEntry *));
     kg->predicate_index = (KG_IndexEntry **)gv_calloc(kg->spo_bucket_count,
                                                     sizeof(KG_IndexEntry *));
-    if (!kg->subject_index || !kg->object_index || !kg->predicate_index)
+    kg->chunk_index = (KG_IndexEntry **)gv_calloc(kg->spo_bucket_count,
+                                                  sizeof(KG_IndexEntry *));
+    kg->name_index = (KG_IndexEntry **)gv_calloc(kg->entity_bucket_count,
+                                                  sizeof(KG_IndexEntry *));
+    kg->type_index = (KG_IndexEntry **)gv_calloc(kg->entity_bucket_count,
+                                                  sizeof(KG_IndexEntry *));
+    if (!kg->subject_index || !kg->object_index || !kg->predicate_index ||
+        !kg->chunk_index || !kg->name_index || !kg->type_index)
         goto fail;
 
     if (pthread_rwlock_init(&kg->rwlock, NULL) != 0) goto fail;
@@ -845,6 +957,9 @@ fail:
     gv_free(kg->subject_index);
     gv_free(kg->object_index);
     gv_free(kg->predicate_index);
+    gv_free(kg->chunk_index);
+    gv_free(kg->name_index);
+    gv_free(kg->type_index);
     gv_free(kg);
     return NULL;
 }
@@ -878,12 +993,61 @@ void kg_destroy(GV_KnowledgeGraph *kg) {
     kg_index_free_table(kg->subject_index, kg->spo_bucket_count);
     kg_index_free_table(kg->object_index, kg->spo_bucket_count);
     kg_index_free_table(kg->predicate_index, kg->spo_bucket_count);
+    kg_index_free_table(kg->chunk_index, kg->spo_bucket_count);
+    kg_index_free_table(kg->name_index, kg->entity_bucket_count);
+    kg_index_free_table(kg->type_index, kg->entity_bucket_count);
 
     gv_free(kg->all_embeddings);
     gv_free(kg->embedding_entity_ids);
 
+    kg_wal_close(kg);
+
     pthread_rwlock_destroy(&kg->rwlock);
     gv_free(kg);
+}
+
+/* Insert an entity with an explicit id (WAL replay). Caller holds the write
+ * lock. Unlike kg_add_entity this does not mirror into an attached vector DB —
+ * the vector DB has its own durability story. Returns 0 on success. */
+static int kg_insert_entity_with_id(GV_KnowledgeGraph *kg, uint64_t eid,
+                                    const char *name, const char *type,
+                                    const float *embedding, size_t dimension) {
+    if (!name || !type) return -1;
+    KG_EntityNode *node = (KG_EntityNode *)gv_calloc(1, sizeof(KG_EntityNode));
+    if (!node) return -1;
+
+    GV_KGEntity *e = &node->entity;
+    e->entity_id  = eid;
+    e->name       = gv_dup_cstr(name);
+    e->type       = gv_dup_cstr(type);
+    e->created_at = kg_now_epoch();
+    e->confidence = 1.0f;
+    if (!e->name || !e->type) {
+        gv_free(e->name);
+        gv_free(e->type);
+        gv_free(node);
+        return -1;
+    }
+
+    if (embedding && dimension > 0 && kg->config.embedding_dimension > 0) {
+        e->embedding = (float *)gv_alloc(dimension * sizeof(float));
+        if (e->embedding) {
+            memcpy(e->embedding, embedding, dimension * sizeof(float));
+            e->dimension = dimension;
+            kg_embedding_add(kg, eid, embedding, dimension);
+        }
+    }
+
+    size_t bucket = (size_t)kg_hash_uint64(eid, kg->entity_bucket_count);
+    node->next = kg->entity_buckets[bucket];
+    kg->entity_buckets[bucket] = node;
+    kg->entity_count++;
+
+    kg_str_index_add(kg, kg->name_index, kg->entity_bucket_count, e->name, eid);
+    kg_str_index_add(kg, kg->type_index, kg->entity_bucket_count, e->type, eid);
+
+    if (eid >= kg->next_entity_id) kg->next_entity_id = eid + 1;
+    return 0;
 }
 
 uint64_t kg_add_entity(GV_KnowledgeGraph *kg, const char *name,
@@ -898,61 +1062,46 @@ uint64_t kg_add_entity(GV_KnowledgeGraph *kg, const char *name,
         return 0;
     }
 
-    KG_EntityNode *node = (KG_EntityNode *)gv_calloc(1, sizeof(KG_EntityNode));
-    if (!node) {
-        pthread_rwlock_unlock(&kg->rwlock);
-        return 0;
-    }
-
     uint64_t eid = kg->next_entity_id++;
-    GV_KGEntity *e = &node->entity;
-    e->entity_id  = eid;
-    e->name       = gv_dup_cstr(name);
-    e->type       = gv_dup_cstr(type);
-    e->properties = NULL;
-    e->prop_count = 0;
-    e->created_at = kg_now_epoch();
-    e->confidence = 1.0f;
 
-    if (!e->name || !e->type) {
-        gv_free(e->name);
-        gv_free(e->type);
-        gv_free(node);
+    if (kg_insert_entity_with_id(kg, eid, name, type, embedding, dimension) != 0) {
+        /* id consumed; bump past it so it is never reused after failure */
         pthread_rwlock_unlock(&kg->rwlock);
         return 0;
-    }
-
-    if (embedding && dimension > 0 && kg->config.embedding_dimension > 0) {
-        e->embedding = (float *)gv_alloc(dimension * sizeof(float));
-        if (e->embedding) {
-            memcpy(e->embedding, embedding, dimension * sizeof(float));
-            e->dimension = dimension;
-            kg_embedding_add(kg, eid, embedding, dimension);
-        }
     }
 
     /* Vectors-as-a-predicate: if a vector DB is attached, mirror the embedding
      * there under "kgent:{id}" so similarity resolves via db_search. */
-    if (kg->vdb != NULL && embedding && dimension > 0) {
+    if (kg->vdb != NULL && embedding && dimension > 0 &&
+        kg->config.embedding_dimension > 0) {
         char kid[48];
         snprintf(kid, sizeof(kid), "kgent:%llu", (unsigned long long)eid);
         db_add_vector_with_id(kg->vdb, kid, embedding, dimension);
     }
 
-    size_t bucket = (size_t)kg_hash_uint64(eid, kg->entity_bucket_count);
-    node->next = kg->entity_buckets[bucket];
-    kg->entity_buckets[bucket] = node;
-    kg->entity_count++;
+    {
+        GV_WalBuf b;
+        gv_wal_init(&b);
+        gv_wal_put_u8(&b, KG_WAL_OP_ADD_ENTITY);
+        gv_wal_put_u64(&b, eid);
+        gv_wal_put_str(&b, name);
+        gv_wal_put_str(&b, type);
+        uint8_t has_emb = (embedding && dimension > 0 &&
+                           kg->config.embedding_dimension > 0) ? 1 : 0;
+        gv_wal_put_u8(&b, has_emb);
+        if (has_emb) {
+            gv_wal_put_u32(&b, (uint32_t)dimension);
+            gv_wal_put_bytes(&b, embedding, dimension * sizeof(float));
+        }
+        kg_wal_append(kg, &b);
+        gv_wal_free(&b);
+    }
 
     pthread_rwlock_unlock(&kg->rwlock);
     return eid;
 }
 
-int kg_remove_entity(GV_KnowledgeGraph *kg, uint64_t entity_id) {
-    if (!kg) return -1;
-
-    pthread_rwlock_wrlock(&kg->rwlock);
-
+static int kg_remove_entity_internal(GV_KnowledgeGraph *kg, uint64_t entity_id) {
     uint64_t *rel_ids = NULL;
     size_t rel_count = kg_collect_relations_for_entity(kg, entity_id,
                                                         &rel_ids);
@@ -968,20 +1117,40 @@ int kg_remove_entity(GV_KnowledgeGraph *kg, uint64_t entity_id) {
     KG_EntityNode *prev = NULL;
     for (KG_EntityNode *n = kg->entity_buckets[bucket]; n; n = n->next) {
         if (n->entity.entity_id == entity_id) {
+            kg_str_index_remove(kg->name_index, kg->entity_bucket_count,
+                                n->entity.name, entity_id);
+            kg_str_index_remove(kg->type_index, kg->entity_bucket_count,
+                                n->entity.type, entity_id);
             if (prev) prev->next = n->next;
             else kg->entity_buckets[bucket] = n->next;
             kg_entity_adjacency_free(n);
             kg_entity_data_free(&n->entity);
             gv_free(n);
             kg->entity_count--;
-            pthread_rwlock_unlock(&kg->rwlock);
             return 0;
         }
         prev = n;
     }
+    return -1;
+}
+
+int kg_remove_entity(GV_KnowledgeGraph *kg, uint64_t entity_id) {
+    if (!kg) return -1;
+
+    pthread_rwlock_wrlock(&kg->rwlock);
+
+    int rc = kg_remove_entity_internal(kg, entity_id);
+    if (rc == 0) {
+        GV_WalBuf b;
+        gv_wal_init(&b);
+        gv_wal_put_u8(&b, KG_WAL_OP_REMOVE_ENTITY);
+        gv_wal_put_u64(&b, entity_id);
+        kg_wal_append(kg, &b);
+        gv_wal_free(&b);
+    }
 
     pthread_rwlock_unlock(&kg->rwlock);
-    return -1;
+    return rc;
 }
 
 const GV_KGEntity *kg_get_entity(const GV_KnowledgeGraph *kg,
@@ -991,6 +1160,63 @@ const GV_KGEntity *kg_get_entity(const GV_KnowledgeGraph *kg,
     KG_EntityNode *n = kg_find_entity_node(kg, entity_id);
     pthread_rwlock_unlock((pthread_rwlock_t *)&kg->rwlock);
     return n ? &n->entity : NULL;
+}
+
+static int kg_remove_prop_internal(GV_KGProp **head, size_t *count,
+                                   const char *key) {
+    return kg_prop_remove(head, count, key);
+}
+
+int kg_remove_entity_prop(GV_KnowledgeGraph *kg, uint64_t entity_id,
+                          const char *key) {
+    if (!kg || !key) return -1;
+    pthread_rwlock_wrlock(&kg->rwlock);
+    KG_EntityNode *n = kg_find_entity_node(kg, entity_id);
+    if (!n) { pthread_rwlock_unlock(&kg->rwlock); return -1; }
+    int rc = kg_remove_prop_internal(&n->entity.properties,
+                                     &n->entity.prop_count, key);
+    if (rc == 0) {
+        GV_WalBuf b;
+        gv_wal_init(&b);
+        gv_wal_put_u8(&b, KG_WAL_OP_REMOVE_ENTITY_PROP);
+        gv_wal_put_u64(&b, entity_id);
+        gv_wal_put_str(&b, key);
+        kg_wal_append(kg, &b);
+        gv_wal_free(&b);
+    }
+    pthread_rwlock_unlock(&kg->rwlock);
+    return rc;
+}
+
+int kg_remove_relation_prop(GV_KnowledgeGraph *kg, uint64_t relation_id,
+                            const char *key) {
+    if (!kg || !key) return -1;
+    pthread_rwlock_wrlock(&kg->rwlock);
+    KG_RelationNode *n = kg_find_relation_node(kg, relation_id);
+    if (!n) { pthread_rwlock_unlock(&kg->rwlock); return -1; }
+    /* Keep the chunk index consistent when deleting a chunk_id facet. */
+    int is_chunk_key = strcmp(key, "chunk_id") == 0;
+    GV_KGProp *old = is_chunk_key
+        ? kg_prop_find(n->relation.properties, "chunk_id") : NULL;
+    if (old && old->value.type != GV_PROP_NULL) {
+        kg_index_remove_id(kg->chunk_index, kg->spo_bucket_count,
+                           kg_prop_hash(old->value), relation_id);
+    }
+    size_t dummy_count = 0;
+    GV_KGProp *p = n->relation.properties;
+    while (p) { dummy_count++; p = p->next; }
+    int rc = kg_remove_prop_internal(&n->relation.properties, &dummy_count, key);
+    if (rc == 0) {
+        GV_WalBuf b;
+        gv_wal_init(&b);
+        gv_wal_put_u8(&b, KG_WAL_OP_REMOVE_RELATION_PROP);
+        gv_wal_put_u64(&b, relation_id);
+        gv_wal_put_str(&b, key);
+        kg_wal_append(kg, &b);
+        gv_wal_free(&b);
+    }
+    pthread_rwlock_unlock(&kg->rwlock);
+    return rc;
 }
 
 int kg_set_entity_prop(GV_KnowledgeGraph *kg, uint64_t entity_id,
@@ -1005,6 +1231,16 @@ int kg_set_entity_prop(GV_KnowledgeGraph *kg, uint64_t entity_id,
     }
     int rc = kg_prop_set(&n->entity.properties, &n->entity.prop_count,
                           key, value);
+    if (rc == 0) {
+        GV_WalBuf b;
+        gv_wal_init(&b);
+        gv_wal_put_u8(&b, KG_WAL_OP_SET_ENTITY_PROP);
+        gv_wal_put_u64(&b, entity_id);
+        gv_wal_put_str(&b, key);
+        gv_wal_put_str(&b, value);
+        kg_wal_append(kg, &b);
+        gv_wal_free(&b);
+    }
     pthread_rwlock_unlock(&kg->rwlock);
     return rc;
 }
@@ -1020,7 +1256,7 @@ const char *kg_get_entity_prop(const GV_KnowledgeGraph *kg,
     }
     GV_KGProp *p = kg_prop_find(n->entity.properties, key);
     pthread_rwlock_unlock((pthread_rwlock_t *)&kg->rwlock);
-    return p ? p->value : NULL;
+    return p && p->value.type == GV_PROP_STRING ? p->value.as.s : NULL;
 }
 
 int kg_find_entities_by_type(const GV_KnowledgeGraph *kg, const char *type,
@@ -1029,10 +1265,14 @@ int kg_find_entities_by_type(const GV_KnowledgeGraph *kg, const char *type,
 
     pthread_rwlock_rdlock((pthread_rwlock_t *)&kg->rwlock);
     size_t found = 0;
-    for (size_t i = 0; i < kg->entity_bucket_count && found < max_count; i++) {
-        for (KG_EntityNode *n = kg->entity_buckets[i];
-             n && found < max_count; n = n->next) {
-            if (n->entity.type && strcmp(n->entity.type, type) == 0) {
+    KG_IndexEntry *e = kg_index_find(kg->type_index,
+                                     kg->entity_bucket_count,
+                                     kg_hash_string(type));
+    if (e) {
+        for (size_t i = 0; i < e->list.count && found < max_count; i++) {
+            KG_EntityNode *n = kg_find_entity_node(kg, e->list.ids[i]);
+            /* Hash collision check: verify the type actually matches */
+            if (n && n->entity.type && strcmp(n->entity.type, type) == 0) {
                 out_ids[found++] = n->entity.entity_id;
             }
         }
@@ -1047,10 +1287,14 @@ int kg_find_entities_by_name(const GV_KnowledgeGraph *kg, const char *name,
 
     pthread_rwlock_rdlock((pthread_rwlock_t *)&kg->rwlock);
     size_t found = 0;
-    for (size_t i = 0; i < kg->entity_bucket_count && found < max_count; i++) {
-        for (KG_EntityNode *n = kg->entity_buckets[i];
-             n && found < max_count; n = n->next) {
-            if (n->entity.name && strcmp(n->entity.name, name) == 0) {
+    KG_IndexEntry *e = kg_index_find(kg->name_index,
+                                     kg->entity_bucket_count,
+                                     kg_hash_string(name));
+    if (e) {
+        for (size_t i = 0; i < e->list.count && found < max_count; i++) {
+            KG_EntityNode *n = kg_find_entity_node(kg, e->list.ids[i]);
+            /* Hash collision check: verify the name actually matches */
+            if (n && n->entity.name && strcmp(n->entity.name, name) == 0) {
                 out_ids[found++] = n->entity.entity_id;
             }
         }
@@ -1059,41 +1303,29 @@ int kg_find_entities_by_name(const GV_KnowledgeGraph *kg, const char *name,
     return (int)found;
 }
 
-uint64_t kg_add_relation(GV_KnowledgeGraph *kg, uint64_t subject,
-                             const char *predicate, uint64_t object,
-                             float weight) {
-    if (!kg || !predicate) return 0;
-
-    pthread_rwlock_wrlock(&kg->rwlock);
-
+/* Insert a relation with an explicit id (WAL replay). Caller holds the write
+ * lock. Returns 0 on success. */
+static int kg_insert_relation_with_id(GV_KnowledgeGraph *kg, uint64_t rid,
+                                      uint64_t subject, const char *predicate,
+                                      uint64_t object, float weight) {
     KG_EntityNode *subj_node = kg_find_entity_node(kg, subject);
     KG_EntityNode *obj_node = kg_find_entity_node(kg, object);
-    if (!subj_node || !obj_node) {
-        pthread_rwlock_unlock(&kg->rwlock);
-        return 0;
-    }
+    if (!subj_node || !obj_node || !predicate) return -1;
 
     KG_RelationNode *node = (KG_RelationNode *)gv_calloc(1,
                                 sizeof(KG_RelationNode));
-    if (!node) {
-        pthread_rwlock_unlock(&kg->rwlock);
-        return 0;
-    }
+    if (!node) return -1;
 
-    uint64_t rid = kg->next_relation_id++;
     GV_KGRelation *r = &node->relation;
     r->relation_id = rid;
     r->subject_id  = subject;
     r->object_id   = object;
     r->predicate   = gv_dup_cstr(predicate);
     r->weight      = weight;
-    r->properties  = NULL;
     r->created_at  = kg_now_epoch();
-
     if (!r->predicate) {
         gv_free(node);
-        pthread_rwlock_unlock(&kg->rwlock);
-        return 0;
+        return -1;
     }
 
     size_t bucket = (size_t)kg_hash_uint64(rid, kg->relation_bucket_count);
@@ -1120,6 +1352,38 @@ uint64_t kg_add_relation(GV_KnowledgeGraph *kg, uint64_t subject,
     /* Wire the new edge into both endpoints for O(1) pointer-deref hops. */
     kg_link_adjacency(subj_node, obj_node, node);
 
+    if (rid >= kg->next_relation_id) kg->next_relation_id = rid + 1;
+    return 0;
+}
+
+uint64_t kg_add_relation(GV_KnowledgeGraph *kg, uint64_t subject,
+                             const char *predicate, uint64_t object,
+                             float weight) {
+    if (!kg || !predicate) return 0;
+
+    pthread_rwlock_wrlock(&kg->rwlock);
+
+    uint64_t rid = kg->next_relation_id++;
+
+    if (kg_insert_relation_with_id(kg, rid, subject, predicate, object,
+                                   weight) != 0) {
+        pthread_rwlock_unlock(&kg->rwlock);
+        return 0;
+    }
+
+    {
+        GV_WalBuf b;
+        gv_wal_init(&b);
+        gv_wal_put_u8(&b, KG_WAL_OP_ADD_RELATION);
+        gv_wal_put_u64(&b, rid);
+        gv_wal_put_u64(&b, subject);
+        gv_wal_put_str(&b, predicate);
+        gv_wal_put_u64(&b, object);
+        gv_wal_put_f32(&b, weight);
+        kg_wal_append(kg, &b);
+        gv_wal_free(&b);
+    }
+
     pthread_rwlock_unlock(&kg->rwlock);
     return rid;
 }
@@ -1128,6 +1392,14 @@ int kg_remove_relation(GV_KnowledgeGraph *kg, uint64_t relation_id) {
     if (!kg) return -1;
     pthread_rwlock_wrlock(&kg->rwlock);
     int rc = kg_remove_relation_internal(kg, relation_id);
+    if (rc == 0) {
+        GV_WalBuf b;
+        gv_wal_init(&b);
+        gv_wal_put_u8(&b, KG_WAL_OP_REMOVE_RELATION);
+        gv_wal_put_u64(&b, relation_id);
+        kg_wal_append(kg, &b);
+        gv_wal_free(&b);
+    }
     pthread_rwlock_unlock(&kg->rwlock);
     return rc;
 }
@@ -1151,11 +1423,35 @@ int kg_set_relation_prop(GV_KnowledgeGraph *kg, uint64_t relation_id,
         pthread_rwlock_unlock(&kg->rwlock);
         return -1;
     }
+    /* Keep the chunk_id -> relations index in sync with the property. */
+    int is_chunk_key = strcmp(key, "chunk_id") == 0;
+    GV_KGProp *old = is_chunk_key
+        ? kg_prop_find(n->relation.properties, "chunk_id") : NULL;
+    if (old && old->value.type != GV_PROP_NULL) {
+        kg_index_remove_id(kg->chunk_index, kg->spo_bucket_count,
+                           kg_prop_hash(old->value), relation_id);
+    }
     /* Relation does not track prop_count in the public struct, use a local */
     size_t dummy_count = 0;
     GV_KGProp *p = n->relation.properties;
     while (p) { dummy_count++; p = p->next; }
     int rc = kg_prop_set(&n->relation.properties, &dummy_count, key, value);
+    if (rc == 0 && is_chunk_key) {
+        KG_IndexEntry *ce = kg_index_get_or_create(kg->chunk_index,
+                                                   kg->spo_bucket_count,
+                                                   kg_hash_string(value));
+        if (ce) kg_idlist_push(&ce->list, relation_id);
+    }
+    if (rc == 0) {
+        GV_WalBuf b;
+        gv_wal_init(&b);
+        gv_wal_put_u8(&b, KG_WAL_OP_SET_RELATION_PROP);
+        gv_wal_put_u64(&b, relation_id);
+        gv_wal_put_str(&b, key);
+        gv_wal_put_str(&b, value);
+        kg_wal_append(kg, &b);
+        gv_wal_free(&b);
+    }
     pthread_rwlock_unlock(&kg->rwlock);
     return rc;
 }
@@ -1269,7 +1565,7 @@ void kg_free_triples(GV_KGTriple *triples, size_t count) {
     }
 }
 
-/* ---- Combined-DB integration (Phase 1) ---- */
+/* Combined-DB integration (Phase 1) */
 
 void kg_attach_vector_db(GV_KnowledgeGraph *kg, struct GV_Database *db) {
     if (!kg) return;
@@ -1301,22 +1597,186 @@ uint64_t kg_add_relation_with_chunk(GV_KnowledgeGraph *kg, uint64_t subject,
     return rid;
 }
 
+uint64_t kg_add_relation_with_props(GV_KnowledgeGraph *kg, uint64_t subject,
+                                    const char *predicate, uint64_t object,
+                                    float weight,
+                                    const GV_KGPropKV *props, size_t n_props) {
+    uint64_t rid = kg_add_relation(kg, subject, predicate, object, weight);
+    if (rid != 0 && props != NULL) {
+        for (size_t i = 0; i < n_props; i++) {
+            if (props[i].key && props[i].value) {
+                kg_set_relation_prop(kg, rid, props[i].key, props[i].value);
+            }
+        }
+    }
+    return rid;
+}
+
 int kg_query_triples_by_chunk(const GV_KnowledgeGraph *kg, const char *chunk_id,
                               GV_KGTriple *out, size_t max_count) {
     if (!kg || !chunk_id || !out || max_count == 0) return -1;
     pthread_rwlock_rdlock((pthread_rwlock_t *)&kg->rwlock);
     size_t found = 0;
-    for (size_t b = 0; b < kg->relation_bucket_count && found < max_count; b++) {
-        for (KG_RelationNode *n = kg->relation_buckets[b];
-             n && found < max_count; n = n->next) {
-            GV_KGProp *p = kg_prop_find(n->relation.properties, "chunk_id");
-            if (p && p->value && strcmp(p->value, chunk_id) == 0) {
-                kg_fill_triple(kg, &n->relation, &out[found++]);
+    uint64_t ch = kg_hash_string(chunk_id);
+    KG_IndexEntry *ce = kg_index_find(kg->chunk_index, kg->spo_bucket_count, ch);
+    if (ce) {
+        for (size_t i = 0; i < ce->list.count && found < max_count; i++) {
+            KG_RelationNode *rn = kg_find_relation_node(kg, ce->list.ids[i]);
+            if (!rn) continue;
+            /* Hash collision check: verify the relation's chunk_id actually matches */
+            GV_KGProp *p = kg_prop_find(rn->relation.properties, "chunk_id");
+            if (p && kg_prop_str_eq(p->value, chunk_id)) {
+                kg_fill_triple(kg, &rn->relation, &out[found++]);
             }
         }
     }
     pthread_rwlock_unlock((pthread_rwlock_t *)&kg->rwlock);
     return (int)found;
+}
+
+int kg_remove_relations_by_chunk(GV_KnowledgeGraph *kg, const char *chunk_id) {
+    if (!kg || !chunk_id) return -1;
+    pthread_rwlock_wrlock(&kg->rwlock);
+    uint64_t ch = kg_hash_string(chunk_id);
+    KG_IndexEntry *ce = kg_index_find(kg->chunk_index, kg->spo_bucket_count, ch);
+    if (!ce) {
+        pthread_rwlock_unlock(&kg->rwlock);
+        return 0;
+    }
+    size_t removed = 0;
+    /* Copy ids out first: removal mutates the index list we are iterating. */
+    size_t n = ce->list.count;
+    uint64_t *ids = (uint64_t *)gv_alloc((n ? n : 1) * sizeof(uint64_t));
+    if (!ids) {
+        pthread_rwlock_unlock(&kg->rwlock);
+        return -1;
+    }
+    memcpy(ids, ce->list.ids, n * sizeof(uint64_t));
+    for (size_t i = 0; i < n; i++) {
+        /* Verify the relation's chunk_id actually matches (hash collisions). */
+        KG_RelationNode *rn = kg_find_relation_node(kg, ids[i]);
+        if (!rn) continue;
+        GV_KGProp *p = kg_prop_find(rn->relation.properties, "chunk_id");
+        if (!p || !kg_prop_str_eq(p->value, chunk_id)) continue;
+        if (kg_remove_relation_internal(kg, ids[i]) == 0) removed++;
+    }
+    gv_free(ids);
+    pthread_rwlock_unlock(&kg->rwlock);
+    return (int)removed;
+}
+
+int kg_expand_context(const GV_KnowledgeGraph *kg,
+                      const uint64_t *seeds, size_t n_seeds,
+                      size_t radius, GV_KGTriple *out, size_t max_count) {
+    if (!kg || !out || max_count == 0 || radius == 0) return -1;
+    if (n_seeds > 0 && !seeds) return -1;
+
+    pthread_rwlock_rdlock((pthread_rwlock_t *)&kg->rwlock);
+
+    /* Visited set over entity ids: open addressing, power-of-two capacity. */
+    size_t vcap = 1024;
+    while (vcap < (n_seeds + 8) * 4) vcap <<= 1;
+    uint64_t *vkeys = (uint64_t *)gv_calloc(vcap, sizeof(uint64_t));
+    uint8_t *vocc = (uint8_t *)gv_calloc(vcap, sizeof(uint8_t));
+    /* Relation-id set so a triple is not re-emitted when reached from both
+     * endpoints during undirected expansion. */
+    uint64_t *rkeys = (uint64_t *)gv_calloc(vcap, sizeof(uint64_t));
+    uint8_t *rocc = (uint8_t *)gv_calloc(vcap, sizeof(uint8_t));
+    uint64_t *frontier = (uint64_t *)gv_alloc((n_seeds ? n_seeds : 1)
+                                              * sizeof(uint64_t));
+    uint64_t *next_f = (uint64_t *)gv_alloc(vcap * sizeof(uint64_t));
+    if (!vkeys || !vocc || !rkeys || !rocc || !frontier || !next_f) {
+        gv_free(vkeys); gv_free(vocc); gv_free(rkeys); gv_free(rocc);
+        gv_free(frontier); gv_free(next_f);
+        pthread_rwlock_unlock((pthread_rwlock_t *)&kg->rwlock);
+        return -1;
+    }
+
+#define VX_H(id) ((size_t)((id) * 0x9E3779B97F4A7C15ULL) & (vcap - 1))
+#define VX_ADD(id) do { \
+        size_t h = VX_H(id); \
+        for (size_t j = 0; j < vcap; j++) { \
+            size_t pp = (h + j) & (vcap - 1); \
+            if (!vocc[pp]) { vocc[pp] = 1; vkeys[pp] = (id); break; } \
+            if (vkeys[pp] == (id)) break; \
+        } \
+    } while (0)
+#define RX_HAS(id) ({ \
+    int _r = 0; \
+    size_t h = VX_H(id); \
+    for (size_t j = 0; j < vcap; j++) { \
+        size_t pp = (h + j) & (vcap - 1); \
+        if (!rocc[pp]) break; \
+        if (rkeys[pp] == (id)) { _r = 1; break; } \
+    } \
+    _r; })
+#define RX_ADD(id) do { \
+    size_t h = VX_H(id); \
+    for (size_t j = 0; j < vcap; j++) { \
+        size_t pp = (h + j) & (vcap - 1); \
+        if (!rocc[pp]) { rocc[pp] = 1; rkeys[pp] = (id); break; } \
+        if (rkeys[pp] == (id)) break; \
+    } \
+} while (0)
+#define VX_HAS(id) ({ \
+    int _r = 0; \
+    size_t h = VX_H(id); \
+    for (size_t j = 0; j < vcap; j++) { \
+        size_t pp = (h + j) & (vcap - 1); \
+        if (!vocc[pp]) break; \
+        if (vkeys[pp] == (id)) { _r = 1; break; } \
+    } \
+    _r; })
+
+    size_t f_len = 0;
+    for (size_t i = 0; i < n_seeds; i++) {
+        uint64_t id = seeds[i];
+        if (!kg_find_entity_node(kg, id)) continue;   /* unknown seed: skip */
+        if (VX_HAS(id)) continue;
+        VX_ADD(id);
+        frontier[f_len++] = id;
+    }
+
+    size_t total_found = 0;
+    for (size_t hop = 0; hop < radius && total_found < max_count; hop++) {
+        size_t nf_len = 0;
+        for (size_t i = 0; i < f_len && total_found < max_count; i++) {
+            KG_EntityNode *en = kg_find_entity_node(kg, frontier[i]);
+            if (!en) continue;
+            /* Incident relations via O(1)-per-hop adjacency pointers. */
+            for (int dir = 0; dir < 2 && total_found < max_count; dir++) {
+                size_t ecnt = dir == 0 ? en->out_count : en->in_count;
+                KG_Edge *edges = dir == 0 ? en->out_edges : en->in_edges;
+                for (size_t k = 0; k < ecnt && total_found < max_count; k++) {
+                    if (!edges[k].rel) continue;
+                    if (RX_HAS(edges[k].rel->relation.relation_id)) continue;
+                    RX_ADD(edges[k].rel->relation.relation_id);
+                    kg_fill_triple(kg, &edges[k].rel->relation,
+                                   &out[total_found]);
+                    total_found++;
+                    KG_EntityNode *nb = edges[k].neighbor;
+                    if (nb && !VX_HAS(nb->entity.entity_id)) {
+                        VX_ADD(nb->entity.entity_id);
+                        next_f[nf_len++] = nb->entity.entity_id;
+                    }
+                }
+            }
+        }
+        uint64_t *tmp = frontier; frontier = next_f; next_f = tmp;
+        f_len = nf_len;
+        if (f_len == 0) break;
+    }
+
+#undef VX_H
+
+    gv_free(vkeys);
+    gv_free(vocc);
+    gv_free(rkeys);
+    gv_free(rocc);
+    gv_free(frontier);
+    gv_free(next_f);
+    pthread_rwlock_unlock((pthread_rwlock_t *)&kg->rwlock);
+    return (int)total_found;
 }
 
 int kg_query_reverse(const GV_KnowledgeGraph *kg, uint64_t object,
@@ -1438,11 +1898,15 @@ int kg_search_by_text(const GV_KnowledgeGraph *kg, const char *text,
             }
             if (score > 0.0f) {
                 if (pair_count >= cap) {
-                    cap *= 2;
+                    /* Grow cap only AFTER a successful realloc: bumping it first
+                     * and then break-ing on failure left cap > the real buffer,
+                     * so the next entity's pairs[pair_count] write ran OOB. */
+                    size_t new_cap = cap * 2;
                     KG_ScorePair *tmp = (KG_ScorePair *)gv_realloc(pairs,
-                        cap * sizeof(KG_ScorePair));
+                        new_cap * sizeof(KG_ScorePair));
                     if (!tmp) break;
                     pairs = tmp;
+                    cap = new_cap;
                 }
                 pairs[pair_count].id = n->entity.entity_id;
                 pairs[pair_count].score = score;
@@ -1584,8 +2048,10 @@ int kg_merge_entities(GV_KnowledgeGraph *kg, uint64_t keep_id,
 
     for (GV_KGProp *p = merge_node->entity.properties; p; p = p->next) {
         if (!kg_prop_find(keep_node->entity.properties, p->key)) {
+            char *pv = gv_prop_to_string(p->value);
             kg_prop_set(&keep_node->entity.properties,
-                        &keep_node->entity.prop_count, p->key, p->value);
+                        &keep_node->entity.prop_count, p->key, pv);
+            gv_free(pv);
         }
     }
 
@@ -2417,8 +2883,242 @@ static int kg_write_props(FILE *fp, const GV_KGProp *props, size_t count) {
     if (write_u32(fp, (uint32_t)count) != 0) return -1;
     for (const GV_KGProp *p = props; p; p = p->next) {
         if (write_string(fp, p->key) != 0) return -1;
-        if (write_string(fp, p->value) != 0) return -1;
+        /* write_prop_value: u8 type byte + varint length + bytes */
+        char *s = gv_prop_to_string(p->value);
+        if (s == NULL) {
+            /* fallback: write as string */
+            if (write_string(fp, "<null>") != 0) return -1;
+        } else {
+            if (write_string(fp, s) != 0) { gv_free(s); return -1; }
+            gv_free(s);
+        }
     }
+    return 0;
+}
+
+int kg_wal_attach(GV_KnowledgeGraph *kg, const char *snapshot_path) {
+    if (!kg || !snapshot_path) return -1;
+
+    pthread_rwlock_wrlock(&kg->rwlock);
+    size_t need = strlen(snapshot_path) + 5;
+    char *path = (char *)gv_alloc(need);
+    if (!path) {
+        pthread_rwlock_unlock(&kg->rwlock);
+        return -1;
+    }
+    snprintf(path, need, "%s.wal", snapshot_path);
+
+    FILE *f = fopen(path, "ab");
+    if (!f) {
+        gv_free(path);
+        pthread_rwlock_unlock(&kg->rwlock);
+        return -1;
+    }
+    kg_wal_close(kg);
+    kg->wal_file = f;
+    kg->wal_path = path;
+    pthread_rwlock_unlock(&kg->rwlock);
+    return 0;
+}
+
+int kg_wal_checkpoint(GV_KnowledgeGraph *kg) {
+    if (!kg) return -1;
+
+    pthread_rwlock_wrlock(&kg->rwlock);
+    if (!kg->wal_file) {
+        pthread_rwlock_unlock(&kg->rwlock);
+        return -1;
+    }
+    if (freopen(kg->wal_path, "wb", kg->wal_file) == NULL) {
+        kg->wal_file = NULL;
+        pthread_rwlock_unlock(&kg->rwlock);
+        return -1;
+    }
+#ifndef _WIN32
+    int bad = fflush(kg->wal_file) != 0 || fsync(fileno(kg->wal_file)) != 0;
+#else
+    int bad = fflush(kg->wal_file) != 0 || _commit(_fileno(kg->wal_file)) != 0;
+#endif
+    pthread_rwlock_unlock(&kg->rwlock);
+    return bad ? -1 : 0;
+}
+
+/* Apply one decoded record. Called with the write lock held and wal_replaying
+ * set; uses the lock-free internal insert/remove paths. */
+static void kg_wal_apply_record(GV_KnowledgeGraph *kg, uint8_t op,
+                                const uint8_t *p, const uint8_t *end) {
+    char *s1 = NULL, *s2 = NULL;
+    const float *emb = NULL;
+    uint64_t id, a, b2;
+    float w;
+    uint8_t has_emb = 0;
+    uint32_t dim = 0;
+
+    switch (op) {
+    case KG_WAL_OP_ADD_ENTITY:
+        if ((p = gv_wal_get_u64(p, end, &id)) != NULL &&
+            (p = gv_wal_get_str(p, end, &s1)) != NULL &&
+            (p = gv_wal_get_str(p, end, &s2)) != NULL &&
+            (p = gv_wal_get_u8(p, end, &has_emb)) != NULL) {
+            if (has_emb &&
+                (p = gv_wal_get_u32(p, end, &dim)) != NULL) {
+                /* floats are stored inline right after dim (no extra length
+                 * prefix — dim already bounds them) */
+                if ((size_t)(end - p) < (size_t)dim * sizeof(float)) {
+                    gv_free(s1);
+                    gv_free(s2);
+                    return;
+                }
+                emb = (const float *)p;
+                p += (size_t)dim * sizeof(float);
+            }
+            if (p && (!has_emb || p))
+                kg_insert_entity_with_id(kg, id, s1, s2,
+                                         has_emb ? emb : NULL,
+                                         has_emb ? dim : 0);
+        }
+        break;
+    case KG_WAL_OP_REMOVE_ENTITY:
+        if ((p = gv_wal_get_u64(p, end, &id)) != NULL)
+            kg_remove_entity_internal(kg, id);   /* lock already held */
+        break;
+    case KG_WAL_OP_ADD_RELATION:
+        if ((p = gv_wal_get_u64(p, end, &id)) != NULL &&
+            (p = gv_wal_get_u64(p, end, &a)) != NULL &&
+            (p = gv_wal_get_str(p, end, &s1)) != NULL &&
+            (p = gv_wal_get_u64(p, end, &b2)) != NULL &&
+            (p = gv_wal_get_f32(p, end, &w)) != NULL)
+            kg_insert_relation_with_id(kg, id, a, s1, b2, w);
+        break;
+    case KG_WAL_OP_REMOVE_RELATION:
+        if ((p = gv_wal_get_u64(p, end, &id)) != NULL)
+            kg_remove_relation_internal(kg, id);
+        break;
+    case KG_WAL_OP_SET_ENTITY_PROP: {
+        if ((p = gv_wal_get_u64(p, end, &id)) != NULL &&
+            (p = gv_wal_get_str(p, end, &s1)) != NULL &&
+            (p = gv_wal_get_str(p, end, &s2)) != NULL) {
+            KG_EntityNode *n = kg_find_entity_node(kg, id);
+            if (n)
+                kg_prop_set(&n->entity.properties, &n->entity.prop_count,
+                            s1, s2);
+        }
+        break;
+    }
+    case KG_WAL_OP_SET_RELATION_PROP: {
+        /* Route through kg_set_relation_prop semantics minus logging by
+         * updating the property directly; chunk index kept in sync here. */
+        if ((p = gv_wal_get_u64(p, end, &id)) != NULL &&
+            (p = gv_wal_get_str(p, end, &s1)) != NULL &&
+            (p = gv_wal_get_str(p, end, &s2)) != NULL) {
+            KG_RelationNode *n = kg_find_relation_node(kg, id);
+            if (n) {
+                size_t pc = 0;
+                for (GV_KGProp *q = n->relation.properties; q; q = q->next) pc++;
+                kg_prop_set(&n->relation.properties, &pc, s1, s2);
+                if (strcmp(s1, "chunk_id") == 0) {
+                    KG_IndexEntry *ce = kg_index_get_or_create(
+                        kg->chunk_index, kg->spo_bucket_count,
+                        kg_hash_string(s2));
+                    if (ce) kg_idlist_push(&ce->list, id);
+                }
+            }
+        }
+        break;
+    }
+    case KG_WAL_OP_REMOVE_ENTITY_PROP:
+        if ((p = gv_wal_get_u64(p, end, &id)) != NULL &&
+            (p = gv_wal_get_str(p, end, &s1)) != NULL) {
+            KG_EntityNode *n = kg_find_entity_node(kg, id);
+            if (n)
+                kg_prop_remove(&n->entity.properties, &n->entity.prop_count, s1);
+        }
+        break;
+    case KG_WAL_OP_REMOVE_RELATION_PROP:
+        if ((p = gv_wal_get_u64(p, end, &id)) != NULL &&
+            (p = gv_wal_get_str(p, end, &s1)) != NULL) {
+            KG_RelationNode *n = kg_find_relation_node(kg, id);
+            if (n) {
+                int is_chunk_key = strcmp(s1, "chunk_id") == 0;
+GV_KGProp *oldp = is_chunk_key
+                    ? kg_prop_find(n->relation.properties, "chunk_id") : NULL;
+if (oldp && oldp->value.type != GV_PROP_NULL) {
+    kg_index_remove_id(kg->chunk_index, kg->spo_bucket_count,
+                       kg_prop_hash(oldp->value), id);
+}
+                size_t pc = 0;
+                for (GV_KGProp *q = n->relation.properties; q; q = q->next) pc++;
+                kg_prop_remove(&n->relation.properties, &pc, s1);
+            }
+        }
+        break;
+    default:
+        break;  /* unknown op: ignore (forward compatibility) */
+    }
+    gv_free(s1);
+    gv_free(s2);
+}
+
+/* Decode one framed record from buf[0..len): [1B op][4B plen][payload].
+ * Returns bytes consumed, or 0 if more data is needed. */
+static size_t kg_wal_parse_record(GV_KnowledgeGraph *kg, const uint8_t *buf,
+                                  size_t len) {
+    if (len < 5) return 0;
+    uint32_t plen = 0;
+    for (int i = 0; i < 4; i++) plen |= (uint32_t)buf[1 + i] << (8 * i);
+    if (len < 5u + (size_t)plen) return 0;
+    kg_wal_apply_record(kg, buf[0], buf + 5, buf + 5 + plen);
+    return 5u + (size_t)plen;
+}
+
+/* Replay "<path>.wal" over a freshly loaded graph and keep it attached.
+ * Returns 0 on success (including no log present). */
+static int kg_wal_replay_and_attach(GV_KnowledgeGraph *kg,
+                                    const char *snapshot_path) {
+    size_t need = strlen(snapshot_path) + 5;
+    char *path = (char *)gv_alloc(need);
+    if (!path) return -1;
+    snprintf(path, need, "%s.wal", snapshot_path);
+
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        gv_free(path);
+        return 0;
+    }
+
+    uint8_t rec[65536];
+    size_t cap = sizeof(rec), len = 0, nread;
+
+    pthread_rwlock_wrlock(&kg->rwlock);
+    kg->wal_replaying = 1;
+
+    int ok = 1;
+    while (ok && (nread = fread(rec + len, 1, cap - len, f)) > 0) {
+        len += nread;
+        size_t off = 0;
+        while (ok) {
+            size_t used = kg_wal_parse_record(kg, rec + off, len - off);
+            if (used == 0) break;
+            off += used;
+            if (off >= len) break;
+        }
+        if (off > 0) {
+            memmove(rec, rec + off, len - off);
+            len -= off;
+        }
+    }
+
+    kg->wal_replaying = 0;
+    pthread_rwlock_unlock(&kg->rwlock);
+    fclose(f);
+
+    FILE *af = fopen(path, "ab");
+    if (!af) {
+        gv_free(path);
+        return -1;
+    }
+    kg->wal_file = af;
+    kg->wal_path = path;
     return 0;
 }
 
@@ -2484,8 +3184,32 @@ int kg_save(const GV_KnowledgeGraph *kg, const char *path) {
         }
     }
 
+    int is_wal_base = 0;
+    if (kg->wal_path) {
+        size_t wl = strlen(kg->wal_path);
+        size_t pl = strlen(path);
+        is_wal_base = wl == pl + 4 &&
+                      strncmp(kg->wal_path, path, pl) == 0 &&
+                      strcmp(kg->wal_path + pl, ".wal") == 0;
+    }
+
+    if (fflush(fp) != 0 || fsync(fileno(fp)) != 0) goto fail;
+
     fclose(fp);
     pthread_rwlock_unlock((pthread_rwlock_t *)&kg->rwlock);
+
+    /* Successful save of the attached snapshot makes the log redundant. */
+    if (is_wal_base) {
+        pthread_rwlock_wrlock((pthread_rwlock_t *)&kg->rwlock);
+        if (kg->wal_file) {
+            freopen(kg->wal_path, "wb", kg->wal_file);
+            if (kg->wal_file) {
+                fflush(kg->wal_file);
+                fsync(fileno(kg->wal_file));
+            }
+        }
+        pthread_rwlock_unlock((pthread_rwlock_t *)&kg->rwlock);
+    }
     return 0;
 
 fail:
@@ -2502,11 +3226,13 @@ static GV_KGProp *kg_read_props(FILE *fp, uint32_t count) {
         GV_KGProp *p = (GV_KGProp *)gv_calloc(1, sizeof(GV_KGProp));
         if (!p) return head;
         p->key = read_string(fp);
-        p->value = read_string(fp);
+        char *val_str = read_string(fp);
+        p->value = gv_prop_parse(val_str, GV_PROP_STRING);
+        gv_free(val_str);
         p->next = NULL;
-        if (!p->key || !p->value) {
+        if (!p->key || p->value.type == GV_PROP_NULL) {
             gv_free(p->key);
-            gv_free(p->value);
+            gv_prop_free(&p->value);
             gv_free(p);
             return head;
         }
@@ -2626,6 +3352,9 @@ GV_KnowledgeGraph *kg_load(const char *path) {
         kg->entity_buckets[bucket] = node;
         kg->entity_count++;
 
+        kg_str_index_add(kg, kg->name_index, kg->entity_bucket_count, e->name, eid);
+        kg_str_index_add(kg, kg->type_index, kg->entity_bucket_count, e->type, eid);
+
         if (has_emb && emb_data && emb_dim > 0) {
             kg_embedding_add(kg, eid, emb_data, (size_t)emb_dim);
         }
@@ -2690,12 +3419,27 @@ GV_KnowledgeGraph *kg_load(const char *path) {
                                                     kg->spo_bucket_count,
                                                     pred_hash);
         if (pe) kg_idlist_push(&pe->list, rid);
+
+        GV_KGProp *cp = kg_prop_find(r->properties, "chunk_id");
+        if (cp && cp->value.type == GV_PROP_STRING && cp->value.as.s) {
+            KG_IndexEntry *ce = kg_index_get_or_create(kg->chunk_index,
+                                                       kg->spo_bucket_count,
+                                                       kg_hash_string(cp->value.as.s));
+            if (ce) kg_idlist_push(&ce->list, rid);
+        }
     }
 
     /* Entities and relations are fully loaded; wire up direct adjacency. */
     kg_rebuild_adjacency(kg);
 
     fclose(fp);
+
+    /* Crash recovery: replay any WAL left over from mutations after the last
+     * save, then keep it attached for future appends. */
+    if (kg_wal_replay_and_attach(kg, path) != 0) {
+        kg_destroy(kg);
+        return NULL;
+    }
     return kg;
 
 load_fail:

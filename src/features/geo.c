@@ -12,14 +12,10 @@
 #include "features/geo.h"
 #include "core/utils.h"
 
-/* Constants */
-
 #define GV_GEO_EARTH_RADIUS_KM  6371.0
 #define GV_GEO_DEG_TO_RAD       (M_PI / 180.0)
 #define GV_GEO_HASH_BUCKETS     65536
 #define GV_GEO_GRID_SCALE       100   /* ~1 km granularity at equator */
-
-/* Internal data structures */
 
 typedef struct GV_GeoEntry {
     size_t              point_index;
@@ -38,8 +34,6 @@ struct GV_GeoIndex {
     pthread_rwlock_t rwlock;
 };
 
-/* Grid hashing */
-
 /**
  * @brief Compute a bucket index from a (lat, lng) pair.
  *
@@ -53,7 +47,6 @@ static uint32_t geo_hash(double lat, double lng)
     int64_t ilat = (int64_t)(lat * GV_GEO_GRID_SCALE);
     int64_t ilng = (int64_t)(lng * GV_GEO_GRID_SCALE);
 
-    /* Combine the two grid coordinates with a hash. */
     uint32_t h = (uint32_t)((ilat * 73856093LL) ^ (ilng * 19349663LL));
     return h % GV_GEO_HASH_BUCKETS;
 }
@@ -67,8 +60,6 @@ static void geo_cell(double lat, double lng, int *out_ilat, int *out_ilng)
     *out_ilat = (int)(lat * GV_GEO_GRID_SCALE);
     *out_ilng = (int)(lng * GV_GEO_GRID_SCALE);
 }
-
-/* Haversine distance */
 
 double geo_distance_km(double lat1, double lng1, double lat2, double lng2)
 {
@@ -85,8 +76,6 @@ double geo_distance_km(double lat1, double lng1, double lat2, double lng2)
 
     return GV_GEO_EARTH_RADIUS_KM * c;
 }
-
-/* Lifecycle */
 
 GV_GeoIndex *geo_create(void)
 {
@@ -121,8 +110,6 @@ void geo_destroy(GV_GeoIndex *index)
     pthread_rwlock_destroy(&index->rwlock);
     gv_free(index);
 }
-
-/* Insert / Update / Remove */
 
 int geo_insert(GV_GeoIndex *index, size_t point_index, double lat, double lng)
 {
@@ -164,7 +151,6 @@ int geo_update(GV_GeoIndex *index, size_t point_index, double lat, double lng)
     /* Remove the old entry first, then insert the new one. */
     pthread_rwlock_wrlock(&index->rwlock);
 
-    /* Scan all buckets for the point_index to remove it. */
     int found = 0;
     for (size_t i = 0; i < GV_GEO_HASH_BUCKETS && !found; i++) {
         GV_GeoEntry **pp = &index->buckets[i].head;
@@ -226,8 +212,6 @@ int geo_remove(GV_GeoIndex *index, size_t point_index)
     pthread_rwlock_unlock(&index->rwlock);
     return -1; /* not found */
 }
-
-/* Radius search */
 
 /**
  * @brief Compute the approximate lat/lng bounding box for a circle
@@ -291,10 +275,20 @@ static int geo_scan_radius(const GV_GeoIndex *index,
 
     size_t found = 0;
 
+    /* Dedup scanned buckets: distinct grid cells can hash to the same bucket, and
+     * scanning it more than once would emit its in-radius entries multiple times.
+     * If the bitmap can't be allocated, fall back to the (possibly-duplicating)
+     * scan rather than fail. */
+    unsigned char *seen = (unsigned char *)gv_calloc(GV_GEO_HASH_BUCKETS / 8, 1);
+
     for (int ilat = cell_min_lat; ilat <= cell_max_lat; ilat++) {
         for (int ilng = cell_min_lng; ilng <= cell_max_lng; ilng++) {
             uint32_t h = (uint32_t)(((int64_t)ilat * 73856093LL) ^ ((int64_t)ilng * 19349663LL));
             uint32_t bucket = h % GV_GEO_HASH_BUCKETS;
+            if (seen) {
+                if (seen[bucket >> 3] & (unsigned char)(1u << (bucket & 7))) continue;
+                seen[bucket >> 3] |= (unsigned char)(1u << (bucket & 7));
+            }
 
             const GV_GeoEntry *entry = index->buckets[bucket].head;
             while (entry != NULL) {
@@ -311,6 +305,7 @@ static int geo_scan_radius(const GV_GeoIndex *index,
                     }
                     found++;
                     if (found >= max_count) {
+                        gv_free(seen);
                         return (int)found;
                     }
                 }
@@ -319,6 +314,7 @@ static int geo_scan_radius(const GV_GeoIndex *index,
         }
     }
 
+    gv_free(seen);
     return (int)found;
 }
 
@@ -335,8 +331,6 @@ int geo_radius_search(const GV_GeoIndex *index, double lat, double lng,
 
     return n;
 }
-
-/* Bounding box search */
 
 int geo_bbox_search(const GV_GeoIndex *index, const GV_GeoBBox *bbox,
                         GV_GeoResult *results, size_t max_results)
@@ -366,10 +360,17 @@ int geo_bbox_search(const GV_GeoIndex *index, const GV_GeoBBox *bbox,
 
     pthread_rwlock_rdlock((pthread_rwlock_t *)&index->rwlock);
 
+    /* Dedup scanned buckets (distinct cells can collide to the same bucket). */
+    unsigned char *seen = (unsigned char *)gv_calloc(GV_GEO_HASH_BUCKETS / 8, 1);
+
     for (int ilat = cell_min_lat; ilat <= cell_max_lat; ilat++) {
         for (int ilng = cell_min_lng; ilng <= cell_max_lng; ilng++) {
             uint32_t h = (uint32_t)(((int64_t)ilat * 73856093LL) ^ ((int64_t)ilng * 19349663LL));
             uint32_t bucket = h % GV_GEO_HASH_BUCKETS;
+            if (seen) {
+                if (seen[bucket >> 3] & (unsigned char)(1u << (bucket & 7))) continue;
+                seen[bucket >> 3] |= (unsigned char)(1u << (bucket & 7));
+            }
 
             const GV_GeoEntry *entry = index->buckets[bucket].head;
             while (entry != NULL) {
@@ -382,6 +383,7 @@ int geo_bbox_search(const GV_GeoIndex *index, const GV_GeoBBox *bbox,
                         geo_distance_km(clat, clng, entry->lat, entry->lng);
                     found++;
                     if (found >= max_results) {
+                        gv_free(seen);
                         pthread_rwlock_unlock((pthread_rwlock_t *)&index->rwlock);
                         return (int)found;
                     }
@@ -391,11 +393,10 @@ int geo_bbox_search(const GV_GeoIndex *index, const GV_GeoBBox *bbox,
         }
     }
 
+    gv_free(seen);
     pthread_rwlock_unlock((pthread_rwlock_t *)&index->rwlock);
     return (int)found;
 }
-
-/* Candidate pre-filter for vector search */
 
 int geo_get_candidates(const GV_GeoIndex *index, double lat, double lng,
                            double radius_km, size_t *out_indices, size_t max_count)
@@ -411,8 +412,6 @@ int geo_get_candidates(const GV_GeoIndex *index, double lat, double lng,
     return n;
 }
 
-/* Count */
-
 size_t geo_count(const GV_GeoIndex *index)
 {
     if (index == NULL) {
@@ -425,8 +424,6 @@ size_t geo_count(const GV_GeoIndex *index)
 
     return c;
 }
-
-/* Save / Load */
 
 /**
  * @brief Persist the geo index to a binary file.

@@ -331,6 +331,18 @@ int memory_update(GV_MemoryLayer *layer, const char *memory_id,
 int memory_delete(GV_MemoryLayer *layer, const char *memory_id);
 
 /**
+ * @brief Delete every memory whose source matches @p source.
+ *
+ * Cross-layer rollback primitive: removes all facts ingested from a given
+ * chunk/doc id (memories store their provenance as the "source" metadata key).
+ *
+ * @param layer Memory layer; must be non-NULL.
+ * @param source Source identifier to match; must be non-NULL.
+ * @return Number of memories deleted, or -1 on error.
+ */
+int memory_delete_by_source(GV_MemoryLayer *layer, const char *source);
+
+/**
  * @brief Free memory result structure.
  *
  * @param result Result to free; safe to call with NULL.
@@ -415,12 +427,6 @@ int memory_link_get(GV_MemoryLayer *layer,
  *
  * @param link_type Original link type.
  * @return Reciprocal link type.
- */
-/**
- * @brief Perform the operation.
- *
- * @param link_type link_type.
- * @return Result value.
  */
 GV_MemoryLinkType memory_link_reciprocal(GV_MemoryLinkType link_type);
 

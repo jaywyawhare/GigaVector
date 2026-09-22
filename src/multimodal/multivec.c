@@ -138,7 +138,7 @@ int multivec_delete_document(void *index, uint64_t doc_id) {
         }
     }
 
-    return -1; /* not found */
+    return -1;
 }
 
 /**

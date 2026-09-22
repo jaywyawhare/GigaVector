@@ -13,8 +13,6 @@
 #include "core/compat.h"
 #include <pthread.h>
 
-/* Internal Structures */
-
 /**
  * @brief TTL entry for a vector.
  */
@@ -35,12 +33,10 @@ typedef struct GV_TTLEntry {
 struct GV_TTLManager {
     GV_TTLConfig config;
 
-    /* Hash table for TTL entries */
     GV_TTLEntry *buckets[TTL_HASH_BUCKETS];
     size_t entry_count;
     pthread_mutex_t mutex;
 
-    /* Statistics */
     uint64_t total_expired;
     uint64_t last_cleanup_time;
 
@@ -52,13 +48,9 @@ struct GV_TTLManager {
     GV_Database *cleanup_db;
 };
 
-/* Hash Function */
-
 static size_t hash_index(size_t vector_index) {
     return vector_index % TTL_HASH_BUCKETS;
 }
-
-/* Configuration */
 
 static const GV_TTLConfig DEFAULT_CONFIG = {
     .default_ttl_seconds = 0,
@@ -71,8 +63,6 @@ void ttl_config_init(GV_TTLConfig *config) {
     if (!config) return;
     *config = DEFAULT_CONFIG;
 }
-
-/* Lifecycle */
 
 GV_TTLManager *ttl_create(const GV_TTLConfig *config) {
     GV_TTLManager *mgr = gv_calloc(1, sizeof(GV_TTLManager));
@@ -97,10 +87,8 @@ GV_TTLManager *ttl_create(const GV_TTLConfig *config) {
 void ttl_destroy(GV_TTLManager *mgr) {
     if (!mgr) return;
 
-    /* Stop background cleanup if running */
     ttl_stop_background_cleanup(mgr);
 
-    /* Free all entries */
     for (size_t i = 0; i < TTL_HASH_BUCKETS; i++) {
         GV_TTLEntry *entry = mgr->buckets[i];
         while (entry) {
@@ -114,8 +102,6 @@ void ttl_destroy(GV_TTLManager *mgr) {
     pthread_mutex_destroy(&mgr->mutex);
     gv_free(mgr);
 }
-
-/* Internal Helpers */
 
 static GV_TTLEntry *find_entry(GV_TTLManager *mgr, size_t vector_index) {
     size_t bucket = hash_index(vector_index);
@@ -150,8 +136,6 @@ static uint64_t current_time_unix(void) {
     return (uint64_t)time(NULL);
 }
 
-/* TTL Operations */
-
 int ttl_set(GV_TTLManager *mgr, size_t vector_index, uint64_t ttl_seconds) {
     if (!mgr) return -1;
 
@@ -172,7 +156,6 @@ int ttl_set_absolute(GV_TTLManager *mgr, size_t vector_index, uint64_t expire_at
 
     pthread_mutex_lock(&mgr->mutex);
 
-    /* Check if entry already exists */
     GV_TTLEntry *entry = find_entry(mgr, vector_index);
     if (entry) {
         entry->expire_at = expire_at_unix;
@@ -180,7 +163,6 @@ int ttl_set_absolute(GV_TTLManager *mgr, size_t vector_index, uint64_t expire_at
         return 0;
     }
 
-    /* Create new entry */
     entry = gv_alloc(sizeof(GV_TTLEntry));
     if (!entry) {
         pthread_mutex_unlock(&mgr->mutex);
@@ -190,7 +172,6 @@ int ttl_set_absolute(GV_TTLManager *mgr, size_t vector_index, uint64_t expire_at
     entry->vector_index = vector_index;
     entry->expire_at = expire_at_unix;
 
-    /* Insert into hash table */
     size_t bucket = hash_index(vector_index);
     entry->next = mgr->buckets[bucket];
     mgr->buckets[bucket] = entry;
@@ -262,8 +243,6 @@ int ttl_get_remaining(const GV_TTLManager *mgr, size_t vector_index, uint64_t *r
     return 0;
 }
 
-/* Cleanup Operations */
-
 int ttl_cleanup_expired(GV_TTLManager *mgr, GV_Database *db) {
     if (!mgr || !db) return -1;
 
@@ -273,7 +252,6 @@ int ttl_cleanup_expired(GV_TTLManager *mgr, GV_Database *db) {
     size_t expired_count = 0;
     size_t max_expire = mgr->config.max_expired_per_cleanup;
 
-    /* Collect expired indices */
     size_t *expired_indices = gv_alloc(max_expire * sizeof(size_t));
     if (!expired_indices) {
         pthread_mutex_unlock(&mgr->mutex);
@@ -292,10 +270,8 @@ int ttl_cleanup_expired(GV_TTLManager *mgr, GV_Database *db) {
 
     pthread_mutex_unlock(&mgr->mutex);
 
-    /* Delete expired vectors from database */
     for (size_t i = 0; i < expired_count; i++) {
         if (db_delete_vector_by_index(db, expired_indices[i]) == 0) {
-            /* Remove from TTL tracking */
             pthread_mutex_lock(&mgr->mutex);
             remove_entry(mgr, expired_indices[i]);
             mgr->total_expired++;
@@ -312,15 +288,12 @@ int ttl_cleanup_expired(GV_TTLManager *mgr, GV_Database *db) {
     return (int)expired_count;
 }
 
-/* Background Cleanup Thread */
-
 static void *cleanup_thread_func(void *arg) {
     GV_TTLManager *mgr = (GV_TTLManager *)arg;
 
     pthread_mutex_lock(&mgr->mutex);
 
     while (!mgr->cleanup_stop_requested) {
-        /* Wait for cleanup interval */
         struct timespec ts;
         clock_gettime(CLOCK_REALTIME, &ts);
         ts.tv_sec += mgr->config.cleanup_interval_seconds;
@@ -402,8 +375,6 @@ int ttl_is_background_cleanup_running(const GV_TTLManager *mgr) {
     return running;
 }
 
-/* Statistics */
-
 int ttl_get_stats(const GV_TTLManager *mgr, GV_TTLStats *stats) {
     if (!mgr || !stats) return -1;
 
@@ -429,8 +400,6 @@ int ttl_get_stats(const GV_TTLManager *mgr, GV_TTLStats *stats) {
     pthread_mutex_unlock((pthread_mutex_t *)&mgr->mutex);
     return 0;
 }
-
-/* Bulk Operations */
 
 int ttl_set_bulk(GV_TTLManager *mgr, const size_t *indices, size_t count, uint64_t ttl_seconds) {
     if (!mgr || !indices || count == 0) return -1;

@@ -88,7 +88,42 @@ int gv_quota_remove(GV_QuotaManager *mgr, const char *tenant_id);
  * @param vector_count Number of vectors to insert.
  * @return Quota decision.
  */
+/**
+ * @brief Advisory capacity check. Does NOT reserve.
+ *
+ * Because it reserves nothing, two concurrent callers can both be admitted
+ * against the same pre-insert usage and then both record, pushing usage past
+ * the cap. Use gv_quota_reserve_insert() when the answer must be binding;
+ * this call is only safe for reporting and for single-threaded callers.
+ *
+ * It does account for outstanding reservations, so it will not admit work that
+ * already-reserved requests have claimed.
+ */
 GV_QuotaResult gv_quota_check_insert(GV_QuotaManager *mgr, const char *tenant_id, size_t vector_count);
+
+/**
+ * @brief Atomically check AND reserve capacity for @p vector_count vectors.
+ *
+ * This is the enforcing path. The check and the reservation happen under one
+ * acquisition of the manager lock, so concurrent callers cannot both be
+ * admitted against the same usage snapshot.
+ *
+ * Every successful reservation must be matched by exactly one
+ * gv_quota_commit_insert() (the insert landed) or gv_quota_release_insert()
+ * (it did not), or the reserved capacity leaks for the tenant's lifetime.
+ *
+ * @return GV_QUOTA_OK when reserved, GV_QUOTA_EXCEEDED / GV_QUOTA_THROTTLED
+ *         when refused (nothing is reserved in that case).
+ */
+GV_QuotaResult gv_quota_reserve_insert(GV_QuotaManager *mgr, const char *tenant_id,
+                                       size_t vector_count);
+
+/** Convert a reservation into recorded usage after the insert succeeded. */
+int gv_quota_commit_insert(GV_QuotaManager *mgr, const char *tenant_id,
+                           size_t count, size_t bytes);
+
+/** Give a reservation back after the insert failed. */
+int gv_quota_release_insert(GV_QuotaManager *mgr, const char *tenant_id, size_t count);
 
 /**
  * @brief Check whether a query operation should be allowed/throttled for a tenant.

@@ -15,6 +15,11 @@ struct GV_GAContext {
     size_t   *val;
     uint8_t  *occ;
     size_t    cap;
+    /* Pinned snapshot: the graph read lock is held from build until free, so
+     * every algorithm running on this context sees one consistent snapshot
+     * and cannot race concurrent writers (they block until gv_ga_free). */
+    GV_GraphDB *g;
+    int        pinned;
 };
 
 static size_t ga_hash(uint64_t id, size_t cap) {
@@ -23,15 +28,22 @@ static size_t ga_hash(uint64_t id, size_t cap) {
 
 GV_GAContext *gv_ga_build(const GV_GraphDB *g) {
     if (!g) return NULL;
-    size_t N = graph_node_count(g);
     GV_GAContext *ctx = (GV_GAContext *)gv_calloc(1, sizeof(GV_GAContext));
     if (!ctx) return NULL;
+
+    /* Pin the snapshot: acquire the read lock BEFORE enumerating so the id
+     * map and every subsequent traversal observe the same version. */
+    size_t N = graph_node_count(g);   /* own locked read, pre-pin */
+    graph_read_lock(g);
+    ctx->g = (GV_GraphDB *)g; /* pinned read-only view; cast documents lock-only use */
+    ctx->pinned = 1;
+
     ctx->N = N;
-    if (N == 0) return ctx;  /* valid empty context */
+    if (N == 0) return ctx;  /* valid empty context (lock still released at free) */
 
     ctx->ids = (uint64_t *)gv_alloc(N * sizeof(uint64_t));
     if (!ctx->ids) { gv_ga_free(ctx); return NULL; }
-    int wrote = graph_get_all_node_ids(g, ctx->ids, N);
+    int wrote = graph_get_all_node_ids_unlocked(g, ctx->ids, N);
     if (wrote < 0 || (size_t)wrote != N) { gv_ga_free(ctx); return NULL; }
 
     ctx->cap = N * 2 + 1;
@@ -73,16 +85,27 @@ size_t gv_ga_index(const GV_GAContext *ctx, uint64_t node_id) {
     return (size_t)-1;
 }
 
+const GV_GraphNode *gv_ga_node(const GV_GAContext *ctx, uint64_t node_id) {
+    if (!ctx || !ctx->pinned) return graph_get_node(ctx ? ctx->g : NULL, node_id);
+    return graph_get_node_unlocked(ctx->g, node_id);
+}
+
+const GV_GraphEdge *gv_ga_edge(const GV_GAContext *ctx, uint64_t edge_id) {
+    if (!ctx || !ctx->pinned) return graph_get_edge(ctx ? ctx->g : NULL, edge_id);
+    return graph_get_edge_unlocked(ctx->g, edge_id);
+}
+
+int gv_ga_pinned(const GV_GAContext *ctx) { return ctx ? ctx->pinned : 0; }
+
 void gv_ga_free(GV_GAContext *ctx) {
     if (!ctx) return;
+    if (ctx->pinned && ctx->g) graph_read_unlock(ctx->g);
     gv_free(ctx->ids);
     gv_free(ctx->key);
     gv_free(ctx->val);
     gv_free(ctx->occ);
     gv_free(ctx);
 }
-
-/* ── result containers ─────────────────────────────────────────────────────*/
 
 void graph_node_scores_free(GV_GraphNodeScores *s) {
     if (!s) return;

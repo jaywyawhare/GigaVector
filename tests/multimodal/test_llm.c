@@ -18,24 +18,19 @@ static const char *read_env_file(const char *env_var) {
     size_t key_len = strlen(env_var);
     
     while (fgets(line, sizeof(line), file)) {
-        // Remove newline
         size_t len = strlen(line);
         if (len > 0 && line[len - 1] == '\n') {
             line[len - 1] = '\0';
             len--;
         }
-        
-        // Skip empty lines and comments
+
         if (len == 0 || line[0] == '#') {
             continue;
         }
-        
-        // Check if line starts with the key
+
         if (strncmp(line, env_var, key_len) == 0 && line[key_len] == '=') {
-            // Found the key, extract value
             const char *value = line + key_len + 1;
-            
-            // Remove quotes if present
+
             size_t value_len = strlen(value);
             if (value_len >= 2 &&
                 ((value[0] == '"' && value[value_len - 1] == '"') ||
@@ -49,7 +44,6 @@ static const char *read_env_file(const char *env_var) {
                 }
             }
 
-            // Copy value (without quotes)
             if (value_len < MAX_ENV_VALUE_LEN - 1) {
                 memcpy(env_buffer, value, value_len);
                 env_buffer[value_len] = '\0';

@@ -34,8 +34,6 @@ extern int gv_cuda_knn_search(GV_GPUContext *ctx, const float *queries,
                                   size_t *indices, float *distances);
 #endif
 
-/* Internal Structures */
-
 struct GV_GPUContext {
     GV_GPUConfig config;
     int device_id;
@@ -61,8 +59,6 @@ struct GV_GPUIndex {
     size_t memory_usage;
 };
 
-/* Configuration */
-
 static const GV_GPUConfig DEFAULT_CONFIG = {
     .device_id = -1,
     .max_vectors_per_batch = 65536,
@@ -81,8 +77,6 @@ void gpu_config_init(GV_GPUConfig *config) {
     if (!config) return;
     *config = DEFAULT_CONFIG;
 }
-
-/* Device Query */
 
 int gpu_available(void) {
 #ifdef HAVE_CUDA
@@ -115,8 +109,6 @@ int gpu_get_device_info(int device_id, GV_GPUDeviceInfo *info) {
 #endif
 }
 
-/* Context Management */
-
 GV_GPUContext *gpu_create(const GV_GPUConfig *config) {
     GV_GPUContext *ctx = gv_calloc(1, sizeof(GV_GPUContext));
     if (!ctx) return NULL;
@@ -126,7 +118,6 @@ GV_GPUContext *gpu_create(const GV_GPUConfig *config) {
 #ifdef HAVE_CUDA
     ctx->cuda_available = gv_cuda_available();
     if (ctx->cuda_available) {
-        /* Initialize CUDA context */
         GV_GPUContext *cuda_ctx = gv_cuda_create(&ctx->config);
         if (cuda_ctx) {
             ctx->cuda_context = cuda_ctx->cuda_context;
@@ -170,8 +161,6 @@ int gpu_synchronize(GV_GPUContext *ctx) {
     return 0;  /* CPU is always synchronized */
 }
 
-/* GPU Index Management */
-
 GV_GPUIndex *gpu_index_create(GV_GPUContext *ctx, const float *vectors,
                                   size_t count, size_t dimension) {
     if (!ctx || !vectors || count == 0 || dimension == 0) return NULL;
@@ -184,7 +173,6 @@ GV_GPUIndex *gpu_index_create(GV_GPUContext *ctx, const float *vectors,
     index->capacity = count;
     index->dimension = dimension;
 
-    /* Allocate host memory */
     size_t data_size = count * dimension * sizeof(float);
     index->vectors = gv_alloc(data_size);
     if (!index->vectors) {
@@ -239,7 +227,6 @@ GV_GPUIndex *gpu_index_from_db(GV_GPUContext *ctx, GV_Database *db) {
 
     if (count == 0 || dimension == 0) return NULL;
 
-    /* Extract all vectors from database */
     float *vectors = gv_alloc(count * dimension * sizeof(float));
     if (!vectors) return NULL;
 
@@ -261,7 +248,6 @@ int gpu_index_add(GV_GPUIndex *index, const float *vectors, size_t count) {
 
     size_t new_count = index->count + count;
 
-    /* Resize if needed */
     if (new_count > index->capacity) {
         size_t new_capacity = index->capacity * 2;
         if (new_capacity < new_count) new_capacity = new_count;
@@ -278,11 +264,9 @@ int gpu_index_add(GV_GPUIndex *index, const float *vectors, size_t count) {
         index->capacity = new_capacity;
     }
 
-    /* Copy new vectors */
     memcpy(index->vectors + index->count * index->dimension,
            vectors, count * index->dimension * sizeof(float));
 
-    /* Compute norms for new vectors */
     for (size_t i = 0; i < count; i++) {
         float norm = 0;
         const float *v = vectors + i * index->dimension;
@@ -297,7 +281,6 @@ int gpu_index_add(GV_GPUIndex *index, const float *vectors, size_t count) {
 
 #ifdef HAVE_CUDA
     if (index->ctx->cuda_available && index->d_vectors) {
-        /* Reallocate device memory with new size */
         size_t new_data_size = index->count * index->dimension * sizeof(float);
         size_t new_norms_size = index->count * sizeof(float);
         float *new_d_vectors = NULL;
@@ -413,7 +396,6 @@ int gpu_index_update(GV_GPUIndex *index, const size_t *indices,
                    vectors + i * index->dimension,
                    index->dimension * sizeof(float));
 
-            /* Update norm */
             float norm = 0;
             const float *v = vectors + i * index->dimension;
             for (size_t j = 0; j < index->dimension; j++) {
@@ -425,7 +407,6 @@ int gpu_index_update(GV_GPUIndex *index, const size_t *indices,
 
 #ifdef HAVE_CUDA
     if (index->ctx->cuda_available && index->d_vectors) {
-        /* Update modified vectors on device */
         for (size_t i = 0; i < count; i++) {
             if (indices[i] < index->count) {
                 size_t offset = indices[i] * index->dimension;
@@ -479,8 +460,6 @@ void gpu_index_destroy(GV_GPUIndex *index) {
     gv_free(index);
 }
 
-/* CPU Distance Computation (Fallback) */
-
 static float cpu_euclidean_distance(const float *a, const float *b, size_t dim) {
     float sum = 0;
     for (size_t i = 0; i < dim; i++) {
@@ -517,8 +496,6 @@ static float cpu_manhattan_distance(const float *a, const float *b, size_t dim) 
     }
     return sum;
 }
-
-/* Distance Computation */
 
 int gpu_compute_distances(GV_GPUContext *ctx, const float *queries,
                               size_t num_queries, const float *database,
@@ -594,13 +571,10 @@ int gpu_index_compute_distances(GV_GPUIndex *index, const float *queries,
                                      index->dimension, metric, distances);
 }
 
-/* k-NN Search */
-
 /* Simple insertion sort for maintaining top-k */
 static void insert_result(size_t *indices, float *distances, size_t k,
                           size_t idx, float dist, size_t *count) {
     if (*count < k) {
-        /* Find insertion point */
         size_t pos = *count;
         while (pos > 0 && distances[pos - 1] > dist) {
             distances[pos] = distances[pos - 1];
@@ -611,7 +585,6 @@ static void insert_result(size_t *indices, float *distances, size_t k,
         indices[pos] = idx;
         (*count)++;
     } else if (dist < distances[k - 1]) {
-        /* Replace worst result */
         size_t pos = k - 1;
         while (pos > 0 && distances[pos - 1] > dist) {
             distances[pos] = distances[pos - 1];
@@ -648,13 +621,11 @@ int gpu_knn_search(GV_GPUContext *ctx, const float *queries,
         size_t *q_indices = indices + q * k;
         float *q_distances = distances + q * k;
 
-        /* Initialize with invalid values */
         for (size_t i = 0; i < k; i++) {
             q_indices[i] = (size_t)-1;
             q_distances[i] = FLT_MAX;
         }
 
-        /* Precompute query norm */
         float query_norm = 0;
         if (params->metric == GV_GPU_COSINE) {
             for (size_t i = 0; i < dimension; i++) {
@@ -726,7 +697,6 @@ int gpu_index_search(GV_GPUIndex *index, const float *query,
     int result = gpu_index_knn_search(index, query, 1, params, indices, distances);
     if (result != 0) return -1;
 
-    /* Count valid results */
     int count = 0;
     for (size_t i = 0; i < params->k; i++) {
         if (indices[i] != (size_t)-1) count++;
@@ -735,13 +705,10 @@ int gpu_index_search(GV_GPUIndex *index, const float *query,
     return count;
 }
 
-/* Batch Operations */
-
 int gpu_batch_add(GV_GPUContext *ctx, GV_Database *db,
                       const float *vectors, size_t count) {
     if (!ctx || !db || !vectors || count == 0) return -1;
 
-    /* Add vectors to database one by one */
     /* In a real implementation, this would batch the operations */
     size_t dim = database_dimension(db);
     for (size_t i = 0; i < count; i++) {
@@ -764,7 +731,6 @@ int gpu_batch_search(GV_GPUContext *ctx, GV_Database *db,
 
     if (count == 0) return -1;
 
-    /* Extract all vectors for GPU search */
     float *vectors = gv_alloc(count * dimension * sizeof(float));
     if (!vectors) return -1;
 
@@ -788,8 +754,6 @@ int gpu_batch_search(GV_GPUContext *ctx, GV_Database *db,
     gv_free(vectors);
     return result;
 }
-
-/* IVF-PQ GPU Support */
 
 int gpu_train_ivfpq(GV_GPUContext *ctx, const float *vectors,
                         size_t num_vectors, size_t dimension,
@@ -1072,8 +1036,6 @@ int gpu_train_ivfpq(GV_GPUContext *ctx, const float *vectors,
 
     return 0;
 }
-
-/* Statistics */
 
 int gpu_get_stats(GV_GPUContext *ctx, GV_GPUStats *stats) {
     if (!ctx || !stats) return -1;

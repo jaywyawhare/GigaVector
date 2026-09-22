@@ -695,8 +695,6 @@ int hnsw_inline_insert(GV_HNSWInlineIndex *idx, const float *vector,
         }
     }
 
-    /* For each level from min(level, max_level_cur) down to 0, search and
-     * connect */
     size_t insert_top = (level < idx->max_level_cur) ? level : idx->max_level_cur;
     Candidate *cands = (Candidate *)gv_alloc(idx->ef_construction * sizeof(Candidate));
     if (cands == NULL) {
@@ -1130,6 +1128,10 @@ GV_HNSWInlineIndex *hnsw_inline_load(const char *path) {
             hnsw_inline_destroy(idx);
             goto fail;
         }
+        /* Count the node as soon as it is initialized so a subsequent read
+         * failure lets hnsw_inline_destroy free its buffers (otherwise the
+         * just-initialized node's quant_vec/neighbor arrays leak). */
+        idx->count++;
 
         if (read_bytes(f, idx->nodes[i].quant_vec,
                        idx->qparams.bytes_per_vec) != 0) {
@@ -1154,8 +1156,7 @@ GV_HNSWInlineIndex *hnsw_inline_load(const char *path) {
             }
             idx->nodes[i].neighbor_counts[l] = actual;
         }
-
-        idx->count++;
+        /* idx->count was already incremented right after node_init above. */
     }
 
     idx->entry_point = (size_t)entry_point;

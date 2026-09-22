@@ -8,8 +8,6 @@
 
 #define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while(0)
 
-/* ---- iteration collector --------------------------------------------- */
-
 typedef struct {
     uint64_t *ids;
     size_t    n;
@@ -34,8 +32,6 @@ static int collect_cb(uint64_t id, void *ctx)
     c->ids[c->n++] = id;
     return 0;
 }
-
-/* ---- tests ------------------------------------------------------------ */
 
 static int test_add_contains_card(void)
 {
@@ -116,8 +112,6 @@ static int test_remove(void)
     gv_id_bitmap_free(b);
     return 0;
 }
-
-/* ---- brute-force reference sets --------------------------------------- */
 
 static int u64_cmp(const void *x, const void *y)
 {

@@ -296,6 +296,28 @@ rc = gv_db_compact(db);
 gv_db_stop_background_compaction(db);
 ```
 
+### MVCC Transactions
+
+Snapshot-isolation transactions (`storage/transaction.h`). Reads see a consistent snapshot; writes
+are staged and applied atomically at commit with first-committer-wins conflict detection.
+
+```c
+#include "storage/transaction.h"
+
+GV_DBTxn *txn = db_begin(db);
+db_txn_add_vector(txn, vec, dim);
+db_txn_delete(txn, some_index);
+int rc = db_commit(txn);            // GV_TXN_OK (0), or GV_TXN_CONFLICT (1) -> retry
+// (db_rollback(txn) discards staged writes instead)
+
+// Non-transactional snapshot read at a specific committed version:
+int n = db_search_at_version(db, query, k, results, GV_DISTANCE_EUCLIDEAN, snapshot_version);
+```
+
+The WiscKey value store (`db_value_store_*`), access-aware storage tiers
+(`gv_db_set_access_tiering_policy` / `gv_db_record_vector_access`), and the Raft consensus core
+(`admin/raft.h`) are documented in [api_reference.md](api_reference.md).
+
 ## Tips
 
 - Most functions return `0` on success, `-1` on error, `NULL` for pointer returns on error

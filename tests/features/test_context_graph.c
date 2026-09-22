@@ -125,10 +125,7 @@ static void test_context_graph_search(void) {
 }
 
 static void test_json_parsing(void) {
-    /* Note: parse_entities_json and parse_relationships_json are static functions,
-       so we can't test them directly. They are tested through the full extraction
-       flow when LLM is available. The JSON parsing logic follows the same pattern
-       as parse_facts_json in memory_extraction.c */
+    /* parse_entities_json/parse_relationships_json are static; exercised via full extraction when LLM is available */
 }
 
 int main(void) {

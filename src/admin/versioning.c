@@ -11,8 +11,6 @@
 #include "admin/versioning.h"
 #include "core/utils.h"
 
-/* Internal types */
-
 typedef struct {
     uint64_t version_id;
     uint64_t timestamp_us;
@@ -30,8 +28,6 @@ struct GV_VersionManager {
     size_t           max_versions;
     uint64_t         next_id;
 };
-
-/* Helpers */
 
 static uint64_t now_microseconds(void)
 {
@@ -83,8 +79,6 @@ static int ensure_capacity(GV_VersionManager *mgr)
     mgr->entry_capacity = new_cap;
     return 0;
 }
-
-/* Public API */
 
 GV_VersionManager *version_manager_create(size_t max_versions)
 {
@@ -306,7 +300,12 @@ int version_load(GV_VersionManager **mgr_ptr, FILE *in)
 
         if (read_bytes(in, e->label, sizeof(e->label)) != 0) goto fail;
 
+        /* count and dimension are read straight from the file; guard the
+         * multiplications so a crafted/corrupt file can't wrap the size to a
+         * tiny allocation that read_floats then overruns (heap overflow). */
+        if (e->dimension != 0 && e->count > SIZE_MAX / e->dimension) goto fail;
         size_t total_floats = e->count * e->dimension;
+        if (total_floats > SIZE_MAX / sizeof(float)) goto fail;
         if (total_floats > 0) {
             e->data = gv_alloc(total_floats * sizeof(float));
             if (!e->data) goto fail;

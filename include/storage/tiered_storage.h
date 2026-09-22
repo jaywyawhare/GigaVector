@@ -74,6 +74,37 @@ int tiered_storage_set_insert_time(GV_TieredStorageManager *mgr,
                                     uint64_t insert_time_us);
 
 /**
+ * @brief Phase 4: record an access (read/search hit) for a vector slot.
+ *
+ * Increments the slot's access counter and updates its last-access timestamp.
+ * These signals drive access-aware tier classification (recency + frequency),
+ * so that a hot working set stays HOT even as its insertion age grows, and a
+ * cold-but-old vector that is suddenly queried is promoted.
+ *
+ * @param mgr Manager; must be non-NULL. No-op returning 0 growth failure aside.
+ * @param vec_id Vector slot index in soa_storage.
+ * @param access_time_us Access time in microseconds since epoch (0 = use now).
+ * @return 0 on success, -1 on allocation failure.
+ */
+int tiered_storage_record_access(GV_TieredStorageManager *mgr,
+                                 size_t vec_id,
+                                 uint64_t access_time_us);
+
+/**
+ * @brief Phase 4: read a vector slot's access statistics.
+ *
+ * @param mgr Manager; must be non-NULL.
+ * @param vec_id Vector slot index.
+ * @param access_count_out Output: number of recorded accesses (may be NULL).
+ * @param last_access_us_out Output: last access timestamp, 0 if never (may be NULL).
+ * @return 0 on success, -1 if vec_id is out of range.
+ */
+int tiered_storage_get_access(const GV_TieredStorageManager *mgr,
+                              size_t vec_id,
+                              uint32_t *access_count_out,
+                              uint64_t *last_access_us_out);
+
+/**
  * @brief Classify a single vector into its tier based on age.
  *
  * Uses the insertion timestamp stored in the manager and the age thresholds
@@ -109,7 +140,7 @@ void tiered_storage_promote(const struct GV_Database *db,
                              size_t *warm_count,
                              size_t *cold_count);
 
-/* ---- Public API (exposed in gigavector.h) ---- */
+/* Public API (exposed in gigavector.h) */
 
 /**
  * @brief Configure tiered storage thresholds for a database.
@@ -128,6 +159,36 @@ int gv_db_set_tiering_config(struct GV_Database *db,
                                uint64_t hot_max_age_sec,
                                uint64_t warm_max_age_sec,
                                size_t hot_max_vectors);
+
+/**
+ * @brief Phase 4: configure access-intelligence tiering policy.
+ *
+ * Layered on top of the age thresholds set by gv_db_set_tiering_config():
+ *   - A vector accessed within @p access_recency_window_sec is kept HOT
+ *     regardless of its insertion age (recency promotion).
+ *   - A vector whose access count reaches @p hot_min_access_count is promoted
+ *     one tier warmer than its age would place it (frequency promotion).
+ *
+ * @param db Database; must be non-NULL. Enables tiering if not already enabled.
+ * @param access_recency_window_sec Recency window in seconds (0 = disable recency promotion).
+ * @param hot_min_access_count Frequency threshold (0 = disable frequency promotion).
+ * @return 0 on success, -1 on error.
+ */
+int gv_db_set_access_tiering_policy(struct GV_Database *db,
+                                    uint64_t access_recency_window_sec,
+                                    uint32_t hot_min_access_count);
+
+/**
+ * @brief Phase 4: record an access for a vector in the database's tier manager.
+ *
+ * Called from the search/read path for each returned vector so that the hot
+ * working set is tracked. Safe no-op when tiering is disabled.
+ *
+ * @param db Database; may be NULL (no-op).
+ * @param vec_id Vector slot index.
+ * @return 0 on success (or no-op), -1 on allocation failure.
+ */
+int gv_db_record_vector_access(struct GV_Database *db, size_t vec_id);
 
 /**
  * @brief Get the storage tier for a specific vector.

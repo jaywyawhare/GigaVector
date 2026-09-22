@@ -11,8 +11,6 @@
 #include <pthread.h>
 #include <time.h>
 
-/* Internal Structures */
-
 typedef struct CacheEntry {
     uint64_t key_hash;          /* Hash of query vector + params */
     float *query_data;          /* Cached query vector (for collision check) */
@@ -20,19 +18,19 @@ typedef struct CacheEntry {
     size_t k;
     int distance_type;
 
-    size_t *indices;            /* Cached result indices */
-    float *distances;           /* Cached result distances */
-    size_t count;               /* Number of results */
+    size_t *indices;
+    float *distances;
+    size_t count;
 
-    uint64_t created_at;        /* Creation timestamp (seconds) */
-    uint64_t last_access;       /* Last access timestamp */
-    uint64_t access_count;      /* Access frequency (for LFU) */
+    uint64_t created_at;        /* seconds */
+    uint64_t last_access;
+    uint64_t access_count;      /* for LFU */
 
-    size_t memory_size;         /* Total memory used by this entry */
+    size_t memory_size;
 
     struct CacheEntry *lru_prev;  /* Doubly-linked list for LRU ordering */
     struct CacheEntry *lru_next;
-    struct CacheEntry *hash_next; /* Hash bucket chain */
+    struct CacheEntry *hash_next;
 } CacheEntry;
 
 #define CACHE_BUCKETS 1024
@@ -40,14 +38,12 @@ typedef struct CacheEntry {
 struct GV_Cache {
     GV_CacheConfig config;
 
-    /* Hash table */
     CacheEntry *buckets[CACHE_BUCKETS];
 
     /* LRU doubly-linked list (head = most recently used) */
     CacheEntry *lru_head;
     CacheEntry *lru_tail;
 
-    /* Stats */
     uint64_t hits;
     uint64_t misses;
     uint64_t evictions;
@@ -55,13 +51,10 @@ struct GV_Cache {
     size_t current_entries;
     size_t current_memory;
 
-    /* Mutation tracking */
     uint64_t mutation_count;
 
     pthread_mutex_t lock;
 };
-
-/* Hash Functions */
 
 static uint64_t fnv1a_64(const void *data, size_t len) {
     const uint8_t *bytes = (const uint8_t *)data;
@@ -85,8 +78,6 @@ static size_t bucket_idx(uint64_t hash) {
     return hash % CACHE_BUCKETS;
 }
 
-/* Internal Helpers */
-
 static uint64_t current_time_seconds(void) {
     return (uint64_t)time(NULL);
 }
@@ -101,12 +92,11 @@ static int entries_match(const CacheEntry *entry, const float *query_data,
 
 static size_t entry_memory_size(size_t dimension, size_t count) {
     return sizeof(CacheEntry) +
-           dimension * sizeof(float) +    /* query_data */
-           count * sizeof(size_t) +       /* indices */
-           count * sizeof(float);         /* distances */
+           dimension * sizeof(float) +
+           count * sizeof(size_t) +
+           count * sizeof(float);
 }
 
-/* Remove entry from LRU list */
 static void lru_remove(GV_Cache *cache, CacheEntry *entry) {
     if (entry->lru_prev) entry->lru_prev->lru_next = entry->lru_next;
     else cache->lru_head = entry->lru_next;
@@ -129,7 +119,6 @@ static void lru_touch(GV_Cache *cache, CacheEntry *entry) {
     if (!cache->lru_tail) cache->lru_tail = entry;
 }
 
-/* Remove entry from hash bucket chain */
 static void hash_remove(GV_Cache *cache, CacheEntry *entry) {
     size_t bi = bucket_idx(entry->key_hash);
     CacheEntry *prev = NULL;
@@ -160,7 +149,6 @@ static void evict_one(GV_Cache *cache) {
     CacheEntry *victim = NULL;
 
     if (cache->config.policy == GV_CACHE_LRU) {
-        /* Evict from tail (least recently used) */
         victim = cache->lru_tail;
     } else {
         /* LFU: find entry with lowest access count */
@@ -192,8 +180,6 @@ static int is_expired(const GV_Cache *cache, const CacheEntry *entry) {
     return (current_time_seconds() - entry->created_at) > cache->config.ttl_seconds;
 }
 
-/* Configuration */
-
 static const GV_CacheConfig DEFAULT_CONFIG = {
     .max_entries = 1024,
     .max_memory_bytes = 64 * 1024 * 1024,  /* 64MB */
@@ -206,8 +192,6 @@ void cache_config_init(GV_CacheConfig *config) {
     if (!config) return;
     *config = DEFAULT_CONFIG;
 }
-
-/* Lifecycle */
 
 GV_Cache *cache_create(const GV_CacheConfig *config) {
     GV_Cache *cache = gv_calloc(1, sizeof(GV_Cache));
@@ -226,7 +210,6 @@ GV_Cache *cache_create(const GV_CacheConfig *config) {
 void cache_destroy(GV_Cache *cache) {
     if (!cache) return;
 
-    /* Free all entries via hash table traversal */
     for (size_t i = 0; i < CACHE_BUCKETS; i++) {
         CacheEntry *cur = cache->buckets[i];
         while (cur) {
@@ -239,8 +222,6 @@ void cache_destroy(GV_Cache *cache) {
     pthread_mutex_destroy(&cache->lock);
     gv_free(cache);
 }
-
-/* Cache Operations */
 
 int cache_lookup(GV_Cache *cache, const float *query_data, size_t dimension,
                     size_t k, int distance_type, GV_CachedResult *result) {
@@ -256,9 +237,7 @@ int cache_lookup(GV_Cache *cache, const float *query_data, size_t dimension,
 
     while (cur) {
         if (cur->key_hash == hash && entries_match(cur, query_data, dimension, k, distance_type)) {
-            /* Check TTL */
             if (is_expired(cache, cur)) {
-                /* Remove expired entry */
                 if (prev) prev->hash_next = cur->hash_next;
                 else cache->buckets[bi] = cur->hash_next;
 
@@ -273,7 +252,6 @@ int cache_lookup(GV_Cache *cache, const float *query_data, size_t dimension,
                 return 0;
             }
 
-            /* Cache hit - copy results */
             result->count = cur->count;
             result->indices = gv_alloc(cur->count * sizeof(size_t));
             result->distances = gv_alloc(cur->count * sizeof(float));
@@ -315,7 +293,6 @@ int cache_store(GV_Cache *cache, const float *query_data, size_t dimension,
 
     pthread_mutex_lock(&cache->lock);
 
-    /* Evict entries until we have space */
     while (cache->current_entries >= cache->config.max_entries && cache->current_entries > 0) {
         evict_one(cache);
     }
@@ -324,7 +301,6 @@ int cache_store(GV_Cache *cache, const float *query_data, size_t dimension,
         evict_one(cache);
     }
 
-    /* Allocate entry */
     CacheEntry *entry = gv_calloc(1, sizeof(CacheEntry));
     if (!entry) {
         pthread_mutex_unlock(&cache->lock);
@@ -336,7 +312,6 @@ int cache_store(GV_Cache *cache, const float *query_data, size_t dimension,
     entry->k = k;
     entry->distance_type = distance_type;
 
-    /* Copy query data */
     entry->query_data = gv_alloc(dimension * sizeof(float));
     if (!entry->query_data) {
         gv_free(entry);
@@ -345,7 +320,6 @@ int cache_store(GV_Cache *cache, const float *query_data, size_t dimension,
     }
     memcpy(entry->query_data, query_data, dimension * sizeof(float));
 
-    /* Copy results */
     entry->count = count;
     entry->indices = gv_alloc(count * sizeof(size_t));
     entry->distances = gv_alloc(count * sizeof(float));
@@ -365,14 +339,13 @@ int cache_store(GV_Cache *cache, const float *query_data, size_t dimension,
     entry->access_count = 1;
     entry->memory_size = mem_needed;
 
-    /* Check for duplicate key - replace existing */
+    /* Replace any existing entry with the same key */
     size_t bi = bucket_idx(entry->key_hash);
     CacheEntry *cur = cache->buckets[bi];
     CacheEntry *prev = NULL;
     while (cur) {
         if (cur->key_hash == entry->key_hash &&
             entries_match(cur, query_data, dimension, k, distance_type)) {
-            /* Replace existing */
             if (prev) prev->hash_next = cur->hash_next;
             else cache->buckets[bi] = cur->hash_next;
 
@@ -386,7 +359,6 @@ int cache_store(GV_Cache *cache, const float *query_data, size_t dimension,
         cur = cur->hash_next;
     }
 
-    /* Insert into hash bucket (head) */
     entry->hash_next = cache->buckets[bi];
     cache->buckets[bi] = entry;
 
@@ -412,7 +384,6 @@ void cache_notify_mutation(GV_Cache *cache) {
 
     if (cache->config.invalidate_after_mutations > 0 &&
         cache->mutation_count >= cache->config.invalidate_after_mutations) {
-        /* Flush entire cache */
         for (size_t i = 0; i < CACHE_BUCKETS; i++) {
             CacheEntry *cur = cache->buckets[i];
             while (cur) {
@@ -466,8 +437,6 @@ void cache_free_result(GV_CachedResult *result) {
     result->distances = NULL;
     result->count = 0;
 }
-
-/* Statistics */
 
 int cache_get_stats(const GV_Cache *cache, GV_CacheStats *stats) {
     if (!cache || !stats) return -1;

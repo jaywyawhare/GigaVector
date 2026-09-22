@@ -160,6 +160,78 @@ int cluster_get_stats(GV_Cluster *cluster, GV_ClusterStats *stats);
 GV_ShardManager *cluster_get_shard_manager(GV_Cluster *cluster);
 
 /**
+ * @brief Distributed k-NN search across the cluster's local and remote shards.
+ *
+ * Fans out to local shards (shard_search) and each distinct remote node
+ * (shard_rpc_search) via shard_rpc_search_distributed(), then merges a global
+ * top-k. Results are owned by the caller (free with gv_search_results_free()).
+ *
+ * @param cluster       Cluster instance.
+ * @param query_data    Query vector.
+ * @param dim           Query dimension (required to reach remote nodes).
+ * @param k             Number of neighbours to return.
+ * @param results       Output array of at least @p k elements.
+ * @param distance_type Distance metric to use.
+ * @return Number of neighbours written (0..k), or -1 on error.
+ */
+int cluster_search(GV_Cluster *cluster, const float *query_data, size_t dim,
+                   size_t k, GV_SearchResult *results,
+                   GV_DistanceType distance_type);
+
+/**
+ * @brief Attach this node's local database as shard 0 (the node's own data).
+ *
+ * Call before cluster_start(). The database is served to peers over the RPC
+ * listener and searched locally by cluster_search().
+ *
+ * @return 0 on success, -1 on error.
+ */
+int cluster_attach_local_db(GV_Cluster *cluster, GV_Database *db);
+
+/**
+ * @brief Port the node's search RPC listener is bound to (0 if not started).
+ *
+ * Useful after binding an ephemeral port (listen_address host:0) to tell peers
+ * where to reach this node.
+ */
+uint16_t cluster_rpc_port(const GV_Cluster *cluster);
+
+/**
+ * @brief Enable raft leader election over the cluster's RPC transport.
+ *
+ * Call after cluster_start(). @p addrs is the ordered set of participating node
+ * RPC endpoints ("host:port"); every node passes the same @p addrs and its own
+ * position as @p my_index. Nodes exchange raft messages over the shared listener
+ * and elect a single leader.
+ *
+ * @return 0 on success, -1 on error.
+ */
+int cluster_enable_raft(GV_Cluster *cluster, const char *const *addrs,
+                        size_t n, int my_index);
+
+/** @brief Believed raft leader's index, or -1 if unknown / raft disabled. */
+int cluster_raft_leader(GV_Cluster *cluster);
+
+/** @brief Non-zero if this node is currently the raft leader. */
+int cluster_is_raft_leader(GV_Cluster *cluster);
+
+/**
+ * @brief Replicate a shard-placement assignment through the raft log.
+ *
+ * Leader-only: proposes "shard @p shard_id is owned by node @p node_index".
+ * On commit the assignment is applied on every node (see cluster_shard_owner).
+ *
+ * @return 0 if accepted (this node is leader), -1 otherwise.
+ */
+int cluster_assign_shard(GV_Cluster *cluster, uint64_t shard_id, int node_index);
+
+/**
+ * @brief Owning node index of @p shard_id in the replicated placement map, or
+ *        -1 if unassigned. Converges on all nodes once the assignment commits.
+ */
+int cluster_shard_owner(GV_Cluster *cluster, uint64_t shard_id);
+
+/**
  * @brief Check if cluster is healthy.
  *
  * @param cluster Cluster instance.

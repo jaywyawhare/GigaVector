@@ -118,16 +118,7 @@ int flat_search(void *index, const GV_Vector *query, size_t k,
         /* Copy vector so result outlives storage */
         GV_Vector *copy = vector_create_from_data(view.dimension, view.data);
         if (copy) {
-            GV_Metadata *meta = soa_storage_get_metadata(idx->storage, vi);
-            if (meta) {
-                GV_Metadata *cur = meta;
-                while (cur) {
-                    if (cur->key && cur->value) {
-                        vector_set_metadata(copy, cur->key, cur->value);
-                    }
-                    cur = cur->next;
-                }
-            }
+            vector_apply_metadata(copy, soa_storage_get_metadata(idx->storage, vi));
             results[i].vector = copy;
         } else {
             results[i].vector = NULL;
@@ -308,13 +299,15 @@ int flat_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version) {
         for (uint32_t m = 0; m < meta_count; m++) {
             uint32_t klen = 0, vlen = 0;
             char *key = NULL, *value = NULL;
-            if (read_u32(in, &klen) != 0) { gv_free(data); flat_destroy(index); return -1; }
-            if (read_str(in, &key, klen) != 0) { gv_free(data); flat_destroy(index); return -1; }
-            if (read_u32(in, &vlen) != 0) { gv_free(key); gv_free(data); flat_destroy(index); return -1; }
-            if (read_str(in, &value, vlen) != 0) { gv_free(key); gv_free(data); flat_destroy(index); return -1; }
+            /* Free the metadata chain accumulated so far on every error path;
+             * previously a mid-loop read failure leaked all prior nodes. */
+            if (read_u32(in, &klen) != 0) { metadata_free(metadata); gv_free(data); flat_destroy(index); return -1; }
+            if (read_str(in, &key, klen) != 0) { metadata_free(metadata); gv_free(data); flat_destroy(index); return -1; }
+            if (read_u32(in, &vlen) != 0) { gv_free(key); metadata_free(metadata); gv_free(data); flat_destroy(index); return -1; }
+            if (read_str(in, &value, vlen) != 0) { gv_free(key); metadata_free(metadata); gv_free(data); flat_destroy(index); return -1; }
 
             GV_Metadata *node = (GV_Metadata *)gv_alloc(sizeof(GV_Metadata));
-            if (!node) { gv_free(key); gv_free(value); gv_free(data); flat_destroy(index); return -1; }
+            if (!node) { gv_free(key); gv_free(value); metadata_free(metadata); gv_free(data); flat_destroy(index); return -1; }
             node->key = key;
             node->value = value;
             node->next = metadata;

@@ -89,7 +89,10 @@ static float xoshiro_random_sign(GV_Xoshiro256 *rng) {
  */
 static float xoshiro_uniform(GV_Xoshiro256 *rng) {
     uint64_t v = xoshiro_next(rng);
-    return ((float)(v >> 40) / (float)(1ULL << 24)) - 1.0f;
+    /* [0,1) -> (-1,1): scale by 2 before subtracting 1. The previous form only
+     * subtracted 1, yielding [-1,0) — an all-non-positive projection matrix that
+     * destroys the zero-mean Johnson–Lindenstrauss property. */
+    return ((float)(v >> 40) / (float)(1ULL << 24)) * 2.0f - 1.0f;
 }
 
 struct GV_MuveraEncoder {
@@ -232,14 +235,7 @@ GV_MuveraEncoder *muvera_create(const GV_MuveraConfig *config) {
     if (cfg.num_projections == 0) cfg.num_projections = 64;
     if (cfg.seed == 0)            cfg.seed = 42;
 
-    /* Compute reduced dimension.
-     * output_dimension = num_projections * NUM_BUCKETS * reduced_dim
-     * If output_dimension is specified, derive reduced_dim from it.
-     * Otherwise, use the default: output_dimension = num_projections * token_dimension / 4,
-     * which gives reduced_dim = token_dimension / (4 * NUM_BUCKETS / 1)
-     *   = token_dimension / (4 * 2 / (num_projections / num_projections))
-     * Actually: output_dim = np * 2 * rd  =>  rd = output_dim / (np * 2)
-     */
+    /* output_dim = np * NUM_BUCKETS * rd; when unset, default output_dim = np * td / 4. */
     size_t np = cfg.num_projections;
     size_t td = cfg.token_dimension;
 

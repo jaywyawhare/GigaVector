@@ -22,12 +22,8 @@
 #include "features/json_index.h"
 #include "features/json.h"
 
-/* Internal Constants */
-
 #define GV_JPI_INITIAL_CAP  16
 #define GV_JPI_PATH_MAXLEN 256
-
-/* Internal Entry Types */
 
 typedef struct {
     char  *value;
@@ -49,8 +45,6 @@ typedef struct {
     size_t vector_index;
 } GV_JPBoolEntry;
 
-/* Per-Path Index */
-
 typedef struct {
     char             path[GV_JPI_PATH_MAXLEN];
     GV_JSONPathType  type;
@@ -63,15 +57,11 @@ typedef struct {
     } data;
 } GV_JPPathIndex;
 
-/* Top-Level Index Structure */
-
 struct GV_JSONPathIndex {
     GV_JPPathIndex  paths[GV_JSON_INDEX_MAX_PATHS];
     size_t          path_count;
     pthread_rwlock_t rwlock;
 };
-
-/* Helpers: find a per-path index by name */
 
 static GV_JPPathIndex *jpi_find_path(const GV_JSONPathIndex *idx, const char *path) {
     for (size_t i = 0; i < idx->path_count; i++) {
@@ -81,8 +71,6 @@ static GV_JPPathIndex *jpi_find_path(const GV_JSONPathIndex *idx, const char *pa
     }
     return NULL;
 }
-
-/* Helpers: JSON path resolution (dot-notation and bracket array access) */
 
 /**
  * @brief Resolve a dot-notation / bracket path against a parsed JSON tree.
@@ -121,11 +109,7 @@ static GV_JsonValue *jpi_resolve_path(const GV_JsonValue *root, const char *path
             }
 
             /* Process one or more bracket indices: [0][1]... */
-            char *p = bracket + 1;  /* skip past '[' after we NUL'd it,
-                                       but we need the original — use offset */
-            /* Re-parse from bracket position in original segment */
-            /* Since we NUL'd bracket, rebuild pointer arithmetic */
-            p = bracket + 1; /* points into buf, after the '[' */
+            char *p = bracket + 1; /* points into buf, after the '[' */
             while (*p) {
                 char *end_bracket = strchr(p, ']');
                 if (!end_bracket) return NULL;
@@ -166,8 +150,7 @@ static GV_JsonValue *jpi_resolve_path(const GV_JsonValue *root, const char *path
     return (GV_JsonValue *)current;
 }
 
-/* Helpers: binary search — strings (sorted by strcmp) */
-
+/* strings are kept sorted by strcmp */
 static size_t jpi_str_lower_bound(const GV_JPStringEntry *entries, size_t count,
                                   const char *value) {
     size_t lo = 0, hi = count;
@@ -181,8 +164,6 @@ static size_t jpi_str_lower_bound(const GV_JPStringEntry *entries, size_t count,
     }
     return lo;
 }
-
-/* Helpers: binary search — int64_t */
 
 static size_t jpi_int_lower_bound(const GV_JPIntEntry *entries, size_t count,
                                   int64_t value) {
@@ -212,8 +193,6 @@ static size_t jpi_int_upper_bound(const GV_JPIntEntry *entries, size_t count,
     return lo;
 }
 
-/* Helpers: binary search — double */
-
 static size_t jpi_float_lower_bound(const GV_JPFloatEntry *entries, size_t count,
                                     double value) {
     size_t lo = 0, hi = count;
@@ -241,8 +220,6 @@ static size_t jpi_float_upper_bound(const GV_JPFloatEntry *entries, size_t count
     }
     return lo;
 }
-
-/* Helpers: per-path sorted insert */
 
 static int jpi_insert_string(GV_JPPathIndex *pi, size_t vector_index, const char *value) {
     if (pi->data.str.count >= pi->data.str.capacity) {
@@ -351,8 +328,6 @@ do_bool_insert:
     return 0;
 }
 
-/* Helpers: per-path entry removal by vector_index */
-
 static void jpi_remove_from_path(GV_JPPathIndex *pi, size_t vector_index) {
     switch (pi->type) {
         case GV_JP_STRING: {
@@ -412,8 +387,6 @@ static void jpi_remove_from_path(GV_JPPathIndex *pi, size_t vector_index) {
     }
 }
 
-/* Helpers: gv_free a single per-path index's entries */
-
 static void jpi_free_path_entries(GV_JPPathIndex *pi) {
     switch (pi->type) {
         case GV_JP_STRING:
@@ -445,8 +418,6 @@ static void jpi_free_path_entries(GV_JPPathIndex *pi) {
             break;
     }
 }
-
-/* Helpers: initialise per-path entry storage */
 
 static int jpi_init_path_entries(GV_JPPathIndex *pi) {
     switch (pi->type) {
@@ -482,8 +453,6 @@ static int jpi_init_path_entries(GV_JPPathIndex *pi) {
     return 0;
 }
 
-/* Lifecycle */
-
 GV_JSONPathIndex *json_index_create(void) {
     GV_JSONPathIndex *idx = (GV_JSONPathIndex *)gv_calloc(1, sizeof(GV_JSONPathIndex));
     if (!idx) return NULL;
@@ -508,8 +477,6 @@ void json_index_destroy(GV_JSONPathIndex *idx) {
     pthread_rwlock_destroy(&idx->rwlock);
     gv_free(idx);
 }
-
-/* Path Registration */
 
 int json_index_add_path(GV_JSONPathIndex *idx, const GV_JSONPathConfig *config) {
     if (!idx || !config || !config->path) return -1;
@@ -567,8 +534,6 @@ int json_index_remove_path(GV_JSONPathIndex *idx, const char *path) {
     pthread_rwlock_unlock(&idx->rwlock);
     return -1; /* Path not found */
 }
-
-/* Data Manipulation */
 
 int json_index_insert(GV_JSONPathIndex *idx, size_t vector_index, const char *json_str) {
     if (!idx || !json_str) return -1;
@@ -632,8 +597,6 @@ int json_index_remove(GV_JSONPathIndex *idx, size_t vector_index) {
     pthread_rwlock_unlock(&idx->rwlock);
     return 0;
 }
-
-/* Lookup */
 
 int json_index_lookup_string(const GV_JSONPathIndex *idx, const char *path,
                                 const char *value, size_t *out_indices, size_t max_count) {
@@ -717,8 +680,6 @@ int json_index_lookup_float_range(const GV_JSONPathIndex *idx, const char *path,
     return (int)n;
 }
 
-/* Statistics */
-
 size_t json_index_count(const GV_JSONPathIndex *idx, const char *path) {
     if (!idx || !path) return 0;
 
@@ -741,8 +702,6 @@ size_t json_index_count(const GV_JSONPathIndex *idx, const char *path) {
     pthread_rwlock_unlock((pthread_rwlock_t *)&idx->rwlock);
     return result;
 }
-
-/* Persistence */
 
 static const char GV_JPI_MAGIC[] = "GV_JPI";
 #define GV_JPI_MAGIC_LEN 6

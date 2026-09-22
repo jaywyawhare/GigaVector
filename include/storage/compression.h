@@ -39,7 +39,6 @@ GV_Compressor *compression_create(const GV_CompressionConfig *config);
 /**
  * @brief Destroy an instance and free associated resources.
  *
- * @param comp comp.
  */
 void compression_destroy(GV_Compressor *comp);
 
@@ -54,8 +53,7 @@ size_t decompress(GV_Compressor *comp, const void *input, size_t input_len,
 /**
  * @brief Perform the operation.
  *
- * @param comp comp.
- * @param input_len input_len.
+
  * @return Count value.
  */
 size_t compress_bound(const GV_Compressor *comp, size_t input_len);
@@ -63,7 +61,6 @@ size_t compress_bound(const GV_Compressor *comp, size_t input_len);
 /**
  * @brief Retrieve statistics.
  *
- * @param comp comp.
  * @param stats Output statistics structure.
  * @return 0 on success, -1 on error.
  */

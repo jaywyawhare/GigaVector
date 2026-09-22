@@ -13,17 +13,9 @@
 #include <time.h>
 #include <pthread.h>
 
-/* Internal Structures */
-
 #define MAX_ALIASES       256
 #define ALIAS_NAME_MAX    128
 #define COLLECTION_MAX    256
-
-/**
- * @brief FNV-1a hash offset basis and prime for 32-bit.
- */
-#define FNV_OFFSET_BASIS  0x811C9DC5u
-#define FNV_PRIME         0x01000193u
 
 /**
  * @brief Single alias entry within the open-addressing hash table.
@@ -36,27 +28,12 @@ typedef struct {
     uint64_t updated_at;                     /**< Unix timestamp of last update. */
 } GV_AliasEntry;
 
-/**
- * @brief Alias manager internal structure.
- */
 struct GV_AliasManager {
     GV_AliasEntry    entries[MAX_ALIASES];
     size_t           count;
     pthread_rwlock_t rwlock;
 };
 
-/* Hash Function (FNV-1a) */
-
-static uint32_t fnv1a(const char *str) {
-    uint32_t hash = FNV_OFFSET_BASIS;
-    for (const unsigned char *p = (const unsigned char *)str; *p; p++) {
-        hash ^= (uint32_t)*p;
-        hash *= FNV_PRIME;
-    }
-    return hash;
-}
-
-/* Internal Helpers */
 
 /**
  * @brief Locate the slot index for a given alias name using open addressing
@@ -65,18 +42,18 @@ static uint32_t fnv1a(const char *str) {
  * @return Slot index if found, or (size_t)-1 if not present.
  */
 static size_t find_slot(const GV_AliasManager *mgr, const char *alias_name) {
-    uint32_t h = fnv1a(alias_name);
+    uint32_t h = gv_fnv1a(alias_name, strlen(alias_name));
     for (size_t i = 0; i < MAX_ALIASES; i++) {
         size_t idx = (h + i) % MAX_ALIASES;
         const GV_AliasEntry *e = &mgr->entries[idx];
         if (!e->occupied) {
-            return (size_t)-1;  /* Empty slot means the name does not exist. */
+            return (size_t)-1;
         }
         if (strcmp(e->alias_name, alias_name) == 0) {
             return idx;
         }
     }
-    return (size_t)-1;  /* Table full, not found. */
+    return (size_t)-1;
 }
 
 /**
@@ -85,7 +62,7 @@ static size_t find_slot(const GV_AliasManager *mgr, const char *alias_name) {
  * @return Slot index, or (size_t)-1 if the table is full.
  */
 static size_t find_empty_slot(const GV_AliasManager *mgr, const char *alias_name) {
-    uint32_t h = fnv1a(alias_name);
+    uint32_t h = gv_fnv1a(alias_name, strlen(alias_name));
     for (size_t i = 0; i < MAX_ALIASES; i++) {
         size_t idx = (h + i) % MAX_ALIASES;
         if (!mgr->entries[idx].occupied) {
@@ -98,8 +75,6 @@ static size_t find_empty_slot(const GV_AliasManager *mgr, const char *alias_name
 static uint64_t current_time_unix(void) {
     return (uint64_t)time(NULL);
 }
-
-/* Lifecycle */
 
 GV_AliasManager *alias_manager_create(void) {
     GV_AliasManager *mgr = gv_calloc(1, sizeof(GV_AliasManager));
@@ -120,8 +95,6 @@ void alias_manager_destroy(GV_AliasManager *mgr) {
     gv_free(mgr);
 }
 
-/* Alias Operations */
-
 int alias_create(GV_AliasManager *mgr, const char *alias_name,
                     const char *collection_name) {
     if (!mgr || !alias_name || !collection_name) return -1;
@@ -130,13 +103,11 @@ int alias_create(GV_AliasManager *mgr, const char *alias_name,
 
     pthread_rwlock_wrlock(&mgr->rwlock);
 
-    /* Reject if alias already exists. */
     if (find_slot(mgr, alias_name) != (size_t)-1) {
         pthread_rwlock_unlock(&mgr->rwlock);
         return -1;
     }
 
-    /* Reject if table is full. */
     if (mgr->count >= MAX_ALIASES) {
         pthread_rwlock_unlock(&mgr->rwlock);
         return -1;
@@ -198,21 +169,16 @@ int alias_delete(GV_AliasManager *mgr, const char *alias_name) {
         return -1;
     }
 
-    /*
-     * Open-addressing deletion: mark slot empty then rehash any entries
-     * in the same cluster that may have been displaced past this slot.
-     */
+    /* Open-addressing deletion: mark empty, then rehash the cluster to fix displaced probes. */
     mgr->entries[idx].occupied = 0;
     mgr->count--;
 
-    /* Rehash subsequent entries that belong to the same cluster. */
     size_t cur = (idx + 1) % MAX_ALIASES;
     while (mgr->entries[cur].occupied) {
         GV_AliasEntry tmp = mgr->entries[cur];
         mgr->entries[cur].occupied = 0;
         mgr->count--;
 
-        /* Re-insert the displaced entry. */
         size_t new_idx = find_empty_slot(mgr, tmp.alias_name);
         mgr->entries[new_idx] = tmp;
         mgr->count++;
@@ -249,7 +215,6 @@ int alias_swap(GV_AliasManager *mgr, const char *alias_a, const char *alias_b) {
         return -1;
     }
 
-    /* Swap collection names. */
     char tmp[COLLECTION_MAX];
     memcpy(tmp, mgr->entries[idx_a].collection_name, COLLECTION_MAX);
     memcpy(mgr->entries[idx_a].collection_name,
@@ -263,8 +228,6 @@ int alias_swap(GV_AliasManager *mgr, const char *alias_a, const char *alias_b) {
     pthread_rwlock_unlock(&mgr->rwlock);
     return 0;
 }
-
-/* Resolve */
 
 const char *alias_resolve(const GV_AliasManager *mgr, const char *alias_name) {
     if (!mgr || !alias_name) return NULL;
@@ -280,8 +243,6 @@ const char *alias_resolve(const GV_AliasManager *mgr, const char *alias_name) {
     pthread_rwlock_unlock((pthread_rwlock_t *)&mgr->rwlock);
     return result;
 }
-
-/* List / Info / Count */
 
 int alias_list(const GV_AliasManager *mgr, GV_AliasInfo **out_list,
                   size_t *out_count) {
@@ -358,8 +319,6 @@ size_t alias_count(const GV_AliasManager *mgr) {
 
     return c;
 }
-
-/* Persistence */
 
 /**
  * Binary format:
@@ -459,7 +418,7 @@ GV_AliasManager *alias_load(const char *filepath) {
         if (read_u64(fp, &created_at) != 0) goto fail;
         if (read_u64(fp, &updated_at) != 0) goto fail;
 
-        /* Insert directly into the hash table (bypasses timestamp generation). */
+        /* Insert directly, preserving loaded timestamps rather than regenerating. */
         size_t idx = find_empty_slot(mgr, alias_buf);
         if (idx == (size_t)-1) goto fail;
 

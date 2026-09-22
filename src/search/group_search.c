@@ -240,7 +240,8 @@ int group_search(const GV_Database *db, const float *query, size_t dimension,
             if (!val) continue;
 
             GroupBucket *b = group_map_get_or_create(&map, val);
-            if (!b || bucket_add_hit(&map, b, i, candidates[i].distance) != 0) {
+            /* Store the real vector id, not the candidate loop index. */
+            if (!b || bucket_add_hit(&map, b, candidates[i].id, candidates[i].distance) != 0) {
                 rc = -1;
                 break;
             }

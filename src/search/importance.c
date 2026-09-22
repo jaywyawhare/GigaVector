@@ -29,12 +29,8 @@
 
 #include "search/importance.h"
 
-/* BM25 Parameters (Okapi BM25 defaults) */
-
 #define BM25_K1 1.5    /* Term frequency saturation parameter */
 #define BM25_B  0.75   /* Length normalization parameter */
-
-/* Helper Functions - Pure Statistical (No Keyword Lists) */
 
 static size_t count_words(const char *text, size_t len) {
     size_t count = 0;
@@ -162,8 +158,6 @@ static double clamp(double value, double min_val, double max_val) {
     return value;
 }
 
-/* Configuration Functions */
-
 GV_ImportanceConfig importance_config_default(void) {
     GV_ImportanceConfig config;
 
@@ -200,8 +194,6 @@ GV_ImportanceConfig importance_config_default(void) {
 
     return config;
 }
-
-/* Content Analysis Functions - Pure Statistical (No Keywords) */
 
 /**
  * @brief Calculate informativeness using Type-Token Ratio (TTR).
@@ -269,7 +261,7 @@ double importance_specificity(const char *content, size_t len) {
         return 0.0;
     }
 
-    double score = 0.5;  /* Base score */
+    double score = 0.5;
     size_t word_count = count_words(content, len);
     if (word_count == 0) return 0.0;
 
@@ -604,8 +596,6 @@ double importance_score_extracted(const char *content, size_t len) {
     return clamp(final_score, floor, 1.0);
 }
 
-/* Temporal Decay Functions - Ebbinghaus Forgetting Curve */
-
 /**
  * @brief Calculate temporal decay using Ebbinghaus forgetting curve.
  *
@@ -645,8 +635,6 @@ double importance_temporal_decay(const GV_TemporalDecayConfig *config,
     return decay;
 }
 
-/* Access Pattern Functions - Spaced Repetition Inspired */
-
 /**
  * @brief Calculate access pattern score based on retrieval history.
  *
@@ -682,7 +670,7 @@ double importance_access_score(const GV_AccessPatternConfig *config,
     double relevance_score = history->avg_relevance;
 
     /* Factor 4: Access interval quality (spaced repetition inspired) */
-    double interval_score = 0.5;  /* Default */
+    double interval_score = 0.5;
     if (history->event_count >= 2) {
         double total_interval = 0.0;
         size_t interval_count = 0;
@@ -755,8 +743,6 @@ int importance_record_access(GV_AccessHistory *history,
 
     return 0;
 }
-
-/* Access History Management */
 
 int access_history_init(GV_AccessHistory *history, size_t initial_capacity) {
     if (history == NULL) {
@@ -882,8 +868,6 @@ int access_history_deserialize(const char *json, GV_AccessHistory *history) {
 
     return 0;
 }
-
-/* Main Scoring Functions */
 
 int importance_calculate(const GV_ImportanceConfig *config,
                             const GV_ImportanceContext *context,
@@ -1024,8 +1008,6 @@ int importance_calculate(const GV_ImportanceConfig *config,
 
     return 0;
 }
-
-/* Batch Operations */
 
 int importance_calculate_batch(const GV_ImportanceConfig *config,
                                    const GV_ImportanceContext *contexts,

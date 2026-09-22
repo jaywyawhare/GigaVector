@@ -20,10 +20,6 @@
 #include <stdint.h>
 #include <inttypes.h>
 
-/* -------------------------------------------------------------------------
- * Internal helpers
- * ---------------------------------------------------------------------- */
-
 /**
  * Encode a uint64 value as a 32-character zero-padded hex string (16 bytes
  * represented as hex — the minimum trace-id width for OTLP).
@@ -86,10 +82,6 @@ static int buf_appendf(char **buf, size_t *len, size_t *capacity,
     }
     return buf_append(buf, len, capacity, tmp);
 }
-
-/* -------------------------------------------------------------------------
- * JSON builders
- * ---------------------------------------------------------------------- */
 
 char *otlp_build_trace_json(const GV_QueryTrace *trace) {
     if (!trace) return NULL;
@@ -326,9 +318,7 @@ oom:
     return NULL;
 }
 
-/* -------------------------------------------------------------------------
- * HTTP delivery (libcurl or stub)
- * ---------------------------------------------------------------------- */
+/* HTTP delivery (libcurl or stub) */
 
 #ifdef HAVE_CURL
 #include <curl/curl.h>
@@ -378,10 +368,6 @@ static int otlp_post_json(const char *url, const char *json, int timeout_ms) {
 }
 
 #endif /* HAVE_CURL */
-
-/* -------------------------------------------------------------------------
- * Public API
- * ---------------------------------------------------------------------- */
 
 int otlp_export_trace(const GV_OtlpConfig *config, const GV_QueryTrace *trace) {
     if (!config || !config->enabled || !config->endpoint[0]) return -1;

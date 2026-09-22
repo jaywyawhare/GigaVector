@@ -138,8 +138,6 @@ static int dedup_insert_into_tables(GV_DedupIndex *dedup, size_t vec_index) {
     return 0;
 }
 
-/* Public API */
-
 GV_DedupIndex *dedup_create(size_t dimension, const GV_DedupConfig *config) {
     if (dimension == 0) {
         return NULL;
@@ -152,7 +150,6 @@ GV_DedupIndex *dedup_create(size_t dimension, const GV_DedupConfig *config) {
 
     dedup->dimension = dimension;
 
-    /* Apply defaults for missing config values */
     if (config != NULL) {
         dedup->config = *config;
     }
@@ -176,7 +173,6 @@ GV_DedupIndex *dedup_create(size_t dimension, const GV_DedupConfig *config) {
 
     size_t num_buckets = (size_t)1 << dedup->config.hash_bits;
 
-    /* Allocate initial vector storage */
     dedup->capacity = 256;
     dedup->count = 0;
     dedup->vectors = (float *)gv_alloc(dedup->capacity * dimension * sizeof(float));
@@ -185,7 +181,6 @@ GV_DedupIndex *dedup_create(size_t dimension, const GV_DedupConfig *config) {
         return NULL;
     }
 
-    /* Allocate hyperplanes (flat array) */
     size_t hp_count = dedup->config.num_hash_tables * dedup->config.hash_bits * dimension;
     dedup->hyperplanes = (float *)gv_alloc(hp_count * sizeof(float));
     if (dedup->hyperplanes == NULL) {
@@ -199,7 +194,6 @@ GV_DedupIndex *dedup_create(size_t dimension, const GV_DedupConfig *config) {
                                dimension,
                                dedup->config.seed);
 
-    /* Allocate hash tables */
     dedup->tables = (GV_DedupHashTable *)gv_calloc(dedup->config.num_hash_tables,
                                                  sizeof(GV_DedupHashTable));
     if (dedup->tables == NULL) {
@@ -214,7 +208,6 @@ GV_DedupIndex *dedup_create(size_t dimension, const GV_DedupConfig *config) {
         dedup->tables[t].buckets = (GV_DedupBucketNode **)gv_calloc(num_buckets,
                                                                    sizeof(GV_DedupBucketNode *));
         if (dedup->tables[t].buckets == NULL) {
-            /* Clean up previously allocated tables */
             for (size_t i = 0; i < t; ++i) {
                 gv_free(dedup->tables[i].buckets);
             }
@@ -303,14 +296,12 @@ int dedup_insert(GV_DedupIndex *dedup, const float *data, size_t dimension) {
         return -1;
     }
 
-    /* Check for an existing duplicate first */
     int dup = dedup_check(dedup, data, dimension);
     if (dup >= 0) {
         return 1; /* duplicate found */
     }
     /* dup == -1 could mean "unique" or "error on empty index"; either way we insert. */
 
-    /* Grow storage if necessary */
     if (dedup->count >= dedup->capacity) {
         size_t new_capacity = dedup->capacity * 2;
         float *new_vectors = (float *)gv_realloc(dedup->vectors,
@@ -322,14 +313,12 @@ int dedup_insert(GV_DedupIndex *dedup, const float *data, size_t dimension) {
         dedup->capacity = new_capacity;
     }
 
-    /* Copy vector data into flat storage */
     size_t new_index = dedup->count;
     memcpy(dedup->vectors + new_index * dedup->dimension,
            data,
            dedup->dimension * sizeof(float));
     dedup->count++;
 
-    /* Insert into all hash tables */
     if (dedup_insert_into_tables(dedup, new_index) != 0) {
         /* Roll back the vector append on hash-table failure */
         dedup->count--;
@@ -360,7 +349,6 @@ int dedup_scan(GV_DedupIndex *dedup, GV_DedupResult *results, size_t max_results
     for (size_t i = 0; i < dedup->count && result_count < max_results; ++i) {
         const float *vec_i = dedup->vectors + i * dedup->dimension;
 
-        /* Allocate a per-vector seen flags array */
         int *seen = (int *)gv_calloc(dedup->count, sizeof(int));
         if (seen == NULL) {
             return (result_count > 0) ? (int)result_count : -1;
@@ -411,7 +399,6 @@ void dedup_clear(GV_DedupIndex *dedup) {
         return;
     }
 
-    /* Free all bucket chains */
     for (size_t t = 0; t < dedup->config.num_hash_tables; ++t) {
         for (size_t b = 0; b < dedup->tables[t].num_buckets; ++b) {
             dedup_bucket_free_chain(dedup->tables[t].buckets[b]);

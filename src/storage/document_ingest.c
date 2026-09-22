@@ -62,11 +62,18 @@ int gv_ingest_document(GV_Database *db, GV_KnowledgeGraph *kg, GV_MemoryLayer *m
     float *emb = (float *)gv_alloc(dim * sizeof(float));
     if (!emb) { gv_chunks_free(chunks, nchunks); return -1; }
 
+    /* Chunk ids already written to the lower layers; used to compensate
+     * (delete vectors/triples) when a later chunk fails mid-document. */
+    size_t done_cap = nchunks > 16 ? nchunks : 16;
+    const char **done = (const char **)gv_calloc(done_cap, sizeof(char *));
+    if (!done) { gv_free(emb); gv_chunks_free(chunks, nchunks); return -1; }
+    size_t done_count = 0;
+
     int rc = 0;
     for (size_t i = 0; i < nchunks; i++) {
         GV_Chunk *ck = &chunks[i];
 
-        /* --- Embedding layer (store the chunk text as metadata "text") --- */
+        /* Embedding layer (store the chunk text as metadata "text") */
         if (embed_one(cfg, ck->text, dim, emb) != 0) { rc = -1; break; }
         {
             const char *mk[1] = { "text" };
@@ -77,7 +84,7 @@ int gv_ingest_document(GV_Database *db, GV_KnowledgeGraph *kg, GV_MemoryLayer *m
         }
         if (out) { out->chunks++; out->vectors++; }
 
-        /* --- Graph layer (optional) --- */
+        /* Graph layer (optional) */
         if (kg && cfg->extract_triples) {
             GV_ExtractedTriple tr[32];
             size_t cap = max_tr > 32 ? 32 : max_tr;
@@ -94,7 +101,8 @@ int gv_ingest_document(GV_Database *db, GV_KnowledgeGraph *kg, GV_MemoryLayer *m
             }
         }
 
-        /* --- Memory layer (optional) --- */
+        /* Memory layer (optional). Facts are rolled back via
+         * memory_delete_by_source on later-chunk failure. */
         if (mem && cfg->extract_facts) {
             char *facts[16];
             size_t cap = max_fa > 16 ? 16 : max_fa;
@@ -120,8 +128,29 @@ int gv_ingest_document(GV_Database *db, GV_KnowledgeGraph *kg, GV_MemoryLayer *m
                 gv_free(facts[f]);
             }
         }
+
+        if (done_count >= done_cap) {
+            size_t new_cap = done_cap * 2;
+            const char **tmp = (const char **)gv_realloc((void *)done,
+                                                          new_cap * sizeof(char *));
+            if (!tmp) { rc = -1; break; }
+            done = tmp;
+            done_cap = new_cap;
+        }
+        done[done_count++] = ck->chunk_id;
     }
 
+    if (rc != 0) {
+        /* Compensating rollback: remove this document's vectors, triples and
+         * memory facts so a partial ingest never leaves orphaned records. */
+        for (size_t i = 0; i < done_count; i++) {
+            db_delete_by_id(db, done[i]);
+            if (kg) kg_remove_relations_by_chunk(kg, done[i]);
+            if (mem) memory_delete_by_source(mem, done[i]);
+        }
+    }
+
+    gv_free((void *)done);
     gv_free(emb);
     gv_chunks_free(chunks, nchunks);
     return rc;

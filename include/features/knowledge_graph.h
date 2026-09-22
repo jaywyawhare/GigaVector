@@ -22,6 +22,7 @@
 #include <stdint.h>
 
 #include "core/id_bitmap.h"
+#include "core/prop_value.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -35,9 +36,17 @@ struct GV_Database; /* fwd decl: KG can resolve entity similarity via db_search 
  */
 typedef struct GV_KGProp {
     char *key;                      /**< Property key (heap-allocated). */
-    char *value;                    /**< Property value (heap-allocated). */
+    GV_PropValue value;             /**< Property value (typed). */
     struct GV_KGProp *next;         /**< Next property in the list. */
 } GV_KGProp;
+
+/**
+ * @brief Key/value pair for bulk property assignment (input only, not owned).
+ */
+typedef struct {
+    const char *key;                /**< Property key; must be non-NULL. */
+    const char *value;              /**< Property value; must be non-NULL. */
+} GV_KGPropKV;
 
 typedef struct {
     uint64_t entity_id;             /**< Unique entity identifier. */
@@ -195,6 +204,132 @@ int kg_set_entity_prop(GV_KnowledgeGraph *kg, uint64_t entity_id,
  */
 const char *kg_get_entity_prop(const GV_KnowledgeGraph *kg,
                                    uint64_t entity_id, const char *key);
+
+/**
+ * @brief Delete a property from an entity (WAL-logged).
+ *
+ * @return 0 if the property was removed, -1 if missing or on error.
+ */
+int kg_remove_entity_prop(GV_KnowledgeGraph *kg, uint64_t entity_id,
+                          const char *key);
+
+/**
+ * @brief Delete a property from a relation (WAL-logged).
+ *
+ * Deleting "chunk_id" also drops the relation from the chunk index.
+ *
+ * @return 0 if the property was removed, -1 if missing or on error.
+ */
+int kg_remove_relation_prop(GV_KnowledgeGraph *kg, uint64_t relation_id,
+                            const char *key);
+
+/**
+ * @brief Set an entity property as int64 (WAL-logged).
+ *
+ * @return 0 on success, -1 on error.
+ */
+int kg_set_entity_prop_int64(GV_KnowledgeGraph *kg, uint64_t entity_id,
+                              const char *key, int64_t value);
+
+/**
+ * @brief Set an entity property as float64 (WAL-logged).
+ *
+ * @return 0 on success, -1 on error.
+ */
+int kg_set_entity_prop_float64(GV_KnowledgeGraph *kg, uint64_t entity_id,
+                                const char *key, double value);
+
+/**
+ * @brief Set an entity property as bool (WAL-logged).
+ *
+ * @return 0 on success, -1 on error.
+ */
+int kg_set_entity_prop_bool(GV_KnowledgeGraph *kg, uint64_t entity_id,
+                             const char *key, int value);
+
+/**
+ * @brief Set a relation property as int64 (WAL-logged).
+ *
+ * @return 0 on success, -1 on error.
+ */
+int kg_set_relation_prop_int64(GV_KnowledgeGraph *kg, uint64_t relation_id,
+                                const char *key, int64_t value);
+
+/**
+ * @brief Set a relation property as float64 (WAL-logged).
+ *
+ * @return 0 on success, -1 on error.
+ */
+int kg_set_relation_prop_float64(GV_KnowledgeGraph *kg, uint64_t relation_id,
+                                  const char *key, double value);
+
+/**
+ * @brief Set a relation property as bool (WAL-logged).
+ *
+ * @return 0 on success, -1 on error.
+ */
+int kg_set_relation_prop_bool(GV_KnowledgeGraph *kg, uint64_t relation_id,
+                               const char *key, int value);
+
+/**
+ * @brief Get an entity property as int64.
+ *
+ * @param fallback Value returned when property is missing or wrong type.
+ * @return Property value, or fallback.
+ */
+int64_t kg_get_entity_prop_int64(const GV_KnowledgeGraph *kg,
+                                  uint64_t entity_id, const char *key,
+                                  int64_t fallback);
+
+/**
+ * @brief Get an entity property as float64.
+ *
+ * @param fallback Value returned when property is missing or wrong type.
+ * @return Property value, or fallback.
+ */
+double kg_get_entity_prop_float64(const GV_KnowledgeGraph *kg,
+                                   uint64_t entity_id, const char *key,
+                                   double fallback);
+
+/**
+ * @brief Get an entity property as int (bool).
+ *
+ * @param fallback Value returned when property is missing or wrong type.
+ * @return Property value, or fallback.
+ */
+int kg_get_entity_prop_bool(const GV_KnowledgeGraph *kg,
+                             uint64_t entity_id, const char *key,
+                             int fallback);
+
+/**
+ * @brief Get a relation property as int64.
+ *
+ * @param fallback Value returned when property is missing or wrong type.
+ * @return Property value, or fallback.
+ */
+int64_t kg_get_relation_prop_int64(const GV_KnowledgeGraph *kg,
+                                    uint64_t relation_id, const char *key,
+                                    int64_t fallback);
+
+/**
+ * @brief Get a relation property as float64.
+ *
+ * @param fallback Value returned when property is missing or wrong type.
+ * @return Property value, or fallback.
+ */
+double kg_get_relation_prop_float64(const GV_KnowledgeGraph *kg,
+                                     uint64_t relation_id, const char *key,
+                                     double fallback);
+
+/**
+ * @brief Get a relation property as int (bool).
+ *
+ * @param fallback Value returned when property is missing or wrong type.
+ * @return Property value, or fallback.
+ */
+int kg_get_relation_prop_bool(const GV_KnowledgeGraph *kg,
+                               uint64_t relation_id, const char *key,
+                               int fallback);
 
 /**
  * @brief Find entities matching a given type.
@@ -594,7 +729,7 @@ int kg_get_predicates(const GV_KnowledgeGraph *kg, char **out_predicates,
  */
 int kg_all_entity_ids(const GV_KnowledgeGraph *kg, uint64_t *out_ids, size_t max_count);
 
-/* ---- Combined-DB integration (Phase 1) ---- */
+/* Combined-DB integration (Phase 1) */
 
 /**
  * @brief Attach a vector database so entity similarity resolves via db_search
@@ -621,6 +756,27 @@ uint64_t kg_add_relation_with_chunk(GV_KnowledgeGraph *kg, uint64_t subject,
                                      float weight, const char *chunk_id);
 
 /**
+ * @brief Add a relation and attach a batch of properties in one call.
+ *
+ * Convenience over kg_add_relation + repeated kg_set_relation_prop(). Properties
+ * with a NULL key or value are skipped. Special keys (e.g. "chunk_id") are
+ * indexed exactly as they would be via kg_set_relation_prop.
+ *
+ * @param kg         Knowledge graph handle.
+ * @param subject    Subject (source) entity ID; must exist.
+ * @param predicate  Predicate label; must be non-NULL.
+ * @param object     Object (target) entity ID; must exist.
+ * @param weight     Relation weight / confidence.
+ * @param props      Array of key/value pairs (may be NULL when n_props == 0).
+ * @param n_props    Number of entries in @p props.
+ * @return relation_id (>0), or 0 on failure.
+ */
+uint64_t kg_add_relation_with_props(GV_KnowledgeGraph *kg, uint64_t subject,
+                                    const char *predicate, uint64_t object,
+                                    float weight,
+                                    const GV_KGPropKV *props, size_t n_props);
+
+/**
  * @brief Query all triples whose relation carries the given chunk_id facet.
  *
  * The cross-layer join primitive: given a chunk_id, return its graph facts.
@@ -628,6 +784,41 @@ uint64_t kg_add_relation_with_chunk(GV_KnowledgeGraph *kg, uint64_t subject,
  */
 int kg_query_triples_by_chunk(const GV_KnowledgeGraph *kg, const char *chunk_id,
                               GV_KGTriple *out, size_t max_count);
+
+/**
+ * @brief Remove every relation carrying the given chunk_id facet.
+ *
+ * Cross-layer rollback primitive: deletes a chunk's graph facts (e.g. when a
+ * document ingest fails partway). Resolves relation ids via the chunk index,
+ * so this is O(removed), not O(relations).
+ *
+ * @return Number of relations removed, or -1 on error.
+ */
+int kg_remove_relations_by_chunk(GV_KnowledgeGraph *kg, const char *chunk_id);
+
+/**
+ * @brief Multi-hop graph expansion (GraphRAG-style context retrieval).
+ *
+ * Starting from seed entity ids, collect every triple whose subject or object
+ * is within @p radius hops of any seed. This is the query-time counterpart of
+ * chunk provenance: instead of "which facts came from this chunk", it answers
+ * "what does the graph know around these entities" — the missing multi-hop
+ * expansion for retrieval-augmented generation.
+ *
+ * Seeds may reference unknown entities; unknown ids are skipped. Expansion
+ * follows both outgoing and incoming edges per hop.
+ *
+ * @param kg          Knowledge graph handle.
+ * @param seeds       Seed entity ids.
+ * @param n_seeds     Number of seeds.
+ * @param radius      Maximum hops from any seed (>= 1).
+ * @param out         Output triple array; must be pre-allocated.
+ * @param max_count   Capacity of out.
+ * @return Number of triples written to out (deduplicated), or -1 on error.
+ */
+int kg_expand_context(const GV_KnowledgeGraph *kg,
+                      const uint64_t *seeds, size_t n_seeds,
+                      size_t radius, GV_KGTriple *out, size_t max_count);
 
 /**
  * @brief Reverse-edge query: triples where @p object is the object of @p predicate.
@@ -655,6 +846,29 @@ int kg_save(const GV_KnowledgeGraph *kg, const char *path);
  * @return Loaded knowledge graph handle, or NULL on failure.
  */
 GV_KnowledgeGraph *kg_load(const char *path);
+
+/**
+ * @brief Attach a write-ahead log for crash-safe durability.
+ *
+ * Every subsequent entity/relation/property mutation is appended to
+ * "<snapshot_path>.wal" and fsync'd before the mutating call returns. After a
+ * crash, kg_load(snapshot_path) replays the WAL over the last saved snapshot.
+ *
+ * @param kg  Knowledge graph handle.
+ * @param snapshot_path Path of the snapshot file the log belongs to.
+ * @return 0 on success, -1 on error.
+ */
+int kg_wal_attach(GV_KnowledgeGraph *kg, const char *snapshot_path);
+
+/**
+ * @brief Truncate and fsync the attached WAL (checkpoint).
+ *
+ * kg_save() already checkpoints automatically when saving to the path the WAL
+ * was attached to; call this after saving elsewhere.
+ *
+ * @return 0 on success, -1 if no WAL is attached or on error.
+ */
+int kg_wal_checkpoint(GV_KnowledgeGraph *kg);
 
 #ifdef __cplusplus
 }

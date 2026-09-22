@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 #include "admin/shard.h"
 
 #include "schema/metadata.h"
@@ -146,7 +147,8 @@ static int test_shard_get_info(void) {
     ASSERT(rc == 0, "get_info for existing shard should succeed");
     ASSERT(info.shard_id == 5, "shard_id should match");
     ASSERT(info.state == GV_SHARD_ACTIVE, "new shard should be ACTIVE");
-    gv_free(info.node_address);
+
+    gv_free(info.node_address);  /* shard_get_info dups node_address; caller frees */
 
     rc = shard_get_info(mgr, 999, &info);
     ASSERT(rc == -1, "get_info for non-existent shard should return -1");
@@ -168,14 +170,14 @@ static int test_shard_set_state(void) {
     memset(&info, 0, sizeof(info));
     shard_get_info(mgr, 1, &info);
     ASSERT(info.state == GV_SHARD_READONLY, "state should be READONLY after set");
-    gv_free(info.node_address);
+    gv_free(info.node_address); info.node_address = NULL;
 
     rc = shard_set_state(mgr, 1, GV_SHARD_MIGRATING);
     ASSERT(rc == 0, "set_state to MIGRATING should succeed");
 
     shard_get_info(mgr, 1, &info);
     ASSERT(info.state == GV_SHARD_MIGRATING, "state should be MIGRATING");
-    gv_free(info.node_address);
+    gv_free(info.node_address); info.node_address = NULL;
 
     rc = shard_set_state(mgr, 1, GV_SHARD_OFFLINE);
     ASSERT(rc == 0, "set_state to OFFLINE should succeed");
@@ -431,6 +433,65 @@ static int test_shard_free_list_null(void) {
     return 0;
 }
 
+/* Distributed k-NN: the global top-k must span shards, not just one shard's
+ * local best. Six vectors are spread over three shards so the true nearest
+ * neighbours live on different shards; shard_search must merge them correctly. */
+static int test_shard_search_topk(void) {
+    GV_ShardManager *mgr = shard_manager_create(NULL);
+    ASSERT(mgr != NULL, "create shard manager");
+    shard_add(mgr, 0, "node0:6000");
+    shard_add(mgr, 1, "node1:6000");
+    shard_add(mgr, 2, "node2:6000");
+
+    GV_Database *db[3];
+    for (int i = 0; i < 3; i++) {
+        db[i] = db_open(NULL, 4, GV_INDEX_TYPE_FLAT);
+        ASSERT(db[i] != NULL, "open shard db");
+        ASSERT(shard_attach_local(mgr, (uint32_t)i, db[i]) == 0, "attach shard");
+    }
+
+    /* All distances are to the origin; smallest three are 0.25, 1, 4 and each
+     * lives on a different shard. */
+    float v0a[4] = {1.0f, 0, 0, 0};      /* shard 0: dist 1   */
+    float v0b[4] = {5.0f, 0, 0, 0};      /* shard 0: dist 25  */
+    float v1a[4] = {0, 2.0f, 0, 0};      /* shard 1: dist 4   */
+    float v1b[4] = {0, 6.0f, 0, 0};      /* shard 1: dist 36  */
+    float v2a[4] = {0, 0, 3.0f, 0};      /* shard 2: dist 9   */
+    float v2b[4] = {0, 0, 0, 0.5f};      /* shard 2: dist 0.25 -> global nearest */
+    ASSERT(db_add_vector(db[0], v0a, 4) == 0, "add v0a");
+    ASSERT(db_add_vector(db[0], v0b, 4) == 0, "add v0b");
+    ASSERT(db_add_vector(db[1], v1a, 4) == 0, "add v1a");
+    ASSERT(db_add_vector(db[1], v1b, 4) == 0, "add v1b");
+    ASSERT(db_add_vector(db[2], v2a, 4) == 0, "add v2a");
+    ASSERT(db_add_vector(db[2], v2b, 4) == 0, "add v2b");
+
+    float q[4] = {0, 0, 0, 0};
+    GV_SearchResult res[3];
+    int n = shard_search(mgr, q, 3, res, GV_DISTANCE_EUCLIDEAN);
+    ASSERT(n == 3, "distributed search returns global top-3 across shards");
+    ASSERT(res[0].distance <= res[1].distance &&
+           res[1].distance <= res[2].distance, "results globally distance-ordered");
+    ASSERT(res[0].vector != NULL, "nearest result has a vector");
+    /* Nearest overall is v2b on shard 2 (dist 0.25) — a single-shard search of
+     * shards 0 or 1 could never surface it. */
+    ASSERT(res[0].distance < res[1].distance, "distinct nearest is strictly closest");
+    ASSERT(fabsf(res[0].vector->data[3] - 0.5f) < 1e-6f, "nearest is v2b (from shard 2)");
+    gv_search_results_free(res, (size_t)n);
+
+    /* Requesting more than available returns only what exists, no error. */
+    GV_SearchResult all[16];
+    int m = shard_search(mgr, q, 16, all, GV_DISTANCE_EUCLIDEAN);
+    ASSERT(m == 6, "k > total returns all six vectors");
+    gv_search_results_free(all, (size_t)m);
+
+    ASSERT(shard_search(NULL, q, 3, res, GV_DISTANCE_EUCLIDEAN) == -1, "NULL mgr rejected");
+    ASSERT(shard_search(mgr, q, 0, res, GV_DISTANCE_EUCLIDEAN) == -1, "k=0 rejected");
+
+    shard_manager_destroy(mgr);
+    for (int i = 0; i < 3; i++) db_close(db[i]);
+    return 0;
+}
+
 typedef int (*test_fn)(void);
 typedef struct { const char *name; test_fn fn; } TestCase;
 
@@ -453,6 +514,7 @@ int main(void) {
         {"Testing shard_rebalance...", test_shard_rebalance},
         {"Testing shard_rebalance_null...", test_shard_rebalance_null},
         {"Testing shard_strategies...", test_shard_strategies},
+        {"Testing shard_search_topk...", test_shard_search_topk},
         {"Testing shard_list_empty...", test_shard_list_empty},
         {"Testing shard_free_list_null...", test_shard_free_list_null},
     };

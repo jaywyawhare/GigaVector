@@ -1213,6 +1213,141 @@ gv_stream_close(stream);
 
 ---
 
+## Graph Durability and Transactions
+
+### `graph_wal_attach`
+
+```c
+int graph_wal_attach(GV_GraphDB *g, const char *snapshot_path);
+```
+
+Enables crash-safe write-ahead logging for the property graph. Every mutation
+is appended to `<snapshot_path>.wal` and fsynced before the mutating call
+returns. `graph_load(snapshot_path)` replays the log over the last snapshot;
+`graph_save` to the same path truncates it (checkpoint).
+
+### `graph_wal_checkpoint`
+
+```c
+int graph_wal_checkpoint(GV_GraphDB *g);
+```
+
+Truncates and fsyncs the attached WAL. Call after saving to a different path.
+
+### `kg_wal_attach` / `kg_wal_checkpoint`
+
+```c
+int kg_wal_attach(GV_KnowledgeGraph *kg, const char *snapshot_path);
+int kg_wal_checkpoint(GV_KnowledgeGraph *kg);
+```
+
+Identical semantics for the knowledge graph (entities, relations, properties,
+and embeddings are all logged).
+
+### `graph_version`
+
+```c
+uint64_t graph_version(const GV_GraphDB *g);
+```
+
+Monotonic mutation counter; bumps on every committed change. Use it to detect
+concurrent modification between reads.
+
+### Read transactions
+
+```c
+GV_GraphReadTxn *txn = graph_read_txn_begin(g);   /* pins a consistent snapshot */
+const GV_GraphNode *n = graph_read_txn_get_node(txn, id);
+int m = graph_read_txn_find_nodes_by_label(txn, "Person", ids, max);
+uint64_t v = graph_read_txn_version(txn);
+graph_read_txn_end(txn);
+```
+
+Repeatable reads across multiple calls while other threads mutate; writers
+cannot commit until the transaction ends. Keep transactions short.
+
+### Write transactions
+
+```c
+GV_GraphWriteTxn *t = graph_write_txn_begin(g);
+uint64_t a = graph_write_txn_add_node(t, "Person");
+uint64_t b = graph_write_txn_add_node(t, "Person");
+graph_write_txn_add_edge(t, a, b, "KNOWS", 1.0f);   /* may reference staged nodes */
+graph_write_txn_set_node_prop(t, a, "name", "Zed");
+graph_write_txn_commit(t);      /* atomic: one WAL fsync + apply */
+/* or: */ graph_write_txn_abort(t);
+```
+
+All-or-nothing application; nothing is visible to other threads until commit.
+
+---
+
+## Knowledge Graph Expansion
+
+### `kg_expand_context`
+
+```c
+int kg_expand_context(const GV_KnowledgeGraph *kg, const uint64_t *seeds,
+                      size_t n_seeds, size_t radius,
+                      GV_KGTriple *out, size_t max_count);
+```
+
+GraphRAG-style multi-hop retrieval: collects every triple whose subject or
+object lies within `radius` hops of any seed entity (deduplicated). The
+query-time complement of chunk provenance joins.
+
+### Property deletion
+
+```c
+int kg_remove_entity_prop(GV_KnowledgeGraph *kg, uint64_t id, const char *key);
+int kg_remove_relation_prop(GV_KnowledgeGraph *kg, uint64_t id, const char *key);
+```
+
+Delete properties outright (Cypher `REMOVE n.prop` uses these). Deleting a
+relation's `chunk_id` also updates the chunk index. Both are WAL-logged.
+
+---
+
+## Memory Layer Rollback
+
+### `memory_delete_by_source`
+
+```c
+int memory_delete_by_source(GV_MemoryLayer *layer, const char *source);
+```
+
+Deletes every memory whose provenance (`source` metadata) matches — the third
+leg of cross-layer rollback alongside `db_delete_by_id` and
+`kg_remove_relations_by_chunk`.
+
+---
+
+## Analytics Extensions
+
+### `graph_betweenness_centrality_approx`
+
+```c
+int graph_betweenness_centrality_approx(const GV_GraphDB *g, int weighted,
+                                        int directed, size_t num_pivots,
+                                        GV_GraphNodeScores *out);
+```
+
+Landmark-sampled Brandes: exact runs from `num_pivots` uniformly spaced pivot
+sources scaled by N/K, parallel over pivots. Use for large graphs where exact
+O(V·E) Brandes is too slow.
+
+### Cached CSR builds
+
+```c
+GV_CSR *m = gv_csr_build_cached(g, ctx, GV_CSR_OUT, 0);
+```
+
+Memoized per (graph version, orientation, weighted); rebuilds only after
+mutations. Cache-owned: do not free. Back-to-back algorithms over one snapshot
+skip redundant construction. `gv_csr_cache_clear()` forces a drop.
+
+---
+
 ## Sharding and Clustering
 
 ### Sharding
@@ -1434,6 +1569,133 @@ int gv_db_save(const GV_Database *db, const char *filepath);
 ```
 
 Saves database snapshot. WAL is automatically replayed on next open.
+
+---
+
+## Transactions (MVCC)
+
+Snapshot-isolation transactions. Declared in `storage/transaction.h`. A transaction reads a
+consistent snapshot (`commit_version` at `db_begin`), buffers its own writes (read-your-writes),
+and commits atomically with first-committer-wins write-write conflict detection.
+
+#### `db_begin`
+
+```c
+GV_DBTxn *db_begin(GV_Database *db);
+```
+
+Starts a transaction pinned to the current committed snapshot. Returns a handle, or NULL on error.
+
+#### `db_txn_add_vector` / `db_txn_delete` / `db_txn_search`
+
+```c
+int db_txn_add_vector(GV_DBTxn *txn, const float *data, size_t dimension);
+int db_txn_delete(GV_DBTxn *txn, size_t vector_index);
+int db_txn_search(GV_DBTxn *txn, const float *query, size_t k,
+                  GV_SearchResult *results, GV_DistanceType distance_type);
+```
+
+Buffered write/delete and a snapshot read that also sees the transaction's own uncommitted writes.
+
+#### `db_commit` / `db_rollback`
+
+```c
+int db_commit(GV_DBTxn *txn);    /* GV_TXN_OK (0) or GV_TXN_CONFLICT (1); frees txn */
+int db_rollback(GV_DBTxn *txn);  /* discards buffered writes; frees txn */
+```
+
+`db_commit` assigns a new `commit_version`, checks for write-write conflicts against concurrently
+committed changes (returns `GV_TXN_CONFLICT` on conflict), applies the writes, and WAL-logs deletes.
+
+#### `db_search_at_version`
+
+```c
+int db_search_at_version(const GV_Database *db, const float *query_data, size_t k,
+                         GV_SearchResult *results, GV_DistanceType distance_type, uint64_t snapshot);
+```
+
+Non-transactional snapshot read: returns only vectors visible at `snapshot` (create_version ≤
+snapshot and not yet deleted at snapshot). `db_search` calls this with the latest committed version.
+
+#### `db_txn_gc`
+
+```c
+size_t db_txn_gc(GV_Database *db, uint64_t safe_below);
+```
+
+Reclaims tombstoned vectors no snapshot at or after `safe_below` can still see; returns the number
+reclaimed.
+
+**Example:**
+```c
+GV_DBTxn *txn = db_begin(db);
+db_txn_add_vector(txn, vec, dim, "label", "cat");
+if (db_commit(txn) == GV_TXN_CONFLICT) { /* retry */ }
+```
+
+---
+
+## WiscKey Value Store
+
+Opt-in key→value store with WiscKey-style key/value separation: a uint64 key index in memory over
+an append-only value log with CRC and garbage collection. Declared in `storage/database.h`
+(the underlying primitives are in `storage/vlog.h` and `storage/value_store.h`).
+
+```c
+int db_value_store_enable(GV_Database *db, const char *path);
+int db_value_store_put(GV_Database *db, uint64_t key, const void *value, size_t len);
+int db_value_store_get(GV_Database *db, uint64_t key, void **value_out, size_t *len_out); /* caller frees *value_out */
+int db_value_store_delete(GV_Database *db, uint64_t key);
+int db_value_store_gc(GV_Database *db);   /* compact the log, dropping dead records */
+```
+
+The index is rebuilt from the durable log on reopen. Useful for offloading large auxiliary
+payloads (documents, blobs) away from the dense vector store.
+
+---
+
+## Storage Tiers
+
+Access-aware hot/warm/cold tiering. Declared in `storage/tiered_storage.h`. Layered on the age
+thresholds from `gv_db_set_tiering_config`, a vector is promoted by **recency** (accessed within a
+window) or **frequency** (access count threshold); `db_search` records accesses automatically.
+
+```c
+int gv_db_set_tiering_config(GV_Database *db, uint64_t hot_max_age_sec,
+                             uint64_t warm_max_age_sec, size_t hot_max_vectors);
+int gv_db_set_access_tiering_policy(GV_Database *db, uint64_t access_recency_window_sec,
+                                    uint32_t hot_min_access_count);
+int gv_db_record_vector_access(GV_Database *db, size_t vec_id);   /* no-op if tiering disabled */
+int gv_db_get_vector_tier(const GV_Database *db, size_t vec_id, GV_StorageTier *out);
+int gv_db_tiering_stats(const GV_Database *db, size_t *hot, size_t *warm, size_t *cold);
+```
+
+`GV_StorageTier` is `GV_TIER_HOT` / `GV_TIER_WARM` / `GV_TIER_COLD`.
+
+---
+
+## Raft Consensus Core
+
+A standalone, transport-agnostic Raft implementation (leader election + log replication) in
+`admin/raft.h`. Driven by `raft_tick` (clock) and `raft_step` (incoming message); emits outbound
+messages via a caller-supplied `send` callback, so it can run over TCP or an in-memory simulation.
+It is a self-contained core and is not yet wired into `admin/replication.c`.
+
+```c
+GV_Raft *raft_create(int id, const int *peers, size_t n_peers,
+                     const GV_RaftConfig *cfg, const GV_RaftCallbacks *cb);
+void raft_tick(GV_Raft *r, uint32_t ms);            /* advance clock; may elect / heartbeat */
+void raft_step(GV_Raft *r, int from, const GV_RaftMsg *msg);   /* handle an RPC */
+int  raft_submit(GV_Raft *r, const void *data, size_t len, uint64_t *index_out);  /* leader only */
+GV_RaftRole raft_role(const GV_Raft *r);
+uint64_t    raft_commit_index(const GV_Raft *r);
+void raft_destroy(GV_Raft *r);
+```
+
+Callbacks (`GV_RaftCallbacks`): `send(ctx, to, msg)`, `apply(ctx, index, data, len)` on commit, and
+optional `persist(ctx, term, voted_for)`. Implements the Raft safety rules (up-to-date vote check,
+AppendEntries log-consistency check with conflict truncation, commit restricted to current-term
+entries replicated on a quorum).
 
 ---
 

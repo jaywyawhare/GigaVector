@@ -32,14 +32,12 @@ GV_NamedVectorStore *named_vectors_create(void);
 /**
  * @brief Destroy an instance and free associated resources.
  *
- * @param store store.
  */
 void named_vectors_destroy(GV_NamedVectorStore *store);
 
 /**
  * @brief Add an item.
  *
- * @param store store.
  * @param config Configuration to apply/output.
  * @return 0 on success, -1 on error.
  */
@@ -47,7 +45,6 @@ int named_vectors_add_field(GV_NamedVectorStore *store, const GV_VectorFieldConf
 /**
  * @brief Perform the operation.
  *
- * @param store store.
  * @param name Name string.
  * @return 0 on success, -1 on error.
  */
@@ -55,14 +52,12 @@ int named_vectors_remove_field(GV_NamedVectorStore *store, const char *name);
 /**
  * @brief Return the number of stored items.
  *
- * @param store store.
  * @return Count value.
  */
 size_t named_vectors_field_count(const GV_NamedVectorStore *store);
 /**
  * @brief Get a value.
  *
- * @param store store.
  * @param name Name string.
  * @param out Output buffer.
  * @return 0 on success, -1 on error.
@@ -76,7 +71,6 @@ int named_vectors_update(GV_NamedVectorStore *store, size_t point_id,
 /**
  * @brief Delete an item.
  *
- * @param store store.
  * @param point_id Identifier.
  * @return 0 on success, -1 on error.
  */
@@ -90,7 +84,6 @@ const float *named_vectors_get(const GV_NamedVectorStore *store, size_t point_id
 /**
  * @brief Return the number of stored items.
  *
- * @param store store.
  * @return Count value.
  */
 size_t named_vectors_count(const GV_NamedVectorStore *store);
@@ -98,7 +91,6 @@ size_t named_vectors_count(const GV_NamedVectorStore *store);
 /**
  * @brief Save state to a file.
  *
- * @param store store.
  * @param filepath Filesystem path.
  * @return 0 on success, -1 on error.
  */

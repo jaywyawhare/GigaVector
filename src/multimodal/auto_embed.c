@@ -343,36 +343,6 @@ static void ae_cache_destroy(AE_Cache *c) {
 #ifdef HAVE_CURL
 
 /**
- * Escape a string for inclusion in a JSON string literal.
- * Writes into dst (up to dst_cap-1 bytes) and NUL-terminates.
- * Returns the number of characters written (excluding NUL).
- */
-static size_t ae_json_escape(char *dst, size_t dst_cap, const char *src) {
-    size_t w = 0;
-    while (*src && w + 6 < dst_cap) {   /* 6 = worst case \uXXXX */
-        unsigned char ch = (unsigned char)*src;
-        if (ch == '"') {
-            dst[w++] = '\\'; dst[w++] = '"';
-        } else if (ch == '\\') {
-            dst[w++] = '\\'; dst[w++] = '\\';
-        } else if (ch == '\n') {
-            dst[w++] = '\\'; dst[w++] = 'n';
-        } else if (ch == '\r') {
-            dst[w++] = '\\'; dst[w++] = 'r';
-        } else if (ch == '\t') {
-            dst[w++] = '\\'; dst[w++] = 't';
-        } else if (ch < 0x20) {
-            w += (size_t)snprintf(dst + w, dst_cap - w, "\\u%04x", ch);
-        } else {
-            dst[w++] = (char)ch;
-        }
-        src++;
-    }
-    if (w < dst_cap) dst[w] = '\0';
-    return w;
-}
-
-/**
  * Build a single-text OpenAI-compatible JSON request body.
  * Caller must gv_free the returned string.
  */
@@ -385,7 +355,7 @@ static char *ae_build_openai_request(const char *text, const char *model,
 
     char *escaped = (char *)gv_alloc(text_len * 2 + 1);
     if (!escaped) { gv_free(json); return NULL; }
-    ae_json_escape(escaped, text_len * 2 + 1, text);
+    gv_json_escape(escaped, text_len * 2 + 1, text);
 
     if (dimension > 0) {
         snprintf(json, alloc,
@@ -413,7 +383,7 @@ static char *ae_build_google_request(const char *text, const char *model,
 
     char *escaped = (char *)gv_alloc(text_len * 2 + 1);
     if (!escaped) { gv_free(json); return NULL; }
-    ae_json_escape(escaped, text_len * 2 + 1, text);
+    gv_json_escape(escaped, text_len * 2 + 1, text);
 
     const char *prefix = (strncmp(model, "models/", 7) != 0) ? "models/" : "";
 
@@ -454,7 +424,7 @@ static char *ae_build_openai_batch_request(const char *const *texts,
     for (size_t i = 0; i < count; i++) {
         if (i > 0) json[pos++] = ',';
         json[pos++] = '"';
-        pos += ae_json_escape(json + pos, alloc - pos, texts[i]);
+        pos += gv_json_escape(json + pos, alloc - pos, texts[i]);
         json[pos++] = '"';
     }
 
@@ -494,7 +464,7 @@ static char *ae_build_google_batch_request(const char *const *texts,
                                 "{\"model\":\"%s%s\","
                                 "\"content\":{\"parts\":[{\"text\":\"",
                                 prefix, model);
-        pos += ae_json_escape(json + pos, alloc - pos, texts[i]);
+        pos += gv_json_escape(json + pos, alloc - pos, texts[i]);
 
         if (dimension > 0) {
             pos += (size_t)snprintf(json + pos, alloc - pos,
@@ -520,7 +490,7 @@ static char *ae_build_hf_request(const char *text) {
 
     char *escaped = (char *)gv_alloc(text_len * 2 + 1);
     if (!escaped) { gv_free(json); return NULL; }
-    ae_json_escape(escaped, text_len * 2 + 1, text);
+    gv_json_escape(escaped, text_len * 2 + 1, text);
 
     snprintf(json, alloc, "{\"input\":\"%s\"}", escaped);
     gv_free(escaped);
@@ -544,7 +514,7 @@ static char *ae_build_hf_batch_request(const char *const *texts, size_t count) {
     for (size_t i = 0; i < count; i++) {
         if (i > 0) json[pos++] = ',';
         json[pos++] = '"';
-        pos += ae_json_escape(json + pos, alloc - pos, texts[i]);
+        pos += gv_json_escape(json + pos, alloc - pos, texts[i]);
         json[pos++] = '"';
     }
     snprintf(json + pos, alloc - pos, "]}");

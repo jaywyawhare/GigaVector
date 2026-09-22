@@ -110,6 +110,16 @@ int crypto_generate_iv(unsigned char *iv);
 int crypto_generate_salt(unsigned char *salt, size_t salt_len);
 
 /**
+ * @brief Fill @p buf with @p len cryptographically-secure random bytes.
+ *
+ * Uses the platform CSPRNG (BCryptGenRandom / getrandom / /dev/urandom). The
+ * single source of secure randomness for the security modules.
+ *
+ * @return 0 on success, -1 if no source of randomness was available.
+ */
+int gv_secure_random_bytes(unsigned char *buf, size_t len);
+
+/**
  * @brief Securely wipe key from memory.
  *
  * @param key Key to wipe.
@@ -123,7 +133,8 @@ void crypto_wipe_key(GV_CryptoKey *key);
  * @param key Encryption key.
  * @param plaintext Input data.
  * @param plaintext_len Input length.
- * @param ciphertext Output buffer (must be plaintext_len + 16 bytes for padding).
+ * @param ciphertext Output buffer (must be at least plaintext_len + 48 bytes:
+ *        a per-message nonce/IV prefix plus GCM tag or PKCS7 padding).
  * @param ciphertext_len Output length.
  * @return 0 on success, -1 on error.
  */
@@ -190,7 +201,9 @@ GV_CryptoStream *crypto_stream_create(GV_CryptoContext *ctx,
  * @param stream Stream handle.
  * @param input Input data.
  * @param input_len Input length.
- * @param output Output buffer.
+ * @param output Output buffer (size it for at least input_len + 32: an encrypting
+ *        stream prepends a 16-byte IV on the first call, and block alignment can
+ *        add one 16-byte block).
  * @param output_len Output length.
  * @return 0 on success, -1 on error.
  */
@@ -250,6 +263,19 @@ int crypto_constant_time_compare(const unsigned char *a,
  * @return Algorithm name string.
  */
 const char *crypto_algorithm_string(GV_CryptoAlgorithm algorithm);
+
+/**
+ * @brief Decode a base64url string (RFC 4648 §5; '=' padding optional).
+ *
+ * Rejects any non-alphabet character. On success writes the decoded bytes to
+ * @p out and sets @p *out_len to the number written. If @p out is too small,
+ * sets @p *out_len to the required capacity and returns -1 (size query).
+ * Shared by JWT/SAML decoding in auth and sso.
+ *
+ * @return 0 on success, -1 on bad input or insufficient buffer.
+ */
+int crypto_base64url_decode(const char *in, size_t in_len,
+                            unsigned char *out, size_t *out_len);
 
 #ifdef __cplusplus
 }

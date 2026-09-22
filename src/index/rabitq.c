@@ -13,10 +13,6 @@
 #include <stdio.h>
 #include <stdint.h>
 
-/* ------------------------------------------------------------------ */
-/* Internal structure                                                   */
-/* ------------------------------------------------------------------ */
-
 typedef struct {
     size_t           dim;         /* original dimension */
     size_t           padded_dim;  /* next power-of-2 >= max(dim, 64) */
@@ -30,10 +26,6 @@ typedef struct {
     size_t           cap;
     GV_RaBitQConfig  config;
 } GV_RaBitQIndex;
-
-/* ------------------------------------------------------------------ */
-/* Helpers                                                              */
-/* ------------------------------------------------------------------ */
 
 static size_t next_pow2_ge64(size_t n) {
     size_t p = 64;
@@ -126,19 +118,11 @@ static void fill_result(GV_RaBitQIndex *idx, size_t vi, float dist,
     GV_Vector view;
     soa_storage_get_vector_view(idx->storage, vi, &view);
     GV_Vector *copy = vector_create_from_data(view.dimension, view.data);
-    if (copy) {
-        GV_Metadata *m = soa_storage_get_metadata(idx->storage, vi);
-        for (; m; m = m->next)
-            if (m->key && m->value)
-                vector_set_metadata(copy, m->key, m->value);
-    }
+    if (copy) vector_apply_metadata(copy, soa_storage_get_metadata(idx->storage, vi));
     r->vector = copy;
 }
 
-/* ------------------------------------------------------------------ */
-/* Candidate heap (max-heap on distance for k-NN maintenance)          */
-/* ------------------------------------------------------------------ */
-
+/* Candidate max-heap on distance for k-NN maintenance. */
 typedef struct { float dist; size_t idx; } RBQCandidate;
 
 static void heap_push(RBQCandidate *h, size_t *hsz, size_t cap,
@@ -167,10 +151,6 @@ static void heap_push(RBQCandidate *h, size_t *hsz, size_t cap,
         }
     }
 }
-
-/* ------------------------------------------------------------------ */
-/* Public API                                                           */
-/* ------------------------------------------------------------------ */
 
 void *rabitq_create(size_t dimension, const GV_RaBitQConfig *config,
                     GV_SoAStorage *soa_storage) {
@@ -240,19 +220,22 @@ int rabitq_insert(void *index, GV_Vector *vector) {
         idx->cap = new_cap;
     }
 
-    /* Add raw float to soa_storage. */
-    size_t vi = soa_storage_add(idx->storage, vector->data, vector->metadata);
-    if (vi == (size_t)-1) return -1;
-    vector->metadata = NULL;
-    vector_destroy(vector);
-
-    /* Compute binarised code: normalise → RHT → binarise. Use heap buffers
-     * (not a VLA) so large dim cannot overflow the stack. */
+    /* Allocate the binarisation scratch BEFORE committing the vector to storage,
+     * so any failure here returns -1 with the vector neither stored nor freed —
+     * the caller still owns it (mirrors pq_insert). Otherwise a post-commit
+     * scratch OOM would return -1 after we destroyed the vector, and the caller
+     * (which frees on non-zero return) would double-free it. */
     float *tmp = (float *)gv_alloc(idx->padded_dim * sizeof(float));
-    if (!tmp) return -1;  /* vector already committed to storage */
-
+    if (!tmp) return -1;
     float *norm_buf = (float *)gv_alloc(idx->dim * sizeof(float));
     if (!norm_buf) { gv_free(tmp); return -1; }
+
+    /* Add raw float to soa_storage. */
+    size_t vi = soa_storage_add(idx->storage, vector->data, vector->metadata);
+    if (vi == (size_t)-1) { gv_free(norm_buf); gv_free(tmp); return -1; }
+    vector->metadata = NULL;  /* ownership transferred to storage */
+
+    /* Compute binarised code: normalise → RHT → binarise. */
     memcpy(norm_buf, soa_storage_get_data(idx->storage, vi),
            idx->dim * sizeof(float));
     l2_normalize(norm_buf, idx->dim);
@@ -262,6 +245,7 @@ int rabitq_insert(void *index, GV_Vector *vector) {
     gv_free(tmp);
 
     idx->count++;
+    vector_destroy(vector);  /* destroy only on success; caller frees on failure */
     return 0;
 }
 
@@ -466,10 +450,6 @@ void rabitq_destroy(void *index) {
     gv_free(idx);
 }
 
-/* ------------------------------------------------------------------ */
-/* Persistence                                                          */
-/* ------------------------------------------------------------------ */
-
 #define RABITQ_MAGIC 0x52425451UL  /* "RBTQ" */
 
 int rabitq_save(const void *index, FILE *out, uint32_t version) {
@@ -532,6 +512,17 @@ int rabitq_load(void **index_ptr, FILE *in, size_t dimension,
     GV_RaBitQConfig cfg = { .seed = seed, .rerank_factor = (size_t)rf };
     GV_RaBitQIndex *idx = (GV_RaBitQIndex *)rabitq_create((size_t)dim, &cfg, NULL);
     if (!idx) return -1;
+
+    /* The per-vector code stride is derived from `dim` (padded_dim/64) in
+     * rabitq_create; the file's `cw` MUST equal it, otherwise later accesses
+     * (codes + vi*code_words) read past a buffer allocated with the file's cw.
+     * Also guard the cap*cw*8 allocation size against overflow. */
+    if ((size_t)cw != idx->code_words) { rabitq_destroy(idx); return -1; }
+    if (cap > 0 && idx->code_words != 0 &&
+        (size_t)cap > SIZE_MAX / (idx->code_words * sizeof(uint64_t))) {
+        rabitq_destroy(idx);
+        return -1;
+    }
 
     if (cap > 0) {
         idx->codes = (uint64_t *)gv_alloc((size_t)cap * (size_t)cw * sizeof(uint64_t));

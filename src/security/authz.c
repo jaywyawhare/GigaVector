@@ -11,8 +11,6 @@
 #include <string.h>
 #include <pthread.h>
 
-/* Internal Structures */
-
 #define MAX_ROLES 64
 #define MAX_USERS 256
 #define MAX_NAMESPACES_PER_ROLE 32
@@ -50,8 +48,6 @@ struct GV_AuthzManager {
     pthread_rwlock_t rwlock;
 };
 
-/* Lifecycle */
-
 GV_AuthzManager *authz_create(void) {
     GV_AuthzManager *authz = gv_calloc(1, sizeof(GV_AuthzManager));
     if (!authz) return NULL;
@@ -67,7 +63,6 @@ GV_AuthzManager *authz_create(void) {
 void authz_destroy(GV_AuthzManager *authz) {
     if (!authz) return;
 
-    /* Free roles */
     for (size_t i = 0; i < authz->role_count; i++) {
         gv_free(authz->roles[i].name);
         for (size_t j = 0; j < authz->roles[i].namespace_count; j++) {
@@ -75,7 +70,6 @@ void authz_destroy(GV_AuthzManager *authz) {
         }
     }
 
-    /* Free users */
     for (size_t i = 0; i < authz->user_count; i++) {
         gv_free(authz->users[i].subject);
         for (size_t j = 0; j < authz->users[i].role_count; j++) {
@@ -86,8 +80,6 @@ void authz_destroy(GV_AuthzManager *authz) {
     pthread_rwlock_destroy(&authz->rwlock);
     gv_free(authz);
 }
-
-/* Internal Helpers */
 
 static RoleEntry *find_role(GV_AuthzManager *authz, const char *name) {
     for (size_t i = 0; i < authz->role_count; i++) {
@@ -119,7 +111,6 @@ static int namespace_allowed(RoleEntry *role, const char *namespace_name) {
         return 0;
     }
 
-    /* Check specific namespace */
     for (size_t i = 0; i < role->namespace_count; i++) {
         if (strcmp(role->namespaces[i], namespace_name) == 0 ||
             strcmp(role->namespaces[i], "*") == 0) {
@@ -129,8 +120,6 @@ static int namespace_allowed(RoleEntry *role, const char *namespace_name) {
     return 0;
 }
 
-/* Role Management */
-
 int authz_define_role(GV_AuthzManager *authz, const char *name,
                           uint32_t permissions, const char **namespaces,
                           size_t namespace_count) {
@@ -138,19 +127,15 @@ int authz_define_role(GV_AuthzManager *authz, const char *name,
 
     pthread_rwlock_wrlock(&authz->rwlock);
 
-    /* Check if role exists */
     RoleEntry *existing = find_role(authz, name);
     if (existing) {
-        /* Update existing role */
         existing->permissions = permissions;
 
-        /* Clear old namespaces */
         for (size_t i = 0; i < existing->namespace_count; i++) {
             gv_free(existing->namespaces[i]);
         }
         existing->namespace_count = 0;
 
-        /* Add new namespaces */
         for (size_t i = 0; i < namespace_count && i < MAX_NAMESPACES_PER_ROLE; i++) {
             existing->namespaces[i] = gv_dup_cstr(namespaces[i]);
             existing->namespace_count++;
@@ -160,7 +145,6 @@ int authz_define_role(GV_AuthzManager *authz, const char *name,
         return 0;
     }
 
-    /* Add new role */
     if (authz->role_count >= MAX_ROLES) {
         pthread_rwlock_unlock(&authz->rwlock);
         return -1;
@@ -189,13 +173,11 @@ int authz_remove_role(GV_AuthzManager *authz, const char *name) {
 
     for (size_t i = 0; i < authz->role_count; i++) {
         if (strcmp(authz->roles[i].name, name) == 0) {
-            /* Free role data */
             gv_free(authz->roles[i].name);
             for (size_t j = 0; j < authz->roles[i].namespace_count; j++) {
                 gv_free(authz->roles[i].namespaces[j]);
             }
 
-            /* Shift remaining roles */
             for (size_t k = i; k < authz->role_count - 1; k++) {
                 authz->roles[k] = authz->roles[k + 1];
             }
@@ -226,6 +208,11 @@ int authz_get_role(GV_AuthzManager *authz, const char *name, GV_Role *role) {
 
     if (entry->namespace_count > 0) {
         role->allowed_namespaces = gv_alloc(entry->namespace_count * sizeof(char *));
+        if (!role->allowed_namespaces) {
+            role->namespace_count = 0;
+            pthread_rwlock_unlock(&authz->rwlock);
+            return -1;
+        }
         for (size_t i = 0; i < entry->namespace_count; i++) {
             role->allowed_namespaces[i] = gv_dup_cstr(entry->namespaces[i]);
         }
@@ -263,10 +250,14 @@ int authz_list_roles(GV_AuthzManager *authz, GV_Role **roles, size_t *count) {
 
         if (authz->roles[i].namespace_count > 0) {
             (*roles)[i].allowed_namespaces = gv_alloc(authz->roles[i].namespace_count * sizeof(char *));
-            for (size_t j = 0; j < authz->roles[i].namespace_count; j++) {
-                (*roles)[i].allowed_namespaces[j] = gv_dup_cstr(authz->roles[i].namespaces[j]);
+            if ((*roles)[i].allowed_namespaces) {
+                for (size_t j = 0; j < authz->roles[i].namespace_count; j++) {
+                    (*roles)[i].allowed_namespaces[j] = gv_dup_cstr(authz->roles[i].namespaces[j]);
+                }
+                (*roles)[i].namespace_count = authz->roles[i].namespace_count;
+            } else {
+                (*roles)[i].namespace_count = 0;  /* OOM: skip rather than deref NULL */
             }
-            (*roles)[i].namespace_count = authz->roles[i].namespace_count;
         } else {
             (*roles)[i].allowed_namespaces = NULL;
             (*roles)[i].namespace_count = 0;
@@ -295,21 +286,17 @@ void authz_free_roles(GV_Role *roles, size_t count) {
     gv_free(roles);
 }
 
-/* User-Role Assignment */
-
 int authz_assign_role(GV_AuthzManager *authz, const char *subject,
                           const char *role_name) {
     if (!authz || !subject || !role_name) return -1;
 
     pthread_rwlock_wrlock(&authz->rwlock);
 
-    /* Verify role exists */
     if (!find_role(authz, role_name)) {
         pthread_rwlock_unlock(&authz->rwlock);
         return -1;
     }
 
-    /* Find or create user */
     UserEntry *user = find_user(authz, subject);
     if (!user) {
         if (authz->user_count >= MAX_USERS) {
@@ -321,15 +308,13 @@ int authz_assign_role(GV_AuthzManager *authz, const char *subject,
         user->role_count = 0;
     }
 
-    /* Check if already assigned */
     for (size_t i = 0; i < user->role_count; i++) {
         if (strcmp(user->roles[i], role_name) == 0) {
             pthread_rwlock_unlock(&authz->rwlock);
-            return 0;  /* Already assigned */
+            return 0;
         }
     }
 
-    /* Add role */
     if (user->role_count >= MAX_ROLES_PER_USER) {
         pthread_rwlock_unlock(&authz->rwlock);
         return -1;
@@ -391,6 +376,11 @@ int authz_get_user_roles(GV_AuthzManager *authz, const char *subject,
     }
 
     *roles = gv_alloc(*count * sizeof(char *));
+    if (!*roles) {
+        *count = 0;
+        pthread_rwlock_unlock(&authz->rwlock);
+        return -1;
+    }
     for (size_t i = 0; i < *count; i++) {
         (*roles)[i] = gv_dup_cstr(user->roles[i]);
     }
@@ -407,8 +397,6 @@ void authz_free_user_roles(char **roles, size_t count) {
     gv_free(roles);
 }
 
-/* Authorization Checks */
-
 int authz_check(GV_AuthzManager *authz, const GV_Identity *identity,
                     GV_Permission permission, GV_ResourceType resource_type,
                     const char *resource_name, GV_AuthzResult *result) {
@@ -416,7 +404,7 @@ int authz_check(GV_AuthzManager *authz, const GV_Identity *identity,
 
     result->allowed = 0;
     result->denied_reason = "No matching role";
-    result->matched_role = NULL;
+    result->matched_role[0] = '\0';
 
     if (!identity->subject) {
         result->denied_reason = "No subject in identity";
@@ -432,24 +420,27 @@ int authz_check(GV_AuthzManager *authz, const GV_Identity *identity,
         return 0;
     }
 
-    /* Check each role */
     for (size_t i = 0; i < user->role_count; i++) {
         RoleEntry *role = find_role(authz, user->roles[i]);
         if (!role) continue;
 
-        /* Check permission */
         if ((role->permissions & permission) == 0) continue;
 
-        /* Check namespace access */
         if (resource_type == GV_RESOURCE_NAMESPACE ||
             resource_type == GV_RESOURCE_VECTOR) {
             if (!namespace_allowed(role, resource_name)) continue;
         }
 
-        /* Access granted */
         result->allowed = 1;
         result->denied_reason = NULL;
-        result->matched_role = role->name;
+        /* Copy the role name so the result stays valid after the lock is dropped
+         * and even if the role is later removed/redefined. */
+        if (role->name) {
+            strncpy(result->matched_role, role->name, sizeof(result->matched_role) - 1);
+            result->matched_role[sizeof(result->matched_role) - 1] = '\0';
+        } else {
+            result->matched_role[0] = '\0';
+        }
         pthread_rwlock_unlock(&authz->rwlock);
         return 0;
     }
@@ -497,22 +488,17 @@ int authz_is_admin(GV_AuthzManager *authz, const GV_Identity *identity) {
     return result.allowed;
 }
 
-/* Built-in Roles */
-
 int authz_init_builtin_roles(GV_AuthzManager *authz) {
     if (!authz) return -1;
 
-    /* Admin role - all permissions on all namespaces */
     if (authz_define_role(authz, "admin", GV_PERM_ALL, NULL, 0) != 0) {
         return -1;
     }
 
-    /* Writer role - read and write */
     if (authz_define_role(authz, "writer", GV_PERM_READ | GV_PERM_WRITE, NULL, 0) != 0) {
         return -1;
     }
 
-    /* Reader role - read only */
     if (authz_define_role(authz, "reader", GV_PERM_READ, NULL, 0) != 0) {
         return -1;
     }

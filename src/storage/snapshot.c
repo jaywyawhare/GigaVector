@@ -121,6 +121,10 @@ uint64_t snapshot_create(GV_SnapshotManager *mgr, size_t vector_count,
         return 0;
     }
 
+    if ((dimension != 0 && vector_count > SIZE_MAX / dimension) ||
+        (vector_count * dimension) > SIZE_MAX / sizeof(float)) {
+        return 0;   /* size would overflow */
+    }
     size_t total_floats = vector_count * dimension;
     float *data_copy = NULL;
 
@@ -376,6 +380,12 @@ int snapshot_load(GV_SnapshotManager **mgr_ptr, FILE *in)
             return -1;
         }
 
+        /* Overflow-guard the size (counts are read from the file, i.e. untrusted). */
+        if ((e->dimension != 0 && e->vector_count > SIZE_MAX / e->dimension) ||
+            (e->vector_count * e->dimension) > SIZE_MAX / sizeof(float)) {
+            snapshot_manager_destroy(mgr);
+            return -1;
+        }
         size_t total_floats = e->vector_count * e->dimension;
         if (total_floats > 0) {
             e->data = gv_alloc(total_floats * sizeof(float));

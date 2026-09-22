@@ -1,0 +1,26 @@
+# Keep the build context small and reproducible.
+.git
+build
+build-*
+_apalache-out
+.venv
+.venv-*
+.ruff_cache
+.hypothesis
+node_modules
+website/node_modules
+website/dist
+blog
+docs/site
+*.o
+*.a
+*.so
+*.db
+*.db.wal
+*.wal
+*.log
+diskann_data.bin
+__pycache__
+*.pyc
+snapshots
+tmp

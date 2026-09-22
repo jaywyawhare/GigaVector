@@ -1,0 +1,23 @@
+# Local single-node GigaVector server.
+#   docker compose up --build
+#   curl http://localhost:8080/health
+services:
+  gigavector:
+    build: .
+    image: gigavector:latest
+    ports:
+      - "8080:8080"
+    environment:
+      GV_PORT: "8080"
+      GV_DIMENSION: "128"
+      GV_INDEX: "hnsw"
+      # Set an API key to require authentication for mutating/admin endpoints.
+      # GV_API_KEY: "change-me"
+      # Or, for local dev only, allow unauthenticated writes:
+      GV_ALLOW_UNAUTH: "1"
+    volumes:
+      - gigavector-data:/data
+    restart: unless-stopped
+
+volumes:
+  gigavector-data:

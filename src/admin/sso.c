@@ -13,6 +13,7 @@
  */
 
 #include "admin/sso.h"
+#include "security/crypto.h"
 #include "core/memory.h"
 #include "core/utils.h"
 
@@ -45,16 +46,12 @@
 #include <openssl/sha.h>    /* SAML XML-DSig: reference DigestValue check */
 #endif
 
-/* Internal Constants */
-
 #define MAX_URL_LEN         2048
 #define MAX_ENDPOINT_LEN    1024
 #define MAX_RESPONSE_SIZE   (256 * 1024)
 #define MAX_GROUPS          64
 #define MAX_JWT_SEGMENTS    3
 #define BASE64_DECODE_MAX   8192
-
-/* Internal Structures */
 
 /**
  * @brief Discovered OIDC endpoints.
@@ -85,20 +82,13 @@ struct GV_SSOManager {
     pthread_mutex_t mutex;
 };
 
-/* Forward Declarations */
-
 static GV_SSOToken *alloc_token(void);
 static char **split_csv(const char *csv, size_t *count);
 static int check_group_in_list(const char *csv_list, const char *group);
 static void populate_admin_flag(GV_SSOToken *token, const char *admin_groups);
 
-/* Base64 URL decoding */
-static int base64url_decode(const char *in, size_t in_len,
-                            unsigned char *out, size_t *out_len);
 
 /* Minimal JSON helpers (no external dependency) */
-static int json_extract_string(const char *json, const char *key,
-                               char *out, size_t out_size);
 static int json_extract_uint64(const char *json, const char *key, uint64_t *out);
 static int json_extract_string_array(const char *json, const char *key,
                                      char ***out, size_t *count);
@@ -108,11 +98,6 @@ static GV_SSOToken *decode_jwt_claims(const char *jwt);
 
 /* ISO 8601 timestamp parsing */
 static uint64_t parse_iso8601(const char *ts);
-
-/* HMAC-SHA256 for JWT signature verification */
-static int hmac_sha256(const unsigned char *key, size_t key_len,
-                       const unsigned char *data, size_t data_len,
-                       unsigned char *out, size_t *out_len);
 
 /*
  * Verify a JWT signature.  Dispatches on the JWT header "alg":
@@ -135,8 +120,6 @@ static int http_get(const char *url, int verify_ssl,
                     char **response, size_t *response_len);
 static int http_post_form(const char *url, const char *post_fields,
                           int verify_ssl, char **response, size_t *response_len);
-
-/* URL Encoding */
 
 /**
  * Percent-encode @p src into @p dst for use in an
@@ -173,8 +156,6 @@ static int url_encode(const char *src, char *dst, size_t dst_size) {
     return 0;
 }
 
-/* Lifecycle */
-
 GV_SSOManager *sso_create(const GV_SSOConfig *config) {
     if (!config) return NULL;
 
@@ -206,8 +187,6 @@ void sso_destroy(GV_SSOManager *mgr) {
     gv_free(mgr);
 }
 
-/* OIDC Discovery */
-
 int sso_discover(GV_SSOManager *mgr) {
     if (!mgr) return -1;
     if (mgr->config.provider != GV_SSO_OIDC) return -1;
@@ -231,23 +210,23 @@ int sso_discover(GV_SSOManager *mgr) {
     /* Parse JSON response for OIDC endpoints */
     int ok = 1;
 
-    if (json_extract_string(response, "authorization_endpoint",
+    if (gv_json_extract_string(response, "authorization_endpoint",
                             mgr->endpoints.authorization_endpoint,
                             MAX_ENDPOINT_LEN) != 0) {
         ok = 0;
     }
-    if (json_extract_string(response, "token_endpoint",
+    if (gv_json_extract_string(response, "token_endpoint",
                             mgr->endpoints.token_endpoint,
                             MAX_ENDPOINT_LEN) != 0) {
         ok = 0;
     }
-    if (json_extract_string(response, "jwks_uri",
+    if (gv_json_extract_string(response, "jwks_uri",
                             mgr->endpoints.jwks_uri,
                             MAX_ENDPOINT_LEN) != 0) {
         ok = 0;
     }
     /* userinfo_endpoint is optional */
-    json_extract_string(response, "userinfo_endpoint",
+    gv_json_extract_string(response, "userinfo_endpoint",
                         mgr->endpoints.userinfo_endpoint,
                         MAX_ENDPOINT_LEN);
 
@@ -260,8 +239,6 @@ int sso_discover(GV_SSOManager *mgr) {
 
     return ok ? 0 : -1;
 }
-
-/* Authentication Flow */
 
 int sso_get_auth_url(const GV_SSOManager *mgr, const char *state,
                          char *url, size_t url_size) {
@@ -352,7 +329,7 @@ GV_SSOToken *sso_exchange_code(GV_SSOManager *mgr, const char *auth_code) {
 
     /* Extract id_token from response JSON */
     char id_token[BASE64_DECODE_MAX];
-    if (json_extract_string(response, "id_token",
+    if (gv_json_extract_string(response, "id_token",
                             id_token, sizeof(id_token)) != 0) {
         gv_free(response);
         return NULL;
@@ -472,7 +449,7 @@ GV_SSOToken *sso_refresh_token(GV_SSOManager *mgr, const char *refresh_token) {
 
     /* Extract id_token from response JSON */
     char id_token[BASE64_DECODE_MAX];
-    if (json_extract_string(response, "id_token",
+    if (gv_json_extract_string(response, "id_token",
                             id_token, sizeof(id_token)) != 0) {
         gv_free(response);
         return NULL;
@@ -509,8 +486,6 @@ void sso_free_token(GV_SSOToken *token) {
     gv_free(token);
 }
 
-/* Group Checking */
-
 int sso_has_group(const GV_SSOToken *token, const char *group) {
     if (!token || !group) return 0;
 
@@ -523,14 +498,10 @@ int sso_has_group(const GV_SSOToken *token, const char *group) {
     return 0;
 }
 
-/* Token Allocation */
-
 static GV_SSOToken *alloc_token(void) {
     GV_SSOToken *token = gv_calloc(1, sizeof(GV_SSOToken));
     return token;
 }
-
-/* CSV / Group Utilities */
 
 /**
  * Split a comma-separated string into an array of trimmed strings.
@@ -622,160 +593,10 @@ static void populate_admin_flag(GV_SSOToken *token, const char *admin_groups) {
     }
 }
 
-/* Base64 URL Decoding */
-
-static const unsigned char b64url_table[256] = {
-    ['A'] = 0,  ['B'] = 1,  ['C'] = 2,  ['D'] = 3,
-    ['E'] = 4,  ['F'] = 5,  ['G'] = 6,  ['H'] = 7,
-    ['I'] = 8,  ['J'] = 9,  ['K'] = 10, ['L'] = 11,
-    ['M'] = 12, ['N'] = 13, ['O'] = 14, ['P'] = 15,
-    ['Q'] = 16, ['R'] = 17, ['S'] = 18, ['T'] = 19,
-    ['U'] = 20, ['V'] = 21, ['W'] = 22, ['X'] = 23,
-    ['Y'] = 24, ['Z'] = 25,
-    ['a'] = 26, ['b'] = 27, ['c'] = 28, ['d'] = 29,
-    ['e'] = 30, ['f'] = 31, ['g'] = 32, ['h'] = 33,
-    ['i'] = 34, ['j'] = 35, ['k'] = 36, ['l'] = 37,
-    ['m'] = 38, ['n'] = 39, ['o'] = 40, ['p'] = 41,
-    ['q'] = 42, ['r'] = 43, ['s'] = 44, ['t'] = 45,
-    ['u'] = 46, ['v'] = 47, ['w'] = 48, ['x'] = 49,
-    ['y'] = 50, ['z'] = 51,
-    ['0'] = 52, ['1'] = 53, ['2'] = 54, ['3'] = 55,
-    ['4'] = 56, ['5'] = 57, ['6'] = 58, ['7'] = 59,
-    ['8'] = 60, ['9'] = 61,
-    ['-'] = 62, ['_'] = 63
-};
-
-static int is_b64url_char(unsigned char c) {
-    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
-           (c >= '0' && c <= '9') || c == '-' || c == '_';
-}
-
-static int base64url_decode(const char *in, size_t in_len,
-                            unsigned char *out, size_t *out_len) {
-    if (!in || !out || !out_len) return -1;
-
-    /* Strip padding */
-    while (in_len > 0 && in[in_len - 1] == '=') in_len--;
-
-    size_t max_out = (in_len * 3) / 4 + 1;
-    if (*out_len < max_out) {
-        *out_len = max_out;
-        return -1;
-    }
-
-    size_t i = 0, j = 0;
-    while (i < in_len) {
-        uint32_t a = 0, b = 0, c = 0, d = 0;
-
-        if (!is_b64url_char((unsigned char)in[i])) return -1;
-        a = b64url_table[(unsigned char)in[i++]];
-        if (i < in_len) {
-            if (!is_b64url_char((unsigned char)in[i])) return -1;
-            b = b64url_table[(unsigned char)in[i++]];
-        }
-
-        uint32_t triple = (a << 18) | (b << 12);
-
-        if (i < in_len) {
-            if (!is_b64url_char((unsigned char)in[i])) return -1;
-            c = b64url_table[(unsigned char)in[i++]];
-            triple |= (c << 6);
-        }
-        if (i < in_len) {
-            if (!is_b64url_char((unsigned char)in[i])) return -1;
-            d = b64url_table[(unsigned char)in[i++]];
-            triple |= d;
-        }
-
-        out[j++] = (unsigned char)((triple >> 16) & 0xFF);
-        if (i > 2 || in_len > 2) {
-            /* Only output second byte if we had at least 3 input chars
-               in this group */
-            size_t group_start = i - (i < in_len ? 0 : (in_len % 4 ? in_len % 4 : 4));
-            (void)group_start;
-        }
-
-        /* Simpler approach: figure out how many output bytes for this group */
-        size_t chars_in_group = in_len - (i - (i <= in_len ? (in_len >= 4 ? 4 : in_len % 4) : 0));
-        (void)chars_in_group;
-    }
-
-    /* Re-do with a cleaner algorithm */
-    j = 0;
-    i = 0;
-    while (i < in_len) {
-        uint32_t sextet[4] = {0, 0, 0, 0};
-        size_t n = 0;
-
-        for (n = 0; n < 4 && i < in_len; n++, i++) {
-            if (!is_b64url_char((unsigned char)in[i])) return -1;
-            sextet[n] = b64url_table[(unsigned char)in[i]];
-        }
-
-        uint32_t triple = (sextet[0] << 18) | (sextet[1] << 12) |
-                          (sextet[2] << 6) | sextet[3];
-
-        if (n >= 2) out[j++] = (unsigned char)((triple >> 16) & 0xFF);
-        if (n >= 3) out[j++] = (unsigned char)((triple >> 8) & 0xFF);
-        if (n >= 4) out[j++] = (unsigned char)(triple & 0xFF);
-    }
-
-    *out_len = j;
-    return 0;
-}
-
-/* Minimal JSON Helpers */
-
 /**
  * Extract a string value for a given key from a JSON object.
  * Very minimal: expects "key":"value" patterns, no nested objects.
  */
-static int json_extract_string(const char *json, const char *key,
-                               char *out, size_t out_size) {
-    if (!json || !key || !out || out_size == 0) return -1;
-
-    /* Build search pattern: "key" */
-    char pattern[256];
-    snprintf(pattern, sizeof(pattern), "\"%s\"", key);
-
-    const char *pos = strstr(json, pattern);
-    if (!pos) return -1;
-
-    pos += strlen(pattern);
-
-    /* Skip whitespace and colon */
-    while (*pos == ' ' || *pos == '\t' || *pos == '\n' || *pos == '\r') pos++;
-    if (*pos != ':') return -1;
-    pos++;
-    while (*pos == ' ' || *pos == '\t' || *pos == '\n' || *pos == '\r') pos++;
-
-    if (*pos != '"') return -1;
-    pos++; /* skip opening quote */
-
-    /* Copy value until closing quote */
-    size_t i = 0;
-    while (*pos && *pos != '"' && i < out_size - 1) {
-        if (*pos == '\\' && *(pos + 1)) {
-            pos++; /* skip escape backslash */
-            switch (*pos) {
-                case '"':  out[i++] = '"';  break;
-                case '\\': out[i++] = '\\'; break;
-                case '/':  out[i++] = '/';  break;
-                case 'n':  out[i++] = '\n'; break;
-                case 't':  out[i++] = '\t'; break;
-                case 'r':  out[i++] = '\r'; break;
-                default:   out[i++] = *pos; break;
-            }
-        } else {
-            out[i++] = *pos;
-        }
-        pos++;
-    }
-
-    out[i] = '\0';
-    return (*pos == '"') ? 0 : -1;
-}
-
 /**
  * Extract an unsigned 64-bit integer value for a given key from JSON.
  */
@@ -882,8 +703,6 @@ static int json_extract_string_array(const char *json, const char *key,
     return 0;
 }
 
-/* ISO 8601 Timestamp Parsing */
-
 /**
  * Parse an ISO 8601 timestamp (e.g. "2024-03-15T12:30:00Z") into a Unix epoch.
  * Handles the format: YYYY-MM-DDThh:mm:ssZ (with optional fractional seconds).
@@ -934,156 +753,6 @@ static uint64_t parse_iso8601(const char *ts) {
     return (t == (time_t)-1) ? 0 : (uint64_t)t;
 }
 
-/* HMAC-SHA256 for JWT Signature Verification */
-
-/**
- * Minimal SHA-256 implementation for HMAC computation.
- * Used for HS256 JWT signature verification without requiring OpenSSL.
- */
-
-static const uint32_t sha256_k[64] = {
-    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5,
-    0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
-    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3,
-    0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
-    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc,
-    0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
-    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
-    0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
-    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13,
-    0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
-    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3,
-    0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
-    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5,
-    0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
-    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208,
-    0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
-};
-
-#define SHA256_ROR(x, n) (((x) >> (n)) | ((x) << (32 - (n))))
-#define SHA256_CH(x, y, z)  (((x) & (y)) ^ (~(x) & (z)))
-#define SHA256_MAJ(x, y, z) (((x) & (y)) ^ ((x) & (z)) ^ ((y) & (z)))
-#define SHA256_EP0(x)  (SHA256_ROR(x, 2)  ^ SHA256_ROR(x, 13) ^ SHA256_ROR(x, 22))
-#define SHA256_EP1(x)  (SHA256_ROR(x, 6)  ^ SHA256_ROR(x, 11) ^ SHA256_ROR(x, 25))
-#define SHA256_SIG0(x) (SHA256_ROR(x, 7)  ^ SHA256_ROR(x, 18) ^ ((x) >> 3))
-#define SHA256_SIG1(x) (SHA256_ROR(x, 17) ^ SHA256_ROR(x, 19) ^ ((x) >> 10))
-
-typedef struct {
-    uint32_t state[8];
-    uint64_t bitcount;
-    unsigned char buffer[64];
-    size_t buflen;
-} SHA256_CTX_Internal;
-
-static void sha256_init(SHA256_CTX_Internal *ctx) {
-    ctx->state[0] = 0x6a09e667; ctx->state[1] = 0xbb67ae85;
-    ctx->state[2] = 0x3c6ef372; ctx->state[3] = 0xa54ff53a;
-    ctx->state[4] = 0x510e527f; ctx->state[5] = 0x9b05688c;
-    ctx->state[6] = 0x1f83d9ab; ctx->state[7] = 0x5be0cd19;
-    ctx->bitcount = 0;
-    ctx->buflen = 0;
-}
-
-static void sha256_transform(SHA256_CTX_Internal *ctx, const unsigned char block[64]) {
-    uint32_t w[64], a, b, c, d, e, f, g, h, t1, t2;
-
-    for (int i = 0; i < 16; i++) {
-        w[i] = ((uint32_t)block[i * 4] << 24) | ((uint32_t)block[i * 4 + 1] << 16) |
-               ((uint32_t)block[i * 4 + 2] << 8) | (uint32_t)block[i * 4 + 3];
-    }
-    for (int i = 16; i < 64; i++) {
-        w[i] = SHA256_SIG1(w[i - 2]) + w[i - 7] + SHA256_SIG0(w[i - 15]) + w[i - 16];
-    }
-
-    a = ctx->state[0]; b = ctx->state[1]; c = ctx->state[2]; d = ctx->state[3];
-    e = ctx->state[4]; f = ctx->state[5]; g = ctx->state[6]; h = ctx->state[7];
-
-    for (int i = 0; i < 64; i++) {
-        t1 = h + SHA256_EP1(e) + SHA256_CH(e, f, g) + sha256_k[i] + w[i];
-        t2 = SHA256_EP0(a) + SHA256_MAJ(a, b, c);
-        h = g; g = f; f = e; e = d + t1;
-        d = c; c = b; b = a; a = t1 + t2;
-    }
-
-    ctx->state[0] += a; ctx->state[1] += b; ctx->state[2] += c; ctx->state[3] += d;
-    ctx->state[4] += e; ctx->state[5] += f; ctx->state[6] += g; ctx->state[7] += h;
-}
-
-static void sha256_update(SHA256_CTX_Internal *ctx, const unsigned char *data, size_t len) {
-    for (size_t i = 0; i < len; i++) {
-        ctx->buffer[ctx->buflen++] = data[i];
-        ctx->bitcount += 8;
-        if (ctx->buflen == 64) {
-            sha256_transform(ctx, ctx->buffer);
-            ctx->buflen = 0;
-        }
-    }
-}
-
-static void sha256_final(SHA256_CTX_Internal *ctx, unsigned char hash[32]) {
-    size_t pad_start = ctx->buflen;
-    ctx->buffer[pad_start++] = 0x80;
-
-    if (pad_start > 56) {
-        memset(ctx->buffer + pad_start, 0, 64 - pad_start);
-        sha256_transform(ctx, ctx->buffer);
-        pad_start = 0;
-    }
-    memset(ctx->buffer + pad_start, 0, 56 - pad_start);
-
-    uint64_t bits = ctx->bitcount;
-    for (int i = 7; i >= 0; i--) {
-        ctx->buffer[56 + (7 - i)] = (unsigned char)(bits >> (i * 8));
-    }
-    sha256_transform(ctx, ctx->buffer);
-
-    for (int i = 0; i < 8; i++) {
-        hash[i * 4]     = (unsigned char)(ctx->state[i] >> 24);
-        hash[i * 4 + 1] = (unsigned char)(ctx->state[i] >> 16);
-        hash[i * 4 + 2] = (unsigned char)(ctx->state[i] >> 8);
-        hash[i * 4 + 3] = (unsigned char)(ctx->state[i]);
-    }
-}
-
-static int hmac_sha256(const unsigned char *key, size_t key_len,
-                       const unsigned char *data, size_t data_len,
-                       unsigned char *out, size_t *out_len) {
-    unsigned char k_pad[64];
-    unsigned char inner_hash[32];
-    SHA256_CTX_Internal ctx;
-
-    /* If key > 64 bytes, hash it first */
-    unsigned char key_hash[32];
-    if (key_len > 64) {
-        sha256_init(&ctx);
-        sha256_update(&ctx, key, key_len);
-        sha256_final(&ctx, key_hash);
-        key = key_hash;
-        key_len = 32;
-    }
-
-    /* Inner hash: H((K ^ ipad) || data) */
-    memset(k_pad, 0x36, 64);
-    for (size_t i = 0; i < key_len; i++) k_pad[i] ^= key[i];
-
-    sha256_init(&ctx);
-    sha256_update(&ctx, k_pad, 64);
-    sha256_update(&ctx, data, data_len);
-    sha256_final(&ctx, inner_hash);
-
-    /* Outer hash: H((K ^ opad) || inner_hash) */
-    memset(k_pad, 0x5c, 64);
-    for (size_t i = 0; i < key_len; i++) k_pad[i] ^= key[i];
-
-    sha256_init(&ctx);
-    sha256_update(&ctx, k_pad, 64);
-    sha256_update(&ctx, inner_hash, 32);
-    sha256_final(&ctx, out);
-
-    *out_len = 32;
-    return 0;
-}
-
 /*
  * Parse a JWT header segment and extract its "alg" and (optionally) "kid".
  *
@@ -1104,17 +773,17 @@ static int jwt_header_parse(const char *jwt, const char *dot1,
 
     unsigned char decoded[1024];
     size_t decoded_len = sizeof(decoded);
-    if (base64url_decode(jwt, header_b64_len, decoded, &decoded_len) != 0) {
+    if (crypto_base64url_decode(jwt, header_b64_len, decoded, &decoded_len) != 0) {
         return -1;
     }
     if (decoded_len >= sizeof(decoded)) decoded_len = sizeof(decoded) - 1;
     decoded[decoded_len] = '\0';
 
-    if (json_extract_string((const char *)decoded, "alg", alg_out, alg_size) != 0) {
+    if (gv_json_extract_string((const char *)decoded, "alg", alg_out, alg_size) != 0) {
         return -1;  /* missing alg -> reject */
     }
     if (kid_out && kid_size > 0) {
-        if (json_extract_string((const char *)decoded, "kid",
+        if (gv_json_extract_string((const char *)decoded, "kid",
                                 kid_out, kid_size) != 0) {
             kid_out[0] = '\0';  /* kid is optional */
         }
@@ -1134,19 +803,13 @@ static int verify_jwt_signature_hs256(const char *jwt, size_t signed_len,
     if (!secret || !secret[0]) return -1;  /* no HMAC key -> fail closed */
 
     unsigned char expected[32];
-    size_t expected_len = 0;
-    hmac_sha256((const unsigned char *)secret, strlen(secret),
-                (const unsigned char *)jwt, signed_len,
-                expected, &expected_len);
+    if (crypto_hmac_sha256((const unsigned char *)secret, strlen(secret),
+                           (const unsigned char *)jwt, signed_len, expected) != 0)
+        return -1;
 
-    if (decoded_sig_len != expected_len) return -1;
+    if (decoded_sig_len != sizeof(expected)) return -1;
 
-    /* Constant-time comparison to prevent timing attacks */
-    unsigned char diff = 0;
-    for (size_t i = 0; i < expected_len; i++) {
-        diff |= decoded_sig[i] ^ expected[i];
-    }
-    return diff == 0 ? 0 : -1;
+    return crypto_constant_time_compare(decoded_sig, expected, sizeof(expected)) == 0 ? 0 : -1;
 }
 
 #ifdef GV_HAVE_OPENSSL
@@ -1196,8 +859,8 @@ static EVP_PKEY *rsa_pkey_from_jwk(const char *n_b64, const char *e_b64) {
     unsigned char e_bin[16];
     size_t n_len = sizeof(n_bin);
     size_t e_len = sizeof(e_bin);
-    if (base64url_decode(n_b64, strlen(n_b64), n_bin, &n_len) != 0) return NULL;
-    if (base64url_decode(e_b64, strlen(e_b64), e_bin, &e_len) != 0) return NULL;
+    if (crypto_base64url_decode(n_b64, strlen(n_b64), n_bin, &n_len) != 0) return NULL;
+    if (crypto_base64url_decode(e_b64, strlen(e_b64), e_bin, &e_len) != 0) return NULL;
 
     /* Convert the big-endian modulus/exponent to BIGNUMs. */
     BIGNUM *bn_n = BN_bin2bn(n_bin, (int)n_len, NULL);
@@ -1269,10 +932,10 @@ static EVP_PKEY *rsa_pkey_from_jwks(const char *jwks_uri, int verify_ssl,
         obj[obj_len] = '\0';
 
         char kty[16];
-        if (json_extract_string(obj, "kty", kty, sizeof(kty)) == 0 &&
+        if (gv_json_extract_string(obj, "kty", kty, sizeof(kty)) == 0 &&
             strcmp(kty, "RSA") == 0) {
             char kid[256];
-            if (json_extract_string(obj, "kid", kid, sizeof(kid)) != 0) {
+            if (gv_json_extract_string(obj, "kid", kid, sizeof(kid)) != 0) {
                 kid[0] = '\0';
             }
             int kid_ok = (!want_kid || !want_kid[0] || kid[0] == '\0' ||
@@ -1280,8 +943,8 @@ static EVP_PKEY *rsa_pkey_from_jwks(const char *jwks_uri, int verify_ssl,
             if (kid_ok) {
                 char n_b64[1400];
                 char e_b64[64];
-                if (json_extract_string(obj, "n", n_b64, sizeof(n_b64)) == 0 &&
-                    json_extract_string(obj, "e", e_b64, sizeof(e_b64)) == 0) {
+                if (gv_json_extract_string(obj, "n", n_b64, sizeof(n_b64)) == 0 &&
+                    gv_json_extract_string(obj, "e", e_b64, sizeof(e_b64)) == 0) {
                     pkey = rsa_pkey_from_jwk(n_b64, e_b64);
                     if (pkey) break;
                 }
@@ -1380,7 +1043,7 @@ static int verify_jwt_signature(const GV_SSOManager *mgr, const char *jwt) {
 
     unsigned char decoded_sig[512];
     size_t decoded_sig_len = sizeof(decoded_sig);
-    if (base64url_decode(sig_start, sig_b64_len,
+    if (crypto_base64url_decode(sig_start, sig_b64_len,
                          decoded_sig, &decoded_sig_len) != 0) {
         return -1;
     }
@@ -1405,8 +1068,6 @@ static int verify_jwt_signature(const GV_SSOManager *mgr, const char *jwt) {
     return -1;
 }
 
-/* JWT Decoding */
-
 /**
  * Decode a JWT and extract claims into a GV_SSOToken.
  * Verifies HS256 signature when a secret is available, and checks expiry.
@@ -1421,7 +1082,6 @@ static GV_SSOToken *decode_jwt_claims(const char *jwt) {
     const char *dot2 = strchr(dot1 + 1, '.');
     if (!dot2) return NULL;
 
-    /* Decode header to verify it looks like a JWT (optional, log kid) */
     /* We focus on the payload segment */
     const char *payload_start = dot1 + 1;
     size_t payload_b64_len = (size_t)(dot2 - payload_start);
@@ -1429,7 +1089,7 @@ static GV_SSOToken *decode_jwt_claims(const char *jwt) {
     unsigned char decoded[BASE64_DECODE_MAX];
     size_t decoded_len = sizeof(decoded);
 
-    if (base64url_decode(payload_start, payload_b64_len,
+    if (crypto_base64url_decode(payload_start, payload_b64_len,
                          decoded, &decoded_len) != 0) {
         return NULL;
     }
@@ -1446,13 +1106,13 @@ static GV_SSOToken *decode_jwt_claims(const char *jwt) {
 
     char buf[512];
 
-    if (json_extract_string(payload_json, "sub", buf, sizeof(buf)) == 0) {
+    if (gv_json_extract_string(payload_json, "sub", buf, sizeof(buf)) == 0) {
         token->subject = gv_dup_cstr(buf);
     }
-    if (json_extract_string(payload_json, "email", buf, sizeof(buf)) == 0) {
+    if (gv_json_extract_string(payload_json, "email", buf, sizeof(buf)) == 0) {
         token->email = gv_dup_cstr(buf);
     }
-    if (json_extract_string(payload_json, "name", buf, sizeof(buf)) == 0) {
+    if (gv_json_extract_string(payload_json, "name", buf, sizeof(buf)) == 0) {
         token->name = gv_dup_cstr(buf);
     }
 
@@ -1490,8 +1150,6 @@ static GV_SSOToken *decode_jwt_claims(const char *jwt) {
 
     return token;
 }
-
-/* SAML Assertion Parsing (Stub) */
 
 /**
  * Extract text content between <tag> and </tag> from XML.
@@ -1587,9 +1245,8 @@ static int xml_extract_attribute_value(const char *xml, const char *attr_name,
     return 0;
 }
 
-/* ============================================================================
+/*
  * SAML XML-DSig signature verification
- * ============================================================================
  *
  * SECURITY MODEL (default deny):
  *   - The ONLY trust anchor is config->saml_idp_cert_pem (a PEM X.509 cert or
@@ -1634,7 +1291,6 @@ static int xml_extract_attribute_value(const char *xml, const char *attr_name,
  *       parser differentials against this string-based (non-DOM) scanner may
  *       still find gaps.  A production deployment SHOULD use a real XML/DSig
  *       library.  We reject on any structural ambiguity we can detect.
- * ============================================================================
  */
 
 #ifdef GV_HAVE_OPENSSL
@@ -1644,7 +1300,7 @@ static int xml_extract_attribute_value(const char *xml, const char *attr_name,
  * DigestValue and X509Certificate use standard base64 with '+' and '/', often
  * wrapped with newlines/spaces.  We copy into a scratch buffer, drop all
  * whitespace, translate '+'->'-' and '/'->'_' and strip '=' padding, then
- * reuse the existing base64url_decode().  Returns 0 on success.
+ * reuse the existing crypto_base64url_decode().  Returns 0 on success.
  */
 static int saml_b64_decode(const char *in, size_t in_len,
                            unsigned char *out, size_t *out_len) {
@@ -1661,7 +1317,7 @@ static int saml_b64_decode(const char *in, size_t in_len,
         tmp[k++] = c;
     }
     tmp[k] = '\0';
-    int rc = base64url_decode(tmp, k, out, out_len);
+    int rc = crypto_base64url_decode(tmp, k, out, out_len);
     gv_free(tmp);
     return rc;
 }
@@ -2030,11 +1686,7 @@ static int saml_verify_xmldsig(const char *xml, size_t xml_len,
                 unsigned int got_len = 0;
                 if (EVP_DigestFinal_ex(mdctx, got, &got_len) == 1 &&
                     got_len == want_digest_len) {
-                    /* constant-time compare of the digest */
-                    unsigned char diff = 0;
-                    for (unsigned int i = 0; i < got_len; i++)
-                        diff |= got[i] ^ want_digest[i];
-                    digest_ok = (diff == 0);
+                    digest_ok = (crypto_constant_time_compare(got, want_digest, got_len) == 0);
                 }
             }
         }
@@ -2079,7 +1731,7 @@ static GV_SSOToken *parse_saml_assertion(const GV_SSOConfig *config,
     if (!decoded) return NULL;
 
     size_t decoded_len = max_decoded;
-    if (base64url_decode(b64_assertion, in_len,
+    if (crypto_base64url_decode(b64_assertion, in_len,
                          decoded, &decoded_len) != 0) {
         /* Try treating '+' as '-' and '/' as '_' for standard base64 */
         char *urlsafe = gv_alloc(in_len + 1);
@@ -2095,7 +1747,7 @@ static GV_SSOToken *parse_saml_assertion(const GV_SSOConfig *config,
         urlsafe[in_len] = '\0';
 
         decoded_len = max_decoded;
-        if (base64url_decode(urlsafe, in_len,
+        if (crypto_base64url_decode(urlsafe, in_len,
                              decoded, &decoded_len) != 0) {
             gv_free(urlsafe);
             gv_free(decoded);
@@ -2111,7 +1763,7 @@ static GV_SSOToken *parse_saml_assertion(const GV_SSOConfig *config,
     const char *xml = (const char *)decoded;
 
     /*
-     * ---- SAML signature policy (FAIL CLOSED) ----
+     * SAML signature policy (FAIL CLOSED).
      *
      * A SAML assertion is a bearer credential that can grant admin
      * (populate_admin_flag scrapes group attributes below).  We must NOT trust
@@ -2271,7 +1923,7 @@ static GV_SSOToken *parse_saml_assertion(const GV_SSOConfig *config,
     }
 
     /*
-     * ---- Enforce the assertion validity window (FAIL CLOSED) ----
+     * Enforce the assertion validity window (FAIL CLOSED).
      *
      * Reject if:
      *   - the Conditions/NotBefore/NotOnOrAfter window is missing (we require
@@ -2307,7 +1959,7 @@ static GV_SSOToken *parse_saml_assertion(const GV_SSOConfig *config,
     }
 
     /*
-     * ---- Enforce the audience restriction (FAIL CLOSED when configured) ----
+     * Enforce the audience restriction (FAIL CLOSED when configured).
      *
      * When config->saml_entity_id (our SP entity ID) is set, the signed
      * assertion MUST contain an <AudienceRestriction><Audience> equal to it.
@@ -2355,8 +2007,6 @@ static GV_SSOToken *parse_saml_assertion(const GV_SSOConfig *config,
     gv_free(decoded);
     return token;
 }
-
-/* HTTP Helpers (libcurl or stub) */
 
 #ifdef HAVE_CURL
 

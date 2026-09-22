@@ -52,7 +52,6 @@ void payload_index_destroy(GV_PayloadIndex *idx);
  *
  * @param idx Index instance.
  * @param name Name string.
- * @param type type.
  * @return 0 on success, -1 on error.
  */
 int payload_index_add_field(GV_PayloadIndex *idx, const char *name, GV_FieldType type);
@@ -77,8 +76,6 @@ int payload_index_field_count(const GV_PayloadIndex *idx);
  *
  * @param idx Index instance.
  * @param vector_id Identifier.
- * @param field field.
- * @param value value.
  * @return 0 on success, -1 on error.
  */
 int payload_index_insert_int(GV_PayloadIndex *idx, size_t vector_id, const char *field, int64_t value);
@@ -87,8 +84,6 @@ int payload_index_insert_int(GV_PayloadIndex *idx, size_t vector_id, const char 
  *
  * @param idx Index instance.
  * @param vector_id Identifier.
- * @param field field.
- * @param value value.
  * @return 0 on success, -1 on error.
  */
 int payload_index_insert_float(GV_PayloadIndex *idx, size_t vector_id, const char *field, double value);
@@ -97,8 +92,6 @@ int payload_index_insert_float(GV_PayloadIndex *idx, size_t vector_id, const cha
  *
  * @param idx Index instance.
  * @param vector_id Identifier.
- * @param field field.
- * @param value value.
  * @return 0 on success, -1 on error.
  */
 int payload_index_insert_string(GV_PayloadIndex *idx, size_t vector_id, const char *field, const char *value);
@@ -107,8 +100,6 @@ int payload_index_insert_string(GV_PayloadIndex *idx, size_t vector_id, const ch
  *
  * @param idx Index instance.
  * @param vector_id Identifier.
- * @param field field.
- * @param value value.
  * @return 0 on success, -1 on error.
  */
 int payload_index_insert_bool(GV_PayloadIndex *idx, size_t vector_id, const char *field, int value);

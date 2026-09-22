@@ -19,6 +19,118 @@ static inline char *gv_dup_cstr(const char *s) {
     return gv_strdup(s);
 }
 
+/* Escape src into a JSON string body (no surrounding quotes) in dst. Named
+ * escapes for " \ \n \r \t; \uXXXX for other control chars; passthrough else.
+ * Bounds-safe (always NUL-terminates, never overruns dst_size). Returns bytes written. */
+static inline size_t gv_json_escape(char *dst, size_t dst_size, const char *src) {
+    size_t w = 0;
+    if (!dst || dst_size == 0) return 0;
+    for (; src && *src; src++) {
+        unsigned char c = (unsigned char)*src;
+        char esc[8]; const char *seq; size_t n;
+        switch (c) {
+            case '"':  seq = "\\\""; n = 2; break;
+            case '\\': seq = "\\\\"; n = 2; break;
+            case '\n': seq = "\\n";  n = 2; break;
+            case '\r': seq = "\\r";  n = 2; break;
+            case '\t': seq = "\\t";  n = 2; break;
+            case '\b': seq = "\\b";  n = 2; break;
+            case '\f': seq = "\\f";  n = 2; break;
+            default:
+                if (c < 0x20) { n = (size_t)snprintf(esc, sizeof(esc), "\\u%04x", c); seq = esc; }
+                else { esc[0] = (char)c; esc[1] = '\0'; seq = esc; n = 1; }
+        }
+        if (w + n >= dst_size) break;
+        memcpy(dst + w, seq, n); w += n;
+    }
+    dst[w] = '\0';
+    return w;
+}
+
+/* Extract the string value of "key" from a FLAT JSON object into out, unescaping
+ * \" \\ \/ \n \t \r. For flat claim objects (JWT/OIDC/SAML) — not nested JSON.
+ * Fails closed: -1 if the key, opening, or closing quote is missing (e.g. a value
+ * truncated by out_size). Returns 0 on success. */
+static inline int gv_json_extract_string(const char *json, const char *key,
+                                         char *out, size_t out_size) {
+    if (!json || !key || !out || out_size == 0) return -1;
+    char pattern[256];
+    snprintf(pattern, sizeof(pattern), "\"%s\"", key);
+    const char *pos = strstr(json, pattern);
+    if (!pos) return -1;
+    pos += strlen(pattern);
+    while (*pos == ' ' || *pos == '\t' || *pos == '\n' || *pos == '\r') pos++;
+    if (*pos != ':') return -1;
+    pos++;
+    while (*pos == ' ' || *pos == '\t' || *pos == '\n' || *pos == '\r') pos++;
+    if (*pos != '"') return -1;
+    pos++;
+    size_t i = 0;
+    while (*pos && *pos != '"' && i < out_size - 1) {
+        if (*pos == '\\' && *(pos + 1)) {
+            pos++;
+            switch (*pos) {
+                case '"':  out[i++] = '"';  break;
+                case '\\': out[i++] = '\\'; break;
+                case '/':  out[i++] = '/';  break;
+                case 'n':  out[i++] = '\n'; break;
+                case 't':  out[i++] = '\t'; break;
+                case 'r':  out[i++] = '\r'; break;
+                default:   out[i++] = *pos; break;
+            }
+        } else {
+            out[i++] = *pos;
+        }
+        pos++;
+    }
+    out[i] = '\0';
+    return (*pos == '"') ? 0 : -1;
+}
+
+/* FNV-1a 32-bit hash. String keys pass strlen(s) as len. */
+static inline uint32_t gv_fnv1a(const void *data, size_t len) {
+    const unsigned char *p = (const unsigned char *)data;
+    uint32_t h = 2166136261u;
+    for (size_t i = 0; i < len; i++) { h ^= p[i]; h *= 16777619u; }
+    return h;
+}
+
+/* splitmix64 finalizer: decorrelates small-integer seeds and hashes uint64 keys. */
+static inline uint64_t gv_mix64(uint64_t z) {
+    z += 0x9E3779B97F4A7C15ULL;
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
+    return z ^ (z >> 31);
+}
+
+/* Little-endian fixed-width packing into byte buffers (on-disk/wire formats). */
+static inline void gv_put_u32(uint8_t *p, uint32_t v) {
+    p[0] = (uint8_t)v;         p[1] = (uint8_t)(v >> 8);
+    p[2] = (uint8_t)(v >> 16); p[3] = (uint8_t)(v >> 24);
+}
+static inline void gv_put_u64(uint8_t *p, uint64_t v) {
+    for (int i = 0; i < 8; i++) p[i] = (uint8_t)(v >> (8 * i));
+}
+static inline uint32_t gv_get_u32(const uint8_t *p) {
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
+           ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+static inline uint64_t gv_get_u64(const uint8_t *p) {
+    uint64_t v = 0;
+    for (int i = 0; i < 8; i++) v |= (uint64_t)p[i] << (8 * i);
+    return v;
+}
+
+/* Big-endian (network byte order) u32 packing, for the wire protocols. */
+static inline void gv_put_u32_be(uint8_t *p, uint32_t v) {
+    p[0] = (uint8_t)(v >> 24); p[1] = (uint8_t)(v >> 16);
+    p[2] = (uint8_t)(v >> 8);  p[3] = (uint8_t)v;
+}
+static inline uint32_t gv_get_u32_be(const uint8_t *p) {
+    return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) |
+           ((uint32_t)p[2] << 8)  | (uint32_t)p[3];
+}
+
 /* CRC-32 (polynomial 0xEDB88320) */
 static inline uint32_t gv_crc32_init(void) { return 0xFFFFFFFFu; }
 
@@ -52,14 +164,10 @@ static inline size_t hash_u64(uint64_t id, size_t bucket_count) {
     return hash % bucket_count;
 }
 
-/*
- * Portable serialization primitives. All multi-byte scalars are written in
- * little-endian byte order and all floats/doubles via an IEEE-754 bit-cast, so
- * files are interchangeable across CPU endianness and 32/64-bit builds. On a
- * little-endian host (x86-64, ARM-LE — the common targets) the emitted bytes
- * are identical to the previous native fwrite(&v) layout, so existing on-disk
- * files remain readable. size_t is normalized to a fixed 8-byte value on disk.
- */
+/* Portable serialization primitives: multi-byte scalars in little-endian,
+ * floats/doubles via IEEE-754 bit-cast, size_t normalized to 8 bytes — files are
+ * interchangeable across endianness and 32/64-bit builds. On LE hosts the bytes
+ * match the old native fwrite(&v) layout, so existing on-disk files stay readable. */
 #if defined(__BYTE_ORDER__) && defined(__ORDER_LITTLE_ENDIAN__)
 #  define GV_LITTLE_ENDIAN (__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__)
 #else

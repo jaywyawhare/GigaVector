@@ -20,7 +20,7 @@ int main(void) {
     float a[4], b[4], c[4];
     fill(a, D, 1.0f); fill(b, D, 2.0f); fill(c, D, 3.0f);
 
-    /* --- in-memory: add-with-id, resolve, delete-by-id --- */
+    /* in-memory: add-with-id, resolve, delete-by-id */
     GV_Database *db = db_open(NULL, D, GV_INDEX_TYPE_HNSW);
     ASSERT(db != NULL, "db_open");
 
@@ -44,7 +44,7 @@ int main(void) {
 
     db_close(db);
 
-    /* --- file-backed: sidecar round-trip --- */
+    /* file-backed: sidecar round-trip */
     const char *path = "test_identity_seam.db";
     char idspath[256];
     snprintf(idspath, sizeof(idspath), "%s.ids", path);

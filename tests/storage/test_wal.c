@@ -241,18 +241,9 @@ static int test_wal_replay_rich(void) {
 }
 
 /*
- * WAL fsync-before-truncate ORDERING reinforcement.
- *
- * wal.c durably fsync()s appended records before any ftruncate() reclaims log
- * space; the ordering guarantee is that a crash can only ever leave a *torn
- * tail* (a partially-written trailing record), never a hole in the middle of a
- * durably-acknowledged prefix. This test exercises that contract from the
- * recovery side: it writes several complete records, then physically truncates
- * the file in the MIDDLE of the last record (simulating a crash mid-append
- * before the record was fsync'd/CRC-committed). Replay must recover the
- * durable prefix and drop the torn trailing record — i.e. it must NOT fail the
- * whole log and must NOT count the torn record. Mirrors the torn-tail pattern
- * in tests/storage/test_corrupt_resilience.c.
+ * WAL fsync-before-truncate ordering: a crash can only leave a torn trailing
+ * record, never a hole in a durable prefix. Truncating mid-last-record, replay
+ * must recover the durable prefix and drop only the torn tail (not fail the log).
  */
 static int test_wal_fsync_truncate_ordering(void) {
     char wal_path[256];

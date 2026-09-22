@@ -1,5 +1,13 @@
 # Architecture
 
+> **Note:** parts of this document describe an older single-directory module layout (e.g.
+> `src/gv_hnsw.c`); the code is now organized under `src/index/`, `src/storage/`, `src/features/`,
+> `src/admin/`, etc. It also predates several subsystems — MVCC snapshot-isolation transactions
+> (`src/storage/transaction.c`), access-aware storage tiers (`src/storage/tiered_storage.c`), the
+> WiscKey value-log (`src/storage/vlog.c` + `src/storage/value_store.c`), and the Raft consensus
+> core (`src/admin/raft.c`). See `docs/api_reference.md` and `docs/combined-architecture.md` for
+> those. The concepts below remain accurate; only the file paths and subsystem list are dated.
+
 ## Overview
 
 GigaVector is a high-performance vector database library written in C, designed for:

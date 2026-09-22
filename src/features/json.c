@@ -17,14 +17,10 @@
 
 #include "features/json.h"
 
-/* Internal Constants */
-
 #define MAX_NESTING_DEPTH 128
 #define INITIAL_ARRAY_CAPACITY 8
 #define INITIAL_OBJECT_CAPACITY 8
 #define STRING_BUFFER_INITIAL 256
-
-/* Parser State */
 
 typedef struct {
     const char *input;
@@ -33,12 +29,8 @@ typedef struct {
     GV_JsonError error;
 } ParserState;
 
-/* Forward Declarations */
-
 static GV_JsonValue *parse_value(ParserState *state);
 static void skip_whitespace(ParserState *state);
-
-/* Error Handling */
 
 const char *json_error_string(GV_JsonError error) {
     switch (error) {
@@ -70,8 +62,6 @@ const char *json_error_string(GV_JsonError error) {
             return "Unknown error";
     }
 }
-
-/* Value Creation */
 
 GV_JsonValue *json_null(void) {
     GV_JsonValue *val = (GV_JsonValue *)gv_calloc(1, sizeof(GV_JsonValue));
@@ -136,8 +126,6 @@ GV_JsonValue *json_object(void) {
     }
     return val;
 }
-
-/* Memory Management */
 
 void json_free(GV_JsonValue *value) {
     if (value == NULL) {
@@ -220,8 +208,6 @@ GV_JsonValue *json_copy(const GV_JsonValue *value) {
     return copy;
 }
 
-/* Type Checking */
-
 bool json_is_null(const GV_JsonValue *value) {
     return value != NULL && value->type == GV_JSON_NULL;
 }
@@ -245,8 +231,6 @@ bool json_is_array(const GV_JsonValue *value) {
 bool json_is_object(const GV_JsonValue *value) {
     return value != NULL && value->type == GV_JSON_OBJECT;
 }
-
-/* Value Extraction */
 
 GV_JsonError json_get_bool(const GV_JsonValue *value, bool *out) {
     if (value == NULL || out == NULL) {
@@ -276,8 +260,6 @@ const char *json_get_string(const GV_JsonValue *value) {
     }
     return value->data.string;
 }
-
-/* Array Operations */
 
 GV_JsonError json_array_push(GV_JsonValue *array, GV_JsonValue *value) {
     if (array == NULL || value == NULL) {
@@ -323,8 +305,6 @@ size_t json_array_length(const GV_JsonValue *array) {
     return array->data.array.count;
 }
 
-/* Object Operations */
-
 GV_JsonError json_object_set(GV_JsonValue *object, const char *key, GV_JsonValue *value) {
     if (object == NULL || key == NULL || value == NULL) {
         return GV_JSON_ERROR_NULL_INPUT;
@@ -333,7 +313,6 @@ GV_JsonError json_object_set(GV_JsonValue *object, const char *key, GV_JsonValue
         return GV_JSON_ERROR_TYPE_MISMATCH;
     }
 
-    // Check if key already exists
     for (size_t i = 0; i < object->data.object.count; i++) {
         if (strcmp(object->data.object.entries[i].key, key) == 0) {
             json_free(object->data.object.entries[i].value);
@@ -342,7 +321,6 @@ GV_JsonError json_object_set(GV_JsonValue *object, const char *key, GV_JsonValue
         }
     }
 
-    // Add new entry
     if (object->data.object.count >= object->data.object.capacity) {
         size_t new_capacity = object->data.object.capacity == 0
             ? INITIAL_OBJECT_CAPACITY
@@ -411,8 +389,6 @@ GV_JsonValue *json_object_value_at(const GV_JsonValue *object, size_t index) {
     return object->data.object.entries[index].value;
 }
 
-/* Path-based Access */
-
 GV_JsonValue *json_get_path(const GV_JsonValue *root, const char *path) {
     if (root == NULL || path == NULL) {
         return NULL;
@@ -429,7 +405,6 @@ GV_JsonValue *json_get_path(const GV_JsonValue *root, const char *path) {
         if (current->type == GV_JSON_OBJECT) {
             current = json_object_get(current, token);
         } else if (current->type == GV_JSON_ARRAY) {
-            // Parse numeric index
             char *endptr;
             long index = strtol(token, &endptr, 10);
             if (*endptr != '\0' || index < 0) {
@@ -451,8 +426,6 @@ const char *json_get_string_path(const GV_JsonValue *root, const char *path) {
     GV_JsonValue *value = json_get_path(root, path);
     return json_get_string(value);
 }
-
-/* Parser Implementation */
 
 static void skip_whitespace(ParserState *state) {
     while (*state->pos && isspace((unsigned char)*state->pos)) {
@@ -485,7 +458,6 @@ static char *parse_string_content(ParserState *state) {
     }
     state->pos++;  // Skip opening quote
 
-    // Calculate required size (with room for escapes)
     size_t capacity = STRING_BUFFER_INITIAL;
     size_t length = 0;
     char *buffer = (char *)gv_alloc(capacity);
@@ -527,11 +499,14 @@ static char *parse_string_content(ParserState *state) {
                     }
                     state->pos += 3;  // Will be incremented by 1 at end of loop
 
-                    // Handle surrogate pairs
+                    // Handle surrogate pairs. pos is at the high surrogate's last
+                    // hex digit here; PEEK for a following "\uXXXX" without
+                    // advancing first, so a lone high surrogate at end-of-input
+                    // doesn't push pos past the NUL (which the loop's trailing
+                    // pos++ would then step over, reading out of bounds).
                     if (codepoint >= 0xD800 && codepoint <= 0xDBFF) {
-                        state->pos++;
-                        if (state->pos[0] == '\\' && state->pos[1] == 'u') {
-                            state->pos += 2;
+                        if (state->pos[1] == '\\' && state->pos[2] == 'u') {
+                            state->pos += 3;   // -> low surrogate's first hex digit
                             unsigned int low;
                             if (parse_hex4(state->pos, &low) != 0 ||
                                 low < 0xDC00 || low > 0xDFFF) {
@@ -539,9 +514,11 @@ static char *parse_string_content(ParserState *state) {
                                 state->error = GV_JSON_ERROR_INVALID_STRING;
                                 return NULL;
                             }
-                            state->pos += 3;
+                            state->pos += 3;   // -> low surrogate's last hex digit
                             codepoint = 0x10000 + ((codepoint - 0xD800) << 10) + (low - 0xDC00);
                         }
+                        /* else: lone high surrogate — leave pos at its last hex
+                         * digit; the loop's pos++ advances normally. */
                     }
 
                     // Encode as UTF-8
@@ -610,7 +587,6 @@ static GV_JsonValue *parse_string(ParserState *state) {
 static GV_JsonValue *parse_number(ParserState *state) {
     const char *start = state->pos;
 
-    // Optional minus
     if (*state->pos == '-') {
         state->pos++;
     }
@@ -654,7 +630,6 @@ static GV_JsonValue *parse_number(ParserState *state) {
         }
     }
 
-    // Parse the number
     char *endptr;
     double num = strtod(start, &endptr);
     if (endptr != state->pos) {
@@ -918,8 +893,6 @@ GV_JsonValue *json_parse(const char *json_str, GV_JsonError *error) {
     return result;
 }
 
-/* Serialization Implementation */
-
 typedef struct {
     char *buffer;
     size_t length;
@@ -1128,7 +1101,6 @@ static int stringify_value(StringifyState *state, const GV_JsonValue *value) {
             char num_buf[64];
             double num = value->data.number;
 
-            // Handle special cases
             if (isnan(num) || isinf(num)) {
                 return stringify_append(state, "null");
             }

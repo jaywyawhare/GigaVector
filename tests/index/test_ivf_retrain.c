@@ -1,19 +1,5 @@
-/**
- * test_ivf_retrain.c
- *
- * Tests for incremental IVF retraining.
- *
- * Test plan:
- *  1. Insert 1000 vectors into an IVFFLAT database.
- *  2. Enable retrain config.
- *  3. Insert 500 more vectors.
- *  4. Manually trigger retrain via gv_db_trigger_retrain().
- *  5. Verify retrain completes (retrain_running == 0).
- *  6. Run a search and verify results still come back correctly.
- *  7. Test drift detection: verify ivf_retrain_check_drift() returns a
- *     positive finite value for a trained index.
- *  8. Test gv_db_retrain_status() API.
- */
+/* Tests for incremental IVF retraining: drift detection, manual retrain
+ * trigger, status API, and post-retrain search correctness. */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -36,8 +22,6 @@ static float rand_float(unsigned int *state) {
     return (float)(*state >> 8) / (float)(1u << 24);
 }
 
-/* ------------------------------------------------------------------ */
-
 static int test_retrain_basic(void) {
     const size_t dim = 16;
     const size_t nlist = 4;
@@ -56,7 +40,6 @@ static int test_retrain_basic(void) {
                                                    GV_INDEX_TYPE_IVFFLAT, &cfg);
     ASSERT(db != NULL);
 
-    /* Train the index */
     unsigned int seed = 42;
     float *train_data = (float *)malloc(ntrain * dim * sizeof(float));
     ASSERT(train_data != NULL);
@@ -67,7 +50,6 @@ static int test_retrain_basic(void) {
     ASSERT(rc == 0);
     free(train_data);
 
-    /* Insert first batch */
     for (size_t i = 0; i < ninsert; i++) {
         float vec[16];
         for (size_t d = 0; d < dim; d++) {
@@ -78,11 +60,10 @@ static int test_retrain_basic(void) {
     }
     ASSERT(db->count == ninsert);
 
-    /* Enable retrain config (low threshold so test is fast) */
+    /* Low threshold so the test triggers retrain quickly. */
     gv_db_set_retrain_config(db, 0.15f, 100 /* low min_new_vectors for test */);
     ASSERT(db->retrain_enabled == 1);
 
-    /* Insert second batch */
     for (size_t i = 0; i < nmore; i++) {
         float vec[16];
         for (size_t d = 0; d < dim; d++) {
@@ -94,16 +75,13 @@ static int test_retrain_basic(void) {
     }
     ASSERT(db->count == ninsert + nmore);
 
-    /* Check drift is computable */
     float drift = ivf_retrain_check_drift(db);
     ASSERT(drift >= 0.0f);
     ASSERT(isfinite(drift));
 
-    /* Manually trigger synchronous retrain */
     rc = gv_db_trigger_retrain(db);
     ASSERT(rc == 0);
 
-    /* Verify retrain completed */
     int is_running = 1;
     float last_drift = 0.0f;
     gv_db_retrain_status(db, &is_running, &last_drift);
@@ -112,7 +90,6 @@ static int test_retrain_basic(void) {
     /* The insert counter should have been reset to 0 by the retrain */
     ASSERT(db->inserts_since_retrain == 0);
 
-    /* Search should still return results */
     float query[16];
     for (size_t d = 0; d < dim; d++) {
         query[d] = rand_float(&seed);
@@ -124,13 +101,11 @@ static int test_retrain_basic(void) {
     ASSERT(found > 0);
     ASSERT(found <= 10);
 
-    /* Results should have valid distances */
     for (int i = 0; i < found; i++) {
         ASSERT(results[i].distance >= 0.0f);
         ASSERT(isfinite(results[i].distance));
     }
 
-    /* Cleanup */
     for (int i = 0; i < found; i++) {
         if (results[i].vector) vector_destroy((GV_Vector *)results[i].vector);
     }
@@ -138,8 +113,6 @@ static int test_retrain_basic(void) {
     db_close(db);
     return 0;
 }
-
-/* ------------------------------------------------------------------ */
 
 static int test_retrain_status_api(void) {
     const size_t dim = 8;
@@ -161,7 +134,6 @@ static int test_retrain_status_api(void) {
     ASSERT(is_running == 0);
     ASSERT(last_drift >= 0.0f); /* default 1.0 */
 
-    /* Train and insert minimum data for retrain */
     unsigned int seed = 12345;
     float train_data[20 * 8];
     for (size_t i = 0; i < 20 * 8; i++) {
@@ -175,7 +147,6 @@ static int test_retrain_status_api(void) {
         ASSERT(db_add_vector(db, vec, dim) == 0);
     }
 
-    /* Trigger retrain synchronously */
     gv_db_set_retrain_config(db, 0.0f, 1);
     ASSERT(gv_db_trigger_retrain(db) == 0);
 
@@ -185,8 +156,6 @@ static int test_retrain_status_api(void) {
     db_close(db);
     return 0;
 }
-
-/* ------------------------------------------------------------------ */
 
 static int test_retrain_non_ivf_type(void) {
     /* For non-IVF types, drift check should return -1.0 (no-op) */
@@ -204,8 +173,6 @@ static int test_retrain_non_ivf_type(void) {
     db_close(db);
     return 0;
 }
-
-/* ------------------------------------------------------------------ */
 
 int main(void) {
     int rc = 0;

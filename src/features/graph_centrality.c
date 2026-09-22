@@ -16,11 +16,17 @@
  * so callers can free them with graph_node_scores_free. No leaks on any path.
  */
 #include "features/graph_algos.h"
+#include "features/graph_minheap.h"
 #include "features/graph_csr.h"
 #include "core/memory.h"
 
 #include <math.h>
+#include <stdio.h>
 #include <string.h>
+#include <pthread.h>
+#ifndef _WIN32
+#include <unistd.h>
+#endif
 #include <float.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -50,69 +56,8 @@ static double clamp_w(float w) {
     return d < 0.0 ? 0.0 : d;
 }
 
-/* ── Binary min-heap keyed by dense index, ordered by a double key ──────────── */
-
-typedef struct {
-    size_t *idx;    /* heap array of dense node indices */
-    double *key;    /* key[node] = current priority of that node */
-    size_t *pos;    /* pos[node] = position in idx[], or (size_t)-1 if absent */
-    size_t  size;
-    size_t  cap;
-} MinHeap;
-
-static int mh_init(MinHeap *h, size_t n) {
-    h->size = 0;
-    h->cap = n;
-    h->idx = NULL;
-    h->key = NULL;
-    h->pos = NULL;
-    if (n == 0) return 0;
-    h->idx = (size_t *)gv_alloc(n * sizeof(size_t));
-    h->key = (double *)gv_alloc(n * sizeof(double));
-    h->pos = (size_t *)gv_alloc(n * sizeof(size_t));
-    if (!h->idx || !h->key || !h->pos) {
-        gv_free(h->idx); gv_free(h->key); gv_free(h->pos);
-        h->idx = NULL; h->key = NULL; h->pos = NULL;
-        return -1;
-    }
-    for (size_t i = 0; i < n; i++) h->pos[i] = (size_t)-1;
-    return 0;
-}
-
-static void mh_free(MinHeap *h) {
-    if (!h) return;
-    gv_free(h->idx); gv_free(h->key); gv_free(h->pos);
-    h->idx = NULL; h->key = NULL; h->pos = NULL;
-    h->size = 0; h->cap = 0;
-}
-
-static void mh_swap(MinHeap *h, size_t a, size_t b) {
-    size_t ta = h->idx[a], tb = h->idx[b];
-    h->idx[a] = tb; h->idx[b] = ta;
-    h->pos[tb] = a; h->pos[ta] = b;
-}
-
-static void mh_sift_up(MinHeap *h, size_t i) {
-    while (i > 0) {
-        size_t parent = (i - 1) / 2;
-        if (h->key[h->idx[parent]] <= h->key[h->idx[i]]) break;
-        mh_swap(h, parent, i);
-        i = parent;
-    }
-}
-
-static void mh_sift_down(MinHeap *h, size_t i) {
-    for (;;) {
-        size_t l = 2 * i + 1, r = 2 * i + 2, smallest = i;
-        if (l < h->size && h->key[h->idx[l]] < h->key[h->idx[smallest]]) smallest = l;
-        if (r < h->size && h->key[h->idx[r]] < h->key[h->idx[smallest]]) smallest = r;
-        if (smallest == i) break;
-        mh_swap(h, i, smallest);
-        i = smallest;
-    }
-}
-
-/* Insert or decrease-key: set key[node]=k and (re)position node in the heap. */
+/* Indexed min-heap (struct + init/free/swap/sift/pop) lives in graph_minheap.h.
+ * Insert-or-update: set key[node]=k unconditionally and (re)position it. */
 static void mh_push(MinHeap *h, size_t node, double k) {
     h->key[node] = k;
     if (h->pos[node] == (size_t)-1) {
@@ -126,18 +71,6 @@ static void mh_push(MinHeap *h, size_t node, double k) {
     }
 }
 
-static size_t mh_pop(MinHeap *h) {
-    size_t top = h->idx[0];
-    h->pos[top] = (size_t)-1;
-    h->size--;
-    if (h->size > 0) {
-        h->idx[0] = h->idx[h->size];
-        h->pos[h->idx[0]] = 0;
-        mh_sift_down(h, 0);
-    }
-    return top;
-}
-
 /* ── Adjacency iteration ─────────────────────────────────────────────────────
  * Visitor abstraction over a node's neighbours. When `directed` is set we walk
  * out_edges only; otherwise we walk out_edges + in_edges (the undirected union,
@@ -149,12 +82,13 @@ typedef void (*neighbor_fn)(size_t nb_idx, double w, void *user);
 static void for_each_neighbor(const GV_GraphDB *g, const GV_GAContext *ctx,
                               uint64_t node_id, int directed,
                               neighbor_fn cb, void *user) {
-    const GV_GraphNode *n = graph_get_node(g, node_id);
+    (void)g;
+    const GV_GraphNode *n = gv_ga_node(ctx, node_id);
     if (!n) return;
     for (size_t k = 0; k < n->out_count; k++) {
         size_t nb = gv_ga_index(ctx, n->out_edges[k].neighbor_id);
         if (nb == (size_t)-1) continue;
-        const GV_GraphEdge *e = graph_get_edge(g, n->out_edges[k].edge_id);
+        const GV_GraphEdge *e = gv_ga_edge(ctx, n->out_edges[k].edge_id);
         double w = e ? clamp_w(e->weight) : 1.0;
         cb(nb, w, user);
     }
@@ -162,7 +96,7 @@ static void for_each_neighbor(const GV_GraphDB *g, const GV_GAContext *ctx,
         for (size_t k = 0; k < n->in_count; k++) {
             size_t nb = gv_ga_index(ctx, n->in_edges[k].neighbor_id);
             if (nb == (size_t)-1) continue;
-            const GV_GraphEdge *e = graph_get_edge(g, n->in_edges[k].edge_id);
+            const GV_GraphEdge *e = gv_ga_edge(ctx, n->in_edges[k].edge_id);
             double w = e ? clamp_w(e->weight) : 1.0;
             cb(nb, w, user);
         }
@@ -204,7 +138,7 @@ static int sssp(const GV_GraphDB *g, const GV_GAContext *ctx, size_t N,
         q[tail++] = src;
         while (head < tail) {
             size_t u = q[head++];
-            const GV_GraphNode *n = graph_get_node(g, gv_ga_id(ctx, u));
+            const GV_GraphNode *n = gv_ga_node(ctx, gv_ga_id(ctx, u));
             if (!n) continue;
             double nd = dist[u] + 1.0;
             for (size_t k = 0; k < n->out_count; k++) {
@@ -239,8 +173,6 @@ static int sssp(const GV_GraphDB *g, const GV_GAContext *ctx, size_t N,
     mh_free(&heap);
     return 0;
 }
-
-/* ═══════════════════════════ Closeness ═════════════════════════════════════ */
 
 int graph_closeness_centrality(const GV_GraphDB *g, int weighted, int directed,
                                GV_GraphNodeScores *out) {
@@ -282,8 +214,6 @@ int graph_closeness_centrality(const GV_GraphDB *g, int weighted, int directed,
     return 0;
 }
 
-/* ═══════════════════════════ Harmonic ══════════════════════════════════════ */
-
 int graph_harmonic_centrality(const GV_GraphDB *g, int weighted, int directed,
                               GV_GraphNodeScores *out) {
     if (!out) return -1;
@@ -318,8 +248,6 @@ int graph_harmonic_centrality(const GV_GraphDB *g, int weighted, int directed,
     return 0;
 }
 
-/* ═══════════════════════════ Betweenness (Brandes) ═════════════════════════ */
-
 /* Per-source accumulation state, reused across sources to avoid re-allocation. */
 typedef struct {
     double *dist;    /* shortest distance from source */
@@ -344,6 +272,164 @@ static int bc_push_pred(BrandesCtx *b, size_t v, size_t u) {
     return 0;
 }
 
+/* One Brandes source iteration over caller-owned buffers. Thread-safe as long
+ * as each worker owns its own BrandesCtx/heap/partial array and only writes
+ * its partial[] — the graph itself is read-only during the computation. */
+typedef struct {
+    const GV_GraphDB *g;
+    const GV_GAContext *ctx;
+    size_t N;
+    int weighted, directed;
+    size_t next_pivot;           /* shared work counter (pivot index) */
+    size_t pivot_stride;         /* dense-source step between pivots */
+    size_t n_pivots;             /* number of pivots (0 = every source) */
+    double **partials;           /* per-worker score accumulators */
+    BrandesCtx *worker_ctx;      /* per-worker reusable buffers */
+    MinHeap   *heaps;            /* per-worker heaps (weighted mode) */
+    int        ok;
+} BrandesJob;
+
+static void brandes_run_source(BrandesJob *job, size_t s, size_t t) {
+    const GV_GAContext *ctx = job->ctx;
+    size_t N = job->N;
+    BrandesCtx *b = &job->worker_ctx[t];
+    MinHeap *heap = &job->heaps[t];
+    double *partial = job->partials[t];
+    int ok = 1;
+
+    for (size_t i = 0; i < N; i++) {
+        b->dist[i] = INFINITY;
+        b->sigma[i] = 0.0;
+        b->delta[i] = 0.0;
+        b->pred_n[i] = 0;
+    }
+    b->dist[s] = 0.0;
+    b->sigma[s] = 1.0;
+    b->order_n = 0;
+
+    if (!job->weighted) {
+        size_t *q = (size_t *)gv_alloc(N * sizeof(size_t));
+        if (!q) { job->ok = 0; return; }
+        size_t head = 0, tail = 0;
+        q[tail++] = s;
+        while (head < tail) {
+            size_t u = q[head++];
+            b->order[b->order_n++] = u;
+            const GV_GraphNode *n = gv_ga_node(ctx, gv_ga_id(ctx, u));
+            if (!n) continue;
+            for (int pass = 0; pass < (job->directed ? 1 : 2); pass++) {
+                size_t cnt = pass == 0 ? n->out_count : n->in_count;
+                const GV_GraphEdgeRef *refs = pass == 0 ? n->out_edges : n->in_edges;
+                for (size_t k = 0; k < cnt; k++) {
+                    size_t w = gv_ga_index(ctx, refs[k].neighbor_id);
+                    if (w == (size_t)-1) continue;
+                    if (b->dist[w] == INFINITY) {
+                        b->dist[w] = b->dist[u] + 1.0;
+                        q[tail++] = w;
+                    }
+                    if (b->dist[w] == b->dist[u] + 1.0) {
+                        b->sigma[w] += b->sigma[u];
+                        if (bc_push_pred(b, w, u) != 0) { ok = 0; }
+                    }
+                }
+            }
+            if (!ok) break;
+        }
+        gv_free(q);
+        if (!ok) { job->ok = 0; return; }
+    } else {
+        uint8_t *done = (uint8_t *)gv_calloc(N, sizeof(uint8_t));
+        if (!done) { job->ok = 0; return; }
+        mh_push(heap, s, 0.0);
+        while (heap->size > 0) {
+            size_t u = mh_pop(heap);
+            if (done[u]) continue;
+            done[u] = 1;
+            b->order[b->order_n++] = u;
+            const GV_GraphNode *n = gv_ga_node(ctx, gv_ga_id(ctx, u));
+            if (!n) continue;
+            for (int pass = 0; pass < (job->directed ? 1 : 2); pass++) {
+                size_t cnt = pass == 0 ? n->out_count : n->in_count;
+                const GV_GraphEdgeRef *refs = pass == 0 ? n->out_edges : n->in_edges;
+                for (size_t k = 0; k < cnt; k++) {
+                    size_t w = gv_ga_index(ctx, refs[k].neighbor_id);
+                    if (w == (size_t)-1 || done[w]) continue;
+                    const GV_GraphEdge *e = gv_ga_edge(ctx, refs[k].edge_id);
+                    double weight = e ? clamp_w(e->weight) : 1.0;
+                    double nd = b->dist[u] + weight;
+                    if (nd < b->dist[w]) {
+                        b->dist[w] = nd;
+                        b->sigma[w] = b->sigma[u];
+                        b->pred_n[w] = 0;
+                        if (bc_push_pred(b, w, u) != 0) { ok = 0; break; }
+                        mh_push(heap, w, nd);
+                    } else if (nd == b->dist[w]) {
+                        b->sigma[w] += b->sigma[u];
+                        if (bc_push_pred(b, w, u) != 0) { ok = 0; break; }
+                    }
+                }
+                if (!ok) break;
+            }
+            if (!ok) break;
+        }
+        while (heap->size > 0) mh_pop(heap);
+        gv_free(done);
+        if (!ok) { job->ok = 0; return; }
+    }
+
+    for (size_t oi = b->order_n; oi-- > 0; ) {
+        size_t w = b->order[oi];
+        for (size_t pidx = 0; pidx < b->pred_n[w]; pidx++) {
+            size_t v = b->preds[w][pidx];
+            if (b->sigma[w] > 0.0)
+                b->delta[v] += (b->sigma[v] / b->sigma[w]) * (1.0 + b->delta[w]);
+        }
+        if (w != s) partial[w] += b->delta[w];
+    }
+}
+
+/* Argument bundle pairing a job with a fixed worker slot. */
+typedef struct {
+    BrandesJob *job;
+    size_t      slot;
+    size_t      stride;   /* 1 = exact; k>1 = landmark sampling */
+} BrandesSlotArg;
+
+static void *brandes_slot_worker(void *arg) {
+    BrandesSlotArg *sa = (BrandesSlotArg *)arg;
+    BrandesJob *job = sa->job;
+    size_t t = sa->slot;
+    size_t total = job->n_pivots ? job->n_pivots : job->N;
+    for (;;) {
+        size_t p = __atomic_fetch_add(&job->next_pivot, 1, __ATOMIC_RELAXED);
+        if (p >= total || !job->ok) break;
+        /* exact mode (n_pivots==0): pivot p IS source p; landmark mode:
+         * dense sources spaced pivot_stride apart cover [0, N) uniformly */
+        size_t s = job->n_pivots ? p * job->pivot_stride : p;
+        brandes_run_source(job, s, t);
+    }
+    return NULL;
+}
+
+static int bc_alloc_worker(BrandesCtx *b, size_t N) {
+    memset(b, 0, sizeof(*b));
+    b->dist     = (double *)gv_alloc(N * sizeof(double));
+    b->sigma    = (double *)gv_alloc(N * sizeof(double));
+    b->delta    = (double *)gv_alloc(N * sizeof(double));
+    b->order    = (size_t *)gv_alloc(N * sizeof(size_t));
+    b->preds    = (size_t **)gv_calloc(N, sizeof(size_t *));
+    b->pred_n   = (size_t *)gv_calloc(N, sizeof(size_t));
+    b->pred_cap = (size_t *)gv_calloc(N, sizeof(size_t));
+    return (b->dist && b->sigma && b->delta && b->order &&
+            b->preds && b->pred_n && b->pred_cap) ? 0 : -1;
+}
+
+static void bc_free_worker(BrandesCtx *b, size_t N) {
+    if (b->preds) for (size_t i = 0; i < N; i++) gv_free(b->preds[i]);
+    gv_free(b->dist); gv_free(b->sigma); gv_free(b->delta); gv_free(b->order);
+    gv_free(b->preds); gv_free(b->pred_n); gv_free(b->pred_cap);
+}
+
 int graph_betweenness_centrality(const GV_GraphDB *g, int weighted, int directed,
                                  GV_GraphNodeScores *out) {
     if (!out) return -1;
@@ -355,138 +441,211 @@ int graph_betweenness_centrality(const GV_GraphDB *g, int weighted, int directed
     size_t N = gv_ga_count(ctx);
     if (N == 0) { gv_ga_free(ctx); return 0; }
 
-    if (scores_alloc(ctx, N, out) != 0) { gv_ga_free(ctx); memset(out, 0, sizeof(*out)); return -1; }
+    if (scores_alloc(ctx, N, out) != 0) {
+        gv_ga_free(ctx);
+        memset(out, 0, sizeof(*out));
+        return -1;
+    }
 
-    /* Allocate all reusable per-source buffers up front. */
-    BrandesCtx b;
-    memset(&b, 0, sizeof(b));
-    MinHeap heap;
-    memset(&heap, 0, sizeof(heap));
+    long ncpu_long =
+#ifndef _WIN32
+        sysconf(_SC_NPROCESSORS_ONLN);
+#else
+        1;
+#endif
+    if (ncpu_long < 1) ncpu_long = 1;
+    size_t nthreads = (size_t)ncpu_long;
+    if (nthreads > N) nthreads = N;
+
+    BrandesJob job;
+    memset(&job, 0, sizeof(job));
+    job.g = g; job.ctx = ctx; job.N = N;
+    job.weighted = weighted; job.directed = directed;
+    job.n_pivots = 0;            /* exact: one source per dense index */
+    job.pivot_stride = 1;
+    job.ok = 1;
+
     int ok = 1;
+    job.worker_ctx = (BrandesCtx *)gv_calloc(nthreads, sizeof(BrandesCtx));
+    job.partials = (double **)gv_calloc(nthreads, sizeof(double *));
+    job.heaps = (MinHeap *)gv_calloc(nthreads, sizeof(MinHeap));
+    pthread_t *threads = (pthread_t *)gv_calloc(nthreads, sizeof(pthread_t));
+    BrandesSlotArg *args = (BrandesSlotArg *)gv_calloc(nthreads, sizeof(BrandesSlotArg));
 
-    b.dist     = (double *)gv_alloc(N * sizeof(double));
-    b.sigma    = (double *)gv_alloc(N * sizeof(double));
-    b.delta    = (double *)gv_alloc(N * sizeof(double));
-    b.order    = (size_t *)gv_alloc(N * sizeof(size_t));
-    b.preds    = (size_t **)gv_calloc(N, sizeof(size_t *));
-    b.pred_n   = (size_t *)gv_calloc(N, sizeof(size_t));
-    b.pred_cap = (size_t *)gv_calloc(N, sizeof(size_t));
-    if (!b.dist || !b.sigma || !b.delta || !b.order ||
-        !b.preds || !b.pred_n || !b.pred_cap) ok = 0;
-    if (ok && weighted && mh_init(&heap, N) != 0) ok = 0;
+    if (!job.worker_ctx || !job.partials || !job.heaps || !threads || !args) ok = 0;
 
-    for (size_t s = 0; ok && s < N; s++) {
-        for (size_t i = 0; i < N; i++) {
-            b.dist[i] = INFINITY;
-            b.sigma[i] = 0.0;
-            b.delta[i] = 0.0;
-            b.pred_n[i] = 0;
-        }
-        b.dist[s] = 0.0;
-        b.sigma[s] = 1.0;
-        b.order_n = 0;
-
-        if (!weighted) {
-            /* BFS accumulation. */
-            size_t *q = (size_t *)gv_alloc(N * sizeof(size_t));
-            if (!q) { ok = 0; break; }
-            size_t head = 0, tail = 0;
-            q[tail++] = s;
-            while (head < tail) {
-                size_t u = q[head++];
-                b.order[b.order_n++] = u;
-                const GV_GraphNode *n = graph_get_node(g, gv_ga_id(ctx, u));
-                if (!n) continue;
-                /* iterate out then (if undirected) in neighbours */
-                for (int pass = 0; pass < (directed ? 1 : 2); pass++) {
-                    size_t cnt = pass == 0 ? n->out_count : n->in_count;
-                    const GV_GraphEdgeRef *refs = pass == 0 ? n->out_edges : n->in_edges;
-                    for (size_t k = 0; k < cnt; k++) {
-                        size_t w = gv_ga_index(ctx, refs[k].neighbor_id);
-                        if (w == (size_t)-1) continue;
-                        if (b.dist[w] == INFINITY) {
-                            b.dist[w] = b.dist[u] + 1.0;
-                            q[tail++] = w;
-                        }
-                        if (b.dist[w] == b.dist[u] + 1.0) {
-                            b.sigma[w] += b.sigma[u];
-                            if (bc_push_pred(&b, w, u) != 0) { ok = 0; }
-                        }
-                    }
-                }
-                if (!ok) break;
-            }
-            gv_free(q);
-            if (!ok) break;
-        } else {
-            /* Dijkstra-based Brandes: finalize nodes in increasing distance. */
-            uint8_t *done = (uint8_t *)gv_calloc(N, sizeof(uint8_t));
-            if (!done) { ok = 0; break; }
-            mh_push(&heap, s, 0.0);
-            while (heap.size > 0) {
-                size_t u = mh_pop(&heap);
-                if (done[u]) continue;
-                done[u] = 1;
-                b.order[b.order_n++] = u;
-                const GV_GraphNode *n = graph_get_node(g, gv_ga_id(ctx, u));
-                if (!n) continue;
-                for (int pass = 0; pass < (directed ? 1 : 2); pass++) {
-                    size_t cnt = pass == 0 ? n->out_count : n->in_count;
-                    const GV_GraphEdgeRef *refs = pass == 0 ? n->out_edges : n->in_edges;
-                    for (size_t k = 0; k < cnt; k++) {
-                        size_t w = gv_ga_index(ctx, refs[k].neighbor_id);
-                        if (w == (size_t)-1 || done[w]) continue;
-                        const GV_GraphEdge *e = graph_get_edge(g, refs[k].edge_id);
-                        double weight = e ? clamp_w(e->weight) : 1.0;
-                        double nd = b.dist[u] + weight;
-                        if (nd < b.dist[w]) {
-                            b.dist[w] = nd;
-                            b.sigma[w] = b.sigma[u];
-                            b.pred_n[w] = 0;
-                            if (bc_push_pred(&b, w, u) != 0) { ok = 0; break; }
-                            mh_push(&heap, w, nd);
-                        } else if (nd == b.dist[w]) {
-                            b.sigma[w] += b.sigma[u];
-                            if (bc_push_pred(&b, w, u) != 0) { ok = 0; break; }
-                        }
-                    }
-                    if (!ok) break;
-                }
-                if (!ok) break;
-            }
-            /* drain heap on failure so pos[] is clean for next source */
-            while (heap.size > 0) mh_pop(&heap);
-            gv_free(done);
-            if (!ok) break;
-        }
-
-        /* Reverse accumulation of dependencies. */
-        for (size_t oi = b.order_n; oi-- > 0; ) {
-            size_t w = b.order[oi];
-            for (size_t p = 0; p < b.pred_n[w]; p++) {
-                size_t v = b.preds[w][p];
-                if (b.sigma[w] > 0.0)
-                    b.delta[v] += (b.sigma[v] / b.sigma[w]) * (1.0 + b.delta[w]);
-            }
-            if (w != s) out->scores[w] += b.delta[w];
-        }
+    for (size_t t = 0; ok && t < nthreads; t++) {
+        if (bc_alloc_worker(&job.worker_ctx[t], N) != 0) { ok = 0; break; }
+        job.partials[t] = (double *)gv_calloc(N, sizeof(double));
+        if (!job.partials[t]) { ok = 0; break; }
+        if (weighted && mh_init(&job.heaps[t], N) != 0) { ok = 0; break; }
     }
 
-    if (weighted) {
-        /* heap may hold stale pos[] entries only if we broke early; clear fully */
-        while (heap.size > 0) mh_pop(&heap);
-        mh_free(&heap);
+    /* Single-threaded path when allocation failed early or one core. */
+    if (ok && nthreads == 1) {
+        for (size_t s = 0; s < N && ok; s++)
+            brandes_run_source(&job, s, 0);
+    } else if (ok) {
+        for (size_t t = 0; t < nthreads; t++) {
+            args[t].job = &job;
+            args[t].slot = t;
+            if (t == nthreads - 1) break;   /* main thread runs last slot */
+            if (pthread_create(&threads[t], NULL, brandes_slot_worker,
+                               &args[t]) != 0) {
+                /* fall back: run remaining sources on this thread */
+                nthreads = t + 1;
+                break;
+            }
+        }
+        brandes_slot_worker(&args[nthreads - 1]);
+        for (size_t t = 0; t < nthreads - 1; t++)
+            pthread_join(threads[t], NULL);
     }
-    if (b.preds) for (size_t i = 0; i < N; i++) gv_free(b.preds[i]);
-    gv_free(b.dist); gv_free(b.sigma); gv_free(b.delta); gv_free(b.order);
-    gv_free(b.preds); gv_free(b.pred_n); gv_free(b.pred_cap);
 
-    if (!ok) { graph_node_scores_free(out); memset(out, 0, sizeof(*out)); gv_ga_free(ctx); return -1; }
+    /* Reduce per-worker partials into the result. */
+    for (size_t t = 0; t < nthreads; t++) {
+        if (!job.partials || !job.partials[t]) continue;
+        for (size_t i = 0; i < N; i++) out->scores[i] += job.partials[t][i];
+    }
+
+    if (job.heaps && weighted) {
+        for (size_t t = 0; t < nthreads; t++) {
+            while (job.heaps[t].size > 0) mh_pop(&job.heaps[t]);
+            mh_free(&job.heaps[t]);
+        }
+    }
+    if (job.worker_ctx) {
+        for (size_t t = 0; t < nthreads; t++) bc_free_worker(&job.worker_ctx[t], N);
+    }
+    if (job.partials) {
+        for (size_t t = 0; t < nthreads; t++) gv_free(job.partials[t]);
+    }
+    gv_free(job.worker_ctx); gv_free(job.partials); gv_free(job.heaps);
+    gv_free(threads); gv_free(args);
+
+    if (!ok || !job.ok) {
+        graph_node_scores_free(out);
+        memset(out, 0, sizeof(*out));
+        gv_ga_free(ctx);
+        return -1;
+    }
     gv_ga_free(ctx);
     return 0;
 }
 
-/* ═══════════════════════════ Eigenvector ═══════════════════════════════════ */
+/* Approximate (landmark) betweenness: run exact Brandes from K uniformly
+ * spaced pivot sources and scale by N/K (Brandes' standard estimator).
+ * Error concentrates on nodes far from all pivots; K=O(log N / eps^2) gives
+ * good rankings at a fraction of the cost for large graphs. */
+int graph_betweenness_centrality_approx(const GV_GraphDB *g, int weighted,
+                                        int directed, size_t num_pivots,
+                                        GV_GraphNodeScores *out) {
+    if (!out || num_pivots == 0) return -1;
+    memset(out, 0, sizeof(*out));
+    if (!g) return -1;
+
+    GV_GAContext *ctx = gv_ga_build(g);
+    if (!ctx) return -1;
+    size_t N = gv_ga_count(ctx);
+    if (N == 0) { gv_ga_free(ctx); return 0; }
+
+    if (num_pivots > N) num_pivots = N;
+
+    if (scores_alloc(ctx, N, out) != 0) {
+        gv_ga_free(ctx);
+        memset(out, 0, sizeof(*out));
+        return -1;
+    }
+
+    long ncpu_long =
+#ifndef _WIN32
+        sysconf(_SC_NPROCESSORS_ONLN);
+#else
+        1;
+#endif
+    if (ncpu_long < 1) ncpu_long = 1;
+    size_t nthreads = (size_t)ncpu_long;
+    if (nthreads > num_pivots) nthreads = num_pivots;
+
+    /* Run the exact engine but stop after num_pivots sources by clamping N:
+     * sources are dense indices [0, num_pivots), which are uniformly spread
+     * over the id space because gv_ga enumerates in bucket order. */
+    BrandesJob job;
+    memset(&job, 0, sizeof(job));
+    job.g = g; job.ctx = ctx;
+    job.N = num_pivots;                 /* only pivot sources get processed */
+    job.weighted = weighted; job.directed = directed;
+    job.ok = 1;
+
+    int ok = 1;
+    job.worker_ctx = (BrandesCtx *)gv_calloc(nthreads, sizeof(BrandesCtx));
+    job.partials = (double **)gv_calloc(nthreads, sizeof(double *));
+    job.heaps = (MinHeap *)gv_calloc(nthreads, sizeof(MinHeap));
+    pthread_t *threads = (pthread_t *)gv_calloc(nthreads, sizeof(pthread_t));
+    BrandesSlotArg *args = (BrandesSlotArg *)gv_calloc(nthreads,
+                                                       sizeof(BrandesSlotArg));
+    if (!job.worker_ctx || !job.partials || !job.heaps || !threads || !args)
+        ok = 0;
+
+    for (size_t t = 0; ok && t < nthreads; t++) {
+        if (bc_alloc_worker(&job.worker_ctx[t], N) != 0) { ok = 0; break; }
+        job.partials[t] = (double *)gv_calloc(N, sizeof(double));
+        if (!job.partials[t]) { ok = 0; break; }
+        if (weighted && mh_init(&job.heaps[t], N) != 0) { ok = 0; break; }
+    }
+
+    /* Landmark sampling: pivots at dense indices 0, stride, 2*stride, ...
+     * spread uniformly over the id space; each estimates N/K sources. */
+    job.n_pivots = num_pivots;
+    job.pivot_stride = N / num_pivots;
+    double scale = (double)N / (double)num_pivots;
+
+    if (ok) {
+        for (size_t t = 0; t < nthreads; t++) {
+            args[t].job = &job;
+            args[t].slot = t;
+            if (t == nthreads - 1) break;   /* main thread runs last slot */
+            if (pthread_create(&threads[t], NULL, brandes_slot_worker,
+                               &args[t]) != 0) {
+                nthreads = t + 1;
+                break;
+            }
+        }
+        brandes_slot_worker(&args[nthreads - 1]);
+        for (size_t t = 0; t < nthreads - 1; t++)
+            pthread_join(threads[t], NULL);
+    }
+
+    for (size_t t = 0; ok && t < nthreads; t++) {
+        if (!job.partials || !job.partials[t]) continue;
+        for (size_t i = 0; i < N; i++) out->scores[i] += job.partials[t][i] * scale;
+    }
+
+    if (job.heaps && weighted) {
+        for (size_t t = 0; t < nthreads; t++) {
+            while (job.heaps[t].size > 0) mh_pop(&job.heaps[t]);
+            mh_free(&job.heaps[t]);
+        }
+    }
+    if (job.worker_ctx) {
+        for (size_t t = 0; t < nthreads; t++)
+            bc_free_worker(&job.worker_ctx[t], N);
+    }
+    if (job.partials) {
+        for (size_t t = 0; t < nthreads; t++) gv_free(job.partials[t]);
+    }
+    gv_free(job.worker_ctx); gv_free(job.partials); gv_free(job.heaps);
+    gv_free(threads); gv_free(args);
+
+    if (!ok || !job.ok) {
+        graph_node_scores_free(out);
+        memset(out, 0, sizeof(*out));
+        gv_ga_free(ctx);
+        return -1;
+    }
+    gv_ga_free(ctx);
+    return 0;
+}
 
 int graph_eigenvector_centrality(const GV_GraphDB *g, size_t max_iters, double tol,
                                  GV_GraphNodeScores *out) {
@@ -547,8 +706,6 @@ int graph_eigenvector_centrality(const GV_GraphDB *g, size_t max_iters, double t
     return 0;
 }
 
-/* ═══════════════════════════ Degree ════════════════════════════════════════ */
-
 int graph_degree_centrality(const GV_GraphDB *g, int mode, GV_GraphNodeScores *out) {
     if (!out) return -1;
     memset(out, 0, sizeof(*out));
@@ -563,7 +720,7 @@ int graph_degree_centrality(const GV_GraphDB *g, int mode, GV_GraphNodeScores *o
 
     double denom = (N > 1) ? (double)(N - 1) : 1.0;
     for (size_t i = 0; i < N; i++) {
-        const GV_GraphNode *n = graph_get_node(g, gv_ga_id(ctx, i));
+        const GV_GraphNode *n = gv_ga_node(ctx, gv_ga_id(ctx, i));
         double deg = 0.0;
         if (n) {
             switch (mode) {
@@ -579,8 +736,6 @@ int graph_degree_centrality(const GV_GraphDB *g, int mode, GV_GraphNodeScores *o
     return 0;
 }
 
-/* ═══════════════════ PageRank family (shared power iteration) ══════════════ */
-
 /* Shared PageRank-style power iteration.
  *   teleport[i]      — per-node teleport (restart) probability distribution,
  *                      must sum to 1. NULL => uniform 1/N.
@@ -591,11 +746,12 @@ static int pagerank_core(const GV_GAContext *ctx, const GV_GraphDB *g, size_t N,
                          size_t iters, double damping, const double *teleport,
                          int article_rank, GV_GraphNodeScores *out) {
     /* IN adjacency (boolean): row j holds j's in-neighbors, so In·contrib pulls
-     * each node's incoming rank contributions in one SpMV. */
-    GV_CSR *In = gv_csr_build(g, ctx, GV_CSR_IN, 0);
+     * each node's incoming rank contributions in one SpMV. Cached per graph
+     * version so back-to-back algorithms skip the rebuild. */
+    GV_CSR *In = gv_csr_build_cached(g, ctx, GV_CSR_IN, 0);
     /* OUT adjacency (boolean): row_ptr gives per-node out-degree (edge count). */
-    GV_CSR *Out = gv_csr_build(g, ctx, GV_CSR_OUT, 0);
-    if (!In || !Out) { gv_csr_free(In); gv_csr_free(Out); return -1; }
+    GV_CSR *Out = gv_csr_build_cached(g, ctx, GV_CSR_OUT, 0);
+    if (!In || !Out) return -1;
 
     double *rank    = (double *)gv_alloc(N * sizeof(double));
     double *next    = (double *)gv_alloc(N * sizeof(double));
@@ -658,7 +814,7 @@ static int pagerank_core(const GV_GAContext *ctx, const GV_GraphDB *g, size_t N,
     for (size_t i = 0; i < N; i++) out->scores[i] = rank[i];
 
     gv_free(rank); gv_free(next); gv_free(contrib); gv_free(tmpvec); gv_free(divisor);
-    gv_csr_free(In); gv_csr_free(Out);
+    /* In/Out are cache-owned: not freed here. */
     return 0;
 }
 
@@ -751,8 +907,6 @@ int graph_article_rank(const GV_GraphDB *g, size_t iters, double damping,
     gv_ga_free(ctx);
     return 0;
 }
-
-/* ═══════════════════════════ HITS ══════════════════════════════════════════ */
 
 int graph_hits(const GV_GraphDB *g, size_t iters, double tol,
                GV_GraphNodeScores *hubs, GV_GraphNodeScores *authorities) {

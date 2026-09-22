@@ -220,8 +220,11 @@ int codebook_decode(const GV_Codebook *cb, const uint8_t *codes,
     if (!cb->trained) return -1;
 
     for (size_t mi = 0; mi < cb->m; mi++) {
+        /* Guard against an out-of-range code (nbits<8 with corrupt/external
+         * input) that would index past the sub-codebook. */
+        size_t code = codes[mi] < cb->ksub ? codes[mi] : 0;
         const float *centroid =
-            &cb->centroids[mi * cb->ksub * cb->dsub + codes[mi] * cb->dsub];
+            &cb->centroids[mi * cb->ksub * cb->dsub + code * cb->dsub];
         memcpy(&output[mi * cb->dsub], centroid, cb->dsub * sizeof(float));
     }
     return 0;
@@ -252,7 +255,8 @@ float codebook_distance_adc(const GV_Codebook *cb, const float *query,
 
     float dist_sq = 0.0f;
     for (size_t mi = 0; mi < cb->m; mi++) {
-        dist_sq += table[mi * cb->ksub + codes[mi]];
+        size_t code = codes[mi] < cb->ksub ? codes[mi] : 0;
+        dist_sq += table[mi * cb->ksub + code];
     }
 
     gv_free(table);

@@ -17,8 +17,6 @@
 #endif
 #include "core/compat.h"
 
-/* Internal Structures */
-
 struct GV_HybridSearcher {
     GV_Database *db;
     GV_BM25Index *bm25;
@@ -26,15 +24,11 @@ struct GV_HybridSearcher {
     pthread_mutex_t mutex;
 };
 
-/* Time Helpers */
-
 static double get_time_ms(void) {
     struct timeval tv;
     gettimeofday(&tv, NULL);
     return tv.tv_sec * 1000.0 + tv.tv_usec / 1000.0;
 }
-
-/* Configuration */
 
 static const GV_HybridConfig DEFAULT_CONFIG = {
     .fusion_type = GV_FUSION_LINEAR,
@@ -49,8 +43,6 @@ void hybrid_config_init(GV_HybridConfig *config) {
     if (!config) return;
     *config = DEFAULT_CONFIG;
 }
-
-/* Lifecycle */
 
 GV_HybridSearcher *hybrid_create(GV_Database *db, GV_BM25Index *bm25,
                                      const GV_HybridConfig *config) {
@@ -83,8 +75,6 @@ void hybrid_destroy(GV_HybridSearcher *searcher) {
     }
 }
 
-/* Fusion Functions */
-
 double hybrid_linear_fusion(double vector_score, double text_score,
                                 double vector_weight, double text_weight) {
     return vector_weight * vector_score + text_weight * text_score;
@@ -106,8 +96,6 @@ double hybrid_normalize_score(double score, double min_score, double max_score) 
     return (score - min_score) / (max_score - min_score);
 }
 
-/* Internal Search Helpers */
-
 typedef struct {
     size_t id;
     double vector_score;
@@ -127,14 +115,12 @@ static int compare_candidates(const void *a, const void *b) {
 
 static CandidateEntry *find_or_add_candidate(CandidateEntry *candidates, size_t *count,
                                               size_t capacity, size_t id) {
-    /* Find existing */
     for (size_t i = 0; i < *count; i++) {
         if (candidates[i].id == id) {
             return &candidates[i];
         }
     }
 
-    /* Add new if capacity allows */
     if (*count >= capacity) return NULL;
 
     CandidateEntry *entry = &candidates[*count];
@@ -143,8 +129,6 @@ static CandidateEntry *find_or_add_candidate(CandidateEntry *candidates, size_t 
     (*count)++;
     return entry;
 }
-
-/* Search Operations */
 
 int hybrid_search(GV_HybridSearcher *searcher, const float *query_vector,
                      const char *query_text, size_t k, GV_HybridResult *results) {
@@ -202,9 +186,11 @@ int hybrid_search_with_stats(GV_HybridSearcher *searcher, const float *query_vec
                 if (sim < vec_min) vec_min = sim;
                 if (sim > vec_max) vec_max = sim;
 
-                /* Use rank position as ID since GV_SearchResult doesn't store index */
+                /* Key on the real vector id (GV_SearchResult.id), not the rank
+                 * position: text candidates are keyed by doc_id, so using `i`
+                 * here merged vector hit #i with the unrelated BM25 doc #i. */
                 CandidateEntry *entry = find_or_add_candidate(candidates, &candidate_count,
-                                                               max_candidates, (size_t)i);
+                                                               max_candidates, vec_results[i].id);
                 if (entry) {
                     entry->vector_score = sim;
                     entry->vector_rank = i + 1;
@@ -324,8 +310,6 @@ int hybrid_search_text_only(GV_HybridSearcher *searcher, const char *query_text,
                                 size_t k, GV_HybridResult *results) {
     return hybrid_search(searcher, NULL, query_text, k, results);
 }
-
-/* Configuration Updates */
 
 int hybrid_set_config(GV_HybridSearcher *searcher, const GV_HybridConfig *config) {
     if (!searcher || !config) return -1;

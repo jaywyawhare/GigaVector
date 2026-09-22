@@ -64,8 +64,6 @@ int alias_exists(const GV_AliasManager *mgr, const char *alias_name);
  * @brief Perform the operation.
  *
  * @param mgr Manager instance.
- * @param alias_a alias_a.
- * @param alias_b alias_b.
  * @return 0 on success, -1 on error.
  */
 int alias_swap(GV_AliasManager *mgr, const char *alias_a, const char *alias_b);
@@ -85,7 +83,6 @@ int alias_list(const GV_AliasManager *mgr, GV_AliasInfo **out_list, size_t *out_
 /**
  * @brief List items.
  *
- * @param list list.
  * @param count Number of items.
  */
 void alias_free_list(GV_AliasInfo *list, size_t count);

@@ -145,13 +145,19 @@ size_t binary_hamming_distance_fast(const GV_BinaryVector *a, const GV_BinaryVec
         
         size_t processed = avx_count * 8;
         for (size_t i = processed; i < bytes - remaining_bytes; i += 8) {
-            uint64_t x = *(uint64_t *)(a->bits + i) ^ *(uint64_t *)(b->bits + i);
+            uint64_t av, bv;
+            memcpy(&av, a->bits + i, sizeof(av));   /* aligned-safe load (bits stride is (dim+7)/8, rarely 8-aligned) */
+            memcpy(&bv, b->bits + i, sizeof(bv));
+            uint64_t x = av ^ bv;
             distance += popcount(x);
         }
     } else {
 #endif
         for (size_t i = 0; i < full_uint64s * 8; i += 8) {
-            uint64_t x = *(uint64_t *)(a->bits + i) ^ *(uint64_t *)(b->bits + i);
+            uint64_t av, bv;
+            memcpy(&av, a->bits + i, sizeof(av));   /* aligned-safe load (bits stride is (dim+7)/8, rarely 8-aligned) */
+            memcpy(&bv, b->bits + i, sizeof(bv));
+            uint64_t x = av ^ bv;
             distance += popcount(x);
         }
 #ifdef __AVX2__

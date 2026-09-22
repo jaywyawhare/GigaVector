@@ -22,8 +22,6 @@
 #include <onnxruntime_c_api.h>
 #endif
 
-/* Constants */
-
 #define GV_ONNX_MAX_TOKEN_LEN   256
 #define GV_ONNX_MAX_SEQ_LEN     512
 #define GV_ONNX_VOCAB_BUCKETS   8192
@@ -31,8 +29,6 @@
 #define GV_ONNX_UNK_TOKEN_ID    1
 #define GV_ONNX_CLS_TOKEN_ID    2
 #define GV_ONNX_SEP_TOKEN_ID    3
-
-/* Internal Structures */
 
 /** Vocabulary hash-table entry for whitespace tokenizer. */
 typedef struct GV_VocabEntry {
@@ -67,8 +63,6 @@ struct GV_ONNXModel {
     pthread_mutex_t     mutex;
     char                last_error[512];
 };
-
-/* Vocabulary Helpers (shared by both compile paths) */
 
 static size_t vocab_hash(const char *str, size_t bucket_count) {
     size_t h = 5381;
@@ -116,11 +110,9 @@ static size_t tokenize_text(const GV_Vocab *vocab, const char *text,
 
     const char *p = text;
     while (*p && pos < max_len - 1) {
-        /* Skip whitespace */
         while (*p && isspace((unsigned char)*p)) p++;
         if (!*p) break;
 
-        /* Collect token */
         char token[GV_ONNX_MAX_TOKEN_LEN];
         size_t tlen = 0;
         while (*p && !isspace((unsigned char)*p) &&
@@ -181,11 +173,7 @@ void onnx_tensor_destroy(GV_ONNXTensor *tensor) {
     tensor->total_elements = 0;
 }
 
-/* GV_HAVE_ONNX — full ONNX Runtime implementation */
-
 #ifdef GV_HAVE_ONNX
-
-/* Internal Helpers (ONNX) */
 
 static void set_error(GV_ONNXModel *m, const char *msg) {
     if (!m) return;
@@ -194,20 +182,16 @@ static void set_error(GV_ONNXModel *m, const char *msg) {
 }
 
 static int check_status(GV_ONNXModel *m, OrtStatus *status) {
-    if (status == NULL) return 0;  /* success */
+    if (status == NULL) return 0;
     const char *msg = m->api->GetErrorMessage(status);
     set_error(m, msg);
     m->api->ReleaseStatus(status);
     return -1;
 }
 
-/* Runtime Query */
-
 int onnx_available(void) {
     return 1;
 }
-
-/* Model Lifecycle */
 
 GV_ONNXModel *onnx_load(const GV_ONNXConfig *config) {
     if (!config || !config->model_path) {
@@ -221,30 +205,25 @@ GV_ONNXModel *onnx_load(const GV_ONNXConfig *config) {
     m->config = *config;
     pthread_mutex_init(&m->mutex, NULL);
 
-    /* Obtain the global API handle */
     m->api = OrtGetApiBase()->GetApi(ORT_API_VERSION);
     if (!m->api) {
         set_error(m, "Failed to obtain ORT API");
         goto fail;
     }
 
-    /* Create environment */
     if (check_status(m, m->api->CreateEnv(ORT_LOGGING_LEVEL_WARNING,
                                            "onnx", &m->env))) {
         goto fail;
     }
 
-    /* Session options */
     if (check_status(m, m->api->CreateSessionOptions(&m->session_opts))) {
         goto fail;
     }
 
-    /* Thread pool */
     int threads = config->num_threads > 0 ? config->num_threads : 4;
     m->api->SetIntraOpNumThreads(m->session_opts, threads);
     m->api->SetInterOpNumThreads(m->session_opts, 1);
 
-    /* Optimization level */
     GraphOptimizationLevel opt;
     switch (config->optimization_level) {
         case 0:  opt = ORT_DISABLE_ALL;               break;
@@ -254,7 +233,6 @@ GV_ONNXModel *onnx_load(const GV_ONNXConfig *config) {
     }
     m->api->SetSessionGraphOptimizationLevel(m->session_opts, opt);
 
-    /* GPU execution provider (optional) */
     if (config->use_gpu) {
         OrtCUDAProviderOptions cuda_opts;
         memset(&cuda_opts, 0, sizeof(cuda_opts));
@@ -264,21 +242,18 @@ GV_ONNXModel *onnx_load(const GV_ONNXConfig *config) {
                                                            &cuda_opts);
     }
 
-    /* Create session */
     if (check_status(m, m->api->CreateSession(m->env, config->model_path,
                                                m->session_opts,
                                                &m->session))) {
         goto fail;
     }
 
-    /* Memory info for tensor allocation */
     if (check_status(m, m->api->CreateCpuMemoryInfo(
                          OrtArenaAllocator, OrtMemTypeDefault,
                          &m->memory_info))) {
         goto fail;
     }
 
-    /* Query input / output names */
     OrtAllocator *allocator = NULL;
     m->api->GetAllocatorWithDefaultOptions(&allocator);
 
@@ -300,7 +275,6 @@ GV_ONNXModel *onnx_load(const GV_ONNXConfig *config) {
         if (name) allocator->Free(allocator, name);
     }
 
-    /* Try to load vocabulary */
     m->vocab = vocab_load(config->model_path);
 
     return m;
@@ -335,8 +309,6 @@ void onnx_destroy(GV_ONNXModel *model) {
     gv_free(model);
 }
 
-/* Inference */
-
 int onnx_infer(GV_ONNXModel *model, const GV_ONNXTensor *inputs,
                    size_t input_count, GV_ONNXTensor *outputs,
                    size_t output_count) {
@@ -350,7 +322,6 @@ int onnx_infer(GV_ONNXModel *model, const GV_ONNXTensor *inputs,
     int rc = -1;
     pthread_mutex_lock(&model->mutex);
 
-    /* Build OrtValue inputs */
     OrtValue **ort_inputs = gv_calloc(input_count, sizeof(OrtValue *));
     if (!ort_inputs) goto unlock;
 
@@ -369,7 +340,6 @@ int onnx_infer(GV_ONNXModel *model, const GV_ONNXTensor *inputs,
         if (check_status(model, s)) goto cleanup;
     }
 
-    /* Run session */
     OrtValue **ort_outputs = gv_calloc(output_count, sizeof(OrtValue *));
     if (!ort_outputs) goto cleanup;
 
@@ -386,7 +356,6 @@ int onnx_infer(GV_ONNXModel *model, const GV_ONNXTensor *inputs,
         goto cleanup;
     }
 
-    /* Copy output data */
     for (size_t i = 0; i < output_count; i++) {
         if (!ort_outputs[i]) continue;
         float *out_data = NULL;
@@ -413,8 +382,6 @@ unlock:
     pthread_mutex_unlock(&model->mutex);
     return rc;
 }
-
-/* Cross-Encoder Re-ranking */
 
 int onnx_rerank(GV_ONNXModel *model, const char *query_text,
                     const char **doc_texts, size_t doc_count, float *scores) {
@@ -455,7 +422,6 @@ int onnx_rerank(GV_ONNXModel *model, const char *query_text,
                 pos++;
             }
 
-            /* Tokenize document and append */
             int64_t d_ids[GV_ONNX_MAX_SEQ_LEN];
             size_t d_len = tokenize_text(model->vocab, doc_texts[base + d],
                                           d_ids, GV_ONNX_MAX_SEQ_LEN);
@@ -466,7 +432,6 @@ int onnx_rerank(GV_ONNXModel *model, const char *query_text,
                 pos++;
             }
 
-            /* Run inference for this pair — shape [1, seq_len] */
             size_t seq_len = pos;
             size_t in_shape[2] = { 1, seq_len };
 
@@ -519,8 +484,6 @@ int onnx_rerank(GV_ONNXModel *model, const char *query_text,
     gv_free(attn);
     return rc;
 }
-
-/* Bi-Encoder Embedding */
 
 int onnx_embed(GV_ONNXModel *model, const char **texts,
                    size_t text_count, float *embeddings, size_t dimension) {
@@ -592,8 +555,6 @@ int onnx_embed(GV_ONNXModel *model, const char **texts,
     return rc;
 }
 
-/* Model Introspection */
-
 int onnx_get_input_info(const GV_ONNXModel *model, size_t *input_count,
                             char ***input_names) {
     if (!model || !input_count || !input_names) return -1;
@@ -627,7 +588,6 @@ int onnx_get_output_info(const GV_ONNXModel *model, size_t *output_count,
 }
 
 /* Stub implementation (no ONNX Runtime) */
-
 #else /* !GV_HAVE_ONNX */
 
 int onnx_available(void) {

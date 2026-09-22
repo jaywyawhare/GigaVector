@@ -214,8 +214,6 @@ double importance_score_content(const char *content, size_t len);
 /**
  * @brief Perform the operation.
  *
- * @param content content.
- * @param len len.
  * @return Result value.
  */
 double importance_score_extracted(const char *content, size_t len);
@@ -306,8 +304,6 @@ double importance_specificity(const char *content, size_t len);
 /**
  * @brief Perform the operation.
  *
- * @param content content.
- * @param len len.
  * @return Result value.
  */
 double importance_salience(const char *content, size_t len);
@@ -328,8 +324,6 @@ double importance_salience(const char *content, size_t len);
 /**
  * @brief Perform the operation.
  *
- * @param content content.
- * @param len len.
  * @return Result value.
  */
 double importance_entity_density(const char *content, size_t len);

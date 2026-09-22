@@ -29,10 +29,6 @@
 /** Default oversample factor when caller passes 0. */
 #define GV_QUANT_RERANK_DEFAULT_OVERSAMPLE 4
 
-/* ------------------------------------------------------------------ */
-/* Internal helpers                                                     */
-/* ------------------------------------------------------------------ */
-
 /**
  * @brief Comparison function for ascending rerank_score sort.
  *
@@ -60,10 +56,6 @@ static float l2_squared(const float *a, const float *b, size_t dim) {
     return sum;
 }
 
-/* ------------------------------------------------------------------ */
-/* Internal candidate struct for exact reranking                        */
-/* ------------------------------------------------------------------ */
-
 typedef struct {
     size_t index;
     float  approx_score;
@@ -77,10 +69,6 @@ static int compare_exact_asc(const void *a, const void *b) {
     if (ra->exact_score > rb->exact_score) return  1;
     return 0;
 }
-
-/* ------------------------------------------------------------------ */
-/* Public API                                                           */
-/* ------------------------------------------------------------------ */
 
 void quant_rerank_config_init(GV_QuantRerankConfig *cfg) {
     if (!cfg) return;

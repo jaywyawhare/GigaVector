@@ -12,10 +12,9 @@
 
 #include "core/id_bitmap.h"
 #include "core/memory.h"
+#include "core/utils.h"
 
 #include <string.h>
-
-/* ---- constants -------------------------------------------------------- */
 
 #define GV_IDBM_CONT_ARRAY  0u
 #define GV_IDBM_CONT_BITMAP 1u
@@ -25,9 +24,8 @@
 
 /* Bitmap container: 65536 bits = 8192 bytes = 1024 uint64 words. */
 #define GV_IDBM_BITMAP_WORDS 1024u
-#define GV_IDBM_BITMAP_BYTES (GV_IDBM_BITMAP_WORDS * 8u) /* 8192 */
+#define GV_IDBM_BITMAP_BYTES (GV_IDBM_BITMAP_WORDS * 8u)
 
-/* Serialization framing. */
 #define GV_IDBM_MAGIC   0x47564942u /* "GVIB" */
 #define GV_IDBM_VERSION 1u
 
@@ -35,8 +33,6 @@
  * chunk count and per-container sizes to bound worst-case allocation. */
 #define GV_IDBM_MAX_CHUNKS   ((size_t)1u << 26) /* 67M chunks */
 #define GV_IDBM_MAX_ARRAY    65536u             /* a chunk holds <= 65536 vals */
-
-/* ---- structures ------------------------------------------------------- */
 
 typedef struct {
     uint64_t key;       /**< high 48 bits (id >> 16). */
@@ -55,8 +51,6 @@ struct GV_IdBitmap {
     size_t      cap;
 };
 
-/* ---- bit helpers ------------------------------------------------------ */
-
 static inline int bitmap_test(const uint64_t *bits, uint16_t v)
 {
     return (bits[v >> 6] >> (v & 63u)) & 1u;
@@ -71,8 +65,6 @@ static inline void bitmap_clear_bit(uint64_t *bits, uint16_t v)
 {
     bits[v >> 6] &= ~((uint64_t)1u << (v & 63u));
 }
-
-/* ---- chunk lookup ----------------------------------------------------- */
 
 /* Binary search for @p key. Returns index if found (*found=1) or the insertion
  * point if not (*found=0). */
@@ -104,8 +96,6 @@ static uint32_t array_search(const uint16_t *arr, uint32_t n, uint16_t v, int *f
     *found = 0;
     return lo;
 }
-
-/* ---- chunk lifecycle -------------------------------------------------- */
 
 static void chunk_fini(GV_IdChunk *ch)
 {
@@ -222,12 +212,10 @@ static int chunk_remove(GV_IdChunk *ch, uint16_t v)
     return 1;
 }
 
-/* ---- public: lifecycle ------------------------------------------------ */
-
 GV_IdBitmap *gv_id_bitmap_create(void)
 {
     GV_IdBitmap *b = (GV_IdBitmap *)gv_calloc(1, sizeof(*b));
-    return b; /* NULL on OOM */
+    return b;
 }
 
 void gv_id_bitmap_clear(GV_IdBitmap *b)
@@ -244,8 +232,6 @@ void gv_id_bitmap_free(GV_IdBitmap *b)
     gv_free(b->chunks);
     gv_free(b);
 }
-
-/* ---- public: single-id ops ------------------------------------------- */
 
 int gv_id_bitmap_add(GV_IdBitmap *b, uint64_t id)
 {
@@ -303,8 +289,6 @@ uint64_t gv_id_bitmap_cardinality(const GV_IdBitmap *b)
     return total;
 }
 
-/* ---- public: clone ---------------------------------------------------- */
-
 /* Deep-copy the container of @p src into the (uninitialized) @p dst chunk.
  * Returns 0 or -1 on OOM. */
 static int chunk_copy(GV_IdChunk *dst, const GV_IdChunk *src)
@@ -350,8 +334,6 @@ GV_IdBitmap *gv_id_bitmap_clone(const GV_IdBitmap *b)
     }
     return out;
 }
-
-/* ---- public: set operations ------------------------------------------ */
 
 /* Merge low values of @p src chunk into @p dst chunk (dst |= src). Returns 0 or
  * -1 on OOM. */
@@ -476,8 +458,6 @@ GV_IdBitmap *gv_id_bitmap_and(const GV_IdBitmap *a, const GV_IdBitmap *b)
     return out;
 }
 
-/* ---- public: iteration ------------------------------------------------ */
-
 int gv_id_bitmap_iterate(const GV_IdBitmap *b,
                          int (*fn)(uint64_t id, void *ctx), void *ctx)
 {
@@ -508,9 +488,7 @@ int gv_id_bitmap_iterate(const GV_IdBitmap *b,
     return 0;
 }
 
-/* ---- serialization ---------------------------------------------------- */
-/*
- * Layout (all little-endian):
+/* Serialization layout (all little-endian):
  *   u32 magic
  *   u32 version
  *   u64 nchunks
@@ -523,29 +501,7 @@ int gv_id_bitmap_iterate(const GV_IdBitmap *b,
  *   u32 crc32 over everything preceding it
  */
 
-static void put_u32(uint8_t *p, uint32_t v)
-{
-    p[0] = (uint8_t)(v);       p[1] = (uint8_t)(v >> 8);
-    p[2] = (uint8_t)(v >> 16); p[3] = (uint8_t)(v >> 24);
-}
-
-static void put_u64(uint8_t *p, uint64_t v)
-{
-    for (int i = 0; i < 8; i++) p[i] = (uint8_t)(v >> (8 * i));
-}
-
-static uint32_t get_u32(const uint8_t *p)
-{
-    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
-           ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
-}
-
-static uint64_t get_u64(const uint8_t *p)
-{
-    uint64_t v = 0;
-    for (int i = 0; i < 8; i++) v |= (uint64_t)p[i] << (8 * i);
-    return v;
-}
+/* Little-endian byte packing lives in core/utils.h (gv_put_u32/gv_get_u64/...). */
 
 /* Simple CRC-32 (IEEE, reflected), computed without a static table. */
 static uint32_t gv_idbm_crc32(const uint8_t *data, size_t len)
@@ -579,18 +535,18 @@ int gv_id_bitmap_serialize(const GV_IdBitmap *b, uint8_t **out, size_t *out_len)
     if (!buf) return -1;
 
     uint8_t *p = buf;
-    put_u32(p, GV_IDBM_MAGIC);   p += 4;
-    put_u32(p, GV_IDBM_VERSION); p += 4;
-    put_u64(p, (uint64_t)b->nchunks); p += 8;
+    gv_put_u32(p, GV_IDBM_MAGIC);   p += 4;
+    gv_put_u32(p, GV_IDBM_VERSION); p += 4;
+    gv_put_u64(p, (uint64_t)b->nchunks); p += 8;
 
     for (size_t i = 0; i < b->nchunks; i++) {
         const GV_IdChunk *ch = &b->chunks[i];
-        put_u64(p, ch->key); p += 8;
+        gv_put_u64(p, ch->key); p += 8;
         *p++ = ch->type;
-        put_u32(p, ch->card); p += 4;
+        gv_put_u32(p, ch->card); p += 4;
         if (ch->type == GV_IDBM_CONT_BITMAP) {
             for (uint32_t w = 0; w < GV_IDBM_BITMAP_WORDS; w++) {
-                put_u64(p, ch->c.bits[w]); p += 8;
+                gv_put_u64(p, ch->c.bits[w]); p += 8;
             }
         } else {
             for (uint32_t k = 0; k < ch->card; k++) {
@@ -602,7 +558,7 @@ int gv_id_bitmap_serialize(const GV_IdBitmap *b, uint8_t **out, size_t *out_len)
     }
 
     uint32_t crc = gv_idbm_crc32(buf, (size_t)(p - buf));
-    put_u32(p, crc); p += 4;
+    gv_put_u32(p, crc); p += 4;
 
     /* p should now equal buf + total. */
     *out = buf;
@@ -616,15 +572,15 @@ GV_IdBitmap *gv_id_bitmap_deserialize(const uint8_t *data, size_t len)
     /* Minimum: header (16) + crc (4). */
     if (len < 20) return NULL;
 
-    if (get_u32(data) != GV_IDBM_MAGIC) return NULL;
-    if (get_u32(data + 4) != GV_IDBM_VERSION) return NULL;
+    if (gv_get_u32(data) != GV_IDBM_MAGIC) return NULL;
+    if (gv_get_u32(data + 4) != GV_IDBM_VERSION) return NULL;
 
     /* Verify trailing CRC over everything before it. */
     size_t body = len - 4;
-    uint32_t stored = get_u32(data + body);
+    uint32_t stored = gv_get_u32(data + body);
     if (gv_idbm_crc32(data, body) != stored) return NULL;
 
-    uint64_t nchunks = get_u64(data + 8);
+    uint64_t nchunks = gv_get_u64(data + 8);
     if (nchunks > GV_IDBM_MAX_CHUNKS) return NULL;
 
     GV_IdBitmap *b = gv_id_bitmap_create();
@@ -637,9 +593,9 @@ GV_IdBitmap *gv_id_bitmap_deserialize(const uint8_t *data, size_t len)
     for (uint64_t ci = 0; ci < nchunks; ci++) {
         /* key(8) + type(1) + card(4) */
         if (pos + 13 > body) { gv_id_bitmap_free(b); return NULL; }
-        uint64_t key = get_u64(data + pos); pos += 8;
+        uint64_t key = gv_get_u64(data + pos); pos += 8;
         uint8_t type = data[pos]; pos += 1;
-        uint32_t card = get_u32(data + pos); pos += 4;
+        uint32_t card = gv_get_u32(data + pos); pos += 4;
 
         /* Keys must be strictly ascending and fit the 48-bit key space. */
         if (key >= ((uint64_t)1u << 48)) { gv_id_bitmap_free(b); return NULL; }
@@ -688,7 +644,7 @@ GV_IdBitmap *gv_id_bitmap_deserialize(const uint8_t *data, size_t len)
 
             uint32_t popcount = 0;
             for (uint32_t w = 0; w < GV_IDBM_BITMAP_WORDS; w++) {
-                uint64_t word = get_u64(data + pos); pos += 8;
+                uint64_t word = gv_get_u64(data + pos); pos += 8;
                 ch->c.bits[w] = word;
                 popcount += (uint32_t)__builtin_popcountll(word);
             }

@@ -18,7 +18,7 @@ ffi.cdef(
     """
 typedef long long time_t;
 typedef enum { GV_INDEX_TYPE_KDTREE = 0, GV_INDEX_TYPE_HNSW = 1, GV_INDEX_TYPE_IVFPQ = 2, GV_INDEX_TYPE_SPARSE = 3, GV_INDEX_TYPE_FLAT = 4, GV_INDEX_TYPE_IVFFLAT = 5, GV_INDEX_TYPE_PQ = 6, GV_INDEX_TYPE_LSH = 7, GV_INDEX_TYPE_IVFSQ8 = 8, GV_INDEX_TYPE_IVFTURBOQUANT = 9, GV_INDEX_TYPE_DISKANN = 10, GV_INDEX_TYPE_IVFDISK = 11, GV_INDEX_TYPE_RABITQ = 12 } GV_IndexType;
-typedef enum { GV_DISTANCE_EUCLIDEAN = 0, GV_DISTANCE_COSINE = 1, GV_DISTANCE_DOT_PRODUCT = 2, GV_DISTANCE_MANHATTAN = 3, GV_DISTANCE_HAMMING = 4 } GV_DistanceType;
+typedef enum { GV_DISTANCE_EUCLIDEAN = 0, GV_DISTANCE_COSINE = 1, GV_DISTANCE_DOT_PRODUCT = 2, GV_DISTANCE_MANHATTAN = 3, GV_DISTANCE_HAMMING = 4, GV_DISTANCE_JACCARD = 5 } GV_DistanceType;
 
 typedef struct {
     uint32_t index;
@@ -121,6 +121,7 @@ typedef struct {
     size_t m;
     uint8_t nbits;
     size_t train_iters;
+    int use_opq;
 } GV_PQConfig;
 
 typedef struct {
@@ -212,6 +213,27 @@ int gv_db_update_vector_metadata(GV_Database *db, size_t vector_index,
                                         const char *const *metadata_keys, const char *const *metadata_values,
                                         size_t metadata_count);
 int gv_db_save(const GV_Database *db, const char *filepath);
+typedef struct GV_DBTxn GV_DBTxn;
+GV_DBTxn *gv_db_begin(GV_Database *db);
+int gv_db_txn_add_vector(GV_DBTxn *txn, const float *data, size_t dimension);
+int gv_db_txn_delete(GV_DBTxn *txn, size_t vector_index);
+int gv_db_txn_search(GV_DBTxn *txn, const float *query, size_t k, GV_SearchResult *results, GV_DistanceType metric);
+int gv_db_commit(GV_DBTxn *txn);
+int gv_db_rollback(GV_DBTxn *txn);
+uint64_t gv_db_txn_gc(GV_Database *db, uint64_t safe_below);
+/* WiscKey value store (opt-in key -> value separation) */
+int gv_db_value_store_enable(GV_Database *db, const char *path);
+int gv_db_value_store_put(GV_Database *db, uint64_t key, const void *value, size_t len);
+int gv_db_value_store_get(GV_Database *db, uint64_t key, void **value_out, size_t *len_out);
+int gv_db_value_store_delete(GV_Database *db, uint64_t key);
+int gv_db_value_store_gc(GV_Database *db);
+/* Access-aware storage tiers */
+int gv_db_set_access_tiering_policy(GV_Database *db, uint64_t access_recency_window_sec, uint32_t hot_min_access_count);
+int gv_db_record_vector_access(GV_Database *db, size_t vec_id);
+int gv_db_warmup(GV_Database *db);
+double gv_db_evaluate_recall(const GV_Database *db, const float *queries, size_t nq, size_t dim, size_t k, GV_DistanceType metric);
+int gv_db_import_csv(GV_Database *db, const char *path, char delimiter, int has_header, int id_column);
+int gv_db_import_jsonl(GV_Database *db, const char *path);
 int gv_db_ivfpq_train(GV_Database *db, const float *data, size_t count, size_t dimension);
 int gv_db_ivfflat_train(GV_Database *db, const float *data, size_t count, size_t dimension);
 int gv_db_ivfdisk_train(GV_Database *db, const float *data, size_t count, size_t dimension);
@@ -274,7 +296,8 @@ typedef struct GV_PostingCatalog GV_PostingCatalog;
 
 typedef struct {
     uint64_t vector_id;
-    uint8_t version;
+    uint32_t version;
+    uint64_t commit_ts;
     uint8_t flags;
     uint8_t payload_type;
     size_t dimension;
@@ -285,7 +308,8 @@ typedef struct {
 
 typedef struct {
     uint64_t vector_id;
-    uint8_t version;
+    uint32_t version;
+    uint64_t commit_ts;
     uint8_t flags;
     const float *data;
     const uint8_t *codes;
@@ -792,6 +816,8 @@ typedef struct {
     const char *api_key;
     double max_requests_per_second;
     size_t rate_limit_burst;
+    const char *data_dir;
+    int allow_unauthenticated;
 } GV_ServerConfig;
 
 typedef struct {
@@ -1098,11 +1124,9 @@ int gv_ttl_get_expiring_before(const GV_TTLManager *mgr, uint64_t before_unix, s
 typedef struct {
     int type;
     int lowercase;
-    int remove_punctuation;
-    const char *stopwords;
-    int stem;
-    int ngram_min;
-    int ngram_max;
+    int remove_stopwords;
+    size_t min_token_length;
+    size_t max_token_length;
 } GV_TokenizerConfig;
 
 typedef struct {
@@ -1770,6 +1794,8 @@ typedef struct {
     size_t max_message_bytes;
     size_t thread_pool_size;
     int enable_compression;
+    const char *auth_token;
+    const char *data_dir;
 } GV_GrpcConfig;
 
 typedef struct {
@@ -2615,9 +2641,11 @@ typedef struct {
     const char *issuer_url;
     const char *client_id;
     const char *client_secret;
+    const char *oidc_rsa_public_key_pem;
     const char *redirect_uri;
     const char *saml_metadata_url;
     const char *saml_entity_id;
+    const char *saml_idp_cert_pem;
     int verify_ssl;
     uint64_t token_ttl;
     const char *allowed_groups;
@@ -2783,6 +2811,7 @@ int gv_cdc_unsubscribe(GV_CDCStream *stream, int subscriber_id);
 
 /* Attach CDC / webhook sinks to a database so mutations emit change events.
  * (Declared here, after both opaque typedefs are known.) */
+void gv_db_set_bulk_load(GV_Database *db, int on);
 void gv_db_set_cdc_stream(GV_Database *db, GV_CDCStream *stream);
 GV_CDCStream *gv_db_get_cdc_stream(const GV_Database *db);
 void gv_db_set_webhook_manager(GV_Database *db, GV_WebhookManager *mgr);
@@ -3101,6 +3130,10 @@ size_t gv_graph_edge_count(const GV_GraphDB *g);
 int gv_graph_save(const GV_GraphDB *g, const char *path);
 GV_GraphDB *gv_graph_load(const char *path);
 
+int gv_graph_wal_attach(GV_GraphDB *g, const char *snapshot_path);
+int gv_graph_wal_checkpoint(GV_GraphDB *g);
+uint64_t gv_graph_version(const GV_GraphDB *g);
+
 /* Knowledge Graph */
 
 typedef struct GV_KnowledgeGraph GV_KnowledgeGraph;
@@ -3217,6 +3250,18 @@ int gv_kg_set_relation_prop(GV_KnowledgeGraph *kg, uint64_t relation_id, const c
 
 int gv_kg_query_triples(const GV_KnowledgeGraph *kg, const uint64_t *subject, const char *predicate, const uint64_t *object, GV_KGTriple *out, size_t max_count);
 void gv_kg_free_triples(GV_KGTriple *triples, size_t count);
+
+uint64_t gv_kg_add_relation_with_chunk(GV_KnowledgeGraph *kg, uint64_t subject, const char *predicate, uint64_t object, float weight, const char *chunk_id);
+int gv_kg_query_triples_by_chunk(const GV_KnowledgeGraph *kg, const char *chunk_id, GV_KGTriple *out, size_t max_count);
+int gv_kg_remove_relations_by_chunk(GV_KnowledgeGraph *kg, const char *chunk_id);
+
+int gv_kg_wal_attach(GV_KnowledgeGraph *kg, const char *snapshot_path);
+int gv_kg_wal_checkpoint(GV_KnowledgeGraph *kg);
+int gv_kg_expand_context(const GV_KnowledgeGraph *kg, const uint64_t *seeds, size_t n_seeds, size_t radius, GV_KGTriple *out, size_t max_count);
+int gv_server_set_graphs(GV_Server *server, GV_KnowledgeGraph *kg, GV_GraphDB *graph);
+
+int gv_kg_remove_entity_prop(GV_KnowledgeGraph *kg, uint64_t entity_id, const char *key);
+int gv_kg_remove_relation_prop(GV_KnowledgeGraph *kg, uint64_t relation_id, const char *key);
 
 int gv_kg_search_similar(const GV_KnowledgeGraph *kg, const float *query_embedding, size_t dimension, size_t k, GV_KGSearchResult *results);
 int gv_kg_search_by_text(const GV_KnowledgeGraph *kg, const char *text, const float *text_embedding, size_t dimension, size_t k, GV_KGSearchResult *results);

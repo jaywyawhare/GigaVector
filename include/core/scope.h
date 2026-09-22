@@ -44,10 +44,10 @@ void      gv_tls_free_or_heap(void *ptr, int on_heap);
 /*
  * On GCC/Clang the arena carries __attribute__((cleanup)), so it is finalized
  * even when the block is left early via return/break/goto (see
- * test_arena_scope_dst). The control pointer drives a single iteration; cleanup
- * — not the loop increment — performs finalization to avoid a double-fini. MSVC
- * lacks cleanup attributes and keeps the loop-increment form (finalizes only on
- * normal block exit).
+ * test_early_return_unwinds). The control pointer drives a single iteration; the
+ * cleanup — not the loop increment — performs finalization to avoid double-fini.
+ * MSVC lacks cleanup attributes and falls back to the loop-increment form, which
+ * only finalizes on normal block exit.
  */
 #if defined(__GNUC__) || defined(__clang__)
 #define GV_WITH_ARENA(arena, cap)                                              \

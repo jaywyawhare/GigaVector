@@ -52,7 +52,7 @@ int graph_coloring(const GV_GraphDB *g, GV_GraphNodeLabels *out) {
     size_t num_colors = 0;
 
     for (size_t i = 0; i < N; i++) {
-        const GV_GraphNode *node = graph_get_node(g, node_ids[i]);
+        const GV_GraphNode *node = gv_ga_node(ctx, node_ids[i]);
 
         /* Mark colors of already-colored neighbors as forbidden, then reset
          * only those slots afterward by rescanning the same neighbors (avoids
@@ -138,7 +138,7 @@ int graph_maximal_independent_set(const GV_GraphDB *g, GV_GraphNodeScores *out) 
     }
 
     for (size_t i = 0; i < N; i++) {
-        const GV_GraphNode *node = graph_get_node(g, node_ids[i]);
+        const GV_GraphNode *node = gv_ga_node(ctx, node_ids[i]);
         int has_set_neighbor = 0;
 
         if (node) {

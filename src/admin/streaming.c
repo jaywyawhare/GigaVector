@@ -28,8 +28,6 @@
 
 #define GV_STREAM_STACK_VEC_CAP 4096
 
-/* Internal Structures */
-
 struct GV_StreamConsumer {
     GV_StreamConfig config;
     GV_Database *db;
@@ -62,8 +60,6 @@ struct GV_StreamConsumer {
     pthread_cond_t state_cond;
 };
 
-/* Default Extractor */
-
 static int default_extractor(const GV_StreamMessage *msg, float *vector,
                               size_t dimension, char ***metadata_keys,
                               char ***metadata_values, size_t *metadata_count,
@@ -84,8 +80,6 @@ static int default_extractor(const GV_StreamMessage *msg, float *vector,
 
     return 0;
 }
-
-/* Configuration */
 
 static const GV_StreamConfig DEFAULT_CONFIG = {
     .source = GV_STREAM_KAFKA,
@@ -305,8 +299,6 @@ static void stream_process_kafka_batch(GV_StreamConsumer *consumer) {
 }
 #endif /* HAVE_RDKAFKA */
 
-/* Consumer Thread */
-
 static void *consumer_thread_func(void *arg) {
     GV_StreamConsumer *consumer = (GV_StreamConsumer *)arg;
 
@@ -363,8 +355,6 @@ static void *consumer_thread_func(void *arg) {
 
     return NULL;
 }
-
-/* Lifecycle */
 
 GV_StreamConsumer *stream_create(GV_Database *db, const GV_StreamConfig *config) {
     if (!db) return NULL;
@@ -569,8 +559,6 @@ int stream_resume(GV_StreamConsumer *consumer) {
     return 0;
 }
 
-/* Configuration */
-
 int stream_set_extractor(GV_StreamConsumer *consumer, GV_VectorExtractor extractor,
                              void *user_data) {
     if (!consumer) return -1;
@@ -594,8 +582,6 @@ int stream_set_handler(GV_StreamConsumer *consumer, GV_StreamMessageHandler hand
 
     return 0;
 }
-
-/* Status and Statistics */
 
 GV_StreamState stream_get_state(GV_StreamConsumer *consumer) {
     if (!consumer) return (GV_StreamState)-1;
@@ -626,8 +612,6 @@ int stream_reset_stats(GV_StreamConsumer *consumer) {
 
     return 0;
 }
-
-/* Offset Management */
 
 int stream_commit(GV_StreamConsumer *consumer) {
     if (!consumer) return -1;

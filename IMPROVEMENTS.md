@@ -1,5 +1,17 @@
 # GigaVector — Comprehensive Improvement Report
 
+> **Status snapshot.** Most of this report has been addressed. Resolved:
+> #1–#4 (dup decls/includes, `strcpy`), #5 (database.c split from 5,879 → ~2,730
+> lines), #6 (`src/index/ivf_base.c`), #7 (cffi bindings — `cffi>=1.16`, ctypes
+> gone), #8 (epoll/thread-pool in `src/api/server.c`), #9 (`docs/lock_ordering.md`),
+> #10 (CI coverage gate), #11 (CI clang-tidy), #12 (perf numbers in
+> `docs/performance.md`), #13 (`db_search_batch` in `src/storage/db_search.c`),
+> #14 (config-ignored open bug), #15–#16, #19 (C examples in api_reference),
+> #20 (`main.c` CLI flags).
+>
+> **Still open:** #17 (add `-Wimplicit-fallthrough` / `-Wformat-truncation`),
+> #18 (`warn_unused_result` on `db_add_vector`/`db_search`/`db_save`).
+
 ## Bugs (fix immediately)
 
 ### 1. Duplicate declarations in `include/storage/database.h` (lines 412–447)

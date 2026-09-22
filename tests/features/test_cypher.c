@@ -2,6 +2,7 @@
    DISTINCT, SET, DELETE, MERGE, OPTIONAL MATCH. */
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #include "features/knowledge_graph.h"
 #include "features/cypher.h"
 
@@ -47,6 +48,15 @@ int main(void) {
     ASSERT(q(cy, "MATCH (p:Person) WHERE p.age > '28' RETURN p.name ORDER BY p.name", &r) == 0, "WHERE numeric");
     ASSERT(r.row_count == 2 && strcmp(cell(&r,0,0),"Alice")==0 && strcmp(cell(&r,1,0),"Carol")==0,
            "age>28 -> Alice,Carol (numeric-aware)");
+    cypher_free_result(&r);
+    /* same comparison with an unquoted numeric literal */
+    ASSERT(q(cy, "MATCH (p:Person) WHERE p.age > 28 RETURN p.name ORDER BY p.name", &r) == 0, "WHERE numeric literal");
+    ASSERT(r.row_count == 2 && strcmp(cell(&r,0,0),"Alice")==0 && strcmp(cell(&r,1,0),"Carol")==0,
+           "age>28 (unquoted literal) -> Alice,Carol");
+    cypher_free_result(&r);
+    /* lexical trap: '9' > '30' as strings but not numerically */
+    ASSERT(q(cy, "MATCH (p:Person {name:'Bob'}) WHERE p.age > 9 RETURN p.name", &r) == 0, "numeric trap setup");
+    ASSERT(r.row_count == 1, "25 > 9 numerically (would fail lexically)");
     cypher_free_result(&r);
 
     /* WHERE OR */
@@ -268,6 +278,122 @@ int main(void) {
     cypher_free_result(&r);
     ASSERT(q(cy, "MATCH pth = (a:Person {name:'Alice'})-[:KNOWS]->(b) RETURN length(pth)", &r) == 0
            && strcmp(cell(&r,0,0),"1")==0, "path variable length");
+    cypher_free_result(&r);
+
+    /* ---- relationship properties ---- */
+    /* CREATE an edge carrying properties */
+    ASSERT(q(cy, "MATCH (a:Person {name:'Alice'}), (b:Person {name:'Bob'}) "
+                 "CREATE (a)-[:RATED {score:'5', note:'great'}]->(b)", &r) == 0, "CREATE rel with props");
+    cypher_free_result(&r);
+    /* read a relationship property via r.prop */
+    ASSERT(q(cy, "MATCH (a:Person {name:'Alice'})-[r:RATED]->(b) RETURN r.score, r.note", &r) == 0
+           && r.row_count == 1 && strcmp(cell(&r,0,0),"5")==0 && strcmp(cell(&r,0,1),"great")==0,
+           "read rel props r.score, r.note");
+    cypher_free_result(&r);
+    /* filter on a relationship property inside the pattern */
+    ASSERT(q(cy, "MATCH (a)-[r:RATED {score:'5'}]->(b) RETURN a.name, b.name", &r) == 0
+           && r.row_count == 1 && strcmp(cell(&r,0,0),"Alice")==0, "inline rel-prop filter matches");
+    cypher_free_result(&r);
+    ASSERT(q(cy, "MATCH (a)-[r:RATED {score:'1'}]->(b) RETURN a.name", &r) == 0 && r.row_count == 0,
+           "inline rel-prop filter excludes");
+    cypher_free_result(&r);
+    /* SET a relationship property, then read it back */
+    ASSERT(q(cy, "MATCH (a:Person {name:'Alice'})-[r:RATED]->(b) SET r.score = '9'", &r) == 0, "SET rel prop");
+    cypher_free_result(&r);
+    ASSERT(q(cy, "MATCH ()-[r:RATED]->() RETURN r.score", &r) == 0 && strcmp(cell(&r,0,0),"9")==0,
+           "rel prop updated to 9");
+    cypher_free_result(&r);
+    /* type(r) still yields the relationship type */
+    ASSERT(q(cy, "MATCH ()-[r:RATED]->() RETURN type(r)", &r) == 0 && strcmp(cell(&r,0,0),"RATED")==0,
+           "type(r) still works");
+    cypher_free_result(&r);
+
+    /* ---- computed SET (expression, not just literal) ---- */
+    ASSERT(q(cy, "MATCH (p:Person {name:'Bob'}) SET p.age = '25'", &r) == 0, "reset Bob age");
+    cypher_free_result(&r);
+    ASSERT(q(cy, "MATCH (p:Person {name:'Bob'}) SET p.age = p.age + '10'", &r) == 0, "computed SET p.age+10");
+    cypher_free_result(&r);
+    ASSERT(q(cy, "MATCH (p:Person {name:'Bob'}) RETURN p.age", &r) == 0 && strcmp(cell(&r,0,0),"35")==0,
+           "Bob age 25 -> 35 via expression");
+    cypher_free_result(&r);
+    ASSERT(q(cy, "MATCH (p:Person {name:'Bob'}) SET p.label = toUpper(p.name)", &r) == 0, "computed SET with function");
+    cypher_free_result(&r);
+    ASSERT(q(cy, "MATCH (p:Person {name:'Bob'}) RETURN p.label", &r) == 0 && strcmp(cell(&r,0,0),"BOB")==0,
+           "SET p.label = toUpper(name)");
+    cypher_free_result(&r);
+
+    /* ---- rel-type alternation :A|B ---- */
+    ASSERT(q(cy, "MATCH (a:Person {name:'Alice'})-[r:KNOWS|RATED]->(b) RETURN b.name ORDER BY b.name", &r) == 0
+           && r.row_count == 2, "alternation KNOWS|RATED -> 2 edges");
+    cypher_free_result(&r);
+
+    /* ---- multi-label node ---- */
+    ASSERT(q(cy, "CREATE (:Person:Person {name:'Zed'})", &r) == 0, "create multi-label node");
+    cypher_free_result(&r);
+    ASSERT(q(cy, "MATCH (n:Person:Person {name:'Zed'}) RETURN n.name", &r) == 0
+           && r.row_count == 1 && strcmp(cell(&r,0,0),"Zed")==0, "multi-label match (all labels)");
+    cypher_free_result(&r);
+
+    /* ---- WITH DISTINCT dedup ---- */
+    /* Many :Person nodes all share the label "Person"; projecting it via
+     * WITH DISTINCT must collapse to a single row, vs one row per node without. */
+    {
+        GV_CypherResult r2;
+        ASSERT(q(cy, "MATCH (p:Person) WITH labels(p) AS l RETURN count(*)", &r2) == 0, "count persons");
+        long persons = atol(cell(&r2, 0, 0));
+        cypher_free_result(&r2);
+        ASSERT(persons > 1, "more than one Person exists");
+        ASSERT(q(cy, "MATCH (p:Person) WITH DISTINCT labels(p) AS l RETURN count(*)", &r2) == 0,
+               "WITH DISTINCT label");
+        ASSERT(r2.row_count == 1 && strcmp(cell(&r2,0,0),"1")==0, "DISTINCT label collapses to 1 group");
+        cypher_free_result(&r2);
+    }
+
+    /* ---- Typed value system ---- (anchored on a single-row MATCH for a projection context) */
+    #define A "MATCH (p:Person {name:'Alice'}) RETURN "
+    /* Integer arithmetic: division and modulo are integer-valued when both operands are integers. */
+    ASSERT(q(cy, A "7/2 AS x", &r) == 0 && strcmp(cell(&r,0,0),"3")==0, "integer division 7/2 -> 3");
+    cypher_free_result(&r);
+    ASSERT(q(cy, A "7.0/2 AS x", &r) == 0 && strcmp(cell(&r,0,0),"3.5")==0, "float division 7.0/2 -> 3.5");
+    cypher_free_result(&r);
+    ASSERT(q(cy, A "7 % 3 AS x", &r) == 0 && strcmp(cell(&r,0,0),"1")==0, "modulo 7 % 3 -> 1");
+    cypher_free_result(&r);
+    ASSERT(q(cy, A "2 + 3 * 4 AS x", &r) == 0 && strcmp(cell(&r,0,0),"14")==0, "integer 2+3*4 -> 14");
+    cypher_free_result(&r);
+    /* Boolean literal renders as true/false. */
+    ASSERT(q(cy, A "true AS x", &r) == 0 && strcmp(cell(&r,0,0),"true")==0, "boolean literal true");
+    cypher_free_result(&r);
+    /* NULL literal is distinct from empty string: IS NULL true, coalesce skips it. */
+    ASSERT(q(cy, "MATCH (p:Person {name:'Alice'}) WHERE null IS NULL RETURN p.name", &r) == 0
+           && r.row_count == 1, "null literal IS NULL");
+    cypher_free_result(&r);
+    ASSERT(q(cy, A "coalesce(null, 'fallback') AS x", &r) == 0 && strcmp(cell(&r,0,0),"fallback")==0, "coalesce skips null");
+    cypher_free_result(&r);
+    /* Three-valued logic: comparison against null is never true (all rows filtered out). */
+    ASSERT(q(cy, "MATCH (p:Person) WHERE p.age > null RETURN p.name", &r) == 0
+           && r.row_count == 0, "comparison with null -> no rows");
+    cypher_free_result(&r);
+    /* Type conversions. */
+    ASSERT(q(cy, A "toInteger('3.7') AS x", &r) == 0 && strcmp(cell(&r,0,0),"3")==0, "toInteger('3.7') -> 3");
+    cypher_free_result(&r);
+    ASSERT(q(cy, A "toString(42) AS x", &r) == 0 && strcmp(cell(&r,0,0),"42")==0, "toString(42) -> '42'");
+    cypher_free_result(&r);
+    ASSERT(q(cy, A "toFloat('3') / 2 AS x", &r) == 0 && strcmp(cell(&r,0,0),"1.5")==0, "toFloat('3')/2 -> 1.5");
+    cypher_free_result(&r);
+    /* CASE returning a typed integer participates in integer arithmetic downstream. */
+    ASSERT(q(cy, A "(CASE WHEN true THEN 10 ELSE 0 END) / 4 AS x", &r) == 0
+           && strcmp(cell(&r,0,0),"2")==0, "typed CASE integer division");
+    cypher_free_result(&r);
+    #undef A
+    /* Bare boolean in predicate position (truthiness). */
+    GV_CypherResult rall;
+    ASSERT(q(cy, "MATCH (p:Person) RETURN p.name", &rall) == 0 && rall.row_count > 0, "person rows exist");
+    ASSERT(q(cy, "MATCH (p:Person) WHERE true RETURN p.name", &r) == 0
+           && r.row_count == rall.row_count, "WHERE true keeps all rows");
+    cypher_free_result(&r);
+    cypher_free_result(&rall);
+    ASSERT(q(cy, "MATCH (p:Person) WHERE false RETURN p.name", &r) == 0
+           && r.row_count == 0, "WHERE false drops all rows");
     cypher_free_result(&r);
 
     /* Syntax error still reported */

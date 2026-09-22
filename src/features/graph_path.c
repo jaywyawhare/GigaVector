@@ -12,6 +12,7 @@
  * index context (gv_ga_*), and allocate their results with gv_alloc/gv_calloc
  * so callers can free them with the matching *_free helpers.
  */
+#include "features/graph_minheap.h"
 #include "features/graph_algos.h"
 #include "core/memory.h"
 
@@ -21,72 +22,11 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-/* ── Binary min-heap keyed by dense index, ordered by a double key ──────────── */
-
-typedef struct {
-    size_t *idx;    /* heap array of dense node indices */
-    double *key;    /* key[node] = current priority of that node */
-    size_t *pos;    /* pos[node] = position in idx[], or (size_t)-1 if absent */
-    size_t  size;
-    size_t  cap;
-} MinHeap;
-
-static int mh_init(MinHeap *h, size_t n) {
-    h->size = 0;
-    h->cap = n;
-    h->idx = NULL;
-    h->key = NULL;
-    h->pos = NULL;
-    if (n == 0) return 0;
-    h->idx = (size_t *)gv_alloc(n * sizeof(size_t));
-    h->key = (double *)gv_alloc(n * sizeof(double));
-    h->pos = (size_t *)gv_alloc(n * sizeof(size_t));
-    if (!h->idx || !h->key || !h->pos) {
-        gv_free(h->idx); gv_free(h->key); gv_free(h->pos);
-        h->idx = NULL; h->key = NULL; h->pos = NULL;
-        return -1;
-    }
-    for (size_t i = 0; i < n; i++) h->pos[i] = (size_t)-1;
-    return 0;
-}
-
-static void mh_free(MinHeap *h) {
-    if (!h) return;
-    gv_free(h->idx); gv_free(h->key); gv_free(h->pos);
-    h->idx = NULL; h->key = NULL; h->pos = NULL;
-    h->size = 0; h->cap = 0;
-}
-
-static void mh_swap(MinHeap *h, size_t a, size_t b) {
-    size_t ta = h->idx[a], tb = h->idx[b];
-    h->idx[a] = tb; h->idx[b] = ta;
-    h->pos[tb] = a; h->pos[ta] = b;
-}
-
-static void mh_sift_up(MinHeap *h, size_t i) {
-    while (i > 0) {
-        size_t parent = (i - 1) / 2;
-        if (h->key[h->idx[parent]] <= h->key[h->idx[i]]) break;
-        mh_swap(h, parent, i);
-        i = parent;
-    }
-}
-
-static void mh_sift_down(MinHeap *h, size_t i) {
-    for (;;) {
-        size_t l = 2 * i + 1, r = 2 * i + 2, smallest = i;
-        if (l < h->size && h->key[h->idx[l]] < h->key[h->idx[smallest]]) smallest = l;
-        if (r < h->size && h->key[h->idx[r]] < h->key[h->idx[smallest]]) smallest = r;
-        if (smallest == i) break;
-        mh_swap(h, i, smallest);
-        i = smallest;
-    }
-}
-
-/* Insert node `node` with priority `key`, or decrease its key if already in. */
+/* Indexed min-heap (struct + init/free/swap/sift/pop) lives in graph_minheap.h.
+ * Dijkstra decrease-key: insert node, or lower its key if the new one is smaller
+ * (never raise an existing key). */
 static void mh_push(MinHeap *h, size_t node, double key) {
     if (h->pos[node] != (size_t)-1) {
-        /* already present: update if this key is smaller */
         if (key < h->key[node]) {
             h->key[node] = key;
             mh_sift_up(h, h->pos[node]);
@@ -99,22 +39,6 @@ static void mh_push(MinHeap *h, size_t node, double key) {
     h->size++;
     mh_sift_up(h, h->size - 1);
 }
-
-/* Pop the min node; returns (size_t)-1 when empty. */
-static size_t mh_pop(MinHeap *h) {
-    if (h->size == 0) return (size_t)-1;
-    size_t top = h->idx[0];
-    h->size--;
-    if (h->size > 0) {
-        h->idx[0] = h->idx[h->size];
-        h->pos[h->idx[0]] = 0;
-        mh_sift_down(h, 0);
-    }
-    h->pos[top] = (size_t)-1;
-    return top;
-}
-
-/* ── Single-source shortest path (Dijkstra weighted / BFS unweighted) ───────── */
 
 int graph_single_source_shortest_path(const GV_GraphDB *g, uint64_t source,
                                       int weighted, int directed,
@@ -159,11 +83,11 @@ int graph_single_source_shortest_path(const GV_GraphDB *g, uint64_t source,
         size_t u;
         while ((u = mh_pop(&heap)) != (size_t)-1) {
             double du = scores[u];
-            const GV_GraphNode *nu = graph_get_node(g, gv_ga_id(ctx, u));
+            const GV_GraphNode *nu = gv_ga_node(ctx, gv_ga_id(ctx, u));
             if (!nu) continue;
             /* forward direction: out_edges */
             for (size_t e = 0; e < nu->out_count; e++) {
-                const GV_GraphEdge *edge = graph_get_edge(g, nu->out_edges[e].edge_id);
+                const GV_GraphEdge *edge = gv_ga_edge(ctx, nu->out_edges[e].edge_id);
                 double w = edge ? (double)edge->weight : 1.0;
                 if (w < 0.0) w = 0.0;
                 size_t v = gv_ga_index(ctx, nu->out_edges[e].neighbor_id);
@@ -174,7 +98,7 @@ int graph_single_source_shortest_path(const GV_GraphDB *g, uint64_t source,
             if (!directed) {
                 /* undirected: also relax in_edges */
                 for (size_t e = 0; e < nu->in_count; e++) {
-                    const GV_GraphEdge *edge = graph_get_edge(g, nu->in_edges[e].edge_id);
+                    const GV_GraphEdge *edge = gv_ga_edge(ctx, nu->in_edges[e].edge_id);
                     double w = edge ? (double)edge->weight : 1.0;
                     if (w < 0.0) w = 0.0;
                     size_t v = gv_ga_index(ctx, nu->in_edges[e].neighbor_id);
@@ -198,7 +122,7 @@ int graph_single_source_shortest_path(const GV_GraphDB *g, uint64_t source,
         while (head < tail) {
             size_t u = queue[head++];
             double du = scores[u];
-            const GV_GraphNode *nu = graph_get_node(g, gv_ga_id(ctx, u));
+            const GV_GraphNode *nu = gv_ga_node(ctx, gv_ga_id(ctx, u));
             if (!nu) continue;
             for (size_t e = 0; e < nu->out_count; e++) {
                 size_t v = gv_ga_index(ctx, nu->out_edges[e].neighbor_id);
@@ -223,8 +147,7 @@ int graph_single_source_shortest_path(const GV_GraphDB *g, uint64_t source,
     return 0;
 }
 
-/* ── A* (Dijkstra when heuristic == NULL) over out_edges ────────────────────── */
-
+/* A* (Dijkstra when heuristic == NULL) over out_edges. */
 int graph_astar(const GV_GraphDB *g, uint64_t from, uint64_t to,
                 GV_GraphHeuristic heuristic, void *user, GV_GraphPath *path) {
     if (path) {
@@ -272,12 +195,12 @@ int graph_astar(const GV_GraphDB *g, uint64_t from, uint64_t to,
         if (closed[u]) continue;
         closed[u] = 1;
         double du = gscore[u];
-        const GV_GraphNode *nu = graph_get_node(g, gv_ga_id(ctx, u));
+        const GV_GraphNode *nu = gv_ga_node(ctx, gv_ga_id(ctx, u));
         if (!nu) continue;
         for (size_t e = 0; e < nu->out_count; e++) {
             size_t v = gv_ga_index(ctx, nu->out_edges[e].neighbor_id);
             if (v == (size_t)-1 || closed[v]) continue;
-            const GV_GraphEdge *edge = graph_get_edge(g, nu->out_edges[e].edge_id);
+            const GV_GraphEdge *edge = gv_ga_edge(ctx, nu->out_edges[e].edge_id);
             double w = edge ? (double)edge->weight : 1.0;
             if (w < 0.0) w = 0.0;
             double tentative = du + w;
@@ -340,8 +263,6 @@ int graph_astar(const GV_GraphDB *g, uint64_t from, uint64_t to,
     return 0;
 }
 
-/* ── Directed cycle detection (iterative white/gray/black DFS) ──────────────── */
-
 /* colors: 0 = white (unvisited), 1 = gray (on stack), 2 = black (done) */
 int graph_detect_cycle(const GV_GraphDB *g, int *is_dag, GV_GraphPath *cycle_out) {
     if (cycle_out) {
@@ -380,7 +301,7 @@ int graph_detect_cycle(const GV_GraphDB *g, int *is_dag, GV_GraphPath *cycle_out
 
         while (sp > 0 && acyclic) {
             size_t u = st_node[sp - 1];
-            const GV_GraphNode *nu = graph_get_node(g, gv_ga_id(ctx, u));
+            const GV_GraphNode *nu = gv_ga_node(ctx, gv_ga_id(ctx, u));
             size_t oc = nu ? nu->out_count : 0;
 
             if (st_iter[sp - 1] < oc) {
@@ -447,8 +368,7 @@ int graph_detect_cycle(const GV_GraphDB *g, int *is_dag, GV_GraphPath *cycle_out
     return rc;
 }
 
-/* ── Minimum spanning forest (Kruskal + union-find over undirected edges) ───── */
-
+/* Minimum spanning forest (Kruskal + union-find over undirected edges). */
 typedef struct {
     uint64_t edge_id;
     double   weight;
@@ -483,7 +403,7 @@ int graph_minimum_spanning_forest(const GV_GraphDB *g, GV_GraphEdgeSet *out) {
      * node's out_edges; iterate all nodes' out_edges to enumerate every edge. */
     size_t total_edges = 0;
     for (size_t i = 0; i < N; i++) {
-        const GV_GraphNode *ni = graph_get_node(g, gv_ga_id(ctx, i));
+        const GV_GraphNode *ni = gv_ga_node(ctx, gv_ga_id(ctx, i));
         if (ni) total_edges += ni->out_count;
     }
 
@@ -495,12 +415,12 @@ int graph_minimum_spanning_forest(const GV_GraphDB *g, GV_GraphEdgeSet *out) {
 
     size_t ecount = 0;
     for (size_t i = 0; i < N; i++) {
-        const GV_GraphNode *ni = graph_get_node(g, gv_ga_id(ctx, i));
+        const GV_GraphNode *ni = gv_ga_node(ctx, gv_ga_id(ctx, i));
         if (!ni) continue;
         for (size_t e = 0; e < ni->out_count; e++) {
             size_t v = gv_ga_index(ctx, ni->out_edges[e].neighbor_id);
             if (v == (size_t)-1) continue;
-            const GV_GraphEdge *edge = graph_get_edge(g, ni->out_edges[e].edge_id);
+            const GV_GraphEdge *edge = gv_ga_edge(ctx, ni->out_edges[e].edge_id);
             double w = edge ? (double)edge->weight : 1.0;
             edges[ecount].edge_id = ni->out_edges[e].edge_id;
             edges[ecount].weight = w;
@@ -556,8 +476,7 @@ int graph_minimum_spanning_forest(const GV_GraphDB *g, GV_GraphEdgeSet *out) {
     return 0;
 }
 
-/* ── Maximum flow (Edmonds-Karp) over a dense residual matrix ───────────────── */
-
+/* Maximum flow (Edmonds-Karp) over a dense residual matrix. */
 double graph_max_flow(const GV_GraphDB *g, uint64_t source, uint64_t sink) {
     if (!g) return -1.0;
     if (source == sink) return -1.0;
@@ -578,12 +497,12 @@ double graph_max_flow(const GV_GraphDB *g, uint64_t source, uint64_t sink) {
     if (!cap) { gv_ga_free(ctx); return -1.0; }
 
     for (size_t u = 0; u < N; u++) {
-        const GV_GraphNode *nu = graph_get_node(g, gv_ga_id(ctx, u));
+        const GV_GraphNode *nu = gv_ga_node(ctx, gv_ga_id(ctx, u));
         if (!nu) continue;
         for (size_t e = 0; e < nu->out_count; e++) {
             size_t v = gv_ga_index(ctx, nu->out_edges[e].neighbor_id);
             if (v == (size_t)-1 || v == u) continue;
-            const GV_GraphEdge *edge = graph_get_edge(g, nu->out_edges[e].edge_id);
+            const GV_GraphEdge *edge = gv_ga_edge(ctx, nu->out_edges[e].edge_id);
             double c = edge ? (double)edge->weight : 1.0;
             if (c < 0.0) c = 0.0;
             cap[u * N + v] += c;         /* sum parallel-edge capacities */

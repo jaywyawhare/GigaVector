@@ -24,6 +24,10 @@ typedef struct {
     float         vector_score;      /**< Cosine similarity from the embedding layer. */
     int           triplet_hit_count; /**< Graph facts attached to this chunk. */
     int           memory_hit_count;  /**< Memory facts attached to this chunk. */
+    int           graph_neighbor_hits; /**< Entities of this chunk that are
+                                            direct KG neighbours of entities
+                                            from top-ranked chunks (GraphRAG
+                                            multi-hop signal; 0 if none). */
     GV_KGTriple  *triplets;          /**< Graph triples for this chunk (heap). */
     size_t        triplet_count;
     char        **facts;             /**< Memory fact texts for this chunk (heap). */

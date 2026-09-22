@@ -34,14 +34,12 @@ GV_Snapshot *snapshot_open(GV_SnapshotManager *mgr, uint64_t snapshot_id);
 /**
  * @brief Perform the operation.
  *
- * @param snap snap.
  */
 void snapshot_close(GV_Snapshot *snap);
 
 /**
  * @brief Return the number of stored items.
  *
- * @param snap snap.
  * @return Count value.
  */
 size_t snapshot_count(const GV_Snapshot *snap);
@@ -49,7 +47,6 @@ const float *snapshot_get_vector(const GV_Snapshot *snap, size_t index);
 /**
  * @brief Perform the operation.
  *
- * @param snap snap.
  * @return Count value.
  */
 size_t snapshot_dimension(const GV_Snapshot *snap);
@@ -58,8 +55,6 @@ size_t snapshot_dimension(const GV_Snapshot *snap);
  * @brief List items.
  *
  * @param mgr Manager instance.
- * @param infos infos.
- * @param max_infos max_infos.
  * @return 0 on success, -1 on error.
  */
 int snapshot_list(const GV_SnapshotManager *mgr, GV_SnapshotInfo *infos, size_t max_infos);
@@ -82,7 +77,6 @@ int snapshot_save(const GV_SnapshotManager *mgr, FILE *out);
 /**
  * @brief Load state from a file.
  *
- * @param mgr_ptr mgr_ptr.
  * @param in Input file stream.
  * @return 0 on success, -1 on error.
  */

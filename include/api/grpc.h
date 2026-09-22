@@ -35,6 +35,8 @@ typedef enum {
     GV_MSG_SAVE = 10,
     GV_MSG_IVFDISK_TRAIN = 11,
     GV_MSG_AUTH = 12,   /* Auth handshake. Payload = raw shared-secret token bytes. */
+    GV_MSG_COMPACT = 13,       /* Compact SoA storage; empty payload, response = [4B status]. */
+    GV_MSG_RANGE_SEARCH = 14,  /* Radius search; SEARCH payload with a trailing 4B float radius. */
     GV_MSG_RESPONSE = 128
 } GV_GrpcMsgType;
 

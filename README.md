@@ -117,12 +117,20 @@ Euclidean, Cosine, Dot Product, Manhattan, Hamming -- all with SIMD-optimized im
 - **Multimodal storage** -- SHA-256 content-addressable blob storage for images, audio, video, documents
 
 ### Transactions and Concurrency
-- **MVCC transactions** -- snapshot isolation with begin/commit/rollback
+- **MVCC transactions** -- snapshot isolation integrated into the database (`db.begin()` /
+  `db_begin`); read-your-writes, first-committer-wins conflict detection, WAL-logged commit; snapshot reads via `db_search_at_version`
 - **Thread-safe** -- reader-writer locks for concurrent access
 - **Client-side caching** -- LRU/LFU cache with TTL and mutation-based invalidation
 
+### Storage Engine
+- **Access-aware storage tiers** -- hot/warm/cold tiering with recency- and frequency-based
+  promotion/demotion; the search path records accesses automatically (`gv_db_set_access_tiering_policy`)
+- **WiscKey value-log** -- opt-in key/value separation: a uint64 key index over an append-only
+  value log with per-record CRC and garbage collection (`db_value_store_*`)
+
 ### Quantization and Compression
 - **Product Quantization (PQ)** -- codebook-based compression
+- **Optimized PQ (OPQ)** -- learned orthonormal rotation before PQ for higher recall; opt-in for PQ and IVF-PQ (`use_opq`, residual rotation persisted in save format v6)
 - **Scalar Quantization** -- configurable bit-width reduction; used by IVF-SQ8 (8-bit per dimension in inverted lists)
 - **TurboQuant** -- PolarQuant rotation-based compression with optional QJL; used by IVF-TurboQuant (requires even dimension); used by IVF-SQ8 (8-bit per dimension in inverted lists)
 - **TurboQuant** -- PolarQuant rotation-based compression with optional QJL; used by IVF-TurboQuant (requires even dimension)
@@ -137,7 +145,9 @@ Euclidean, Cosine, Dot Product, Manhattan, Hamming -- all with SIMD-optimized im
 - **gRPC API** -- binary protocol server with connection pooling and streaming support
 - **TLS/HTTPS** -- TLS 1.2/1.3 transport encryption with certificate management
 - **Sharding** -- hash/range-based data partitioning
-- **Replication** -- leader-follower with automatic failover and election
+- **Replication** -- leader-follower with automatic failover and election (with a standalone Raft
+  consensus core -- leader election + log replication with the Raft safety rules -- and Raft
+  election-restriction safety in the replication manager)
 - **Read replica load balancing** -- round-robin, least-lag, and random routing policies
 - **Cluster management** -- multi-node coordination
 - **Namespace / multi-tenancy** -- isolated collections within a single instance
@@ -165,6 +175,14 @@ Euclidean, Cosine, Dot Product, Manhattan, Hamming -- all with SIMD-optimized im
 - **Hybrid graph+vector search** -- embedding similarity filtered by entity type and predicate
 - **Subgraph extraction** -- BFS-based k-hop subgraph with entity and relation IDs
 - **Graph persistence** -- binary save/load for both graph DB ("GVGR") and knowledge graph ("GVKG")
+- **Graph write-ahead logging** -- crash-safe durability for both the property graph and knowledge
+  graph: every mutation is appended and fsync'd to `<snapshot>.wal`; load replays the log over the
+  last snapshot, and save checkpoints (truncates) it
+- **Graph transactions** -- staged write transactions (`graph_write_txn_*`) that apply all-or-nothing
+  with a single WAL fsync, plus repeatable-read read transactions (`graph_read_txn_*`) pinned to a
+  mutation version
+- **Multi-hop retrieval** -- `kg_expand_context()` collects deduplicated triples within N hops of seed
+  entities (GraphRAG-style context expansion); Cypher `REMOVE n.prop` performs true property deletion
 
 ### AI Integration
 - **LLM support** -- OpenAI, Anthropic, Google Gemini (chat completions)
@@ -333,12 +351,14 @@ schema.add_field("name", SchemaFieldType.STRING, required=True)
 schema.add_field("score", SchemaFieldType.FLOAT)
 assert schema.validate({"name": "test", "score": "0.95"})
 
-# MVCC transactions
-mvcc = MVCCManager(dimension=128)
-with mvcc.begin() as txn:
+# MVCC transactions (snapshot isolation, integrated into the database)
+with db.begin() as txn:            # -> DBTransaction
     txn.add_vector([0.1] * 128)
-    txn.add_vector([0.2] * 128)
-    # auto-commits on exit, or auto-rolls-back on exception
+    txn.delete(0)
+    txn.search([0.1] * 128, k=5)   # sees the txn's own staged writes
+    # auto-commits on clean exit (raises TransactionConflict on write-write conflict),
+    # or auto-rolls-back on exception
+# (MVCCManager remains available as a standalone snapshot-version manager)
 
 # Query optimizer
 opt = QueryOptimizer()

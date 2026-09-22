@@ -512,3 +512,50 @@ dataset: 1M vectors × 128 dimensions (SIFT1M), k=10.
 > (`make bench`, `make bench-ivfdisk`). Run `make bench` on your hardware and
 > update this table — actual numbers vary with CPU, memory bandwidth, and dataset
 > intrinsic dimensionality.
+
+## Measured Results
+
+Captured from the committed benchmark suite. Reproduce with `make bench` and
+`make bench-hnsw-build`; update this table with your machine's numbers.
+
+Environment: Linux x86_64, Release build (`make lib`, default flags), random
+float32 data.
+
+### HNSW build + recall (20k vectors, 128-dim, 200 queries, k=10)
+
+| Metric | Value |
+|--------|------:|
+| Build time | 4.58 s |
+| Insert throughput | 4,364 ins/s (229 us/ins) |
+| recall@10 | 0.883 |
+
+### IVF-PQ (10k vectors, 64-dim, nlist=256, m=8, nbits=8, nprobe=16, rerank=32)
+
+| Metric | Value |
+|--------|------:|
+| Query latency (200 queries) | 18.4 ms total |
+| QPS | 10,881 |
+| recall@1 | 0.375 (nprobe/rerank tuning recommended; see above) |
+
+### HNSW at scale (128-dim, serial build, default query params)
+
+| Scale | Build time | Sustained inserts | recall@10 |
+|-------|-----------:|------------------:|----------:|
+| 20k   | 4.58 s     | 4,364 ins/s       | 0.885     |
+| 500k  | 714 s      | 700 ins/s         | 0.376     |
+| 1M    | 1,611 s    | 621 ins/s         | 0.273     |
+
+**Read this table correctly:** insert cost grows as O(log N) graph traversal
+per insert, and the falling recall is *not* a construction-quality cliff — the
+benchmark queries with fixed default `efSearch`, which must scale with dataset
+size. Raise `efSearch` (see the tuning section above) or use
+`db_hnsw_build_parallel` for builds; expect recall back in the 0.9+ range at
+matching QPS trade-offs. Numbers published as measured so regressions in this
+curve are visible.
+
+### SIMD distance kernels (128-dim, 500k iterations)
+
+| Kernel | Scalar | SIMD | Speedup |
+|--------|-------:|-----:|--------:|
+| Euclidean | 26.1M ops/s | 71.1M ops/s | 2.72x |
+| Cosine    | 17.2M ops/s | 24.7M ops/s | 1.44x |

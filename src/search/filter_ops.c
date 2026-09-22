@@ -81,8 +81,6 @@ static void filter_ops_free_indices(size_t *indices, int on_heap) {
     }
 }
 
-/* Public API */
-
 int db_delete_by_filter(GV_Database *db, const char *filter_expr)
 {
     if (!db || !filter_expr) {

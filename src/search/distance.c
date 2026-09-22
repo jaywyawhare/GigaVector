@@ -468,6 +468,30 @@ float distance_hamming(const GV_Vector *a, const GV_Vector *b) {
     return count;
 }
 
+float distance_jaccard(const GV_Vector *a, const GV_Vector *b) {
+    if (a == NULL || b == NULL || a->data == NULL || b->data == NULL) {
+        return -1.0f;
+    }
+    if (a->dimension != b->dimension || a->dimension == 0) {
+        return -1.0f;
+    }
+
+    /* Continuous Tanimoto: dot / (|a|^2 + |b|^2 - dot). For binary inputs this is
+     * exactly intersection/union. Both-zero vectors are identical (distance 0). */
+    float dot = 0.0f, na = 0.0f, nb = 0.0f;
+    for (size_t i = 0; i < a->dimension; i++) {
+        float x = a->data[i], y = b->data[i];
+        dot += x * y;
+        na  += x * x;
+        nb  += y * y;
+    }
+    float denom = na + nb - dot;
+    if (denom <= 0.0f) return 0.0f;         /* a == b == 0 */
+    float t = dot / denom;
+    if (t > 1.0f) t = 1.0f; else if (t < 0.0f) t = 0.0f;
+    return 1.0f - t;
+}
+
 float distance(const GV_Vector *a, const GV_Vector *b, GV_DistanceType type) {
     if (a == NULL || b == NULL) {
         return -1.0f;
@@ -484,6 +508,8 @@ float distance(const GV_Vector *a, const GV_Vector *b, GV_DistanceType type) {
             return distance_manhattan(a, b);
         case GV_DISTANCE_HAMMING:
             return distance_hamming(a, b);
+        case GV_DISTANCE_JACCARD:
+            return distance_jaccard(a, b);
         default:
             return -1.0f;
     }
@@ -516,6 +542,8 @@ float distance_scalar(const GV_Vector *a, const GV_Vector *b, GV_DistanceType ty
         case GV_DISTANCE_HAMMING:
             /* Hamming has no SIMD variant; distance() is already scalar. */
             return distance_hamming(a, b);
+        case GV_DISTANCE_JACCARD:
+            return distance_jaccard(a, b);
         default:
             return -1.0f;
     }

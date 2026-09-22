@@ -20,10 +20,6 @@
 #include <pthread.h>
 #include <inttypes.h>
 
-/* -------------------------------------------------------------------------
- * Internal helpers
- * ---------------------------------------------------------------------- */
-
 /**
  * @brief Return current monotonic time in microseconds.
  */
@@ -32,10 +28,6 @@ static uint64_t ab_now_us(void) {
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (uint64_t)ts.tv_sec * 1000000ULL + (uint64_t)ts.tv_nsec / 1000ULL;
 }
-
-/* -------------------------------------------------------------------------
- * ab_test_create
- * ---------------------------------------------------------------------- */
 
 GV_ABTest *ab_test_create(GV_Database *db, const char *name, int type_b, float split) {
     if (!db || !name) {
@@ -87,8 +79,8 @@ GV_ABTest *ab_test_create(GV_Database *db, const char *name, int type_b, float s
     size_t count = database_count(db);
     for (size_t i = 0; i < count; i++) {
         const float *vec = database_get_vector(db, i);
-        if (vec) {
-            db_add_vector(shadow, vec, db->dimension);
+        if (vec && db_add_vector(shadow, vec, db->dimension) != 0) {
+            break;
         }
     }
 
@@ -96,10 +88,7 @@ GV_ABTest *ab_test_create(GV_Database *db, const char *name, int type_b, float s
     return test;
 }
 
-/* -------------------------------------------------------------------------
- * ab_test_route — must be called with db->ab_mutex held
- * ---------------------------------------------------------------------- */
-
+/* ab_test_route — must be called with db->ab_mutex held. */
 int ab_test_route(GV_Database *db) {
     if (!db || !db->ab_test) {
         return 0; /* default to A */
@@ -125,10 +114,7 @@ int ab_test_route(GV_Database *db) {
     return slot < threshold ? 1 : 0;
 }
 
-/* -------------------------------------------------------------------------
- * ab_test_record — must be called with db->ab_mutex held
- * ---------------------------------------------------------------------- */
-
+/* ab_test_record — must be called with db->ab_mutex held. */
 void ab_test_record(GV_Database *db, int which, double latency_us) {
     if (!db || !db->ab_test) {
         return;
@@ -143,10 +129,7 @@ void ab_test_record(GV_Database *db, int which, double latency_us) {
     }
 }
 
-/* -------------------------------------------------------------------------
- * ab_test_report — reads ab_test under caller's lock
- * ---------------------------------------------------------------------- */
-
+/* ab_test_report — reads ab_test under caller's lock. */
 int ab_test_report(const GV_Database *db, char *buf, size_t len) {
     if (!db || !db->ab_test || !buf || len == 0) {
         return -1;
@@ -185,10 +168,6 @@ int ab_test_report(const GV_Database *db, char *buf, size_t len) {
     return (n > 0 && (size_t)n < len) ? 0 : -1;
 }
 
-/* -------------------------------------------------------------------------
- * ab_test_destroy
- * ---------------------------------------------------------------------- */
-
 void ab_test_destroy(GV_ABTest *test) {
     if (!test) {
         return;
@@ -209,10 +188,6 @@ void ab_test_destroy(GV_ABTest *test) {
     }
     free(test);
 }
-
-/* -------------------------------------------------------------------------
- * Public API
- * ---------------------------------------------------------------------- */
 
 int gv_db_ab_test_start(GV_Database *db, const char *name, int type_b, float split) {
     if (!db || !name) {

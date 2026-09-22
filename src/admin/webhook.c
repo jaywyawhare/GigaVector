@@ -28,16 +28,12 @@
 #endif
 #include "core/compat.h"
 
-/* Internal Constants */
-
 #define MAX_WEBHOOKS       64
 #define MAX_SUBSCRIBERS    32
 #define WORK_QUEUE_SIZE    256
 #define DELIVERY_THREADS   2
 #define DEFAULT_MAX_RETRIES 3
 #define DEFAULT_TIMEOUT_MS  5000
-
-/* Internal Structures */
 
 typedef struct {
     char *id;
@@ -89,8 +85,6 @@ struct GV_WebhookManager {
     pthread_cond_t queue_cond;
 };
 
-/* Forward Declarations */
-
 static void *delivery_thread_func(void *arg);
 static int  enqueue_delivery(GV_WebhookManager *mgr, DeliveryWork *work);
 static void free_delivery_work(DeliveryWork *work);
@@ -98,8 +92,6 @@ static char *build_json_payload(const GV_Event *event);
 static int  compute_signature(const char *secret, const char *body,
                                char *out_hex, size_t out_len);
 static int  deliver_webhook(const DeliveryWork *work);
-
-/* Lifecycle */
 
 GV_WebhookManager *webhook_create(void) {
     GV_WebhookManager *mgr = gv_calloc(1, sizeof(GV_WebhookManager));
@@ -176,8 +168,6 @@ void webhook_destroy(GV_WebhookManager *mgr) {
     pthread_mutex_destroy(&mgr->mutex);
     gv_free(mgr);
 }
-
-/* Register / Unregister */
 
 int webhook_register(GV_WebhookManager *mgr, const char *webhook_id,
                          const GV_WebhookConfig *config) {
@@ -293,8 +283,6 @@ int webhook_resume(GV_WebhookManager *mgr, const char *webhook_id) {
     return -1;
 }
 
-/* List Webhooks */
-
 int webhook_list(const GV_WebhookManager *mgr, char ***out_ids, size_t *out_count) {
     if (!mgr || !out_ids || !out_count) return -1;
 
@@ -347,8 +335,6 @@ void webhook_free_list(char **ids, size_t count) {
     gv_free(ids);
 }
 
-/* Change Stream Subscribe / Unsubscribe */
-
 int webhook_subscribe(GV_WebhookManager *mgr, GV_EventType mask,
                           GV_ChangeCallback cb, void *user_data) {
     if (!mgr || !cb) return -1;
@@ -396,8 +382,6 @@ int webhook_unsubscribe(GV_WebhookManager *mgr, GV_ChangeCallback cb) {
     pthread_mutex_unlock(&mgr->mutex);
     return -1; /* not found */
 }
-
-/* Fire Event */
 
 int webhook_fire(GV_WebhookManager *mgr, const GV_Event *event) {
     if (!mgr || !event) return -1;
@@ -457,8 +441,6 @@ int webhook_fire(GV_WebhookManager *mgr, const GV_Event *event) {
     return 0;
 }
 
-/* Stats */
-
 int webhook_get_stats(const GV_WebhookManager *mgr, GV_WebhookStats *stats) {
     if (!mgr || !stats) return -1;
 
@@ -470,8 +452,6 @@ int webhook_get_stats(const GV_WebhookManager *mgr, GV_WebhookStats *stats) {
 
     return 0;
 }
-
-/* JSON Payload Builder */
 
 static const char *event_type_string(GV_EventType type) {
     switch (type) {
@@ -503,8 +483,6 @@ static char *build_json_payload(const GV_Event *event) {
     return buf;
 }
 
-/* HMAC Signature */
-
 static int compute_signature(const char *secret, const char *body,
                               char *out_hex, size_t out_len) {
     if (!secret || !body || !out_hex || out_len < 65) return -1;
@@ -528,7 +506,7 @@ static int compute_signature(const char *secret, const char *body,
     return 0;
 }
 
-/* HTTP Delivery (libcurl or stub) */
+/* HTTP delivery (libcurl or stub) */
 
 #ifdef HAVE_CURL
 #include <curl/curl.h>
@@ -628,8 +606,6 @@ static int deliver_webhook(const DeliveryWork *work) {
 
 #endif /* HAVE_CURL */
 
-/* Work Queue Helpers */
-
 /**
  * Enqueue a delivery work item.  Caller must hold mgr->mutex.
  * Ownership of work's heap pointers transfers to the queue on success.
@@ -654,8 +630,6 @@ static void free_delivery_work(DeliveryWork *work) {
     work->json_body = NULL;
     work->secret = NULL;
 }
-
-/* Background Delivery Thread */
 
 static void *delivery_thread_func(void *arg) {
     GV_WebhookManager *mgr = (GV_WebhookManager *)arg;

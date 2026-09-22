@@ -709,7 +709,12 @@ int context_graph_add_relationships(GV_ContextGraph *graph,
         RelationshipNode *found = NULL;
         
         while (node != NULL) {
-            if (strcmp(node->relationship.source_entity_id, rel->source_entity_id) == 0 &&
+            /* NULL-guard every field: relationships parsed from JSON can carry a
+             * NULL source/destination/type, and strcmp(NULL, ...) crashes. */
+            if (node->relationship.source_entity_id && rel->source_entity_id &&
+                node->relationship.destination_entity_id && rel->destination_entity_id &&
+                node->relationship.relationship_type && rel->relationship_type &&
+                strcmp(node->relationship.source_entity_id, rel->source_entity_id) == 0 &&
                 strcmp(node->relationship.destination_entity_id, rel->destination_entity_id) == 0 &&
                 strcmp(node->relationship.relationship_type, rel->relationship_type) == 0) {
                 found = node;
@@ -914,7 +919,14 @@ int context_graph_get_related(GV_ContextGraph *graph,
     
     size_t queue_front = 0;
     size_t queue_back = 0;
-    int *visited = (int *)gv_calloc(graph->entity_table_size * 100, sizeof(int));
+    /* Track visited entities by id, not by hash bucket: two distinct ids that
+     * collide to the same bucket would otherwise make the second be skipped,
+     * silently omitting reachable relationships. Ids are graph-owned and stable
+     * for the duration of this locked BFS. */
+    /* Size visited like the queue: visited_count grows in lockstep with enqueues
+     * (bounded by max_results*2), so the old entity_table_size*100 sizing could be
+     * SMALLER than the fill bound and overflow for large max_results. */
+    const char **visited = (const char **)gv_calloc(max_results * 2, sizeof(const char *));
     if (visited == NULL) {
         gv_free(queue);
         pthread_mutex_unlock(&graph->mutex);
@@ -926,7 +938,7 @@ int context_graph_get_related(GV_ContextGraph *graph,
     queue_back++;
     
     size_t visited_count = 0;
-    visited[visited_count++] = hash_str(entity_id) % graph->entity_table_size;
+    visited[visited_count++] = entity_id;
     
     while (queue_front < queue_back && result_count < max_results) {
         QueueItem current = queue[queue_front++];
@@ -956,9 +968,8 @@ int context_graph_get_related(GV_ContextGraph *graph,
             }
             
             int already_visited = 0;
-            size_t next_hash = hash_str(next_entity_id) % graph->entity_table_size;
             for (size_t j = 0; j < visited_count; j++) {
-                if (visited[j] == (int)next_hash) {
+                if (visited[j] && next_entity_id && strcmp(visited[j], next_entity_id) == 0) {
                     already_visited = 1;
                     break;
                 }
@@ -979,7 +990,7 @@ int context_graph_get_related(GV_ContextGraph *graph,
                 queue[queue_back].entity_id = next_entity_id;
                 queue[queue_back].depth = current.depth + 1;
                 queue_back++;
-                visited[visited_count++] = (int)next_hash;
+                visited[visited_count++] = next_entity_id;
             }
         }
     }

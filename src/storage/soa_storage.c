@@ -72,25 +72,21 @@ static int soa_storage_grow(GV_SoAStorage *storage, size_t min_capacity)
     int *tmp_del = (int *)soa_realloc(storage, storage->deleted, new_capacity * sizeof(int));
     uint64_t *tmp_ts = (uint64_t *)realloc(storage->insert_timestamps,
                                             new_capacity * sizeof(uint64_t));
-    if (!tmp_data || !tmp_meta || !tmp_del || !tmp_ts) {
-        /* Partial-failure recovery.  realloc leaves the ORIGINAL block intact
-         * on failure, so any array that failed still points at a valid buffer
-         * of the OLD capacity.  For the arrays that succeeded we adopt the
-         * (larger) new pointer so the enlarged block is not leaked -- note the
-         * arena-managed arrays use soa_realloc while insert_timestamps uses
-         * plain realloc; both return a fresh pointer that must be retained.
-         *
-         * Crucially we DO NOT advance storage->capacity: it must stay at the
-         * old value so the struct remains self-consistent.  The succeeded
-         * arrays are merely larger than capacity claims (harmless -- the extra
-         * tail is never indexed because all access is bounded by capacity, and
-         * that tail was never zero-initialised).  A later grow retry recomputes
-         * new_capacity from this unchanged capacity and re-reallocs every
-         * array, so no capacity/allocation desync is possible. */
+    uint64_t *tmp_cv = (uint64_t *)realloc(storage->create_version, new_capacity * sizeof(uint64_t));
+    uint64_t *tmp_dv = (uint64_t *)realloc(storage->delete_version, new_capacity * sizeof(uint64_t));
+    if (!tmp_data || !tmp_meta || !tmp_del || !tmp_ts || !tmp_cv || !tmp_dv) {
+        /* Partial-failure recovery: realloc leaves the original block intact on
+         * failure. Adopt the new pointer for arrays that succeeded (so the larger
+         * block isn't leaked) but do NOT advance storage->capacity — it must stay
+         * at the old value for self-consistency. Succeeded arrays being larger than
+         * capacity claims is harmless (the tail is never indexed); a later grow
+         * retry re-reallocs every array from the unchanged capacity, so no desync. */
         if (tmp_data) storage->data = tmp_data;
         if (tmp_meta) storage->metadata = tmp_meta;
         if (tmp_del) storage->deleted = tmp_del;
         if (tmp_ts) storage->insert_timestamps = tmp_ts;
+        if (tmp_cv) storage->create_version = tmp_cv;
+        if (tmp_dv) storage->delete_version = tmp_dv;
         return -1;
     }
     if (new_capacity > storage->capacity) {
@@ -100,11 +96,15 @@ static int soa_storage_grow(GV_SoAStorage *storage, size_t min_capacity)
                (new_capacity - storage->capacity) * sizeof(int));
         memset(tmp_ts + storage->capacity, 0,
                (new_capacity - storage->capacity) * sizeof(uint64_t));
+        memset(tmp_cv + storage->capacity, 0, (new_capacity - storage->capacity) * sizeof(uint64_t));
+        memset(tmp_dv + storage->capacity, 0, (new_capacity - storage->capacity) * sizeof(uint64_t));
     }
     storage->data = tmp_data;
     storage->metadata = tmp_meta;
     storage->deleted = tmp_del;
     storage->insert_timestamps = tmp_ts;
+    storage->create_version = tmp_cv;
+    storage->delete_version = tmp_dv;
     storage->capacity = new_capacity;
     return 0;
 }
@@ -156,7 +156,13 @@ GV_SoAStorage *soa_storage_create(size_t dimension, size_t initial_capacity) {
     }
 
     storage->insert_timestamps = (uint64_t *)calloc(storage->capacity, sizeof(uint64_t));
-    if (storage->insert_timestamps == NULL) {
+    storage->create_version = (uint64_t *)calloc(storage->capacity, sizeof(uint64_t));
+    storage->delete_version = (uint64_t *)calloc(storage->capacity, sizeof(uint64_t));
+    if (storage->insert_timestamps == NULL || storage->create_version == NULL ||
+        storage->delete_version == NULL) {
+        free(storage->insert_timestamps);
+        free(storage->create_version);
+        free(storage->delete_version);
         gv_free(storage->deleted);
         gv_free(storage->metadata);
         gv_free(storage->data);
@@ -230,8 +236,10 @@ void soa_storage_destroy(GV_SoAStorage *storage) {
         storage->deleted = NULL;
         storage->owner_db = NULL;
     }
-    /* insert_timestamps is a plain-heap array (never arena-owned); free unconditionally. */
+    /* insert_timestamps + version arrays are plain-heap (never arena-owned); free unconditionally. */
     free(storage->insert_timestamps);
+    free(storage->create_version);
+    free(storage->delete_version);
     gv_free(storage);
 }
 
@@ -309,6 +317,24 @@ int soa_storage_is_deleted(const GV_SoAStorage *storage, size_t index) {
         return -1;
     }
     return storage->deleted[index];
+}
+
+uint64_t soa_storage_create_version(const GV_SoAStorage *storage, size_t index) {
+    if (storage == NULL || index >= storage->count) return 0;
+    return storage->create_version[index];
+}
+
+uint64_t soa_storage_delete_version(const GV_SoAStorage *storage, size_t index) {
+    if (storage == NULL || index >= storage->count) return 0;
+    return storage->delete_version[index];
+}
+
+void soa_storage_set_create_version(GV_SoAStorage *storage, size_t index, uint64_t version) {
+    if (storage != NULL && index < storage->count) storage->create_version[index] = version;
+}
+
+void soa_storage_set_delete_version(GV_SoAStorage *storage, size_t index, uint64_t version) {
+    if (storage != NULL && index < storage->count) storage->delete_version[index] = version;
 }
 
 int soa_storage_update_data(GV_SoAStorage *storage, size_t index, const float *data) {

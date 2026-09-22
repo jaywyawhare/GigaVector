@@ -33,8 +33,16 @@
 #define BUFFER_SIZE (64 * 1024)
 
 #define BACKUP_FLAG_COMPRESSED 0x01
-#define BACKUP_FLAG_ENCRYPTED  0x02
+#define BACKUP_FLAG_ENCRYPTED  0x02   /* legacy inner-header bit; no longer set (see wrapper) */
 #define BACKUP_FLAG_INCREMENTAL 0x04
+
+/* Encryption is applied as a transparent OUTER wrapper around the whole plaintext
+ * backup: [BACKUP_ENC_MAGIC][ per chunk: 4-byte LE cipher_len | cipher ]. The
+ * inner backup format is untouched, so restore/verify just detect the magic,
+ * decrypt to a temp plaintext file, and delegate to the normal code path. */
+#define BACKUP_ENC_MAGIC     "GVBKENC1"
+#define BACKUP_ENC_MAGIC_LEN 8
+#define BACKUP_ENC_CHUNK     (64 * 1024)
 
 static const GV_BackupOptions DEFAULT_BACKUP_OPTIONS = {
     .compression = GV_BACKUP_COMPRESS_NONE,
@@ -109,6 +117,105 @@ static int backup_fsync_parent_dir(const char *path) {
 #endif
 }
 
+/* Derive the backup encryption key from a passphrase. Uses a fixed (zero) salt so
+ * the same passphrase deterministically yields the same key for encrypt/decrypt.
+ * The derived key->iv is irrelevant — crypto_encrypt generates a fresh nonce/IV
+ * per chunk and prepends it. */
+static int backup_derive_key(GV_CryptoContext *ctx, const char *pw, GV_CryptoKey *key) {
+    unsigned char salt[16] = {0};
+    return crypto_derive_key(ctx, pw, strlen(pw), salt, sizeof(salt), key);
+}
+
+/* True if the file begins with the encrypted-backup wrapper magic. */
+static int backup_file_is_encrypted(const char *path) {
+    FILE *f = fopen(path, "rb");
+    if (!f) return 0;
+    char m[BACKUP_ENC_MAGIC_LEN];
+    size_t n = fread(m, 1, BACKUP_ENC_MAGIC_LEN, f);
+    fclose(f);
+    return (n == BACKUP_ENC_MAGIC_LEN && memcmp(m, BACKUP_ENC_MAGIC, BACKUP_ENC_MAGIC_LEN) == 0);
+}
+
+/* Encrypt plain_path into out_path as [magic][per-chunk: 4-byte LE len | cipher]. */
+static int backup_encrypt_wrap(const char *plain_path, const char *out_path, const char *pw) {
+    GV_CryptoContext *ctx = crypto_create(NULL);
+    if (!ctx) return -1;
+    GV_CryptoKey key;
+    if (backup_derive_key(ctx, pw, &key) != 0) { crypto_destroy(ctx); return -1; }
+    FILE *fin = fopen(plain_path, "rb");
+    if (!fin) { crypto_wipe_key(&key); crypto_destroy(ctx); return -1; }
+    FILE *fout = fopen(out_path, "wb");
+    if (!fout) { fclose(fin); crypto_wipe_key(&key); crypto_destroy(ctx); return -1; }
+
+    int rc = 0;
+    unsigned char *buf = gv_alloc(BACKUP_ENC_CHUNK);
+    unsigned char *cipher = gv_alloc(BACKUP_ENC_CHUNK + 48);
+    if (!buf || !cipher) rc = -1;
+    if (rc == 0 && fwrite(BACKUP_ENC_MAGIC, 1, BACKUP_ENC_MAGIC_LEN, fout) != BACKUP_ENC_MAGIC_LEN) rc = -1;
+    size_t nread;
+    while (rc == 0 && (nread = fread(buf, 1, BACKUP_ENC_CHUNK, fin)) > 0) {
+        size_t clen = 0;
+        if (crypto_encrypt(ctx, &key, buf, nread, cipher, &clen) != 0) { rc = -1; break; }
+        unsigned char lb[4] = { (unsigned char)(clen & 0xFF), (unsigned char)((clen >> 8) & 0xFF),
+                                (unsigned char)((clen >> 16) & 0xFF), (unsigned char)((clen >> 24) & 0xFF) };
+        if (fwrite(lb, 1, 4, fout) != 4 || fwrite(cipher, 1, clen, fout) != clen) { rc = -1; break; }
+    }
+    if (ferror(fin)) rc = -1;
+    gv_free(buf); gv_free(cipher);
+    if (rc == 0 && fflush(fout) == 0) {
+#ifndef _WIN32
+        if (fsync(fileno(fout)) != 0) rc = -1;
+#endif
+    } else if (rc == 0) { rc = -1; }
+    if (fclose(fout) != 0) rc = -1;
+    fclose(fin);
+    crypto_wipe_key(&key); crypto_destroy(ctx);
+    if (rc != 0) remove(out_path);
+    return rc;
+}
+
+/* Decrypt a wrapped file (enc_path) into plaintext out_path. Returns -1 on a bad
+ * magic, wrong key, or corruption (crypto_decrypt's GCM tag / PKCS7 check fails). */
+static int backup_decrypt_wrap(const char *enc_path, const char *out_path, const char *pw) {
+    GV_CryptoContext *ctx = crypto_create(NULL);
+    if (!ctx) return -1;
+    GV_CryptoKey key;
+    if (backup_derive_key(ctx, pw, &key) != 0) { crypto_destroy(ctx); return -1; }
+    FILE *fin = fopen(enc_path, "rb");
+    if (!fin) { crypto_wipe_key(&key); crypto_destroy(ctx); return -1; }
+    char m[BACKUP_ENC_MAGIC_LEN];
+    if (fread(m, 1, BACKUP_ENC_MAGIC_LEN, fin) != BACKUP_ENC_MAGIC_LEN ||
+        memcmp(m, BACKUP_ENC_MAGIC, BACKUP_ENC_MAGIC_LEN) != 0) {
+        fclose(fin); crypto_wipe_key(&key); crypto_destroy(ctx); return -1;
+    }
+    FILE *fout = fopen(out_path, "wb");
+    if (!fout) { fclose(fin); crypto_wipe_key(&key); crypto_destroy(ctx); return -1; }
+
+    int rc = 0;
+    size_t cap = BACKUP_ENC_CHUNK + 48;
+    unsigned char *cbuf = gv_alloc(cap);
+    unsigned char *plain = gv_alloc(cap);
+    if (!cbuf || !plain) rc = -1;
+    unsigned char lb[4]; size_t got;
+    while (rc == 0 && (got = fread(lb, 1, 4, fin)) == 4) {
+        uint32_t clen = (uint32_t)lb[0] | ((uint32_t)lb[1] << 8) |
+                        ((uint32_t)lb[2] << 16) | ((uint32_t)lb[3] << 24);
+        if (clen == 0 || clen > cap) { rc = -1; break; }
+        if (fread(cbuf, 1, clen, fin) != clen) { rc = -1; break; }
+        size_t plen = 0;
+        if (crypto_decrypt(ctx, &key, cbuf, clen, plain, &plen) != 0) { rc = -1; break; }
+        if (fwrite(plain, 1, plen, fout) != plen) { rc = -1; break; }
+    }
+    if (rc == 0 && got != 0 && got != 4) rc = -1;   /* trailing partial length header */
+    if (ferror(fin)) rc = -1;
+    gv_free(cbuf); gv_free(plain);
+    if (fclose(fout) != 0) rc = -1;
+    fclose(fin);
+    crypto_wipe_key(&key); crypto_destroy(ctx);
+    if (rc != 0) remove(out_path);
+    return rc;
+}
+
 GV_BackupResult *backup_create(GV_Database *db, const char *backup_path,
                                    const GV_BackupOptions *options,
                                    GV_BackupProgressCallback progress,
@@ -145,9 +252,9 @@ GV_BackupResult *backup_create(GV_Database *db, const char *backup_path,
     if (opts->compression != GV_BACKUP_COMPRESS_NONE) {
         header.flags |= BACKUP_FLAG_COMPRESSED;
     }
-    if (opts->encryption_key) {
-        header.flags |= BACKUP_FLAG_ENCRYPTED;
-    }
+    /* Encryption is applied as an outer wrapper after the plaintext backup is
+     * written (see the finalization below), so the inner header is a plain
+     * backup — no BACKUP_FLAG_ENCRYPTED here. */
     header.created_at = (uint64_t)time(NULL);
     header.vector_count = db->count;
     header.dimension = db->dimension;
@@ -223,13 +330,10 @@ GV_BackupResult *backup_create(GV_Database *db, const char *backup_path,
         progress(count, count, user_data);
     }
 
-    /* v2 metadata section (appended AFTER the raw vectors so the vector layout
-     * stays byte-for-byte identical to v1).  We always write the meta_present
-     * marker; when include_metadata is off (or there is no SoA storage to read
-     * from) we write a zero marker and no records, yielding a valid v2 file with
-     * an empty metadata section.  When on, we emit exactly `count` records in
-     * vector-index order, each via write_metadata() — the same wire format the
-     * main snapshot uses (uint32 count + length-prefixed key/value pairs). */
+    /* v2 metadata section, appended AFTER the raw vectors so the vector layout
+     * stays byte-for-byte identical to v1. Always write the meta_present marker
+     * (0 = empty section); when on, emit exactly `count` records in vector-index
+     * order via write_metadata() (same wire format as the main snapshot). */
     uint32_t meta_present = (opts->include_metadata && db->soa_storage) ? 1u : 0u;
     if (write_u32(fp, meta_present) != 0) {
         fclose(fp);
@@ -271,6 +375,41 @@ GV_BackupResult *backup_create(GV_Database *db, const char *backup_path,
             fwrite(checksum, 1, BACKUP_CHECKSUM_LEN, fp);
             fclose(fp);
         }
+    }
+
+    /* Encryption: wrap the completed plaintext temp file. The plaintext is
+     * verified first (we can't verify the ciphertext without the key), then
+     * encrypted into a second temp and published; the inner backup format is
+     * unchanged. */
+    if (opts->encryption_key) {
+        if (opts->verify_after) {
+            GV_BackupResult *v = backup_verify(tmp_path, NULL);
+            int ok = v && v->success;
+            if (v) backup_result_free(v);
+            if (!ok) { remove(tmp_path); return create_result(0, "Verification failed"); }
+        }
+        char enc_tmp[1024];
+        if (snprintf(enc_tmp, sizeof(enc_tmp), "%s.enc.tmp", backup_path) >= (int)sizeof(enc_tmp)) {
+            remove(tmp_path);
+            return create_result(0, "Backup path too long");
+        }
+        if (backup_encrypt_wrap(tmp_path, enc_tmp, opts->encryption_key) != 0) {
+            remove(tmp_path); remove(enc_tmp);
+            return create_result(0, "Failed to encrypt backup");
+        }
+        remove(tmp_path);
+        if (gv_rename_replace(enc_tmp, backup_path) != 0) {
+            remove(enc_tmp);
+            return create_result(0, "Failed to publish encrypted backup");
+        }
+        if (backup_fsync_parent_dir(backup_path) != 0) {
+            return create_result(0, "Failed to fsync backup directory");
+        }
+        GV_BackupResult *result = create_result(1, NULL);
+        result->bytes_processed = data_size;
+        result->vectors_processed = db->count;
+        result->elapsed_seconds = get_time_seconds() - start_time;
+        return result;
     }
 
     /* Durably flush the temp file before publishing it: fflush + fsync so a crash
@@ -349,17 +488,10 @@ void backup_result_free(GV_BackupResult *result) {
 }
 
 /* Read the v2 metadata section (positioned immediately after the raw vectors)
- * and apply it to the just-restored database, per vector index.
- *
- * Backward compatibility: for v1 backups there is no metadata section, so this
- * is a no-op (callers gate on header->version).  For v2 backups the section
- * begins with a uint32 meta_present marker; when it is 0 (include_metadata was
- * off, or the source had no metadata) there are no records to read.
- *
- * `fp` must be positioned at the start of the metadata section.  Returns 0 on
- * success (including "nothing to apply"); a truncated/garbled section is
- * treated as a soft failure — the vectors are already restored, so we simply
- * stop applying metadata and return 0 rather than failing the whole restore. */
+ * and apply it per vector index. No-op for v1 (no section) or a 0 meta_present
+ * marker. `fp` must be at the section start. Always returns 0: a truncated/garbled
+ * section is a soft failure — vectors are already restored, so stop applying
+ * metadata rather than failing the whole restore. */
 static int backup_apply_metadata_section(FILE *fp, GV_Database *db,
                                          uint32_t version, uint64_t vector_count) {
     if (!fp || !db || version < 2) return 0;
@@ -432,6 +564,26 @@ GV_BackupResult *backup_restore(const char *backup_path, const char *db_path,
     const GV_RestoreOptions *opts = options ? options : &DEFAULT_RESTORE_OPTIONS;
     double start_time = get_time_seconds();
 
+    /* Encrypted backup (outer wrapper): decrypt to a temp plaintext file and
+     * restore from that. The decrypted temp is a plain backup, so the recursive
+     * call does not re-enter this branch. */
+    if (backup_file_is_encrypted(backup_path)) {
+        if (!opts->decryption_key || opts->decryption_key[0] == '\0') {
+            return create_result(0, "Backup is encrypted but no decryption key provided");
+        }
+        char dec_tmp[1024];
+        if (snprintf(dec_tmp, sizeof(dec_tmp), "%s.dec.tmp", db_path) >= (int)sizeof(dec_tmp)) {
+            return create_result(0, "Path too long");
+        }
+        if (backup_decrypt_wrap(backup_path, dec_tmp, opts->decryption_key) != 0) {
+            remove(dec_tmp);
+            return create_result(0, "Decryption failed — wrong key or corrupted backup");
+        }
+        GV_BackupResult *r = backup_restore(dec_tmp, db_path, options, progress, user_data);
+        remove(dec_tmp);
+        return r;
+    }
+
     if (!opts->overwrite) {
         struct stat st;
         if (stat(db_path, &st) == 0) {
@@ -496,7 +648,9 @@ GV_BackupResult *backup_restore(const char *backup_path, const char *db_path,
             break;
         }
 
-        db_add_vector(db, buffer, header.dimension);
+        if (db_add_vector(db, buffer, header.dimension) != 0) {
+            break;
+        }
         vectors_read++;
 
         if (progress && vectors_read % 1000 == 0) {
@@ -543,6 +697,24 @@ GV_BackupResult *backup_restore_to_db(const char *backup_path,
 
     const GV_RestoreOptions *opts = options ? options : &DEFAULT_RESTORE_OPTIONS;
 
+    /* Encrypted backup: decrypt to a temp plaintext file, then restore from it. */
+    if (backup_file_is_encrypted(backup_path)) {
+        if (!opts->decryption_key || opts->decryption_key[0] == '\0') {
+            return create_result(0, "Backup is encrypted but no decryption key provided");
+        }
+        char dec_tmp[1024];
+        if (snprintf(dec_tmp, sizeof(dec_tmp), "%s.dec.tmp", backup_path) >= (int)sizeof(dec_tmp)) {
+            return create_result(0, "Path too long");
+        }
+        if (backup_decrypt_wrap(backup_path, dec_tmp, opts->decryption_key) != 0) {
+            remove(dec_tmp);
+            return create_result(0, "Decryption failed — wrong key or corrupted backup");
+        }
+        GV_BackupResult *r = backup_restore_to_db(dec_tmp, options, db);
+        remove(dec_tmp);
+        return r;
+    }
+
     if (opts->verify_checksum) {
         GV_BackupResult *verify = backup_verify(backup_path, opts->decryption_key);
         if (!verify->success) {
@@ -587,7 +759,9 @@ GV_BackupResult *backup_restore_to_db(const char *backup_path,
         if (read_floats(fp, buffer, header.dimension) != 0) {
             break;
         }
-        db_add_vector(*db, buffer, header.dimension);
+        if (db_add_vector(*db, buffer, header.dimension) != 0) {
+            break;
+        }
         vectors_read++;
     }
 
@@ -643,6 +817,24 @@ int backup_read_header(const char *backup_path, GV_BackupHeader *header) {
 GV_BackupResult *backup_verify(const char *backup_path, const char *decryption_key) {
     if (!backup_path) {
         return create_result(0, "Invalid parameters");
+    }
+
+    /* Encrypted backup: decrypt to a temp and verify the plaintext. */
+    if (backup_file_is_encrypted(backup_path)) {
+        if (!decryption_key || decryption_key[0] == '\0') {
+            return create_result(0, "Backup is encrypted but no decryption key provided");
+        }
+        char dec_tmp[1024];
+        if (snprintf(dec_tmp, sizeof(dec_tmp), "%s.decv.tmp", backup_path) >= (int)sizeof(dec_tmp)) {
+            return create_result(0, "Path too long");
+        }
+        if (backup_decrypt_wrap(backup_path, dec_tmp, decryption_key) != 0) {
+            remove(dec_tmp);
+            return create_result(0, "Decryption failed — wrong key or corrupted backup");
+        }
+        GV_BackupResult *r = backup_verify(dec_tmp, NULL);
+        remove(dec_tmp);
+        return r;
     }
 
     GV_BackupHeader header;
@@ -754,8 +946,10 @@ GV_BackupResult *backup_verify(const char *backup_path, const char *decryption_k
         return create_result(0, "Backup file appears truncated");
     }
 
-    /* Verify checksum if present — force null termination before compare */
-    header.checksum[BACKUP_CHECKSUM_LEN - 1] = '\0';
+    /* Verify checksum if present — NUL-terminate after all 64 hex chars (the
+     * field is 65 bytes). Using LEN-1 here truncated a real digit and made every
+     * verify mismatch. */
+    header.checksum[BACKUP_CHECKSUM_LEN] = '\0';
     if (header.checksum[0] != '\0') {
         char computed[65];
         if (backup_compute_checksum(backup_path, computed) == 0) {
@@ -892,9 +1086,7 @@ GV_BackupResult *backup_create_incremental(GV_Database *db, const char *backup_p
     if (opts->compression != GV_BACKUP_COMPRESS_NONE) {
         header.flags |= BACKUP_FLAG_COMPRESSED;
     }
-    if (opts->encryption_key) {
-        header.flags |= BACKUP_FLAG_ENCRYPTED;
-    }
+    /* Encryption is an outer wrapper (applied after write); inner header is plain. */
     header.created_at = (uint64_t)time(NULL);
     header.vector_count = vectors_to_backup;
     header.dimension = db->dimension;
@@ -1043,6 +1235,21 @@ GV_BackupResult *backup_merge(const char *base_backup_path,
     }
 
     fclose(out_fp);
+
+    /* Recompute the whole-file checksum: the merged output carries the base
+     * backup's header (with its now-stale SHA) plus appended incremental
+     * payloads and a patched vector_count. Without rewriting it, the default
+     * verifying restore rejects every merged backup. backup_compute_checksum
+     * zeroes the checksum field before hashing, so patching it back is safe. */
+    char merged_checksum[65];
+    if (backup_compute_checksum(output_path, merged_checksum) == 0) {
+        FILE *cf = fopen(output_path, "r+b");
+        if (cf) {
+            fseek(cf, (long)BACKUP_HEADER_FIXED_SIZE, SEEK_SET);
+            fwrite(merged_checksum, 1, BACKUP_CHECKSUM_LEN, cf);
+            fclose(cf);
+        }
+    }
 
     GV_BackupResult *result = create_result(1, NULL);
     if (result) {

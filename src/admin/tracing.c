@@ -18,24 +18,16 @@
 #include <stdint.h>
 #include <inttypes.h>
 
-/* Constants */
-
 #define GV_TRACE_INITIAL_CAPACITY 16
-
-/* Internal State */
 
 static uint64_t trace_id_counter = 0;
 static pthread_mutex_t trace_id_mutex = PTHREAD_MUTEX_INITIALIZER;
-
-/* Utility */
 
 uint64_t trace_get_time_us(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (uint64_t)ts.tv_sec * 1000000ULL + (uint64_t)ts.tv_nsec / 1000ULL;
 }
-
-/* Internal Helpers */
 
 /**
  * @brief Ensure the spans array has room for at least one more span.
@@ -82,8 +74,6 @@ static GV_TraceSpan *trace_find_last_open_span(GV_QueryTrace *trace) {
 
     return NULL;
 }
-
-/* Trace Lifecycle */
 
 GV_QueryTrace *trace_begin(void) {
     GV_QueryTrace *trace = gv_calloc(1, sizeof(GV_QueryTrace));
@@ -136,8 +126,6 @@ void trace_destroy(GV_QueryTrace *trace) {
     gv_free(trace->spans);
     gv_free(trace);
 }
-
-/* Span Operations */
 
 void trace_span_start(GV_QueryTrace *trace, const char *name) {
     if (!trace || !trace->active || !name) {
@@ -212,51 +200,6 @@ void trace_set_metadata(GV_QueryTrace *trace, const char *metadata) {
     span->metadata = metadata ? gv_dup_cstr(metadata) : NULL;
 }
 
-/* Serialization */
-
-/**
- * @brief Escape a string for JSON output.
- *
- * Handles backslash, double-quote, and common control characters.
- *
- * @param src Input string.
- * @param dst Output buffer.
- * @param dst_size Size of output buffer.
- * @return Number of characters written (excluding null terminator).
- */
-static size_t trace_json_escape(const char *src, char *dst, size_t dst_size) {
-    size_t written = 0;
-
-    if (!src || !dst || dst_size == 0) {
-        return 0;
-    }
-
-    for (const char *p = src; *p && written + 1 < dst_size; p++) {
-        char c = *p;
-        if (c == '\\' || c == '"') {
-            if (written + 2 >= dst_size) break;
-            dst[written++] = '\\';
-            dst[written++] = c;
-        } else if (c == '\n') {
-            if (written + 2 >= dst_size) break;
-            dst[written++] = '\\';
-            dst[written++] = 'n';
-        } else if (c == '\r') {
-            if (written + 2 >= dst_size) break;
-            dst[written++] = '\\';
-            dst[written++] = 'r';
-        } else if (c == '\t') {
-            if (written + 2 >= dst_size) break;
-            dst[written++] = '\\';
-            dst[written++] = 't';
-        } else {
-            dst[written++] = c;
-        }
-    }
-
-    dst[written] = '\0';
-    return written;
-}
 
 char *trace_to_json(const GV_QueryTrace *trace) {
     if (!trace) {
@@ -289,50 +232,52 @@ char *trace_to_json(const GV_QueryTrace *trace) {
     for (size_t i = 0; i < trace->span_count; i++) {
         const GV_TraceSpan *span = &trace->spans[i];
 
-        /* Escape the span name. */
+        /* Escape the span name and metadata up front. */
         char escaped_name[512];
-        trace_json_escape(span->name ? span->name : "", escaped_name, sizeof(escaped_name));
-
-        /* Start the span object. */
-        if (i > 0) {
-            if (offset < estimate) {
-                buf[offset++] = ',';
-            }
+        gv_json_escape(escaped_name, sizeof(escaped_name), span->name ? span->name : "");
+        char escaped_meta[1024];
+        if (span->metadata) {
+            gv_json_escape(escaped_meta, sizeof(escaped_meta), span->metadata);
         }
+
+        /* Ensure headroom for this whole span object BEFORE writing. The old code
+         * grew AFTER writing and only reserved 512 bytes, but a span object can be
+         * ~1600 bytes (name<=511 + metadata<=1023 + fixed); on truncation the
+         * snprintf return (would-have-written length) pushed `offset` past
+         * `estimate`, and the next `estimate - offset` underflowed to a huge size,
+         * writing out of bounds. Growing first makes truncation impossible. */
+        size_t need = 2 + strlen(escaped_name) + 96 +
+                      (span->metadata ? strlen(escaped_meta) + 4 : 6);
+        while (offset + need > estimate) {
+            estimate *= 2;
+            char *new_buf = gv_realloc(buf, estimate);
+            if (!new_buf) { gv_free(buf); return NULL; }
+            buf = new_buf;
+        }
+
+        if (i > 0) buf[offset++] = ',';
 
         ret = snprintf(buf + offset, estimate - offset,
                        "{\"name\":\"%s\",\"start_us\":%" PRIu64 ",\"duration_us\":%" PRIu64 ",\"metadata\":",
                        escaped_name, span->start_us, span->duration_us);
-        if (ret < 0) {
-            gv_free(buf);
-            return NULL;
-        }
+        if (ret < 0) { gv_free(buf); return NULL; }
         offset += (size_t)ret;
 
-        /* Metadata: null or escaped string. */
         if (span->metadata) {
-            char escaped_meta[1024];
-            trace_json_escape(span->metadata, escaped_meta, sizeof(escaped_meta));
             ret = snprintf(buf + offset, estimate - offset, "\"%s\"}", escaped_meta);
         } else {
             ret = snprintf(buf + offset, estimate - offset, "null}");
         }
-        if (ret < 0) {
-            gv_free(buf);
-            return NULL;
-        }
+        if (ret < 0) { gv_free(buf); return NULL; }
         offset += (size_t)ret;
+    }
 
-        /* Grow buffer if running low. */
-        if (offset + 512 > estimate) {
-            estimate *= 2;
-            char *new_buf = gv_realloc(buf, estimate);
-            if (!new_buf) {
-                gv_free(buf);
-                return NULL;
-            }
-            buf = new_buf;
-        }
+    /* Headroom for the closing "]}" (and NUL). */
+    if (offset + 4 > estimate) {
+        estimate += 8;
+        char *new_buf = gv_realloc(buf, estimate);
+        if (!new_buf) { gv_free(buf); return NULL; }
+        buf = new_buf;
     }
 
     ret = snprintf(buf + offset, estimate - offset, "]}");
@@ -346,8 +291,6 @@ char *trace_to_json(const GV_QueryTrace *trace) {
     char *result = gv_realloc(buf, offset + 1);
     return result ? result : buf;
 }
-
-/* Pretty Print */
 
 void trace_print(const GV_QueryTrace *trace, FILE *out) {
     if (!trace || !out) {

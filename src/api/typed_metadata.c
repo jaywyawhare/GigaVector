@@ -12,8 +12,6 @@
 #include <stdio.h>
 #include <math.h>
 
-/* Value Creation Functions */
-
 GV_TypedValue typed_null(void) {
     GV_TypedValue val;
     memset(&val, 0, sizeof(val));
@@ -77,14 +75,11 @@ GV_TypedValue typed_object(void) {
     return val;
 }
 
-/* Array Operations */
-
 int typed_array_push(GV_TypedValue *array, const GV_TypedValue *item) {
     if (!array || array->type != GV_META_TYPE_ARRAY || !item) {
         return -1;
     }
 
-    /* Grow capacity if needed */
     if (array->data.array_val.count >= array->data.array_val.capacity) {
         size_t new_cap = array->data.array_val.capacity == 0 ? 4 : array->data.array_val.capacity * 2;
         GV_TypedValue *new_items = gv_realloc(array->data.array_val.items, new_cap * sizeof(GV_TypedValue));
@@ -95,7 +90,6 @@ int typed_array_push(GV_TypedValue *array, const GV_TypedValue *item) {
         array->data.array_val.capacity = new_cap;
     }
 
-    /* Copy item */
     array->data.array_val.items[array->data.array_val.count] = typed_value_copy(item);
     array->data.array_val.count++;
 
@@ -119,24 +113,19 @@ size_t typed_array_length(const GV_TypedValue *array) {
     return array->data.array_val.count;
 }
 
-/* Object Operations */
-
 int typed_object_set(GV_TypedValue *object, const char *key, const GV_TypedValue *value) {
     if (!object || object->type != GV_META_TYPE_OBJECT || !key || !value) {
         return -1;
     }
 
-    /* Check if key already exists */
     for (size_t i = 0; i < object->data.object_val.count; i++) {
         if (strcmp(object->data.object_val.keys[i], key) == 0) {
-            /* Update existing value */
             typed_value_free(&object->data.object_val.values[i]);
             object->data.object_val.values[i] = typed_value_copy(value);
             return 0;
         }
     }
 
-    /* Grow capacity if needed */
     if (object->data.object_val.count >= object->data.object_val.capacity) {
         size_t new_cap = object->data.object_val.capacity == 0 ? 4 : object->data.object_val.capacity * 2;
         char **new_keys = gv_realloc(object->data.object_val.keys, new_cap * sizeof(char *));
@@ -151,7 +140,6 @@ int typed_object_set(GV_TypedValue *object, const char *key, const GV_TypedValue
         object->data.object_val.capacity = new_cap;
     }
 
-    /* Add new key-value pair */
     object->data.object_val.keys[object->data.object_val.count] = gv_dup_cstr(key);
     object->data.object_val.values[object->data.object_val.count] = typed_value_copy(value);
     object->data.object_val.count++;
@@ -181,8 +169,6 @@ size_t typed_object_length(const GV_TypedValue *object) {
     }
     return object->data.object_val.count;
 }
-
-/* Value Extraction */
 
 const char *typed_get_string(const GV_TypedValue *value) {
     if (!value || value->type != GV_META_TYPE_STRING) {
@@ -224,8 +210,6 @@ int typed_get_bool(const GV_TypedValue *value, bool *out) {
     return 0;
 }
 
-/* Comparison Operations */
-
 static double get_numeric_value(const GV_TypedValue *value) {
     if (value->type == GV_META_TYPE_INT64) {
         return (double)value->data.int_val;
@@ -243,7 +227,6 @@ static bool is_numeric(const GV_TypedValue *value) {
 int typed_compare(const GV_TypedValue *a, const GV_TypedValue *b) {
     if (!a || !b) return 0;
 
-    /* Numeric comparison */
     if (is_numeric(a) && is_numeric(b)) {
         double va = get_numeric_value(a);
         double vb = get_numeric_value(b);
@@ -252,7 +235,6 @@ int typed_compare(const GV_TypedValue *a, const GV_TypedValue *b) {
         return 0;
     }
 
-    /* Same type comparison */
     if (a->type != b->type) return 0;
 
     switch (a->type) {
@@ -273,7 +255,6 @@ int typed_compare(const GV_TypedValue *a, const GV_TypedValue *b) {
 bool typed_equals(const GV_TypedValue *a, const GV_TypedValue *b) {
     if (!a || !b) return false;
 
-    /* Numeric comparison */
     if (is_numeric(a) && is_numeric(b)) {
         double va = get_numeric_value(a);
         double vb = get_numeric_value(b);
@@ -347,8 +328,6 @@ bool typed_array_contains(const GV_TypedValue *array, const GV_TypedValue *item)
     }
     return false;
 }
-
-/* Memory Management */
 
 void typed_value_free(GV_TypedValue *value) {
     if (!value) return;
@@ -498,7 +477,6 @@ static int ensure_capacity(uint8_t **buf, size_t *cap, size_t needed, size_t cur
 static int serialize_value(const GV_TypedValue *value, uint8_t **buf, size_t *len, size_t *cap) {
     if (!value) return -1;
 
-    /* Write type */
     if (ensure_capacity(buf, cap, 1, *len) < 0) return -1;
     (*buf)[(*len)++] = (uint8_t)value->type;
 
@@ -583,9 +561,14 @@ int typed_value_serialize(const GV_TypedValue *value, uint8_t **buf, size_t *len
     return 0;
 }
 
-static int deserialize_value(const uint8_t *buf, size_t len, size_t *pos, GV_TypedValue *out);
+/* Cap recursion so a crafted deeply-nested ARRAY/OBJECT blob can't overflow the
+ * C stack (each level costs only a few bytes on the wire but a stack frame here). */
+#define TYPED_META_MAX_DEPTH 64
 
-static int deserialize_value(const uint8_t *buf, size_t len, size_t *pos, GV_TypedValue *out) {
+static int deserialize_value(const uint8_t *buf, size_t len, size_t *pos, GV_TypedValue *out, size_t depth);
+
+static int deserialize_value(const uint8_t *buf, size_t len, size_t *pos, GV_TypedValue *out, size_t depth) {
+    if (depth > TYPED_META_MAX_DEPTH) return -1;
     if (*pos >= len) return -1;
 
     memset(out, 0, sizeof(*out));
@@ -599,7 +582,9 @@ static int deserialize_value(const uint8_t *buf, size_t len, size_t *pos, GV_Typ
             if (*pos + 4 > len) return -1;
             uint32_t str_len;
             memcpy(&str_len, buf + *pos, 4); *pos += 4;
-            if (*pos + str_len > len) return -1;
+            /* Subtractive form avoids a 32-bit size_t wrap: *pos <= len here, so
+             * len - *pos can't underflow, and str_len (uint32) can't overflow it. */
+            if (str_len > len - *pos) return -1;
             out->data.string_val = gv_alloc(str_len + 1);
             if (!out->data.string_val) return -1;
             memcpy(out->data.string_val, buf + *pos, str_len);
@@ -634,7 +619,7 @@ static int deserialize_value(const uint8_t *buf, size_t len, size_t *pos, GV_Typ
                 out->data.array_val.items = gv_alloc(count * sizeof(GV_TypedValue));
                 if (!out->data.array_val.items) return -1;
                 for (uint32_t i = 0; i < count; i++) {
-                    if (deserialize_value(buf, len, pos, &out->data.array_val.items[i]) < 0) {
+                    if (deserialize_value(buf, len, pos, &out->data.array_val.items[i], depth + 1) < 0) {
                         return -1;
                     }
                 }
@@ -656,13 +641,13 @@ static int deserialize_value(const uint8_t *buf, size_t len, size_t *pos, GV_Typ
                     if (*pos + 4 > len) return -1;
                     uint32_t key_len;
                     memcpy(&key_len, buf + *pos, 4); *pos += 4;
-                    if (*pos + key_len > len) return -1;
+                    if (key_len > len - *pos) return -1;  /* subtractive: avoid 32-bit wrap */
                     out->data.object_val.keys[i] = gv_alloc(key_len + 1);
                     if (!out->data.object_val.keys[i]) return -1;
                     memcpy(out->data.object_val.keys[i], buf + *pos, key_len);
                     out->data.object_val.keys[i][key_len] = '\0';
                     *pos += key_len;
-                    if (deserialize_value(buf, len, pos, &out->data.object_val.values[i]) < 0) {
+                    if (deserialize_value(buf, len, pos, &out->data.object_val.values[i], depth + 1) < 0) {
                         return -1;
                     }
                 }
@@ -680,7 +665,7 @@ static int deserialize_value(const uint8_t *buf, size_t len, size_t *pos, GV_Typ
 int typed_value_deserialize(const uint8_t *buf, size_t len, GV_TypedValue *out) {
     if (!buf || !out) return -1;
     size_t pos = 0;
-    if (deserialize_value(buf, len, &pos, out) < 0) {
+    if (deserialize_value(buf, len, &pos, out, 0) < 0) {
         return -1;
     }
     return (int)pos;
@@ -693,13 +678,11 @@ int typed_metadata_serialize(const GV_TypedMetadata *meta, uint8_t **buf, size_t
     *len = 0;
     size_t cap = 0;
 
-    /* Serialize key */
     uint32_t key_len = (uint32_t)strlen(meta->key);
     if (ensure_capacity(buf, &cap, 4 + key_len, *len) < 0) return -1;
     memcpy(*buf + *len, &key_len, 4); *len += 4;
     memcpy(*buf + *len, meta->key, key_len); *len += key_len;
 
-    /* Serialize value */
     if (serialize_value(&meta->value, buf, len, &cap) < 0) {
         gv_free(*buf);
         *buf = NULL;
@@ -715,7 +698,6 @@ GV_TypedMetadata *typed_metadata_deserialize(const uint8_t *buf, size_t len) {
 
     size_t pos = 0;
 
-    /* Deserialize key */
     uint32_t key_len;
     memcpy(&key_len, buf + pos, 4); pos += 4;
     if (pos + key_len > len) return NULL;
@@ -732,8 +714,7 @@ GV_TypedMetadata *typed_metadata_deserialize(const uint8_t *buf, size_t len) {
     meta->key[key_len] = '\0';
     pos += key_len;
 
-    /* Deserialize value */
-    if (deserialize_value(buf, len, &pos, &meta->value) < 0) {
+    if (deserialize_value(buf, len, &pos, &meta->value, 0) < 0) {
         gv_free(meta->key);
         gv_free(meta);
         return NULL;
@@ -742,8 +723,6 @@ GV_TypedMetadata *typed_metadata_deserialize(const uint8_t *buf, size_t len) {
     meta->next = NULL;
     return meta;
 }
-
-/* Conversion Functions */
 
 char *typed_to_string(const GV_TypedValue *value) {
     if (!value) return gv_dup_cstr("null");

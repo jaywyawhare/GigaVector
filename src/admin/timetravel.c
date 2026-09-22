@@ -20,14 +20,10 @@
 #include "core/compat.h"
 #include <pthread.h>
 
-/* Constants */
-
 #define TT_MAGIC        "GVTT"
 #define TT_MAGIC_LEN    4
 #define TT_FILE_VERSION 1
 #define TT_INIT_CAP     64
-
-/* Internal Types */
 
 /**
  * @brief Type of mutation stored in a change record.
@@ -60,7 +56,6 @@ typedef struct {
  * @brief Time-travel manager internal structure.
  */
 struct GV_TimeTravelManager {
-    /* Configuration */
     GV_TimeTravelConfig config;
 
     /* Change log (dynamic array, append-only) */
@@ -68,17 +63,12 @@ struct GV_TimeTravelManager {
     size_t           log_count;
     size_t           log_capacity;
 
-    /* Version counter (next version to assign) */
-    uint64_t         next_version;
+    uint64_t         next_version;   /* next version to assign */
 
-    /* Current live vector count (maintained incrementally) */
     size_t           current_vector_count;
 
-    /* Reader-writer lock for thread safety */
     pthread_rwlock_t rwlock;
 };
-
-/* Internal Helpers */
 
 /**
  * @brief Get current time in microseconds since epoch.
@@ -283,8 +273,6 @@ static uint64_t version_at_timestamp(const GV_TimeTravelManager *mgr, uint64_t t
     return best;
 }
 
-/* Lifecycle */
-
 void tt_config_init(GV_TimeTravelConfig *config)
 {
     if (!config)
@@ -334,8 +322,6 @@ void tt_destroy(GV_TimeTravelManager *mgr)
     pthread_rwlock_destroy(&mgr->rwlock);
     gv_free(mgr);
 }
-
-/* Mutation Recording */
 
 uint64_t tt_record_insert(GV_TimeTravelManager *mgr, size_t index,
                               const float *vector, size_t dimension)
@@ -392,8 +378,6 @@ uint64_t tt_record_delete(GV_TimeTravelManager *mgr, size_t index,
     pthread_rwlock_unlock(&mgr->rwlock);
     return ver;
 }
-
-/* Point-in-Time Queries */
 
 int tt_query_at_version(const GV_TimeTravelManager *mgr, uint64_t version_id,
                             size_t index, float *output, size_t dimension)
@@ -512,8 +496,6 @@ int tt_query_at_timestamp(const GV_TimeTravelManager *mgr, uint64_t timestamp,
     return tt_query_at_version(mgr, ver, index, output, dimension);
 }
 
-/* Version Inspection */
-
 size_t tt_count_at_version(const GV_TimeTravelManager *mgr, uint64_t version_id)
 {
     if (!mgr)
@@ -582,8 +564,6 @@ int tt_list_versions(const GV_TimeTravelManager *mgr, GV_VersionEntry *out,
     return (int)to_write;
 }
 
-/* Garbage Collection */
-
 int tt_gc(GV_TimeTravelManager *mgr)
 {
     if (!mgr)
@@ -595,8 +575,6 @@ int tt_gc(GV_TimeTravelManager *mgr)
 
     return removed;
 }
-
-/* Persistence Helpers */
 
 /* Signed int is serialized through the same-width unsigned LE helper. */
 static int write_int(FILE *f, int v)
@@ -612,8 +590,6 @@ static int read_int(FILE *f, int *v)
     *v = (int)(int32_t)tmp;
     return 0;
 }
-
-/* Persistence */
 
 int tt_save(const GV_TimeTravelManager *mgr, const char *path)
 {
@@ -746,6 +722,10 @@ GV_TimeTravelManager *tt_load(const char *path)
         if (read_u8(f, &has_old) != 0) goto fail;
         if (read_u8(f, &has_new) != 0) goto fail;
 
+        /* dimension is file-controlled; guard dimension*sizeof(float) so a
+         * corrupt/malicious snapshot can't wrap to a tiny allocation that
+         * read_floats then overruns (heap overflow). */
+        if (rec->dimension > SIZE_MAX / sizeof(float)) goto fail;
         if (has_old) {
             size_t bytes = rec->dimension * sizeof(float);
             rec->old_data = gv_alloc(bytes);

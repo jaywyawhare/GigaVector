@@ -104,6 +104,12 @@ static int db_init_latency_histogram(GV_LatencyHistogram *hist, size_t bucket_co
     if (hist->buckets == NULL || hist->bucket_boundaries == NULL) {
         free(hist->buckets);
         free(hist->bucket_boundaries);
+        /* Null both and clear the count so the freed pointers can't be treated
+         * as live: db_record_latency ignores this -1 and would otherwise deref a
+         * dangling/NULL buffer, and the re-init guard (buckets==NULL) must fire. */
+        hist->buckets = NULL;
+        hist->bucket_boundaries = NULL;
+        hist->bucket_count = 0;
         return -1;
     }
 

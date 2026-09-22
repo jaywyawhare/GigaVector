@@ -26,10 +26,6 @@
 #define M_LN2 0.6931471805599453
 #endif
 
-/* ---------------------------------------------------------------------------
- * Internal helpers
- * ------------------------------------------------------------------------ */
-
 /**
  * Compute a normalised age in units of half_life_ms.
  * Returns 0.0 if the vector was inserted now; 1.0 after one half-life.
@@ -43,10 +39,6 @@ static double compute_age_ratio(uint64_t insert_time_ms, uint64_t now_ms,
                     : 0.0;
     return age_ms / half_life_ms;
 }
-
-/* ---------------------------------------------------------------------------
- * Public API
- * ------------------------------------------------------------------------ */
 
 float freshness_score(uint64_t insert_time_ms, uint64_t now_ms,
                       double half_life_ms, GV_RankOp decay_type)
@@ -79,10 +71,6 @@ float freshness_blend(float vector_score, float freshness,
     return score_weight * vector_score + freshness_weight * freshness;
 }
 
-/* ---------------------------------------------------------------------------
- * Comparison function for qsort (sort by final_score descending)
- * ------------------------------------------------------------------------ */
-
 static int cmp_freshness_result_desc(const void *a, const void *b)
 {
     const GV_FreshnessResult *ra = (const GV_FreshnessResult *)a;
@@ -91,10 +79,6 @@ static int cmp_freshness_result_desc(const void *a, const void *b)
     if (ra->final_score < rb->final_score) return  1;
     return 0;
 }
-
-/* ---------------------------------------------------------------------------
- * Core implementation shared by filtered and unfiltered variants
- * ------------------------------------------------------------------------ */
 
 static int freshness_search_impl(const GV_Database *db,
                                   const float *query, size_t k,
@@ -177,10 +161,6 @@ static int freshness_search_impl(const GV_Database *db,
 
     return (int)write_count;
 }
-
-/* ---------------------------------------------------------------------------
- * Public entry points
- * ------------------------------------------------------------------------ */
 
 int db_search_with_freshness(const void *db, const float *query, size_t k,
                               const GV_FreshnessParams *params,

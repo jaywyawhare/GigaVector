@@ -4,6 +4,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "core/types.h"       /* GV_SearchResult */
+#include "search/distance.h"  /* GV_DistanceType */
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -230,6 +233,41 @@ int shard_migrate_vectors(GV_ShardManager *mgr, uint32_t from_shard, uint32_t to
  */
 int shard_migrate_vector_at(GV_ShardManager *mgr, uint32_t from_shard, uint32_t to_shard,
                             size_t vector_index, size_t *out_new_index);
+
+/**
+ * @brief Distributed k-NN search: scatter over local shard databases, gather
+ *        the global top-k.
+ *
+ * Runs db_search() on every online shard that has an attached local database,
+ * then merges the per-shard results into a single distance-ordered top-k. All
+ * distance metrics rank smaller-is-better, so the merge is an ascending sort.
+ *
+ * On success @p results is filled with owned vectors exactly like db_search();
+ * the caller frees them with gv_search_results_free().
+ *
+ * @param mgr           Shard manager.
+ * @param query_data    Query vector (length == shard databases' dimension).
+ * @param k             Number of neighbours to return.
+ * @param results       Output array of at least @p k elements.
+ * @param distance_type Distance metric to use.
+ * @return Number of neighbours written (0..k), or -1 on error.
+ */
+int shard_search(GV_ShardManager *mgr, const float *query_data, size_t k,
+                 GV_SearchResult *results, GV_DistanceType distance_type);
+
+/**
+ * @brief Merge owned candidate results into a distance-ordered top-k.
+ *
+ * Sorts @p all ascending by distance, copies the closest min(@p k, @p total)
+ * into @p out (transferring each kept result's owned .vector), and frees the
+ * discarded tail's vectors. Does NOT free the @p all buffer itself. Shared by
+ * the local (shard_search) and distributed (shard_rpc) coordinators so there is
+ * one merge implementation.
+ *
+ * @return Number of results written to @p out.
+ */
+size_t shard_merge_topk(GV_SearchResult *all, size_t total, size_t k,
+                        GV_SearchResult *out);
 
 #ifdef __cplusplus
 }

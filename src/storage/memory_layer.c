@@ -1121,6 +1121,16 @@ int memory_delete(GV_MemoryLayer *layer, const char *memory_id) {
     return rc;
 }
 
+int memory_delete_by_source(GV_MemoryLayer *layer, const char *source) {
+    if (layer == NULL || layer->db == NULL || source == NULL) {
+        return -1;
+    }
+    /* Memories carry their provenance as the "source" metadata key. */
+    char filter[512];
+    snprintf(filter, sizeof(filter), "source == \"%s\"", source);
+    return db_delete_by_filter(layer->db, filter);
+}
+
 void memory_result_free(GV_MemoryResult *result) {
     if (result == NULL) {
         return;
@@ -1516,8 +1526,6 @@ int memory_update(GV_MemoryLayer *layer, const char *memory_id,
     return result;
 }
 
-/* Search Options and Advanced Search */
-
 GV_MemorySearchOptions memory_search_options_default(void) {
     GV_MemorySearchOptions options;
     options.temporal_weight = 0.0f;      /* Pure semantic by default */
@@ -1790,10 +1798,14 @@ int memory_search_advanced(GV_MemoryLayer *layer, const float *query_embedding,
         for (size_t i = 0; i < out_count && out_count < k; i++) {
             if (results[i].memory_id == NULL) continue;
             GV_MemoryResult linked[8];
+            /* Bound the request to the fixed 8-slot buffer: memory_get_related
+             * writes up to `cap` entries, and k - out_count can exceed 8, which
+             * would overflow the stack array. */
+            size_t link_cap = (k - out_count) < 8 ? (k - out_count) : 8;
             int ln = memory_get_related(layer, results[i].memory_id,
-                                        k - out_count, linked);
+                                        link_cap, linked);
             if (ln <= 0) continue;
-            for (int j = 0; j < ln && out_count < k; j++) {
+            for (int j = 0; j < ln; j++) {
                 int dup = 0;
                 for (size_t m = 0; m < out_count; m++) {
                     if (results[m].memory_id && linked[j].memory_id &&
@@ -1802,7 +1814,10 @@ int memory_search_advanced(GV_MemoryLayer *layer, const float *query_embedding,
                         break;
                     }
                 }
-                if (dup) {
+                /* Free (never leak) any entry we can't transfer: a duplicate, or
+                 * once the output is full. Always iterate all ln so the tail is
+                 * released rather than dropped. */
+                if (dup || out_count >= k) {
                     memory_result_free(&linked[j]);
                     continue;
                 }
@@ -1830,8 +1845,6 @@ int memory_search_advanced(GV_MemoryLayer *layer, const float *query_embedding,
 
     return (int)out_count;
 }
-
-/* Memory Link Management */
 
 /** Reciprocal strength multiplier for bidirectional links */
 #define RECIPROCAL_STRENGTH_FACTOR 0.9f

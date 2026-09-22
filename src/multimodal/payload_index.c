@@ -9,8 +9,6 @@
 
 #include "multimodal/payload_index.h"
 
-/* Internal data structures */
-
 #define GV_PAYLOAD_INITIAL_CAP 16
 
 typedef struct {
@@ -54,8 +52,6 @@ struct GV_PayloadIndex {
     size_t field_capacity;
 };
 
-/* Helpers: find field by name */
-
 static GV_FieldIndex *find_field(const GV_PayloadIndex *idx, const char *name) {
     for (size_t i = 0; i < idx->field_count; i++) {
         if (strcmp(idx->fields[i].schema.name, name) == 0) {
@@ -64,8 +60,6 @@ static GV_FieldIndex *find_field(const GV_PayloadIndex *idx, const char *name) {
     }
     return NULL;
 }
-
-/* Helpers: sorted-insert utilities for int entries */
 
 /**
  * @brief Binary search for the insertion position in a sorted int array.
@@ -100,8 +94,6 @@ static size_t int_upper_bound(const GV_IntEntry *entries, size_t count, int64_t 
     return lo;
 }
 
-/* Helpers: sorted-insert utilities for float entries */
-
 static size_t float_lower_bound(const GV_FloatEntry *entries, size_t count, double value) {
     size_t lo = 0, hi = count;
     while (lo < hi) {
@@ -128,8 +120,6 @@ static size_t float_upper_bound(const GV_FloatEntry *entries, size_t count, doub
     return lo;
 }
 
-/* Helpers: sorted-insert utilities for string entries */
-
 static size_t string_lower_bound(const GV_StringEntry *entries, size_t count, const char *value) {
     size_t lo = 0, hi = count;
     while (lo < hi) {
@@ -142,8 +132,6 @@ static size_t string_lower_bound(const GV_StringEntry *entries, size_t count, co
     }
     return lo;
 }
-
-/* Helpers: size_t array sorting and intersection */
 
 static int compare_size_t(const void *a, const void *b) {
     size_t va = *(const size_t *)a;
@@ -174,8 +162,6 @@ static size_t intersect_sorted(const size_t *a, size_t a_len,
     }
     return k;
 }
-
-/* Create / Destroy */
 
 GV_PayloadIndex *payload_index_create(void) {
     GV_PayloadIndex *idx = (GV_PayloadIndex *)gv_alloc(sizeof(GV_PayloadIndex));
@@ -220,17 +206,13 @@ void payload_index_destroy(GV_PayloadIndex *idx) {
     gv_free(idx);
 }
 
-/* Schema management */
-
 int payload_index_add_field(GV_PayloadIndex *idx, const char *name, GV_FieldType type) {
     if (idx == NULL || name == NULL) {
         return -1;
     }
-    /* Reject duplicate field names */
     if (find_field(idx, name) != NULL) {
         return -1;
     }
-    /* Grow fields array if needed */
     if (idx->field_count >= idx->field_capacity) {
         size_t new_cap = idx->field_capacity * 2;
         GV_FieldIndex *tmp = (GV_FieldIndex *)gv_realloc(idx->fields, new_cap * sizeof(GV_FieldIndex));
@@ -248,7 +230,6 @@ int payload_index_add_field(GV_PayloadIndex *idx, const char *name, GV_FieldType
     fi->schema.name[sizeof(fi->schema.name) - 1] = '\0';
     fi->schema.type = type;
 
-    /* Pre-allocate initial entry storage */
     switch (type) {
         case GV_FIELD_INT:
             fi->data.int_data.entries = (GV_IntEntry *)gv_alloc(GV_PAYLOAD_INITIAL_CAP * sizeof(GV_IntEntry));
@@ -287,7 +268,6 @@ int payload_index_remove_field(GV_PayloadIndex *idx, const char *name) {
     for (size_t i = 0; i < idx->field_count; i++) {
         if (strcmp(idx->fields[i].schema.name, name) == 0) {
             GV_FieldIndex *fi = &idx->fields[i];
-            /* Free entry storage */
             switch (fi->schema.type) {
                 case GV_FIELD_INT:
                     gv_free(fi->data.int_data.entries);
@@ -305,7 +285,6 @@ int payload_index_remove_field(GV_PayloadIndex *idx, const char *name) {
                     gv_free(fi->data.bool_data.entries);
                     break;
             }
-            /* Shift remaining fields down */
             if (i < idx->field_count - 1) {
                 memmove(&idx->fields[i], &idx->fields[i + 1],
                         (idx->field_count - i - 1) * sizeof(GV_FieldIndex));
@@ -314,7 +293,7 @@ int payload_index_remove_field(GV_PayloadIndex *idx, const char *name) {
             return 0;
         }
     }
-    return -1; /* Field not found */
+    return -1;
 }
 
 int payload_index_field_count(const GV_PayloadIndex *idx) {
@@ -323,8 +302,6 @@ int payload_index_field_count(const GV_PayloadIndex *idx) {
     }
     return (int)idx->field_count;
 }
-
-/* Insert operations */
 
 int payload_index_insert_int(GV_PayloadIndex *idx, size_t vector_id,
                                  const char *field, int64_t value) {
@@ -335,7 +312,6 @@ int payload_index_insert_int(GV_PayloadIndex *idx, size_t vector_id,
     if (fi == NULL || fi->schema.type != GV_FIELD_INT) {
         return -1;
     }
-    /* Grow if needed */
     if (fi->data.int_data.count >= fi->data.int_data.capacity) {
         size_t new_cap = fi->data.int_data.capacity * 2;
         GV_IntEntry *tmp = (GV_IntEntry *)gv_realloc(fi->data.int_data.entries,
@@ -344,9 +320,7 @@ int payload_index_insert_int(GV_PayloadIndex *idx, size_t vector_id,
         fi->data.int_data.entries = tmp;
         fi->data.int_data.capacity = new_cap;
     }
-    /* Find sorted insertion position by value */
     size_t pos = int_lower_bound(fi->data.int_data.entries, fi->data.int_data.count, value);
-    /* Shift entries to make room */
     if (pos < fi->data.int_data.count) {
         memmove(&fi->data.int_data.entries[pos + 1],
                 &fi->data.int_data.entries[pos],
@@ -466,8 +440,7 @@ bool_do_insert:
     return 0;
 }
 
-/*  Remove: delete all entries for a given vector_id across all fields */
-
+/* Delete all entries for a given vector_id across all fields. */
 int payload_index_remove(GV_PayloadIndex *idx, size_t vector_id) {
     if (idx == NULL) {
         return -1;
@@ -533,8 +506,6 @@ int payload_index_remove(GV_PayloadIndex *idx, size_t vector_id) {
     }
     return 0;
 }
-
-/* Single-condition query helpers */
 
 static int query_int(const GV_FieldIndex *fi, const GV_PayloadQuery *q,
                          size_t *result_ids, size_t max_results) {
@@ -774,8 +745,6 @@ static int query_bool(const GV_FieldIndex *fi, const GV_PayloadQuery *q,
     return (int)n;
 }
 
-/* Query: single condition */
-
 int payload_index_query(const GV_PayloadIndex *idx, const GV_PayloadQuery *query,
                             size_t *result_ids, size_t max_results) {
     if (idx == NULL || query == NULL || result_ids == NULL || max_results == 0) {
@@ -805,15 +774,13 @@ int payload_index_query(const GV_PayloadIndex *idx, const GV_PayloadQuery *query
     return -1;
 }
 
-/* Query: multi-condition (AND of all conditions) */
-
+/* Multi-condition query: AND of all conditions. */
 int payload_index_query_multi(const GV_PayloadIndex *idx, const GV_PayloadQuery *queries,
                                   size_t query_count, size_t *result_ids, size_t max_results) {
     if (idx == NULL || queries == NULL || result_ids == NULL || max_results == 0 || query_count == 0) {
         return -1;
     }
 
-    /* Allocate temporary buffers for intermediate results */
     size_t buf_size = max_results;
     size_t *buf_a = (size_t *)gv_alloc(buf_size * sizeof(size_t));
     size_t *buf_b = (size_t *)gv_alloc(buf_size * sizeof(size_t));
@@ -823,7 +790,6 @@ int payload_index_query_multi(const GV_PayloadIndex *idx, const GV_PayloadQuery 
         return -1;
     }
 
-    /* Execute the first query */
     int first_count = payload_index_query(idx, &queries[0], buf_a, buf_size);
     if (first_count < 0) {
         gv_free(buf_a);
@@ -832,10 +798,8 @@ int payload_index_query_multi(const GV_PayloadIndex *idx, const GV_PayloadQuery 
     }
 
     size_t current_count = (size_t)first_count;
-    /* Sort the first result set for intersection */
     qsort(buf_a, current_count, sizeof(size_t), compare_size_t);
 
-    /* For each subsequent query, execute and intersect */
     for (size_t q = 1; q < query_count; q++) {
         int next_count = payload_index_query(idx, &queries[q], buf_b, buf_size);
         if (next_count < 0) {
@@ -846,7 +810,6 @@ int payload_index_query_multi(const GV_PayloadIndex *idx, const GV_PayloadQuery 
         size_t nc = (size_t)next_count;
         qsort(buf_b, nc, sizeof(size_t), compare_size_t);
 
-        /* Intersect buf_a[0..current_count) with buf_b[0..nc) into result_ids */
         size_t intersected = intersect_sorted(buf_a, current_count, buf_b, nc,
                                                   result_ids, max_results);
 
@@ -859,7 +822,6 @@ int payload_index_query_multi(const GV_PayloadIndex *idx, const GV_PayloadQuery 
         }
     }
 
-    /* Final results are in buf_a */
     if (current_count > max_results) {
         current_count = max_results;
     }
@@ -869,8 +831,6 @@ int payload_index_query_multi(const GV_PayloadIndex *idx, const GV_PayloadQuery 
     gv_free(buf_b);
     return (int)current_count;
 }
-
-/* Stats */
 
 size_t payload_index_total_entries(const GV_PayloadIndex *idx) {
     if (idx == NULL) {

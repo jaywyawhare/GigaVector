@@ -6,6 +6,7 @@
 #include <stdint.h>
 
 #include "index/ivfsq8.h"
+#include "index/ivf_base.h"
 #include "search/distance.h"
 #include "schema/vector.h"
 #include "schema/metadata.h"
@@ -40,28 +41,9 @@ typedef struct {
 
 GV_HEAP_DEFINE(ivfsq8_heap, GV_IVFSQ8HeapItem)
 
-static void ivfsq8_argmin(const float *data, size_t count, size_t dim,
-                            const float *centroids, size_t k, int *assign) {
-    for (size_t i = 0; i < count; i++) {
-        const float *vec = data + i * dim;
-        float best_dist = INFINITY;
-        int best_idx = -1;
-        for (size_t c = 0; c < k; c++) {
-            const float *centroid = centroids + c * dim;
-            float dist = 0.0f;
-            for (size_t d = 0; d < dim; d++) {
-                float diff = vec[d] - centroid[d];
-                dist += diff * diff;
-            }
-            if (dist < best_dist) {
-                best_dist = dist;
-                best_idx = (int)c;
-            }
-        }
-        assign[i] = best_idx;
-    }
-}
-
+/* NOTE: unlike ivf_train_centroids, this resets EMPTY clusters to the origin
+ * (new_centroids is memset to 0 and copied back wholesale) rather than keeping
+ * their previous centroid — kept as-is to preserve ivfsq8's trained output. */
 static int ivfsq8_kmeans(const float *data, size_t count, size_t dim,
                          size_t k, size_t iters, float *out_centroids) {
     if (count < k || !data || !out_centroids) return -1;
@@ -80,7 +62,7 @@ static int ivfsq8_kmeans(const float *data, size_t count, size_t dim,
     }
 
     for (size_t iter = 0; iter < iters; iter++) {
-        ivfsq8_argmin(data, count, dim, out_centroids, k, assign);
+        ivf_assign_to_list(data, count, dim, out_centroids, k, assign);
 
         memset(new_centroids, 0, k * dim * sizeof(float));
         memset(counts, 0, k * sizeof(size_t));
@@ -188,23 +170,7 @@ static float ivfsq8_entry_distance(const GV_IVFSQ8Index *idx, const GV_Vector *q
 }
 
 static void ivfsq8_copy_result(GV_SearchResult *out, const GV_IVFSQ8Entry *entry, float dist) {
-    GV_Vector *copy = vector_create_from_data(entry->vector->dimension, entry->vector->data);
-    if (copy) {
-        GV_Metadata *meta = entry->vector->metadata;
-        while (meta) {
-            if (meta->key && meta->value) {
-                vector_set_metadata(copy, meta->key, meta->value);
-            }
-            meta = meta->next;
-        }
-        out->vector = copy;
-    } else {
-        out->vector = NULL;
-    }
-    out->distance = dist;
-    out->is_sparse = 0;
-    out->sparse_vector = NULL;
-    out->id = entry->id;
+    ivf_fill_result(out, entry->vector, entry->id, dist);
 }
 
 void *ivfsq8_create(size_t dimension, const GV_IVFSQ8Config *config) {
@@ -264,27 +230,10 @@ int ivfsq8_train(void *index, const float *data, size_t count) {
         return -1;
     }
 
-    size_t total = count * idx->dimension;
-    float *train_buf = (float *)gv_alloc(total * sizeof(float));
+    float *train_buf = ivf_prepare_training_buffer(data, count, idx->dimension,
+                                                   idx->config.use_cosine);
     if (!train_buf) {
         return -1;
-    }
-    memcpy(train_buf, data, total * sizeof(float));
-
-    if (idx->config.use_cosine) {
-        for (size_t i = 0; i < count; ++i) {
-            float norm = 0.0f;
-            float *v = train_buf + i * idx->dimension;
-            for (size_t j = 0; j < idx->dimension; ++j) {
-                norm += v[j] * v[j];
-            }
-            if (norm > 0.0f) {
-                norm = 1.0f / sqrtf(norm);
-                for (size_t j = 0; j < idx->dimension; ++j) {
-                    v[j] *= norm;
-                }
-            }
-        }
     }
 
     if (ivfsq8_kmeans(train_buf, count, idx->dimension, idx->config.nlist,
@@ -324,21 +273,8 @@ int ivfsq8_insert(void *index, GV_Vector *vector) {
         return -1;
     }
 
-    float best_dist = INFINITY;
-    size_t best_list = 0;
-
-    for (size_t i = 0; i < idx->config.nlist; i++) {
-        const float *centroid = idx->centroids + i * idx->dimension;
-        float dist = 0.0f;
-        for (size_t d = 0; d < idx->dimension; d++) {
-            float diff = vector->data[d] - centroid[d];
-            dist += diff * diff;
-        }
-        if (dist < best_dist) {
-            best_dist = dist;
-            best_list = i;
-        }
-    }
+    size_t best_list = ivf_nearest_centroid(vector->data, idx->centroids,
+                                            idx->config.nlist, idx->dimension);
 
     GV_IVFSQ8Entry *entry = (GV_IVFSQ8Entry *)gv_alloc(sizeof(GV_IVFSQ8Entry));
     if (!entry) {
@@ -441,6 +377,7 @@ int ivfsq8_search(void *index, const GV_Vector *query, size_t k,
     gv_free(probe_lists);
 
     size_t found = heap_size;
+    if (found == 0) { gv_free(heap); return 0; }   /* no candidates: empty result, not an error */
     GV_IVFSQ8HeapItem *candidates = (GV_IVFSQ8HeapItem *)gv_alloc(found * sizeof(GV_IVFSQ8HeapItem));
     if (!candidates) {
         gv_free(heap);
@@ -457,11 +394,15 @@ int ivfsq8_search(void *index, const GV_Vector *query, size_t k,
     }
     gv_free(heap);
 
+    /* Candidates are ordered by approximate distance. When reranking, refine the
+     * top `rr` with exact distances and then rank ONLY within that window — never
+     * mixing exact and approximate distances in the final selection. Rerank at
+     * least k so the returned set is fully exact-ranked. */
+    size_t sel_window = found;
     if (idx->config.default_rerank > 0 && found > 0) {
         size_t rr = idx->config.default_rerank;
-        if (rr > found) {
-            rr = found;
-        }
+        if (rr < k) rr = k;
+        if (rr > found) rr = found;
         for (size_t i = 0; i < rr; ++i) {
             if (candidates[i].entry == NULL) {
                 continue;
@@ -471,12 +412,13 @@ int ivfsq8_search(void *index, const GV_Vector *query, size_t k,
                 candidates[i].dist = exact;
             }
         }
+        sel_window = rr;
     }
 
-    size_t result_count = (found < k) ? found : k;
+    size_t result_count = (sel_window < k) ? sel_window : k;
     for (size_t i = 0; i < result_count; ++i) {
         size_t minj = i;
-        for (size_t j = i + 1; j < found; ++j) {
+        for (size_t j = i + 1; j < sel_window; ++j) {
             if (candidates[j].dist < candidates[minj].dist) {
                 minj = j;
             }
@@ -696,6 +638,14 @@ static int ivfsq8_read_scalar_template(FILE *in, GV_ScalarQuantVector **out) {
     if (read_u32(in, &per_dim) != 0) return -1;
     if (read_u32(in, &bytes) != 0) return -1;
 
+    /* ivfsq8 entries are ALWAYS 8-bit: each loaded entry hardcodes bits=8 and
+     * scalar_dequantize reads `dimension` bytes from quantized[]. So reject any
+     * other template bit width (a bits=4 template would pass a smaller-need check
+     * yet still be read as `dimension` bytes → OOB), and require the buffer to
+     * hold at least `dimension` bytes. */
+    if (bits != 8) return -1;
+    if ((size_t)bytes < (size_t)dim) return -1;
+
     GV_ScalarQuantVector *tmpl = (GV_ScalarQuantVector *)gv_calloc(1, sizeof(GV_ScalarQuantVector));
     if (!tmpl) return -1;
 
@@ -781,22 +731,7 @@ int ivfsq8_save(const void *index, FILE *out, uint32_t version) {
                 return -1;
             }
 
-            uint32_t meta_count = 0;
-            GV_Metadata *meta = entry->vector->metadata;
-            while (meta) {
-                meta_count++;
-                meta = meta->next;
-            }
-            if (write_u32(out, meta_count) != 0) return -1;
-
-            meta = entry->vector->metadata;
-            while (meta) {
-                uint32_t klen = meta->key ? (uint32_t)strlen(meta->key) : 0;
-                uint32_t vlen = meta->value ? (uint32_t)strlen(meta->value) : 0;
-                if (write_str(out, meta->key ? meta->key : "", klen) != 0) return -1;
-                if (write_str(out, meta->value ? meta->value : "", vlen) != 0) return -1;
-                meta = meta->next;
-            }
+            if (write_metadata(out, entry->vector->metadata) != 0) return -1;
 
             entry = entry->next;
         }
@@ -848,12 +783,28 @@ int ivfsq8_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version) 
     idx->next_id = (size_t)next_id;
 
     if (trained) {
+        /* Guard the file-controlled nlist*dimension against overflow before the
+         * fread (create may have under-allocated centroids on a wrapped size). */
+        if (idx->dimension != 0 && idx->config.nlist > SIZE_MAX / idx->dimension) {
+            ivfsq8_destroy(index);
+            return -1;
+        }
         size_t centroid_floats = idx->config.nlist * idx->dimension;
+        if (centroid_floats > SIZE_MAX / sizeof(float)) {
+            ivfsq8_destroy(index);
+            return -1;
+        }
         if (fread(idx->centroids, sizeof(float), centroid_floats, in) != centroid_floats) {
             ivfsq8_destroy(index);
             return -1;
         }
         if (ivfsq8_read_scalar_template(in, &idx->scalar_quant_template) != 0) {
+            ivfsq8_destroy(index);
+            return -1;
+        }
+        /* The template's dimension must match the index; entries dequantize
+         * idx->dimension values against the template's bytes_per_vector. */
+        if (idx->scalar_quant_template->dimension != idx->dimension) {
             ivfsq8_destroy(index);
             return -1;
         }
@@ -961,36 +912,7 @@ int ivfsq8_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version) 
                 return -1;
             }
 
-            uint32_t meta_count = 0;
-            if (read_u32(in, &meta_count) != 0) {
-                scalar_quant_vector_destroy(entry->scalar_quant);
-                vector_destroy(vec);
-                gv_free(entry);
-                ivfsq8_destroy(index);
-                return -1;
-            }
-
-            for (uint32_t m = 0; m < meta_count; m++) {
-                uint32_t klen = 0, vlen = 0;
-                char *key = NULL, *value = NULL;
-
-                if (read_u32(in, &klen) != 0) goto meta_fail;
-                if (read_str(in, &key, klen) != 0) goto meta_fail;
-                if (read_u32(in, &vlen) != 0) goto meta_fail;
-                if (read_str(in, &value, vlen) != 0) goto meta_fail;
-
-                if (vector_set_metadata(vec, key, value) != 0) {
-                    gv_free(key);
-                    gv_free(value);
-                    goto meta_fail;
-                }
-                gv_free(key);
-                gv_free(value);
-                continue;
-
-            meta_fail:
-                if (key) gv_free(key);
-                if (value) gv_free(value);
+            if (read_metadata_into_vector(in, vec) != 0) {
                 scalar_quant_vector_destroy(entry->scalar_quant);
                 vector_destroy(vec);
                 gv_free(entry);

@@ -76,7 +76,6 @@ static int test_check_insert_over_limit(void) {
     cfg.max_vectors = 5;
     ASSERT(gv_quota_set(mgr, "t2", &cfg) == 0, "set quota");
 
-    /* Record existing usage to fill up */
     ASSERT(gv_quota_record_insert(mgr, "t2", 5, 500) == 0, "record 5 inserts");
 
     GV_QuotaResult result = gv_quota_check_insert(mgr, "t2", 1);

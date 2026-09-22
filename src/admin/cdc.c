@@ -20,13 +20,9 @@
 #include <pthread.h>
 #include <time.h>
 
-/* Internal Constants */
-
 #define MAX_SUBSCRIBERS         32
 #define DEFAULT_RING_SIZE       65536
 #define DEFAULT_MAX_LOG_SIZE_MB 256
-
-/* Internal Structures */
 
 /**
  * @brief Deep-copied event stored in the ring buffer.
@@ -53,16 +49,13 @@ typedef struct {
 } CDCSubscriber;
 
 struct GV_CDCStream {
-    /* Ring buffer */
     CDCRingEntry *ring;
     size_t ring_size;
     size_t head;                    /* next write position */
     uint64_t next_sequence;         /* monotonically increasing counter */
 
-    /* Subscribers */
     CDCSubscriber subscribers[MAX_SUBSCRIBERS];
 
-    /* Persistence */
     int persist_to_file;
     char *log_path;
     size_t max_log_size_bytes;
@@ -70,18 +63,13 @@ struct GV_CDCStream {
     size_t log_bytes_written;
     int include_vector_data;
 
-    /* Synchronization */
     pthread_mutex_t mutex;
 };
-
-/* Forward Declarations */
 
 static void  free_ring_entry(CDCRingEntry *entry);
 static int   deep_copy_event(CDCRingEntry *dst, const GV_CDCEvent *src,
                              uint64_t seq, int include_vector_data);
 static void  persist_event(GV_CDCStream *stream, const CDCRingEntry *entry);
-
-/* Configuration */
 
 static const GV_CDCConfig DEFAULT_CONFIG = {
     .ring_buffer_size    = DEFAULT_RING_SIZE,
@@ -95,8 +83,6 @@ void cdc_config_init(GV_CDCConfig *config) {
     if (!config) return;
     *config = DEFAULT_CONFIG;
 }
-
-/* Lifecycle */
 
 GV_CDCStream *cdc_create(const GV_CDCConfig *config) {
     GV_CDCConfig cfg = config ? *config : DEFAULT_CONFIG;
@@ -154,7 +140,6 @@ GV_CDCStream *cdc_create(const GV_CDCConfig *config) {
 void cdc_destroy(GV_CDCStream *stream) {
     if (!stream) return;
 
-    /* Free all ring buffer entries */
     for (size_t i = 0; i < stream->ring_size; i++) {
         free_ring_entry(&stream->ring[i]);
     }
@@ -170,8 +155,6 @@ void cdc_destroy(GV_CDCStream *stream) {
     gv_free(stream);
 }
 
-/* Publishing */
-
 int cdc_publish(GV_CDCStream *stream, const GV_CDCEvent *event) {
     if (!stream || !event) return -1;
 
@@ -183,17 +166,14 @@ int cdc_publish(GV_CDCStream *stream, const GV_CDCEvent *event) {
     /* Free the old entry if it is being overwritten */
     free_ring_entry(&stream->ring[slot]);
 
-    /* Deep-copy the event into the ring buffer */
     if (deep_copy_event(&stream->ring[slot], event, seq,
                         stream->include_vector_data) != 0) {
         pthread_mutex_unlock(&stream->mutex);
         return -1;
     }
 
-    /* Advance the head (circular) */
     stream->head = (stream->head + 1) % stream->ring_size;
 
-    /* Persist to file if configured */
     if (stream->persist_to_file && stream->log_fp) {
         persist_event(stream, &stream->ring[slot]);
     }
@@ -206,15 +186,31 @@ int cdc_publish(GV_CDCStream *stream, const GV_CDCEvent *event) {
     CDCSubscriber subs_copy[MAX_SUBSCRIBERS];
     memcpy(subs_copy, stream->subscribers, sizeof(subs_copy));
 
-    /* Build a const event view pointing into the ring entry for callbacks */
+    /* Deep-copy the ring entry's payload under the lock. The event we hand to
+     * callbacks (invoked *outside* the lock) must not alias ring[slot], because a
+     * concurrent publish that wraps to the same slot calls free_ring_entry() and
+     * would free vector_data/metadata_json mid-callback (use-after-free). */
+    float *vd_copy = NULL;
+    char  *mj_copy = NULL;
+    if (stream->ring[slot].vector_data && stream->ring[slot].dimension > 0) {
+        vd_copy = (float *)gv_alloc(stream->ring[slot].dimension * sizeof(float));
+        if (vd_copy) {
+            memcpy(vd_copy, stream->ring[slot].vector_data,
+                   stream->ring[slot].dimension * sizeof(float));
+        }
+    }
+    if (stream->ring[slot].metadata_json) {
+        mj_copy = gv_dup_cstr(stream->ring[slot].metadata_json);
+    }
+
     GV_CDCEvent cb_event;
     cb_event.sequence_number = stream->ring[slot].sequence_number;
     cb_event.type            = stream->ring[slot].type;
     cb_event.vector_index    = stream->ring[slot].vector_index;
     cb_event.timestamp       = stream->ring[slot].timestamp;
-    cb_event.vector_data     = stream->ring[slot].vector_data;
-    cb_event.dimension       = stream->ring[slot].dimension;
-    cb_event.metadata_json   = stream->ring[slot].metadata_json;
+    cb_event.vector_data     = vd_copy;
+    cb_event.dimension       = vd_copy ? stream->ring[slot].dimension : 0;
+    cb_event.metadata_json   = mj_copy;
 
     pthread_mutex_unlock(&stream->mutex);
 
@@ -226,10 +222,10 @@ int cdc_publish(GV_CDCStream *stream, const GV_CDCEvent *event) {
         subs_copy[i].callback(&cb_event, subs_copy[i].user_data);
     }
 
+    gv_free(vd_copy);
+    gv_free(mj_copy);
     return 0;
 }
-
-/* Subscription (push interface) */
 
 int cdc_subscribe(GV_CDCStream *stream, uint32_t event_mask,
                      GV_CDCCallback callback, void *user_data) {
@@ -247,7 +243,7 @@ int cdc_subscribe(GV_CDCStream *stream, uint32_t event_mask,
 
     if (slot < 0) {
         pthread_mutex_unlock(&stream->mutex);
-        return -1; /* no gv_free slots */
+        return -1;
     }
 
     CDCSubscriber *sub = &stream->subscribers[slot];
@@ -276,8 +272,6 @@ int cdc_unsubscribe(GV_CDCStream *stream, int subscriber_id) {
     pthread_mutex_unlock(&stream->mutex);
     return 0;
 }
-
-/* Polling (pull interface) */
 
 int cdc_poll(GV_CDCStream *stream, GV_CDCCursor *cursor,
                 GV_CDCEvent *events, size_t max_events) {
@@ -439,8 +433,6 @@ size_t cdc_pending_count(const GV_CDCStream *stream, const GV_CDCCursor *cursor)
     return pending;
 }
 
-/* Ring Buffer Helpers */
-
 static void free_ring_entry(CDCRingEntry *entry) {
     if (!entry || !entry->valid) return;
 
@@ -462,7 +454,6 @@ static int deep_copy_event(CDCRingEntry *dst, const GV_CDCEvent *src,
     dst->metadata_json   = NULL;
     dst->valid           = 1;
 
-    /* Deep-copy vector data */
     if (include_vector_data && src->vector_data && src->dimension > 0) {
         size_t nbytes = src->dimension * sizeof(float);
         dst->vector_data = gv_alloc(nbytes);
@@ -473,7 +464,6 @@ static int deep_copy_event(CDCRingEntry *dst, const GV_CDCEvent *src,
         memcpy(dst->vector_data, src->vector_data, nbytes);
     }
 
-    /* Deep-copy metadata JSON */
     if (src->metadata_json) {
         dst->metadata_json = gv_dup_cstr(src->metadata_json);
         if (!dst->metadata_json) {
@@ -486,8 +476,6 @@ static int deep_copy_event(CDCRingEntry *dst, const GV_CDCEvent *src,
 
     return 0;
 }
-
-/* File Persistence */
 
 /**
  * Binary record format (all fields little-endian / native):

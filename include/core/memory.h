@@ -25,17 +25,11 @@ void gv_memory_init(GV_Memory *mem);
 void gv_memory_fini(GV_Memory *mem);
 
 /*
- * Test-only allocation-failure injection.
- *
- * The counter is always compiled in but disabled by default (fail_after < 0),
- * so in normal builds every allocation only pays a single predictable
- * "is injection armed?" compare against a thread-shared long. Tests arm it to
- * force the n-th subsequent gv_alloc/gv_calloc/gv_realloc to return NULL,
- * exercising out-of-memory error paths without a real OOM.
- *
- *   gv_alloc_set_fail_after(n): n < 0 disables; n >= 0 makes the n-th
- *     subsequent allocation (0 = the very next one) return NULL. Once armed,
- *     it fires exactly once and then disarms.
+ * Test-only allocation-failure injection. Compiled in but disabled by default
+ * (fail_after < 0), costing one predictable compare per allocation. Tests arm it
+ * to force an OOM path without a real OOM.
+ *   gv_alloc_set_fail_after(n): n < 0 disables; n >= 0 makes the n-th subsequent
+ *     allocation (0 = the next one) return NULL, firing exactly once then disarming.
  *   gv_alloc_reset_fail(): disable injection and clear the internal counter.
  */
 void gv_alloc_set_fail_after(long n);

@@ -194,43 +194,48 @@ typedef struct {
 
 ## What Needs to Be Built
 
-### 1. Chunker (`src/storage/chunker.c`)
+> **Status (all implemented).** This section was the original build plan; every
+> item below now exists. Kept as a record of the design intent.
 
-Does not exist yet. Needs:
+### 1. Chunker (`src/storage/chunker.c`) — ✅ done
+
 - `gv_chunk_document(text, chunk_size, overlap, doc_id, out_chunks, out_count)`
 - Splits on sentence boundaries where possible, falls back to token count
 - Assigns `chunk_id = doc_id + ":" + zero_padded_index`
 - Returns `GV_Chunk[]` with text + char offsets
 
-### 2. Ingest coordinator (`src/storage/document_ingest.c`)
+### 2. Ingest coordinator (`src/storage/document_ingest.c`) — ✅ done
 
-Does not exist yet. Needs:
 - `gv_ingest_document(db, kg, memory_layer, llm, text, doc_id)`
-- Calls chunker, then for each chunk in parallel:
+- Calls chunker, then for each chunk:
   - `db_add_vector_with_rich_metadata()` → Embedding Layer
   - LLM extracts triplets → `kg_add_entity` + `kg_add_relation` with `chunk_id` property
   - LLM distills facts → `memory_add()` with `chunk_id` metadata
 - Atomic at chunk granularity (partial ingest is recoverable)
 
-### 3. Unified search (`src/storage/document_search.c`)
+### 3. Unified search (`src/storage/document_search.c`) — ✅ done
 
-Does not exist yet. Needs:
 - `gv_search_document(db, kg, memory_layer, query_text, query_embedding, k, out)`
-- Fans out to all three layers in parallel
-- Joins results on `chunk_id`, computes merged score
+- Fans out to all three layers, joins on `chunk_id`, computes merged score
 - Returns `GV_EnrichedResult[]`
 
-### 4. Wire `chunk_id` into Graph Layer triplet properties
+### 4. Wire `chunk_id` into Graph Layer triplet properties — ✅ done
 
-Currently `kg_add_relation` does not have a properties argument. Needs:
-- `kg_add_relation_with_props(kg, subject, object, predicate, weight, props, n_props)`
-- so `chunk_id` can be stored on each triple
+Relations carry typed properties (`GV_KGRelation.properties`). The API surface:
+- `kg_set_relation_prop()` (+ typed `_int64/_float64/_bool` variants) — per-key
+- `kg_add_relation_with_chunk(kg, subject, predicate, object, weight, chunk_id)` — single chunk_id facet
+- `kg_add_relation_with_props(kg, subject, predicate, object, weight, props, n_props)`
+  — batch attach via a `GV_KGPropKV[]` array; `chunk_id` is indexed identically
+- `kg_query_triples_by_chunk()` resolves triples back by their `chunk_id` facet
 
-### 5. `GV_KnowledgeGraph` → stop owning its own embeddings
+### 5. `GV_KnowledgeGraph` → delegate similarity to the vector DB — ✅ done (as a hybrid)
 
-- Remove `float *all_embeddings` from internal struct
-- Add `GV_Database *vdb` field
-- Replace `kg_search_similar` brute-force with `db_search(kg->vdb, ...)`
+- `GV_Database *vdb` field added; attach via `kg_attach_vector_db()`.
+- Entities added with an embedding are mirrored into the DB under `kgent:{id}`.
+- `kg_search_similar()` delegates to `db_search(kg->vdb, ...)` when a vdb is attached.
+- **Intentionally kept:** the internal `all_embeddings` brute-force store as the
+  fallback for the *no-vdb* case (exercised by `test_knowledge_graph.c`). It is
+  not removed because that would regress similarity search when no DB is attached.
 
 ---
 

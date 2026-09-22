@@ -176,42 +176,36 @@ GV_JsonValue *json_object_value_at(const GV_JsonValue *object, size_t index);
 /**
  * @brief Query a boolean condition.
  *
- * @param value value.
  * @return Result value.
  */
 bool json_is_null(const GV_JsonValue *value);
 /**
  * @brief Query a boolean condition.
  *
- * @param value value.
  * @return Result value.
  */
 bool json_is_bool(const GV_JsonValue *value);
 /**
  * @brief Query a boolean condition.
  *
- * @param value value.
  * @return Result value.
  */
 bool json_is_number(const GV_JsonValue *value);
 /**
  * @brief Query a boolean condition.
  *
- * @param value value.
  * @return Result value.
  */
 bool json_is_string(const GV_JsonValue *value);
 /**
  * @brief Query a boolean condition.
  *
- * @param value value.
  * @return Result value.
  */
 bool json_is_array(const GV_JsonValue *value);
 /**
  * @brief Query a boolean condition.
  *
- * @param value value.
  * @return Result value.
  */
 bool json_is_object(const GV_JsonValue *value);

@@ -46,7 +46,6 @@ int rbac_add_rule(GV_RBACManager *mgr, const char *role_name,
  *
  * @param mgr Manager instance.
  * @param role_name Name string.
- * @param resource resource.
  * @return 0 on success, -1 on error.
  */
 int rbac_remove_rule(GV_RBACManager *mgr, const char *role_name, const char *resource);
@@ -55,7 +54,6 @@ int rbac_remove_rule(GV_RBACManager *mgr, const char *role_name, const char *res
  *
  * @param mgr Manager instance.
  * @param role_name Name string.
- * @param parent_role parent_role.
  * @return 0 on success, -1 on error.
  */
 int rbac_set_inheritance(GV_RBACManager *mgr, const char *role_name, const char *parent_role);
@@ -96,7 +94,6 @@ int rbac_list_roles(const GV_RBACManager *mgr, char ***out_names, size_t *out_co
 /**
  * @brief List items.
  *
- * @param list list.
  * @param count Number of items.
  */
 void rbac_free_string_list(char **list, size_t count);

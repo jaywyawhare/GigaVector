@@ -83,8 +83,7 @@ int schema_diff(const GV_Schema *old_schema, const GV_Schema *new_schema,
 /**
  * @brief Query a boolean condition.
  *
- * @param old_schema old_schema.
- * @param new_schema new_schema.
+
  * @return 1 if true, 0 if false, -1 on error.
  */
 int schema_is_compatible(const GV_Schema *old_schema, const GV_Schema *new_schema);

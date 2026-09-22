@@ -1,6 +1,11 @@
 CC      := gcc
-BASE_CFLAGS := -O3 -g -Wall -Wextra -MMD -Iinclude -pthread -fPIC
-SIMD_FLAGS ?=
+BASE_CFLAGS := -O3 -g -Wall -Wextra -Wimplicit-fallthrough -Wformat-truncation -MMD -Iinclude -pthread -fPIC
+# SIMD: default to -march=native for local builds (build host == run host), which
+# activates the AVX2/FMA distance kernels in hnsw.c/distance.c/ivfpq.c (huge speedup
+# for HNSW/IVF build + search). Override for portable binaries, e.g.
+#   make SIMD_FLAGS="-mavx2 -mfma"   (AVX2-only; runtime-gated in-code)
+#   make SIMD_FLAGS=                 (disable SIMD entirely / non-x86)
+SIMD_FLAGS ?= -march=native
 HARDENING_FLAGS ?=
 CURL_FLAGS ?=
 OPENSSL_FLAGS ?=
@@ -32,7 +37,7 @@ endif
 
 SRC_FILES   := $(shell find $(SRC_DIR) -name "*.c")
 MAIN_FILE   := main.c
-BENCH_FILES := benchmarks/benchmark_simd.c benchmarks/benchmark_compare.c benchmarks/benchmark_ivfpq.c benchmarks/benchmark_ivfpq_recall.c benchmarks/bench_ivfdisk.c benchmarks/bench_hnsw_build.c
+BENCH_FILES := benchmarks/benchmark_simd.c benchmarks/benchmark_compare.c benchmarks/benchmark_ivfpq.c benchmarks/benchmark_ivfpq_recall.c benchmarks/bench_ivfdisk.c benchmarks/bench_hnsw_build.c benchmarks/bench_scale.c
 TEST_DIR    := tests
 
 PYTHON_DIR  := python
@@ -63,6 +68,11 @@ bench-hnsw-build: $(BENCH_DIR)/bench_hnsw_build
 	@echo "=== HNSW build benchmark (20k x 128) ==="
 	@LD_LIBRARY_PATH=$(LIB_DIR) $(BENCH_DIR)/bench_hnsw_build 20000 128
 
+.PHONY: bench-scale
+bench-scale: $(BENCH_DIR)/bench_scale
+	@echo "=== Scale benchmark (1M x 128, HNSW) ==="
+	@LD_LIBRARY_PATH=$(LIB_DIR) $(BENCH_DIR)/bench_scale 1000000 128 200 10
+
 .PHONY: bench-ivfdisk
 bench-ivfdisk: $(BENCH_DIR)/bench_ivfdisk
 	@echo "=== IVFDisk smoke benchmark (10k x 128) ==="
@@ -77,6 +87,13 @@ $(BIN_DIR)/main: $(MAIN_OBJ) $(STATIC_LIB)
 	@mkdir -p $(BIN_DIR)
 	$(CC) $(CFLAGS) $(MAIN_OBJ) $(STATIC_LIB) $(LDFLAGS) -o $@
 	@echo "Built main executable: $@"
+
+.PHONY: gvserver
+gvserver: $(BIN_DIR)/gvserver
+$(BIN_DIR)/gvserver: tools/gvserver.c $(STATIC_LIB)
+	@mkdir -p $(BIN_DIR)
+	$(CC) $(CFLAGS) tools/gvserver.c $(STATIC_LIB) $(LDFLAGS) -o $@
+	@echo "Built server daemon: $@"
 
 .PHONY: lib
 lib: $(STATIC_LIB) $(SHARED_LIB)
@@ -125,6 +142,11 @@ $(BENCH_DIR)/bench_ivfdisk: benchmarks/bench_ivfdisk.c $(STATIC_LIB)
 	@echo "Built benchmark: $@"
 
 $(BENCH_DIR)/bench_hnsw_build: benchmarks/bench_hnsw_build.c $(STATIC_LIB)
+	@mkdir -p $(BENCH_DIR)
+	$(CC) $(CFLAGS) $< -L$(LIB_DIR) -l$(LIB_NAME) $(LDFLAGS) -o $@
+	@echo "Built benchmark: $@"
+
+$(BENCH_DIR)/bench_scale: benchmarks/bench_scale.c $(STATIC_LIB)
 	@mkdir -p $(BENCH_DIR)
 	$(CC) $(CFLAGS) $< -L$(LIB_DIR) -l$(LIB_NAME) $(LDFLAGS) -o $@
 	@echo "Built benchmark: $@"
@@ -227,7 +249,8 @@ test-asan: CFLAGS += $(ASAN_FLAGS)
 test-asan: LDFLAGS += -fsanitize=address
 test-asan:
 	@$(MAKE) clean
-	@$(MAKE) lib $(TEST_BINS)
+	@$(MAKE) CFLAGS="$(CFLAGS)" LDFLAGS="$(LDFLAGS)" lib
+	@$(MAKE) CFLAGS="$(CFLAGS)" LDFLAGS="$(LDFLAGS)" $(TEST_BINS)
 	@echo "Running tests with AddressSanitizer..."
 	@for test in $(TEST_BINS); do \
 		echo "Running $$test with ASAN..."; \
@@ -241,7 +264,8 @@ test-tsan: CFLAGS += $(TSAN_FLAGS)
 test-tsan: LDFLAGS += -fsanitize=thread
 test-tsan:
 	@$(MAKE) clean
-	@$(MAKE) lib $(TEST_BINS)
+	@$(MAKE) CFLAGS="$(CFLAGS)" LDFLAGS="$(LDFLAGS)" lib
+	@$(MAKE) CFLAGS="$(CFLAGS)" LDFLAGS="$(LDFLAGS)" $(TEST_BINS)
 	@echo "Running tests with ThreadSanitizer..."
 	@for test in $(TEST_BINS); do \
 		echo "Running $$test with TSAN..."; \
@@ -254,7 +278,8 @@ test-ubsan: CFLAGS += $(UBSAN_FLAGS)
 test-ubsan: LDFLAGS += -fsanitize=undefined
 test-ubsan:
 	@$(MAKE) clean
-	@$(MAKE) lib $(TEST_BINS)
+	@$(MAKE) CFLAGS="$(CFLAGS)" LDFLAGS="$(LDFLAGS)" lib
+	@$(MAKE) CFLAGS="$(CFLAGS)" LDFLAGS="$(LDFLAGS)" $(TEST_BINS)
 	@echo "Running tests with UndefinedBehaviorSanitizer..."
 	@for test in $(TEST_BINS); do \
 		echo "Running $$test with UBSAN..."; \
@@ -431,6 +456,7 @@ endif
 	$(FUZZ_CC) $(FUZZ_CFLAGS) tests/fuzz/fuzz_filter_expr.c $(FUZZ_LDFLAGS) -o $(FUZZ_DIR)/fuzz_filter_expr
 	$(FUZZ_CC) $(FUZZ_CFLAGS) tests/fuzz/fuzz_sql.c $(FUZZ_LDFLAGS) -o $(FUZZ_DIR)/fuzz_sql
 	$(FUZZ_CC) $(FUZZ_CFLAGS) tests/fuzz/fuzz_cypher.c $(FUZZ_LDFLAGS) -o $(FUZZ_DIR)/fuzz_cypher
+	$(FUZZ_CC) $(FUZZ_CFLAGS) -D_GNU_SOURCE tests/fuzz/fuzz_graph_wal.c $(FUZZ_LDFLAGS) -o $(FUZZ_DIR)/fuzz_graph_wal
 	@echo "Built fuzzers in $(FUZZ_DIR)"
 
 # Crash / leak / oom / timeout reproducers land under build/ (via
@@ -438,37 +464,295 @@ endif
 FUZZ_CRASH_DIR := $(FUZZ_DIR)/crashes
 FUZZ_ARTIFACT_PREFIX := -artifact_prefix=$(FUZZ_CRASH_DIR)/
 
+# CORPUS_CACHE: optional writable directory placed FIRST in each fuzzer's
+# corpus list. libFuzzer writes every newly discovered unit there while still
+# reading the in-repo seed corpus that follows it, so CI can cache the dir and
+# coverage accumulates across runs instead of resetting to the seeds each time.
+# Unset (the default) keeps the historical behaviour: seeds only, new units
+# discarded with the workspace.
+CORPUS_CACHE ?=
+FUZZ_CORPUS_ARGS := $(if $(CORPUS_CACHE),$(CORPUS_CACHE),)
+
 fuzz-run: export LSAN_OPTIONS = suppressions=$(abspath tests/fuzz/lsan.supp)
 fuzz-run: fuzz
-	@mkdir -p $(FUZZ_CRASH_DIR)
+	@mkdir -p $(FUZZ_CRASH_DIR) $(CORPUS_CACHE)
 	@echo "Running fuzz_wal_apply..."
-	@$(FUZZ_DIR)/fuzz_wal_apply tests/fuzz/corpus/wal $(FUZZ_ARTIFACT_PREFIX) -max_total_time=30 -rss_limit_mb=2048 -print_final_stats=1
+	@$(FUZZ_DIR)/fuzz_wal_apply $(FUZZ_CORPUS_ARGS) tests/fuzz/corpus/wal $(FUZZ_ARTIFACT_PREFIX) -max_total_time=30 -rss_limit_mb=512 -print_final_stats=1
 	@echo "Running fuzz_grpc_decode..."
-	@$(FUZZ_DIR)/fuzz_grpc_decode tests/fuzz/corpus/grpc $(FUZZ_ARTIFACT_PREFIX) -max_total_time=30 -rss_limit_mb=2048 -print_final_stats=1
+	@$(FUZZ_DIR)/fuzz_grpc_decode $(FUZZ_CORPUS_ARGS) tests/fuzz/corpus/grpc $(FUZZ_ARTIFACT_PREFIX) -max_total_time=30 -rss_limit_mb=512 -print_final_stats=1
 	@echo "Running fuzz_grpc_frame..."
-	@$(FUZZ_DIR)/fuzz_grpc_frame tests/fuzz/corpus/grpc $(FUZZ_ARTIFACT_PREFIX) -max_total_time=30 -rss_limit_mb=2048 -print_final_stats=1
+	@$(FUZZ_DIR)/fuzz_grpc_frame $(FUZZ_CORPUS_ARGS) tests/fuzz/corpus/grpc $(FUZZ_ARTIFACT_PREFIX) -max_total_time=30 -rss_limit_mb=512 -print_final_stats=1
 	@echo "Running fuzz_grpc_dispatch..."
-	@$(FUZZ_DIR)/fuzz_grpc_dispatch tests/fuzz/corpus/grpc $(FUZZ_ARTIFACT_PREFIX) -max_total_time=30 -rss_limit_mb=2048 -print_final_stats=1
+	@$(FUZZ_DIR)/fuzz_grpc_dispatch $(FUZZ_CORPUS_ARGS) tests/fuzz/corpus/grpc $(FUZZ_ARTIFACT_PREFIX) -max_total_time=30 -rss_limit_mb=512 -print_final_stats=1
 	@echo "Running fuzz_repl_frame..."
-	@$(FUZZ_DIR)/fuzz_repl_frame tests/fuzz/corpus/repl $(FUZZ_ARTIFACT_PREFIX) -max_total_time=30 -rss_limit_mb=2048 -print_final_stats=1
+	@$(FUZZ_DIR)/fuzz_repl_frame $(FUZZ_CORPUS_ARGS) tests/fuzz/corpus/repl $(FUZZ_ARTIFACT_PREFIX) -max_total_time=30 -rss_limit_mb=512 -print_final_stats=1
 	@echo "Running fuzz_posting_segment..."
 	@mkdir -p tests/fuzz/corpus/posting
-	@$(FUZZ_DIR)/fuzz_posting_segment tests/fuzz/corpus/posting $(FUZZ_ARTIFACT_PREFIX) -max_total_time=30 -rss_limit_mb=2048 -print_final_stats=1
+	@$(FUZZ_DIR)/fuzz_posting_segment $(FUZZ_CORPUS_ARGS) tests/fuzz/corpus/posting $(FUZZ_ARTIFACT_PREFIX) -max_total_time=30 -rss_limit_mb=512 -print_final_stats=1
 	@echo "Running fuzz_wal_replay (empty seed corpus; full-file replay)..."
 	@mkdir -p tests/fuzz/corpus/wal_replay_empty
-	@$(FUZZ_DIR)/fuzz_wal_replay tests/fuzz/corpus/wal_replay_empty $(FUZZ_ARTIFACT_PREFIX) -runs=5000 -max_len=8192 -rss_limit_mb=2048 -print_final_stats=1
+	@$(FUZZ_DIR)/fuzz_wal_replay $(FUZZ_CORPUS_ARGS) tests/fuzz/corpus/wal_replay_empty $(FUZZ_ARTIFACT_PREFIX) -runs=5000 -max_len=8192 -rss_limit_mb=512 -print_final_stats=1
 	@echo "Running fuzz_json..."
 	@mkdir -p tests/fuzz/corpus/json
-	@$(FUZZ_DIR)/fuzz_json tests/fuzz/corpus/json $(FUZZ_ARTIFACT_PREFIX) -max_total_time=30 -rss_limit_mb=2048 -print_final_stats=1
+	@$(FUZZ_DIR)/fuzz_json $(FUZZ_CORPUS_ARGS) tests/fuzz/corpus/json $(FUZZ_ARTIFACT_PREFIX) -max_total_time=30 -rss_limit_mb=512 -print_final_stats=1
 	@echo "Running fuzz_filter_expr..."
 	@mkdir -p tests/fuzz/corpus/filter_expr
-	@$(FUZZ_DIR)/fuzz_filter_expr tests/fuzz/corpus/filter_expr $(FUZZ_ARTIFACT_PREFIX) -max_total_time=30 -rss_limit_mb=2048 -print_final_stats=1
+	@$(FUZZ_DIR)/fuzz_filter_expr $(FUZZ_CORPUS_ARGS) tests/fuzz/corpus/filter_expr $(FUZZ_ARTIFACT_PREFIX) -max_total_time=30 -rss_limit_mb=512 -print_final_stats=1
 	@echo "Running fuzz_sql..."
 	@mkdir -p tests/fuzz/corpus/sql
-	@$(FUZZ_DIR)/fuzz_sql tests/fuzz/corpus/sql $(FUZZ_ARTIFACT_PREFIX) -max_total_time=30 -rss_limit_mb=2048 -print_final_stats=1
+	@$(FUZZ_DIR)/fuzz_sql $(FUZZ_CORPUS_ARGS) tests/fuzz/corpus/sql $(FUZZ_ARTIFACT_PREFIX) -max_total_time=30 -rss_limit_mb=512 -print_final_stats=1
 	@echo "Running fuzz_cypher..."
 	@mkdir -p tests/fuzz/corpus/cypher
-	@$(FUZZ_DIR)/fuzz_cypher tests/fuzz/corpus/cypher $(FUZZ_ARTIFACT_PREFIX) -max_total_time=30 -rss_limit_mb=2048 -print_final_stats=1
+	@echo "Running fuzz_graph_wal..."
+	@$(FUZZ_DIR)/fuzz_graph_wal $(FUZZ_CORPUS_ARGS) $(FUZZ_ARTIFACT_PREFIX) -max_total_time=30 -rss_limit_mb=512 -print_final_stats=1
+	@$(FUZZ_DIR)/fuzz_cypher $(FUZZ_CORPUS_ARGS) tests/fuzz/corpus/cypher $(FUZZ_ARTIFACT_PREFIX) -max_total_time=30 -rss_limit_mb=512 -print_final_stats=1
 
 fuzz-corpus: lib
 	@bash tests/fuzz/gen_corpus.sh
+
+# --- Formal verification: Quint specs, CBMC harnesses, structural checks -----
+#
+# Specs live in specs/quint/*.qnt and are globbed, so a new spec cannot drift
+# out of CI. See docs/formal_verification_plan.md.
+#
+# Cost tiers, cheapest first:
+#   formal-lint      lock-order static check            -- no toolchain, ~1s
+#   quint-typecheck  type + effect check, every spec    -- seconds
+#   quint-test       run scenarios / regression witness -- seconds
+#   cbmc-smoke       compile+run harnesses concretely   -- seconds
+#   quint-replay     ITF traces vs. the real C          -- seconds
+#   quint-verify     Apalache symbolic model checking   -- minutes (nightly)
+#   cbmc             bounded proof over the C           -- minutes (nightly)
+QUINT       ?= quint
+QUINT_SPECS := $(sort $(wildcard specs/quint/*.qnt))
+
+# Every module that declares a `run`. "file:module".
+QUINT_TEST_MODULES := \
+  specs/quint/raft.qnt:raft3 \
+  specs/quint/raft.qnt:raft5_prefix \
+  specs/quint/mvcc.qnt:mvcc \
+  specs/quint/consistency.qnt:consistency \
+  specs/quint/wal_recovery.qnt:wal_recovery \
+  specs/quint/wal_recovery.qnt:wal_group_commit \
+  specs/quint/vlog_gc.qnt:vlog_gc \
+  specs/quint/quota.qnt:quota \
+  specs/quint/ttl.qnt:ttl \
+  specs/quint/shard_rebalance.qnt:shard_rebalance \
+  specs/quint/replication.qnt:replication \
+  specs/quint/lock_order.qnt:lock_order \
+  specs/quint/cdc.qnt:cdc \
+  specs/quint/tiered_storage.qnt:tiered_storage \
+  specs/quint/index_swap.qnt:index_swap \
+  specs/quint/rbac.qnt:rbac \
+  specs/quint/cluster.qnt:cluster \
+  specs/quint/snapshot.qnt:snapshot \
+  specs/quint/cache.qnt:cache \
+  specs/quint/cache.qnt:cache_invalidating \
+  specs/quint/namespace.qnt:namespace \
+  specs/quint/versioning.qnt:versioning \
+  specs/quint/webhook.qnt:webhook \
+  specs/quint/auth.qnt:auth \
+  specs/quint/dedup.qnt:dedup \
+  specs/quint/scroll_cursor.qnt:scroll_cursor \
+  specs/quint/memory_layer.qnt:memory_layer \
+  specs/quint/bulk_import.qnt:bulk_import \
+  specs/quint/ab_test.qnt:ab_test \
+  specs/quint/repl_wal_crash.qnt:repl_wal_crash
+
+# Model-checking runs: "file:module:invariant:max-steps".
+# ttl and quota are deliberately absent: their `safety` invariant is currently
+# FALSE by design (confirmed TOCTOU findings, see docs/formal_verification_plan.md).
+# Re-add them here once those are fixed, so the fix cannot silently regress.
+QUINT_CHECKS := \
+  specs/quint/raft.qnt:raft3:safety:6 \
+  specs/quint/mvcc.qnt:mvcc:safety:8 \
+  specs/quint/consistency.qnt:consistency:safety:8 \
+  specs/quint/wal_recovery.qnt:wal_recovery:safety:8 \
+  specs/quint/vlog_gc.qnt:vlog_gc:safety:8 \
+  specs/quint/lock_order.qnt:lock_order:safety:8 \
+  specs/quint/snapshot.qnt:snapshot \
+  specs/quint/cache.qnt:cache \
+  specs/quint/cache.qnt:cache_invalidating \
+  specs/quint/namespace.qnt:namespace \
+  specs/quint/versioning.qnt:versioning \
+  specs/quint/webhook.qnt:webhook \
+  specs/quint/auth.qnt:auth \
+  specs/quint/dedup.qnt:dedup \
+  specs/quint/scroll_cursor.qnt:scroll_cursor \
+  specs/quint/memory_layer.qnt:memory_layer \
+  specs/quint/bulk_import.qnt:bulk_import \
+  specs/quint/ab_test.qnt:ab_test:safety:8 \
+  specs/quint/repl_wal_crash.qnt:repl_wal_crash:safety:6
+
+.PHONY: formal-lint
+formal-lint:
+	@python3 scripts/check_lock_order.py
+
+# Every .c file under src/ must carry a verification classification, and every
+# classification must point at an artifact that exists. This is what stops new
+# code from silently escaping verification, and stops the manifest from
+# over-claiming coverage it does not have.
+.PHONY: formal-coverage
+formal-coverage:
+	@python3 scripts/check_coverage.py
+
+.PHONY: quint-typecheck
+quint-typecheck:
+	@command -v $(QUINT) >/dev/null 2>&1 || { \
+	  echo "quint not found; install with: npm install -g @informalsystems/quint"; exit 1; }
+	@for s in $(QUINT_SPECS); do \
+	  printf '  typecheck %-36s' $$s; \
+	  $(QUINT) typecheck $$s >/dev/null || { echo FAIL; $(QUINT) typecheck $$s; exit 1; }; \
+	  echo ok; \
+	done
+	@echo "All Quint specs typecheck."
+
+.PHONY: quint-test
+quint-test:
+	@for c in $(QUINT_TEST_MODULES); do \
+	  f=$$(echo $$c | cut -d: -f1); m=$$(echo $$c | cut -d: -f2); \
+	  printf '  test %-22s' $$m; \
+	  $(QUINT) test --main=$$m $$f >/dev/null 2>&1 || { \
+	    echo FAIL; $(QUINT) test --main=$$m $$f; exit 1; }; \
+	  echo ok; \
+	done
+	@echo "All Quint scenario tests pass."
+
+# Vacuity gate. A spec whose `step` can never fire passes every invariant
+# trivially -- the worst failure mode for a spec suite, because it looks green.
+# Each entry names a state the model MUST be able to reach; if it becomes
+# unreachable the spec has died and this fails.
+# "file:module:witness-expression".
+QUINT_WITNESSES := \
+  'specs/quint/raft.qnt:raft3:role.get(0) == "Leader"' \
+  'specs/quint/mvcc.qnt:mvcc:versions.size() > 1' \
+  'specs/quint/consistency.qnt:consistency:leaderPos > 1' \
+  'specs/quint/wal_recovery.qnt:wal_recovery:durable.length() > 1' \
+  'specs/quint/vlog_gc.qnt:vlog_gc:log.length() > 1' \
+  'specs/quint/quota.qnt:quota:currentVectors > 0' \
+  'specs/quint/ttl.qnt:ttl:pendingDelete.size() > 0' \
+  'specs/quint/shard_rebalance.qnt:shard_rebalance:holders.get(1).size() > 1' \
+  'specs/quint/replication.qnt:replication:leaderLog > 1' \
+  'specs/quint/lock_order.qnt:lock_order:held.get(1).size() > 1' \
+  'specs/quint/cdc.qnt:cdc:published.length() > 1' \
+  'specs/quint/tiered_storage.qnt:tiered_storage:tier.get(1) == "hot"' \
+  'specs/quint/index_swap.qnt:index_swap:stored.size() > 1' \
+  'specs/quint/rbac.qnt:rbac:effectivePerms(1).size() > 0' \
+  'specs/quint/cluster.qnt:cluster:members.size() > 2' \
+  'specs/quint/snapshot.qnt:snapshot:haveSnapshot' \
+  'specs/quint/cache.qnt:cache:servedStale.size() > 0' \
+  'specs/quint/namespace.qnt:namespace:aliases.size() > 0' \
+  'specs/quint/versioning.qnt:versioning:versions.size() > 1' \
+  'specs/quint/webhook.qnt:webhook:delivered.size() > 0' \
+  'specs/quint/auth.qnt:auth:accepted.size() > 0' \
+  'specs/quint/dedup.qnt:dedup:stored.size() > 1' \
+  'specs/quint/scroll_cursor.qnt:scroll_cursor:returned.length() > 1' \
+  'specs/quint/memory_layer.qnt:memory_layer:memories.size() > 1' \
+  'specs/quint/bulk_import.qnt:bulk_import:inserted.size() > 1' \
+  'specs/quint/ab_test.qnt:ab_test:recorded.size() > 0' \
+  'specs/quint/repl_wal_crash.qnt:repl_wal_crash:ackedCommitted.size() > 0'
+
+.PHONY: quint-witness
+quint-witness:
+	@for c in $(QUINT_WITNESSES); do \
+	  f=$$(echo "$$c" | cut -d: -f1); m=$$(echo "$$c" | cut -d: -f2); \
+	  w=$$(echo "$$c" | cut -d: -f3-); \
+	  printf '  witness %-20s' $$m; \
+	  out=$$($(QUINT) run --main=$$m --witnesses="$$w" --max-steps=10 \
+	          --max-samples=500 $$f 2>&1 | grep -oE 'witnessed in [0-9]+ trace' | head -1); \
+	  n=$$(echo "$$out" | grep -oE '[0-9]+'); \
+	  if [ -z "$$n" ] || [ "$$n" -eq 0 ]; then \
+	    echo "UNREACHABLE ($$w)"; exit 1; \
+	  fi; \
+	  echo "ok ($$n traces)"; \
+	done
+	@echo "All specs reach their witness states (no vacuous passes)."
+
+# UNBOUNDED proofs. `quint-verify` is bounded (--max-steps): a clean run means
+# no counterexample within the bound. An inductive invariant is stronger --
+# it holds in every initial state, is preserved by every step, and implies the
+# target, so the result holds for ALL reachable states with no bound at all.
+#
+# Each entry needs a hand-written `typeOk` (domain constraints via `.in(<set>)`,
+# because the checker enumerates candidate states from the predicate) plus
+# whatever strengthening makes the conjunction closed under `step`. That is real
+# work per spec, which is why this list is shorter than QUINT_CHECKS.
+QUINT_INDUCTIVE := \
+  specs/quint/auth.qnt:auth \
+  specs/quint/lock_order.qnt:lock_order \
+  specs/quint/versioning.qnt:versioning \
+  specs/quint/cluster.qnt:cluster \
+  specs/quint/bulk_import.qnt:bulk_import \
+  specs/quint/namespace.qnt:namespace
+
+.PHONY: quint-induct
+quint-induct:
+	@for c in $(QUINT_INDUCTIVE); do \
+	  f=$$(echo $$c | cut -d: -f1); m=$$(echo $$c | cut -d: -f2); \
+	  printf '  induct %-20s' $$m; \
+	  $(QUINT) verify --main=$$m --inductive-invariant=indInv \
+	    --invariant=safety $$f >/dev/null 2>&1 \
+	    && echo "PROVED (unbounded)" \
+	    || { echo FAIL; exit 1; }; \
+	done
+	@echo "Inductive invariants established -- these hold for ALL reachable states."
+
+# BOUNDED model checking via Apalache. scripts/run_quint_verify.py tunes
+# --max-steps per spec (state size varies enormously) and applies a per-check
+# timeout, so a check that cannot finish is reported INTRACTABLE rather than
+# hanging while the summary still reads green.
+QUINT_VERIFY_TIMEOUT ?= 600
+
+.PHONY: quint-verify
+quint-verify:
+	@python3 -u scripts/run_quint_verify.py --quint $(QUINT) \
+	  --timeout $(QUINT_VERIFY_TIMEOUT)
+
+# Replay Quint-generated ITF traces against the real C implementation.
+# Traces under specs/quint/traces/ whose name contains "conformance" must match
+# exactly; the *-violation / *-double-count witnesses are expected to diverge
+# (they were generated from the PRE-FIX model and are kept as regressions).
+# Dispatch by filename prefix: raft* traces drive src/admin/raft.c via
+# replay_raft.py; wal-recovery* traces drive src/storage/wal.c (crash +
+# recovery against a real file) via replay_wal.py.
+.PHONY: quint-replay
+quint-replay: lib
+	@for t in specs/quint/traces/*conformance*.itf.json; do \
+	  [ -e "$$t" ] || continue; \
+	  case "$$t" in \
+	    *wal-recovery*) python3 specs/replay/replay_wal.py $$t || exit 1 ;; \
+	    *)              python3 specs/replay/replay_raft.py $$t || exit 1 ;; \
+	  esac || exit 1; \
+	done
+	@echo "ITF trace replay conformant."
+
+.PHONY: cbmc-smoke
+cbmc-smoke: lib
+	@for h in specs/cbmc/harness_*.c; do \
+	  b=$(BUILD_DIR)/cbmc-$$(basename $$h .c); \
+	  printf '  %-40s' $$h; \
+	  $(CC) -O0 -g -Wall -Wextra -Iinclude $$h -o $$b $(LIB_DIR)/lib$(LIB_NAME).a \
+	    -lm -pthread >/dev/null 2>&1 || { echo "BUILD FAIL"; exit 1; }; \
+	  $$b >/dev/null 2>&1 || { echo "RUN FAIL"; exit 1; }; \
+	  echo ok; \
+	done
+	@echo "CBMC harnesses compile and pass concretely."
+
+# Real bounded proof over the C. Distinct from cbmc-smoke, which only compiles
+# and concretely runs each harness once -- a single execution is not
+# verification. scripts/run_cbmc.py reads each harness's CBMC-SOURCES /
+# CBMC-UNWIND directives and reports PROVED / FAILED / INTRACTABLE honestly;
+# INTRACTABLE harnesses are NOT proofs and the coverage manifest says so.
+CBMC ?= cbmc
+CBMC_TIMEOUT ?= 300
+
+.PHONY: cbmc
+cbmc:
+	@command -v $(CBMC) >/dev/null 2>&1 || { \
+	  echo "cbmc not found; skipping bounded proofs."; \
+	  echo "install: https://github.com/diffblue/cbmc/releases"; exit 0; }
+	@python3 -u scripts/run_cbmc.py --cbmc $(CBMC) --timeout $(CBMC_TIMEOUT)
+
+.PHONY: formal
+formal: formal-lint formal-coverage quint-typecheck quint-test quint-witness quint-induct cbmc-smoke
+	@echo "Formal checks (fast tier) passed."

@@ -16,8 +16,6 @@
 #include <pthread.h>
 #include <stdatomic.h>
 
-/* Internal Structures */
-
 /**
  * @brief Maximum number of concurrent sessions tracked by the manager.
  */
@@ -50,8 +48,6 @@ struct GV_ConsistencyManager {
     pthread_mutex_t mutex;
 };
 
-/* Lifecycle */
-
 GV_ConsistencyManager *consistency_create(GV_ConsistencyLevel default_level)
 {
     GV_ConsistencyManager *mgr = gv_calloc(1, sizeof(*mgr));
@@ -80,8 +76,6 @@ void consistency_destroy(GV_ConsistencyManager *mgr)
     gv_free(mgr);
 }
 
-/* Default Level */
-
 int consistency_set_default(GV_ConsistencyManager *mgr, GV_ConsistencyLevel level)
 {
     if (!mgr) {
@@ -109,8 +103,6 @@ GV_ConsistencyLevel consistency_get_default(const GV_ConsistencyManager *mgr)
     return mgr->default_level;
 }
 
-/* Consistency Check */
-
 /**
  * @brief Look up the write position recorded for a session token.
  *
@@ -118,14 +110,27 @@ GV_ConsistencyLevel consistency_get_default(const GV_ConsistencyManager *mgr)
  *
  * @return The write position, or 0 if the token is not found.
  */
+/*
+ * Look up a session's required read position.
+ *
+ * @param found_out set to 1 if the token is known, 0 if it is not. This is the
+ *        distinction the return value alone cannot express: a known session
+ *        that has performed no writes also has position 0, and conflating the
+ *        two made an UNKNOWN token look like a session with nothing to catch
+ *        up on -- so the read was admitted anywhere. An evicted, restarted, or
+ *        foreign-node token silently downgraded SESSION to EVENTUAL.
+ */
 static uint64_t session_lookup_locked(const GV_ConsistencyManager *mgr,
-                                      uint64_t session_token)
+                                      uint64_t session_token,
+                                      int *found_out)
 {
     for (size_t i = 0; i < mgr->session_count; i++) {
         if (mgr->sessions[i].token == session_token) {
+            if (found_out) *found_out = 1;
             return mgr->sessions[i].write_position;
         }
     }
+    if (found_out) *found_out = 0;
     return 0;
 }
 
@@ -171,11 +176,23 @@ int consistency_check(const GV_ConsistencyManager *mgr,
          */
         GV_ConsistencyManager *mutable_mgr = (GV_ConsistencyManager *)mgr;
         pthread_mutex_lock(&mutable_mgr->mutex);
-        uint64_t required_pos = session_lookup_locked(mgr, config->session_token);
+        int found = 0;
+        uint64_t required_pos =
+            session_lookup_locked(mgr, config->session_token, &found);
         pthread_mutex_unlock(&mutable_mgr->mutex);
 
+        if (!found) {
+            /* FAIL CLOSED. We cannot know what this session has written, so we
+             * cannot certify that this replica has caught up to it. Refusing
+             * sends the caller to the leader, which trivially satisfies
+             * read-your-writes. Admitting instead -- as this did previously --
+             * silently degrades SESSION to EVENTUAL for any token that was
+             * evicted, minted on another node, or survived a restart. */
+            return 0;
+        }
         if (required_pos == 0) {
-            /* Unknown session or no writes recorded yet -- allow read */
+            /* Known session that has not written yet: nothing to catch up on,
+             * so any replica satisfies it. */
             return 1;
         }
         return (replica_position >= required_pos) ? 1 : 0;
@@ -185,8 +202,6 @@ int consistency_check(const GV_ConsistencyManager *mgr,
         return -1;
     }
 }
-
-/* Session Token Management */
 
 uint64_t consistency_new_session(GV_ConsistencyManager *mgr)
 {
@@ -253,13 +268,12 @@ uint64_t consistency_get_session_position(const GV_ConsistencyManager *mgr,
 
     GV_ConsistencyManager *mutable_mgr = (GV_ConsistencyManager *)mgr;
     pthread_mutex_lock(&mutable_mgr->mutex);
-    uint64_t pos = session_lookup_locked(mgr, session_token);
+    int found = 0;
+    uint64_t pos = session_lookup_locked(mgr, session_token, &found);
     pthread_mutex_unlock(&mutable_mgr->mutex);
 
-    return pos;
+    return found ? pos : 0;
 }
-
-/* Config Helpers */
 
 void consistency_config_init(GV_ConsistencyConfig *config)
 {

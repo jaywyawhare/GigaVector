@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <stdint.h>
 #ifdef __linux__
 #include <sys/random.h>
 #elif defined(_WIN32)
@@ -26,8 +27,15 @@
 
 /* AES-256-GCM authenticated tag length (bytes). */
 #define GCM_TAG_LEN 16
-
-/* Internal Structures */
+/* Per-message GCM nonce (96-bit) and CBC IV lengths. A FRESH random value is
+ * generated for every crypto_encrypt() call and prepended to the output, so the
+ * (key, nonce) pair is never reused — the old code took the nonce from the fixed
+ * key->iv, which is catastrophic for GCM across multiple messages. */
+#define GCM_NONCE_LEN 12
+#define CBC_IV_LEN    16
+/* Max bytes crypto_encrypt adds over the plaintext: IV/nonce prefix + tag/pad.
+ * (GCM: 12 nonce + 16 tag = 28; CBC: 16 IV + up-to-16 pad = 32.) */
+#define CRYPTO_MAX_OVERHEAD 48
 
 struct GV_CryptoContext {
     GV_CryptoConfig config;
@@ -37,11 +45,14 @@ struct GV_CryptoStream {
     GV_CryptoContext *ctx;
     GV_CryptoKey key;
     int encrypting;
-    unsigned char buffer[16];
+    unsigned char buffer[16];   /* partial input block accumulator */
     size_t buffer_len;
+    unsigned char prev[16];     /* CBC chaining block (holds the IV initially) */
+    int iv_done;                /* encrypt: IV emitted; decrypt: IV consumed */
+    unsigned char held[16];     /* decrypt: previous plaintext block, held back so
+                                 * final() can strip the PKCS7 padding of the LAST block */
+    int have_held;
 };
-
-/* AES Implementation (Minimal, for portability) */
 
 /* AES S-box */
 static const unsigned char sbox[256] = {
@@ -253,9 +264,7 @@ static void aes256_decrypt_block(const unsigned char in[16], unsigned char out[1
     memcpy(out, state, 16);
 }
 
-/* Random Generation */
-
-static int generate_random_bytes(unsigned char *buf, size_t len) {
+int gv_secure_random_bytes(unsigned char *buf, size_t len) {
 #if defined(_WIN32)
     NTSTATUS st = BCryptGenRandom(NULL, (PUCHAR)buf, (ULONG)len, BCRYPT_USE_SYSTEM_PREFERRED_RNG);
     if (BCRYPT_SUCCESS(st)) return 0;
@@ -271,11 +280,9 @@ static int generate_random_bytes(unsigned char *buf, size_t len) {
         if (n == len) return 0;
     }
 #endif
-    fprintf(stderr, "GigaVector crypto: FATAL: could not obtain cryptographic randomness\n");
+    fprintf(stderr, "GigaVector: FATAL: could not obtain cryptographic randomness\n");
     return -1;
 }
-
-/* Configuration */
 
 static const GV_CryptoConfig DEFAULT_CONFIG = {
     .algorithm = GV_CRYPTO_AES_256_CBC,
@@ -287,8 +294,6 @@ void crypto_config_init(GV_CryptoConfig *config) {
     if (!config) return;
     *config = DEFAULT_CONFIG;
 }
-
-/* Lifecycle */
 
 GV_CryptoContext *crypto_create(const GV_CryptoConfig *config) {
     GV_CryptoContext *ctx = gv_calloc(1, sizeof(GV_CryptoContext));
@@ -302,8 +307,6 @@ void crypto_destroy(GV_CryptoContext *ctx) {
     memset(ctx, 0, sizeof(*ctx));
     gv_free(ctx);
 }
-
-/* Key Management */
 
 int crypto_derive_key(GV_CryptoContext *ctx, const char *password,
                           size_t password_len, const unsigned char *salt,
@@ -320,7 +323,6 @@ int crypto_derive_key(GV_CryptoContext *ctx, const char *password,
     /* Derive 32 bytes for key + generate random IV */
     unsigned char dk[32];
 
-    /* Initialize T to zeros */
     memset(T, 0, 32);
 
     /* Counter (big-endian) */
@@ -347,15 +349,15 @@ int crypto_derive_key(GV_CryptoContext *ctx, const char *password,
     memcpy(dk, T, 32);
 
     memcpy(key->key, dk, 32);
-    if (generate_random_bytes(key->iv, 16) != 0) return -1;
+    if (gv_secure_random_bytes(key->iv, 16) != 0) return -1;
 
     return 0;
 }
 
 int crypto_generate_key(GV_CryptoKey *key) {
     if (!key) return -1;
-    if (generate_random_bytes(key->key, 32) != 0) return -1;
-    if (generate_random_bytes(key->iv, 16) != 0) {
+    if (gv_secure_random_bytes(key->key, 32) != 0) return -1;
+    if (gv_secure_random_bytes(key->iv, 16) != 0) {
         crypto_wipe_key(key);
         return -1;
     }
@@ -364,12 +366,12 @@ int crypto_generate_key(GV_CryptoKey *key) {
 
 int crypto_generate_iv(unsigned char *iv) {
     if (!iv) return -1;
-    return generate_random_bytes(iv, 16);
+    return gv_secure_random_bytes(iv, 16);
 }
 
 int crypto_generate_salt(unsigned char *salt, size_t salt_len) {
     if (!salt || salt_len == 0) return -1;
-    return generate_random_bytes(salt, salt_len);
+    return gv_secure_random_bytes(salt, salt_len);
 }
 
 void crypto_wipe_key(GV_CryptoKey *key) {
@@ -386,20 +388,21 @@ void crypto_wipe_key(GV_CryptoKey *key) {
     }
 }
 
-/* Encryption/Decryption */
-
 #ifdef GV_HAVE_OPENSSL
 /*
  * AES-256-GCM authenticated encryption using OpenSSL.
  *
- * Output layout (self-contained, since the public API has no separate tag
- * parameter): [ciphertext bytes ...][16-byte GCM tag].
- * The 96-bit nonce is taken from the first 12 bytes of key->iv.
- * Returns 0 on success, -1 on failure.
+ * Output layout (self-contained, since the public API has no separate nonce/tag
+ * parameters): [12-byte nonce][ciphertext bytes ...][16-byte GCM tag].
+ * A fresh random 96-bit nonce is generated per call (never key->iv), so the
+ * (key, nonce) pair is never reused. Returns 0 on success, -1 on failure.
  */
 static int gcm_encrypt_openssl(const GV_CryptoKey *key,
                                const unsigned char *plaintext, size_t plaintext_len,
                                unsigned char *ciphertext, size_t *ciphertext_len) {
+    unsigned char nonce[GCM_NONCE_LEN];
+    if (gv_secure_random_bytes(nonce, GCM_NONCE_LEN) != 0) return -1;
+
     EVP_CIPHER_CTX *c = EVP_CIPHER_CTX_new();
     if (!c) return -1;
     int rc = -1;
@@ -407,12 +410,15 @@ static int gcm_encrypt_openssl(const GV_CryptoKey *key,
     size_t total = 0;
 
     if (EVP_EncryptInit_ex(c, EVP_aes_256_gcm(), NULL, NULL, NULL) != 1) goto done;
-    /* 96-bit IV (default for GCM). */
-    if (EVP_CIPHER_CTX_ctrl(c, EVP_CTRL_GCM_SET_IVLEN, 12, NULL) != 1) goto done;
-    if (EVP_EncryptInit_ex(c, NULL, NULL, key->key, key->iv) != 1) goto done;
+    if (EVP_CIPHER_CTX_ctrl(c, EVP_CTRL_GCM_SET_IVLEN, GCM_NONCE_LEN, NULL) != 1) goto done;
+    if (EVP_EncryptInit_ex(c, NULL, NULL, key->key, nonce) != 1) goto done;
+
+    /* Prepend the nonce so the decryptor can recover it. */
+    memcpy(ciphertext, nonce, GCM_NONCE_LEN);
+    total = GCM_NONCE_LEN;
 
     if (plaintext_len > 0) {
-        if (EVP_EncryptUpdate(c, ciphertext, &outl, plaintext,
+        if (EVP_EncryptUpdate(c, ciphertext + total, &outl, plaintext,
                               (int)plaintext_len) != 1) goto done;
         total += (size_t)outl;
     }
@@ -433,9 +439,12 @@ done:
 static int gcm_decrypt_openssl(const GV_CryptoKey *key,
                                const unsigned char *ciphertext, size_t ciphertext_len,
                                unsigned char *plaintext, size_t *plaintext_len) {
-    if (ciphertext_len < GCM_TAG_LEN) return -1;
-    size_t ct_len = ciphertext_len - GCM_TAG_LEN;
-    const unsigned char *tag = ciphertext + ct_len;
+    /* Layout: [12 nonce][ct][16 tag]. */
+    if (ciphertext_len < GCM_NONCE_LEN + GCM_TAG_LEN) return -1;
+    const unsigned char *nonce = ciphertext;
+    const unsigned char *ct    = ciphertext + GCM_NONCE_LEN;
+    size_t ct_len = ciphertext_len - GCM_NONCE_LEN - GCM_TAG_LEN;
+    const unsigned char *tag = ct + ct_len;
 
     EVP_CIPHER_CTX *c = EVP_CIPHER_CTX_new();
     if (!c) return -1;
@@ -444,11 +453,11 @@ static int gcm_decrypt_openssl(const GV_CryptoKey *key,
     size_t total = 0;
 
     if (EVP_DecryptInit_ex(c, EVP_aes_256_gcm(), NULL, NULL, NULL) != 1) goto done;
-    if (EVP_CIPHER_CTX_ctrl(c, EVP_CTRL_GCM_SET_IVLEN, 12, NULL) != 1) goto done;
-    if (EVP_DecryptInit_ex(c, NULL, NULL, key->key, key->iv) != 1) goto done;
+    if (EVP_CIPHER_CTX_ctrl(c, EVP_CTRL_GCM_SET_IVLEN, GCM_NONCE_LEN, NULL) != 1) goto done;
+    if (EVP_DecryptInit_ex(c, NULL, NULL, key->key, nonce) != 1) goto done;
 
     if (ct_len > 0) {
-        if (EVP_DecryptUpdate(c, plaintext, &outl, ciphertext,
+        if (EVP_DecryptUpdate(c, plaintext, &outl, ct,
                               (int)ct_len) != 1) goto done;
         total += (size_t)outl;
     }
@@ -491,18 +500,23 @@ int crypto_encrypt(GV_CryptoContext *ctx, const GV_CryptoKey *key,
         return -1;  /* unknown/unsupported algorithm */
     }
 
-    /* Expand key */
+    /* Fresh random IV per message, prepended to the output; the old code used the
+     * fixed key->iv, which leaks first-block equality across messages. */
+    unsigned char iv[CBC_IV_LEN];
+    if (gv_secure_random_bytes(iv, CBC_IV_LEN) != 0) return -1;
+
     unsigned char roundkeys[240];
     aes256_key_expansion(key->key, roundkeys);
 
     /* Calculate padded length (PKCS7) */
     size_t pad_len = 16 - (plaintext_len % 16);
     size_t total_len = plaintext_len + pad_len;
-    *ciphertext_len = total_len;
+    *ciphertext_len = CBC_IV_LEN + total_len;   /* IV prefix + ciphertext */
 
-    /* CBC mode encryption — loop over total_len which includes PKCS7 padding block */
+    /* Prepend the IV; ciphertext blocks are written after it. */
+    memcpy(ciphertext, iv, CBC_IV_LEN);
     unsigned char prev_block[16];
-    memcpy(prev_block, key->iv, 16);
+    memcpy(prev_block, iv, CBC_IV_LEN);
 
     size_t pos = 0;
     while (pos < total_len) {
@@ -522,9 +536,8 @@ int crypto_encrypt(GV_CryptoContext *ctx, const GV_CryptoKey *key,
             block[i] ^= prev_block[i];
         }
 
-        /* Encrypt */
-        aes256_encrypt_block(block, ciphertext + pos, roundkeys);
-        memcpy(prev_block, ciphertext + pos, 16);
+        aes256_encrypt_block(block, ciphertext + CBC_IV_LEN + pos, roundkeys);
+        memcpy(prev_block, ciphertext + CBC_IV_LEN + pos, 16);
 
         pos += 16;
     }
@@ -550,19 +563,23 @@ int crypto_decrypt(GV_CryptoContext *ctx, const GV_CryptoKey *key,
         return -1;  /* unknown/unsupported algorithm */
     }
 
-    if (ciphertext_len == 0 || ciphertext_len % 16 != 0) return -1;
+    /* Layout: [16 IV][ciphertext]. */
+    if (ciphertext_len < CBC_IV_LEN) return -1;
+    const unsigned char *iv = ciphertext;
+    const unsigned char *ct = ciphertext + CBC_IV_LEN;
+    size_t ct_len = ciphertext_len - CBC_IV_LEN;
+    if (ct_len == 0 || ct_len % 16 != 0) return -1;
 
-    /* Expand key */
     unsigned char roundkeys[240];
     aes256_key_expansion(key->key, roundkeys);
 
-    /* CBC mode decryption */
+    /* CBC mode decryption, seeded with the prepended IV. */
     unsigned char prev_block[16];
-    memcpy(prev_block, key->iv, 16);
+    memcpy(prev_block, iv, CBC_IV_LEN);
 
-    for (size_t pos = 0; pos < ciphertext_len; pos += 16) {
+    for (size_t pos = 0; pos < ct_len; pos += 16) {
         unsigned char block[16];
-        aes256_decrypt_block(ciphertext + pos, block, roundkeys);
+        aes256_decrypt_block(ct + pos, block, roundkeys);
 
         /* XOR with previous ciphertext block */
         for (int i = 0; i < 16; i++) {
@@ -570,25 +587,23 @@ int crypto_decrypt(GV_CryptoContext *ctx, const GV_CryptoKey *key,
         }
 
         memcpy(plaintext + pos, block, 16);
-        memcpy(prev_block, ciphertext + pos, 16);
+        memcpy(prev_block, ct + pos, 16);
     }
 
     /* Remove and validate PKCS7 padding */
-    unsigned char pad = plaintext[ciphertext_len - 1];
+    unsigned char pad = plaintext[ct_len - 1];
     if (pad == 0 || pad > 16) {
         return -1;
     }
     for (unsigned char pi = 1; pi < pad; pi++) {
-        if (plaintext[ciphertext_len - 1 - pi] != pad) {
+        if (plaintext[ct_len - 1 - pi] != pad) {
             return -1;
         }
     }
-    *plaintext_len = ciphertext_len - pad;
+    *plaintext_len = ct_len - pad;
 
     return 0;
 }
-
-/* File Encryption */
 
 #define FILE_BUFFER_SIZE (64 * 1024)
 
@@ -605,11 +620,8 @@ int crypto_encrypt_file(GV_CryptoContext *ctx, const GV_CryptoKey *key,
         return -1;
     }
 
-    /* Write IV at beginning */
-    fwrite(key->iv, 1, 16, fout);
-
     unsigned char *buffer = gv_alloc(FILE_BUFFER_SIZE);
-    unsigned char *cipher = gv_alloc(FILE_BUFFER_SIZE + 16);
+    unsigned char *cipher = gv_alloc(FILE_BUFFER_SIZE + CRYPTO_MAX_OVERHEAD);
     if (!buffer || !cipher) {
         gv_free(buffer);
         gv_free(cipher);
@@ -618,32 +630,32 @@ int crypto_encrypt_file(GV_CryptoContext *ctx, const GV_CryptoKey *key,
         return -1;
     }
 
+    /* Each 64 KiB plaintext chunk is encrypted independently (crypto_encrypt now
+     * embeds its own nonce/IV + tag/pad, so a chunk's ciphertext is larger than
+     * its plaintext by a variable amount). Length-FRAME every chunk so the
+     * decryptor reads exactly cipher_len bytes — the old code re-read fixed 64 KiB
+     * chunks, which desynced after the first chunk for any file > 64 KiB. */
+    int rc = 0;
     size_t nread;
-    GV_CryptoKey working_key = *key;
-
     while ((nread = fread(buffer, 1, FILE_BUFFER_SIZE, fin)) > 0) {
-        size_t cipher_len;
-        if (crypto_encrypt(ctx, &working_key, buffer, nread, cipher, &cipher_len) != 0) {
-            gv_free(buffer);
-            gv_free(cipher);
-            fclose(fin);
-            fclose(fout);
-            return -1;
-        }
-        fwrite(cipher, 1, cipher_len, fout);
-
-        /* Update IV for next block */
-        if (cipher_len >= 16) {
-            memcpy(working_key.iv, cipher + cipher_len - 16, 16);
-        }
+        size_t cipher_len = 0;
+        if (crypto_encrypt(ctx, key, buffer, nread, cipher, &cipher_len) != 0) { rc = -1; break; }
+        unsigned char lenbuf[4];
+        lenbuf[0] = (unsigned char)(cipher_len & 0xFF);
+        lenbuf[1] = (unsigned char)((cipher_len >> 8) & 0xFF);
+        lenbuf[2] = (unsigned char)((cipher_len >> 16) & 0xFF);
+        lenbuf[3] = (unsigned char)((cipher_len >> 24) & 0xFF);
+        if (fwrite(lenbuf, 1, 4, fout) != 4 ||
+            fwrite(cipher, 1, cipher_len, fout) != cipher_len) { rc = -1; break; }
     }
+    if (ferror(fin)) rc = -1;
 
     gv_free(buffer);
     gv_free(cipher);
+    if (fclose(fout) != 0) rc = -1;
     fclose(fin);
-    fclose(fout);
 
-    return 0;
+    return rc;
 }
 
 int crypto_decrypt_file(GV_CryptoContext *ctx, const GV_CryptoKey *key,
@@ -659,56 +671,40 @@ int crypto_decrypt_file(GV_CryptoContext *ctx, const GV_CryptoKey *key,
         return -1;
     }
 
-    /* Read IV from beginning */
-    GV_CryptoKey working_key = *key;
-    if (fread(working_key.iv, 1, 16, fin) != 16) {
-        fclose(fin);
-        fclose(fout);
-        return -1;
-    }
-
-    unsigned char *buffer = gv_alloc(FILE_BUFFER_SIZE);
-    unsigned char *plain = gv_alloc(FILE_BUFFER_SIZE);
-    if (!buffer || !plain) {
-        gv_free(buffer);
+    size_t cap = FILE_BUFFER_SIZE + CRYPTO_MAX_OVERHEAD;
+    unsigned char *cbuf  = gv_alloc(cap);
+    unsigned char *plain = gv_alloc(cap);   /* plaintext is never larger than its ciphertext */
+    if (!cbuf || !plain) {
+        gv_free(cbuf);
         gv_free(plain);
         fclose(fin);
         fclose(fout);
         return -1;
     }
 
-    size_t nread;
-    while ((nread = fread(buffer, 1, FILE_BUFFER_SIZE, fin)) > 0) {
-        size_t plain_len;
-        if (crypto_decrypt(ctx, &working_key, buffer, nread, plain, &plain_len) != 0) {
-            gv_free(buffer);
-            gv_free(plain);
-            fclose(fin);
-            fclose(fout);
-            return -1;
-        }
-        /* Capture last ciphertext block before overwriting buffer */
-        unsigned char last_cipher_block[16];
-        if (nread >= 16) {
-            memcpy(last_cipher_block, buffer + nread - 16, 16);
-        }
-        fwrite(plain, 1, plain_len, fout);
-
-        /* Update IV using the last ciphertext block (CBC chaining) */
-        if (nread >= 16) {
-            memcpy(working_key.iv, last_cipher_block, 16);
-        }
+    /* Read each length-framed chunk: [4-byte LE cipher_len][cipher bytes]. */
+    int rc = 0;
+    size_t got;
+    unsigned char lenbuf[4];
+    while ((got = fread(lenbuf, 1, 4, fin)) == 4) {
+        uint32_t clen = (uint32_t)lenbuf[0] | ((uint32_t)lenbuf[1] << 8) |
+                        ((uint32_t)lenbuf[2] << 16) | ((uint32_t)lenbuf[3] << 24);
+        if (clen == 0 || clen > cap) { rc = -1; break; }   /* corrupt/oversized frame */
+        if (fread(cbuf, 1, clen, fin) != clen) { rc = -1; break; }
+        size_t plain_len = 0;
+        if (crypto_decrypt(ctx, key, cbuf, clen, plain, &plain_len) != 0) { rc = -1; break; }
+        if (fwrite(plain, 1, plain_len, fout) != plain_len) { rc = -1; break; }
     }
+    if (got != 0 && got != 4) rc = -1;   /* trailing partial length header = corruption */
+    if (ferror(fin)) rc = -1;
 
-    gv_free(buffer);
+    gv_free(cbuf);
     gv_free(plain);
+    if (fclose(fout) != 0) rc = -1;
     fclose(fin);
-    fclose(fout);
 
-    return 0;
+    return rc;
 }
-
-/* Stream Encryption */
 
 GV_CryptoStream *crypto_stream_create(GV_CryptoContext *ctx,
                                           const GV_CryptoKey *key,
@@ -722,6 +718,14 @@ GV_CryptoStream *crypto_stream_create(GV_CryptoContext *ctx,
     stream->key = *key;
     stream->encrypting = encrypting;
     stream->buffer_len = 0;
+    stream->iv_done = 0;
+    stream->have_held = 0;
+    if (encrypting) {
+        /* Fresh random IV per stream (emitted to the output before any ciphertext
+         * on the first update/final). Never the fixed key->iv, which would reuse
+         * the IV across streams. */
+        if (gv_secure_random_bytes(stream->prev, 16) != 0) { gv_free(stream); return NULL; }
+    }
 
     return stream;
 }
@@ -729,12 +733,20 @@ GV_CryptoStream *crypto_stream_create(GV_CryptoContext *ctx,
 int crypto_stream_update(GV_CryptoStream *stream,
                              const unsigned char *input, size_t input_len,
                              unsigned char *output, size_t *output_len) {
-    if (!stream || !input || !output || !output_len) return -1;
+    if (!stream || (!input && input_len) || !output || !output_len) return -1;
 
-    /* For simplicity, process complete blocks only */
     *output_len = 0;
 
-    /* Add input to buffer */
+    unsigned char roundkeys[240];
+    aes256_key_expansion(stream->key.key, roundkeys);
+
+    /* Encrypt: emit the random IV once, before any ciphertext. */
+    if (stream->encrypting && !stream->iv_done) {
+        memcpy(output, stream->prev, 16);
+        *output_len = 16;
+        stream->iv_done = 1;
+    }
+
     size_t processed = 0;
     while (processed < input_len) {
         size_t space = 16 - stream->buffer_len;
@@ -745,28 +757,31 @@ int crypto_stream_update(GV_CryptoStream *stream,
         stream->buffer_len += to_copy;
         processed += to_copy;
 
-        /* Process complete block */
         if (stream->buffer_len == 16) {
-            unsigned char roundkeys[240];
-            aes256_key_expansion(stream->key.key, roundkeys);
-
             if (stream->encrypting) {
-                for (int i = 0; i < 16; i++) {
-                    stream->buffer[i] ^= stream->key.iv[i];
-                }
+                for (int i = 0; i < 16; i++) stream->buffer[i] ^= stream->prev[i];
                 aes256_encrypt_block(stream->buffer, output + *output_len, roundkeys);
-                memcpy(stream->key.iv, output + *output_len, 16);
+                memcpy(stream->prev, output + *output_len, 16);  /* chain */
+                *output_len += 16;
+            } else if (!stream->iv_done) {
+                /* Decrypt: the FIRST block of the input stream is the IV. */
+                memcpy(stream->prev, stream->buffer, 16);
+                stream->iv_done = 1;
             } else {
-                unsigned char temp[16];
-                memcpy(temp, stream->buffer, 16);
-                aes256_decrypt_block(stream->buffer, output + *output_len, roundkeys);
-                for (int i = 0; i < 16; i++) {
-                    output[*output_len + i] ^= stream->key.iv[i];
+                unsigned char cipher[16], plain[16];
+                memcpy(cipher, stream->buffer, 16);
+                aes256_decrypt_block(stream->buffer, plain, roundkeys);
+                for (int i = 0; i < 16; i++) plain[i] ^= stream->prev[i];
+                memcpy(stream->prev, cipher, 16);  /* chain */
+                /* Hold back one plaintext block so final() can strip the PKCS7
+                 * padding from the genuine last block; emit the prior held block. */
+                if (stream->have_held) {
+                    memcpy(output + *output_len, stream->held, 16);
+                    *output_len += 16;
                 }
-                memcpy(stream->key.iv, temp, 16);
+                memcpy(stream->held, plain, 16);
+                stream->have_held = 1;
             }
-
-            *output_len += 16;
             stream->buffer_len = 0;
         }
     }
@@ -780,27 +795,39 @@ int crypto_stream_final(GV_CryptoStream *stream,
 
     *output_len = 0;
 
+    unsigned char roundkeys[240];
+    aes256_key_expansion(stream->key.key, roundkeys);
+
     if (stream->encrypting) {
-        /* Add PKCS7 padding */
+        /* Emit the IV first if no update() ever did (empty plaintext). */
+        if (!stream->iv_done) {
+            memcpy(output, stream->prev, 16);
+            *output_len = 16;
+            stream->iv_done = 1;
+        }
+        /* PKCS7-pad the final (possibly empty) partial block, then CBC-encrypt. */
         size_t pad_len = 16 - stream->buffer_len;
         for (size_t i = stream->buffer_len; i < 16; i++) {
             stream->buffer[i] = (unsigned char)pad_len;
         }
-
-        unsigned char roundkeys[240];
-        aes256_key_expansion(stream->key.key, roundkeys);
-
-        for (int i = 0; i < 16; i++) {
-            stream->buffer[i] ^= stream->key.iv[i];
-        }
-        aes256_encrypt_block(stream->buffer, output, roundkeys);
-        *output_len = 16;
+        for (int i = 0; i < 16; i++) stream->buffer[i] ^= stream->prev[i];
+        aes256_encrypt_block(stream->buffer, output + *output_len, roundkeys);
+        *output_len += 16;
     } else {
-        /* Handle remaining data with padding removal */
-        if (stream->buffer_len > 0) {
-            /* This is an error - incomplete block in decryption */
-            return -1;
+        /* A leftover partial block means the ciphertext was truncated. */
+        if (stream->buffer_len != 0) return -1;
+        /* The held block is the last plaintext block; strip and validate its
+         * PKCS7 padding. Without a held block the stream carried no data block
+         * (IV only / empty) — invalid, since encrypt always emits ≥1 padded block. */
+        if (!stream->have_held) return -1;
+        unsigned char pad = stream->held[15];
+        if (pad == 0 || pad > 16) return -1;
+        for (unsigned char pi = 1; pi < pad; pi++) {
+            if (stream->held[16 - 1 - pi] != pad) return -1;
         }
+        size_t out = 16 - (size_t)pad;
+        if (out > 0) memcpy(output, stream->held, out);
+        *output_len = out;
     }
 
     return 0;
@@ -813,8 +840,6 @@ void crypto_stream_destroy(GV_CryptoStream *stream) {
     gv_free(stream);
 }
 
-/* HMAC-SHA256 */
-
 int crypto_hmac_sha256(const unsigned char *key, size_t key_len,
                            const unsigned char *data, size_t data_len,
                            unsigned char *hmac) {
@@ -822,18 +847,15 @@ int crypto_hmac_sha256(const unsigned char *key, size_t key_len,
 
     unsigned char k_ipad[64], k_opad[64];
 
-    /* Key processing */
     unsigned char key_block[64];
     memset(key_block, 0, 64);
 
     if (key_len > 64) {
-        /* Hash key if too long */
         auth_sha256(key, key_len, key_block);
     } else {
         memcpy(key_block, key, key_len);
     }
 
-    /* Create padded keys */
     for (int i = 0; i < 64; i++) {
         k_ipad[i] = key_block[i] ^ 0x36;
         k_opad[i] = key_block[i] ^ 0x5c;
@@ -888,4 +910,39 @@ const char *crypto_algorithm_string(GV_CryptoAlgorithm algorithm) {
         case GV_CRYPTO_AES_256_GCM: return "AES-256-GCM";
         default: return "unknown";
     }
+}
+
+static int b64url_val(unsigned char c) {
+    if (c >= 'A' && c <= 'Z') return c - 'A';
+    if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+    if (c >= '0' && c <= '9') return c - '0' + 52;
+    if (c == '-') return 62;
+    if (c == '_') return 63;
+    return -1;
+}
+
+int crypto_base64url_decode(const char *in, size_t in_len,
+                            unsigned char *out, size_t *out_len) {
+    if (!in || !out || !out_len) return -1;
+    while (in_len > 0 && in[in_len - 1] == '=') in_len--;
+
+    size_t max_out = (in_len * 3) / 4 + 1;
+    if (*out_len < max_out) { *out_len = max_out; return -1; }
+
+    size_t i = 0, j = 0;
+    while (i < in_len) {
+        int s[4] = {0, 0, 0, 0};
+        size_t n = 0;
+        for (n = 0; n < 4 && i < in_len; n++, i++) {
+            s[n] = b64url_val((unsigned char)in[i]);
+            if (s[n] < 0) return -1;
+        }
+        uint32_t triple = ((uint32_t)s[0] << 18) | ((uint32_t)s[1] << 12) |
+                          ((uint32_t)s[2] << 6) | (uint32_t)s[3];
+        if (n >= 2) out[j++] = (unsigned char)((triple >> 16) & 0xFF);
+        if (n >= 3) out[j++] = (unsigned char)((triple >> 8) & 0xFF);
+        if (n >= 4) out[j++] = (unsigned char)(triple & 0xFF);
+    }
+    *out_len = j;
+    return 0;
 }

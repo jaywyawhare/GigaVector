@@ -16,7 +16,6 @@ extern "C" {
  * expiration and cleanup of stale data.
  */
 
-/* Forward declaration */
 struct GV_Database;
 
 /**

@@ -160,10 +160,10 @@ static int test_resource_limits(void) {
     ASSERT(retrieved.max_vectors == limits.max_vectors, "retrieve vector limit");
     
     size_t mem_usage = db_get_memory_usage(db);
-    (void)mem_usage;  /* Verify function call succeeded */
-    
+    (void)mem_usage;
+
     size_t concurrent_ops = db_get_concurrent_operations(db);
-    (void)concurrent_ops;  /* Verify function call succeeded */
+    (void)concurrent_ops;
     
     db_close(db);
     return 0;
@@ -266,7 +266,11 @@ static int test_range_search_filtered(void) {
     GV_SearchResult res[10];
     int n = db_range_search_filtered(db, q, 2.5f, res, 10, GV_DISTANCE_EUCLIDEAN, "tag", "a");
     ASSERT(n >= 0, "range search filtered");
-    
+
+    /* Result vectors are caller-owned heap copies; free them. */
+    for (int i = 0; i < n; i++) {
+        if (res[i].vector) vector_destroy((GV_Vector *)res[i].vector);
+    }
     db_close(db);
     return 0;
 }

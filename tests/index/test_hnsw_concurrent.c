@@ -72,7 +72,7 @@ static int test_concurrent_insert_search(void) {
     for (int i = 0; i < N_SEED; i++) {
         float v[4] = {(float)i * 0.01f, (float)i * 0.02f,
                       (float)i * 0.03f, (float)i * 0.04f};
-        db_add_vector(db, v, 4);
+        { int _r = db_add_vector(db, v, 4); (void)_r; }
     }
 
     pthread_t insert_threads[N_INSERT_THREADS];

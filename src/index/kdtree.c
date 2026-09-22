@@ -108,52 +108,6 @@ int kdtree_save_recursive(const GV_KDNode *node, const GV_SoAStorage *storage, F
 }
 
 
-static int read_metadata(FILE *in, GV_Vector *vec) {
-    if (vec == NULL) {
-        return -1;
-    }
-
-    uint32_t count = 0;
-    if (read_u32(in, &count) != 0) {
-        return -1;
-    }
-
-    for (uint32_t i = 0; i < count; ++i) {
-        uint32_t key_len = 0;
-        uint32_t val_len = 0;
-        char *key = NULL;
-        char *value = NULL;
-
-        if (read_u32(in, &key_len) != 0) {
-            return -1;
-        }
-        if (read_str(in, &key, key_len) != 0) {
-            gv_free(key);
-            return -1;
-        }
-
-        if (read_u32(in, &val_len) != 0) {
-            gv_free(key);
-            return -1;
-        }
-        if (read_str(in, &value, val_len) != 0) {
-            gv_free(key);
-            gv_free(value);
-            return -1;
-        }
-
-        if (vector_set_metadata(vec, key, value) != 0) {
-            gv_free(key);
-            gv_free(value);
-            return -1;
-        }
-
-        gv_free(key);
-        gv_free(value);
-    }
-
-    return 0;
-}
 
 int kdtree_load_recursive(GV_KDNode **root, GV_SoAStorage *storage, FILE *in, size_t dimension, uint32_t version) {
     if (root == NULL || in == NULL || dimension == 0 || storage == NULL) {
@@ -203,7 +157,7 @@ int kdtree_load_recursive(GV_KDNode **root, GV_SoAStorage *storage, FILE *in, si
         temp_vec.dimension = dimension;
         temp_vec.data = NULL;
         temp_vec.metadata = NULL;
-        if (read_metadata(in, &temp_vec) != 0) {
+        if (read_metadata_into_vector(in, &temp_vec) != 0) {
             gv_free(temp_data);
             return -1;
         }
@@ -287,6 +241,46 @@ static GV_Vector *knn_get_vector_view(GV_KNNStorageContext *storage_ctx, size_t 
         return NULL;
     }
     return &storage_ctx->temp_views[index];
+}
+
+/* Build a caller-owned deep copy (data + metadata) of the vector at @p index by
+ * fetching a FRESH view from storage. Unlike reading a stored `results[].vector`
+ * pointer, this never depends on the transient temp_views array (which may have
+ * been reallocated mid-search or freed before the caller reads the results).
+ * Returns NULL on failure. */
+static GV_Vector *kd_materialize_owned_copy(const GV_SoAStorage *storage, size_t index) {
+    GV_Vector view;
+    if (soa_storage_get_vector_view((GV_SoAStorage *)storage, index, &view) != 0) {
+        return NULL;
+    }
+    GV_Vector *copy = vector_create_from_data(view.dimension, view.data);
+    if (copy == NULL) return NULL;
+    if (view.metadata != NULL) {
+        GV_Metadata *src = view.metadata;
+        GV_Metadata *dst_head = NULL, *dst_tail = NULL;
+        while (src != NULL) {
+            GV_Metadata *new_meta = (GV_Metadata *)gv_alloc(sizeof(GV_Metadata));
+            if (new_meta == NULL) {
+                while (dst_head != NULL) {
+                    GV_Metadata *next = dst_head->next;
+                    gv_free(dst_head->key);
+                    gv_free(dst_head->value);
+                    gv_free(dst_head);
+                    dst_head = next;
+                }
+                vector_destroy(copy);
+                return NULL;
+            }
+            new_meta->key = src->key ? gv_dup_cstr(src->key) : NULL;
+            new_meta->value = src->value ? gv_dup_cstr(src->value) : NULL;
+            new_meta->next = NULL;
+            if (dst_head == NULL) dst_head = dst_tail = new_meta;
+            else { dst_tail->next = new_meta; dst_tail = new_meta; }
+            src = src->next;
+        }
+        copy->metadata = dst_head;
+    }
+    return copy;
 }
 
 static void knn_insert_result(GV_KNNContext *ctx, GV_KNNStorageContext *storage_ctx, size_t vector_index, float distance) {
@@ -449,47 +443,13 @@ int kdtree_knn_search(const GV_KDNode *root, const GV_SoAStorage *storage, const
 
     knn_search_recursive(root, storage, query, &ctx, &storage_ctx);
 
-    /* Copy vector data from views to ensure results remain valid after temp_views is freed */
+    /* Materialize owned deep copies from FRESH views (by id) so results stay
+     * valid after temp_views is freed and are immune to the mid-search realloc
+     * that relocated the transient view pointers. */
     for (size_t i = 0; i < ctx.count; ++i) {
-        if (ctx.results[i].vector != NULL && !ctx.results[i].is_sparse) {
-            const GV_Vector *view = ctx.results[i].vector;
-            GV_Vector *copy = vector_create_from_data(view->dimension, view->data);
-            if (copy != NULL && view->metadata != NULL) {
-                /* Copy metadata chain */
-                GV_Metadata *src = view->metadata;
-                GV_Metadata *dst_head = NULL;
-                GV_Metadata *dst_tail = NULL;
-                while (src != NULL) {
-                    GV_Metadata *new_meta = (GV_Metadata *)gv_alloc(sizeof(GV_Metadata));
-                    if (new_meta == NULL) {
-                        /* Free what we've copied so far */
-                        while (dst_head != NULL) {
-                            GV_Metadata *next = dst_head->next;
-                            gv_free(dst_head->key);
-                            gv_free(dst_head->value);
-                            gv_free(dst_head);
-                            dst_head = next;
-                        }
-                        vector_destroy(copy);
-                        copy = NULL;
-                        break;
-                    }
-                    new_meta->key = src->key ? gv_dup_cstr(src->key) : NULL;
-                    new_meta->value = src->value ? gv_dup_cstr(src->value) : NULL;
-                    new_meta->next = NULL;
-                    if (dst_head == NULL) {
-                        dst_head = dst_tail = new_meta;
-                    } else {
-                        dst_tail->next = new_meta;
-                        dst_tail = new_meta;
-                    }
-                    src = src->next;
-                }
-                if (copy != NULL)
-                    copy->metadata = dst_head;
-            }
-            ctx.results[i].vector = copy;
-        }
+        ctx.results[i].vector = ctx.results[i].is_sparse
+            ? NULL
+            : kd_materialize_owned_copy(storage, ctx.results[i].id);
     }
 
     gv_free(storage_ctx.temp_views);
@@ -525,46 +485,13 @@ int kdtree_knn_search_filtered(const GV_KDNode *root, const GV_SoAStorage *stora
 
     knn_search_recursive(root, storage, query, &ctx, &storage_ctx);
 
-    /* Copy vector data from views to ensure results remain valid after temp_views is freed */
+    /* Materialize owned deep copies from FRESH views (by id) so results stay
+     * valid after temp_views is freed and are immune to the mid-search realloc
+     * that relocated the transient view pointers. */
     for (size_t i = 0; i < ctx.count; ++i) {
-        if (ctx.results[i].vector != NULL && !ctx.results[i].is_sparse) {
-            const GV_Vector *view = ctx.results[i].vector;
-            GV_Vector *copy = vector_create_from_data(view->dimension, view->data);
-            if (copy != NULL && view->metadata != NULL) {
-                /* Copy metadata chain */
-                GV_Metadata *src = view->metadata;
-                GV_Metadata *dst_head = NULL;
-                GV_Metadata *dst_tail = NULL;
-                while (src != NULL) {
-                    GV_Metadata *new_meta = (GV_Metadata *)gv_alloc(sizeof(GV_Metadata));
-                    if (new_meta == NULL) {
-                        while (dst_head != NULL) {
-                            GV_Metadata *next = dst_head->next;
-                            gv_free(dst_head->key);
-                            gv_free(dst_head->value);
-                            gv_free(dst_head);
-                            dst_head = next;
-                        }
-                        vector_destroy(copy);
-                        copy = NULL;
-                        break;
-                    }
-                    new_meta->key = src->key ? gv_dup_cstr(src->key) : NULL;
-                    new_meta->value = src->value ? gv_dup_cstr(src->value) : NULL;
-                    new_meta->next = NULL;
-                    if (dst_head == NULL) {
-                        dst_head = dst_tail = new_meta;
-                    } else {
-                        dst_tail->next = new_meta;
-                        dst_tail = new_meta;
-                    }
-                    src = src->next;
-                }
-                if (copy != NULL)
-                    copy->metadata = dst_head;
-            }
-            ctx.results[i].vector = copy;
-        }
+        ctx.results[i].vector = ctx.results[i].is_sparse
+            ? NULL
+            : kd_materialize_owned_copy(storage, ctx.results[i].id);
     }
 
     gv_free(storage_ctx.temp_views);
@@ -699,6 +626,14 @@ int kdtree_range_search(const GV_KDNode *root, const GV_SoAStorage *storage, con
 
     range_search_recursive(root, storage, query, &ctx, &storage_ctx);
 
+    /* Replace the transient view pointers with owned deep copies (fetched fresh
+     * by id) so the caller does not read freed temp_views memory. */
+    for (size_t i = 0; i < ctx.count; ++i) {
+        ctx.results[i].vector = ctx.results[i].is_sparse
+            ? NULL
+            : kd_materialize_owned_copy(storage, ctx.results[i].id);
+    }
+
     gv_free(storage_ctx.temp_views);
     return (int)ctx.count;
 }
@@ -732,6 +667,14 @@ int kdtree_range_search_filtered(const GV_KDNode *root, const GV_SoAStorage *sto
     memset(results, 0, max_results * sizeof(GV_SearchResult));
 
     range_search_recursive(root, storage, query, &ctx, &storage_ctx);
+
+    /* Replace the transient view pointers with owned deep copies (fetched fresh
+     * by id) so the caller does not read freed temp_views memory. */
+    for (size_t i = 0; i < ctx.count; ++i) {
+        ctx.results[i].vector = ctx.results[i].is_sparse
+            ? NULL
+            : kd_materialize_owned_copy(storage, ctx.results[i].id);
+    }
 
     gv_free(storage_ctx.temp_views);
     return (int)ctx.count;
@@ -859,18 +802,15 @@ int kdtree_update(GV_KDNode **root, GV_SoAStorage *storage, size_t vector_index,
         return -1;
     }
 
-    /* Delete the old node from the tree */
     int delete_status = kdtree_delete(root, storage, vector_index);
     if (delete_status != 0) {
         return -1;
     }
 
-    /* Update the data in SoA storage */
     if (soa_storage_update_data(storage, vector_index, new_data) != 0) {
         return -1;
     }
 
-    /* Reinsert the updated vector into the tree */
     int insert_status = kdtree_insert(root, storage, vector_index, 0);
     if (insert_status != 0) {
         return -1;

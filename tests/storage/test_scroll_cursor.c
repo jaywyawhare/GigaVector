@@ -41,9 +41,7 @@ static void make_vec(float *buf, size_t id) {
     }
 }
 
-/* -------------------------------------------------------------------------
- * Test: basic scroll exhausts all N_INIT vectors with no duplicates
- * ---------------------------------------------------------------------- */
+/* basic scroll exhausts all N_INIT vectors with no duplicates */
 static int test_full_scroll(void) {
     GV_Database *db = db_open(NULL, DIM, GV_INDEX_TYPE_FLAT);
     ASSERT(db != NULL, "db_open");
@@ -106,9 +104,7 @@ static int test_full_scroll(void) {
     return 0;
 }
 
-/* -------------------------------------------------------------------------
- * Test: inserts after cursor_open do not appear in pages (snapshot isolation)
- * ---------------------------------------------------------------------- */
+/* inserts after cursor_open do not appear in pages (snapshot isolation) */
 static int test_snapshot_isolation(void) {
     GV_Database *db = db_open(NULL, DIM, GV_INDEX_TYPE_FLAT);
     ASSERT(db != NULL, "db_open");
@@ -157,9 +153,7 @@ static int test_snapshot_isolation(void) {
     return 0;
 }
 
-/* -------------------------------------------------------------------------
- * Test: invalid argument handling
- * ---------------------------------------------------------------------- */
+/* invalid argument handling */
 static int test_invalid_args(void) {
     GV_Database *db = db_open(NULL, DIM, GV_INDEX_TYPE_FLAT);
     ASSERT(db != NULL, "db_open");
@@ -186,9 +180,7 @@ static int test_invalid_args(void) {
     return 0;
 }
 
-/* -------------------------------------------------------------------------
- * Test: empty database returns zero results on first cursor_next
- * ---------------------------------------------------------------------- */
+/* empty database returns zero results on first cursor_next */
 static int test_empty_db(void) {
     GV_Database *db = db_open(NULL, DIM, GV_INDEX_TYPE_FLAT);
     ASSERT(db != NULL, "db_open");
@@ -207,9 +199,7 @@ static int test_empty_db(void) {
     return 0;
 }
 
-/* -------------------------------------------------------------------------
- * Test: generation counter increments on mutations
- * ---------------------------------------------------------------------- */
+/* generation counter increments on mutations */
 static int test_generation_counter(void) {
     GV_Database *db = db_open(NULL, DIM, GV_INDEX_TYPE_FLAT);
     ASSERT(db != NULL, "db_open");
@@ -227,9 +217,6 @@ static int test_generation_counter(void) {
     return 0;
 }
 
-/* -------------------------------------------------------------------------
- * Main
- * ---------------------------------------------------------------------- */
 int main(void) {
     int failed = 0;
 

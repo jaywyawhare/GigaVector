@@ -19,7 +19,7 @@ option(ENABLE_NATIVE_OPTIMIZATIONS "Enable CPU-specific optimizations (-march=na
 
 # Compiler flags
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -g")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -Wimplicit-fallthrough -Wformat-truncation -g")
 elseif(MSVC)
     # Keep warnings high on MSVC, but do not inject GCC/Clang flags.
     add_compile_options(/W4)
@@ -160,18 +160,23 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang|AppleClang" AND NOT WIN32)
     check_c_compiler_flag(-mavx2 COMPILER_SUPPORTS_AVX2)
     check_c_compiler_flag(-mavx512f COMPILER_SUPPORTS_AVX512F)
 
-    set(GV_DISTANCE_SRC "${CMAKE_CURRENT_SOURCE_DIR}/src/search/distance.c")
+    # distance.c AND hnsw.c both runtime-dispatch their AVX2 kernels via
+    # cpu_has_feature(), so compiling them with -mavx2 activates the fast path
+    # while staying safe on CPUs without AVX2 (falls back to scalar at runtime).
+    set(GV_SIMD_SRCS
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/search/distance.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/index/hnsw.c")
 
     if(COMPILER_SUPPORTS_AVX512F)
-        set_source_files_properties(${GV_DISTANCE_SRC} PROPERTIES
+        set_source_files_properties(${GV_SIMD_SRCS} PROPERTIES
             COMPILE_FLAGS "-mavx2 -mfma -mavx512f")
-        message(STATUS "  SIMD distance: AVX512 enabled")
+        message(STATUS "  SIMD (distance + hnsw): AVX512 enabled")
     elseif(COMPILER_SUPPORTS_AVX2)
-        set_source_files_properties(${GV_DISTANCE_SRC} PROPERTIES
+        set_source_files_properties(${GV_SIMD_SRCS} PROPERTIES
             COMPILE_FLAGS "-mavx2 -mfma")
-        message(STATUS "  SIMD distance: AVX2 enabled")
+        message(STATUS "  SIMD (distance + hnsw): AVX2 enabled")
     else()
-        message(STATUS "  SIMD distance: Scalar fallback (no AVX2/AVX512)")
+        message(STATUS "  SIMD: Scalar fallback (no AVX2/AVX512)")
     endif()
 endif()
 
@@ -245,6 +250,9 @@ target_link_libraries(gvrestore PRIVATE GigaVector)
 
 add_executable(gvinspect tools/inspect_cli.c)
 target_link_libraries(gvinspect PRIVATE GigaVector)
+
+add_executable(gvserver tools/gvserver.c)
+target_link_libraries(gvserver PRIVATE GigaVector)
 
 # Install CLI tools
 install(TARGETS gvbackup gvrestore gvinspect

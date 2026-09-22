@@ -57,6 +57,30 @@ int gv_hnsw_insert(void *index, GV_Vector *vector);
 int gv_hnsw_reserve(void *index, size_t n);
 
 /**
+ * @brief Set efConstruction at runtime (candidate list size during insert).
+ * Lower = faster build, lower recall; higher = slower build, higher recall.
+ * A common pattern is a low value for bulk load, raised before serving queries.
+ */
+void gv_hnsw_set_ef_construction(void *index, size_t ef);
+
+/** @brief Set efSearch at runtime (candidate list size during query). */
+void gv_hnsw_set_ef_search(void *index, size_t ef);
+
+/** @brief Current efConstruction (0 if index is NULL). */
+size_t gv_hnsw_get_ef_construction(const void *index);
+
+/**
+ * @brief Build the HNSW graph over already-added vectors using @p num_threads
+ *        worker threads (0/1 = serial). Uses a batched "parallel search + serial
+ *        link" strategy: candidate neighbours are found concurrently against the
+ *        frozen graph (thread-local scratch, read-only), then links are applied
+ *        serially — so the result is race-free and identical in structure to a
+ *        serial build within rounding. Intended for bulk construction: add all
+ *        vectors, then call this. Returns 0 on success, -1 on error.
+ */
+int gv_hnsw_build_parallel(void *index, size_t num_threads);
+
+/**
  * @brief Insert a raw vector (no GV_Vector allocation) into the HNSW index.
  *
  * Faster than gv_hnsw_insert for bulk loading. Data is copied into SoA storage.

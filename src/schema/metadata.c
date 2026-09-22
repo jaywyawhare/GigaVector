@@ -143,3 +143,28 @@ GV_Metadata *metadata_from_keys_values(const char **keys, const char **values, s
     }
     return head;
 }
+
+int read_metadata_into_vector(FILE *in, GV_Vector *vector) {
+    uint32_t count = 0;
+    if (read_u32(in, &count) != 0) return -1;
+    for (uint32_t i = 0; i < count; i++) {
+        char *key = read_string(in);
+        char *value = read_string(in);
+        int rc = (key && value) ? vector_set_metadata(vector, key, value) : -1;
+        gv_free(key);
+        gv_free(value);
+        if (rc != 0) return -1;
+    }
+    return 0;
+}
+
+void vector_apply_metadata(GV_Vector *dst, const GV_Metadata *src) {
+    if (!dst) return;
+    for (const GV_Metadata *m = src; m; m = m->next) {
+        if (m->key && m->value) vector_set_metadata(dst, m->key, m->value);
+    }
+}
+
+void vector_copy_metadata(GV_Vector *dst, const GV_Vector *src) {
+    if (src) vector_apply_metadata(dst, src->metadata);
+}

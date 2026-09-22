@@ -4,6 +4,8 @@
  */
 
 #include "api/rest_handlers.h"
+#include "features/knowledge_graph.h"
+#include "features/graph_db.h"
 #include "core/memory.h"
 #include "features/json.h"
 #include "storage/database.h"
@@ -23,8 +25,6 @@
 #include <string.h>
 #include <stdio.h>
 #include <time.h>
-
-/* Response Helpers */
 
 GV_HttpResponse *rest_response_json(GV_JsonValue *data) {
     if (!data) {
@@ -86,8 +86,6 @@ void rest_response_free(GV_HttpResponse *response) {
     gv_free(response);
 }
 
-/* Request Parsing Helpers */
-
 int rest_parse_path_param(const char *url, const char *prefix,
                               char *param_out, size_t param_size) {
     if (!url || !prefix || !param_out || param_size == 0) {
@@ -146,7 +144,6 @@ int rest_parse_query_param(const char *query_string, const char *key,
             return 0;
         }
 
-        /* Move to next parameter */
         const char *next = strchr(p, '&');
         if (!next) break;
         p = next + 1;
@@ -164,8 +161,6 @@ GV_JsonValue *rest_parse_body(const GV_HttpRequest *request, GV_JsonError *error
     return json_parse(request->body, error);
 }
 
-/* Distance Type Parsing */
-
 static GV_DistanceType parse_distance_type(const char *str) {
     if (!str) return GV_DISTANCE_EUCLIDEAN;
     if (strcmp(str, "euclidean") == 0) return GV_DISTANCE_EUCLIDEAN;
@@ -173,10 +168,9 @@ static GV_DistanceType parse_distance_type(const char *str) {
     if (strcmp(str, "dot_product") == 0) return GV_DISTANCE_DOT_PRODUCT;
     if (strcmp(str, "manhattan") == 0) return GV_DISTANCE_MANHATTAN;
     if (strcmp(str, "hamming") == 0) return GV_DISTANCE_HAMMING;
+    if (strcmp(str, "jaccard") == 0 || strcmp(str, "tanimoto") == 0) return GV_DISTANCE_JACCARD;
     return GV_DISTANCE_EUCLIDEAN;
 }
-
-/* Endpoint Handlers */
 
 GV_HttpResponse *rest_handle_health(const GV_HandlerContext *ctx,
                                         const GV_HttpRequest *request) {
@@ -240,7 +234,6 @@ GV_HttpResponse *rest_handle_vectors_post(const GV_HandlerContext *ctx,
                                        json_error_string(error));
     }
 
-    /* Check for batch vs single vector */
     GV_JsonValue *vectors_arr = json_object_get(body, "vectors");
     GV_JsonValue *data_arr = json_object_get(body, "data");
 
@@ -249,7 +242,6 @@ GV_HttpResponse *rest_handle_vectors_post(const GV_HandlerContext *ctx,
 
     GV_WITH_ARENA(scratch, GV_REST_INSERT_ARENA_BYTES) {
     if (vectors_arr && json_is_array(vectors_arr)) {
-        /* Batch insert */
         size_t count = json_array_length(vectors_arr);
         for (size_t i = 0; i < count; i++) {
             gv_arena_reset(&scratch);
@@ -276,7 +268,6 @@ GV_HttpResponse *rest_handle_vectors_post(const GV_HandlerContext *ctx,
                 }
             }
 
-            /* Handle metadata */
             GV_JsonValue *metadata = json_object_get(vec_obj, "metadata");
             int result;
 
@@ -291,16 +282,13 @@ GV_HttpResponse *rest_handle_vectors_post(const GV_HandlerContext *ctx,
                         &scratch, meta_count, sizeof(char *));
 
                     if (keys && values && value_buffers) {
-                        /* Extract all key-value pairs */
                         GV_JsonEntry *entries = metadata->data.object.entries;
                         for (size_t m = 0; m < meta_count; m++) {
                             keys[m] = entries[m].key;
-                            /* Convert value to string if needed */
                             if (json_is_string(entries[m].value)) {
                                 values[m] = json_get_string(entries[m].value);
                                 value_buffers[m] = NULL;
                             } else {
-                                /* Convert non-string values to string */
                                 value_buffers[m] = json_stringify(entries[m].value, false);
                                 values[m] = value_buffers[m];
                             }
@@ -309,7 +297,6 @@ GV_HttpResponse *rest_handle_vectors_post(const GV_HandlerContext *ctx,
                         result = db_add_vector_with_rich_metadata(ctx->db, vec, dim,
                                                                       keys, values, meta_count);
 
-                        /* Free converted value buffers */
                         for (size_t m = 0; m < meta_count; m++) {
                             gv_free(value_buffers[m]);
                         }
@@ -329,7 +316,6 @@ GV_HttpResponse *rest_handle_vectors_post(const GV_HandlerContext *ctx,
             }
         }
     } else if (data_arr && json_is_array(data_arr)) {
-        /* Single vector */
         size_t dim = json_array_length(data_arr);
         if (dim != ctx->db->dimension) {
             json_free(body);
@@ -430,7 +416,6 @@ GV_HttpResponse *rest_handle_vectors_get(const GV_HandlerContext *ctx,
                                        "Vector not found");
     }
 
-    /* Get vector from SoA storage */
     if (!ctx->db->soa_storage) {
         return rest_response_error(GV_HTTP_500_INTERNAL_ERROR, "internal_error",
                                        "Storage not available");
@@ -442,7 +427,6 @@ GV_HttpResponse *rest_handle_vectors_get(const GV_HandlerContext *ctx,
                                        "Vector not found");
     }
 
-    /* Check if deleted */
     if (storage->deleted && storage->deleted[vector_index]) {
         return rest_response_error(GV_HTTP_404_NOT_FOUND, "not_found",
                                        "Vector has been deleted");
@@ -451,7 +435,6 @@ GV_HttpResponse *rest_handle_vectors_get(const GV_HandlerContext *ctx,
     GV_JsonValue *obj = json_object();
     json_object_set(obj, "index", json_number((double)vector_index));
 
-    /* Add vector data */
     GV_JsonValue *data_arr = json_array();
     float *vec_data = storage->data + vector_index * ctx->db->dimension;
     for (size_t i = 0; i < ctx->db->dimension; i++) {
@@ -459,7 +442,6 @@ GV_HttpResponse *rest_handle_vectors_get(const GV_HandlerContext *ctx,
     }
     json_object_set(obj, "data", data_arr);
 
-    /* Add metadata */
     GV_JsonValue *meta_obj = json_object();
     if (storage->metadata && storage->metadata[vector_index]) {
         GV_Metadata *meta = storage->metadata[vector_index];
@@ -569,7 +551,6 @@ GV_HttpResponse *rest_handle_search(const GV_HandlerContext *ctx,
                                        json_error_string(error));
     }
 
-    /* Parse query vector */
     GV_JsonValue *query_arr = json_object_get(body, "query");
     if (!query_arr || !json_is_array(query_arr)) {
         json_free(body);
@@ -601,7 +582,6 @@ GV_HttpResponse *rest_handle_search(const GV_HandlerContext *ctx,
             }
         }
 
-        /* Parse k */
         GV_JsonValue *k_val = json_object_get(body, "k");
         double k_num;
         size_t k = 10;
@@ -614,7 +594,6 @@ GV_HttpResponse *rest_handle_search(const GV_HandlerContext *ctx,
             k = (size_t)k_num;
         }
 
-        /* Parse distance type */
         const char *dist_str = json_get_string_path(body, "distance");
         GV_DistanceType distance = parse_distance_type(dist_str);
 
@@ -738,7 +717,6 @@ GV_HttpResponse *rest_handle_search_range(const GV_HandlerContext *ctx,
                                        json_error_string(error));
     }
 
-    /* Parse query vector */
     GV_JsonValue *query_arr = json_object_get(body, "query");
     if (!query_arr || !json_is_array(query_arr)) {
         json_free(body);
@@ -867,7 +845,6 @@ GV_HttpResponse *rest_handle_search_batch(const GV_HandlerContext *ctx,
                                        json_error_string(error));
     }
 
-    /* Parse queries array */
     GV_JsonValue *queries_arr = json_object_get(body, "queries");
     if (!queries_arr || !json_is_array(queries_arr)) {
         json_free(body);
@@ -887,7 +864,6 @@ GV_HttpResponse *rest_handle_search_batch(const GV_HandlerContext *ctx,
                                        "Batch query count exceeds maximum of 10000");
     }
 
-    /* Parse k */
     GV_JsonValue *k_val = json_object_get(body, "k");
     double k_num;
     size_t k = 10;
@@ -900,7 +876,6 @@ GV_HttpResponse *rest_handle_search_batch(const GV_HandlerContext *ctx,
         k = (size_t)k_num;
     }
 
-    /* Parse distance type */
     const char *dist_str = json_get_string_path(body, "distance");
     GV_DistanceType distance = parse_distance_type(dist_str);
 
@@ -972,6 +947,12 @@ GV_HttpResponse *rest_handle_search_batch(const GV_HandlerContext *ctx,
             json_array_push(batch_results, query_results);
         }
 
+        /* Free the caller-owned GV_Vector on every result slot (qcount*k array;
+         * unfilled slots are NULL), matching rest_handle_search's cleanup. */
+        for (size_t i = 0; i < qcount * k; i++) {
+            if (results[i].vector) vector_destroy((GV_Vector *)results[i].vector);
+        }
+
         json_object_set(response, "results", batch_results);
         json_object_set(response, "query_count", json_number((double)qcount));
         json_object_set(response, "latency_ms", json_number(latency_ms));
@@ -999,6 +980,57 @@ GV_HttpResponse *rest_handle_compact(const GV_HandlerContext *ctx,
     }
 
     return rest_response_success("Compaction completed");
+}
+
+/* POST /ivfdisk/train  body: {"vectors": [[...], [...], ...]} (each of db dimension). */
+GV_HttpResponse *rest_handle_ivfdisk_train(const GV_HandlerContext *ctx,
+                                           const GV_HttpRequest *request) {
+    if (!ctx || !ctx->db) {
+        return rest_response_error(GV_HTTP_500_INTERNAL_ERROR, "internal_error", "Database not available");
+    }
+    if (!request || !request->body || request->body_length == 0) {
+        return rest_response_error(GV_HTTP_400_BAD_REQUEST, "bad_request", "Missing training data");
+    }
+    GV_JsonValue *body = json_parse(request->body, NULL);
+    if (!body) {
+        return rest_response_error(GV_HTTP_400_BAD_REQUEST, "bad_json", "Invalid JSON");
+    }
+    GV_JsonValue *vectors = json_object_get(body, "vectors");
+    if (!vectors || !json_is_array(vectors)) {
+        json_free(body);
+        return rest_response_error(GV_HTTP_400_BAD_REQUEST, "bad_request", "Expected 'vectors' array");
+    }
+    size_t count = json_array_length(vectors);
+    size_t dim = ctx->db->dimension;
+    if (count == 0) {
+        json_free(body);
+        return rest_response_error(GV_HTTP_400_BAD_REQUEST, "bad_request", "Empty training set");
+    }
+    float *data = (float *)gv_alloc(count * dim * sizeof(float));
+    if (!data) {
+        json_free(body);
+        return rest_response_error(GV_HTTP_500_INTERNAL_ERROR, "memory_error", "Failed to allocate memory");
+    }
+    for (size_t i = 0; i < count; i++) {
+        GV_JsonValue *row = json_array_get(vectors, i);
+        if (!row || !json_is_array(row) || json_array_length(row) != dim) {
+            gv_free(data); json_free(body);
+            return rest_response_error(GV_HTTP_400_BAD_REQUEST, "dimension_mismatch",
+                                       "Training row dimension does not match database");
+        }
+        for (size_t j = 0; j < dim; j++) {
+            double num = 0.0;
+            json_get_number(json_array_get(row, j), &num);
+            data[i * dim + j] = (float)num;
+        }
+    }
+    int rc = db_ivfdisk_train(ctx->db, data, count, dim);
+    gv_free(data);
+    json_free(body);
+    if (rc != 0) {
+        return rest_response_error(GV_HTTP_500_INTERNAL_ERROR, "train_failed", "IVFDisk training failed");
+    }
+    return rest_response_success("IVFDisk trained");
 }
 
 GV_HttpResponse *rest_handle_save(const GV_HandlerContext *ctx,
@@ -1044,8 +1076,6 @@ GV_HttpResponse *rest_handle_save(const GV_HandlerContext *ctx,
     return rest_response_json(obj);
 }
 
-/* Router */
-
 GV_HttpResponse *rest_route(const GV_HandlerContext *ctx,
                                 const GV_HttpRequest *request) {
     if (!ctx || !request || !request->url) {
@@ -1055,7 +1085,6 @@ GV_HttpResponse *rest_route(const GV_HandlerContext *ctx,
 
     const char *url = request->url;
 
-    /* Strip query string for matching */
     char url_path[256];
     const char *query_start = strchr(url, '?');
     if (query_start) {
@@ -1066,24 +1095,18 @@ GV_HttpResponse *rest_route(const GV_HandlerContext *ctx,
         url = url_path;
     }
 
-    /* Route to handlers */
-
-    /* GET /health */
     if (strcmp(url, "/health") == 0 && request->method == GV_HTTP_GET) {
         return rest_handle_health(ctx, request);
     }
 
-    /* GET /stats */
     if (strcmp(url, "/stats") == 0 && request->method == GV_HTTP_GET) {
         return rest_handle_stats(ctx, request);
     }
 
-    /* POST /vectors */
     if (strcmp(url, "/vectors") == 0 && request->method == GV_HTTP_POST) {
         return rest_handle_vectors_post(ctx, request);
     }
 
-    /* /vectors/{id} routes */
     if (strncmp(url, "/vectors/", 9) == 0) {
         char id_str[32];
         if (rest_parse_path_param(url, "/vectors/", id_str, sizeof(id_str)) == 0) {
@@ -1106,32 +1129,237 @@ GV_HttpResponse *rest_route(const GV_HandlerContext *ctx,
         }
     }
 
-    /* POST /search */
     if (strcmp(url, "/search") == 0 && request->method == GV_HTTP_POST) {
         return rest_handle_search(ctx, request);
     }
 
-    /* POST /search/range */
     if (strcmp(url, "/search/range") == 0 && request->method == GV_HTTP_POST) {
         return rest_handle_search_range(ctx, request);
     }
 
-    /* POST /search/batch */
     if (strcmp(url, "/search/batch") == 0 && request->method == GV_HTTP_POST) {
         return rest_handle_search_batch(ctx, request);
     }
 
-    /* POST /compact */
+    if (strcmp(url, "/graph/stats") == 0 && request->method == GV_HTTP_GET) {
+        return rest_handle_graph_stats(ctx, request);
+    }
+
+    if (strcmp(url, "/graph/wal/attach") == 0 && request->method == GV_HTTP_POST) {
+        return rest_handle_graph_wal_attach(ctx, request);
+    }
+
+    if (strcmp(url, "/graph/wal/checkpoint") == 0 &&
+        request->method == GV_HTTP_POST) {
+        return rest_handle_graph_wal_checkpoint(ctx, request);
+    }
+
+    if (strcmp(url, "/kg/expand") == 0 && request->method == GV_HTTP_GET) {
+        return rest_handle_kg_expand(ctx, request);
+    }
+
+    if (strcmp(url, "/kg/wal/attach") == 0 && request->method == GV_HTTP_POST) {
+        return rest_handle_kg_wal_attach(ctx, request);
+    }
+
+    if (strcmp(url, "/kg/wal/checkpoint") == 0 &&
+        request->method == GV_HTTP_POST) {
+        return rest_handle_kg_wal_checkpoint(ctx, request);
+    }
+
     if (strcmp(url, "/compact") == 0 && request->method == GV_HTTP_POST) {
         return rest_handle_compact(ctx, request);
     }
 
-    /* POST /save */
+    if (strcmp(url, "/ivfdisk/train") == 0 && request->method == GV_HTTP_POST) {
+        return rest_handle_ivfdisk_train(ctx, request);
+    }
+
     if (strcmp(url, "/save") == 0 && request->method == GV_HTTP_POST) {
         return rest_handle_save(ctx, request);
     }
 
-    /* 404 Not Found */
     return rest_response_error(GV_HTTP_404_NOT_FOUND, "not_found",
                                    "Endpoint not found");
+}
+
+
+/* ── Graph & knowledge-graph endpoints ─────────────────────────────────── */
+
+GV_HttpResponse *rest_handle_graph_stats(const GV_HandlerContext *ctx,
+                                         const GV_HttpRequest *request) {
+    (void)request;
+    if (!ctx || !ctx->graph) {
+        return rest_response_error(GV_HTTP_404_NOT_FOUND, "not_found",
+                                   "No graph attached to server");
+    }
+    GV_JsonValue *obj = json_object();
+    json_object_set(obj, "node_count",
+                    json_number((double)graph_node_count(ctx->graph)));
+    json_object_set(obj, "edge_count",
+                    json_number((double)graph_edge_count(ctx->graph)));
+    json_object_set(obj, "version",
+                    json_number((double)graph_version(ctx->graph)));
+    return rest_response_json(obj);
+}
+
+static GV_HttpResponse *kg_wal_attach_response(const GV_HandlerContext *ctx,
+                                               const GV_HttpRequest *request) {
+    const char *req_path = NULL;
+    GV_JsonValue *body = NULL;
+    if (request->body && request->body_length > 0) {
+        GV_JsonError error;
+        body = rest_parse_body(request, &error);
+        if (body) req_path = json_get_string_path(body, "path");
+    }
+    const char *base_dir = (ctx->config && ctx->config->data_dir)
+                               ? ctx->config->data_dir : "./data";
+    char confined[1024];
+    if (server_confine_save_path(base_dir, req_path, confined,
+                                 sizeof(confined)) != 0) {
+        if (body) json_free(body);
+        return rest_response_error(GV_HTTP_400_BAD_REQUEST, "invalid_path",
+                                   "Invalid or unsafe path");
+    }
+    if (body) json_free(body);
+    int rc = kg_wal_attach(ctx->kg, confined);
+    if (rc != 0) {
+        return rest_response_error(GV_HTTP_500_INTERNAL_ERROR, "wal_attach_failed",
+                                   "Failed to attach WAL");
+    }
+    return rest_response_success("WAL attached");
+}
+
+GV_HttpResponse *rest_handle_kg_wal_attach(const GV_HandlerContext *ctx,
+                                           const GV_HttpRequest *request) {
+    if (!ctx || !ctx->kg) {
+        return rest_response_error(GV_HTTP_404_NOT_FOUND, "not_found",
+                                   "No knowledge graph attached to server");
+    }
+    return kg_wal_attach_response(ctx, request);
+}
+
+GV_HttpResponse *rest_handle_kg_wal_checkpoint(const GV_HandlerContext *ctx,
+                                               const GV_HttpRequest *request) {
+    (void)request;
+    if (!ctx || !ctx->kg) {
+        return rest_response_error(GV_HTTP_404_NOT_FOUND, "not_found",
+                                   "No knowledge graph attached to server");
+    }
+    if (kg_wal_checkpoint(ctx->kg) != 0) {
+        return rest_response_error(GV_HTTP_500_INTERNAL_ERROR,
+                                   "wal_checkpoint_failed", "No WAL attached");
+    }
+    return rest_response_success("WAL checkpointed");
+}
+
+GV_HttpResponse *rest_handle_graph_wal_attach(const GV_HandlerContext *ctx,
+                                              const GV_HttpRequest *request) {
+    if (!ctx || !ctx->graph) {
+        return rest_response_error(GV_HTTP_404_NOT_FOUND, "not_found",
+                                   "No graph attached to server");
+    }
+    /* Same body/confine flow as the KG variant but against the property graph. */
+    const char *req_path = NULL;
+    GV_JsonValue *body = NULL;
+    if (request->body && request->body_length > 0) {
+        GV_JsonError error;
+        body = rest_parse_body(request, &error);
+        if (body) req_path = json_get_string_path(body, "path");
+    }
+    const char *base_dir = (ctx->config && ctx->config->data_dir)
+                               ? ctx->config->data_dir : "./data";
+    char confined[1024];
+    if (server_confine_save_path(base_dir, req_path, confined,
+                                 sizeof(confined)) != 0) {
+        if (body) json_free(body);
+        return rest_response_error(GV_HTTP_400_BAD_REQUEST, "invalid_path",
+                                   "Invalid or unsafe path");
+    }
+    if (body) json_free(body);
+    if (graph_wal_attach(ctx->graph, confined) != 0) {
+        return rest_response_error(GV_HTTP_500_INTERNAL_ERROR,
+                                   "wal_attach_failed", "Failed to attach WAL");
+    }
+    return rest_response_success("WAL attached");
+}
+
+GV_HttpResponse *rest_handle_graph_wal_checkpoint(const GV_HandlerContext *ctx,
+                                                  const GV_HttpRequest *request) {
+    (void)request;
+    if (!ctx || !ctx->graph) {
+        return rest_response_error(GV_HTTP_404_NOT_FOUND, "not_found",
+                                   "No graph attached to server");
+    }
+    if (graph_wal_checkpoint(ctx->graph) != 0) {
+        return rest_response_error(GV_HTTP_500_INTERNAL_ERROR,
+                                   "wal_checkpoint_failed", "No WAL attached");
+    }
+    return rest_response_success("WAL checkpointed");
+}
+
+GV_HttpResponse *rest_handle_kg_expand(const GV_HandlerContext *ctx,
+                                       const GV_HttpRequest *request) {
+    if (!ctx || !ctx->kg) {
+        return rest_response_error(GV_HTTP_404_NOT_FOUND, "not_found",
+                                   "No knowledge graph attached to server");
+    }
+    uint64_t seeds[64];
+    size_t n_seeds = 0;
+    long radius = 1;
+
+    if (request->query_string) {
+        char val[32];
+        /* repeated seed=N params */
+        const char *q = request->query_string;
+        while (q && n_seeds < 64) {
+            const char *seedp = strstr(q, "seed=");
+            if (!seedp) break;
+            seeds[n_seeds++] = strtoull(seedp + 5, NULL, 10);
+            q = strchr(seedp, '&');
+        }
+        if (rest_parse_query_param(request->query_string, "radius", val,
+                                   sizeof(val)) == 0)
+            radius = strtol(val, NULL, 10);
+    }
+
+    if (n_seeds == 0 || radius < 1 || radius > 8) {
+        return rest_response_error(GV_HTTP_400_BAD_REQUEST, "invalid_request",
+                                   "Requires seed=<id> params and radius in [1,8]");
+    }
+
+    enum { MAX_TRIPLES = 256 };
+    GV_KGTriple *tr = (GV_KGTriple *)gv_calloc(MAX_TRIPLES, sizeof(GV_KGTriple));
+    if (!tr) {
+        return rest_response_error(GV_HTTP_500_INTERNAL_ERROR, "internal_error",
+                                   "Allocation failed");
+    }
+    int n = kg_expand_context(ctx->kg, seeds, n_seeds, (size_t)radius, tr,
+                              MAX_TRIPLES);
+    if (n < 0) {
+        gv_free(tr);
+        return rest_response_error(GV_HTTP_500_INTERNAL_ERROR, "internal_error",
+                                   "Expansion failed");
+    }
+
+    GV_JsonValue *arr = json_array();
+    for (int i = 0; i < n; i++) {
+        GV_JsonValue *t = json_object();
+        json_object_set(t, "subject_id", json_number((double)tr[i].subject_id));
+        json_object_set(t, "subject_name",
+                        json_string(tr[i].subject_name ? tr[i].subject_name : ""));
+        json_object_set(t, "predicate",
+                        json_string(tr[i].predicate ? tr[i].predicate : ""));
+        json_object_set(t, "object_id", json_number((double)tr[i].object_id));
+        json_object_set(t, "object_name",
+                        json_string(tr[i].object_name ? tr[i].object_name : ""));
+        json_array_push(arr, t);
+    }
+    kg_free_triples(tr, (size_t)n);
+    gv_free(tr);
+
+    GV_JsonValue *obj = json_object();
+    json_object_set(obj, "triples", arr);
+    json_object_set(obj, "count", json_number((double)n));
+    return rest_response_json(obj);
 }

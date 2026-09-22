@@ -9,11 +9,11 @@
 #include "core/utils.h"
 
 struct GV_BloomFilter {
-    uint8_t *bits;           /* Bit array (packed, 1 bit per position). */
-    size_t   num_bits;       /* Total number of bits (m). */
-    size_t   num_hashes;     /* Number of hash functions (k). */
-    size_t   count;          /* Number of items inserted so far. */
-    double   target_fp_rate; /* Desired false-positive probability. */
+    uint8_t *bits;
+    size_t   num_bits;       /* m */
+    size_t   num_hashes;     /* k */
+    size_t   count;
+    double   target_fp_rate;
 };
 
 #define FNV_OFFSET_BASIS UINT64_C(14695981039346656037)
@@ -171,11 +171,11 @@ int bloom_check(const GV_BloomFilter *bf, const void *data, size_t len)
     for (size_t i = 0; i < bf->num_hashes; i++) {
         size_t pos = bloom_hash_i(h1, h2, i, bf->num_bits);
         if (!bit_get(bf->bits, pos)) {
-            return 0; /* Definitely absent. */
+            return 0;
         }
     }
 
-    return 1; /* Possibly present. */
+    return 1; /* possibly present (may be false positive) */
 }
 
 int bloom_check_string(const GV_BloomFilter *bf, const char *str)

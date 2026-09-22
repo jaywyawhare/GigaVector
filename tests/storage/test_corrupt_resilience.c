@@ -96,7 +96,7 @@ static int test_corrupt_snapshot(void) {
     ASSERT(db != NULL, "db_open");
     for (int i = 0; i < 8; i++) {
         float v[DIM] = {(float)i, 0.5f, 0.25f, 0.125f};
-        db_add_vector(db, v, DIM);
+        { int _r = db_add_vector(db, v, DIM); (void)_r; }
     }
     ASSERT(db_save(db, snap_path) == 0, "db_save");
     db_close(db);

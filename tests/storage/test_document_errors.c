@@ -47,7 +47,7 @@ int main(void) {
 
     GV_IngestStats st;
 
-    /* --- NULL argument rejection --- */
+    /* NULL argument rejection */
     CHECK(gv_ingest_document(NULL, NULL, NULL, "text", "d", &ok_cfg, &st) == -1,
           "NULL db rejected");
     CHECK(gv_ingest_document(db, NULL, NULL, NULL, "d", &ok_cfg, &st) == -1,
@@ -55,7 +55,7 @@ int main(void) {
     CHECK(gv_ingest_document(db, NULL, NULL, "text", "d", NULL, &st) == -1,
           "NULL config rejected");
 
-    /* --- No embedder configured (embed == NULL, default_embedder == NULL) --- */
+    /* No embedder configured (embed == NULL, default_embedder == NULL) */
     {
         GV_IngestConfig no_embed;
         memset(&no_embed, 0, sizeof(no_embed));
@@ -67,7 +67,7 @@ int main(void) {
         CHECK(st.vectors == 0, "no vectors stored when embedder missing");
     }
 
-    /* --- Embedder reports an error (e.g. wrong/unavailable dimension) --- */
+    /* Embedder reports an error (e.g. wrong/unavailable dimension) */
     {
         GV_IngestConfig err_cfg = ok_cfg;
         err_cfg.embed = embed_err;
@@ -77,7 +77,7 @@ int main(void) {
         CHECK(rc == -1, "embedder error aborts ingest");
     }
 
-    /* --- Empty document: zero chunks, zero vectors, rc 0 --- */
+    /* Empty document: zero chunks, zero vectors, rc 0 */
     {
         memset(&st, 0, sizeof(st));
         int rc = gv_ingest_document(db, NULL, NULL, "", "dEMPTY", &ok_cfg, &st);
@@ -91,7 +91,7 @@ int main(void) {
         CHECK(st.chunks == 0, "whitespace-only document yields no chunks");
     }
 
-    /* --- A good ingest, then delete of a non-existent doc --- */
+    /* A good ingest, then delete of a non-existent doc */
     {
         memset(&st, 0, sizeof(st));
         int rc = gv_ingest_document(db, NULL, NULL, "alpha beta gamma delta",

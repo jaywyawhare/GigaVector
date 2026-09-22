@@ -7,7 +7,12 @@ must follow this hierarchy from top (acquired first) to bottom (acquired last).
 ## Hierarchy
 
 ```
-Level 1 (outermost)
+Level 0 (outermost)
+  db->txn_mutex        (pthread_mutex_t) — serializes MVCC commits (commit_version
+                       assignment + write-write conflict check); a commit holds it
+                       across the Level-1 rwlock and Level-3 wal_mutex it then takes
+
+Level 1
   db->rwlock           (pthread_rwlock_t) — guards all vector data, index, and count
 
 Level 2
@@ -23,6 +28,9 @@ Level 4 (innermost)
 
 ## Rules
 
+0. `db->txn_mutex` (commit serialization) is outermost — acquire it before `db->rwlock`; a commit
+   legitimately holds it across `db->rwlock` and `db->wal_mutex`. Never acquire it while holding
+   any lower-level `db` lock.
 1. Always acquire `db->rwlock` before any other `db` mutex.
 2. Never acquire `db->wal_mutex` while holding `db->observability_mutex`, or vice versa
    (they are siblings at level 3 — do not hold both simultaneously).
@@ -61,6 +69,14 @@ acquiring these, and never acquire these while holding a `db` lock.
 | shard.c          | `shard->lock`                     | shard routing table             |
 | streaming.c      | `stream->lock`                    | stream subscriber list          |
 | ttl.c            | `ttl->lock`                       | TTL expiration queue            |
+| tiered_storage.c | `mgr->mutex`                      | per-slot insert/access counters (storage tiers) |
+| value_store.c    | `vs->mutex`                       | WiscKey key→offset index; held over the vlog mutex below |
+| vlog.c           | `vl->mutex`                       | append-only value-log file cursor (innermost of the two) |
+
+Note: `tiered_storage.c mgr->mutex` is taken by `gv_db_record_vector_access` from the search path,
+but only **after** `db_search` has released `db->rwlock` — it is never held together with a `db`
+lock. Within the value store, `value_store.c vs->mutex` may be held while acquiring `vlog.c
+vl->mutex` (that pair is self-contained and independent of the `db` hierarchy).
 
 ## Adding new locks
 

@@ -50,7 +50,6 @@ GV_AutoEmbedder *auto_embed_create(const GV_AutoEmbedConfig *config);
 /**
  * @brief Destroy an instance and free associated resources.
  *
- * @param embedder embedder.
  */
 void auto_embed_destroy(GV_AutoEmbedder *embedder);
 
@@ -71,7 +70,6 @@ float *auto_embed_text(GV_AutoEmbedder *embedder, const char *text, size_t *out_
 /**
  * @brief Retrieve statistics.
  *
- * @param embedder embedder.
  * @param stats Output statistics structure.
  * @return 0 on success, -1 on error.
  */
@@ -79,7 +77,6 @@ int auto_embed_get_stats(const GV_AutoEmbedder *embedder, GV_AutoEmbedStats *sta
 /**
  * @brief Perform the operation.
  *
- * @param embedder embedder.
  */
 void auto_embed_clear_cache(GV_AutoEmbedder *embedder);
 

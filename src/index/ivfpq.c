@@ -12,6 +12,7 @@
 #include "core/compat.h"
 
 #include "index/ivfpq.h"
+#include "index/opq.h"
 #include "search/distance.h"
 #include "core/config.h"
 #include "schema/vector.h"
@@ -213,6 +214,8 @@ typedef struct {
     float oversampling_factor; /* Factor to oversample candidates before reranking */
     float *coarse;   /* nlist * dimension */
     float *pq;       /* m * codebook_size * subdim */
+    int use_opq;     /* rotate residuals through opq before PQ */
+    GV_OPQ *opq;     /* residual rotation (NULL unless use_opq && trained) */
     GV_IVFPQList *lists;
     pthread_rwlock_t rwlock;
     pthread_mutex_t *list_mutex;
@@ -221,6 +224,22 @@ typedef struct {
     float *lut_buf;
     size_t lut_buf_size; /* elements */
 } GV_IVFPQIndex;
+
+/* Rotate `residual` (dimension floats) through the OPQ matrix in place using the
+ * caller's scratch (dimension floats). No-op when OPQ is disabled. */
+/* Rotate `residual` in place by the OPQ matrix. Allocates its own scratch and
+ * returns -1 on OOM so callers can fail rather than silently encode/search
+ * against an un-rotated residual (which the rotated-space codebooks misinterpret).
+ * No-op returning 0 when OPQ is not enabled. */
+static int ivfpq_opq_rotate(const GV_IVFPQIndex *idx, float *residual) {
+    if (!idx->opq) return 0;
+    float *scratch = (float *)gv_alloc(idx->dimension * sizeof(float));
+    if (!scratch) return -1;
+    opq_rotate(idx->opq, residual, scratch);
+    memcpy(residual, scratch, idx->dimension * sizeof(float));
+    gv_free(scratch);
+    return 0;
+}
 
 static int ivfpq_argmin(const float *queries, size_t qcount, size_t dim, const float *centroids, size_t ccount, int *assign) {
     for (size_t qi = 0; qi < qcount; ++qi) {
@@ -306,6 +325,9 @@ void *gv_ivfpq_create(size_t dimension, const GV_IVFPQConfig *config) {
     idx->use_cosine = (config ? config->use_cosine : 0);
     idx->use_scalar_quant = (config && config->use_scalar_quant) ? 1 : 0;
     idx->oversampling_factor = (config && config->oversampling_factor > 0.0f) ? config->oversampling_factor : 3.0f;
+    /* OPQ rotates residuals before PQ; incompatible with the cosine (non-residual
+     * IP) and scalar-quant rerank paths, so it is only enabled without them. */
+    idx->use_opq = (config && config->use_opq && !idx->use_cosine && !idx->use_scalar_quant) ? 1 : 0;
     if (idx->use_scalar_quant && config) {
         idx->scalar_quant_config = config->scalar_quant_config;
         idx->scalar_quant_template = NULL;
@@ -319,7 +341,10 @@ void *gv_ivfpq_create(size_t dimension, const GV_IVFPQConfig *config) {
         return NULL;
     }
     idx->subdim = idx->dimension / idx->m;
-    if (idx->nbits == 0 || idx->nbits > 16) {
+    /* Per-subquantizer codes are stored in uint8_t, so the codebook cannot
+     * exceed 256 entries. Reject nbits>8 rather than silently truncating the
+     * chosen centroid index into a byte (which corrupts encodings/search). */
+    if (idx->nbits == 0 || idx->nbits > 8) {
         gv_free(idx);
         return NULL;
     }
@@ -402,6 +427,25 @@ int gv_ivfpq_train(void *index_ptr, const float *data, size_t count) {
         }
     }
 
+    /* OPQ: learn a rotation on the residuals and rotate them in place before
+     * training the PQ codebooks; encode/search apply the same rotation. */
+    if (idx->use_opq) {
+        opq_free(idx->opq);
+        idx->opq = opq_train(idx->dimension, idx->m, train_buf, count);
+        if (idx->opq) {
+            /* Allocate the rotation scratch once, up front: if it fails, abort the
+             * whole train rather than rotate only a prefix (which would leave the
+             * training buffer a mix of rotated and un-rotated residuals). */
+            float *scratch = (float *)gv_alloc(idx->dimension * sizeof(float));
+            if (!scratch) { gv_free(train_buf); pthread_rwlock_unlock(&idx->rwlock); return -1; }
+            for (size_t i = 0; i < count; ++i) {
+                opq_rotate(idx->opq, train_buf + i * idx->dimension, scratch);
+                memcpy(train_buf + i * idx->dimension, scratch, idx->dimension * sizeof(float));
+            }
+            gv_free(scratch);
+        }
+    }
+
     /* train each subquantizer on residual subvectors */
     float *subbuf = (float *)gv_alloc(count * idx->subdim * sizeof(float));
     if (!subbuf) {
@@ -460,6 +504,7 @@ static int ivfpq_encode(const GV_IVFPQIndex *idx, const float *vec, uint8_t *cod
     for (size_t j = 0; j < idx->dimension; ++j) {
         res[j] = vec[j] - centroid[j];
     }
+    if (ivfpq_opq_rotate(idx, res) != 0) { gv_free(res); return -1; }
 
     for (size_t m = 0; m < idx->m; ++m) {
         const float *codebook = idx->pq + m * idx->codebook_size * idx->subdim;
@@ -631,7 +676,11 @@ int gv_ivfpq_search(void *index_ptr, const GV_Vector *query, size_t k,
         return -1;
     }
     pthread_rwlock_rdlock(&idx->rwlock);
-    int cosine = idx->use_cosine || (distance_type == GV_DISTANCE_COSINE);
+    /* With OPQ active the codebooks live in rotated-residual space, so the cosine
+     * LUT (non-rotated, non-residual) would rank garbage. OPQ is only enabled for
+     * L2 indexes, so force the L2/residual path when opq is set regardless of the
+     * per-query metric (exact rerank still honours the requested distance). */
+    int cosine = (idx->use_cosine || (distance_type == GV_DISTANCE_COSINE)) && idx->opq == NULL;
     size_t nprobe = (nprobe_override > 0) ? nprobe_override : idx->nprobe;
     if (nprobe > idx->nlist) nprobe = idx->nlist;
 
@@ -770,6 +819,9 @@ int gv_ivfpq_search(void *index_ptr, const GV_Vector *query, size_t k,
             for (size_t j = 0; j < idx_dim; ++j) {
                 qres[j] = qdata[j] - centroid[j];
             }
+            /* On rotation OOM, skip this list's candidates rather than rank them
+             * with an un-rotated (wrongly-encoded) query residual. */
+            if (ivfpq_opq_rotate(idx, qres) != 0) continue;
         }
 
         /* Compute LUT.  L2 uses the query residual (ADC); cosine uses the
@@ -933,15 +985,7 @@ int gv_ivfpq_search(void *index_ptr, const GV_Vector *query, size_t k,
         if (beste[i] && beste[i]->vector && beste[i]->vector->data) {
             GV_Vector *copy = vector_create_from_data(beste[i]->vector->dimension,
                                                       beste[i]->vector->data);
-            if (copy) {
-                GV_Metadata *meta = beste[i]->vector->metadata;
-                while (meta) {
-                    if (meta->key && meta->value) {
-                        vector_set_metadata(copy, meta->key, meta->value);
-                    }
-                    meta = meta->next;
-                }
-            }
+            if (copy) vector_apply_metadata(copy, beste[i]->vector->metadata);
             results[i].vector = copy;
         } else {
             results[i].vector = NULL;
@@ -989,7 +1033,6 @@ void gv_ivfpq_destroy(void *index_ptr) {
         scalar_quant_vector_destroy(idx->scalar_quant_template);
     }
     gv_free(idx->lists);
-    /* list_mutex freed separately */
     if (idx->list_mutex) {
         for (size_t i = 0; i < idx->nlist; ++i) {
             pthread_mutex_destroy(&idx->list_mutex[i]);
@@ -1001,11 +1044,11 @@ void gv_ivfpq_destroy(void *index_ptr) {
     gv_free(idx->coarse);
     gv_free(idx->pq);
     gv_free(idx->lut_buf);
+    opq_free(idx->opq);
     gv_free(idx);
 }
 
 int gv_ivfpq_save(const void *index_ptr, FILE *out, uint32_t version) {
-    (void)version;
     const GV_IVFPQIndex *idx = (const GV_IVFPQIndex *)index_ptr;
     if (idx == NULL || out == NULL) return -1;
     uint32_t crc = crc32_init();
@@ -1029,6 +1072,16 @@ int gv_ivfpq_save(const void *index_ptr, FILE *out, uint32_t version) {
     crc = crc32_update(crc, &idx->default_rerank, sizeof(size_t));
     if (write_u32(out, (uint32_t)idx->use_cosine) != 0) return -1;
     crc = crc32_update(crc, &idx->use_cosine, sizeof(int));
+    if (version >= 6) {   /* OPQ residual rotation */
+        uint32_t has_opq = (idx->opq != NULL) ? 1u : 0u;
+        if (write_u32(out, has_opq) != 0) return -1;
+        crc = crc32_update(crc, &has_opq, sizeof(uint32_t));
+        if (has_opq) {
+            size_t rsz = idx->dimension * idx->dimension;
+            if (write_floats(out, opq_matrix(idx->opq), rsz) != 0) return -1;
+            crc = crc32_update(crc, opq_matrix(idx->opq), rsz * sizeof(float));
+        }
+    }
     if (write_f32(out, idx->oversampling_factor) != 0) return -1;
     crc = crc32_update(crc, &idx->oversampling_factor, sizeof(float));
     if (write_u32(out, (uint32_t)idx->trained) != 0) return -1;
@@ -1077,7 +1130,6 @@ int gv_ivfpq_save(const void *index_ptr, FILE *out, uint32_t version) {
 }
 
 int gv_ivfpq_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version) {
-    (void)version;
     if (index_ptr == NULL || in == NULL) return -1;
     size_t dim = 0, nlist = 0, m = 0, nprobe = 0, train_iters = 0, default_rerank = 0;
     uint8_t nbits = 0;
@@ -1108,11 +1160,23 @@ int gv_ivfpq_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version
         use_cosine = (int)u;
     }
     crc = crc32_update(crc, &use_cosine, sizeof(int));
-    if (read_f32(in, &oversampling_factor) != 0) {
-        oversampling_factor = 1.0f;
-    } else {
-        crc = crc32_update(crc, &oversampling_factor, sizeof(float));
+    /* v6+: OPQ residual rotation (matches gv_ivfpq_save ordering). */
+    uint32_t has_opq = 0;
+    float *opq_R = NULL;
+    if (version >= 6) {
+        if (read_u32(in, &has_opq) != 0) return -1;
+        crc = crc32_update(crc, &has_opq, sizeof(uint32_t));
+        if (has_opq) {
+            size_t rsz = dim * dim;
+            opq_R = (float *)gv_alloc(rsz * sizeof(float));
+            if (!opq_R || read_floats(in, opq_R, rsz) != 0) { gv_free(opq_R); return -1; }
+            crc = crc32_update(crc, opq_R, rsz * sizeof(float));
+        }
     }
+    /* oversampling_factor is always written by save; a failed read here means a
+     * truncated file, not an old format, so it is an error (not a silent default). */
+    if (read_f32(in, &oversampling_factor) != 0) return -1;
+    crc = crc32_update(crc, &oversampling_factor, sizeof(float));
     {
         uint32_t u = 0;
         if (read_u32(in, &u) != 0) return -1;
@@ -1122,8 +1186,17 @@ int gv_ivfpq_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version
 
     GV_IVFPQConfig cfg = {.nlist = nlist, .m = m, .nbits = nbits, .nprobe = nprobe, .train_iters = train_iters, .default_rerank = default_rerank, .use_cosine = use_cosine, .oversampling_factor = oversampling_factor};
     void *idx_ptr = gv_ivfpq_create(dim, &cfg);
-    if (!idx_ptr) return -1;
+    if (!idx_ptr) { gv_free(opq_R); return -1; }
     GV_IVFPQIndex *idx = (GV_IVFPQIndex *)idx_ptr;
+    if (has_opq && opq_R) {
+        idx->opq = opq_from_matrix(dim, opq_R);
+        /* Fail the load on OPQ OOM: the stored codes are in rotated space, so a
+         * NULL rotation (encode/search skips rotation when opq==NULL) would yield
+         * silently wrong results. */
+        if (!idx->opq) { gv_free(opq_R); gv_ivfpq_destroy(idx_ptr); return -1; }
+        idx->use_opq = 1;
+    }
+    gv_free(opq_R);
     idx->trained = trained;
     if (trained) {
         /* Reject files whose (file-supplied) counts overflow the size_t
@@ -1304,7 +1377,8 @@ int gv_ivfpq_range_search(void *index_ptr, const GV_Vector *query, float radius,
 
     pthread_rwlock_rdlock(&idx->rwlock);
 
-    int cosine = (distance_type == GV_DISTANCE_COSINE) ? 1 : 0;
+    /* Force the L2/residual path when OPQ is active (see gv_ivfpq_search). */
+    int cosine = ((distance_type == GV_DISTANCE_COSINE) && idx->opq == NULL) ? 1 : 0;
     float *qbuf = (float *)gv_alloc(idx->dimension * sizeof(float));
     if (!qbuf) {
         pthread_rwlock_unlock(&idx->rwlock);
@@ -1398,6 +1472,8 @@ int gv_ivfpq_range_search(void *index_ptr, const GV_Vector *query, float radius,
         for (size_t j = 0; j < idx->dimension; ++j) {
             qres[j] = qbuf[j] - centroid[j];
         }
+        /* On rotation OOM, skip this list rather than rank with an un-rotated query. */
+        if (ivfpq_opq_rotate(idx, qres) != 0) continue;
 
         for (size_t m = 0; m < idx->m; ++m) {
             float *lut_row = lut + m * codebook_size;
@@ -1564,29 +1640,22 @@ int gv_ivfpq_update(void *index_ptr, size_t entry_index, const float *new_data, 
                 }
 
                 if (ent->codes != NULL && idx->pq != NULL && idx->coarse != NULL) {
-                    float best = INFINITY;
-                    int best_coarse_id = -1;
-                    for (size_t c = 0; c < idx->nlist; ++c) {
-                        const float *cent = idx->coarse + c * idx->dimension;
-                        float d = 0.0f;
+                    /* Re-encode against THIS entry's list centroid. The entry is not
+                     * moved between inverted lists on update, and search reconstructs
+                     * a list's entries relative to coarse[list_id]; encoding the
+                     * residual against any other centroid (e.g. new_data's nearest)
+                     * would make the stored codes inconsistent with the list and
+                     * corrupt the ADC distance. Exact rerank uses ent->vector->data. */
+                    const float *centroid = idx->coarse + list_id * idx->dimension;
+                    float *residual = (float *)gv_alloc(idx->dimension * sizeof(float));
+                    if (residual != NULL) {
                         for (size_t j = 0; j < idx->dimension; ++j) {
-                            float diff = new_data[j] - cent[j];
-                            d += diff * diff;
+                            residual[j] = new_data[j] - centroid[j];
                         }
-                        if (d < best) {
-                            best = d;
-                            best_coarse_id = (int)c;
-                        }
-                    }
-                    
-                    if (best_coarse_id >= 0) {
-                        const float *centroid = idx->coarse + best_coarse_id * idx->dimension;
-                        float *residual = (float *)gv_alloc(idx->dimension * sizeof(float));
-                        if (residual != NULL) {
-                            for (size_t j = 0; j < idx->dimension; ++j) {
-                                residual[j] = new_data[j] - centroid[j];
-                            }
-                            
+                        /* On rotation OOM, keep the old codes (exact rerank uses the
+                         * updated ent->vector->data anyway) rather than encode an
+                         * un-rotated residual against rotated-space codebooks. */
+                        if (ivfpq_opq_rotate(idx, residual) == 0) {
                             for (size_t m = 0; m < idx->m; ++m) {
                                 const float *codebook = idx->pq + m * idx->codebook_size * idx->subdim;
                                 const float *subvec = residual + m * idx->subdim;
@@ -1607,8 +1676,8 @@ int gv_ivfpq_update(void *index_ptr, size_t entry_index, const float *new_data, 
                                 ent->codes[m] = bestc;
                                 list->codes_soa[m * list->capacity + e] = bestc;
                             }
-                            gv_free(residual);
                         }
+                        gv_free(residual);
                     }
                 }
                 
@@ -1621,8 +1690,11 @@ int gv_ivfpq_update(void *index_ptr, size_t entry_index, const float *new_data, 
                         float range = max_val - min_val;
                         if (range > 0.0f) {
                             float normalized = (new_data[i] - min_val) / range;
-                            uint8_t quantized = (uint8_t)(normalized * max_quant + 0.5f);
-                            if (quantized > max_quant) quantized = max_quant;
+                            /* Use a wide type: max_quant is up to 65535 for the
+                             * 16-bit path, so a uint8_t here would truncate the
+                             * value before the clamp and the 16-bit store. */
+                            uint32_t quantized = (uint32_t)(normalized * max_quant + 0.5f);
+                            if (quantized > (uint32_t)max_quant) quantized = (uint32_t)max_quant;
                             if (sqv->bits == 4) {
                                 /* Match scalar_quantize/scalar_dequantize packing:
                                  * byte_idx = i/2, high nibble for even i,
@@ -1634,7 +1706,7 @@ int gv_ivfpq_update(void *index_ptr, size_t entry_index, const float *new_data, 
                                 sqv->quantized[byte_idx] = (uint8_t)((sqv->quantized[byte_idx] & ~mask) |
                                                                      ((quantized & 0x0F) << shift));
                             } else if (sqv->bits == 8) {
-                                sqv->quantized[i] = quantized;
+                                sqv->quantized[i] = (uint8_t)quantized;
                             } else if (sqv->bits == 16) {
                                 ((uint16_t *)sqv->quantized)[i] = (uint16_t)quantized;
                             }

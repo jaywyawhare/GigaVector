@@ -15,6 +15,8 @@
 
 #include "index/hnsw.h"
 #include "search/distance.h"
+#include "core/config.h"   /* cpu_has_feature for runtime SIMD dispatch */
+#include <pthread.h>       /* parallel bulk build */
 #include "schema/metadata.h"
 #include "schema/vector.h"
 #include "specialized/binary_quant.h"
@@ -175,54 +177,61 @@ static inline float hnsw_dot_avx2(const float *a, const float *b, size_t dim) {
 }
 #endif
 
+/* Cached runtime AVX2+FMA availability (0/1); -1 = not yet probed. */
+static int hnsw_avx2_ok(void) {
+#ifdef __AVX2__
+    static int v = -1;
+    if (v < 0) v = (cpu_has_feature(GV_CPU_FEATURE_AVX2) && cpu_has_feature(GV_CPU_FEATURE_FMA)) ? 1 : 0;
+    return v;
+#else
+    return 0;
+#endif
+}
+
 static float hnsw_raw_distance(const float *a, const float *b, size_t dim,
                                    GV_DistanceType dtype) {
+    int use_avx = hnsw_avx2_ok() && dim >= 8; /* compile-guarded impls only exist under __AVX2__ */
+    (void)use_avx;
     switch (dtype) {
     case GV_DISTANCE_EUCLIDEAN:
+    default:
 #ifdef __AVX2__
-        return hnsw_l2_avx2(a, b, dim);
-#else
-        return hnsw_l2_scalar(a, b, dim);
+        if (use_avx) return hnsw_l2_avx2(a, b, dim);
 #endif
+        return hnsw_l2_scalar(a, b, dim);
     case GV_DISTANCE_COSINE: {
         float dot = 0.0f, na = 0.0f, nb = 0.0f;
 #ifdef __AVX2__
-        __m256 vdot = _mm256_setzero_ps(), vna = _mm256_setzero_ps(), vnb = _mm256_setzero_ps();
-        size_t i = 0;
-        for (; i + 8 <= dim; i += 8) {
-            __m256 va = _mm256_loadu_ps(a + i);
-            __m256 vb = _mm256_loadu_ps(b + i);
-            vdot = _mm256_fmadd_ps(va, vb, vdot);
-            vna = _mm256_fmadd_ps(va, va, vna);
-            vnb = _mm256_fmadd_ps(vb, vb, vnb);
-        }
-        float td[8], tna[8], tnb[8];
-        _mm256_storeu_ps(td, vdot); _mm256_storeu_ps(tna, vna); _mm256_storeu_ps(tnb, vnb);
-        for (int j = 0; j < 8; ++j) { dot += td[j]; na += tna[j]; nb += tnb[j]; }
-        for (; i < dim; ++i) { dot += a[i]*b[i]; na += a[i]*a[i]; nb += b[i]*b[i]; }
-#else
-        for (size_t i = 0; i < dim; ++i) { dot += a[i]*b[i]; na += a[i]*a[i]; nb += b[i]*b[i]; }
+        if (use_avx) {
+            __m256 vdot = _mm256_setzero_ps(), vna = _mm256_setzero_ps(), vnb = _mm256_setzero_ps();
+            size_t i = 0;
+            for (; i + 8 <= dim; i += 8) {
+                __m256 va = _mm256_loadu_ps(a + i);
+                __m256 vb = _mm256_loadu_ps(b + i);
+                vdot = _mm256_fmadd_ps(va, vb, vdot);
+                vna = _mm256_fmadd_ps(va, va, vna);
+                vnb = _mm256_fmadd_ps(vb, vb, vnb);
+            }
+            float td[8], tna[8], tnb[8];
+            _mm256_storeu_ps(td, vdot); _mm256_storeu_ps(tna, vna); _mm256_storeu_ps(tnb, vnb);
+            for (int j = 0; j < 8; ++j) { dot += td[j]; na += tna[j]; nb += tnb[j]; }
+            for (; i < dim; ++i) { dot += a[i]*b[i]; na += a[i]*a[i]; nb += b[i]*b[i]; }
+        } else
 #endif
+        { for (size_t i = 0; i < dim; ++i) { dot += a[i]*b[i]; na += a[i]*a[i]; nb += b[i]*b[i]; } }
         float denom = sqrtf(na) * sqrtf(nb);
         return (denom > 0.0f) ? (1.0f - dot / denom) : 1.0f;
     }
     case GV_DISTANCE_DOT_PRODUCT:
 #ifdef __AVX2__
-        return -hnsw_dot_avx2(a, b, dim);
-#else
-        { float d = 0; for (size_t i = 0; i < dim; ++i) d += a[i]*b[i]; return -d; }
+        if (use_avx) return -hnsw_dot_avx2(a, b, dim);
 #endif
+        { float d = 0; for (size_t i = 0; i < dim; ++i) d += a[i]*b[i]; return -d; }
     case GV_DISTANCE_MANHATTAN: {
         float sum = 0.0f;
         for (size_t i = 0; i < dim; ++i) { float d = a[i] - b[i]; sum += (d < 0) ? -d : d; }
         return sum;
     }
-    default:
-#ifdef __AVX2__
-        return hnsw_l2_avx2(a, b, dim);
-#else
-        return hnsw_l2_scalar(a, b, dim);
-#endif
     }
 }
 
@@ -232,40 +241,42 @@ static inline void hnsw_l2_batch4(const float *x,
                                        size_t dim,
                                        float *d0, float *d1, float *d2, float *d3) {
 #ifdef __AVX2__
-    __m256 acc0 = _mm256_setzero_ps();
-    __m256 acc1 = _mm256_setzero_ps();
-    __m256 acc2 = _mm256_setzero_ps();
-    __m256 acc3 = _mm256_setzero_ps();
-    size_t i = 0;
-    for (; i + 8 <= dim; i += 8) {
-        __m256 vx = _mm256_loadu_ps(x + i);
-        __m256 v0 = _mm256_sub_ps(vx, _mm256_loadu_ps(y0 + i));
-        __m256 v1 = _mm256_sub_ps(vx, _mm256_loadu_ps(y1 + i));
-        __m256 v2 = _mm256_sub_ps(vx, _mm256_loadu_ps(y2 + i));
-        __m256 v3 = _mm256_sub_ps(vx, _mm256_loadu_ps(y3 + i));
-        acc0 = _mm256_fmadd_ps(v0, v0, acc0);
-        acc1 = _mm256_fmadd_ps(v1, v1, acc1);
-        acc2 = _mm256_fmadd_ps(v2, v2, acc2);
-        acc3 = _mm256_fmadd_ps(v3, v3, acc3);
+    if (hnsw_avx2_ok() && dim >= 8) {
+        __m256 acc0 = _mm256_setzero_ps();
+        __m256 acc1 = _mm256_setzero_ps();
+        __m256 acc2 = _mm256_setzero_ps();
+        __m256 acc3 = _mm256_setzero_ps();
+        size_t i = 0;
+        for (; i + 8 <= dim; i += 8) {
+            __m256 vx = _mm256_loadu_ps(x + i);
+            __m256 v0 = _mm256_sub_ps(vx, _mm256_loadu_ps(y0 + i));
+            __m256 v1 = _mm256_sub_ps(vx, _mm256_loadu_ps(y1 + i));
+            __m256 v2 = _mm256_sub_ps(vx, _mm256_loadu_ps(y2 + i));
+            __m256 v3 = _mm256_sub_ps(vx, _mm256_loadu_ps(y3 + i));
+            acc0 = _mm256_fmadd_ps(v0, v0, acc0);
+            acc1 = _mm256_fmadd_ps(v1, v1, acc1);
+            acc2 = _mm256_fmadd_ps(v2, v2, acc2);
+            acc3 = _mm256_fmadd_ps(v3, v3, acc3);
+        }
+        float t0[8], t1[8], t2[8], t3[8];
+        _mm256_storeu_ps(t0, acc0); _mm256_storeu_ps(t1, acc1);
+        _mm256_storeu_ps(t2, acc2); _mm256_storeu_ps(t3, acc3);
+        *d0 = t0[0]+t0[1]+t0[2]+t0[3]+t0[4]+t0[5]+t0[6]+t0[7];
+        *d1 = t1[0]+t1[1]+t1[2]+t1[3]+t1[4]+t1[5]+t1[6]+t1[7];
+        *d2 = t2[0]+t2[1]+t2[2]+t2[3]+t2[4]+t2[5]+t2[6]+t2[7];
+        *d3 = t3[0]+t3[1]+t3[2]+t3[3]+t3[4]+t3[5]+t3[6]+t3[7];
+        for (; i < dim; ++i) {
+            float q0 = x[i]-y0[i], q1 = x[i]-y1[i], q2 = x[i]-y2[i], q3 = x[i]-y3[i];
+            *d0 += q0*q0; *d1 += q1*q1; *d2 += q2*q2; *d3 += q3*q3;
+        }
+        return;
     }
-    float t0[8], t1[8], t2[8], t3[8];
-    _mm256_storeu_ps(t0, acc0); _mm256_storeu_ps(t1, acc1);
-    _mm256_storeu_ps(t2, acc2); _mm256_storeu_ps(t3, acc3);
-    *d0 = t0[0]+t0[1]+t0[2]+t0[3]+t0[4]+t0[5]+t0[6]+t0[7];
-    *d1 = t1[0]+t1[1]+t1[2]+t1[3]+t1[4]+t1[5]+t1[6]+t1[7];
-    *d2 = t2[0]+t2[1]+t2[2]+t2[3]+t2[4]+t2[5]+t2[6]+t2[7];
-    *d3 = t3[0]+t3[1]+t3[2]+t3[3]+t3[4]+t3[5]+t3[6]+t3[7];
-    for (; i < dim; ++i) {
-        float q0 = x[i]-y0[i], q1 = x[i]-y1[i], q2 = x[i]-y2[i], q3 = x[i]-y3[i];
-        *d0 += q0*q0; *d1 += q1*q1; *d2 += q2*q2; *d3 += q3*q3;
-    }
-#else
+#endif
     *d0 = *d1 = *d2 = *d3 = 0.0f;
     for (size_t i = 0; i < dim; ++i) {
         float q0 = x[i]-y0[i], q1 = x[i]-y1[i], q2 = x[i]-y2[i], q3 = x[i]-y3[i];
         *d0 += q0*q0; *d1 += q1*q1; *d2 += q2*q2; *d3 += q3*q3;
     }
-#endif
 }
 
 static inline void prefetch_L2(const void *addr) {
@@ -374,6 +385,35 @@ void *gv_hnsw_create(size_t dimension, const GV_HNSWConfig *config, GV_SoAStorag
     return index;
 }
 
+void gv_hnsw_set_ef_construction(void *index_ptr, size_t ef) {
+    if (!index_ptr || ef == 0) return;
+    GV_HNSWIndex *index = (GV_HNSWIndex *)index_ptr;
+    /* The insert path uses efConstruction as the capacity of the insert scratch
+     * heaps (insert_dis/ids/proc), so raising ef past their allocated size would
+     * overflow them. Grow the buffers first; commit each realloc immediately so
+     * the struct never points at a freed block, and only publish the larger ef
+     * once all three have grown. On OOM keep the old ef (safe, no overflow). */
+    if (ef > index->insert_buf_size) {
+        float *nd = (float *)gv_realloc(index->insert_dis, ef * sizeof(float));
+        if (!nd) return;
+        index->insert_dis = nd;
+        size_t *ni = (size_t *)gv_realloc(index->insert_ids, ef * sizeof(size_t));
+        if (!ni) return;
+        index->insert_ids = ni;
+        uint8_t *np = (uint8_t *)gv_realloc(index->insert_proc, ef * sizeof(uint8_t));
+        if (!np) return;
+        index->insert_proc = np;
+        index->insert_buf_size = ef;
+    }
+    index->efConstruction = ef;
+}
+void gv_hnsw_set_ef_search(void *index_ptr, size_t ef) {
+    if (index_ptr && ef > 0) ((GV_HNSWIndex *)index_ptr)->efSearch = ef;
+}
+size_t gv_hnsw_get_ef_construction(const void *index_ptr) {
+    return index_ptr ? ((const GV_HNSWIndex *)index_ptr)->efConstruction : 0;
+}
+
 int gv_hnsw_reserve(void *index_ptr, size_t n) {
     if (!index_ptr || n == 0) return -1;
     GV_HNSWIndex *index = (GV_HNSWIndex *)index_ptr;
@@ -471,7 +511,11 @@ static void add_link(GV_HNSWIndex *index, size_t from, size_t to, size_t level,
     float new_dist = hnsw_raw_distance(from_data, LINK_VEC(index->nodes[to].vector_index),
                                             soa_dim, index->distance_type);
 
-    float worst_dist = -1.0f;
+    /* -FLT_MAX, not -1.0f: for DOT_PRODUCT hnsw_raw_distance returns -dot, which
+     * is unbounded-negative, so a -1.0f seed would never be beaten when every
+     * neighbour distance is < -1 and the loop would evict neighbour 0 instead of
+     * the true worst. -FLT_MAX is correct for every metric. */
+    float worst_dist = -FLT_MAX;
     size_t worst_i = 0;
 
     if (index->distance_type == GV_DISTANCE_EUCLIDEAN && max_n >= 4) {
@@ -1175,6 +1219,236 @@ int gv_hnsw_search(void *index_ptr, const GV_Vector *query, size_t k,
     return (int)result_count;
 }
 
+/* Parallel bulk build — race-free "parallel search + serial link": every node
+ * is pre-allocated with an empty neighbour list (so an un-linked node has no
+ * in-links and is unreachable). Per batch, worker threads search the
+ * already-linked subgraph READ-ONLY (each with its own scratch) to collect
+ * candidate neighbours; a single thread then applies the links. No shared
+ * mutable state during the parallel phase. */
+#define GV_PB_CAND_CAP 96
+
+typedef struct {
+    uint32_t *visited; uint32_t epoch; size_t vcap;
+    float *hd; size_t *hi; uint8_t *hp; size_t hcap;
+} PScratch;
+
+static int pscratch_init(PScratch *s, size_t vcap, size_t hcap) {
+    memset(s, 0, sizeof(*s));
+    s->visited = (uint32_t *)gv_calloc(vcap ? vcap : 1, sizeof(uint32_t));
+    s->hd = (float *)gv_alloc((hcap + 1) * sizeof(float));
+    s->hi = (size_t *)gv_alloc((hcap + 1) * sizeof(size_t));
+    s->hp = (uint8_t *)gv_alloc((hcap + 1) * sizeof(uint8_t));
+    if (!s->visited || !s->hd || !s->hi || !s->hp) {
+        gv_free(s->visited); gv_free(s->hd); gv_free(s->hi); gv_free(s->hp); return -1;
+    }
+    s->vcap = vcap; s->hcap = hcap; s->epoch = 0;
+    return 0;
+}
+static void pscratch_free(PScratch *s) { gv_free(s->visited); gv_free(s->hd); gv_free(s->hi); gv_free(s->hp); }
+
+/* Read-only greedy descent from ep through levels above node_level. */
+static size_t pb_descent(GV_HNSWIndex *index, const float *nv, size_t ep, size_t node_level) {
+    const float *base = index->soa_storage->data; const size_t dim = index->dimension;
+    size_t cur = ep;
+    size_t cl = index->nodes[cur].level; if (cl > index->maxLevel) cl = index->maxLevel;
+    for (int lc = (int)cl; lc > (int)node_level; --lc) {
+        if ((size_t)lc > index->nodes[cur].level) continue;
+        float cd = hnsw_raw_distance(nv, base + index->nodes[cur].vector_index * dim, dim, index->distance_type);
+        int improved = 1;
+        while (improved) {
+            improved = 0;
+            int32_t *nbs = nb_begin(index, cur, (size_t)lc); size_t mx = max_nb_at_level(index, (size_t)lc);
+            for (size_t i = 0; i < mx; ++i) { int32_t nb = nbs[i]; if (nb < 0) break;
+                if (index->nodes[nb].deleted) continue;
+                float d = hnsw_raw_distance(nv, base + index->nodes[nb].vector_index * dim, dim, index->distance_type);
+                if (d < cd) { cd = d; cur = (size_t)nb; improved = 1; } }
+        }
+        cl = index->nodes[cur].level; if (cl > index->maxLevel) cl = index->maxLevel;
+    }
+    return cur;
+}
+
+/* Read-only ef-search at level lc from ep; writes nearest ids (sorted) to out. */
+static size_t pb_ef_search(GV_HNSWIndex *index, const float *nv, size_t ep, int lc,
+                           PScratch *s, size_t *out, size_t out_cap) {
+    const float *base = index->soa_storage->data; const size_t dim = index->dimension;
+    s->epoch++;
+    if (s->epoch == 0) { memset(s->visited, 0, s->vcap * sizeof(uint32_t)); s->epoch = 1; }
+    float *hd = s->hd; size_t *hi = s->hi; uint8_t *hp = s->hp; size_t hk = 0;
+    float seed = hnsw_raw_distance(nv, base + index->nodes[ep].vector_index * dim, dim, index->distance_type);
+    mmheap_push(hd, hi, hp, &hk, index->efConstruction, ep, seed);
+    if (ep < s->vcap) s->visited[ep] = s->epoch;
+    for (;;) {
+        float cd; size_t cn = mmheap_pop_min(hd, hi, hp, hk, &cd);
+        if (cn == SIZE_MAX) break;
+        if (index->nodes[cn].deleted || (size_t)lc > index->nodes[cn].level) continue;
+        if (hk >= index->efConstruction && cd > hd[0]) break;
+        int32_t *nbs = nb_begin(index, cn, (size_t)lc); size_t mx = max_nb_at_level(index, (size_t)lc);
+        for (size_t i = 0; i < mx; ++i) { int32_t nb = nbs[i]; if (nb < 0) break;
+            if (index->nodes[nb].deleted) continue;
+            if ((size_t)nb >= s->vcap || s->visited[nb] == s->epoch) continue;
+            s->visited[nb] = s->epoch;
+            float d = hnsw_raw_distance(nv, base + index->nodes[nb].vector_index * dim, dim, index->distance_type);
+            float th = (hk >= index->efConstruction) ? hd[0] : FLT_MAX;
+            if (d < th) mmheap_push(hd, hi, hp, &hk, index->efConstruction, (size_t)nb, d);
+        }
+    }
+    size_t cn2 = hk < 512 ? hk : 512;
+    GV_CandKV kv[512];
+    for (size_t i = 0; i < cn2; ++i) { kv[i].d = hd[i]; kv[i].src = (uint32_t)i; }
+    candkv_sort_asc(kv, cn2);
+    size_t n = cn2 < out_cap ? cn2 : out_cap;
+    for (size_t i = 0; i < n; ++i) out[i] = hi[kv[i].src];
+    return n;
+}
+
+typedef struct { size_t nlev; size_t *ids; size_t *cnt; } PCand;
+typedef struct {
+    GV_HNSWIndex *index; size_t lo, hi; size_t frozen_entry;
+    const size_t *levels; PCand *pc; int ok;
+} PBWork;
+
+static void *pb_worker(void *arg) {
+    PBWork *w = (PBWork *)arg;
+    GV_HNSWIndex *index = w->index;
+    const float *base = index->soa_storage->data; const size_t dim = index->dimension;
+    PScratch s;
+    if (pscratch_init(&s, index->count, index->efConstruction + 1) != 0) { w->ok = -1; return NULL; }
+    for (size_t i = w->lo; i < w->hi; ++i) {
+        size_t level = w->levels[i];
+        const float *nv = base + index->nodes[i].vector_index * dim;
+        size_t cur = pb_descent(index, nv, w->frozen_entry, level);
+        for (size_t lc = 0; lc <= level; ++lc) {
+            PCand *c = &w->pc[i - w->lo];
+            c->cnt[lc] = pb_ef_search(index, nv, cur, (int)lc, &s,
+                                      c->ids + lc * GV_PB_CAND_CAP, GV_PB_CAND_CAP);
+        }
+    }
+    pscratch_free(&s);
+    return NULL;
+}
+
+/* Serial link of node i using its precomputed per-level candidate lists. */
+static void pb_link_node(GV_HNSWIndex *index, size_t i, size_t level, const PCand *c) {
+    const float *base = index->soa_storage->data; const size_t dim = index->dimension;
+    for (size_t lc = 0; lc <= level; ++lc) {
+        size_t cand_n = c->cnt[lc];
+        const size_t *cand = c->ids + lc * GV_PB_CAND_CAP;
+        size_t max_nbrs = max_nb_at_level(index, lc);
+        size_t sel[64]; size_t sn = 0;
+        for (size_t ci = 0; ci < cand_n && sn < max_nbrs; ++ci) {
+            size_t cn = cand[ci];
+            if (cn == i || index->nodes[cn].deleted) continue;
+            float dq = hnsw_raw_distance(base + index->nodes[i].vector_index * dim,
+                                         base + index->nodes[cn].vector_index * dim, dim, index->distance_type);
+            const float *cd = base + index->nodes[cn].vector_index * dim;
+            int keep = 1;
+            for (size_t si = 0; si < sn; ++si) {
+                float ds = hnsw_raw_distance(cd, base + index->nodes[sel[si]].vector_index * dim, dim, index->distance_type);
+                if (ds < dq) { keep = 0; break; }
+            }
+            if (keep) sel[sn++] = cn;
+        }
+        for (size_t ci = 0; ci < cand_n && sn < max_nbrs; ++ci) { /* backfill */
+            size_t cn = cand[ci]; if (cn == i || index->nodes[cn].deleted) continue;
+            int dup = 0; for (size_t si = 0; si < sn; ++si) if (sel[si] == cn) { dup = 1; break; }
+            if (!dup) sel[sn++] = cn;
+        }
+        for (size_t k = 0; k < sn; ++k) {
+            add_link(index, i, sel[k], lc, base, dim);
+            if (lc <= index->nodes[sel[k]].level) add_link(index, sel[k], i, lc, base, dim);
+        }
+    }
+}
+
+int gv_hnsw_build_parallel(void *index_ptr, size_t num_threads) {
+    GV_HNSWIndex *index = (GV_HNSWIndex *)index_ptr;
+    if (!index || !index->soa_storage) return -1;
+    size_t N = index->soa_storage->count;
+    if (index->count != 0) return -1;  /* only builds an empty graph */
+    if (N == 0) return 0;
+    if (num_threads == 0) num_threads = 1;
+
+    /* 1) Serial pre-pass: create every node with an empty neighbour list + a level. */
+    if (gv_hnsw_reserve(index, N) != 0) return -1;
+    size_t *levels = (size_t *)gv_alloc(N * sizeof(size_t));
+    if (!levels) return -1;
+    size_t maxlvl = 0;
+    for (size_t i = 0; i < N; ++i) {
+        size_t lv = calculate_level(index);
+        levels[i] = lv; if (lv > maxlvl) maxlvl = lv;
+        index->nodes[i].vector_index = i;
+        index->nodes[i].binary_vector = NULL;
+        index->nodes[i].level = lv;
+        index->nodes[i].deleted = 0;
+        if (index->use_binary_quant) {
+            const float *vd = soa_storage_get_data(index->soa_storage, i);
+            if (vd) index->nodes[i].binary_vector = binary_quantize(vd, index->dimension);
+        }
+        if (alloc_node_neighbors(index, i, lv) != 0) { gv_free(levels); return -1; }
+    }
+    index->count = N;
+    index->entry_point = 0;  /* node 0 seeds the graph */
+
+    /* Warm the AVX2-support cache serially so worker threads only read it (the
+     * probe is idempotent, but priming it here keeps the parallel phase race-free). */
+    (void)hnsw_avx2_ok();
+
+    /* 2) Batched parallel-search + serial-link over nodes 1..N-1. */
+    /* Batch size trades speed vs graph quality: within a batch, nodes search the
+     * frozen pre-batch graph and don't link to each other, so large batches lose
+     * intra-batch edges and degrade recall. Empirically mult=16 is the knee — full
+     * recall parity with serial (~-0.2pp) at ~2x speedup on 8 threads; larger drops
+     * recall fast (mult=128 => -10pp). Overridable via GV_PB_BATCH_MULT for tuning. */
+    size_t batch_mult = 16;
+    { const char *e = getenv("GV_PB_BATCH_MULT"); if (e) { long m = atol(e); if (m > 0) batch_mult = (size_t)m; } }
+    size_t batch = num_threads * batch_mult; if (batch < 16) batch = 16;
+    int rc = 0;
+    for (size_t start = 1; start < N && rc == 0; start += batch) {
+        size_t end = start + batch; if (end > N) end = N;
+        size_t bsz = end - start;
+        size_t frozen_entry = index->entry_point;
+
+        PCand *pc = (PCand *)gv_calloc(bsz, sizeof(PCand));
+        if (!pc) { rc = -1; break; }
+        for (size_t k = 0; k < bsz; ++k) {
+            size_t lv = levels[start + k];
+            pc[k].nlev = lv + 1;
+            pc[k].ids = (size_t *)gv_alloc((lv + 1) * GV_PB_CAND_CAP * sizeof(size_t));
+            pc[k].cnt = (size_t *)gv_calloc(lv + 1, sizeof(size_t));
+            if (!pc[k].ids || !pc[k].cnt) rc = -1;
+        }
+        if (rc == 0) {
+            size_t nt = num_threads; if (nt > bsz) nt = bsz;
+            pthread_t th[64]; PBWork wk[64]; if (nt > 64) nt = 64;
+            size_t per = (bsz + nt - 1) / nt;
+            /* Track WHICH slots hold a live thread, not just how many spawned:
+             * a mid-list pthread_create failure (inline fallback) leaves th[t]
+             * uninitialized, and joining by a success-count would join that
+             * garbage handle while skipping a later live worker (which then
+             * races/UAFs pc[] freed below). */
+            int created[64] = {0};
+            for (size_t t = 0; t < nt; ++t) {
+                size_t lo = start + t * per, hi = lo + per; if (hi > end) hi = end;
+                if (lo >= hi) break;
+                wk[t] = (PBWork){ index, lo, hi, frozen_entry, levels, pc + (lo - start), 0 };
+                if (pthread_create(&th[t], NULL, pb_worker, &wk[t]) == 0) created[t] = 1;
+                else { pb_worker(&wk[t]); } /* fall back to inline on spawn failure */
+            }
+            for (size_t t = 0; t < nt; ++t) if (created[t]) pthread_join(th[t], NULL);
+            /* serial link in node order */
+            for (size_t i = start; i < end; ++i) {
+                pb_link_node(index, i, levels[i], &pc[i - start]);
+                if (levels[i] > index->nodes[index->entry_point].level) index->entry_point = i;
+            }
+        }
+        for (size_t k = 0; k < bsz; ++k) { gv_free(pc[k].ids); gv_free(pc[k].cnt); }
+        gv_free(pc);
+    }
+    gv_free(levels);
+    return rc;
+}
+
 void gv_hnsw_destroy(void *index_ptr) {
     if (!index_ptr) return;
     GV_HNSWIndex *index = (GV_HNSWIndex *)index_ptr;
@@ -1278,21 +1552,6 @@ int gv_hnsw_update(void *index_ptr, size_t node_index, const float *new_data, si
     return 0;
 }
 
-static int read_metadata(FILE *in, GV_Vector *vec) {
-    if (!vec) return -1;
-    uint32_t count = 0;
-    if (read_u32(in, &count) != 0) return -1;
-    for (uint32_t i = 0; i < count; ++i) {
-        uint32_t kl = 0, vl = 0;
-        char *key = NULL, *value = NULL;
-        if (read_u32(in, &kl) != 0 || read_str(in, &key, kl) != 0) { gv_free(key); return -1; }
-        if (read_u32(in, &vl) != 0 || read_str(in, &value, vl) != 0) { gv_free(key); gv_free(value); return -1; }
-        if (vector_set_metadata(vec, key, value) != 0) { gv_free(key); gv_free(value); return -1; }
-        gv_free(key); gv_free(value);
-    }
-    return 0;
-}
-
 int gv_hnsw_save(const void *index_ptr, FILE *out, uint32_t version) {
     if (!index_ptr || !out) return -1;
     GV_HNSWIndex *index = (GV_HNSWIndex *)index_ptr;
@@ -1305,6 +1564,14 @@ int gv_hnsw_save(const void *index_ptr, FILE *out, uint32_t version) {
 
     uint64_t ep = (index->entry_point == SIZE_MAX) ? UINT64_MAX : (uint64_t)index->entry_point;
     if (write_u64(out, ep) != 0) return -1;
+
+    /* v6+: persist config that affects search correctness (was reset to defaults on load). */
+    if (version >= 6) {
+        if (write_u32(out, (uint32_t)index->use_binary_quant) != 0) return -1;
+        if (write_u32(out, (uint32_t)index->use_acorn) != 0) return -1;
+        if (write_u32(out, (uint32_t)index->acorn_hops) != 0) return -1;
+        if (write_u32(out, (uint32_t)index->distance_type) != 0) return -1;
+    }
 
     /* Pass 1: node data */
     for (size_t i = 0; i < index->count; ++i) {
@@ -1345,7 +1612,17 @@ int gv_hnsw_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version,
     if (read_u64(in, &count) != 0) return -1;
     if (read_u64(in, &entry_point_idx) != 0) return -1;
 
-    GV_HNSWConfig config = {.M = M, .efConstruction = efConstruction, .efSearch = efSearch, .maxLevel = maxLevel};
+    uint32_t ubq = 0, uac = 0, ahops = 0, dtype = 0;
+    if (version >= 6) {
+        if (read_u32(in, &ubq) != 0) return -1;
+        if (read_u32(in, &uac) != 0) return -1;
+        if (read_u32(in, &ahops) != 0) return -1;
+        if (read_u32(in, &dtype) != 0) return -1;
+    }
+
+    GV_HNSWConfig config = {.M = M, .efConstruction = efConstruction, .efSearch = efSearch, .maxLevel = maxLevel,
+                            .use_binary_quant = (int)ubq, .use_acorn = (int)uac, .acorn_hops = (size_t)ahops,
+                            .distance_type = (GV_DistanceType)dtype};
     void *idx = gv_hnsw_create(dimension, &config, soa_storage);
     if (!idx) return -1;
     GV_HNSWIndex *hnsw = (GV_HNSWIndex *)idx;
@@ -1373,6 +1650,11 @@ int gv_hnsw_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version,
     for (size_t i = 0; i < (size_t)count; ++i) {
         uint32_t lev = 0;
         if (read_u32(in, &lev) != 0) { gv_hnsw_destroy(idx); return -1; }
+        /* Reject an out-of-range node level from a crafted/corrupt file: the
+         * neighbor arrays and cum_nb_per_level are sized for maxLevel, so a
+         * larger level makes nb_begin() index cum_nb_per_level past its end and
+         * write through the resulting wild pointer. */
+        if (lev > (uint32_t)hnsw->maxLevel) { gv_hnsw_destroy(idx); return -1; }
 
         float *vd = (float *)gv_alloc(dimension * sizeof(float));
         if (!vd) { gv_hnsw_destroy(idx); return -1; }
@@ -1381,7 +1663,7 @@ int gv_hnsw_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version,
         GV_Metadata *meta = NULL;
         if (version >= 2) {
             GV_Vector tmp = {.data = vd, .dimension = dimension, .metadata = NULL};
-            if (read_metadata(in, &tmp) != 0) { gv_free(vd); gv_hnsw_destroy(idx); return -1; }
+            if (read_metadata_into_vector(in, &tmp) != 0) { gv_free(vd); gv_hnsw_destroy(idx); return -1; }
             meta = tmp.metadata;
         }
 
@@ -1391,6 +1673,11 @@ int gv_hnsw_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version,
 
         hnsw->nodes[i].vector_index = vi;
         hnsw->nodes[i].binary_vector = NULL;
+        /* Regenerate the binary code so a binary-quant index searches correctly after load. */
+        if (hnsw->use_binary_quant) {
+            const float *vdata = soa_storage_get_data(hnsw->soa_storage, vi);
+            if (vdata) hnsw->nodes[i].binary_vector = binary_quantize(vdata, dimension);
+        }
         hnsw->nodes[i].level = lev;
         hnsw->nodes[i].deleted = 0;
 

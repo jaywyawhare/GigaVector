@@ -28,6 +28,8 @@ struct GV_WAL {
     size_t dimension;
     uint32_t index_type;
     uint32_t version;
+    size_t sync_interval;   /* fsync every N appended records (1 = every record) */
+    size_t since_sync;      /* records appended since the last fsync */
 };
 
 
@@ -35,6 +37,28 @@ static int wal_sync(FILE *f) {
     if (fflush(f) != 0) return -1;
     if (fsync(fileno(f)) != 0) return -1;
     return 0;
+}
+
+/* Group-commit: always flush to the OS buffer; fsync only every sync_interval
+ * records. Interval 1 (default) fsyncs every record (crash-durable). A larger
+ * interval trades power-loss durability for throughput during bulk loads. */
+static int wal_maybe_sync(GV_WAL *wal) {
+    if (fflush(wal->file) != 0) return -1;
+    wal->since_sync++;
+    if (wal->sync_interval <= 1 || wal->since_sync >= wal->sync_interval) {
+        wal->since_sync = 0;
+        if (fsync(fileno(wal->file)) != 0) return -1;
+    }
+    return 0;
+}
+
+/* Public: set fsync interval (records). 1 = every record (default). Forces a
+ * durable flush of anything pending. */
+void wal_set_sync_interval(GV_WAL *wal, size_t interval) {
+    if (!wal) return;
+    wal->sync_interval = interval;
+    wal->since_sync = 0;
+    if (wal->file) { fflush(wal->file); fsync(fileno(wal->file)); }
 }
 
 static void *wal_scratch_alloc(size_t bytes, int *on_heap) {
@@ -106,16 +130,11 @@ static void wal_vec_scratch_release(WalVecScratch *rec) {
 }
 
 /*
- * Reads a vector record body. On failure returns -1 and, via *short_read,
- * distinguishes the failure mode so the caller can classify it correctly:
- *   *short_read = 1  -> a true short read (EOF / truncated file). The record is
- *                       a torn trailing record and the caller may safely stop.
- *   *short_read = 0  -> a validation failure (bad dim, oversized meta_count, or
- *                       a bad embedded string length). The bytes present are
- *                       structurally invalid, so this is corruption, NOT a torn
- *                       tail; the caller must run the "is there more data after
- *                       this record?" check before deciding to truncate.
- * *short_read is only meaningful when the function returns -1.
+ * Reads a vector record body. On -1, *short_read distinguishes the failure mode
+ * (only meaningful on -1):
+ *   1 -> true short read (EOF/truncated): torn trailing record, caller may stop.
+ *   0 -> validation failure (bad dim/meta_count/string len): structurally invalid,
+ *        so corruption NOT a torn tail; caller must check for trailing data first.
  */
 static int wal_vec_read_body(FILE *f, uint32_t expected_dim, WalVecScratch *rec,
                              int *short_read) {
@@ -341,6 +360,8 @@ GV_WAL *wal_open(const char *path, size_t dimension, uint32_t index_type) {
     wal->path = gv_dup_cstr(path);
     wal->index_type = index_type;
     wal->version = file_version;
+    wal->sync_interval = 1;   /* durable by default: fsync every record */
+    wal->since_sync = 0;
     if (wal->path == NULL) {
         fclose(f);
         gv_free(wal);
@@ -387,7 +408,7 @@ int wal_append_insert(GV_WAL *wal, const float *data, size_t dimension,
         if (write_u32(wal->file, crc) != 0) return -1;
     }
 
-    if (wal_sync(wal->file) != 0) {
+    if (wal_maybe_sync(wal) != 0) {
         return -1;
     }
     return 0;
@@ -439,7 +460,7 @@ int wal_append_insert_rich(GV_WAL *wal, const float *data, size_t dimension,
         if (write_u32(wal->file, crc) != 0) return -1;
     }
 
-    if (wal_sync(wal->file) != 0) {
+    if (wal_maybe_sync(wal) != 0) {
         return -1;
     }
     return 0;
@@ -464,7 +485,7 @@ int wal_append_delete(GV_WAL *wal, size_t vector_index) {
         if (write_u32(wal->file, crc) != 0) return -1;
     }
 
-    if (wal_sync(wal->file) != 0) return -1;
+    if (wal_maybe_sync(wal) != 0) return -1;
     return 0;
 }
 
@@ -513,7 +534,7 @@ int wal_append_update(GV_WAL *wal, size_t vector_index, const float *data, size_
         if (write_u32(wal->file, crc) != 0) return -1;
     }
 
-    if (wal_sync(wal->file) != 0) return -1;
+    if (wal_maybe_sync(wal) != 0) return -1;
     return 0;
 }
 
@@ -539,7 +560,7 @@ int wal_append_ivfdisk_append(GV_WAL *wal, uint64_t head_id, uint64_t vector_id,
         crc = gv_crc32_finish(crc);
         if (write_u32(wal->file, crc) != 0) return -1;
     }
-    return wal_sync(wal->file);
+    return wal_maybe_sync(wal);
 }
 
 static int wal_skip_ivfdisk_append_record(FILE *f, int has_crc)
@@ -560,22 +581,13 @@ static int wal_skip_ivfdisk_append_record(FILE *f, int has_crc)
 }
 
 /*
- * Decide whether a failure while reading the record that began at file offset
- * `record_start` represents a torn TRAILING record (the common case after an
- * unclean shutdown) rather than corruption in the middle of the log.
- *
- * `short_read` must be non-zero when the failure was a truncated read (fread
- * returned fewer bytes than requested), which unambiguously means the file
- * ended mid-record -> torn tail. For a CRC mismatch on a fully-read record,
- * pass short_read == 0: it is a torn tail only if no bytes follow the record
- * (i.e. we are already at EOF); otherwise a valid record follows and the
- * mismatch indicates mid-log corruption.
- *
- * Returns 1 if this is a torn trailing record (replay should stop and succeed),
- * 0 if it is mid-log corruption (replay should fail).
- *
- * On a torn tail, the log is truncated to `record_start` so the partial/corrupt
- * bytes are discarded and the next open starts from a clean boundary.
+ * Decide whether a failed read of the record at `record_start` is a torn TRAILING
+ * record (common after unclean shutdown) vs mid-log corruption. Pass short_read=1
+ * for a truncated read (unambiguously torn tail); pass 0 for a CRC mismatch on a
+ * fully-read record — then it's a torn tail only if nothing follows (already EOF),
+ * otherwise mid-log corruption. Returns 1 for torn tail (replay stops, succeeds),
+ * 0 for corruption (replay fails). On a torn tail the log is truncated back to
+ * record_start so the next open starts from a clean boundary.
  */
 static int wal_is_torn_tail(FILE *f, long record_start, int short_read) {
     if (!short_read) {
@@ -616,7 +628,14 @@ int wal_replay(const char *path, size_t expected_dimension,
 
     gv_tls_arena_reset();
 
-    FILE *f = fopen(path, "rb");
+    /* Open read-WRITE so wal_is_torn_tail() can actually ftruncate a torn
+     * trailing record back to the last good boundary. Opened "rb" (read-only),
+     * the ftruncate fails silently (EINVAL) and the torn tail survives — after a
+     * second crash it sits mid-log with valid data behind it, which the torn-tail
+     * check treats as unrecoverable corruption. Fall back to "rb" on read-only
+     * media (truncation then no-ops, but replay still succeeds). */
+    FILE *f = fopen(path, "r+b");
+    if (f == NULL && errno != ENOENT) f = fopen(path, "rb");
     if (f == NULL) {
         return (errno == ENOENT) ? 0 : -1;
     }
@@ -828,7 +847,14 @@ int wal_replay_rich(const char *path, size_t expected_dimension,
 
     gv_tls_arena_reset();
 
-    FILE *f = fopen(path, "rb");
+    /* Open read-WRITE so wal_is_torn_tail() can actually ftruncate a torn
+     * trailing record back to the last good boundary. Opened "rb" (read-only),
+     * the ftruncate fails silently (EINVAL) and the torn tail survives — after a
+     * second crash it sits mid-log with valid data behind it, which the torn-tail
+     * check treats as unrecoverable corruption. Fall back to "rb" on read-only
+     * media (truncation then no-ops, but replay still succeeds). */
+    FILE *f = fopen(path, "r+b");
+    if (f == NULL && errno != ENOENT) f = fopen(path, "rb");
     if (f == NULL) {
         return (errno == ENOENT) ? 0 : -1;
     }
@@ -1222,7 +1248,11 @@ int wal_truncate(GV_WAL *wal) {
         return -1;
     }
 
-    if (wal_sync(f) != 0 || fclose(f) != 0) {
+    /* Always fclose(f): the short-circuit `wal_sync(f) != 0 || fclose(f)` skipped
+     * the close when the sync failed, leaking the FILE*. */
+    int sync_rc = wal_sync(f);
+    int close_rc = fclose(f);
+    if (sync_rc != 0 || close_rc != 0) {
         return -1;
     }
 
@@ -1394,7 +1424,7 @@ int wal_read_entry_at(const char *path, uint64_t entry_index, uint8_t *out_type,
 int wal_append_raw(GV_WAL *wal, const uint8_t *record, size_t len) {
     if (!wal || !wal->file || !record || len == 0) return -1;
     if (fwrite(record, 1, len, wal->file) != len) return -1;
-    return wal_sync(wal->file);
+    return wal_maybe_sync(wal);
 }
 
 int wal_apply_record_buffer(const uint8_t *record, size_t len, int has_crc,

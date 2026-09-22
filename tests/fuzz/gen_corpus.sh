@@ -157,6 +157,23 @@ int main(int argc, char **argv) {
 }
 EOF
 
+# ── graph WAL seed corpus: valid frames + torn/junk tails ──────────────────
+mkdir -p "$ROOT/tests/fuzz/corpus/graph_wal"
+python3 - "$ROOT/tests/fuzz/corpus/graph_wal" << 'PYEOF'
+import struct, sys, os
+out = sys.argv[1]
+def frame(op, payload): return bytes([op]) + struct.pack("<I", len(payload)) + payload
+def s(x):
+    b = x.encode(); return struct.pack("<I", len(b)) + b
+open(os.path.join(out, "a_add_node"), "wb").write(frame(1, struct.pack("<Q", 99) + s("Fuzz") + s("T")))
+open(os.path.join(out, "b_remove"), "wb").write(frame(2, struct.pack("<Q", 1)))
+open(os.path.join(out, "c_add_edge"), "wb").write(frame(3, struct.pack("<QQ", 10, 11) + s("E") + struct.pack("<f", 2.0)))
+open(os.path.join(out, "d_set_prop"), "wb").write(frame(5, struct.pack("<Q", 1) + s("k") + s("v")))
+open(os.path.join(out, "e_torn"), "wb").write(bytes([5]) + struct.pack("<I", 500) + b"x" * 10)
+open(os.path.join(out, "f_junk"), "wb").write(bytes(range(64)))
+print("graph WAL corpus written")
+PYEOF
+
 gcc -O2 -I"$ROOT/include" "$GEN_SRC" -L"$ROOT/build/lib" -lGigaVector -lm -pthread \
     -Wl,-rpath,"$ROOT/build/lib" -o "$GEN_BIN"
 "$GEN_BIN" "$ROOT"

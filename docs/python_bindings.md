@@ -116,6 +116,36 @@ db.train_ivfpq(training_data)
 4. **Monitor resources** -- call `db.get_memory_usage()` and `db.get_resource_limits()` for large datasets.
 5. **Use appropriate data types** -- vectors must be lists of floats; metadata values must be strings. NumPy arrays work after calling `.tolist()`.
 
+## Transactions (MVCC)
+
+`Database.begin()` returns a `DBTransaction` — a snapshot-isolation transaction. Reads see a
+consistent snapshot as of `begin()`; writes are staged and applied atomically at `commit()`.
+Concurrent write-write conflicts raise `TransactionConflict`. It is usable as a context manager
+(commits on clean exit, rolls back on exception).
+
+```python
+from gigavector import Database, TransactionConflict
+
+with Database(dim=128) as db:
+    txn = db.begin()
+    txn.add_vector([0.1] * 128)
+    txn.delete(0)
+    hits = txn.search([0.1] * 128, k=5)   # sees the txn's own staged writes
+    try:
+        txn.commit()
+    except TransactionConflict:
+        ...  # retry
+
+    # or as a context manager:
+    with db.begin() as t:
+        t.add_vector([0.2] * 128)          # commits automatically on clean exit
+
+    db.txn_gc(safe_below=snapshot_version)   # reclaim tombstones no snapshot >= this can see
+```
+
+`DBTransaction` methods: `add_vector(vector)`, `delete(vector_index)`,
+`search(query, k, distance=…)`, `commit()`, `rollback()`.
+
 ## Available Modules
 
 The Python bindings expose the following module groups. See [usage.md](usage.md) and [c_api_guide.md](c_api_guide.md) for full examples.
@@ -123,6 +153,7 @@ The Python bindings expose the following module groups. See [usage.md](usage.md)
 - **Async & Concurrency:** `AsyncDatabase`, `DatabasePool` -- asyncio-native API and connection pooling.
 - **Benchmarking:** `Benchmark`, `BenchmarkResult` -- latency and throughput measurement.
 - **Core:** `Database`, `Vector`, `SearchHit`, `IndexType`, `DistanceType` -- database operations and search.
+- **Transactions:** `DBTransaction`, `TransactionConflict` -- MVCC snapshot-isolation transactions from `Database.begin()`.
 - **Configuration:** `HNSWConfig`, `IVFPQConfig`, `ScalarQuantConfig` -- index tuning parameters.
 - **LLM Integration:** `LLM`, `LLMConfig`, `EmbeddingService` -- embedding generation and LLM helpers.
 - **Memory:** `MemoryLayer`, `ContextGraph` -- conversational memory and context tracking.

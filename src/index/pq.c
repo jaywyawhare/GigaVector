@@ -7,6 +7,7 @@
 #include <float.h>
 
 #include "index/pq.h"
+#include "index/opq.h"
 #include "search/distance.h"
 #include "schema/vector.h"
 #include "schema/metadata.h"
@@ -33,6 +34,9 @@ typedef struct {
     size_t entry_capacity;
     int trained;
     size_t train_iters;
+    int use_opq;           /* learn/apply an OPQ rotation before PQ */
+    GV_OPQ *opq;           /* rotation (NULL until trained with use_opq) */
+    float *rot_scratch;    /* dimension floats: reused rotation output */
 } GV_PQIndex;
 
 typedef struct { float dist; size_t idx; } GV_PQHeapItem;
@@ -113,6 +117,10 @@ static void pq_train_subquantizer(float *codebook, const float *subvecs,
 }
 
 static void pq_encode(const GV_PQIndex *idx, const float *data, uint8_t *codes) {
+    if (idx->opq) {                       /* rotate into OPQ space before quantizing */
+        opq_rotate(idx->opq, data, idx->rot_scratch);
+        data = idx->rot_scratch;
+    }
     for (size_t m_i = 0; m_i < idx->m; m_i++) {
         const float *subvec = &data[m_i * idx->dsub];
         const float *subcodebook = &idx->codebooks[m_i * idx->ksub * idx->dsub];
@@ -144,6 +152,7 @@ void *pq_create(size_t dimension, const GV_PQConfig *config) {
         idx->m = config->m;
         idx->nbits = config->nbits;
         idx->train_iters = config->train_iters;
+        idx->use_opq = config->use_opq;
     } else {
         idx->m = 8;
         idx->nbits = 8;
@@ -170,9 +179,15 @@ void *pq_create(size_t dimension, const GV_PQConfig *config) {
         return NULL;
     }
 
+    if (idx->use_opq) {
+        idx->rot_scratch = (float *)gv_alloc(dimension * sizeof(float));
+        if (!idx->rot_scratch) { gv_free(idx->codebooks); gv_free(idx); return NULL; }
+    }
+
     idx->entry_capacity = 128;
     idx->entries = (GV_PQEntry *)gv_calloc(idx->entry_capacity, sizeof(GV_PQEntry));
     if (!idx->entries) {
+        gv_free(idx->rot_scratch);
         gv_free(idx->codebooks);
         gv_free(idx);
         return NULL;
@@ -186,13 +201,38 @@ int pq_train(void *index, const float *data, size_t count) {
     if (!index || !data || count == 0) return -1;
     GV_PQIndex *idx = (GV_PQIndex *)index;
 
+    /* OPQ: learn a rotation, then train codebooks on the rotated training set so
+     * the sub-quantizers see balanced, axis-aligned variance. Encode/search apply
+     * the same rotation, so ADC distances remain valid. */
+    const float *train_data = data;
+    float *rotated = NULL;
+    if (idx->use_opq) {
+        opq_free(idx->opq);
+        idx->opq = opq_train(idx->dimension, idx->m, data, count);
+        if (idx->opq) {
+            rotated = (float *)gv_alloc(count * idx->dimension * sizeof(float));
+            if (rotated) {
+                for (size_t i = 0; i < count; i++)
+                    opq_rotate(idx->opq, data + i * idx->dimension, rotated + i * idx->dimension);
+                train_data = rotated;
+            } else {
+                /* Rotation-scratch OOM: drop OPQ entirely so the codebooks
+                 * (trained on un-rotated `data`) stay consistent with encode/
+                 * search, which rotate only when idx->opq != NULL. Otherwise
+                 * codes would be built un-rotated but queried rotated → garbage. */
+                opq_free(idx->opq);
+                idx->opq = NULL;
+            }
+        }
+    }
+
     float *subvecs = (float *)gv_alloc(count * idx->dsub * sizeof(float));
-    if (!subvecs) return -1;
+    if (!subvecs) { gv_free(rotated); return -1; }
 
     for (size_t m_i = 0; m_i < idx->m; m_i++) {
         for (size_t i = 0; i < count; i++) {
             memcpy(&subvecs[i * idx->dsub],
-                   &data[i * idx->dimension + m_i * idx->dsub],
+                   &train_data[i * idx->dimension + m_i * idx->dsub],
                    idx->dsub * sizeof(float));
         }
 
@@ -201,6 +241,7 @@ int pq_train(void *index, const float *data, size_t count) {
     }
 
     gv_free(subvecs);
+    gv_free(rotated);
     idx->trained = 1;
     return 0;
 }
@@ -259,8 +300,18 @@ int pq_search(void *index, const GV_Vector *query, size_t k,
     float *distance_table = (float *)gv_alloc(idx->m * idx->ksub * sizeof(float));
     if (!distance_table) return -1;
 
+    /* Rotate the query into OPQ space so its sub-vectors align with the codebooks. */
+    const float *qdata = query->data;
+    float *qrot = NULL;
+    if (idx->opq) {
+        qrot = (float *)gv_alloc(idx->dimension * sizeof(float));
+        if (!qrot) { gv_free(distance_table); return -1; }
+        opq_rotate(idx->opq, query->data, qrot);
+        qdata = qrot;
+    }
+
     for (size_t m_i = 0; m_i < idx->m; m_i++) {
-        const float *query_subvec = &query->data[m_i * idx->dsub];
+        const float *query_subvec = &qdata[m_i * idx->dsub];
         const float *subcodebook = &idx->codebooks[m_i * idx->ksub * idx->dsub];
 
         for (size_t k_i = 0; k_i < idx->ksub; k_i++) {
@@ -268,6 +319,7 @@ int pq_search(void *index, const GV_Vector *query, size_t k,
             distance_table[m_i * idx->ksub + k_i] = dist_sq;
         }
     }
+    gv_free(qrot);
 
     size_t oversample_k = k * GV_PQ_RERANK_FACTOR;
     if (oversample_k > idx->entry_count) oversample_k = idx->entry_count;
@@ -352,14 +404,7 @@ int pq_search(void *index, const GV_Vector *query, size_t k,
 
         GV_Vector *result_vec = vector_create_from_data(idx->dimension, entry->raw_data);
         if (result_vec) {
-            GV_Metadata *cur = entry->metadata;
-            while (cur) {
-                if (cur->key && cur->value) {
-                    vector_set_metadata(result_vec, cur->key, cur->value);
-                }
-                cur = cur->next;
-            }
-
+            vector_apply_metadata(result_vec, entry->metadata);
             results[i].vector = result_vec;
             results[i].distance = candidates[i].dist;
             results[i].is_sparse = 0;
@@ -391,8 +436,17 @@ int pq_range_search(void *index, const GV_Vector *query, float radius,
     float *distance_table = (float *)gv_alloc(idx->m * idx->ksub * sizeof(float));
     if (!distance_table) return -1;
 
+    const float *qdata = query->data;
+    float *qrot = NULL;
+    if (idx->opq) {
+        qrot = (float *)gv_alloc(idx->dimension * sizeof(float));
+        if (!qrot) { gv_free(distance_table); return -1; }
+        opq_rotate(idx->opq, query->data, qrot);
+        qdata = qrot;
+    }
+
     for (size_t m_i = 0; m_i < idx->m; m_i++) {
-        const float *query_subvec = &query->data[m_i * idx->dsub];
+        const float *query_subvec = &qdata[m_i * idx->dsub];
         const float *subcodebook = &idx->codebooks[m_i * idx->ksub * idx->dsub];
 
         for (size_t k_i = 0; k_i < idx->ksub; k_i++) {
@@ -400,6 +454,7 @@ int pq_range_search(void *index, const GV_Vector *query, float radius,
             distance_table[m_i * idx->ksub + k_i] = dist;
         }
     }
+    gv_free(qrot);
 
     size_t found = 0;
 
@@ -504,6 +559,14 @@ int pq_save(const void *index, FILE *out, uint32_t version) {
     if (write_u32(out, (uint32_t)idx->train_iters) != 0) return -1;
     if (write_u32(out, (uint32_t)idx->trained) != 0) return -1;
 
+    /* OPQ rotation: flag + dim×dim matrix so a reloaded index rotates identically. */
+    uint32_t has_opq = (idx->opq != NULL) ? 1u : 0u;
+    if (write_u32(out, has_opq) != 0) return -1;
+    if (has_opq) {
+        size_t rsz = idx->dimension * idx->dimension;
+        if (fwrite(opq_matrix(idx->opq), sizeof(float), rsz, out) != rsz) return -1;
+    }
+
     size_t codebook_size = idx->m * idx->ksub * idx->dsub;
     if (fwrite(idx->codebooks, sizeof(float), codebook_size, out) != codebook_size) return -1;
 
@@ -563,6 +626,20 @@ int pq_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version) {
 
     GV_PQIndex *idx = (GV_PQIndex *)index;
 
+    /* OPQ rotation (must precede codebooks, matching pq_save). */
+    uint32_t has_opq = 0;
+    if (read_u32(in, &has_opq) != 0) { pq_destroy(index); return -1; }
+    if (has_opq) {
+        size_t rsz = (size_t)file_dim * (size_t)file_dim;
+        float *R = (float *)gv_alloc(rsz * sizeof(float));
+        if (!R || fread(R, sizeof(float), rsz, in) != rsz) { gv_free(R); pq_destroy(index); return -1; }
+        idx->opq = opq_from_matrix((size_t)file_dim, R);
+        gv_free(R);
+        idx->use_opq = 1;
+        if (!idx->rot_scratch) idx->rot_scratch = (float *)gv_alloc((size_t)file_dim * sizeof(float));
+        if (!idx->opq || !idx->rot_scratch) { pq_destroy(index); return -1; }
+    }
+
     size_t codebook_size = idx->m * idx->ksub * idx->dsub;
     if (fread(idx->codebooks, sizeof(float), codebook_size, in) != codebook_size) {
         pq_destroy(index);
@@ -603,6 +680,12 @@ int pq_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version) {
             pq_destroy(index);
             return -1;
         }
+        /* Validate each code against the codebook size (ksub). For nbits<8 a
+         * corrupt/truncated file could hold a byte >= ksub, which later indexes
+         * distance_table[m*ksub + code] / centroids out of bounds. */
+        for (size_t c = 0; c < idx->m; c++) {
+            if (entry->codes[c] >= idx->ksub) { pq_destroy(index); return -1; }
+        }
 
         entry->raw_data = (float *)gv_alloc(idx->dimension * sizeof(float));
         if (!entry->raw_data) { pq_destroy(index); return -1; }
@@ -638,11 +721,38 @@ int pq_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version) {
     return 0;
 }
 
+double pq_avg_quantization_error(const void *index) {
+    const GV_PQIndex *idx = (const GV_PQIndex *)index;
+    if (!idx || !idx->trained || idx->entry_count == 0) return -1.0;
+
+    float *rot = idx->opq ? (float *)gv_alloc(idx->dimension * sizeof(float)) : NULL;
+    double total = 0.0;
+    size_t n = 0;
+    for (size_t e = 0; e < idx->entry_count; e++) {
+        if (idx->entries[e].deleted) continue;
+        const float *v = idx->entries[e].raw_data;
+        if (idx->opq) { opq_rotate(idx->opq, v, rot); v = rot; }
+        double err = 0.0;
+        for (size_t m_i = 0; m_i < idx->m; m_i++) {
+            const float *subvec = &v[m_i * idx->dsub];
+            const float *centroid = &idx->codebooks[m_i * idx->ksub * idx->dsub +
+                                                     idx->entries[e].codes[m_i] * idx->dsub];
+            err += pq_subvec_distance_sq(subvec, centroid, idx->dsub);
+        }
+        total += err;
+        n++;
+    }
+    gv_free(rot);
+    return n ? total / (double)n : -1.0;
+}
+
 void pq_destroy(void *index) {
     if (!index) return;
     GV_PQIndex *idx = (GV_PQIndex *)index;
 
     gv_free(idx->codebooks);
+    opq_free(idx->opq);
+    gv_free(idx->rot_scratch);
 
     for (size_t i = 0; i < idx->entry_count; i++) {
         gv_free(idx->entries[i].codes);

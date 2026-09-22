@@ -10,10 +10,6 @@
 #include "index/ivfturboquant.h"
 #include "storage/database.h"
 
-/* ------------------------------------------------------------------ */
-/* Internal helpers                                                     */
-/* ------------------------------------------------------------------ */
-
 /**
  * Compute current inertia for the IVF index stored in db->hnsw_index.
  * Returns -1.0f if the index type is not a supported IVF variant.
@@ -23,9 +19,8 @@ static float db_compute_ivf_inertia(GV_Database *db) {
     switch (db->index_type) {
         case GV_INDEX_TYPE_IVFFLAT:
             return ivfflat_compute_inertia(db->hnsw_index);
-        /* Other IVF types: return 0.0f to indicate "no drift data available"
-         * which means no automatic retrain is triggered for those types via
-         * the drift path (they can still be triggered manually). */
+        /* Other IVF types have no drift data, so no automatic retrain is
+         * triggered via the drift path (they can still be triggered manually). */
         default:
             return -1.0f;
     }
@@ -38,15 +33,12 @@ static float db_compute_ivf_inertia(GV_Database *db) {
 static int db_do_ivf_retrain(GV_Database *db) {
     if (!db) return -1;
 
-    /* Use the database read lock to protect the index during retrain setup,
-     * then upgrade to write lock for the centroid swap. For IVFFLAT the
-     * retrain is fully in-place under the write lock. */
+    /* For IVFFLAT the retrain is fully in-place under the write lock. */
     pthread_rwlock_wrlock(&db->rwlock);
 
     int rc = -1;
     switch (db->index_type) {
         case GV_INDEX_TYPE_IVFFLAT: {
-            /* Default to 10 iterations; can be made configurable later */
             rc = ivfflat_retrain(db->hnsw_index, 10);
             if (rc == 0) {
                 /* Record new inertia as the post-retrain baseline */
@@ -68,10 +60,6 @@ static int db_do_ivf_retrain(GV_Database *db) {
     return rc;
 }
 
-/* ------------------------------------------------------------------ */
-/* Background retrain thread                                            */
-/* ------------------------------------------------------------------ */
-
 static void *retrain_thread_fn(void *arg) {
     GV_Database *db = (GV_Database *)arg;
     db_do_ivf_retrain(db);
@@ -82,10 +70,6 @@ static void *retrain_thread_fn(void *arg) {
 
     return NULL;
 }
-
-/* ------------------------------------------------------------------ */
-/* Public API                                                           */
-/* ------------------------------------------------------------------ */
 
 float ivf_retrain_check_drift(GV_Database *db) {
     if (!db) return -1.0f;
@@ -122,16 +106,29 @@ int ivf_retrain_trigger(GV_Database *db) {
         pthread_mutex_unlock(&db->retrain_mutex);
         return 0; /* already in progress */
     }
+    /* Reap a previously-completed worker (finished, retrain_running cleared, but
+     * never joined) before reusing the handle — otherwise pthread_create would
+     * overwrite retrain_thread and leak the old thread's resources. Join outside
+     * the lock (the worker's completion path also takes retrain_mutex). */
+    if (db->retrain_thread_joinable) {
+        pthread_t prev = db->retrain_thread;
+        db->retrain_thread_joinable = 0;
+        pthread_mutex_unlock(&db->retrain_mutex);
+        pthread_join(prev, NULL);
+        pthread_mutex_lock(&db->retrain_mutex);
+        /* Another trigger may have raced in during the join window. */
+        if (db->retrain_running) { pthread_mutex_unlock(&db->retrain_mutex); return 0; }
+    }
     db->retrain_running = 1;
-    pthread_mutex_unlock(&db->retrain_mutex);
 
     int rc = pthread_create(&db->retrain_thread, NULL, retrain_thread_fn, db);
     if (rc != 0) {
-        pthread_mutex_lock(&db->retrain_mutex);
         db->retrain_running = 0;
         pthread_mutex_unlock(&db->retrain_mutex);
         return -1;
     }
+    db->retrain_thread_joinable = 1;
+    pthread_mutex_unlock(&db->retrain_mutex);
     return 0;
 }
 
@@ -144,19 +141,17 @@ void ivf_retrain_stop(GV_Database *db) {
      * Only the caller that observed running != 0 performs the join, outside
      * the lock, using the captured handle. */
     pthread_mutex_lock(&db->retrain_mutex);
-    int should_join = db->retrain_running;
+    /* Join if a worker is still running OR finished but not yet reaped. */
+    int should_join = db->retrain_running || db->retrain_thread_joinable;
     pthread_t thread = db->retrain_thread;
     db->retrain_running = 0;
+    db->retrain_thread_joinable = 0;
     pthread_mutex_unlock(&db->retrain_mutex);
 
     if (should_join) {
         pthread_join(thread, NULL);
     }
 }
-
-/* ------------------------------------------------------------------ */
-/* User-facing wrapper API                                              */
-/* ------------------------------------------------------------------ */
 
 void gv_db_set_retrain_config(GV_Database *db, float drift_threshold,
                                size_t min_new_vectors) {
@@ -171,16 +166,10 @@ void gv_db_set_retrain_config(GV_Database *db, float drift_threshold,
 int gv_db_trigger_retrain(GV_Database *db) {
     if (!db) return -1;
 
-    pthread_mutex_lock(&db->retrain_mutex);
-    int running = db->retrain_running;
-    pthread_mutex_unlock(&db->retrain_mutex);
+    /* Await and reap any outstanding async worker (running or finished-unjoined),
+     * then run synchronously on the calling thread. */
+    ivf_retrain_stop(db);
 
-    if (running) {
-        /* Wait for existing retrain to complete, then run synchronously */
-        ivf_retrain_stop(db);
-    }
-
-    /* Run synchronously on the calling thread */
     return db_do_ivf_retrain(db);
 }
 
