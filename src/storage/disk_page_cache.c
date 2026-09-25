@@ -21,9 +21,6 @@ typedef struct DiskPageLookupScratch {
     size_t cap;
 } DiskPageLookupScratch;
 
-static pthread_key_t g_scratch_key;
-static pthread_once_t g_scratch_once = PTHREAD_ONCE_INIT;
-
 static void disk_page_scratch_destroy(void *p)
 {
     DiskPageLookupScratch *s = (DiskPageLookupScratch *)p;
@@ -32,15 +29,12 @@ static void disk_page_scratch_destroy(void *p)
     gv_free(s);
 }
 
-static void disk_page_scratch_key_create(void)
-{
-    (void)pthread_key_create(&g_scratch_key, disk_page_scratch_destroy);
-}
+GV_TLS_KEY_DEFINE(g_scratch_key, g_scratch_once, disk_page_scratch_key_create, disk_page_scratch_destroy)
 
 /* Return this thread's scratch buffer sized to at least @p len, or NULL on OOM. */
 static uint8_t *disk_page_scratch_get(size_t len)
 {
-    pthread_once(&g_scratch_once, disk_page_scratch_key_create);
+    GV_TLS_KEY_ENSURE(g_scratch_once, disk_page_scratch_key_create);
     DiskPageLookupScratch *s = (DiskPageLookupScratch *)pthread_getspecific(g_scratch_key);
     if (!s) {
         s = (DiskPageLookupScratch *)gv_calloc(1, sizeof(*s));

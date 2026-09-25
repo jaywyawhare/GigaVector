@@ -7,14 +7,10 @@
 #include "features/graph_csr.h"
 #include "features/graph_algos.h"
 #include "core/memory.h"
+#include "core/compat.h"
 
 #include <string.h>
 #include <pthread.h>
-#ifndef _WIN32
-#include <unistd.h>
-#else
-#include <windows.h>
-#endif
 
 /* Row-parallel SpMV worker: rows [start,end) of A x -> y. */
 typedef struct {
@@ -206,9 +202,8 @@ GV_CSR *gv_csr_build(const GV_GraphDB *g, const GV_GAContext *ctx,
 void gv_csr_spmv(const GV_CSR *A, const double *x, double *y) {
     if (!A || !x || !y) return;
 
-    long ncpu = sysconf(_SC_NPROCESSORS_ONLN);
-    size_t nthreads = (ncpu > 0 && A->n >= CSR_PARALLEL_MIN_ROWS)
-                          ? (size_t)ncpu : 1;
+    long ncpu = gv_get_cpu_count();
+    size_t nthreads = (A->n >= CSR_PARALLEL_MIN_ROWS) ? (size_t)ncpu : 1;
     if (nthreads <= 1) {
         CsrSpmvJob j = { A, x, y, 0, A->n };
         csr_spmv_worker(&j);

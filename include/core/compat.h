@@ -62,6 +62,11 @@ static inline char *strcasestr(const char *haystack, const char *needle) {
 struct timeval { long long tv_sec; long tv_usec; };
 #endif
 
+/* __GNUC__ guard: MinGW/ucrt already declares gettimeofday (non-static) in its
+ * system headers, so a static inline redefinition here conflicts. Only MSVC
+ * lacks it and needs this shim. struct timeval above stays unconditional (its
+ * own _TIMEVAL_DEFINED guard makes it a no-op where the platform supplies it). */
+#ifndef __GNUC__
 static inline int gettimeofday(struct timeval *tv, void *tz) {
     (void)tz;
     if (!tv) return 0;
@@ -73,6 +78,7 @@ static inline int gettimeofday(struct timeval *tv, void *tz) {
     tv->tv_usec = (long)((t % UINT64_C(10000000)) / 10ULL);
     return 0;
 }
+#endif /* !__GNUC__ */
 
 #ifndef _SSIZE_T_DEFINED
 #define _SSIZE_T_DEFINED
@@ -203,6 +209,17 @@ static inline int write(int fd, const void *buf, unsigned int count) {
 }
 #endif /* !__GNUC__ */
 
+/* ftruncate() is POSIX and absent on BOTH MinGW and MSVC; both provide the
+ * 64-bit _chsize_s() via <io.h>. MSVC already pulled <io.h> in above (under the
+ * _CRT_DECLARE_NONSTDC_NAMES guard); MinGW needs it here. _chsize_s returns 0 on
+ * success / errno on failure, matching ftruncate's != 0 error convention. */
+#ifdef __GNUC__
+#include <io.h>
+#endif
+static inline int ftruncate(int fd, long long length) {
+    return _chsize_s(fd, length);
+}
+
 #endif /* _WIN32 */
 
 #if !defined(__GNUC__) && !defined(__clang__)
@@ -232,6 +249,22 @@ static inline int gv_rename_replace(const char *src, const char *dst) {
 static inline int gv_rand_r(unsigned int *seed) {
     *seed = *seed * 1103515245u + 12345u;
     return (int)((*seed >> 16) & 0x7FFF);
+}
+
+/* Portable logical CPU count, always >= 1. sysconf(_SC_NPROCESSORS_ONLN) is
+ * POSIX-only; Windows has no equivalent and reports via GetSystemInfo(). */
+#ifndef _WIN32
+#include <unistd.h>
+#endif
+static inline long gv_get_cpu_count(void) {
+#ifdef _WIN32
+    SYSTEM_INFO si;
+    GetSystemInfo(&si);
+    long ncpu = (long)si.dwNumberOfProcessors;
+#else
+    long ncpu = sysconf(_SC_NPROCESSORS_ONLN);
+#endif
+    return ncpu > 0 ? ncpu : 1;
 }
 
 /* Warn when a function's return value is ignored (GCC/Clang; no-op elsewhere). */

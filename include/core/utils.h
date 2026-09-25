@@ -398,4 +398,22 @@ static inline GV_Metadata *metadata_copy(GV_Metadata *src) {
     return head;
 }
 
+/*
+ * Declares the pthread_key_t/pthread_once_t plumbing for a per-thread key
+ * whose sole purpose is running `destructor_fn` when a thread that touched it
+ * exits. pthread_once's init callback takes no arguments, so each key still
+ * needs its own file-scope create-trampoline; this macro is what keeps that
+ * trampoline's shape (and any future fix to it) in exactly one place instead
+ * of hand-copied per module. Requires <pthread.h> to already be included by
+ * the caller. Expands to `key_var`/`once_var`/`create_fn` at file scope —
+ * follow with GV_TLS_KEY_ENSURE(once_var, create_fn) before first use.
+ */
+#define GV_TLS_KEY_DEFINE(key_var, once_var, create_fn, destructor_fn)   \
+    static pthread_key_t  key_var;                                       \
+    static pthread_once_t once_var = PTHREAD_ONCE_INIT;                  \
+    static void create_fn(void) {                                       \
+        (void)pthread_key_create(&(key_var), (destructor_fn));           \
+    }
+#define GV_TLS_KEY_ENSURE(once_var, create_fn) pthread_once(&(once_var), (create_fn))
+
 #endif /* GV_UTILS_H */

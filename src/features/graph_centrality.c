@@ -19,14 +19,12 @@
 #include "features/graph_minheap.h"
 #include "features/graph_csr.h"
 #include "core/memory.h"
+#include "core/compat.h"
 
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
 #include <pthread.h>
-#ifndef _WIN32
-#include <unistd.h>
-#endif
 #include <float.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -447,13 +445,7 @@ int graph_betweenness_centrality(const GV_GraphDB *g, int weighted, int directed
         return -1;
     }
 
-    long ncpu_long =
-#ifndef _WIN32
-        sysconf(_SC_NPROCESSORS_ONLN);
-#else
-        1;
-#endif
-    if (ncpu_long < 1) ncpu_long = 1;
+    long ncpu_long = gv_get_cpu_count();
     size_t nthreads = (size_t)ncpu_long;
     if (nthreads > N) nthreads = N;
 
@@ -557,13 +549,7 @@ int graph_betweenness_centrality_approx(const GV_GraphDB *g, int weighted,
         return -1;
     }
 
-    long ncpu_long =
-#ifndef _WIN32
-        sysconf(_SC_NPROCESSORS_ONLN);
-#else
-        1;
-#endif
-    if (ncpu_long < 1) ncpu_long = 1;
+    long ncpu_long = gv_get_cpu_count();
     size_t nthreads = (size_t)ncpu_long;
     if (nthreads > num_pivots) nthreads = num_pivots;
 

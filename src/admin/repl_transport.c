@@ -33,6 +33,11 @@
 
 #define REPL_MAX_MSG_BYTES (16 * 1024 * 1024)
 #define REPL_MAX_CONNECTIONS 32
+/* Generous headroom over REPL_MAX_CONNECTIONS: a connection is tracked here
+ * from the instant accept() returns (before it has done any handshake I/O and
+ * long before it might win a connections[] slot), so more of these can be
+ * transiently in flight than there are registered connections at once. */
+#define REPL_MAX_HANDLER_THREADS (REPL_MAX_CONNECTIONS * 2)
 
 /* One queued WAL frame awaiting delivery to a follower. */
 typedef struct PendingWal {
@@ -42,8 +47,30 @@ typedef struct PendingWal {
     struct PendingWal *next;
 } PendingWal;
 
+/*
+ * Tracks one repl_client_handler_thread from the moment it is created (see
+ * repl_accept_thread_func) until it exits, independent of whether/when it
+ * ever registers into transport->connections[]. Without this, a thread still
+ * mid-handshake (blocked in recv() for HELLO/CATCHUP, or streaming a WAL
+ * catchup) is invisible to repl_transport_stop() — it can then outlive
+ * repl_transport_stop()/repl_transport_destroy() and touch conn_mutex/
+ * transport after both have been destroyed/freed. All fields guarded by
+ * conn_mutex.
+ */
 typedef struct {
-    int fd;
+    pthread_t thread;
+    int fd;          /* the raw accepted fd this thread owns; -1 once closed */
+    int in_use;      /* slot holds a tracked thread, from creation to reaping */
+    int stop_owns;   /* repl_transport_stop() claimed this thread to join it;
+                       * the thread must stay joinable (not self-detach) */
+} ReplHandlerSlot;
+
+typedef struct {
+    /* Atomic so repl_transport_stop() can safely read it (to shutdown()) while
+     * the owning handler thread may concurrently close it in its own cleanup;
+     * only the handler thread ever clears it (via atomic_exchange), and only
+     * while holding conn_mutex, so it can never race a slot being reused. */
+    _Atomic int fd;
     char *node_id;
     int active;
     /* FIFO of pending WAL frames. A batch (or rapid appends) enqueues one frame
@@ -68,11 +95,20 @@ struct GV_ReplTransport {
     int accept_thread_started;
     pthread_t follower_thread;
     int follower_thread_started;
-    /* Guarded by conn_mutex: written by the follower thread and read/closed by
-     * the stop path. Must never be read, written, or closed without the lock. */
-    int leader_fd;
+    /* Written by the follower thread (on connect/reconnect) and read/closed by
+     * the stop path. Atomic so the cross-thread int access is race-free; the fd
+     * is only close()d after the follower thread is joined (a close() while the
+     * follower is mid-recv() on it is a use-after-close / TSAN fd race). */
+    _Atomic int leader_fd;
     ReplConnection connections[REPL_MAX_CONNECTIONS];
+    ReplHandlerSlot handler_threads[REPL_MAX_HANDLER_THREADS];
     pthread_mutex_t conn_mutex;
+    /* Separate from conn_mutex: repl_transport_send()/repl_transport_recv()
+     * (which read `hooks`) are called from places that already hold
+     * conn_mutex (e.g. repl_flush_connection_pending under repl_handle_client's
+     * poll loop) — reusing conn_mutex here would self-deadlock on relock of a
+     * non-recursive mutex. hooks_mutex guards only the `hooks` field. */
+    pthread_mutex_t hooks_mutex;
 #endif
 };
 
@@ -174,11 +210,28 @@ static int repl_recv_message(int fd, uint8_t *msg_type, uint32_t *request_id,
     return 0;
 }
 
+/* transport->hooks can be set/cleared (by test/DST code) from a thread other
+ * than the one calling send/recv, concurrently with the accept/follower/
+ * handler threads reading it here — copy it out under hooks_mutex rather than
+ * reading the live struct field, and invoke the callback on the copy outside
+ * the lock (so a hook that itself touches the transport can't deadlock).
+ * hooks_mutex (not conn_mutex) because callers of repl_transport_send/recv can
+ * already hold conn_mutex (see repl_flush_connection_pending). */
+static GV_ReplTransportHooks repl_transport_hooks_snapshot(GV_ReplTransport *transport) {
+    GV_ReplTransportHooks hooks;
+    memset(&hooks, 0, sizeof(hooks));
+    if (!transport) return hooks;
+    pthread_mutex_lock(&transport->hooks_mutex);
+    hooks = transport->hooks;
+    pthread_mutex_unlock(&transport->hooks_mutex);
+    return hooks;
+}
+
 static int repl_transport_send(GV_ReplTransport *transport, int fd, uint8_t msg_type,
                                uint32_t request_id, const uint8_t *payload, size_t payload_len) {
-    if (transport && transport->hooks.filter_outbound) {
-        if (transport->hooks.filter_outbound(transport->hooks.ctx, msg_type,
-                                             payload, payload_len) != 0) {
+    GV_ReplTransportHooks hooks = repl_transport_hooks_snapshot(transport);
+    if (hooks.filter_outbound) {
+        if (hooks.filter_outbound(hooks.ctx, msg_type, payload, payload_len) != 0) {
             return 0;
         }
     }
@@ -190,9 +243,9 @@ static int repl_transport_recv(GV_ReplTransport *transport, int fd, uint8_t *msg
     if (repl_recv_message(fd, msg_type, request_id, payload, payload_len) != 0) {
         return -1;
     }
-    if (transport && transport->hooks.filter_inbound && *payload_len > 0) {
-        if (transport->hooks.filter_inbound(transport->hooks.ctx, *msg_type,
-                                            *payload, *payload_len) != 0) {
+    GV_ReplTransportHooks hooks = repl_transport_hooks_snapshot(transport);
+    if (hooks.filter_inbound && *payload_len > 0) {
+        if (hooks.filter_inbound(hooks.ctx, *msg_type, *payload, *payload_len) != 0) {
             gv_free(*payload);
             *payload = NULL;
             *payload_len = 0;
@@ -346,7 +399,32 @@ static int repl_send_catchup(GV_ReplTransport *transport, int fd, GV_Database *d
     return 0;
 }
 
-static void repl_handle_client(GV_ReplTransport *transport, int fd) {
+/*
+ * Releases a connection's fd from its owning handler thread. `tslot` (may be
+ * -1 if the tracking table was full at accept time) is cleared under
+ * conn_mutex *before* the fd is physically closed, so repl_transport_stop()
+ * can never observe a stale fd number through handler_threads[tslot].fd and
+ * shutdown() an unrelated descriptor that number was recycled into after
+ * close(). shutdown() before close() is a no-op if the peer already dropped
+ * the connection and otherwise unblocks any last poll()/recv() cleanly.
+ */
+static void repl_release_fd(GV_ReplTransport *transport, int tslot, int fd) {
+    if (fd < 0) return;
+    if (tslot >= 0) {
+        pthread_mutex_lock(&transport->conn_mutex);
+        transport->handler_threads[tslot].fd = -1;
+        pthread_mutex_unlock(&transport->conn_mutex);
+    }
+    shutdown(fd, SHUT_RDWR);
+    close(fd);
+}
+
+/* Handles one accepted connection to completion. `tslot` identifies this
+ * thread's entry in transport->handler_threads[] (see repl_accept_thread_func
+ * and ReplHandlerSlot) so every fd-release point can keep that tracking
+ * current; the join-vs-detach decision itself is made by the caller
+ * (repl_client_handler_thread) after this function returns. */
+static void repl_handle_client(GV_ReplTransport *transport, int fd, int tslot) {
     GV_ReplicationManager *mgr = transport->mgr;
     repl_tune_socket(fd);
     char node_id[256] = {0};
@@ -358,13 +436,13 @@ static void repl_handle_client(GV_ReplTransport *transport, int fd) {
     if (repl_recv_message(fd, &msg_type, &req_id, &payload, &payload_len) != 0 ||
         msg_type != REPL_MSG_HELLO || payload_len < 4) {
         gv_free(payload);
-        close(fd);
+        repl_release_fd(transport, tslot, fd);
         return;
     }
     uint32_t nid_len = gv_get_u32_be(payload);
     if (nid_len >= sizeof(node_id) || payload_len < 4 + nid_len) {
         gv_free(payload);
-        close(fd);
+        repl_release_fd(transport, tslot, fd);
         return;
     }
     memcpy(node_id, payload + 4, nid_len);
@@ -387,7 +465,7 @@ static void repl_handle_client(GV_ReplTransport *transport, int fd) {
             crypto_constant_time_compare((const unsigned char *)(payload + offered_off),
                                          (const unsigned char *)secret, secret_len) != 0) {
             gv_free(payload);
-            close(fd);
+            repl_release_fd(transport, tslot, fd);
             return;
         }
     }
@@ -423,7 +501,7 @@ static void repl_handle_client(GV_ReplTransport *transport, int fd) {
     pthread_mutex_unlock(&transport->conn_mutex);
 
     if (slot < 0) {
-        close(fd);
+        repl_release_fd(transport, tslot, fd);
         return;
     }
 
@@ -445,27 +523,65 @@ static void repl_handle_client(GV_ReplTransport *transport, int fd) {
         gv_free(payload);
     }
 
+    int own_fd = -1;
     pthread_mutex_lock(&transport->conn_mutex);
     if (slot >= 0 && slot < REPL_MAX_CONNECTIONS) {
         repl_clear_connection_pending(&transport->connections[slot]);
+        /* Capture-and-clear the fd before dropping `active`: once active is 0
+         * this slot is eligible for reuse by a new connection, and exchanging
+         * the fd after that point could steal or clobber the new occupant's fd. */
+        own_fd = atomic_exchange(&transport->connections[slot].fd, -1);
         transport->connections[slot].active = 0;
-        transport->connections[slot].fd = -1;
         gv_free(transport->connections[slot].node_id);
         transport->connections[slot].node_id = NULL;
     }
+    /* Clear handler_threads[tslot].fd in this same critical section, before
+     * own_fd is physically closed below — see repl_release_fd for why. */
+    if (tslot >= 0) {
+        transport->handler_threads[tslot].fd = -1;
+    }
     pthread_mutex_unlock(&transport->conn_mutex);
-    shutdown(fd, SHUT_RDWR);
-    close(fd);
+    if (own_fd >= 0) {
+        shutdown(own_fd, SHUT_RDWR);
+        close(own_fd);
+    }
 }
 
 typedef struct {
     GV_ReplTransport *transport;
     int fd;
+    int tslot;   /* index into transport->handler_threads[], or -1 if the
+                  * tracking table was full at accept time (see below) */
 } ReplClientArg;
 
 static void *repl_client_handler_thread(void *arg) {
     ReplClientArg *client = (ReplClientArg *)arg;
-    repl_handle_client(client->transport, client->fd);
+    GV_ReplTransport *transport = client->transport;
+    int tslot = client->tslot;
+    if (tslot < 0) {
+        /* handler_threads[] was full at accept time: this thread is invisible
+         * to repl_transport_stop(), so it must detach itself now rather than
+         * leak (never joined, never detached) until process exit. */
+        pthread_detach(pthread_self());
+    }
+    repl_handle_client(transport, client->fd, tslot);
+    if (tslot >= 0) {
+        int self_detach = 0;
+        pthread_mutex_lock(&transport->conn_mutex);
+        if (!transport->handler_threads[tslot].stop_owns) {
+            /* No stop is in progress, so nobody will ever join this thread;
+             * detach it now to release its resources. If stop already claimed
+             * it (stop_owns), stay joinable — joining an already-detached
+             * thread is undefined behavior; repl_transport_stop() clears
+             * in_use once its pthread_join() returns. */
+            transport->handler_threads[tslot].in_use = 0;
+            self_detach = 1;
+        }
+        pthread_mutex_unlock(&transport->conn_mutex);
+        if (self_detach) {
+            pthread_detach(pthread_self());
+        }
+    }
     gv_free(client);
     return NULL;
 }
@@ -488,13 +604,45 @@ static void *repl_accept_thread_func(void *arg) {
         }
         client->transport = transport;
         client->fd = client_fd;
+
+        /*
+         * Reserve a handler_threads[] slot (recording its fd) and spawn the
+         * thread in one critical section, so there is no window where the
+         * thread is running but not yet visible to repl_transport_stop() —
+         * that window is what let a still-handshaking connection outlive
+         * stop()/destroy() and touch a freed transport. Holding conn_mutex
+         * across pthread_create() is safe: it does not call back into any of
+         * our locking code.
+         */
+        pthread_mutex_lock(&transport->conn_mutex);
+        int tslot = -1;
+        for (int i = 0; i < REPL_MAX_HANDLER_THREADS; i++) {
+            if (!transport->handler_threads[i].in_use) {
+                tslot = i;
+                break;
+            }
+        }
+        if (tslot >= 0) {
+            transport->handler_threads[tslot].in_use = 1;
+            transport->handler_threads[tslot].stop_owns = 0;
+            transport->handler_threads[tslot].fd = client_fd;
+        }
+        client->tslot = tslot;
         pthread_t tid;
-        if (pthread_create(&tid, NULL, repl_client_handler_thread, client) != 0) {
+        int rc = pthread_create(&tid, NULL, repl_client_handler_thread, client);
+        if (rc == 0) {
+            if (tslot >= 0) transport->handler_threads[tslot].thread = tid;
+        } else if (tslot >= 0) {
+            transport->handler_threads[tslot].in_use = 0;
+        }
+        pthread_mutex_unlock(&transport->conn_mutex);
+        if (rc != 0) {
             gv_free(client);
             close(client_fd);
             continue;
         }
-        pthread_detach(tid);
+        /* Not detached here: repl_client_handler_thread decides for itself
+         * whether to stay joinable or detach, based on handler_threads[tslot]. */
     }
     return NULL;
 }
@@ -519,6 +667,21 @@ static void *repl_follower_thread_func(void *arg) {
         }
         repl_tune_socket(fd);
         pthread_mutex_lock(&transport->conn_mutex);
+        if (atomic_load(&transport->stop_requested)) {
+            /*
+             * A stop was already requested. repl_transport_stop() takes this
+             * same lock to read+shutdown() leader_fd exactly once before
+             * joining this thread; if it already ran that step (or runs it
+             * concurrently and loses this lock race), publishing this
+             * brand-new fd now would leave it un-shut-down, and this thread
+             * would then block in the recv loop below until its 10s
+             * SO_RCVTIMEO fires — stalling repl_transport_stop()'s join for
+             * that long. Discard the fd here instead of entering the loop.
+             */
+            pthread_mutex_unlock(&transport->conn_mutex);
+            close(fd);
+            break;
+        }
         transport->leader_fd = fd;
         pthread_mutex_unlock(&transport->conn_mutex);
 
@@ -587,12 +750,10 @@ static void *repl_follower_thread_func(void *arg) {
         /*
          * Close the leader fd exactly once. The stop path may concurrently
          * capture-and-close leader_fd; whoever clears the sentinel first owns
-         * the close. Capture under the lock, clear it, then close outside.
+         * the close. atomic_exchange alone (no mutex needed) makes this a
+         * single-variable race-free handoff between the two possible closers.
          */
-        pthread_mutex_lock(&transport->conn_mutex);
-        int own_fd = transport->leader_fd;
-        transport->leader_fd = -1;
-        pthread_mutex_unlock(&transport->conn_mutex);
+        int own_fd = atomic_exchange(&transport->leader_fd, -1);
         if (own_fd >= 0) {
             close(own_fd);
         }
@@ -653,8 +814,12 @@ GV_ReplTransport *repl_transport_create(GV_ReplicationManager *mgr) {
     t->listen_fd = -1;
     t->leader_fd = -1;
     pthread_mutex_init(&t->conn_mutex, NULL);
+    pthread_mutex_init(&t->hooks_mutex, NULL);
     for (int i = 0; i < REPL_MAX_CONNECTIONS; i++) {
         t->connections[i].fd = -1;
+    }
+    for (int i = 0; i < REPL_MAX_HANDLER_THREADS; i++) {
+        t->handler_threads[i].fd = -1;
     }
 #endif
     return t;
@@ -665,6 +830,7 @@ void repl_transport_destroy(GV_ReplTransport *transport) {
     repl_transport_stop(transport);
 #ifndef _WIN32
     pthread_mutex_destroy(&transport->conn_mutex);
+    pthread_mutex_destroy(&transport->hooks_mutex);
 #endif
     gv_free(transport);
 }
@@ -699,21 +865,39 @@ int repl_transport_stop(GV_ReplTransport *transport) {
     atomic_store(&transport->stop_requested, 1);
 
 #ifndef _WIN32
+    /* Only shut the listener down here to unblock a blocked accept(); do NOT
+     * close/clear listen_fd yet — the accept thread still reads it each loop
+     * (repl_accept_thread_func), so mutating it before the join is a data race.
+     * The close+clear happens after the join below. */
     if (transport->listen_fd >= 0) {
         shutdown(transport->listen_fd, SHUT_RDWR);
-        close(transport->listen_fd);
-        transport->listen_fd = -1;
     }
+    /*
+     * Only shutdown() handler fds here (never close()) to unblock each
+     * handler thread's blocking recv()/send()/poll() without invalidating the
+     * fd it may still be using — this covers a connection at any stage, from
+     * still mid-handshake (not yet in connections[]) through fully registered,
+     * since handler_threads[] tracks every accepted connection from the
+     * instant its thread is created (see repl_accept_thread_func). Claim
+     * (stop_owns) every still-tracked thread while holding the lock so that
+     * when it wakes on the shutdown and reaches its own cleanup, it sees the
+     * claim and stays joinable instead of self-detaching — then join each of
+     * them below so repl_transport_stop() never returns (and
+     * repl_transport_destroy() never frees/destroys transport/conn_mutex)
+     * while a handler thread might still be touching either. The handler
+     * thread itself performs the actual close() as part of that same cleanup
+     * (repl_release_fd / repl_handle_client's tail), so there is nothing left
+     * for stop() to close here.
+     */
+    int join_slots[REPL_MAX_HANDLER_THREADS];
+    int join_count = 0;
     pthread_mutex_lock(&transport->conn_mutex);
-    for (int i = 0; i < REPL_MAX_CONNECTIONS; i++) {
-        if (transport->connections[i].active && transport->connections[i].fd >= 0) {
-            shutdown(transport->connections[i].fd, SHUT_RDWR);
-            close(transport->connections[i].fd);
-            transport->connections[i].fd = -1;
-            transport->connections[i].active = 0;
-            gv_free(transport->connections[i].node_id);
-            transport->connections[i].node_id = NULL;
-            repl_clear_connection_pending(&transport->connections[i]);
+    for (int i = 0; i < REPL_MAX_HANDLER_THREADS; i++) {
+        if (transport->handler_threads[i].in_use) {
+            int fd = transport->handler_threads[i].fd;
+            if (fd >= 0) shutdown(fd, SHUT_RDWR);
+            transport->handler_threads[i].stop_owns = 1;
+            join_slots[join_count++] = i;
         }
     }
     pthread_mutex_unlock(&transport->conn_mutex);
@@ -721,23 +905,47 @@ int repl_transport_stop(GV_ReplTransport *transport) {
         pthread_join(transport->accept_thread, NULL);
         transport->accept_thread_started = 0;
     }
+    /* Accept thread has exited; now no one else touches listen_fd. */
+    if (transport->listen_fd >= 0) {
+        close(transport->listen_fd);
+        transport->listen_fd = -1;
+    }
+    for (int i = 0; i < join_count; i++) {
+        pthread_join(transport->handler_threads[join_slots[i]].thread, NULL);
+    }
+    if (join_count > 0) {
+        /* Recycle the claimed slots so a later repl_transport_start() on this
+         * same transport doesn't find handler_threads[] permanently exhausted. */
+        pthread_mutex_lock(&transport->conn_mutex);
+        for (int i = 0; i < join_count; i++) {
+            transport->handler_threads[join_slots[i]].in_use = 0;
+            transport->handler_threads[join_slots[i]].stop_owns = 0;
+        }
+        pthread_mutex_unlock(&transport->conn_mutex);
+    }
     if (transport->follower_thread_started) {
         /*
-         * Capture-and-clear leader_fd under the lock so we close it exactly
-         * once. The follower thread races to do the same; whoever clears the
-         * -1 sentinel first owns the shutdown/close, avoiding a double close
-         * of a descriptor that may have been reused by another thread.
+         * shutdown() (not close()) to unblock the follower's recv() without
+         * invalidating the fd it is still using — closing it here while the
+         * follower reads it is a use-after-close / TSAN fd race. Read
+         * leader_fd under conn_mutex — the same lock the follower takes
+         * before publishing a freshly-connected fd (see repl_follower_thread_func)
+         * — so the two can't race: either this runs first and shuts down
+         * whatever the follower already published, or the follower's publish
+         * step runs first, sees stop_requested (already set above) under this
+         * same lock, and discards its new fd itself instead of publishing it.
+         * Join first; only then capture-and-close, so exactly one of
+         * {follower, stop} closes (atomic_exchange on the -1 sentinel) with no
+         * thread still using the fd.
          */
         pthread_mutex_lock(&transport->conn_mutex);
-        int leader_fd = transport->leader_fd;
-        transport->leader_fd = -1;
+        int lf = atomic_load(&transport->leader_fd);
+        if (lf >= 0) shutdown(lf, SHUT_RDWR);
         pthread_mutex_unlock(&transport->conn_mutex);
-        if (leader_fd >= 0) {
-            shutdown(leader_fd, SHUT_RDWR);
-            close(leader_fd);
-        }
         pthread_join(transport->follower_thread, NULL);
         transport->follower_thread_started = 0;
+        int own = atomic_exchange(&transport->leader_fd, -1);
+        if (own >= 0) close(own);
     }
 #endif
 
@@ -747,11 +955,20 @@ int repl_transport_stop(GV_ReplTransport *transport) {
 
 void repl_transport_set_hooks(GV_ReplTransport *transport, const GV_ReplTransportHooks *hooks) {
     if (!transport) return;
+    /* hooks_mutex (non-Windows only) also guards reads of transport->hooks in
+     * repl_transport_send/recv, which run concurrently with this from the
+     * accept/follower/handler threads — see repl_transport_hooks_snapshot(). */
+#ifndef _WIN32
+    pthread_mutex_lock(&transport->hooks_mutex);
+#endif
     if (hooks) {
         transport->hooks = *hooks;
     } else {
         memset(&transport->hooks, 0, sizeof(transport->hooks));
     }
+#ifndef _WIN32
+    pthread_mutex_unlock(&transport->hooks_mutex);
+#endif
 }
 
 void repl_transport_clear_hooks(GV_ReplTransport *transport) {

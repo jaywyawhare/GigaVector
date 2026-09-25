@@ -91,6 +91,32 @@ static _Thread_local size_t    *ts_search_ids = NULL;
 static _Thread_local uint8_t   *ts_search_proc = NULL;
 static _Thread_local size_t     ts_search_buf_size = 0;
 
+/* Free the per-thread search scratch when a worker thread exits so LeakSanitizer
+ * does not flag it as lost. A pthread_key destructor runs in the exiting
+ * thread's context (where the _Thread_local pointers below are that thread's
+ * own). The main thread's scratch stays reachable via live TLS at process exit
+ * and is therefore never reported. */
+static void ts_scratch_cleanup(void *unused) {
+    (void)unused;
+    gv_free(ts_visited);     ts_visited = NULL;     ts_visited_cap = 0;
+    gv_free(ts_search_dis);  ts_search_dis = NULL;
+    gv_free(ts_search_ids);  ts_search_ids = NULL;
+    gv_free(ts_search_proc); ts_search_proc = NULL; ts_search_buf_size = 0;
+}
+GV_TLS_KEY_DEFINE(ts_scratch_key, ts_scratch_once, ts_scratch_key_make, ts_scratch_cleanup)
+
+/* Registration itself (pthread_setspecific) only needs to happen once per
+ * thread; gv_hnsw_search() runs on every query, so a plain _Thread_local flag
+ * (cheaper than re-checking pthread_getspecific) skips the redundant write on
+ * every call after the first. */
+static _Thread_local int ts_scratch_registered = 0;
+static void ts_scratch_register(void) {
+    if (ts_scratch_registered) return;
+    GV_TLS_KEY_ENSURE(ts_scratch_once, ts_scratch_key_make);
+    pthread_setspecific(ts_scratch_key, (void *)1); /* non-NULL → destructor fires */
+    ts_scratch_registered = 1;
+}
+
 static size_t calculate_level(GV_HNSWIndex *index) {
 #ifndef _WIN32
     double r = (double)gv_rand_r(&index->rand_seed) / 32768.0;
@@ -1036,6 +1062,7 @@ int gv_hnsw_search(void *index_ptr, const GV_Vector *query, size_t k,
 
     /* Grow the per-thread visited table to cover every node index (matches the
      * per-index visited_capacity, which is >= node count). */
+    ts_scratch_register(); /* free this thread's scratch on exit (LSan-clean) */
     if (index->visited_capacity > ts_visited_cap) {
         uint32_t *nv = (uint32_t *)gv_realloc(ts_visited, index->visited_capacity * sizeof(uint32_t));
         if (!nv) {

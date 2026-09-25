@@ -14,6 +14,7 @@
 #include "storage/wal.h"
 #include "core/scope.h"
 #include "core/utils.h"
+#include "core/compat.h"   /* ftruncate (Windows _chsize_s shim) */
 
 #define GV_WAL_MAGIC "GVW1"
 #define GV_WAL_VERSION 3u
@@ -606,13 +607,9 @@ static int wal_is_torn_tail(FILE *f, long record_start, int short_read) {
     /* Torn trailing record: truncate the log back to the last good boundary. */
     if (record_start >= 0) {
         if (fflush(f) == 0) {
-#ifndef _WIN32
             if (ftruncate(fileno(f), (off_t)record_start) != 0) {
                 /* best-effort truncation; recovery continues on failure */
             }
-#else
-            (void)_chsize_s(_fileno(f), (long long)record_start);
-#endif
         }
     }
     return 1;

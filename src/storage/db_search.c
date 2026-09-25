@@ -9,18 +9,12 @@
 #include <string.h>
 #include <pthread.h>
 #include <time.h>
-#ifndef _WIN32
-#include <unistd.h>
-#endif
-#ifdef _WIN32
-#include <windows.h>
-#include <io.h>
-#endif
 
 #include "core/types.h"
 #include "core/memory.h"
 #include "core/log.h"
 #include "core/utils.h"
+#include "core/compat.h"
 #include "core/scope.h"
 #include "storage/database.h"
 #include "storage/db_internal.h"
@@ -336,15 +330,7 @@ int db_search_batch(const GV_Database *db, const float *queries, size_t qcount, 
         return 0;
     }
 
-#ifdef _WIN32
-    long ncpu = 1;
-    SYSTEM_INFO si;
-    GetSystemInfo(&si);
-    ncpu = (long)si.dwNumberOfProcessors;
-#else
-    long ncpu = sysconf(_SC_NPROCESSORS_ONLN);
-#endif
-    if (ncpu < 1) ncpu = 1;
+    long ncpu = gv_get_cpu_count();
 
     size_t nthreads = (size_t)ncpu < qcount ? (size_t)ncpu : qcount;
 

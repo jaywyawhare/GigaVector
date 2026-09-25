@@ -20,14 +20,12 @@
  */
 #include "features/graph_algos.h"
 #include "core/memory.h"
+#include "core/compat.h"
 
 #include <math.h>
 #include <string.h>
 #include <stdint.h>
 #include <pthread.h>
-#ifndef _WIN32
-#include <unistd.h>
-#endif
 #include <stdlib.h>
 
 /* ── Undirected CSR adjacency over the dense index ──────────────────────────
@@ -887,13 +885,7 @@ int graph_triangle_count(const GV_GraphDB *g, GV_GraphNodeScores *out, uint64_t 
     GV_UAdj adj;
     if (uadj_build(g, ctx, &adj) != 0) { gv_ga_free(ctx); return -1; }
 
-    long ncpu_long =
-#ifndef _WIN32
-        sysconf(_SC_NPROCESSORS_ONLN);
-#else
-        1;
-#endif
-    if (ncpu_long < 1) ncpu_long = 1;
+    long ncpu_long = gv_get_cpu_count();
     size_t nthreads = (size_t)ncpu_long;
     if (nthreads > N) nthreads = N;
 
