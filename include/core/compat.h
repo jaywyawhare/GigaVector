@@ -6,6 +6,17 @@
 #include <process.h>
 #include <stdint.h>
 
+/* MinGW/ucrt supplies the POSIX layer (usleep/sleep/gettimeofday/ftruncate/...)
+ * via <unistd.h>/<sys/time.h>; pull them so those symbols resolve and so our
+ * shims below (MSVC-only) don't clash with the system declarations. */
+#ifdef __GNUC__
+#include <unistd.h>
+#include <sys/time.h>
+#endif
+
+/* MSVC lacks usleep/sleep; MinGW provides them (guarded out here to avoid a
+ * conflicting-type redefinition against <unistd.h>). */
+#ifndef __GNUC__
 static inline void usleep(unsigned long usec) {
     Sleep((DWORD)((usec + 999UL) / 1000UL));
 }
@@ -15,6 +26,7 @@ static inline unsigned int sleep(unsigned int sec) {
     Sleep((DWORD)(ms < 0xFFFFFFFFULL ? ms : 0xFFFFFFFFULL));
     return 0;
 }
+#endif /* !__GNUC__ */
 
 
 #ifndef getpid
@@ -211,16 +223,15 @@ static inline int write(int fd, const void *buf, unsigned int count) {
 }
 #endif /* !__GNUC__ */
 
-/* ftruncate() is POSIX and absent on BOTH MinGW and MSVC; both provide the
- * 64-bit _chsize_s() via <io.h>. MSVC already pulled <io.h> in above (under the
- * _CRT_DECLARE_NONSTDC_NAMES guard); MinGW needs it here. _chsize_s returns 0 on
- * success / errno on failure, matching ftruncate's != 0 error convention. */
-#ifdef __GNUC__
-#include <io.h>
-#endif
+/* MinGW/ucrt declares ftruncate in <unistd.h> (pulled above); only MSVC lacks
+ * it, where we map to the 64-bit _chsize_s() from <io.h> (already included under
+ * the _CRT_DECLARE_NONSTDC_NAMES guard). _chsize_s returns 0 on success / errno
+ * on failure, matching ftruncate's != 0 error convention. */
+#ifndef __GNUC__
 static inline int ftruncate(int fd, long long length) {
     return _chsize_s(fd, length);
 }
+#endif /* !__GNUC__ */
 
 #endif /* _WIN32 */
 
@@ -258,24 +269,20 @@ static inline int gv_rand_r(unsigned int *seed) {
 #ifndef _WIN32
 #include <unistd.h>
 #endif
-#ifdef __APPLE__
-#include <sys/sysctl.h>
-#endif
 static inline long gv_get_cpu_count(void) {
 #ifdef _WIN32
     SYSTEM_INFO si;
     GetSystemInfo(&si);
     long ncpu = (long)si.dwNumberOfProcessors;
-#elif defined(__APPLE__)
-    /* macOS hides _SC_NPROCESSORS_ONLN when a TU defines _POSIX_C_SOURCE, so
-     * query the count through sysctl, which is always available. */
-    int n = 0; size_t sz = sizeof(n);
-    long ncpu = (sysctlbyname("hw.logicalcpu", &n, &sz, NULL, 0) == 0 && n > 0)
-                    ? (long)n : 1;
 #elif defined(_SC_NPROCESSORS_ONLN)
     long ncpu = sysconf(_SC_NPROCESSORS_ONLN);
 #else
-    long ncpu = 1;
+    /* _SC_NPROCESSORS_ONLN is a non-POSIX extension that macOS hides when a TU
+     * defines _POSIX_C_SOURCE; fall back to a conservative default there (this
+     * inline is parsed in every TU, so it must compile under strict POSIX). The
+     * TUs that actually tune parallelism don't restrict the namespace, so they
+     * still see the real count. */
+    long ncpu = 4;
 #endif
     return ncpu > 0 ? ncpu : 1;
 }
