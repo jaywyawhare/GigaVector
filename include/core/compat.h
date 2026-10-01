@@ -57,16 +57,18 @@ static inline char *strcasestr(const char *haystack, const char *needle) {
 #define __builtin_prefetch(p,rw,loc) ((void)(p))
 #endif
 
+/* MinGW/ucrt ships a real struct timeval AND gettimeofday in <sys/time.h>;
+ * pulling it here makes gettimeofday available to every TU that includes
+ * compat.h (several callers don't include <sys/time.h> themselves). MSVC has
+ * neither, so there we define struct timeval and a gettimeofday shim instead.
+ * Defining both only on MSVC avoids a struct-timeval redefinition on MinGW. */
+#ifdef __GNUC__
+#include <sys/time.h>
+#else
 #ifndef _TIMEVAL_DEFINED
 #define _TIMEVAL_DEFINED
 struct timeval { long long tv_sec; long tv_usec; };
 #endif
-
-/* __GNUC__ guard: MinGW/ucrt already declares gettimeofday (non-static) in its
- * system headers, so a static inline redefinition here conflicts. Only MSVC
- * lacks it and needs this shim. struct timeval above stays unconditional (its
- * own _TIMEVAL_DEFINED guard makes it a no-op where the platform supplies it). */
-#ifndef __GNUC__
 static inline int gettimeofday(struct timeval *tv, void *tz) {
     (void)tz;
     if (!tv) return 0;
@@ -256,13 +258,24 @@ static inline int gv_rand_r(unsigned int *seed) {
 #ifndef _WIN32
 #include <unistd.h>
 #endif
+#ifdef __APPLE__
+#include <sys/sysctl.h>
+#endif
 static inline long gv_get_cpu_count(void) {
 #ifdef _WIN32
     SYSTEM_INFO si;
     GetSystemInfo(&si);
     long ncpu = (long)si.dwNumberOfProcessors;
-#else
+#elif defined(__APPLE__)
+    /* macOS hides _SC_NPROCESSORS_ONLN when a TU defines _POSIX_C_SOURCE, so
+     * query the count through sysctl, which is always available. */
+    int n = 0; size_t sz = sizeof(n);
+    long ncpu = (sysctlbyname("hw.logicalcpu", &n, &sz, NULL, 0) == 0 && n > 0)
+                    ? (long)n : 1;
+#elif defined(_SC_NPROCESSORS_ONLN)
     long ncpu = sysconf(_SC_NPROCESSORS_ONLN);
+#else
+    long ncpu = 1;
 #endif
     return ncpu > 0 ? ncpu : 1;
 }

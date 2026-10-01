@@ -353,7 +353,9 @@ struct GV_GrpcServer {
 
     int listen_fd;
     int running;
-    int stop_requested;
+    /* Read by the accept/worker threads while the stop path writes it; _Atomic
+     * so those plain loads/stores are race-free (C11 seq_cst). */
+    _Atomic int stop_requested;
 
     pthread_t accept_thread;
     int accept_thread_started;
@@ -1630,15 +1632,21 @@ int grpc_stop(GV_GrpcServer *server) {
 
     server->stop_requested = 1;
 
+    /* shutdown() only, to unblock the accept thread's blocked accept() without
+     * invalidating listen_fd while that thread still reads it each loop; the
+     * close+clear happens after the join (closing it before is an fd race). */
     if (server->listen_fd >= 0) {
         shutdown(server->listen_fd, SHUT_RDWR);
-        close(server->listen_fd);
-        server->listen_fd = -1;
     }
 
     if (server->accept_thread_started) {
         pthread_join(server->accept_thread, NULL);
         server->accept_thread_started = 0;
+    }
+
+    if (server->listen_fd >= 0) {
+        close(server->listen_fd);
+        server->listen_fd = -1;
     }
 
     thread_pool_destroy(&server->pool);
