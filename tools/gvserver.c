@@ -97,7 +97,12 @@ int main(void) {
            cfg.api_key ? "on" : (cfg.allow_unauthenticated ? "off(insecure)" : "read-only"));
     fflush(stdout);
 
+    /* pause() is POSIX-only; on Windows (MinGW) poll the stop flag instead. */
+#ifdef _WIN32
+    while (!g_stop) Sleep(100);
+#else
     while (!g_stop) pause();
+#endif
 
     printf("gvserver: shutting down\n");
     server_stop(server);
