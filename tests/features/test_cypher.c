@@ -456,6 +456,23 @@ int main(void) {
            && strlen(cell(&r,0,0))==10, "date() -> YYYY-MM-DD (10 chars)");
     cypher_free_result(&r);
 
+    /* Index DDL: CREATE/DROP INDEX (advisory) + SHOW INDEXES / CALL db.indexes */
+    ASSERT(q(cy, "CREATE INDEX ON :Person(name)", &r) == 0, "CREATE INDEX legacy form");
+    cypher_free_result(&r);
+    ASSERT(q(cy, "CREATE INDEX FOR (p:Person) ON (p.age)", &r) == 0, "CREATE INDEX descriptor form");
+    cypher_free_result(&r);
+    ASSERT(q(cy, "CREATE INDEX ON :Person(name)", &r) == 0, "CREATE INDEX idempotent");
+    cypher_free_result(&r);
+    ASSERT(q(cy, "SHOW INDEXES", &r) == 0 && r.row_count == 2, "SHOW INDEXES lists 2");
+    ASSERT(row_with(&r,0,"Person(name)") >= 0 && row_with(&r,0,"Person(age)") >= 0, "both indexes present");
+    cypher_free_result(&r);
+    ASSERT(q(cy, "CALL db.indexes()", &r) == 0 && r.row_count == 2, "CALL db.indexes -> 2");
+    cypher_free_result(&r);
+    ASSERT(q(cy, "DROP INDEX ON :Person(name)", &r) == 0, "DROP INDEX");
+    cypher_free_result(&r);
+    ASSERT(q(cy, "SHOW INDEXES", &r) == 0 && r.row_count == 1 && row_with(&r,0,"Person(age)") >= 0, "1 index after drop");
+    cypher_free_result(&r);
+
     /* Syntax error still reported */
     ASSERT(q(cy, "MATCH (n:Person RETURN n.name", &r) == -1 && strlen(cypher_last_error(cy)) > 0, "syntax error");
 

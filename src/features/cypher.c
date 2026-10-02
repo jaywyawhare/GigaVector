@@ -730,6 +730,7 @@ static Expr *parse_or(Lex *lx) {
 struct GV_CypherEngine {
     GV_KnowledgeGraph *kg; char err[CY_ERR];
     char **pname; char **pval; size_t nparam;   /* query parameters ($name) */
+    char **idx_label; char **idx_prop; size_t nidx; /* tracked CREATE INDEX declarations */
 };
 /* Current engine during a run() (for parameters + EXISTS pattern eval). */
 static GV_CypherEngine *g_eng = NULL;
@@ -1997,6 +1998,14 @@ static int run_call(GV_CypherEngine *eng, Lex *lx, GV_CypherResult *res) {
     const char *defcol = "value";
     if (strcasecmp(proc, "db.labels") == 0) { n = kg_get_entity_types(eng->kg, buf, 4096); defcol = "label"; }
     else if (strcasecmp(proc, "db.relationshiptypes") == 0) { n = kg_get_predicates(eng->kg, buf, 4096); defcol = "relationshipType"; }
+    else if (strcasecmp(proc, "db.indexes") == 0) {
+        for (size_t k = 0; k < eng->nidx && n < 4096; k++) {
+            size_t ln = strlen(eng->idx_label[k]) + strlen(eng->idx_prop[k]) + 4;
+            char *s = (char *)gv_alloc(ln); snprintf(s, ln, "%s(%s)", eng->idx_label[k], eng->idx_prop[k]);
+            buf[n++] = s;
+        }
+        defcol = "index";
+    }
     else { snprintf(eng->err, CY_ERR, "unknown procedure '%s'", proc); gv_free(colname); return -1; }
     if (n < 0) n = 0;
 
@@ -2387,6 +2396,8 @@ void cypher_destroy(GV_CypherEngine *eng) {
     if (!eng) return;
     for (size_t i = 0; i < eng->nparam; i++) { gv_free(eng->pname[i]); gv_free(eng->pval[i]); }
     gv_free(eng->pname); gv_free(eng->pval);
+    for (size_t i = 0; i < eng->nidx; i++) { gv_free(eng->idx_label[i]); gv_free(eng->idx_prop[i]); }
+    gv_free(eng->idx_label); gv_free(eng->idx_prop);
     gv_free(eng);
 }
 
@@ -2501,6 +2512,92 @@ static int result_union_merge(GV_CypherResult *dst, const GV_CypherResult *src, 
 
 /* Execute one top-level query segment (no UNION handling). Dispatches the
  * leading clause, including the CALL { subquery } brace form. */
+/* Extract (label, property) from an index DDL statement, tolerating both the
+ * legacy form  CREATE INDEX ON :Label(prop)  and the modern descriptor form
+ * CREATE INDEX FOR (n:Label) ON (n.prop).  Returns 0 and heap-dups *label and
+ * *prop on success; -1 otherwise. Leftover tokens (to end of statement) are
+ * consumed either way. */
+static int parse_index_target(Lex *lx, char **label, char **prop) {
+    *label = NULL; *prop = NULL;
+    char *dot_prop = NULL, *lp_prop = NULL; /* n.prop form vs legacy :Label(prop) form */
+    Tk prev = T_EOF;
+    while (pk(lx)->t != T_EOF && pk(lx)->t != T_RC) {
+        Tok *t = pk(lx);
+        if (kw(t, "union")) break;
+        if (t->t == T_IDENT) {
+            if (prev == T_COLON && !*label) *label = gv_dup_cstr(t->s);
+            else if (prev == T_DOT && !dot_prop) dot_prop = gv_dup_cstr(t->s);
+            else if (prev == T_LP && !lp_prop && *label) lp_prop = gv_dup_cstr(t->s);
+        }
+        prev = t->t;
+        adv(lx);
+    }
+    /* A dotted property (descriptor form `ON (n.prop)`) wins over the bare
+     * ident inside parens, which for that form is just the pattern variable. */
+    *prop = dot_prop ? dot_prop : lp_prop;
+    if (dot_prop && lp_prop) gv_free(lp_prop);
+    if (!*label || !*prop) { gv_free(*label); gv_free(*prop); *label = *prop = NULL; return -1; }
+    return 0;
+}
+
+/* Build a single-column result with `label(prop)` rows describing tracked indexes. */
+static int indexes_result(GV_CypherEngine *eng, GV_CypherResult *res) {
+    memset(res, 0, sizeof(*res));
+    res->column_count = 1;
+    res->column_names = (char **)gv_alloc(sizeof(char *));
+    res->column_names[0] = gv_dup_cstr("index");
+    res->row_count = eng->nidx;
+    res->column_values = (char **)gv_alloc((eng->nidx ? eng->nidx : 1) * sizeof(char *));
+    for (size_t i = 0; i < eng->nidx; i++) {
+        size_t n = strlen(eng->idx_label[i]) + strlen(eng->idx_prop[i]) + 4;
+        char *s = (char *)gv_alloc(n);
+        snprintf(s, n, "%s(%s)", eng->idx_label[i], eng->idx_prop[i]);
+        res->column_values[i] = s;
+    }
+    return 0;
+}
+
+/* CREATE/DROP INDEX: advisory DDL. The KG already resolves :Label and name
+ * predicates through hash indexes, so a property index does not change query
+ * results — we track declarations so clients can round-trip index DDL and list
+ * them via SHOW INDEXES / CALL db.indexes. */
+static int run_create_index(GV_CypherEngine *eng, Lex *lx, GV_CypherResult *res) {
+    adv(lx); /* CREATE */ adv(lx); /* INDEX */
+    char *label = NULL, *prop = NULL;
+    if (parse_index_target(lx, &label, &prop) != 0) {
+        snprintf(lx->err, CY_ERR, "CREATE INDEX: expected :Label(property)"); return -1;
+    }
+    for (size_t i = 0; i < eng->nidx; i++) /* idempotent: ignore duplicates */
+        if (strcmp(eng->idx_label[i], label) == 0 && strcmp(eng->idx_prop[i], prop) == 0) {
+            gv_free(label); gv_free(prop); memset(res, 0, sizeof(*res)); return 0;
+        }
+    char **nl = (char **)gv_realloc(eng->idx_label, (eng->nidx + 1) * sizeof(char *));
+    char **np = (char **)gv_realloc(eng->idx_prop, (eng->nidx + 1) * sizeof(char *));
+    if (!nl || !np) { gv_free(nl); gv_free(np); gv_free(label); gv_free(prop); snprintf(lx->err, CY_ERR, "OOM"); return -1; }
+    eng->idx_label = nl; eng->idx_prop = np;
+    eng->idx_label[eng->nidx] = label; eng->idx_prop[eng->nidx] = prop; eng->nidx++;
+    memset(res, 0, sizeof(*res));
+    return 0;
+}
+
+static int run_drop_index(GV_CypherEngine *eng, Lex *lx, GV_CypherResult *res) {
+    adv(lx); /* DROP */ adv(lx); /* INDEX */
+    char *label = NULL, *prop = NULL;
+    if (parse_index_target(lx, &label, &prop) != 0) {
+        snprintf(lx->err, CY_ERR, "DROP INDEX: expected :Label(property)"); return -1;
+    }
+    for (size_t i = 0; i < eng->nidx; i++)
+        if (strcmp(eng->idx_label[i], label) == 0 && strcmp(eng->idx_prop[i], prop) == 0) {
+            gv_free(eng->idx_label[i]); gv_free(eng->idx_prop[i]);
+            memmove(&eng->idx_label[i], &eng->idx_label[i + 1], (eng->nidx - i - 1) * sizeof(char *));
+            memmove(&eng->idx_prop[i], &eng->idx_prop[i + 1], (eng->nidx - i - 1) * sizeof(char *));
+            eng->nidx--; break;
+        }
+    gv_free(label); gv_free(prop);
+    memset(res, 0, sizeof(*res));
+    return 0;
+}
+
 static int run_segment(GV_CypherEngine *eng, Lex *lx, GV_CypherResult *res) {
     Tok *first = pk(lx);
     if (kw(first, "call") && lx->pos + 1 < lx->n && lx->v[lx->pos + 1].t == T_LC) {
@@ -2516,9 +2613,17 @@ static int run_segment(GV_CypherEngine *eng, Lex *lx, GV_CypherResult *res) {
         return 0;
     }
     if (kw(first, "call")) return run_call(eng, lx, res);
+    /* Index DDL: CREATE INDEX .. / DROP INDEX .. (distinguished from node CREATE
+     * by the INDEX keyword in the second position). */
+    if (kw(first, "create") && lx->pos + 1 < lx->n && kw(&lx->v[lx->pos + 1], "index"))
+        return run_create_index(eng, lx, res);
+    if (kw(first, "drop") && lx->pos + 1 < lx->n && kw(&lx->v[lx->pos + 1], "index"))
+        return run_drop_index(eng, lx, res);
+    if (kw(first, "show") && lx->pos + 1 < lx->n && kw(&lx->v[lx->pos + 1], "indexes"))
+        return indexes_result(eng, res);
     if (kw(first, "match") || kw(first, "optional") || kw(first, "create") || kw(first, "merge") || kw(first, "unwind") || kw(first, "foreach"))
         return run(eng, lx, res);
-    snprintf(lx->err, CY_ERR, "expected MATCH, OPTIONAL, CREATE, MERGE, UNWIND or CALL");
+    snprintf(lx->err, CY_ERR, "expected MATCH, OPTIONAL, CREATE, MERGE, UNWIND, CALL, CREATE/DROP INDEX or SHOW INDEXES");
     return -1;
 }
 
