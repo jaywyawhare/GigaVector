@@ -541,10 +541,14 @@ jobs:
         timeout-minutes: 30
         run: |
           set -o pipefail
-          find src -name '*.c' | sort | xargs \
-            clang-tidy --quiet \
-            --checks='-*,cert-*,clang-analyzer-*' \
-            -- -Iinclude -std=c11 -D_GNU_SOURCE 2>&1 | tee clang-tidy-report.txt
+          # Source files must come BEFORE `--` (everything after it is compiler
+          # flags); plain `xargs clang-tidy ... --` appended them after it, so
+          # clang-tidy saw no inputs and exited with its usage text.
+          find src -name '*.c' -print0 | sort -z | \
+            xargs -0 -n 8 -P "$(nproc)" sh -c \
+              'clang-tidy --quiet --checks="-*,cert-*,clang-analyzer-*" "$@" -- -Iinclude -std=c11 -D_GNU_SOURCE' _ \
+            2>&1 | tee clang-tidy-report.txt
+          echo "clang-tidy findings: $(grep -c 'warning:' clang-tidy-report.txt || true)"
 
       - name: Upload clang-tidy report
         if: always()
