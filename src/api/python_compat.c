@@ -2240,3 +2240,278 @@ int gv_alias_get_info(const GV_AliasManager *mgr, const char *alias_name, GV_Ali
 size_t gv_alias_count(const GV_AliasManager *mgr) { return alias_count(mgr); }
 int gv_alias_save(const GV_AliasManager *mgr, const char *filepath) { return alias_save(mgr, filepath); }
 GV_AliasManager *gv_alias_load(const char *filepath) { return alias_load(filepath); }
+
+/* ===== Auto-generated gv_* CFFI forwarding wrappers =====
+ * The high-level Python layer (CFFI) resolves gv_-prefixed symbols, but many
+ * subsystems only exported their unprefixed C names, so those Python classes
+ * failed at call time with undefined-symbol errors. These one-line forwarders
+ * expose the gv_ names the bindings expect. */
+#include "admin/cache.h"
+#include "admin/sso.h"
+#include "api/schema.h"
+#include "index/codebook.h"
+#include "index/hnsw_opt.h"
+#include "multimodal/auto_embed.h"
+#include "multimodal/fulltext.h"
+#include "multimodal/inference.h"
+#include "multimodal/late_interaction.h"
+#include "multimodal/multimodal.h"
+#include "multimodal/multivec.h"
+#include "multimodal/muvera.h"
+#include "multimodal/onnx.h"
+#include "multimodal/payload_index.h"
+#include "schema/tiered_tenant.h"
+#include "search/consistency.h"
+#include "search/filter_ops.h"
+#include "search/group_search.h"
+#include "search/hybrid_search.h"
+#include "search/quant_rerank.h"
+#include "search/ranking.h"
+#include "search/score_threshold.h"
+#include "security/auth.h"
+#include "security/rbac.h"
+#include "security/tls.h"
+#include "specialized/agent.h"
+#include "specialized/embedded.h"
+#include "specialized/optimizer.h"
+#include "specialized/point_id.h"
+#include "specialized/quantization.h"
+#include "storage/compression.h"
+#include "storage/vacuum.h"
+
+const char * gv_gpu_get_error(GV_GPUContext *ctx) { return gpu_get_error(ctx); }
+const char * gv_server_error_string(int error) { return server_error_string(error); }
+void gv_hybrid_config_init(GV_HybridConfig *config) { hybrid_config_init(config); }
+GV_HybridSearcher * gv_hybrid_create(GV_Database *db, GV_BM25Index *bm25, const GV_HybridConfig *config) { return hybrid_create(db, bm25, config); }
+void gv_hybrid_destroy(GV_HybridSearcher *searcher) { hybrid_destroy(searcher); }
+int gv_hybrid_search(GV_HybridSearcher *searcher, const float *query_vector, const char *query_text, size_t k, GV_HybridResult *results) { return hybrid_search(searcher, query_vector, query_text, k, results); }
+int gv_hybrid_search_with_stats(GV_HybridSearcher *searcher, const float *query_vector, const char *query_text, size_t k, GV_HybridResult *results, GV_HybridStats *stats) { return hybrid_search_with_stats(searcher, query_vector, query_text, k, results, stats); }
+int gv_hybrid_search_vector_only(GV_HybridSearcher *searcher, const float *query_vector, size_t k, GV_HybridResult *results) { return hybrid_search_vector_only(searcher, query_vector, k, results); }
+int gv_hybrid_search_text_only(GV_HybridSearcher *searcher, const char *query_text, size_t k, GV_HybridResult *results) { return hybrid_search_text_only(searcher, query_text, k, results); }
+int gv_hybrid_set_weights(GV_HybridSearcher *searcher, double vector_weight, double text_weight) { return hybrid_set_weights(searcher, vector_weight, text_weight); }
+void gv_auth_config_init(GV_AuthConfig *config) { auth_config_init(config); }
+GV_AuthManager * gv_auth_create(const GV_AuthConfig *config) { return auth_create(config); }
+void gv_auth_destroy(GV_AuthManager *auth) { auth_destroy(auth); }
+int gv_auth_generate_api_key(GV_AuthManager *auth, const char *description, uint64_t expires_at, char *key_out, char *key_id_out) { return auth_generate_api_key(auth, description, expires_at, key_out, key_id_out); }
+int gv_auth_add_api_key(GV_AuthManager *auth, const char *key_id, const char *key_hash, const char *description, uint64_t expires_at) { return auth_add_api_key(auth, key_id, key_hash, description, expires_at); }
+int gv_auth_revoke_api_key(GV_AuthManager *auth, const char *key_id) { return auth_revoke_api_key(auth, key_id); }
+int gv_auth_list_api_keys(GV_AuthManager *auth, GV_APIKey **keys, size_t *count) { return auth_list_api_keys(auth, keys, count); }
+void gv_auth_free_api_keys(GV_APIKey *keys, size_t count) { auth_free_api_keys(keys, count); }
+GV_AuthResult gv_auth_verify_api_key(GV_AuthManager *auth, const char *api_key, GV_Identity *identity) { return auth_verify_api_key(auth, api_key, identity); }
+GV_AuthResult gv_auth_verify_jwt(GV_AuthManager *auth, const char *token, GV_Identity *identity) { return auth_verify_jwt(auth, token, identity); }
+GV_AuthResult gv_auth_authenticate(GV_AuthManager *auth, const char *credential, GV_Identity *identity) { return auth_authenticate(auth, credential, identity); }
+void gv_auth_free_identity(GV_Identity *identity) { auth_free_identity(identity); }
+int gv_auth_generate_jwt(GV_AuthManager *auth, const char *subject, uint64_t expires_in, char *token_out, size_t token_size) { return auth_generate_jwt(auth, subject, expires_in, token_out, token_size); }
+const char * gv_auth_result_string(GV_AuthResult result) { return auth_result_string(result); }
+void * gv_multivec_create(size_t dimension, const GV_MultiVecConfig *config) { return multivec_create(dimension, config); }
+void gv_multivec_destroy(void *index) { multivec_destroy(index); }
+int gv_multivec_add_document(void *index, uint64_t doc_id, const float *chunks, size_t num_chunks, size_t dimension) { return multivec_add_document(index, doc_id, chunks, num_chunks, dimension); }
+int gv_multivec_delete_document(void *index, uint64_t doc_id) { return multivec_delete_document(index, doc_id); }
+int gv_multivec_search(void *index, const float *query, size_t k, GV_DocSearchResult *results, int distance_type) { return multivec_search(index, query, k, results, distance_type); }
+size_t gv_multivec_count_documents(const void *index) { return multivec_count_documents(index); }
+size_t gv_multivec_count_chunks(const void *index) { return multivec_count_chunks(index); }
+GV_QueryOptimizer * gv_optimizer_create(void) { return optimizer_create(); }
+void gv_optimizer_destroy(GV_QueryOptimizer *opt) { optimizer_destroy(opt); }
+void gv_optimizer_update_stats(GV_QueryOptimizer *opt, const GV_CollectionStats *stats) { optimizer_update_stats(opt, stats); }
+int gv_optimizer_plan(const GV_QueryOptimizer *opt, size_t k, int has_filter, double filter_selectivity, GV_QueryPlan *plan) { return optimizer_plan(opt, k, has_filter, filter_selectivity, plan); }
+size_t gv_optimizer_recommend_ef_search(const GV_QueryOptimizer *opt, size_t k) { return optimizer_recommend_ef_search(opt, k); }
+size_t gv_optimizer_recommend_nprobe(const GV_QueryOptimizer *opt, size_t k) { return optimizer_recommend_nprobe(opt, k); }
+GV_PayloadIndex * gv_payload_index_create(void) { return payload_index_create(); }
+void gv_payload_index_destroy(GV_PayloadIndex *idx) { payload_index_destroy(idx); }
+int gv_payload_index_add_field(GV_PayloadIndex *idx, const char *name, GV_FieldType type) { return payload_index_add_field(idx, name, type); }
+int gv_payload_index_field_count(const GV_PayloadIndex *idx) { return payload_index_field_count(idx); }
+int gv_payload_index_insert_int(GV_PayloadIndex *idx, size_t vector_id, const char *field, int64_t value) { return payload_index_insert_int(idx, vector_id, field, value); }
+int gv_payload_index_insert_float(GV_PayloadIndex *idx, size_t vector_id, const char *field, double value) { return payload_index_insert_float(idx, vector_id, field, value); }
+int gv_payload_index_insert_string(GV_PayloadIndex *idx, size_t vector_id, const char *field, const char *value) { return payload_index_insert_string(idx, vector_id, field, value); }
+int gv_payload_index_insert_bool(GV_PayloadIndex *idx, size_t vector_id, const char *field, int value) { return payload_index_insert_bool(idx, vector_id, field, value); }
+int gv_payload_index_remove(GV_PayloadIndex *idx, size_t vector_id) { return payload_index_remove(idx, vector_id); }
+size_t gv_payload_index_total_entries(const GV_PayloadIndex *idx) { return payload_index_total_entries(idx); }
+void gv_cache_config_init(GV_CacheConfig *config) { cache_config_init(config); }
+GV_Cache * gv_cache_create(const GV_CacheConfig *config) { return cache_create(config); }
+void gv_cache_destroy(GV_Cache *cache) { cache_destroy(cache); }
+void gv_cache_notify_mutation(GV_Cache *cache) { cache_notify_mutation(cache); }
+void gv_cache_invalidate_all(GV_Cache *cache) { cache_invalidate_all(cache); }
+int gv_cache_get_stats(const GV_Cache *cache, GV_CacheStats *stats) { return cache_get_stats(cache, stats); }
+void gv_cache_reset_stats(GV_Cache *cache) { cache_reset_stats(cache); }
+GV_Schema * gv_schema_create(uint32_t version) { return schema_create(version); }
+void gv_schema_destroy(GV_Schema *schema) { schema_destroy(schema); }
+int gv_schema_add_field(GV_Schema *schema, const char *name, GV_SchemaFieldType type, int required, const char *default_value) { return schema_add_field(schema, name, type, required, default_value); }
+int gv_schema_remove_field(GV_Schema *schema, const char *name) { return schema_remove_field(schema, name); }
+int gv_schema_has_field(const GV_Schema *schema, const char *name) { return schema_has_field(schema, name); }
+size_t gv_schema_field_count(const GV_Schema *schema) { return schema_field_count(schema); }
+int gv_schema_validate(const GV_Schema *schema, const char *const *keys, const char *const *values, size_t count) { return schema_validate(schema, keys, values, count); }
+int gv_schema_is_compatible(const GV_Schema *old_schema, const GV_Schema *new_schema) { return schema_is_compatible(old_schema, new_schema); }
+char * gv_schema_to_json(const GV_Schema *schema) { return schema_to_json(schema); }
+GV_Codebook * gv_codebook_create(size_t dimension, size_t m, uint8_t nbits) { return codebook_create(dimension, m, nbits); }
+void gv_codebook_destroy(GV_Codebook *cb) { codebook_destroy(cb); }
+int gv_codebook_train(GV_Codebook *cb, const float *data, size_t count, size_t train_iters) { return codebook_train(cb, data, count, train_iters); }
+int gv_codebook_encode(const GV_Codebook *cb, const float *vector, uint8_t *codes) { return codebook_encode(cb, vector, codes); }
+int gv_codebook_decode(const GV_Codebook *cb, const uint8_t *codes, float *output) { return codebook_decode(cb, codes, output); }
+int gv_codebook_save(const GV_Codebook *cb, const char *filepath) { return codebook_save(cb, filepath); }
+GV_Codebook * gv_codebook_load(const char *filepath) { return codebook_load(filepath); }
+GV_Codebook * gv_codebook_copy(const GV_Codebook *cb) { return codebook_copy(cb); }
+GV_PointIDMap * gv_point_id_create(size_t initial_capacity) { return point_id_create(initial_capacity); }
+void gv_point_id_destroy(GV_PointIDMap *map) { point_id_destroy(map); }
+int gv_point_id_set(GV_PointIDMap *map, const char *string_id, size_t internal_index) { return point_id_set(map, string_id, internal_index); }
+int gv_point_id_get(const GV_PointIDMap *map, const char *string_id, size_t *out_index) { return point_id_get(map, string_id, out_index); }
+int gv_point_id_remove(GV_PointIDMap *map, const char *string_id) { return point_id_remove(map, string_id); }
+int gv_point_id_has(const GV_PointIDMap *map, const char *string_id) { return point_id_has(map, string_id); }
+const char * gv_point_id_reverse_lookup(const GV_PointIDMap *map, size_t internal_index) { return point_id_reverse_lookup(map, internal_index); }
+int gv_point_id_generate_uuid(char *buf, size_t buf_size) { return point_id_generate_uuid(buf, buf_size); }
+size_t gv_point_id_count(const GV_PointIDMap *map) { return point_id_count(map); }
+int gv_point_id_save(const GV_PointIDMap *map, const char *filepath) { return point_id_save(map, filepath); }
+GV_PointIDMap * gv_point_id_load(const char *filepath) { return point_id_load(filepath); }
+void gv_tls_config_init(GV_TLSConfig *config) { tls_config_init(config); }
+GV_TLSContext * gv_tls_create(const GV_TLSConfig *config) { return tls_create(config); }
+void gv_tls_destroy(GV_TLSContext *ctx) { tls_destroy(ctx); }
+int gv_tls_is_available(void) { return tls_is_available(); }
+int gv_tls_cert_days_remaining(const GV_TLSContext *ctx) { return tls_cert_days_remaining(ctx); }
+int gv_db_search_with_threshold(const void *db, const float *query_data, size_t k, int distance_type, float score_threshold, GV_ThresholdResult *results) { return db_search_with_threshold(db, query_data, k, distance_type, score_threshold, results); }
+int gv_db_delete_by_filter(GV_Database *db, const char *filter_expr) { return db_delete_by_filter(db, filter_expr); }
+int gv_db_update_metadata_by_filter(GV_Database *db, const char *filter_expr, const char **metadata_keys, const char **metadata_values, size_t metadata_count) { return db_update_metadata_by_filter(db, filter_expr, metadata_keys, metadata_values, metadata_count); }
+int gv_db_count_by_filter(const GV_Database *db, const char *filter_expr) { return db_count_by_filter(db, filter_expr); }
+void gv_auto_embed_config_init(GV_AutoEmbedConfig *config) { auto_embed_config_init(config); }
+GV_AutoEmbedder * gv_auto_embed_create(const GV_AutoEmbedConfig *config) { return auto_embed_create(config); }
+void gv_auto_embed_destroy(GV_AutoEmbedder *embedder) { auto_embed_destroy(embedder); }
+float * gv_auto_embed_text(GV_AutoEmbedder *embedder, const char *text, size_t *out_dimension) { return auto_embed_text(embedder, text, out_dimension); }
+int gv_auto_embed_get_stats(const GV_AutoEmbedder *embedder, GV_AutoEmbedStats *stats) { return auto_embed_get_stats(embedder, stats); }
+void gv_group_search_config_init(GV_GroupSearchConfig *config) { group_search_config_init(config); }
+int gv_group_search(const GV_Database *db, const float *query, size_t dimension, const GV_GroupSearchConfig *config, GV_GroupedResult *result) { return group_search(db, query, dimension, config, result); }
+void gv_group_search_free_result(GV_GroupedResult *result) { group_search_free_result(result); }
+void gv_late_interaction_config_init(GV_LateInteractionConfig *config) { late_interaction_config_init(config); }
+GV_LateInteractionIndex * gv_late_interaction_create(const GV_LateInteractionConfig *config) { return late_interaction_create(config); }
+void gv_late_interaction_destroy(GV_LateInteractionIndex *index) { late_interaction_destroy(index); }
+int gv_late_interaction_add_doc(GV_LateInteractionIndex *index, const float *token_embeddings, size_t num_tokens) { return late_interaction_add_doc(index, token_embeddings, num_tokens); }
+int gv_late_interaction_search(const GV_LateInteractionIndex *index, const float *query_tokens, size_t num_query_tokens, size_t k, GV_LateInteractionResult *results) { return late_interaction_search(index, query_tokens, num_query_tokens, k, results); }
+size_t gv_late_interaction_count(const GV_LateInteractionIndex *index) { return late_interaction_count(index); }
+void gv_vacuum_config_init(GV_VacuumConfig *config) { vacuum_config_init(config); }
+GV_VacuumManager * gv_vacuum_create(GV_Database *db, const GV_VacuumConfig *config) { return vacuum_create(db, config); }
+void gv_vacuum_destroy(GV_VacuumManager *mgr) { vacuum_destroy(mgr); }
+int gv_vacuum_run(GV_VacuumManager *mgr) { return vacuum_run(mgr); }
+int gv_vacuum_start_auto(GV_VacuumManager *mgr) { return vacuum_start_auto(mgr); }
+int gv_vacuum_stop_auto(GV_VacuumManager *mgr) { return vacuum_stop_auto(mgr); }
+double gv_vacuum_get_fragmentation(const GV_VacuumManager *mgr) { return vacuum_get_fragmentation(mgr); }
+int gv_vacuum_get_stats(const GV_VacuumManager *mgr, GV_VacuumStats *stats) { return vacuum_get_stats(mgr, stats); }
+GV_ConsistencyManager * gv_consistency_create(GV_ConsistencyLevel default_level) { return consistency_create(default_level); }
+void gv_consistency_destroy(GV_ConsistencyManager *mgr) { consistency_destroy(mgr); }
+int gv_consistency_set_default(GV_ConsistencyManager *mgr, GV_ConsistencyLevel level) { return consistency_set_default(mgr, level); }
+GV_ConsistencyLevel gv_consistency_get_default(const GV_ConsistencyManager *mgr) { return consistency_get_default(mgr); }
+uint64_t gv_consistency_new_session(GV_ConsistencyManager *mgr) { return consistency_new_session(mgr); }
+void gv_compression_config_init(GV_CompressionConfig *config) { compression_config_init(config); }
+GV_Compressor * gv_compression_create(const GV_CompressionConfig *config) { return compression_create(config); }
+void gv_compression_destroy(GV_Compressor *comp) { compression_destroy(comp); }
+size_t gv_compress(GV_Compressor *comp, const void *input, size_t input_len, void *output, size_t output_capacity) { return compress(comp, input, input_len, output, output_capacity); }
+size_t gv_decompress(GV_Compressor *comp, const void *input, size_t input_len, void *output, size_t output_capacity) { return decompress(comp, input, input_len, output, output_capacity); }
+size_t gv_compress_bound(const GV_Compressor *comp, size_t input_len) { return compress_bound(comp, input_len); }
+int gv_compression_get_stats(const GV_Compressor *comp, GV_CompressionStats *stats) { return compression_get_stats(comp, stats); }
+GV_RBACManager * gv_rbac_create(void) { return rbac_create(); }
+void gv_rbac_destroy(GV_RBACManager *mgr) { rbac_destroy(mgr); }
+int gv_rbac_create_role(GV_RBACManager *mgr, const char *role_name) { return rbac_create_role(mgr, role_name); }
+int gv_rbac_delete_role(GV_RBACManager *mgr, const char *role_name) { return rbac_delete_role(mgr, role_name); }
+int gv_rbac_add_rule(GV_RBACManager *mgr, const char *role_name, const char *resource, uint32_t permissions) { return rbac_add_rule(mgr, role_name, resource, permissions); }
+int gv_rbac_assign_role(GV_RBACManager *mgr, const char *user_id, const char *role_name) { return rbac_assign_role(mgr, user_id, role_name); }
+int gv_rbac_revoke_role(GV_RBACManager *mgr, const char *user_id, const char *role_name) { return rbac_revoke_role(mgr, user_id, role_name); }
+int gv_rbac_check(const GV_RBACManager *mgr, const char *user_id, const char *resource, GV_Permission required) { return rbac_check(mgr, user_id, resource, required); }
+int gv_rbac_init_defaults(GV_RBACManager *mgr) { return rbac_init_defaults(mgr); }
+int gv_rbac_save(const GV_RBACManager *mgr, const char *filepath) { return rbac_save(mgr, filepath); }
+GV_RBACManager * gv_rbac_load(const char *filepath) { return rbac_load(filepath); }
+GV_RankExpr * gv_rank_expr_parse(const char *expression) { return rank_expr_parse(expression); }
+GV_RankExpr * gv_rank_expr_create_weighted(size_t n, const char **signal_names, const double *weights) { return rank_expr_create_weighted(n, signal_names, weights); }
+double gv_rank_expr_eval(const GV_RankExpr *expr, float vector_score, const GV_RankSignal *signals, size_t signal_count) { return rank_expr_eval(expr, vector_score, signals, signal_count); }
+void gv_rank_expr_destroy(GV_RankExpr *expr) { rank_expr_destroy(expr); }
+void gv_quant_config_init(GV_QuantConfig *config) { quant_config_init(config); }
+GV_QuantCodebook * gv_quant_train(const float *vectors, size_t count, size_t dimension, const GV_QuantConfig *config) { return quant_train(vectors, count, dimension, config); }
+int gv_quant_encode(const GV_QuantCodebook *cb, const float *vector, size_t dimension, uint8_t *codes) { return quant_encode(cb, vector, dimension, codes); }
+float gv_quant_distance(const GV_QuantCodebook *cb, const float *query, size_t dimension, const uint8_t *codes) { return quant_distance(cb, query, dimension, codes); }
+size_t gv_quant_code_size(const GV_QuantCodebook *cb, size_t dimension) { return quant_code_size(cb, dimension); }
+int gv_quant_codebook_save(const GV_QuantCodebook *cb, const char *path) { return quant_codebook_save(cb, path); }
+GV_QuantCodebook * gv_quant_codebook_load(const char *path) { return quant_codebook_load(path); }
+void gv_quant_codebook_destroy(GV_QuantCodebook *cb) { quant_codebook_destroy(cb); }
+float gv_quant_memory_ratio(const GV_QuantCodebook *cb, size_t dimension) { return quant_memory_ratio(cb, dimension); }
+void gv_ft_config_init(GV_FTConfig *config) { ft_config_init(config); }
+GV_FTIndex * gv_ft_create(const GV_FTConfig *config) { return ft_create(config); }
+void gv_ft_destroy(GV_FTIndex *idx) { ft_destroy(idx); }
+int gv_ft_add_document(GV_FTIndex *idx, size_t doc_id, const char *text) { return ft_add_document(idx, doc_id, text); }
+int gv_ft_remove_document(GV_FTIndex *idx, size_t doc_id) { return ft_remove_document(idx, doc_id); }
+int gv_ft_search(const GV_FTIndex *idx, const char *query, size_t limit, GV_FTResult *results) { return ft_search(idx, query, limit, results); }
+int gv_ft_search_phrase(const GV_FTIndex *idx, const char *phrase, size_t limit, GV_FTResult *results) { return ft_search_phrase(idx, phrase, limit, results); }
+int gv_ft_stem(const char *word, GV_FTLanguage lang, char *output, size_t output_size) { return ft_stem(word, lang, output, output_size); }
+void gv_ft_free_results(GV_FTResult *results, size_t count) { ft_free_results(results, count); }
+size_t gv_ft_doc_count(const GV_FTIndex *idx) { return ft_doc_count(idx); }
+int gv_ft_save(const GV_FTIndex *idx, const char *path) { return ft_save(idx, path); }
+GV_FTIndex * gv_ft_load(const char *path) { return ft_load(path); }
+GV_HNSWInlineIndex * gv_hnsw_inline_create(size_t dimension, size_t max_elements, size_t M, size_t ef_construction, const GV_HNSWInlineConfig *config) { return hnsw_inline_create(dimension, max_elements, M, ef_construction, config); }
+void gv_hnsw_inline_destroy(GV_HNSWInlineIndex *idx) { hnsw_inline_destroy(idx); }
+int gv_hnsw_inline_insert(GV_HNSWInlineIndex *idx, const float *vector, size_t label) { return hnsw_inline_insert(idx, vector, label); }
+int gv_hnsw_inline_search(const GV_HNSWInlineIndex *idx, const float *query, size_t k, size_t ef_search, size_t *labels, float *distances) { return hnsw_inline_search(idx, query, k, ef_search, labels, distances); }
+int gv_hnsw_inline_rebuild(GV_HNSWInlineIndex *idx, const GV_HNSWRebuildConfig *config) { return hnsw_inline_rebuild(idx, config); }
+int gv_hnsw_inline_rebuild_status(const GV_HNSWInlineIndex *idx, GV_HNSWRebuildStats *stats) { return hnsw_inline_rebuild_status(idx, stats); }
+size_t gv_hnsw_inline_count(const GV_HNSWInlineIndex *idx) { return hnsw_inline_count(idx); }
+int gv_hnsw_inline_save(const GV_HNSWInlineIndex *idx, const char *path) { return hnsw_inline_save(idx, path); }
+GV_HNSWInlineIndex * gv_hnsw_inline_load(const char *path) { return hnsw_inline_load(path); }
+int gv_onnx_available(void) { return onnx_available(); }
+GV_ONNXModel * gv_onnx_load(const GV_ONNXConfig *config) { return onnx_load(config); }
+void gv_onnx_destroy(GV_ONNXModel *model) { onnx_destroy(model); }
+int gv_onnx_rerank(GV_ONNXModel *model, const char *query_text, const char **doc_texts, size_t doc_count, float *scores) { return onnx_rerank(model, query_text, doc_texts, doc_count, scores); }
+int gv_onnx_embed(GV_ONNXModel *model, const char **texts, size_t text_count, float *embeddings, size_t dimension) { return onnx_embed(model, texts, text_count, embeddings, dimension); }
+GV_Agent * gv_agent_create(const void *db, const GV_AgentConfig *config) { return agent_create(db, config); }
+void gv_agent_destroy(GV_Agent *agent) { agent_destroy(agent); }
+GV_AgentResult * gv_agent_query(GV_Agent *agent, const char *natural_language_query, size_t k) { return agent_query(agent, natural_language_query, k); }
+GV_AgentResult * gv_agent_transform(GV_Agent *agent, const char *natural_language_instruction) { return agent_transform(agent, natural_language_instruction); }
+GV_AgentResult * gv_agent_personalize(GV_Agent *agent, const char *query, const char *user_profile_json, size_t k) { return agent_personalize(agent, query, user_profile_json, k); }
+void gv_agent_free_result(GV_AgentResult *result) { agent_free_result(result); }
+void gv_agent_set_schema_hint(GV_Agent *agent, const char *schema_json) { agent_set_schema_hint(agent, schema_json); }
+void gv_muvera_config_init(GV_MuveraConfig *config) { muvera_config_init(config); }
+GV_MuveraEncoder * gv_muvera_create(const GV_MuveraConfig *config) { return muvera_create(config); }
+void gv_muvera_destroy(GV_MuveraEncoder *enc) { muvera_destroy(enc); }
+int gv_muvera_encode(const GV_MuveraEncoder *enc, const float *tokens, size_t num_tokens, float *output) { return muvera_encode(enc, tokens, num_tokens, output); }
+size_t gv_muvera_output_dimension(const GV_MuveraEncoder *enc) { return muvera_output_dimension(enc); }
+int gv_muvera_save(const GV_MuveraEncoder *enc, const char *path) { return muvera_save(enc, path); }
+GV_MuveraEncoder * gv_muvera_load(const char *path) { return muvera_load(path); }
+GV_SSOManager * gv_sso_create(const GV_SSOConfig *config) { return sso_create(config); }
+void gv_sso_destroy(GV_SSOManager *mgr) { sso_destroy(mgr); }
+int gv_sso_discover(GV_SSOManager *mgr) { return sso_discover(mgr); }
+int gv_sso_get_auth_url(const GV_SSOManager *mgr, const char *state, char *url, size_t url_size) { return sso_get_auth_url(mgr, state, url, url_size); }
+GV_SSOToken * gv_sso_validate_token(GV_SSOManager *mgr, const char *token_string) { return sso_validate_token(mgr, token_string); }
+void gv_sso_free_token(GV_SSOToken *token) { sso_free_token(token); }
+void gv_tiered_config_init(GV_TieredTenantConfig *config) { tiered_config_init(config); }
+GV_TieredManager * gv_tiered_create(const GV_TieredTenantConfig *config) { return tiered_create(config); }
+void gv_tiered_destroy(GV_TieredManager *mgr) { tiered_destroy(mgr); }
+int gv_tiered_add_tenant(GV_TieredManager *mgr, const char *tenant_id, GV_TenantTier initial_tier) { return tiered_add_tenant(mgr, tenant_id, initial_tier); }
+int gv_tiered_remove_tenant(GV_TieredManager *mgr, const char *tenant_id) { return tiered_remove_tenant(mgr, tenant_id); }
+int gv_tiered_promote(GV_TieredManager *mgr, const char *tenant_id, GV_TenantTier new_tier) { return tiered_promote(mgr, tenant_id, new_tier); }
+int gv_tiered_get_info(const GV_TieredManager *mgr, const char *tenant_id, GV_TenantInfo *info) { return tiered_get_info(mgr, tenant_id, info); }
+int gv_tiered_record_usage(GV_TieredManager *mgr, const char *tenant_id, size_t vectors_delta, size_t memory_delta) { return tiered_record_usage(mgr, tenant_id, vectors_delta, memory_delta); }
+size_t gv_tiered_tenant_count(const GV_TieredManager *mgr) { return tiered_tenant_count(mgr); }
+int gv_tiered_save(const GV_TieredManager *mgr, const char *path) { return tiered_save(mgr, path); }
+GV_TieredManager * gv_tiered_load(const char *path) { return tiered_load(path); }
+void gv_inference_config_init(GV_InferenceConfig *config) { inference_config_init(config); }
+GV_InferenceEngine * gv_inference_create(void *db, const GV_InferenceConfig *config) { return inference_create(db, config); }
+void gv_inference_destroy(GV_InferenceEngine *eng) { inference_destroy(eng); }
+int gv_inference_add(GV_InferenceEngine *eng, const char *text, const char *metadata_json) { return inference_add(eng, text, metadata_json); }
+int gv_inference_search(GV_InferenceEngine *eng, const char *query_text, size_t k, GV_InferenceResult *results) { return inference_search(eng, query_text, k, results); }
+void gv_inference_free_results(GV_InferenceResult *results, size_t count) { inference_free_results(results, count); }
+void gv_embedded_config_init(GV_EmbeddedConfig *config) { embedded_config_init(config); }
+GV_EmbeddedDB * gv_embedded_open(const GV_EmbeddedConfig *config) { return embedded_open(config); }
+void gv_embedded_close(GV_EmbeddedDB *db) { embedded_close(db); }
+int gv_embedded_add(GV_EmbeddedDB *db, const float *vector) { return embedded_add(db, vector); }
+int gv_embedded_search(const GV_EmbeddedDB *db, const float *query, size_t k, int distance_type, GV_EmbeddedResult *results) { return embedded_search(db, query, k, distance_type, results); }
+int gv_embedded_delete(GV_EmbeddedDB *db, size_t index) { return embedded_delete(db, index); }
+size_t gv_embedded_count(const GV_EmbeddedDB *db) { return embedded_count(db); }
+size_t gv_embedded_memory_usage(const GV_EmbeddedDB *db) { return embedded_memory_usage(db); }
+int gv_embedded_save(const GV_EmbeddedDB *db, const char *path) { return embedded_save(db, path); }
+GV_EmbeddedDB * gv_embedded_load(const char *path) { return embedded_load(path); }
+int gv_embedded_compact(GV_EmbeddedDB *db) { return embedded_compact(db); }
+void gv_media_config_init(GV_MediaConfig *config) { media_config_init(config); }
+GV_MediaStore * gv_media_create(const GV_MediaConfig *config) { return media_create(config); }
+void gv_media_destroy(GV_MediaStore *store) { media_destroy(store); }
+int gv_media_store_blob(GV_MediaStore *store, size_t vector_index, GV_MediaType type, const void *data, size_t data_size, const char *filename, const char *mime_type) { return media_store_blob(store, vector_index, type, data, data_size, filename, mime_type); }
+int gv_media_store_file(GV_MediaStore *store, size_t vector_index, GV_MediaType type, const char *file_path) { return media_store_file(store, vector_index, type, file_path); }
+int gv_media_retrieve(const GV_MediaStore *store, size_t vector_index, void *buffer, size_t buffer_size, size_t *actual_size) { return media_retrieve(store, vector_index, buffer, buffer_size, actual_size); }
+int gv_media_get_info(const GV_MediaStore *store, size_t vector_index, GV_MediaEntry *entry) { return media_get_info(store, vector_index, entry); }
+int gv_media_delete(GV_MediaStore *store, size_t vector_index) { return media_delete(store, vector_index); }
+int gv_media_exists(const GV_MediaStore *store, size_t vector_index) { return media_exists(store, vector_index); }
+size_t gv_media_count(const GV_MediaStore *store) { return media_count(store); }
+size_t gv_media_total_size(const GV_MediaStore *store) { return media_total_size(store); }
+int gv_media_save_index(const GV_MediaStore *store, const char *path) { return media_save_index(store, path); }
+GV_MediaStore * gv_media_load_index(const char *index_path, const char *storage_dir) { return media_load_index(index_path, storage_dir); }
