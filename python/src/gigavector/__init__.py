@@ -349,7 +349,7 @@ from .retry import (
 from .dashboard.backend.server import DashboardServer
 from .async_api import AsyncDatabase
 from .pool import DatabasePool
-from .benchmark import Benchmark, BenchmarkResult
+from .benchmark import Benchmark, BenchmarkResult, RecallResult
 
 
 __all__ = [
@@ -357,6 +357,7 @@ __all__ = [
     "DatabasePool",
     "Benchmark",
     "BenchmarkResult",
+    "RecallResult",
     "Database",
     "DBStats",
     "DistanceType",

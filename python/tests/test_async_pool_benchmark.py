@@ -186,6 +186,37 @@ class TestBenchmark(unittest.TestCase):
             self.assertGreaterEqual(result.p99_ms, result.p95_ms)
             self.assertGreaterEqual(result.p95_ms, result.p50_ms)
 
+    def test_run_recall(self):
+        from gigavector import RecallResult
+
+        with self._make_db() as db:
+            data = [[float(i), float(i + 1), 0.0, 0.0] for i in range(40)]
+            for v in data:
+                db.add_vector(v)
+            bench = Benchmark(db)
+            queries = data[:10]
+            k = 5
+            # Ground truth from the exact FLAT index itself -> recall must be 1.0.
+            gt = [[h.id for h in db.search(q, k)] for q in queries]
+            res = bench.run_recall(queries, gt, k=k)
+            self.assertIsInstance(res, RecallResult)
+            self.assertEqual(res.k, k)
+            self.assertEqual(res.count, 10)
+            self.assertAlmostEqual(res.recall_at_k, 1.0, places=6)
+            self.assertGreater(res.qps, 0)
+            # Replacing one true id per query with a distinct bogus id drops recall
+            # to exactly (k-1)/k.
+            gt_partial = [[g[0] * 0 + 10_000_000 + i] + g[1:] for i, g in enumerate(gt)]
+            res2 = bench.run_recall(queries, gt_partial, k=k)
+            self.assertAlmostEqual(res2.recall_at_k, (k - 1) / k, places=6)
+
+    def test_run_recall_length_mismatch(self):
+        with self._make_db() as db:
+            db.add_vector([1.0, 2.0, 3.0, 4.0])
+            bench = Benchmark(db)
+            with self.assertRaises(ValueError):
+                bench.run_recall([[1.0, 2.0, 3.0, 4.0]], [], k=1)
+
     def test_run_search(self):
         with self._make_db() as db:
             for i in range(20):
