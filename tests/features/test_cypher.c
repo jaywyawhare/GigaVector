@@ -249,6 +249,10 @@ int main(void) {
     ASSERT(q(cy, "MATCH (m:Measure) RETURN stDev(m.v)", &r) == 0
            && r.row_count == 1 && strncmp(cell(&r,0,0),"10",2)==0, "stDev({10,20,30}) = 10");
     cypher_free_result(&r);
+    /* same aggregate through a WITH projection (separate aggregation path) */
+    ASSERT(q(cy, "MATCH (m:Measure) WITH stDevP(m.v) AS s RETURN s", &r) == 0
+           && r.row_count == 1 && strncmp(cell(&r,0,0),"8.16",4)==0, "WITH stDevP ~= 8.16");
+    cypher_free_result(&r);
 
     /* ---- WITH pipelining ---- */
     ASSERT(q(cy, "MATCH (a:Person {name:'Alice'}) WITH a MATCH (a)-[:KNOWS]->(b) RETURN b.name", &r) == 0

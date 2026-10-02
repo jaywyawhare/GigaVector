@@ -2204,7 +2204,14 @@ static int run(GV_CypherEngine *eng, Lex *lx, GV_CypherResult *res) {
                             gv_free(el);
                         } else { double acc=0,mn=0,mx=0; size_t cn=0;
                             for (size_t i = 0; i < rows.n; i++) if (grp[i]==gi) { char *v=val_of(eng->kg,&wopd[c],&rows.r[i]); double d; if(is_num(v,&d)){ if(!cn){mn=mx=d;} else { if(d<mn)mn=d; if(d>mx)mx=d;} acc+=d; cn++; } gv_free(v); }
-                            double ov = wagg[c]==AG_SUM?acc : wagg[c]==AG_AVG?(cn?acc/cn:0) : wagg[c]==AG_MIN?mn:mx;
+                            double ov;
+                            if (wagg[c]==AG_STDEV || wagg[c]==AG_STDEVP) {
+                                double mean = cn?acc/cn:0, ss=0;
+                                for (size_t i = 0; i < rows.n; i++) if (grp[i]==gi) { char *v=val_of(eng->kg,&wopd[c],&rows.r[i]); double d; if(is_num(v,&d)){ double dv=d-mean; ss+=dv*dv; } gv_free(v); }
+                                ov = wagg[c]==AG_STDEV ? (cn>1?sqrt(ss/(cn-1)):0) : (cn>0?sqrt(ss/cn):0);
+                            } else {
+                                ov = wagg[c]==AG_SUM?acc : wagg[c]==AG_AVG?(cn?acc/cn:0) : wagg[c]==AG_MIN?mn:mx;
+                            }
                             char *v = fmt_num(ov); row_bind_val(&nwr, nm, v); gv_free(v);
                         }
                     }
