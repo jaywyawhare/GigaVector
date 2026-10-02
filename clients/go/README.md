@@ -55,6 +55,10 @@ If your layout differs, override `CGO_CFLAGS` / `CGO_LDFLAGS` and
 | `AddVector`                | Insert a vector                          |
 | `AddVectorWithMetadata`    | Insert a vector with a key/value pair    |
 | `Search`                   | k-nearest-neighbour search (Euclidean / Cosine / DotProduct / Manhattan) |
+| `RangeSearch`              | All vectors within a radius               |
+| `UpdateVector`            | Replace a vector by index                 |
+| `DeleteVector`            | Remove a vector by index                  |
+| `Save`                     | Write a durable snapshot (reopen with `Open`) |
 
 This is the first non-Python client. A network client against the REST/gRPC
 server can be layered on the same package later.

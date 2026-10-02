@@ -126,6 +126,67 @@ func (db *DB) AddVectorWithMetadata(vec []float32, key, value string) error {
 	return nil
 }
 
+// DeleteVector removes the vector at the given storage index.
+func (db *DB) DeleteVector(index uint64) error {
+	if db.ptr == nil {
+		return ErrClosed
+	}
+	if rc := C.db_delete_vector_by_index(db.ptr, C.size_t(index)); rc != 0 {
+		return errors.New("gigavector: db_delete_vector_by_index failed")
+	}
+	return nil
+}
+
+// UpdateVector replaces the vector at the given storage index.
+func (db *DB) UpdateVector(index uint64, vec []float32) error {
+	if db.ptr == nil {
+		return ErrClosed
+	}
+	if len(vec) != db.dim {
+		return errors.New("gigavector: vector length does not match dimension")
+	}
+	if rc := C.db_update_vector(db.ptr, C.size_t(index), db.cvec(vec), C.size_t(len(vec))); rc != 0 {
+		return errors.New("gigavector: db_update_vector failed")
+	}
+	return nil
+}
+
+// RangeSearch returns up to maxResults vectors within radius of query.
+func (db *DB) RangeSearch(query []float32, radius float32, maxResults int, metric Distance) ([]SearchResult, error) {
+	if db.ptr == nil {
+		return nil, ErrClosed
+	}
+	if len(query) != db.dim {
+		return nil, errors.New("gigavector: query length does not match dimension")
+	}
+	if maxResults <= 0 {
+		return nil, nil
+	}
+	out := make([]C.GV_SearchResult, maxResults)
+	found := C.db_range_search(db.ptr, db.cvec(query), C.float(radius), &out[0], C.size_t(maxResults), C.GV_DistanceType(metric))
+	if found < 0 {
+		return nil, errors.New("gigavector: db_range_search failed")
+	}
+	results := make([]SearchResult, int(found))
+	for i := 0; i < int(found); i++ {
+		results[i] = SearchResult{ID: uint64(out[i].id), Distance: float32(out[i].distance)}
+	}
+	return results, nil
+}
+
+// Save writes a durable snapshot of the database to filepath. Reopen it with Open.
+func (db *DB) Save(filepath string) error {
+	if db.ptr == nil {
+		return ErrClosed
+	}
+	cpath := C.CString(filepath)
+	defer C.free(unsafe.Pointer(cpath))
+	if rc := C.db_save(db.ptr, cpath); rc != 0 {
+		return errors.New("gigavector: db_save failed")
+	}
+	return nil
+}
+
 // Search returns the k nearest neighbours of query under the given metric.
 func (db *DB) Search(query []float32, k int, metric Distance) ([]SearchResult, error) {
 	if db.ptr == nil {
