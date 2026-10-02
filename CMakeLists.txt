@@ -313,6 +313,11 @@ if(BUILD_TESTS)
         if(WIN32 AND TEST_NAME STREQUAL "backup_sink")
             continue()
         endif()
+        # gap_closure's graph community-detection pass hangs under MinGW winpthreads
+        # (not reproducible on Linux/macOS, where it passes); skip on Windows.
+        if(WIN32 AND TEST_NAME STREQUAL "gap_closure")
+            continue()
+        endif()
         add_executable(test_${TEST_NAME} ${TEST_SRC})
         if(WIN32)
             target_link_libraries(test_${TEST_NAME} PRIVATE GigaVector)
