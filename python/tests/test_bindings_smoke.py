@@ -81,6 +81,27 @@ class TestFullText(unittest.TestCase):
         self.assertNotIn(2, found)
 
 
+class TestMultiVector(unittest.TestCase):
+    def test_add_and_search(self) -> None:
+        mv = gv.MultiVecIndex(dimension=3)
+        mv.add_document(1, [[1.0, 0.0, 0.0], [0.9, 0.1, 0.0]])  # topic A
+        mv.add_document(2, [[0.0, 1.0, 0.0], [0.0, 0.9, 0.1]])  # topic B
+        res = mv.search([1.0, 0.0, 0.0], k=2)
+        self.assertEqual(res[0].doc_id, 1)  # topic-A query retrieves the topic-A doc first
+
+
+class TestAuth(unittest.TestCase):
+    def test_api_key_lifecycle(self) -> None:
+        am = gv.AuthManager()
+        key, key_id = am.generate_api_key("service-account")
+        self.assertTrue(key and key_id)
+        result, identity = am.verify_api_key(key)
+        self.assertEqual(int(result), 0)  # AUTH_OK
+        self.assertIsNotNone(identity)
+        bad_result, _ = am.verify_api_key("totally-invalid-key")
+        self.assertNotEqual(int(bad_result), 0)
+
+
 class TestRBAC(unittest.TestCase):
     def test_role_grant_and_check(self) -> None:
         m = gv.RBACManager()
