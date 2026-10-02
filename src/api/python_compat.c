@@ -47,6 +47,7 @@
 #include "admin/versioning.h"
 #include "admin/tracing.h"
 #include "admin/migration.h"
+#include "api/alias.h"
 
 #include <stdlib.h>
 
@@ -2223,3 +2224,19 @@ int gv_diskann_get_stats(const GV_DiskANNIndex *index, GV_DiskANNStats *stats) {
 int gv_diskann_save(const GV_DiskANNIndex *index, const char *filepath) { return diskann_save(index, filepath); }
 GV_DiskANNIndex *gv_diskann_load(const char *filepath, const GV_DiskANNConfig *config) { return diskann_load(filepath, config); }
 size_t gv_diskann_count(const GV_DiskANNIndex *index) { return diskann_count(index); }
+
+/* --- Collection aliases: gv_-prefixed wrappers the CFFI layer resolves. --- */
+GV_AliasManager *gv_alias_manager_create(void) { return alias_manager_create(); }
+void gv_alias_manager_destroy(GV_AliasManager *mgr) { alias_manager_destroy(mgr); }
+int gv_alias_create(GV_AliasManager *mgr, const char *alias_name, const char *collection_name) { return alias_create(mgr, alias_name, collection_name); }
+int gv_alias_update(GV_AliasManager *mgr, const char *alias_name, const char *new_collection_name) { return alias_update(mgr, alias_name, new_collection_name); }
+int gv_alias_delete(GV_AliasManager *mgr, const char *alias_name) { return alias_delete(mgr, alias_name); }
+int gv_alias_exists(const GV_AliasManager *mgr, const char *alias_name) { return alias_exists(mgr, alias_name); }
+int gv_alias_swap(GV_AliasManager *mgr, const char *alias_a, const char *alias_b) { return alias_swap(mgr, alias_a, alias_b); }
+const char *gv_alias_resolve(const GV_AliasManager *mgr, const char *alias_name) { return alias_resolve(mgr, alias_name); }
+int gv_alias_list(const GV_AliasManager *mgr, GV_AliasInfo **out_list, size_t *out_count) { return alias_list(mgr, out_list, out_count); }
+void gv_alias_free_list(GV_AliasInfo *list, size_t count) { alias_free_list(list, count); }
+int gv_alias_get_info(const GV_AliasManager *mgr, const char *alias_name, GV_AliasInfo *info) { return alias_get_info(mgr, alias_name, info); }
+size_t gv_alias_count(const GV_AliasManager *mgr) { return alias_count(mgr); }
+int gv_alias_save(const GV_AliasManager *mgr, const char *filepath) { return alias_save(mgr, filepath); }
+GV_AliasManager *gv_alias_load(const char *filepath) { return alias_load(filepath); }
