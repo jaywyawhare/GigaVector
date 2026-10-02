@@ -21,6 +21,16 @@
 #include <math.h>
 #include <time.h>
 
+/* Portable UTC breakdown: POSIX gmtime_r vs the Windows/ucrt gmtime_s (whose
+ * argument order is dest-first, like C11 Annex K). MinGW lacks gmtime_r. */
+static void gv_gmtime_utc(const time_t *t, struct tm *out) {
+#ifdef _WIN32
+    gmtime_s(out, t);
+#else
+    gmtime_r(t, out);
+#endif
+}
+
 #define CY_MAXPROP  16
 #define CY_MAXNODE  8
 #define CY_MAXRET   32
@@ -1384,11 +1394,11 @@ static char *val_of(GV_KnowledgeGraph *kg, const Opd *o, const Row *row) {
             else if (strcasecmp(fn, "timestamp") == 0) { res = fmt_num((double)((long long)time(NULL) * 1000LL)); }
             else if (strcasecmp(fn, "date") == 0) {
                 if (a0 && a0[0]) { res = gv_dup_cstr(a0); }
-                else { char b[16]; time_t now = time(NULL); struct tm tmv; gmtime_r(&now, &tmv); strftime(b, sizeof(b), "%Y-%m-%d", &tmv); res = gv_dup_cstr(b); }
+                else { char b[16]; time_t now = time(NULL); struct tm tmv; gv_gmtime_utc(&now, &tmv); strftime(b, sizeof(b), "%Y-%m-%d", &tmv); res = gv_dup_cstr(b); }
             }
             else if (strcasecmp(fn, "datetime") == 0) {
                 if (a0 && a0[0]) { res = gv_dup_cstr(a0); }
-                else { char b[32]; time_t now = time(NULL); struct tm tmv; gmtime_r(&now, &tmv); strftime(b, sizeof(b), "%Y-%m-%dT%H:%M:%S", &tmv); res = gv_dup_cstr(b); }
+                else { char b[32]; time_t now = time(NULL); struct tm tmv; gv_gmtime_utc(&now, &tmv); strftime(b, sizeof(b), "%Y-%m-%dT%H:%M:%S", &tmv); res = gv_dup_cstr(b); }
             }
             else if (strcasecmp(fn, "coalesce") == 0) {
                 gv_free(a0); a0 = NULL; res = NULL;
