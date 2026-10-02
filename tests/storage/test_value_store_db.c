@@ -8,14 +8,16 @@
 #include <stdint.h>
 
 #include "storage/database.h"
+#include "../test_tmp.h"
 
 static int failures = 0;
 #define ASSERT(c, m) do { if (!(c)) { printf("FAIL: %s\n", (m)); failures++; } \
                           else { printf("ok: %s\n", (m)); } } while (0)
 
-#define PATH "/tmp/gv_test_vs_db.bin"
+static char PATH[512];
 
 int main(void) {
+    gv_test_make_temp_path(PATH, sizeof(PATH), "gv_test_vs_db", ".bin");
     remove(PATH);
     GV_Database *db = db_open(NULL, 4, GV_INDEX_TYPE_FLAT);
     ASSERT(db != NULL, "db_open");

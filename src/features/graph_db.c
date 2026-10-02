@@ -1158,9 +1158,9 @@ static uint64_t *collect_all_node_ids(const GV_GraphDB *g, size_t *out_count)
 uint64_t graph_version(const GV_GraphDB *g)
 {
     if (!g) return 0;
-    pthread_rwlock_rdlock((pthread_rwlock_t *)&g->rwlock);
+    graph_read_lock(g);
     uint64_t v = g->mutation_count;
-    pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+    graph_read_unlock(g);
     return v;
 }
 
@@ -1170,9 +1170,9 @@ int graph_edge_deltas_since(const GV_GraphDB *g, uint64_t since_version,
 {
     if (!g || !out_len) return -1;
     *out_len = 0;
-    pthread_rwlock_rdlock((pthread_rwlock_t *)&g->rwlock);
+    graph_read_lock(g);
     if (g->journal_base_version > since_version) {
-        pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+        graph_read_unlock(g);
         return -1;   /* coverage broken: full rebuild required */
     }
     size_t avail = 0;
@@ -1186,7 +1186,7 @@ int graph_edge_deltas_since(const GV_GraphDB *g, uint64_t since_version,
                 out[copied++] = g->edge_journal[i];
         }
     }
-    pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+    graph_read_unlock(g);
     return 0;
 }
 
@@ -1470,15 +1470,37 @@ void graph_write_txn_abort(GV_GraphWriteTxn *t)
     gtxn_finish(t);
 }
 
+/* Per-thread recursion counting for the read lock.
+ *
+ * The pinned-snapshot analytics layer (gv_ga_build) holds the read lock for the
+ * duration of a computation, and some algorithms nest another gv_ga_build (or a
+ * locking accessor like graph_node_count) inside that span. A plain recursive
+ * pthread_rwlock_rdlock() deadlocks on a writer-preferring implementation
+ * (notably macOS/ARM): the second rdlock blocks behind a queued writer that is
+ * itself waiting for this thread's first rdlock. Counting recursion per thread
+ * so only the outermost acquire touches the OS lock avoids that entirely, and
+ * keeps concurrent readers on other threads working as before.
+ *
+ * Single-graph recursion is tracked (the common case); a thread that nests read
+ * locks across two different graphs falls back to a direct acquire. */
+static _Thread_local const GV_GraphDB *gv_rd_held_g = NULL;
+static _Thread_local unsigned         gv_rd_depth   = 0;
+
 void graph_read_lock(const GV_GraphDB *g)
 {
     if (!g) return;
+    if (gv_rd_held_g == g) { gv_rd_depth++; return; }
     pthread_rwlock_rdlock((pthread_rwlock_t *)&g->rwlock);
+    if (gv_rd_held_g == NULL) { gv_rd_held_g = g; gv_rd_depth = 1; }
 }
 
 void graph_read_unlock(const GV_GraphDB *g)
 {
     if (!g) return;
+    if (gv_rd_held_g == g) {
+        if (--gv_rd_depth > 0) return;
+        gv_rd_held_g = NULL;
+    }
     pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
 }
 
@@ -1739,10 +1761,10 @@ const GV_GraphNode *graph_get_node(const GV_GraphDB *g, uint64_t node_id)
 {
     if (!g) return NULL;
 
-    pthread_rwlock_rdlock((pthread_rwlock_t *)&g->rwlock);
+    graph_read_lock(g);
     NodeEntry *e = find_node_entry(g, node_id);
     const GV_GraphNode *result = e ? &e->node : NULL;
-    pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+    graph_read_unlock(g);
     return result;
 }
 
@@ -1777,14 +1799,14 @@ const char *graph_get_node_prop(const GV_GraphDB *g, uint64_t node_id,
 {
     if (!g || !key) return NULL;
 
-    pthread_rwlock_rdlock((pthread_rwlock_t *)&g->rwlock);
+    graph_read_lock(g);
     NodeEntry *e = find_node_entry(g, node_id);
     const char *result = NULL;
     if (e) {
         GV_GraphProp *p = find_prop(e->node.properties, key);
         if (p) result = prop_borrow_string(p);
     }
-    pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+    graph_read_unlock(g);
     return result;
 }
 
@@ -1793,7 +1815,7 @@ int graph_find_nodes_by_label(const GV_GraphDB *g, const char *label,
 {
     if (!g || !label || !out_ids) return -1;
 
-    pthread_rwlock_rdlock((pthread_rwlock_t *)&g->rwlock);
+    graph_read_lock(g);
 
     int count = 0;
     LabelEntry *le = find_label_entry(g, label);
@@ -1806,7 +1828,7 @@ int graph_find_nodes_by_label(const GV_GraphDB *g, const char *label,
         }
     }
 
-    pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+    graph_read_unlock(g);
     return (count > (int)max_count) ? (int)max_count : count;
 }
 
@@ -1927,10 +1949,10 @@ const GV_GraphEdge *graph_get_edge(const GV_GraphDB *g, uint64_t edge_id)
 {
     if (!g) return NULL;
 
-    pthread_rwlock_rdlock((pthread_rwlock_t *)&g->rwlock);
+    graph_read_lock(g);
     EdgeEntry *e = find_edge_entry(g, edge_id);
     const GV_GraphEdge *result = e ? &e->edge : NULL;
-    pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+    graph_read_unlock(g);
     return result;
 }
 
@@ -1965,14 +1987,14 @@ const char *graph_get_edge_prop(const GV_GraphDB *g, uint64_t edge_id,
 {
     if (!g || !key) return NULL;
 
-    pthread_rwlock_rdlock((pthread_rwlock_t *)&g->rwlock);
+    graph_read_lock(g);
     EdgeEntry *e = find_edge_entry(g, edge_id);
     const char *result = NULL;
     if (e) {
         GV_GraphProp *p = find_prop(e->edge.properties, key);
         if (p) result = prop_borrow_string(p);
     }
-    pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+    graph_read_unlock(g);
     return result;
 }
 
@@ -2153,13 +2175,13 @@ static GV_PropValue node_get_prop(const GV_GraphDB *g, uint64_t node_id,
 {
     GV_PropValue r = gv_prop_null();
     if (!g || !key) return r;
-    pthread_rwlock_rdlock((pthread_rwlock_t *)&g->rwlock);
+    graph_read_lock(g);
     NodeEntry *e = find_node_entry(g, node_id);
     if (e) {
         GV_GraphProp *p = find_prop(e->node.properties, key);
         if (p) r = p->value;
     }
-    pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+    graph_read_unlock(g);
     return r;
 }
 
@@ -2168,13 +2190,13 @@ static GV_PropValue edge_get_prop(const GV_GraphDB *g, uint64_t edge_id,
 {
     GV_PropValue r = gv_prop_null();
     if (!g || !key) return r;
-    pthread_rwlock_rdlock((pthread_rwlock_t *)&g->rwlock);
+    graph_read_lock(g);
     EdgeEntry *e = find_edge_entry(g, edge_id);
     if (e) {
         GV_GraphProp *p = find_prop(e->edge.properties, key);
         if (p) r = p->value;
     }
-    pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+    graph_read_unlock(g);
     return r;
 }
 
@@ -2225,7 +2247,7 @@ int graph_find_nodes_by_prop(const GV_GraphDB *g, const char *key,
                              uint64_t *out_ids, size_t max_count)
 {
     if (!g || !key || !out_ids) return -1;
-    pthread_rwlock_rdlock((pthread_rwlock_t *)&g->rwlock);
+    graph_read_lock(g);
     int count = 0;
     for (size_t b = 0; b < g->node_bucket_count; b++) {
         for (NodeEntry *e = g->node_buckets[b]; e; e = e->next) {
@@ -2237,7 +2259,7 @@ int graph_find_nodes_by_prop(const GV_GraphDB *g, const char *key,
             count++;
         }
     }
-    pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+    graph_read_unlock(g);
     return count;
 }
 
@@ -2246,11 +2268,11 @@ int graph_get_edges_out(const GV_GraphDB *g, uint64_t node_id,
 {
     if (!g || !out_ids) return -1;
 
-    pthread_rwlock_rdlock((pthread_rwlock_t *)&g->rwlock);
+    graph_read_lock(g);
 
     NodeEntry *e = find_node_entry(g, node_id);
     if (!e) {
-        pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+        graph_read_unlock(g);
         return -1;
     }
 
@@ -2260,7 +2282,7 @@ int graph_get_edges_out(const GV_GraphDB *g, uint64_t node_id,
         out_ids[i] = e->node.out_edges[i].edge_id;
     }
 
-    pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+    graph_read_unlock(g);
     return (int)n;
 }
 
@@ -2269,11 +2291,11 @@ int graph_get_edges_in(const GV_GraphDB *g, uint64_t node_id,
 {
     if (!g || !out_ids) return -1;
 
-    pthread_rwlock_rdlock((pthread_rwlock_t *)&g->rwlock);
+    graph_read_lock(g);
 
     NodeEntry *e = find_node_entry(g, node_id);
     if (!e) {
-        pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+        graph_read_unlock(g);
         return -1;
     }
 
@@ -2283,7 +2305,7 @@ int graph_get_edges_in(const GV_GraphDB *g, uint64_t node_id,
         out_ids[i] = e->node.in_edges[i].edge_id;
     }
 
-    pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+    graph_read_unlock(g);
     return (int)n;
 }
 
@@ -2292,18 +2314,18 @@ int graph_get_neighbors(const GV_GraphDB *g, uint64_t node_id,
 {
     if (!g || !out_ids) return -1;
 
-    pthread_rwlock_rdlock((pthread_rwlock_t *)&g->rwlock);
+    graph_read_lock(g);
 
     NodeEntry *e = find_node_entry(g, node_id);
     if (!e) {
-        pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+        graph_read_unlock(g);
         return -1;
     }
 
     size_t total_refs = e->node.out_count + e->node.in_count;
     VisitedSet seen;
     if (visited_init(&seen, total_refs > 16 ? total_refs * 2 : 32) != 0) {
-        pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+        graph_read_unlock(g);
         return -1;
     }
 
@@ -2322,7 +2344,7 @@ int graph_get_neighbors(const GV_GraphDB *g, uint64_t node_id,
     }
 
     visited_free(&seen);
-    pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+    graph_read_unlock(g);
     return count;
 }
 
@@ -2332,11 +2354,11 @@ int graph_get_out_neighbors_typed(const GV_GraphDB *g, uint64_t node_id,
 {
     if (!g || !out_ids) return -1;
 
-    pthread_rwlock_rdlock((pthread_rwlock_t *)&g->rwlock);
+    graph_read_lock(g);
 
     NodeEntry *e = find_node_entry(g, node_id);
     if (!e) {
-        pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+        graph_read_unlock(g);
         return -1;
     }
 
@@ -2350,7 +2372,7 @@ int graph_get_out_neighbors_typed(const GV_GraphDB *g, uint64_t node_id,
         out_ids[count++] = e->node.out_edges[i].neighbor_id;
     }
 
-    pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+    graph_read_unlock(g);
     return count;
 }
 
@@ -2359,10 +2381,10 @@ int graph_bfs(const GV_GraphDB *g, uint64_t start, size_t max_depth,
 {
     if (!g || !out_ids) return -1;
 
-    pthread_rwlock_rdlock((pthread_rwlock_t *)&g->rwlock);
+    graph_read_lock(g);
 
     if (!find_node_entry(g, start)) {
-        pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+        graph_read_unlock(g);
         return -1;
     }
 
@@ -2372,7 +2394,7 @@ int graph_bfs(const GV_GraphDB *g, uint64_t start, size_t max_depth,
     if (!q_ids || !q_depths) {
         gv_free(q_ids);
         gv_free(q_depths);
-        pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+        graph_read_unlock(g);
         return -1;
     }
 
@@ -2380,7 +2402,7 @@ int graph_bfs(const GV_GraphDB *g, uint64_t start, size_t max_depth,
     if (visited_init(&visited, queue_cap * 2) != 0) {
         gv_free(q_ids);
         gv_free(q_depths);
-        pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+        graph_read_unlock(g);
         return -1;
     }
 
@@ -2470,7 +2492,7 @@ bfs_done:
     visited_free(&visited);
     gv_free(q_ids);
     gv_free(q_depths);
-    pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+    graph_read_unlock(g);
 
     return (result_count > (int)max_count) ? (int)max_count : result_count;
 }
@@ -2511,17 +2533,17 @@ int graph_dfs(const GV_GraphDB *g, uint64_t start, size_t max_depth,
 {
     if (!g || !out_ids) return -1;
 
-    pthread_rwlock_rdlock((pthread_rwlock_t *)&g->rwlock);
+    graph_read_lock(g);
 
     if (!find_node_entry(g, start)) {
-        pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+        graph_read_unlock(g);
         return -1;
     }
 
     size_t vis_cap = g->node_count > 16 ? g->node_count * 2 : 32;
     VisitedSet visited;
     if (visited_init(&visited, vis_cap) != 0) {
-        pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+        graph_read_unlock(g);
         return -1;
     }
 
@@ -2530,7 +2552,7 @@ int graph_dfs(const GV_GraphDB *g, uint64_t start, size_t max_depth,
     dfs_recurse(g, start, 0, max_depth, &visited, out_ids, max_count, &count);
 
     visited_free(&visited);
-    pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+    graph_read_unlock(g);
 
     return (count > (int)max_count) ? (int)max_count : count;
 }
@@ -2542,10 +2564,10 @@ int graph_shortest_path(const GV_GraphDB *g, uint64_t from, uint64_t to,
 
     memset(path, 0, sizeof(GV_GraphPath));
 
-    pthread_rwlock_rdlock((pthread_rwlock_t *)&g->rwlock);
+    graph_read_lock(g);
 
     if (!find_node_entry(g, from) || !find_node_entry(g, to)) {
-        pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+        graph_read_unlock(g);
         return -1;
     }
 
@@ -2557,21 +2579,21 @@ int graph_shortest_path(const GV_GraphDB *g, uint64_t from, uint64_t to,
         path->edge_ids = NULL;
         path->length = 0;
         path->total_weight = 0.0f;
-        pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+        graph_read_unlock(g);
         return 0;
     }
 
     size_t cap = g->node_count > 16 ? g->node_count * 2 : 32;
     DistMap dm;
     if (distmap_init(&dm, cap) != 0) {
-        pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+        graph_read_unlock(g);
         return -1;
     }
 
     MinHeap heap;
     if (heap_init(&heap, cap) != 0) {
         distmap_free(&dm);
-        pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+        graph_read_unlock(g);
         return -1;
     }
 
@@ -2579,7 +2601,7 @@ int graph_shortest_path(const GV_GraphDB *g, uint64_t from, uint64_t to,
     if (visited_init(&finalized, cap) != 0) {
         distmap_free(&dm);
         heap_free(&heap);
-        pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+        graph_read_unlock(g);
         return -1;
     }
 
@@ -2627,7 +2649,7 @@ int graph_shortest_path(const GV_GraphDB *g, uint64_t from, uint64_t to,
         distmap_free(&dm);
         heap_free(&heap);
         visited_free(&finalized);
-        pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+        graph_read_unlock(g);
         return -1;
     }
 
@@ -2642,7 +2664,7 @@ int graph_shortest_path(const GV_GraphDB *g, uint64_t from, uint64_t to,
                 distmap_free(&dm);
                 heap_free(&heap);
                 visited_free(&finalized);
-                pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+                graph_read_unlock(g);
                 return -1;
             }
         }
@@ -2660,7 +2682,7 @@ int graph_shortest_path(const GV_GraphDB *g, uint64_t from, uint64_t to,
         distmap_free(&dm);
         heap_free(&heap);
         visited_free(&finalized);
-        pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+        graph_read_unlock(g);
         return -1;
     }
 
@@ -2678,7 +2700,7 @@ int graph_shortest_path(const GV_GraphDB *g, uint64_t from, uint64_t to,
     distmap_free(&dm);
     heap_free(&heap);
     visited_free(&finalized);
-    pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+    graph_read_unlock(g);
     return 0;
 }
 
@@ -2760,10 +2782,10 @@ int graph_all_paths(const GV_GraphDB *g, uint64_t from, uint64_t to,
 {
     if (!g || !paths) return -1;
 
-    pthread_rwlock_rdlock((pthread_rwlock_t *)&g->rwlock);
+    graph_read_lock(g);
 
     if (!find_node_entry(g, from) || !find_node_entry(g, to)) {
-        pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+        graph_read_unlock(g);
         return -1;
     }
 
@@ -2772,7 +2794,7 @@ int graph_all_paths(const GV_GraphDB *g, uint64_t from, uint64_t to,
     if (!node_stack || !edge_stack) {
         gv_free(node_stack);
         gv_free(edge_stack);
-        pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+        graph_read_unlock(g);
         return -1;
     }
 
@@ -2785,7 +2807,7 @@ int graph_all_paths(const GV_GraphDB *g, uint64_t from, uint64_t to,
 
     gv_free(node_stack);
     gv_free(edge_stack);
-    pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+    graph_read_unlock(g);
 
     return (path_count > (int)max_paths) ? (int)max_paths : path_count;
 }
@@ -2806,11 +2828,11 @@ float graph_pagerank(const GV_GraphDB *g, uint64_t node_id,
 {
     if (!g || iterations == 0) return 0.0f;
 
-    pthread_rwlock_rdlock((pthread_rwlock_t *)&g->rwlock);
+    graph_read_lock(g);
 
     size_t N = g->node_count;
     if (N == 0) {
-        pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+        graph_read_unlock(g);
         return 0.0f;
     }
 
@@ -2818,7 +2840,7 @@ float graph_pagerank(const GV_GraphDB *g, uint64_t node_id,
     uint64_t *all_ids = collect_all_node_ids(g, &id_count);
     if (!all_ids || id_count == 0) {
         gv_free(all_ids);
-        pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+        graph_read_unlock(g);
         return 0.0f;
     }
 
@@ -2832,7 +2854,7 @@ float graph_pagerank(const GV_GraphDB *g, uint64_t node_id,
     if (!map_keys || !map_occ || !map_idx || !scores || !new_scores) {
         gv_free(all_ids); gv_free(map_keys); gv_free(map_occ);
         gv_free(map_idx); gv_free(scores); gv_free(new_scores);
-        pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+        graph_read_unlock(g);
         return 0.0f;
     }
 
@@ -2897,37 +2919,37 @@ float graph_pagerank(const GV_GraphDB *g, uint64_t node_id,
     gv_free(map_idx);
     gv_free(scores);
     gv_free(new_scores);
-    pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+    graph_read_unlock(g);
     return result;
 }
 
 size_t graph_degree(const GV_GraphDB *g, uint64_t node_id)
 {
     if (!g) return 0;
-    pthread_rwlock_rdlock((pthread_rwlock_t *)&g->rwlock);
+    graph_read_lock(g);
     NodeEntry *e = find_node_entry(g, node_id);
     size_t deg = e ? (e->node.in_count + e->node.out_count) : 0;
-    pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+    graph_read_unlock(g);
     return deg;
 }
 
 size_t graph_in_degree(const GV_GraphDB *g, uint64_t node_id)
 {
     if (!g) return 0;
-    pthread_rwlock_rdlock((pthread_rwlock_t *)&g->rwlock);
+    graph_read_lock(g);
     NodeEntry *e = find_node_entry(g, node_id);
     size_t deg = e ? e->node.in_count : 0;
-    pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+    graph_read_unlock(g);
     return deg;
 }
 
 size_t graph_out_degree(const GV_GraphDB *g, uint64_t node_id)
 {
     if (!g) return 0;
-    pthread_rwlock_rdlock((pthread_rwlock_t *)&g->rwlock);
+    graph_read_lock(g);
     NodeEntry *e = find_node_entry(g, node_id);
     size_t deg = e ? e->node.out_count : 0;
-    pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+    graph_read_unlock(g);
     return deg;
 }
 
@@ -2936,22 +2958,22 @@ int graph_connected_components(const GV_GraphDB *g,
 {
     if (!g || !component_ids) return -1;
 
-    pthread_rwlock_rdlock((pthread_rwlock_t *)&g->rwlock);
+    graph_read_lock(g);
 
     size_t N = g->node_count;
     if (N == 0) {
-        pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+        graph_read_unlock(g);
         return 0;
     }
     if (max_count < N) {
-        pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+        graph_read_unlock(g);
         return -1;
     }
 
     size_t id_count = 0;
     uint64_t *all_ids = collect_all_node_ids(g, &id_count);
     if (!all_ids) {
-        pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+        graph_read_unlock(g);
         return -1;
     }
 
@@ -2966,7 +2988,7 @@ int graph_connected_components(const GV_GraphDB *g,
 
     if (!map_keys || !map_occ || !map_idx) {
         gv_free(all_ids); gv_free(map_keys); gv_free(map_occ); gv_free(map_idx);
-        pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+        graph_read_unlock(g);
         return -1;
     }
 
@@ -2986,7 +3008,7 @@ int graph_connected_components(const GV_GraphDB *g,
     uint64_t *queue = (uint64_t *)gv_alloc(id_count * sizeof(uint64_t));
     if (!queue) {
         gv_free(all_ids); gv_free(map_keys); gv_free(map_occ); gv_free(map_idx);
-        pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+        graph_read_unlock(g);
         return -1;
     }
 
@@ -3031,7 +3053,7 @@ int graph_connected_components(const GV_GraphDB *g,
     gv_free(map_occ);
     gv_free(map_idx);
     gv_free(queue);
-    pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+    graph_read_unlock(g);
     return (int)comp_id;
 }
 
@@ -3039,30 +3061,30 @@ float graph_clustering_coefficient(const GV_GraphDB *g, uint64_t node_id)
 {
     if (!g) return 0.0f;
 
-    pthread_rwlock_rdlock((pthread_rwlock_t *)&g->rwlock);
+    graph_read_lock(g);
 
     NodeEntry *ne = find_node_entry(g, node_id);
     if (!ne) {
-        pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+        graph_read_unlock(g);
         return 0.0f;
     }
 
     size_t total_refs = ne->node.out_count + ne->node.in_count;
     if (total_refs < 2) {
-        pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+        graph_read_unlock(g);
         return 0.0f;
     }
 
     uint64_t *neighbors = (uint64_t *)gv_alloc(total_refs * sizeof(uint64_t));
     if (!neighbors) {
-        pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+        graph_read_unlock(g);
         return 0.0f;
     }
 
     VisitedSet seen;
     if (visited_init(&seen, total_refs * 2 + 16) != 0) {
         gv_free(neighbors);
-        pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+        graph_read_unlock(g);
         return 0.0f;
     }
 
@@ -3083,14 +3105,14 @@ float graph_clustering_coefficient(const GV_GraphDB *g, uint64_t node_id)
 
     if (k < 2) {
         gv_free(neighbors);
-        pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+        graph_read_unlock(g);
         return 0.0f;
     }
 
     VisitedSet nbr_set;
     if (visited_init(&nbr_set, k * 3 + 16) != 0) {
         gv_free(neighbors);
-        pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+        graph_read_unlock(g);
         return 0.0f;
     }
     for (size_t i = 0; i < k; i++) {
@@ -3125,25 +3147,25 @@ float graph_clustering_coefficient(const GV_GraphDB *g, uint64_t node_id)
 
     visited_free(&nbr_set);
     gv_free(neighbors);
-    pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+    graph_read_unlock(g);
     return cc;
 }
 
 size_t graph_node_count(const GV_GraphDB *g)
 {
     if (!g) return 0;
-    pthread_rwlock_rdlock((pthread_rwlock_t *)&g->rwlock);
+    graph_read_lock(g);
     size_t count = g->node_count;
-    pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+    graph_read_unlock(g);
     return count;
 }
 
 size_t graph_edge_count(const GV_GraphDB *g)
 {
     if (!g) return 0;
-    pthread_rwlock_rdlock((pthread_rwlock_t *)&g->rwlock);
+    graph_read_lock(g);
     size_t count = g->edge_count;
-    pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+    graph_read_unlock(g);
     return count;
 }
 
@@ -3267,11 +3289,11 @@ int graph_save(const GV_GraphDB *g, const char *path)
 {
     if (!g || !path) return -1;
 
-    pthread_rwlock_rdlock((pthread_rwlock_t *)&g->rwlock);
+    graph_read_lock(g);
 
     FILE *f = fopen(path, "wb");
     if (!f) {
-        pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+        graph_read_unlock(g);
         return -1;
     }
 
@@ -3342,7 +3364,7 @@ int graph_save(const GV_GraphDB *g, const char *path)
         goto save_fail;
 
     fclose(f);
-    pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+    graph_read_unlock(g);
 
     /* Successful save of the attached snapshot makes the log redundant. */
     if (is_wal_base) {
@@ -3352,13 +3374,13 @@ int graph_save(const GV_GraphDB *g, const char *path)
             fflush(g->wal_file);
             fsync(fileno(g->wal_file));
         }
-        pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+        graph_read_unlock(g);
     }
     return 0;
 
 save_fail:
     fclose(f);
-    pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+    graph_read_unlock(g);
     return -1;
 }
 
@@ -3561,20 +3583,20 @@ load_fail:
 
 int graph_get_all_node_ids(const GV_GraphDB *g, uint64_t *out_ids, size_t max_count) {
     if (!g || !out_ids) return -1;
-    pthread_rwlock_rdlock((pthread_rwlock_t *)&g->rwlock);
+    graph_read_lock(g);
     if (g->node_count > max_count) {
-        pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+        graph_read_unlock(g);
         return -1;
     }
     size_t n = 0;
     uint64_t *ids = collect_all_node_ids(g, &n);
     if (!ids && n > 0) {
-        pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+        graph_read_unlock(g);
         return -1;
     }
     for (size_t i = 0; i < n; i++) out_ids[i] = ids[i];
     gv_free(ids);
-    pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
+    graph_read_unlock(g);
     return (int)n;
 }
 

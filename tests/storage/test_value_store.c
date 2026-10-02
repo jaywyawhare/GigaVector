@@ -8,12 +8,13 @@
 #include <stdint.h>
 
 #include "storage/value_store.h"
+#include "../test_tmp.h"
 
 static int failures = 0;
 #define ASSERT(c, m) do { if (!(c)) { printf("FAIL: %s\n", (m)); failures++; } \
                           else { printf("ok: %s\n", (m)); } } while (0)
 
-#define PATH "/tmp/gv_test_value_store.bin"
+static char PATH[512];
 
 static int get_eq(GV_ValueStore *vs, uint64_t key, const char *expect) {
     void *buf = NULL; size_t len = 0;
@@ -24,6 +25,7 @@ static int get_eq(GV_ValueStore *vs, uint64_t key, const char *expect) {
 }
 
 int main(void) {
+    gv_test_make_temp_path(PATH, sizeof(PATH), "gv_test_value_store", ".bin");
     remove(PATH);
 
     /* ---- put / get / update / delete ---- */

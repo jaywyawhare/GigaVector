@@ -300,7 +300,14 @@ if(BUILD_TESTS)
             get_filename_component(TEST_DIR ${TEST_DIR} NAME)
             set(TEST_NAME "${TEST_DIR}_${TEST_NAME}")
         endif()
-        if(WIN32 AND (TEST_NAME STREQUAL "repl_tcp" OR TEST_NAME STREQUAL "repl_tcp_fault"))
+        # These tests exercise the TCP RPC transports (sockets), which are
+        # in-process stubs on Windows/MinGW (no POSIX sockets), so they cannot
+        # pass there — skip them on WIN32, as with repl_tcp.
+        if(WIN32 AND (TEST_NAME STREQUAL "repl_tcp" OR TEST_NAME STREQUAL "repl_tcp_fault"
+                      OR TEST_NAME STREQUAL "shard_rpc" OR TEST_NAME STREQUAL "graph_rpc"
+                      OR TEST_NAME STREQUAL "cluster_membership"
+                      OR TEST_NAME STREQUAL "repl_raft" OR TEST_NAME STREQUAL "graph_distributed"
+                      OR TEST_NAME STREQUAL "backup_sink"))
             continue()
         endif()
         add_executable(test_${TEST_NAME} ${TEST_SRC})

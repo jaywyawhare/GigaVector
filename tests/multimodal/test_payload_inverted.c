@@ -6,6 +6,7 @@
 #include "multimodal/payload_inverted.h"
 #include "core/id_bitmap.h"
 #include "core/memory.h"
+#include "../test_tmp.h"
 
 #define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while(0)
 
@@ -158,7 +159,7 @@ static int test_persistence(void) {
 
     /* Save to a temp file */
     char path[256];
-    snprintf(path, sizeof(path), "/tmp/gv_inv_test_%d.bin", (int)getpid());
+    snprintf(path, sizeof(path), "%s/gv_inv_test_%d.bin", gv_test_tmp_root(), (int)getpid());
     FILE *f = fopen(path, "wb");
     ASSERT(f != NULL, "open file for write");
     ASSERT(payload_inverted_save(idx, f) == 0, "save");

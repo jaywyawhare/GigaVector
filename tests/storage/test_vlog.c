@@ -7,12 +7,13 @@
 #include <stdint.h>
 
 #include "storage/vlog.h"
+#include "../test_tmp.h"
 
 static int failures = 0;
 #define ASSERT(c, m) do { if (!(c)) { printf("FAIL: %s\n", (m)); failures++; } \
                           else { printf("ok: %s\n", (m)); } } while (0)
 
-#define PATH "/tmp/gv_test_vlog.bin"
+static char PATH[512];
 
 /* Liveness callback: live if the offset is present in a caller-supplied set. */
 typedef struct { const uint64_t *live; size_t n; } LiveSet;
@@ -23,6 +24,7 @@ static int live_in_set(uint64_t off, void *ctx) {
 }
 
 int main(void) {
+    gv_test_make_temp_path(PATH, sizeof(PATH), "gv_test_vlog", ".bin");
     remove(PATH);
 
     /* ---- append + read round-trip (incl. zero-length and large values) ---- */
