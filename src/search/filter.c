@@ -29,7 +29,9 @@ typedef enum {
     GV_FILTER_OP_IN,       /* field IN [v1, v2, ...] — set membership */
     GV_FILTER_OP_BETWEEN,  /* field BETWEEN lo AND hi — inclusive numeric range */
     GV_FILTER_OP_GEORADIUS, /* field GEORADIUS lat, lon, meters — great-circle radius */
-    GV_FILTER_OP_GEOBBOX    /* field GEOBBOX minLat, minLon, maxLat, maxLon — box */
+    GV_FILTER_OP_GEOBBOX,   /* field GEOBBOX minLat, minLon, maxLat, maxLon — box */
+    GV_FILTER_OP_ISNULL,    /* field IS NULL — payload key absent */
+    GV_FILTER_OP_ISNOTNULL  /* field IS NOT NULL — payload key present */
 } GV_FilterOp;
 
 typedef struct GV_FilterNode {
@@ -81,6 +83,8 @@ typedef enum {
     TOK_BETWEEN,
     TOK_GEORADIUS,
     TOK_GEOBBOX,
+    TOK_IS,
+    TOK_NULL,
     TOK_LBRACK,
     TOK_RBRACK,
     TOK_COMMA,
@@ -177,6 +181,10 @@ static GV_FilterToken filter_lexer_next(GV_Arena *arena, GV_FilterLexer *lx) {
             tok.type = TOK_GEORADIUS;
         } else if (filter_match_kw(text, len, "GEOBBOX")) {
             tok.type = TOK_GEOBBOX;
+        } else if (filter_match_kw(text, len, "IS")) {
+            tok.type = TOK_IS;
+        } else if (filter_match_kw(text, len, "NULL")) {
+            tok.type = TOK_NULL;
         } else {
             tok.type = TOK_IDENT;
             tok.text = text;
@@ -434,6 +442,20 @@ static GV_FilterNode *filter_parse_primary(GV_FilterParser *p) {
         return node;
     }
 
+    /* field IS NULL / field IS NOT NULL — payload key presence test. */
+    if (p->current.type == TOK_IS) {
+        filter_parser_advance(p);
+        int negate = 0;
+        if (p->current.type == TOK_NOT) { negate = 1; filter_parser_advance(p); }
+        if (p->current.type != TOK_NULL) return NULL;
+        filter_parser_advance(p);
+        GV_FilterNode *node = filter_node_new(p->arena, GV_FILTER_NODE_COMPARISON);
+        if (!node) return NULL;
+        node->key = key;
+        node->op = negate ? GV_FILTER_OP_ISNOTNULL : GV_FILTER_OP_ISNULL;
+        return node;
+    }
+
     GV_FilterOp op;
     if (p->current.type == TOK_EQ) {
         op = GV_FILTER_OP_EQ;
@@ -620,6 +642,14 @@ static int filter_eval_node(const GV_FilterNode *node, const GV_Vector *vector) 
     }
     case GV_FILTER_NODE_COMPARISON: {
         const char *meta_val = vector_get_metadata(vector, node->key);
+        /* Presence tests must run before the missing-key early return: a key is
+         * NULL when absent or stored as an empty string. */
+        if (node->op == GV_FILTER_OP_ISNULL) {
+            return (!meta_val || meta_val[0] == '\0') ? 1 : 0;
+        }
+        if (node->op == GV_FILTER_OP_ISNOTNULL) {
+            return (meta_val && meta_val[0] != '\0') ? 1 : 0;
+        }
         if (!meta_val) {
             return 0;
         }

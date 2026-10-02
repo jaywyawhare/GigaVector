@@ -239,6 +239,26 @@ static int test_filter_geobbox_operator(void) {
     return 0;
 }
 
+static int test_filter_is_null_operator(void) {
+    GV_Filter *fnull = filter_parse("optional IS NULL");
+    ASSERT(fnull != NULL, "parse IS NULL");
+    GV_Filter *fnn = filter_parse("name IS NOT NULL");
+    ASSERT(fnn != NULL, "parse IS NOT NULL");
+    float d[2] = {1.0f, 2.0f};
+    GV_Vector *v = vector_create_from_data(2, d);
+    ASSERT(vector_set_metadata(v, "name", "Alice") == 0, "set name");
+    /* "optional" absent -> IS NULL true, IS NOT NULL (on name) true */
+    ASSERT(filter_eval(fnull, v) == 1, "absent key IS NULL");
+    ASSERT(filter_eval(fnn, v) == 1, "present key IS NOT NULL");
+    /* now give optional a value -> IS NULL false */
+    ASSERT(vector_set_metadata(v, "optional", "x") == 0, "set optional");
+    ASSERT(filter_eval(fnull, v) == 0, "present key not IS NULL");
+    vector_destroy(v);
+    filter_destroy(fnull);
+    filter_destroy(fnn);
+    return 0;
+}
+
 int main(void) {
     int rc = 0;
     rc |= test_filter_parse_simple();
@@ -257,6 +277,7 @@ int main(void) {
     rc |= test_filter_between_operator();
     rc |= test_filter_georadius_operator();
     rc |= test_filter_geobbox_operator();
+    rc |= test_filter_is_null_operator();
     rc |= test_filter_destroy_null();
     return rc;
 }
