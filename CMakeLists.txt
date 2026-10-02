@@ -303,9 +303,10 @@ if(BUILD_TESTS)
         # TCP server/RPC tests: in-process stubs on Windows (no POSIX sockets),
         # and on macOS their server stop-path hangs because BSD shutdown() does
         # not unblock a blocked accept(). Covered on Linux; skip on both.
-        set(GV_SOCKET_TESTS repl_tcp repl_tcp_fault shard_rpc graph_rpc
-                            cluster_membership repl_raft graph_distributed grpc)
-        if((WIN32 OR APPLE) AND (TEST_NAME IN_LIST GV_SOCKET_TESTS))
+        if((WIN32 OR APPLE) AND (TEST_NAME STREQUAL "repl_tcp" OR TEST_NAME STREQUAL "repl_tcp_fault"
+                      OR TEST_NAME STREQUAL "shard_rpc" OR TEST_NAME STREQUAL "graph_rpc"
+                      OR TEST_NAME STREQUAL "cluster_membership" OR TEST_NAME STREQUAL "repl_raft"
+                      OR TEST_NAME STREQUAL "graph_distributed" OR TEST_NAME STREQUAL "grpc"))
             continue()
         endif()
         # backup_sink drives a POSIX shell command (cp); skip on Windows only.
