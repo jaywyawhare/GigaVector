@@ -46,5 +46,23 @@ class TestSchema(unittest.TestCase):
         self.assertTrue(s.has_field("name"))
 
 
+class TestHybridSearch(unittest.TestCase):
+    def test_dense_sparse_fusion(self) -> None:
+        db = gv.Database.open(None, dimension=3, index=gv.IndexType.FLAT)
+        docs = {0: "the quick brown fox", 1: "lazy dog sleeps", 2: "quick fox runs fast"}
+        vecs = {0: [1.0, 0.0, 0.0], 1: [0.0, 1.0, 0.0], 2: [0.9, 0.1, 0.0]}
+        for i in sorted(docs):
+            db.add_vector(vecs[i])
+        bm = gv.BM25Index()
+        for i in sorted(docs):
+            bm.add_document(i, docs[i])
+        hs = gv.HybridSearcher(db, bm)
+        res = hs.search(query_vector=[1.0, 0.0, 0.0], query_text="quick fox", k=3)
+        self.assertEqual(len(res), 3)
+        # Doc 0 matches both the query vector and the text best -> ranks first.
+        self.assertEqual(res[0].vector_index, 0)
+        self.assertGreater(res[0].combined_score, res[1].combined_score)
+
+
 if __name__ == "__main__":
     unittest.main()
