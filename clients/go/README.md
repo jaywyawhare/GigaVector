@@ -1,39 +1,60 @@
-# GigaVector Go client
+# GigaVector Go client (embedded)
 
-A small Go SDK for the GigaVector HTTP (REST) API.
+An idiomatic Go binding for GigaVector. It links the GigaVector C library
+directly via cgo, so it runs **embedded** in your process — no server required.
+
+## Requirements
+
+- Go 1.21+
+- A compiled GigaVector C library. From the repository root:
+
+  ```sh
+  make lib
+  ```
+
+## Usage
 
 ```go
-import "gigavector"
+import gv "github.com/jaywyawhare/GigaVector/clients/go"
 
-c := gigavector.New("http://localhost:8080", gigavector.WithAPIKey("secret"))
-
-if _, err := c.AddVector([]float32{1, 0, 0, 0}, map[string]string{"tag": "a"}); err != nil {
+db, err := gv.Open("", 4, gv.IndexFlat) // "" => in-memory
+if err != nil {
     log.Fatal(err)
 }
+defer db.Close()
 
-results, err := c.Search([]float32{1, 0, 0, 0}, 5, gigavector.Cosine)
-for _, r := range results {
-    fmt.Println(r.ID, r.Distance)
+_ = db.AddVector([]float32{1, 0, 0, 0})
+_ = db.AddVectorWithMetadata([]float32{0, 1, 0, 0}, "color", "blue")
+
+hits, _ := db.Search([]float32{1, 0, 0, 0}, 2, gv.Euclidean)
+for _, h := range hits {
+    fmt.Printf("id=%d distance=%.4f\n", h.ID, h.Distance)
 }
 ```
 
-## Auth
+## Building & testing
 
-Pass `WithAPIKey(key)` — it is sent as the `X-API-Key` header. When the server is
-started without an API key it runs read-only (or, with `GV_ALLOW_UNAUTH=1`,
-allows unauthenticated writes for local development).
-
-## Testing
-
-Unit tests run against an in-process mock and need no server:
+The cgo directives in `gigavector.go` locate the headers (`../../include`) and
+shared library (`../../build/lib`) relative to this package. Point the loader at
+the library at run time:
 
 ```sh
-go test ./...
+cd clients/go
+LD_LIBRARY_PATH=../../build/lib go test ./...
 ```
 
-To run the end-to-end test against a real `gvserver`:
+If your layout differs, override `CGO_CFLAGS` / `CGO_LDFLAGS` and
+`LD_LIBRARY_PATH` accordingly.
 
-```sh
-docker run -d -p 8080:8080 -e GV_DIMENSION=8 -e GV_INDEX=flat -e GV_ALLOW_UNAUTH=1 gigavector
-GIGAVECTOR_TEST_ADDR=http://localhost:8080 go test -run TestIntegration ./...
-```
+## Supported API
+
+| Method                     | Description                              |
+| -------------------------- | ---------------------------------------- |
+| `Open`                     | Open/create a database (in-memory or on disk) |
+| `Close`                    | Release the database                     |
+| `AddVector`                | Insert a vector                          |
+| `AddVectorWithMetadata`    | Insert a vector with a key/value pair    |
+| `Search`                   | k-nearest-neighbour search (Euclidean / Cosine / DotProduct / Manhattan) |
+
+This is the first non-Python client. A network client against the REST/gRPC
+server can be layered on the same package later.

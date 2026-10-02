@@ -1,173 +1,153 @@
-// Package gigavector is a Go client for the GigaVector HTTP (REST) API.
+// Package gigavector is an embedded Go client for GigaVector: it links the
+// GigaVector C library directly via cgo (no server required) and exposes an
+// idiomatic Go API over the core vector database.
 //
-// Example:
+// Build/test requires the compiled C library. From the repository root:
 //
-//	c := gigavector.New("http://localhost:8080", gigavector.WithAPIKey("secret"))
-//	if _, err := c.AddVector([]float32{1, 0, 0, 0}, map[string]string{"tag": "a"}); err != nil {
-//	    log.Fatal(err)
-//	}
-//	res, err := c.Search([]float32{1, 0, 0, 0}, 5, gigavector.Euclidean)
+//	make lib
+//	cd clients/go && go test ./...
+//
+// The cgo directives below locate the headers and shared library relative to
+// this package; set CGO_LDFLAGS / LD_LIBRARY_PATH if your layout differs.
 package gigavector
 
+/*
+#cgo CFLAGS: -I${SRCDIR}/../../include
+#cgo LDFLAGS: -L${SRCDIR}/../../build/lib -lGigaVector -lm
+#include <stdlib.h>
+#include "storage/database.h"
+#include "search/distance.h"
+#include "core/types.h"
+*/
+import "C"
+
 import (
-	"bytes"
-	"encoding/json"
-	"fmt"
-	"io"
-	"net/http"
-	"time"
+	"errors"
+	"runtime"
+	"unsafe"
 )
 
-// Distance metrics accepted by the server.
+// IndexType selects the vector index implementation.
+type IndexType int
+
 const (
-	Euclidean  = "euclidean"
-	Cosine     = "cosine"
-	DotProduct = "dot_product"
-	Manhattan  = "manhattan"
-	Hamming    = "hamming"
+	IndexKDTree IndexType = C.GV_INDEX_TYPE_KDTREE
+	IndexHNSW   IndexType = C.GV_INDEX_TYPE_HNSW
+	IndexIVFPQ  IndexType = C.GV_INDEX_TYPE_IVFPQ
+	IndexFlat   IndexType = C.GV_INDEX_TYPE_FLAT
 )
 
-// Client talks to a GigaVector server.
-type Client struct {
-	baseURL string
-	apiKey  string
-	http    *http.Client
+// Distance selects the similarity metric used by Search.
+type Distance int
+
+const (
+	Euclidean  Distance = C.GV_DISTANCE_EUCLIDEAN
+	Cosine     Distance = C.GV_DISTANCE_COSINE
+	DotProduct Distance = C.GV_DISTANCE_DOT_PRODUCT
+	Manhattan  Distance = C.GV_DISTANCE_MANHATTAN
+)
+
+// DB is a handle to an open GigaVector database.
+type DB struct {
+	ptr *C.GV_Database
+	dim int
 }
 
-// Option configures a Client.
-type Option func(*Client)
-
-// WithAPIKey sets the API key sent as the X-API-Key header.
-func WithAPIKey(key string) Option { return func(c *Client) { c.apiKey = key } }
-
-// WithHTTPClient overrides the underlying *http.Client.
-func WithHTTPClient(h *http.Client) Option { return func(c *Client) { c.http = h } }
-
-// New creates a client for the server at baseURL (e.g. "http://localhost:8080").
-func New(baseURL string, opts ...Option) *Client {
-	c := &Client{baseURL: baseURL, http: &http.Client{Timeout: 30 * time.Second}}
-	for _, o := range opts {
-		o(c)
-	}
-	return c
+// SearchResult is one hit returned by Search.
+type SearchResult struct {
+	ID       uint64
+	Distance float32
 }
 
-// APIError is returned for non-2xx responses.
-type APIError struct {
-	Status  int
-	Code    string `json:"error"`
-	Message string `json:"message"`
+// ErrClosed is returned when operating on a closed database.
+var ErrClosed = errors.New("gigavector: database is closed")
+
+// Open opens (or creates) a database. Pass path == "" for an in-memory database.
+func Open(path string, dimension int, index IndexType) (*DB, error) {
+	var cpath *C.char
+	if path != "" {
+		cpath = C.CString(path)
+		defer C.free(unsafe.Pointer(cpath))
+	}
+	ptr := C.db_open(cpath, C.size_t(dimension), C.GV_IndexType(index))
+	if ptr == nil {
+		return nil, errors.New("gigavector: db_open failed")
+	}
+	db := &DB{ptr: ptr, dim: dimension}
+	runtime.SetFinalizer(db, (*DB).Close)
+	return db, nil
 }
 
-func (e *APIError) Error() string {
-	return fmt.Sprintf("gigavector: %d %s: %s", e.Status, e.Code, e.Message)
-}
-
-func (c *Client) do(method, path string, reqBody, respOut any) error {
-	var body io.Reader
-	if reqBody != nil {
-		b, err := json.Marshal(reqBody)
-		if err != nil {
-			return err
-		}
-		body = bytes.NewReader(b)
-	}
-	req, err := http.NewRequest(method, c.baseURL+path, body)
-	if err != nil {
-		return err
-	}
-	if reqBody != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	if c.apiKey != "" {
-		req.Header.Set("X-API-Key", c.apiKey)
-	}
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return err
-	}
-	if resp.StatusCode >= 400 {
-		apiErr := &APIError{Status: resp.StatusCode}
-		_ = json.Unmarshal(data, apiErr) // best effort
-		return apiErr
-	}
-	if respOut != nil && len(data) > 0 {
-		return json.Unmarshal(data, respOut)
+// Close releases the database. Safe to call more than once.
+func (db *DB) Close() error {
+	if db.ptr != nil {
+		C.db_close(db.ptr)
+		db.ptr = nil
+		runtime.SetFinalizer(db, nil)
 	}
 	return nil
 }
 
-// Health is the server's health snapshot.
-type Health struct {
-	Status      string `json:"status"`
-	VectorCount int    `json:"vector_count"`
-}
-
-// Health returns the server health.
-func (c *Client) Health() (*Health, error) {
-	var h Health
-	if err := c.do(http.MethodGet, "/health", nil, &h); err != nil {
-		return nil, err
+func (db *DB) cvec(v []float32) *C.float {
+	if len(v) == 0 {
+		return nil
 	}
-	return &h, nil
+	return (*C.float)(unsafe.Pointer(&v[0]))
 }
 
-// AddResponse is the result of adding vectors.
-type AddResponse struct {
-	Success  bool  `json:"success"`
-	Inserted int   `json:"inserted"`
-	Indices  []int `json:"indices"`
-}
-
-// AddVector inserts a single vector with optional metadata.
-func (c *Client) AddVector(data []float32, metadata map[string]string) (*AddResponse, error) {
-	body := map[string]any{"data": data}
-	if len(metadata) > 0 {
-		body["metadata"] = metadata
+// AddVector inserts a vector. Its length must equal the database dimension.
+func (db *DB) AddVector(vec []float32) error {
+	if db.ptr == nil {
+		return ErrClosed
 	}
-	var out AddResponse
-	if err := c.do(http.MethodPost, "/vectors", body, &out); err != nil {
-		return nil, err
+	if len(vec) != db.dim {
+		return errors.New("gigavector: vector length does not match dimension")
 	}
-	return &out, nil
+	if rc := C.db_add_vector(db.ptr, db.cvec(vec), C.size_t(len(vec))); rc != 0 {
+		return errors.New("gigavector: db_add_vector failed")
+	}
+	return nil
 }
 
-// SearchResult is one neighbour returned by Search.
-type SearchResult struct {
-	ID       int       `json:"id"`
-	Distance float64   `json:"distance"`
-	Data     []float32 `json:"data"`
+// AddVectorWithMetadata inserts a vector with a single key/value metadata pair.
+func (db *DB) AddVectorWithMetadata(vec []float32, key, value string) error {
+	if db.ptr == nil {
+		return ErrClosed
+	}
+	if len(vec) != db.dim {
+		return errors.New("gigavector: vector length does not match dimension")
+	}
+	ckey, cval := C.CString(key), C.CString(value)
+	defer C.free(unsafe.Pointer(ckey))
+	defer C.free(unsafe.Pointer(cval))
+	if rc := C.db_add_vector_with_metadata(db.ptr, db.cvec(vec), C.size_t(len(vec)), ckey, cval); rc != 0 {
+		return errors.New("gigavector: db_add_vector_with_metadata failed")
+	}
+	return nil
 }
 
-type searchResponse struct {
-	Results []SearchResult `json:"results"`
-	Count   int            `json:"count"`
-}
-
-// Search returns the k nearest neighbours of query using the given distance
-// metric (use the package constants; "" defaults to Euclidean).
-func (c *Client) Search(query []float32, k int, distance string) ([]SearchResult, error) {
-	if distance == "" {
-		distance = Euclidean
+// Search returns the k nearest neighbours of query under the given metric.
+func (db *DB) Search(query []float32, k int, metric Distance) ([]SearchResult, error) {
+	if db.ptr == nil {
+		return nil, ErrClosed
 	}
-	body := map[string]any{"query": query, "k": k, "distance": distance}
-	var out searchResponse
-	if err := c.do(http.MethodPost, "/search", body, &out); err != nil {
-		return nil, err
+	if len(query) != db.dim {
+		return nil, errors.New("gigavector: query length does not match dimension")
 	}
-	return out.Results, nil
-}
-
-// Stats returns raw server statistics as a decoded JSON object.
-func (c *Client) Stats() (map[string]any, error) {
-	var out map[string]any
-	if err := c.do(http.MethodGet, "/stats", nil, &out); err != nil {
-		return nil, err
+	if k <= 0 {
+		return nil, nil
 	}
-	return out, nil
+	out := make([]C.GV_SearchResult, k)
+	found := C.db_search(db.ptr, db.cvec(query), C.size_t(k), &out[0], C.GV_DistanceType(metric))
+	if found < 0 {
+		return nil, errors.New("gigavector: db_search failed")
+	}
+	results := make([]SearchResult, int(found))
+	for i := 0; i < int(found); i++ {
+		results[i] = SearchResult{
+			ID:       uint64(out[i].id),
+			Distance: float32(out[i].distance),
+		}
+	}
+	return results, nil
 }

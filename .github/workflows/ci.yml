@@ -552,3 +552,38 @@ jobs:
         with:
           name: clang-tidy-report
           path: clang-tidy-report.txt
+
+  # ── Go client (cgo, embedded; Linux only) ─────────────────────────────
+  go-client:
+    name: Go client (cgo)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4.2.2
+
+      - name: Install dependencies
+        timeout-minutes: 10
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            libcurl4-openssl-dev \
+            libssl-dev \
+            libmicrohttpd-dev
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.21"
+
+      - name: Build C library
+        run: make lib
+
+      - name: Build and test Go client
+        working-directory: clients/go
+        env:
+          LD_LIBRARY_PATH: ${{ github.workspace }}/build/lib
+        run: |
+          go vet ./...
+          go test -v ./...
