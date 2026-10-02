@@ -66,6 +66,7 @@
 #include "multimodal/inference.h"
 #include "multimodal/late_interaction.h"
 #include "multimodal/learned_sparse.h"
+#include "multimodal/splade.h"
 #include "multimodal/llm.h"
 #include "multimodal/metadata_index.h"
 #include "multimodal/multimodal.h"
