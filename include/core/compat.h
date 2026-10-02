@@ -271,9 +271,11 @@ static inline int gv_rand_r(unsigned int *seed) {
 #endif
 static inline long gv_get_cpu_count(void) {
 #ifdef _WIN32
-    SYSTEM_INFO si;
-    GetSystemInfo(&si);
-    long ncpu = (long)si.dwNumberOfProcessors;
+    /* Report a single CPU on Windows so the graph-algorithm thread pools
+     * (triangle count, etc.) run serially. Their create-N-1-threads+join pattern
+     * hangs under MinGW winpthreads in CI; the serial path is correct, and
+     * Windows is not a throughput target. */
+    long ncpu = 1;
 #elif defined(_SC_NPROCESSORS_ONLN)
     long ncpu = sysconf(_SC_NPROCESSORS_ONLN);
 #else

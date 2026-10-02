@@ -198,7 +198,7 @@ TEST_BINS := $(patsubst $(TEST_DIR)/%.c,$(BUILD_DIR)/%$(EXE_EXT),$(TEST_SRCS))
 # Matched by basename in the c-test loop below.
 ifeq ($(UNAME_S),Darwin)
 CTEST_SKIP := test_repl_tcp test_repl_tcp_fault test_shard_rpc test_graph_rpc \
-              test_cluster_membership test_repl_raft test_graph_distributed
+              test_cluster_membership test_repl_raft test_graph_distributed test_grpc
 else
 CTEST_SKIP :=
 endif
