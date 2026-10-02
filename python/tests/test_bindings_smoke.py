@@ -64,6 +64,34 @@ class TestHybridSearch(unittest.TestCase):
         self.assertGreater(res[0].combined_score, res[1].combined_score)
 
 
+class TestFullText(unittest.TestCase):
+    def test_index_and_search(self) -> None:
+        idx = gv.FTIndex()
+        corpus = {
+            1: "the quick brown fox jumps",
+            2: "a lazy dog sleeps all day",
+            3: "quick foxes are clever animals",
+        }
+        for doc_id, text in corpus.items():
+            idx.add_document(doc_id, text)
+        hits = idx.search("quick fox", 5)
+        found = {h.doc_id for h in hits}
+        # Both docs mentioning quick/fox should match; the lazy-dog doc should not.
+        self.assertIn(1, found)
+        self.assertNotIn(2, found)
+
+
+class TestRBAC(unittest.TestCase):
+    def test_role_grant_and_check(self) -> None:
+        m = gv.RBACManager()
+        m.create_role("reader")
+        m.add_rule("reader", "collection:docs", int(gv.Permission.READ))
+        m.assign_role("alice", "reader")
+        self.assertTrue(m.check("alice", "collection:docs", gv.Permission.READ))
+        # An unassigned user is denied.
+        self.assertFalse(m.check("bob", "collection:docs", gv.Permission.READ))
+
+
 class TestQuantization(unittest.TestCase):
     def test_train_encode_distance(self) -> None:
         import random
