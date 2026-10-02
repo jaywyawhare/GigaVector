@@ -221,6 +221,24 @@ static int test_filter_georadius_operator(void) {
     return 0;
 }
 
+static int test_filter_geobbox_operator(void) {
+    /* Box roughly covering the SF Bay Area. */
+    GV_Filter *filter = filter_parse("loc GEOBBOX 37.0, -123.0, 38.5, -121.5");
+    ASSERT(filter != NULL, "parse GEOBBOX filter");
+    float d[2] = {1.0f, 2.0f};
+    GV_Vector *v = vector_create_from_data(2, d);
+    ASSERT(vector_set_metadata(v, "loc", "37.7749,-122.4194") == 0, "set inside loc");
+    ASSERT(filter_eval(filter, v) == 1, "GEOBBOX matches point inside box");
+    ASSERT(vector_set_metadata(v, "loc", "34.0522,-118.2437") == 0, "set outside loc");
+    ASSERT(filter_eval(filter, v) == 0, "GEOBBOX excludes point outside box");
+    vector_destroy(v);
+    filter_destroy(filter);
+    /* reversed bounds are rejected at parse time */
+    GV_Filter *bad = filter_parse("loc GEOBBOX 38.5, -121.5, 37.0, -123.0");
+    ASSERT(bad == NULL, "GEOBBOX rejects min > max");
+    return 0;
+}
+
 int main(void) {
     int rc = 0;
     rc |= test_filter_parse_simple();
@@ -238,6 +256,7 @@ int main(void) {
     rc |= test_filter_in_operator();
     rc |= test_filter_between_operator();
     rc |= test_filter_georadius_operator();
+    rc |= test_filter_geobbox_operator();
     rc |= test_filter_destroy_null();
     return rc;
 }

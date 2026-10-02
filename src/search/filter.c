@@ -28,7 +28,8 @@ typedef enum {
     GV_FILTER_OP_PREFIX,
     GV_FILTER_OP_IN,       /* field IN [v1, v2, ...] — set membership */
     GV_FILTER_OP_BETWEEN,  /* field BETWEEN lo AND hi — inclusive numeric range */
-    GV_FILTER_OP_GEORADIUS /* field GEORADIUS lat, lon, meters — great-circle radius */
+    GV_FILTER_OP_GEORADIUS, /* field GEORADIUS lat, lon, meters — great-circle radius */
+    GV_FILTER_OP_GEOBBOX    /* field GEOBBOX minLat, minLon, maxLat, maxLon — box */
 } GV_FilterOp;
 
 typedef struct GV_FilterNode {
@@ -40,7 +41,8 @@ typedef struct GV_FilterNode {
     char *value;
     double numeric_value;
     double numeric_value2;        /* upper bound for BETWEEN; center lon for GEORADIUS */
-    double numeric_value3;        /* radius in meters for GEORADIUS */
+    double numeric_value3;        /* radius for GEORADIUS; max lat for GEOBBOX */
+    double numeric_value4;        /* max lon for GEOBBOX */
     char **values;               /* arena-allocated list for IN */
     size_t n_values;
     int is_numeric;
@@ -78,6 +80,7 @@ typedef enum {
     TOK_IN,
     TOK_BETWEEN,
     TOK_GEORADIUS,
+    TOK_GEOBBOX,
     TOK_LBRACK,
     TOK_RBRACK,
     TOK_COMMA,
@@ -172,6 +175,8 @@ static GV_FilterToken filter_lexer_next(GV_Arena *arena, GV_FilterLexer *lx) {
             tok.type = TOK_BETWEEN;
         } else if (filter_match_kw(text, len, "GEORADIUS")) {
             tok.type = TOK_GEORADIUS;
+        } else if (filter_match_kw(text, len, "GEOBBOX")) {
+            tok.type = TOK_GEOBBOX;
         } else {
             tok.type = TOK_IDENT;
             tok.text = text;
@@ -398,6 +403,33 @@ static GV_FilterNode *filter_parse_primary(GV_FilterParser *p) {
         node->numeric_value = nums[0];   /* center lat  */
         node->numeric_value2 = nums[1];  /* center lon  */
         node->numeric_value3 = nums[2];  /* radius (m)  */
+        node->is_numeric = 1;
+        return node;
+    }
+
+    /* field GEOBBOX minLat, minLon, maxLat, maxLon — the field stores "lat,lon"
+     * and matches when the point falls inside the axis-aligned box. */
+    if (p->current.type == TOK_GEOBBOX) {
+        filter_parser_advance(p);
+        double nums[4];
+        for (int i = 0; i < 4; i++) {
+            if (p->current.type != TOK_NUMBER) return NULL;
+            nums[i] = strtod(p->current.text, NULL);
+            filter_parser_advance(p);
+            if (i < 3) {
+                if (p->current.type != TOK_COMMA) return NULL;
+                filter_parser_advance(p);
+            }
+        }
+        if (nums[0] > nums[2] || nums[1] > nums[3]) return NULL; /* min must be <= max */
+        GV_FilterNode *node = filter_node_new(p->arena, GV_FILTER_NODE_COMPARISON);
+        if (!node) return NULL;
+        node->key = key;
+        node->op = GV_FILTER_OP_GEOBBOX;
+        node->numeric_value = nums[0];   /* min lat */
+        node->numeric_value2 = nums[1];  /* min lon */
+        node->numeric_value3 = nums[2];  /* max lat */
+        node->numeric_value4 = nums[3];  /* max lon */
         node->is_numeric = 1;
         return node;
     }
@@ -629,6 +661,18 @@ static int filter_eval_node(const GV_FilterNode *node, const GV_Vector *vector) 
                            sin(dlon / 2) * sin(dlon / 2);
             double dist = 2.0 * R * atan2(sqrt(a), sqrt(1.0 - a));
             return dist <= node->numeric_value3 ? 1 : 0;
+        }
+        if (node->op == GV_FILTER_OP_GEOBBOX) {
+            /* meta_val is "lat,lon"; match if inside [minLat,maxLat]x[minLon,maxLon]. */
+            char *e1 = NULL;
+            double lat = strtod(meta_val, &e1);
+            if (e1 == meta_val || *e1 != ',') return 0;
+            char *e2 = NULL;
+            double lon = strtod(e1 + 1, &e2);
+            if (e2 == e1 + 1) return 0;
+            return (lat >= node->numeric_value && lat <= node->numeric_value3 &&
+                    lon >= node->numeric_value2 && lon <= node->numeric_value4)
+                       ? 1 : 0;
         }
         if (node->op == GV_FILTER_OP_CONTAINS) {
             if (!node->value) return 0;
