@@ -552,6 +552,19 @@ static Opd *parse_atom_impl(Lex *lx) {
             o->k = OPD_TYPE; o->var = gv_dup_cstr(adv(lx)->s); adv(lx); gv_free(fn); return o;
         }
         o->k = OPD_FUNC; o->fname = fn;
+        /* list predicate: any/all/none/single ( var IN listExpr WHERE pred ) —
+         * reuses the list-comprehension fields (lcvar/lclist/lcwhere). */
+        if ((strcasecmp(fn, "any") == 0 || strcasecmp(fn, "all") == 0 ||
+             strcasecmp(fn, "none") == 0 || strcasecmp(fn, "single") == 0) &&
+            pk(lx)->t == T_IDENT && lx->pos + 1 < lx->n && kw(&lx->v[lx->pos + 1], "in")) {
+            o->lcvar = gv_dup_cstr(adv(lx)->s);
+            adv(lx); /* IN */
+            o->lclist = parse_add(lx);
+            if (!o->lclist) { opd_clear(o); gv_free(o); return NULL; }
+            if (kw(pk(lx), "where")) { adv(lx); o->lcwhere = parse_or(lx); if (!o->lcwhere) { opd_clear(o); gv_free(o); return NULL; } }
+            if (eat(lx, T_RP, "')'")) { opd_clear(o); gv_free(o); return NULL; }
+            return o;
+        }
         if (pk(lx)->t == T_STAR) adv(lx); /* count(*)-like inside expr: ignore arg */
         while (pk(lx)->t != T_RP && pk(lx)->t != T_EOF) {
             Opd *a = parse_add(lx);
@@ -1278,6 +1291,25 @@ static char *val_of(GV_KnowledgeGraph *kg, const Opd *o, const Row *row) {
             const char *fn = o->fname;
             char *a0 = o->nargs > 0 ? val_of(kg, o->args[0], row) : gv_dup_cstr("");
             char *res = NULL;
+            /* list predicates any/all/none/single (var IN list WHERE pred) */
+            if (o->lclist && (strcasecmp(fn, "any") == 0 || strcasecmp(fn, "all") == 0 ||
+                              strcasecmp(fn, "none") == 0 || strcasecmp(fn, "single") == 0)) {
+                char *lv = val_of(kg, o->lclist, row);
+                char **e; size_t n = cy_list_split(lv, &e); gv_free(lv);
+                size_t matches = 0;
+                for (size_t i = 0; i < n; i++) {
+                    Row tmp = row_copy(row); row_bind_val(&tmp, o->lcvar, e[i]);
+                    if (o->lcwhere ? eval_expr(kg, o->lcwhere, &tmp) : 1) matches++;
+                    row_free(&tmp); gv_free(e[i]);
+                }
+                gv_free(e);
+                int r = strcasecmp(fn, "any") == 0 ? (matches > 0)
+                      : strcasecmp(fn, "all") == 0 ? (matches == n)
+                      : strcasecmp(fn, "none") == 0 ? (matches == 0)
+                      : (matches == 1); /* single */
+                gv_free(a0);
+                return gv_dup_cstr(r ? "true" : "false");
+            }
             if (strcasecmp(fn, "toupper") == 0) { for (char *p = a0; *p; p++) *p = (char)toupper((unsigned char)*p); res = a0; a0 = NULL; }
             else if (strcasecmp(fn, "tolower") == 0) { for (char *p = a0; *p; p++) *p = (char)tolower((unsigned char)*p); res = a0; a0 = NULL; }
             else if (strcasecmp(fn, "trim") == 0) { char *s = a0; while (*s && isspace((unsigned char)*s)) s++; char *e = s + strlen(s); while (e > s && isspace((unsigned char)e[-1])) e--; res = gv_alloc((size_t)(e - s) + 1); memcpy(res, s, (size_t)(e - s)); res[e - s] = 0; }

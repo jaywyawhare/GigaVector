@@ -269,6 +269,23 @@ int main(void) {
            && r.row_count == 1 && strncmp(cell(&r,0,0),"20",2)==0, "WITH percentileCont(0.5)=20");
     cypher_free_result(&r);
 
+    /* ---- list predicate functions any/all/none/single ---- */
+    ASSERT(q(cy, "UNWIND [1] AS z RETURN any(x IN [1,2,3] WHERE x > 2)", &r) == 0
+           && strcmp(cell(&r,0,0),"true")==0, "any(x>2)=true");
+    cypher_free_result(&r);
+    ASSERT(q(cy, "UNWIND [1] AS z RETURN all(x IN [1,2,3] WHERE x > 1)", &r) == 0
+           && strcmp(cell(&r,0,0),"false")==0, "all(x>1)=false");
+    cypher_free_result(&r);
+    ASSERT(q(cy, "UNWIND [1] AS z RETURN none(x IN [1,2,3] WHERE x > 5)", &r) == 0
+           && strcmp(cell(&r,0,0),"true")==0, "none(x>5)=true");
+    cypher_free_result(&r);
+    ASSERT(q(cy, "UNWIND [1] AS z RETURN single(x IN [1,2,3] WHERE x = 2)", &r) == 0
+           && strcmp(cell(&r,0,0),"true")==0, "single(x=2)=true");
+    cypher_free_result(&r);
+    ASSERT(q(cy, "UNWIND [1] AS z RETURN single(x IN [1,2,3] WHERE x > 1)", &r) == 0
+           && strcmp(cell(&r,0,0),"false")==0, "single(x>1)=false (two match)");
+    cypher_free_result(&r);
+
     /* ---- WITH pipelining ---- */
     ASSERT(q(cy, "MATCH (a:Person {name:'Alice'}) WITH a MATCH (a)-[:KNOWS]->(b) RETURN b.name", &r) == 0
            && r.row_count == 1 && strcmp(cell(&r,0,0),"Bob")==0, "WITH pass-through var");
