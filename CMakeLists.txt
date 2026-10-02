@@ -323,8 +323,12 @@ if(BUILD_TESTS)
         set_tests_properties(${TEST_NAME} PROPERTIES TIMEOUT 120)
     endforeach()
 
-    if(NOT WIN32)
+    # repl_tcp/repl_tcp_fault are excluded on WIN32 and APPLE (see socket-test
+    # skip above), so only reference them for the resource lock where they exist.
+    if(NOT WIN32 AND NOT APPLE)
         set_tests_properties(repl_tcp repl_tcp_fault PROPERTIES RESOURCE_LOCK gv_tcp_repl)
+    endif()
+    if(NOT WIN32)
         set_tests_properties(cluster PROPERTIES RESOURCE_LOCK gv_cluster_ports)
     endif()
 
