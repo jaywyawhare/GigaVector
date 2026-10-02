@@ -697,7 +697,13 @@ static int modularity_levels(const GV_GraphDB *g, size_t max_levels,
             if (two_m <= 0.0) break; /* edgeless: singletons are optimal */
 
             int changed = 0;
-            for (;;) {
+            /* Bound the local-moving passes. Louvain converges in a handful of
+             * passes (modularity is monotonic), but floating-point rounding can
+             * differ across platforms and make a node oscillate between two
+             * communities of equal gain forever (observed hanging on Windows).
+             * A generous finite cap stops that without affecting real results. */
+            size_t max_pass = cur.N > 1000 ? cur.N : 1000;
+            for (size_t pass = 0; pass < max_pass; pass++) {
                 if (!local_move_round(&cur, labels, k, sigma, two_m,
                                       cand, cw, cpos, cstamp))
                     break;
