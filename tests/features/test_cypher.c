@@ -285,6 +285,13 @@ int main(void) {
     ASSERT(q(cy, "UNWIND [1] AS z RETURN single(x IN [1,2,3] WHERE x > 1)", &r) == 0
            && strcmp(cell(&r,0,0),"false")==0, "single(x>1)=false (two match)");
     cypher_free_result(&r);
+    /* reduce: left fold */
+    ASSERT(q(cy, "UNWIND [1] AS z RETURN reduce(s = 0, x IN [1,2,3,4] | s + x)", &r) == 0
+           && strncmp(cell(&r,0,0),"10",2)==0, "reduce sum = 10");
+    cypher_free_result(&r);
+    ASSERT(q(cy, "UNWIND [1] AS z RETURN reduce(p = 1, x IN [1,2,3,4] | p * x)", &r) == 0
+           && strncmp(cell(&r,0,0),"24",2)==0, "reduce product = 24");
+    cypher_free_result(&r);
 
     /* ---- WITH pipelining ---- */
     ASSERT(q(cy, "MATCH (a:Person {name:'Alice'}) WITH a MATCH (a)-[:KNOWS]->(b) RETURN b.name", &r) == 0

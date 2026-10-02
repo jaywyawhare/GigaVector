@@ -269,6 +269,7 @@ static Opd opd_copy(const Opd *s) {
      * uncopied (NULL) lclist on a list-comp subject would NULL-deref. */
     if (s->lcvar)  d.lcvar  = gv_dup_cstr(s->lcvar);
     if (s->lclist) { d.lclist = (Opd *)gv_alloc(sizeof(Opd)); *d.lclist = opd_copy(s->lclist); }
+    if (s->lcproj) { d.lcproj = (Opd *)gv_alloc(sizeof(Opd)); *d.lcproj = opd_copy(s->lcproj); }
     if (s->l) { d.l = (Opd *)gv_alloc(sizeof(Opd)); *d.l = opd_copy(s->l); }
     if (s->r) { d.r = (Opd *)gv_alloc(sizeof(Opd)); *d.r = opd_copy(s->r); }
     return d; /* CASE/pattern-comprehension subtrees still not copied (unsupported as copied subjects) */
@@ -552,6 +553,26 @@ static Opd *parse_atom_impl(Lex *lx) {
             o->k = OPD_TYPE; o->var = gv_dup_cstr(adv(lx)->s); adv(lx); gv_free(fn); return o;
         }
         o->k = OPD_FUNC; o->fname = fn;
+        /* reduce( acc = init, var IN listExpr | expr ) — fold a list into one
+         * value. Stored as: var=acc name, l=init, lcvar=loop var, lclist=list,
+         * lcproj=body expr. */
+        if (strcasecmp(fn, "reduce") == 0 && pk(lx)->t == T_IDENT) {
+            o->var = gv_dup_cstr(adv(lx)->s);        /* accumulator variable */
+            if (eat(lx, T_EQ, "'=' in reduce")) { opd_clear(o); gv_free(o); return NULL; }
+            o->l = parse_add(lx);                    /* initial value */
+            if (!o->l) { opd_clear(o); gv_free(o); return NULL; }
+            if (eat(lx, T_COMMA, "',' in reduce")) { opd_clear(o); gv_free(o); return NULL; }
+            if (pk(lx)->t != T_IDENT) { snprintf(lx->err, CY_ERR, "expected loop var in reduce"); opd_clear(o); gv_free(o); return NULL; }
+            o->lcvar = gv_dup_cstr(adv(lx)->s);      /* loop variable */
+            if (!kw(pk(lx), "in")) { snprintf(lx->err, CY_ERR, "expected IN in reduce"); opd_clear(o); gv_free(o); return NULL; }
+            adv(lx); /* IN */
+            o->lclist = parse_add(lx);
+            if (!o->lclist) { opd_clear(o); gv_free(o); return NULL; }
+            if (eat(lx, T_PIPE, "'|' in reduce")) { opd_clear(o); gv_free(o); return NULL; }
+            o->lcproj = parse_add(lx);               /* body expression */
+            if (!o->lcproj || eat(lx, T_RP, "')'")) { opd_clear(o); gv_free(o); return NULL; }
+            return o;
+        }
         /* list predicate: any/all/none/single ( var IN listExpr WHERE pred ) —
          * reuses the list-comprehension fields (lcvar/lclist/lcwhere). */
         if ((strcasecmp(fn, "any") == 0 || strcasecmp(fn, "all") == 0 ||
@@ -1291,6 +1312,22 @@ static char *val_of(GV_KnowledgeGraph *kg, const Opd *o, const Row *row) {
             const char *fn = o->fname;
             char *a0 = o->nargs > 0 ? val_of(kg, o->args[0], row) : gv_dup_cstr("");
             char *res = NULL;
+            /* reduce(acc = init, var IN list | expr): left fold over the list */
+            if (o->lcproj && o->var && strcasecmp(fn, "reduce") == 0) {
+                char *acc = val_of(kg, o->l, row);
+                char *lv = val_of(kg, o->lclist, row);
+                char **e; size_t n = cy_list_split(lv, &e); gv_free(lv);
+                for (size_t i = 0; i < n; i++) {
+                    Row tmp = row_copy(row);
+                    row_bind_val(&tmp, o->lcvar, e[i]);
+                    row_bind_val(&tmp, o->var, acc);
+                    char *na = val_of(kg, o->lcproj, &tmp);
+                    gv_free(acc); acc = na;
+                    row_free(&tmp); gv_free(e[i]);
+                }
+                gv_free(e); gv_free(a0);
+                return acc ? acc : gv_dup_cstr("");
+            }
             /* list predicates any/all/none/single (var IN list WHERE pred) */
             if (o->lclist && (strcasecmp(fn, "any") == 0 || strcasecmp(fn, "all") == 0 ||
                               strcasecmp(fn, "none") == 0 || strcasecmp(fn, "single") == 0)) {
