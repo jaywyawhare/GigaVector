@@ -202,6 +202,29 @@ int main(void) {
            "UNWIND + sum -> 6");
     cypher_free_result(&r);
 
+    /* ---- additional scalar functions (replace/reverse/left/right/toBoolean/pow/split) ---- */
+    ASSERT(q(cy, "UNWIND ['x'] AS v RETURN replace('hello','l','L')", &r) == 0
+           && strcmp(cell(&r,0,0),"heLLo")==0, "replace");
+    cypher_free_result(&r);
+    ASSERT(q(cy, "UNWIND ['x'] AS v RETURN reverse('abc')", &r) == 0
+           && strcmp(cell(&r,0,0),"cba")==0, "reverse");
+    cypher_free_result(&r);
+    ASSERT(q(cy, "UNWIND ['x'] AS v RETURN left('hello',2)", &r) == 0
+           && strcmp(cell(&r,0,0),"he")==0, "left");
+    cypher_free_result(&r);
+    ASSERT(q(cy, "UNWIND ['x'] AS v RETURN right('hello',2)", &r) == 0
+           && strcmp(cell(&r,0,0),"lo")==0, "right");
+    cypher_free_result(&r);
+    ASSERT(q(cy, "UNWIND ['x'] AS v RETURN toBoolean('true')", &r) == 0
+           && strcmp(cell(&r,0,0),"true")==0, "toBoolean");
+    cypher_free_result(&r);
+    ASSERT(q(cy, "UNWIND ['x'] AS v RETURN pow(2,10)", &r) == 0
+           && strncmp(cell(&r,0,0),"1024",4)==0, "pow");
+    cypher_free_result(&r);
+    ASSERT(q(cy, "UNWIND ['x'] AS v RETURN size(split('a,b,c',','))", &r) == 0
+           && strcmp(cell(&r,0,0),"3")==0, "split+size");
+    cypher_free_result(&r);
+
     /* ---- WITH pipelining ---- */
     ASSERT(q(cy, "MATCH (a:Person {name:'Alice'}) WITH a MATCH (a)-[:KNOWS]->(b) RETURN b.name", &r) == 0
            && r.row_count == 1 && strcmp(cell(&r,0,0),"Bob")==0, "WITH pass-through var");

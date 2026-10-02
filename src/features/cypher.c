@@ -1311,6 +1311,74 @@ static char *val_of(GV_KnowledgeGraph *kg, const Opd *o, const Row *row) {
             else if (strcasecmp(fn, "round") == 0) { double d = 0; is_num(a0, &d); res = fmt_num(floor(d + 0.5)); }
             else if (strcasecmp(fn, "sqrt") == 0) { double d = 0; is_num(a0, &d); res = fmt_num(d > 0 ? sqrt(d) : 0); }
             else if (strcasecmp(fn, "sign") == 0) { double d = 0; is_num(a0, &d); res = fmt_num(d > 0 ? 1 : d < 0 ? -1 : 0); }
+            else if (strcasecmp(fn, "exp") == 0) { double d = 0; is_num(a0, &d); res = fmt_num(exp(d)); }
+            else if (strcasecmp(fn, "log") == 0) { double d = 0; is_num(a0, &d); res = fmt_num(d > 0 ? log(d) : 0); }
+            else if (strcasecmp(fn, "log10") == 0) { double d = 0; is_num(a0, &d); res = fmt_num(d > 0 ? log10(d) : 0); }
+            else if (strcasecmp(fn, "pow") == 0) {
+                double base = 0, ex = 0; is_num(a0, &base);
+                if (o->nargs > 1) { char *s = val_of(kg, o->args[1], row); is_num(s, &ex); gv_free(s); }
+                res = fmt_num(pow(base, ex));
+            }
+            else if (strcasecmp(fn, "e") == 0) { res = fmt_num(2.718281828459045235); }
+            else if (strcasecmp(fn, "pi") == 0) { res = fmt_num(3.141592653589793238); }
+            else if (strcasecmp(fn, "toboolean") == 0) {
+                res = gv_dup_cstr((a0 && (strcasecmp(a0, "true") == 0 || strcmp(a0, "1") == 0)) ? "true" : "false");
+            }
+            else if (strcasecmp(fn, "reverse") == 0) {
+                size_t L = strlen(a0); res = gv_alloc(L + 1);
+                for (size_t i = 0; i < L; i++) res[i] = a0[L - 1 - i];
+                res[L] = 0;
+            }
+            else if (strcasecmp(fn, "left") == 0) {
+                double n = 0; if (o->nargs > 1) { char *s = val_of(kg, o->args[1], row); is_num(s, &n); gv_free(s); }
+                size_t L = strlen(a0), k = (size_t)(n < 0 ? 0 : n); if (k > L) k = L;
+                res = gv_alloc(k + 1); memcpy(res, a0, k); res[k] = 0;
+            }
+            else if (strcasecmp(fn, "right") == 0) {
+                double n = 0; if (o->nargs > 1) { char *s = val_of(kg, o->args[1], row); is_num(s, &n); gv_free(s); }
+                size_t L = strlen(a0), k = (size_t)(n < 0 ? 0 : n); if (k > L) k = L;
+                res = gv_alloc(k + 1); memcpy(res, a0 + (L - k), k); res[k] = 0;
+            }
+            else if (strcasecmp(fn, "replace") == 0) {
+                char *from = o->nargs > 1 ? val_of(kg, o->args[1], row) : NULL;
+                char *to   = o->nargs > 2 ? val_of(kg, o->args[2], row) : NULL;
+                if (!from || !*from) { res = gv_dup_cstr(a0); }
+                else {
+                    size_t fl = strlen(from), tl = to ? strlen(to) : 0;
+                    size_t cap = strlen(a0) + 1, len = 0; res = gv_alloc(cap);
+                    for (const char *p = a0; *p; ) {
+                        if (strncmp(p, from, fl) == 0) {
+                            if (len + tl + 1 > cap) { cap = (len + tl + 1) * 2; res = gv_realloc(res, cap); }
+                            if (to) { memcpy(res + len, to, tl); }
+                            len += tl; p += fl;
+                        } else {
+                            if (len + 2 > cap) { cap = (len + 2) * 2; res = gv_realloc(res, cap); }
+                            res[len++] = *p++;
+                        }
+                    }
+                    res[len] = 0;
+                }
+                gv_free(from); gv_free(to);
+            }
+            else if (strcasecmp(fn, "split") == 0) {
+                char *delim = o->nargs > 1 ? val_of(kg, o->args[1], row) : NULL;
+                const char *d = (delim && *delim) ? delim : ",";
+                size_t dl = strlen(d);
+                char **parts = NULL; size_t np = 0, cap = 0;
+                const char *start = a0;
+                for (const char *p = a0; ; p++) {
+                    if (strncmp(p, d, dl) == 0 || *p == '\0') {
+                        size_t seg = (size_t)(p - start);
+                        if (np == cap) { cap = cap ? cap * 2 : 8; parts = gv_realloc(parts, cap * sizeof(char *)); }
+                        parts[np] = gv_alloc(seg + 1); memcpy(parts[np], start, seg); parts[np][seg] = 0; np++;
+                        if (*p == '\0') break;
+                        p += dl - 1; start = p + 1;
+                    }
+                }
+                res = cy_list_encode(parts, np);
+                for (size_t i = 0; i < np; i++) gv_free(parts[i]);
+                gv_free(parts); gv_free(delim);
+            }
             /* Temporal scalars. With an argument the ISO string is echoed (parsed);
              * with no argument the current wall-clock value is returned. */
             else if (strcasecmp(fn, "timestamp") == 0) { res = fmt_num((double)((long long)time(NULL) * 1000LL)); }
