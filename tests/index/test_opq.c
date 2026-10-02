@@ -6,6 +6,7 @@
 #include "index/pq.h"
 #include "core/types.h"
 #include "schema/vector.h"
+#include "../test_tmp.h"
 
 static int failures = 0;
 #define ASSERT(c, m) do { if (!(c)) { printf("FAIL: %s\n", (m)); failures++; } \
@@ -54,14 +55,16 @@ int main(void) {
     ASSERT(eo < eb, "OPQ reduces PQ distortion");
 
     /* save/load round-trips the rotation (reconstruction error unchanged) */
-    FILE *f = fopen("/tmp/gv_opq.bin", "wb"); ASSERT(pq_save(po, f, 1) == 0, "save"); fclose(f);
-    void *pl = NULL; FILE *g = fopen("/tmp/gv_opq.bin", "rb");
+    char opq_path[512];
+    gv_test_make_temp_path(opq_path, sizeof(opq_path), "gv_opq", ".bin");
+    FILE *f = fopen(opq_path, "wb"); ASSERT(pq_save(po, f, 1) == 0, "save"); fclose(f);
+    void *pl = NULL; FILE *g = fopen(opq_path, "rb");
     ASSERT(pq_load(&pl, g, D, 1) == 0 && pl, "load"); fclose(g);
     double el = pq_avg_quantization_error(pl);
     ASSERT(fabs(el - eo) < 1e-4, "OPQ survives save/load");
 
     pq_destroy(pb); pq_destroy(po); if (pl) pq_destroy(pl);
-    free(data); remove("/tmp/gv_opq.bin");
+    free(data); remove(opq_path);
     printf(failures ? "\nSOME TESTS FAILED (%d)\n" : "\nALL OPQ TESTS PASSED\n", failures);
     return failures ? 1 : 0;
 }

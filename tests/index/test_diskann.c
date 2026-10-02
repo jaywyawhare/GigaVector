@@ -3,6 +3,7 @@
 #include <string.h>
 #include <math.h>
 #include "index/diskann.h"
+#include "../test_tmp.h"
 
 #define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while(0)
 
@@ -330,7 +331,8 @@ static int test_diskann_delete_rebuild(void) {
 
 /* Save/load round-trip: build, save, load, search both, verify results match. */
 static int test_diskann_save_load(void) {
-    const char *path = "/tmp/gv_diskann_test_save.bin";
+    char path[512];
+    gv_test_make_temp_path(path, sizeof(path), "gv_diskann_test_save", ".bin");
 
     /* Build original index */
     GV_DiskANNConfig config;
