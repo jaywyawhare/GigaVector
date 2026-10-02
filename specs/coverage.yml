@@ -276,6 +276,7 @@ tiers:
         - multimodal/fulltext.c
         - multimodal/late_interaction.c
         - multimodal/learned_sparse.c
+        - multimodal/splade.c
     - ref: "tests + harness_compression.c"
       why: "shares its contract with the representative verified in harness_compression.c, but is NOT itself symbolically executed -- covered by unit/differential tests only"
       files:
