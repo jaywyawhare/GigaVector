@@ -1,5 +1,6 @@
 #include <ctype.h>
 #include "core/memory.h"
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -26,7 +27,8 @@ typedef enum {
     GV_FILTER_OP_CONTAINS,
     GV_FILTER_OP_PREFIX,
     GV_FILTER_OP_IN,       /* field IN [v1, v2, ...] — set membership */
-    GV_FILTER_OP_BETWEEN   /* field BETWEEN lo AND hi — inclusive numeric range */
+    GV_FILTER_OP_BETWEEN,  /* field BETWEEN lo AND hi — inclusive numeric range */
+    GV_FILTER_OP_GEORADIUS /* field GEORADIUS lat, lon, meters — great-circle radius */
 } GV_FilterOp;
 
 typedef struct GV_FilterNode {
@@ -37,7 +39,8 @@ typedef struct GV_FilterNode {
     char *key;
     char *value;
     double numeric_value;
-    double numeric_value2;        /* upper bound for BETWEEN */
+    double numeric_value2;        /* upper bound for BETWEEN; center lon for GEORADIUS */
+    double numeric_value3;        /* radius in meters for GEORADIUS */
     char **values;               /* arena-allocated list for IN */
     size_t n_values;
     int is_numeric;
@@ -74,6 +77,7 @@ typedef enum {
     TOK_RPAREN,
     TOK_IN,
     TOK_BETWEEN,
+    TOK_GEORADIUS,
     TOK_LBRACK,
     TOK_RBRACK,
     TOK_COMMA,
@@ -166,6 +170,8 @@ static GV_FilterToken filter_lexer_next(GV_Arena *arena, GV_FilterLexer *lx) {
             tok.type = TOK_IN;
         } else if (filter_match_kw(text, len, "BETWEEN")) {
             tok.type = TOK_BETWEEN;
+        } else if (filter_match_kw(text, len, "GEORADIUS")) {
+            tok.type = TOK_GEORADIUS;
         } else {
             tok.type = TOK_IDENT;
             tok.text = text;
@@ -366,6 +372,32 @@ static GV_FilterNode *filter_parse_primary(GV_FilterParser *p) {
         node->op = GV_FILTER_OP_BETWEEN;
         node->numeric_value = lo;
         node->numeric_value2 = hi;
+        node->is_numeric = 1;
+        return node;
+    }
+
+    /* field GEORADIUS lat, lon, meters — the field stores "lat,lon" and matches
+     * when within `meters` great-circle distance of the given center. */
+    if (p->current.type == TOK_GEORADIUS) {
+        filter_parser_advance(p);
+        double nums[3];
+        for (int i = 0; i < 3; i++) {
+            if (p->current.type != TOK_NUMBER) return NULL;
+            nums[i] = strtod(p->current.text, NULL);
+            filter_parser_advance(p);
+            if (i < 2) {
+                if (p->current.type != TOK_COMMA) return NULL;
+                filter_parser_advance(p);
+            }
+        }
+        if (nums[2] < 0) return NULL; /* radius must be non-negative */
+        GV_FilterNode *node = filter_node_new(p->arena, GV_FILTER_NODE_COMPARISON);
+        if (!node) return NULL;
+        node->key = key;
+        node->op = GV_FILTER_OP_GEORADIUS;
+        node->numeric_value = nums[0];   /* center lat  */
+        node->numeric_value2 = nums[1];  /* center lon  */
+        node->numeric_value3 = nums[2];  /* radius (m)  */
         node->is_numeric = 1;
         return node;
     }
@@ -578,6 +610,25 @@ static int filter_eval_node(const GV_FilterNode *node, const GV_Vector *vector) 
             double v = strtod(meta_val, &endptr);
             if (endptr == meta_val) return 0;
             return (v >= node->numeric_value && v <= node->numeric_value2) ? 1 : 0;
+        }
+        if (node->op == GV_FILTER_OP_GEORADIUS) {
+            /* meta_val is "lat,lon"; match if within numeric_value3 meters of the
+             * center via the haversine great-circle distance. */
+            char *e1 = NULL;
+            double lat = strtod(meta_val, &e1);
+            if (e1 == meta_val || *e1 != ',') return 0;
+            char *e2 = NULL;
+            double lon = strtod(e1 + 1, &e2);
+            if (e2 == e1 + 1) return 0;
+            const double R = 6371000.0; /* Earth mean radius, meters */
+            const double rad = 3.14159265358979323846 / 180.0;
+            double dlat = (lat - node->numeric_value) * rad;
+            double dlon = (lon - node->numeric_value2) * rad;
+            double a = sin(dlat / 2) * sin(dlat / 2) +
+                       cos(node->numeric_value * rad) * cos(lat * rad) *
+                           sin(dlon / 2) * sin(dlon / 2);
+            double dist = 2.0 * R * atan2(sqrt(a), sqrt(1.0 - a));
+            return dist <= node->numeric_value3 ? 1 : 0;
         }
         if (node->op == GV_FILTER_OP_CONTAINS) {
             if (!node->value) return 0;

@@ -201,6 +201,26 @@ static int test_filter_between_operator(void) {
     return 0;
 }
 
+static int test_filter_georadius_operator(void) {
+    /* San Francisco (37.7749, -122.4194) center, 50 km radius. */
+    GV_Filter *filter = filter_parse("loc GEORADIUS 37.7749, -122.4194, 50000");
+    ASSERT(filter != NULL, "parse GEORADIUS filter");
+    float d[2] = {1.0f, 2.0f};
+    GV_Vector *v = vector_create_from_data(2, d);
+    /* Oakland (~13 km away) -> inside */
+    ASSERT(vector_set_metadata(v, "loc", "37.8044,-122.2712") == 0, "set near loc");
+    ASSERT(filter_eval(filter, v) == 1, "GEORADIUS matches nearby point");
+    /* Los Angeles (~560 km away) -> outside */
+    ASSERT(vector_set_metadata(v, "loc", "34.0522,-118.2437") == 0, "set far loc");
+    ASSERT(filter_eval(filter, v) == 0, "GEORADIUS excludes far point");
+    /* malformed metadata -> no match (not a crash) */
+    ASSERT(vector_set_metadata(v, "loc", "not-a-coord") == 0, "set bad loc");
+    ASSERT(filter_eval(filter, v) == 0, "GEORADIUS rejects malformed coord");
+    vector_destroy(v);
+    filter_destroy(filter);
+    return 0;
+}
+
 int main(void) {
     int rc = 0;
     rc |= test_filter_parse_simple();
@@ -217,6 +237,7 @@ int main(void) {
     rc |= test_filter_in_database();
     rc |= test_filter_in_operator();
     rc |= test_filter_between_operator();
+    rc |= test_filter_georadius_operator();
     rc |= test_filter_destroy_null();
     return rc;
 }
