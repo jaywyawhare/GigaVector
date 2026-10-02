@@ -1332,6 +1332,22 @@ static char *val_of(GV_KnowledgeGraph *kg, const Opd *o, const Row *row) {
             }
             else if (strcasecmp(fn, "e") == 0) { res = fmt_num(2.718281828459045235); }
             else if (strcasecmp(fn, "pi") == 0) { res = fmt_num(3.141592653589793238); }
+            else if (strcasecmp(fn, "sin") == 0) { double d = 0; is_num(a0, &d); res = fmt_num(sin(d)); }
+            else if (strcasecmp(fn, "cos") == 0) { double d = 0; is_num(a0, &d); res = fmt_num(cos(d)); }
+            else if (strcasecmp(fn, "tan") == 0) { double d = 0; is_num(a0, &d); res = fmt_num(tan(d)); }
+            else if (strcasecmp(fn, "asin") == 0) { double d = 0; is_num(a0, &d); res = fmt_num((d >= -1 && d <= 1) ? asin(d) : 0); }
+            else if (strcasecmp(fn, "acos") == 0) { double d = 0; is_num(a0, &d); res = fmt_num((d >= -1 && d <= 1) ? acos(d) : 0); }
+            else if (strcasecmp(fn, "atan") == 0) { double d = 0; is_num(a0, &d); res = fmt_num(atan(d)); }
+            else if (strcasecmp(fn, "atan2") == 0) {
+                double y = 0, x = 0; is_num(a0, &y);
+                if (o->nargs > 1) { char *s = val_of(kg, o->args[1], row); is_num(s, &x); gv_free(s); }
+                res = fmt_num(atan2(y, x));
+            }
+            else if (strcasecmp(fn, "cot") == 0) { double d = 0; is_num(a0, &d); double t = tan(d); res = fmt_num(t != 0 ? 1.0 / t : 0); }
+            else if (strcasecmp(fn, "degrees") == 0) { double d = 0; is_num(a0, &d); res = fmt_num(d * (180.0 / 3.141592653589793238)); }
+            else if (strcasecmp(fn, "radians") == 0) { double d = 0; is_num(a0, &d); res = fmt_num(d * (3.141592653589793238 / 180.0)); }
+            else if (strcasecmp(fn, "haversin") == 0) { double d = 0; is_num(a0, &d); double s = sin(d / 2.0); res = fmt_num(s * s); }
+            else if (strcasecmp(fn, "rand") == 0) { res = fmt_num((double)rand() / ((double)RAND_MAX + 1.0)); }
             else if (strcasecmp(fn, "toboolean") == 0) {
                 res = gv_dup_cstr((a0 && (strcasecmp(a0, "true") == 0 || strcmp(a0, "1") == 0)) ? "true" : "false");
             }

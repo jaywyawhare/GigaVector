@@ -224,6 +224,19 @@ int main(void) {
     ASSERT(q(cy, "UNWIND ['x'] AS v RETURN size(split('a,b,c',','))", &r) == 0
            && strcmp(cell(&r,0,0),"3")==0, "split+size");
     cypher_free_result(&r);
+    /* trigonometric / angle math functions */
+    ASSERT(q(cy, "UNWIND ['x'] AS v RETURN sin(0)", &r) == 0
+           && strncmp(cell(&r,0,0),"0",1)==0, "sin(0)=0");
+    cypher_free_result(&r);
+    ASSERT(q(cy, "UNWIND ['x'] AS v RETURN cos(0)", &r) == 0
+           && strncmp(cell(&r,0,0),"1",1)==0, "cos(0)=1");
+    cypher_free_result(&r);
+    ASSERT(q(cy, "UNWIND ['x'] AS v RETURN degrees(pi())", &r) == 0
+           && strncmp(cell(&r,0,0),"180",3)==0, "degrees(pi)=180");
+    cypher_free_result(&r);
+    ASSERT(q(cy, "UNWIND ['x'] AS v RETURN atan2(1,1)", &r) == 0
+           && strncmp(cell(&r,0,0),"0.785",5)==0, "atan2(1,1)=pi/4");
+    cypher_free_result(&r);
 
     /* ---- WITH pipelining ---- */
     ASSERT(q(cy, "MATCH (a:Person {name:'Alice'}) WITH a MATCH (a)-[:KNOWS]->(b) RETURN b.name", &r) == 0
