@@ -108,14 +108,17 @@ jobs:
 
       - name: Run Python tests
         timeout-minutes: 10
-        shell: bash
+        shell: pwsh
         env:
           PYTHONUNBUFFERED: "1"
           PYTHONFAULTHANDLER: "1"
         run: |
           # Stream output live and arm a faulthandler watchdog so a hang dumps
-          # the stuck test's stack instead of an opaque CI step timeout.
+          # the stuck test's stack instead of an opaque CI step timeout. pwsh is
+          # used (not bash) so the setup-python interpreter is the one on PATH on
+          # the Windows runner.
           python python/tests/_run_suite.py
+          if ($LASTEXITCODE -ne 0) { exit 1 }
 
       - name: Lint and type-check Python (Linux only)
         if: matrix.os == 'ubuntu-latest'
