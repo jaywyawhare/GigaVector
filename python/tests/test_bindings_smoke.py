@@ -64,5 +64,20 @@ class TestHybridSearch(unittest.TestCase):
         self.assertGreater(res[0].combined_score, res[1].combined_score)
 
 
+class TestQuantization(unittest.TestCase):
+    def test_train_encode_distance(self) -> None:
+        import random
+
+        dim, n = 8, 200
+        random.seed(1)
+        vectors = [[random.random() for _ in range(dim)] for _ in range(n)]
+        cb = gv.QuantCodebook.train(vectors, gv.QuantConfig())
+        codes = cb.encode(vectors[0])
+        self.assertGreater(len(codes), 0)
+        # Asymmetric distance: a query is closer to its own code than to another's.
+        self.assertLessEqual(cb.distance(vectors[0], codes), cb.distance(vectors[1], codes))
+        self.assertGreater(cb.memory_ratio(dim), 1.0)
+
+
 if __name__ == "__main__":
     unittest.main()
