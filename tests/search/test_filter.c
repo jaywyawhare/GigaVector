@@ -161,6 +161,46 @@ static int test_filter_destroy_null(void) {
     return 0;
 }
 
+static int test_filter_in_operator(void) {
+    GV_Filter *filter = filter_parse("country IN [\"US\", \"CA\", \"GB\"]");
+    ASSERT(filter != NULL, "parse IN filter");
+    float d[2] = {1.0f, 2.0f};
+    GV_Vector *v = vector_create_from_data(2, d);
+    ASSERT(vector_set_metadata(v, "country", "CA") == 0, "set metadata");
+    ASSERT(filter_eval(filter, v) == 1, "IN should match member");
+    ASSERT(vector_set_metadata(v, "country", "FR") == 0, "set metadata 2");
+    ASSERT(filter_eval(filter, v) == 0, "IN should not match non-member");
+    vector_destroy(v);
+    filter_destroy(filter);
+    /* numeric IN */
+    filter = filter_parse("level IN [1, 2, 3]");
+    ASSERT(filter != NULL, "parse numeric IN");
+    GV_Vector *v2 = vector_create_from_data(2, d);
+    ASSERT(vector_set_metadata(v2, "level", "2") == 0, "set numeric metadata");
+    ASSERT(filter_eval(filter, v2) == 1, "numeric IN matches");
+    vector_destroy(v2);
+    filter_destroy(filter);
+    return 0;
+}
+
+static int test_filter_between_operator(void) {
+    GV_Filter *filter = filter_parse("score BETWEEN 0.5 AND 1.5");
+    ASSERT(filter != NULL, "parse BETWEEN filter");
+    float d[2] = {1.0f, 2.0f};
+    GV_Vector *v = vector_create_from_data(2, d);
+    ASSERT(vector_set_metadata(v, "score", "1.0") == 0, "set metadata");
+    ASSERT(filter_eval(filter, v) == 1, "BETWEEN matches in range");
+    ASSERT(vector_set_metadata(v, "score", "0.25") == 0, "set below");
+    ASSERT(filter_eval(filter, v) == 0, "BETWEEN excludes below range");
+    ASSERT(vector_set_metadata(v, "score", "2.0") == 0, "set above");
+    ASSERT(filter_eval(filter, v) == 0, "BETWEEN excludes above range");
+    ASSERT(vector_set_metadata(v, "score", "0.5") == 0, "set lower bound");
+    ASSERT(filter_eval(filter, v) == 1, "BETWEEN is inclusive of bounds");
+    vector_destroy(v);
+    filter_destroy(filter);
+    return 0;
+}
+
 int main(void) {
     int rc = 0;
     rc |= test_filter_parse_simple();
@@ -175,6 +215,8 @@ int main(void) {
     rc |= test_filter_eval_no_match();
     rc |= test_filter_eval_numeric();
     rc |= test_filter_in_database();
+    rc |= test_filter_in_operator();
+    rc |= test_filter_between_operator();
     rc |= test_filter_destroy_null();
     return rc;
 }

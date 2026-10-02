@@ -396,6 +396,43 @@ int main(void) {
            && r.row_count == 0, "WHERE false drops all rows");
     cypher_free_result(&r);
 
+    /* Baseline person count for the UNION/CALL assertions below. */
+    GV_CypherResult rbase;
+    ASSERT(q(cy, "MATCH (p:Person) RETURN p.name", &rbase) == 0 && rbase.row_count > 0, "person baseline rows exist");
+    size_t np = rbase.row_count;
+    cypher_free_result(&rbase);
+
+    /* UNION: the combined set is de-duplicated back to the baseline. */
+    ASSERT(q(cy, "MATCH (p:Person) RETURN p.name UNION MATCH (p:Person) RETURN p.name", &r) == 0
+           && r.row_count == np, "UNION dedups to baseline persons");
+    cypher_free_result(&r);
+    /* UNION ALL: duplicates are kept (2 x baseline). */
+    ASSERT(q(cy, "MATCH (p:Person) RETURN p.name UNION ALL MATCH (p:Person) RETURN p.name", &r) == 0
+           && r.row_count == 2 * np, "UNION ALL keeps all rows");
+    cypher_free_result(&r);
+    /* UNION with mismatched column counts is an error. */
+    ASSERT(q(cy, "MATCH (p:Person) RETURN p.name UNION MATCH (p:Person) RETURN p.name, p.age", &r) == -1
+           && strlen(cypher_last_error(cy)) > 0, "UNION column count mismatch errors");
+
+    /* CALL { subquery }: inner rows become the statement result. */
+    ASSERT(q(cy, "CALL { MATCH (p:Person) RETURN p.name }", &r) == 0
+           && r.row_count == np && r.column_count == 1, "CALL { subquery } returns baseline rows");
+    cypher_free_result(&r);
+
+    /* Temporal scalar functions. */
+    ASSERT(q(cy, "MATCH (p:Person {name:'Alice'}) RETURN timestamp() AS t", &r) == 0
+           && atoll(cell(&r,0,0)) > 0, "timestamp() > 0");
+    cypher_free_result(&r);
+    ASSERT(q(cy, "MATCH (p:Person {name:'Alice'}) RETURN date('2020-01-02') AS d", &r) == 0
+           && strcmp(cell(&r,0,0),"2020-01-02")==0, "date('2020-01-02') echoes ISO date");
+    cypher_free_result(&r);
+    ASSERT(q(cy, "MATCH (p:Person {name:'Alice'}) RETURN datetime('2020-01-02T03:04:05') AS d", &r) == 0
+           && strcmp(cell(&r,0,0),"2020-01-02T03:04:05")==0, "datetime(iso) echoes ISO datetime");
+    cypher_free_result(&r);
+    ASSERT(q(cy, "MATCH (p:Person {name:'Alice'}) RETURN date() AS d", &r) == 0
+           && strlen(cell(&r,0,0))==10, "date() -> YYYY-MM-DD (10 chars)");
+    cypher_free_result(&r);
+
     /* Syntax error still reported */
     ASSERT(q(cy, "MATCH (n:Person RETURN n.name", &r) == -1 && strlen(cypher_last_error(cy)) > 0, "syntax error");
 

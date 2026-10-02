@@ -24,7 +24,9 @@ typedef enum {
     GV_FILTER_OP_GT,
     GV_FILTER_OP_GE,
     GV_FILTER_OP_CONTAINS,
-    GV_FILTER_OP_PREFIX
+    GV_FILTER_OP_PREFIX,
+    GV_FILTER_OP_IN,       /* field IN [v1, v2, ...] — set membership */
+    GV_FILTER_OP_BETWEEN   /* field BETWEEN lo AND hi — inclusive numeric range */
 } GV_FilterOp;
 
 typedef struct GV_FilterNode {
@@ -35,6 +37,9 @@ typedef struct GV_FilterNode {
     char *key;
     char *value;
     double numeric_value;
+    double numeric_value2;        /* upper bound for BETWEEN */
+    char **values;               /* arena-allocated list for IN */
+    size_t n_values;
     int is_numeric;
     GV_FilterOp op;
 } GV_FilterNode;
@@ -67,6 +72,11 @@ typedef enum {
     TOK_GE,
     TOK_LPAREN,
     TOK_RPAREN,
+    TOK_IN,
+    TOK_BETWEEN,
+    TOK_LBRACK,
+    TOK_RBRACK,
+    TOK_COMMA,
     TOK_ERROR
 } GV_FilterTokenType;
 
@@ -152,6 +162,10 @@ static GV_FilterToken filter_lexer_next(GV_Arena *arena, GV_FilterLexer *lx) {
             tok.type = TOK_CONTAINS;
         } else if (filter_match_kw(text, len, "PREFIX")) {
             tok.type = TOK_PREFIX;
+        } else if (filter_match_kw(text, len, "IN")) {
+            tok.type = TOK_IN;
+        } else if (filter_match_kw(text, len, "BETWEEN")) {
+            tok.type = TOK_BETWEEN;
         } else {
             tok.type = TOK_IDENT;
             tok.text = text;
@@ -244,6 +258,21 @@ static GV_FilterToken filter_lexer_next(GV_Arena *arena, GV_FilterLexer *lx) {
         tok.type = TOK_RPAREN;
         return tok;
     }
+    if (c == '[') {
+        lx->pos++;
+        tok.type = TOK_LBRACK;
+        return tok;
+    }
+    if (c == ']') {
+        lx->pos++;
+        tok.type = TOK_RBRACK;
+        return tok;
+    }
+    if (c == ',') {
+        lx->pos++;
+        tok.type = TOK_COMMA;
+        return tok;
+    }
 
     lx->pos++;
     tok.type = TOK_ERROR;
@@ -289,6 +318,57 @@ static GV_FilterNode *filter_parse_primary(GV_FilterParser *p) {
     char *key = p->current.text;
     p->current.text = NULL;
     filter_parser_advance(p);
+
+    /* field IN [v1, v2, ...] — set membership (string or numeric). */
+    if (p->current.type == TOK_IN) {
+        filter_parser_advance(p);
+        if (p->current.type != TOK_LBRACK) return NULL;
+        filter_parser_advance(p);
+        char *tmp[256];
+        size_t nv = 0;
+        while (p->current.type != TOK_RBRACK) {
+            if (p->current.type != TOK_STRING && p->current.type != TOK_NUMBER &&
+                p->current.type != TOK_IDENT) return NULL;
+            if (nv >= 256) return NULL;
+            tmp[nv++] = p->current.text;
+            p->current.text = NULL;
+            filter_parser_advance(p);
+            if (p->current.type == TOK_COMMA) { filter_parser_advance(p); continue; }
+            if (p->current.type != TOK_RBRACK) return NULL;
+        }
+        filter_parser_advance(p); /* consume ] */
+        GV_FilterNode *node = filter_node_new(p->arena, GV_FILTER_NODE_COMPARISON);
+        if (!node) return NULL;
+        node->key = key;
+        node->op = GV_FILTER_OP_IN;
+        node->n_values = nv;
+        node->values = (char **)gv_arena_alloc(p->arena,
+                              (nv ? nv : 1) * sizeof(char *), sizeof(char *));
+        if (!node->values) return NULL;
+        for (size_t i = 0; i < nv; i++) node->values[i] = tmp[i];
+        return node;
+    }
+
+    /* field BETWEEN lo AND hi — inclusive numeric range. */
+    if (p->current.type == TOK_BETWEEN) {
+        filter_parser_advance(p);
+        if (p->current.type != TOK_NUMBER) return NULL;
+        double lo = strtod(p->current.text, NULL);
+        filter_parser_advance(p);
+        if (p->current.type != TOK_AND) return NULL;
+        filter_parser_advance(p);
+        if (p->current.type != TOK_NUMBER) return NULL;
+        double hi = strtod(p->current.text, NULL);
+        filter_parser_advance(p);
+        GV_FilterNode *node = filter_node_new(p->arena, GV_FILTER_NODE_COMPARISON);
+        if (!node) return NULL;
+        node->key = key;
+        node->op = GV_FILTER_OP_BETWEEN;
+        node->numeric_value = lo;
+        node->numeric_value2 = hi;
+        node->is_numeric = 1;
+        return node;
+    }
 
     GV_FilterOp op;
     if (p->current.type == TOK_EQ) {
@@ -478,6 +558,26 @@ static int filter_eval_node(const GV_FilterNode *node, const GV_Vector *vector) 
         const char *meta_val = vector_get_metadata(vector, node->key);
         if (!meta_val) {
             return 0;
+        }
+        if (node->op == GV_FILTER_OP_IN) {
+            for (size_t i = 0; i < node->n_values; i++) {
+                const char *cand = node->values[i];
+                if (!cand) continue;
+                if (strcmp(meta_val, cand) == 0) return 1;
+                /* numeric-equality fallback when both sides parse as numbers */
+                char *e1 = NULL, *e2 = NULL;
+                double a = strtod(meta_val, &e1);
+                double b = strtod(cand, &e2);
+                if (e1 != meta_val && *e1 == '\0' && e2 != cand && *e2 == '\0' && a == b)
+                    return 1;
+            }
+            return 0;
+        }
+        if (node->op == GV_FILTER_OP_BETWEEN) {
+            char *endptr = NULL;
+            double v = strtod(meta_val, &endptr);
+            if (endptr == meta_val) return 0;
+            return (v >= node->numeric_value && v <= node->numeric_value2) ? 1 : 0;
         }
         if (node->op == GV_FILTER_OP_CONTAINS) {
             if (!node->value) return 0;

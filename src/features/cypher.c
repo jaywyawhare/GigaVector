@@ -19,6 +19,7 @@
 #include <stdlib.h>
 #include <ctype.h>
 #include <math.h>
+#include <time.h>
 
 #define CY_MAXPROP  16
 #define CY_MAXNODE  8
@@ -1310,6 +1311,17 @@ static char *val_of(GV_KnowledgeGraph *kg, const Opd *o, const Row *row) {
             else if (strcasecmp(fn, "round") == 0) { double d = 0; is_num(a0, &d); res = fmt_num(floor(d + 0.5)); }
             else if (strcasecmp(fn, "sqrt") == 0) { double d = 0; is_num(a0, &d); res = fmt_num(d > 0 ? sqrt(d) : 0); }
             else if (strcasecmp(fn, "sign") == 0) { double d = 0; is_num(a0, &d); res = fmt_num(d > 0 ? 1 : d < 0 ? -1 : 0); }
+            /* Temporal scalars. With an argument the ISO string is echoed (parsed);
+             * with no argument the current wall-clock value is returned. */
+            else if (strcasecmp(fn, "timestamp") == 0) { res = fmt_num((double)((long long)time(NULL) * 1000LL)); }
+            else if (strcasecmp(fn, "date") == 0) {
+                if (a0 && a0[0]) { res = gv_dup_cstr(a0); }
+                else { char b[16]; time_t now = time(NULL); struct tm tmv; gmtime_r(&now, &tmv); strftime(b, sizeof(b), "%Y-%m-%d", &tmv); res = gv_dup_cstr(b); }
+            }
+            else if (strcasecmp(fn, "datetime") == 0) {
+                if (a0 && a0[0]) { res = gv_dup_cstr(a0); }
+                else { char b[32]; time_t now = time(NULL); struct tm tmv; gmtime_r(&now, &tmv); strftime(b, sizeof(b), "%Y-%m-%dT%H:%M:%S", &tmv); res = gv_dup_cstr(b); }
+            }
             else if (strcasecmp(fn, "coalesce") == 0) {
                 gv_free(a0); a0 = NULL; res = NULL;
                 for (size_t i = 0; i < o->nargs; i++) {
@@ -2376,6 +2388,62 @@ static int cypher_explain(GV_CypherEngine *eng, const char *query,
     return 0;
 }
 
+/* Append src's rows onto dst (UNION). Column counts must match. When !all,
+ * a src row is skipped if every cell equals an existing dst row's (set union);
+ * O(n^2) which is fine at the scales this engine targets. dst keeps its own
+ * column_names (from the first query segment). Returns 0, or -1 on a column
+ * mismatch / allocation failure. */
+static int result_union_merge(GV_CypherResult *dst, const GV_CypherResult *src, int all) {
+    if (dst->column_count != src->column_count) return -1;
+    size_t cc = dst->column_count;
+    for (size_t sr = 0; sr < src->row_count; sr++) {
+        char **srow = &src->column_values[sr * cc];
+        if (!all) {
+            int dup = 0;
+            for (size_t dr = 0; dr < dst->row_count && !dup; dr++) {
+                int eq = 1;
+                for (size_t c = 0; c < cc; c++) {
+                    const char *a = dst->column_values[dr * cc + c];
+                    const char *b = srow[c];
+                    if (strcmp(a ? a : "", b ? b : "") != 0) { eq = 0; break; }
+                }
+                if (eq) dup = 1;
+            }
+            if (dup) continue;
+        }
+        char **nv = (char **)gv_realloc(dst->column_values, (dst->row_count + 1) * cc * sizeof(char *));
+        if (!nv) return -1;
+        dst->column_values = nv;
+        for (size_t c = 0; c < cc; c++)
+            dst->column_values[dst->row_count * cc + c] = gv_dup_cstr(srow[c] ? srow[c] : "");
+        dst->row_count++;
+    }
+    return 0;
+}
+
+/* Execute one top-level query segment (no UNION handling). Dispatches the
+ * leading clause, including the CALL { subquery } brace form. */
+static int run_segment(GV_CypherEngine *eng, Lex *lx, GV_CypherResult *res) {
+    Tok *first = pk(lx);
+    if (kw(first, "call") && lx->pos + 1 < lx->n && lx->v[lx->pos + 1].t == T_LC) {
+        /* CALL { <subquery> }: run the braced read-query and surface its rows as
+         * this statement's result (uncorrelated form only — the subquery does not
+         * see outer variables, and a trailing outer RETURN is not supported). */
+        adv(lx); /* CALL */
+        adv(lx); /* '{' */
+        int rc = run(eng, lx, res);
+        if (rc != 0) return rc;
+        if (pk(lx)->t != T_RC) { snprintf(lx->err, CY_ERR, "expected '}' to close CALL subquery"); cypher_free_result(res); return -1; }
+        adv(lx); /* '}' */
+        return 0;
+    }
+    if (kw(first, "call")) return run_call(eng, lx, res);
+    if (kw(first, "match") || kw(first, "optional") || kw(first, "create") || kw(first, "merge") || kw(first, "unwind") || kw(first, "foreach"))
+        return run(eng, lx, res);
+    snprintf(lx->err, CY_ERR, "expected MATCH, OPTIONAL, CREATE, MERGE, UNWIND or CALL");
+    return -1;
+}
+
 int cypher_execute(GV_CypherEngine *eng, const char *query, GV_CypherResult *result) {
     if (!eng || !query || !result) return -1;
     eng->err[0] = 0;
@@ -2388,13 +2456,21 @@ int cypher_execute(GV_CypherEngine *eng, const char *query, GV_CypherResult *res
 
     Lex lx; memset(&lx, 0, sizeof(lx));
     if (tokenize(&lx, query)) { snprintf(eng->err, CY_ERR, "%s", lx.err); lex_free(&lx); return -1; }
-    Tok *first = pk(&lx);
-    int rc;
     GV_CypherEngine *prev = g_eng; g_eng = eng;  /* for parameters + EXISTS */
-    if (kw(first, "call")) rc = run_call(eng, &lx, result);
-    else if (kw(first, "match") || kw(first, "optional") || kw(first, "create") || kw(first, "merge") || kw(first, "unwind") || kw(first, "foreach"))
-        rc = run(eng, &lx, result);
-    else { snprintf(eng->err, CY_ERR, "expected MATCH, OPTIONAL, CREATE, MERGE, UNWIND or CALL"); rc = -1; }
+    int rc = run_segment(eng, &lx, result);
+    /* UNION [ALL]: fold each following segment into the first result. */
+    while (rc == 0 && kw(pk(&lx), "union")) {
+        adv(&lx);
+        int all = 0;
+        if (kw(pk(&lx), "all")) { adv(&lx); all = 1; }
+        GV_CypherResult r2; memset(&r2, 0, sizeof(r2));
+        if (run_segment(eng, &lx, &r2) != 0) { cypher_free_result(&r2); rc = -1; break; }
+        if (result_union_merge(result, &r2, all) != 0) {
+            snprintf(eng->err, CY_ERR, "UNION column count mismatch");
+            cypher_free_result(&r2); cypher_free_result(result); rc = -1; break;
+        }
+        cypher_free_result(&r2);
+    }
     g_eng = prev;
     if (rc != 0 && lx.err[0] && !eng->err[0]) snprintf(eng->err, CY_ERR, "%s", lx.err);
     lex_free(&lx);
