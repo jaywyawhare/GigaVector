@@ -108,12 +108,14 @@ jobs:
 
       - name: Run Python tests
         timeout-minutes: 10
-        shell: pwsh
+        shell: bash
+        env:
+          PYTHONUNBUFFERED: "1"
+          PYTHONFAULTHANDLER: "1"
         run: |
-          $out = python -m unittest discover -s python/tests -v 2>&1 | Out-String
-          Write-Host $out
-          if ($out -match "FAILED" -or -not ($out -match "OK")) { exit 1 }
-          exit 0
+          # Stream output live and arm a faulthandler watchdog so a hang dumps
+          # the stuck test's stack instead of an opaque CI step timeout.
+          python python/tests/_run_suite.py
 
       - name: Lint and type-check Python (Linux only)
         if: matrix.os == 'ubuntu-latest'
