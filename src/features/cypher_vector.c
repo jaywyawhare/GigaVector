@@ -77,7 +77,9 @@ static size_t parse_float_vector(const char *s, float **out) {
     if (!v) return 0;
     const char *p = s;
     while (*p) {
-        while (*p == ' ' || *p == ',') p++;
+        /* Skip any separators (whitespace, commas, and [] / () brackets) up to
+         * the start of the next number so "[1, 0, 0]" parses like "1 0 0". */
+        while (*p && !((*p >= '0' && *p <= '9') || *p == '-' || *p == '+' || *p == '.')) p++;
         if (!*p) break;
         char *end;
         float val = strtof(p, &end);

@@ -293,6 +293,30 @@ int main(void) {
            && strncmp(cell(&r,0,0),"24",2)==0, "reduce product = 24");
     cypher_free_result(&r);
 
+    /* ---- vector distance predicates + variable-length paths ---- */
+    ASSERT(q(cy, "CREATE (va:Vec {name:'va', emb:'[1,0,0]'})-[:LINK]->(vb:Vec {name:'vb', emb:'[0,1,0]'})"
+                 "-[:LINK]->(vc:Vec {name:'vc', emb:'[0.9,0.1,0]'})", &r) == 0, "create vec chain");
+    cypher_free_result(&r);
+    /* bracketed vectors parse; L2 distance computed */
+    ASSERT(q(cy, "MATCH (v:Vec {name:'va'}) RETURN vector_distance(v.emb, '[1,0,0]')", &r) == 0
+           && strncmp(cell(&r,0,0),"0",1)==0, "vector_distance(self)=0");
+    cypher_free_result(&r);
+    /* vector predicate in WHERE filters correctly (excludes the far vb) */
+    ASSERT(q(cy, "MATCH (v:Vec) WHERE vector_distance(v.emb, '[1,0,0]') < 0.5 RETURN v.name ORDER BY v.name", &r) == 0
+           && r.row_count == 2 && strcmp(cell(&r,0,0),"va")==0 && strcmp(cell(&r,1,0),"vc")==0,
+           "WHERE vector_distance < 0.5 -> va,vc (not vb)");
+    cypher_free_result(&r);
+    /* cosine metric: parallel vector has distance 0 */
+    ASSERT(q(cy, "MATCH (v:Vec {name:'va'}) RETURN vector_distance_cosine(v.emb, '[2,0,0]')", &r) == 0
+           && strncmp(cell(&r,0,0),"0",1)==0, "cosine of parallel vectors = 0");
+    cypher_free_result(&r);
+    /* HEADLINE: variable-length path + vector predicate combined */
+    ASSERT(q(cy, "MATCH (a:Vec {name:'va'})-[:LINK*1..2]->(x) WHERE vector_distance(x.emb, '[1,0,0]') < 0.5 "
+                 "RETURN x.name ORDER BY x.name", &r) == 0
+           && r.row_count == 1 && strcmp(cell(&r,0,0),"vc")==0,
+           "varlen path + vector predicate -> only vc");
+    cypher_free_result(&r);
+
     /* ---- WITH pipelining ---- */
     ASSERT(q(cy, "MATCH (a:Person {name:'Alice'}) WITH a MATCH (a)-[:KNOWS]->(b) RETURN b.name", &r) == 0
            && r.row_count == 1 && strcmp(cell(&r,0,0),"Bob")==0, "WITH pass-through var");
