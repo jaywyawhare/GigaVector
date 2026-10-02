@@ -253,6 +253,21 @@ int main(void) {
     ASSERT(q(cy, "MATCH (m:Measure) WITH stDevP(m.v) AS s RETURN s", &r) == 0
            && r.row_count == 1 && strncmp(cell(&r,0,0),"8.16",4)==0, "WITH stDevP ~= 8.16");
     cypher_free_result(&r);
+    /* percentileCont(0.5) over {10,20,30} = 20 (interpolated median) */
+    ASSERT(q(cy, "MATCH (m:Measure) RETURN percentileCont(m.v, 0.5)", &r) == 0
+           && r.row_count == 1 && strncmp(cell(&r,0,0),"20",2)==0, "percentileCont(0.5)=20");
+    cypher_free_result(&r);
+    /* percentileDisc(0.0) = min = 10; percentileDisc(1.0) = max = 30 */
+    ASSERT(q(cy, "MATCH (m:Measure) RETURN percentileDisc(m.v, 0)", &r) == 0
+           && strncmp(cell(&r,0,0),"10",2)==0, "percentileDisc(0)=10");
+    cypher_free_result(&r);
+    ASSERT(q(cy, "MATCH (m:Measure) RETURN percentileDisc(m.v, 1)", &r) == 0
+           && strncmp(cell(&r,0,0),"30",2)==0, "percentileDisc(1)=30");
+    cypher_free_result(&r);
+    /* percentileCont through WITH projection (separate aggregation path) */
+    ASSERT(q(cy, "MATCH (m:Measure) WITH percentileCont(m.v, 0.5) AS p RETURN p", &r) == 0
+           && r.row_count == 1 && strncmp(cell(&r,0,0),"20",2)==0, "WITH percentileCont(0.5)=20");
+    cypher_free_result(&r);
 
     /* ---- WITH pipelining ---- */
     ASSERT(q(cy, "MATCH (a:Person {name:'Alice'}) WITH a MATCH (a)-[:KNOWS]->(b) RETURN b.name", &r) == 0

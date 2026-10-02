@@ -204,8 +204,9 @@ typedef struct Expr { ExK k; struct Expr *l, *r; Cmp op; Opd a, b;
                       char **inlist; size_t nin; Pattern *pat; } Expr;
 static void pattern_clear(Pattern *p);
 
-typedef enum { AG_NONE, AG_COUNT, AG_COUNTSTAR, AG_COLLECT, AG_SUM, AG_AVG, AG_MIN, AG_MAX, AG_STDEV, AG_STDEVP } Agg;
-typedef struct { Agg agg; Opd opd; char *alias; } Ret;
+typedef enum { AG_NONE, AG_COUNT, AG_COUNTSTAR, AG_COLLECT, AG_SUM, AG_AVG, AG_MIN, AG_MAX, AG_STDEV, AG_STDEVP, AG_PCTCONT, AG_PCTDISC } Agg;
+static int agg_has_pct(Agg a) { return a == AG_PCTCONT || a == AG_PCTDISC; }
+typedef struct { Agg agg; Opd opd; char *alias; double aggarg; } Ret; /* aggarg: percentile p for percentileCont/Disc */
 typedef struct { Opd opd; int desc; } Ord;
 typedef struct { char *var; char *prop; Opd *valexpr; } SetItem;
 
@@ -1653,6 +1654,29 @@ static void cells_add(Cells *c, char *v) {
     c->cells[c->n++] = v;
 }
 
+static int cy_dcmp(const void *a, const void *b) {
+    double x = *(const double *)a, y = *(const double *)b;
+    return x < y ? -1 : x > y ? 1 : 0;
+}
+/* percentileCont (linear interpolation) / percentileDisc (nearest-rank) over a
+ * mutable value array; sorts in place. Matches Neo4j semantics. */
+static double cy_percentile(double *vals, size_t n, double p, int cont) {
+    if (n == 0) return 0;
+    if (p < 0) p = 0;
+    if (p > 1) p = 1;
+    qsort(vals, n, sizeof(double), cy_dcmp);
+    if (cont) {
+        double rank = p * (double)(n - 1);
+        size_t lo = (size_t)floor(rank), hi = (size_t)ceil(rank);
+        if (lo == hi) return vals[lo];
+        return vals[lo] + (rank - (double)lo) * (vals[hi] - vals[lo]);
+    }
+    size_t idx = (size_t)ceil(p * (double)n);
+    if (idx > 0) idx--;
+    if (idx >= n) idx = n - 1;
+    return vals[idx];
+}
+
 static char *col_name(const Ret *r) {
     char buf[160];
     if (r->alias) return gv_dup_cstr(r->alias);
@@ -1664,6 +1688,7 @@ static char *col_name(const Ret *r) {
         case AG_SUM: fn = "sum"; break; case AG_AVG: fn = "avg"; break;
         case AG_MIN: fn = "min"; break; case AG_MAX: fn = "max"; break;
         case AG_STDEV: fn = "stDev"; break; case AG_STDEVP: fn = "stDevP"; break;
+        case AG_PCTCONT: fn = "percentileCont"; break; case AG_PCTDISC: fn = "percentileDisc"; break;
         case AG_NONE: default: fn = NULL; break;
     }
     char base[128];
@@ -1758,7 +1783,7 @@ static int build_projection(GV_CypherEngine *eng, RowSet *rows, Ret *items, size
                     else if (items[c].agg == AG_AVG) outv = cntn ? acc / cntn : 0;
                     else if (items[c].agg == AG_MIN) outv = mn;
                     else if (items[c].agg == AG_MAX) outv = mx;
-                    else { /* AG_STDEV (sample, N-1) / AG_STDEVP (population, N) */
+                    else if (items[c].agg == AG_STDEV || items[c].agg == AG_STDEVP) {
                         double mean = cntn ? acc / cntn : 0, ss = 0;
                         for (size_t k = 0; k < g->nr; k++) {
                             char *v = val_of(kg, &items[c].opd, &rows->r[g->rowidx[k]]);
@@ -1767,6 +1792,16 @@ static int build_projection(GV_CypherEngine *eng, RowSet *rows, Ret *items, size
                         }
                         if (items[c].agg == AG_STDEV) outv = cntn > 1 ? sqrt(ss / (cntn - 1)) : 0;
                         else outv = cntn > 0 ? sqrt(ss / cntn) : 0;
+                    } else { /* AG_PCTCONT / AG_PCTDISC */
+                        double *vals = (double *)gv_alloc((g->nr ? g->nr : 1) * sizeof(double));
+                        size_t nv = 0;
+                        for (size_t k = 0; k < g->nr; k++) {
+                            char *v = val_of(kg, &items[c].opd, &rows->r[g->rowidx[k]]);
+                            double d; if (is_num(v, &d)) vals[nv++] = d;
+                            gv_free(v);
+                        }
+                        outv = cy_percentile(vals, nv, items[c].aggarg, items[c].agg == AG_PCTCONT);
+                        gv_free(vals);
                     }
                     char b[48]; snprintf(b, sizeof(b), "%g", outv); cells_add(&out, gv_dup_cstr(b));
                 }
@@ -1871,6 +1906,8 @@ static Agg agg_of(const Tok *t) {
     if (kw(t, "max")) return AG_MAX;
     if (kw(t, "stdev")) return AG_STDEV;
     if (kw(t, "stdevp")) return AG_STDEVP;
+    if (kw(t, "percentilecont")) return AG_PCTCONT;
+    if (kw(t, "percentiledisc")) return AG_PCTDISC;
     return AG_NONE;
 }
 static int parse_return(Lex *lx, Ret *items, size_t *ni, int *distinct, int *star) {
@@ -1889,6 +1926,11 @@ static int parse_return(Lex *lx, Ret *items, size_t *ni, int *distinct, int *sta
                 if (kw(pk(lx), "distinct")) adv(lx); /* count(DISTINCT x) ~ count(x) here */
                 it->agg = a;
                 if (parse_operand(lx, &it->opd)) return -1;
+                if (agg_has_pct(a)) { /* percentileCont/Disc(expr, fraction) */
+                    if (eat(lx, T_COMMA, "','")) return -1;
+                    if (pk(lx)->t != T_NUMBER) { snprintf(lx->err, CY_ERR, "percentile expects a numeric fraction"); return -1; }
+                    it->aggarg = strtod(adv(lx)->s, NULL);
+                }
             }
             if (eat(lx, T_RP, "')'")) return -1;
         } else {
@@ -2126,7 +2168,7 @@ static int run(GV_CypherEngine *eng, Lex *lx, GV_CypherResult *res) {
             int wdistinct = 0;
             if (kw(pk(lx), "distinct")) { wdistinct = 1; adv(lx); }
             /* WITH item [AS alias] , ... [WHERE expr] — supports aggregation. */
-            Opd wopd[CY_MAXRET]; char *walias[CY_MAXRET]; Agg wagg[CY_MAXRET]; size_t nw2 = 0;
+            Opd wopd[CY_MAXRET]; char *walias[CY_MAXRET]; Agg wagg[CY_MAXRET]; double wpct[CY_MAXRET]; size_t nw2 = 0;
             int werr = 0, anyagg = 0;
             for (;;) {
                 if (nw2 >= CY_MAXRET) { werr = 1; break; }
@@ -2136,7 +2178,8 @@ static int run(GV_CypherEngine *eng, Lex *lx, GV_CypherResult *res) {
                     adv(lx);
                     if (eat(lx, T_LP, "'('")) { werr = 1; break; }
                     if (a == AG_COUNT && pk(lx)->t == T_STAR) { wagg[nw2] = AG_COUNTSTAR; adv(lx); }
-                    else { if (kw(pk(lx), "distinct")) adv(lx); wagg[nw2] = a; if (parse_operand(lx, &wopd[nw2])) { werr = 1; break; } }
+                    else { if (kw(pk(lx), "distinct")) adv(lx); wagg[nw2] = a; if (parse_operand(lx, &wopd[nw2])) { werr = 1; break; }
+                           if (agg_has_pct(a)) { if (eat(lx, T_COMMA, "','")) { werr = 1; break; } if (pk(lx)->t != T_NUMBER) { werr = 1; break; } wpct[nw2] = strtod(adv(lx)->s, NULL); } }
                     if (eat(lx, T_RP, "')'")) { werr = 1; break; }
                     anyagg = 1;
                 } else { wagg[nw2] = AG_NONE; if (parse_operand(lx, &wopd[nw2])) { werr = 1; break; } }
@@ -2209,6 +2252,10 @@ static int run(GV_CypherEngine *eng, Lex *lx, GV_CypherResult *res) {
                                 double mean = cn?acc/cn:0, ss=0;
                                 for (size_t i = 0; i < rows.n; i++) if (grp[i]==gi) { char *v=val_of(eng->kg,&wopd[c],&rows.r[i]); double d; if(is_num(v,&d)){ double dv=d-mean; ss+=dv*dv; } gv_free(v); }
                                 ov = wagg[c]==AG_STDEV ? (cn>1?sqrt(ss/(cn-1)):0) : (cn>0?sqrt(ss/cn):0);
+                            } else if (agg_has_pct(wagg[c])) {
+                                double *pv = (double*)gv_alloc((cn?cn:1)*sizeof(double)); size_t pn=0;
+                                for (size_t i = 0; i < rows.n; i++) if (grp[i]==gi) { char *v=val_of(eng->kg,&wopd[c],&rows.r[i]); double d; if(is_num(v,&d)) pv[pn++]=d; gv_free(v); }
+                                ov = cy_percentile(pv, pn, wpct[c], wagg[c]==AG_PCTCONT); gv_free(pv);
                             } else {
                                 ov = wagg[c]==AG_SUM?acc : wagg[c]==AG_AVG?(cn?acc/cn:0) : wagg[c]==AG_MIN?mn:mx;
                             }
