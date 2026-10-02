@@ -116,9 +116,13 @@ jobs:
           # Stream output live and arm a faulthandler watchdog so a hang dumps
           # the stuck test's stack instead of an opaque CI step timeout. pwsh is
           # used (not bash) so the setup-python interpreter is the one on PATH on
-          # the Windows runner.
+          # the Windows runner. Disable pwsh's native-stderr-as-error handling so
+          # unittest's progress on stderr does not fail an otherwise-passing run;
+          # correctness is decided solely by the interpreter's exit code.
+          $ErrorActionPreference = 'Continue'
+          $PSNativeCommandUseErrorActionPreference = $false
           python python/tests/_run_suite.py
-          if ($LASTEXITCODE -ne 0) { exit 1 }
+          exit $LASTEXITCODE
 
       - name: Lint and type-check Python (Linux only)
         if: matrix.os == 'ubuntu-latest'
