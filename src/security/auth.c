@@ -359,6 +359,7 @@ GV_AuthResult auth_verify_api_key(GV_AuthManager *auth, const char *api_key,
     unsigned char key_bytes[KEY_LEN];
     for (size_t i = 0; i < KEY_LEN; i++) {
         unsigned int byte;
+        /* NOLINTNEXTLINE(cert-err34-c): return value is validated (!= 1). */
         if (sscanf(api_key + i * 2, "%2x", &byte) != 1) {
             return GV_AUTH_INVALID_FORMAT;
         }

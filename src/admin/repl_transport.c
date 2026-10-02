@@ -263,7 +263,7 @@ static int parse_host_port(const char *address, char *host, size_t host_cap, uin
     if (hlen >= host_cap) return -1;
     memcpy(host, address, hlen);
     host[hlen] = '\0';
-    *port = (uint16_t)atoi(colon + 1);
+    *port = (uint16_t)(int)strtol(colon + 1, NULL, 10);
     return (*port > 0) ? 0 : -1;
 }
 

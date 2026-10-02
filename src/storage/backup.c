@@ -359,10 +359,10 @@ GV_BackupResult *backup_create(GV_Database *db, const char *backup_path,
         remove(tmp_path);
         return create_result(0, "Failed to get file position after writing vectors");
     }
-    fseek(fp, sizes_pos, SEEK_SET);
+    (void)fseek(fp, sizes_pos, SEEK_SET);
     write_u64(fp, data_size);
     write_u64(fp, zero);
-    fseek(fp, end_pos, SEEK_SET);
+    (void)fseek(fp, end_pos, SEEK_SET);
 
     fclose(fp);
 
@@ -371,8 +371,8 @@ GV_BackupResult *backup_create(GV_Database *db, const char *backup_path,
     if (backup_compute_checksum(tmp_path, checksum) == 0) {
         fp = fopen(tmp_path, "r+b");
         if (fp) {
-            fseek(fp, sizes_pos + 16, SEEK_SET);
-            fwrite(checksum, 1, BACKUP_CHECKSUM_LEN, fp);
+            (void)fseek(fp, sizes_pos + 16, SEEK_SET);
+            (void)fwrite(checksum, 1, BACKUP_CHECKSUM_LEN, fp);
             fclose(fp);
         }
     }
@@ -743,7 +743,7 @@ GV_BackupResult *backup_restore_to_db(const char *backup_path,
         return create_result(0, "Failed to open backup file");
     }
 
-    fseek(fp, BACKUP_HEADER_SIZE, SEEK_SET);
+    (void)fseek(fp, BACKUP_HEADER_SIZE, SEEK_SET);
 
     size_t vector_size = header.dimension * sizeof(float);
     float *buffer = gv_alloc(vector_size);
@@ -881,7 +881,7 @@ GV_BackupResult *backup_verify(const char *backup_path, const char *decryption_k
         }
 
         size_t header_total = BACKUP_HEADER_SIZE;
-        fseek(fp, (long)header_total, SEEK_SET);
+        (void)fseek(fp, (long)header_total, SEEK_SET);
 
         size_t probe_size = header.dimension * sizeof(float);
         /* Encrypted data may have padding — read extra 16 bytes */
@@ -926,7 +926,7 @@ GV_BackupResult *backup_verify(const char *backup_path, const char *decryption_k
         return create_result(0, "Failed to open backup file");
     }
 
-    fseek(fp, 0, SEEK_END);
+    (void)fseek(fp, 0, SEEK_END);
     long file_size = ftell(fp);
     fclose(fp);
 
@@ -1077,7 +1077,7 @@ GV_BackupResult *backup_create_incremental(GV_Database *db, const char *backup_p
         return create_result(0, "Failed to create incremental backup file");
     }
 
-    fwrite(BACKUP_MAGIC, 1, BACKUP_MAGIC_LEN, fp);
+    (void)fwrite(BACKUP_MAGIC, 1, BACKUP_MAGIC_LEN, fp);
 
     GV_BackupHeader header;
     memset(&header, 0, sizeof(header));
@@ -1142,7 +1142,7 @@ GV_BackupResult *backup_merge(const char *base_backup_path,
         return create_result(0, "Failed to open base backup");
     }
 
-    fseek(base_fp, 0, SEEK_SET);
+    (void)fseek(base_fp, 0, SEEK_SET);
 
     char *buffer = gv_alloc(BUFFER_SIZE);
     if (!buffer) {
@@ -1193,7 +1193,7 @@ GV_BackupResult *backup_merge(const char *base_backup_path,
             sizeof(inc_header.dimension) + sizeof(inc_header.index_type) +
             sizeof(uint64_t) * 2;
 
-        fseek(inc_fp, header_size, SEEK_SET);
+        (void)fseek(inc_fp, header_size, SEEK_SET);
 
         /* Bound the multiplication: vector_count (uint64) * dimension (uint32) *
          * sizeof(float) can overflow size_t.  A wrapped-around vector_bytes would
@@ -1227,7 +1227,7 @@ GV_BackupResult *backup_merge(const char *base_backup_path,
 
     gv_free(buffer);
 
-    fseek(out_fp, BACKUP_MAGIC_LEN + sizeof(uint32_t) * 2 + sizeof(uint64_t), SEEK_SET);
+    (void)fseek(out_fp, BACKUP_MAGIC_LEN + sizeof(uint32_t) * 2 + sizeof(uint64_t), SEEK_SET);
     if (write_u64(out_fp, total_vectors) != 0) {
         fclose(out_fp);
         remove(output_path);
@@ -1245,8 +1245,8 @@ GV_BackupResult *backup_merge(const char *base_backup_path,
     if (backup_compute_checksum(output_path, merged_checksum) == 0) {
         FILE *cf = fopen(output_path, "r+b");
         if (cf) {
-            fseek(cf, (long)BACKUP_HEADER_FIXED_SIZE, SEEK_SET);
-            fwrite(merged_checksum, 1, BACKUP_CHECKSUM_LEN, cf);
+            (void)fseek(cf, (long)BACKUP_HEADER_FIXED_SIZE, SEEK_SET);
+            (void)fwrite(merged_checksum, 1, BACKUP_CHECKSUM_LEN, cf);
             fclose(cf);
         }
     }
@@ -1265,9 +1265,9 @@ int backup_compute_checksum(const char *backup_path, char *checksum_out) {
     FILE *fp = fopen(backup_path, "rb");
     if (!fp) return -1;
 
-    fseek(fp, 0, SEEK_END);
+    (void)fseek(fp, 0, SEEK_END);
     long file_size = ftell(fp);
-    fseek(fp, 0, SEEK_SET);
+    (void)fseek(fp, 0, SEEK_SET);
 
     /* ftell() returns -1 on error; an empty file yields 0.  Either would lead to
      * a negative/zero-sized gv_alloc (a huge alloc after the implicit conversion

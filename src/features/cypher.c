@@ -1372,7 +1372,11 @@ static char *val_of(GV_KnowledgeGraph *kg, const Opd *o, const Row *row) {
                 if (o->nargs > 2) { char *s = val_of(kg, o->args[2], row); is_num(s, &step); gv_free(s); }
                 if (step == 0) step = 1;
                 char **el = NULL; size_t n = 0, cap = 0;
-                for (double v = lo; (step > 0) ? v <= hi : v >= hi; v += step) {
+                /* Index by an integer and compute each value as lo + i*step so the
+                 * loop counter is not a float (avoids accumulation drift). */
+                for (size_t i = 0;; i++) {
+                    double v = lo + (double)i * step;
+                    if ((step > 0) ? v > hi : v < hi) break;
                     if (n == cap) { cap = cap ? cap * 2 : 8; el = (char **)gv_realloc(el, cap * sizeof(char *)); }
                     el[n++] = fmt_num(v);
                     if (n > 100000) break;
@@ -1417,7 +1421,7 @@ static char *val_of(GV_KnowledgeGraph *kg, const Opd *o, const Row *row) {
             else if (strcasecmp(fn, "degrees") == 0) { double d = 0; is_num(a0, &d); res = fmt_num(d * (180.0 / 3.141592653589793238)); }
             else if (strcasecmp(fn, "radians") == 0) { double d = 0; is_num(a0, &d); res = fmt_num(d * (3.141592653589793238 / 180.0)); }
             else if (strcasecmp(fn, "haversin") == 0) { double d = 0; is_num(a0, &d); double s = sin(d / 2.0); res = fmt_num(s * s); }
-            else if (strcasecmp(fn, "rand") == 0) { res = fmt_num((double)rand() / ((double)RAND_MAX + 1.0)); }
+            else if (strcasecmp(fn, "rand") == 0) { res = fmt_num((double)rand() / ((double)RAND_MAX + 1.0)); } /* NOLINT(cert-msc30-c,cert-msc50-cpp): non-cryptographic RNG for Cypher rand(). */
             else if (strcasecmp(fn, "toboolean") == 0) {
                 res = gv_dup_cstr((a0 && (strcasecmp(a0, "true") == 0 || strcmp(a0, "1") == 0)) ? "true" : "false");
             }

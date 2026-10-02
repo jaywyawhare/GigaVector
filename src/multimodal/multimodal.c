@@ -194,13 +194,13 @@ static void *read_entire_file(const char *path, size_t *out_size) {
     FILE *fp = fopen(path, "rb");
     if (!fp) return NULL;
 
-    fseek(fp, 0, SEEK_END);
+    (void)fseek(fp, 0, SEEK_END);
     long sz = ftell(fp);
     if (sz < 0) {
         fclose(fp);
         return NULL;
     }
-    fseek(fp, 0, SEEK_SET);
+    (void)fseek(fp, 0, SEEK_SET);
 
     void *buf = gv_alloc((size_t)sz);
     if (!buf) {
@@ -520,7 +520,7 @@ int media_save_index(const GV_MediaStore *store, const char *path) {
         return -1;
     }
 
-    fwrite(MEDIA_INDEX_MAGIC, 1, MEDIA_INDEX_MAGIC_LEN, fp);
+    (void)fwrite(MEDIA_INDEX_MAGIC, 1, MEDIA_INDEX_MAGIC_LEN, fp);
     uint32_t version = MEDIA_INDEX_VERSION;
     write_u32(fp, version);
 
@@ -539,12 +539,12 @@ int media_save_index(const GV_MediaStore *store, const char *path) {
             write_u32(fp, t);
 
             /* hash (64 bytes, no null) */
-            fwrite(e->hash, 1, 64, fp);
+            (void)fwrite(e->hash, 1, 64, fp);
 
             uint32_t fn_len = e->filename ? (uint32_t)strlen(e->filename) : 0;
             write_u32(fp, fn_len);
             if (fn_len > 0) {
-                fwrite(e->filename, 1, fn_len, fp);
+                (void)fwrite(e->filename, 1, fn_len, fp);
             }
 
             uint64_t fs = (uint64_t)e->file_size;
@@ -553,7 +553,7 @@ int media_save_index(const GV_MediaStore *store, const char *path) {
             uint32_t mt_len = e->mime_type ? (uint32_t)strlen(e->mime_type) : 0;
             write_u32(fp, mt_len);
             if (mt_len > 0) {
-                fwrite(e->mime_type, 1, mt_len, fp);
+                (void)fwrite(e->mime_type, 1, mt_len, fp);
             }
 
             write_u64(fp, (uint64_t)e->created_at);

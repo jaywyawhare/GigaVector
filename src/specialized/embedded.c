@@ -608,7 +608,7 @@ static int emb_lsh_insert(GV_EmbeddedDB *db, size_t vec_idx) {
 
     for (size_t t = 0; t < l->num_tables; ++t) {
         uint32_t hash = emb_lsh_hash(l, data, t);
-        uint32_t bucket_idx = hash % (uint32_t)l->num_buckets;
+        uint32_t bucket_idx = l->num_buckets ? hash % (uint32_t)l->num_buckets : 0;
         if (emb_lsh_bucket_add(db, &l->tables[t][bucket_idx], vec_idx) != 0) {
             return -1;
         }
@@ -626,7 +626,7 @@ static int emb_lsh_search(const GV_EmbeddedDB *db, const float *query, size_t k,
 
     for (size_t t = 0; t < l->num_tables; ++t) {
         uint32_t hash = emb_lsh_hash(l, query, t);
-        uint32_t bucket_idx = hash % (uint32_t)l->num_buckets;
+        uint32_t bucket_idx = l->num_buckets ? hash % (uint32_t)l->num_buckets : 0;
         GV_EmbeddedLSHBucket *bucket = &l->tables[t][bucket_idx];
 
         for (size_t i = 0; i < bucket->count; ++i) {

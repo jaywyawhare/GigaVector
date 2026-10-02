@@ -204,6 +204,7 @@ static float distance_l2(const float *a, const float *b, size_t dimension) {
 }
 
 static size_t assign_level(double level_mult) {
+    /* NOLINTNEXTLINE(cert-msc30-c,cert-msc50-cpp): non-cryptographic RNG for probabilistic HNSW level assignment. */
     double r = (double)rand() / ((double)RAND_MAX + 1.0);
     if (r <= 0.0) r = 1e-12;
     size_t level = (size_t)(-log(r) * level_mult);

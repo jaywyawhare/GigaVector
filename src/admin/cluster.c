@@ -244,7 +244,7 @@ static int cluster_split_addr(const char *addr, char *host, size_t hostsz,
     if (hlen >= hostsz) return -1;
     memcpy(host, addr, hlen);
     host[hlen] = '\0';
-    int p = atoi(colon + 1);
+    int p = (int)strtol(colon + 1, NULL, 10);
     if (p < 0 || p > 65535) return -1;
     *port = (uint16_t)p;
     return 0;

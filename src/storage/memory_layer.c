@@ -675,29 +675,29 @@ static int parse_memory_metadata(const GV_Metadata *meta_list, GV_MemoryMetadata
         if (strcmp(current->key, "memory_id") == 0) {
             out->memory_id = gv_dup_cstr(current->value);
         } else if (strcmp(current->key, "memory_type") == 0) {
-            out->memory_type = (GV_MemoryType)atoi(current->value);
+            out->memory_type = (GV_MemoryType)(int)strtol(current->value, NULL, 10);
         } else if (strcmp(current->key, "source") == 0) {
             out->source = gv_dup_cstr(current->value);
         } else if (strcmp(current->key, "timestamp") == 0) {
-            out->timestamp = (time_t)atol(current->value);
+            out->timestamp = (time_t)strtol(current->value, NULL, 10);
         } else if (strcmp(current->key, "importance_score") == 0) {
-            out->importance_score = atof(current->value);
+            out->importance_score = strtod(current->value, NULL);
         } else if (strcmp(current->key, "extraction_metadata") == 0) {
             out->extraction_metadata = gv_dup_cstr(current->value);
         } else if (strcmp(current->key, "consolidated") == 0) {
-            out->consolidated = atoi(current->value);
+            out->consolidated = (int)strtol(current->value, NULL, 10);
         } else if (strcmp(current->key, "related_memories") == 0) {
             deserialize_related_ids(current->value, &out->related_memory_ids, &out->related_count);
         } else if (strcmp(current->key, "memory_links") == 0) {
             deserialize_links(current->value, &out->links, &out->link_count);
         } else if (strcmp(current->key, "valid_from") == 0) {
-            out->valid_from = (time_t)atol(current->value);
+            out->valid_from = (time_t)strtol(current->value, NULL, 10);
         } else if (strcmp(current->key, "valid_to") == 0) {
-            out->valid_to = (time_t)atol(current->value);
+            out->valid_to = (time_t)strtol(current->value, NULL, 10);
         } else if (strcmp(current->key, "access_count") == 0) {
             out->access_count = (uint32_t)strtoul(current->value, NULL, 10);
         } else if (strcmp(current->key, "last_accessed") == 0) {
-            out->last_accessed = (time_t)atol(current->value);
+            out->last_accessed = (time_t)strtol(current->value, NULL, 10);
         }
         current = current->next;
     }
@@ -982,7 +982,7 @@ int memory_search(GV_MemoryLayer *layer, const float *query_embedding,
             /* Set up importance context */
             contexts[i].current_time = current_time;
             if (timestamp_str) {
-                contexts[i].creation_time = (time_t)atol(timestamp_str);
+                contexts[i].creation_time = (time_t)strtol(timestamp_str, NULL, 10);
             }
             contexts[i].semantic_similarity = similarity;
 
@@ -1423,7 +1423,7 @@ int memory_search_filtered(GV_MemoryLayer *layer, const float *query_embedding,
         if (min_timestamp > 0 || max_timestamp > 0) {
             const char *ts_str = vector_get_metadata(vec, "timestamp");
             if (ts_str != NULL) {
-                time_t ts = (time_t)atol(ts_str);
+                time_t ts = (time_t)strtol(ts_str, NULL, 10);
                 if (min_timestamp > 0 && ts < min_timestamp) continue;
                 if (max_timestamp > 0 && ts > max_timestamp) continue;
             }
@@ -1468,7 +1468,7 @@ int memory_get_related(GV_MemoryLayer *layer, const char *memory_id,
         return -1;
     }
     
-    GV_MemoryResult mem_result;
+    GV_MemoryResult mem_result = {0};
     int ret = memory_get(layer, memory_id, &mem_result);
     if (ret != 0) {
         return -1;
@@ -1481,7 +1481,7 @@ int memory_get_related(GV_MemoryLayer *layer, const char *memory_id,
     
     size_t found = 0;
     for (size_t i = 0; i < mem_result.metadata->related_count && found < k; i++) {
-        GV_MemoryResult related;
+        GV_MemoryResult related = {0};
         if (memory_get(layer, mem_result.metadata->related_memory_ids[i], &related) == 0) {
             results[found++] = related;
         }
@@ -1657,12 +1657,12 @@ int memory_search_advanced(GV_MemoryLayer *layer, const float *query_embedding,
         }
 
         const char *timestamp_str = vector_get_metadata(vec, "timestamp");
-        time_t creation_time = timestamp_str ? (time_t)atol(timestamp_str) : 0;
+        time_t creation_time = timestamp_str ? (time_t)strtol(timestamp_str, NULL, 10) : 0;
 
         const char *valid_from_str = vector_get_metadata(vec, "valid_from");
         const char *valid_to_str = vector_get_metadata(vec, "valid_to");
         if (valid_from_str) {
-            time_t vf = (time_t)atol(valid_from_str);
+            time_t vf = (time_t)strtol(valid_from_str, NULL, 10);
             if (opts.max_timestamp > 0 && vf > opts.max_timestamp) continue;
             if (opts.min_timestamp > 0 && vf > 0 && opts.min_timestamp < vf &&
                 creation_time < vf) {
@@ -1670,7 +1670,7 @@ int memory_search_advanced(GV_MemoryLayer *layer, const float *query_embedding,
             }
         }
         if (valid_to_str) {
-            time_t vt = (time_t)atol(valid_to_str);
+            time_t vt = (time_t)strtol(valid_to_str, NULL, 10);
             if (opts.min_timestamp > 0 && vt > 0 && vt < opts.min_timestamp) continue;
             if (opts.max_timestamp > 0 && vt > 0 && vt < opts.max_timestamp) {
                 /* still valid within query window */
@@ -1890,7 +1890,7 @@ static int add_link_to_memory(GV_MemoryLayer *layer, const char *memory_id,
                                const char *target_id, GV_MemoryLinkType link_type,
                                float strength, const char *reason) {
     /* Get current memory */
-    GV_MemoryResult result;
+    GV_MemoryResult result = {0};
     int ret = memory_get(layer, memory_id, &result);
     if (ret != 0) {
         return -1;
@@ -1985,7 +1985,7 @@ int memory_link_create(GV_MemoryLayer *layer,
 static int remove_link_from_memory(GV_MemoryLayer *layer, const char *memory_id,
                                     const char *target_id) {
     /* Get current memory */
-    GV_MemoryResult result;
+    GV_MemoryResult result = {0};
     int ret = memory_get(layer, memory_id, &result);
     if (ret != 0) {
         return -1;
@@ -2054,7 +2054,7 @@ int memory_link_get(GV_MemoryLayer *layer,
         return -1;
     }
 
-    GV_MemoryResult result;
+    GV_MemoryResult result = {0};
     int ret = memory_get(layer, memory_id, &result);
     if (ret != 0) {
         return -1;
@@ -2094,7 +2094,7 @@ int memory_record_access(GV_MemoryLayer *layer,
     (void)relevance;
 
     /* Get current memory */
-    GV_MemoryResult result;
+    GV_MemoryResult result = {0};
     int ret = memory_get(layer, memory_id, &result);
     if (ret != 0) {
         return -1;

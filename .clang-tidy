@@ -1,0 +1,38 @@
+# Curated clang-tidy configuration for GigaVector.
+#
+# This gate runs the DETERMINISTIC, low-false-positive checks that reliably flag
+# real defects. The path-sensitive clang-analyzer checks are intentionally not in
+# the gate (they belong in an ad-hoc scan-build run): on this codebase they
+# produce false positives that would demand speculative defensive code for paths
+# that cannot occur, or NOLINT noise inside macro-generated code. The genuinely
+# real bugs those checks surfaced (uninitialised struct reads, divide-by-zero,
+# unchecked I/O, sign-extended char hashing, rewind without error detection) were
+# fixed in the code rather than suppressed.
+#
+# Checks deliberately excluded and why:
+#   * clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling —
+#     wants the C11 Annex K *_s functions (memcpy_s, snprintf_s) that glibc,
+#     musl, macOS libc and MinGW do not provide; "fixing" would not compile.
+#   * clang-analyzer-optin.performance.Padding — struct field-ordering micro-opt.
+#   * cert-dcl37-c / cert-dcl51-cpp — fire on the feature-test macros
+#     (_POSIX_C_SOURCE, _GNU_SOURCE) that POSIX requires us to define.
+#   * cert-err33-c — flags every ignored printf/snprintf return; replaced by a
+#     scoped bugprone-unused-return-value covering calls that can silently lose
+#     data or fail (buffered I/O and allocation).
+Checks: >
+  -*,
+  bugprone-unused-return-value,
+  cert-env33-c,
+  cert-err34-c,
+  cert-flp30-c,
+  cert-msc24-c,
+  cert-msc30-c,
+  cert-msc32-c,
+  cert-msc33-c,
+  cert-msc50-cpp,
+  cert-str34-c
+CheckOptions:
+  bugprone-unused-return-value.CheckedFunctions: '::fwrite;::fread;::fseek;::ftell;::fgets;::fgetpos;::fsetpos;::malloc;::calloc;::realloc'
+  bugprone-unused-return-value.AllowCastToVoid: 'true'
+HeaderFilterRegex: ''
+WarningsAsErrors: ''

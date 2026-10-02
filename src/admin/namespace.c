@@ -233,9 +233,9 @@ static int read_manifest(const char *db_filepath, size_t *dimension,
     }
 
     /* Read entire file */
-    fseek(fp, 0, SEEK_END);
+    (void)fseek(fp, 0, SEEK_END);
     long fsize = ftell(fp);
-    fseek(fp, 0, SEEK_SET);
+    (void)fseek(fp, 0, SEEK_SET);
     if (fsize < 0) {
         /* ftell failure: without this guard fsize == -1 makes gv_alloc(0) and
          * fread(...,(size_t)-1,...) / content[-1] run wild. */
@@ -274,7 +274,7 @@ static int read_manifest(const char *db_filepath, size_t *dimension,
     }
     if ((p = strstr(content, "\"index_type\"")) != NULL) {
         p = strchr(p, ':');
-        if (p) *index_type = (GV_NSIndexType)atoi(p + 1);
+        if (p) *index_type = (GV_NSIndexType)(int)strtol(p + 1, NULL, 10);
     }
     if ((p = strstr(content, "\"max_vectors\"")) != NULL) {
         p = strchr(p, ':');
@@ -654,7 +654,7 @@ int namespace_manager_load_all(GV_NamespaceManager *mgr) {
             FILE *db_fp = fopen(filepath, "rb");
             if (db_fp) {
                 /* Skip magic bytes and version, read dimension */
-                fseek(db_fp, 8, SEEK_SET);  /* After magic(4) + version(4) */
+                (void)fseek(db_fp, 8, SEEK_SET);  /* After magic(4) + version(4) */
                 uint32_t dim_from_file = 0;
                 if (read_u32(db_fp, &dim_from_file) == 0) {
                     if (dim_from_file > 0 && dim_from_file <= 65536) {

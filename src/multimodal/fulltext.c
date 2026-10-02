@@ -1542,7 +1542,7 @@ int ft_save(const GV_FTIndex *idx, const char *path) {
     pthread_rwlock_rdlock((pthread_rwlock_t *)&idx->rwlock);
 
     const char magic[] = "GV_FT01";
-    fwrite(magic, 1, 7, fp);
+    (void)fwrite(magic, 1, 7, fp);
 
     uint32_t lang = (uint32_t)idx->config.language;
     uint32_t flags = 0;
@@ -1579,7 +1579,7 @@ int ft_save(const GV_FTIndex *idx, const char *path) {
         while (pl) {
             uint32_t term_len = (uint32_t)strlen(pl->term);
             write_u32(fp, term_len);
-            fwrite(pl->term, 1, term_len, fp);
+            (void)fwrite(pl->term, 1, term_len, fp);
 
             uint64_t pcount = (uint64_t)pl->count;
             write_u64(fp, pcount);

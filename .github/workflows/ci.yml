@@ -518,7 +518,6 @@ jobs:
     name: static analysis (clang-tidy)
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    continue-on-error: true   # report-only until existing findings are triaged
     steps:
       - name: Checkout code
         uses: actions/checkout@v4.2.2
@@ -534,19 +533,16 @@ jobs:
             libssl-dev \
             libmicrohttpd-dev
 
-      # cert-* + clang-analyzer-* catch the bug classes IMPROVEMENTS.md called
-      # out (unsafe strcpy, unchecked returns). Report-only for now so the
-      # existing backlog doesn't block PRs; flip continue-on-error once clean.
       - name: Run clang-tidy
         timeout-minutes: 30
         run: |
           set -o pipefail
+          # Check set lives in the repo's .clang-tidy (curated, documented there).
           # Source files must come BEFORE `--` (everything after it is compiler
-          # flags); plain `xargs clang-tidy ... --` appended them after it, so
-          # clang-tidy saw no inputs and exited with its usage text.
+          # flags); run in parallel to stay within the timeout.
           find src -name '*.c' -print0 | sort -z | \
             xargs -0 -n 8 -P "$(nproc)" sh -c \
-              'clang-tidy --quiet --checks="-*,cert-*,clang-analyzer-*" "$@" -- -Iinclude -std=c11 -D_GNU_SOURCE' _ \
+              'clang-tidy --quiet --warnings-as-errors="*" "$@" -- -Iinclude -std=c11 -D_GNU_SOURCE' _ \
             2>&1 | tee clang-tidy-report.txt
           echo "clang-tidy findings: $(grep -c 'warning:' clang-tidy-report.txt || true)"
 

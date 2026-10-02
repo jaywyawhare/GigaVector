@@ -818,17 +818,17 @@ int access_history_deserialize(const char *json, GV_AccessHistory *history) {
 
     p = strstr(json, "\"total_accesses\":");
     if (p) {
-        history->total_accesses = (uint32_t)atoi(p + 17);
+        history->total_accesses = (uint32_t)(int)strtol(p + 17, NULL, 10);
     }
 
     p = strstr(json, "\"last_access\":");
     if (p) {
-        history->last_access = (time_t)atol(p + 14);
+        history->last_access = (time_t)strtol(p + 14, NULL, 10);
     }
 
     p = strstr(json, "\"avg_relevance\":");
     if (p) {
-        history->avg_relevance = atof(p + 16);
+        history->avg_relevance = strtod(p + 16, NULL);
     }
 
     p = strstr(json, "\"events\":[");
@@ -841,9 +841,9 @@ int access_history_deserialize(const char *json, GV_AccessHistory *history) {
                 const char *rel = strstr(p, "\"rel\":");
                 const char *type = strstr(p, "\"type\":");
 
-                if (ts) event.timestamp = (time_t)atol(ts + 5);
-                if (rel) event.relevance_at_access = atof(rel + 6);
-                if (type) event.access_type = atoi(type + 7);
+                if (ts) event.timestamp = (time_t)strtol(ts + 5, NULL, 10);
+                if (rel) event.relevance_at_access = strtod(rel + 6, NULL);
+                if (type) event.access_type = (int)strtol(type + 7, NULL, 10);
 
                 if (history->event_count >= history->event_capacity) {
                     size_t new_cap = history->event_capacity * 2;

@@ -208,6 +208,7 @@ GV_PropValue gv_prop_parse(const char *raw, GV_PropType hint)
         if (!data) return gv_prop_null();
         for (size_t i = 0; i < byte_count; i++) {
             unsigned int byte_val = 0;
+            /* NOLINTNEXTLINE(cert-err34-c): return value is validated (!= 1). */
             if (sscanf(raw + i * 2, "%2x", &byte_val) != 1) {
                 gv_free(data);
                 return gv_prop_null();

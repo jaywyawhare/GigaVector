@@ -205,7 +205,7 @@ static uint64_t kg_hash_uint64(uint64_t key, size_t buckets) {
     key ^= key >> 27;
     key *= 0x94d049bb133111ebULL;
     key ^= key >> 31;
-    return key % buckets;
+    return buckets ? key % buckets : 0;
 }
 
 static uint64_t kg_hash_string(const char *str) {

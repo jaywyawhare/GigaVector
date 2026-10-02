@@ -73,6 +73,7 @@ int gv_backup_command_put(void *ctx, const char *object_name, const char *local_
     char cmd[4096];
     if (expand_template(tmpl, local_path, object_name, cmd, sizeof(cmd)) != 0) return -1;
 
+    /* NOLINTNEXTLINE(cert-env33-c): operator-configured backup command; object_name is validated by name_is_safe(). */
     int rc = system(cmd);
     if (rc == -1) return -1;
 #ifdef WIFEXITED

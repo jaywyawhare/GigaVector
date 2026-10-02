@@ -149,9 +149,10 @@ static inline uint32_t gv_crc32_finish(uint32_t crc) { return crc ^ 0xFFFFFFFFu;
 /* DJB2 string hash */
 static inline uint32_t hash_str(const char *s) {
     uint32_t h = 5381;
-    int c;
-    while ((c = *s++))
-        h = ((h << 5) + h) + (uint32_t)c;
+    unsigned char c;
+    /* Read through unsigned char so a high-bit byte is not sign-extended. */
+    while ((c = (unsigned char)*s++))
+        h = ((h << 5) + h) + c;
     return h;
 }
 

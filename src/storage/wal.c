@@ -297,11 +297,11 @@ GV_WAL *wal_open(const char *path, size_t dimension, uint32_t index_type) {
         return NULL;
     }
 
-    rewind(f);
+    if (fseek(f, 0, SEEK_SET) != 0) { fclose(f); return NULL; }
 
     char magic[4] = {0};
     if (fread(magic, 1, 4, f) != 4) {
-        rewind(f);
+        if (fseek(f, 0, SEEK_SET) != 0) { fclose(f); return NULL; }
         if (fwrite(GV_WAL_MAGIC, 1, 4, f) != 4) {
             fclose(f);
             return NULL;
@@ -1258,7 +1258,7 @@ int wal_truncate(GV_WAL *wal) {
         return -1;
     }
 
-    fseek(wal->file, 0, SEEK_END);
+    (void)fseek(wal->file, 0, SEEK_END);
 
     return 0;
 }
@@ -1348,7 +1348,7 @@ uint64_t wal_count_entries(const char *path) {
         if (start < 0) break;
         uint8_t type = 0;
         if (fread(&type, 1, 1, f) != 1) break;
-        fseek(f, start, SEEK_SET);
+        (void)fseek(f, start, SEEK_SET);
         if (wal_skip_record_from_file(f, has_crc, NULL, NULL) != 0) break;
         count++;
     }

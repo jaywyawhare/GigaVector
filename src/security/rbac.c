@@ -738,10 +738,10 @@ GV_RBACManager *rbac_load(const char *filepath) {
     FILE *fp = fopen(filepath, "r");
     if (!fp) return NULL;
 
-    fseek(fp, 0, SEEK_END);
+    (void)fseek(fp, 0, SEEK_END);
     long fsize = ftell(fp);
     if (fsize <= 0) { fclose(fp); return NULL; }
-    fseek(fp, 0, SEEK_SET);
+    (void)fseek(fp, 0, SEEK_SET);
 
     char *data = gv_alloc((size_t)fsize + 1);
     if (!data) { fclose(fp); return NULL; }

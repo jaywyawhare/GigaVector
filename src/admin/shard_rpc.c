@@ -439,7 +439,7 @@ int shard_rpc_search_distributed(GV_ShardManager *mgr, const float *query,
         if (hlen >= sizeof(host)) continue;
         memcpy(host, addr, hlen);
         host[hlen] = '\0';
-        uint16_t port = (uint16_t)atoi(colon + 1);
+        uint16_t port = (uint16_t)(int)strtol(colon + 1, NULL, 10);
         if (port == 0) continue;
 
         int rn = shard_rpc_search(host, port, query, dim, k, distance_type,

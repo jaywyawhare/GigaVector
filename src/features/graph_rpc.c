@@ -289,7 +289,7 @@ static int net_fetch(uint64_t node_id, uint64_t *out, size_t max, void *vctx) {
     if (hlen >= sizeof(host)) return 0;
     memcpy(host, part->remote_addr, hlen);
     host[hlen] = '\0';
-    int pt = atoi(colon + 1);
+    int pt = (int)strtol(colon + 1, NULL, 10);
     if (pt <= 0 || pt > 65535) return 0;
 
     int r = graph_rpc_neighbors(host, (uint16_t)pt, node_id, c->predicate, out, max);

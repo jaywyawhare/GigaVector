@@ -711,6 +711,7 @@ static uint64_t parse_iso8601(const char *ts) {
     if (!ts) return 0;
 
     int year = 0, month = 0, day = 0, hour = 0, min = 0, sec = 0;
+    /* NOLINTNEXTLINE(cert-err34-c): return value is validated below (matched < 3). */
     int matched = sscanf(ts, "%d-%d-%dT%d:%d:%d", &year, &month, &day, &hour, &min, &sec);
     if (matched < 3) return 0;
 

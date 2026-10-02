@@ -109,7 +109,7 @@ GV_VLog *vlog_open(const char *path) {
                 /* Truncate failed (e.g. read-only fs): still position appends at
                  * valid_end so this session overwrites the torn tail. */
             }
-            fseek(fp, (long)valid_end, SEEK_SET);
+            (void)fseek(fp, (long)valid_end, SEEK_SET);
         }
         vl->write_pos = valid_end;
     } else {

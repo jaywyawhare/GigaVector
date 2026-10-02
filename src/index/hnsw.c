@@ -1455,7 +1455,7 @@ int gv_hnsw_build_parallel(void *index_ptr, size_t num_threads) {
      * recall parity with serial (~-0.2pp) at ~2x speedup on 8 threads; larger drops
      * recall fast (mult=128 => -10pp). Overridable via GV_PB_BATCH_MULT for tuning. */
     size_t batch_mult = 16;
-    { const char *e = getenv("GV_PB_BATCH_MULT"); if (e) { long m = atol(e); if (m > 0) batch_mult = (size_t)m; } }
+    { const char *e = getenv("GV_PB_BATCH_MULT"); if (e) { long m = strtol(e, NULL, 10); if (m > 0) batch_mult = (size_t)m; } }
     size_t batch = num_threads * batch_mult; if (batch < 16) batch = 16;
     int rc = 0;
     for (size_t start = 1; start < N && rc == 0; start += batch) {

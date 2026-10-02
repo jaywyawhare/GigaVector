@@ -716,7 +716,7 @@ int json_index_save(const GV_JSONPathIndex *idx, const char *path_file) {
     pthread_rwlock_rdlock((pthread_rwlock_t *)&idx->rwlock);
 
     /* Header */
-    fwrite(GV_JPI_MAGIC, 1, GV_JPI_MAGIC_LEN, fp);
+    (void)fwrite(GV_JPI_MAGIC, 1, GV_JPI_MAGIC_LEN, fp);
     write_u32(fp, (uint32_t)GV_JPI_VERSION);
 
     /* Path count */
@@ -729,7 +729,7 @@ int json_index_save(const GV_JSONPathIndex *idx, const char *path_file) {
         /* Path string (length-prefixed) */
         uint32_t path_len = (uint32_t)strlen(pi->path);
         write_u32(fp, path_len);
-        fwrite(pi->path, 1, path_len, fp);
+        (void)fwrite(pi->path, 1, path_len, fp);
 
         /* Type */
         write_u32(fp, (uint32_t)pi->type);
@@ -741,7 +741,7 @@ int json_index_save(const GV_JSONPathIndex *idx, const char *path_file) {
                 for (size_t j = 0; j < pi->data.str.count; j++) {
                     uint32_t slen = (uint32_t)strlen(pi->data.str.entries[j].value);
                     write_u32(fp, slen);
-                    fwrite(pi->data.str.entries[j].value, 1, slen, fp);
+                    (void)fwrite(pi->data.str.entries[j].value, 1, slen, fp);
                     write_u64(fp, (uint64_t)pi->data.str.entries[j].vector_index);
                 }
                 break;
