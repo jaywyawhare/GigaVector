@@ -238,6 +238,18 @@ int main(void) {
            && strncmp(cell(&r,0,0),"0.785",5)==0, "atan2(1,1)=pi/4");
     cypher_free_result(&r);
 
+    /* stDev / stDevP aggregates over a fresh, isolated node set {10,20,30} */
+    ASSERT(q(cy, "CREATE (:Measure {v:'10'}),(:Measure {v:'20'}),(:Measure {v:'30'})", &r) == 0, "create Measure nodes");
+    cypher_free_result(&r);
+    /* population stdev of {10,20,30}: mean 20, var=(100+0+100)/3=66.67, sqrt~=8.165 */
+    ASSERT(q(cy, "MATCH (m:Measure) RETURN stDevP(m.v)", &r) == 0
+           && r.row_count == 1 && strncmp(cell(&r,0,0),"8.16",4)==0, "stDevP({10,20,30}) ~= 8.16");
+    cypher_free_result(&r);
+    /* sample stdev of {10,20,30} = sqrt(200/2) = 10 */
+    ASSERT(q(cy, "MATCH (m:Measure) RETURN stDev(m.v)", &r) == 0
+           && r.row_count == 1 && strncmp(cell(&r,0,0),"10",2)==0, "stDev({10,20,30}) = 10");
+    cypher_free_result(&r);
+
     /* ---- WITH pipelining ---- */
     ASSERT(q(cy, "MATCH (a:Person {name:'Alice'}) WITH a MATCH (a)-[:KNOWS]->(b) RETURN b.name", &r) == 0
            && r.row_count == 1 && strcmp(cell(&r,0,0),"Bob")==0, "WITH pass-through var");

@@ -204,7 +204,7 @@ typedef struct Expr { ExK k; struct Expr *l, *r; Cmp op; Opd a, b;
                       char **inlist; size_t nin; Pattern *pat; } Expr;
 static void pattern_clear(Pattern *p);
 
-typedef enum { AG_NONE, AG_COUNT, AG_COUNTSTAR, AG_COLLECT, AG_SUM, AG_AVG, AG_MIN, AG_MAX } Agg;
+typedef enum { AG_NONE, AG_COUNT, AG_COUNTSTAR, AG_COLLECT, AG_SUM, AG_AVG, AG_MIN, AG_MAX, AG_STDEV, AG_STDEVP } Agg;
 typedef struct { Agg agg; Opd opd; char *alias; } Ret;
 typedef struct { Opd opd; int desc; } Ord;
 typedef struct { char *var; char *prop; Opd *valexpr; } SetItem;
@@ -1663,6 +1663,7 @@ static char *col_name(const Ret *r) {
         case AG_COLLECT: fn = "collect"; break;
         case AG_SUM: fn = "sum"; break; case AG_AVG: fn = "avg"; break;
         case AG_MIN: fn = "min"; break; case AG_MAX: fn = "max"; break;
+        case AG_STDEV: fn = "stDev"; break; case AG_STDEVP: fn = "stDevP"; break;
         case AG_NONE: default: fn = NULL; break;
     }
     char base[128];
@@ -1756,7 +1757,17 @@ static int build_projection(GV_CypherEngine *eng, RowSet *rows, Ret *items, size
                     if (items[c].agg == AG_SUM) outv = acc;
                     else if (items[c].agg == AG_AVG) outv = cntn ? acc / cntn : 0;
                     else if (items[c].agg == AG_MIN) outv = mn;
-                    else outv = mx;
+                    else if (items[c].agg == AG_MAX) outv = mx;
+                    else { /* AG_STDEV (sample, N-1) / AG_STDEVP (population, N) */
+                        double mean = cntn ? acc / cntn : 0, ss = 0;
+                        for (size_t k = 0; k < g->nr; k++) {
+                            char *v = val_of(kg, &items[c].opd, &rows->r[g->rowidx[k]]);
+                            double d; if (is_num(v, &d)) { double dv = d - mean; ss += dv * dv; }
+                            gv_free(v);
+                        }
+                        if (items[c].agg == AG_STDEV) outv = cntn > 1 ? sqrt(ss / (cntn - 1)) : 0;
+                        else outv = cntn > 0 ? sqrt(ss / cntn) : 0;
+                    }
                     char b[48]; snprintf(b, sizeof(b), "%g", outv); cells_add(&out, gv_dup_cstr(b));
                 }
             }
@@ -1858,6 +1869,8 @@ static Agg agg_of(const Tok *t) {
     if (kw(t, "avg")) return AG_AVG;
     if (kw(t, "min")) return AG_MIN;
     if (kw(t, "max")) return AG_MAX;
+    if (kw(t, "stdev")) return AG_STDEV;
+    if (kw(t, "stdevp")) return AG_STDEVP;
     return AG_NONE;
 }
 static int parse_return(Lex *lx, Ret *items, size_t *ni, int *distinct, int *star) {
