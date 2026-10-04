@@ -17,6 +17,7 @@
  * - MemoryBank (Zhong et al., 2024) "Enhancing LLMs with Long-Term Memory"
  */
 
+#include <stdint.h>
 #include <stdlib.h>
 #include "core/memory.h"
 #include <string.h>
@@ -54,41 +55,55 @@ static size_t count_words(const char *text, size_t len) {
  * This is language-agnostic - works on any tokenized text.
  */
 static size_t count_unique_words(const char *text, size_t len) {
-    #define HASH_SIZE 256
-    unsigned int seen[HASH_SIZE] = {0};
-    size_t unique = 0;
+    /* Open-addressing set keyed on the full 32-bit FNV-1a hash of each word,
+     * grown with the token count. The previous fixed 256-slot table keyed on
+     * hash%256 silently undercounted whenever two distinct words collided; a
+     * full-width hash makes collisions negligible, so the count is effectively
+     * exact. */
+    size_t cap = 64, count = 0;
+    uint32_t *keys = (uint32_t *)gv_calloc(cap, sizeof(uint32_t));
+    unsigned char *used = (unsigned char *)gv_calloc(cap, 1);
+    if (!keys || !used) { gv_free(keys); gv_free(used); return 0; }
 
     const char *start = text;
     const char *end = text + len;
 
     while (start < end) {
-        /* Skip non-word characters */
         while (start < end && !isalnum((unsigned char)*start)) start++;
         if (start >= end) break;
-
-        /* Find word end */
         const char *word_start = start;
         while (start < end && isalnum((unsigned char)*start)) start++;
-        size_t word_len = start - word_start;
-
+        size_t word_len = (size_t)(start - word_start);
         if (word_len == 0 || word_len > 63) continue;
 
-        /* Simple hash of word */
-        unsigned int hash = 0;
+        uint32_t h = 2166136261u; /* FNV-1a over the lowercased word */
         for (size_t i = 0; i < word_len; i++) {
-            hash = hash * 31 + (unsigned char)tolower((unsigned char)word_start[i]);
+            h ^= (unsigned char)tolower((unsigned char)word_start[i]);
+            h *= 16777619u;
         }
-        hash %= HASH_SIZE;
 
-        /* Mark as seen (simplified - may have collisions but good enough) */
-        if (seen[hash] == 0) {
-            seen[hash] = 1;
-            unique++;
+        if ((count + 1) * 10 >= cap * 7) { /* grow at 70% load factor */
+            size_t ncap = cap * 2;
+            uint32_t *nk = (uint32_t *)gv_calloc(ncap, sizeof(uint32_t));
+            unsigned char *nu = (unsigned char *)gv_calloc(ncap, 1);
+            if (!nk || !nu) { gv_free(nk); gv_free(nu); break; } /* OOM: stop growing, count so far */
+            for (size_t i = 0; i < cap; i++) {
+                if (!used[i]) continue;
+                size_t j = keys[i] & (ncap - 1);
+                while (nu[j]) j = (j + 1) & (ncap - 1);
+                nk[j] = keys[i]; nu[j] = 1;
+            }
+            gv_free(keys); gv_free(used);
+            keys = nk; used = nu; cap = ncap;
         }
+
+        size_t j = h & (cap - 1);
+        while (used[j] && keys[j] != h) j = (j + 1) & (cap - 1);
+        if (!used[j]) { used[j] = 1; keys[j] = h; count++; }
     }
 
-    return unique;
-    #undef HASH_SIZE
+    gv_free(keys); gv_free(used);
+    return count;
 }
 
 /**
