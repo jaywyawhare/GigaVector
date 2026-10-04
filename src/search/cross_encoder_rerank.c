@@ -150,29 +150,32 @@ int cross_encoder_rerank_batch(GV_CrossEncoder *ce, const char *query,
         return onnx_rerank(ce->model, query, document_texts, doc_count, out_scores);
     }
 
-    /* Fallback: TF-IDF overlap scoring with a real IDF computed over this
-     * batch (the only corpus the reranker has). Tokenise every document once,
-     * count how many contain each query term (document frequency), then score. */
+    /* Fallback: TF-IDF overlap scoring with a real IDF computed over this batch
+     * (the only corpus the reranker has). Memory stays constant in doc_count:
+     * pass 1 counts document frequency per query term with one reused bag; pass
+     * 2 re-tokenises each document to score it. */
     TermBag qbag;
     tokenize_to_bag(query, &qbag);
 
-    TermBag *dbags = (TermBag *)gv_calloc(doc_count, sizeof(TermBag));
-    if (!dbags) return -1;
-    for (size_t i = 0; i < doc_count; i++) tokenize_to_bag(document_texts[i], &dbags[i]);
-
-    float idf[CE_MAX_TERMS];
-    for (int t = 0; t < qbag.count; t++) {
-        size_t df = 0;
-        for (size_t i = 0; i < doc_count; i++)
-            if (termbag_tf(&dbags[i], qbag.words[t]) > 0.0f) df++;
-        /* Smoothed IDF: rarer-in-batch terms weigh more; always >= 0. */
-        idf[t] = logf(((float)doc_count + 1.0f) / ((float)df + 1.0f)) + 1.0f;
+    size_t df[CE_MAX_TERMS];
+    for (int t = 0; t < qbag.count; t++) df[t] = 0;
+    for (size_t i = 0; i < doc_count; i++) {
+        TermBag dbag;
+        tokenize_to_bag(document_texts[i], &dbag);
+        for (int t = 0; t < qbag.count; t++)
+            if (termbag_tf(&dbag, qbag.words[t]) > 0.0f) df[t]++;
     }
 
-    for (size_t i = 0; i < doc_count; i++)
-        out_scores[i] = fallback_score(&qbag, &dbags[i], idf);
+    float idf[CE_MAX_TERMS];
+    for (int t = 0; t < qbag.count; t++) /* smoothed IDF: rarer-in-batch weighs more, always >= 0 */
+        idf[t] = logf(((float)doc_count + 1.0f) / ((float)df[t] + 1.0f)) + 1.0f;
 
-    gv_free(dbags);
+    for (size_t i = 0; i < doc_count; i++) {
+        TermBag dbag;
+        tokenize_to_bag(document_texts[i], &dbag);
+        out_scores[i] = fallback_score(&qbag, &dbag, idf);
+    }
+
     return 0;
 }
 

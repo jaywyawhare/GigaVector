@@ -148,35 +148,45 @@ typedef struct {
     size_t   n;
     uint64_t cur_term;
     int      voted_for;
+    size_t   applied;   /* count of entries handed to the apply callback */
+    uint64_t fail_at;   /* persist_log returns failure at this 1-based index (0 = never) */
 } DurStore;
 static DurStore g_dur;
 
 static void dur_persist(void *ctx, uint64_t t, int vf) {
     (void)ctx; g_dur.cur_term = t; g_dur.voted_for = vf;
 }
-static void dur_persist_log(void *ctx, uint64_t idx, uint64_t term,
-                            const void *data, size_t len) {
+static int dur_persist_log(void *ctx, uint64_t idx, uint64_t term,
+                           const void *data, size_t len) {
     (void)ctx;
-    if (idx == 0 || idx > DUR_CAP) return;
+    if (g_dur.fail_at && idx == g_dur.fail_at) return -1; /* simulate a durable-write failure */
+    if (idx == 0 || idx > DUR_CAP) return -1;
     size_t i = idx - 1;
     free(g_dur.data[i]);
     g_dur.data[i] = len ? malloc(len) : NULL;
     if (len) memcpy(g_dur.data[i], data, len);
     g_dur.term[i] = term; g_dur.len[i] = len;
     if (idx > g_dur.n) g_dur.n = idx;
+    return 0;
 }
-static void dur_truncate(void *ctx, uint64_t keep) {
+static int dur_truncate(void *ctx, uint64_t keep) {
     (void)ctx;
     for (size_t i = keep; i < g_dur.n; i++) { free(g_dur.data[i]); g_dur.data[i] = NULL; }
     if (g_dur.n > keep) g_dur.n = keep;
+    return 0;
 }
 static void dur_send(void *ctx, int to, const GV_RaftMsg *m) { (void)ctx; (void)to; (void)m; }
 static void dur_apply(void *ctx, uint64_t i, const void *d, size_t l) {
-    (void)ctx; (void)i; (void)d; (void)l;
+    (void)ctx; (void)i; (void)d; (void)l; g_dur.applied++;
+}
+
+static void dur_reset(void) {
+    for (size_t i = 0; i < DUR_CAP; i++) { free(g_dur.data[i]); g_dur.data[i] = NULL; }
+    memset(&g_dur, 0, sizeof(g_dur));
 }
 
 static void test_durability(void) {
-    memset(&g_dur, 0, sizeof(g_dur));
+    dur_reset();
     GV_RaftConfig cfg; raft_config_init(&cfg);
     GV_RaftCallbacks cb; memset(&cb, 0, sizeof(cb));
     cb.send = dur_send; cb.apply = dur_apply; cb.persist = dur_persist;
@@ -194,6 +204,8 @@ static void test_durability(void) {
     ASSERT(raft_last_log_index(r) == 3, "durability: 3 entries in live log");
     ASSERT(g_dur.n == 3, "durability: 3 entries flushed via persist_log");
     uint64_t saved_term = raft_current_term(r);
+    uint64_t committed = raft_commit_index(r);
+    ASSERT(committed == 3, "durability: single node committed all 3");
     raft_destroy(r); /* simulate process crash */
 
     /* Restart: reload the durable log into a fresh node. */
@@ -201,14 +213,28 @@ static void test_durability(void) {
     for (size_t i = 0; i < g_dur.n; i++) {
         ents[i].term = g_dur.term[i]; ents[i].data = g_dur.data[i]; ents[i].len = g_dur.len[i];
     }
+    g_dur.applied = 0;
     GV_Raft *r2 = raft_create(0, NULL, 0, &cfg, &cb);
-    ASSERT(raft_restore(r2, g_dur.cur_term, g_dur.voted_for, ents, g_dur.n) == 0,
+    ASSERT(raft_restore(r2, g_dur.cur_term, g_dur.voted_for, committed, ents, g_dur.n) == 0,
            "durability: raft_restore succeeds");
     ASSERT(raft_last_log_index(r2) == 3, "durability: log recovered after restart (not lost)");
     ASSERT(raft_current_term(r2) == saved_term, "durability: term recovered");
     ASSERT(raft_log_term_at(r2, 3) == g_dur.term[2], "durability: entry 3 term matches");
+    ASSERT(g_dur.applied == 3, "durability: committed prefix re-applied to state machine");
     raft_destroy(r2);
-    for (size_t i = 0; i < DUR_CAP; i++) free(g_dur.data[i]);
+
+    /* Failure contract: if persist_log fails, the entry must not be acked. */
+    dur_reset();
+    g_dur.fail_at = 2; /* second append fails durably */
+    GV_Raft *r3 = raft_create(0, NULL, 0, &cfg, &cb);
+    raft_tick(r3, cfg.election_timeout_max_ms + 10);
+    ASSERT(raft_role(r3) == GV_RAFT_LEADER, "durability: node3 leader");
+    ASSERT(raft_submit(r3, &v1, sizeof(v1), NULL) == 0, "durability: first submit ok");
+    ASSERT(raft_submit(r3, &v2, sizeof(v2), NULL) == -1, "durability: submit rejected when persist fails");
+    ASSERT(raft_last_log_index(r3) == 1, "durability: failed entry rolled back (not in log)");
+    ASSERT(g_dur.n == 1, "durability: durable store has only the successful entry");
+    raft_destroy(r3);
+    dur_reset();
 }
 
 int main(void) {

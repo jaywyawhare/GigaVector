@@ -107,8 +107,15 @@ static int log_append_ex(GV_Raft *r, uint64_t term, const void *data, size_t len
     r->log[r->log_len].data = copy;
     r->log[r->log_len].len  = len;
     r->log_len++;
-    if (do_persist && r->cb.persist_log)
-        r->cb.persist_log(r->cb.ctx, r->log_len, term, copy, len);
+    if (do_persist && r->cb.persist_log &&
+        r->cb.persist_log(r->cb.ctx, r->log_len, term, copy, len) != 0) {
+        /* Durable write failed: roll the entry back so it is never acknowledged
+         * or committed (an un-acked entry cannot be lost). */
+        r->log_len--;
+        free(copy);
+        r->log[r->log_len].data = NULL;
+        return -1;
+    }
     return 0;
 }
 
@@ -116,14 +123,18 @@ static int log_append(GV_Raft *r, uint64_t term, const void *data, size_t len) {
     return log_append_ex(r, term, data, len, 1);
 }
 
-static void log_truncate(GV_Raft *r, uint64_t keep) { /* drop entries after index `keep` */
-    if (r->log_len > keep && r->cb.truncate_log)
-        r->cb.truncate_log(r->cb.ctx, keep);
+static int log_truncate(GV_Raft *r, uint64_t keep) { /* drop entries after index `keep` */
+    /* Delete durably first; if that fails, leave the in-memory log intact so the
+     * two stay consistent and the caller can reject the AppendEntries. */
+    if (r->log_len > keep && r->cb.truncate_log &&
+        r->cb.truncate_log(r->cb.ctx, keep) != 0)
+        return -1;
     while (r->log_len > keep) {
         r->log_len--;
         free(r->log[r->log_len].data);
         r->log[r->log_len].data = NULL;
     }
+    return 0;
 }
 
 static void apply_committed(GV_Raft *r) {
@@ -293,8 +304,8 @@ static void handle_append_entries(GV_Raft *r, const GV_RaftMsg *msg) {
         const GV_RaftEntry *e = &msg->entries[i];
         if (idx <= last_log_index(r)) {
             if (log_term_at(r, idx) != e->term) {
-                log_truncate(r, idx - 1);
-                if (log_append(r, e->term, e->data, e->len) != 0) append_ok = 0;
+                if (log_truncate(r, idx - 1) != 0) append_ok = 0;
+                else if (log_append(r, e->term, e->data, e->len) != 0) append_ok = 0;
             }
             /* else: already present and matching — skip */
         } else {
@@ -419,7 +430,8 @@ int raft_submit(GV_Raft *r, const void *data, size_t len, uint64_t *index_out) {
 }
 
 int raft_restore(GV_Raft *r, uint64_t current_term, int voted_for,
-                 const GV_RaftEntry *entries, size_t n_entries) {
+                 uint64_t commit_index, const GV_RaftEntry *entries,
+                 size_t n_entries) {
     if (!r) return -1;
     if (n_entries && !entries) return -1;
     r->current_term = current_term;
@@ -429,6 +441,13 @@ int raft_restore(GV_Raft *r, uint64_t current_term, int voted_for,
         if (log_append_ex(r, entries[i].term, entries[i].data, entries[i].len, 0) != 0)
             return -1;
     }
+    /* Re-apply the committed prefix to the state machine. commit_index is
+     * volatile in Raft, so a recovered node would otherwise start with an empty
+     * state machine until a leader re-advanced it (which never happens for a
+     * single-node cluster). Clamp to the restored log length. */
+    if (commit_index > r->log_len) commit_index = r->log_len;
+    r->commit_index = commit_index;
+    apply_committed(r);
     return 0;
 }
 

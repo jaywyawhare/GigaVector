@@ -1297,7 +1297,13 @@ int ft_search(const GV_FTIndex *idx, const char *query, size_t limit,
             gv_free(cursors);
         }
     } else {
-        ft_search_naive(idx, &tokens, limit, &heap);
+        if (ft_search_naive(idx, &tokens, limit, &heap) != 0) {
+            /* Report the failure instead of silently returning zero matches. */
+            ft_heap_free(&heap);
+            pthread_rwlock_unlock((pthread_rwlock_t *)&idx->rwlock);
+            ft_token_list_free(&tokens);
+            return -1;
+        }
     }
 
     int count = (int)heap.count;
