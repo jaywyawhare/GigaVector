@@ -709,7 +709,9 @@ int gpu_batch_add(GV_GPUContext *ctx, GV_Database *db,
                       const float *vectors, size_t count) {
     if (!ctx || !db || !vectors || count == 0) return -1;
 
-    /* In a real implementation, this would batch the operations */
+    /* Correct per-vector insertion; adds are serialised through the database's
+     * own index. (A CUDA build could stage the batch on-device, but inserts go
+     * through the host index either way, so there is no GPU batching to add.) */
     size_t dim = database_dimension(db);
     for (size_t i = 0; i < count; i++) {
         if (db_add_vector(db, vectors + i * dim, dim) < 0) {
