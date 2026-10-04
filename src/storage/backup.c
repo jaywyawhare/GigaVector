@@ -72,6 +72,7 @@ static GV_BackupResult *create_result(int success, const char *error) {
     GV_BackupResult *result = gv_calloc(1, sizeof(GV_BackupResult));
     if (!result) return NULL;
     result->success = success;
+    result->metadata_complete = 1; /* restore paths clear this on a partial section */
     if (error) {
         result->error_message = gv_strdup(error);
     }
@@ -503,6 +504,9 @@ static int backup_apply_metadata_section(FILE *fp, GV_Database *db,
     if (meta_present == 0) {
         return 0; /* clean: backup carried no per-vector metadata */
     }
+    if (meta_present != 1) {
+        return -1; /* malformed marker (only 0 and 1 are valid) */
+    }
 
     for (uint64_t i = 0; i < vector_count; i++) {
         uint32_t pair_count = 0;
@@ -684,11 +688,10 @@ GV_BackupResult *backup_restore(const char *backup_path, const char *db_path,
 
     db_close(db);
 
-    /* Vectors restored, but flag truncated/garbled metadata so the loss is not
-     * silent. The restore still counts as successful for the vector data. */
-    GV_BackupResult *result = create_result(1, meta_rc != 0
-        ? "restored; warning: backup metadata section was truncated, some per-vector metadata was not restored"
-        : NULL);
+    /* Vectors restored; flag truncated/garbled metadata via metadata_complete so
+     * the loss is not silent while keeping the success/error_message contract. */
+    GV_BackupResult *result = create_result(1, NULL);
+    if (result) result->metadata_complete = (meta_rc == 0);
     result->bytes_processed = header.original_size;
     result->vectors_processed = vectors_read;
     result->elapsed_seconds = get_time_seconds() - start_time;
@@ -784,9 +787,8 @@ GV_BackupResult *backup_restore_to_db(const char *backup_path,
 
     fclose(fp);
 
-    GV_BackupResult *result = create_result(1, meta_rc != 0
-        ? "restored; warning: backup metadata section was truncated, some per-vector metadata was not restored"
-        : NULL);
+    GV_BackupResult *result = create_result(1, NULL);
+    if (result) result->metadata_complete = (meta_rc == 0);
     result->vectors_processed = vectors_read;
 
     return result;
