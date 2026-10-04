@@ -564,7 +564,14 @@ int cluster_enable_raft(GV_Cluster *cluster, const char *const *addrs,
 
     GV_RaftConfig cfg;
     raft_config_init(&cfg);
-    GV_RaftCallbacks cb = { raft_send_cb, cluster_raft_apply, NULL, cluster };
+    GV_RaftCallbacks cb = {
+        .send = raft_send_cb,
+        .apply = cluster_raft_apply,
+        .persist = NULL,
+        .persist_log = NULL,
+        .truncate_log = NULL,
+        .ctx = cluster,
+    };
     pthread_mutex_init(&cluster->raft_lock, NULL);
     cluster->outbox_n = 0;
     cluster->raft = raft_create(my_index, peers, np, &cfg, &cb);

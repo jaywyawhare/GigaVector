@@ -78,14 +78,28 @@ typedef struct {
 
 /**
  * Callbacks into the host environment.
- * - send:    deliver @p msg to node @p to (transport owns copying if it queues).
- * - apply:   a committed entry at @p index is ready to apply to the state machine.
- * - persist: currentTerm/votedFor changed and should be made durable (may be NULL).
+ * - send:        deliver @p msg to node @p to (transport owns copying if it queues).
+ * - apply:       a committed entry at @p index is ready to apply to the state machine.
+ * - persist:     currentTerm/votedFor changed and should be made durable (may be NULL).
+ * - persist_log: a log entry was appended at 1-based @p index and must be made
+ *                durable BEFORE the append is acknowledged (may be NULL). This is
+ *                what makes committed entries survive a restart — Raft requires
+ *                the log to be persistent. On startup, replay the durable log via
+ *                raft_restore() before the first tick.
+ * - truncate_log:conflicting tail entries after 1-based @p keep_upto were dropped;
+ *                the durable store must delete entries with index > keep_upto
+ *                (may be NULL).
+ *
+ * persist_log/truncate_log being NULL preserves the older in-memory-only
+ * behaviour (no durability), which is fine for tests and simulations.
  */
 typedef struct {
     void (*send)(void *ctx, int to, const GV_RaftMsg *msg);
     void (*apply)(void *ctx, uint64_t index, const void *data, size_t len);
     void (*persist)(void *ctx, uint64_t current_term, int voted_for);
+    void (*persist_log)(void *ctx, uint64_t index, uint64_t term,
+                        const void *data, size_t len);
+    void (*truncate_log)(void *ctx, uint64_t keep_upto);
     void *ctx;
 } GV_RaftCallbacks;
 
@@ -111,6 +125,17 @@ void raft_config_init(GV_RaftConfig *cfg);
  */
 GV_Raft *raft_create(int id, const int *peers, size_t n_peers,
                      const GV_RaftConfig *cfg, const GV_RaftCallbacks *cb);
+
+/**
+ * @brief Restore durable state into a freshly-created node on startup.
+ *
+ * Reloads the persisted currentTerm/votedFor and replays the durable log
+ * (entries in ascending index order). Call this once, after raft_create() and
+ * before the first raft_tick()/raft_step(). Replayed entries are NOT re-emitted
+ * to persist_log (they are already durable). Returns 0 on success, -1 on error.
+ */
+int raft_restore(GV_Raft *r, uint64_t current_term, int voted_for,
+                 const GV_RaftEntry *entries, size_t n_entries);
 
 /** @brief Advance the internal clock by @p ms; may trigger elections/heartbeats. */
 void raft_tick(GV_Raft *r, uint32_t ms);

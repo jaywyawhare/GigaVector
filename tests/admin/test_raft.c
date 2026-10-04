@@ -139,7 +139,82 @@ static void submit_to_leader(int leader, uint64_t val) {
     raft_submit(g_sim.nodes[leader], &val, sizeof(val), NULL);
 }
 
+/* ---- Log-durability test: persist_log + restore across a simulated crash ---- */
+#define DUR_CAP 64
+typedef struct {
+    uint64_t term[DUR_CAP];
+    void    *data[DUR_CAP];
+    size_t   len[DUR_CAP];
+    size_t   n;
+    uint64_t cur_term;
+    int      voted_for;
+} DurStore;
+static DurStore g_dur;
+
+static void dur_persist(void *ctx, uint64_t t, int vf) {
+    (void)ctx; g_dur.cur_term = t; g_dur.voted_for = vf;
+}
+static void dur_persist_log(void *ctx, uint64_t idx, uint64_t term,
+                            const void *data, size_t len) {
+    (void)ctx;
+    if (idx == 0 || idx > DUR_CAP) return;
+    size_t i = idx - 1;
+    free(g_dur.data[i]);
+    g_dur.data[i] = len ? malloc(len) : NULL;
+    if (len) memcpy(g_dur.data[i], data, len);
+    g_dur.term[i] = term; g_dur.len[i] = len;
+    if (idx > g_dur.n) g_dur.n = idx;
+}
+static void dur_truncate(void *ctx, uint64_t keep) {
+    (void)ctx;
+    for (size_t i = keep; i < g_dur.n; i++) { free(g_dur.data[i]); g_dur.data[i] = NULL; }
+    if (g_dur.n > keep) g_dur.n = keep;
+}
+static void dur_send(void *ctx, int to, const GV_RaftMsg *m) { (void)ctx; (void)to; (void)m; }
+static void dur_apply(void *ctx, uint64_t i, const void *d, size_t l) {
+    (void)ctx; (void)i; (void)d; (void)l;
+}
+
+static void test_durability(void) {
+    memset(&g_dur, 0, sizeof(g_dur));
+    GV_RaftConfig cfg; raft_config_init(&cfg);
+    GV_RaftCallbacks cb; memset(&cb, 0, sizeof(cb));
+    cb.send = dur_send; cb.apply = dur_apply; cb.persist = dur_persist;
+    cb.persist_log = dur_persist_log; cb.truncate_log = dur_truncate;
+
+    GV_Raft *r = raft_create(0, NULL, 0, &cfg, &cb);
+    ASSERT(r != NULL, "durability: create single-node");
+    raft_tick(r, cfg.election_timeout_max_ms + 10);
+    ASSERT(raft_role(r) == GV_RAFT_LEADER, "durability: single node becomes leader");
+
+    uint64_t v1 = 0xA1, v2 = 0xB2, v3 = 0xC3;
+    raft_submit(r, &v1, sizeof(v1), NULL);
+    raft_submit(r, &v2, sizeof(v2), NULL);
+    raft_submit(r, &v3, sizeof(v3), NULL);
+    ASSERT(raft_last_log_index(r) == 3, "durability: 3 entries in live log");
+    ASSERT(g_dur.n == 3, "durability: 3 entries flushed via persist_log");
+    uint64_t saved_term = raft_current_term(r);
+    raft_destroy(r); /* simulate process crash */
+
+    /* Restart: reload the durable log into a fresh node. */
+    GV_RaftEntry ents[DUR_CAP];
+    for (size_t i = 0; i < g_dur.n; i++) {
+        ents[i].term = g_dur.term[i]; ents[i].data = g_dur.data[i]; ents[i].len = g_dur.len[i];
+    }
+    GV_Raft *r2 = raft_create(0, NULL, 0, &cfg, &cb);
+    ASSERT(raft_restore(r2, g_dur.cur_term, g_dur.voted_for, ents, g_dur.n) == 0,
+           "durability: raft_restore succeeds");
+    ASSERT(raft_last_log_index(r2) == 3, "durability: log recovered after restart (not lost)");
+    ASSERT(raft_current_term(r2) == saved_term, "durability: term recovered");
+    ASSERT(raft_log_term_at(r2, 3) == g_dur.term[2], "durability: entry 3 term matches");
+    raft_destroy(r2);
+    for (size_t i = 0; i < DUR_CAP; i++) free(g_dur.data[i]);
+}
+
 int main(void) {
+    /* ---- 0. Log durability (persist_log + restore) ---- */
+    test_durability();
+
     /* ---- 1. Leader election (3 nodes, no partition) ---- */
     sim_init(3);
     sim_run(60, 10);
