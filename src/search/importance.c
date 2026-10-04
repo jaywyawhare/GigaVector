@@ -17,6 +17,7 @@
  * - MemoryBank (Zhong et al., 2024) "Enhancing LLMs with Long-Term Memory"
  */
 
+#include <stdint.h>
 #include <stdlib.h>
 #include "core/memory.h"
 #include <string.h>
@@ -53,42 +54,77 @@ static size_t count_words(const char *text, size_t len) {
  * @brief Count unique tokens using hash-based deduplication.
  * This is language-agnostic - works on any tokenized text.
  */
+/* Case-insensitive compare of two words of equal length. */
+static int word_ci_eq(const char *a, const char *b, size_t n) {
+    for (size_t i = 0; i < n; i++)
+        if (tolower((unsigned char)a[i]) != tolower((unsigned char)b[i])) return 0;
+    return 1;
+}
+
 static size_t count_unique_words(const char *text, size_t len) {
-    #define HASH_SIZE 256
-    unsigned int seen[HASH_SIZE] = {0};
-    size_t unique = 0;
+    /* Open-addressing set of distinct words, grown with the token count. The
+     * previous fixed 256-slot table keyed on hash%256 silently undercounted on
+     * collision. Here each slot stores the full hash AND a pointer+length into
+     * the (stable) text, and a hash match is confirmed by a case-insensitive
+     * word comparison, so two distinct words that happen to share a hash are
+     * still counted separately. */
+    size_t cap = 64, count = 0;
+    uint32_t    *keys = (uint32_t *)gv_calloc(cap, sizeof(uint32_t));
+    const char **wptr = (const char **)gv_calloc(cap, sizeof(const char *));
+    size_t      *wlen = (size_t *)gv_calloc(cap, sizeof(size_t));
+    unsigned char *used = (unsigned char *)gv_calloc(cap, 1);
+    if (!keys || !wptr || !wlen || !used) {
+        gv_free(keys); gv_free(wptr); gv_free(wlen); gv_free(used); return 0;
+    }
 
     const char *start = text;
     const char *end = text + len;
 
     while (start < end) {
-        /* Skip non-word characters */
         while (start < end && !isalnum((unsigned char)*start)) start++;
         if (start >= end) break;
-
-        /* Find word end */
         const char *word_start = start;
         while (start < end && isalnum((unsigned char)*start)) start++;
-        size_t word_len = start - word_start;
-
+        size_t word_len = (size_t)(start - word_start);
         if (word_len == 0 || word_len > 63) continue;
 
-        /* Simple hash of word */
-        unsigned int hash = 0;
+        uint32_t h = 2166136261u; /* FNV-1a over the lowercased word */
         for (size_t i = 0; i < word_len; i++) {
-            hash = hash * 31 + (unsigned char)tolower((unsigned char)word_start[i]);
+            h ^= (unsigned char)tolower((unsigned char)word_start[i]);
+            h *= 16777619u;
         }
-        hash %= HASH_SIZE;
 
-        /* Mark as seen (simplified - may have collisions but good enough) */
-        if (seen[hash] == 0) {
-            seen[hash] = 1;
-            unique++;
+        if ((count + 1) * 10 >= cap * 7) { /* grow at 70% load factor */
+            size_t ncap = cap * 2;
+            uint32_t    *nk = (uint32_t *)gv_calloc(ncap, sizeof(uint32_t));
+            const char **np = (const char **)gv_calloc(ncap, sizeof(const char *));
+            size_t      *nl = (size_t *)gv_calloc(ncap, sizeof(size_t));
+            unsigned char *nu = (unsigned char *)gv_calloc(ncap, 1);
+            if (!nk || !np || !nl || !nu) {
+                gv_free(nk); gv_free(np); gv_free(nl); gv_free(nu); break; /* OOM: stop growing */
+            }
+            for (size_t i = 0; i < cap; i++) {
+                if (!used[i]) continue;
+                size_t j = keys[i] & (ncap - 1);
+                while (nu[j]) j = (j + 1) & (ncap - 1);
+                nk[j] = keys[i]; np[j] = wptr[i]; nl[j] = wlen[i]; nu[j] = 1;
+            }
+            gv_free(keys); gv_free(wptr); gv_free(wlen); gv_free(used);
+            keys = nk; wptr = np; wlen = nl; used = nu; cap = ncap;
+        }
+
+        size_t j = h & (cap - 1);
+        while (used[j] && !(keys[j] == h && wlen[j] == word_len &&
+                            word_ci_eq(wptr[j], word_start, word_len)))
+            j = (j + 1) & (cap - 1);
+        if (!used[j]) {
+            used[j] = 1; keys[j] = h; wptr[j] = word_start; wlen[j] = word_len;
+            count++;
         }
     }
 
-    return unique;
-    #undef HASH_SIZE
+    gv_free(keys); gv_free(wptr); gv_free(wlen); gv_free(used);
+    return count;
 }
 
 /**

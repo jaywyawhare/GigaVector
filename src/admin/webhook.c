@@ -591,16 +591,9 @@ static int deliver_webhook(const DeliveryWork *work) {
     fprintf(stderr, "[webhook] stub: would POST to %s (body=%zu bytes)\n",
             work->url, strlen(work->json_body));
 
-    /* Simulate retry delay to honour the API contract */
-    int attempts = work->max_retries > 0 ? work->max_retries : DEFAULT_MAX_RETRIES;
-    for (int attempt = 0; attempt < attempts; attempt++) {
-        /* In a stub we just pretend each attempt fails instantly */
-        if (attempt + 1 < attempts) {
-            unsigned int delay_sec = 1u << (unsigned)attempt;
-            sleep(delay_sec);
-        }
-    }
-
+    /* No libcurl means no POST is possible, so every retry would fail the same
+     * way. Fail immediately rather than sleeping with exponential backoff
+     * between attempts that can never succeed (which just blocks the worker). */
     return -1;
 }
 

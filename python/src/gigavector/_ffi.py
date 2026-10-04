@@ -279,7 +279,6 @@ int gv_vector_set_metadata(GV_Vector *vector, const char *key, const char *value
 void gv_vector_destroy(GV_Vector *vector);
 
 // Index insertion functions
-int gv_kdtree_insert(GV_KDNode **root, GV_Vector *point, size_t depth);
 int gv_hnsw_insert(void *index, GV_Vector *vector);
 int gv_ivfpq_insert(void *index, GV_Vector *vector);
 

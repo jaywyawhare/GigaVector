@@ -78,15 +78,34 @@ typedef struct {
 
 /**
  * Callbacks into the host environment.
- * - send:    deliver @p msg to node @p to (transport owns copying if it queues).
- * - apply:   a committed entry at @p index is ready to apply to the state machine.
- * - persist: currentTerm/votedFor changed and should be made durable (may be NULL).
+ * - send:        deliver @p msg to node @p to (transport owns copying if it queues).
+ * - apply:       a committed entry at @p index is ready to apply to the state machine.
+ * - persist:     currentTerm/votedFor changed and should be made durable (may be NULL).
+ * - persist_log: a log entry was appended at 1-based @p index and must be made
+ *                durable BEFORE the append is acknowledged (may be NULL). Return
+ *                0 on success, non-zero on a durable-write failure: the append is
+ *                then rolled back and NOT acknowledged/committed, so a committed
+ *                entry is never lost. On startup, replay the durable log via
+ *                raft_restore() before the first tick.
+ * - truncate_log:conflicting tail entries after 1-based @p keep_upto must be
+ *                deleted from the durable store (may be NULL). Return 0 on
+ *                success, non-zero on failure (the AppendEntries is then rejected).
+ *
+ * persist_log/truncate_log being NULL preserves the older in-memory-only
+ * behaviour (no durability), which is fine for tests and simulations.
+ *
+ * ctx stays immediately after persist so older positional initializers
+ * ({send, apply, persist, ctx}) keep assigning it correctly; the trailing
+ * callbacks then default to NULL.
  */
 typedef struct {
     void (*send)(void *ctx, int to, const GV_RaftMsg *msg);
     void (*apply)(void *ctx, uint64_t index, const void *data, size_t len);
     void (*persist)(void *ctx, uint64_t current_term, int voted_for);
     void *ctx;
+    int  (*persist_log)(void *ctx, uint64_t index, uint64_t term,
+                        const void *data, size_t len);
+    int  (*truncate_log)(void *ctx, uint64_t keep_upto);
 } GV_RaftCallbacks;
 
 typedef struct {
@@ -111,6 +130,28 @@ void raft_config_init(GV_RaftConfig *cfg);
  */
 GV_Raft *raft_create(int id, const int *peers, size_t n_peers,
                      const GV_RaftConfig *cfg, const GV_RaftCallbacks *cb);
+
+/**
+ * @brief Restore durable state into a freshly-created node on startup.
+ *
+ * Reloads the persisted currentTerm/votedFor and replays the durable log
+ * (entries in ascending index order). Call this once, after raft_create() and
+ * before the first raft_tick()/raft_step(). Replayed entries are NOT re-emitted
+ * to persist_log (they are already durable).
+ *
+ * @p commit_index is the last index the host knows was committed (0 if unknown).
+ * The entries up to it are re-applied to the state machine via the apply
+ * callback, so a recovered node (notably a single-node cluster, which has no
+ * leader to re-advance the commit index) does not come back with an empty state
+ * machine. On a multi-node restart, pass 0 (or the persisted commit index) and
+ * let the leader re-advance commitment; do not assume every durable entry is
+ * committed, since the log may carry an uncommitted tail.
+ *
+ * Returns 0 on success, -1 on error.
+ */
+int raft_restore(GV_Raft *r, uint64_t current_term, int voted_for,
+                 uint64_t commit_index, const GV_RaftEntry *entries,
+                 size_t n_entries);
 
 /** @brief Advance the internal clock by @p ms; may trigger elections/heartbeats. */
 void raft_tick(GV_Raft *r, uint32_t ms);

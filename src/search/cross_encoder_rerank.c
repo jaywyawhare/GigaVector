@@ -87,24 +87,19 @@ static void tokenize_to_bag(const char *text, TermBag *bag) {
 }
 
 /**
- * @brief Compute TF-IDF-like overlap score between query and document.
+ * @brief TF-IDF overlap score of a document against the query.
  *
- * For each query term, accumulates document_tf * idf_weight.  Since we have
- * no corpus statistics, idf is approximated as 1/(1 + doc_freq) where
- * doc_freq is the number of query terms containing the word (a crude proxy).
- * The result is normalised by query length.
+ * Per query term: document_tf * idf[term], where idf is the real inverse
+ * document frequency computed across the reranked batch (see the batch loop).
+ * Normalised by query length.
  */
-static float fallback_score(const TermBag *query, const TermBag *doc) {
+static float fallback_score(const TermBag *query, const TermBag *doc, const float *idf) {
     if (query->count == 0) return 0.0f;
 
     float score = 0.0f;
     for (int i = 0; i < query->count; i++) {
         float doc_tf = termbag_tf(doc, query->words[i]);
-        if (doc_tf > 0.0f) {
-            /* IDF proxy: higher weight for less common query terms */
-            float idf = 1.0f / (1.0f + (query->tf[i] - 1.0f));
-            score += doc_tf * idf;
-        }
+        if (doc_tf > 0.0f) score += doc_tf * idf[i];
     }
 
     return score / (float)query->count;
@@ -155,14 +150,30 @@ int cross_encoder_rerank_batch(GV_CrossEncoder *ce, const char *query,
         return onnx_rerank(ce->model, query, document_texts, doc_count, out_scores);
     }
 
-    /* Fallback: TF-IDF overlap scoring */
+    /* Fallback: TF-IDF overlap scoring with a real IDF computed over this batch
+     * (the only corpus the reranker has). Memory stays constant in doc_count:
+     * pass 1 counts document frequency per query term with one reused bag; pass
+     * 2 re-tokenises each document to score it. */
     TermBag qbag;
     tokenize_to_bag(query, &qbag);
+
+    size_t df[CE_MAX_TERMS];
+    for (int t = 0; t < qbag.count; t++) df[t] = 0;
+    for (size_t i = 0; i < doc_count; i++) {
+        TermBag dbag;
+        tokenize_to_bag(document_texts[i], &dbag);
+        for (int t = 0; t < qbag.count; t++)
+            if (termbag_tf(&dbag, qbag.words[t]) > 0.0f) df[t]++;
+    }
+
+    float idf[CE_MAX_TERMS];
+    for (int t = 0; t < qbag.count; t++) /* smoothed IDF: rarer-in-batch weighs more, always >= 0 */
+        idf[t] = logf(((float)doc_count + 1.0f) / ((float)df[t] + 1.0f)) + 1.0f;
 
     for (size_t i = 0; i < doc_count; i++) {
         TermBag dbag;
         tokenize_to_bag(document_texts[i], &dbag);
-        out_scores[i] = fallback_score(&qbag, &dbag);
+        out_scores[i] = fallback_score(&qbag, &dbag, idf);
     }
 
     return 0;

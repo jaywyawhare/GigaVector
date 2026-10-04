@@ -20,7 +20,9 @@ struct GV_Raft {
     size_t   n_peers;
     size_t   majority;      /* votes needed = floor(cluster/2) + 1 */
 
-    /* Persistent state (would be flushed via cb.persist in a durable deployment). */
+    /* Persistent state: current_term/voted_for are flushed via cb.persist, and
+     * each log entry via cb.persist_log (truncations via cb.truncate_log), so a
+     * durable host can reload it all with raft_restore() after a restart. */
     uint64_t current_term;
     int      voted_for;     /* -1 = none */
     GV_RaftEntry *log;      /* 0-based; array[k] == Raft index k+1 */
@@ -84,7 +86,11 @@ static void persist(GV_Raft *r) {
     if (r->cb.persist) r->cb.persist(r->cb.ctx, r->current_term, r->voted_for);
 }
 
-static int log_append(GV_Raft *r, uint64_t term, const void *data, size_t len) {
+/* Append one entry. When do_persist is set, flush it durably via persist_log
+ * BEFORE returning so the entry survives a restart; restore (replaying an
+ * already-durable log) passes 0 to avoid re-persisting. */
+static int log_append_ex(GV_Raft *r, uint64_t term, const void *data, size_t len,
+                         int do_persist) {
     if (r->log_len == r->log_cap) {
         size_t nc = r->log_cap ? r->log_cap * 2 : 16;
         GV_RaftEntry *nl = (GV_RaftEntry *)realloc(r->log, nc * sizeof(GV_RaftEntry));
@@ -101,15 +107,34 @@ static int log_append(GV_Raft *r, uint64_t term, const void *data, size_t len) {
     r->log[r->log_len].data = copy;
     r->log[r->log_len].len  = len;
     r->log_len++;
+    if (do_persist && r->cb.persist_log &&
+        r->cb.persist_log(r->cb.ctx, r->log_len, term, copy, len) != 0) {
+        /* Durable write failed: roll the entry back so it is never acknowledged
+         * or committed (an un-acked entry cannot be lost). */
+        r->log_len--;
+        free(copy);
+        r->log[r->log_len].data = NULL;
+        return -1;
+    }
     return 0;
 }
 
-static void log_truncate(GV_Raft *r, uint64_t keep) { /* drop entries after index `keep` */
+static int log_append(GV_Raft *r, uint64_t term, const void *data, size_t len) {
+    return log_append_ex(r, term, data, len, 1);
+}
+
+static int log_truncate(GV_Raft *r, uint64_t keep) { /* drop entries after index `keep` */
+    /* Delete durably first; if that fails, leave the in-memory log intact so the
+     * two stay consistent and the caller can reject the AppendEntries. */
+    if (r->log_len > keep && r->cb.truncate_log &&
+        r->cb.truncate_log(r->cb.ctx, keep) != 0)
+        return -1;
     while (r->log_len > keep) {
         r->log_len--;
         free(r->log[r->log_len].data);
         r->log[r->log_len].data = NULL;
     }
+    return 0;
 }
 
 static void apply_committed(GV_Raft *r) {
@@ -279,8 +304,8 @@ static void handle_append_entries(GV_Raft *r, const GV_RaftMsg *msg) {
         const GV_RaftEntry *e = &msg->entries[i];
         if (idx <= last_log_index(r)) {
             if (log_term_at(r, idx) != e->term) {
-                log_truncate(r, idx - 1);
-                if (log_append(r, e->term, e->data, e->len) != 0) append_ok = 0;
+                if (log_truncate(r, idx - 1) != 0) append_ok = 0;
+                else if (log_append(r, e->term, e->data, e->len) != 0) append_ok = 0;
             }
             /* else: already present and matching — skip */
         } else {
@@ -401,6 +426,28 @@ int raft_submit(GV_Raft *r, const void *data, size_t len, uint64_t *index_out) {
     /* Kick replication immediately (also covered by the next heartbeat). */
     for (size_t i = 0; i < r->n_peers; i++) send_append_entries(r, (int)i);
     advance_commit(r); /* single-node clusters commit right away */
+    return 0;
+}
+
+int raft_restore(GV_Raft *r, uint64_t current_term, int voted_for,
+                 uint64_t commit_index, const GV_RaftEntry *entries,
+                 size_t n_entries) {
+    if (!r) return -1;
+    if (n_entries && !entries) return -1;
+    r->current_term = current_term;
+    r->voted_for = voted_for;
+    /* Replay the already-durable log without re-persisting it. */
+    for (size_t i = 0; i < n_entries; i++) {
+        if (log_append_ex(r, entries[i].term, entries[i].data, entries[i].len, 0) != 0)
+            return -1;
+    }
+    /* Re-apply the committed prefix to the state machine. commit_index is
+     * volatile in Raft, so a recovered node would otherwise start with an empty
+     * state machine until a leader re-advanced it (which never happens for a
+     * single-node cluster). Clamp to the restored log length. */
+    if (commit_index > r->log_len) commit_index = r->log_len;
+    r->commit_index = commit_index;
+    apply_committed(r);
     return 0;
 }
 
