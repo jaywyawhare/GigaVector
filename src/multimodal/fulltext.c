@@ -1166,10 +1166,14 @@ typedef struct {
 
 static int ft_search_naive(const GV_FTIndex *idx, const FT_TokenList *query_tokens,
                             size_t limit, FT_MinHeap *heap) {
-    (void)limit;
-    const char *unique_terms[256];
+    (void)limit; /* top-k is enforced by the caller-sized min-heap, not here */
+    /* De-duplicate query terms into a growable array so no term is dropped
+     * (the old fixed 256-slot array silently truncated long queries). */
+    size_t uterm_cap = query_tokens->count ? query_tokens->count : 1;
+    const char **unique_terms = gv_calloc(uterm_cap, sizeof(*unique_terms));
+    if (!unique_terms) return -1;
     size_t unique_count = 0;
-    for (size_t i = 0; i < query_tokens->count && unique_count < 256; i++) {
+    for (size_t i = 0; i < query_tokens->count; i++) {
         int found = 0;
         for (size_t j = 0; j < unique_count; j++) {
             if (strcmp(unique_terms[j], query_tokens->tokens[i].text) == 0) {
@@ -1181,7 +1185,7 @@ static int ft_search_naive(const GV_FTIndex *idx, const FT_TokenList *query_toke
 
     size_t score_cap = 256;
     FT_DocScore *scores = gv_calloc(score_cap, sizeof(FT_DocScore));
-    if (!scores) return -1;
+    if (!scores) { gv_free(unique_terms); return -1; }
     size_t score_count = 0;
 
     for (size_t t = 0; t < unique_count; t++) {
@@ -1211,7 +1215,7 @@ static int ft_search_naive(const GV_FTIndex *idx, const FT_TokenList *query_toke
                 if (score_count >= score_cap) {
                     score_cap *= 2;
                     FT_DocScore *tmp = gv_realloc(scores, score_cap * sizeof(FT_DocScore));
-                    if (!tmp) { gv_free(scores); return -1; }
+                    if (!tmp) { gv_free(scores); gv_free(unique_terms); return -1; }
                     scores = tmp;
                 }
                 scores[score_count].doc_id = doc_id;
@@ -1228,6 +1232,7 @@ static int ft_search_naive(const GV_FTIndex *idx, const FT_TokenList *query_toke
     }
 
     gv_free(scores);
+    gv_free(unique_terms);
     return 0;
 }
 

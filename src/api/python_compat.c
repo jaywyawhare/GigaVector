@@ -497,14 +497,10 @@ int gv_vector_set_metadata(GV_Vector *vector, const char *key,
 
 void gv_vector_destroy(GV_Vector *vector) { vector_destroy(vector); }
 
-/* ── KD-tree: gv_kdtree_insert has a different signature from the underlying
-   kdtree_insert (which requires SoA storage context). Stub returns -1. ── */
-int gv_kdtree_insert(GV_KDNode **root, GV_Vector *point, size_t depth) {
-  (void)root;
-  (void)point;
-  (void)depth;
-  return -1;
-}
+/* (Removed gv_kdtree_insert: it could never work — the real kdtree_insert
+   operates on SoA storage + a vector index, not a standalone GV_Vector node,
+   so the binding was a permanent -1 stub. Use a Database with
+   IndexType.KDTREE for KD-tree indexing.) */
 
 int gv_wal_append_insert(GV_WAL *wal, const float *data, size_t dimension,
                          const char *metadata_key, const char *metadata_value) {

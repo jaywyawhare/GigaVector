@@ -267,6 +267,12 @@ int sparse_index_search(const GV_SparseIndex *index, const GV_SparseVector *quer
     if (query->dimension != index->dimension) {
         return -1;
     }
+    /* Sparse scoring is defined only for dot-product / cosine. Reject other
+     * metrics up front instead of silently skipping every candidate and
+     * returning an empty (but "successful") result. */
+    if (distance_type != GV_DISTANCE_DOT_PRODUCT && distance_type != GV_DISTANCE_COSINE) {
+        return -1;
+    }
     if (index->count == 0) {
         return 0;
     }
@@ -344,12 +350,7 @@ int sparse_index_search(const GV_SparseIndex *index, const GV_SparseVector *quer
     for (size_t vid = 0; vid < index->count; ++vid) {
         if (!touched[vid] || index->deleted[vid] != 0) continue;
         float score = scores[vid];
-        float dist;
-        if (distance_type == GV_DISTANCE_DOT_PRODUCT || distance_type == GV_DISTANCE_COSINE) {
-            dist = -score; /* higher dot → smaller distance */
-        } else {
-            continue; /* unsupported */
-        }
+        float dist = -score; /* dot/cosine (validated above): higher score → smaller distance */
 
         if (filled < k) {
             results[filled].sparse_vector = index->vectors[vid];
