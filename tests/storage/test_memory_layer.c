@@ -39,12 +39,29 @@ static int test_memory_layer_destroy_null(void) {
 typedef int (*test_fn)(void);
 typedef struct { const char *name; test_fn fn; } TestCase;
 
+static int test_memory_link_reciprocal(void) {
+    /* Directional links invert; symmetric links map to themselves. */
+    ASSERT(memory_link_reciprocal(GV_LINK_CAUSAL) == GV_LINK_CAUSES, "CAUSAL -> CAUSES");
+    ASSERT(memory_link_reciprocal(GV_LINK_CAUSES) == GV_LINK_CAUSAL, "CAUSES -> CAUSAL");
+    ASSERT(memory_link_reciprocal(GV_LINK_PREREQUISITE) == GV_LINK_DEPENDENT, "PREREQUISITE -> DEPENDENT");
+    ASSERT(memory_link_reciprocal(GV_LINK_DEPENDENT) == GV_LINK_PREREQUISITE, "DEPENDENT -> PREREQUISITE");
+    ASSERT(memory_link_reciprocal(GV_LINK_CONTRADICTS) == GV_LINK_CONTRADICTS, "CONTRADICTS symmetric");
+    ASSERT(memory_link_reciprocal(GV_LINK_SIMILAR) == GV_LINK_SIMILAR, "SIMILAR symmetric");
+    /* Reciprocal of reciprocal returns the original for directional pairs. */
+    ASSERT(memory_link_reciprocal(memory_link_reciprocal(GV_LINK_CAUSAL)) == GV_LINK_CAUSAL,
+           "CAUSAL round-trips");
+    ASSERT(memory_link_reciprocal(memory_link_reciprocal(GV_LINK_PREREQUISITE)) == GV_LINK_PREREQUISITE,
+           "PREREQUISITE round-trips");
+    return 0;
+}
+
 int main(void) {
     TestCase tests[] = {
         {"memory_layer_config_default", test_memory_layer_config_default},
         {"memory_layer_create_null_db", test_memory_layer_create_null_db},
         {"memory_layer_create", test_memory_layer_create},
         {"memory_layer_destroy_null", test_memory_layer_destroy_null},
+        {"memory_link_reciprocal", test_memory_link_reciprocal},
     };
     int n = sizeof(tests) / sizeof(tests[0]);
     int passed = 0;

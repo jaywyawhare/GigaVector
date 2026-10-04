@@ -42,7 +42,9 @@ typedef enum {
     GV_LINK_CAUSAL = 4,             /**< This memory is caused by target. */
     GV_LINK_EXAMPLE = 5,            /**< This memory is an example of target. */
     GV_LINK_PREREQUISITE = 6,       /**< Target depends on this memory. */
-    GV_LINK_TEMPORAL = 7            /**< Temporal relationship (before/after). */
+    GV_LINK_TEMPORAL = 7,           /**< Temporal relationship (before/after). */
+    GV_LINK_CAUSES = 8,             /**< This memory causes target (inverse of CAUSAL). */
+    GV_LINK_DEPENDENT = 9           /**< This memory depends on target (inverse of PREREQUISITE). */
 } GV_MemoryLinkType;
 
 /**
