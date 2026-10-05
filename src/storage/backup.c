@@ -670,7 +670,9 @@ GV_BackupResult *backup_restore(const char *backup_path, const char *db_path,
     /* fp is now positioned right after the raw vectors: for v2 backups the
      * per-vector metadata section follows here.  Apply it before closing fp.
      * Only meaningful when every declared vector was read back. */
-    int meta_rc = 0;
+    /* -1 marks the per-vector metadata as not fully applied. A short vector read
+     * means the metadata section is skipped entirely, so it is incomplete too. */
+    int meta_rc = (vectors_read == header.vector_count) ? 0 : -1;
     if (vectors_read == header.vector_count) {
         meta_rc = backup_apply_metadata_section(fp, db, header.version, header.vector_count);
     }
@@ -780,7 +782,7 @@ GV_BackupResult *backup_restore_to_db(const char *backup_path,
 
     /* Apply the v2 per-vector metadata section (no-op for v1 or empty section)
      * before closing the file — fp is positioned right after the raw vectors. */
-    int meta_rc = 0;
+    int meta_rc = (vectors_read == header.vector_count) ? 0 : -1;
     if (vectors_read == header.vector_count) {
         meta_rc = backup_apply_metadata_section(fp, *db, header.version, header.vector_count);
     }
