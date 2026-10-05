@@ -691,7 +691,7 @@ GV_BackupResult *backup_restore(const char *backup_path, const char *db_path,
     /* Vectors restored; flag truncated/garbled metadata via metadata_complete so
      * the loss is not silent while keeping the success/error_message contract. */
     GV_BackupResult *result = create_result(1, NULL);
-    if (result) result->metadata_complete = (meta_rc == 0);
+    result->metadata_complete = (meta_rc == 0);
     result->bytes_processed = header.original_size;
     result->vectors_processed = vectors_read;
     result->elapsed_seconds = get_time_seconds() - start_time;
@@ -788,7 +788,7 @@ GV_BackupResult *backup_restore_to_db(const char *backup_path,
     fclose(fp);
 
     GV_BackupResult *result = create_result(1, NULL);
-    if (result) result->metadata_complete = (meta_rc == 0);
+    result->metadata_complete = (meta_rc == 0);
     result->vectors_processed = vectors_read;
 
     return result;
