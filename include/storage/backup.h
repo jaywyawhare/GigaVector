@@ -74,6 +74,10 @@ typedef struct {
     uint64_t bytes_processed;       /**< Bytes processed. */
     uint64_t vectors_processed;     /**< Vectors processed. */
     double elapsed_seconds;         /**< Time elapsed. */
+    int metadata_complete;          /**< Restore only: 1 if all per-vector metadata was
+                                         applied, 0 if a truncated/garbled metadata
+                                         section was skipped (vectors still restored).
+                                         Always 1 for non-restore operations. */
 } GV_BackupResult;
 
 /**

@@ -77,8 +77,10 @@ GV_GrpcServer *grpc_create(GV_Database *db, const GV_GrpcConfig *config) {
 int grpc_start(GV_GrpcServer *server) {
     if (!server) return GV_GRPC_ERROR_NULL;
     if (server->running) return GV_GRPC_ERROR_RUNNING;
-    server->running = 1;
-    return GV_GRPC_OK;
+    /* The gRPC server needs POSIX sockets, which this MinGW/Windows build does
+     * not provide. Fail honestly instead of reporting a running server that is
+     * not listening (grpc_is_running would otherwise lie). */
+    return GV_GRPC_ERROR_BIND;
 }
 
 int grpc_stop(GV_GrpcServer *server) {

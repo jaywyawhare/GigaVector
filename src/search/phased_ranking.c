@@ -495,7 +495,7 @@ static int execute_rerank_quant_phase(const GV_Database *db,
         if (candidates[i].index >= codes_count) continue;
         const uint8_t *code = codes + candidates[i].index * stride;
         float refined = quant_distance(cb, query, dim, code);
-        if (refined < 0.0f) continue; /* skip on error */
+        if (refined < 0.0f) refined = candidates[i].score; /* quant error: keep prior score, don't drop the candidate */
 
         /* Replace score with refined value; store in same slot. */
         candidates[valid].index    = candidates[i].index;

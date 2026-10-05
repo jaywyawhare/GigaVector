@@ -72,6 +72,7 @@ static GV_BackupResult *create_result(int success, const char *error) {
     GV_BackupResult *result = gv_calloc(1, sizeof(GV_BackupResult));
     if (!result) return NULL;
     result->success = success;
+    result->metadata_complete = 1; /* restore paths clear this on a partial section */
     if (error) {
         result->error_message = gv_strdup(error);
     }
@@ -489,7 +490,7 @@ void backup_result_free(GV_BackupResult *result) {
 
 /* Read the v2 metadata section (positioned immediately after the raw vectors)
  * and apply it per vector index. No-op for v1 (no section) or a 0 meta_present
- * marker. `fp` must be at the section start. Always returns 0: a truncated/garbled
+ * marker. `fp` must be at the section start. Returns 0 on a clean section, -1 if truncated/garbled: a truncated
  * section is a soft failure — vectors are already restored, so stop applying
  * metadata rather than failing the whole restore. */
 static int backup_apply_metadata_section(FILE *fp, GV_Database *db,
@@ -497,14 +498,20 @@ static int backup_apply_metadata_section(FILE *fp, GV_Database *db,
     if (!fp || !db || version < 2) return 0;
 
     uint32_t meta_present = 0;
-    if (read_u32(fp, &meta_present) != 0 || meta_present == 0) {
-        return 0;
+    if (read_u32(fp, &meta_present) != 0) {
+        return -1; /* truncated: metadata section header unreadable */
+    }
+    if (meta_present == 0) {
+        return 0; /* clean: backup carried no per-vector metadata */
+    }
+    if (meta_present != 1) {
+        return -1; /* malformed marker (only 0 and 1 are valid) */
     }
 
     for (uint64_t i = 0; i < vector_count; i++) {
         uint32_t pair_count = 0;
         if (read_u32(fp, &pair_count) != 0) {
-            return 0;  /* truncated; stop, keep what we have */
+            return -1;  /* truncated; stop, keep what we have, signal partial */
         }
         if (pair_count == 0) {
             continue;  /* vector had no metadata */
@@ -515,7 +522,7 @@ static int backup_apply_metadata_section(FILE *fp, GV_Database *db,
         if (!keys || !vals) {
             gv_free(keys);
             gv_free(vals);
-            return 0;
+            return -1;
         }
 
         uint32_t got = 0;
@@ -546,7 +553,7 @@ static int backup_apply_metadata_section(FILE *fp, GV_Database *db,
         gv_free(vals);
 
         if (got < pair_count) {
-            return 0;  /* truncated record; stop applying further metadata */
+            return -1;  /* truncated record; stop applying, signal partial */
         }
     }
 
@@ -663,8 +670,11 @@ GV_BackupResult *backup_restore(const char *backup_path, const char *db_path,
     /* fp is now positioned right after the raw vectors: for v2 backups the
      * per-vector metadata section follows here.  Apply it before closing fp.
      * Only meaningful when every declared vector was read back. */
+    /* -1 marks the per-vector metadata as not fully applied. A short vector read
+     * means the metadata section is skipped entirely, so it is incomplete too. */
+    int meta_rc = (vectors_read == header.vector_count) ? 0 : -1;
     if (vectors_read == header.vector_count) {
-        backup_apply_metadata_section(fp, db, header.version, header.vector_count);
+        meta_rc = backup_apply_metadata_section(fp, db, header.version, header.vector_count);
     }
 
     fclose(fp);
@@ -680,7 +690,10 @@ GV_BackupResult *backup_restore(const char *backup_path, const char *db_path,
 
     db_close(db);
 
+    /* Vectors restored; flag truncated/garbled metadata via metadata_complete so
+     * the loss is not silent while keeping the success/error_message contract. */
     GV_BackupResult *result = create_result(1, NULL);
+    result->metadata_complete = (meta_rc == 0);
     result->bytes_processed = header.original_size;
     result->vectors_processed = vectors_read;
     result->elapsed_seconds = get_time_seconds() - start_time;
@@ -769,13 +782,15 @@ GV_BackupResult *backup_restore_to_db(const char *backup_path,
 
     /* Apply the v2 per-vector metadata section (no-op for v1 or empty section)
      * before closing the file — fp is positioned right after the raw vectors. */
+    int meta_rc = (vectors_read == header.vector_count) ? 0 : -1;
     if (vectors_read == header.vector_count) {
-        backup_apply_metadata_section(fp, *db, header.version, header.vector_count);
+        meta_rc = backup_apply_metadata_section(fp, *db, header.version, header.vector_count);
     }
 
     fclose(fp);
 
     GV_BackupResult *result = create_result(1, NULL);
+    result->metadata_complete = (meta_rc == 0);
     result->vectors_processed = vectors_read;
 
     return result;

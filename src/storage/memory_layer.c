@@ -1854,20 +1854,27 @@ int memory_search_advanced(GV_MemoryLayer *layer, const float *query_embedding,
 
 GV_MemoryLinkType memory_link_reciprocal(GV_MemoryLinkType link_type) {
     switch (link_type) {
-        case GV_LINK_SUPPORTS:
-            return GV_LINK_SUPPORTS;  /* Symmetric for simplicity */
-        case GV_LINK_CONTRADICTS:
-            return GV_LINK_CONTRADICTS;  /* Symmetric */
-        case GV_LINK_EXTENDS:
-            return GV_LINK_EXTENDS;  /* Symmetric */
+        /* Directional pairs: the reverse edge carries the inverse relation so
+         * cause/effect and prerequisite/dependent are not collapsed. */
         case GV_LINK_CAUSAL:
-            return GV_LINK_CAUSAL;  /* Effect -> Cause */
-        case GV_LINK_EXAMPLE:
-            return GV_LINK_EXAMPLE;  /* Symmetric */
+            return GV_LINK_CAUSES;       /* "is caused by" <-> "causes" */
+        case GV_LINK_CAUSES:
+            return GV_LINK_CAUSAL;
         case GV_LINK_PREREQUISITE:
-            return GV_LINK_PREREQUISITE;  /* Depends -> Required */
+            return GV_LINK_DEPENDENT;    /* "is prerequisite of" <-> "depends on" */
+        case GV_LINK_DEPENDENT:
+            return GV_LINK_PREREQUISITE;
+        /* Symmetric relations: the reverse edge is the same type. */
+        case GV_LINK_SUPPORTS:
+            return GV_LINK_SUPPORTS;
+        case GV_LINK_CONTRADICTS:
+            return GV_LINK_CONTRADICTS;
+        case GV_LINK_EXTENDS:
+            return GV_LINK_EXTENDS;
+        case GV_LINK_EXAMPLE:
+            return GV_LINK_EXAMPLE;
         case GV_LINK_TEMPORAL:
-            return GV_LINK_TEMPORAL;  /* Symmetric */
+            return GV_LINK_TEMPORAL;
         case GV_LINK_SIMILAR:
         default:
             return GV_LINK_SIMILAR;
