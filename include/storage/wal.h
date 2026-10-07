@@ -196,6 +196,13 @@ int wal_truncate(GV_WAL *wal);
 uint64_t wal_count_entries(const char *path);
 
 /**
+ * @brief Current on-disk size of the WAL in bytes (0 if closed/NULL).
+ *
+ * Used to drive size-based checkpointing.
+ */
+uint64_t wal_size(const GV_WAL *wal);
+
+/**
  * @brief Read one WAL record by zero-based entry index.
  *
  * @return 0 on success, -1 on error or if index out of range.

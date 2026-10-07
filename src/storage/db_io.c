@@ -336,6 +336,27 @@ int db_save(const GV_Database *db, const char *filepath) {
     return status;
 }
 
+int db_wal_checkpoint(GV_Database *db) {
+    if (db == NULL || db->wal == NULL || db->filepath == NULL) {
+        return -1;  /* nothing to checkpoint (in-memory or no WAL) */
+    }
+    /* db_save snapshots to the backing file and truncates the WAL (see above). */
+    return db_save(db, db->filepath);
+}
+
+int db_wal_checkpoint_if_needed(GV_Database *db, size_t threshold_bytes) {
+    if (db == NULL || db->wal == NULL || db->filepath == NULL) {
+        return 0;  /* nothing to do */
+    }
+    pthread_mutex_lock(&db->wal_mutex);
+    uint64_t sz = wal_size(db->wal);
+    pthread_mutex_unlock(&db->wal_mutex);
+    if (sz < (uint64_t)threshold_bytes) {
+        return 0;
+    }
+    return (db_wal_checkpoint(db) == 0) ? 1 : -1;
+}
+
 int db_export_json(const GV_Database *db, const char *filepath) {
     if (db == NULL || filepath == NULL) {
         return -1;

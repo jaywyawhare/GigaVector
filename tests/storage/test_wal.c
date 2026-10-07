@@ -295,6 +295,88 @@ static int test_wal_fsync_truncate_ordering(void) {
     return 0;
 }
 
+static long gv_file_size(const char *path) {
+    FILE *f = fopen(path, "rb");
+    if (!f) return -1;
+    if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return -1; }
+    long s = ftell(f);
+    fclose(f);
+    return s;
+}
+
+static int test_wal_size(void) {
+    char wal_path[256];
+    if (gv_test_make_temp_path(wal_path, sizeof(wal_path), "gv_wal_size", ".wal") != 0) return 0;
+    remove(wal_path);
+
+    GV_WAL *wal = wal_open(wal_path, 2, GV_INDEX_TYPE_KDTREE);
+    ASSERT(wal != NULL, "wal open");
+    uint64_t hdr = wal_size(wal);
+    ASSERT(hdr > 0, "header-only size is non-zero");
+
+    float v[2] = {1.0f, 2.0f};
+    for (int i = 0; i < 20; i++) {
+        ASSERT(wal_append_insert(wal, v, 2, NULL, NULL) == 0, "append insert");
+    }
+    uint64_t grown = wal_size(wal);
+    ASSERT(grown > hdr, "wal_size grows with appends");
+
+    ASSERT(wal_truncate(wal) == 0, "truncate");
+    uint64_t after = wal_size(wal);
+    ASSERT(after < grown, "wal_size shrinks after truncate");
+
+    wal_close(wal);
+    remove(wal_path);
+    return 0;
+}
+
+static int test_db_wal_checkpoint(void) {
+    char db_path[256], wal_path[256];
+    if (gv_test_make_temp_path(db_path, sizeof(db_path), "gv_ckpt_db", ".bin") != 0) return 0;
+    if (gv_test_make_temp_path(wal_path, sizeof(wal_path), "gv_ckpt", ".wal") != 0) return 0;
+    remove(db_path); remove(wal_path);
+
+    GV_Database *db = db_open(db_path, 2, GV_INDEX_TYPE_FLAT);
+    ASSERT(db != NULL, "db open");
+    ASSERT(db_set_wal(db, wal_path) == 0, "set wal");
+
+    float v[2];
+    for (int i = 0; i < 50; i++) {
+        v[0] = (float)i; v[1] = (float)(i + 1);
+        ASSERT(db_add_vector(db, v, 2) == 0, "add vector");
+    }
+    long grown = gv_file_size(wal_path);
+    ASSERT(grown > 0, "wal grew on disk");
+
+    /* Threshold 1 byte -> a checkpoint runs and truncates the WAL. */
+    int ck = db_wal_checkpoint_if_needed(db, 1);
+    ASSERT(ck == 1, "checkpoint ran when over threshold");
+    long after = gv_file_size(wal_path);
+    ASSERT(after >= 0 && after < grown, "wal shrank after checkpoint");
+
+    /* Below threshold -> no-op. */
+    ASSERT(db_wal_checkpoint_if_needed(db, (size_t)1 << 30) == 0, "no checkpoint below threshold");
+
+    /* Data survives the checkpoint. */
+    GV_SearchResult res[1];
+    int n = db_search(db, v, 1, res, GV_DISTANCE_EUCLIDEAN);
+    ASSERT(n == 1, "data survives checkpoint");
+    gv_search_results_free(res, (size_t)(n > 0 ? n : 0));
+
+    db_disable_wal(db);
+    db_close(db);
+    gv_test_remove_db(db_path);
+    remove(wal_path);
+
+    /* In-memory database: nothing to checkpoint. */
+    GV_Database *mem = db_open(NULL, 2, GV_INDEX_TYPE_FLAT);
+    ASSERT(mem != NULL, "open in-memory db");
+    ASSERT(db_wal_checkpoint(mem) == -1, "in-memory checkpoint is a no-op failure");
+    ASSERT(db_wal_checkpoint_if_needed(mem, 1) == 0, "in-memory checkpoint_if_needed is 0");
+    db_close(mem);
+    return 0;
+}
+
 static int test_wal_in_database(void) {
     char db_path[256], wal_path[256];
     if (gv_test_make_temp_path(db_path, sizeof(db_path), "gv_wal_db", ".bin") != 0) return 0;
@@ -342,6 +424,8 @@ int main(void) {
     rc |= test_wal_replay();
     rc |= test_wal_replay_rich();
     rc |= test_wal_fsync_truncate_ordering();
+    rc |= test_wal_size();
+    rc |= test_db_wal_checkpoint();
     rc |= test_wal_in_database();
     return rc;
 }

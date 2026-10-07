@@ -1263,6 +1263,22 @@ int wal_truncate(GV_WAL *wal) {
     return 0;
 }
 
+uint64_t wal_size(const GV_WAL *wal) {
+    if (wal == NULL || wal->file == NULL) {
+        return 0;
+    }
+    /* The stream is opened in append mode, so the current end offset is the
+     * on-disk size. Flush first so buffered appends are counted. */
+    FILE *f = wal->file;
+    fflush(f);
+    long cur = ftell(f);
+    if (fseek(f, 0, SEEK_END) != 0) {
+        return (cur >= 0) ? (uint64_t)cur : 0;
+    }
+    long end = ftell(f);
+    return (end >= 0) ? (uint64_t)end : 0;
+}
+
 static int wal_record_has_crc(uint32_t version) {
     return version >= 2;
 }

@@ -709,6 +709,29 @@ int db_update_vector_metadata(GV_Database *db, size_t vector_index,
 GV_NODISCARD int db_save(const GV_Database *db, const char *filepath);
 
 /**
+ * @brief Checkpoint the WAL: snapshot the database to its backing file and
+ *        truncate the write-ahead log, bounding its growth.
+ *
+ * Equivalent to db_save(db, db->filepath) for a file-backed database. A
+ * no-op-failure (returns -1) for in-memory databases (no filepath/WAL).
+ *
+ * @return 0 on success, -1 on error or when there is nothing to checkpoint.
+ */
+int db_wal_checkpoint(GV_Database *db);
+
+/**
+ * @brief Checkpoint only if the WAL has grown to at least @p threshold_bytes.
+ *
+ * Call periodically (or after writes) to keep the WAL bounded without a full
+ * checkpoint on every mutation.
+ *
+ * @param db Database.
+ * @param threshold_bytes WAL size (bytes) at/above which to checkpoint.
+ * @return 1 if a checkpoint ran, 0 if below threshold / nothing to do, -1 on error.
+ */
+int db_wal_checkpoint_if_needed(GV_Database *db, size_t threshold_bytes);
+
+/**
  * @brief Search for k nearest neighbors to a query vector.
  *
  * @param db Database to search; must be non-NULL.
