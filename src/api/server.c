@@ -287,6 +287,31 @@ static void add_cors_headers(struct MHD_Response *response, const GV_Server *ser
  * path. Only the OPTIONS (CORS preflight) method is additionally exempt, as
  * it carries no body and returns no data.
  */
+/* Copy `src` into `dst` (NUL-terminated, bounded) escaping characters that
+ * would break a JSON string: quote, backslash and control bytes. Used for the
+ * structured access log so an odd request path cannot corrupt a log line. */
+static void json_escape_field(const char *src, char *dst, size_t dst_size) {
+    size_t o = 0;
+    if (dst_size == 0) return;
+    for (size_t i = 0; src[i] != '\0' && o + 7 < dst_size; i++) {
+        unsigned char c = (unsigned char)src[i];
+        switch (c) {
+            case '"':  dst[o++] = '\\'; dst[o++] = '"'; break;
+            case '\\': dst[o++] = '\\'; dst[o++] = '\\'; break;
+            case '\n': dst[o++] = '\\'; dst[o++] = 'n'; break;
+            case '\r': dst[o++] = '\\'; dst[o++] = 'r'; break;
+            case '\t': dst[o++] = '\\'; dst[o++] = 't'; break;
+            default:
+                if (c < 0x20) {
+                    o += (size_t)snprintf(dst + o, dst_size - o, "\\u%04x", c);
+                } else {
+                    dst[o++] = (char)c;
+                }
+        }
+    }
+    dst[o] = '\0';
+}
+
 static int is_liveness_request(const char *url, const char *method) {
     if (!url || !method) {
         return 0;  /* Unknown -> not liveness (fail closed). */
@@ -535,9 +560,8 @@ static enum MHD_Result answer_to_connection(void *cls,
         }
     }
 
-    if (server->config.enable_logging) {
-        fprintf(stderr, "[GV_Server] %s %s\n", method, url);
-    }
+    struct timespec req_start;
+    clock_gettime(CLOCK_MONOTONIC, &req_start);
 
     GV_HttpResponse *http_response = rest_route(&server->handler_ctx, &request);
 
@@ -547,6 +571,24 @@ static enum MHD_Result answer_to_connection(void *cls,
         server->error_count++;
     }
     pthread_mutex_unlock(&server->stats_mutex);
+
+    if (server->config.enable_logging) {
+        struct timespec req_end;
+        clock_gettime(CLOCK_MONOTONIC, &req_end);
+        double latency_ms = (double)(req_end.tv_sec - req_start.tv_sec) * 1000.0 +
+                            (double)(req_end.tv_nsec - req_start.tv_nsec) / 1e6;
+        int log_status = http_response ? (int)http_response->status : 500;
+        size_t log_bytes = (http_response && http_response->body) ? http_response->body_length : 0;
+        /* Structured single-line JSON access log: timestamp, method, path,
+         * status, latency and response size — parseable by log shippers. */
+        char esc_url[1024];
+        json_escape_field(url ? url : "", esc_url, sizeof(esc_url));
+        fprintf(stderr,
+                "{\"ts\":%lld,\"method\":\"%s\",\"path\":\"%s\",\"status\":%d,"
+                "\"latency_ms\":%.3f,\"bytes\":%zu}\n",
+                (long long)time(NULL), method ? method : "", esc_url, log_status,
+                latency_ms, log_bytes);
+    }
 
     struct MHD_Response *mhd_response;
     unsigned int status_code = GV_HTTP_500_INTERNAL_ERROR;
