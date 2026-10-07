@@ -246,6 +246,7 @@ tiers:
         - core/prop_value.c
         - features/cypher_vector.c
         - storage/object_store.c
+        - storage/document_extract.c
         - features/graph_distributed.c
         - features/graph_prop_index.c
         - features/graph_rpc.c
