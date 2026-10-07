@@ -310,6 +310,38 @@ int gpu_batch_search(GV_GPUContext *ctx, GV_Database *db,
                          const float *queries, size_t num_queries, size_t k,
                          size_t *indices, float *distances);
 
+/* ---- Multi-device (multi-GPU) search ---- */
+
+/**
+ * @brief A fan-out over several GPU devices (one GV_GPUContext each).
+ *
+ * gpu_multi_batch_search partitions the query batch across the devices and runs
+ * each shard concurrently, so throughput scales with device count. With a CUDA
+ * build each context binds a distinct device (round-robin over the available
+ * ones); without CUDA each is a CPU-fallback context, so the fan-out still
+ * parallelises the batch across threads and the API is exercised either way.
+ */
+typedef struct GV_GPUMultiContext GV_GPUMultiContext;
+
+/** Create a fan-out of @p device_count contexts from @p base_config (clamped to
+ *  [1, 64]). Returns NULL on error. */
+GV_GPUMultiContext *gpu_multi_create(const GV_GPUConfig *base_config, size_t device_count);
+
+/** Destroy a multi-device context and all its sub-contexts (NULL-safe). */
+void gpu_multi_destroy(GV_GPUMultiContext *mctx);
+
+/** Number of devices/contexts in the fan-out. */
+size_t gpu_multi_device_count(const GV_GPUMultiContext *mctx);
+
+/**
+ * @brief Batch kNN across all devices: query i's results land in
+ *        indices[i*k .. i*k+k) / distances[i*k ..], identical layout to
+ *        gpu_batch_search. Returns 0 on success, -1 on error.
+ */
+int gpu_multi_batch_search(GV_GPUMultiContext *mctx, GV_Database *db,
+                           const float *queries, size_t num_queries, size_t k,
+                           size_t *indices, float *distances);
+
 /**
  * @brief Train IVF-PQ codebook on GPU.
  *

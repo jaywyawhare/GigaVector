@@ -14,6 +14,7 @@
 #include <string.h>
 #include <math.h>
 #include <float.h>
+#include <pthread.h>
 
 /* Check for CUDA availability at compile time */
 #ifdef HAVE_CUDA
@@ -1061,4 +1062,118 @@ int gpu_reset_stats(GV_GPUContext *ctx) {
 const char *gpu_get_error(GV_GPUContext *ctx) {
     if (!ctx) return "Invalid context";
     return ctx->last_error[0] ? ctx->last_error : "No error";
+}
+
+/* ---- Multi-device (multi-GPU) fan-out ---- */
+
+struct GV_GPUMultiContext {
+    GV_GPUContext **ctxs;
+    size_t          n;
+};
+
+GV_GPUMultiContext *gpu_multi_create(const GV_GPUConfig *base_config, size_t device_count) {
+    if (device_count == 0) device_count = 1;
+    if (device_count > 64) device_count = 64;
+
+    GV_GPUMultiContext *m = (GV_GPUMultiContext *)gv_calloc(1, sizeof(*m));
+    if (!m) return NULL;
+    m->ctxs = (GV_GPUContext **)gv_calloc(device_count, sizeof(GV_GPUContext *));
+    if (!m->ctxs) { gv_free(m); return NULL; }
+
+    int avail = gpu_device_count();
+    GV_GPUConfig base;
+    if (base_config) base = *base_config; else gpu_config_init(&base);
+
+    for (size_t i = 0; i < device_count; i++) {
+        GV_GPUConfig c = base;
+        /* Bind each context to a distinct device (round-robin) when GPUs exist;
+         * otherwise -1 (CPU-fallback contexts that still parallelise the batch). */
+        c.device_id = (avail > 0) ? (int)(i % (size_t)avail) : -1;
+        m->ctxs[i] = gpu_create(&c);
+        if (!m->ctxs[i]) {
+            for (size_t j = 0; j < i; j++) gpu_destroy(m->ctxs[j]);
+            gv_free(m->ctxs);
+            gv_free(m);
+            return NULL;
+        }
+        m->n++;
+    }
+    return m;
+}
+
+void gpu_multi_destroy(GV_GPUMultiContext *mctx) {
+    if (!mctx) return;
+    for (size_t i = 0; i < mctx->n; i++) gpu_destroy(mctx->ctxs[i]);
+    gv_free(mctx->ctxs);
+    gv_free(mctx);
+}
+
+size_t gpu_multi_device_count(const GV_GPUMultiContext *mctx) {
+    return mctx ? mctx->n : 0;
+}
+
+typedef struct {
+    GV_GPUContext *ctx;
+    GV_Database   *db;
+    const float   *queries;
+    size_t         num;
+    size_t         k;
+    size_t        *indices;
+    float         *distances;
+    int            rc;
+} GPUShardJob;
+
+static void *gpu_shard_worker(void *arg) {
+    GPUShardJob *j = (GPUShardJob *)arg;
+    j->rc = (j->num == 0)
+        ? 0
+        : gpu_batch_search(j->ctx, j->db, j->queries, j->num, j->k, j->indices, j->distances);
+    return NULL;
+}
+
+int gpu_multi_batch_search(GV_GPUMultiContext *mctx, GV_Database *db,
+                           const float *queries, size_t num_queries, size_t k,
+                           size_t *indices, float *distances) {
+    if (!mctx || mctx->n == 0 || !db || !queries || !indices || !distances) return -1;
+    if (num_queries == 0 || k == 0) return -1;
+
+    size_t dim = database_dimension(db);
+    if (dim == 0) return -1;
+
+    /* One shard per device, but never more shards than queries. */
+    size_t n = mctx->n;
+    if (n > num_queries) n = num_queries;
+
+    GPUShardJob *jobs = (GPUShardJob *)gv_alloc(n * sizeof(GPUShardJob));
+    pthread_t   *th   = (pthread_t *)gv_alloc(n * sizeof(pthread_t));
+    int         *spawned = (int *)gv_calloc(n, sizeof(int));
+    if (!jobs || !th || !spawned) { gv_free(jobs); gv_free(th); gv_free(spawned); return -1; }
+
+    size_t base = num_queries / n, rem = num_queries % n, off = 0;
+    for (size_t i = 0; i < n; i++) {
+        size_t cnt = base + (i < rem ? 1 : 0);
+        jobs[i].ctx = mctx->ctxs[i];
+        jobs[i].db = db;
+        jobs[i].queries = queries + off * dim;
+        jobs[i].num = cnt;
+        jobs[i].k = k;
+        jobs[i].indices = indices + off * k;
+        jobs[i].distances = distances + off * k;
+        jobs[i].rc = -1;
+        off += cnt;
+    }
+
+    for (size_t i = 0; i < n; i++) {
+        if (pthread_create(&th[i], NULL, gpu_shard_worker, &jobs[i]) == 0) {
+            spawned[i] = 1;
+        } else {
+            gpu_shard_worker(&jobs[i]); /* fall back to running inline */
+        }
+    }
+    for (size_t i = 0; i < n; i++) if (spawned[i]) pthread_join(th[i], NULL);
+
+    int rc = 0;
+    for (size_t i = 0; i < n; i++) if (jobs[i].rc != 0) rc = -1;
+    gv_free(jobs); gv_free(th); gv_free(spawned);
+    return rc;
 }
