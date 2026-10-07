@@ -48,6 +48,10 @@ typedef struct {
     GV_NodeRole role;               /**< This node's role. */
     uint32_t heartbeat_interval_ms; /**< Heartbeat interval. */
     uint32_t failure_timeout_ms;    /**< Node failure timeout. */
+    const char *raft_data_dir;      /**< If set, the Raft log/vote are persisted
+                                         under this directory (one file per node)
+                                         and reloaded on restart for durable HA.
+                                         NULL keeps the older in-memory behaviour. */
 } GV_ClusterConfig;
 
 typedef struct {

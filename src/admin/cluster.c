@@ -7,6 +7,7 @@
 #include "admin/cluster.h"
 #include "admin/shard_rpc.h"
 #include "admin/raft.h"
+#include "admin/raft_log.h"
 #include "core/memory.h"
 #include "core/utils.h"
 
@@ -51,6 +52,7 @@ struct GV_Cluster {
     char           **raft_addrs;     /* index -> "host:port" */
     size_t           raft_n;
     int              raft_my_index;
+    GV_RaftLog      *raft_log;       /* durable log+vote when config.raft_data_dir is set (else NULL) */
     RaftOut          outbox[RAFT_OUTBOX_CAP];
     size_t           outbox_n;
 
@@ -443,6 +445,22 @@ static void raft_send_cb(void *ctx, int to, const GV_RaftMsg *msg) {
 
 #define CLUSTER_OP_ASSIGN_SHARD 1  /* [u8 op][u64 shard][u32 node] */
 
+/* Durable-state callbacks (used only when config.raft_data_dir is set). Each
+ * returns 0/-1 so a failed fsync rolls back the append and is never acked. */
+static void cluster_raft_persist(void *ctx, uint64_t term, int voted_for) {
+    GV_Cluster *c = (GV_Cluster *)ctx;
+    if (c->raft_log) (void)raft_log_set_meta(c->raft_log, term, voted_for);
+}
+static int cluster_raft_persist_log(void *ctx, uint64_t index, uint64_t term,
+                                    const void *data, size_t len) {
+    GV_Cluster *c = (GV_Cluster *)ctx;
+    return c->raft_log ? raft_log_append(c->raft_log, index, term, data, len) : 0;
+}
+static int cluster_raft_truncate_log(void *ctx, uint64_t keep_upto) {
+    GV_Cluster *c = (GV_Cluster *)ctx;
+    return c->raft_log ? raft_log_truncate(c->raft_log, keep_upto) : 0;
+}
+
 /* Apply a committed raft log entry to the replicated state machine. Runs on
  * every node under the raft lock (invoked from within raft_step/raft_tick). */
 static void cluster_raft_apply(void *ctx, uint64_t index, const void *data, size_t len) {
@@ -536,6 +554,8 @@ static void cluster_raft_shutdown(GV_Cluster *c) {
     gv_free(c->raft_addrs);
     c->raft_addrs = NULL;
     c->raft_n = 0;
+
+    if (c->raft_log) { raft_log_close(c->raft_log); c->raft_log = NULL; }
 }
 
 int cluster_enable_raft(GV_Cluster *cluster, const char *const *addrs,
@@ -562,14 +582,23 @@ int cluster_enable_raft(GV_Cluster *cluster, const char *const *addrs,
     size_t np = 0;
     for (int i = 0; i < (int)n; i++) if (i != my_index) peers[np++] = i;
 
+    /* Durable Raft log/vote when a data dir is configured (one file per node). */
+    if (cluster->config.raft_data_dir) {
+        char lp[4096];
+        snprintf(lp, sizeof(lp), "%s/raft-%s.log", cluster->config.raft_data_dir,
+                 cluster->config.node_id ? cluster->config.node_id : "node");
+        cluster->raft_log = raft_log_open(lp);
+        if (!cluster->raft_log) { gv_free(peers); cluster_raft_shutdown(cluster); return -1; }
+    }
+
     GV_RaftConfig cfg;
     raft_config_init(&cfg);
     GV_RaftCallbacks cb = {
         .send = raft_send_cb,
         .apply = cluster_raft_apply,
-        .persist = NULL,
-        .persist_log = NULL,
-        .truncate_log = NULL,
+        .persist = cluster_raft_persist,
+        .persist_log = cluster_raft_persist_log,
+        .truncate_log = cluster_raft_truncate_log,
         .ctx = cluster,
     };
     pthread_mutex_init(&cluster->raft_lock, NULL);
@@ -578,11 +607,22 @@ int cluster_enable_raft(GV_Cluster *cluster, const char *const *addrs,
     gv_free(peers);
     if (!cluster->raft) {
         pthread_mutex_destroy(&cluster->raft_lock);
+        if (cluster->raft_log) { raft_log_close(cluster->raft_log); cluster->raft_log = NULL; }
         for (size_t i = 0; i < n; i++) gv_free(cluster->raft_addrs[i]);
         gv_free(cluster->raft_addrs);
         cluster->raft_addrs = NULL;
         cluster->raft_n = 0;
         return -1;
+    }
+
+    /* Reload persisted term/vote/log so a restart keeps Raft safety (no double
+     * vote, no lost entries). commit_index is volatile and re-advanced by the
+     * leader, so restore it as 0. */
+    if (cluster->raft_log) {
+        raft_restore(cluster->raft, raft_log_term(cluster->raft_log),
+                     raft_log_voted_for(cluster->raft_log), 0,
+                     raft_log_entries(cluster->raft_log),
+                     raft_log_count(cluster->raft_log));
     }
 
     shard_rpc_set_raft_handler(cluster->rpc_server, cluster_raft_recv, cluster);
