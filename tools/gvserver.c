@@ -15,6 +15,9 @@
  *   GV_API_KEY        API key (enables auth)      (default none)
  *   GV_ALLOW_UNAUTH   "1" to allow unauthenticated mutations (default 0)
  *   GV_THREADS        worker threads              (default 4)
+ *   GV_READ_ONLY      "1" to reject writes/admin (read replica) (default 0)
+ *   GV_TLS_CERT       path to PEM certificate chain (enables HTTPS with GV_TLS_KEY)
+ *   GV_TLS_KEY        path to PEM private key
  */
 
 #include <stdio.h>
@@ -43,6 +46,22 @@ static GV_IndexType parse_index(const char *s) {
     if (strcmp(s, "ivfpq") == 0)  return GV_INDEX_TYPE_IVFPQ;
     if (strcmp(s, "flat") == 0)   return GV_INDEX_TYPE_FLAT;
     return GV_INDEX_TYPE_HNSW;
+}
+
+/* Read an entire file into a malloc'd NUL-terminated buffer (caller frees),
+ * or NULL on error. Used to load TLS cert/key PEM files. */
+static char *read_file_all(const char *path) {
+    FILE *f = fopen(path, "rb");
+    if (!f) return NULL;
+    if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return NULL; }
+    long sz = ftell(f);
+    if (sz < 0 || fseek(f, 0, SEEK_SET) != 0) { fclose(f); return NULL; }
+    char *buf = (char *)malloc((size_t)sz + 1);
+    if (!buf) { fclose(f); return NULL; }
+    size_t n = fread(buf, 1, (size_t)sz, f);
+    fclose(f);
+    buf[n] = '\0';
+    return buf;
 }
 
 int main(void) {
@@ -74,10 +93,29 @@ int main(void) {
     const char *api_key  = getenv("GV_API_KEY");
     if (api_key && *api_key) cfg.api_key = api_key;
     cfg.allow_unauthenticated = strcmp(env_or("GV_ALLOW_UNAUTH", "0"), "1") == 0;
+    cfg.read_only = strcmp(env_or("GV_READ_ONLY", "0"), "1") == 0;
+
+    /* Optional HTTPS: both cert and key must be provided. */
+    char *tls_cert = NULL, *tls_key = NULL;
+    const char *cert_path = getenv("GV_TLS_CERT");
+    const char *key_path  = getenv("GV_TLS_KEY");
+    if (cert_path && *cert_path && key_path && *key_path) {
+        tls_cert = read_file_all(cert_path);
+        tls_key  = read_file_all(key_path);
+        if (!tls_cert || !tls_key) {
+            fprintf(stderr, "gvserver: failed to read TLS cert/key (%s, %s)\n", cert_path, key_path);
+            free(tls_cert); free(tls_key);
+            db_close(db);
+            return EXIT_FAILURE;
+        }
+        cfg.tls_cert_pem = tls_cert;
+        cfg.tls_key_pem  = tls_key;
+    }
 
     GV_Server *server = server_create(db, &cfg);
     if (!server) {
         fprintf(stderr, "gvserver: failed to create server\n");
+        free(tls_cert); free(tls_key);
         db_close(db);
         return EXIT_FAILURE;
     }
@@ -88,13 +126,16 @@ int main(void) {
     if (server_start(server) != GV_SERVER_OK) {
         fprintf(stderr, "gvserver: failed to start on %s:%u\n", cfg.bind_address, cfg.port);
         server_destroy(server);
+        free(tls_cert); free(tls_key);
         db_close(db);
         return EXIT_FAILURE;
     }
 
-    printf("gvserver: listening on %s:%u (db=%s dim=%zu index=%s auth=%s)\n",
+    printf("gvserver: listening on %s://%s:%u (db=%s dim=%zu index=%s auth=%s%s)\n",
+           cfg.tls_cert_pem ? "https" : "http",
            cfg.bind_address, cfg.port, db_path, dim, index_s,
-           cfg.api_key ? "on" : (cfg.allow_unauthenticated ? "off(insecure)" : "read-only"));
+           cfg.api_key ? "on" : (cfg.allow_unauthenticated ? "off(insecure)" : "read-only"),
+           cfg.read_only ? " read-only" : "");
     fflush(stdout);
 
     /* pause() is POSIX-only; on Windows (MinGW) poll the stop flag instead. */
@@ -107,6 +148,7 @@ int main(void) {
     printf("gvserver: shutting down\n");
     server_stop(server);
     server_destroy(server);
+    free(tls_cert); free(tls_key);
     db_close(db);
     return EXIT_SUCCESS;
 }
