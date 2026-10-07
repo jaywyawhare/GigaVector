@@ -81,6 +81,14 @@ typedef struct {
     const char *data_dir;              /**< Base directory that /save output is confined to (default: "./data"). */
     int allow_unauthenticated;         /**< INSECURE opt-in: when non-zero, allow mutating/admin endpoints
                                         *   without an api_key. Default 0 (fail closed). */
+    /**
+     * Optional authentication manager (see security/auth.h). When set, it takes
+     * precedence over @ref api_key and enables multiple API keys (with per-key
+     * expiry/revocation) and JWT bearer tokens: every request credential is
+     * validated via auth_authenticate(). NULL (default) keeps the single
+     * shared-secret @ref api_key behaviour.
+     */
+    struct GV_AuthManager *auth_manager;
 } GV_ServerConfig;
 
 /**

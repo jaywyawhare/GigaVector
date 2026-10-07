@@ -23,6 +23,7 @@
 #include <string.h>
 
 #include "api/server.h"
+#include "security/auth.h"
 
 #define ASSERT(cond, msg) do { \
     if (!(cond)) { fprintf(stderr, "FAIL: %s:%d: %s\n", __FILE__, __LINE__, msg); return -1; } \
@@ -111,11 +112,62 @@ static int test_key_configured(void) {
     return 0;
 }
 
+/*
+ * Mirror of check_auth()'s auth-manager precedence branch (src/api/server.c):
+ * when config.auth_manager is set it takes precedence over api_key — liveness
+ * probes stay exempt, every other request must present a credential that
+ * auth_authenticate() accepts.
+ */
+static int policy_check_auth_mgr(int manager_authenticates, const char *url, const char *method) {
+    if (policy_is_liveness(url, method)) return 1;   /* liveness exempt */
+    return manager_authenticates ? 1 : 0;            /* else credential must authenticate */
+}
+
+/* (e) auth_manager wired in: delegates to the REAL auth_authenticate() over a
+ * manager holding a generated key, so multiple keys + JWT are honoured and the
+ * precedence/liveness policy matches check_auth(). */
+static int test_auth_manager_branch(void) {
+    GV_AuthConfig acfg;
+    auth_config_init(&acfg);
+    acfg.type = GV_AUTH_API_KEY;
+    GV_AuthManager *mgr = auth_create(&acfg);
+    ASSERT(mgr != NULL, "auth_create");
+
+    char key[65], key_id[33];
+    ASSERT(auth_generate_api_key(mgr, "svc-a", 0, key, key_id) == 0, "generate api key");
+
+    /* The real delegate the server now calls: correct key accepted, others not. */
+    GV_Identity id;
+    memset(&id, 0, sizeof(id));
+    ASSERT(auth_authenticate(mgr, key, &id) == GV_AUTH_SUCCESS, "generated key authenticates");
+    auth_free_identity(&id);
+    memset(&id, 0, sizeof(id));
+    ASSERT(auth_authenticate(mgr, "not-a-real-key", &id) != GV_AUTH_SUCCESS, "bogus key rejected");
+    auth_free_identity(&id);
+
+    /* A second key on the same manager also authenticates (multi-key support). */
+    char key2[65], key_id2[33];
+    ASSERT(auth_generate_api_key(mgr, "svc-b", 0, key2, key_id2) == 0, "generate second key");
+    memset(&id, 0, sizeof(id));
+    ASSERT(auth_authenticate(mgr, key2, &id) == GV_AUTH_SUCCESS, "second key authenticates");
+    auth_free_identity(&id);
+
+    /* Policy branch: liveness exempt; data endpoints follow the auth decision. */
+    ASSERT(policy_check_auth_mgr(0, "/health", "GET") == 1, "manager: liveness exempt");
+    ASSERT(policy_check_auth_mgr(0, "/vectors/1", "GET") == 0, "manager: no credential denied");
+    ASSERT(policy_check_auth_mgr(1, "/vectors/1", "GET") == 1, "manager: authenticated allowed");
+    ASSERT(policy_check_auth_mgr(1, "/search", "POST") == 1, "manager: authenticated POST allowed");
+
+    auth_destroy(mgr);
+    return 0;
+}
+
 int main(void) {
     int rc = 0;
     rc |= test_no_key_fail_closed();
     rc |= test_allow_unauthenticated();
     rc |= test_key_configured();
+    rc |= test_auth_manager_branch();
     if (rc == 0) printf("All auth-policy tests PASSED.\n");
     return rc != 0;
 }

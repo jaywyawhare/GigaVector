@@ -11,6 +11,7 @@
 #include "core/memory.h"
 #include "api/rest_handlers.h"
 #include "security/crypto.h"
+#include "security/auth.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -313,8 +314,41 @@ static int is_liveness_request(const char *url, const char *method) {
  * When an api_key IS configured, all endpoints require a matching key
  * (constant-time compare), regardless of the opt-in flag.
  */
+/* Extract the presented credential: X-API-Key, else a Bearer Authorization
+ * token. Returns NULL when neither is present. */
+static const char *extract_credential(struct MHD_Connection *connection) {
+    const char *auth = MHD_lookup_connection_value(connection, MHD_HEADER_KIND, "X-API-Key");
+    if (!auth) {
+        auth = MHD_lookup_connection_value(connection, MHD_HEADER_KIND, "Authorization");
+        if (auth && strncmp(auth, "Bearer ", 7) == 0) {
+            auth += 7;
+        } else {
+            auth = NULL;  /* Only Bearer-scheme Authorization headers carry a token. */
+        }
+    }
+    return auth;
+}
+
 static int check_auth(const GV_Server *server, struct MHD_Connection *connection,
                       const char *url, const char *method) {
+    /* An auth manager, when configured, takes precedence: it validates multiple
+     * API keys (with per-key expiry/revocation) and JWT bearer tokens. Liveness
+     * probes remain exempt so health checks need no credential. */
+    if (server->config.auth_manager) {
+        if (is_liveness_request(url, method)) {
+            return 1;
+        }
+        const char *cred = extract_credential(connection);
+        if (!cred) {
+            return 0;
+        }
+        GV_Identity identity;
+        memset(&identity, 0, sizeof(identity));
+        GV_AuthResult r = auth_authenticate(server->config.auth_manager, cred, &identity);
+        auth_free_identity(&identity);
+        return (r == GV_AUTH_SUCCESS) ? 1 : 0;
+    }
+
     if (!server->config.api_key) {
         /* No credential configured. Deny everything except explicit liveness
          * probes unless the operator has opted into unauthenticated access. */
@@ -327,14 +361,7 @@ static int check_auth(const GV_Server *server, struct MHD_Connection *connection
         return 0;  /* Fail closed. */
     }
 
-    const char *auth = MHD_lookup_connection_value(connection, MHD_HEADER_KIND, "X-API-Key");
-    if (!auth) {
-        auth = MHD_lookup_connection_value(connection, MHD_HEADER_KIND, "Authorization");
-        if (auth && strncmp(auth, "Bearer ", 7) == 0) {
-            auth += 7;
-        }
-    }
-
+    const char *auth = extract_credential(connection);
     if (!auth) {
         return 0;
     }
