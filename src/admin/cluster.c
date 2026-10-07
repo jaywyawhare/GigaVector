@@ -672,6 +672,19 @@ int cluster_assign_shard(GV_Cluster *cluster, uint64_t shard_id, int node_index)
     return rc;
 }
 
+int cluster_rebalance_shards(GV_Cluster *cluster, uint64_t num_shards) {
+    if (!cluster || !cluster->raft || num_shards == 0) return -1;
+    size_t nodes = cluster->raft_n;
+    if (nodes == 0) return -1;
+    /* Round-robin shards over the current node set; each placement is proposed
+     * through raft (leader-only) and converges on every node on commit. */
+    for (uint64_t s = 0; s < num_shards; s++) {
+        int node = (int)(s % (uint64_t)nodes);
+        if (cluster_assign_shard(cluster, s, node) != 0) return -1;
+    }
+    return 0;
+}
+
 int cluster_shard_owner(GV_Cluster *cluster, uint64_t shard_id) {
     if (!cluster || !cluster->raft) return -1;
     int owner = -1;

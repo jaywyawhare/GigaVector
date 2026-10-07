@@ -276,6 +276,122 @@ static int test_raft_replicated_placement(void) {
     return 0;
 }
 
+/* Failover: kill the elected leader; the surviving majority (2 of 3) must
+ * elect a new leader from among themselves. */
+static int test_raft_failover(void) {
+    GV_Cluster *cl[3];
+    char addr[3][64];
+    const char *ids[3] = { "F0", "F1", "F2" };
+
+    for (int i = 0; i < 3; i++) {
+        GV_ClusterConfig cfg;
+        cluster_config_init(&cfg);
+        cfg.node_id = ids[i];
+        cfg.listen_address = "127.0.0.1:0";
+        cfg.heartbeat_interval_ms = 1000;
+        cfg.failure_timeout_ms = 600000;
+        cl[i] = cluster_create(&cfg);
+        ASSERT(cl[i] != NULL, "create node");
+        ASSERT(cluster_start(cl[i]) == 0, "start node");
+        snprintf(addr[i], sizeof(addr[i]), "127.0.0.1:%u", cluster_rpc_port(cl[i]));
+    }
+    const char *addrs[3] = { addr[0], addr[1], addr[2] };
+    for (int i = 0; i < 3; i++)
+        ASSERT(cluster_enable_raft(cl[i], addrs, 3, i) == 0, "enable raft");
+
+    int leader = -1;
+    for (int t = 0; t < 200 && leader < 0; t++) {
+        usleep(50000);
+        int nl = 0, li = -1;
+        for (int i = 0; i < 3; i++) if (cluster_is_raft_leader(cl[i])) { nl++; li = i; }
+        if (nl == 1) leader = li;
+    }
+    ASSERT(leader >= 0, "initial leader elected");
+
+    /* Take the leader down. */
+    cluster_destroy(cl[leader]);
+    cl[leader] = NULL;
+
+    /* The two survivors must converge on a new leader that is NOT the dead one. */
+    int new_leader = -1, converged = 0;
+    for (int t = 0; t < 300 && !converged; t++) {
+        usleep(50000);
+        int nl = 0, li = -1;
+        for (int i = 0; i < 3; i++) {
+            if (cl[i] && cluster_is_raft_leader(cl[i])) { nl++; li = i; }
+        }
+        /* Both survivors must agree on the leader index. */
+        int agree = 1, seen = 0, agreed_idx = -1;
+        for (int i = 0; i < 3; i++) {
+            if (!cl[i]) continue;
+            int l = cluster_raft_leader(cl[i]);
+            if (!seen) { agreed_idx = l; seen = 1; }
+            else if (l != agreed_idx) agree = 0;
+        }
+        if (nl == 1 && agree && agreed_idx >= 0) { new_leader = li; converged = 1; }
+    }
+    ASSERT(converged, "survivors elected a new leader after failover");
+    ASSERT(new_leader != leader, "new leader differs from the failed node");
+    ASSERT(new_leader >= 0 && cl[new_leader] != NULL, "new leader is a surviving node");
+
+    for (int i = 0; i < 3; i++) if (cl[i]) cluster_destroy(cl[i]);
+    return 0;
+}
+
+/* Online resharding: the leader rebalances N shards round-robin across the
+ * node set and the new placement converges on every node. */
+static int test_online_resharding(void) {
+    GV_Cluster *cl[3];
+    char addr[3][64];
+    const char *ids[3] = { "S0", "S1", "S2" };
+
+    for (int i = 0; i < 3; i++) {
+        GV_ClusterConfig cfg;
+        cluster_config_init(&cfg);
+        cfg.node_id = ids[i];
+        cfg.listen_address = "127.0.0.1:0";
+        cfg.heartbeat_interval_ms = 1000;
+        cfg.failure_timeout_ms = 600000;
+        cl[i] = cluster_create(&cfg);
+        ASSERT(cl[i] != NULL, "create node");
+        ASSERT(cluster_start(cl[i]) == 0, "start node");
+        snprintf(addr[i], sizeof(addr[i]), "127.0.0.1:%u", cluster_rpc_port(cl[i]));
+    }
+    const char *addrs[3] = { addr[0], addr[1], addr[2] };
+    for (int i = 0; i < 3; i++)
+        ASSERT(cluster_enable_raft(cl[i], addrs, 3, i) == 0, "enable raft");
+
+    int leader = -1;
+    for (int t = 0; t < 200 && leader < 0; t++) {
+        usleep(50000);
+        int nl = 0, li = -1;
+        for (int i = 0; i < 3; i++) if (cluster_is_raft_leader(cl[i])) { nl++; li = i; }
+        if (nl == 1) leader = li;
+    }
+    ASSERT(leader >= 0, "leader elected");
+
+    /* Non-leader cannot rebalance. */
+    ASSERT(cluster_rebalance_shards(cl[(leader + 1) % 3], 6) == -1, "non-leader rebalance rejected");
+    /* Leader rebalances 6 shards across 3 nodes -> round-robin 0,1,2,0,1,2. */
+    ASSERT(cluster_rebalance_shards(cl[leader], 6) == 0, "leader rebalance accepted");
+
+    int converged = 0;
+    for (int t = 0; t < 300 && !converged; t++) {
+        usleep(50000);
+        int ok = 1;
+        for (uint64_t s = 0; s < 6 && ok; s++) {
+            int want = (int)(s % 3);
+            for (int i = 0; i < 3; i++)
+                if (cluster_shard_owner(cl[i], s) != want) { ok = 0; break; }
+        }
+        converged = ok;
+    }
+    ASSERT(converged, "round-robin shard placement converged on all nodes");
+
+    for (int i = 0; i < 3; i++) cluster_destroy(cl[i]);
+    return 0;
+}
+
 typedef int (*test_fn)(void);
 typedef struct { const char *name; test_fn fn; } TestCase;
 
@@ -285,6 +401,8 @@ int main(void) {
         {"Testing gossip_discovery...", test_gossip_discovery},
         {"Testing raft_leader_election...", test_raft_leader_election},
         {"Testing raft_replicated_placement...", test_raft_replicated_placement},
+        {"Testing raft_failover...", test_raft_failover},
+        {"Testing online_resharding...", test_online_resharding},
     };
     int n = sizeof(tests) / sizeof(tests[0]);
     int passed = 0;

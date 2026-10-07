@@ -236,6 +236,22 @@ int cluster_assign_shard(GV_Cluster *cluster, uint64_t shard_id, int node_index)
 int cluster_shard_owner(GV_Cluster *cluster, uint64_t shard_id);
 
 /**
+ * @brief Online resharding: (leader-only) assign shards 0..num_shards-1 evenly
+ *        across the current raft node set, replicating each placement through
+ *        the raft log so every node converges on the new map.
+ *
+ * Shards are distributed round-robin over the participating nodes, so the
+ * assignment is balanced and deterministic. Safe to call repeatedly as the
+ * desired shard count changes; existing placements are upserted.
+ *
+ * @param cluster    Cluster instance with raft enabled.
+ * @param num_shards Number of shards to place (must be > 0).
+ * @return 0 if every assignment was accepted (this node is the leader), -1
+ *         otherwise (not leader, raft disabled, or a proposal was rejected).
+ */
+int cluster_rebalance_shards(GV_Cluster *cluster, uint64_t num_shards);
+
+/**
  * @brief Check if cluster is healthy.
  *
  * @param cluster Cluster instance.
