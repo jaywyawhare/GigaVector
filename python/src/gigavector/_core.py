@@ -1415,13 +1415,17 @@ class LLMMessage:
     role: str
     content: str
 
-    def _to_c_message(self) -> tuple[CData, bytes, bytes]:
-        role_bytes = self.role.encode()
-        content_bytes = self.content.encode()
+    def _to_c_message(self) -> tuple[CData, CData, CData]:
+        # Return the char[] cdata buffers (not the source bytes): assigning a
+        # cdata into a struct field does NOT keep it alive in CFFI, so the
+        # caller must hold these references for the duration of the C call or
+        # c_msg.role/content dangle (use-after-free).
+        c_role = ffi.new("char[]", self.role.encode())
+        c_content = ffi.new("char[]", self.content.encode())
         c_msg = ffi.new("GV_LLMMessage *")
-        c_msg.role = ffi.new("char[]", role_bytes)
-        c_msg.content = ffi.new("char[]", content_bytes)
-        return (c_msg, role_bytes, content_bytes)
+        c_msg.role = c_role
+        c_msg.content = c_content
+        return (c_msg, c_role, c_content)
 
 
 @dataclass
@@ -1497,9 +1501,11 @@ class LLM:
         message_refs = []  # Keep references alive
         
         for i, msg in enumerate(messages):
-            c_msg, role_bytes, content_bytes = msg._to_c_message()
+            c_msg, c_role, c_content = msg._to_c_message()
             c_messages[i] = c_msg[0]
-            message_refs.append((c_msg, role_bytes, content_bytes))
+            # Pin the char[] buffers AND the struct so c_messages[i].role/content
+            # stay valid until gv_llm_generate_response returns below.
+            message_refs.append((c_msg, c_role, c_content))
 
         response_format_bytes = response_format.encode() if response_format else ffi.NULL
         c_response = ffi.new("GV_LLMResponse *")
@@ -1509,9 +1515,10 @@ class LLM:
         )
 
         # The message role/content buffers are CFFI-owned (allocated via ffi.new
-        # in _to_c_message and kept alive by message_refs). gv_llm_message_free
-        # calls free() on them, which would double-free once CFFI reclaims them.
-        # Just drop the references and let CFFI free them.
+        # in _to_c_message and pinned by message_refs through the call above).
+        # We must NOT pass them to gv_llm_message_free (that would free() a
+        # CFFI-owned pointer on the library heap — a cross-heap free that
+        # crashes on Windows); CFFI reclaims them when message_refs is dropped.
         del message_refs
 
         if result != 0:
