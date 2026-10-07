@@ -38,11 +38,19 @@
 #define BACKUP_FLAG_INCREMENTAL 0x04
 
 /* Encryption is applied as a transparent OUTER wrapper around the whole plaintext
- * backup: [BACKUP_ENC_MAGIC][ per chunk: 4-byte LE cipher_len | cipher ]. The
- * inner backup format is untouched, so restore/verify just detect the magic,
- * decrypt to a temp plaintext file, and delegate to the normal code path. */
-#define BACKUP_ENC_MAGIC     "GVBKENC1"
+ * backup. The inner backup format is untouched, so restore/verify just detect the
+ * magic, decrypt to a temp plaintext file, and delegate to the normal code path.
+ *
+ *   V2 (current): [GVBKENC2][16-byte random KDF salt][ per chunk: 4-byte LE len | cipher ]
+ *   V1 (legacy):  [GVBKENC1][ per chunk: 4-byte LE len | cipher ]  (fixed zero salt)
+ *
+ * V2 derives the key from a per-backup random salt (stored in the header) so the
+ * same passphrase no longer yields the same key across backups — defeating
+ * precomputation and cross-backup key reuse. V1 backups remain restorable. */
+#define BACKUP_ENC_MAGIC     "GVBKENC1"   /* legacy (zero-salt) */
+#define BACKUP_ENC_MAGIC_V2  "GVBKENC2"   /* current (random per-backup salt) */
 #define BACKUP_ENC_MAGIC_LEN 8
+#define BACKUP_ENC_SALT_LEN  16
 #define BACKUP_ENC_CHUNK     (64 * 1024)
 
 static const GV_BackupOptions DEFAULT_BACKUP_OPTIONS = {
@@ -119,31 +127,36 @@ static int backup_fsync_parent_dir(const char *path) {
 #endif
 }
 
-/* Derive the backup encryption key from a passphrase. Uses a fixed (zero) salt so
- * the same passphrase deterministically yields the same key for encrypt/decrypt.
+/* Derive the backup encryption key from a passphrase and an explicit salt.
  * The derived key->iv is irrelevant — crypto_encrypt generates a fresh nonce/IV
  * per chunk and prepends it. */
-static int backup_derive_key(GV_CryptoContext *ctx, const char *pw, GV_CryptoKey *key) {
-    unsigned char salt[16] = {0};
-    return crypto_derive_key(ctx, pw, strlen(pw), salt, sizeof(salt), key);
+static int backup_derive_key(GV_CryptoContext *ctx, const char *pw,
+                             const unsigned char *salt, size_t salt_len,
+                             GV_CryptoKey *key) {
+    return crypto_derive_key(ctx, pw, strlen(pw), salt, salt_len, key);
 }
 
-/* True if the file begins with the encrypted-backup wrapper magic. */
+/* True if the file begins with either encrypted-backup wrapper magic (V1 or V2). */
 static int backup_file_is_encrypted(const char *path) {
     FILE *f = fopen(path, "rb");
     if (!f) return 0;
     char m[BACKUP_ENC_MAGIC_LEN];
     size_t n = fread(m, 1, BACKUP_ENC_MAGIC_LEN, f);
     fclose(f);
-    return (n == BACKUP_ENC_MAGIC_LEN && memcmp(m, BACKUP_ENC_MAGIC, BACKUP_ENC_MAGIC_LEN) == 0);
+    return (n == BACKUP_ENC_MAGIC_LEN &&
+            (memcmp(m, BACKUP_ENC_MAGIC, BACKUP_ENC_MAGIC_LEN) == 0 ||
+             memcmp(m, BACKUP_ENC_MAGIC_V2, BACKUP_ENC_MAGIC_LEN) == 0));
 }
 
 /* Encrypt plain_path into out_path as [magic][per-chunk: 4-byte LE len | cipher]. */
 static int backup_encrypt_wrap(const char *plain_path, const char *out_path, const char *pw) {
     GV_CryptoContext *ctx = crypto_create(NULL);
     if (!ctx) return -1;
+    /* Per-backup random salt so identical passphrases diverge across backups. */
+    unsigned char salt[BACKUP_ENC_SALT_LEN];
+    if (gv_secure_random_bytes(salt, sizeof(salt)) != 0) { crypto_destroy(ctx); return -1; }
     GV_CryptoKey key;
-    if (backup_derive_key(ctx, pw, &key) != 0) { crypto_destroy(ctx); return -1; }
+    if (backup_derive_key(ctx, pw, salt, sizeof(salt), &key) != 0) { crypto_destroy(ctx); return -1; }
     FILE *fin = fopen(plain_path, "rb");
     if (!fin) { crypto_wipe_key(&key); crypto_destroy(ctx); return -1; }
     FILE *fout = fopen(out_path, "wb");
@@ -153,7 +166,8 @@ static int backup_encrypt_wrap(const char *plain_path, const char *out_path, con
     unsigned char *buf = gv_alloc(BACKUP_ENC_CHUNK);
     unsigned char *cipher = gv_alloc(BACKUP_ENC_CHUNK + 48);
     if (!buf || !cipher) rc = -1;
-    if (rc == 0 && fwrite(BACKUP_ENC_MAGIC, 1, BACKUP_ENC_MAGIC_LEN, fout) != BACKUP_ENC_MAGIC_LEN) rc = -1;
+    if (rc == 0 && fwrite(BACKUP_ENC_MAGIC_V2, 1, BACKUP_ENC_MAGIC_LEN, fout) != BACKUP_ENC_MAGIC_LEN) rc = -1;
+    if (rc == 0 && fwrite(salt, 1, sizeof(salt), fout) != sizeof(salt)) rc = -1;
     size_t nread;
     while (rc == 0 && (nread = fread(buf, 1, BACKUP_ENC_CHUNK, fin)) > 0) {
         size_t clen = 0;
@@ -181,14 +195,28 @@ static int backup_encrypt_wrap(const char *plain_path, const char *out_path, con
 static int backup_decrypt_wrap(const char *enc_path, const char *out_path, const char *pw) {
     GV_CryptoContext *ctx = crypto_create(NULL);
     if (!ctx) return -1;
-    GV_CryptoKey key;
-    if (backup_derive_key(ctx, pw, &key) != 0) { crypto_destroy(ctx); return -1; }
     FILE *fin = fopen(enc_path, "rb");
-    if (!fin) { crypto_wipe_key(&key); crypto_destroy(ctx); return -1; }
+    if (!fin) { crypto_destroy(ctx); return -1; }
+
+    /* Read the magic, then the salt appropriate to the version. */
     char m[BACKUP_ENC_MAGIC_LEN];
-    if (fread(m, 1, BACKUP_ENC_MAGIC_LEN, fin) != BACKUP_ENC_MAGIC_LEN ||
-        memcmp(m, BACKUP_ENC_MAGIC, BACKUP_ENC_MAGIC_LEN) != 0) {
-        fclose(fin); crypto_wipe_key(&key); crypto_destroy(ctx); return -1;
+    unsigned char salt[BACKUP_ENC_SALT_LEN];
+    if (fread(m, 1, BACKUP_ENC_MAGIC_LEN, fin) != BACKUP_ENC_MAGIC_LEN) {
+        fclose(fin); crypto_destroy(ctx); return -1;
+    }
+    if (memcmp(m, BACKUP_ENC_MAGIC_V2, BACKUP_ENC_MAGIC_LEN) == 0) {
+        if (fread(salt, 1, sizeof(salt), fin) != sizeof(salt)) {
+            fclose(fin); crypto_destroy(ctx); return -1;
+        }
+    } else if (memcmp(m, BACKUP_ENC_MAGIC, BACKUP_ENC_MAGIC_LEN) == 0) {
+        memset(salt, 0, sizeof(salt));   /* legacy V1: fixed zero salt */
+    } else {
+        fclose(fin); crypto_destroy(ctx); return -1;
+    }
+
+    GV_CryptoKey key;
+    if (backup_derive_key(ctx, pw, salt, sizeof(salt), &key) != 0) {
+        fclose(fin); crypto_destroy(ctx); return -1;
     }
     FILE *fout = fopen(out_path, "wb");
     if (!fout) { fclose(fin); crypto_wipe_key(&key); crypto_destroy(ctx); return -1; }
