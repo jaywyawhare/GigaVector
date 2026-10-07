@@ -245,6 +245,7 @@ tiers:
         - admin/shard_rpc.c
         - core/prop_value.c
         - features/cypher_vector.c
+        - storage/object_store.c
         - features/graph_distributed.c
         - features/graph_prop_index.c
         - features/graph_rpc.c

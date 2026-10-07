@@ -10,6 +10,7 @@
 #include "storage/backup.h"
 #include "core/memory.h"
 #include "storage/database.h"
+#include "storage/object_store.h"
 #include "core/utils.h"
 #include "security/auth.h"     /* For SHA-256 */
 #include "security/crypto.h"   /* For encryption */
@@ -1328,4 +1329,85 @@ const char *backup_compression_string(GV_BackupCompression compression) {
         case GV_BACKUP_COMPRESS_LZ4: return "lz4";
         default: return "unknown";
     }
+}
+
+/* ---- Native object-store backup (no shell-out) ---- */
+
+/* Build a unique temp path from the system temp dir + pid + a hash of key. */
+static int backup_tmp_path(char *buf, size_t n, const char *key) {
+    const char *dir = getenv("TMPDIR");
+#ifdef _WIN32
+    if (!dir) dir = getenv("TEMP");
+    if (!dir) dir = getenv("TMP");
+#endif
+    if (!dir || !dir[0]) dir = "/tmp";
+    uint32_t h = 2166136261u;
+    for (const char *p = key; p && *p; p++) { h ^= (unsigned char)*p; h *= 16777619u; }
+    int w = snprintf(buf, n, "%s/gvbackup-%d-%08x.tmp", dir, (int)getpid(), h);
+    return (w > 0 && (size_t)w < n) ? 0 : -1;
+}
+
+static int backup_read_whole_file(const char *path, void **out, size_t *len_out) {
+    FILE *f = fopen(path, "rb");
+    if (!f) return -1;
+    int rc = -1;
+    if (fseek(f, 0, SEEK_END) == 0) {
+        long sz = ftell(f);
+        if (sz >= 0 && fseek(f, 0, SEEK_SET) == 0) {
+            void *b = gv_alloc((size_t)sz ? (size_t)sz : 1);
+            if (b && ((size_t)sz == 0 || fread(b, 1, (size_t)sz, f) == (size_t)sz)) {
+                *out = b; *len_out = (size_t)sz; rc = 0;
+            } else { gv_free(b); }
+        }
+    }
+    fclose(f);
+    return rc;
+}
+
+GV_BackupResult *backup_to_object_store(GV_Database *db, struct GV_ObjectStore *os,
+                                        const char *key, const GV_BackupOptions *options) {
+    if (!db || !os || !key) return create_result(0, "Invalid parameters");
+    char tmp[4096];
+    if (backup_tmp_path(tmp, sizeof(tmp), key) != 0) return create_result(0, "Failed to build temp path");
+
+    GV_BackupResult *result = backup_create(db, tmp, options, NULL, NULL);
+    if (!result) { remove(tmp); return NULL; }
+    if (result->success) {
+        void *buf = NULL; size_t len = 0;
+        if (backup_read_whole_file(tmp, &buf, &len) != 0 ||
+            object_store_put((GV_ObjectStore *)os, key, buf, len) != 0) {
+            gv_free(buf);
+            remove(tmp);
+            backup_result_free(result);
+            return create_result(0, "Failed to write backup to object store");
+        }
+        gv_free(buf);
+    }
+    remove(tmp);
+    return result;
+}
+
+GV_BackupResult *backup_restore_from_object_store(struct GV_ObjectStore *os, const char *key,
+                                                  const char *db_path,
+                                                  const GV_RestoreOptions *options) {
+    if (!os || !key || !db_path) return create_result(0, "Invalid parameters");
+    void *buf = NULL; size_t len = 0;
+    if (object_store_get((GV_ObjectStore *)os, key, &buf, &len) != 0)
+        return create_result(0, "Object not found in store");
+
+    char tmp[4096];
+    if (backup_tmp_path(tmp, sizeof(tmp), key) != 0) { free(buf); return create_result(0, "Failed to build temp path"); }
+
+    int wrote = 0;
+    FILE *f = fopen(tmp, "wb");
+    if (f) {
+        wrote = (len == 0) || (fwrite(buf, 1, len, f) == len);
+        if (fclose(f) != 0) wrote = 0;
+    }
+    free(buf); /* object_store_get returns a malloc'd buffer */
+    if (!wrote) { remove(tmp); return create_result(0, "Failed to stage object for restore"); }
+
+    GV_BackupResult *result = backup_restore(tmp, db_path, options, NULL, NULL);
+    remove(tmp);
+    return result;
 }
