@@ -21,6 +21,12 @@ typedef enum {
     GV_AUTH_JWT = 2                 /**< JWT bearer token. */
 } GV_AuthType;
 
+/** Authorization scope granted to a credential. */
+typedef enum {
+    GV_SCOPE_READ_WRITE = 0,        /**< Full access (default). */
+    GV_SCOPE_READ_ONLY  = 1         /**< Reads/search only; mutations forbidden. */
+} GV_AuthScope;
+
 typedef enum {
     GV_AUTH_SUCCESS = 0,            /**< Authentication successful. */
     GV_AUTH_INVALID_KEY = 1,        /**< Invalid API key. */
@@ -37,6 +43,7 @@ typedef struct {
     uint64_t created_at;            /**< Creation timestamp. */
     uint64_t expires_at;            /**< Expiration (0 = never). */
     int enabled;                    /**< Whether key is active. */
+    GV_AuthScope scope;             /**< Authorization scope (read-write / read-only). */
 } GV_APIKey;
 
 typedef struct {
@@ -58,6 +65,7 @@ typedef struct {
     uint64_t auth_time;             /**< When authentication occurred. */
     uint64_t expires_at;            /**< When auth expires (0 = session). */
     void *claims;                   /**< Additional JWT claims (opaque). */
+    GV_AuthScope scope;             /**< Authorization scope of the credential. */
 } GV_Identity;
 
 typedef struct GV_AuthManager GV_AuthManager;
@@ -96,6 +104,16 @@ void auth_destroy(GV_AuthManager *auth);
  */
 int auth_generate_api_key(GV_AuthManager *auth, const char *description,
                               uint64_t expires_at, char *key_out, char *key_id_out);
+
+/**
+ * @brief Generate a new API key with an explicit authorization scope.
+ *
+ * Like auth_generate_api_key but grants @p scope (e.g. GV_SCOPE_READ_ONLY for
+ * a key that may read/search but not mutate).
+ */
+int auth_generate_api_key_scoped(GV_AuthManager *auth, const char *description,
+                                     uint64_t expires_at, GV_AuthScope scope,
+                                     char *key_out, char *key_id_out);
 
 /**
  * @brief Add an existing API key.

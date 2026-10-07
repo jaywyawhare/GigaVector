@@ -354,11 +354,13 @@ static const char *extract_credential(struct MHD_Connection *connection) {
     return auth;
 }
 
+/* Returns 1 = allow, 0 = unauthenticated (401), -1 = forbidden (403, e.g. a
+ * read-only credential on a mutating endpoint). */
 static int check_auth(const GV_Server *server, struct MHD_Connection *connection,
                       const char *url, const char *method) {
     /* An auth manager, when configured, takes precedence: it validates multiple
-     * API keys (with per-key expiry/revocation) and JWT bearer tokens. Liveness
-     * probes remain exempt so health checks need no credential. */
+     * API keys (with per-key expiry/revocation) and JWT bearer tokens, and
+     * enforces per-key authorization scope. Liveness probes remain exempt. */
     if (server->config.auth_manager) {
         if (is_liveness_request(url, method)) {
             return 1;
@@ -370,8 +372,17 @@ static int check_auth(const GV_Server *server, struct MHD_Connection *connection
         GV_Identity identity;
         memset(&identity, 0, sizeof(identity));
         GV_AuthResult r = auth_authenticate(server->config.auth_manager, cred, &identity);
+        GV_AuthScope scope = identity.scope;
         auth_free_identity(&identity);
-        return (r == GV_AUTH_SUCCESS) ? 1 : 0;
+        if (r != GV_AUTH_SUCCESS) {
+            return 0;
+        }
+        /* Authorization: a read-only key may not reach mutating endpoints. */
+        if (scope == GV_SCOPE_READ_ONLY &&
+            rest_request_is_mutation(url, parse_method(method))) {
+            return -1;
+        }
+        return 1;
     }
 
     if (!server->config.api_key) {
@@ -521,13 +532,18 @@ static enum MHD_Result answer_to_connection(void *cls,
     }
 #endif /* HAVE_MICROHTTPD */
 
-    if (!check_auth(server, connection, url, method)) {
-        const char *error_json = "{\"error\":\"Unauthorized\",\"message\":\"Invalid or missing API key\"}";
+    int auth_rc = check_auth(server, connection, url, method);
+    if (auth_rc <= 0) {
+        /* auth_rc == 0 -> unauthenticated (401); < 0 -> forbidden by scope (403). */
+        const char *error_json = (auth_rc < 0)
+            ? "{\"error\":\"Forbidden\",\"message\":\"Credential lacks write scope\"}"
+            : "{\"error\":\"Unauthorized\",\"message\":\"Invalid or missing API key\"}";
+        unsigned int code = (auth_rc < 0) ? GV_HTTP_403_FORBIDDEN : MHD_HTTP_UNAUTHORIZED;
         struct MHD_Response *response = MHD_create_response_from_buffer(
             strlen(error_json), (void *)error_json, MHD_RESPMEM_PERSISTENT);
         MHD_add_response_header(response, "Content-Type", "application/json");
         add_cors_headers(response, server);
-        enum MHD_Result ret = MHD_queue_response(connection, MHD_HTTP_UNAUTHORIZED, response);
+        enum MHD_Result ret = MHD_queue_response(connection, code, response);
         MHD_destroy_response(response);
 
         pthread_mutex_lock(&server->stats_mutex);

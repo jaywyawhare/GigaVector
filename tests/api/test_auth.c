@@ -162,12 +162,74 @@ static int test_auth_manager_branch(void) {
     return 0;
 }
 
+/*
+ * Mirror of check_auth()'s scope enforcement for the auth-manager branch:
+ * returns 1 allow, 0 unauthenticated (401), -1 forbidden (403). A read-only
+ * credential on a mutating endpoint is forbidden.
+ */
+static int policy_check_auth_scoped(int authenticated, GV_AuthScope scope,
+                                    int is_mutation, const char *url, const char *method) {
+    if (policy_is_liveness(url, method)) return 1;
+    if (!authenticated) return 0;
+    if (scope == GV_SCOPE_READ_ONLY && is_mutation) return -1;
+    return 1;
+}
+
+/* (f) per-key scopes: a read-only key authenticates but is forbidden on writes;
+ * a read-write key is allowed. Exercises the real scoped delegate. */
+static int test_scoped_keys(void) {
+    GV_AuthConfig acfg;
+    auth_config_init(&acfg);
+    acfg.type = GV_AUTH_API_KEY;
+    GV_AuthManager *mgr = auth_create(&acfg);
+    ASSERT(mgr != NULL, "auth_create");
+
+    char ro_key[65], ro_id[33], rw_key[65], rw_id[33];
+    ASSERT(auth_generate_api_key_scoped(mgr, "reader", 0, GV_SCOPE_READ_ONLY, ro_key, ro_id) == 0,
+           "generate read-only key");
+    ASSERT(auth_generate_api_key_scoped(mgr, "writer", 0, GV_SCOPE_READ_WRITE, rw_key, rw_id) == 0,
+           "generate read-write key");
+    /* The default (unscoped) generator grants read-write. */
+    char def_key[65], def_id[33];
+    ASSERT(auth_generate_api_key(mgr, "default", 0, def_key, def_id) == 0, "generate default key");
+
+    GV_Identity id;
+    memset(&id, 0, sizeof(id));
+    ASSERT(auth_authenticate(mgr, ro_key, &id) == GV_AUTH_SUCCESS, "read-only key authenticates");
+    ASSERT(id.scope == GV_SCOPE_READ_ONLY, "read-only key carries READ_ONLY scope");
+    auth_free_identity(&id);
+
+    memset(&id, 0, sizeof(id));
+    ASSERT(auth_authenticate(mgr, rw_key, &id) == GV_AUTH_SUCCESS, "read-write key authenticates");
+    ASSERT(id.scope == GV_SCOPE_READ_WRITE, "read-write key carries READ_WRITE scope");
+    auth_free_identity(&id);
+
+    memset(&id, 0, sizeof(id));
+    ASSERT(auth_authenticate(mgr, def_key, &id) == GV_AUTH_SUCCESS, "default key authenticates");
+    ASSERT(id.scope == GV_SCOPE_READ_WRITE, "default key defaults to READ_WRITE scope");
+    auth_free_identity(&id);
+
+    /* Policy: read-only key forbidden on writes, allowed on reads; rw allowed everywhere. */
+    ASSERT(policy_check_auth_scoped(1, GV_SCOPE_READ_ONLY, 1, "/vectors", "POST") == -1,
+           "read-only key forbidden (403) on mutation");
+    ASSERT(policy_check_auth_scoped(1, GV_SCOPE_READ_ONLY, 0, "/search", "POST") == 1,
+           "read-only key allowed on read");
+    ASSERT(policy_check_auth_scoped(1, GV_SCOPE_READ_WRITE, 1, "/vectors", "POST") == 1,
+           "read-write key allowed on mutation");
+    ASSERT(policy_check_auth_scoped(0, GV_SCOPE_READ_WRITE, 1, "/vectors", "POST") == 0,
+           "unauthenticated still 401");
+
+    auth_destroy(mgr);
+    return 0;
+}
+
 int main(void) {
     int rc = 0;
     rc |= test_no_key_fail_closed();
     rc |= test_allow_unauthenticated();
     rc |= test_key_configured();
     rc |= test_auth_manager_branch();
+    rc |= test_scoped_keys();
     if (rc == 0) printf("All auth-policy tests PASSED.\n");
     return rc != 0;
 }
