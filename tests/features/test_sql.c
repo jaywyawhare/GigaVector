@@ -615,6 +615,48 @@ static int test_group_by(void) {
     return 0;
 }
 
+static int test_multi_aggregate_no_group(void) {
+    GV_Database *db = create_grouped_db();
+    GV_SQLEngine *eng = sql_create(db);
+    ASSERT(db && eng, "setup");
+    GV_SQLResult r;
+
+    /* multiple aggregates over the whole table -> one row, one column each */
+    memset(&r, 0, sizeof(r));
+    ASSERT(sql_execute(eng, "SELECT COUNT(*), SUM(score), MIN(score), MAX(score), AVG(score) FROM vectors", &r) == 0,
+           "multi-aggregate without GROUP BY should succeed");
+    ASSERT(r.row_count == 1 && r.column_count == 5, "one row, five aggregate columns");
+    ASSERT(strcmp(r.column_values[0], "5") == 0, "COUNT = 5");
+    ASSERT(strcmp(r.column_values[1], "105") == 0, "SUM = 105");
+    ASSERT(strcmp(r.column_values[2], "5") == 0, "MIN = 5");
+    ASSERT(strcmp(r.column_values[3], "40") == 0, "MAX = 40");
+    ASSERT(strcmp(r.column_values[4], "21") == 0, "AVG = 21");
+    sql_free_result(&r);
+
+    /* aliases are honoured for multi-aggregate projections */
+    memset(&r, 0, sizeof(r));
+    ASSERT(sql_execute(eng, "SELECT SUM(score) AS total, COUNT(*) AS n FROM vectors", &r) == 0,
+           "aliased multi-aggregate should succeed");
+    ASSERT(r.column_count == 2 && strcmp(r.column_names[0], "total") == 0 && strcmp(r.column_names[1], "n") == 0,
+           "aliases applied to aggregate columns");
+    sql_free_result(&r);
+
+    /* WHERE is respected across all aggregates */
+    memset(&r, 0, sizeof(r));
+    ASSERT(sql_execute(eng, "SELECT COUNT(*), SUM(score) FROM vectors WHERE category = 'tech'", &r) == 0,
+           "filtered multi-aggregate should succeed");
+    ASSERT(strcmp(r.column_values[0], "2") == 0 && strcmp(r.column_values[1], "60") == 0, "tech: count 2, sum 60");
+    sql_free_result(&r);
+
+    /* mixing aggregate and plain columns without GROUP BY is still rejected */
+    memset(&r, 0, sizeof(r));
+    ASSERT(sql_execute(eng, "SELECT category, COUNT(*) FROM vectors", &r) != 0,
+           "mixed agg/plain without GROUP BY should fail");
+
+    sql_destroy(eng); db_close(db);
+    return 0;
+}
+
 static int test_distinct(void) {
     GV_Database *db = create_grouped_db();
     GV_SQLEngine *eng = sql_create(db);
@@ -664,6 +706,7 @@ int main(void) {
         {"Testing sql WHERE IS NULL...", test_where_is_null},
         {"Testing sql aggregates SUM/MIN/MAX/AVG...", test_aggregates},
         {"Testing sql GROUP BY / HAVING...", test_group_by},
+        {"Testing sql multi-aggregate without GROUP BY...", test_multi_aggregate_no_group},
         {"Testing sql DISTINCT...", test_distinct},
         {"Testing sql INSERT...", test_insert},
     };
