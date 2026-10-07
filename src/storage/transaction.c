@@ -1,6 +1,7 @@
 #include "storage/transaction.h"
 #include "storage/soa_storage.h"
 #include "storage/wal.h"
+#include "storage/db_internal.h"   /* db_estimate_vector_memory */
 #include "schema/vector.h"
 #include "core/memory.h"
 
@@ -150,6 +151,21 @@ int db_commit(GV_DBTxn *t) {
         t->state = GV_TXN_COMMITTED;
         txn_free(t);
         return GV_TXN_OK;
+    }
+
+    /* Atomic admission control: reject the whole commit up front if applying
+     * every staged insert would breach a resource limit (max_vectors /
+     * max_memory). This makes the common, deterministic failure all-or-nothing
+     * instead of leaving a partially-applied transaction. (A rare mid-loop OOM
+     * is still reported as a hard failure below.) */
+    if (t->ins_n > 0) {
+        size_t per_vec = db_estimate_vector_memory(t->dimension);
+        if (db_check_resource_limits(db, t->ins_n, per_vec * t->ins_n) != 0) {
+            pthread_mutex_unlock(&db->txn_mutex);
+            t->state = GV_TXN_ABORTED;
+            txn_free(t);
+            return -1;
+        }
     }
 
     uint64_t cv = ++db->commit_version;

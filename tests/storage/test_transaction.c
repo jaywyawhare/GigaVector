@@ -89,6 +89,31 @@ int main(void) {
     ASSERT(db_commit(G) == GV_TXN_OK, "G deletes index 2, commits");
     ASSERT(db_commit(H) == GV_TXN_CONFLICT, "H's conflicting delete is rejected");
 
+    /* ---- atomic admission: a resource-limit breach rejects the WHOLE commit
+     * with no partial application ---- */
+    {
+        GV_Database *ldb = db_open(NULL, D, GV_INDEX_TYPE_FLAT);
+        ASSERT(ldb != NULL, "open limited db");
+        { int _r = db_add_vector(ldb, v0, D); (void)_r; }   /* count = 1 */
+        GV_ResourceLimits lim;
+        memset(&lim, 0, sizeof(lim));
+        lim.max_vectors = 2;                                /* room for exactly 1 more */
+        ASSERT(db_set_resource_limits(ldb, &lim) == 0, "set max_vectors=2");
+
+        GV_DBTxn *T = db_begin(ldb);
+        ASSERT(db_txn_add_vector(T, v1, D) == 0, "stage insert 1");
+        ASSERT(db_txn_add_vector(T, v2, D) == 0, "stage insert 2");
+        ASSERT(db_txn_add_vector(T, v3, D) == 0, "stage insert 3 (would exceed limit)");
+        /* 1 existing + 3 staged = 4 > max_vectors(2): reject atomically. */
+        ASSERT(db_commit(T) == -1, "over-limit commit rejected");
+
+        GV_SearchResult lr[8];
+        int ln = db_search(ldb, v1, 8, lr, GV_DISTANCE_EUCLIDEAN);
+        ASSERT(ln == 1, "no staged inserts applied (count still 1)");
+        freeres(lr, ln);
+        db_close(ldb);
+    }
+
     db_close(db);
     printf(failures ? "\nSOME TESTS FAILED (%d)\n" : "\nALL TRANSACTION TESTS PASSED\n", failures);
     return failures ? 1 : 0;
