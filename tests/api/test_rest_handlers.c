@@ -397,6 +397,68 @@ static int test_route_get_metrics(void) {
     return 0;
 }
 
+static int test_request_is_mutation(void) {
+    /* Reads */
+    ASSERT(rest_request_is_mutation("/stats", GV_HTTP_GET) == 0, "GET is read");
+    ASSERT(rest_request_is_mutation("/vectors/1", GV_HTTP_GET) == 0, "GET vector is read");
+    ASSERT(rest_request_is_mutation("/search", GV_HTTP_POST) == 0, "POST /search is read");
+    ASSERT(rest_request_is_mutation("/search/range", GV_HTTP_POST) == 0, "POST /search/range is read");
+    ASSERT(rest_request_is_mutation("/search/batch", GV_HTTP_POST) == 0, "POST /search/batch is read");
+    /* Mutations */
+    ASSERT(rest_request_is_mutation("/vectors", GV_HTTP_POST) == 1, "POST /vectors is mutation");
+    ASSERT(rest_request_is_mutation("/vectors/1", GV_HTTP_PUT) == 1, "PUT is mutation");
+    ASSERT(rest_request_is_mutation("/vectors/1", GV_HTTP_DELETE) == 1, "DELETE is mutation");
+    ASSERT(rest_request_is_mutation("/save", GV_HTTP_POST) == 1, "POST /save is mutation");
+    ASSERT(rest_request_is_mutation("/compact", GV_HTTP_POST) == 1, "POST /compact is mutation");
+    return 0;
+}
+
+static int test_read_only_mode(void) {
+    gv_test_remove_db(TEST_DB);
+    GV_Database *db = db_open(TEST_DB, TEST_DIM, GV_INDEX_TYPE_FLAT);
+    ASSERT(db != NULL, "database creation");
+    float v[] = {1.0f, 0.0f, 0.0f, 0.0f};
+    { int _r = db_add_vector(db, v, TEST_DIM); (void)_r; }
+
+    GV_ServerConfig scfg;
+    GV_HandlerContext ctx = create_test_ctx(db, &scfg);
+    scfg.read_only = 1;
+
+    /* A read still works. */
+    GV_HttpRequest read_req = {
+        .method = GV_HTTP_GET, .url = "/stats", .query_string = NULL,
+        .body = NULL, .body_length = 0, .content_type = NULL, .authorization = NULL
+    };
+    GV_HttpResponse *rr = rest_route(&ctx, &read_req);
+    ASSERT(rr != NULL && rr->status == GV_HTTP_200_OK, "read allowed in read-only mode");
+    rest_response_free(rr);
+
+    /* A write is rejected with 403. */
+    GV_HttpRequest write_req = {
+        .method = GV_HTTP_POST, .url = "/vectors", .query_string = NULL,
+        .body = "{\"data\":[1,0,0,0]}", .body_length = 18,
+        .content_type = "application/json", .authorization = NULL
+    };
+    GV_HttpResponse *wr = rest_route(&ctx, &write_req);
+    ASSERT(wr != NULL && wr->status == GV_HTTP_403_FORBIDDEN, "write rejected in read-only mode");
+    ASSERT(strstr(wr->body, "read_only") != NULL, "403 body names read_only");
+    rest_response_free(wr);
+
+    /* POST /search is a read and still allowed. */
+    GV_HttpRequest search_req = {
+        .method = GV_HTTP_POST, .url = "/search", .query_string = NULL,
+        .body = "{\"query\":[1,0,0,0],\"k\":1}", .body_length = 25,
+        .content_type = "application/json", .authorization = NULL
+    };
+    GV_HttpResponse *sr = rest_route(&ctx, &search_req);
+    ASSERT(sr != NULL && sr->status == GV_HTTP_200_OK, "search allowed in read-only mode");
+    rest_response_free(sr);
+
+    db_close(db);
+    gv_test_remove_db(TEST_DB);
+    return 0;
+}
+
 static int test_route_not_found(void) {
     gv_test_remove_db(TEST_DB);
     GV_Database *db = db_open(TEST_DB, TEST_DIM, GV_INDEX_TYPE_FLAT);
@@ -480,6 +542,8 @@ int main(void) {
         {"test_route_get_health",          test_route_get_health},
         {"test_route_get_stats",           test_route_get_stats},
         {"test_route_get_metrics",         test_route_get_metrics},
+        {"test_request_is_mutation",       test_request_is_mutation},
+        {"test_read_only_mode",            test_read_only_mode},
         {"test_route_not_found",           test_route_not_found},
         {"test_route_method_mismatch",     test_route_method_mismatch},
     };

@@ -1145,6 +1145,20 @@ GV_HttpResponse *rest_handle_save(const GV_HandlerContext *ctx,
     return rest_response_json(obj);
 }
 
+int rest_request_is_mutation(const char *url, GV_HttpMethod method) {
+    if (method == GV_HTTP_PUT || method == GV_HTTP_DELETE) return 1;
+    if (method == GV_HTTP_POST) {
+        /* Search endpoints are reads despite using POST (they carry a query body). */
+        if (url && (strcmp(url, "/search") == 0 ||
+                    strcmp(url, "/search/range") == 0 ||
+                    strcmp(url, "/search/batch") == 0)) {
+            return 0;
+        }
+        return 1;
+    }
+    return 0; /* GET / OPTIONS / HEAD */
+}
+
 GV_HttpResponse *rest_route(const GV_HandlerContext *ctx,
                                 const GV_HttpRequest *request) {
     if (!ctx || !request || !request->url) {
@@ -1162,6 +1176,13 @@ GV_HttpResponse *rest_route(const GV_HandlerContext *ctx,
         memcpy(url_path, url, len);
         url_path[len] = '\0';
         url = url_path;
+    }
+
+    /* Read-only mode: reject any state-mutating endpoint before dispatch. */
+    if (ctx->config && ctx->config->read_only &&
+        rest_request_is_mutation(url, request->method)) {
+        return rest_response_error(GV_HTTP_403_FORBIDDEN, "read_only",
+                                       "Server is in read-only mode");
     }
 
     if (strcmp(url, "/health") == 0 && request->method == GV_HTTP_GET) {

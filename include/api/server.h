@@ -97,6 +97,10 @@ typedef struct {
      */
     const char *tls_cert_pem;          /**< PEM-encoded certificate chain. */
     const char *tls_key_pem;           /**< PEM-encoded private key. */
+    int read_only;                     /**< When non-zero, reject all mutating endpoints
+                                        *   (writes/admin) with 403 — for read replicas or
+                                        *   a safe maintenance mode. Reads/search still serve.
+                                        *   Default 0. */
 } GV_ServerConfig;
 
 /**

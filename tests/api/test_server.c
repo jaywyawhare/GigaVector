@@ -44,6 +44,7 @@ static void test_server_config_init(void) {
     TEST_ASSERT(config.auth_manager == NULL, "Auth manager should be NULL by default");
     TEST_ASSERT(config.tls_cert_pem == NULL, "TLS cert should be NULL by default (plain HTTP)");
     TEST_ASSERT(config.tls_key_pem == NULL, "TLS key should be NULL by default (plain HTTP)");
+    TEST_ASSERT(config.read_only == 0, "read_only should be 0 by default");
 
     TEST_PASS();
 }

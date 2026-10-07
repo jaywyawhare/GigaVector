@@ -321,6 +321,19 @@ GV_HttpResponse *rest_handle_save(const GV_HandlerContext *ctx,
 GV_HttpResponse *rest_route(const GV_HandlerContext *ctx,
                                 const GV_HttpRequest *request);
 
+/**
+ * @brief Classify a request as a mutation (write/admin) vs a read.
+ *
+ * Mutations: any PUT/DELETE, and any POST that is not one of the search
+ * endpoints (/search, /search/range, /search/batch). GET/OPTIONS are reads.
+ * Used to enforce read-only server mode.
+ *
+ * @param url Request path (query string already stripped).
+ * @param method HTTP method.
+ * @return 1 if the request mutates state, 0 otherwise.
+ */
+int rest_request_is_mutation(const char *url, GV_HttpMethod method);
+
 #ifdef __cplusplus
 }
 #endif
