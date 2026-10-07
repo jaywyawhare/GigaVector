@@ -89,6 +89,14 @@ typedef struct {
      * shared-secret @ref api_key behaviour.
      */
     struct GV_AuthManager *auth_manager;
+    /**
+     * TLS (HTTPS) — set BOTH to a PEM certificate chain and its private key to
+     * serve over HTTPS instead of plain HTTP. NULL (default) = plaintext HTTP.
+     * Requires libmicrohttpd built with TLS support; server_start fails if the
+     * handshake backend is unavailable.
+     */
+    const char *tls_cert_pem;          /**< PEM-encoded certificate chain. */
+    const char *tls_key_pem;           /**< PEM-encoded private key. */
 } GV_ServerConfig;
 
 /**

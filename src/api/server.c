@@ -679,21 +679,43 @@ int server_start(GV_Server *server) {
     }
 
 #ifdef HAVE_MICROHTTPD
+    /* Older libmicrohttpd spells the TLS flag MHD_USE_SSL. */
+#ifndef MHD_USE_TLS
+#define MHD_USE_TLS MHD_USE_SSL
+#endif
     /* Use internal select with thread pool for handling connections.
      * Note: MHD_USE_THREAD_PER_CONNECTION and MHD_OPTION_THREAD_POOL_SIZE
      * are mutually exclusive - we use thread pool for better resource control. */
     unsigned int flags = MHD_USE_INTERNAL_POLLING_THREAD;
 
-    server->daemon = MHD_start_daemon(
-        flags,
-        server->config.port,
-        NULL, NULL,  /* Accept policy */
-        &answer_to_connection, server,
-        MHD_OPTION_NOTIFY_COMPLETED, request_completed_callback, NULL,
-        MHD_OPTION_CONNECTION_TIMEOUT, (unsigned int)(server->config.request_timeout_ms / 1000),
-        MHD_OPTION_CONNECTION_LIMIT, (unsigned int)server->config.max_connections,
-        MHD_OPTION_THREAD_POOL_SIZE, (unsigned int)server->config.thread_pool_size,
-        MHD_OPTION_END);
+    /* HTTPS when a cert+key pair is configured (both required). */
+    int use_tls = (server->config.tls_cert_pem != NULL && server->config.tls_key_pem != NULL);
+    if (use_tls) {
+        flags |= MHD_USE_TLS;
+        server->daemon = MHD_start_daemon(
+            flags,
+            server->config.port,
+            NULL, NULL,  /* Accept policy */
+            &answer_to_connection, server,
+            MHD_OPTION_NOTIFY_COMPLETED, request_completed_callback, NULL,
+            MHD_OPTION_CONNECTION_TIMEOUT, (unsigned int)(server->config.request_timeout_ms / 1000),
+            MHD_OPTION_CONNECTION_LIMIT, (unsigned int)server->config.max_connections,
+            MHD_OPTION_THREAD_POOL_SIZE, (unsigned int)server->config.thread_pool_size,
+            MHD_OPTION_HTTPS_MEM_CERT, server->config.tls_cert_pem,
+            MHD_OPTION_HTTPS_MEM_KEY, server->config.tls_key_pem,
+            MHD_OPTION_END);
+    } else {
+        server->daemon = MHD_start_daemon(
+            flags,
+            server->config.port,
+            NULL, NULL,  /* Accept policy */
+            &answer_to_connection, server,
+            MHD_OPTION_NOTIFY_COMPLETED, request_completed_callback, NULL,
+            MHD_OPTION_CONNECTION_TIMEOUT, (unsigned int)(server->config.request_timeout_ms / 1000),
+            MHD_OPTION_CONNECTION_LIMIT, (unsigned int)server->config.max_connections,
+            MHD_OPTION_THREAD_POOL_SIZE, (unsigned int)server->config.thread_pool_size,
+            MHD_OPTION_END);
+    }
 
     if (!server->daemon) {
         return GV_SERVER_ERROR_START_FAILED;
@@ -703,7 +725,8 @@ int server_start(GV_Server *server) {
     server->start_time = time(NULL);
 
     if (server->config.enable_logging) {
-        fprintf(stderr, "[GV_Server] Started on port %u\n", server->config.port);
+        fprintf(stderr, "[GV_Server] Started on port %u (%s)\n",
+                server->config.port, use_tls ? "https" : "http");
     }
 
     return GV_SERVER_OK;
