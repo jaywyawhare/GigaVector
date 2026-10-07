@@ -7,6 +7,7 @@
 #include "features/knowledge_graph.h"
 #include "features/graph_db.h"
 #include "core/memory.h"
+#include "core/utils.h"
 #include "features/json.h"
 #include "storage/database.h"
 #include "core/types.h"
@@ -218,6 +219,74 @@ GV_HttpResponse *rest_handle_stats(const GV_HandlerContext *ctx,
     json_object_set(obj, "dimension", json_number((double)ctx->db->dimension));
 
     return rest_response_json(obj);
+}
+
+GV_HttpResponse *rest_handle_metrics(const GV_HandlerContext *ctx,
+                                         const GV_HttpRequest *request) {
+    (void)request;
+    if (!ctx || !ctx->db) {
+        return rest_response_error(GV_HTTP_500_INTERNAL_ERROR, "internal_error",
+                                       "Database not available");
+    }
+
+    GV_DBStats stats;
+    db_get_stats(ctx->db, &stats);
+    size_t memory = db_get_memory_usage(ctx->db);
+    int health = db_health_check(ctx->db);          /* 0 = healthy */
+    int up = (health == 0) ? 1 : 0;
+
+    /* Prometheus text exposition format (version 0.0.4). */
+    char buf[2048];
+    int len = snprintf(buf, sizeof(buf),
+        "# HELP gigavector_up 1 when the database is healthy, 0 otherwise.\n"
+        "# TYPE gigavector_up gauge\n"
+        "gigavector_up %d\n"
+        "# HELP gigavector_vectors Vectors currently stored.\n"
+        "# TYPE gigavector_vectors gauge\n"
+        "gigavector_vectors %zu\n"
+        "# HELP gigavector_dimension Configured vector dimension.\n"
+        "# TYPE gigavector_dimension gauge\n"
+        "gigavector_dimension %zu\n"
+        "# HELP gigavector_memory_bytes Estimated resident memory in bytes.\n"
+        "# TYPE gigavector_memory_bytes gauge\n"
+        "gigavector_memory_bytes %zu\n"
+        "# HELP gigavector_inserts_total Total successful vector insertions.\n"
+        "# TYPE gigavector_inserts_total counter\n"
+        "gigavector_inserts_total %llu\n"
+        "# HELP gigavector_queries_total Total k-NN / filtered / batch queries.\n"
+        "# TYPE gigavector_queries_total counter\n"
+        "gigavector_queries_total %llu\n"
+        "# HELP gigavector_range_queries_total Total range-search calls.\n"
+        "# TYPE gigavector_range_queries_total counter\n"
+        "gigavector_range_queries_total %llu\n",
+        up,
+        ctx->db->count,
+        ctx->db->dimension,
+        memory,
+        (unsigned long long)stats.total_inserts,
+        (unsigned long long)stats.total_queries,
+        (unsigned long long)stats.total_range_queries);
+
+    if (len < 0 || (size_t)len >= sizeof(buf)) {
+        return rest_response_error(GV_HTTP_500_INTERNAL_ERROR, "internal_error",
+                                       "Failed to render metrics");
+    }
+
+    GV_HttpResponse *response = gv_calloc(1, sizeof(GV_HttpResponse));
+    if (!response) {
+        return rest_response_error(GV_HTTP_500_INTERNAL_ERROR, "internal_error",
+                                       "Out of memory");
+    }
+    response->body = gv_dup_cstr(buf);
+    if (!response->body) {
+        gv_free(response);
+        return rest_response_error(GV_HTTP_500_INTERNAL_ERROR, "internal_error",
+                                       "Out of memory");
+    }
+    response->body_length = (size_t)len;
+    response->status = GV_HTTP_200_OK;
+    response->content_type = "text/plain; version=0.0.4; charset=utf-8";
+    return response;
 }
 
 GV_HttpResponse *rest_handle_vectors_post(const GV_HandlerContext *ctx,
@@ -1101,6 +1170,10 @@ GV_HttpResponse *rest_route(const GV_HandlerContext *ctx,
 
     if (strcmp(url, "/stats") == 0 && request->method == GV_HTTP_GET) {
         return rest_handle_stats(ctx, request);
+    }
+
+    if (strcmp(url, "/metrics") == 0 && request->method == GV_HTTP_GET) {
+        return rest_handle_metrics(ctx, request);
     }
 
     if (strcmp(url, "/vectors") == 0 && request->method == GV_HTTP_POST) {

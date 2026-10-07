@@ -128,6 +128,12 @@ GV_HttpResponse *rest_handle_stats(const GV_HandlerContext *ctx,
                                        const GV_HttpRequest *request);
 
 /**
+ * @brief Handle GET /metrics — Prometheus text exposition of DB counters.
+ */
+GV_HttpResponse *rest_handle_metrics(const GV_HandlerContext *ctx,
+                                         const GV_HttpRequest *request);
+
+/**
  * @brief Handle POST /vectors endpoint.
  *
  * Add one or more vectors to the database.

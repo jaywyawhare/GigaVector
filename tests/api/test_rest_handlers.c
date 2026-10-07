@@ -245,6 +245,48 @@ static int test_handle_stats(void) {
     return 0;
 }
 
+static int test_handle_metrics(void) {
+    gv_test_remove_db(TEST_DB);
+    GV_Database *db = db_open(TEST_DB, TEST_DIM, GV_INDEX_TYPE_FLAT);
+    ASSERT(db != NULL, "database creation");
+
+    float v1[] = {1.0f, 0.0f, 0.0f, 0.0f};
+    float v2[] = {0.0f, 1.0f, 0.0f, 0.0f};
+    { int _r = db_add_vector(db, v1, TEST_DIM); (void)_r; }
+    { int _r = db_add_vector(db, v2, TEST_DIM); (void)_r; }
+
+    GV_ServerConfig scfg;
+    GV_HandlerContext ctx = create_test_ctx(db, &scfg);
+    GV_HttpRequest request = {
+        .method = GV_HTTP_GET,
+        .url = "/metrics",
+        .query_string = NULL,
+        .body = NULL,
+        .body_length = 0,
+        .content_type = NULL,
+        .authorization = NULL
+    };
+
+    GV_HttpResponse *resp = rest_handle_metrics(&ctx, &request);
+    ASSERT(resp != NULL, "metrics response creation");
+    ASSERT(resp->status == GV_HTTP_200_OK, "metrics status should be 200");
+    ASSERT(resp->body != NULL, "metrics body should not be NULL");
+    ASSERT(resp->content_type != NULL && strstr(resp->content_type, "text/plain") != NULL,
+           "metrics content-type is Prometheus text");
+    /* Prometheus exposition: HELP/TYPE lines + sample values present. */
+    ASSERT(strstr(resp->body, "# TYPE gigavector_vectors gauge") != NULL, "vectors TYPE line");
+    ASSERT(strstr(resp->body, "gigavector_vectors 2") != NULL, "vectors gauge value");
+    ASSERT(strstr(resp->body, "gigavector_dimension 4") != NULL, "dimension gauge value");
+    ASSERT(strstr(resp->body, "gigavector_up 1") != NULL, "up gauge healthy");
+    ASSERT(strstr(resp->body, "# TYPE gigavector_inserts_total counter") != NULL, "inserts TYPE line");
+    ASSERT(resp->body_length == strlen(resp->body), "body_length matches body");
+
+    rest_response_free(resp);
+    db_close(db);
+    gv_test_remove_db(TEST_DB);
+    return 0;
+}
+
 static int test_handle_stats_empty(void) {
     gv_test_remove_db(TEST_DB);
     GV_Database *db = db_open(TEST_DB, TEST_DIM, GV_INDEX_TYPE_FLAT);
@@ -320,6 +362,34 @@ static int test_route_get_stats(void) {
     GV_HttpResponse *resp = rest_route(&ctx, &request);
     ASSERT(resp != NULL, "route stats response");
     ASSERT(resp->status == GV_HTTP_200_OK, "route stats status 200");
+
+    rest_response_free(resp);
+    db_close(db);
+    gv_test_remove_db(TEST_DB);
+    return 0;
+}
+
+static int test_route_get_metrics(void) {
+    gv_test_remove_db(TEST_DB);
+    GV_Database *db = db_open(TEST_DB, TEST_DIM, GV_INDEX_TYPE_FLAT);
+    ASSERT(db != NULL, "database creation");
+
+    GV_ServerConfig scfg;
+    GV_HandlerContext ctx = create_test_ctx(db, &scfg);
+    GV_HttpRequest request = {
+        .method = GV_HTTP_GET,
+        .url = "/metrics",
+        .query_string = NULL,
+        .body = NULL,
+        .body_length = 0,
+        .content_type = NULL,
+        .authorization = NULL
+    };
+
+    GV_HttpResponse *resp = rest_route(&ctx, &request);
+    ASSERT(resp != NULL, "route metrics response");
+    ASSERT(resp->status == GV_HTTP_200_OK, "route metrics status 200");
+    ASSERT(strstr(resp->body, "gigavector_up") != NULL, "routed metrics body");
 
     rest_response_free(resp);
     db_close(db);
@@ -406,8 +476,10 @@ int main(void) {
         {"test_handle_health",             test_handle_health},
         {"test_handle_stats",              test_handle_stats},
         {"test_handle_stats_empty",        test_handle_stats_empty},
+        {"test_handle_metrics",            test_handle_metrics},
         {"test_route_get_health",          test_route_get_health},
         {"test_route_get_stats",           test_route_get_stats},
+        {"test_route_get_metrics",         test_route_get_metrics},
         {"test_route_not_found",           test_route_not_found},
         {"test_route_method_mismatch",     test_route_method_mismatch},
     };
