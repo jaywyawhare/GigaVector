@@ -4,8 +4,15 @@
 #include <string.h>
 #include "admin/migration.h"
 #include "storage/soa_storage.h"
+#include "index/sparse_index.h"
+#include "index/ivfdisk.h"
+#include "../test_tmp.h"
 
 #define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while(0)
+
+/* MIG_INDEX_* type tags (mirrors the GV_IndexType enum values). */
+#define T_SPARSE  3
+#define T_IVFDISK 11
 
 static int test_migration_start_destroy(void) {
     float data[8] = {1.0f, 2.0f, 3.0f, 4.0f,
@@ -123,6 +130,69 @@ static int test_migration_progress(void) {
     return 0;
 }
 
+/* Migration to a SPARSE index: dense vectors convert to their non-zero
+ * (index, value) components and the taken index is a GV_SparseIndex. */
+static int test_migration_to_sparse(void) {
+    const size_t dim = 4, n = 6;
+    float data[24] = {
+        1.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 2.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 3.0f, 0.0f,
+        1.0f, 0.0f, 0.0f, 4.0f,
+        0.0f, 5.0f, 6.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 0.0f, /* all-zero -> empty sparse vector */
+    };
+    GV_Migration *mig = migration_start(data, n, dim, T_SPARSE, NULL);
+    ASSERT(mig != NULL, "start SPARSE migration");
+    ASSERT(migration_wait(mig) == 0, "SPARSE migration wait succeeds");
+
+    GV_MigrationInfo info;
+    migration_get_info(mig, &info);
+    ASSERT(info.status == GV_MIGRATION_COMPLETED, "SPARSE migration completes");
+    ASSERT(info.vectors_migrated == n, "all vectors migrated to SPARSE");
+
+    GV_SparseIndex *idx = (GV_SparseIndex *)migration_take_index(mig);
+    ASSERT(idx != NULL, "SPARSE index produced");
+    sparse_index_destroy(idx);
+    migration_destroy(mig);
+    return 0;
+}
+
+/* Migration to an IVFDISK index: on-disk index built under a temp data_dir
+ * passed via the config. The taken index is a GV_IVFDiskIndex. */
+static int test_migration_to_ivfdisk(void) {
+    const size_t dim = 4, n = 16;
+    float data[64];
+    for (size_t i = 0; i < n; i++)
+        for (size_t d = 0; d < dim; d++)
+            data[i * dim + d] = (float)((i * 3u + d) % 7u);
+
+    char dir[512];
+    gv_test_make_temp_path(dir, sizeof(dir), "ivfdiskmig", "");
+
+    GV_IVFDiskConfig cfg;
+    ivfdisk_config_init(&cfg);
+    cfg.nlist = 4;
+    cfg.nprobe = 2;
+    cfg.data_dir = dir;
+
+    GV_Migration *mig = migration_start(data, n, dim, T_IVFDISK, &cfg);
+    ASSERT(mig != NULL, "start IVFDISK migration");
+    ASSERT(migration_wait(mig) == 0, "IVFDISK migration wait succeeds");
+
+    GV_MigrationInfo info;
+    migration_get_info(mig, &info);
+    ASSERT(info.status == GV_MIGRATION_COMPLETED, "IVFDISK migration completes");
+    ASSERT(info.vectors_migrated == n, "all vectors migrated to IVFDISK");
+
+    GV_IVFDiskIndex *idx = (GV_IVFDiskIndex *)migration_take_index(mig);
+    ASSERT(idx != NULL, "IVFDISK index produced");
+    ASSERT(ivfdisk_count(idx) == n, "IVFDISK holds all vectors");
+    ivfdisk_destroy(idx);
+    migration_destroy(mig);
+    return 0;
+}
+
 static int test_null_safety(void) {
     migration_destroy(NULL);
 
@@ -145,6 +215,8 @@ int main(void) {
         {"Testing migration take index...", test_migration_take_index},
         {"Testing migration cancel...", test_migration_cancel},
         {"Testing migration progress...", test_migration_progress},
+        {"Testing migration to SPARSE...", test_migration_to_sparse},
+        {"Testing migration to IVFDISK...", test_migration_to_ivfdisk},
         {"Testing null safety...", test_null_safety},
     };
     int n = sizeof(tests) / sizeof(tests[0]);

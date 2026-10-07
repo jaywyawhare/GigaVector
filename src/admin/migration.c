@@ -18,7 +18,10 @@
 #include "index/ivfturboquant.h"
 #include "index/rabitq.h"
 #include "index/diskann.h"
+#include "index/sparse_index.h"
+#include "index/ivfdisk.h"
 #include "schema/vector.h"
+#include "storage/sparse_vector.h"
 #include "storage/soa_storage.h"
 
 /* Index type constants matching GV_IndexType enum used across the codebase */
@@ -393,6 +396,132 @@ static void *create_diskann_index(GV_Migration *mig)
     return index;
 }
 
+/* Build a sparse inverted index from dense source vectors by keeping each
+   vector's non-zero components as (index, value) pairs — the natural dense→
+   sparse projection. Zero-only vectors become empty sparse vectors. */
+static void *create_sparse_index(GV_Migration *mig)
+{
+    GV_SparseIndex *index = sparse_index_create(mig->dimension);
+    if (!index) {
+        migration_set_error(mig, "Failed to create SPARSE index");
+        return NULL;
+    }
+
+    uint32_t *idxbuf = (uint32_t *)gv_alloc(mig->dimension * sizeof(uint32_t));
+    float    *valbuf = (float *)gv_alloc(mig->dimension * sizeof(float));
+    if (!idxbuf || !valbuf) {
+        gv_free(idxbuf); gv_free(valbuf);
+        sparse_index_destroy(index);
+        migration_set_error(mig, "Out of memory building SPARSE index");
+        return NULL;
+    }
+
+    for (size_t i = 0; i < mig->total_vectors; i++) {
+        if (migration_is_cancelled(mig)) {
+            gv_free(idxbuf); gv_free(valbuf);
+            sparse_index_destroy(index);
+            return NULL;
+        }
+
+        const float *vec_data = mig->source_data + i * mig->dimension;
+        size_t nnz = 0;
+        for (size_t d = 0; d < mig->dimension; d++) {
+            if (vec_data[d] != 0.0f) {
+                idxbuf[nnz] = (uint32_t)d;
+                valbuf[nnz] = vec_data[d];
+                nnz++;
+            }
+        }
+
+        GV_SparseVector *sv = sparse_vector_create(mig->dimension, idxbuf, valbuf, nnz);
+        if (!sv) {
+            gv_free(idxbuf); gv_free(valbuf);
+            sparse_index_destroy(index);
+            migration_set_error(mig, "Failed to create sparse vector during SPARSE migration");
+            return NULL;
+        }
+        /* ownership of sv transfers to the index on success */
+        if (sparse_index_add(index, sv) != 0) {
+            sparse_vector_destroy(sv);
+            gv_free(idxbuf); gv_free(valbuf);
+            sparse_index_destroy(index);
+            migration_set_error(mig, "Failed to add vector to SPARSE index");
+            return NULL;
+        }
+
+        if ((i + 1) % MIGRATION_BATCH_SIZE == 0 || i + 1 == mig->total_vectors) {
+            migration_update_progress(mig, i + 1);
+        }
+    }
+
+    gv_free(idxbuf); gv_free(valbuf);
+    return index;
+}
+
+/* Pick a writable data directory for an IVFDisk migration: honour the
+   caller's config.data_dir when supplied, otherwise synthesize a unique path
+   under $TMPDIR/$TEMP/$TMP (or "." as a last resort). The index itself creates
+   the directory tree on open. */
+static void ivfdisk_pick_data_dir(const GV_Migration *mig, char *out, size_t out_size)
+{
+    const char *base = getenv("TMPDIR");
+    if (!base || !*base) base = getenv("TEMP");
+    if (!base || !*base) base = getenv("TMP");
+    if (!base || !*base) base = ".";
+    snprintf(out, out_size, "%s/gv-ivfdisk-mig-%ld-%p",
+             base, (long)now_us(), (const void *)mig);
+}
+
+static void *create_ivfdisk_index(GV_Migration *mig)
+{
+    GV_IVFDiskConfig cfg;
+    ivfdisk_config_init(&cfg);
+
+    char tmp_dir[1024];
+    if (mig->new_index_config) {
+        cfg = *(const GV_IVFDiskConfig *)mig->new_index_config;
+    }
+    if (!cfg.data_dir || !*cfg.data_dir) {
+        ivfdisk_pick_data_dir(mig, tmp_dir, sizeof(tmp_dir));
+        cfg.data_dir = tmp_dir;
+    }
+
+    GV_IVFDiskIndex *index = ivfdisk_create(mig->dimension, &cfg);
+    if (!index) {
+        migration_set_error(mig, "Failed to create IVFDISK index (check data_dir is writable)");
+        return NULL;
+    }
+
+    if (ivfdisk_train(index, mig->source_data, mig->total_vectors) != 0) {
+        ivfdisk_destroy(index);
+        migration_set_error(mig, "Failed to train IVFDISK index");
+        return NULL;
+    }
+
+    if (migration_is_cancelled(mig)) {
+        ivfdisk_destroy(index);
+        return NULL;
+    }
+
+    for (size_t i = 0; i < mig->total_vectors; i++) {
+        if (migration_is_cancelled(mig)) {
+            ivfdisk_destroy(index);
+            return NULL;
+        }
+        const float *vec_data = mig->source_data + i * mig->dimension;
+        if (ivfdisk_insert(index, vec_data, mig->dimension, i) != 0) {
+            ivfdisk_destroy(index);
+            migration_set_error(mig, "Failed to insert vector into IVFDISK index");
+            return NULL;
+        }
+        if ((i + 1) % MIGRATION_BATCH_SIZE == 0 || i + 1 == mig->total_vectors) {
+            migration_update_progress(mig, i + 1);
+        }
+    }
+
+    return index;
+}
+
 /* migration thread entry point */
 static void *migration_thread_func(void *arg)
 {
@@ -439,21 +568,12 @@ static void *migration_thread_func(void *arg)
     case MIG_INDEX_DISKANN:
         new_index = create_diskann_index(mig);
         break;
-    case MIG_INDEX_SPARSE: {
-        /* Sparse indexes operate on GV_SparseVector, not the dense float array
-           the migration path supplies. Migrating a dense source into a sparse
-           index has no well-defined semantics, so it is not supported here. */
-        migration_set_error(mig,
-            "Migration to SPARSE index not yet supported: requires sparse source vectors");
-        return NULL;
-    }
-    case MIG_INDEX_IVFDISK: {
-        /* IVFDisk requires an on-disk data directory (derived from a filepath),
-           which the in-memory migration path does not provide. */
-        migration_set_error(mig,
-            "Migration to IVFDISK index not yet supported: requires an on-disk data directory");
-        return NULL;
-    }
+    case MIG_INDEX_SPARSE:
+        new_index = create_sparse_index(mig);
+        break;
+    case MIG_INDEX_IVFDISK:
+        new_index = create_ivfdisk_index(mig);
+        break;
     default: {
         char buf[256];
         snprintf(buf, sizeof(buf), "Unsupported index type: %d", mig->new_index_type);
