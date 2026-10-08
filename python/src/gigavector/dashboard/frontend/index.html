@@ -13,7 +13,7 @@
 	<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Source+Sans+3:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap"
 		rel="stylesheet">
 	<link rel="stylesheet" href="/dashboard/styles/style.css">
-	<script src="/dashboard/src/index.js"></script>
+	<script defer src="/dashboard/src/index.js"></script>
 
 </head>
 
@@ -299,25 +299,38 @@
 								<input type="number" id="viz-limit" value="200" min="10"
 									max="500" style="width:70px">
 								<label class="label-sm">Color by</label>
-								<select id="viz-color" onchange="drawScatter()"
+								<select id="viz-color" onchange="recolorScatter()"
 									title="Color points by k-means cluster or a metadata field">
 									<option value="">None</option>
 									<option value="__cluster__">K-means clusters</option>
 								</select>
 								<label class="label-sm">k</label>
-								<input type="number" id="viz-k" value="5" min="2" max="8"
-									style="width:48px" onchange="drawScatter()"
-									title="Number of clusters">
+								<input type="number" id="viz-k" value="3" min="2" max="12"
+									style="width:48px" onchange="recolorScatter()"
+									title="Number of clusters (the 3 largest get a color, the rest fold into Other)">
 								<button class="btn btn-sm"
 									onclick="runVisualization()">Run</button>
 								<span id="viz-status" class="mono-sm"
 									style="margin-left:auto"></span>
 							</div>
+							<div class="viz-legend" id="viz-legend" hidden></div>
 							<canvas class="viz-canvas" id="scatter-canvas" width="900"
-								height="460"></canvas>
+								height="460" tabindex="0" role="img"
+								aria-label="2D projection of stored vectors. Use arrow keys to step through points, Enter to select. A table view is below."></canvas>
 							<div class="viz-info" id="scatter-info">Click <b>Run</b> to
 								project vectors into 2D space. Hover to preview, click
 								to inspect.</div>
+							<details class="viz-table">
+								<summary>Table view</summary>
+								<div class="viz-table-scroll">
+									<table>
+										<thead>
+											<tr><th>ID</th><th>x</th><th>y</th><th>Group</th></tr>
+										</thead>
+										<tbody id="viz-table-body"></tbody>
+									</table>
+								</div>
+							</details>
 						</div>
 						<div class="viz-detail" id="scatter-detail">
 							<div class="viz-detail-header">Point Detail</div>

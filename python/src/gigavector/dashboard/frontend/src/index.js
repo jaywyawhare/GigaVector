@@ -152,7 +152,7 @@ async function refreshOverview() {
     document.getElementById("footer-version").textContent =
       "GigaVector v" + (info.data.version || "?");
     document.getElementById("footer-index").textContent =
-      (info.data.index_type || "") + " · dim " + (info.data.dimension || "?");
+      (info.data.index_type || "") + " | dim " + (info.data.dimension || "?");
     document.getElementById("ov-server-info").innerHTML = jsonHighlight(
       info.data,
     );
@@ -294,11 +294,14 @@ async function runVisualization() {
   const dim = raw[0].length;
   const pts = algo === "pca" ? pcaProject(raw) : randomProject(raw);
   vizData = { pts, indices, raw, metas };
+  scatterHovered = -1;
+  scatterSelected = -1;
+  showScatterDetail(-1);
   populateColorByOptions(metas);
-  status.textContent = `${vecs.length} pts · ${algo.toUpperCase()}`;
+  status.textContent = `${vecs.length} pts | ${algo.toUpperCase()}`;
   document.getElementById("scatter-info").innerHTML =
-    `<b>${vecs.length}</b> vectors projected from <b>${dim}D</b> -> 2D. Hover to inspect.`;
-  drawScatter();
+    `<b>${vecs.length}</b> vectors projected from <b>${dim}D</b> to 2D. Hover or focus and use arrow keys to inspect.`;
+  recolorScatter();
 }
 
 function pcaProject(data) {
@@ -374,12 +377,17 @@ function randomProject(data) {
   });
 }
 
-// Okabe-Ito categorical palette: colorblind-safe and legible on the dark theme.
-const VIZ_PALETTE = [
-  "#56B4E9", "#E69F00", "#009E73", "#F0E442",
-  "#D55E00", "#CC79A7", "#0072B2", "#999999",
-];
-const VIZ_DEFAULT_COLOR = "#2ee6c8";
+// Categorical slots validated (all pairs, normal + CVD, >= 3:1 contrast) against
+// the #0c1118 surface. A scatter overlaps every pair, so only three hues pass;
+// further groups fold into a muted "Other" bucket instead of a generated hue.
+const VIZ_PALETTE = ["#3987e5", "#d95926", "#199e70"];
+const VIZ_OTHER_COLOR = "#898781";
+const VIZ_DEFAULT_COLOR = "#3987e5";
+const VIZ_SURFACE = "#0c1118";
+const VIZ_GRID = "#1a2430";
+const VIZ_AXIS = "#2c3a4b";
+const VIZ_INK_PRIMARY = "#e9eff8";
+const VIZ_INK_SECONDARY = "#9fb1c8";
 
 // Populate the "Color by" dropdown: keep the fixed None / K-means options, then
 // append any metadata keys found, preserving the current selection.
@@ -393,7 +401,9 @@ function populateColorByOptions(metas) {
   sel.innerHTML =
     '<option value="">None</option>' +
     '<option value="__cluster__">K-means clusters</option>' +
-    sorted.map((k) => `<option value="${k}">${k}</option>`).join("");
+    sorted
+      .map((k) => `<option value="${escapeHtml(k)}">${escapeHtml(k)}</option>`)
+      .join("");
   sel.value = prev === "__cluster__" || sorted.includes(prev) ? prev : "";
 }
 
@@ -447,36 +457,108 @@ function kmeansLabels(data, k) {
   return labels;
 }
 
-// Map each point to a color by k-means cluster or a metadata field. Returns
-// { colors, legend: [label,color][] }; legend empty when coloring is off.
-function vizColorMapping() {
+// Group each point by k-means cluster or a metadata field. The three largest
+// groups get a palette slot (largest first, so a group keeps its color as long
+// as it stays in the top three); the rest share "Other". Returns
+// { groups: string[], colors: string[], legend: {label,color,count}[] }.
+function computeVizGroups() {
   const field = (document.getElementById("viz-color") || {}).value || "";
-  const metas = (vizData && vizData.metas) || [];
-  const raw = (vizData && vizData.raw) || [];
+  const raw = vizData.raw,
+    metas = vizData.metas;
   if (!field) {
-    return { colors: raw.map(() => VIZ_DEFAULT_COLOR), legend: [] };
+    return { groups: raw.map(() => ""), colors: raw.map(() => VIZ_DEFAULT_COLOR), legend: [] };
   }
-  const valueColor = new Map();
-  const assign = (key) => {
-    if (!valueColor.has(key)) {
-      valueColor.set(key, VIZ_PALETTE[valueColor.size % VIZ_PALETTE.length]);
-    }
-    return valueColor.get(key);
-  };
-  let colors;
+  let groups;
   if (field === "__cluster__") {
-    const k = parseInt((document.getElementById("viz-k") || {}).value) || 5;
-    const labels = kmeansLabels(raw, k);
-    colors = Array.from(labels, (l) => assign("Cluster " + l));
+    const k = parseInt((document.getElementById("viz-k") || {}).value) || 3;
+    groups = Array.from(kmeansLabels(raw, k), (l) => `Cluster ${l + 1}`);
   } else {
-    colors = metas.map((m) =>
-      assign(m && m[field] != null ? String(m[field]) : "(none)"),
-    );
+    groups = metas.map((m) => (m && m[field] != null ? String(m[field]) : "(none)"));
+  }
+  const counts = new Map();
+  for (const g of groups) counts.set(g, (counts.get(g) || 0) + 1);
+  const ranked = [...counts.entries()].sort(
+    (a, b) => b[1] - a[1] || a[0].localeCompare(b[0]),
+  );
+  const slot = new Map();
+  ranked.slice(0, VIZ_PALETTE.length).forEach(([g], i) => slot.set(g, VIZ_PALETTE[i]));
+  const legend = ranked
+    .slice(0, VIZ_PALETTE.length)
+    .map(([label, count]) => ({ label, color: slot.get(label), count }));
+  const rest = ranked.slice(VIZ_PALETTE.length);
+  if (rest.length) {
+    legend.push({
+      label: `Other (${rest.length} group${rest.length > 1 ? "s" : ""})`,
+      color: VIZ_OTHER_COLOR,
+      count: rest.reduce((s, [, c]) => s + c, 0),
+    });
   }
   return {
-    colors,
-    legend: [...valueColor.entries()].sort((a, b) => a[0].localeCompare(b[0])),
+    groups,
+    colors: groups.map((g) => slot.get(g) || VIZ_OTHER_COLOR),
+    legend,
   };
+}
+
+// Recompute grouping (k-means is not free) and redraw. Hover redraws reuse the
+// cached result instead of re-clustering on every mouse move.
+function recolorScatter() {
+  if (!vizData) return;
+  vizData.coloring = computeVizGroups();
+  renderVizLegend();
+  renderVizTable();
+  drawScatterWithHighlights();
+}
+
+function renderVizLegend() {
+  const el = document.getElementById("viz-legend");
+  if (!el) return;
+  el.replaceChildren();
+  const legend = (vizData && vizData.coloring && vizData.coloring.legend) || [];
+  el.hidden = !legend.length;
+  for (const { label, color, count } of legend) {
+    const item = document.createElement("span");
+    item.className = "viz-legend-item";
+    const sw = document.createElement("span");
+    sw.className = "viz-legend-swatch";
+    sw.style.background = color;
+    const name = document.createElement("span");
+    name.textContent = label;
+    const n = document.createElement("span");
+    n.className = "viz-legend-count";
+    n.textContent = count;
+    item.append(sw, name, n);
+    el.append(item);
+  }
+}
+
+function renderVizTable() {
+  const tbody = document.getElementById("viz-table-body");
+  if (!tbody || !vizData) return;
+  const { pts, indices, coloring } = vizData;
+  const rows = pts.map((p, i) => {
+    const tr = document.createElement("tr");
+    tr.dataset.idx = i;
+    const cells = [
+      `#${indices[i]}`,
+      p[0].toFixed(4),
+      p[1].toFixed(4),
+      (coloring && coloring.groups[i]) || "-",
+    ];
+    for (const c of cells) {
+      const td = document.createElement("td");
+      td.textContent = c;
+      tr.append(td);
+    }
+    if (coloring && coloring.groups[i]) {
+      const sw = document.createElement("span");
+      sw.className = "viz-legend-swatch";
+      sw.style.background = coloring.colors[i];
+      tr.lastChild.prepend(sw);
+    }
+    return tr;
+  });
+  tbody.replaceChildren(...rows);
 }
 
 function drawScatter() {
@@ -490,9 +572,15 @@ function drawScatter() {
   canvas.style.height = `${h}px`;
   const ctx = canvas.getContext("2d");
   ctx.scale(dpr, dpr);
+  ctx.fillStyle = VIZ_SURFACE;
+  ctx.fillRect(0, 0, w, h);
   if (!vizData) return;
+  if (!vizData.coloring) vizData.coloring = computeVizGroups();
   const { pts, indices } = vizData;
-  const pad = 44;
+  const padL = 36,
+    padR = 20,
+    padT = 20,
+    padB = 32;
   let mnX = Infinity,
     mxX = -Infinity,
     mnY = Infinity,
@@ -505,91 +593,68 @@ function drawScatter() {
   }
   const rx = mxX - mnX || 1,
     ry = mxY - mnY || 1;
-  const sx = (w - pad * 2) / rx,
-    sy = (h - pad * 2) / ry;
+  // 4% breathing room so edge points are not clipped by the frame.
+  mnX -= rx * 0.04;
+  mxX += rx * 0.04;
+  mnY -= ry * 0.04;
+  mxY += ry * 0.04;
+  const pw = w - padL - padR,
+    ph = h - padT - padB;
+  const sx = pw / (mxX - mnX),
+    sy = ph / (mxY - mnY);
   function toS(x, y) {
-    return [(x - mnX) * sx + pad, h - ((y - mnY) * sy + pad)];
+    return [(x - mnX) * sx + padL, padT + ph - (y - mnY) * sy];
   }
 
-  // Background
-  ctx.fillStyle = "#0c1118";
-  ctx.fillRect(0, 0, w, h);
-
-  // Grid
-  ctx.strokeStyle = "#1e2b3b";
-  ctx.lineWidth = 0.5;
-  for (let g = 0; g <= 8; g++) {
-    const gx = pad + ((w - pad * 2) * g) / 8;
-    ctx.beginPath();
-    ctx.moveTo(gx, pad);
-    ctx.lineTo(gx, h - pad);
-    ctx.stroke();
-    const gy = pad + ((h - pad * 2) * g) / 8;
-    ctx.beginPath();
-    ctx.moveTo(pad, gy);
-    ctx.lineTo(w - pad, gy);
-    ctx.stroke();
-  }
-
-  // Axes
-  ctx.strokeStyle = "#333";
+  // Recessive solid hairline grid; 1px lines snapped to the pixel grid.
+  ctx.strokeStyle = VIZ_GRID;
   ctx.lineWidth = 1;
-  ctx.strokeRect(pad, pad, w - pad * 2, h - pad * 2);
-  ctx.fillStyle = "#666";
+  ctx.beginPath();
+  for (let g = 1; g < 6; g++) {
+    const gx = Math.round(padL + (pw * g) / 6) + 0.5;
+    ctx.moveTo(gx, padT);
+    ctx.lineTo(gx, padT + ph);
+    const gy = Math.round(padT + (ph * g) / 4) + 0.5;
+    ctx.moveTo(padL, gy);
+    ctx.lineTo(padL + pw, gy);
+  }
+  ctx.stroke();
+  ctx.strokeStyle = VIZ_AXIS;
+  ctx.beginPath();
+  ctx.moveTo(padL + 0.5, padT);
+  ctx.lineTo(padL + 0.5, padT + ph + 0.5);
+  ctx.lineTo(padL + pw, padT + ph + 0.5);
+  ctx.stroke();
+
+  const algo = (document.getElementById("viz-algo") || {}).value;
+  const [ax, ay] = algo === "pca" ? ["PC1", "PC2"] : ["Projection 1", "Projection 2"];
+  ctx.fillStyle = VIZ_INK_SECONDARY;
   ctx.font = '10px "IBM Plex Mono"';
-  ctx.textAlign = "center";
-  ctx.fillText("PC1", w / 2, h - 8);
+  ctx.textAlign = "right";
+  ctx.fillText(ax, padL + pw, h - 10);
   ctx.save();
-  ctx.translate(10, h / 2);
+  ctx.translate(14, padT);
   ctx.rotate(-Math.PI / 2);
-  ctx.fillText("PC2", 0, 0);
+  ctx.textAlign = "right";
+  ctx.fillText(ay, 0, 0);
   ctx.restore();
 
-  // Points, colored by the selected metadata field (if any).
-  const { colors, legend } = vizColorMapping();
-  for (let i = 0; i < pts.length; i++) {
+  // 8px markers with a 2px surface ring so overlapping points stay separable.
+  // "Other" draws first so the named groups sit on top.
+  const { colors } = vizData.coloring;
+  const order = pts.map((_, i) => i);
+  order.sort(
+    (a, b) => (colors[b] === VIZ_OTHER_COLOR) - (colors[a] === VIZ_OTHER_COLOR),
+  );
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = VIZ_SURFACE;
+  for (const i of order) {
     const [px, py] = toS(pts[i][0], pts[i][1]);
-    const selected = i === scatterSelected;
     ctx.beginPath();
-    ctx.arc(px, py, selected ? 6 : 4, 0, Math.PI * 2);
-    ctx.fillStyle = colors[i] || VIZ_DEFAULT_COLOR;
-    ctx.globalAlpha = legend.length ? 0.85 : 1;
+    ctx.arc(px, py, 4, 0, Math.PI * 2);
+    ctx.fillStyle = colors[i];
     ctx.fill();
-    ctx.globalAlpha = 1;
-    ctx.beginPath();
-    ctx.arc(px, py, selected ? 6 : 4, 0, Math.PI * 2);
-    ctx.strokeStyle = selected ? "#fff" : "rgba(255,255,255,0.35)";
-    ctx.lineWidth = selected ? 2 : 1;
     ctx.stroke();
-  }
-
-  // Legend (top-right) when coloring by a field. Capped so it never overflows.
-  if (legend.length) {
-    ctx.font = '11px "IBM Plex Mono"';
-    ctx.textAlign = "left";
-    const rowH = 16,
-      shown = legend.slice(0, 12),
-      bw = 150,
-      bh = shown.length * rowH + 10,
-      bx = w - pad - bw,
-      by = pad + 6;
-    ctx.fillStyle = "rgba(12,17,24,0.85)";
-    ctx.strokeStyle = "#1e2b3b";
-    ctx.lineWidth = 1;
-    ctx.fillRect(bx, by, bw, bh);
-    ctx.strokeRect(bx, by, bw, bh);
-    shown.forEach(([val, col], i) => {
-      const ly = by + 8 + i * rowH;
-      ctx.fillStyle = col;
-      ctx.fillRect(bx + 8, ly, 10, 10);
-      ctx.fillStyle = "#c9d4e0";
-      const label = val.length > 16 ? val.slice(0, 15) + "..." : val;
-      ctx.fillText(label, bx + 24, ly + 9);
-    });
-    if (legend.length > 12) {
-      ctx.fillStyle = "#666";
-      ctx.fillText(`+${legend.length - 12} more`, bx + 8, by + bh - 2);
-    }
   }
 
   canvas._vizMap = { pts, indices, toS, w, h };
@@ -599,12 +664,13 @@ let scatterHovered = -1,
   scatterSelected = -1;
 const vizTooltip = document.getElementById("viz-tooltip");
 
+// Nearest point within 12px: a 24px hit target around an 8px mark.
 function scatterFindNearest(mx, my) {
   if (!vizData || !vizData.pts) return -1;
   const { pts, toS } = document.getElementById("scatter-canvas")._vizMap || {};
   if (!toS) return -1;
   let closest = -1,
-    cd = 14;
+    cd = 12;
   for (let i = 0; i < pts.length; i++) {
     const [sx, sy] = toS(pts[i][0], pts[i][1]);
     const d = Math.hypot(mx - sx, my - sy);
@@ -616,17 +682,49 @@ function scatterFindNearest(mx, my) {
   return closest;
 }
 
-function showVizTooltip(e, html) {
-  vizTooltip.innerHTML = html;
-  vizTooltip.classList.add("visible");
+function placeVizTooltip(clientX, clientY) {
   const r = vizTooltip.getBoundingClientRect();
-  let tx = e.clientX + 14,
-    ty = e.clientY - 10;
-  if (tx + r.width > window.innerWidth - 8) tx = e.clientX - r.width - 10;
-  if (ty + r.height > window.innerHeight - 8) ty = e.clientY - r.height - 10;
+  let tx = clientX + 14,
+    ty = clientY - 10;
+  if (tx + r.width > window.innerWidth - 8) tx = clientX - r.width - 10;
+  if (ty + r.height > window.innerHeight - 8) ty = clientY - r.height - 10;
   if (ty < 8) ty = 8;
   vizTooltip.style.left = `${tx}px`;
   vizTooltip.style.top = `${ty}px`;
+}
+
+// Tooltip body built with textContent: metadata values are user data.
+function showPointTooltip(idx, clientX, clientY) {
+  const pt = vizData.raw[idx],
+    id = vizData.indices[idx];
+  const coloring = vizData.coloring || {};
+  const group = coloring.groups ? coloring.groups[idx] : "";
+  const preview = `[${pt
+    .slice(0, 4)
+    .map((v) => v.toFixed(3))
+    .join(", ")}${pt.length > 4 ? ", ..." : ""}]`;
+  const row = (cls, text) => {
+    const d = document.createElement("div");
+    d.className = cls;
+    d.textContent = text;
+    return d;
+  };
+  const head = row("tt-id", `Point #${id}`);
+  const parts = [head, row("tt-dim", `${pt.length}-dimensional`)];
+  if (group) {
+    const g = row("tt-group", group);
+    const sw = document.createElement("span");
+    sw.className = "viz-legend-swatch";
+    sw.style.background = coloring.colors[idx];
+    g.prepend(sw);
+    parts.push(g);
+  }
+  parts.push(row("tt-data", preview));
+  vizTooltip.replaceChildren(...parts);
+  vizTooltip.classList.add("visible");
+  placeVizTooltip(clientX, clientY);
+  document.getElementById("scatter-info").textContent =
+    `Point #${id} | ${pt.length}D${group ? ` | ${group}` : ""} | ${preview}`;
 }
 function hideVizTooltip() {
   vizTooltip.classList.remove("visible");
@@ -641,10 +739,18 @@ function showScatterDetail(idx) {
   }
   const pt = vizData.raw[idx],
     id = vizData.indices[idx];
+  const coloring = vizData.coloring || {};
+  const group = coloring.groups ? coloring.groups[idx] : "";
   const vecStr = `[${pt.map((v) => v.toFixed(6)).join(", ")}]`;
   body.innerHTML = `
     <div class="detail-label">Point ID</div>
-    <div class="detail-value" style="font-size:16px;font-weight:600;color:var(--accent)">#${id}</div>
+    <div class="detail-value" style="font-size:16px;font-weight:600;color:var(--text)">#${id}</div>
+    ${
+      group
+        ? `<div class="detail-label">Group</div>
+    <div class="detail-value dim"><span class="viz-legend-swatch" style="background:${coloring.colors[idx]}"></span>${escapeHtml(group)}</div>`
+        : ""
+    }
     <div class="detail-label">Dimension</div>
     <div class="detail-value dim">${pt.length}</div>
     <div class="detail-label">Projected (x, y)</div>
@@ -658,94 +764,107 @@ function drawScatterWithHighlights() {
   drawScatter();
   if (!vizData || !vizData.pts) return;
   const canvas = document.getElementById("scatter-canvas");
-  const { pts, indices, toS } = canvas._vizMap || {};
+  const { pts, toS } = canvas._vizMap || {};
   if (!toS) return;
   const dpr = window.devicePixelRatio || 1;
   const ctx = canvas.getContext("2d");
-  ctx.scale(dpr, dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const { colors } = vizData.coloring;
 
-  // Selected ring
-  if (scatterSelected >= 0 && scatterSelected < pts.length) {
-    const [sx, sy] = toS(pts[scatterSelected][0], pts[scatterSelected][1]);
+  // Redraw the emphasized point on top, then ring it: hover in secondary ink,
+  // selection in primary ink with a wider gap.
+  const ring = (i, r, color, width) => {
+    const [sx, sy] = toS(pts[i][0], pts[i][1]);
     ctx.beginPath();
-    ctx.arc(sx, sy, 10, 0, Math.PI * 2);
-    ctx.strokeStyle = "#2ee6c8";
-    ctx.lineWidth = 2.5;
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.arc(sx, sy, 13, 0, Math.PI * 2);
-    ctx.strokeStyle = "rgba(46,230,200,0.22)";
-    ctx.lineWidth = 3;
-    ctx.stroke();
-  }
-  // Hovered ring
-  if (
-    scatterHovered >= 0 &&
-    scatterHovered < pts.length &&
-    scatterHovered !== scatterSelected
-  ) {
-    const [sx, sy] = toS(pts[scatterHovered][0], pts[scatterHovered][1]);
-    ctx.beginPath();
-    ctx.arc(sx, sy, 8, 0, Math.PI * 2);
-    ctx.strokeStyle = "#2ee6c8";
+    ctx.arc(sx, sy, 5, 0, Math.PI * 2);
+    ctx.fillStyle = colors[i];
+    ctx.fill();
     ctx.lineWidth = 2;
+    ctx.strokeStyle = VIZ_SURFACE;
     ctx.stroke();
-    ctx.fillStyle = "#555";
-    ctx.font = '10px "IBM Plex Mono"';
-    ctx.textAlign = "left";
-    ctx.fillText(`#${indices[scatterHovered]}`, sx + 12, sy + 4);
+    ctx.beginPath();
+    ctx.arc(sx, sy, r, 0, Math.PI * 2);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = width;
+    ctx.stroke();
+  };
+  if (scatterHovered >= 0 && scatterHovered < pts.length && scatterHovered !== scatterSelected) {
+    ring(scatterHovered, 8, VIZ_INK_SECONDARY, 1.5);
+  }
+  if (scatterSelected >= 0 && scatterSelected < pts.length) {
+    ring(scatterSelected, 9, VIZ_INK_PRIMARY, 2);
   }
   ctx.setTransform(1, 0, 0, 1, 0, 0);
+
+  const tbody = document.getElementById("viz-table-body");
+  if (tbody) {
+    for (const tr of tbody.children) {
+      tr.classList.toggle("selected", +tr.dataset.idx === scatterSelected);
+    }
+  }
 }
 
-document
-  .getElementById("scatter-canvas")
-  .addEventListener("mousemove", function (e) {
-    if (!this._vizMap || !vizData) return;
-    const rect = this.getBoundingClientRect();
-    const mx = e.clientX - rect.left,
-      my = e.clientY - rect.top;
-    const prev = scatterHovered;
-    scatterHovered = scatterFindNearest(mx, my);
-    if (scatterHovered !== prev) drawScatterWithHighlights();
-    if (scatterHovered >= 0) {
-      const pt = vizData.raw[scatterHovered],
-        id = vizData.indices[scatterHovered];
-      const preview = `[${pt
-        .slice(0, 4)
-        .map((v) => v.toFixed(3))
-        .join(", ")}${pt.length > 4 ? ", \u2026" : ""}]`;
-      showVizTooltip(
-        e,
-        `<div class="tt-id">Point #${id}</div>
-         <div class="tt-dim">${pt.length}-dimensional</div>
-         <div class="tt-data">${preview}</div>`,
-      );
-      document.getElementById("scatter-info").innerHTML =
-        `Point <b>#${id}</b> \u2014 ${pt.length}D \u2014 ${preview}`;
-    } else {
-      hideVizTooltip();
-    }
-  });
-document
-  .getElementById("scatter-canvas")
-  .addEventListener("mouseleave", function () {
+function selectScatterPoint(idx) {
+  scatterSelected = idx === scatterSelected ? -1 : idx;
+  drawScatterWithHighlights();
+  showScatterDetail(scatterSelected);
+}
+
+const scatterCanvas = document.getElementById("scatter-canvas");
+scatterCanvas.addEventListener("mousemove", function (e) {
+  if (!this._vizMap || !vizData) return;
+  const rect = this.getBoundingClientRect();
+  const prev = scatterHovered;
+  scatterHovered = scatterFindNearest(e.clientX - rect.left, e.clientY - rect.top);
+  if (scatterHovered !== prev) drawScatterWithHighlights();
+  this.style.cursor = scatterHovered >= 0 ? "pointer" : "crosshair";
+  if (scatterHovered >= 0) showPointTooltip(scatterHovered, e.clientX, e.clientY);
+  else hideVizTooltip();
+});
+scatterCanvas.addEventListener("mouseleave", function () {
+  scatterHovered = -1;
+  hideVizTooltip();
+  drawScatterWithHighlights();
+});
+scatterCanvas.addEventListener("click", function (e) {
+  if (!this._vizMap || !vizData) return;
+  const rect = this.getBoundingClientRect();
+  const idx = scatterFindNearest(e.clientX - rect.left, e.clientY - rect.top);
+  if (idx >= 0 || scatterSelected >= 0) selectScatterPoint(idx);
+});
+// Keyboard: arrows step through points left-to-right, Enter/Space selects,
+// Escape clears. The tooltip follows the focused point.
+scatterCanvas.addEventListener("keydown", function (e) {
+  if (!this._vizMap || !vizData || !vizData.pts.length) return;
+  const { pts, toS } = this._vizMap;
+  const byX = vizData.byX || (vizData.byX = pts.map((_, i) => i).sort((a, b) => pts[a][0] - pts[b][0]));
+  const pos = byX.indexOf(scatterHovered);
+  let next = scatterHovered;
+  if (e.key === "ArrowRight" || e.key === "ArrowDown") next = byX[Math.min(byX.length - 1, pos + 1)];
+  else if (e.key === "ArrowLeft" || e.key === "ArrowUp") next = byX[Math.max(0, pos < 0 ? 0 : pos - 1)];
+  else if ((e.key === "Enter" || e.key === " ") && scatterHovered >= 0) {
+    e.preventDefault();
+    selectScatterPoint(scatterHovered);
+    return;
+  } else if (e.key === "Escape") {
     scatterHovered = -1;
     hideVizTooltip();
-    drawScatterWithHighlights();
-  });
-document
-  .getElementById("scatter-canvas")
-  .addEventListener("click", function (e) {
-    if (!this._vizMap || !vizData) return;
-    const rect = this.getBoundingClientRect();
-    const mx = e.clientX - rect.left,
-      my = e.clientY - rect.top;
-    const idx = scatterFindNearest(mx, my);
-    scatterSelected = idx === scatterSelected ? -1 : idx;
-    drawScatterWithHighlights();
-    showScatterDetail(scatterSelected);
-  });
+    if (scatterSelected >= 0) selectScatterPoint(scatterSelected);
+    else drawScatterWithHighlights();
+    return;
+  } else return;
+  e.preventDefault();
+  scatterHovered = next;
+  drawScatterWithHighlights();
+  const rect = this.getBoundingClientRect();
+  const [sx, sy] = toS(pts[next][0], pts[next][1]);
+  showPointTooltip(next, rect.left + sx, rect.top + sy);
+});
+scatterCanvas.addEventListener("blur", hideVizTooltip);
+document.getElementById("viz-table-body")?.addEventListener("click", (e) => {
+  const tr = e.target.closest("tr");
+  if (tr) selectScatterPoint(+tr.dataset.idx);
+});
 
 // similarlty graph
 
@@ -826,7 +945,7 @@ async function runGraph() {
     }
     frontier = next;
   }
-  status.textContent = `${graphNodes.length} nodes · ${graphEdges.length} edges`;
+  status.textContent = `${graphNodes.length} nodes | ${graphEdges.length} edges`;
   document.getElementById("graph-info").innerHTML =
     `<b>${graphNodes.length}</b> nodes, <b>${graphEdges.length}</b> edges from seed <b>#${seed}</b>`;
   if (graphAnim) cancelAnimationFrame(graphAnim);
@@ -1063,7 +1182,7 @@ function simGraph() {
       const nodePreview = `[${node.data
         .slice(0, 3)
         .map((v) => v.toFixed(3))
-        .join(", ")}${node.data.length > 3 ? ", \u2026" : ""}]`;
+        .join(", ")}${node.data.length > 3 ? ", ..." : ""}]`;
       showVizTooltip(
         e,
         `<div class="tt-id">Node #${node.id}</div>
@@ -1071,7 +1190,7 @@ function simGraph() {
          <div class="tt-data">${nodePreview}</div>`,
       );
       document.getElementById("graph-info").innerHTML =
-        `Node <b>#${node.id}</b> \u2014 depth ${node.depth} \u2014 ${neighbors.length} neighbors`;
+        `Node <b>#${node.id}</b> | depth ${node.depth} | ${neighbors.length} neighbors`;
     } else {
       hideVizTooltip();
     }
