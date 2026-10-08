@@ -127,14 +127,19 @@ static void decode_entity(TextBuf *t, const char *s, size_t len, size_t *i) {
         long code = (name[1] == 'x' || name[1] == 'X')
             ? strtol(name + 2, NULL, 16)
             : strtol(name + 1, NULL, 10);
-        if (code <= 0) { tb_putc(t, '&'); (*i)++; return; }
+        if (code <= 0 || code > 0x10FFFF) { tb_putc(t, '&'); (*i)++; return; }
         if (code < 0x80) {
             tb_putc(t, (char)code);
         } else if (code < 0x800) {
             tb_putc(t, (char)(0xC0 | (code >> 6)));
             tb_putc(t, (char)(0x80 | (code & 0x3F)));
-        } else {
+        } else if (code < 0x10000) {
             tb_putc(t, (char)(0xE0 | (code >> 12)));
+            tb_putc(t, (char)(0x80 | ((code >> 6) & 0x3F)));
+            tb_putc(t, (char)(0x80 | (code & 0x3F)));
+        } else {
+            tb_putc(t, (char)(0xF0 | (code >> 18)));
+            tb_putc(t, (char)(0x80 | ((code >> 12) & 0x3F)));
             tb_putc(t, (char)(0x80 | ((code >> 6) & 0x3F)));
             tb_putc(t, (char)(0x80 | (code & 0x3F)));
         }
@@ -314,14 +319,24 @@ static char *extract_pdf(const char *s, size_t len) {
     size_t i = 0;
     while (i < len) {
         if (!ci_match(s, len, i, "stream")) { i++; continue; }
+        /* The stream dictionary precedes the keyword. If it declares a /Filter
+         * (FlateDecode etc.) the body is compressed binary — never emit it as
+         * text (a "Tj"/"TJ" byte pair can occur by chance in compressed data). */
+        size_t look = (i > 512) ? i - 512 : 0;
+        int filtered = 0;
+        for (size_t p = look; p + 7 <= i; p++) {
+            if (ci_match(s, i, p, "/filter")) { filtered = 1; break; }
+        }
         i += 6;
         if (i < len && s[i] == '\r') i++;
         if (i < len && s[i] == '\n') i++;
         size_t send = i;
         while (send < len && !ci_match(s, len, send, "endstream")) send++;
 
-        /* Only parse streams that look like text content (contain text ops and
-           are not FlateDecode binary). Heuristic: must contain "Tj" or "TJ". */
+        if (filtered) { i = (send < len) ? send + 9 : len; continue; }
+
+        /* Only parse streams that look like text content. Heuristic: must
+           contain a "Tj" or "TJ" text-showing operator. */
         size_t seg_len = send - i;
         int has_text_op = 0;
         for (size_t p = i; p + 1 < send; p++) {

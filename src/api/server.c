@@ -708,7 +708,13 @@ int server_start(GV_Server *server) {
      * are mutually exclusive - we use thread pool for better resource control. */
     unsigned int flags = MHD_USE_INTERNAL_POLLING_THREAD;
 
-    /* HTTPS when a cert+key pair is configured (both required). */
+    /* HTTPS when a cert+key pair is configured (both required). Refuse to start
+     * on a half-configured pair rather than silently falling back to plaintext,
+     * which would transmit credentials in the clear against the operator's intent. */
+    if ((server->config.tls_cert_pem != NULL) != (server->config.tls_key_pem != NULL)) {
+        fprintf(stderr, "[GV_Server] Error: both tls_cert_pem and tls_key_pem are required for HTTPS\n");
+        return GV_SERVER_ERROR_START_FAILED;
+    }
     int use_tls = (server->config.tls_cert_pem != NULL && server->config.tls_key_pem != NULL);
     if (use_tls) {
         flags |= MHD_USE_TLS;

@@ -9,6 +9,10 @@
 #include <string.h>
 #include <pthread.h>
 
+/* Bound concurrently-open transactions so an unauthenticated flood of
+ * /txn/begin cannot exhaust memory or pin MVCC tombstones indefinitely. */
+#define TXN_REGISTRY_MAX 4096
+
 typedef struct {
     char      token[GV_TXN_TOKEN_SIZE];
     GV_DBTxn *txn;
@@ -69,6 +73,11 @@ static void remove_at_locked(GV_TxnRegistry *reg, size_t i) {
 int txn_registry_begin(GV_TxnRegistry *reg, GV_Database *db,
                        char *token_out, size_t token_size) {
     if (!reg || !db || !token_out || token_size < GV_TXN_TOKEN_SIZE) return -1;
+
+    pthread_mutex_lock(&reg->mutex);
+    int full = (reg->count >= TXN_REGISTRY_MAX);
+    pthread_mutex_unlock(&reg->mutex);
+    if (full) return -1;
 
     GV_DBTxn *txn = db_begin(db);
     if (!txn) return -1;

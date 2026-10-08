@@ -1371,7 +1371,13 @@ static int backup_tmp_path(char *buf, size_t n, const char *key) {
     if (!dir || !dir[0]) dir = "/tmp";
     uint32_t h = 2166136261u;
     for (const char *p = key; p && *p; p++) { h ^= (unsigned char)*p; h *= 16777619u; }
-    int w = snprintf(buf, n, "%s/gvbackup-%d-%08x.tmp", dir, (int)getpid(), h);
+    /* Unpredictable per-call suffix so the staging path cannot be pre-created as
+     * a symlink and so concurrent backups for the same key never collide. */
+    unsigned char rnd[8];
+    if (gv_secure_random_bytes(rnd, sizeof(rnd)) != 0) return -1;
+    char rhex[17];
+    for (int i = 0; i < 8; i++) snprintf(rhex + i * 2, 3, "%02x", rnd[i]);
+    int w = snprintf(buf, n, "%s/gvbackup-%d-%08x-%s.tmp", dir, (int)getpid(), h, rhex);
     return (w > 0 && (size_t)w < n) ? 0 : -1;
 }
 

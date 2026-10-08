@@ -31,9 +31,14 @@ struct GV_RaftLog {
     GV_RaftEntry *entries;    /* index k -> raft index k+1 */
     size_t        count;
     size_t        cap;
+    int           failed;     /* a durable write failed; reject further writes */
 };
 
 enum { REC_META = 0, REC_ENTRY = 1, REC_TRUNC = 2 };
+
+/* Reject an absurd entry length read from a (possibly corrupt) log file before
+ * allocating for it. */
+#define RAFT_LOG_MAX_ENTRY (64u * 1024u * 1024u)
 
 /* ---- little-endian helpers ---- */
 static int w_u64(FILE *f, uint64_t v) {
@@ -118,6 +123,11 @@ static void replay(GV_RaftLog *log, FILE *fp) {
         } else if (tag == REC_ENTRY) {
             uint64_t idx, term, len;
             if (r_u64(fp, &idx) != 0 || r_u64(fp, &term) != 0 || r_u64(fp, &len) != 0) break;
+            /* Entries are appended with monotonically increasing indices; a gap
+             * or an out-of-range length means the tail is corrupt — stop and
+             * keep the valid prefix. Bound len before malloc to resist a
+             * corrupt/hostile log driving a huge or overflowing allocation. */
+            if (idx != log->count + 1 || len > RAFT_LOG_MAX_ENTRY) break;
             void *buf = NULL;
             if (len) {
                 buf = malloc(len);
@@ -200,33 +210,46 @@ void raft_log_close(GV_RaftLog *log) {
     free(log);
 }
 
+/* Durability ordering: persist the record (write + fsync) BEFORE mutating the
+ * in-memory state, so a failed write never leaves memory and disk disagreeing.
+ * Any write failure latches `failed`, after which every write is rejected (the
+ * on-disk tail may be torn and must not be appended past). */
 int raft_log_set_meta(GV_RaftLog *log, uint64_t term, int voted_for) {
     if (!log) return -1;
+    if (log->failed) return -1;
+    if (fputc(REC_META, log->fp) == EOF || w_u64(log->fp, term) != 0 ||
+        w_i32(log->fp, voted_for) != 0 || sync_file(log->fp) != 0) {
+        log->failed = 1;
+        return -1;
+    }
     log->term = term;
     log->voted_for = voted_for;
-    if (fputc(REC_META, log->fp) == EOF || w_u64(log->fp, term) != 0 ||
-        w_i32(log->fp, voted_for) != 0)
-        return -1;
-    return sync_file(log->fp);
+    return 0;
 }
 
 int raft_log_append(GV_RaftLog *log, uint64_t index, uint64_t term,
                     const void *data, size_t len) {
     if (!log) return -1;
-    if (mem_append(log, term, data, len) != 0) return -1;
+    if (log->failed) return -1;
     if (fputc(REC_ENTRY, log->fp) == EOF || w_u64(log->fp, index) != 0 ||
         w_u64(log->fp, term) != 0 || w_u64(log->fp, len) != 0 ||
-        (len && fwrite(data, 1, len, log->fp) != len))
+        (len && fwrite(data, 1, len, log->fp) != len) || sync_file(log->fp) != 0) {
+        log->failed = 1;
         return -1;
-    return sync_file(log->fp);
+    }
+    return mem_append(log, term, data, len);
 }
 
 int raft_log_truncate(GV_RaftLog *log, uint64_t keep_upto) {
     if (!log) return -1;
-    mem_truncate(log, keep_upto);
-    if (fputc(REC_TRUNC, log->fp) == EOF || w_u64(log->fp, keep_upto) != 0)
+    if (log->failed) return -1;
+    if (fputc(REC_TRUNC, log->fp) == EOF || w_u64(log->fp, keep_upto) != 0 ||
+        sync_file(log->fp) != 0) {
+        log->failed = 1;
         return -1;
-    return sync_file(log->fp);
+    }
+    mem_truncate(log, keep_upto);
+    return 0;
 }
 
 uint64_t raft_log_term(const GV_RaftLog *log) { return log ? log->term : 0; }

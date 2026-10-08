@@ -20,6 +20,7 @@
 #define fsync(fd) _commit(fd)
 #else
 #include <unistd.h>
+#include <fcntl.h>
 #define gv_mkdir(p) mkdir((p), 0700)
 #endif
 
@@ -98,8 +99,22 @@ static int fs_put(void *ctx, const char *key, const void *data, size_t len) {
         int ok = (len == 0) || (fwrite(data, 1, len, f) == len);
         if (ok) ok = (fflush(f) == 0 && fsync(fileno(f)) == 0);
         fclose(f);
-        if (ok && rename(tmp, path) == 0) rc = 0;
-        else remove(tmp);
+        if (ok && rename(tmp, path) == 0) {
+            rc = 0;
+#ifndef _WIN32
+            /* fsync the containing directory so the rename itself survives a
+             * crash (the file bytes were fsync'd above, the link was not). */
+            char *slash = strrchr(path, '/');
+            if (slash) {
+                *slash = '\0';
+                int dfd = open(path[0] ? path : "/", O_RDONLY | O_DIRECTORY);
+                *slash = '/';
+                if (dfd >= 0) { fsync(dfd); close(dfd); }
+            }
+#endif
+        } else {
+            remove(tmp);
+        }
     }
     gv_free(tmp);
     gv_free(path);

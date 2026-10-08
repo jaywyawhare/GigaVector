@@ -584,9 +584,14 @@ int cluster_enable_raft(GV_Cluster *cluster, const char *const *addrs,
 
     /* Durable Raft log/vote when a data dir is configured (one file per node). */
     if (cluster->config.raft_data_dir) {
+        /* The log filename must be unique per node. Without a node_id, every
+         * node under the same raft_data_dir would open raft-node.log and corrupt
+         * each other's term/vote/log — so require it (and reject a truncated path). */
+        if (!cluster->config.node_id) { gv_free(peers); cluster_raft_shutdown(cluster); return -1; }
         char lp[4096];
-        snprintf(lp, sizeof(lp), "%s/raft-%s.log", cluster->config.raft_data_dir,
-                 cluster->config.node_id ? cluster->config.node_id : "node");
+        int w = snprintf(lp, sizeof(lp), "%s/raft-%s.log", cluster->config.raft_data_dir,
+                         cluster->config.node_id);
+        if (w < 0 || (size_t)w >= sizeof(lp)) { gv_free(peers); cluster_raft_shutdown(cluster); return -1; }
         cluster->raft_log = raft_log_open(lp);
         if (!cluster->raft_log) { gv_free(peers); cluster_raft_shutdown(cluster); return -1; }
     }
@@ -619,10 +624,13 @@ int cluster_enable_raft(GV_Cluster *cluster, const char *const *addrs,
      * vote, no lost entries). commit_index is volatile and re-advanced by the
      * leader, so restore it as 0. */
     if (cluster->raft_log) {
-        raft_restore(cluster->raft, raft_log_term(cluster->raft_log),
-                     raft_log_voted_for(cluster->raft_log), 0,
-                     raft_log_entries(cluster->raft_log),
-                     raft_log_count(cluster->raft_log));
+        if (raft_restore(cluster->raft, raft_log_term(cluster->raft_log),
+                         raft_log_voted_for(cluster->raft_log), 0,
+                         raft_log_entries(cluster->raft_log),
+                         raft_log_count(cluster->raft_log)) != 0) {
+            cluster_raft_shutdown(cluster);
+            return -1;
+        }
     }
 
     shard_rpc_set_raft_handler(cluster->rpc_server, cluster_raft_recv, cluster);

@@ -4,6 +4,7 @@
 #include "storage/db_internal.h"   /* db_estimate_vector_memory */
 #include "schema/vector.h"
 #include "core/memory.h"
+#include "core/log.h"
 
 #include <string.h>
 #include <pthread.h>
@@ -196,6 +197,20 @@ int db_commit(GV_DBTxn *t) {
         }
     }
 
+    /* Allocate the delete-index buffer BEFORE applying anything: if this fails
+     * we must abort before any in-memory change, otherwise deletes would be
+     * applied but omitted from the atomic TXN record and lost on replay. */
+    uint64_t *txn_dels = NULL;
+    if (t->del_n > 0) {
+        txn_dels = (uint64_t *)gv_alloc(t->del_n * sizeof(uint64_t));
+        if (!txn_dels) {
+            pthread_mutex_unlock(&db->txn_mutex);
+            t->state = GV_TXN_ABORTED;
+            txn_free(t);
+            return -1;
+        }
+    }
+
     uint64_t cv = __atomic_add_fetch(&db->commit_version, 1, __ATOMIC_SEQ_CST);
 
     /* Apply staged inserts to the index ONLY: db_set_wal_suppress stops
@@ -211,6 +226,7 @@ int db_commit(GV_DBTxn *t) {
     db_set_wal_suppress(0);
     db_set_commit_stamp(0);
     if (!apply_ok) {
+        gv_free(txn_dels);
         pthread_mutex_unlock(&db->txn_mutex);
         t->state = GV_TXN_ABORTED;
         txn_free(t);
@@ -220,7 +236,6 @@ int db_commit(GV_DBTxn *t) {
     /* Apply staged deletes as MVCC tombstones (older snapshots still see them),
      * collecting the indices we actually tombstoned so they go into the atomic
      * TXN record. No per-delete WAL record is written here. */
-    uint64_t *txn_dels = (t->del_n > 0) ? (uint64_t *)gv_alloc(t->del_n * sizeof(uint64_t)) : NULL;
     size_t txn_del_n = 0;
     pthread_rwlock_wrlock(&db->rwlock);
     for (size_t i = 0; i < t->del_n; i++) {
@@ -239,8 +254,9 @@ int db_commit(GV_DBTxn *t) {
         pthread_mutex_lock(&db->wal_mutex);
         if (wal_append_txn(db->wal, (const float *const *)t->ins_data, t->dimension,
                            t->ins_n, txn_dels, txn_del_n) != 0) {
-            /* Durability failure: the in-memory commit stands but is not logged.
-             * Mirror db_add_vector's non-fatal WAL-error semantics. */
+            /* Durability failure: the in-memory commit stands but is not logged
+             * (mirrors db_add_vector's non-fatal WAL-error semantics). Surface it. */
+            GV_LOG_ERROR("db_commit: wal_append_txn failed - transaction not durable");
         }
         pthread_mutex_unlock(&db->wal_mutex);
     }

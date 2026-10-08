@@ -453,8 +453,9 @@ int wal_append_insert_deferred(GV_WAL *wal, const float *data, size_t dimension,
 }
 
 int wal_fsync_deferred(GV_WAL *wal) {
-    if (wal == NULL || wal->file == NULL) return -1;
-    /* SHARED with other deferred fsyncs; EXCLUDED against wal_truncate's reopen. */
+    if (wal == NULL) return -1;
+    /* SHARED with other deferred fsyncs; EXCLUDED against wal_truncate's reopen.
+     * wal->file is only read INSIDE the lock, since truncate reassigns it. */
     pthread_rwlock_rdlock(&wal->sync_lock);
     int rc = (wal->file != NULL && fsync(fileno(wal->file)) == 0) ? 0 : -1;
     pthread_rwlock_unlock(&wal->sync_lock);

@@ -160,6 +160,7 @@ int gv_ingest_document(GV_Database *db, GV_KnowledgeGraph *kg, GV_MemoryLayer *m
 int gv_ingest_document_bytes(GV_Database *db, GV_KnowledgeGraph *kg, GV_MemoryLayer *mem,
                              int fmt, const void *data, size_t len, const char *doc_id,
                              const GV_IngestConfig *cfg, GV_IngestStats *out) {
+    if (out) memset(out, 0, sizeof(*out));   /* zero stats even on the early returns below */
     if (!data) return -1;
 
     char *text = gv_document_extract_text((GV_DocFormat)fmt, data, len);
