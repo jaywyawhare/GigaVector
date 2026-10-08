@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
+#include <time.h>
 
 /* Include the specific storage headers (not gigavector.h): the umbrella header
  * pulls in specialized/mvcc.h, whose GV_TXN_* enum collides with the identical
@@ -131,11 +132,70 @@ static int test_concurrent_durability(void) {
     return 0;
 }
 
+/* ---- checkpoints racing deferred-fsync inserts ----
+ * Inserts defer their WAL fsync until after the write lock is dropped; a
+ * concurrent checkpoint (db_save + WAL truncate) must coordinate with those
+ * in-flight fsyncs without losing any acked write. */
+static int g_ckpt_stop = 0;
+
+static void *checkpoint_thread(void *p) {
+    Arg *a = (Arg *)p;
+    a->ok = 0;
+    while (!__atomic_load_n(&g_ckpt_stop, __ATOMIC_SEQ_CST)) {
+        int rc = db_wal_checkpoint(a->db);   /* db_save + WAL truncate */
+        if (rc != 0) { a->ok = -1; return NULL; }
+        struct timespec ts = {0, 2 * 1000 * 1000}; /* 2ms */
+        nanosleep(&ts, NULL);
+    }
+    return NULL;
+}
+
+static int test_checkpoint_races_writes(void) {
+    char db_path[256], wal_path[512];
+    ASSERT(gv_test_make_temp_path(db_path, sizeof(db_path), "gv_ckpt_race", ".bin") == 0, "db path");
+    snprintf(wal_path, sizeof(wal_path), "%s.wal", db_path);
+    remove(db_path); remove(wal_path);
+
+    GV_Database *db = db_open(db_path, DIM, GV_INDEX_TYPE_FLAT);
+    ASSERT(db != NULL, "open db");
+    ASSERT(db_set_wal(db, wal_path) == 0, "enable wal");
+
+    __atomic_store_n(&g_ckpt_stop, 0, __ATOMIC_SEQ_CST);
+    pthread_t pt[N_PLAIN_THREADS], ck;
+    Arg pa[N_PLAIN_THREADS], ca;
+    for (int i = 0; i < N_PLAIN_THREADS; i++) { pa[i].db = db; pa[i].tid = i; pthread_create(&pt[i], NULL, plain_writer, &pa[i]); }
+    ca.db = db; ca.tid = -1; pthread_create(&ck, NULL, checkpoint_thread, &ca);
+
+    for (int i = 0; i < N_PLAIN_THREADS; i++) pthread_join(pt[i], NULL);
+    __atomic_store_n(&g_ckpt_stop, 1, __ATOMIC_SEQ_CST);
+    pthread_join(ck, NULL);
+
+    for (int i = 0; i < N_PLAIN_THREADS; i++) ASSERT(pa[i].ok == 0, "writer ok under concurrent checkpoints");
+    ASSERT(ca.ok == 0, "checkpoint thread ok");
+
+    size_t expected = (size_t)N_PLAIN_THREADS * PLAIN_PER_THREAD;
+    ASSERT(database_count(db) == expected, "all inserts present with checkpoints racing");
+
+    /* Every acked insert must survive recovery: snapshot (from a checkpoint) +
+     * replay of the residual WAL must reconstruct the full set. */
+    db_close(db);
+    GV_Database *db2 = db_open(db_path, DIM, GV_INDEX_TYPE_FLAT);
+    ASSERT(db2 != NULL, "reopen db");
+    ASSERT(database_count(db2) == expected, "no acked write lost across checkpoint+recovery");
+    db_close(db2);
+    remove(db_path); remove(wal_path);
+    return 0;
+}
+
 int main(void) {
     if (test_concurrent_durability() != 0) {
         printf("\nCONCURRENCY/DURABILITY TEST FAILED\n");
         return 1;
     }
-    printf("\nCONCURRENCY/DURABILITY TEST PASSED\n");
+    if (test_checkpoint_races_writes() != 0) {
+        printf("\nCHECKPOINT-RACE TEST FAILED\n");
+        return 1;
+    }
+    printf("\nCONCURRENCY/DURABILITY TESTS PASSED\n");
     return 0;
 }

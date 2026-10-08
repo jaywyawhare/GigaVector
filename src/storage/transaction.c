@@ -28,7 +28,7 @@ GV_DBTxn *db_begin(GV_Database *db) {
      * and register this snapshot's read_version so GC never reclaims a version
      * still visible to us. */
     pthread_mutex_lock(&db->txn_mutex);
-    t->read_version = db->commit_version;
+    t->read_version = __atomic_load_n(&db->commit_version, __ATOMIC_SEQ_CST);
     if (db->txn_active_count == db->txn_active_cap) {
         size_t nc = db->txn_active_cap ? db->txn_active_cap * 2 : 8;
         uint64_t *na = (uint64_t *)gv_realloc(db->txn_active_versions, nc * sizeof(uint64_t));
@@ -196,7 +196,7 @@ int db_commit(GV_DBTxn *t) {
         }
     }
 
-    uint64_t cv = ++db->commit_version;
+    uint64_t cv = __atomic_add_fetch(&db->commit_version, 1, __ATOMIC_SEQ_CST);
 
     /* Apply staged inserts to the index ONLY: db_set_wal_suppress stops
      * db_add_vector from writing its own per-insert WAL record, so the entire
@@ -277,7 +277,7 @@ size_t db_txn_gc_auto(GV_Database *db) {
      * snapshot holds (so tombstones deleted at <= that version are invisible to
      * all of them), or commit_version+1 when no transaction is active. */
     pthread_mutex_lock(&db->txn_mutex);
-    uint64_t cv = db->commit_version;
+    uint64_t cv = __atomic_load_n(&db->commit_version, __ATOMIC_SEQ_CST);
     uint64_t min = 0; int have = 0;
     for (size_t i = 0; i < db->txn_active_count; i++) {
         uint64_t v = db->txn_active_versions[i];

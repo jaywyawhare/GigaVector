@@ -15,6 +15,7 @@
 #include "core/scope.h"
 #include "core/utils.h"
 #include "core/compat.h"   /* ftruncate (Windows _chsize_s shim) */
+#include <pthread.h>
 
 #define GV_WAL_MAGIC "GVW1"
 #define GV_WAL_VERSION 3u
@@ -36,6 +37,11 @@ struct GV_WAL {
     uint32_t version;
     size_t sync_interval;   /* fsync every N appended records (1 = every record) */
     size_t since_sync;      /* records appended since the last fsync */
+    /* Coordinates a deferred fsync (held SHARED) against wal_truncate's
+     * fclose/reopen of `file` (held EXCLUSIVE), so a fsync that runs after its
+     * writer released the DB write lock can never touch a file pointer that a
+     * concurrent checkpoint is swapping out. */
+    pthread_rwlock_t sync_lock;
 };
 
 
@@ -373,11 +379,22 @@ GV_WAL *wal_open(const char *path, size_t dimension, uint32_t index_type) {
         gv_free(wal);
         return NULL;
     }
+    if (pthread_rwlock_init(&wal->sync_lock, NULL) != 0) {
+        fclose(f);
+        gv_free(wal->path);
+        gv_free(wal);
+        return NULL;
+    }
     return wal;
 }
 
-int wal_append_insert(GV_WAL *wal, const float *data, size_t dimension,
-                         const char *metadata_key, const char *metadata_value) {
+/* Shared body for the plain single-metadata insert record. When @p defer is
+ * non-zero the record is written and fflush'd to the OS but NOT fsync'd — the
+ * caller is responsible for a later wal_fsync_deferred() once it has dropped the
+ * DB write lock (so the fsync no longer blocks concurrent readers). */
+static int wal_append_insert_impl(GV_WAL *wal, const float *data, size_t dimension,
+                                  const char *metadata_key, const char *metadata_value,
+                                  int defer) {
     if (wal == NULL || wal->file == NULL || data == NULL || dimension == 0) {
         return -1;
     }
@@ -414,10 +431,34 @@ int wal_append_insert(GV_WAL *wal, const float *data, size_t dimension,
         if (write_u32(wal->file, crc) != 0) return -1;
     }
 
+    if (defer) {
+        /* Push bytes to the OS (ordered under the caller's write lock) but defer
+         * the durability barrier; wal_fsync_deferred() completes it off-lock. */
+        return (fflush(wal->file) != 0) ? -1 : 0;
+    }
     if (wal_maybe_sync(wal) != 0) {
         return -1;
     }
     return 0;
+}
+
+int wal_append_insert(GV_WAL *wal, const float *data, size_t dimension,
+                         const char *metadata_key, const char *metadata_value) {
+    return wal_append_insert_impl(wal, data, dimension, metadata_key, metadata_value, 0);
+}
+
+int wal_append_insert_deferred(GV_WAL *wal, const float *data, size_t dimension,
+                                   const char *metadata_key, const char *metadata_value) {
+    return wal_append_insert_impl(wal, data, dimension, metadata_key, metadata_value, 1);
+}
+
+int wal_fsync_deferred(GV_WAL *wal) {
+    if (wal == NULL || wal->file == NULL) return -1;
+    /* SHARED with other deferred fsyncs; EXCLUDED against wal_truncate's reopen. */
+    pthread_rwlock_rdlock(&wal->sync_lock);
+    int rc = (wal->file != NULL && fsync(fileno(wal->file)) == 0) ? 0 : -1;
+    pthread_rwlock_unlock(&wal->sync_lock);
+    return rc;
 }
 
 int wal_append_insert_rich(GV_WAL *wal, const float *data, size_t dimension,
@@ -1357,6 +1398,7 @@ void wal_close(GV_WAL *wal) {
         wal_sync(wal->file);
         fclose(wal->file);
     }
+    pthread_rwlock_destroy(&wal->sync_lock);
     gv_free(wal->path);
     gv_free(wal);
 }
@@ -1373,11 +1415,9 @@ int wal_reset(const char *path) {
     return 0;
 }
 
-int wal_truncate(GV_WAL *wal) {
-    if (wal == NULL || wal->path == NULL) {
-        return -1;
-    }
-
+/* Reopen the WAL file as an empty, header-only log. MUST be called with
+ * wal->sync_lock held EXCLUSIVE so no deferred fsync observes the swap. */
+static int wal_truncate_locked(GV_WAL *wal) {
     if (wal->file != NULL) {
         wal_sync(wal->file);
         fclose(wal->file);
@@ -1414,8 +1454,18 @@ int wal_truncate(GV_WAL *wal) {
     }
 
     (void)fseek(wal->file, 0, SEEK_END);
-
     return 0;
+}
+
+int wal_truncate(GV_WAL *wal) {
+    if (wal == NULL || wal->path == NULL) {
+        return -1;
+    }
+    /* Exclude in-flight deferred fsyncs while we fclose/reopen wal->file. */
+    pthread_rwlock_wrlock(&wal->sync_lock);
+    int rc = wal_truncate_locked(wal);
+    pthread_rwlock_unlock(&wal->sync_lock);
+    return rc;
 }
 
 uint64_t wal_size(const GV_WAL *wal) {

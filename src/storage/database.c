@@ -141,7 +141,7 @@ static void db_init_common_fields(GV_Database *db) {
     db->resource_limits.max_concurrent_operations = 0;  /* Unlimited by default */
     db->current_memory_bytes = 0;
     db->current_concurrent_ops = 0;
-    db->commit_version = 0;
+    __atomic_store_n(&db->commit_version, 0, __ATOMIC_SEQ_CST);
     pthread_mutex_init(&db->resource_mutex, NULL);
     pthread_mutex_init(&db->txn_mutex, NULL);
     memset(&db->insert_latency_hist, 0, sizeof(GV_LatencyHistogram));

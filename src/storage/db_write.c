@@ -297,15 +297,22 @@ int db_add_vector(GV_Database *db, const float *data, size_t dimension) {
         return -1;
     }
 
-    /* Append-after-apply: the in-memory insert succeeded, so now durably
-     * record it in the WAL. Doing this under the held write lock guarantees
-     * the WAL order matches the in-memory (positional) order, and that no
-     * phantom insert is ever durably recorded for an apply that failed. */
+    /* Append-after-apply: the in-memory insert succeeded, so now record it in
+     * the WAL. The record bytes are written+fflush'd UNDER the write lock (so
+     * WAL order matches the in-memory positional order, and no phantom insert is
+     * recorded for a failed apply), but the fsync durability barrier is DEFERRED
+     * until after the write lock is released — so a slow fsync no longer stalls
+     * concurrent readers. wal_fsync_deferred() is serialized against WAL
+     * truncation, and an un-fsync'd record that a checkpoint truncates is still
+     * durable via the snapshot (the checkpoint ran under the rwlock after this
+     * insert was applied). */
+    GV_WAL *deferred_wal = NULL;
     if (db->wal != NULL && db->wal_replaying == 0 && !g_txn_wal_suppress) {
         pthread_mutex_lock(&db->wal_mutex);
-        int wal_res = wal_append_insert(db->wal, data, dimension, NULL, NULL);
+        int wal_res = wal_append_insert_deferred(db->wal, data, dimension, NULL, NULL);
         if (wal_res == 0) {
             db->total_wal_records += 1;
+            deferred_wal = db->wal;
         }
         pthread_mutex_unlock(&db->wal_mutex);
         if (wal_res != 0) {
@@ -333,6 +340,15 @@ int db_add_vector(GV_Database *db, const float *data, size_t dimension) {
     }
     size_t emit_index = db->count - 1;
     pthread_rwlock_unlock(&db->rwlock);
+
+    /* Durability barrier OUTSIDE the write lock: concurrent readers are not
+     * blocked during the fsync. Non-fatal on failure (bytes are already written
+     * and fflush'd; this forces them to stable storage). */
+    if (deferred_wal != NULL) {
+        if (wal_fsync_deferred(deferred_wal) != 0) {
+            GV_LOG_ERROR("db_add_vector: deferred WAL fsync failed - insert may not be durable");
+        }
+    }
 
     db_emit_change(db, GV_CDC_INSERT, GV_EVENT_INSERT, emit_index, data, dimension);
 

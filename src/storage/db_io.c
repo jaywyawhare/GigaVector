@@ -305,7 +305,7 @@ int db_save(const GV_Database *db, const char *filepath) {
      * so they persist across every index's save format. Checkpoint semantics: a
      * reloaded database has no older snapshots to serve, so the tombstone becomes
      * a permanent delete. (No-op unless transactions have run.) */
-    if (db->commit_version != 0 && db->soa_storage != NULL) {
+    if (__atomic_load_n(&db->commit_version, __ATOMIC_SEQ_CST) != 0 && db->soa_storage != NULL) {
         GV_Database *mdb = (GV_Database *)db;
         /* Snapshot the tombstoned indices UNDER the read lock so the scan doesn't
          * race a concurrent db_add_vector resizing delete_version[]/deleted[].

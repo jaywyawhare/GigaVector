@@ -93,6 +93,25 @@ int wal_append_ivfdisk_append(GV_WAL *wal, uint64_t head_id, uint64_t vector_id,
                               const float *data, size_t dimension);
 
 /**
+ * @brief Append a plain insert record WITHOUT the fsync durability barrier.
+ *
+ * Writes and fflush'es the record (so bytes reach the OS in order under the
+ * caller's lock) but does not fsync. The caller MUST invoke wal_fsync_deferred()
+ * afterwards — ideally after dropping the DB write lock, so the fsync does not
+ * stall concurrent readers. Same return contract as wal_append_insert.
+ */
+int wal_append_insert_deferred(GV_WAL *wal, const float *data, size_t dimension,
+                                   const char *metadata_key, const char *metadata_value);
+
+/**
+ * @brief Complete a deferred append by fsync'ing the WAL to disk.
+ *
+ * Safe to call off the DB write lock; it is serialized against wal_truncate so a
+ * concurrent checkpoint cannot swap the file out mid-fsync. Returns 0 on success.
+ */
+int wal_fsync_deferred(GV_WAL *wal);
+
+/**
  * @brief Append a whole transaction as ONE atomic record.
  *
  * Writes @p n_inserts dense vectors (each of @p dimension floats, no metadata)
