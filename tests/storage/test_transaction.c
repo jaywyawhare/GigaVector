@@ -4,6 +4,7 @@
 #include <string.h>
 #include "storage/database.h"
 #include "storage/transaction.h"
+#include "../test_tmp.h"
 
 static int failures = 0;
 #define ASSERT(c, m) do { if (!(c)) { printf("FAIL: %s\n", (m)); failures++; } \
@@ -146,6 +147,34 @@ int main(void) {
         ASSERT(reclaimed == 1, "tombstone reclaimed once no snapshot can see it");
 
         db_close(g);
+    }
+
+    /* ---- crash-atomic commit survives reopen via single-record WAL replay ---- */
+    {
+        char dbp[256], walp[512];
+        if (gv_test_make_temp_path(dbp, sizeof(dbp), "gv_txn_wal_db", ".bin") == 0) {
+            snprintf(walp, sizeof(walp), "%s.wal", dbp);
+            remove(dbp); remove(walp);
+
+            GV_Database *fdb = db_open(dbp, D, GV_INDEX_TYPE_FLAT);
+            ASSERT(fdb != NULL, "open file-backed db");
+            ASSERT(db_set_wal(fdb, walp) == 0, "enable wal");
+            { int _r = db_add_vector(fdb, v0, D); (void)_r; }   /* base vector -> WAL INSERT */
+            GV_DBTxn *tx = db_begin(fdb);
+            ASSERT(db_txn_add_vector(tx, v1, D) == 0, "stage t1");
+            ASSERT(db_txn_add_vector(tx, v2, D) == 0, "stage t2");
+            ASSERT(db_commit(tx) == GV_TXN_OK, "commit (one atomic WAL txn record)");
+            db_close(fdb);   /* no db_save -> recovery MUST replay the WAL */
+
+            GV_Database *rdb = db_open(dbp, D, GV_INDEX_TYPE_FLAT);
+            ASSERT(rdb != NULL, "reopen db (replays WAL)");
+            GV_SearchResult rr[8];
+            int rn = db_search(rdb, v1, 8, rr, GV_DISTANCE_EUCLIDEAN);
+            ASSERT(rn == 3, "base + 2 committed inserts recovered from the atomic txn record");
+            freeres(rr, rn);
+            db_close(rdb);
+            remove(dbp); remove(walp);
+        }
     }
 
     printf(failures ? "\nSOME TESTS FAILED (%d)\n" : "\nALL TRANSACTION TESTS PASSED\n", failures);

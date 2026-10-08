@@ -93,6 +93,20 @@ int wal_append_ivfdisk_append(GV_WAL *wal, uint64_t head_id, uint64_t vector_id,
                               const float *data, size_t dimension);
 
 /**
+ * @brief Append a whole transaction as ONE atomic record.
+ *
+ * Writes @p n_inserts dense vectors (each of @p dimension floats, no metadata)
+ * and @p n_deletes committed-vector indices under a single trailing CRC. On
+ * replay the record is applied all-or-nothing: a torn or CRC-mismatched record
+ * at the tail is discarded in full, so a crash mid-commit never leaves a
+ * partially-applied transaction.
+ *
+ * @return 0 on success, -1 on error.
+ */
+int wal_append_txn(GV_WAL *wal, const float *const *inserts, size_t dimension,
+                   size_t n_inserts, const uint64_t *delete_indices, size_t n_deletes);
+
+/**
  * @brief Replay a WAL file by invoking a callback for every insert record.
  *
  * The callback is responsible for applying the operation to the in-memory

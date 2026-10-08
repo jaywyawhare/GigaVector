@@ -1043,6 +1043,11 @@ int db_value_store_gc(GV_Database *db);
  * stamp applied by the next db_add_vector call(s) on this thread. 0 clears it. */
 void db_set_commit_stamp(uint64_t stamp);
 
+/* Internal (transaction commit path): when set non-zero on this thread,
+ * db_add_vector applies to the index but suppresses its own per-insert WAL
+ * record so the commit can write a single atomic TXN record instead. 0 clears. */
+void db_set_wal_suppress(int on);
+
 /**
  * @brief Internal: compact SoA storage in place, removing deleted vectors and
  *        rebuilding all dependent structures (primary index and metadata_index)

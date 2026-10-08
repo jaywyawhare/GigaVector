@@ -198,16 +198,17 @@ int db_commit(GV_DBTxn *t) {
 
     uint64_t cv = ++db->commit_version;
 
-    /* Apply staged inserts. db_add_vector stamps each inserted slot with `cv`
-     * atomically under its own write lock via the thread-local commit stamp, so
-     * the right slot is tagged even if a non-transactional insert interleaves.
-     * If any insert fails the commit is aborted (best-effort: earlier inserts of
-     * this transaction may remain — a hard failure is reported, not GV_TXN_OK). */
+    /* Apply staged inserts to the index ONLY: db_set_wal_suppress stops
+     * db_add_vector from writing its own per-insert WAL record, so the entire
+     * transaction is logged as a single atomic TXN record below (crash-atomic).
+     * db_add_vector still stamps each slot's MVCC create_version with `cv`. */
     db_set_commit_stamp(cv);
+    db_set_wal_suppress(1);
     int apply_ok = 1;
     for (size_t i = 0; i < t->ins_n; i++) {
         if (db_add_vector(db, t->ins_data[i], t->dimension) != 0) { apply_ok = 0; break; }
     }
+    db_set_wal_suppress(0);
     db_set_commit_stamp(0);
     if (!apply_ok) {
         pthread_mutex_unlock(&db->txn_mutex);
@@ -216,23 +217,34 @@ int db_commit(GV_DBTxn *t) {
         return -1;
     }
 
-    /* Apply staged deletes as MVCC tombstones (older snapshots still see them).
-     * Also WAL-log each as a delete so a crash before the next snapshot replays it:
-     * post-recovery there are no older snapshots, so a hard delete is the correct
-     * materialisation of the tombstone. */
+    /* Apply staged deletes as MVCC tombstones (older snapshots still see them),
+     * collecting the indices we actually tombstoned so they go into the atomic
+     * TXN record. No per-delete WAL record is written here. */
+    uint64_t *txn_dels = (t->del_n > 0) ? (uint64_t *)gv_alloc(t->del_n * sizeof(uint64_t)) : NULL;
+    size_t txn_del_n = 0;
     pthread_rwlock_wrlock(&db->rwlock);
     for (size_t i = 0; i < t->del_n; i++) {
         uint64_t dv = soa_storage_delete_version(db->soa_storage, t->del_idx[i]);
         if (dv == 0) {
             soa_storage_set_delete_version(db->soa_storage, t->del_idx[i], cv);
-            if (db->wal) {
-                pthread_mutex_lock(&db->wal_mutex);
-                wal_append_delete(db->wal, t->del_idx[i]);
-                pthread_mutex_unlock(&db->wal_mutex);
-            }
+            if (txn_dels) txn_dels[txn_del_n++] = (uint64_t)t->del_idx[i];
         }
     }
     pthread_rwlock_unlock(&db->rwlock);
+
+    /* One atomic WAL record for the whole transaction. A crash before this fsync
+     * loses the entire transaction (none replayed); a crash after replays it in
+     * full — crash-atomic. In-memory databases (no WAL) skip logging. */
+    if (db->wal != NULL) {
+        pthread_mutex_lock(&db->wal_mutex);
+        if (wal_append_txn(db->wal, (const float *const *)t->ins_data, t->dimension,
+                           t->ins_n, txn_dels, txn_del_n) != 0) {
+            /* Durability failure: the in-memory commit stands but is not logged.
+             * Mirror db_add_vector's non-fatal WAL-error semantics. */
+        }
+        pthread_mutex_unlock(&db->wal_mutex);
+    }
+    gv_free(txn_dels);
 
     pthread_mutex_unlock(&db->txn_mutex);
     t->state = GV_TXN_COMMITTED;

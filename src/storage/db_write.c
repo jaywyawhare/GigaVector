@@ -57,6 +57,12 @@
 static _Thread_local uint64_t g_txn_commit_stamp = 0;
 void db_set_commit_stamp(uint64_t stamp) { g_txn_commit_stamp = stamp; }
 
+/* When set on a thread, db_add_vector applies to the index but does NOT write
+ * its own per-insert WAL record — the transaction commit path writes one atomic
+ * TXN record for the whole batch instead. See transaction.c:db_commit. */
+static _Thread_local int g_txn_wal_suppress = 0;
+void db_set_wal_suppress(int on) { g_txn_wal_suppress = on; }
+
 int db_add_vector(GV_Database *db, const float *data, size_t dimension) {
     if (db == NULL || data == NULL || dimension == 0 || dimension != db->dimension) {
         return -1;
@@ -206,7 +212,7 @@ int db_add_vector(GV_Database *db, const float *data, size_t dimension) {
             size_t nh = 0;
             status = ivfdisk_insert_routed((GV_IVFDiskIndex *)db->hnsw_index, stored,
                                            dimension, vector_index, heads, &nh, 2);
-            if (status == 0 && db->wal != NULL) {
+            if (status == 0 && db->wal != NULL && !g_txn_wal_suppress) {
                 pthread_mutex_lock(&db->wal_mutex);
                 for (size_t hi = 0; hi < nh; ++hi) {
                     if (wal_append_ivfdisk_append(db->wal, heads[hi], (uint64_t)vector_index,
@@ -295,7 +301,7 @@ int db_add_vector(GV_Database *db, const float *data, size_t dimension) {
      * record it in the WAL. Doing this under the held write lock guarantees
      * the WAL order matches the in-memory (positional) order, and that no
      * phantom insert is ever durably recorded for an apply that failed. */
-    if (db->wal != NULL && db->wal_replaying == 0) {
+    if (db->wal != NULL && db->wal_replaying == 0 && !g_txn_wal_suppress) {
         pthread_mutex_lock(&db->wal_mutex);
         int wal_res = wal_append_insert(db->wal, data, dimension, NULL, NULL);
         if (wal_res == 0) {
@@ -871,7 +877,7 @@ int db_add_vector_with_rich_metadata(GV_Database *db, const float *data, size_t 
             size_t nh = 0;
             status = ivfdisk_insert_routed((GV_IVFDiskIndex *)db->hnsw_index, stored,
                                            dimension, vector_index, heads, &nh, 2);
-            if (status == 0 && db->wal != NULL) {
+            if (status == 0 && db->wal != NULL && !g_txn_wal_suppress) {
                 pthread_mutex_lock(&db->wal_mutex);
                 for (size_t hi = 0; hi < nh; ++hi) {
                     if (wal_append_ivfdisk_append(db->wal, heads[hi], (uint64_t)vector_index,
