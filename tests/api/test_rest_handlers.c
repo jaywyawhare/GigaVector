@@ -10,6 +10,7 @@
 #include "storage/database.h"
 #include "api/server.h"
 #include "api/rest_handlers.h"
+#include "api/txn_registry.h"
 #include "features/json.h"
 #include "../test_tmp.h"
 
@@ -33,6 +34,7 @@ static int init_test_db_path(void) {
 static GV_HandlerContext create_test_ctx(GV_Database *db, GV_ServerConfig *scfg) {
     server_config_init(scfg);
     GV_HandlerContext ctx;
+    memset(&ctx, 0, sizeof(ctx));   /* kg/graph/txn_registry default to NULL */
     ctx.db = db;
     ctx.config = scfg;
     return ctx;
@@ -459,6 +461,109 @@ static int test_read_only_mode(void) {
     return 0;
 }
 
+/* Extract the 32-hex txn_id value from a {"txn_id":"..."} JSON body. */
+static int extract_txn_id(const char *body, char *out, size_t out_sz) {
+    const char *p = strstr(body, "\"txn_id\"");
+    if (!p) return -1;
+    p = strchr(p, ':');
+    if (!p) return -1;
+    p = strchr(p, '"');
+    if (!p) return -1;
+    p++;                                  /* first char of value */
+    const char *e = strchr(p, '"');
+    if (!e || (size_t)(e - p) >= out_sz) return -1;
+    memcpy(out, p, (size_t)(e - p));
+    out[e - p] = '\0';
+    return 0;
+}
+
+static int test_txn_endpoints(void) {
+    gv_test_remove_db(TEST_DB);
+    GV_Database *db = db_open(TEST_DB, TEST_DIM, GV_INDEX_TYPE_FLAT);
+    ASSERT(db != NULL, "database creation");
+
+    GV_ServerConfig scfg;
+    GV_HandlerContext ctx = create_test_ctx(db, &scfg);
+    GV_TxnRegistry *reg = txn_registry_create();
+    ASSERT(reg != NULL, "create registry");
+    ctx.txn_registry = reg;
+
+    /* BEGIN -> 200 + txn_id */
+    GV_HttpRequest begin_req = {
+        .method = GV_HTTP_POST, .url = "/txn/begin", .query_string = NULL,
+        .body = NULL, .body_length = 0, .content_type = NULL, .authorization = NULL
+    };
+    GV_HttpResponse *br = rest_route(&ctx, &begin_req);
+    ASSERT(br != NULL && br->status == GV_HTTP_200_OK, "begin -> 200");
+    char tid[64] = {0};
+    ASSERT(extract_txn_id(br->body, tid, sizeof(tid)) == 0 && strlen(tid) == 32, "begin returns a txn_id");
+    rest_response_free(br);
+    ASSERT(txn_registry_count(reg) == 1, "one open txn after begin");
+
+    /* COMMIT with that id -> 200 */
+    char cbody[128];
+    snprintf(cbody, sizeof(cbody), "{\"txn_id\":\"%s\"}", tid);
+    GV_HttpRequest commit_req = {
+        .method = GV_HTTP_POST, .url = "/txn/commit", .query_string = NULL,
+        .body = cbody, .body_length = strlen(cbody),
+        .content_type = "application/json", .authorization = NULL
+    };
+    GV_HttpResponse *cr = rest_route(&ctx, &commit_req);
+    ASSERT(cr != NULL && cr->status == GV_HTTP_200_OK, "commit -> 200");
+    ASSERT(strstr(cr->body, "committed") != NULL, "commit body says committed");
+    rest_response_free(cr);
+    ASSERT(txn_registry_count(reg) == 0, "no open txns after commit");
+
+    /* COMMIT unknown id -> 404 */
+    const char *unknown = "{\"txn_id\":\"00000000000000000000000000000000\"}";
+    GV_HttpRequest unk_req = {
+        .method = GV_HTTP_POST, .url = "/txn/commit", .query_string = NULL,
+        .body = unknown, .body_length = strlen(unknown),
+        .content_type = "application/json", .authorization = NULL
+    };
+    GV_HttpResponse *ur = rest_route(&ctx, &unk_req);
+    ASSERT(ur != NULL && ur->status == GV_HTTP_404_NOT_FOUND, "commit unknown -> 404");
+    rest_response_free(ur);
+
+    /* COMMIT with no body -> 400 */
+    GV_HttpRequest nobody = {
+        .method = GV_HTTP_POST, .url = "/txn/commit", .query_string = NULL,
+        .body = NULL, .body_length = 0, .content_type = NULL, .authorization = NULL
+    };
+    GV_HttpResponse *nr = rest_route(&ctx, &nobody);
+    ASSERT(nr != NULL && nr->status == GV_HTTP_400_BAD_REQUEST, "commit without txn_id -> 400");
+    rest_response_free(nr);
+
+    /* ROLLBACK a fresh txn -> 200 */
+    GV_HttpResponse *br2 = rest_route(&ctx, &begin_req);
+    char tid2[64] = {0};
+    ASSERT(extract_txn_id(br2->body, tid2, sizeof(tid2)) == 0, "second begin txn_id");
+    rest_response_free(br2);
+    char rbody[128];
+    snprintf(rbody, sizeof(rbody), "{\"txn_id\":\"%s\"}", tid2);
+    GV_HttpRequest rb_req = {
+        .method = GV_HTTP_POST, .url = "/txn/rollback", .query_string = NULL,
+        .body = rbody, .body_length = strlen(rbody),
+        .content_type = "application/json", .authorization = NULL
+    };
+    GV_HttpResponse *rbr = rest_route(&ctx, &rb_req);
+    ASSERT(rbr != NULL && rbr->status == GV_HTTP_200_OK, "rollback -> 200");
+    rest_response_free(rbr);
+    ASSERT(txn_registry_count(reg) == 0, "no open txns after rollback");
+
+    /* With no registry wired, txn endpoints report 503. */
+    GV_HandlerContext ctx_no = create_test_ctx(db, &scfg);  /* txn_registry defaults to NULL */
+    ctx_no.txn_registry = NULL;
+    GV_HttpResponse *sr = rest_route(&ctx_no, &begin_req);
+    ASSERT(sr != NULL && sr->status == GV_HTTP_503_SERVICE_UNAVAILABLE, "no registry -> 503");
+    rest_response_free(sr);
+
+    txn_registry_destroy(reg);
+    db_close(db);
+    gv_test_remove_db(TEST_DB);
+    return 0;
+}
+
 static int test_route_not_found(void) {
     gv_test_remove_db(TEST_DB);
     GV_Database *db = db_open(TEST_DB, TEST_DIM, GV_INDEX_TYPE_FLAT);
@@ -544,6 +649,7 @@ int main(void) {
         {"test_route_get_metrics",         test_route_get_metrics},
         {"test_request_is_mutation",       test_request_is_mutation},
         {"test_read_only_mode",            test_read_only_mode},
+        {"test_txn_endpoints",             test_txn_endpoints},
         {"test_route_not_found",           test_route_not_found},
         {"test_route_method_mismatch",     test_route_method_mismatch},
     };

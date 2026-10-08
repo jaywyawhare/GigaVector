@@ -10,6 +10,7 @@
 #include "features/graph_db.h"
 #include "core/memory.h"
 #include "api/rest_handlers.h"
+#include "api/txn_registry.h"
 #include "security/crypto.h"
 #include "security/auth.h"
 
@@ -672,6 +673,9 @@ GV_Server *server_create(GV_Database *db, const GV_ServerConfig *config) {
     server->handler_ctx.config = &server->config;
     server->handler_ctx.kg = NULL;
     server->handler_ctx.graph = NULL;
+    /* Enable stateful client transactions (BEGIN/COMMIT/ROLLBACK over REST). A
+     * NULL registry (allocation failure) simply disables the /txn endpoints. */
+    server->handler_ctx.txn_registry = txn_registry_create();
 
     return server;
 }
@@ -791,6 +795,9 @@ void server_destroy(GV_Server *server) {
     if (server->running) {
         server_stop(server);
     }
+
+    /* Rolls back any transactions the client left open. */
+    txn_registry_destroy(server->handler_ctx.txn_registry);
 
     pthread_mutex_destroy(&server->stats_mutex);
     gv_free(server);

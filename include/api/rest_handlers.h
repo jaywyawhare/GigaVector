@@ -25,6 +25,7 @@ typedef struct {
     const GV_ServerConfig *config;     /**< Server configuration. */
     struct GV_KnowledgeGraph *kg;      /**< Optional knowledge graph (may be NULL). */
     struct GV_GraphDB *graph;          /**< Optional property graph (may be NULL). */
+    struct GV_TxnRegistry *txn_registry; /**< Optional client-transaction registry (may be NULL). */
 } GV_HandlerContext;
 
 /**
@@ -132,6 +133,16 @@ GV_HttpResponse *rest_handle_stats(const GV_HandlerContext *ctx,
  */
 GV_HttpResponse *rest_handle_metrics(const GV_HandlerContext *ctx,
                                          const GV_HttpRequest *request);
+
+/** @brief POST /txn/begin — start a transaction; returns {"txn_id": "..."}. */
+GV_HttpResponse *rest_handle_txn_begin(const GV_HandlerContext *ctx,
+                                           const GV_HttpRequest *request);
+/** @brief POST /txn/commit — body {"txn_id":"..."}; 200/404/409/503. */
+GV_HttpResponse *rest_handle_txn_commit(const GV_HandlerContext *ctx,
+                                            const GV_HttpRequest *request);
+/** @brief POST /txn/rollback — body {"txn_id":"..."}; 200/404/503. */
+GV_HttpResponse *rest_handle_txn_rollback(const GV_HandlerContext *ctx,
+                                              const GV_HttpRequest *request);
 
 /**
  * @brief Handle POST /vectors endpoint.

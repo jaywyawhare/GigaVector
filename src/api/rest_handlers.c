@@ -8,6 +8,7 @@
 #include "features/graph_db.h"
 #include "core/memory.h"
 #include "core/utils.h"
+#include "api/txn_registry.h"
 #include "features/json.h"
 #include "storage/database.h"
 #include "core/types.h"
@@ -287,6 +288,108 @@ GV_HttpResponse *rest_handle_metrics(const GV_HandlerContext *ctx,
     response->status = GV_HTTP_200_OK;
     response->content_type = "text/plain; version=0.0.4; charset=utf-8";
     return response;
+}
+
+/* Extract "txn_id" from a JSON body; sets *body_out (caller frees) or NULL. */
+static const char *txn_id_from_body(const GV_HttpRequest *request, GV_JsonValue **body_out) {
+    *body_out = NULL;
+    if (request->body && request->body_length > 0) {
+        GV_JsonError err;
+        GV_JsonValue *body = rest_parse_body(request, &err);
+        if (body) {
+            *body_out = body;
+            return json_get_string_path(body, "txn_id");
+        }
+    }
+    return NULL;
+}
+
+GV_HttpResponse *rest_handle_txn_begin(const GV_HandlerContext *ctx,
+                                           const GV_HttpRequest *request) {
+    (void)request;
+    if (!ctx || !ctx->db) {
+        return rest_response_error(GV_HTTP_500_INTERNAL_ERROR, "internal_error",
+                                       "Database not available");
+    }
+    if (!ctx->txn_registry) {
+        return rest_response_error(GV_HTTP_503_SERVICE_UNAVAILABLE, "txn_unavailable",
+                                       "Transactions are not enabled on this server");
+    }
+    char token[GV_TXN_TOKEN_SIZE];
+    if (txn_registry_begin(ctx->txn_registry, ctx->db, token, sizeof(token)) != 0) {
+        return rest_response_error(GV_HTTP_500_INTERNAL_ERROR, "txn_begin_failed",
+                                       "Failed to begin transaction");
+    }
+    GV_JsonValue *obj = json_object();
+    json_object_set(obj, "txn_id", json_string(token));
+    return rest_response_json(obj);
+}
+
+GV_HttpResponse *rest_handle_txn_commit(const GV_HandlerContext *ctx,
+                                            const GV_HttpRequest *request) {
+    if (!ctx) {
+        return rest_response_error(GV_HTTP_500_INTERNAL_ERROR, "internal_error", "No context");
+    }
+    if (!ctx->txn_registry) {
+        return rest_response_error(GV_HTTP_503_SERVICE_UNAVAILABLE, "txn_unavailable",
+                                       "Transactions are not enabled on this server");
+    }
+    GV_JsonValue *body = NULL;
+    const char *tid = txn_id_from_body(request, &body);
+    if (!tid) {
+        if (body) json_free(body);
+        return rest_response_error(GV_HTTP_400_BAD_REQUEST, "missing_txn_id",
+                                       "Request must include 'txn_id'");
+    }
+    int rc = txn_registry_commit(ctx->txn_registry, tid);
+    if (body) json_free(body);
+
+    if (rc == -2) {
+        return rest_response_error(GV_HTTP_404_NOT_FOUND, "unknown_txn",
+                                       "No such transaction");
+    }
+    if (rc == GV_TXN_CONFLICT) {
+        return rest_response_error(GV_HTTP_409_CONFLICT, "txn_conflict",
+                                       "Transaction aborted due to a write-write conflict");
+    }
+    if (rc != GV_TXN_OK) {
+        return rest_response_error(GV_HTTP_500_INTERNAL_ERROR, "txn_commit_failed",
+                                       "Commit failed");
+    }
+    GV_JsonValue *obj = json_object();
+    json_object_set(obj, "status", json_string("committed"));
+    return rest_response_json(obj);
+}
+
+GV_HttpResponse *rest_handle_txn_rollback(const GV_HandlerContext *ctx,
+                                              const GV_HttpRequest *request) {
+    if (!ctx) {
+        return rest_response_error(GV_HTTP_500_INTERNAL_ERROR, "internal_error", "No context");
+    }
+    if (!ctx->txn_registry) {
+        return rest_response_error(GV_HTTP_503_SERVICE_UNAVAILABLE, "txn_unavailable",
+                                       "Transactions are not enabled on this server");
+    }
+    GV_JsonValue *body = NULL;
+    const char *tid = txn_id_from_body(request, &body);
+    if (!tid) {
+        if (body) json_free(body);
+        return rest_response_error(GV_HTTP_400_BAD_REQUEST, "missing_txn_id",
+                                       "Request must include 'txn_id'");
+    }
+    int rc = txn_registry_rollback(ctx->txn_registry, tid);
+    if (body) json_free(body);
+    if (rc == -2) {
+        return rest_response_error(GV_HTTP_404_NOT_FOUND, "unknown_txn",
+                                       "No such transaction");
+    }
+    if (rc != 0) {
+        return rest_response_error(GV_HTTP_500_INTERNAL_ERROR, "txn_rollback_failed",
+                                       "Rollback failed");
+    }
+    GV_JsonValue *obj = json_object();
+    json_object_set(obj, "status", json_string("rolled_back"));
+    return rest_response_json(obj);
 }
 
 GV_HttpResponse *rest_handle_vectors_post(const GV_HandlerContext *ctx,
@@ -1195,6 +1298,16 @@ GV_HttpResponse *rest_route(const GV_HandlerContext *ctx,
 
     if (strcmp(url, "/metrics") == 0 && request->method == GV_HTTP_GET) {
         return rest_handle_metrics(ctx, request);
+    }
+
+    if (strcmp(url, "/txn/begin") == 0 && request->method == GV_HTTP_POST) {
+        return rest_handle_txn_begin(ctx, request);
+    }
+    if (strcmp(url, "/txn/commit") == 0 && request->method == GV_HTTP_POST) {
+        return rest_handle_txn_commit(ctx, request);
+    }
+    if (strcmp(url, "/txn/rollback") == 0 && request->method == GV_HTTP_POST) {
+        return rest_handle_txn_rollback(ctx, request);
     }
 
     if (strcmp(url, "/vectors") == 0 && request->method == GV_HTTP_POST) {
