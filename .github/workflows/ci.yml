@@ -38,6 +38,16 @@ jobs:
         run: |
           brew install cmake curl openssl libmicrohttpd
 
+      # Compiler cache (incremental builds across CI runs). ccache is
+      # content-addressed and flag-aware, so Make and CMake share cache and the
+      # sanitizer jobs keep their own entries. Windows (ucrt64) is left uncached.
+      - name: Set up ccache (Linux/macOS)
+        if: matrix.os != 'windows-latest'
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ${{ matrix.os }}-build-and-test
+          max-size: 500M
+
       # ── Windows (ucrt64 via pre-installed MSYS2) ──────────────────────────
       - name: Set up ucrt64 (Windows)
         if: matrix.os == 'windows-latest'
@@ -56,18 +66,18 @@ jobs:
       - name: Build library with Make
         if: matrix.os != 'windows-latest'
         timeout-minutes: 10
-        run: make lib
+        run: make lib CC="ccache gcc"
 
       - name: Run C tests (Make)
         if: matrix.os != 'windows-latest'
         timeout-minutes: 20
-        run: make c-test
+        run: make c-test CC="ccache gcc"
 
       # ── Build (CMake - all platforms) ─────────────────────────────────────
       - name: Configure CMake build (Linux/macOS)
         if: matrix.os != 'windows-latest'
         timeout-minutes: 10
-        run: cmake -S . -B build-cmake -DBUILD_TESTS=ON -DBUILD_BENCHMARKS=OFF
+        run: cmake -S . -B build-cmake -DBUILD_TESTS=ON -DBUILD_BENCHMARKS=OFF -DCMAKE_C_COMPILER_LAUNCHER=ccache
 
       - name: Configure CMake build (Windows)
         if: matrix.os == 'windows-latest'
@@ -155,6 +165,12 @@ jobs:
             libssl-dev \
             libmicrohttpd-dev
 
+      - name: Set up ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: sanitizers-asan-ubsan
+          max-size: 500M
+
       - name: Configure with sanitizers
         timeout-minutes: 10
         run: |
@@ -162,7 +178,8 @@ jobs:
             -DCMAKE_BUILD_TYPE=Debug \
             -DBUILD_TESTS=ON \
             -DBUILD_BENCHMARKS=OFF \
-            -DENABLE_SANITIZERS=ON
+            -DENABLE_SANITIZERS=ON \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache
 
       - name: Build
         timeout-minutes: 10
@@ -195,12 +212,17 @@ jobs:
             libssl-dev \
             libmicrohttpd-dev
 
+      - name: Set up ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: tsan
+          max-size: 500M
+
       - name: Build and run tests under ThreadSanitizer
         timeout-minutes: 20
         env:
-          CC: clang
           TSAN_OPTIONS: halt_on_error=1
-        run: make test-tsan
+        run: make test-tsan CC="ccache gcc"
 
   # ── libFuzzer + DST (clang, Linux only) ───────────────────────────────
   fuzz:
@@ -307,8 +329,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential libcurl4-openssl-dev libssl-dev libmicrohttpd-dev
 
+      - name: Set up ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: formal
+          max-size: 500M
+
       - name: Build library
-        run: make lib
+        run: make lib CC="ccache gcc"
 
       # No toolchain needed: parses docs/lock_ordering.md and checks every lock
       # acquisition in src/ against it. Includes a self-test, so a broken
@@ -408,6 +436,12 @@ jobs:
             libssl-dev \
             libmicrohttpd-dev
 
+      - name: Set up ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: valgrind
+          max-size: 500M
+
       # Runs valgrind with --error-exitcode=1 --leak-check=full over a curated
       # set of memory-sensitive binaries. Any leak/error fails the build (unlike
       # the legacy `test-valgrind`, which ran a single binary and was swallowed).
@@ -419,7 +453,7 @@ jobs:
       # scalar fallback keeps behaviour identical for memory checking.
       - name: Curated valgrind memcheck
         timeout-minutes: 20
-        run: make test-valgrind-core SIMD_FLAGS=
+        run: make test-valgrind-core SIMD_FLAGS= CC="ccache gcc"
 
   # ── Static analysis (cppcheck, Linux only) ──────────────────────────────
   static-analysis:
@@ -477,11 +511,17 @@ jobs:
             libssl-dev \
             libmicrohttpd-dev
 
+      - name: Set up ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: strict-warnings
+          max-size: 500M
+
       # Builds the library with -Werror on top of -Wall -Wextra so any NEW
       # warning fails CI. Opt-in target; not part of the default build.
       - name: Build library with -Werror
         timeout-minutes: 10
-        run: make strict
+        run: make strict CC="ccache gcc"
 
   # ── Coverage gate (Linux only) ──────────────────────────────────────────
   coverage-gate:
@@ -577,8 +617,14 @@ jobs:
         with:
           go-version: "1.21"
 
+      - name: Set up ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: go-client
+          max-size: 500M
+
       - name: Build C library
-        run: make lib
+        run: make lib CC="ccache gcc"
 
       - name: Build and test Go client
         working-directory: clients/go
@@ -601,6 +647,11 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: clients/rust
 
       - name: Build, lint and test Rust client
         working-directory: clients/rust
