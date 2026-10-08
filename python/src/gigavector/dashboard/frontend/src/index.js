@@ -1421,7 +1421,7 @@ async function runGraph() {
     }
     frontier = next;
   }
-  status.textContent = `${graphNodes.length} nodes, ${graphEdges.length} edges`;
+  status.textContent = "";
   document.getElementById("graph-info").innerHTML =
     `<b>${graphNodes.length}</b> nodes, <b>${graphEdges.length}</b> edges from seed <b>#${seed}</b>`;
   if (graphAnim) cancelAnimationFrame(graphAnim);
@@ -2613,8 +2613,7 @@ async function geBFS() {
     vy: 0,
   }));
   geEdges = r.data.edges || [];
-  document.getElementById("ge-status").textContent =
-    `${geNodes.length} nodes, ${geEdges.length} edges`;
+  document.getElementById("ge-status").textContent = "";
   if (geAnim) cancelAnimationFrame(geAnim);
   simGraphExplorer();
 }
@@ -2647,8 +2646,7 @@ async function geRefresh() {
     vy: 0,
   }));
   geEdges = r.data.edges || [];
-  document.getElementById("ge-status").textContent =
-    `${geNodes.length} nodes, ${geEdges.length} edges`;
+  document.getElementById("ge-status").textContent = "";
   if (geAnim) cancelAnimationFrame(geAnim);
   simGraphExplorer();
 }
