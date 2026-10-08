@@ -58,7 +58,6 @@ int object_store_exists(GV_ObjectStore *os, const char *key) {
     return os->ops.exists(os->ops.ctx, key);
 }
 
-/* ---------------- filesystem backend ---------------- */
 
 typedef struct { char *root; } FsCtx;
 

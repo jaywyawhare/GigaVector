@@ -11,7 +11,6 @@
 #include <ctype.h>
 #include <stdint.h>
 
-/* ---- growable byte buffer ---- */
 typedef struct {
     char  *buf;
     size_t len;
@@ -64,7 +63,6 @@ static char *tb_finish(TextBuf *t) {
     return t->buf;
 }
 
-/* ---- format sniffing ---- */
 
 static int ci_ends_with(const char *s, const char *suffix) {
     size_t ls = strlen(s), lx = strlen(suffix);
@@ -101,7 +99,6 @@ static GV_DocFormat sniff_format(const char *data, size_t len) {
     return GV_DOC_FORMAT_TEXT;
 }
 
-/* ---- plain text ---- */
 
 static char *extract_text(const char *data, size_t len) {
     char *out = (char *)gv_alloc(len + 1);
@@ -111,7 +108,6 @@ static char *extract_text(const char *data, size_t len) {
     return out;
 }
 
-/* ---- HTML entity decode ---- */
 
 /* Decode a single entity starting at s[*i] == '&'. Writes decoded bytes to t,
    advances *i past the entity (including ';'). Falls back to emitting '&'. */
@@ -132,7 +128,6 @@ static void decode_entity(TextBuf *t, const char *s, size_t len, size_t *i) {
             ? strtol(name + 2, NULL, 16)
             : strtol(name + 1, NULL, 10);
         if (code <= 0) { tb_putc(t, '&'); (*i)++; return; }
-        /* Minimal UTF-8 encode. */
         if (code < 0x80) {
             tb_putc(t, (char)code);
         } else if (code < 0x800) {
@@ -168,7 +163,6 @@ static char *extract_html(const char *s, size_t len) {
     size_t i = 0;
     while (i < len) {
         if (s[i] == '<') {
-            /* Comments. */
             if (ci_match(s, len, i, "<!--")) {
                 i += 4;
                 while (i < len && !(i + 2 < len && s[i] == '-' && s[i+1] == '-' && s[i+2] == '>')) i++;
@@ -207,14 +201,12 @@ static char *extract_html(const char *s, size_t len) {
     return tb_finish(&t);
 }
 
-/* ---- Markdown ---- */
 
 static char *extract_markdown(const char *s, size_t len) {
     TextBuf t; tb_init(&t);
     int in_fence = 0;
     size_t i = 0;
     while (i < len) {
-        /* line start */
         size_t ls = i;
         size_t le = ls;
         while (le < len && s[le] != '\n') le++;
@@ -231,7 +223,6 @@ static char *extract_markdown(const char *s, size_t len) {
             continue;
         }
         if (in_fence) {
-            /* keep code verbatim */
             tb_put(&t, s + ls, line_len);
             tb_putc(&t, '\n');
             i = (le < len) ? le + 1 : le;
@@ -279,7 +270,6 @@ static char *extract_markdown(const char *s, size_t len) {
     return tb_finish(&t);
 }
 
-/* ---- PDF (uncompressed content streams) ---- */
 
 /* Emit a PDF literal string (already inside the parentheses) with escape
    handling into t. Returns index just past the closing ')'. */
@@ -327,7 +317,6 @@ static char *extract_pdf(const char *s, size_t len) {
         i += 6;
         if (i < len && s[i] == '\r') i++;
         if (i < len && s[i] == '\n') i++;
-        /* locate endstream */
         size_t send = i;
         while (send < len && !ci_match(s, len, send, "endstream")) send++;
 
