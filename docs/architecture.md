@@ -333,7 +333,7 @@ typedef struct {
 #### Bidirectional Links
 
 When creating a link A->B, a reciprocal link B->A is automatically created with:
-- Reciprocal link type (SUPPORTS ↔ SUPPORTS, etc.)
+- Reciprocal link type (SUPPORTS <-> SUPPORTS, etc.)
 - Reduced strength (0.9x of original)
 
 ---

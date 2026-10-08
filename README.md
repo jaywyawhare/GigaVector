@@ -118,7 +118,11 @@ Euclidean, Cosine, Dot Product, Manhattan, Hamming -- all with SIMD-optimized im
 
 ### Transactions and Concurrency
 - **MVCC transactions** -- snapshot isolation integrated into the database (`db.begin()` /
-  `db_begin`); read-your-writes, first-committer-wins conflict detection, WAL-logged commit; snapshot reads via `db_search_at_version`
+  `db_begin`); read-your-writes, first-committer-wins conflict detection, snapshot reads via `db_search_at_version`
+- **Crash-atomic commit** -- a whole transaction (all inserts + deletes) is written as one WAL record under a single fsync, so recovery replays all of it or none
+- **Transactions over REST** -- stateful `POST /txn/begin|commit|rollback` with a server-side token-to-transaction registry
+- **Automatic tombstone GC** -- `db_txn_gc_auto` reclaims deleted versions no live snapshot can observe
+- **Deferred-fsync writes** -- the WAL record is written under the write lock but fsync'd after releasing it, so a slow fsync does not block concurrent readers
 - **Thread-safe** -- reader-writer locks for concurrent access
 - **Client-side caching** -- LRU/LFU cache with TTL and mutation-based invalidation
 
@@ -132,7 +136,6 @@ Euclidean, Cosine, Dot Product, Manhattan, Hamming -- all with SIMD-optimized im
 - **Product Quantization (PQ)** -- codebook-based compression
 - **Optimized PQ (OPQ)** -- learned orthonormal rotation before PQ for higher recall; opt-in for PQ and IVF-PQ (`use_opq`, residual rotation persisted in save format v6)
 - **Scalar Quantization** -- configurable bit-width reduction; used by IVF-SQ8 (8-bit per dimension in inverted lists)
-- **TurboQuant** -- PolarQuant rotation-based compression with optional QJL; used by IVF-TurboQuant (requires even dimension); used by IVF-SQ8 (8-bit per dimension in inverted lists)
 - **TurboQuant** -- PolarQuant rotation-based compression with optional QJL; used by IVF-TurboQuant (requires even dimension)
 - **Binary Quantization** -- 1-bit compression for HNSW
 - **Codebook sharing** -- train once, share PQ codebooks across collections
@@ -140,14 +143,18 @@ Euclidean, Cosine, Dot Product, Manhattan, Hamming -- all with SIMD-optimized im
 - **Inline HNSW + incremental rebuild** -- quantized vectors embedded in graph nodes with prefetch, background rebuild
 
 ### Distributed Architecture
-- **HTTP REST server** -- embedded server with rate limiting, CORS, and API key auth
+- **HTTP REST server** -- embedded server with rate limiting, CORS, API key auth, a read-only mode (rejects mutations with 403), and structured JSON access logs
+- **Prometheus metrics** -- `GET /metrics` exposes up/vector-count/dimension/memory gauges and insert/query counters in text exposition format
 - **Web dashboard** -- built-in Qdrant-style dark-theme SPA at `/dashboard` with overview, vector browser, search, and API console
 - **gRPC API** -- binary protocol server with connection pooling and streaming support
 - **TLS/HTTPS** -- TLS 1.2/1.3 transport encryption with certificate management
+- **Client libraries** -- Python (CFFI), Go (cgo, embedded), JavaScript (REST), and a dependency-free Rust REST SDK with connection pooling (`clients/`)
 - **Sharding** -- hash/range-based data partitioning
 - **Replication** -- leader-follower with automatic failover and election (with a standalone Raft
   consensus core -- leader election + log replication with the Raft safety rules -- and Raft
   election-restriction safety in the replication manager)
+- **Durable Raft log** -- term/vote/log persisted to disk (crash-safe append + compaction) and reloaded on restart via `raft_data_dir`
+- **Online resharding** -- `cluster_rebalance_shards` places shards round-robin across the live node set, replicated through the Raft log
 - **Read replica load balancing** -- round-robin, least-lag, and random routing policies
 - **Cluster management** -- multi-node coordination
 - **Namespace / multi-tenancy** -- isolated collections within a single instance
@@ -159,7 +166,8 @@ Euclidean, Cosine, Dot Product, Manhattan, Hamming -- all with SIMD-optimized im
 
 ### Security
 - **Authentication** -- API key and JWT-based auth
-- **RBAC** -- fine-grained role-based access control with per-collection permissions
+- **RBAC** -- fine-grained role-based access control with per-collection permissions, plus per-API-key scopes (read-write / read-only) enforced on the REST server
+- **Encrypted backups** -- optional AES-wrapped backups with a per-backup random KDF salt
 - **Cryptographic primitives** -- SHA-256, HMAC for secure token handling
 - **Enterprise SSO** -- OIDC discovery, JWT validation, SAML XML parsing for enterprise identity providers
 - **Fine-grained authorization** -- permission flags (READ/WRITE/DELETE/ADMIN), resource-level access control, role definitions with namespace scoping
@@ -204,7 +212,8 @@ Euclidean, Cosine, Dot Product, Manhattan, Hamming -- all with SIMD-optimized im
 - **DiskANN** -- on-disk approximate nearest neighbor index with Vamana graph
 - **Async vacuum** -- background compaction with configurable thresholds and scheduling
 - **Webhooks** -- event-driven notifications for insert/delete/update operations
-- **GPU acceleration** -- CUDA-based distance computation and batch search (optional)
+- **GPU acceleration** -- CUDA-based distance computation and batch search (optional), with multi-GPU fan-out that shards a query batch across N per-device contexts
+- **WAL checkpointing** -- size-based `db_wal_checkpoint` / `db_wal_checkpoint_if_needed` bound WAL growth without a full save on every write
 - **Health checks** -- database integrity monitoring (healthy/degraded/unhealthy)
 - **Detailed statistics** -- latency histograms, QPS/IPS tracking, memory breakdown, recall metrics
 - **Resource limits** -- configurable max memory, max vectors, and max concurrent operations
@@ -602,6 +611,7 @@ server.start()
 |--------|------|-------------|
 | `GET` | `/health` | Health check |
 | `GET` | `/stats` | Database statistics |
+| `GET` | `/metrics` | Prometheus metrics (text exposition) |
 | `POST` | `/vectors` | Add vector(s) |
 | `GET` | `/vectors/{id}` | Get vector by index |
 | `PUT` | `/vectors/{id}` | Update vector |
@@ -609,8 +619,12 @@ server.start()
 | `POST` | `/search` | k-NN search |
 | `POST` | `/search/range` | Range search |
 | `POST` | `/search/batch` | Batch search |
+| `POST` | `/txn/begin` | Begin a transaction (returns `txn_id`) |
+| `POST` | `/txn/commit` | Commit a transaction |
+| `POST` | `/txn/rollback` | Roll back a transaction |
 | `POST` | `/compact` | Trigger compaction |
 | `POST` | `/save` | Save database to disk |
+
 ### Web Dashboard
 
 GigaVector ships a built-in web dashboard (dark theme, pure Python - no libmicrohttpd required). Launch it with one line:

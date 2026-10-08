@@ -317,8 +317,8 @@ targets:
    auto-tiering
 4. **TurboQuant + Polar quantization** - unique compression technique
 5. **WAND-optimized learned sparse** - best sparse search implementation
-6. **Cross-layer chunk-ID join** - single `chunk_id` PK binds vector embedding ↔
-   graph triples ↔ memory facts (unique among multi-model DBs)
+6. **Cross-layer chunk-ID join** - single `chunk_id` PK binds vector embedding <->
+   graph triples <-> memory facts (unique among multi-model DBs)
 7. **Built-in recall@k measurement** - unique for self-monitoring quality
 8. **Typed properties + property value indexes** - schema enforcement with typed
    values, unlike Neo4j's string-only properties
@@ -330,13 +330,15 @@ targets:
 
 ## 8. Implementation Status Summary
 
-| Category | Implemented | In Progress | Not Started |
-|---|---|---|---|
-| Foundation (typed props, multi-label, indexes, schema) | ✅ All | - | - |
-| Search pipeline (filtered HNSW, inverted payload, cross-encoder, sparse-dense fusion) | ✅ Partial | 1 pending ONNX integration | 1 pending sparse model integration |
-| Cypher extensions (vector distance, variable-length paths) | ✅ Partial | Distance functions wired | Full Cypher integration pending |
-| DiskANN graph index | ✅ Partial | In-memory Vamana graph | Full out-of-core Vamana |
-| Multi-GPU, PDF ingestion | - | - | Not started |
+| Category | Status | Notes |
+|---|---|---|
+| Foundation (typed props, multi-label, indexes, schema) | Done | - |
+| Search pipeline (filtered HNSW, inverted payload, cross-encoder, sparse-dense fusion) | Done | ONNX cross-encoder/model serving optional (built when ONNX Runtime is present) |
+| Cypher extensions (vector distance, variable-length paths) | Done | Variable-length paths and vector-distance predicates wired; broad Cypher subset supported |
+| DiskANN graph index | Done (in-memory) | In-memory Vamana graph + page cache; full out-of-core Vamana remains future work |
+| Multi-GPU fan-out | Done | `GV_GPUMultiContext` shards a query batch across N per-device contexts (CUDA; CPU-fallback safe) |
+| Document ingestion (Markdown / HTML / PDF) | Done | Plain-text extraction via `gv_document_extract_text`; DOCX and FlateDecode-only PDF need a decompression lib (out of scope) |
+| Transactions over REST | Done | `POST /txn/begin\|commit\|rollback` with crash-atomic WAL commit |
 
 **Total lines added:** ~8,000 across 25+ new files
 **Total lines modified:** ~2,000 in existing headers
