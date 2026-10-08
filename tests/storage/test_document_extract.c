@@ -89,7 +89,9 @@ static void test_pdf_uncompressed(void) {
 
 static void test_auto_sniff(void) {
     const char *pdf = "%PDF-1.7\nstuff";
-    ASSERT(gv_document_extract_text(GV_DOC_FORMAT_AUTO, pdf, strlen(pdf)) != NULL, "auto pdf ok");
+    char *pdf_out = gv_document_extract_text(GV_DOC_FORMAT_AUTO, pdf, strlen(pdf));
+    ASSERT(pdf_out != NULL, "auto pdf ok");
+    gv_free(pdf_out);
 
     const char *html = "  <html><body>Hi there</body></html>";
     char *out = gv_document_extract_text(GV_DOC_FORMAT_AUTO, html, strlen(html));

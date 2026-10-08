@@ -11,6 +11,7 @@
  */
 
 #include "admin/raft_log.h"
+#include "core/compat.h"   /* gv_rename_replace (Windows-safe atomic replace) */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -167,7 +168,9 @@ static int compact_rewrite(GV_RaftLog *log) {
     if (ok && sync_file(out) != 0) ok = 0;
     fclose(out);
     if (!ok) { remove(tmp); return -1; }
-    if (rename(tmp, log->path) != 0) { remove(tmp); return -1; }
+    /* gv_rename_replace overwrites an existing destination; plain rename() fails
+     * on Windows when log->path already exists, which broke reopen there. */
+    if (gv_rename_replace(tmp, log->path) != 0) { remove(tmp); return -1; }
     return 0;
 }
 
