@@ -333,7 +333,7 @@ GV_Transaction *gv_txn_begin(GV_MVCCManager *mgr)
         return NULL;
 
     txn->mgr = mgr;
-    txn->status = GV_TXN_ACTIVE;
+    txn->status = GV_MVCC_TXN_ACTIVE;
     txn->added_indices = NULL;
     txn->added_count = 0;
     txn->added_capacity = 0;
@@ -380,7 +380,7 @@ int gv_txn_commit(GV_Transaction *txn)
 {
     if (!txn || !txn->mgr)
         return -1;
-    if (txn->status != GV_TXN_ACTIVE)
+    if (txn->status != GV_MVCC_TXN_ACTIVE)
         return -1;
 
     GV_MVCCManager *mgr = txn->mgr;
@@ -391,7 +391,7 @@ int gv_txn_commit(GV_Transaction *txn)
      * set to our gv_txn_id).  When we commit, those become permanent -- no
      * further action needed on the versions themselves. */
 
-    txn->status = GV_TXN_COMMITTED;
+    txn->status = GV_MVCC_TXN_COMMITTED;
     mvcc_remove_active(mgr, txn->gv_txn_id);
 
     pthread_mutex_unlock(&mgr->mutex);
@@ -403,7 +403,7 @@ int gv_txn_rollback(GV_Transaction *txn)
 {
     if (!txn || !txn->mgr)
         return -1;
-    if (txn->status != GV_TXN_ACTIVE)
+    if (txn->status != GV_MVCC_TXN_ACTIVE)
         return -1;
 
     GV_MVCCManager *mgr = txn->mgr;
@@ -429,7 +429,7 @@ int gv_txn_rollback(GV_Transaction *txn)
         }
     }
 
-    txn->status = GV_TXN_ABORTED;
+    txn->status = GV_MVCC_TXN_ABORTED;
     mvcc_remove_active(mgr, txn->gv_txn_id);
 
     pthread_mutex_unlock(&mgr->mutex);
@@ -447,7 +447,7 @@ uint64_t gv_txn_id(const GV_Transaction *txn)
 GV_TxnStatus gv_txn_status(const GV_Transaction *txn)
 {
     if (!txn)
-        return GV_TXN_ABORTED;
+        return GV_MVCC_TXN_ABORTED;
     return txn->status;
 }
 
@@ -455,7 +455,7 @@ int gv_txn_add_vector(GV_Transaction *txn, const float *data, size_t dimension)
 {
     if (!txn || !txn->mgr || !data)
         return -1;
-    if (txn->status != GV_TXN_ACTIVE)
+    if (txn->status != GV_MVCC_TXN_ACTIVE)
         return -1;
     if (dimension == 0)
         return -1;
@@ -505,7 +505,7 @@ int gv_txn_delete_vector(GV_Transaction *txn, size_t vector_index)
 {
     if (!txn || !txn->mgr)
         return -1;
-    if (txn->status != GV_TXN_ACTIVE)
+    if (txn->status != GV_MVCC_TXN_ACTIVE)
         return -1;
 
     GV_MVCCManager *mgr = txn->mgr;

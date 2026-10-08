@@ -8,10 +8,12 @@
 extern "C" {
 #endif
 
+/* Prefixed to avoid colliding with storage/transaction.h's GV_TXN_* macros when
+ * both headers are visible in one translation unit (e.g. via gigavector.h). */
 typedef enum {
-    GV_TXN_ACTIVE = 0,
-    GV_TXN_COMMITTED = 1,
-    GV_TXN_ABORTED = 2
+    GV_MVCC_TXN_ACTIVE = 0,
+    GV_MVCC_TXN_COMMITTED = 1,
+    GV_MVCC_TXN_ABORTED = 2
 } GV_TxnStatus;
 
 typedef struct GV_MVCCManager GV_MVCCManager;
