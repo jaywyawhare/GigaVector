@@ -120,8 +120,16 @@ server.start()
 A built-in dark-theme web dashboard is served at `/dashboard`
 (`serve_with_dashboard(db, port=6969)`; pure Python, no libmicrohttpd required).
 
-Client libraries live under `clients/`: Python (CFFI), Go (cgo, embedded),
-JavaScript (REST), and a dependency-free Rust REST SDK with connection pooling.
+## Client Libraries
+
+Official client SDKs live under [`clients/`](clients/):
+
+| Language | Transport | Notes | Guide |
+|----------|-----------|-------|-------|
+| Python | Embedded (CFFI) | Full in-process API over the C library | [clients/python](clients/python/README.md) |
+| Go | Embedded (cgo) | Links the C library directly, no server | [clients/go](clients/go/README.md) |
+| JavaScript | REST | `fetch`-based client for the HTTP server | [clients/js](clients/js/README.md) |
+| Rust | REST | Dependency-free (std-only), keep-alive connection pooling | [clients/rust](clients/rust/README.md) |
 
 ## Environment Variables
 
