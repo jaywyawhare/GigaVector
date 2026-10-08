@@ -134,16 +134,26 @@
 			</a>
 		</nav>
 		<div class="sidebar-footer">
-			<span id="footer-version">GigaVector</span>
-			<span id="footer-index"></span>
+			<div class="instance">
+				<span class="status-dot" id="side-status-dot"></span>
+				<div>
+					<div class="instance-status" id="side-status">Connecting</div>
+					<div class="instance-meta" id="side-uptime"></div>
+					<div class="instance-meta" id="side-version"></div>
+				</div>
+			</div>
 		</div>
 	</div>
 
 	<div class="main">
 		<div class="header">
-			<div class="header-title" id="viewTitle">Overview</div>
+			<nav class="crumbs" aria-label="Breadcrumb">
+				<span>GigaVector</span>
+				<span class="crumb-sep" aria-hidden="true">/</span>
+				<span class="crumb-current" id="viewTitle" aria-current="page">Overview</span>
+			</nav>
 			<div class="header-right">
-				<div class="uptime-badge" id="uptimeBadge"></div>
+				<a class="btn btn-ghost btn-sm" href="/docs" target="_blank" rel="noopener">API reference</a>
 				<div class="status-badge"><span class="status-dot" id="statusDot"></span><span
 						id="statusText">Connecting</span></div>
 			</div>
@@ -151,85 +161,133 @@
 		<div class="content">
 
 			<!-- OVERVIEW -->
-			<div class="view view-fill active" id="view-overview">
-				<div class="cards">
-					<div class="card">
-						<div class="card-label">Vectors</div>
-						<div class="card-value" id="ov-vectors">-</div>
+			<div class="view active" id="view-overview">
+				<div class="page-head">
+					<div>
+						<h1 class="page-title">Overview</h1>
+						<p class="page-desc" id="ov-subtitle">Live health and traffic for this instance.</p>
 					</div>
-					<div class="card">
-						<div class="card-label">Dimension</div>
-						<div class="card-value" id="ov-dim">-</div>
-					</div>
-					<div class="card">
-						<div class="card-label">Index type</div>
-						<div class="card-value" id="ov-index">-</div>
-					</div>
-					<div class="card">
-						<div class="card-label">Version</div>
-						<div class="card-value" id="ov-version">-</div>
-					</div>
-					<div class="card">
-						<div class="card-label">Total requests</div>
-						<div class="card-value" id="ov-reqs">-</div>
-					</div>
-					<div class="card">
-						<div class="card-label">Queries per second</div>
-						<div class="card-value" id="ov-qps">-</div>
-					</div>
-					<div class="card">
-						<div class="card-label">Errors</div>
-						<div class="card-value" id="ov-errors">-</div>
-					</div>
-					<div class="card">
-						<div class="card-label">Data sent</div>
-						<div class="card-value" id="ov-sent">-</div>
-						<div class="card-sub" id="ov-recv"></div>
+					<div class="page-actions">
+						<button class="btn btn-outline btn-sm" onclick="quickReq('POST','/compact')">Compact</button>
+						<button class="btn btn-sm" onclick="quickBackup()">Save backup</button>
 					</div>
 				</div>
-				<div class="ov-grid">
-					<div class="ov-charts">
-						<div class="chart-panel">
-							<div class="chart-head">
-								<div class="chart-title">Queries per second</div>
-								<div class="chart-meta" id="ov-qps-meta">Collecting samples</div>
-							</div>
-							<div class="chart-body"><canvas id="ov-qps-chart"></canvas></div>
-						</div>
-						<div class="chart-panel">
-							<div class="chart-head">
-								<div class="chart-title">Search latency</div>
-								<div class="chart-meta" id="ov-lat-meta">Collecting samples</div>
-							</div>
-							<div class="chart-body"><canvas id="ov-lat-chart"></canvas></div>
-						</div>
+
+				<div class="kpis">
+					<div class="kpi">
+						<div class="kpi-label">Vectors</div>
+						<div class="kpi-value" id="kpi-vectors">-</div>
+						<div class="kpi-sub" id="kpi-vectors-sub"></div>
 					</div>
-					<div class="ov-side">
-						<div class="section">
-							<div class="section-title">Status</div>
-							<div id="ov-health-json">
-								<p class="kv-empty">Waiting for the server.</p>
+					<div class="kpi">
+						<div class="kpi-top">
+							<div>
+								<div class="kpi-label">Queries per second</div>
+								<div class="kpi-value" id="kpi-qps">-</div>
 							</div>
+							<div class="kpi-spark"><canvas id="spark-qps" aria-hidden="true"></canvas></div>
 						</div>
-						<div class="section ov-actions">
-							<div class="section-title">Actions</div>
-							<div class="ov-action-buttons">
-								<button class="btn btn-outline"
-									onclick="quickReq('POST','/compact')">Compact database</button>
-								<button class="btn btn-outline" onclick="quickBackup()">Save backup</button>
-								<button class="btn btn-outline"
-									onclick="quickReq('GET','/stats')">Refresh stats</button>
-								<button class="btn btn-outline"
-									onclick="quickReq('GET','/health')">Run health check</button>
-							</div>
-							<div class="json-view mt-sm" id="ov-action-result">Responses from these actions appear here.</div>
-						</div>
+						<div class="kpi-sub" id="kpi-qps-sub"></div>
 					</div>
+					<div class="kpi">
+						<div class="kpi-top">
+							<div>
+								<div class="kpi-label">Search latency</div>
+								<div class="kpi-value" id="kpi-lat">-</div>
+							</div>
+							<div class="kpi-spark"><canvas id="spark-lat" aria-hidden="true"></canvas></div>
+						</div>
+						<div class="kpi-sub" id="kpi-lat-sub"></div>
+					</div>
+					<div class="kpi">
+						<div class="kpi-label">Memory</div>
+						<div class="kpi-value" id="kpi-mem">-</div>
+						<div class="kpi-sub" id="kpi-mem-sub"></div>
+					</div>
+				</div>
+
+				<div class="ov-row">
+					<section class="card">
+						<header class="card-head">
+							<div>
+								<h2 class="card-title" id="traffic-title">Queries per second</h2>
+								<p class="card-meta" id="traffic-meta">Collecting samples</p>
+							</div>
+							<div class="card-tools">
+								<div class="seg" role="group" aria-label="Metric">
+									<button type="button" data-ov-metric="qps" aria-pressed="true">Queries</button>
+									<button type="button" data-ov-metric="ips" aria-pressed="false">Inserts</button>
+									<button type="button" data-ov-metric="lat" aria-pressed="false">Latency</button>
+								</div>
+								<div class="seg" role="group" aria-label="Time range">
+									<button type="button" data-ov-range="24" aria-pressed="false">1m</button>
+									<button type="button" data-ov-range="120" aria-pressed="true">5m</button>
+									<button type="button" data-ov-range="360" aria-pressed="false">15m</button>
+								</div>
+							</div>
+						</header>
+						<div class="chart-body chart-lg"><canvas id="traffic-chart"></canvas></div>
+					</section>
+					<section class="card">
+						<header class="card-head">
+							<h2 class="card-title">Instance</h2>
+						</header>
+						<div id="ov-instance"><p class="kv-empty">Waiting for the server.</p></div>
+					</section>
+				</div>
+
+				<div class="ov-row">
+					<section class="card">
+						<header class="card-head">
+							<div>
+								<h2 class="card-title">Search latency distribution</h2>
+								<p class="card-meta" id="latency-hist-meta">No searches yet</p>
+							</div>
+						</header>
+						<div class="chart-body chart-md"><canvas id="latency-hist"></canvas></div>
+					</section>
+					<section class="card">
+						<header class="card-head">
+							<h2 class="card-title">Memory</h2>
+							<span class="card-meta" id="ov-memory-total"></span>
+						</header>
+						<div id="ov-memory"><p class="kv-empty">Waiting for the server.</p></div>
+					</section>
+				</div>
+
+				<div class="ov-row">
+					<section class="card card-flush" id="ov-collections-card">
+						<header class="card-head">
+							<h2 class="card-title">Collections</h2>
+							<span class="card-meta" id="ov-collections-count"></span>
+						</header>
+						<table class="data-table">
+							<thead>
+								<tr><th>Name</th><th>Index</th><th class="num">Dimension</th><th class="num">Vectors</th><th class="num">Memory</th></tr>
+							</thead>
+							<tbody id="ov-collections-body">
+								<tr><td colspan="5" class="table-empty">Loading collections</td></tr>
+							</tbody>
+						</table>
+					</section>
+					<section class="card">
+						<header class="card-head">
+							<h2 class="card-title">Requests</h2>
+							<span class="card-meta">Since start</span>
+						</header>
+						<div id="ov-requests"><p class="kv-empty">Waiting for the server.</p></div>
+					</section>
 				</div>
 			</div>
 
 			<!-- VECTORS -->
 			<div class="view" id="view-vectors">
+				<div class="page-head">
+					<div>
+						<h1 class="page-title">Vectors</h1>
+						<p class="page-desc">Browse, inspect and add vectors.</p>
+					</div>
+				</div>
 				<div class="tabs">
 					<button class="tab active" data-tab="vec-browse">Browse</button>
 					<button class="tab" data-tab="vec-add">Add</button>
@@ -288,6 +346,12 @@
 
 			<!-- VISUALIZE -->
 			<div class="view view-fill" id="view-visualize">
+				<div class="page-head">
+					<div>
+						<h1 class="page-title">Visualize</h1>
+						<p class="page-desc">Explore the embedding space in two dimensions.</p>
+					</div>
+				</div>
 				<div class="tabs">
 					<button class="tab active" data-tab="viz-scatter">Scatter plot</button>
 					<button class="tab" data-tab="viz-graph">Similarity graph</button>
@@ -372,13 +436,18 @@
 
 			<!-- SEARCH -->
 			<div class="view" id="view-search">
+				<div class="page-head">
+					<div>
+						<h1 class="page-title">Search</h1>
+						<p class="page-desc">Run nearest-neighbor and radius queries against the index.</p>
+					</div>
+				</div>
 				<div class="tabs">
 					<button class="tab active" data-tab="search-knn">Nearest neighbors</button>
 					<button class="tab" data-tab="search-range">Within radius</button>
 				</div>
 				<div id="search-knn" class="tab-content">
 					<div class="section">
-						<div class="section-title">Nearest-neighbor search</div>
 						<div class="form-group"><label>Query vector (JSON array)</label><textarea id="search-query" rows="2"
 								style="width:100%"
 								placeholder="[0.1, 0.2, 0.3, 0.4]"></textarea></div>
@@ -430,7 +499,6 @@
 				</div>
 				<div id="search-range" class="tab-content" style="display:none">
 					<div class="section">
-						<div class="section-title">Radius search</div>
 						<div class="form-group"><label>Query vector (JSON array)</label><textarea id="range-query" rows="2"
 								style="width:100%"
 								placeholder="[0.1, 0.2, 0.3, 0.4]"></textarea></div>
@@ -472,9 +540,13 @@
 
 			<!-- CONSOLE -->
 			<div class="view" id="view-console">
+				<div class="page-head">
+					<div>
+						<h1 class="page-title">Console</h1>
+						<p class="page-desc">Send raw HTTP requests to the server API.</p>
+					</div>
+				</div>
 				<div class="section">
-					<div class="section-title">API console</div>
-					<div class="section-desc">Send HTTP requests to the GigaVector server.</div>
 					<div class="console-bar">
 						<select id="con-method">
 							<option>GET</option>
@@ -497,9 +569,13 @@
 
 			<!-- IMPORT -->
 			<div class="view" id="view-import">
+				<div class="page-head">
+					<div>
+						<h1 class="page-title">Import</h1>
+						<p class="page-desc">Load vectors from a CSV, JSON or JSON Lines file. The file is parsed in your browser and sent in batches.</p>
+					</div>
+				</div>
 				<div class="section">
-					<div class="section-title">Import vectors</div>
-					<div class="section-desc">Load vectors from a CSV, JSON or JSON Lines file. The file is parsed in your browser and sent in batches.</div>
 					<input type="file" id="import-file" accept=".csv,.json,.jsonl" hidden>
 					<div class="drop-zone" id="import-drop" role="button" tabindex="0">
 						<div id="import-drop-text">Drop a file here or click to choose one</div>
@@ -525,8 +601,15 @@
 
 			<!-- NAMESPACES -->
 			<div class="view" id="view-namespaces">
+				<div class="page-head">
+					<div>
+						<h1 class="page-title">Namespaces</h1>
+						<p class="page-desc">Isolated vector spaces, each with its own dimension and index.</p>
+					</div>
+					<div class="page-actions"><button class="btn btn-outline btn-sm" onclick="loadNamespaces()">Refresh</button></div>
+				</div>
 				<div class="section">
-					<div class="section-title">Namespaces</div>
+					<div class="section-title">Create a namespace</div>
 					<div class="form-row" style="margin-bottom:14px">
 						<div class="form-group" style="margin-bottom:0">
 							<label>Name</label><input type="text" id="ns-name"
@@ -544,8 +627,6 @@
 							</select>
 						</div>
 						<button class="btn" onclick="createNamespace()">Create</button>
-						<button class="btn btn-outline"
-							onclick="loadNamespaces()">Refresh</button>
 					</div>
 					<table id="ns-table">
 						<thead>
@@ -563,9 +644,14 @@
 
 			<!-- SQL -->
 			<div class="view" id="view-sql">
+				<div class="page-head">
+					<div>
+						<h1 class="page-title">SQL</h1>
+						<p class="page-desc">Query vectors and metadata with SQL.</p>
+					</div>
+				</div>
 				<div class="section">
-					<div class="section-title">SQL query</div>
-					<div class="section-desc">Query vectors using SQL syntax. Example:
+					<div class="section-desc">For example
 						<code>SELECT * FROM vectors LIMIT 10</code>
 					</div>
 					<textarea class="sql-editor" id="sql-input"
@@ -588,22 +674,28 @@
 
 			<!-- MONITORING -->
 			<div class="view view-fill" id="view-monitoring">
+				<div class="page-head">
+					<div>
+						<h1 class="page-title">Monitoring</h1>
+						<p class="page-desc">Per-second throughput, latency and memory for the last minute.</p>
+					</div>
+				</div>
 				<div class="cards" id="mon-cards">
 					<div class="card">
 						<div class="card-label">Queries per second</div>
 						<div class="card-value" id="mon-qps">-</div>
 					</div>
 					<div class="card">
-						<div class="card-label">Vectors</div>
-						<div class="card-value" id="mon-vecs">-</div>
+						<div class="card-label">Inserts per second</div>
+						<div class="card-value" id="mon-ips">-</div>
+					</div>
+					<div class="card">
+						<div class="card-label">Search latency</div>
+						<div class="card-value" id="mon-lat">-</div>
 					</div>
 					<div class="card">
 						<div class="card-label">Memory</div>
 						<div class="card-value" id="mon-mem">-</div>
-					</div>
-					<div class="card">
-						<div class="card-label">Health</div>
-						<div class="card-value" id="mon-health">-</div>
 					</div>
 				</div>
 				<div class="mon-grid">
@@ -616,15 +708,15 @@
 					</div>
 					<div class="chart-panel">
 						<div class="chart-head">
-							<div class="chart-title">Search latency (ms)</div>
-							<div class="chart-meta">Last 60 seconds</div>
+							<div class="chart-title">Search latency</div>
+							<div class="chart-meta">Mean per second</div>
 						</div>
 						<div class="chart-body"><canvas id="mon-latency-chart"></canvas></div>
 					</div>
 					<div class="chart-panel">
 						<div class="chart-head">
 							<div class="chart-title">Memory</div>
-							<div class="chart-meta">Of a 1 GB budget</div>
+							<div class="chart-meta">Last 60 seconds</div>
 						</div>
 						<div class="chart-body"><canvas id="mon-mem-chart"></canvas></div>
 					</div>
@@ -640,8 +732,14 @@
 
 			<!-- GRAPH EXPLORER -->
 			<div class="view" id="view-graph">
+				<div class="page-head">
+					<div>
+						<h1 class="page-title">Graph</h1>
+						<p class="page-desc">Build and traverse the property graph.</p>
+					</div>
+				</div>
 				<div class="section">
-					<div class="section-title">Graph explorer</div>
+					<div class="section-title">Edit and query</div>
 					<div class="form-row" style="margin-bottom:10px">
 						<div class="form-group" style="margin-bottom:0"><label>Node label</label><input type="text" id="ge-label"
 								placeholder="Person" style="width:120px"></div>
@@ -693,13 +791,14 @@
 
 
 			<div class="view" id="view-cluster">
-				<div class="section">
-					<div
-						style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
-						<div class="section-title" style="margin-bottom:0">Cluster</div>
-						<button class="btn btn-outline btn-sm"
-							onclick="loadCluster()">Refresh</button>
+				<div class="page-head">
+					<div>
+						<h1 class="page-title">Cluster</h1>
+						<p class="page-desc">Nodes and shards in this deployment.</p>
 					</div>
+					<div class="page-actions"><button class="btn btn-outline btn-sm" onclick="loadCluster()">Refresh</button></div>
+				</div>
+				<div class="section">
 					<div class="cards" id="cluster-cards">
 						<div class="card">
 							<div class="card-label">Nodes</div>
@@ -744,8 +843,13 @@
 
 			<!-- BACKUPS -->
 			<div class="view" id="view-backups">
+				<div class="page-head">
+					<div>
+						<h1 class="page-title">Backups</h1>
+						<p class="page-desc">Create, restore and inspect backup files on the server.</p>
+					</div>
+				</div>
 				<div class="section">
-					<div class="section-title">Backups</div>
 					<div class="tabs">
 						<button class="tab active" data-tab="bk-create">Create</button>
 						<button class="tab" data-tab="bk-restore">Restore</button>

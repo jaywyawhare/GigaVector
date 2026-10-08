@@ -32,50 +32,6 @@ function canvasBox(canvas, fallbackH, padX = 0) {
 }
 const CHART_FONT_MONO = '11px "IBM Plex Mono", monospace';
 
-// Render a flat object as a definition list. Nested values fall back to JSON.
-function renderKV(el, obj) {
-  const first = ["status", "uptime_seconds"];
-  const entries = Object.entries(obj || {}).sort(
-    ([a], [b]) =>
-      (first.includes(a) ? first.indexOf(a) : 99) -
-      (first.includes(b) ? first.indexOf(b) : 99),
-  );
-  if (!entries.length) {
-    el.innerHTML = '<p class="kv-empty">Nothing reported.</p>';
-    return;
-  }
-  const dl = document.createElement("dl");
-  dl.className = "kv";
-  for (const [k, v] of entries) {
-    const dt = document.createElement("dt");
-    dt.textContent = humanizeKey(k);
-    const dd = document.createElement("dd");
-    if (v !== null && typeof v === "object") {
-      dd.textContent = JSON.stringify(v);
-      dd.className = "machine";
-    } else if (k.endsWith("_seconds") && typeof v === "number") {
-      dd.textContent = formatUptime(v);
-    } else if (k.includes("bytes") && typeof v === "number") {
-      dd.textContent = formatBytes(v);
-    } else if (typeof v === "boolean") {
-      dd.textContent = v ? "Yes" : "No";
-    } else if (k === "status") {
-      const dot = document.createElement("span");
-      dot.className = `status-dot ${v}`;
-      dd.append(dot, String(v).charAt(0).toUpperCase() + String(v).slice(1));
-    } else {
-      dd.textContent = typeof v === "number" ? v.toLocaleString() : String(v);
-    }
-    dl.append(dt, dd);
-  }
-  el.replaceChildren(dl);
-}
-const KEY_ACRONYMS = { wal: "WAL", qps: "QPS", id: "ID", api: "API", tls: "TLS", gpu: "GPU", ms: "ms" };
-function humanizeKey(k) {
-  const words = k.replace(/_seconds$/, "").split("_");
-  const s = words.map((w) => KEY_ACRONYMS[w.toLowerCase()] || w).join(" ");
-  return s.charAt(0).toUpperCase() + s.slice(1);
-}
 
 // utils
 
@@ -192,122 +148,373 @@ document.querySelectorAll(".tabs").forEach((tabs) => {
 });
 
 let refreshTimer = null;
+
+// ---- Server stats ----------------------------------------------------------
+// /api/detailed-stats reports search latency as a histogram (per-bucket counts
+// with upper boundaries in microseconds), memory as a breakdown and health as
+// an int. Older builds sent plain numbers, so both shapes are accepted.
+const HEALTH_NAMES = { 0: "healthy", "-1": "degraded", "-2": "unhealthy" };
+function healthName(v) {
+  if (typeof v === "number") return HEALTH_NAMES[v] || "unknown";
+  return v || "unknown";
+}
+function parseDetailed(d) {
+  d = d || {};
+  const lat = d.search_latency;
+  return {
+    qps: Number(d.queries_per_second) || 0,
+    ips: Number(d.inserts_per_second) || 0,
+    latNumber: typeof lat === "number" ? lat : null,
+    hist: lat && typeof lat === "object" && Array.isArray(lat.buckets) ? lat : null,
+    mem:
+      d.memory && typeof d.memory === "object"
+        ? d.memory
+        : { total_bytes: Number(d.memory) || 0 },
+    health: healthName(d.health_status),
+    deleted: d.deleted_vector_count ?? null,
+    deletedRatio: d.deleted_ratio ?? null,
+    basic: d.basic_stats || {},
+  };
+}
+function histPercentile(hist, p) {
+  if (!hist || !hist.total_samples) return null;
+  const target = hist.total_samples * p;
+  let acc = 0;
+  for (const b of hist.buckets) {
+    acc += b.count;
+    if (acc >= target) return b.boundary_us / 1000;
+  }
+  return null;
+}
+function fmtMs(ms) {
+  if (ms == null || !Number.isFinite(ms)) return "-";
+  return ms >= 100 ? `${ms.toFixed(0)} ms` : ms >= 10 ? `${ms.toFixed(1)} ms` : `${ms.toFixed(2)} ms`;
+}
+function setText(id, text) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = text;
+}
+
+// ---- Overview state --------------------------------------------------------
+const OV_INTERVAL_S = 2.5;
+const OV_MAX_SAMPLES = 360; // 15 minutes
+const ov = {
+  qps: [],
+  ips: [],
+  lat: [],
+  lastHist: null,
+  metric: "qps",
+  range: 120,
+  collectionsLoaded: 0,
+};
+const OV_METRICS = {
+  qps: { title: "Queries per second", unit: "queries/s", fmt: (v) => v.toFixed(1) },
+  ips: { title: "Inserts per second", unit: "inserts/s", fmt: (v) => v.toFixed(1) },
+  lat: { title: "Search latency", unit: "", fmt: (v) => fmtMs(v) },
+};
+function pushSample(arr, v) {
+  arr.push(v == null || !Number.isFinite(v) ? null : v);
+  if (arr.length > OV_MAX_SAMPLES) arr.shift();
+}
+
+// Mean latency of the searches that ran during the last poll interval, from
+// the change in the cumulative histogram. Null when no searches ran.
+function intervalLatency(D) {
+  if (D.latNumber != null) return D.latNumber;
+  const h = D.hist;
+  if (!h) return null;
+  const prev = ov.lastHist;
+  ov.lastHist = { n: h.total_samples, sum: h.sum_latency_us };
+  if (!prev) return h.total_samples ? h.sum_latency_us / h.total_samples / 1000 : null;
+  const dn = h.total_samples - prev.n;
+  return dn > 0 ? (h.sum_latency_us - prev.sum) / dn / 1000 : null;
+}
+
+function setStatus(name) {
+  const dot = document.getElementById("statusDot");
+  dot.className = "status-dot " + name;
+  const label = name.charAt(0).toUpperCase() + name.slice(1);
+  setText("statusText", label);
+  setText("side-status", label);
+  document.getElementById("side-status-dot").className = "status-dot " + name;
+}
+
 async function refreshOverview() {
-  const [info, stats, health] = await Promise.all([
+  const [info, stats, health, det] = await Promise.all([
     apiCall("/api/dashboard/info"),
     apiCall("/stats"),
     apiCall("/health"),
+    apiCall("/api/detailed-stats"),
   ]);
-  const dot = document.getElementById("statusDot"),
-    txt = document.getElementById("statusText");
-  if (health.ok && health.data) {
-    const s = health.data.status || "unknown";
-    dot.className = "status-dot " + s;
-    txt.textContent = s.charAt(0).toUpperCase() + s.slice(1);
-    ovHealth = health.data;
-    const up = health.data.uptime_seconds;
-    document.getElementById("uptimeBadge").textContent =
-      up != null ? "Up for " + formatUptime(up) : "";
+  const I = info.ok && info.data ? info.data : {};
+  const S = stats.ok && stats.data ? stats.data : {};
+  const H = health.ok && health.data ? health.data : null;
+  const D = det.ok && det.data ? parseDetailed(det.data) : null;
+
+  if (!H) {
+    setStatus("unhealthy");
+    setText("statusText", "Unreachable");
+    setText("side-status", "Unreachable");
+    setText("side-uptime", "The server is not responding");
+    return;
+  }
+  const status = D && D.health !== "unknown" ? D.health : healthName(H.status);
+  setStatus(status);
+  const uptime = H.uptime_seconds ?? S.uptime_seconds;
+  setText("side-uptime", uptime != null ? `Up for ${formatUptime(uptime)}` : "");
+  setText("side-version", I.version ? `Version ${I.version}` : "");
+  setText("ov-subtitle", `${I.index_type || "Unknown"} index, ${I.dimension ?? "?"} dimensions`);
+
+  // KPIs
+  const count = I.vector_count ?? H.vector_count ?? S.total_vectors ?? 0;
+  setText("kpi-vectors", count.toLocaleString());
+  if (D && D.deleted) {
+    const pct = D.deletedRatio != null ? ` (${(D.deletedRatio * 100).toFixed(1)}%)` : "";
+    setText("kpi-vectors-sub", `${D.deleted.toLocaleString()} deleted${pct}, reclaimed by compaction`);
   } else {
-    dot.className = "status-dot unhealthy";
-    txt.textContent = "Unreachable";
-    document.getElementById("ov-health-json").innerHTML =
-      '<p class="kv-empty">The server is not responding. Check that it is running and reachable from this browser.</p>';
-    document.getElementById("uptimeBadge").textContent = "";
+    setText("kpi-vectors-sub", `${I.dimension ?? "?"} dimensions, ${I.index_type || "unknown"} index`);
   }
-  if (info.ok && info.data) {
-    document.getElementById("ov-vectors").textContent = (
-      info.data.vector_count ?? 0
-    ).toLocaleString();
-    document.getElementById("ov-dim").textContent = info.data.dimension ?? "-";
-    document.getElementById("ov-index").textContent =
-      info.data.index_type ?? "-";
-    document.getElementById("ov-version").textContent =
-      info.data.version ?? "-";
-    document.getElementById("footer-version").textContent =
-      "GigaVector v" + (info.data.version || "?");
-    document.getElementById("footer-index").textContent =
-      `${info.data.index_type || "Unknown index"}, ${info.data.dimension || "?"} dimensions`;
-    ovInfo = info.data;
-  }
-  if (stats.ok && stats.data) {
-    document.getElementById("ov-reqs").textContent = (
-      stats.data.total_requests ??
-      (stats.data.total_inserts || 0) + (stats.data.total_queries || 0)
-    ).toLocaleString();
-    document.getElementById("ov-qps").textContent =
-      stats.data.queries_per_second ?? "-";
-    document.getElementById("ov-errors").textContent = (
-      stats.data.error_count ?? 0
-    ).toLocaleString();
-    document.getElementById("ov-sent").textContent = formatBytes(
-      stats.data.total_bytes_sent,
-    );
-    document.getElementById("ov-recv").textContent =
-      stats.data.total_bytes_received != null
-        ? formatBytes(stats.data.total_bytes_received) + " received"
-        : "";
-  }
-  // Status panel: health and server fields, minus what the stat strip shows.
-  if (health.ok && health.data) {
-    const merged = { ...ovInfo, ...ovHealth };
-    for (const k of OV_STRIP_KEYS) delete merged[k];
-    renderKV(document.getElementById("ov-health-json"), merged);
-  }
-  const det = await apiCall("/api/detailed-stats");
-  const qps = Number(
-    det.ok && det.data?.queries_per_second != null
-      ? det.data.queries_per_second
-      : (stats.data?.queries_per_second ?? 0),
+
+  const lat = D ? intervalLatency(D) : null;
+  pushSample(ov.qps, D ? D.qps : null);
+  pushSample(ov.ips, D ? D.ips : null);
+  pushSample(ov.lat, lat);
+
+  setText("kpi-qps", D ? D.qps.toFixed(1) : "-");
+  setText(
+    "kpi-qps-sub",
+    S.total_queries != null ? `${S.total_queries.toLocaleString()} queries since start` : "",
   );
-  const lat = Number((det.ok && det.data?.search_latency) || 0);
-  pushRing(ovRing.qps, qps);
-  pushRing(ovRing.lat, lat);
-  drawOverviewCharts();
+  const lastLat = [...ov.lat].reverse().find((v) => v != null);
+  setText("kpi-lat", lastLat != null ? fmtMs(lastLat) : "-");
+  // Percentiles come from histogram buckets, so report the bucket bound.
+  const p95 = D ? histPercentile(D.hist, 0.95) : null;
+  setText(
+    "kpi-lat-sub",
+    p95 != null ? `95% of searches under ${fmtMs(p95)}` : "No searches yet",
+  );
+  const mem = D ? D.mem : null;
+  setText("kpi-mem", mem ? formatBytes(mem.total_bytes) : "-");
+  setText(
+    "kpi-mem-sub",
+    mem && mem.index_bytes != null ? `${formatBytes(mem.index_bytes)} in the index` : "",
+  );
+
+  drawSparkline(document.getElementById("spark-qps"), ov.qps);
+  drawSparkline(document.getElementById("spark-lat"), ov.lat);
+  drawTraffic();
+  if (D) {
+    renderMemoryBars(mem);
+    drawLatencyHistogram(D.hist);
+  }
+
+  renderRows(document.getElementById("ov-instance"), [
+    ["Status", statusLabel(status)],
+    ["Version", I.version || "-"],
+    ["Index type", I.index_type || "-"],
+    ["Dimension", I.dimension ?? "-"],
+    ["Uptime", uptime != null ? formatUptime(uptime) : "-"],
+    ["WAL records", D?.basic.total_wal_records != null ? D.basic.total_wal_records.toLocaleString() : "-"],
+    ...(H.read_only != null ? [["Read only", H.read_only ? "Yes" : "No"]] : []),
+  ]);
+
+  const reqs = S.total_requests ?? 0,
+    errs = S.error_count ?? 0;
+  renderRows(document.getElementById("ov-requests"), [
+    ["Total requests", reqs.toLocaleString()],
+    ["Inserts", (S.total_inserts ?? 0).toLocaleString()],
+    ["k-NN queries", (S.total_queries ?? 0).toLocaleString()],
+    ["Range queries", (S.total_range_queries ?? 0).toLocaleString()],
+    ["Errors", `${errs.toLocaleString()} (${reqs ? ((errs / reqs) * 100).toFixed(2) : "0.00"}%)`],
+    ["Received", formatBytes(S.total_bytes_received)],
+    ["Sent", formatBytes(S.total_bytes_sent)],
+  ]);
+
+  if (Date.now() - ov.collectionsLoaded > 30000) loadOverviewCollections();
 }
 
-const OV_STRIP_KEYS = ["version", "index_type", "dimension", "vector_count"];
-const OV_SAMPLES = 120; // 5 minutes at the 2.5 s refresh interval
-const ovRing = { qps: [], lat: [] };
-let ovHealth = {},
-  ovInfo = {};
-function pushRing(arr, v) {
-  arr.push(Number.isFinite(v) ? v : 0);
-  if (arr.length > OV_SAMPLES) arr.shift();
+function statusLabel(name) {
+  const span = document.createElement("span");
+  const dot = document.createElement("span");
+  dot.className = `status-dot ${name}`;
+  span.append(dot, name.charAt(0).toUpperCase() + name.slice(1));
+  return span;
 }
-function drawOverviewCharts() {
-  const q = ovRing.qps,
-    l = ovRing.lat;
-  drawLineChart(document.getElementById("ov-qps-chart"), q, { fill: true });
-  drawLineChart(document.getElementById("ov-lat-chart"), l, { fill: true });
-  const span = (n) => {
-    const secs = Math.round((n * 2.5) / 5) * 5;
-    return secs >= 60 ? `${Math.round(secs / 60)} min` : `${secs} s`;
-  };
-  if (q.length) {
-    const avg = q.reduce((a, b) => a + b, 0) / q.length;
-    document.getElementById("ov-qps-meta").innerHTML =
-      `<b>${q[q.length - 1].toFixed(1)}</b> now, ${avg.toFixed(1)} average over ${span(q.length)}`;
+
+function renderRows(el, rows) {
+  if (!el) return;
+  const dl = document.createElement("dl");
+  dl.className = "kv";
+  for (const [label, value] of rows) {
+    const dt = document.createElement("dt");
+    dt.textContent = label;
+    const dd = document.createElement("dd");
+    if (value instanceof Node) dd.append(value);
+    else dd.textContent = String(value);
+    dl.append(dt, dd);
   }
-  if (l.length) {
-    const peak = Math.max(...l);
-    document.getElementById("ov-lat-meta").innerHTML =
-      `<b>${l[l.length - 1].toFixed(2)} ms</b> now, ${peak.toFixed(2)} ms peak over ${span(l.length)}`;
-  }
+  el.replaceChildren(dl);
 }
+
+function renderMemoryBars(mem) {
+  const el = document.getElementById("ov-memory");
+  if (!el) return;
+  const total = mem.total_bytes || 0;
+  setText("ov-memory-total", formatBytes(total));
+  const parts = [
+    ["Vector storage", mem.soa_storage_bytes],
+    ["Index", mem.index_bytes],
+    ["Metadata index", mem.metadata_index_bytes],
+    ["Write-ahead log", mem.wal_bytes],
+  ].filter(([, v]) => v != null);
+  if (!parts.length) {
+    el.innerHTML = '<p class="kv-empty">This server does not report a memory breakdown.</p>';
+    return;
+  }
+  el.replaceChildren(
+    ...parts.map(([label, v]) => {
+      const row = document.createElement("div");
+      row.className = "bar-row";
+      const head = document.createElement("div");
+      head.className = "bar-head";
+      const l = document.createElement("span");
+      l.textContent = label;
+      const val = document.createElement("span");
+      val.className = "bar-value";
+      val.textContent = `${formatBytes(v)}${total ? `, ${((v / total) * 100).toFixed(0)}%` : ""}`;
+      head.append(l, val);
+      const track = document.createElement("div");
+      track.className = "bar-track";
+      const fill = document.createElement("div");
+      fill.className = "bar-fill";
+      fill.style.width = `${total ? Math.max(0.5, (v / total) * 100) : 0}%`;
+      track.append(fill);
+      row.append(head, track);
+      return row;
+    }),
+  );
+}
+
+async function loadOverviewCollections() {
+  ov.collectionsLoaded = Date.now();
+  const card = document.getElementById("ov-collections-card");
+  const r = await apiCall("/api/collections");
+  const list = r.ok && r.data && Array.isArray(r.data.collections) ? r.data.collections : null;
+  if (!list) {
+    card.hidden = true;
+    return;
+  }
+  card.hidden = false;
+  setText("ov-collections-count", `${list.length} total`);
+  const tbody = document.getElementById("ov-collections-body");
+  if (!list.length) {
+    tbody.innerHTML =
+      '<tr><td colspan="5" class="table-empty">No collections yet. Create one through the API or the Python client.</td></tr>';
+    return;
+  }
+  tbody.replaceChildren(
+    ...list.map((c) => {
+      const tr = document.createElement("tr");
+      const cells = [
+        c.name,
+        c.index_type ?? "-",
+        c.dimension ?? "-",
+        (c.vector_count ?? 0).toLocaleString(),
+        c.memory_bytes != null ? formatBytes(c.memory_bytes) : "-",
+      ];
+      cells.forEach((v, i) => {
+        const td = document.createElement("td");
+        td.textContent = v;
+        if (i >= 2) td.className = "num";
+        tr.append(td);
+      });
+      return tr;
+    }),
+  );
+}
+
+function drawTraffic() {
+  const m = OV_METRICS[ov.metric];
+  const data = ov[ov.metric].slice(-ov.range);
+  setText("traffic-title", m.title);
+  const vals = data.filter((v) => v != null);
+  const meta = document.getElementById("traffic-meta");
+  if (vals.length) {
+    const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
+    const peak = Math.max(...vals);
+    meta.textContent = `Average ${m.fmt(avg)}, peak ${m.fmt(peak)}`;
+  } else {
+    meta.textContent = ov.metric === "lat" ? "No searches in this window" : "Collecting samples";
+  }
+  drawLineChart(document.getElementById("traffic-chart"), data, {
+    fill: true,
+    spanSec: ov.range * OV_INTERVAL_S,
+    intervalSec: OV_INTERVAL_S,
+    fmt: m.fmt,
+    unit: m.unit,
+  });
+}
+
+function drawLatencyHistogram(hist) {
+  const canvas = document.getElementById("latency-hist");
+  if (!canvas) return;
+  if (!hist || !hist.total_samples) {
+    setText("latency-hist-meta", "No searches yet");
+    drawBars(canvas, [], []);
+    return;
+  }
+  let last = 0;
+  hist.buckets.forEach((b, i) => {
+    if (b.count) last = i;
+  });
+  const buckets = hist.buckets.slice(0, Math.min(hist.buckets.length, last + 2));
+  const labels = buckets.map((b) => fmtMs(b.boundary_us / 1000).replace(" ms", ""));
+  setText(
+    "latency-hist-meta",
+    `${hist.total_samples.toLocaleString()} searches, mean ${fmtMs(hist.sum_latency_us / hist.total_samples / 1000)}`,
+  );
+  drawBars(canvas, labels, buckets.map((b) => b.count), {
+    tip: (i) => {
+      const lo = i ? fmtMs(buckets[i - 1].boundary_us / 1000) : "0 ms";
+      const pct = ((buckets[i].count / hist.total_samples) * 100).toFixed(1);
+      return [`${lo} to ${fmtMs(buckets[i].boundary_us / 1000)}`, `${buckets[i].count.toLocaleString()} searches, ${pct}%`];
+    },
+    xTitle: "Upper bound (ms)",
+  });
+}
+
+document.querySelectorAll("[data-ov-metric]").forEach((b) =>
+  b.addEventListener("click", () => {
+    ov.metric = b.dataset.ovMetric;
+    document
+      .querySelectorAll("[data-ov-metric]")
+      .forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+    drawTraffic();
+  }),
+);
+document.querySelectorAll("[data-ov-range]").forEach((b) =>
+  b.addEventListener("click", () => {
+    ov.range = Number(b.dataset.ovRange);
+    document
+      .querySelectorAll("[data-ov-range]")
+      .forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+    drawTraffic();
+  }),
+);
 
 // Redraw a canvas whenever its .chart-body changes size (view shown, window
 // resized, table view opened).
 const chartRedraw = {
-  "ov-qps-chart": drawOverviewCharts,
-  "ov-lat-chart": drawOverviewCharts,
+  "traffic-chart": drawTraffic,
+  "latency-hist": () => {},
   "scatter-canvas": () => vizData && drawScatterWithHighlights(),
 };
 if (window.ResizeObserver) {
   const pending = new Set();
   const ro = new ResizeObserver((entries) => {
     for (const e of entries) {
-      const fn = chartRedraw[e.target.querySelector("canvas")?.id];
+      const c = e.target.querySelector("canvas");
+      const fn = chartRedraw[c?.id] || c?._redraw;
       if (fn) pending.add(fn);
     }
     requestAnimationFrame(() => {
@@ -315,12 +522,12 @@ if (window.ResizeObserver) {
       pending.clear();
     });
   });
-  document.querySelectorAll(".chart-body").forEach((el) => ro.observe(el));
+  document.querySelectorAll(".chart-body, .kpi-spark").forEach((el) => ro.observe(el));
 }
 
 function startRefresh() {
   refreshOverview();
-  refreshTimer = setInterval(refreshOverview, 2500);
+  refreshTimer = setInterval(refreshOverview, OV_INTERVAL_S * 1000);
 }
 startRefresh();
 
@@ -1599,20 +1806,22 @@ async function consoleSend() {
   document.getElementById("con-result").innerHTML = jsonHighlight(r.data);
 }
 
+const QUICK_ACTIONS = {
+  "/compact": ["Compaction finished", "Compaction failed"],
+  "/stats": ["Stats refreshed", "Could not load stats"],
+  "/health": ["Health check passed", "Health check failed"],
+};
 async function quickReq(method, url) {
-  const el = document.getElementById("ov-action-result");
-  if (el) el.innerHTML = '<span class="json-null">Waiting for response</span>';
+  const [ok, fail] = QUICK_ACTIONS[url] || [`${method} ${url} succeeded`, `${method} ${url} failed`];
   const r = await apiCall(url, { method });
-  if (el) el.innerHTML = jsonHighlight(r.data);
   showToast(
-    r.ok ? `${method} ${url} succeeded` : `${method} ${url} failed`,
+    r.ok ? ok : `${fail}: ${r.data?.message || r.data?.error || "server error"}`,
     r.ok ? "success" : "error",
   );
+  if (r.ok) refreshOverview();
 }
 
 async function quickBackup() {
-  const el = document.getElementById("ov-action-result");
-  if (el) el.innerHTML = '<span class="json-null">Saving backup</span>';
   const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
   const path = `/tmp/gigavector_backup_${ts}.gvb`;
   const r = await apiCall("/api/backups", {
@@ -1620,10 +1829,9 @@ async function quickBackup() {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ path }),
   });
-  if (el) el.innerHTML = jsonHighlight(r.data);
   const ok = r.ok && (!r.data || r.data.success !== false);
   showToast(
-    ok ? `Backup saved to ${path}` : "Backup failed. See the response for details.",
+    ok ? `Backup saved to ${path}` : `Backup failed: ${r.data?.message || "server error"}`,
     ok ? "success" : "error",
   );
 }
@@ -1631,83 +1839,294 @@ document.getElementById("con-url").addEventListener("keydown", (e) => {
   if (e.key === "Enter") consoleSend();
 });
 
-// char primitives
+// chart primitives
 
-function drawLineChart(canvas, data, opts = {}) {
-  const [w, h] = canvasBox(canvas, opts.height || 160, 32),
-    dpr = window.devicePixelRatio || 1;
-  canvas.width = w * dpr;
-  canvas.height = h * dpr;
+function prepCanvas(canvas, w, h) {
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = Math.round(w * dpr);
+  canvas.height = Math.round(h * dpr);
   canvas.style.width = `${w}px`;
   canvas.style.height = `${h}px`;
   const ctx = canvas.getContext("2d");
-  ctx.scale(dpr, dpr);
-  const pad = { t: 8, r: 8, b: opts.label ? 24 : 8, l: 44 },
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return ctx;
+}
+
+function fmtAgo(sec) {
+  if (sec < 1) return "now";
+  if (sec < 60) return `${Math.round(sec)} s ago`;
+  return `${Math.round(sec / 60)} min ago`;
+}
+
+// Hover for canvas charts: the chart stores a hitTest(x) -> {index, x, lines}
+// on canvas._hit; the shared handler redraws with the hover index and shows
+// the tooltip. Installed once per canvas.
+function ensureChartHover(canvas) {
+  if (canvas._hoverBound) return;
+  canvas._hoverBound = true;
+  canvas.addEventListener("mousemove", (e) => {
+    if (!canvas._hit) return;
+    const r = canvas.getBoundingClientRect();
+    const hit = canvas._hit(e.clientX - r.left, e.clientY - r.top);
+    const idx = hit ? hit.index : -1;
+    if (idx !== canvas._hoverIdx) {
+      canvas._hoverIdx = idx;
+      canvas._redraw && canvas._redraw();
+    }
+    if (!hit) return hideVizTooltip();
+    const parts = hit.lines.map((t, i) => {
+      const d = document.createElement("div");
+      d.className = i === 0 ? "tt-id" : "tt-dim";
+      d.textContent = t;
+      return d;
+    });
+    vizTooltip.replaceChildren(...parts);
+    vizTooltip.classList.add("visible");
+    placeVizTooltip(r.left + hit.x, e.clientY);
+  });
+  canvas.addEventListener("mouseleave", () => {
+    canvas._hoverIdx = -1;
+    hideVizTooltip();
+    canvas._redraw && canvas._redraw();
+  });
+}
+
+function drawLineChart(canvas, data, opts = {}) {
+  canvas._redraw = () => drawLineChart(canvas, data, opts);
+  ensureChartHover(canvas);
+  const [w, h] = canvasBox(canvas, opts.height || 160, 32);
+  const ctx = prepCanvas(canvas, w, h);
+  const fmt = opts.fmt || ((v) => v.toFixed(1));
+  const pad = { t: 8, r: 8, b: opts.spanSec ? 22 : 8, l: 44 },
     pw = w - pad.l - pad.r,
     ph = h - pad.t - pad.b;
-  if (!data.length) {
-    ctx.fillStyle = T.surface;
-    ctx.fillRect(0, 0, w, h);
+  ctx.fillStyle = T.surface;
+  ctx.fillRect(0, 0, w, h);
+  const vals = data.filter((v) => v != null);
+  if (!vals.length) {
     ctx.fillStyle = T.ink3;
     ctx.font = CHART_FONT;
     ctx.textAlign = "center";
-    ctx.fillText("Waiting for samples", w / 2, h / 2);
+    ctx.fillText(opts.empty || "Waiting for samples", w / 2, h / 2);
+    canvas._hit = null;
     return;
   }
-  let mn = Infinity,
-    mx = -Infinity;
-  for (const v of data) {
-    if (v < mn) mn = v;
-    if (v > mx) mx = v;
-  }
-  // Rates and latencies are magnitudes: anchor at zero and round the top so
-  // small fluctuations do not read as large swings.
-  if (opts.zero !== false) {
-    mn = Math.min(0, mn);
-    mx = niceCeil(mx * 1.1);
-  } else if (mn === mx) {
-    mn -= 1;
-    mx += 1;
-  }
+  // Magnitudes: anchor at zero and round the top so noise does not read as
+  // a swing.
+  let mn = Math.min(0, ...vals),
+    mx = niceCeil(Math.max(...vals) * 1.1);
   const tickDigits = mx - mn >= 10 ? 0 : mx - mn >= 1 ? 1 : 2;
-  ctx.fillStyle = T.surface;
-  ctx.fillRect(0, 0, w, h);
-  ctx.strokeStyle = T.grid;
+  ctx.font = CHART_FONT;
   ctx.lineWidth = 1;
   for (let i = 0; i <= 4; i++) {
-    const y = pad.t + (ph * i) / 4;
+    const y = Math.round(pad.t + (ph * i) / 4) + 0.5;
+    ctx.strokeStyle = i === 4 ? T.axis : T.grid;
     ctx.beginPath();
     ctx.moveTo(pad.l, y);
     ctx.lineTo(pad.l + pw, y);
     ctx.stroke();
     ctx.fillStyle = T.ink3;
-    ctx.font = CHART_FONT;
     ctx.textAlign = "right";
-    ctx.fillText((mx - ((mx - mn) * i) / 4).toFixed(tickDigits), pad.l - 6, y + 4);
+    ctx.fillText((mx - ((mx - mn) * i) / 4).toFixed(tickDigits), pad.l - 8, y + 4);
   }
+  // The window is always the full span; short histories sit at the right.
+  const slots = opts.spanSec && opts.intervalSec ? Math.round(opts.spanSec / opts.intervalSec) : data.length;
+  const offset = Math.max(0, slots - data.length);
+  const X = (i) => pad.l + (pw * (i + offset)) / Math.max(1, slots - 1);
+  const Y = (v) => pad.t + ph - ((v - mn) / (mx - mn)) * ph;
+  if (opts.spanSec) {
+    ctx.fillStyle = T.ink3;
+    ctx.textAlign = "left";
+    ctx.fillText(fmtAgo(opts.spanSec), pad.l, h - 6);
+    ctx.textAlign = "right";
+    ctx.fillText("now", pad.l + pw, h - 6);
+  }
+  const color = opts.color || T.s1;
+  // Area then line, breaking at gaps (null samples).
+  const runs = [];
+  let run = [];
+  data.forEach((v, i) => {
+    if (v == null) {
+      if (run.length) runs.push(run);
+      run = [];
+    } else run.push(i);
+  });
+  if (run.length) runs.push(run);
+  for (const r of runs) {
+    if (opts.fill && r.length > 1) {
+      ctx.beginPath();
+      ctx.moveTo(X(r[0]), Y(data[r[0]]));
+      for (const i of r) ctx.lineTo(X(i), Y(data[i]));
+      ctx.lineTo(X(r[r.length - 1]), pad.t + ph);
+      ctx.lineTo(X(r[0]), pad.t + ph);
+      ctx.closePath();
+      ctx.fillStyle = color + "1f";
+      ctx.fill();
+    }
+    ctx.beginPath();
+    ctx.moveTo(X(r[0]), Y(data[r[0]]));
+    for (const i of r) ctx.lineTo(X(i), Y(data[i]));
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.lineJoin = "round";
+    ctx.stroke();
+    if (r.length === 1) {
+      ctx.beginPath();
+      ctx.arc(X(r[0]), Y(data[r[0]]), 2.5, 0, Math.PI * 2);
+      ctx.fillStyle = color;
+      ctx.fill();
+    }
+  }
+  // Crosshair for the hovered sample.
+  const hi = canvas._hoverIdx;
+  if (hi != null && hi >= 0 && hi < data.length) {
+    const x = Math.round(X(hi)) + 0.5;
+    ctx.strokeStyle = T.ink3;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x, pad.t);
+    ctx.lineTo(x, pad.t + ph);
+    ctx.stroke();
+    if (data[hi] != null) {
+      ctx.beginPath();
+      ctx.arc(X(hi), Y(data[hi]), 4, 0, Math.PI * 2);
+      ctx.fillStyle = color;
+      ctx.fill();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = T.surface;
+      ctx.stroke();
+    }
+  }
+  canvas._hit = (x) => {
+    if (x < pad.l - 4 || x > pad.l + pw + 4) return null;
+    const step = pw / Math.max(1, slots - 1);
+    const i = Math.round((x - pad.l) / step) - offset;
+    if (i < 0 || i >= data.length) return null;
+    const ago = opts.intervalSec ? (data.length - 1 - i) * opts.intervalSec : null;
+    const v = data[i];
+    return {
+      index: i,
+      x: X(i),
+      lines: [
+        v == null ? "No data" : `${fmt(v)}${opts.unit ? " " + opts.unit : ""}`,
+        ago != null ? fmtAgo(ago) : `Sample ${i + 1}`,
+      ],
+    };
+  };
+}
+
+function drawSparkline(canvas, data) {
+  if (!canvas) return;
+  canvas._redraw = () => drawSparkline(canvas, data);
+  const p = canvas.parentElement;
+  const w = Math.max(40, p.clientWidth),
+    h = Math.max(20, p.clientHeight);
+  const ctx = prepCanvas(canvas, w, h);
+  const pts = data.slice(-48);
+  const vals = pts.filter((v) => v != null);
+  if (vals.length < 2) return;
+  const mx = Math.max(...vals) || 1,
+    mn = Math.min(0, ...vals);
+  const X = (i) => 1 + ((w - 4) * i) / Math.max(1, pts.length - 1);
+  const Y = (v) => h - 2 - ((v - mn) / (mx - mn || 1)) * (h - 5);
   ctx.beginPath();
-  ctx.moveTo(pad.l, pad.t + ph - ((data[0] - mn) / (mx - mn)) * ph);
-  for (let i = 1; i < data.length; i++) {
-    const x = pad.l + (pw * i) / (data.length - 1),
-      y = pad.t + ph - ((data[i] - mn) / (mx - mn)) * ph;
-    ctx.lineTo(x, y);
-  }
-  ctx.strokeStyle = opts.color || T.s1;
-  ctx.lineWidth = 2;
+  let started = false;
+  pts.forEach((v, i) => {
+    if (v == null) {
+      started = false;
+      return;
+    }
+    if (!started) ctx.moveTo(X(i), Y(v));
+    else ctx.lineTo(X(i), Y(v));
+    started = true;
+  });
+  ctx.strokeStyle = T.s1;
+  ctx.lineWidth = 1.5;
+  ctx.lineJoin = "round";
   ctx.stroke();
-  if (opts.fill) {
-    ctx.lineTo(pad.l + pw, pad.t + ph);
-    ctx.lineTo(pad.l, pad.t + ph);
-    ctx.closePath();
-    ctx.fillStyle = opts.fillColor || (opts.color || T.s1) + "26";
+  const li = pts.length - 1;
+  if (pts[li] != null) {
+    ctx.beginPath();
+    ctx.arc(X(li), Y(pts[li]), 2.5, 0, Math.PI * 2);
+    ctx.fillStyle = T.s1;
     ctx.fill();
   }
-  if (opts.label) {
+}
+
+function drawBars(canvas, labels, values, opts = {}) {
+  canvas._redraw = () => drawBars(canvas, labels, values, opts);
+  ensureChartHover(canvas);
+  const [w, h] = canvasBox(canvas, opts.height || 180, 32);
+  const ctx = prepCanvas(canvas, w, h);
+  ctx.fillStyle = T.surface;
+  ctx.fillRect(0, 0, w, h);
+  if (!values.length) {
     ctx.fillStyle = T.ink3;
     ctx.font = CHART_FONT;
     ctx.textAlign = "center";
-    ctx.fillText(opts.label, w / 2, h - 4);
+    ctx.fillText(opts.empty || "No data yet", w / 2, h / 2);
+    canvas._hit = null;
+    return;
   }
+  const pad = { t: 8, r: 8, b: opts.xTitle ? 38 : 22, l: 44 },
+    pw = w - pad.l - pad.r,
+    ph = h - pad.t - pad.b;
+  const mx = niceCeil(Math.max(...values) * 1.1);
+  ctx.font = CHART_FONT;
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    const y = Math.round(pad.t + (ph * i) / 4) + 0.5;
+    ctx.strokeStyle = i === 4 ? T.axis : T.grid;
+    ctx.beginPath();
+    ctx.moveTo(pad.l, y);
+    ctx.lineTo(pad.l + pw, y);
+    ctx.stroke();
+    ctx.fillStyle = T.ink3;
+    ctx.textAlign = "right";
+    const tv = mx - (mx * i) / 4;
+    ctx.fillText(tv >= 1000 ? `${(tv / 1000).toFixed(1)}k` : tv.toFixed(mx >= 10 ? 0 : 1), pad.l - 8, y + 4);
+  }
+  const slot = pw / values.length,
+    bw = Math.max(2, slot - 2);
+  const hi = canvas._hoverIdx;
+  const every = Math.ceil(values.length / Math.max(1, Math.floor(pw / 44)));
+  values.forEach((v, i) => {
+    const x = pad.l + i * slot + 1,
+      bh = (v / mx) * ph,
+      y = pad.t + ph - bh;
+    ctx.fillStyle = hi === i ? T.ink2 : T.s1;
+    if (bh > 0) {
+      const r = Math.min(2, bw / 2, bh);
+      ctx.beginPath();
+      ctx.moveTo(x, pad.t + ph);
+      ctx.lineTo(x, y + r);
+      ctx.quadraticCurveTo(x, y, x + r, y);
+      ctx.lineTo(x + bw - r, y);
+      ctx.quadraticCurveTo(x + bw, y, x + bw, y + r);
+      ctx.lineTo(x + bw, pad.t + ph);
+      ctx.closePath();
+      ctx.fill();
+    }
+    if (i % every === 0) {
+      ctx.fillStyle = T.ink3;
+      ctx.textAlign = "center";
+      ctx.fillText(labels[i], x + bw / 2, pad.t + ph + 15);
+    }
+  });
+  if (opts.xTitle) {
+    ctx.fillStyle = T.ink3;
+    ctx.textAlign = "center";
+    ctx.fillText(opts.xTitle, pad.l + pw / 2, h - 4);
+  }
+  canvas._hit = (x) => {
+    const i = Math.floor((x - pad.l) / slot);
+    if (i < 0 || i >= values.length) return null;
+    return {
+      index: i,
+      x: pad.l + i * slot + slot / 2,
+      lines: opts.tip ? opts.tip(i) : [labels[i], String(values[i])],
+    };
+  };
 }
 
 function niceCeil(v) {
@@ -1717,136 +2136,80 @@ function niceCeil(v) {
   return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 2.5 ? 2.5 : n <= 5 ? 5 : 10) * p;
 }
 
-function drawBarChart(canvas, labels, values, opts = {}) {
-  const [w, h] = canvasBox(canvas, opts.height || 180, 32),
-    dpr = window.devicePixelRatio || 1;
-  canvas.width = w * dpr;
-  canvas.height = h * dpr;
-  canvas.style.width = `${w}px`;
-  canvas.style.height = `${h}px`;
-  const ctx = canvas.getContext("2d");
-  ctx.scale(dpr, dpr);
-  const pad = { t: 14, r: 10, b: 36, l: 50 },
-    pw = w - pad.l - pad.r,
-    ph = h - pad.t - pad.b;
-  const mx = Math.max(...values) * 1.15 || 1;
-  ctx.fillStyle = T.surface;
-  ctx.fillRect(0, 0, w, h);
-  ctx.strokeStyle = T.grid;
-  ctx.lineWidth = 1;
-  for (let i = 0; i <= 4; i++) {
-    const y = pad.t + (ph * i) / 4;
-    ctx.beginPath();
-    ctx.moveTo(pad.l, y);
-    ctx.lineTo(pad.l + pw, y);
-    ctx.stroke();
-    ctx.fillStyle = T.ink3;
-    ctx.font = CHART_FONT;
-    ctx.textAlign = "right";
-    ctx.fillText(
-      (mx - (mx * i) / 4).toFixed(opts.decimals ?? 1),
-      pad.l - 4,
-      y + 3,
-    );
-  }
-  const colors = opts.colors || [T.s1, T.s2, T.s3, T.other];
-  const gap = pw / (labels.length * 2 + 1),
-    bw = gap * 1.5;
-  for (let i = 0; i < labels.length; i++) {
-    const x = pad.l + gap + i * (bw + gap),
-      bh = (values[i] / mx) * ph;
-    ctx.fillStyle = colors[i % colors.length];
-    ctx.fillRect(x, pad.t + ph - bh, bw, bh);
-    ctx.fillStyle = T.ink;
-    ctx.font = '500 11px "IBM Plex Sans", sans-serif';
-    ctx.textAlign = "center";
-    ctx.fillText(
-      values[i].toFixed(opts.decimals ?? 1),
-      x + bw / 2,
-      pad.t + ph - bh - 4,
-    );
-    ctx.fillStyle = T.ink2;
-    ctx.font = CHART_FONT;
-    ctx.fillText(labels[i], x + bw / 2, h - 8);
-  }
-}
-
 function drawGauge(canvas, value, max, opts = {}) {
-  const [w, h] = canvasBox(canvas, opts.height || 160, 32),
-    dpr = window.devicePixelRatio || 1;
-  canvas.width = w * dpr;
-  canvas.height = h * dpr;
-  canvas.style.width = `${w}px`;
-  canvas.style.height = `${h}px`;
-  const ctx = canvas.getContext("2d");
-  ctx.scale(dpr, dpr);
+  const [w, h] = canvasBox(canvas, opts.height || 160, 32);
+  const ctx = prepCanvas(canvas, w, h);
   ctx.fillStyle = T.surface;
   ctx.fillRect(0, 0, w, h);
   const cx = w / 2,
-    cy = h * 0.6,
-    r = Math.min(w, h) * 0.38;
+    cy = h * 0.62,
+    r = Math.min(w * 0.3, h * 0.45);
   const pct = Math.min(value / (max || 1), 1);
+  ctx.lineWidth = 10;
+  ctx.lineCap = "butt";
   ctx.beginPath();
   ctx.arc(cx, cy, r, Math.PI, 2 * Math.PI);
   ctx.strokeStyle = T.grid;
-  ctx.lineWidth = 10;
-  ctx.lineCap = "butt";
   ctx.stroke();
   ctx.beginPath();
   ctx.arc(cx, cy, r, Math.PI, Math.PI + Math.PI * pct);
   ctx.strokeStyle = pct > 0.85 ? T.critical : pct > 0.6 ? T.warning : T.good;
-  ctx.lineWidth = 10;
-  ctx.lineCap = "butt";
   ctx.stroke();
   ctx.fillStyle = T.ink;
   ctx.font = '500 20px "IBM Plex Sans", sans-serif';
   ctx.textAlign = "center";
-  ctx.fillText(`${(pct * 100).toFixed(0)}%`, cx, cy + 6);
+  ctx.fillText(`${(pct * 100).toFixed(0)}%`, cx, cy + 4);
   if (opts.label) {
     ctx.fillStyle = T.ink3;
     ctx.font = CHART_FONT;
-    ctx.fillText(opts.label, cx, cy + 22);
+    ctx.fillText(opts.label, cx, cy + 24);
   }
 }
 
 // monitoring
 
-const monRing = { qps: [], latency: [], mem: [] };
+const monRing = { qps: [], ips: [], latency: [], mem: [], lastHist: null };
 let monTimer = null;
 
 async function refreshMonitoring() {
   const r = await apiCall("/api/detailed-stats");
   if (!r.ok) return;
-  const d = r.data;
-  const qps = d.queries_per_second || 0;
-  const lat = d.search_latency || 0;
-  const mem = d.memory || 0;
-  monRing.qps.push(qps);
-  if (monRing.qps.length > 60) monRing.qps.shift();
-  monRing.latency.push(lat);
-  if (monRing.latency.length > 60) monRing.latency.shift();
-  monRing.mem.push(mem);
-  if (monRing.mem.length > 60) monRing.mem.shift();
-  document.getElementById("mon-qps").textContent = qps.toFixed(1);
-  document.getElementById("mon-vecs").textContent = (
-    d.basic_stats?.total_vectors || 0
-  ).toLocaleString();
-  document.getElementById("mon-mem").textContent = formatBytes(mem);
-  const hs = d.health_status || "ok";
-  document.getElementById("mon-health").textContent =
-    hs.charAt(0).toUpperCase() + hs.slice(1);
+  const D = parseDetailed(r.data);
+  let lat = D.latNumber;
+  if (lat == null && D.hist) {
+    const prev = monRing.lastHist;
+    monRing.lastHist = { n: D.hist.total_samples, sum: D.hist.sum_latency_us };
+    const dn = prev ? D.hist.total_samples - prev.n : 0;
+    lat = dn > 0 ? (D.hist.sum_latency_us - prev.sum) / dn / 1000 : null;
+  }
+  const push = (arr, v) => {
+    arr.push(v == null || !Number.isFinite(v) ? null : v);
+    if (arr.length > 60) arr.shift();
+  };
+  push(monRing.qps, D.qps);
+  push(monRing.ips, D.ips);
+  push(monRing.latency, lat);
+  push(monRing.mem, D.mem.total_bytes / 1048576);
+  setText("mon-qps", D.qps.toFixed(1));
+  setText("mon-ips", D.ips.toFixed(1));
+  const lastLat = [...monRing.latency].reverse().find((v) => v != null);
+  setText("mon-lat", lastLat != null ? fmtMs(lastLat) : "-");
+  setText("mon-mem", formatBytes(D.mem.total_bytes));
+  const common = { fill: true, spanSec: 60, intervalSec: 1 };
   drawLineChart(document.getElementById("mon-qps-chart"), monRing.qps, {
-    color: T.s1,
-    fill: true,
+    ...common,
+    unit: "queries/s",
   });
   drawLineChart(document.getElementById("mon-latency-chart"), monRing.latency, {
-    color: T.s1,
-    fill: true,
+    ...common,
+    fmt: fmtMs,
+    empty: "No searches in the last minute",
   });
-  drawGauge(document.getElementById("mon-mem-chart"), mem, 1073741824, {
-    label: `${formatBytes(mem)} / 1 GB`,
+  drawLineChart(document.getElementById("mon-mem-chart"), monRing.mem, {
+    ...common,
+    fmt: (v) => `${v.toFixed(1)} MB`,
   });
-  document.getElementById("mon-detail-json").innerHTML = jsonHighlight(d);
+  document.getElementById("mon-detail-json").innerHTML = jsonHighlight(r.data);
 }
 
 // SQL console
@@ -2489,6 +2852,7 @@ document.querySelectorAll(".sidebar-nav a").forEach((a) => {
     document.getElementById("viewTitle").textContent =
       a.querySelector("span").textContent;
     if (view === "vectors") loadPoints();
+    hideVizTooltip();
     if (viewHooks[view]) viewHooks[view]();
   });
 });
