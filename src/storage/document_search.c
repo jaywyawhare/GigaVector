@@ -98,7 +98,7 @@ int gv_search_document(GV_Database *db, GV_KnowledgeGraph *kg, GV_MemoryLayer *m
                 if (!c) continue;
                 if (c->vrank < 0) { c->vrank = i; c->vscore = 1.0f - sr[i].distance; }
             }
-            /* db_search hands back owned result vectors — free them. */
+            /* db_search hands back owned result vectors - free them. */
             for (int i = 0; i < n; i++)
                 if (sr[i].vector) vector_destroy((GV_Vector *)sr[i].vector);
             gv_free(sr);
@@ -191,7 +191,7 @@ int gv_search_document(GV_Database *db, GV_KnowledgeGraph *kg, GV_MemoryLayer *m
      * chunk whose own entities fall inside that union. This makes the graph
      * contribution query-dependent: a chunk is promoted when it discusses
      * entities directly connected to (or identical with) the best-matching
-     * context — even if it shares no literal triple with them. */
+     * context - even if it shares no literal triple with them. */
     if (kg && ncand > 1) {
         enum { MAX_SEED_ENTITIES = 32 };
         uint64_t seeds[MAX_SEED_ENTITIES];

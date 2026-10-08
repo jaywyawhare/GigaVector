@@ -1,5 +1,5 @@
 /**
- * graph_centrality.c — centrality algorithms for the GigaVector property graph.
+ * graph_centrality.c - centrality algorithms for the GigaVector property graph.
  *
  * Implements the centrality portion of graph_algos.h:
  *   - graph_betweenness_centrality     (Brandes: BFS unweighted / Dijkstra weighted)
@@ -72,7 +72,7 @@ static void mh_push(MinHeap *h, size_t node, double k) {
 /* ── Adjacency iteration ─────────────────────────────────────────────────────
  * Visitor abstraction over a node's neighbours. When `directed` is set we walk
  * out_edges only; otherwise we walk out_edges + in_edges (the undirected union,
- * counting parallel edges as separate transitions — fine for these algorithms).
+ * counting parallel edges as separate transitions - fine for these algorithms).
  * The callback receives the neighbour's dense index and the clamped weight. */
 
 typedef void (*neighbor_fn)(size_t nb_idx, double w, void *user);
@@ -272,7 +272,7 @@ static int bc_push_pred(BrandesCtx *b, size_t v, size_t u) {
 
 /* One Brandes source iteration over caller-owned buffers. Thread-safe as long
  * as each worker owns its own BrandesCtx/heap/partial array and only writes
- * its partial[] — the graph itself is read-only during the computation. */
+ * its partial[] - the graph itself is read-only during the computation. */
 typedef struct {
     const GV_GraphDB *g;
     const GV_GAContext *ctx;
@@ -723,9 +723,9 @@ int graph_degree_centrality(const GV_GraphDB *g, int mode, GV_GraphNodeScores *o
 }
 
 /* Shared PageRank-style power iteration.
- *   teleport[i]      — per-node teleport (restart) probability distribution,
+ *   teleport[i]      - per-node teleport (restart) probability distribution,
  *                      must sum to 1. NULL => uniform 1/N.
- *   article_rank     — when non-zero, divide each node's outgoing contribution
+ *   article_rank     - when non-zero, divide each node's outgoing contribution
  *                      by (out_degree + average_out_degree) instead of out_degree.
  * Writes the stationary distribution into out->scores. */
 static int pagerank_core(const GV_GAContext *ctx, const GV_GraphDB *g, size_t N,

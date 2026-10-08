@@ -585,7 +585,7 @@ typedef int (*GV_KGHopVisitor)(const GV_KGHop *hop, void *ctx);
 /**
  * @brief Visit an entity's adjacency in O(degree) with zero allocation.
  *
- * Each hop is produced by dereferencing pre-linked edge pointers — no hashing,
+ * Each hop is produced by dereferencing pre-linked edge pointers - no hashing,
  * no id->node resolution, no triple materialisation, no string copies. This is
  * the constant-time-per-hop primitive the Cypher engine uses to expand pattern
  * edges; a k-hop path is k pointer walks rather than k index probes.
@@ -802,7 +802,7 @@ int kg_remove_relations_by_chunk(GV_KnowledgeGraph *kg, const char *chunk_id);
  * Starting from seed entity ids, collect every triple whose subject or object
  * is within @p radius hops of any seed. This is the query-time counterpart of
  * chunk provenance: instead of "which facts came from this chunk", it answers
- * "what does the graph know around these entities" — the missing multi-hop
+ * "what does the graph know around these entities" - the missing multi-hop
  * expansion for retrieval-augmented generation.
  *
  * Seeds may reference unknown entities; unknown ids are skipped. Expansion

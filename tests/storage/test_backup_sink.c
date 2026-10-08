@@ -24,7 +24,7 @@ int main(void) {
     float v[8] = {1, 2, 3, 4, 5, 6, 7, 8};
     for (int i = 0; i < 100; i++) { int _r = db_add_vector(db, v, 8); (void)_r; }
 
-    /* Regression: verify_after=1 (default) must SUCCEED — was always "corrupted". */
+    /* Regression: verify_after=1 (default) must SUCCEED - was always "corrupted". */
     GV_BackupResult *r = backup_create(db, "/tmp/gv_vok.gvbak", NULL, NULL, NULL);
     ASSERT(r && r->success, "backup with default verify_after passes");
     if (r) backup_result_free(r);

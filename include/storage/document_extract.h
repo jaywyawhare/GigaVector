@@ -41,7 +41,7 @@ GV_DocFormat gv_doc_format_from_extension(const char *path);
  * @param len  Length of @p data in bytes.
  * @return A newly allocated NUL-terminated string (free with gv_free), or
  *         NULL on allocation failure or when @p data is NULL. For a PDF with
- *         only compressed (FlateDecode) streams the result may be empty — the
+ *         only compressed (FlateDecode) streams the result may be empty - the
  *         extractor reads uncompressed text operators only, never guessing.
  */
 char *gv_document_extract_text(GV_DocFormat fmt, const void *data, size_t len);

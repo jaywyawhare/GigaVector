@@ -1,5 +1,5 @@
 /**
- * test_chunker.c — edge cases for the document chunker (src/storage/chunker.c):
+ * test_chunker.c - edge cases for the document chunker (src/storage/chunker.c):
  * empty/whitespace-only text, single word, overlap>=chunk_tokens clamp,
  * chunk_tokens==0 default, long doc_id truncation, and normal multi-chunk
  * with overlap.

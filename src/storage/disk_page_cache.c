@@ -96,7 +96,7 @@ static void disk_page_cache_push_front(GV_DiskPageCache *cache, DiskPageCacheNod
 }
 
 /* Move an existing (already-linked) node to the head. Must not be called on a
- * node that is not in the list — unlink() would corrupt head/tail otherwise. */
+ * node that is not in the list - unlink() would corrupt head/tail otherwise. */
 static void disk_page_cache_touch(GV_DiskPageCache *cache, DiskPageCacheNode *node)
 {
     disk_page_cache_unlink(cache, node);

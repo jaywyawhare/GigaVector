@@ -48,7 +48,7 @@ static inline size_t gv_json_escape(char *dst, size_t dst_size, const char *src)
 }
 
 /* Extract the string value of "key" from a FLAT JSON object into out, unescaping
- * \" \\ \/ \n \t \r. For flat claim objects (JWT/OIDC/SAML) — not nested JSON.
+ * \" \\ \/ \n \t \r. For flat claim objects (JWT/OIDC/SAML) - not nested JSON.
  * Fails closed: -1 if the key, opening, or closing quote is missing (e.g. a value
  * truncated by out_size). Returns 0 on success. */
 static inline int gv_json_extract_string(const char *json, const char *key,
@@ -166,7 +166,7 @@ static inline size_t hash_u64(uint64_t id, size_t bucket_count) {
 }
 
 /* Portable serialization primitives: multi-byte scalars in little-endian,
- * floats/doubles via IEEE-754 bit-cast, size_t normalized to 8 bytes — files are
+ * floats/doubles via IEEE-754 bit-cast, size_t normalized to 8 bytes - files are
  * interchangeable across endianness and 32/64-bit builds. On LE hosts the bytes
  * match the old native fwrite(&v) layout, so existing on-disk files stay readable. */
 #if defined(__BYTE_ORDER__) && defined(__ORDER_LITTLE_ENDIAN__)
@@ -406,7 +406,7 @@ static inline GV_Metadata *metadata_copy(GV_Metadata *src) {
  * needs its own file-scope create-trampoline; this macro is what keeps that
  * trampoline's shape (and any future fix to it) in exactly one place instead
  * of hand-copied per module. Requires <pthread.h> to already be included by
- * the caller. Expands to `key_var`/`once_var`/`create_fn` at file scope —
+ * the caller. Expands to `key_var`/`once_var`/`create_fn` at file scope -
  * follow with GV_TLS_KEY_ENSURE(once_var, create_fn) before first use.
  */
 #define GV_TLS_KEY_DEFINE(key_var, once_var, create_fn, destructor_fn)   \

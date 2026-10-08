@@ -80,7 +80,7 @@ bench-ivfdisk: $(BENCH_DIR)/bench_ivfdisk
 
 .PHONY: bench-ivfdisk-full
 bench-ivfdisk-full: $(BENCH_DIR)/bench_ivfdisk
-	@echo "=== IVFDisk full benchmark (1M x 128) — expect long runtime ==="
+	@echo "=== IVFDisk full benchmark (1M x 128) - expect long runtime ==="
 	@LD_LIBRARY_PATH=$(LIB_DIR) $(BENCH_DIR)/bench_ivfdisk 1000000 128 1024 64 100 0
 
 $(BIN_DIR)/main: $(MAIN_OBJ) $(STATIC_LIB)
@@ -170,7 +170,7 @@ test-corrupt-snapshot: $(BIN_DIR)/main
 	@bash $(TEST_DIR)/corrupt_snapshot.sh $(DATA_DIR)/database.bin || true
 
 # Corrupt-input resilience: feed corrupted WAL + snapshot bytes to the loaders
-# and assert they return a defined error (no crash). Real exit code — a crash or
+# and assert they return a defined error (no crash). Real exit code - a crash or
 # silent-accept fails the build (unlike the descriptive scripts above).
 .PHONY: test-corrupt-resilience
 test-corrupt-resilience: lib $(BUILD_DIR)/storage/test_corrupt_resilience$(EXE_EXT)

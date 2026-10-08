@@ -517,7 +517,7 @@ static char *parse_string_content(ParserState *state) {
                             state->pos += 3;   // -> low surrogate's last hex digit
                             codepoint = 0x10000 + ((codepoint - 0xD800) << 10) + (low - 0xDC00);
                         }
-                        /* else: lone high surrogate — leave pos at its last hex
+                        /* else: lone high surrogate - leave pos at its last hex
                          * digit; the loop's pos++ advances normally. */
                     }
 

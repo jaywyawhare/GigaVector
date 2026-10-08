@@ -1,5 +1,5 @@
 /*
- * test_tiered_storage.c — Unit tests for the tiered hot/warm/cold storage feature.
+ * test_tiered_storage.c - Unit tests for the tiered hot/warm/cold storage feature.
  */
 
 #include <stdio.h>
@@ -84,9 +84,9 @@ static int test_tier_classification(void) {
      * Configure tiering: hot_max_age = 1 s, warm_max_age = 5 s.
      * Then manually backdate the insertion timestamps to test classification.
      *
-     * Vector 0: inserted 10 seconds ago  → COLD
-     * Vector 1: inserted  3 seconds ago  → WARM
-     * Vector 2: inserted  0 seconds ago  → HOT (timestamp = now)
+     * Vector 0: inserted 10 seconds ago  -> COLD
+     * Vector 1: inserted  3 seconds ago  -> WARM
+     * Vector 2: inserted  0 seconds ago  -> HOT (timestamp = now)
      */
     ASSERT(gv_db_set_tiering_config(db, 1, 5, 0) == 0, "set tiering config");
     ASSERT(db->tiering_enabled != 0, "tiering_enabled flag set");

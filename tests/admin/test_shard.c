@@ -472,7 +472,7 @@ static int test_shard_search_topk(void) {
     ASSERT(res[0].distance <= res[1].distance &&
            res[1].distance <= res[2].distance, "results globally distance-ordered");
     ASSERT(res[0].vector != NULL, "nearest result has a vector");
-    /* Nearest overall is v2b on shard 2 (dist 0.25) — a single-shard search of
+    /* Nearest overall is v2b on shard 2 (dist 0.25) - a single-shard search of
      * shards 0 or 1 could never surface it. */
     ASSERT(res[0].distance < res[1].distance, "distinct nearest is strictly closest");
     ASSERT(fabsf(res[0].vector->data[3] - 0.5f) < 1e-6f, "nearest is v2b (from shard 2)");

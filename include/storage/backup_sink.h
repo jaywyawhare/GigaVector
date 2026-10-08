@@ -48,7 +48,7 @@ int db_backup_to_sink(GV_Database *db, const char *object_name,
  * @p ctx is a command-template string where "%f" expands to the local file path
  * and "%o" to the object name, e.g. "aws s3 cp %f s3://bucket/%o" or
  * "gsutil cp %f gs://bucket/%o". Runs via the shell. For safety the object name
- * is rejected if it contains shell metacharacters — operators supply trusted
+ * is rejected if it contains shell metacharacters - operators supply trusted
  * templates and keys, not end-user input.
  *
  * @return 0 if the command exits 0, non-zero otherwise.

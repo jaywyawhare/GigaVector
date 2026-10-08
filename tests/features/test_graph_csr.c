@@ -1,5 +1,5 @@
 /**
- * test_graph_csr.c — unit tests for the GraphBLAS-lite CSR layer (graph_csr.h):
+ * test_graph_csr.c - unit tests for the GraphBLAS-lite CSR layer (graph_csr.h):
  * build + SpMV/SpMM/row-sums/bool-reachability kernels vs hand-computed values.
  * Graph: a -w2-> b -w3-> c   (3 nodes, 2 weighted directed edges)
  */
@@ -42,7 +42,7 @@ int main(void) {
     ASSERT((int)(y[ia] + 0.5) == 2 && (int)(y[ib] + 0.5) == 3 && (int)(y[ic] + 0.5) == 0,
            "SpMV(Ow, ones) == {2,3,0}");
 
-    /* SpMV with x = e_c → only b (edge b->c, w3) contributes */
+    /* SpMV with x = e_c -> only b (edge b->c, w3) contributes */
     double ec[3] = {0}; ec[ic] = 1.0; double yc[3] = {0};
     gv_csr_spmv(Ow, ec, yc);
     ASSERT((int)(yc[ib] + 0.5) == 3 && (int)(yc[ia] + 0.5) == 0, "SpMV(Ow, e_c) puts 3 at b");
@@ -56,7 +56,7 @@ int main(void) {
     /* ---- OUT boolean ---- */
     GV_CSR *Ob = gv_csr_build(g, ctx, GV_CSR_OUT, 0);
     ASSERT(Ob && Ob->val == NULL, "boolean matrix has NULL val");
-    /* bool reachability: predecessors of b (x = e_b) → a lights up */
+    /* bool reachability: predecessors of b (x = e_b) -> a lights up */
     uint8_t xb[3] = {0}; xb[ib] = 1; uint8_t yb[3] = {0};
     gv_csr_bool_spmv(Ob, xb, yb);
     ASSERT(yb[ia] == 1 && yb[ib] == 0 && yb[ic] == 0, "bool_spmv(Ob, e_b): a is a predecessor of b");
@@ -93,7 +93,7 @@ int main(void) {
     ASSERT((int)(C[ic*2+0]+0.5) == 0 && (int)(C[ic*2+1]+0.5) == 0, "SpMM row c == (0,0)");
     gv_csr_free(A);
 
-    /* empty graph → valid empty matrix */
+    /* empty graph -> valid empty matrix */
     GV_GraphDB *e = graph_create(NULL);
     GV_GAContext *ectx = gv_ga_build(e);
     GV_CSR *em = gv_csr_build(e, ectx, GV_CSR_OUT, 1);

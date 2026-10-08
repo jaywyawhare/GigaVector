@@ -136,7 +136,7 @@ int main(void) {
     cypher_free_result(&r);
 
     /* ---- edge direction over the O(1) adjacency ---- */
-    /* Reverse pattern: who KNOWS Carol?  (Bob-KNOWS->Carol) — uses incoming adjacency. */
+    /* Reverse pattern: who KNOWS Carol?  (Bob-KNOWS->Carol) - uses incoming adjacency. */
     ASSERT(q(cy, "MATCH (c:Person {name:'Carol'})<-[:KNOWS]-(x) RETURN x.name ORDER BY x.name", &r) == 0
            && r.row_count == 1 && strcmp(cell(&r,0,0),"Bob")==0, "reverse <-[:KNOWS]- Carol -> Bob");
     cypher_free_result(&r);

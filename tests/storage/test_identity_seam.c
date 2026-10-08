@@ -1,4 +1,4 @@
-/* Phase 0 — identity seam: chunk_id <-> internal index, cascade delete, sidecar persist. */
+/* Phase 0 - identity seam: chunk_id <-> internal index, cascade delete, sidecar persist. */
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>

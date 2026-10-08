@@ -991,7 +991,7 @@ int posting_catalog_append_segment_ex(GV_PostingCatalog *cat, uint64_t head_id,
     GV_PostingSegmentParams local = { .payload_type = GV_POSTING_PAYLOAD_FLOAT };
     if (params) local = *params;
 
-    /* One append() is one logical commit → one MVCC timestamp shared by all of
+    /* One append() is one logical commit -> one MVCC timestamp shared by all of
      * this batch's (possibly split) segments. */
     uint64_t commit_ts = ++cat->commit_counter;
 
@@ -1367,7 +1367,7 @@ static int posting_catalog_reconcile_head_live_counts(GV_PostingCatalog *cat,
          * (version, commit_ts, flags) as the deduped survivor; when the same
          * (id, version, commit_ts) exists in multiple segments, tagged is sorted
          * with the winner last, so we take the LAST matching tagged entry
-         * (highest segment_index) — mirroring the dedup tie-break. */
+         * (highest segment_index) - mirroring the dedup tie-break. */
         int found = 0;
         size_t win_seg = 0;
         for (size_t t = 0; t < tagged.count; ++t) {
@@ -1544,8 +1544,8 @@ static int posting_catalog_drop_head_segments_below(GV_PostingCatalog *cat, uint
 /* Durably supersede this head's old segments after a new consolidated segment
  * has been appended and made durable.  `keep_seq` is the sequence of the newly
  * written segment (all strictly-lower sequences are old and get dropped).  Order
- * is: drop old refs from the in-memory catalog → posting_catalog_save() so the
- * catalog on disk no longer references them → only then unlink the old files.
+ * is: drop old refs from the in-memory catalog -> posting_catalog_save() so the
+ * catalog on disk no longer references them -> only then unlink the old files.
  * At every crash point the on-disk catalog references only durable files. */
 static int posting_catalog_supersede_old_head_segments(GV_PostingCatalog *cat,
                                                         uint64_t head_id, uint64_t keep_seq)
@@ -1593,7 +1593,7 @@ int posting_catalog_compact_head(GV_PostingCatalog *cat, uint64_t head_id,
      * segment files until the consolidated segment + updated catalog are durable
      * on disk.  Otherwise a crash after the remove() but before the new segment
      * and catalog are persisted leaves a CRC-valid catalog referencing deleted
-     * files → head data lost.
+     * files -> head data lost.
      *
      * Note the old segments are still registered in the catalog while we append,
      * so posting_next_sequence() derives a strictly higher sequence for the new
@@ -1604,7 +1604,7 @@ int posting_catalog_compact_head(GV_PostingCatalog *cat, uint64_t head_id,
      * referencing both old + new), we drop the old refs and unlink the old files.
      * If a crash happens in that window, the catalog references the old + new
      * segments; reads merge them and the new segment's higher commit_ts wins, so
-     * no data is lost — the stale files are simply reclaimed on the next pass. */
+     * no data is lost - the stale files are simply reclaimed on the next pass. */
     uint64_t keep_seq = posting_next_sequence(cat, head_id);
     int rc = 0;
     if (view.count > 0) {
@@ -1748,9 +1748,9 @@ int posting_catalog_rewrite_head(GV_PostingCatalog *cat, uint64_t head_id,
 
     /* Durability: write-new-then-delete-old (see posting_catalog_compact_head).
      * `entries` are caller-owned and independent of the old segment files, so we
-     * append the replacement segment(s) first — while the old segments are still
+     * append the replacement segment(s) first - while the old segments are still
      * registered, so their sequences stay below the new ones and filenames can't
-     * collide — then, only after the new segment(s) and catalog are durable, drop
+     * collide - then, only after the new segment(s) and catalog are durable, drop
      * and unlink the superseded files.  A crash mid-way leaves a CRC-valid catalog
      * that still references durable files (old and/or new); no data is lost. */
     uint64_t keep_seq = posting_next_sequence(cat, head_id);

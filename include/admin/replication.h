@@ -409,8 +409,8 @@ GV_ReplTransport *replication_get_transport(GV_ReplicationManager *mgr);
  *
  * TEARDOWN CONTRACT: peers reference each other's inboxes for in-process message
  * delivery, so a tick on one manager may write into a peer's inbox. Before
- * destroying ANY manager in a raft group, quiesce the whole group — stop calling
- * replication_raft_tick()/submit() on every member — then destroy them. Destroying
+ * destroying ANY manager in a raft group, quiesce the whole group - stop calling
+ * replication_raft_tick()/submit() on every member - then destroy them. Destroying
  * one while another is still ticking is a use-after-free of the destroyed inbox. */
 
 /** Create the raft core for this manager. @p peer_ids lists the OTHER nodes. */

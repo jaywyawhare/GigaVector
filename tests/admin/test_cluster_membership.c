@@ -21,7 +21,7 @@ static int addr_in_nodes(GV_Cluster *c, const char *addr) {
 
 /* Two nodes form a cluster: the coordinator discovers the peer via a seed
  * address, auto-registers it as a remote shard, and cluster_search transparently
- * merges the peer's data with its own — no manual shard_add by the caller. */
+ * merges the peer's data with its own - no manual shard_add by the caller. */
 static int test_two_node_discovery(void) {
     /* --- Node A: holds the global nearest, serves on an ephemeral port. --- */
     GV_Database *dbA = db_open(NULL, 4, GV_INDEX_TYPE_FLAT);
@@ -91,7 +91,7 @@ static int test_two_node_discovery(void) {
 
 /* Anti-entropy gossip: C seeds only B, B seeds only A. C must learn A
  * transitively via B's membership list, register it as a shard, and then reach
- * A's data through cluster_search — convergence from partial seeds. */
+ * A's data through cluster_search - convergence from partial seeds. */
 static int test_gossip_discovery(void) {
     const float target[4] = {9, 0, 0, 0};
 

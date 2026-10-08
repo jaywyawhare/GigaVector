@@ -47,18 +47,18 @@ float freshness_score(uint64_t insert_time_ms, uint64_t now_ms,
 
     switch (decay_type) {
         case GV_RANK_DECAY_GAUSS: {
-            /* exp(-0.5 * t^2 * ln2) — equals 0.5 at t=1 */
+            /* exp(-0.5 * t^2 * ln2) - equals 0.5 at t=1 */
             double v = exp(-0.5 * t * t * M_LN2);
             return (float)(v < 0.0 ? 0.0 : (v > 1.0 ? 1.0 : v));
         }
         case GV_RANK_DECAY_LINEAR: {
-            /* max(0, 1 - t * ln2) — equals 0 before t = 1/ln2 */
+            /* max(0, 1 - t * ln2) - equals 0 before t = 1/ln2 */
             double v = 1.0 - t * M_LN2;
             return (float)(v < 0.0 ? 0.0 : (v > 1.0 ? 1.0 : v));
         }
         case GV_RANK_DECAY_EXP:
         default: {
-            /* exp(-ln2 * t) — equals 0.5 at t=1 */
+            /* exp(-ln2 * t) - equals 0.5 at t=1 */
             double v = exp(-M_LN2 * t);
             return (float)(v < 0.0 ? 0.0 : (v > 1.0 ? 1.0 : v));
         }

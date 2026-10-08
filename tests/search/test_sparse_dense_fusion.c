@@ -38,7 +38,7 @@ static int test_fuse_rrf(void) {
     sparse[1].id = 1; sparse[1].distance = 0.7f;
     sparse[2].id = 2; sparse[2].distance = 0.5f;
 
-    /* Dense results: doc 1, 3, 0 (score desc) — note overlap on ids 0 and 1 */
+    /* Dense results: doc 1, 3, 0 (score desc) - note overlap on ids 0 and 1 */
     GV_SearchResult dense[3];
     memset(dense, 0, sizeof(dense));
     dense[0].id = 1; dense[0].distance = 0.8f;

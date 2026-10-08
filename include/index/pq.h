@@ -62,7 +62,7 @@ int pq_is_trained(const void *index);
  *
  * The sum of squared distances between each (rotated, if OPQ) sub-vector and its
  * chosen codebook centroid, averaged over vectors. This is the quantity OPQ
- * minimises — a lower value means higher-fidelity codes (and thus recall) at the
+ * minimises - a lower value means higher-fidelity codes (and thus recall) at the
  * same bit budget. Returns -1.0 if the index is untrained or empty.
  */
 double pq_avg_quantization_error(const void *index);

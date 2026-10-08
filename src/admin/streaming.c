@@ -107,7 +107,7 @@ void stream_config_init(GV_StreamConfig *config) {
 }
 
 /**
- * One embedded batch: synthetic messages → optional handler → extractor → db_add_vector.
+ * One embedded batch: synthetic messages -> optional handler -> extractor -> db_add_vector.
  * Updates *stats, *current_offset, *committed_offset under caller-held consumer mutex.
  */
 static void stream_process_embedded_batch(GV_StreamConsumer *consumer) {

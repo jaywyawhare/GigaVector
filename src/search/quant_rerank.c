@@ -3,7 +3,7 @@
  * @brief Quantization-aware two-stage reranking pipeline implementation.
  *
  * Stage 1: coarse ANN retrieval via db_search() with oversample_factor*k candidates.
- * Stage 2: asymmetric quantized distance refinement — raw float query vs stored
+ * Stage 2: asymmetric quantized distance refinement - raw float query vs stored
  *          quantized codes via quant_distance(); sort by rerank_score ascending.
  *
  * quant_rerank_search() mirrors the pattern of rank_search() in ranking.c:

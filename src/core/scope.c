@@ -22,7 +22,7 @@ GV_TLS_KEY_DEFINE(gv_tls_arena_key, gv_tls_arena_once, gv_tls_arena_key_create, 
 /* Frees the calling thread's TLS arena.  Registered via atexit() so it runs
    before LSan's own atexit check (LIFO order: atexit runs after main returns
    but before shared-library unload, while __attribute__((destructor)) on a
-   shared library runs during unload — after LSan). */
+   shared library runs during unload - after LSan). */
 static void gv_tls_scope_atexit(void) {
     GV_TLS_KEY_ENSURE(gv_tls_arena_once, gv_tls_arena_key_create);
     GV_Arena *arena = (GV_Arena *)pthread_getspecific(gv_tls_arena_key);

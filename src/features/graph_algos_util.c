@@ -1,5 +1,5 @@
 /**
- * graph_algos_util.c — shared helpers for the graph-algorithms layer:
+ * graph_algos_util.c - shared helpers for the graph-algorithms layer:
  * a dense node id<->index context and the result-container free functions.
  */
 #include "features/graph_algos.h"

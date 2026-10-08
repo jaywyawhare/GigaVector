@@ -3,8 +3,8 @@
  * @brief Quantization-aware two-stage reranking pipeline.
  *
  * Implements a two-stage retrieval pipeline:
- *   Stage 1 — coarse ANN retrieval of oversample_factor*k candidates.
- *   Stage 2 — asymmetric quantized distance refinement; return top-k.
+ *   Stage 1 - coarse ANN retrieval of oversample_factor*k candidates.
+ *   Stage 2 - asymmetric quantized distance refinement; return top-k.
  *
  * The caller is responsible for maintaining the codes array in sync with
  * insertions by calling quant_encode() after each db_add_vector().

@@ -1,5 +1,5 @@
 /*
- * test_value_store_db.c — DB-level WiscKey value store integration:
+ * test_value_store_db.c - DB-level WiscKey value store integration:
  * enable, put/get/delete/gc via the GV_Database API, and clean teardown.
  */
 #include <stdio.h>

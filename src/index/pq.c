@@ -219,7 +219,7 @@ int pq_train(void *index, const float *data, size_t count) {
                 /* Rotation-scratch OOM: drop OPQ entirely so the codebooks
                  * (trained on un-rotated `data`) stay consistent with encode/
                  * search, which rotate only when idx->opq != NULL. Otherwise
-                 * codes would be built un-rotated but queried rotated → garbage. */
+                 * codes would be built un-rotated but queried rotated -> garbage. */
                 opq_free(idx->opq);
                 idx->opq = NULL;
             }

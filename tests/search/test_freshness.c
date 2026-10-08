@@ -30,7 +30,7 @@
 
 
 /* ---------------------------------------------------------------------------
- * Test: freshness_score() — basic decay math
+ * Test: freshness_score() - basic decay math
  * ------------------------------------------------------------------------ */
 
 static int test_freshness_score_exp(void)

@@ -651,7 +651,7 @@ static int sql_tok_is_value(const GV_SQLToken *t)
                  t->type == GV_SQL_TOK_IDENT);
 }
 
-/* field IN (v1, v2, ...) — takes ownership of `field`. */
+/* field IN (v1, v2, ...) - takes ownership of `field`. */
 static GV_SQLWhere *sql_parse_in_list(GV_SQLTokenBuf *buf, char *field)
 {
     sql_advance(buf); /* consume IN */
@@ -700,7 +700,7 @@ static GV_SQLWhere *sql_parse_in_list(GV_SQLTokenBuf *buf, char *field)
     return node;
 }
 
-/* field BETWEEN low AND high — takes ownership of `field`. */
+/* field BETWEEN low AND high - takes ownership of `field`. */
 static GV_SQLWhere *sql_parse_between(GV_SQLTokenBuf *buf, char *field)
 {
     sql_advance(buf); /* consume BETWEEN */
@@ -730,7 +730,7 @@ static GV_SQLWhere *sql_parse_between(GV_SQLTokenBuf *buf, char *field)
     return node;
 }
 
-/* field IS [NOT] NULL — takes ownership of `field`. */
+/* field IS [NOT] NULL - takes ownership of `field`. */
 static GV_SQLWhere *sql_parse_is_null(GV_SQLTokenBuf *buf, char *field)
 {
     sql_advance(buf); /* consume IS */
@@ -1577,7 +1577,7 @@ static char *sql_metadata_to_json(const GV_Metadata *meta)
         }
         first = 0;
 
-        /* "key":"value" — key and value escaped for valid JSON. */
+        /* "key":"value" - key and value escaped for valid JSON. */
         if (!sql_json_reserve(&buf, &cap, len, 1)) { gv_free(buf); return NULL; }
         buf[len++] = '"';
         if (!sql_json_append_escaped(&buf, &cap, &len, m->key)) { gv_free(buf); return NULL; }
@@ -2026,7 +2026,7 @@ static int sql_exec_where_scan(GV_SQLEngine *eng, const GV_SQLStmt *stmt,
 
 /* Executor: SELECT COUNT(*) */
 
-/* Executor: aggregate projection — COUNT(*) / SUM / MIN / MAX / AVG(column).
+/* Executor: aggregate projection - COUNT(*) / SUM / MIN / MAX / AVG(column).
  * Produces a single-row, single-column result.  COUNT keeps its historical
  * contract (result->indices[0] holds the count); every aggregate also exposes
  * a formatted value in result->column_values[0]. */
@@ -2359,7 +2359,7 @@ static int sql_exec_group_by(GV_SQLEngine *eng, const GV_SQLStmt *stmt, GV_SQLRe
     }
 
     /* Apply HAVING, then ORDER BY (by a group column via the representative row),
-     * then OFFSET/LIMIT — all over the group list. */
+     * then OFFSET/LIMIT - all over the group list. */
     size_t *ord = (size_t *)gv_calloc(gn ? gn : 1, sizeof(size_t));
     if (!ord) { sql_group_free(groups, gn); sql_set_error(eng, "Out of memory"); return -1; }
     size_t on = 0;

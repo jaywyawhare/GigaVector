@@ -1,5 +1,5 @@
 /**
- * test_serialization_portable.c — verifies the core/utils.h serialization
+ * test_serialization_portable.c - verifies the core/utils.h serialization
  * helpers emit a DETERMINISTIC little-endian, fixed-width, IEEE-754 on-disk
  * format. This guards endianness/width portability: the assertions on the raw
  * emitted bytes hold identically on little- and big-endian hosts (the helpers

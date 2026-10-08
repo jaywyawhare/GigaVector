@@ -1,5 +1,5 @@
 /**
- * graph_classify.c — graph classification algorithms for the graph-algorithms
+ * graph_classify.c - graph classification algorithms for the graph-algorithms
  * layer: greedy graph coloring and greedy maximal independent set.
  *
  * Both treat the graph as UNDIRECTED (a node's neighbors are the union of its

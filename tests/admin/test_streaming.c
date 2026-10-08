@@ -206,7 +206,7 @@ static int test_start_stop(void) {
     int rc = stream_start(consumer);
     ASSERT(rc == 0, "stream_start should succeed");
 
-    /* CUSTOM source thread may exit quickly — state could be RUNNING or STOPPED */
+    /* CUSTOM source thread may exit quickly - state could be RUNNING or STOPPED */
     GV_StreamState state = stream_get_state(consumer);
     ASSERT(state == GV_STREAM_RUNNING || state == GV_STREAM_STOPPED || state == GV_STREAM_ERROR,
            "state after start should be RUNNING, STOPPED, or ERROR");
@@ -238,7 +238,7 @@ static int test_pause_resume(void) {
     /* CUSTOM source thread may exit quickly, so pause/resume may or may not
        transition states. We just verify no crash and valid return codes. */
     rc = stream_pause(consumer);
-    /* rc == 0 means paused, non-zero means already stopped — both OK */
+    /* rc == 0 means paused, non-zero means already stopped - both OK */
 
     /* wait up to 200ms for pause to take effect */
     int waited = 0;

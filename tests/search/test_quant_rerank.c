@@ -252,7 +252,7 @@ static int test_recall_improvement(void) {
         if (d < best_dist) { best_dist = d; true_nn = i; }
     }
 
-    /* Rerank search with generous oversample — should find the true NN. */
+    /* Rerank search with generous oversample - should find the true NN. */
     int n = gv_db_search_with_rerank(db, query, 1, 8, NULL);
     /* We can't pass NULL for out here; allocate a result */
     GV_SearchResult out[1];

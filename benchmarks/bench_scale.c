@@ -1,4 +1,4 @@
-/* bench_scale — reproducible scale harness for the "vector db killer" claim.
+/* bench_scale - reproducible scale harness for the "vector db killer" claim.
  *
  * Measures, for a configurable corpus size N (default 100k; pass 10000000 for
  * the 10M run):
@@ -11,7 +11,7 @@
  * Metadata/WAL overhead is deliberately excluded: these are index-level
  * scale numbers. Deterministic PRNG so runs are comparable across versions.
  * NOTE: uniform random vectors are the hardest case for ANN graphs (no
- * manifold structure) — treat recall here as a floor, not a headline.
+ * manifold structure) - treat recall here as a floor, not a headline.
  *
  * Usage: bench_scale [N] [dim] [queries] [k]
  */
@@ -32,7 +32,7 @@ static double now_ms(void) {
     return ts.tv_sec * 1000.0 + ts.tv_nsec / 1e6;
 }
 
-/* xorshift64* — fast deterministic fills without rand() range limits. */
+/* xorshift64* - fast deterministic fills without rand() range limits. */
 static uint64_t rng = 0x9E3779B97F4A7C15ULL;
 static uint64_t next_u64(void) {
     rng ^= rng >> 12; rng ^= rng << 25; rng ^= rng >> 27;

@@ -3,7 +3,7 @@
 Plain ``unittest discover`` buffered through a shell pipe hides *which* test is
 running when the suite hangs (as it does on some platforms). This runner streams
 output live and arms faulthandler to dump every thread's stack and abort if the
-suite exceeds the watchdog timeout — so a hang shows up as a traceback pointing
+suite exceeds the watchdog timeout - so a hang shows up as a traceback pointing
 at the stuck test rather than an opaque CI step timeout.
 """
 

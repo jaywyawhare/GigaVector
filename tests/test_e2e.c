@@ -4,11 +4,11 @@
  * Unlike the per-subsystem unit tests, this walks one realistic multi-model
  * workflow end to end and checks the subsystems work together:
  *
- *   1. Vector DB   — add/search/filter/range/update/delete/persist (save+reopen)
- *   2. Graph+Cypher— CREATE, MATCH, aggregation, variable-length path + vector
+ *   1. Vector DB   - add/search/filter/range/update/delete/persist (save+reopen)
+ *   2. Graph+Cypher- CREATE, MATCH, aggregation, variable-length path + vector
  *                    distance predicate (the multi-model join)
- *   3. SPLADE      — text -> learned-sparse -> relevance search
- *   4. Hybrid      — dense (vector) + sparse (BM25) fusion over one corpus
+ *   3. SPLADE      - text -> learned-sparse -> relevance search
+ *   4. Hybrid      - dense (vector) + sparse (BM25) fusion over one corpus
  *
  * Any failure returns non-zero and names the phase, so this doubles as a smoke
  * test that the whole stack is wired correctly.

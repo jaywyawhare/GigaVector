@@ -1,5 +1,5 @@
 /*
- * vlog.c — WiscKey-style append-only value log with garbage collection.
+ * vlog.c - WiscKey-style append-only value log with garbage collection.
  *
  * See include/storage/vlog.h for the on-disk layout and API contract.
  */
@@ -78,7 +78,7 @@ static size_t vlog_scan_count(FILE *fp, uint64_t file_size, uint64_t *valid_end_
         count++;
         pos = next;
     }
-    /* `pos` is the end of the last fully-valid record — the position new appends
+    /* `pos` is the end of the last fully-valid record - the position new appends
      * must start from so a torn trailing record is overwritten rather than left
      * mid-log (which a later scan would misparse against following data). */
     if (valid_end_out) *valid_end_out = pos;

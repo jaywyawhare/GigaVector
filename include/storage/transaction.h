@@ -16,10 +16,10 @@ extern "C" {
  * @brief Multi-statement transactions with MVCC snapshot isolation.
  *
  * A transaction captures a read snapshot at begin. All reads through it see a
- * consistent view of the database as of that snapshot — inserts and deletes
+ * consistent view of the database as of that snapshot - inserts and deletes
  * committed by other transactions afterward are invisible, and reads never block
  * writers. Writes are staged and applied atomically at commit; conflicting
- * concurrent deletes are rejected (first-committer-wins → serializable for the
+ * concurrent deletes are rejected (first-committer-wins -> serializable for the
  * write set). Targets the dense SoA-backed indexes (KD-tree / HNSW / FLAT / IVF).
  */
 
@@ -70,7 +70,7 @@ uint64_t db_txn_read_version(const GV_DBTxn *txn);
 /**
  * @brief Reclaim MVCC tombstones no live snapshot can observe.
  *
- * Hard-deletes vectors whose delete version is < @p safe_below — they are
+ * Hard-deletes vectors whose delete version is < @p safe_below - they are
  * invisible to every snapshot at or after @p safe_below. Pass the minimum read
  * version among still-active transactions (or the current commit version + 1 when
  * none are active) to reclaim everything safely.

@@ -3,7 +3,7 @@
 //!
 //! The client is dependency-free (standard library only) and maintains a
 //! bounded pool of keep-alive TCP connections, so repeated requests reuse
-//! sockets instead of reconnecting on every call — connection pooling at the
+//! sockets instead of reconnecting on every call - connection pooling at the
 //! protocol level.
 //!
 //! ```no_run
@@ -180,7 +180,7 @@ impl Client {
         Err(last_err.unwrap_or_else(|| Error::Protocol("request failed".into())))
     }
 
-    /// `GET /health` — returns the raw JSON (status + vector_count).
+    /// `GET /health` - returns the raw JSON (status + vector_count).
     pub fn health(&self) -> Result<Json, Error> {
         self.request("GET", "/health", None)
     }
@@ -194,7 +194,7 @@ impl Client {
         })
     }
 
-    /// `POST /vectors` — insert a single vector with optional metadata.
+    /// `POST /vectors` - insert a single vector with optional metadata.
     /// Returns the assigned vector index.
     pub fn add_vector(&self, data: &[f32], metadata: &[(&str, &str)]) -> Result<u64, Error> {
         let mut obj = BTreeMap::new();
@@ -210,7 +210,7 @@ impl Client {
         Ok(resp.get("index").and_then(|n| n.as_f64()).unwrap_or(0.0) as u64)
     }
 
-    /// `POST /search` — k-NN search.
+    /// `POST /search` - k-NN search.
     pub fn search(&self, query: &[f32], k: usize, distance: Distance) -> Result<Vec<SearchResult>, Error> {
         let mut obj = BTreeMap::new();
         obj.insert("query".to_string(), floats_to_json(query));
@@ -220,7 +220,7 @@ impl Client {
         parse_results(&resp)
     }
 
-    /// `POST /search/range` — all vectors within `radius`.
+    /// `POST /search/range` - all vectors within `radius`.
     pub fn range_search(
         &self,
         query: &[f32],
@@ -237,7 +237,7 @@ impl Client {
         parse_results(&resp)
     }
 
-    /// `POST /save` — persist the database to `path` on the server.
+    /// `POST /save` - persist the database to `path` on the server.
     pub fn save(&self, path: &str) -> Result<(), Error> {
         let mut obj = BTreeMap::new();
         obj.insert("path".to_string(), Json::Str(path.to_string()));

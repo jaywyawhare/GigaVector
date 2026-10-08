@@ -60,7 +60,7 @@ typedef struct GV_ABTest {
     int             cv_inited;   /**< Non-zero once inflight_cv is initialised. */
 } GV_ABTest;
 
-/* Internal helpers — used by ab_test.c and callable from tests. */
+/* Internal helpers - used by ab_test.c and callable from tests. */
 
 /**
  * @brief Allocate and initialise a GV_ABTest, building the shadow index.

@@ -1,5 +1,5 @@
 /* Pinned-snapshot analytics: an algorithm running on a GV_GAContext must see
- * one consistent snapshot while another thread mutates the graph — no data
+ * one consistent snapshot while another thread mutates the graph - no data
  * races (TSAN), no torn traversals. Writers simply block until the context is
  * released. Run this test under -fsanitize=thread to verify. */
 #include <stdio.h>

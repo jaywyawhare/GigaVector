@@ -35,7 +35,7 @@ void gv_memory_fini(GV_Memory *mem);
 void gv_alloc_set_fail_after(long n);
 void gv_alloc_reset_fail(void);
 
-/* Process heap — caller-owned and long-lived allocations without a DB context. */
+/* Process heap - caller-owned and long-lived allocations without a DB context. */
 void *gv_alloc(size_t size);
 void *gv_calloc(size_t nmemb, size_t size);
 void *gv_realloc(void *ptr, size_t size);

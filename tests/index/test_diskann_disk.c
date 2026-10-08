@@ -1,5 +1,5 @@
 /**
- * test_diskann_disk.c — disk-backed DiskANN build/save/reload/search.
+ * test_diskann_disk.c - disk-backed DiskANN build/save/reload/search.
  *
  * Unlike test_diskann.c (which only uses in-memory data_path=NULL), this test
  * sets config.data_path to a real on-disk file so the on-disk vector storage
@@ -83,7 +83,7 @@ static int test_diskann_disk_roundtrip(void) {
     ASSERT(loaded != NULL, "load");
     ASSERT(diskann_count(loaded) == BUILD_COUNT, "count after reload");
 
-    /* Search the reloaded index — must return results and be consistent with
+    /* Search the reloaded index - must return results and be consistent with
      * the pre-save top-1 (deterministic build/search). */
     GV_DiskANNResult after[5];
     memset(after, 0, sizeof(after));

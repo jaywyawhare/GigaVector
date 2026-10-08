@@ -1347,7 +1347,7 @@ int embedding_generate_batch(GV_EmbeddingService *service,
         int batch_result = generate_openai_embedding_batch(service, texts, text_count,
                                                           embedding_dims, embeddings);
         /* The batch call returns the count parsed (>=0) on success, -1 on error
-         * — never 0-means-success. The old `== 0` check therefore treated every
+         * - never 0-means-success. The old `== 0` check therefore treated every
          * successful batch as failure (re-running per item, leaking the batch's
          * already-allocated vectors) and treated a 0-count as full success with
          * uninitialized outputs. Mirror the Google branch's >= 0 convention. */

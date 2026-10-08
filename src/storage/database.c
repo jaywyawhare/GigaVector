@@ -167,7 +167,7 @@ static void db_init_common_fields(GV_Database *db) {
     db->retrain_running = 0;
     db->retrain_thread_joinable = 0;
     pthread_mutex_init(&db->retrain_mutex, NULL);
-    /* Tiered storage — disabled by default */
+    /* Tiered storage - disabled by default */
     db->tiering_enabled      = 0;
     db->hot_max_age_seconds  = 86400;    /* 1 day */
     db->warm_max_age_seconds = 604800;   /* 7 days */
@@ -236,7 +236,7 @@ int db_add_vectors_parallel(GV_Database *db, const float *data, size_t count,
     if (dimension != db->dimension || db->count != 0) return -1; /* fresh HNSW index only */
 
     pthread_rwlock_wrlock(&db->rwlock);
-    /* Stage all vector data into SoA (data copy only — no graph links yet). */
+    /* Stage all vector data into SoA (data copy only - no graph links yet). */
     for (size_t i = 0; i < count; ++i) {
         if (soa_storage_add(db->soa_storage, data + i * dimension, NULL) == (size_t)-1) {
             pthread_rwlock_unlock(&db->rwlock);
@@ -263,7 +263,7 @@ int db_add_vectors_parallel(GV_Database *db, const float *data, size_t count,
     } else {
         /* Build failed: discard the staged SoA rows so soa_storage->count stays
          * consistent with db->count (0). Otherwise the next db_add_vector would
-         * use db->count==0 as its SoA slot and overwrite/misindex these rows —
+         * use db->count==0 as its SoA slot and overwrite/misindex these rows -
          * persistent corruption. The WAL records remain durable and are recovered
          * by incremental replay on the next reopen (metadata was NULL, so no
          * per-row heap is orphaned by the reset). */
@@ -1485,8 +1485,8 @@ void db_close(GV_Database *db) {
 /* Fully tear down a partially-constructed db from db_open_from_memory_impl's
  * error paths. Must be called only AFTER db_init_common_fields(db) has run (so
  * the compaction/resource/observability mutexes and memory pool exist). Frees
- * everything that may have been allocated so far — soa_storage (bound via
- * gv_db_alloc), metadata_index, id_map, any loaded index — without touching the
+ * everything that may have been allocated so far - soa_storage (bound via
+ * gv_db_alloc), metadata_index, id_map, any loaded index - without touching the
  * success path. */
 static void db_open_from_memory_cleanup(GV_Database *db) {
     if (db == NULL) {

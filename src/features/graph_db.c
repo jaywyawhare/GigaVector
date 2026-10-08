@@ -1464,7 +1464,7 @@ int graph_write_txn_commit(GV_GraphWriteTxn *t)
 void graph_write_txn_abort(GV_GraphWriteTxn *t)
 {
     if (!t || t->finished) { gtxn_finish(t); return; }
-    /* IDs consumed by staged adds leave gaps — same semantics as failed
+    /* IDs consumed by staged adds leave gaps - same semantics as failed
      * non-transactional inserts. Nothing else to undo: nothing was applied. */
     t->finished = 1;
     gtxn_finish(t);
@@ -1504,7 +1504,7 @@ void graph_read_unlock(const GV_GraphDB *g)
     pthread_rwlock_unlock((pthread_rwlock_t *)&g->rwlock);
 }
 
-/* Unlocked accessors for callers that already hold the read lock — the
+/* Unlocked accessors for callers that already hold the read lock - the
  * pinned-snapshot analytics layer (GV_GAContext) uses these so a whole
  * algorithm run sees one consistent snapshot without recursive locking. */
 const GV_GraphNode *graph_get_node_unlocked(const GV_GraphDB *g, uint64_t node_id)
@@ -2440,7 +2440,7 @@ int graph_bfs(const GV_GraphDB *g, uint64_t start, size_t max_depth,
                                 gv_free(nqi ? nqi : q_ids);
                                 gv_free(nqd ? nqd : q_depths);
                                 /* Null both so bfs_done's cleanup can't free the
-                                 * same (already-freed) blocks again — the prior
+                                 * same (already-freed) blocks again - the prior
                                  * `q_ids = nqi` left a freed pointer live. */
                                 q_ids = NULL;
                                 q_depths = NULL;
@@ -2469,7 +2469,7 @@ int graph_bfs(const GV_GraphDB *g, uint64_t start, size_t max_depth,
                                 gv_free(nqi ? nqi : q_ids);
                                 gv_free(nqd ? nqd : q_depths);
                                 /* Null both so bfs_done's cleanup can't free the
-                                 * same (already-freed) blocks again — the prior
+                                 * same (already-freed) blocks again - the prior
                                  * `q_ids = nqi` left a freed pointer live. */
                                 q_ids = NULL;
                                 q_depths = NULL;

@@ -125,7 +125,7 @@ static void replay(GV_RaftLog *log, FILE *fp) {
             uint64_t idx, term, len;
             if (r_u64(fp, &idx) != 0 || r_u64(fp, &term) != 0 || r_u64(fp, &len) != 0) break;
             /* Entries are appended with monotonically increasing indices; a gap
-             * or an out-of-range length means the tail is corrupt — stop and
+             * or an out-of-range length means the tail is corrupt - stop and
              * keep the valid prefix. Bound len before malloc to resist a
              * corrupt/hostile log driving a huge or overflowing allocation. */
             if (idx != log->count + 1 || len > RAFT_LOG_MAX_ENTRY) break;

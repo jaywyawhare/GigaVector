@@ -1,5 +1,5 @@
 /**
- * graph_matrix.c — matrix-native graph traversal (GraphBLAS-lite): variable-
+ * graph_matrix.c - matrix-native graph traversal (GraphBLAS-lite): variable-
  * length reachability as repeated boolean SpMV, and spreading activation as
  * weighted SpMV, both over the CSR adjacency matrix (graph_csr.h). These are the
  * property-graph equivalents of FalkorDB's "traversal == matrix multiply".

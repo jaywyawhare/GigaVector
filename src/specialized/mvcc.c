@@ -644,7 +644,7 @@ int gv_mvcc_gc(GV_MVCCManager *mgr)
      * added_indices/deleted_indices. Build an old->new position map so we can
      * rewrite those trackers; without it a post-GC rollback stamps the wrong
      * version (or misses its own insert), silently resurrecting rolled-back data.
-     * (A remap of SIZE_MAX marks a reclaimed slot — an active txn never tracks a
+     * (A remap of SIZE_MAX marks a reclaimed slot - an active txn never tracks a
      * reclaimable version, since its own creates/deletes keep those versions live.) */
     size_t *remap = NULL;
     if (mgr->ver_count > 0) {

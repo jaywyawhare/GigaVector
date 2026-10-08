@@ -577,7 +577,7 @@ GV_AuthResult auth_verify_jwt(GV_AuthManager *auth, const char *token,
     }
 
     /* Fail CLOSED: when an issuer is configured, a token that omits "iss" (or
-     * carries a non-matching one) must be rejected — otherwise dropping the claim
+     * carries a non-matching one) must be rejected - otherwise dropping the claim
      * bypasses issuer scoping entirely. */
     if (auth->config.jwt.issuer) {
         char iss[256] = {0};
@@ -676,7 +676,7 @@ int auth_generate_jwt(GV_AuthManager *auth, const char *subject,
     char header_b64[128];
     base64url_encode(header, strlen(header), header_b64);
 
-    /* Build payload — escape subject to prevent JSON injection */
+    /* Build payload - escape subject to prevent JSON injection */
     uint64_t now = (uint64_t)time(NULL);
     uint64_t exp = now + expires_in;
 
@@ -753,7 +753,7 @@ int auth_generate_jwt(GV_AuthManager *auth, const char *subject,
     char sig_b64[64];
     base64url_encode(signature, 32, sig_b64);
 
-    /* Combine — fail on truncation rather than emitting a malformed token. */
+    /* Combine - fail on truncation rather than emitting a malformed token. */
     int written = snprintf(token_out, token_size, "%s.%s.%s",
                            header_b64, payload_b64, sig_b64);
     if (written < 0 || (size_t)written >= token_size) {

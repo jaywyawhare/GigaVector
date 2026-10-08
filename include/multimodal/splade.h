@@ -19,12 +19,12 @@ extern "C" {
  *
  * Two back-ends, selected automatically:
  *
- *   - **Neural (SPLADE)** — when built with `GV_HAVE_ONNX` and given a SPLADE
+ *   - **Neural (SPLADE)** - when built with `GV_HAVE_ONNX` and given a SPLADE
  *     MLM model path, the text is run through the model and the classic SPLADE
  *     pooling `w_j = max_i log(1 + ReLU(logit_ij))` over the vocabulary yields a
  *     sparse term-weight vector.
  *
- *   - **Deterministic fallback** — otherwise, text is tokenised and each unique
+ *   - **Deterministic fallback** - otherwise, text is tokenised and each unique
  *     term is mapped to a stable vocabulary slot with a saturating
  *     `log(1 + tf)` weight. This keeps the whole text -> encode -> index ->
  *     search pipeline working (and testable) without a model; shared terms

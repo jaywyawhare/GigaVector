@@ -69,7 +69,7 @@ static int push(Lex *lx, Tk t, const char *s, size_t n) {
         lx->v = nv; lx->cap = nc;
     }
     char *dup = (s && n) ? sdup(s, n) : NULL;
-    if (s && n && !dup) return -1;  /* OOM building token text — abort tokenize */
+    if (s && n && !dup) return -1;  /* OOM building token text - abort tokenize */
     lx->v[lx->n].t = t;
     lx->v[lx->n].s = dup;
     lx->n++;
@@ -353,7 +353,7 @@ static int parse_rel(Lex *lx, Rel *r) {
         if (pk(lx)->t != T_IDENT) { snprintf(lx->err, CY_ERR, "expected relationship type"); return rel_fail(r); }
         r->type = gv_dup_cstr(adv(lx)->s);
         r->types[r->ntypes++] = gv_dup_cstr(r->type);
-        /* rel type alternation :A|B|... — match ANY listed type */
+        /* rel type alternation :A|B|... - match ANY listed type */
         while (pk(lx)->t == T_PIPE) { adv(lx);
             if (pk(lx)->t == T_COLON) adv(lx);   /* tolerate :A|:B form */
             if (pk(lx)->t == T_IDENT) { char *tt = gv_dup_cstr(adv(lx)->s); if (r->ntypes < 8) r->types[r->ntypes++] = tt; else gv_free(tt); }
@@ -553,7 +553,7 @@ static Opd *parse_atom_impl(Lex *lx) {
             o->k = OPD_TYPE; o->var = gv_dup_cstr(adv(lx)->s); adv(lx); gv_free(fn); return o;
         }
         o->k = OPD_FUNC; o->fname = fn;
-        /* reduce( acc = init, var IN listExpr | expr ) — fold a list into one
+        /* reduce( acc = init, var IN listExpr | expr ) - fold a list into one
          * value. Stored as: var=acc name, l=init, lcvar=loop var, lclist=list,
          * lcproj=body expr. */
         if (strcasecmp(fn, "reduce") == 0 && pk(lx)->t == T_IDENT) {
@@ -573,7 +573,7 @@ static Opd *parse_atom_impl(Lex *lx) {
             if (!o->lcproj || eat(lx, T_RP, "')'")) { opd_clear(o); gv_free(o); return NULL; }
             return o;
         }
-        /* list predicate: any/all/none/single ( var IN listExpr WHERE pred ) —
+        /* list predicate: any/all/none/single ( var IN listExpr WHERE pred ) -
          * reuses the list-comprehension fields (lcvar/lclist/lcwhere). */
         if ((strcasecmp(fn, "any") == 0 || strcasecmp(fn, "all") == 0 ||
              strcasecmp(fn, "none") == 0 || strcasecmp(fn, "single") == 0) &&
@@ -801,7 +801,7 @@ static Row row_copy(const Row *s) {
     return d;
 }
 /* Structural equality of two rows' bindings (same vars, same bound values in
- * order) — used to enforce WITH DISTINCT. */
+ * order) - used to enforce WITH DISTINCT. */
 static int row_proj_eq(const Row *a, const Row *b) {
     if (a->n != b->n) return 0;
     for (size_t i = 0; i < a->n; i++) {
@@ -921,7 +921,7 @@ static int cy_in_arr(const uint64_t *a, int n, uint64_t x) {
  * O(1)-per-hop edge expansion.
  *
  * Each pattern edge is expanded by walking the endpoint's pre-linked adjacency
- * arrays via kg_for_each_hop — a pure pointer dereference per neighbour, with no
+ * arrays via kg_for_each_hop - a pure pointer dereference per neighbour, with no
  * hashing, id->node resolution, triple materialisation or string copies. A hop
  * yields the neighbour id and an interior pointer to the edge predicate (valid
  * for the read-only lifetime of the match), which is all the traversal needs.
@@ -955,7 +955,7 @@ static int cy_hop_collect(const GV_KGHop *h, void *ctx) {
 static int cy_expand(GV_KnowledgeGraph *kg, uint64_t id, const char *type,
                      int dir, CyHopVec *vec) {
     vec->buf = NULL; vec->n = 0; vec->cap = 0; vec->oom = 0;
-    /* dir: 1=outgoing, -1=incoming, 0=both — maps directly onto kg_for_each_hop. */
+    /* dir: 1=outgoing, -1=incoming, 0=both - maps directly onto kg_for_each_hop. */
     kg_for_each_hop(kg, id, dir, type, cy_hop_collect, vec);
     return vec->oom ? -1 : 0;
 }
@@ -2125,7 +2125,7 @@ static void bind_paths(RowSet *rs, const Pattern *p, GV_KnowledgeGraph *kg, cons
     }
 }
 
-/* CALL db.labels() | db.relationshipTypes() [YIELD col] — built-in procedures. */
+/* CALL db.labels() | db.relationshipTypes() [YIELD col] - built-in procedures. */
 static int run_call(GV_CypherEngine *eng, Lex *lx, GV_CypherResult *res) {
     memset(res, 0, sizeof(*res));
     adv(lx); /* CALL */
@@ -2240,7 +2240,7 @@ static int run(GV_CypherEngine *eng, Lex *lx, GV_CypherResult *res) {
             adv(lx);
             int wdistinct = 0;
             if (kw(pk(lx), "distinct")) { wdistinct = 1; adv(lx); }
-            /* WITH item [AS alias] , ... [WHERE expr] — supports aggregation. */
+            /* WITH item [AS alias] , ... [WHERE expr] - supports aggregation. */
             Opd wopd[CY_MAXRET]; char *walias[CY_MAXRET]; Agg wagg[CY_MAXRET]; double wpct[CY_MAXRET]; size_t nw2 = 0;
             int werr = 0, anyagg = 0;
             for (;;) {
@@ -2397,7 +2397,7 @@ static int run(GV_CypherEngine *eng, Lex *lx, GV_CypherResult *res) {
     /* Terminal clause */
     if (kw(pk(lx), "remove")) {
         adv(lx);
-        /* REMOVE var.prop [, ...] — deletes the property outright. */
+        /* REMOVE var.prop [, ...] - deletes the property outright. */
         for (;;) {
             if (pk(lx)->t != T_IDENT) { snprintf(lx->err, CY_ERR, "expected variable in REMOVE"); goto done; }
             char *rv = gv_dup_cstr(adv(lx)->s);
@@ -2715,7 +2715,7 @@ static int indexes_result(GV_CypherEngine *eng, GV_CypherResult *res) {
 
 /* CREATE/DROP INDEX: advisory DDL. The KG already resolves :Label and name
  * predicates through hash indexes, so a property index does not change query
- * results — we track declarations so clients can round-trip index DDL and list
+ * results - we track declarations so clients can round-trip index DDL and list
  * them via SHOW INDEXES / CALL db.indexes. */
 static int run_create_index(GV_CypherEngine *eng, Lex *lx, GV_CypherResult *res) {
     adv(lx); /* CREATE */ adv(lx); /* INDEX */
@@ -2758,7 +2758,7 @@ static int run_segment(GV_CypherEngine *eng, Lex *lx, GV_CypherResult *res) {
     Tok *first = pk(lx);
     if (kw(first, "call") && lx->pos + 1 < lx->n && lx->v[lx->pos + 1].t == T_LC) {
         /* CALL { <subquery> }: run the braced read-query and surface its rows as
-         * this statement's result (uncorrelated form only — the subquery does not
+         * this statement's result (uncorrelated form only - the subquery does not
          * see outer variables, and a trailing outer RETURN is not supported). */
         adv(lx); /* CALL */
         adv(lx); /* '{' */

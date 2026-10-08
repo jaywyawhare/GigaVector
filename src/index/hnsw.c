@@ -113,7 +113,7 @@ static _Thread_local int ts_scratch_registered = 0;
 static void ts_scratch_register(void) {
     if (ts_scratch_registered) return;
     GV_TLS_KEY_ENSURE(ts_scratch_once, ts_scratch_key_make);
-    pthread_setspecific(ts_scratch_key, (void *)1); /* non-NULL → destructor fires */
+    pthread_setspecific(ts_scratch_key, (void *)1); /* non-NULL -> destructor fires */
     ts_scratch_registered = 1;
 }
 
@@ -1273,7 +1273,7 @@ int gv_hnsw_search(void *index_ptr, const GV_Vector *query, size_t k,
     return (int)result_count;
 }
 
-/* Parallel bulk build — race-free "parallel search + serial link": every node
+/* Parallel bulk build - race-free "parallel search + serial link": every node
  * is pre-allocated with an empty neighbour list (so an un-linked node has no
  * in-links and is unreachable). Per batch, worker threads search the
  * already-linked subgraph READ-ONLY (each with its own scratch) to collect
@@ -1451,7 +1451,7 @@ int gv_hnsw_build_parallel(void *index_ptr, size_t num_threads) {
     /* 2) Batched parallel-search + serial-link over nodes 1..N-1. */
     /* Batch size trades speed vs graph quality: within a batch, nodes search the
      * frozen pre-batch graph and don't link to each other, so large batches lose
-     * intra-batch edges and degrade recall. Empirically mult=16 is the knee — full
+     * intra-batch edges and degrade recall. Empirically mult=16 is the knee - full
      * recall parity with serial (~-0.2pp) at ~2x speedup on 8 threads; larger drops
      * recall fast (mult=128 => -10pp). Overridable via GV_PB_BATCH_MULT for tuning. */
     size_t batch_mult = 16;

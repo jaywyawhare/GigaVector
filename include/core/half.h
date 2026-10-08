@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-/* IEEE-754 binary16 (half precision) codec — halves vector RAM at ~3 decimal
+/* IEEE-754 binary16 (half precision) codec - halves vector RAM at ~3 decimal
  * digits of precision (near-lossless for normalized embeddings). Pure integer
  * bit-twiddling; no hardware fp16 required. */
 
@@ -56,7 +56,7 @@ static inline float gv_f16_to_f32(uint16_t h) {
     return f;
 }
 
-/* Symmetric per-vector int8 codec — quarters vector RAM. The scale is
+/* Symmetric per-vector int8 codec - quarters vector RAM. The scale is
  * max(|x_i|)/127; decode is v = q * scale. Store one float scale per vector. */
 
 static inline float gv_i8_encode(const float *src, int8_t *dst, size_t dim) {

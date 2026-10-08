@@ -1,5 +1,5 @@
 /**
- * test_db_resource.c — src/storage/db_resource.c limit + accounting checks.
+ * test_db_resource.c - src/storage/db_resource.c limit + accounting checks.
  *
  * Exercises the public resource-limit API (storage/database.h):
  *   db_set_resource_limits / db_get_resource_limits

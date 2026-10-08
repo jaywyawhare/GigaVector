@@ -19,7 +19,7 @@
 #include <windows.h>
 #include <direct.h>
 #define mkdir(path, mode) _mkdir(path)
-/* Minimal dirent shim for MSVC — MinGW ships its own <dirent.h> */
+/* Minimal dirent shim for MSVC - MinGW ships its own <dirent.h> */
 #ifndef _DIRENT_DEFINED
 #define _DIRENT_DEFINED
 struct dirent { char d_name[MAX_PATH]; };

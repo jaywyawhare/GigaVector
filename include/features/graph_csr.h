@@ -1,12 +1,12 @@
 /**
  * @file graph_csr.h
- * @brief "GraphBLAS-lite" — a zero-dependency sparse adjacency-matrix layer for
+ * @brief "GraphBLAS-lite" - a zero-dependency sparse adjacency-matrix layer for
  *        the GigaVector property graph, plus the sparse linear-algebra kernels
  *        (SpMV, dense SpMM, boolean reachability SpMV) that the analytics and
  *        embedding algorithms are expressed in.
  *
  * Rationale: graph traversal and iterative analytics (PageRank, eigenvector,
- * HITS, FastRP, k-hop reachability) are naturally sparse linear algebra — the
+ * HITS, FastRP, k-hop reachability) are naturally sparse linear algebra - the
  * same insight FalkorDB gets from SuiteSparse:GraphBLAS. Rather than take on a
  * heavyweight external dependency (GigaVector's core is dependency-free), this
  * provides a compact CSR matrix + a handful of semiring kernels tuned to
@@ -50,7 +50,7 @@ typedef enum {
  * @param g   graph.
  * @param ctx dense node-index context (gv_ga_build); must match g.
  * @param dir orientation (out/in/undirected).
- * @param weighted non-zero → store edge weights in ->val; 0 → boolean (->val NULL).
+ * @param weighted non-zero -> store edge weights in ->val; 0 -> boolean (->val NULL).
  *        For UNDIRECTED weighted, parallel edges between a pair are summed.
  * @return heap CSR (free with gv_csr_free), or NULL on error.
  */
@@ -61,7 +61,7 @@ GV_CSR *gv_csr_build(const GV_GraphDB *g, const GV_GAContext *ctx,
  * Cached build: same as gv_csr_build but memoized per (graph, version,
  * orientation, weighted) and rebuilt only when graph_version() changed.
  *
- * The returned matrix is owned by the cache — do NOT free it, and do not
+ * The returned matrix is owned by the cache - do NOT free it, and do not
  * hold it across graph mutations. Falls back to a fresh build on any
  * internal inconsistency.
  */
@@ -78,7 +78,7 @@ void gv_csr_free(GV_CSR *m);
 size_t gv_csr_nrows(const GV_CSR *m);
 
 /**
- * Sparse matrix–vector product y = A·x over the (+,*) semiring.
+ * Sparse matrix-vector product y = A·x over the (+,*) semiring.
  * Boolean matrices (val==NULL) use implicit weight 1. x and y have length n; y
  * must not alias x. Auto-vectorizes on the inner accumulation.
  */
@@ -86,7 +86,7 @@ void gv_csr_spmv(const GV_CSR *A, const double *x, double *y);
 
 /**
  * Transpose-free "column push" SpMV: y[j] += (val or 1)·x[i] for every edge
- * i→j in A (i.e. y = Aᵀ·x). Useful for PageRank-style rank distribution without
+ * i->j in A (i.e. y = Aᵀ·x). Useful for PageRank-style rank distribution without
  * materializing the transpose. y must be zeroed by the caller; y != x.
  */
 void gv_csr_spmv_transpose(const GV_CSR *A, const double *x, double *y);
@@ -95,7 +95,7 @@ void gv_csr_spmv_transpose(const GV_CSR *A, const double *x, double *y);
 void gv_csr_row_sums(const GV_CSR *A, double *out);
 
 /**
- * Dense sparse matrix–matrix product C = A·B where B is a dense n×k row-major
+ * Dense sparse matrix-matrix product C = A·B where B is a dense n×k row-major
  * matrix and C is dense n×k row-major (C must not alias B). Used by FastRP.
  */
 void gv_csr_spmm_dense(const GV_CSR *A, const double *B, size_t k, double *C);

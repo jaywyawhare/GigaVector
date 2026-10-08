@@ -14,7 +14,7 @@ extern "C" {
  * Learns an orthonormal rotation R from training data that (1) aligns axes with
  * the data's principal components and (2) permutes them so each of @p m
  * sub-quantizers receives a balanced share of the variance. Applying R before PQ
- * lowers quantization error — and thus raises recall — at the same bit budget.
+ * lowers quantization error - and thus raises recall - at the same bit budget.
  * Because R is orthonormal, Euclidean distances are preserved, so PQ's ADC
  * distance tables stay valid on the rotated space.
  */

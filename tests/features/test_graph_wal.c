@@ -15,7 +15,7 @@
     } while (0)
 
 /* Build a small graph, save the snapshot, then mutate with the WAL attached
- * and never save again — simulating a crash after the mutations. */
+ * and never save again - simulating a crash after the mutations. */
 static int test_wal_replay_after_crash(void) {
     char path[512];
     ASSERT(gv_test_make_temp_path(path, sizeof(path), "gv_graphwal", ".gvgr") == 0,

@@ -54,7 +54,7 @@ def parse_hierarchy(doc_path):
         if lv:
             current = int(lv.group(1))
             continue
-        # e.g. "  db->txn_mutex        (pthread_mutex_t) — serializes ..."
+        # e.g. "  db->txn_mutex        (pthread_mutex_t) - serializes ..."
         name = re.match(r"\s+(?:\w+\s*->\s*)?(\w+)\s+\(", line)
         if name and current is not None:
             levels[name.group(1)] = current

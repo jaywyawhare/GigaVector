@@ -1,4 +1,4 @@
-/* Phase 1 — KG combined-DB integration: chunk facet, reverse edges, db-delegated similarity. */
+/* Phase 1 - KG combined-DB integration: chunk facet, reverse edges, db-delegated similarity. */
 #include <stdio.h>
 #include <string.h>
 #include "features/knowledge_graph.h"

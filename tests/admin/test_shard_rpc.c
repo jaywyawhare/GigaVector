@@ -57,7 +57,7 @@ static int test_rpc_matches_local(void) {
                "remote distance matches local");
         ASSERT(remote[i].vector != NULL, "remote result carries a vector");
     }
-    /* Global nearest is v2b (component 3 == 0.5) — proves cross-shard merge. */
+    /* Global nearest is v2b (component 3 == 0.5) - proves cross-shard merge. */
     ASSERT(fabsf(remote[0].vector->data[3] - 0.5f) < 1e-6f, "remote nearest is v2b");
 
     gv_search_results_free(local, (size_t)ln);
@@ -90,7 +90,7 @@ static int test_rpc_errors(void) {
 
 /* End-to-end distributed query: a coordinator with one local shard plus one
  * remote shard (a second node reached over TCP) must merge both sides, with the
- * global nearest coming from the remote node — proving the fan-out contributes. */
+ * global nearest coming from the remote node - proving the fan-out contributes. */
 static int test_distributed_local_plus_remote(void) {
     /* Remote node: holds the global nearest (component 3 == 0.5, dist 0.25). */
     GV_Database *rdb = db_open(NULL, 4, GV_INDEX_TYPE_FLAT);

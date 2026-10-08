@@ -1,5 +1,5 @@
 /*
- * value_store.c — WiscKey key-value separation over the append-only value log.
+ * value_store.c - WiscKey key-value separation over the append-only value log.
  *
  * An open-addressing hash map holds key -> current vlog offset. Values live in
  * the vlog; updates/deletes orphan old records, which value_store_gc() reclaims.
@@ -193,7 +193,7 @@ int value_store_delete(GV_ValueStore *vs, uint64_t key) {
     if (idx == SIZE_MAX) { pthread_mutex_unlock(&vs->mutex); return -1; }
     /* Append the durable delete marker FIRST. If it fails, leave the map intact
      * (both in-memory and log still hold the key) rather than tombstone only in
-     * memory — which would resurrect the key on the next reopen/rebuild. */
+     * memory - which would resurrect the key on the next reopen/rebuild. */
     uint64_t off;
     if (vs_write_record(vs, key, VS_TYPE_DEL, NULL, 0, &off) != 0) {
         pthread_mutex_unlock(&vs->mutex);

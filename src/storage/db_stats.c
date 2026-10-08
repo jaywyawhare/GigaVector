@@ -161,7 +161,7 @@ void db_record_latency(GV_Database *db, uint64_t latency_us, int is_insert) {
 
         uint64_t now_us = db_get_time_us();
         if (db->first_insert_time_us == 0) {
-            /* Set once and never reset — needed for precise lifetime IPS */
+            /* Set once and never reset - needed for precise lifetime IPS */
             db->first_insert_time_us = now_us;
         }
         if (db->last_ips_update_time_us == 0) {
@@ -179,7 +179,7 @@ void db_record_latency(GV_Database *db, uint64_t latency_us, int is_insert) {
 
         uint64_t elapsed_us = now_us - db->last_ips_update_time_us;
         if (elapsed_us >= 1000000) {
-            /* Reset window counts but never reset first_insert_time_us or last_ips_update_time_us —
+            /* Reset window counts but never reset first_insert_time_us or last_ips_update_time_us -
                they are needed for precise lifetime IPS fallback calculation. */
             db->insert_count_since_update = 0;
         }
@@ -354,7 +354,7 @@ int db_get_detailed_stats(const GV_Database *db, GV_DetailedStats *out) {
                 out->inserts_per_second = 0.0;
             }
         }
-        /* Priority 5: inserts exist but no timing data (e.g. after database reopen) — rate unknowable */
+        /* Priority 5: inserts exist but no timing data (e.g. after database reopen) - rate unknowable */
         else if (db->total_inserts > 0) {
             out->inserts_per_second = 0.0;
         } else {

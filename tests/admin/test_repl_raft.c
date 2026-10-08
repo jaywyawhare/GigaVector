@@ -1,5 +1,5 @@
 /*
- * test_repl_raft.c — the Raft consensus core driving the replication layer.
+ * test_repl_raft.c - the Raft consensus core driving the replication layer.
  *
  * Three replication managers each own a raft node; messages are delivered
  * in-process and applied on replication_raft_tick(). Verifies a single leader

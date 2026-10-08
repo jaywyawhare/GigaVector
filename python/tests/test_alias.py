@@ -1,4 +1,4 @@
-"""Collection alias manager — exercises the gv_alias_* CFFI bindings."""
+"""Collection alias manager - exercises the gv_alias_* CFFI bindings."""
 
 from __future__ import annotations
 

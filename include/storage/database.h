@@ -352,7 +352,7 @@ GV_Database *db_open_mmap(const char *filepath, size_t dimension, GV_IndexType i
  * @brief Warm the database's on-disk data into the OS page cache.
  *
  * Prefetches the backing data/snapshot file (and WAL) so the first queries after
- * open — especially for mmap-opened or on-disk indexes (DiskANN/IVFDISK) — don't
+ * open - especially for mmap-opened or on-disk indexes (DiskANN/IVFDISK) - don't
  * pay cold page-fault latency. In-memory databases are a no-op. Call after open,
  * before serving traffic.
  *

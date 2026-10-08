@@ -43,7 +43,7 @@ GV_HEAP_DEFINE(ivfsq8_heap, GV_IVFSQ8HeapItem)
 
 /* NOTE: unlike ivf_train_centroids, this resets EMPTY clusters to the origin
  * (new_centroids is memset to 0 and copied back wholesale) rather than keeping
- * their previous centroid — kept as-is to preserve ivfsq8's trained output. */
+ * their previous centroid - kept as-is to preserve ivfsq8's trained output. */
 static int ivfsq8_kmeans(const float *data, size_t count, size_t dim,
                          size_t k, size_t iters, float *out_centroids) {
     if (count < k || !data || !out_centroids) return -1;
@@ -395,7 +395,7 @@ int ivfsq8_search(void *index, const GV_Vector *query, size_t k,
     gv_free(heap);
 
     /* Candidates are ordered by approximate distance. When reranking, refine the
-     * top `rr` with exact distances and then rank ONLY within that window — never
+     * top `rr` with exact distances and then rank ONLY within that window - never
      * mixing exact and approximate distances in the final selection. Rerank at
      * least k so the returned set is fully exact-ranked. */
     size_t sel_window = found;
@@ -641,7 +641,7 @@ static int ivfsq8_read_scalar_template(FILE *in, GV_ScalarQuantVector **out) {
     /* ivfsq8 entries are ALWAYS 8-bit: each loaded entry hardcodes bits=8 and
      * scalar_dequantize reads `dimension` bytes from quantized[]. So reject any
      * other template bit width (a bits=4 template would pass a smaller-need check
-     * yet still be read as `dimension` bytes → OOB), and require the buffer to
+     * yet still be read as `dimension` bytes -> OOB), and require the buffer to
      * hold at least `dimension` bytes. */
     if (bits != 8) return -1;
     if ((size_t)bytes < (size_t)dim) return -1;

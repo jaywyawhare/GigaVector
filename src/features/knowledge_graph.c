@@ -84,7 +84,7 @@ struct KG_RelationNode; /* fwd decl for adjacency edges */
 /*
  * A materialised adjacency edge. Each edge stores *raw pointers* to the
  * relation node and to the entity node at the far end, so following a hop is a
- * pure pointer dereference — no hashing, no id->node lookup, no triple copy.
+ * pure pointer dereference - no hashing, no id->node lookup, no triple copy.
  *
  * The referenced nodes live in the entity/relation hash tables, which use
  * separate-chaining: nodes are heap-allocated once and never moved for the
@@ -578,7 +578,7 @@ static size_t kg_collect_relations_for_entity(const GV_KnowledgeGraph *kg,
 
 /* Dgraph-style typed roaring sets:
  * Materialize typed relation / neighbor sets as roaring bitmaps (id_bitmap.h)
- * so typed queries compose as set operations — the Dgraph model where a
+ * so typed queries compose as set operations - the Dgraph model where a
  * <predicate> is a UID set and a typed join is a bitmap AND. Callers own the
  * returned bitmap (free with gv_id_bitmap_free) and combine several with
  * gv_id_bitmap_and / gv_id_bitmap_or. */
@@ -1007,7 +1007,7 @@ void kg_destroy(GV_KnowledgeGraph *kg) {
 }
 
 /* Insert an entity with an explicit id (WAL replay). Caller holds the write
- * lock. Unlike kg_add_entity this does not mirror into an attached vector DB —
+ * lock. Unlike kg_add_entity this does not mirror into an attached vector DB -
  * the vector DB has its own durability story. Returns 0 on success. */
 static int kg_insert_entity_with_id(GV_KnowledgeGraph *kg, uint64_t eid,
                                     const char *name, const char *type,
@@ -1816,7 +1816,7 @@ int kg_search_similar(const GV_KnowledgeGraph *kg,
             out++;
         }
         pthread_rwlock_unlock((pthread_rwlock_t *)&kg->rwlock);
-        /* db_search hands back owned result vectors — free all of them. */
+        /* db_search hands back owned result vectors - free all of them. */
         for (int i = 0; i < n_sr; i++)
             if (sr[i].vector) vector_destroy((GV_Vector *)sr[i].vector);
         gv_free(sr);
@@ -2249,7 +2249,7 @@ int kg_get_neighbors(const GV_KnowledgeGraph *kg, uint64_t entity_id,
     size_t found = 0;
 
     /* Outgoing neighbours (object side), then incoming (subject side), via the
-     * direct adjacency arrays — no id->node hash lookups. */
+     * direct adjacency arrays - no id->node hash lookups. */
     for (size_t i = 0; i < node->out_count && found < max_count; i++) {
         uint64_t nbr = node->out_edges[i].neighbor->entity.entity_id;
         int dup = 0;
@@ -2964,7 +2964,7 @@ static void kg_wal_apply_record(GV_KnowledgeGraph *kg, uint8_t op,
             if (has_emb &&
                 (p = gv_wal_get_u32(p, end, &dim)) != NULL) {
                 /* floats are stored inline right after dim (no extra length
-                 * prefix — dim already bounds them) */
+                 * prefix - dim already bounds them) */
                 if ((size_t)(end - p) < (size_t)dim * sizeof(float)) {
                     gv_free(s1);
                     gv_free(s2);

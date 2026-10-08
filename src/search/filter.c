@@ -26,12 +26,12 @@ typedef enum {
     GV_FILTER_OP_GE,
     GV_FILTER_OP_CONTAINS,
     GV_FILTER_OP_PREFIX,
-    GV_FILTER_OP_IN,       /* field IN [v1, v2, ...] — set membership */
-    GV_FILTER_OP_BETWEEN,  /* field BETWEEN lo AND hi — inclusive numeric range */
-    GV_FILTER_OP_GEORADIUS, /* field GEORADIUS lat, lon, meters — great-circle radius */
-    GV_FILTER_OP_GEOBBOX,   /* field GEOBBOX minLat, minLon, maxLat, maxLon — box */
-    GV_FILTER_OP_ISNULL,    /* field IS NULL — payload key absent */
-    GV_FILTER_OP_ISNOTNULL  /* field IS NOT NULL — payload key present */
+    GV_FILTER_OP_IN,       /* field IN [v1, v2, ...] - set membership */
+    GV_FILTER_OP_BETWEEN,  /* field BETWEEN lo AND hi - inclusive numeric range */
+    GV_FILTER_OP_GEORADIUS, /* field GEORADIUS lat, lon, meters - great-circle radius */
+    GV_FILTER_OP_GEOBBOX,   /* field GEOBBOX minLat, minLon, maxLat, maxLon - box */
+    GV_FILTER_OP_ISNULL,    /* field IS NULL - payload key absent */
+    GV_FILTER_OP_ISNOTNULL  /* field IS NOT NULL - payload key present */
 } GV_FilterOp;
 
 typedef struct GV_FilterNode {
@@ -338,7 +338,7 @@ static GV_FilterNode *filter_parse_primary(GV_FilterParser *p) {
     p->current.text = NULL;
     filter_parser_advance(p);
 
-    /* field IN [v1, v2, ...] — set membership (string or numeric). */
+    /* field IN [v1, v2, ...] - set membership (string or numeric). */
     if (p->current.type == TOK_IN) {
         filter_parser_advance(p);
         if (p->current.type != TOK_LBRACK) return NULL;
@@ -368,7 +368,7 @@ static GV_FilterNode *filter_parse_primary(GV_FilterParser *p) {
         return node;
     }
 
-    /* field BETWEEN lo AND hi — inclusive numeric range. */
+    /* field BETWEEN lo AND hi - inclusive numeric range. */
     if (p->current.type == TOK_BETWEEN) {
         filter_parser_advance(p);
         if (p->current.type != TOK_NUMBER) return NULL;
@@ -389,7 +389,7 @@ static GV_FilterNode *filter_parse_primary(GV_FilterParser *p) {
         return node;
     }
 
-    /* field GEORADIUS lat, lon, meters — the field stores "lat,lon" and matches
+    /* field GEORADIUS lat, lon, meters - the field stores "lat,lon" and matches
      * when within `meters` great-circle distance of the given center. */
     if (p->current.type == TOK_GEORADIUS) {
         filter_parser_advance(p);
@@ -415,7 +415,7 @@ static GV_FilterNode *filter_parse_primary(GV_FilterParser *p) {
         return node;
     }
 
-    /* field GEOBBOX minLat, minLon, maxLat, maxLon — the field stores "lat,lon"
+    /* field GEOBBOX minLat, minLon, maxLat, maxLon - the field stores "lat,lon"
      * and matches when the point falls inside the axis-aligned box. */
     if (p->current.type == TOK_GEOBBOX) {
         filter_parser_advance(p);
@@ -442,7 +442,7 @@ static GV_FilterNode *filter_parse_primary(GV_FilterParser *p) {
         return node;
     }
 
-    /* field IS NULL / field IS NOT NULL — payload key presence test. */
+    /* field IS NULL / field IS NOT NULL - payload key presence test. */
     if (p->current.type == TOK_IS) {
         filter_parser_advance(p);
         int negate = 0;

@@ -265,7 +265,7 @@ static int ivfpq_argmin(const float *queries, size_t qcount, size_t dim, const f
 
 static int ivfpq_kmeans(float *data, size_t n, size_t dim, size_t k, size_t iters, float *out_centroids) {
     if (n < k) return -1;
-    /* init: k-means++ style — pick k vectors evenly spaced through data */
+    /* init: k-means++ style - pick k vectors evenly spaced through data */
     for (size_t i = 0; i < k; ++i) {
         size_t idx = (i * n) / k;
         memcpy(out_centroids + i * dim, data + idx * dim, dim * sizeof(float));
@@ -718,7 +718,7 @@ int gv_ivfpq_search(void *index_ptr, const GV_Vector *query, size_t k,
 
     if (cheap != cheap_stack) gv_free(cheap);
 
-    /* LUT buffer — stack if small enough */
+    /* LUT buffer - stack if small enough */
     size_t lut_need = idx->m * idx->codebook_size;
     float lut_stack[IVFPQ_MAX_STACK_LUT];
     float *lut = (lut_need <= IVFPQ_MAX_STACK_LUT) ? lut_stack : (float *)gv_alloc(lut_need * sizeof(float));
@@ -728,7 +728,7 @@ int gv_ivfpq_search(void *index_ptr, const GV_Vector *query, size_t k,
         return -1;
     }
 
-    /* Residual buffer — stack if small enough */
+    /* Residual buffer - stack if small enough */
     float qres_stack[IVFPQ_MAX_STACK_DIM];
     float *qres = (idx->dimension <= IVFPQ_MAX_STACK_DIM) ? qres_stack : (float *)gv_alloc(idx->dimension * sizeof(float));
     if (!qres) {
@@ -759,7 +759,7 @@ int gv_ivfpq_search(void *index_ptr, const GV_Vector *query, size_t k,
         }
     }
 
-    /* Calculate oversampled candidate count — must be >= rerank target */
+    /* Calculate oversampled candidate count - must be >= rerank target */
     size_t oversampled_k = (size_t)(k * idx->oversampling_factor + 0.5f);
     if (oversampled_k < k) oversampled_k = k;
     size_t rr_target = (rerank_top > 0) ? rerank_top : idx->default_rerank;
@@ -810,7 +810,7 @@ int gv_ivfpq_search(void *index_ptr, const GV_Vector *query, size_t k,
          * The -<q, centroid> part is a per-list constant included here so that
          * candidates from different probed lists are ranked consistently; the
          * per-subquantizer -<q_m, code_m> terms go in the LUT below (built on
-         * the NON-residual normalized query, using plain inner product — NOT
+         * the NON-residual normalized query, using plain inner product - NOT
          * the residual query and NOT a bogus per-subvector norm). */
         float list_base = 0.0f;
         if (cosine) {
@@ -826,7 +826,7 @@ int gv_ivfpq_search(void *index_ptr, const GV_Vector *query, size_t k,
 
         /* Compute LUT.  L2 uses the query residual (ADC); cosine uses the
          * non-residual normalized query with inner product (see note above).
-         * Use scalar math directly — subdim is small (4-16), runtime dispatch
+         * Use scalar math directly - subdim is small (4-16), runtime dispatch
          * overhead dominates. */
         for (size_t m = 0; m < idx_m; ++m) {
             const float *cb = idx->pq + m * idx_cbsz * idx_subdim;
@@ -945,7 +945,7 @@ int gv_ivfpq_search(void *index_ptr, const GV_Vector *query, size_t k,
                 dist = scalar_quant_distance(query->data, beste[i]->scalar_quant,
                                                  (int)(cosine ? GV_DISTANCE_COSINE : GV_DISTANCE_EUCLIDEAN));
             } else if (cosine) {
-                /* cosine distance = 1 - dot(a,b)/(|a||b|) — use raw SIMD dot */
+                /* cosine distance = 1 - dot(a,b)/(|a||b|) - use raw SIMD dot */
                 float dot = ivfpq_dot_runtime(qdata, vdata, dim);
                 float na = ivfpq_dot_runtime(qdata, qdata, dim);
                 float nb = ivfpq_dot_runtime(vdata, vdata, dim);
@@ -958,7 +958,7 @@ int gv_ivfpq_search(void *index_ptr, const GV_Vector *query, size_t k,
             bestd[i] = dist;
         }
         /* Partial selection sort: find top-k from rr reranked candidates.
-         * Only k passes instead of rr passes — O(k*rr) for k=10, rr=200 = 2000 ops. */
+         * Only k passes instead of rr passes - O(k*rr) for k=10, rr=200 = 2000 ops. */
         {
             size_t sel = (k < rr) ? k : rr;
             for (size_t i = 0; i < sel; ++i) {

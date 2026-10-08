@@ -497,7 +497,7 @@ int gv_vector_set_metadata(GV_Vector *vector, const char *key,
 
 void gv_vector_destroy(GV_Vector *vector) { vector_destroy(vector); }
 
-/* (Removed gv_kdtree_insert: it could never work — the real kdtree_insert
+/* (Removed gv_kdtree_insert: it could never work - the real kdtree_insert
    operates on SoA storage + a vector index, not a standalone GV_Vector node,
    so the binding was a permanent -1 stub. Use a Database with
    IndexType.KDTREE for KD-tree indexing.) */
@@ -2206,7 +2206,7 @@ int gv_cypher_execute(GV_CypherEngine *eng, const char *query, GV_CypherResult *
 void gv_cypher_free_result(GV_CypherResult *result) { cypher_free_result(result); }
 const char *gv_cypher_last_error(const GV_CypherEngine *eng) { return cypher_last_error(eng); }
 
-/* DiskANN forwarders — the Python DiskANNIndex binding calls these gv_-prefixed
+/* DiskANN forwarders - the Python DiskANNIndex binding calls these gv_-prefixed
  * symbols (declared in _ffi.py) but only the unprefixed diskann_* functions
  * existed, so every DiskANNIndex construction failed with an undefined symbol. */
 void gv_diskann_config_init(GV_DiskANNConfig *config) { diskann_config_init(config); }

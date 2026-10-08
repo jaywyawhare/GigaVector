@@ -491,7 +491,7 @@ static int execute_rerank_quant_phase(const GV_Database *db,
     size_t valid = 0;
     for (size_t i = 0; i < count; i++) {
         /* Guard against candidates whose SoA id was inserted after the codes
-         * array was encoded — indexing past codes_count would read OOB. */
+         * array was encoded - indexing past codes_count would read OOB. */
         if (candidates[i].index >= codes_count) continue;
         const uint8_t *code = codes + candidates[i].index * stride;
         float refined = quant_distance(cb, query, dim, code);

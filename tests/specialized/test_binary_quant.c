@@ -106,7 +106,7 @@ static int test_binary_vector_wrap(void) {
     ASSERT(bv->bytes_per_vector == nbytes, "bytes_per_vector mismatch after wrap");
 
     binary_vector_destroy(bv);
-    /* bits is owned by bv after wrap — do NOT gv_free(bits) */
+    /* bits is owned by bv after wrap - do NOT gv_free(bits) */
     return 0;
 }
 

@@ -1,5 +1,5 @@
 /**
- * graph_path.c — path / flow algorithms for the GigaVector property graph.
+ * graph_path.c - path / flow algorithms for the GigaVector property graph.
  *
  * Implements the path & traversal portion of graph_algos.h:
  *   - graph_single_source_shortest_path (Dijkstra / BFS)

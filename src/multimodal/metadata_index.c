@@ -1,5 +1,5 @@
 /**
- * metadata_index.c — inverted index mapping metadata (key=value) → the set of
+ * metadata_index.c - inverted index mapping metadata (key=value) -> the set of
  * vectors carrying it, used to accelerate filtered search.
  *
  * Posting lists are stored as roaring-lite bitmaps (GV_IdBitmap, core/id_bitmap.h),

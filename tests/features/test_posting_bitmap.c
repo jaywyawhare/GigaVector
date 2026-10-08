@@ -1,5 +1,5 @@
 /**
- * test_posting_bitmap.c — validates the Dgraph-style roaring-bitmap posting
+ * test_posting_bitmap.c - validates the Dgraph-style roaring-bitmap posting
  * conversions: the metadata inverted index (key=value -> roaring UID set, with
  * AND-based multi-filter) and the knowledge-graph typed sets (predicate ->
  * relation set, entity -> neighbour set, joined by bitmap intersection).

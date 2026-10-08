@@ -182,7 +182,7 @@ static int replication_candidate_has_quorum_locked(const GV_ReplicationManager *
     for (size_t i = 0; i < mgr->replica_count; i++) {
         if (mgr->follower_dbs[i] == NULL) continue;
         if (mgr->wal_position >= mgr->replicas[i].last_wal_position) {
-            votes++; /* follower's log is not ahead — it grants the vote */
+            votes++; /* follower's log is not ahead - it grants the vote */
         }
     }
     size_t quorum = (mgr->replica_count + 1) / 2 + 1;
@@ -696,7 +696,7 @@ int replication_sync_commit(GV_ReplicationManager *mgr, uint32_t timeout_ms) {
 
     /* Cluster-majority durability. Cluster size is replica_count + 1 (the leader
      * already holds the write), so the follower acks needed are majority(N+1) - 1
-     * = (replica_count + 1) / 2 — not a majority of followers alone (which would
+     * = (replica_count + 1) / 2 - not a majority of followers alone (which would
      * require ALL of 2 followers and hang if one is down). */
     size_t required_acks = (mgr->replica_count + 1) / 2;
     if (required_acks == 0) required_acks = 1;
@@ -1017,7 +1017,7 @@ static void replication_route_read_locked(GV_ReplicationManager *mgr,
  * done; replication_remove_follower() blocks on pin_cond until all pins drain,
  * so it cannot free a follower with a read in flight. Leader targets are not
  * pinned and need no release. (replication_remove_follower() does not itself
- * db_close the follower — the ultimate free is owned externally — but it will
+ * db_close the follower - the ultimate free is owned externally - but it will
  * not return while pinned, so the drain ordering is enforced here, not by the
  * caller.)
  */
@@ -1213,7 +1213,7 @@ static GV_ReplicationManager *repl_raft_find_peer(GV_ReplicationManager *mgr, in
 }
 
 /* raft send callback (ctx = sending manager): enqueue a deep copy to the peer's
- * inbox under the peer's leaf inbox lock — never the peer's raft lock — so a
+ * inbox under the peer's leaf inbox lock - never the peer's raft lock - so a
  * send can't re-enter or deadlock a peer that is mid-tick. */
 static void repl_raft_send(void *ctx, int to, const GV_RaftMsg *msg) {
     GV_ReplicationManager *mgr = (GV_ReplicationManager *)ctx;

@@ -88,7 +88,7 @@ GV_ABTest *ab_test_create(GV_Database *db, const char *name, int type_b, float s
     return test;
 }
 
-/* ab_test_route — must be called with db->ab_mutex held. */
+/* ab_test_route - must be called with db->ab_mutex held. */
 int ab_test_route(GV_Database *db) {
     if (!db || !db->ab_test) {
         return 0; /* default to A */
@@ -114,7 +114,7 @@ int ab_test_route(GV_Database *db) {
     return slot < threshold ? 1 : 0;
 }
 
-/* ab_test_record — must be called with db->ab_mutex held. */
+/* ab_test_record - must be called with db->ab_mutex held. */
 void ab_test_record(GV_Database *db, int which, double latency_us) {
     if (!db || !db->ab_test) {
         return;
@@ -129,7 +129,7 @@ void ab_test_record(GV_Database *db, int which, double latency_us) {
     }
 }
 
-/* ab_test_report — reads ab_test under caller's lock. */
+/* ab_test_report - reads ab_test under caller's lock. */
 int ab_test_report(const GV_Database *db, char *buf, size_t len) {
     if (!db || !db->ab_test || !buf || len == 0) {
         return -1;

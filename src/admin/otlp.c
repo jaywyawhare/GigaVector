@@ -22,7 +22,7 @@
 
 /**
  * Encode a uint64 value as a 32-character zero-padded hex string (16 bytes
- * represented as hex — the minimum trace-id width for OTLP).
+ * represented as hex - the minimum trace-id width for OTLP).
  */
 static void u64_to_hex32(uint64_t val, char out[33]) {
     /* Pad to 32 hex chars (16 bytes) by zero-prefixing the 16-char form. */
@@ -31,7 +31,7 @@ static void u64_to_hex32(uint64_t val, char out[33]) {
 
 /**
  * Encode a uint64 value as a 16-character zero-padded hex string (8 bytes
- * — the span-id width for OTLP).
+ * - the span-id width for OTLP).
  */
 static void u64_to_hex16(uint64_t val, char out[17]) {
     snprintf(out, 17, "%016" PRIx64, val);

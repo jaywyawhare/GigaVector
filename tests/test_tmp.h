@@ -76,7 +76,7 @@ static inline int gv_test_mkstemp(char *buf, size_t size, const char *stem) {
 /*
  * Recursively remove a directory tree (or a single file). Portable: uses a
  * manual directory walk (readdir + unlink/rmdir) on POSIX and FindFirstFile on
- * Windows. Best-effort — ignores errors so it is safe to call in test teardown
+ * Windows. Best-effort - ignores errors so it is safe to call in test teardown
  * even if the path is already gone. Returns 0 on success, -1 on failure.
  */
 #ifdef _WIN32

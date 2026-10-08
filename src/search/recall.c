@@ -36,7 +36,7 @@ int db_evaluate_recall(const GV_Database *db, const float *queries, size_t nq,
         GV_Vector qv; qv.dimension = dim; qv.data = (float *)qd; qv.metadata = NULL;
 
         /* Exact ground truth: brute-force top-k over stored vectors. Done before
-         * db_search, which resets the TLS arena — our heap buffers are unaffected. */
+         * db_search, which resets the TLS arena - our heap buffers are unaffected. */
         size_t gn = 0;
         for (size_t i = 0; i < N; i++) {
             if (soa_storage_is_deleted(db->soa_storage, i)) continue;

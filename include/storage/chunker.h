@@ -1,7 +1,7 @@
 /**
  * @file chunker.h
  * @brief Document chunker: splits text into overlapping chunks, each with a
- *        deterministic shared identity ("{doc_id}:{index:04d}") — the primary
+ *        deterministic shared identity ("{doc_id}:{index:04d}") - the primary
  *        key that binds the embedding, graph, and memory layers.
  */
 #ifndef GIGAVECTOR_GV_CHUNKER_H
@@ -14,7 +14,7 @@ extern "C" {
 #endif
 
 typedef struct {
-    char    chunk_id[64];   /**< "{doc_id}:{index:04d}" — the cross-layer PK. */
+    char    chunk_id[64];   /**< "{doc_id}:{index:04d}" - the cross-layer PK. */
     char    doc_id[32];     /**< Document id (sha/uuid prefix). */
     size_t  chunk_index;    /**< Position within the document. */
     char   *text;           /**< Heap-allocated chunk text (NUL-terminated). */

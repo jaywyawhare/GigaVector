@@ -237,7 +237,7 @@ GV_ONNXModel *onnx_load(const GV_ONNXConfig *config) {
         OrtCUDAProviderOptions cuda_opts;
         memset(&cuda_opts, 0, sizeof(cuda_opts));
         cuda_opts.device_id = 0;
-        /* Ignore failure — will fall back to CPU */
+        /* Ignore failure - will fall back to CPU */
         m->api->SessionOptionsAppendExecutionProvider_CUDA(m->session_opts,
                                                            &cuda_opts);
     }
@@ -388,7 +388,7 @@ int onnx_rerank(GV_ONNXModel *model, const char *query_text,
     if (!model || !query_text || !doc_texts || !scores) return -1;
     if (doc_count == 0) return -1;
     if (!model->vocab) {
-        set_error(model, "No vocabulary loaded — cannot tokenize");
+        set_error(model, "No vocabulary loaded - cannot tokenize");
         return -1;
     }
 
@@ -490,7 +490,7 @@ int onnx_embed(GV_ONNXModel *model, const char **texts,
     if (!model || !texts || !embeddings) return -1;
     if (text_count == 0 || dimension == 0) return -1;
     if (!model->vocab) {
-        set_error(model, "No vocabulary loaded — cannot tokenize");
+        set_error(model, "No vocabulary loaded - cannot tokenize");
         return -1;
     }
 

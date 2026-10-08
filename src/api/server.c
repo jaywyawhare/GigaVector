@@ -597,7 +597,7 @@ static enum MHD_Result answer_to_connection(void *cls,
         int log_status = http_response ? (int)http_response->status : 500;
         size_t log_bytes = (http_response && http_response->body) ? http_response->body_length : 0;
         /* Structured single-line JSON access log: timestamp, method, path,
-         * status, latency and response size — parseable by log shippers. */
+         * status, latency and response size - parseable by log shippers. */
         char esc_url[1024];
         json_escape_field(url ? url : "", esc_url, sizeof(esc_url));
         fprintf(stderr,

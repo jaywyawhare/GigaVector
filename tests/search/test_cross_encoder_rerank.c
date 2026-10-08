@@ -65,7 +65,7 @@ static const char *RERANK_DOCS[] = {
 };
 
 /* The getter receives the index into the results array (see header contract)
- * and must return the text for the result at that position — i.e. the doc whose
+ * and must return the text for the result at that position - i.e. the doc whose
  * id the result holds. RERANK_DOCS is indexed by doc id. */
 static const char *rerank_getter(size_t idx, void *user_data) {
     const GV_SearchResult *results = (const GV_SearchResult *)user_data;
@@ -103,7 +103,7 @@ static int test_rerank_callback(void) {
     ASSERT(results[1].id == 2 || results[1].id == 0,
            "second result should be doc 0 or 2");
 
-    /* The two non-relevant docs (ids 1 and 3 — no query-term overlap, so they
+    /* The two non-relevant docs (ids 1 and 3 - no query-term overlap, so they
      * tie at score 0) rank last, in either order. */
     ASSERT((results[2].id == 1 || results[2].id == 3) &&
            (results[3].id == 1 || results[3].id == 3),

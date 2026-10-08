@@ -97,7 +97,7 @@ int wal_append_ivfdisk_append(GV_WAL *wal, uint64_t head_id, uint64_t vector_id,
  *
  * Writes and fflush'es the record (so bytes reach the OS in order under the
  * caller's lock) but does not fsync. The caller MUST invoke wal_fsync_deferred()
- * afterwards — ideally after dropping the DB write lock, so the fsync does not
+ * afterwards - ideally after dropping the DB write lock, so the fsync does not
  * stall concurrent readers. Same return contract as wal_append_insert.
  */
 int wal_append_insert_deferred(GV_WAL *wal, const float *data, size_t dimension,
@@ -199,7 +199,7 @@ void wal_close(GV_WAL *wal);
 /**
  * @brief Set the fsync interval in records (group commit).
  * 1 (default) fsyncs every record (crash-durable). A larger interval fsyncs only
- * every N records — much faster for bulk loads at the cost of power-loss durability
+ * every N records - much faster for bulk loads at the cost of power-loss durability
  * for the last <N records. Forces a durable flush of anything currently pending.
  */
 void wal_set_sync_interval(GV_WAL *wal, size_t interval);

@@ -8,35 +8,35 @@ must follow this hierarchy from top (acquired first) to bottom (acquired last).
 
 ```
 Level 0 (outermost)
-  db->txn_mutex        (pthread_mutex_t) — serializes MVCC commits (commit_version
+  db->txn_mutex        (pthread_mutex_t) - serializes MVCC commits (commit_version
                        assignment + write-write conflict check); a commit holds it
                        across the Level-1 rwlock and Level-3 wal_mutex it then takes
 
 Level 1
-  db->rwlock           (pthread_rwlock_t) — guards all vector data, index, and count
+  db->rwlock           (pthread_rwlock_t) - guards all vector data, index, and count
 
 Level 2
-  db->compaction_mutex (pthread_mutex_t) — guards compaction_running flag and thread
+  db->compaction_mutex (pthread_mutex_t) - guards compaction_running flag and thread
 
 Level 3
-  db->wal_mutex        (pthread_mutex_t) — guards WAL writes; never held across IO blocking
-  db->observability_mutex (pthread_mutex_t) — guards latency histograms and QPS tracking
+  db->wal_mutex        (pthread_mutex_t) - guards WAL writes; never held across IO blocking
+  db->observability_mutex (pthread_mutex_t) - guards latency histograms and QPS tracking
 
 Level 4 (innermost)
-  db->resource_mutex   (pthread_mutex_t) — guards resource limits and memory counters
+  db->resource_mutex   (pthread_mutex_t) - guards resource limits and memory counters
 ```
 
 ## Rules
 
-0. `db->txn_mutex` (commit serialization) is outermost — acquire it before `db->rwlock`; a commit
+0. `db->txn_mutex` (commit serialization) is outermost - acquire it before `db->rwlock`; a commit
    legitimately holds it across `db->rwlock` and `db->wal_mutex`. Never acquire it while holding
    any lower-level `db` lock.
 1. Always acquire `db->rwlock` before any other `db` mutex.
 2. Never acquire `db->wal_mutex` while holding `db->observability_mutex`, or vice versa
-   (they are siblings at level 3 — do not hold both simultaneously).
+   (they are siblings at level 3 - do not hold both simultaneously).
 3. `db->resource_mutex` is always innermost; never acquire another lock while holding it.
 4. Index-internal locks (e.g. inside HNSW, IVF) are always acquired **after** `db->rwlock`
-   and are opaque to the db layer — do not acquire any `db` mutex after entering an
+   and are opaque to the db layer - do not acquire any `db` mutex after entering an
    index-internal lock.
 5. For read-only operations use `pthread_rwlock_rdlock`; multiple readers are safe in parallel.
    Writes (insert, delete, update, compact) must use `pthread_rwlock_wrlock`.
@@ -45,14 +45,14 @@ Level 4 (innermost)
 
 | Operation         | Locks acquired (in order)              |
 |-------------------|----------------------------------------|
-| `db_add_vector`   | rwlock(W) → wal_mutex → resource_mutex |
+| `db_add_vector`   | rwlock(W) -> wal_mutex -> resource_mutex |
 | `db_search`       | rwlock(R)                              |
 | `db_search_batch` | rwlock(R) [worker threads share rdlock] |
 | `db_compact`      | rwlock(W)                              |
 | `db_record_latency` | observability_mutex                  |
 | `db_get_memory_usage` | resource_mutex                     |
-| `db_get_detailed_stats` | rwlock(R) → observability_mutex  |
-| WAL replay (`db_replay_wal`) | rwlock(W) → wal_mutex        |
+| `db_get_detailed_stats` | rwlock(R) -> observability_mutex  |
+| WAL replay (`db_replay_wal`) | rwlock(W) -> wal_mutex        |
 
 ## Module-level locks (outside GV_Database)
 
@@ -70,11 +70,11 @@ acquiring these, and never acquire these while holding a `db` lock.
 | streaming.c      | `stream->lock`                    | stream subscriber list          |
 | ttl.c            | `ttl->lock`                       | TTL expiration queue            |
 | tiered_storage.c | `mgr->mutex`                      | per-slot insert/access counters (storage tiers) |
-| value_store.c    | `vs->mutex`                       | WiscKey key→offset index; held over the vlog mutex below |
+| value_store.c    | `vs->mutex`                       | WiscKey key->offset index; held over the vlog mutex below |
 | vlog.c           | `vl->mutex`                       | append-only value-log file cursor (innermost of the two) |
 
 Note: `tiered_storage.c mgr->mutex` is taken by `gv_db_record_vector_access` from the search path,
-but only **after** `db_search` has released `db->rwlock` — it is never held together with a `db`
+but only **after** `db_search` has released `db->rwlock` - it is never held together with a `db`
 lock. Within the value store, `value_store.c vs->mutex` may be held while acquiring `vlog.c
 vl->mutex` (that pair is self-contained and independent of the `db` hierarchy).
 
@@ -84,4 +84,4 @@ When introducing a new lock:
 1. Decide which level it belongs to in the hierarchy above.
 2. Update this document.
 3. Annotate every acquisition site with a comment citing the level (e.g.
-   `/* level 3 — acquire after rwlock */`).
+   `/* level 3 - acquire after rwlock */`).

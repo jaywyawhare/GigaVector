@@ -1,5 +1,5 @@
 /*
- * test_value_store.c — WiscKey key-value store: put/get/update/delete,
+ * test_value_store.c - WiscKey key-value store: put/get/update/delete,
  * reopen durability (index rebuilt from the log), and GC reclamation.
  */
 #include <stdio.h>

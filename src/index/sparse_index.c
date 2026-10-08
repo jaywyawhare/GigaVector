@@ -350,7 +350,7 @@ int sparse_index_search(const GV_SparseIndex *index, const GV_SparseVector *quer
     for (size_t vid = 0; vid < index->count; ++vid) {
         if (!touched[vid] || index->deleted[vid] != 0) continue;
         float score = scores[vid];
-        float dist = -score; /* dot/cosine (validated above): higher score → smaller distance */
+        float dist = -score; /* dot/cosine (validated above): higher score -> smaller distance */
 
         if (filled < k) {
             results[filled].sparse_vector = index->vectors[vid];

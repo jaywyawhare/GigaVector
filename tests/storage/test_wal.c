@@ -347,7 +347,7 @@ static int test_wal_fsync_truncate_ordering(void) {
     fclose(f);
     ASSERT(sz > 8, "wal non-trivial");
 
-    /* Cut off a handful of bytes from the end — inside the final record's
+    /* Cut off a handful of bytes from the end - inside the final record's
      * payload/CRC region rather than on a clean record boundary. */
     ASSERT(truncate(wal_path, sz - 5) == 0, "truncate mid-record");
 

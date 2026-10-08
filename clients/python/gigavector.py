@@ -1,6 +1,6 @@
 """Python client for the GigaVector HTTP (REST) API.
 
-Standalone (stdlib only) — talks to a remote gvserver over HTTP. This is
+Standalone (stdlib only) - talks to a remote gvserver over HTTP. This is
 distinct from the in-process cffi bindings under ``python/src/gigavector``.
 
     from gigavector import GigaVector, Distance

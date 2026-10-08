@@ -58,7 +58,7 @@ static _Thread_local uint64_t g_txn_commit_stamp = 0;
 void db_set_commit_stamp(uint64_t stamp) { g_txn_commit_stamp = stamp; }
 
 /* When set on a thread, db_add_vector applies to the index but does NOT write
- * its own per-insert WAL record — the transaction commit path writes one atomic
+ * its own per-insert WAL record - the transaction commit path writes one atomic
  * TXN record for the whole batch instead. See transaction.c:db_commit. */
 static _Thread_local int g_txn_wal_suppress = 0;
 void db_set_wal_suppress(int on) { g_txn_wal_suppress = on; }
@@ -301,7 +301,7 @@ int db_add_vector(GV_Database *db, const float *data, size_t dimension) {
      * the WAL. The record bytes are written+fflush'd UNDER the write lock (so
      * WAL order matches the in-memory positional order, and no phantom insert is
      * recorded for a failed apply), but the fsync durability barrier is DEFERRED
-     * until after the write lock is released — so a slow fsync no longer stalls
+     * until after the write lock is released - so a slow fsync no longer stalls
      * concurrent readers. wal_fsync_deferred() is serialized against WAL
      * truncation, and an un-fsync'd record that a checkpoint truncates is still
      * durable via the snapshot (the checkpoint ran under the rwlock after this
@@ -490,7 +490,7 @@ int db_add_vector_with_metadata(GV_Database *db, const float *data, size_t dimen
                 return -1;
             }
         }
-        /* Save metadata pointer before insert — hnsw_insert transfers ownership and NULLs it */
+        /* Save metadata pointer before insert - hnsw_insert transfers ownership and NULLs it */
         GV_Metadata *saved_meta = vector->metadata;
         status = gv_hnsw_insert(db->hnsw_index, vector);
         if (status == 0 && saved_meta != NULL && db->metadata_index != NULL) {

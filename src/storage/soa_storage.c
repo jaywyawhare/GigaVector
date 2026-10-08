@@ -77,7 +77,7 @@ static int soa_storage_grow(GV_SoAStorage *storage, size_t min_capacity)
     if (!tmp_data || !tmp_meta || !tmp_del || !tmp_ts || !tmp_cv || !tmp_dv) {
         /* Partial-failure recovery: realloc leaves the original block intact on
          * failure. Adopt the new pointer for arrays that succeeded (so the larger
-         * block isn't leaked) but do NOT advance storage->capacity — it must stay
+         * block isn't leaked) but do NOT advance storage->capacity - it must stay
          * at the old value for self-consistency. Succeeded arrays being larger than
          * capacity claims is harmless (the tail is never indexed); a later grow
          * retry re-reallocs every array from the unchanged capacity, so no desync. */

@@ -1,5 +1,5 @@
 /**
- * graph_embed.c — graph node-embedding algorithms for GigaVector.
+ * graph_embed.c - graph node-embedding algorithms for GigaVector.
  *
  * FastRP structural embeddings (sparse random projection + degree-normalized
  * neighborhood propagation) and node2vec-style biased 2nd-order random walks.

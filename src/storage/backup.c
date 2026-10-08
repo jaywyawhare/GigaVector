@@ -45,7 +45,7 @@
  *   V1 (legacy):  [GVBKENC1][ per chunk: 4-byte LE len | cipher ]  (fixed zero salt)
  *
  * V2 derives the key from a per-backup random salt (stored in the header) so the
- * same passphrase no longer yields the same key across backups — defeating
+ * same passphrase no longer yields the same key across backups - defeating
  * precomputation and cross-backup key reuse. V1 backups remain restorable. */
 #define BACKUP_ENC_MAGIC     "GVBKENC1"   /* legacy (zero-salt) */
 #define BACKUP_ENC_MAGIC_V2  "GVBKENC2"   /* current (random per-backup salt) */
@@ -128,7 +128,7 @@ static int backup_fsync_parent_dir(const char *path) {
 }
 
 /* Derive the backup encryption key from a passphrase and an explicit salt.
- * The derived key->iv is irrelevant — crypto_encrypt generates a fresh nonce/IV
+ * The derived key->iv is irrelevant - crypto_encrypt generates a fresh nonce/IV
  * per chunk and prepends it. */
 static int backup_derive_key(GV_CryptoContext *ctx, const char *pw,
                              const unsigned char *salt, size_t salt_len,
@@ -259,7 +259,7 @@ GV_BackupResult *backup_create(GV_Database *db, const char *backup_path,
 
     /* Durability: write to a temp file, fsync it, then atomically rename over the
      * canonical backup path (mirrors db_save).  This ensures a crash or ENOSPC
-     * mid-write never corrupts an existing/canonical backup — the final path only
+     * mid-write never corrupts an existing/canonical backup - the final path only
      * appears once the new backup is complete and durable on disk. */
     char tmp_path[1024];
     if (snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", backup_path) >= (int)sizeof(tmp_path)) {
@@ -284,7 +284,7 @@ GV_BackupResult *backup_create(GV_Database *db, const char *backup_path,
     }
     /* Encryption is applied as an outer wrapper after the plaintext backup is
      * written (see the finalization below), so the inner header is a plain
-     * backup — no BACKUP_FLAG_ENCRYPTED here. */
+     * backup - no BACKUP_FLAG_ENCRYPTED here. */
     header.created_at = (uint64_t)time(NULL);
     header.vector_count = db->count;
     header.dimension = db->dimension;
@@ -520,7 +520,7 @@ void backup_result_free(GV_BackupResult *result) {
 /* Read the v2 metadata section (positioned immediately after the raw vectors)
  * and apply it per vector index. No-op for v1 (no section) or a 0 meta_present
  * marker. `fp` must be at the section start. Returns 0 on a clean section, -1 if truncated/garbled: a truncated
- * section is a soft failure — vectors are already restored, so stop applying
+ * section is a soft failure - vectors are already restored, so stop applying
  * metadata rather than failing the whole restore. */
 static int backup_apply_metadata_section(FILE *fp, GV_Database *db,
                                          uint32_t version, uint64_t vector_count) {
@@ -613,7 +613,7 @@ GV_BackupResult *backup_restore(const char *backup_path, const char *db_path,
         }
         if (backup_decrypt_wrap(backup_path, dec_tmp, opts->decryption_key) != 0) {
             remove(dec_tmp);
-            return create_result(0, "Decryption failed — wrong key or corrupted backup");
+            return create_result(0, "Decryption failed - wrong key or corrupted backup");
         }
         GV_BackupResult *r = backup_restore(dec_tmp, db_path, options, progress, user_data);
         remove(dec_tmp);
@@ -661,7 +661,7 @@ GV_BackupResult *backup_restore(const char *backup_path, const char *db_path,
         read_u64(fp, &header.compressed_size) != 0 ||
         fread(header.checksum, 1, BACKUP_CHECKSUM_LEN, fp) != BACKUP_CHECKSUM_LEN) {
         fclose(fp);
-        return create_result(0, "Backup file truncated — failed to read header");
+        return create_result(0, "Backup file truncated - failed to read header");
     }
 
     GV_Database *db = db_open(NULL, header.dimension, header.index_type);
@@ -750,7 +750,7 @@ GV_BackupResult *backup_restore_to_db(const char *backup_path,
         }
         if (backup_decrypt_wrap(backup_path, dec_tmp, opts->decryption_key) != 0) {
             remove(dec_tmp);
-            return create_result(0, "Decryption failed — wrong key or corrupted backup");
+            return create_result(0, "Decryption failed - wrong key or corrupted backup");
         }
         GV_BackupResult *r = backup_restore_to_db(dec_tmp, options, db);
         remove(dec_tmp);
@@ -810,7 +810,7 @@ GV_BackupResult *backup_restore_to_db(const char *backup_path,
     gv_free(buffer);
 
     /* Apply the v2 per-vector metadata section (no-op for v1 or empty section)
-     * before closing the file — fp is positioned right after the raw vectors. */
+     * before closing the file - fp is positioned right after the raw vectors. */
     int meta_rc = (vectors_read == header.vector_count) ? 0 : -1;
     if (vectors_read == header.vector_count) {
         meta_rc = backup_apply_metadata_section(fp, *db, header.version, header.vector_count);
@@ -874,7 +874,7 @@ GV_BackupResult *backup_verify(const char *backup_path, const char *decryption_k
         }
         if (backup_decrypt_wrap(backup_path, dec_tmp, decryption_key) != 0) {
             remove(dec_tmp);
-            return create_result(0, "Decryption failed — wrong key or corrupted backup");
+            return create_result(0, "Decryption failed - wrong key or corrupted backup");
         }
         GV_BackupResult *r = backup_verify(dec_tmp, NULL);
         remove(dec_tmp);
@@ -901,7 +901,7 @@ GV_BackupResult *backup_verify(const char *backup_path, const char *decryption_k
 
         /* Verify decryption key by attempting to decrypt a small probe block.
          * Read the first vector-sized chunk of data after the header and try
-         * to decrypt it — if decryption succeeds and produces valid floats,
+         * to decrypt it - if decryption succeeds and produces valid floats,
          * the key is correct. */
         GV_CryptoContext *ctx = crypto_create(NULL);
         if (!ctx) {
@@ -928,7 +928,7 @@ GV_BackupResult *backup_verify(const char *backup_path, const char *decryption_k
         (void)fseek(fp, (long)header_total, SEEK_SET);
 
         size_t probe_size = header.dimension * sizeof(float);
-        /* Encrypted data may have padding — read extra 16 bytes */
+        /* Encrypted data may have padding - read extra 16 bytes */
         size_t read_size = probe_size + 16;
         unsigned char *encrypted_probe = gv_alloc(read_size);
         unsigned char *decrypted_probe = gv_alloc(read_size);
@@ -949,7 +949,7 @@ GV_BackupResult *backup_verify(const char *backup_path, const char *decryption_k
             gv_free(decrypted_probe);
             crypto_wipe_key(&key);
             crypto_destroy(ctx);
-            return create_result(0, "Backup file truncated — cannot read probe block");
+            return create_result(0, "Backup file truncated - cannot read probe block");
         }
 
         size_t decrypted_len = 0;
@@ -961,7 +961,7 @@ GV_BackupResult *backup_verify(const char *backup_path, const char *decryption_k
         crypto_destroy(ctx);
 
         if (dec_rc != 0) {
-            return create_result(0, "Decryption failed — wrong key or corrupted backup");
+            return create_result(0, "Decryption failed - wrong key or corrupted backup");
         }
     }
 
@@ -990,7 +990,7 @@ GV_BackupResult *backup_verify(const char *backup_path, const char *decryption_k
         return create_result(0, "Backup file appears truncated");
     }
 
-    /* Verify checksum if present — NUL-terminate after all 64 hex chars (the
+    /* Verify checksum if present - NUL-terminate after all 64 hex chars (the
      * field is 65 bytes). Using LEN-1 here truncated a real digit and made every
      * verify mismatch. */
     header.checksum[BACKUP_CHECKSUM_LEN] = '\0';
@@ -999,7 +999,7 @@ GV_BackupResult *backup_verify(const char *backup_path, const char *decryption_k
         if (backup_compute_checksum(backup_path, computed) == 0) {
             computed[64] = '\0';
             if (strcmp(computed, header.checksum) != 0) {
-                return create_result(0, "Checksum mismatch — backup may be corrupted");
+                return create_result(0, "Checksum mismatch - backup may be corrupted");
             }
         }
     }
@@ -1230,7 +1230,7 @@ GV_BackupResult *backup_merge(const char *base_backup_path,
 
         /* Incremental header layout: magic + version + flags + created_at +
          * vector_count + dimension + index_type + start_idx + base_created_at.
-         * No checksum field — do NOT include BACKUP_CHECKSUM_LEN here. */
+         * No checksum field - do NOT include BACKUP_CHECKSUM_LEN here. */
         size_t header_size = BACKUP_MAGIC_LEN +
             sizeof(inc_header.version) + sizeof(inc_header.flags) +
             sizeof(inc_header.created_at) + sizeof(inc_header.vector_count) +

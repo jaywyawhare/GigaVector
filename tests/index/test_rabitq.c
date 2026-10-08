@@ -1,5 +1,5 @@
 /**
- * test_rabitq.c — direct tests for the RaBitQ index (src/index/rabitq.c):
+ * test_rabitq.c - direct tests for the RaBitQ index (src/index/rabitq.c):
  * create/destroy, insert/search round-trip, self-query recall on a small
  * synthetic set, delete, update, and DB-level integration.
  */

@@ -22,7 +22,7 @@ typedef struct {
     int use_binary_quant;  /**< Enable binary quantization for fast candidate selection (default: 0) */
     size_t quant_rerank;   /**< Number of candidates to rerank with exact distance (0 = disable, default: 0) */
     int use_acorn;         /**< Enable ACORN-style extra exploration for filtered search (default: 0) */
-    size_t acorn_hops;     /**< ACORN exploration depth in hops (1–2; default: 1) */
+    size_t acorn_hops;     /**< ACORN exploration depth in hops (1-2; default: 1) */
     GV_DistanceType distance_type; /**< Distance metric for construction (default: EUCLIDEAN) */
 } GV_HNSWConfig;
 
@@ -74,7 +74,7 @@ size_t gv_hnsw_get_ef_construction(const void *index);
  *        worker threads (0/1 = serial). Uses a batched "parallel search + serial
  *        link" strategy: candidate neighbours are found concurrently against the
  *        frozen graph (thread-local scratch, read-only), then links are applied
- *        serially — so the result is race-free and identical in structure to a
+ *        serially - so the result is race-free and identical in structure to a
  *        serial build within rounding. Intended for bulk construction: add all
  *        vectors, then call this. Returns 0 on success, -1 on error.
  */

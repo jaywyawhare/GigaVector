@@ -1,4 +1,4 @@
-/* tests/test_metadata_index.c — In-depth tests for the metadata index */
+/* tests/test_metadata_index.c - In-depth tests for the metadata index */
 #include <stdio.h>
 #include <string.h>
 #include "multimodal/metadata_index.h"

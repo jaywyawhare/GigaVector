@@ -1,5 +1,5 @@
 /*
- * test_vlog.c — WiscKey-style value log: append/read, durability, GC, CRC.
+ * test_vlog.c - WiscKey-style value log: append/read, durability, GC, CRC.
  */
 #include <stdio.h>
 #include <stdlib.h>

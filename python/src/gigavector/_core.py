@@ -1517,7 +1517,7 @@ class LLM:
         # The message role/content buffers are CFFI-owned (allocated via ffi.new
         # in _to_c_message and pinned by message_refs through the call above).
         # We must NOT pass them to gv_llm_message_free (that would free() a
-        # CFFI-owned pointer on the library heap — a cross-heap free that
+        # CFFI-owned pointer on the library heap - a cross-heap free that
         # crashes on Windows); CFFI reclaims them when message_refs is dropped.
         del message_refs
 
@@ -4872,7 +4872,7 @@ class DBTransaction:
 
     Reads see a consistent snapshot as of begin; writes are staged and applied
     atomically at commit (write-write conflicts raise ``TransactionConflict``).
-    Usable as a context manager — commits on clean exit, rolls back on exception.
+    Usable as a context manager - commits on clean exit, rolls back on exception.
     """
     def __init__(self, db, handle):
         self._db = db
@@ -6024,7 +6024,7 @@ class AutoEmbedder:
         if self._embedder == ffi.NULL:
             raise RuntimeError(
                 "Failed to create AutoEmbedder. "
-                "This feature requires libcurl — recompile the library with libcurl-dev installed."
+                "This feature requires libcurl - recompile the library with libcurl-dev installed."
             )
 
     def close(self) -> None:
@@ -7352,7 +7352,7 @@ class SSOManager:
         if self._mgr == ffi.NULL:
             raise RuntimeError(
                 "Failed to create SSO manager. "
-                "This feature requires libcurl — recompile the library with libcurl-dev installed."
+                "This feature requires libcurl - recompile the library with libcurl-dev installed."
             )
 
     def close(self) -> None:
@@ -9445,7 +9445,7 @@ class TemporalEdge:
 class TemporalKnowledgeGraph:
     """Append-only temporal wrapper over KnowledgeGraph.
 
-    Edges are never overwritten — each mutation appends a new edge with
+    Edges are never overwritten - each mutation appends a new edge with
     (t_valid_from, t_valid_to) metadata, enabling point-in-time queries
     and full state-transition history.
     """

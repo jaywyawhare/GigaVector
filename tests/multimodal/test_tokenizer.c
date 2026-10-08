@@ -72,7 +72,7 @@ static int test_standard_tokenizer_stopwords(void) {
     GV_TokenList list = {0};
     int rc = tokenizer_tokenize(tok, text, strlen(text), &list);
     ASSERT(rc == 0, "tokenize should succeed");
-    /* "the", "is", "on" are stopwords — should be removed */
+    /* "the", "is", "on" are stopwords - should be removed */
     for (size_t i = 0; i < list.count; i++) {
         ASSERT(strcmp(list.tokens[i].text, "the") != 0, "stopword 'the' removed");
         ASSERT(strcmp(list.tokens[i].text, "is") != 0, "stopword 'is' removed");

@@ -1,12 +1,12 @@
 /**
- * test_auth.c — fail-closed REST auth policy tests.
+ * test_auth.c - fail-closed REST auth policy tests.
  *
  * LIMITATION / WHY THIS SHAPE:
  *   The real decision function `check_auth` (src/api/server.c) is `static` AND
  *   compiled only under `#ifdef HAVE_MICROHTTPD`. This build does not define
  *   HAVE_MICROHTTPD (grep the Makefile: no -DHAVE_MICROHTTPD, no -lmicrohttpd),
  *   so neither `check_auth` nor its helper `is_liveness_request` are present in
- *   libGigaVector.so — they cannot be linked against or reached without a live
+ *   libGigaVector.so - they cannot be linked against or reached without a live
  *   libmicrohttpd HTTP server. server.h exposes no public auth-policy helper
  *   (only server_confine_save_path, which is path confinement, not auth).
  *
@@ -15,7 +15,7 @@
  *   GV_ServerConfig (via server_config_init) and evaluates a policy oracle that
  *   mirrors check_auth()'s decision table BYTE-FOR-BYTE (see src/api/server.c
  *   check_auth + is_liveness_request). If server.c's policy changes, this
- *   oracle must be updated in lockstep — it is a specification test, not a
+ *   oracle must be updated in lockstep - it is a specification test, not a
  *   direct call. The point is to guarantee the fail-closed defaults in
  *   GV_ServerConfig stay wired the way the auth code assumes.
  */
@@ -114,7 +114,7 @@ static int test_key_configured(void) {
 
 /*
  * Mirror of check_auth()'s auth-manager precedence branch (src/api/server.c):
- * when config.auth_manager is set it takes precedence over api_key — liveness
+ * when config.auth_manager is set it takes precedence over api_key - liveness
  * probes stay exempt, every other request must present a credential that
  * auth_authenticate() accepts.
  */

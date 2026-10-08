@@ -249,7 +249,7 @@ int db_commit(GV_DBTxn *t) {
 
     /* One atomic WAL record for the whole transaction. A crash before this fsync
      * loses the entire transaction (none replayed); a crash after replays it in
-     * full — crash-atomic. In-memory databases (no WAL) skip logging. */
+     * full - crash-atomic. In-memory databases (no WAL) skip logging. */
     if (db->wal != NULL) {
         pthread_mutex_lock(&db->wal_mutex);
         if (wal_append_txn(db->wal, (const float *const *)t->ins_data, t->dimension,

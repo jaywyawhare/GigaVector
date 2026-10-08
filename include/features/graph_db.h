@@ -159,7 +159,7 @@ int graph_read_txn_find_nodes_by_label(GV_GraphReadTxn *txn, const char *label,
  * @brief Opaque write transaction over a graph.
  *
  * Mutations are staged locally and become visible to all threads only at
- * graph_write_txn_commit() — abort discards everything. The transaction
+ * graph_write_txn_commit() - abort discards everything. The transaction
  * holds the graph write lock from begin() until commit/abort, so keep it
  * short-lived. On commit the whole batch is appended to the WAL (when
  * attached) with a single fsync before being applied.
@@ -294,7 +294,7 @@ int graph_remove_node(GV_GraphDB *g, uint64_t node_id);
  * @param g Graph database; must be non-NULL.
  * @param node_id Node identifier.
  * @return Pointer to the node (valid only while no other thread mutates the
- *         graph — a concurrent remove_node frees it; wrap use in
+ *         graph - a concurrent remove_node frees it; wrap use in
  *         graph_read_lock()/graph_read_unlock() for safety), or NULL if not found.
  */
 const GV_GraphNode *graph_get_node(const GV_GraphDB *g, uint64_t node_id);
@@ -368,7 +368,7 @@ typedef struct {
  * @brief Fetch edge mutations recorded after `since_version`.
  *
  * Used by the CSR cache to patch matrices incrementally. The journal covers
- * plain edge add/remove only — node changes, write transactions and WAL
+ * plain edge add/remove only - node changes, write transactions and WAL
  * replay invalidate coverage.
  *
  * @param g Graph database; must be non-NULL.
@@ -389,7 +389,7 @@ int graph_edge_deltas_since(const GV_GraphDB *g, uint64_t since_version,
  * @param g Graph database; must be non-NULL.
  * @param edge_id Edge identifier.
  * @return Pointer to the edge (valid only while no other thread mutates the
- *         graph — a concurrent remove_edge frees it; wrap use in
+ *         graph - a concurrent remove_edge frees it; wrap use in
  *         graph_read_lock()/graph_read_unlock() for safety), or NULL if not found.
  */
 const GV_GraphEdge *graph_get_edge(const GV_GraphDB *g, uint64_t edge_id);
@@ -457,7 +457,7 @@ int graph_get_neighbors(const GV_GraphDB *g, uint64_t node_id,
  * @brief Get outgoing neighbour node IDs, optionally filtered by edge label.
  *
  * Directed (out-edges only). When @p predicate is non-NULL, only neighbours
- * reached by an edge whose label equals @p predicate are returned — the typed
+ * reached by an edge whose label equals @p predicate are returned - the typed
  * traversal step used by graph queries.
  *
  * @param g Graph database; must be non-NULL.
@@ -805,7 +805,7 @@ int graph_find_nodes_by_prop(const GV_GraphDB *g, const char *key,
  * nodes/edges with their properties.
  *
  * If @p path is the snapshot this graph's WAL is attached to (see
- * graph_wal_attach), a successful save also truncates the WAL — it acts as a
+ * graph_wal_attach), a successful save also truncates the WAL - it acts as a
  * checkpoint. The file is fsync'd before returning.
  *
  * @param g Graph database; must be non-NULL.

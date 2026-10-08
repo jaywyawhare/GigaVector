@@ -11,7 +11,7 @@ extern "C" {
 typedef struct GV_ReplSim GV_ReplSim;
 
 typedef struct {
-    /** Drop probability in permille (0–1000). */
+    /** Drop probability in permille (0-1000). */
     uint32_t drop_permille;
     /** When set, no messages are delivered until heal. */
     int partitioned;

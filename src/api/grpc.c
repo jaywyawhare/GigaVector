@@ -609,7 +609,7 @@ static void handle_add_vector(GV_GrpcServer *server, int fd,
 /* db_search()/db_search_batch()/db_range_search() fill results[i].vector with a
  * heap-allocated GV_Vector the CALLER owns (see the REST search handlers that
  * free them). These gRPC handlers only surface id/distance, so they must free
- * the vectors or every query leaks one GV_Vector — a remotely driven OOM/DoS. */
+ * the vectors or every query leaks one GV_Vector - a remotely driven OOM/DoS. */
 static void grpc_free_result_vectors(GV_SearchResult *results, int found) {
     if (!results) return;
     for (int i = 0; i < found; i++) {
@@ -1031,7 +1031,7 @@ static void handle_health(GV_GrpcServer *server, int fd,
 }
 
 /**
- * @brief Handle GV_MSG_COMPACT — compact SoA storage (reclaim deleted slots).
+ * @brief Handle GV_MSG_COMPACT - compact SoA storage (reclaim deleted slots).
  * Request payload: (empty). Response payload: [4-byte status (0 = ok)].
  */
 static void handle_compact(GV_GrpcServer *server, int fd,
@@ -1043,9 +1043,9 @@ static void handle_compact(GV_GrpcServer *server, int fd,
 }
 
 /**
- * @brief Handle GV_MSG_RANGE_SEARCH — radius search.
+ * @brief Handle GV_MSG_RANGE_SEARCH - radius search.
  * Request payload: [dim u32][max_results u32][distance u32][dim floats][radius float].
- * Response payload: [count u32][count × (id u32, distance float)] — same as SEARCH.
+ * Response payload: [count u32][count × (id u32, distance float)] - same as SEARCH.
  */
 static void handle_range_search(GV_GrpcServer *server, int fd,
                                 const GV_GrpcMessage *msg) {

@@ -1,5 +1,5 @@
 /**
- * test_ivf_base.c — direct tests for src/index/ivf_base.c kmeans/assignment.
+ * test_ivf_base.c - direct tests for src/index/ivf_base.c kmeans/assignment.
  *
  * Covers ivf_train_centroids and ivf_assign_to_list:
  *   - empty input / invalid args

@@ -397,7 +397,7 @@ static void *create_diskann_index(GV_Migration *mig)
 }
 
 /* Build a sparse inverted index from dense source vectors by keeping each
-   vector's non-zero components as (index, value) pairs — the natural dense→
+   vector's non-zero components as (index, value) pairs - the natural dense->
    sparse projection. Zero-only vectors become empty sparse vectors. */
 static void *create_sparse_index(GV_Migration *mig)
 {

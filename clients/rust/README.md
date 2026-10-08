@@ -3,7 +3,7 @@
 An idiomatic, **dependency-free** Rust client for the GigaVector REST API. It
 speaks HTTP/1.1 and JSON using only the standard library, and keeps a bounded
 pool of **keep-alive TCP connections** so repeated calls reuse sockets instead
-of reconnecting — connection pooling at the protocol level.
+of reconnecting - connection pooling at the protocol level.
 
 ## Requirements
 
@@ -64,14 +64,14 @@ Errors surface as the `gigavector::Error` enum (`Http`, `Io`, `Parse`,
 ## Connection pooling
 
 Each request checks an idle connection out of the pool (or opens a new one),
-sends the request with `Connection: keep-alive`, reads the response, and — when
-the server keeps the connection open — returns it to the pool for reuse. A
+sends the request with `Connection: keep-alive`, reads the response, and - when
+the server keeps the connection open - returns it to the pool for reuse. A
 request that fails on a stale pooled socket is transparently retried once on a
 fresh connection. `client.pooled_connections()` reports the current idle count.
 
 ## Testing
 
 ```sh
-cargo test     # unit tests (JSON, HTTP framing, pool) — no server needed
+cargo test     # unit tests (JSON, HTTP framing, pool) - no server needed
 cargo clippy   # lint-clean
 ```

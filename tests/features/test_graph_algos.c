@@ -1,5 +1,5 @@
 /**
- * test_graph_algos.c — exercises the graph data-science library (graph_algos.h)
+ * test_graph_algos.c - exercises the graph data-science library (graph_algos.h)
  * on a small hand-computable graph, asserting known values where possible.
  *
  * Test graph (directed, weight 1 unless noted):
@@ -63,7 +63,7 @@ int main(void) {
     graph_node_scores_free(&sc);
 
     ASSERT(graph_betweenness_centrality(g, 0, 1, &sc) == 0, "betweenness runs");
-    /* node 3 is the only bridge from the triangle into 4/5 → highest betweenness */
+    /* node 3 is the only bridge from the triangle into 4/5 -> highest betweenness */
     double b3 = score_of(&sc, id[3]), b1 = score_of(&sc, id[1]);
     ASSERT(b3 >= b1, "node 3 (bridge) betweenness >= node 1");
     graph_node_scores_free(&sc);
@@ -79,11 +79,11 @@ int main(void) {
     double psum = 0; for (size_t i = 0; i < sc.count; i++) psum += sc.scores[i];
     ASSERT(fabs(psum - 1.0) < 1e-3, "pagerank sums to ~1");
     /* node 4 receives rank from the triangle (via 3->4) but 6/7 are an isolated
-     * 2-cycle → CSR-backed PageRank must rank node 4 above node 6 */
+     * 2-cycle -> CSR-backed PageRank must rank node 4 above node 6 */
     ASSERT(score_of(&sc, id[4]) > score_of(&sc, id[6]), "CSR pagerank: node 4 > node 6");
     graph_node_scores_free(&sc);
 
-    /* HITS (CSR-backed) — hubs & authorities */
+    /* HITS (CSR-backed) - hubs & authorities */
     GV_GraphNodeScores hubs, auth;
     ASSERT(graph_hits(g, 100, 1e-8, &hubs, &auth) == 0, "HITS runs");
     ASSERT(hubs.count == 7 && auth.count == 7, "HITS shapes 7");
@@ -189,7 +189,7 @@ int main(void) {
     graph_node_scores_free(&sc);
 
     /* ---- link prediction ---- */
-    /* nodes 1 and 3 both neighbor node 2 (undirected) → common neighbor >= 1 */
+    /* nodes 1 and 3 both neighbor node 2 (undirected) -> common neighbor >= 1 */
     ASSERT(graph_common_neighbors(g, id[1], id[3]) >= 1.0, "common neighbors 1,3 >= 1");
     ASSERT(graph_jaccard_similarity(g, id[1], id[3]) > 0.0, "jaccard 1,3 > 0");
     ASSERT(graph_cosine_neighborhood(g, id[1], id[3]) > 0.0, "cosine 1,3 > 0");

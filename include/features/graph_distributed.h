@@ -6,7 +6,7 @@
  * node/shard); each node's adjacency lives on the partition that owns it, so an
  * edge may cross a partition boundary. graph_dist_khop() runs a breadth-first
  * k-hop expansion that routes every node's neighbour lookup to its owning
- * partition and deduplicates the visited set globally — the distributed
+ * partition and deduplicates the visited set globally - the distributed
  * traversal primitive underneath multi-hop graph queries.
  */
 

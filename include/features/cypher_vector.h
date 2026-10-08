@@ -36,8 +36,8 @@ char *cypher_eval_vector_distance(const char *stored_str, const char *query_str,
  * Register vector distance functions in a Cypher context.
  *
  * After calling this, the Cypher engine supports:
- * - vector_distance(prop_ref, $query_param) — L2 by default
- * - vector_distance(prop_ref, $query_param, 'cosine') — specified metric
+ * - vector_distance(prop_ref, $query_param) - L2 by default
+ * - vector_distance(prop_ref, $query_param, 'cosine') - specified metric
  * - vector_distance_l2(prop_ref, $query_param)
  * - vector_distance_cosine(prop_ref, $query_param)
  *

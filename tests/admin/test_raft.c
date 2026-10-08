@@ -1,5 +1,5 @@
 /*
- * test_raft.c — Deterministic multi-node simulation of the Raft core.
+ * test_raft.c - Deterministic multi-node simulation of the Raft core.
  *
  * A virtual network delivers deep-copied messages between nodes with a one-step
  * latency and supports partitions (nodes only talk within their group). Drives
@@ -282,7 +282,7 @@ int main(void) {
     g_sim.group[minority_b] = 1;   /* group 1 has 2 nodes (minority) */
     /* group 0 keeps the other 3 (majority). */
 
-    /* Old leader tries to commit into the minority — must NOT commit. */
+    /* Old leader tries to commit into the minority - must NOT commit. */
     uint64_t before = raft_commit_index(g_sim.nodes[minority_a]);
     submit_to_leader(minority_a, 100);
     sim_run(80, 10);

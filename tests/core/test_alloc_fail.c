@@ -1,5 +1,5 @@
 /**
- * test_alloc_fail.c — allocation-failure (OOM) injection harness.
+ * test_alloc_fail.c - allocation-failure (OOM) injection harness.
  *
  * Uses the test-only gv_alloc_set_fail_after()/gv_alloc_reset_fail() hook in
  * src/core/memory.c to force the n-th subsequent gv_alloc/gv_calloc/gv_realloc
@@ -111,7 +111,7 @@ static int test_cypher_oom(void) {
     };
     /* NOTE: the Cypher engine is not yet comprehensively OOM-safe (tokenizer ignores
      * push() failures, some parser/executor allocations unchecked), so per-allocation
-     * injection can crash it — full coverage is a follow-up. Here we only sanity-check
+     * injection can crash it - full coverage is a follow-up. Here we only sanity-check
      * that queries execute and free cleanly with no injection. */
     for (size_t q = 0; q < sizeof(queries) / sizeof(queries[0]); q++) {
         GV_CypherResult result;

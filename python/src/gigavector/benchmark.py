@@ -213,7 +213,7 @@ def _cli(argv: Sequence[str] | None = None) -> int:
     """Reproducible insert/search/recall benchmark harness.
 
     Generates seeded random data, builds the chosen index plus an exact FLAT
-    index for ground truth, and reports insert/search throughput and recall@k —
+    index for ground truth, and reports insert/search throughput and recall@k -
     the standard vector-database (ann-benchmarks-style) metrics.
     """
     import argparse
@@ -246,7 +246,7 @@ def _cli(argv: Sequence[str] | None = None) -> int:
     search = bench.run_search(queries, k=args.k)
     recall = bench.run_recall(queries, ground_truth, k=args.k)
 
-    print(f"GigaVector benchmark — index={args.index.upper()} n={args.n} dim={args.dim} k={args.k}")
+    print(f"GigaVector benchmark - index={args.index.upper()} n={args.n} dim={args.dim} k={args.k}")
     print(bench.report(search))
     print(bench.report_recall(recall))
     return 0

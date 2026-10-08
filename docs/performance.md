@@ -423,14 +423,14 @@ GigaVector supports two deployment modes for vector search. Use `index_suggest_w
 
 | Mode | Index types | When to use | Query latency | Recall | RAM | Insert cost |
 |------|-------------|-------------|---------------|--------|-----|-------------|
-| **Fast (in-memory)** | HNSW, IVFPQ, IVFFlat, Flat, KD-Tree | Dataset fits in ~70% of RAM budget | Sub-ms to low-ms | High (tunable) | Holds full index + vectors | Low–medium |
+| **Fast (in-memory)** | HNSW, IVFPQ, IVFFlat, Flat, KD-Tree | Dataset fits in ~70% of RAM budget | Sub-ms to low-ms | High (tunable) | Holds full index + vectors | Low-medium |
 | **Large (on-disk)** | **IVFDisk** (Phase 2), **DiskANN** | Dataset exceeds RAM; mmap/static serve | Bounded by cache + list size | Good with nprobe/ef tuning | Head + page cache only | Append-first (posting lists) |
 | **Read-only serve** | Any via `db_open_mmap()` | Static snapshots, edge replicas | Fast cold start | Same as snapshot index | OS page cache | N/A (read-only) |
 
 **Rules of thumb**
 
 - Estimate bytes/vector as `dimension × 4 + 64` metadata overhead (or pass `bytes_per_vector` explicitly).
-- If `expected_count × bytes_per_vector > 0.7 × max_memory_bytes` → prefer **IVFDisk** (partition + disk posting lists) or **DiskANN** (graph-on-disk for very large high-D datasets).
+- If `expected_count × bytes_per_vector > 0.7 × max_memory_bytes` -> prefer **IVFDisk** (partition + disk posting lists) or **DiskANN** (graph-on-disk for very large high-D datasets).
 - **HNSW**: best default for in-memory general ANN.
 - **IVFPQ / IVFSQ8**: in-memory compression when RAM is tight but data still fits.
 - **DiskANN**: graph traversal on SSD; strong for billion-scale when graph quality matters.
@@ -440,10 +440,10 @@ GigaVector supports two deployment modes for vector search. Use `index_suggest_w
 
 | Knob | Typical range | Effect |
 |------|---------------|--------|
-| `max_degree` | 32–128 | Higher → better graph quality, more disk I/O per hop |
-| `search_list_size` | 50–400 | Beam width during build; larger → slower build, better recall |
-| `ef_search` | 32–256 | Query-time beam; raise for recall at higher latency |
-| `num_threads` | 1–hardware | Parallel graph construction |
+| `max_degree` | 32-128 | Higher -> better graph quality, more disk I/O per hop |
+| `search_list_size` | 50-400 | Beam width during build; larger -> slower build, better recall |
+| `ef_search` | 32-256 | Query-time beam; raise for recall at higher latency |
+| `num_threads` | 1-hardware | Parallel graph construction |
 
 **When to use:** datasets that exceed RAM but need graph-quality ANN on SSD. Pair with `db_open_mmap()` for read-only replicas.
 
@@ -453,9 +453,9 @@ GigaVector supports two deployment modes for vector search. Use `index_suggest_w
 
 | Knob | Default | Effect |
 |------|---------|--------|
-| `nlist` | 64–1024 | More lists → smaller posting lists, more head RAM |
-| `nprobe` | 4–64 | Higher → better recall, more disk reads per query |
-| `cache_size_mb` | 64–128 | LRU for posting segments; raise if p99 latency spikes |
+| `nlist` | 64-1024 | More lists -> smaller posting lists, more head RAM |
+| `nprobe` | 4-64 | Higher -> better recall, more disk reads per query |
+| `cache_size_mb` | 64-128 | LRU for posting segments; raise if p99 latency spikes |
 | `head_ratio` | 0.2 | Train rejects if centroid RAM exceeds ratio × cache budget |
 | `border_ratio` | 1.15 | Replicate border vectors to 2nd nearest list when d₂/d₁ ≤ ratio |
 | `max_list_bytes` | 64 MiB | Split trigger when a posting list exceeds cap (via `db_compact()` / background thread) |
@@ -464,7 +464,7 @@ GigaVector supports two deployment modes for vector search. Use `index_suggest_w
 
 **Read-only mmap:** `db_open_mmap(path, dim, GV_INDEX_TYPE_IVFDISK)` loads the snapshot via mmap and posting data from `{path}.ivfdisk/`.
 
-**Maintenance (Phase 3):** `db_compact()` runs `ivfdisk_maintenance_run()` — split (k-means, dynamic head growth), lite reassign, merge (stale versions), defrag (multi-segment heads). Head mutations are logged to `{data_dir}/head_wal.bin` and checkpointed to `head_checkpoint.bin`.
+**Maintenance (Phase 3):** `db_compact()` runs `ivfdisk_maintenance_run()` - split (k-means, dynamic head growth), lite reassign, merge (stale versions), defrag (multi-segment heads). Head mutations are logged to `{data_dir}/head_wal.bin` and checkpointed to `head_checkpoint.bin`.
 
 **gRPC:** `GV_MSG_IVFDISK_TRAIN` (13) trains centroids on an IVFDisk database (payload: count, dimension, train vectors).
 
@@ -510,7 +510,7 @@ dataset: 1M vectors × 128 dimensions (SIFT1M), k=10.
 
 > **Note:** These numbers are representative targets from the benchmark suite
 > (`make bench`, `make bench-ivfdisk`). Run `make bench` on your hardware and
-> update this table — actual numbers vary with CPU, memory bandwidth, and dataset
+> update this table - actual numbers vary with CPU, memory bandwidth, and dataset
 > intrinsic dimensionality.
 
 ## Measured Results
@@ -546,7 +546,7 @@ float32 data.
 | 1M    | 1,611 s    | 621 ins/s         | 0.273     |
 
 **Read this table correctly:** insert cost grows as O(log N) graph traversal
-per insert, and the falling recall is *not* a construction-quality cliff — the
+per insert, and the falling recall is *not* a construction-quality cliff - the
 benchmark queries with fixed default `efSearch`, which must scale with dataset
 size. Raise `efSearch` (see the tuning section above) or use
 `db_hnsw_build_parallel` for builds; expect recall back in the 0.9+ range at

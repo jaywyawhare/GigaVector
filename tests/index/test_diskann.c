@@ -118,7 +118,7 @@ static int test_diskann_search(void) {
     int found = diskann_search(idx, query, DIM, 5, results);
     ASSERT(found > 0, "search returned no results");
 
-    /* DiskANN is approximate — just verify we got valid results */
+    /* DiskANN is approximate - just verify we got valid results */
     ASSERT(results[0].distance >= 0.0f, "distance should be non-negative");
 
     diskann_destroy(idx);
@@ -318,7 +318,7 @@ static int test_diskann_delete_rebuild(void) {
     /* If vector 0 appears at all, it should be later than position 0 */
     for (int i = 0; i < found; i++) {
         if (results[i].index == 0) {
-            /* Found it at some position — that's acceptable as a tombstone
+            /* Found it at some position - that's acceptable as a tombstone
              * that wasn't pruned, but it shouldn't be at position 0 */
             ASSERT(i > 0, "deleted vector not at top-1");
             break;

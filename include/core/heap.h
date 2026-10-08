@@ -7,10 +7,10 @@
  * Macro-generated heaps for top-k selection. Item type must have a `dist` field.
  *
  * GV_HEAP_DEFINE (max-heap): root = largest dist. Use for distance metrics
- *   where lower is better — push evicts the worst (largest) candidate.
+ *   where lower is better - push evicts the worst (largest) candidate.
  *
  * GV_MIN_HEAP_DEFINE (min-heap): root = smallest dist. Use for similarity
- *   scores where higher is better — push evicts the worst (smallest) candidate.
+ *   scores where higher is better - push evicts the worst (smallest) candidate.
  *
  * Both generate:
  *   static void prefix_sift_down(type *heap, size_t size, size_t i);

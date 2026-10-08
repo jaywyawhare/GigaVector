@@ -146,13 +146,13 @@ def main() -> int:
               f"({100.0*proved_files/total:.1f}% of the tree).")
         if unproved:
             detail = ", ".join(f"{k}: {len(set(v))}" for k, v in sorted(unproved_by.items()))
-            print(f"  {unproved} are NOT currently proved ({detail}) — "
+            print(f"  {unproved} are NOT currently proved ({detail}) - "
                   f"their harnesses exist but do not discharge.")
 
     ok = True
     if unclassified:
         ok = False
-        print(f"\n[FAIL] {len(unclassified)} file(s) not in the manifest — new code "
+        print(f"\n[FAIL] {len(unclassified)} file(s) not in the manifest - new code "
               f"must be classified before it can merge:")
         for f in unclassified:
             print(f"    {f}")
@@ -170,7 +170,7 @@ def main() -> int:
     if bad_refs:
         ok = False
         print(f"\n[FAIL] {len(bad_refs)} manifest reference(s) point at missing "
-              f"artifacts — the manifest must not over-claim:")
+              f"artifacts - the manifest must not over-claim:")
         for r in bad_refs:
             print(f"    {r}")
 

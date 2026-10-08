@@ -255,7 +255,7 @@ sudo dnf install gcc make cmake libcurl-devel
 # macOS
 brew install cmake curl
 
-# Windows (source builds only — PyPI wheel needs nothing extra)
+# Windows (source builds only - PyPI wheel needs nothing extra)
 pacman -S --needed mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-make
 ```
 

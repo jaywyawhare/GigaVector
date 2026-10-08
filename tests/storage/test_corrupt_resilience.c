@@ -1,5 +1,5 @@
 /**
- * test_corrupt_resilience.c — corrupt-WAL / corrupt-snapshot recovery.
+ * test_corrupt_resilience.c - corrupt-WAL / corrupt-snapshot recovery.
  *
  * Feeds deliberately corrupted WAL and snapshot bytes to the loaders and
  * asserts they return a *defined error* (not a crash / not silent success).
@@ -75,7 +75,7 @@ static int test_corrupt_wal(void) {
      * not crash. */
     ASSERT(wal_replay(wal_path, DIM + 1, on_insert, NULL, 0) != 0, "dimension mismatch rejected");
 
-    /* Corrupt the header magic — a structurally invalid WAL is rejected. */
+    /* Corrupt the header magic - a structurally invalid WAL is rejected. */
     { FILE *f = fopen(wal_path, "r+b"); ASSERT(f != NULL, "reopen wal");
       fputc(0xFF, f); fputc(0xFF, f); fputc(0xFF, f); fputc(0xFF, f); fclose(f); }
     ASSERT(wal_replay(wal_path, DIM, on_insert, NULL, 0) != 0, "corrupt header rejected");
@@ -113,7 +113,7 @@ static int test_corrupt_snapshot(void) {
     ASSERT(fread(buf, 1, (size_t)sz, f) == (size_t)sz, "read snapshot");
     fclose(f);
 
-    /* 1) Corrupt the header/magic — loader must reject. */
+    /* 1) Corrupt the header/magic - loader must reject. */
     unsigned char *bad = (unsigned char *)malloc((size_t)sz);
     ASSERT(bad != NULL, "malloc bad buffer");
     memcpy(bad, buf, (size_t)sz);
@@ -123,13 +123,13 @@ static int test_corrupt_snapshot(void) {
     ASSERT(d1 == NULL, "corrupted-magic snapshot rejected");
     free(bad);
 
-    /* 2) Truncated snapshot — loader must not read past the buffer. */
+    /* 2) Truncated snapshot - loader must not read past the buffer. */
     size_t half = (size_t)sz / 2;
     GV_Database *d2 = db_open_from_memory(buf, half, DIM, GV_INDEX_TYPE_FLAT);
     if (d2) db_close(d2);
     ASSERT(d2 == NULL, "truncated snapshot rejected");
 
-    /* 3) Zero-length — must be rejected, not crash. */
+    /* 3) Zero-length - must be rejected, not crash. */
     GV_Database *d3 = db_open_from_memory(buf, 0, DIM, GV_INDEX_TYPE_FLAT);
     if (d3) db_close(d3);
     ASSERT(d3 == NULL, "zero-length snapshot rejected");

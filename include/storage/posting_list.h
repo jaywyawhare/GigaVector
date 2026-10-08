@@ -46,7 +46,7 @@ extern "C" {
  *   magic, version, segment_count, repeated (head_id, sequence, byte_len,
  *   live_count, path_len, rel_path), trailing file_crc32.
  *
- * Merge semantics: same vector_id across segments — highest version wins;
+ * Merge semantics: same vector_id across segments - highest version wins;
  * @c GV_POSTING_FLAG_DELETED suppresses the id. @c live_count in catalog is
  * reconciled automatically after visit/materialize when enabled (default on).
  */

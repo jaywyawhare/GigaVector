@@ -1,4 +1,4 @@
-/* Distance metrics — focus on Jaccard/Tanimoto (binary + continuous). */
+/* Distance metrics - focus on Jaccard/Tanimoto (binary + continuous). */
 #include <stdio.h>
 #include <math.h>
 #include "search/distance.h"

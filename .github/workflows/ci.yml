@@ -52,7 +52,7 @@ jobs:
             mingw-w64-ucrt-x86_64-openssl
           echo "C:/msys64/ucrt64/bin" >> "$GITHUB_PATH"
 
-      # ── Build (Makefile — Linux/macOS only) ───────────────────────────────
+      # ── Build (Makefile - Linux/macOS only) ───────────────────────────────
       - name: Build library with Make
         if: matrix.os != 'windows-latest'
         timeout-minutes: 10
@@ -63,7 +63,7 @@ jobs:
         timeout-minutes: 20
         run: make c-test
 
-      # ── Build (CMake — all platforms) ─────────────────────────────────────
+      # ── Build (CMake - all platforms) ─────────────────────────────────────
       - name: Configure CMake build (Linux/macOS)
         if: matrix.os != 'windows-latest'
         timeout-minutes: 10

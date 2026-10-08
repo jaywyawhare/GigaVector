@@ -46,23 +46,23 @@ is the first lever to reach for.
 | `--smt2` (Z3 5.0.0, installed via `pip install z3-solver`) | CBMC crashes with an internal invariant violation and dumps core. This is a CBMC/Z3 integration defect, not something the harness can work around. |
 | `--cprover-smt2` (CBMC's built-in SMT2 backend) | Reaches `0 of 624 failed` on `bloom` but then reports `VERIFICATION ERROR` rather than `SUCCESSFUL`. The backend is incomplete, so the result cannot be counted as a proof. |
 | `--slice-formula`, `--full-slice` | No measurable effect on the float-heavy harnesses. |
-| Allocator stubbing (`cbmc_alloc_stub.c`) | Linking `src/core/memory.c` drags the whole memory-accounting subsystem (pools, tracking tables, locks) into every model, and CBMC was visibly spending its budget inside `gv_memory_untrack_locked`. Replacing it with thin `malloc`/`free` stubs removes all of that — but `bloom`, `soa` and `id_bitmap` still time out, so the bookkeeping was not the dominant cost. The stub is kept because it is principled and reduces model size for free. |
+| Allocator stubbing (`cbmc_alloc_stub.c`) | Linking `src/core/memory.c` drags the whole memory-accounting subsystem (pools, tracking tables, locks) into every model, and CBMC was visibly spending its budget inside `gv_memory_untrack_locked`. Replacing it with thin `malloc`/`free` stubs removes all of that - but `bloom`, `soa` and `id_bitmap` still time out, so the bookkeeping was not the dominant cost. The stub is kept because it is principled and reduces model size for free. |
 
 ## The dominant cost: exact IEEE-754 arithmetic
 
 Four harnesses are blocked structurally, not by scope:
 
-- **`distance`** — SIMD kernel vs scalar reference. Times out at DIM 8, at DIM 4
+- **`distance`** - SIMD kernel vs scalar reference. Times out at DIM 8, at DIM 4
   (the smallest that still dispatches to SSE), and in a Manhattan-only variant
   with no `sqrt` at all.
-- **`geo`** — CBMC ships no libm bodies (`asin`/`sin`/`cos`/`sqrt`) and offers
+- **`geo`** - CBMC ships no libm bodies (`asin`/`sin`/`cos`/`sqrt`) and offers
   no stub-override at this invocation level; range-contracted stubs are ignored.
-- **`bloom`** — still times out at **one item of one byte**.
+- **`bloom`** - still times out at **one item of one byte**.
   `bloom_optimal_bits`/`bloom_optimal_hashes` size the filter with double
   `log`/`pow`, and `bloom_hash_i` then indexes with `% num_bits` on a value
   derived from that float arithmetic. Float reasoning feeding a symbolic modulo
   is the worst case for bit-blasting.
-- **`ranking`** — MMR defaults to cosine, putting division and score
+- **`ranking`** - MMR defaults to cosine, putting division and score
   normalisation on the critical path.
 
 Bit-blasting floats to propositional logic is the root cause in every case. The

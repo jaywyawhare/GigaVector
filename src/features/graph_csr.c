@@ -1,5 +1,5 @@
 /**
- * graph_csr.c — "GraphBLAS-lite" CSR adjacency matrix + sparse linear-algebra
+ * graph_csr.c - "GraphBLAS-lite" CSR adjacency matrix + sparse linear-algebra
  * kernels. Zero external dependencies; kernels use restrict + simple loops so
  * the compiler auto-vectorizes the inner accumulations at -O3 (and -mavx2 when
  * the build enables SIMD_FLAGS).
@@ -411,7 +411,7 @@ static int csr_patch_rows(const GV_GraphDB *g, const GV_GAContext *ctx,
 /* ── Memoized builds ───────────────────────────────────────────────────────
  * Analytics repeatedly rebuild the same CSR while the graph is unchanged;
  * key the cache by the graph's mutation version and drop it on change.
- * Single global entry per orientation/weighted combo — enough for pipelines
+ * Single global entry per orientation/weighted combo - enough for pipelines
  * that run several algorithms back-to-back over one snapshot. */
 #define GV_CSR_CACHE_SLOTS 6
 
@@ -476,7 +476,7 @@ GV_CSR *gv_csr_build_cached(const GV_GraphDB *g, const GV_GAContext *ctx,
                           s->weighted == (weighted ? 1 : 0);
         if (s->m && s->g == g && s->version == ver) {
             /* current-version entry: serve any matching combo, and NEVER
-             * expire other combos of this snapshot — callers may still hold
+             * expire other combos of this snapshot - callers may still hold
              * those pointers (e.g. PageRank keeps IN while building OUT). */
             if (match_combo) {
                 pthread_mutex_unlock(&g_csr_cache_mu);

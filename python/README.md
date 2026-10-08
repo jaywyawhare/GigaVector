@@ -45,7 +45,7 @@ pip install gigavector
 ```
 
 Pre-built wheels for Linux (x86_64), macOS (x86_64 + arm64), and Windows (AMD64) are
-published to PyPI. The wheel bundles the native library and all runtime DLLs — no
+published to PyPI. The wheel bundles the native library and all runtime DLLs - no
 compiler or MinGW required.
 
 **Building from source** requires a C toolchain. On Windows this means
@@ -273,29 +273,29 @@ db.close()
 
 ### IndexType
 
-- `IndexType.KDTREE` — exact search, low/medium dimension
-- `IndexType.HNSW` — approximate graph index
-- `IndexType.IVFPQ` — IVF + product quantization; requires training
-- `IndexType.SPARSE` — sparse vectors
-- `IndexType.FLAT` — brute-force exact search
-- `IndexType.IVFFLAT` — IVF with full float vectors in lists; requires training
-- `IndexType.PQ` — product quantization; requires training
-- `IndexType.LSH` — locality-sensitive hashing
-- `IndexType.IVFSQ8` — IVF with 8-bit scalar-quantized vectors in lists; requires training
-- `IndexType.IVFTURBOQUANT` — IVF with TurboQuant (PolarQuant + optional QJL) in lists; requires training; even dimension
+- `IndexType.KDTREE` - exact search, low/medium dimension
+- `IndexType.HNSW` - approximate graph index
+- `IndexType.IVFPQ` - IVF + product quantization; requires training
+- `IndexType.SPARSE` - sparse vectors
+- `IndexType.FLAT` - brute-force exact search
+- `IndexType.IVFFLAT` - IVF with full float vectors in lists; requires training
+- `IndexType.PQ` - product quantization; requires training
+- `IndexType.LSH` - locality-sensitive hashing
+- `IndexType.IVFSQ8` - IVF with 8-bit scalar-quantized vectors in lists; requires training
+- `IndexType.IVFTURBOQUANT` - IVF with TurboQuant (PolarQuant + optional QJL) in lists; requires training; even dimension
 
 ### Index config dataclasses
 
 Pass the matching config to `Database.open()` for the chosen index type.
 
-- `HNSWConfig` — `M`, `ef_construction`, `ef_search`, ...
-- `IVFPQConfig` — `nlist`, `m`, `nbits`, `nprobe`, `default_rerank`, ...
-- `IVFFlatConfig` — `nlist`, `nprobe`, `train_iters`, `use_cosine`
-- `IVFSQ8Config` — `nlist`, `nprobe`, `train_iters`, `use_cosine`, `per_dimension`, `default_rerank`
-- `IVFTurboQuantConfig` — `nlist`, `nprobe`, `train_iters`, `use_cosine`, `default_rerank`, `turbo` (`TurboQuantConfig`)
-- `TurboQuantConfig` — `bits`, `projections`, `seed`, `use_qjl`, `rotation` (`TurboQuantRotation`: AUTO, FHWT, QR)
-- `PQConfig` — `m`, `nbits`, `train_iters`
-- `LSHConfig` — `num_tables`, `num_hash_bits`, `seed`, `bucket_width`
+- `HNSWConfig` - `M`, `ef_construction`, `ef_search`, ...
+- `IVFPQConfig` - `nlist`, `m`, `nbits`, `nprobe`, `default_rerank`, ...
+- `IVFFlatConfig` - `nlist`, `nprobe`, `train_iters`, `use_cosine`
+- `IVFSQ8Config` - `nlist`, `nprobe`, `train_iters`, `use_cosine`, `per_dimension`, `default_rerank`
+- `IVFTurboQuantConfig` - `nlist`, `nprobe`, `train_iters`, `use_cosine`, `default_rerank`, `turbo` (`TurboQuantConfig`)
+- `TurboQuantConfig` - `bits`, `projections`, `seed`, `use_qjl`, `rotation` (`TurboQuantRotation`: AUTO, FHWT, QR)
+- `PQConfig` - `m`, `nbits`, `train_iters`
+- `LSHConfig` - `num_tables`, `num_hash_bits`, `seed`, `bucket_width`
 
 Per-query `nprobe` for IVF-Flat, IVF-SQ8, and IVF-TurboQuant: `db.search_with_params(query, k, params=SearchParams(nprobe=16))`.
 

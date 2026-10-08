@@ -80,10 +80,10 @@ GigaVector supports multiple index types. Choose based on your requirements:
 | **Sparse** | Sparse vectors, text embeddings | Any | High (sparse) | Fast | Low |
 
 **Quick Decision Guide:**
-- **Small dataset (< 100K vectors) and need exact results?** → KD-Tree
-- **Large dataset and need fast approximate search?** → HNSW
-- **Very large dataset and memory is critical?** → IVFPQ
-- **Sparse vectors (most dimensions are zero)?** → Sparse Index
+- **Small dataset (< 100K vectors) and need exact results?** -> KD-Tree
+- **Large dataset and need fast approximate search?** -> HNSW
+- **Very large dataset and memory is critical?** -> IVFPQ
+- **Sparse vectors (most dimensions are zero)?** -> Sparse Index
 
 See the [Performance Tuning Guide](performance.md) for detailed recommendations.
 
@@ -233,7 +233,7 @@ print(f"QPS: {detailed['queries_per_second']}")
 print(f"Memory: {detailed['memory']['total_bytes'] / 1024 / 1024:.2f} MB")
 print(f"Recall: {detailed['recall']['avg_recall']:.2%}")
 
-# Health check — returns 0 (healthy), -1 (degraded), or positive (unhealthy)
+# Health check - returns 0 (healthy), -1 (degraded), or positive (unhealthy)
 health = db.health_check()
 ```
 
@@ -434,7 +434,7 @@ curl http://localhost:6969/api/dashboard/info
 ### Web Dashboard
 
 GigaVector ships a built-in web dashboard with a dark theme. It is a pure-Python
-feature — no libmicrohttpd or other C HTTP library is needed.
+feature - no libmicrohttpd or other C HTTP library is needed.
 
 **Dashboard views:**
 - **Overview** -- live metrics: vector count, dimension, index type, QPS, health status (auto-refreshes every 2 s)
@@ -600,5 +600,5 @@ triples = kg.expand_context(seeds=[entity_id], radius=2)
 ```
 
 Returns every triple whose subject/object is within `radius` hops of any seed,
-deduplicated — use it to enrich RAG answers with structured facts around the
+deduplicated - use it to enrich RAG answers with structured facts around the
 entities your vector hits mention.

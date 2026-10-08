@@ -89,7 +89,7 @@ _DELETE_ROUTES: list[tuple[re.Pattern[str], str]] = [
 
 
 class _Handler(BaseHTTPRequestHandler):
-    """Request handler — dispatches to the Database held by the server."""
+    """Request handler - dispatches to the Database held by the server."""
 
     server: "_DashboardHTTPServer"
 
@@ -1594,7 +1594,7 @@ class _DashboardHTTPServer(HTTPServer):
 class DashboardServer:
     """Pure-Python dashboard server for GigaVector.
 
-    Uses :mod:`http.server` from the stdlib — no C HTTP library required.
+    Uses :mod:`http.server` from the stdlib - no C HTTP library required.
 
     Example::
 

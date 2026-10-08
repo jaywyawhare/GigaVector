@@ -36,7 +36,7 @@ void gv_disk_page_cache_get_stats(const GV_DiskPageCache *cache, GV_DiskPageCach
  *   per-thread scratch buffer that is OWNED by the cache library and is
  *   thread-local to the CALLING thread. The returned pointer therefore does NOT
  *   alias the internal cache entry and is immune to a concurrent eviction/free
- *   of that entry — this is what makes the returned pointer safe under
+ *   of that entry - this is what makes the returned pointer safe under
  *   concurrent eviction without changing this function's signature.
  *
  *   The returned pointer is valid on the calling thread until that same thread's

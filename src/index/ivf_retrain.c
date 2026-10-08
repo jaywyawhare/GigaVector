@@ -107,7 +107,7 @@ int ivf_retrain_trigger(GV_Database *db) {
         return 0; /* already in progress */
     }
     /* Reap a previously-completed worker (finished, retrain_running cleared, but
-     * never joined) before reusing the handle — otherwise pthread_create would
+     * never joined) before reusing the handle - otherwise pthread_create would
      * overwrite retrain_thread and leak the old thread's resources. Join outside
      * the lock (the worker's completion path also takes retrain_mutex). */
     if (db->retrain_thread_joinable) {
@@ -177,7 +177,7 @@ void gv_db_retrain_status(const GV_Database *db, int *is_running,
                            float *last_drift) {
     if (!db) return;
 
-    /* Cast away const for mutex — the mutex is logically const here */
+    /* Cast away const for mutex - the mutex is logically const here */
     GV_Database *mdb = (GV_Database *)(uintptr_t)db;
     pthread_mutex_lock(&mdb->retrain_mutex);
     if (is_running) *is_running = db->retrain_running;

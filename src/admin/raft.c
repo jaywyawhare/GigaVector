@@ -1,8 +1,8 @@
 /*
- * raft.c — Raft consensus core (leader election + log replication).
+ * raft.c - Raft consensus core (leader election + log replication).
  *
  * Transport-agnostic: driven by raft_tick() and raft_step(), emits messages via
- * the send callback. Implements the Raft safety rules — up-to-date vote check,
+ * the send callback. Implements the Raft safety rules - up-to-date vote check,
  * AppendEntries log-consistency check with conflict truncation, and commit
  * advancement restricted to current-term entries replicated on a quorum.
  *
@@ -295,7 +295,7 @@ static void handle_append_entries(GV_Raft *r, const GV_RaftMsg *msg) {
 
     /* Append / overwrite entries, truncating on the first conflict. On an append
      * (OOM) failure, reply failure at the last consistent index instead of a
-     * false success — otherwise the leader would believe we hold an entry we do
+     * false success - otherwise the leader would believe we hold an entry we do
      * not, and never resend it. */
     uint64_t idx = msg->prev_log_index;
     int append_ok = 1;
@@ -307,7 +307,7 @@ static void handle_append_entries(GV_Raft *r, const GV_RaftMsg *msg) {
                 if (log_truncate(r, idx - 1) != 0) append_ok = 0;
                 else if (log_append(r, e->term, e->data, e->len) != 0) append_ok = 0;
             }
-            /* else: already present and matching — skip */
+            /* else: already present and matching - skip */
         } else {
             if (log_append(r, e->term, e->data, e->len) != 0) append_ok = 0;
         }

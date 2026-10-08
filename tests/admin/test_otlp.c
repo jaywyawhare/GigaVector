@@ -159,11 +159,11 @@ static int test_otlp_flush_no_server(void) {
     GV_Database *db = db_open(NULL, 4, GV_INDEX_TYPE_FLAT);
     ASSERT(db != NULL, "db_open should succeed");
 
-    /* Point to a non-existent server — should fail gracefully */
+    /* Point to a non-existent server - should fail gracefully */
     gv_db_set_otlp_endpoint(db, "http://127.0.0.1:19999/v1/metrics");
 
     /* Return code will be -1 (no server), but must not crash */
-    gv_db_otlp_flush(db);   /* ignore return — may be -1 */
+    gv_db_otlp_flush(db);   /* ignore return - may be -1 */
 
     db_close(db);
     return 0;

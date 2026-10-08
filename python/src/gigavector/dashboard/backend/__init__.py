@@ -1,4 +1,4 @@
-"""GigaVector dashboard backend — HTTP server implementation."""
+"""GigaVector dashboard backend - HTTP server implementation."""
 
 from .server import DashboardServer
 

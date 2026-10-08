@@ -277,7 +277,7 @@ int db_save_locked(const GV_Database *db, const char *filepath) {
 
     /* Persist the chunk_id -> index map to a "{filepath}.ids" sidecar.
      * point_id_save is crash-atomic (temp + fsync + rename), so a failure here
-     * means the sidecar wasn't durably written at all (not torn) — and a missing/
+     * means the sidecar wasn't durably written at all (not torn) - and a missing/
      * stale sidecar corrupts chunk_id -> index lookups on reload, so we must
      * surface it. The main snapshot is already durable above, so ordering is safe. */
     if (status == 0 && filepath != NULL && db->id_map != NULL &&

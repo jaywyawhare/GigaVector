@@ -482,7 +482,7 @@ static int test_posting_auto_live_count_on_read(void)
     return 0;
 }
 
-/* #4: version is 32-bit now — values > 255 must survive encode/parse. */
+/* #4: version is 32-bit now - values > 255 must survive encode/parse. */
 static int test_posting_version_wide(void)
 {
     char dir[512];
@@ -537,7 +537,7 @@ static int test_posting_segment_split(void)
     ASSERT(cat != NULL, "open");
 
     const size_t dim = 64;                 /* stride ~24+256 = 280 bytes/entry */
-    const size_t n = 20000;                /* ~5.6 MB > 2 MB cap → must split */
+    const size_t n = 20000;                /* ~5.6 MB > 2 MB cap -> must split */
     GV_PostingWriteEntry *batch = (GV_PostingWriteEntry *)gv_calloc(n, sizeof(GV_PostingWriteEntry));
     float *data = (float *)gv_calloc(n * dim, sizeof(float));
     ASSERT(batch && data, "alloc");

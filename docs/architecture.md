@@ -2,7 +2,7 @@
 
 > **Note:** parts of this document describe an older single-directory module layout (e.g.
 > `src/gv_hnsw.c`); the code is now organized under `src/index/`, `src/storage/`, `src/features/`,
-> `src/admin/`, etc. It also predates several subsystems — MVCC snapshot-isolation transactions
+> `src/admin/`, etc. It also predates several subsystems - MVCC snapshot-isolation transactions
 > (`src/storage/transaction.c`), access-aware storage tiers (`src/storage/tiered_storage.c`), the
 > WiscKey value-log (`src/storage/vlog.c` + `src/storage/value_store.c`), and the Raft consensus
 > core (`src/admin/raft.c`). See `docs/api_reference.md` and `docs/combined-architecture.md` for
@@ -332,7 +332,7 @@ typedef struct {
 
 #### Bidirectional Links
 
-When creating a link A→B, a reciprocal link B→A is automatically created with:
+When creating a link A->B, a reciprocal link B->A is automatically created with:
 - Reciprocal link type (SUPPORTS ↔ SUPPORTS, etc.)
 - Reduced strength (0.9x of original)
 
@@ -476,8 +476,8 @@ typedef struct {
 #### Specificity Detection
 
 Instead of keyword matching, uses structural signals:
-- **Number density**: "Meeting at 3:45 PM on Jan 15" → high specificity
-- **Capitalized words**: "John works at Google" → proper nouns
+- **Number density**: "Meeting at 3:45 PM on Jan 15" -> high specificity
+- **Capitalized words**: "John works at Google" -> proper nouns
 - **Structural patterns**: URLs, emails, dates, times
 - **Word length variance**: Technical terms tend to be longer
 - **Short word ratio**: Vague text has many short words (it, that, this)
@@ -485,9 +485,9 @@ Instead of keyword matching, uses structural signals:
 #### Salience Detection
 
 Uses emphasis markers, not keyword lists:
-- **Exclamation/question marks**: "This is important!" → higher salience
-- **ALL CAPS words**: "URGENT: Please respond" → emphasis
-- **Possessive patterns**: "my preference", "John's idea" → personal relevance
+- **Exclamation/question marks**: "This is important!" -> higher salience
+- **ALL CAPS words**: "URGENT: Please respond" -> emphasis
+- **Possessive patterns**: "my preference", "John's idea" -> personal relevance
 - **Sentence length variance**: Varied structure indicates importance
 
 ### Access Pattern Scoring (Spaced Repetition)
@@ -775,7 +775,7 @@ The graph database (`gv_graph_db.h`) implements a directed property graph:
 Node (hash table)          Edge (hash table)
 ┌──────────────┐          ┌──────────────────────┐
 │ node_id      │          │ edge_id              │
-│ label        │          │ source_id → target_id│
+│ label        │          │ source_id -> target_id│
 │ properties   │          │ label, weight        │
 │ out_edges[]  │──────────│ properties           │
 │ in_edges[]   │          └──────────────────────┘
@@ -1014,7 +1014,7 @@ GigaVector distinguishes **fast in-memory** indexes from **large on-disk** index
 |---------|-------------------------|----------------------------|
 | Primary structure | Graph / inverted lists in RAM | Centroid head in RAM + vectors on disk |
 | Durability | WAL + optional snapshot | WAL + segment catalog + head checkpoint |
-| Visibility | Insert → index + WAL fsync → searchable | Same invariant; posting append is append-only |
+| Visibility | Insert -> index + WAL fsync -> searchable | Same invariant; posting append is append-only |
 | Selection API | `index_suggest()` | `index_suggest_with_budget(dim, count, ram_bytes, 0)` |
 
 **IVFDisk** (Phase 2) combines an in-memory IVF/HNSW head with Phase 1 posting lists per partition. **DiskANN** stores the Vamana graph and vectors on disk with an LRU page cache (`src/index/diskann.c`).

@@ -586,7 +586,7 @@ int cluster_enable_raft(GV_Cluster *cluster, const char *const *addrs,
     if (cluster->config.raft_data_dir) {
         /* The log filename must be unique per node. Without a node_id, every
          * node under the same raft_data_dir would open raft-node.log and corrupt
-         * each other's term/vote/log — so require it (and reject a truncated path). */
+         * each other's term/vote/log - so require it (and reject a truncated path). */
         if (!cluster->config.node_id) { gv_free(peers); cluster_raft_shutdown(cluster); return -1; }
         char lp[4096];
         int w = snprintf(lp, sizeof(lp), "%s/raft-%s.log", cluster->config.raft_data_dir,

@@ -1,5 +1,5 @@
 /**
- * graph_community.c — community detection / clustering algorithms for the
+ * graph_community.c - community detection / clustering algorithms for the
  * graph-algorithms layer (graph_algos.h):
  *
  *   - graph_label_propagation      Label Propagation (LPA), undirected
@@ -311,7 +311,7 @@ int graph_label_propagation(const GV_GraphDB *g, size_t max_iters,
  *      (a node may not leave its sub-community if it is a cut vertex of it),
  *   3. aggregation: build the next-level graph over the refined partition and
  *      repeat.
- * Leiden's refinement guarantees aggregated communities stay connected —
+ * Leiden's refinement guarantees aggregated communities stay connected -
  * unlike plain Louvain, which can produce arbitrarily badly-connected
  * communities. Everything is deterministic (dense-index order, ties broken
  * toward smaller community ids).
@@ -966,7 +966,7 @@ int graph_triangle_count(const GV_GraphDB *g, GV_GraphNodeScores *out, uint64_t 
  * Core number of each node via the standard peeling algorithm: repeatedly
  * remove the node of smallest current degree; its core number is the max
  * degree-threshold reached so far. Implemented with a bucket/bin sort
- * (Batagelj–Zaversnik) for O(V+E). labels[i] = core number; num_labels =
+ * (Batagelj-Zaversnik) for O(V+E). labels[i] = core number; num_labels =
  * max core + 1. */
 int graph_kcore(const GV_GraphDB *g, GV_GraphNodeLabels *out) {
     if (!g || !out) return -1;
@@ -983,7 +983,7 @@ int graph_kcore(const GV_GraphDB *g, GV_GraphNodeLabels *out) {
     uint64_t *node_ids = (uint64_t *)gv_alloc(N * sizeof(uint64_t));
     int64_t  *labels   = (int64_t *)gv_alloc(N * sizeof(int64_t));
     size_t   *deg      = (size_t *)gv_alloc(N * sizeof(size_t));
-    /* Bucket-sort structures (Batagelj–Zaversnik). */
+    /* Bucket-sort structures (Batagelj-Zaversnik). */
     size_t   *pos      = (size_t *)gv_alloc(N * sizeof(size_t)); /* vert -> position in `vert` */
     size_t   *vert     = (size_t *)gv_alloc(N * sizeof(size_t)); /* ordered by degree */
     if (!node_ids || !labels || !deg || !pos || !vert) {

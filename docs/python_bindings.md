@@ -118,7 +118,7 @@ db.train_ivfpq(training_data)
 
 ## Transactions (MVCC)
 
-`Database.begin()` returns a `DBTransaction` — a snapshot-isolation transaction. Reads see a
+`Database.begin()` returns a `DBTransaction` - a snapshot-isolation transaction. Reads see a
 consistent snapshot as of `begin()`; writes are staged and applied atomically at `commit()`.
 Concurrent write-write conflicts raise `TransactionConflict`. It is usable as a context manager
 (commits on clean exit, rolls back on exception).
@@ -144,7 +144,7 @@ with Database(dim=128) as db:
 ```
 
 `DBTransaction` methods: `add_vector(vector)`, `delete(vector_index)`,
-`search(query, k, distance=…)`, `commit()`, `rollback()`.
+`search(query, k, distance=...)`, `commit()`, `rollback()`.
 
 ## Available Modules
 

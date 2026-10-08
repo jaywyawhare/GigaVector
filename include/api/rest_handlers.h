@@ -129,18 +129,18 @@ GV_HttpResponse *rest_handle_stats(const GV_HandlerContext *ctx,
                                        const GV_HttpRequest *request);
 
 /**
- * @brief Handle GET /metrics — Prometheus text exposition of DB counters.
+ * @brief Handle GET /metrics - Prometheus text exposition of DB counters.
  */
 GV_HttpResponse *rest_handle_metrics(const GV_HandlerContext *ctx,
                                          const GV_HttpRequest *request);
 
-/** @brief POST /txn/begin — start a transaction; returns {"txn_id": "..."}. */
+/** @brief POST /txn/begin - start a transaction; returns {"txn_id": "..."}. */
 GV_HttpResponse *rest_handle_txn_begin(const GV_HandlerContext *ctx,
                                            const GV_HttpRequest *request);
-/** @brief POST /txn/commit — body {"txn_id":"..."}; 200/404/409/503. */
+/** @brief POST /txn/commit - body {"txn_id":"..."}; 200/404/409/503. */
 GV_HttpResponse *rest_handle_txn_commit(const GV_HandlerContext *ctx,
                                             const GV_HttpRequest *request);
-/** @brief POST /txn/rollback — body {"txn_id":"..."}; 200/404/503. */
+/** @brief POST /txn/rollback - body {"txn_id":"..."}; 200/404/503. */
 GV_HttpResponse *rest_handle_txn_rollback(const GV_HandlerContext *ctx,
                                               const GV_HttpRequest *request);
 
@@ -354,11 +354,11 @@ int rest_request_is_mutation(const char *url, GV_HttpMethod method);
 
 /* ── Graph & knowledge-graph endpoints (require server_set_graphs) ────── */
 
-/** GET /graph/stats — node/edge counts and mutation version. */
+/** GET /graph/stats - node/edge counts and mutation version. */
 GV_HttpResponse *rest_handle_graph_stats(const GV_HandlerContext *ctx,
                                          const GV_HttpRequest *request);
 
-/** POST /kg/expand  body: {"seeds": [id, ...], "radius": N} → triples. */
+/** POST /kg/expand  body: {"seeds": [id, ...], "radius": N} -> triples. */
 GV_HttpResponse *rest_handle_kg_expand(const GV_HandlerContext *ctx,
                                        const GV_HttpRequest *request);
 

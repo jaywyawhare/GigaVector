@@ -1,6 +1,6 @@
 /**
  * @file document_search.h
- * @brief Unified cross-layer search — fans a query out to the embedding, graph,
+ * @brief Unified cross-layer search - fans a query out to the embedding, graph,
  *        and memory layers, joins the results on their shared chunk_id, fuses
  *        the per-layer ranks with Reciprocal Rank Fusion, and returns enriched
  *        results (chunk + its triplets + its facts).

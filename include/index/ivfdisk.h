@@ -69,7 +69,7 @@ uint64_t ivfdisk_nearest_head(const GV_IVFDiskIndex *index, const float *data);
 int ivfdisk_delete(GV_IVFDiskIndex *index, size_t vector_id, const float *data);
 int ivfdisk_update(GV_IVFDiskIndex *index, size_t vector_id, const float *new_data, size_t dimension);
 
-/** Rebuild vector_id → head location map by scanning on-disk posting lists. */
+/** Rebuild vector_id -> head location map by scanning on-disk posting lists. */
 int ivfdisk_rebuild_vector_map(GV_IVFDiskIndex *index);
 
 int ivfdisk_search(GV_IVFDiskIndex *index, const float *query, size_t k,

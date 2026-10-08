@@ -1,5 +1,5 @@
 /*
- * tiered_storage.c — Tiered hot/warm/cold storage management for GigaVector.
+ * tiered_storage.c - Tiered hot/warm/cold storage management for GigaVector.
  *
  * Strategy:
  *   HOT:  age < hot_max_age_seconds
@@ -176,7 +176,7 @@ GV_StorageTier tiered_storage_classify(const GV_Database *db, size_t vec_id) {
         if (since_sec < db->access_recency_window_seconds) return GV_TIER_HOT;
     }
 
-    /* A zero timestamp means we have no record — treat as HOT. */
+    /* A zero timestamp means we have no record - treat as HOT. */
     if (insert_us == 0) return GV_TIER_HOT;
 
     uint64_t age_sec = (now_us > insert_us) ? (now_us - insert_us) / 1000000ULL : 0;

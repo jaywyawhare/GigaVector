@@ -18,7 +18,7 @@ typedef struct {
     size_t           padded_dim;  /* next power-of-2 >= max(dim, 64) */
     size_t           code_words;  /* padded_dim / 64 */
     float           *signs;       /* [padded_dim] random ±1 from seed */
-    GV_SoAStorage   *storage;     /* shared soa – float vectors + metadata */
+    GV_SoAStorage   *storage;     /* shared soa - float vectors + metadata */
     int              owns_storage;
     uint64_t        *codes;       /* [cap * code_words] binarised codes */
     uint8_t         *deleted_arr; /* [cap] per-slot deletion flag */
@@ -76,7 +76,7 @@ static void l2_normalize(float *v, size_t n) {
     for (size_t i = 0; i < n; i++) v[i] *= inv;
 }
 
-/* Pack sign bits (>=0 → 1) into code_words uint64_t words. */
+/* Pack sign bits (>=0 -> 1) into code_words uint64_t words. */
 static void binarize(const float *x, uint64_t *codes, size_t padded_dim) {
     size_t code_words = padded_dim / 64;
     for (size_t w = 0; w < code_words; w++) {
@@ -98,7 +98,7 @@ static int popcount_xnor(const uint64_t *a, const uint64_t *b,
     return cnt;
 }
 
-/* metadata_match helper – check if a metadata list satisfies a k/v filter. */
+/* metadata_match helper - check if a metadata list satisfies a k/v filter. */
 static int meta_match(GV_Metadata *m, const char *fk, const char *fv) {
     if (!fk || !fv) return 1;
     for (; m; m = m->next)
@@ -221,7 +221,7 @@ int rabitq_insert(void *index, GV_Vector *vector) {
     }
 
     /* Allocate the binarisation scratch BEFORE committing the vector to storage,
-     * so any failure here returns -1 with the vector neither stored nor freed —
+     * so any failure here returns -1 with the vector neither stored nor freed -
      * the caller still owns it (mirrors pq_insert). Otherwise a post-commit
      * scratch OOM would return -1 after we destroyed the vector, and the caller
      * (which frees on non-zero return) would double-free it. */
@@ -235,7 +235,7 @@ int rabitq_insert(void *index, GV_Vector *vector) {
     if (vi == (size_t)-1) { gv_free(norm_buf); gv_free(tmp); return -1; }
     vector->metadata = NULL;  /* ownership transferred to storage */
 
-    /* Compute binarised code: normalise → RHT → binarise. */
+    /* Compute binarised code: normalise -> RHT -> binarise. */
     memcpy(norm_buf, soa_storage_get_data(idx->storage, vi),
            idx->dim * sizeof(float));
     l2_normalize(norm_buf, idx->dim);
@@ -275,12 +275,12 @@ int rabitq_search(void *index, const GV_Vector *query, size_t k,
     gv_free(qbuf);
     gv_free(qnorm);
 
-    /* First pass: binary scan → top (rerank_factor * k) candidates. */
+    /* First pass: binary scan -> top (rerank_factor * k) candidates. */
     size_t rerank_k = idx->config.rerank_factor * k;
     if (rerank_k < k) rerank_k = k;
     if (rerank_k > n) rerank_k = n;
 
-    /* We want highest popcount_xnor → store negated score in max-heap so we
+    /* We want highest popcount_xnor -> store negated score in max-heap so we
        keep the worst of the best and pop it when we find something better.
        Actually: smaller -score = better candidate, so use a max-heap on
        (-score) to maintain the top rerank_k.  But we already wrote
@@ -484,7 +484,7 @@ int rabitq_save(const void *index, FILE *out, uint32_t version) {
         if (write_bytes(out, idx->deleted_arr, idx->cap) != 0) return -1;
     }
 
-    /* Save soa_storage (owns-storage case only — shared storage saved by DB). */
+    /* Save soa_storage (owns-storage case only - shared storage saved by DB). */
     if (idx->owns_storage && idx->storage) {
         if (soa_storage_save(idx->storage, out, version) != 0) return -1;
     }

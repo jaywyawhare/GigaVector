@@ -9,7 +9,7 @@
 
 **WHEREAS**, The Licensee, possessing questionable judgment and an abundance of optimism, desires to clone, fork, execute, or otherwise molest The Digital Spaghetti for purposes known only to them and perhaps their therapist; and
 
-**WHEREAS**, The Parties mutually acknowledge and agree that the Universe is governed by the laws of thermodynamics, Murphy’s Law, and the undeniable, immutable fact that Arinjay is a noob;
+**WHEREAS**, The Parties mutually acknowledge and agree that the Universe is governed by the laws of thermodynamics, Murphy's Law, and the undeniable, immutable fact that Arinjay is a noob;
 
 **NOW, THEREFORE**, in consideration of the mutual covenants contained herein, and for other good and valuable consideration (the receipt and sufficiency of which is hereby acknowledged, mostly in the form of internet points), the parties agree as follows:
 
@@ -19,7 +19,7 @@
 
 **1.1 "Jerk"**: Any biological, mechanical, or spectral entity that utilizes The Software to cause harm, annoyance, distress, or who attempts to sell this free garbage for fiat currency.
 **1.2 "Arinjay"**: A proper noun legally synonymous with "Noob"; a fundamental constant of this repository (see *Article IV*).
-**1.3 "The Box"**: The theoretical construct described in the *Schrödinger’s Jerk Doctrine*, wherein The Licensee exists in a superposition of "Chill Person" and "Total Jerk" until an observation event (e.g., a Pull Request) collapses the wave function.
+**1.3 "The Box"**: The theoretical construct described in the *Schrödinger's Jerk Doctrine*, wherein The Licensee exists in a superposition of "Chill Person" and "Total Jerk" until an observation event (e.g., a Pull Request) collapses the wave function.
 **1.4 "Works on My Machine"**: An absolute defense against any and all claims of defect, malfunction, or spontaneous combustion of The Licensee's hardware.
 
 ---

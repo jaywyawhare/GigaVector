@@ -1,6 +1,6 @@
 /**
  * @file test_ivfdisk_maintenance_dst.c
- * @brief DST oracle: insert → compact/split → search recall preserved.
+ * @brief DST oracle: insert -> compact/split -> search recall preserved.
  */
 
 #include <math.h>

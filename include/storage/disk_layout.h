@@ -19,7 +19,7 @@ extern "C" {
 size_t gv_disk_default_sector_size(void);
 
 /**
- * @brief Normalize a sector size (0 → default).
+ * @brief Normalize a sector size (0 -> default).
  */
 size_t gv_disk_normalize_sector_size(size_t sector_size);
 

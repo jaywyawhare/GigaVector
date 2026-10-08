@@ -642,7 +642,7 @@ int ivfdisk_delete(GV_IVFDiskIndex *index, size_t vector_id, const float *data)
 
     IVFDiskVectorLoc *loc = &index->vector_locs[vector_id];
     uint32_t new_ver = loc->version + 1;
-    const float *payload = data;  /* NULL → tombstone_head writes a zero vector */
+    const float *payload = data;  /* NULL -> tombstone_head writes a zero vector */
 
     if (ivfdisk_tombstone_head(index, loc->head_id, vector_id, new_ver, payload) != 0) {
         return -1;
@@ -670,7 +670,7 @@ int ivfdisk_update(GV_IVFDiskIndex *index, size_t vector_id, const float *new_da
     uint32_t new_ver = loc->version + 1;
 
     if (loc->secondary_head_id != GV_IVFDISK_NO_SECONDARY_HEAD) {
-        /* NULL payload → tombstone_head writes a correctly sized zero vector. */
+        /* NULL payload -> tombstone_head writes a correctly sized zero vector. */
         if (ivfdisk_tombstone_head(index, loc->secondary_head_id, vector_id, new_ver, NULL) != 0) {
             return -1;
         }
@@ -1273,7 +1273,7 @@ int ivfdisk_head_wal_replay(GV_IVFDiskIndex *index)
             uint64_t src = 0, neu = 0;
             memcpy(&src, payload, 8);
             memcpy(&neu, payload + 8, 8);
-            /* BOTH src and neu subscript centroids[] below — the old code grew for
+            /* BOTH src and neu subscript centroids[] below - the old code grew for
              * neu only and left src unchecked, so `centroids + src*dimension` was a
              * controlled wild write. Grow to cover the larger; reject the +1 wrap. */
             uint64_t maxc = src > neu ? src : neu;

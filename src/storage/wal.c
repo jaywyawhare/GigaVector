@@ -24,7 +24,7 @@
 #define GV_WAL_TYPE_UPDATE 3u
 #define GV_WAL_TYPE_IVFDISK_APPEND 4u
 /* A whole transaction as ONE atomic record: N dense inserts (no metadata) +
- * M delete indices, a single trailing CRC. Replay applies all-or-nothing — a
+ * M delete indices, a single trailing CRC. Replay applies all-or-nothing - a
  * torn/mismatched record is discarded wholesale, making multi-op commits
  * crash-atomic. */
 #define GV_WAL_TYPE_TXN 5u
@@ -389,7 +389,7 @@ GV_WAL *wal_open(const char *path, size_t dimension, uint32_t index_type) {
 }
 
 /* Shared body for the plain single-metadata insert record. When @p defer is
- * non-zero the record is written and fflush'd to the OS but NOT fsync'd — the
+ * non-zero the record is written and fflush'd to the OS but NOT fsync'd - the
  * caller is responsible for a later wal_fsync_deferred() once it has dropped the
  * DB write lock (so the fsync no longer blocks concurrent readers). */
 static int wal_append_insert_impl(GV_WAL *wal, const float *data, size_t dimension,
@@ -672,7 +672,7 @@ static int wal_skip_ivfdisk_append_record(FILE *f, int has_crc)
  * Decide whether a failed read of the record at `record_start` is a torn TRAILING
  * record (common after unclean shutdown) vs mid-log corruption. Pass short_read=1
  * for a truncated read (unambiguously torn tail); pass 0 for a CRC mismatch on a
- * fully-read record — then it's a torn tail only if nothing follows (already EOF),
+ * fully-read record - then it's a torn tail only if nothing follows (already EOF),
  * otherwise mid-log corruption. Returns 1 for torn tail (replay stops, succeeds),
  * 0 for corruption (replay fails). On a torn tail the log is truncated back to
  * record_start so the next open starts from a clean boundary.
@@ -788,7 +788,7 @@ int wal_replay(const char *path, size_t expected_dimension,
 
     /* Open read-WRITE so wal_is_torn_tail() can actually ftruncate a torn
      * trailing record back to the last good boundary. Opened "rb" (read-only),
-     * the ftruncate fails silently (EINVAL) and the torn tail survives — after a
+     * the ftruncate fails silently (EINVAL) and the torn tail survives - after a
      * second crash it sits mid-log with valid data behind it, which the torn-tail
      * check treats as unrecoverable corruption. Fall back to "rb" on read-only
      * media (truncation then no-ops, but replay still succeeds). */
@@ -1024,7 +1024,7 @@ int wal_replay_rich(const char *path, size_t expected_dimension,
 
     /* Open read-WRITE so wal_is_torn_tail() can actually ftruncate a torn
      * trailing record back to the last good boundary. Opened "rb" (read-only),
-     * the ftruncate fails silently (EINVAL) and the torn tail survives — after a
+     * the ftruncate fails silently (EINVAL) and the torn tail survives - after a
      * second crash it sits mid-log with valid data behind it, which the torn-tail
      * check treats as unrecoverable corruption. Fall back to "rb" on read-only
      * media (truncation then no-ops, but replay still succeeds). */

@@ -1,7 +1,7 @@
 # GigaVector Go client (embedded)
 
 An idiomatic Go binding for GigaVector. It links the GigaVector C library
-directly via cgo, so it runs **embedded** in your process — no server required.
+directly via cgo, so it runs **embedded** in your process - no server required.
 
 ## Requirements
 

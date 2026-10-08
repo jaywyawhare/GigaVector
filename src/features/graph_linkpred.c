@@ -107,7 +107,7 @@ static size_t undirected_degree(const GV_GAContext *ctx, uint64_t id) {
     const GV_GraphNode *node = gv_ga_node(ctx, id);
     if (!node) return 0;
     GV_Nbhd n;
-    if (nbhd_build(node, id, &n) != 0) return 0; /* alloc failure → treat as 0 */
+    if (nbhd_build(node, id, &n) != 0) return 0; /* alloc failure -> treat as 0 */
     size_t deg = n.count;
     nbhd_free(&n);
     return deg;
@@ -116,7 +116,7 @@ static size_t undirected_degree(const GV_GAContext *ctx, uint64_t id) {
 /**
  * Common scaffold: fetch both nodes, build both neighborhoods.
  * Returns 0 on success (na/nb populated), -1 if a or b is absent (caller returns
- * -1.0), -2 on allocation failure (caller returns 0.0 — read-only best effort).
+ * -1.0), -2 on allocation failure (caller returns 0.0 - read-only best effort).
  */
 static int prep_pair(const GV_GAContext *ctx, uint64_t a, uint64_t b,
                      GV_Nbhd *na, GV_Nbhd *nb) {
@@ -259,7 +259,7 @@ static double intersection_degree_sum(const GV_GAContext *ctx,
 }
 
 static double adamic_adar_term(size_t deg) {
-    if (deg <= 1) return 0.0;      /* log(deg) <= 0 → skip */
+    if (deg <= 1) return 0.0;      /* log(deg) <= 0 -> skip */
     double l = log((double)deg);
     if (l <= 0.0) return 0.0;
     return 1.0 / l;

@@ -1,12 +1,12 @@
 /**
  * @file document_ingest.h
- * @brief Document ingest coordinator — fans one document into the embedding,
+ * @brief Document ingest coordinator - fans one document into the embedding,
  *        graph, and memory layers under a shared chunk_id (the cross-layer PK).
  *
  * Embeddings come from a caller-supplied callback (primary) or an optional
  * GV_AutoEmbedder default. Graph triples and memory facts come from optional
  * extractor callbacks; when none are provided (or kg/mem are NULL), that layer
- * is skipped — a valid embeddings-only ingest (no LLM required).
+ * is skipped - a valid embeddings-only ingest (no LLM required).
  */
 #ifndef GIGAVECTOR_GV_DOCUMENT_INGEST_H
 #define GIGAVECTOR_GV_DOCUMENT_INGEST_H

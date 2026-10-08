@@ -153,7 +153,7 @@ else()
     message(WARNING "Install librdkafka-dev to enable real Kafka streaming ingestion")
 endif()
 
-# SIMD runtime dispatch — compile the SIMD sources with -mavx2 -mfma when the
+# SIMD runtime dispatch - compile the SIMD sources with -mavx2 -mfma when the
 # compiler supports them, without forcing -march=native across the whole build.
 #
 # IMPORTANT: only AVX2 is enabled here, never AVX512. distance.c and hnsw.c
@@ -204,7 +204,7 @@ else()
     message(STATUS "  GPU Acceleration: Disabled (CUDA not found)")
 endif()
 
-# Link libraries — m and pthread are separate on POSIX; on Windows they are
+# Link libraries - m and pthread are separate on POSIX; on Windows they are
 # in the CRT / provided by MinGW's built-in runtime.
 if(NOT WIN32)
     target_link_libraries(GigaVector PRIVATE m pthread)
@@ -259,7 +259,7 @@ install(TARGETS gvbackup gvrestore gvinspect
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 
-# Sanitizers — ASAN and TSAN are mutually exclusive; ENABLE_SANITIZERS uses ASAN+UBSAN.
+# Sanitizers - ASAN and TSAN are mutually exclusive; ENABLE_SANITIZERS uses ASAN+UBSAN.
 # Use ENABLE_TSAN for a separate thread-sanitizer build.
 option(ENABLE_TSAN "Enable ThreadSanitizer (incompatible with ASAN)" OFF)
 

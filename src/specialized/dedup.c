@@ -29,7 +29,7 @@ struct GV_DedupIndex {
     size_t count;                  /**< Number of vectors currently stored. */
     size_t capacity;               /**< Number of vectors that can be stored without gv_realloc. */
 
-    /* LSH hyperplanes – single flat allocation:
+    /* LSH hyperplanes - single flat allocation:
      *   hyperplanes[t * hash_bits * dimension + b * dimension + d]
      * gives the d-th component of the b-th hyperplane for table t. */
     float *hyperplanes;

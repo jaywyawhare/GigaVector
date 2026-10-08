@@ -1,4 +1,4 @@
-/* Phase 2 — vertical slice: one document in -> chunk_id-joined enriched result out. */
+/* Phase 2 - vertical slice: one document in -> chunk_id-joined enriched result out. */
 #include <stdio.h>
 #include <string.h>
 #include <strings.h>

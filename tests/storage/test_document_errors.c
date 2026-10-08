@@ -1,5 +1,5 @@
 /**
- * test_document_errors.c — error/edge cases for the document ingest pipeline
+ * test_document_errors.c - error/edge cases for the document ingest pipeline
  * (src/storage/document_ingest.c):
  *   - NULL config / NULL db / NULL text are rejected.
  *   - No embedder configured (embed == NULL and default_embedder == NULL) fails.

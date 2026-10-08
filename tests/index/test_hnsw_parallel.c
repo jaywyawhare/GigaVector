@@ -64,7 +64,7 @@ int main(void) {
 
     /* parallel recall must be healthy on its own... */
     ASSERT(pr >= 80.0, "parallel recall >= 80%");
-    /* ...and within 3pp of serial — i.e. no meaningful quality loss from parallelism. */
+    /* ...and within 3pp of serial - i.e. no meaningful quality loss from parallelism. */
     ASSERT(fabs(sr - pr) <= 3.0, "parallel recall within 3pp of serial");
 
     /* efConstruction knob is accepted before a build */

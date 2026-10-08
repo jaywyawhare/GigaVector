@@ -11,7 +11,7 @@ extern "C" {
 
 /**
  * @file freshness.h
- * @brief Vector Freshness Scoring — blend vector similarity with time-decay signals.
+ * @brief Vector Freshness Scoring - blend vector similarity with time-decay signals.
  *
  * Enables ranking search results by a combination of vector similarity and
  * how recently a vector was inserted (or last updated). Newer vectors receive

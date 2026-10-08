@@ -49,7 +49,7 @@ static int test_lsh_insert_search(void) {
         ASSERT(vec != NULL);
         int rc = lsh_insert(index, vec);
         ASSERT(rc == 0);
-        /* lsh_insert takes ownership — do NOT destroy vec */
+        /* lsh_insert takes ownership - do NOT destroy vec */
     }
 
     ASSERT(lsh_count(index) == (size_t)num_vectors);
@@ -96,7 +96,7 @@ static int test_lsh_range_search(void) {
         GV_Vector *vec = vector_create_from_data(dim, data);
         ASSERT(vec != NULL);
         ASSERT(lsh_insert(index, vec) == 0);
-        /* lsh_insert takes ownership — do NOT destroy vec */
+        /* lsh_insert takes ownership - do NOT destroy vec */
     }
 
     float query_data[8] = {0.0f, 0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f, 0.7f};
@@ -142,7 +142,7 @@ static int test_lsh_delete(void) {
         GV_Vector *vec = vector_create_from_data(dim, data);
         ASSERT(vec != NULL);
         ASSERT(lsh_insert(index, vec) == 0);
-        /* lsh_insert takes ownership — do NOT destroy vec */
+        /* lsh_insert takes ownership - do NOT destroy vec */
     }
 
     ASSERT(lsh_count(index) == 5);
@@ -173,7 +173,7 @@ static int test_lsh_update(void) {
     GV_Vector *vec = vector_create_from_data(dim, data);
     ASSERT(vec != NULL);
     ASSERT(lsh_insert(index, vec) == 0);
-    /* lsh_insert takes ownership — do NOT destroy vec */
+    /* lsh_insert takes ownership - do NOT destroy vec */
 
     ASSERT(lsh_count(index) == 1);
 

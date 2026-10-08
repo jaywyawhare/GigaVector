@@ -48,7 +48,7 @@ def _cmake_generator(env: dict) -> str:
     if shutil.which("cl") or env.get("VCINSTALLDIR") or env.get("VCToolsInstallDir"):
         return ""  # CMake will pick the VS generator automatically
 
-    # No MSVC found — fall back to MinGW Makefiles if gcc is available.
+    # No MSVC found - fall back to MinGW Makefiles if gcc is available.
     if shutil.which("gcc") or shutil.which("mingw32-make"):
         return "MinGW Makefiles"
 

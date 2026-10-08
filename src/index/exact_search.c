@@ -74,7 +74,7 @@ int exact_knn_search_vectors(GV_Vector *const *vectors, size_t count,
             }
             if (copy == NULL) {
                 /* OOM: skip this candidate rather than store the borrowed storage
-                 * vector `v`, which the caller would later vector_destroy() —
+                 * vector `v`, which the caller would later vector_destroy() -
                  * freeing storage-owned data (heap corruption). */
                 continue;
             }
@@ -185,7 +185,7 @@ int exact_knn_search_kdtree(const GV_KDNode *root, const GV_SoAStorage *storage,
         return -1;
     }
     /* One contiguous array of borrowed VIEW structs (data/metadata point into
-     * SoA storage and are owned by it — never freed here). This avoids the
+     * SoA storage and are owned by it - never freed here). This avoids the
      * per-vector vector_create() path, which both leaked the shell's freshly
      * allocated data buffer (overwritten by the borrowed pointer) and, on the
      * OOM-cleanup path, vector_destroy()'d borrowed storage data. */

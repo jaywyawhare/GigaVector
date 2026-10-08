@@ -320,7 +320,7 @@ static char *extract_pdf(const char *s, size_t len) {
     while (i < len) {
         if (!ci_match(s, len, i, "stream")) { i++; continue; }
         /* The stream dictionary precedes the keyword. If it declares a /Filter
-         * (FlateDecode etc.) the body is compressed binary — never emit it as
+         * (FlateDecode etc.) the body is compressed binary - never emit it as
          * text (a "Tj"/"TJ" byte pair can occur by chance in compressed data). */
         size_t look = (i > 512) ? i - 512 : 0;
         int filtered = 0;

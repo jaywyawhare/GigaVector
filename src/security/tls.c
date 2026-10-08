@@ -262,7 +262,7 @@ int tls_cert_days_remaining(const GV_TLSContext *ctx) {
 #else /* !GV_HAVE_OPENSSL */
 
 struct GV_TLSContext {
-    int dummy;  /* unused – structure must not be zero-sized */
+    int dummy;  /* unused - structure must not be zero-sized */
 };
 
 int tls_is_available(void) {

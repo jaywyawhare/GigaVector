@@ -71,7 +71,7 @@ Euclidean, Cosine, Dot Product, Manhattan, Hamming -- all with SIMD-optimized im
 - **MMR diversity reranking** -- maximal marginal relevance for diverse result sets
 - **Custom ranking expressions** -- expression parser with decay functions (exp/gauss/linear) and score boosting
 - **SQL query interface** -- `SELECT ... WHERE ... ORDER BY vector_distance(...)` SQL syntax
-- **Phased ranking pipeline** -- multi-stage ANN → rerank → filter pipeline with per-phase stats
+- **Phased ranking pipeline** -- multi-stage ANN -> rerank -> filter pipeline with per-phase stats
 - **Learned sparse index** -- SPLADE-style token-weighted inverted index with WAND acceleration
 - **Full-text search** -- Porter stemming, multilingual (6 languages), BlockMax WAND, phrase matching
 - **IVF-PQ per-query tuning** -- nprobe and rerank overrides on individual search calls
@@ -613,7 +613,7 @@ server.start()
 | `POST` | `/save` | Save database to disk |
 ### Web Dashboard
 
-GigaVector ships a built-in web dashboard (dark theme, pure Python — no libmicrohttpd required). Launch it with one line:
+GigaVector ships a built-in web dashboard (dark theme, pure Python - no libmicrohttpd required). Launch it with one line:
 
 ```python
 from gigavector import Database, IndexType, serve_with_dashboard

@@ -90,8 +90,8 @@ static float xoshiro_random_sign(GV_Xoshiro256 *rng) {
 static float xoshiro_uniform(GV_Xoshiro256 *rng) {
     uint64_t v = xoshiro_next(rng);
     /* [0,1) -> (-1,1): scale by 2 before subtracting 1. The previous form only
-     * subtracted 1, yielding [-1,0) — an all-non-positive projection matrix that
-     * destroys the zero-mean Johnson–Lindenstrauss property. */
+     * subtracted 1, yielding [-1,0) - an all-non-positive projection matrix that
+     * destroys the zero-mean Johnson-Lindenstrauss property. */
     return ((float)(v >> 40) / (float)(1ULL << 24)) * 2.0f - 1.0f;
 }
 

@@ -1316,7 +1316,7 @@ relation's `chunk_id` also updates the chunk index. Both are WAL-logged.
 int memory_delete_by_source(GV_MemoryLayer *layer, const char *source);
 ```
 
-Deletes every memory whose provenance (`source` metadata) matches — the third
+Deletes every memory whose provenance (`source` metadata) matches - the third
 leg of cross-layer rollback alongside `db_delete_by_id` and
 `kg_remove_relations_by_chunk`.
 
@@ -1637,7 +1637,7 @@ if (db_commit(txn) == GV_TXN_CONFLICT) { /* retry */ }
 
 ## WiscKey Value Store
 
-Opt-in key→value store with WiscKey-style key/value separation: a uint64 key index in memory over
+Opt-in key->value store with WiscKey-style key/value separation: a uint64 key index in memory over
 an append-only value log with CRC and garbage collection. Declared in `storage/database.h`
 (the underlying primitives are in `storage/vlog.h` and `storage/value_store.h`).
 

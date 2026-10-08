@@ -37,7 +37,7 @@ static int triples_fn(void *ctx, const char *chunk, GV_ExtractedTriple *out, siz
     if (strcasestr(chunk, "invent"))
         out[n++] = (GV_ExtractedTriple){"Alan Turing","Person","invented","Turing Machine","Concept"};
     if (strcasestr(chunk, "codebreak")) {
-        /* links docB's entities to the seed entity — no shared keywords */
+        /* links docB's entities to the seed entity - no shared keywords */
         out[n++] = (GV_ExtractedTriple){"Alan Turing","Person","worked_at","Bletchley Park","Place"};
     }
     if (strcasestr(chunk, "weather"))

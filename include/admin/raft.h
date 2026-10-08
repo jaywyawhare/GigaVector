@@ -19,8 +19,8 @@ extern "C" {
  * matchIndex, randomised election timeouts, and the leader/candidate/follower
  * state machine with the Raft safety rules.
  *
- * The core is driven by two entry points — raft_tick() (clock) and raft_step()
- * (an incoming message) — and emits outbound messages through a caller-supplied
+ * The core is driven by two entry points - raft_tick() (clock) and raft_step()
+ * (an incoming message) - and emits outbound messages through a caller-supplied
  * send callback. That keeps it independent of any particular transport, so it
  * can run over TCP or inside a deterministic in-memory simulation for testing.
  *
@@ -49,7 +49,7 @@ typedef struct {
 
 /**
  * A Raft RPC message. AppendEntries carries a (possibly empty) run of entries;
- * the pointer is borrowed for the duration of the send/step call — a transport
+ * the pointer is borrowed for the duration of the send/step call - a transport
  * that queues the message must deep-copy the entries.
  */
 typedef struct {

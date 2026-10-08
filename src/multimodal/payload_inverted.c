@@ -7,7 +7,7 @@
 #include "core/utils.h"
 #include "multimodal/payload_inverted.h"
 
-/* ---- Hash map: string key → GV_IdBitmap* ---- */
+/* ---- Hash map: string key -> GV_IdBitmap* ---- */
 
 #define BUCKET_EMPTY NULL
 
@@ -102,8 +102,8 @@ static InvBucket *hashmap_find(const InvHashMap *hm, const char *key) {
 typedef struct {
     char       name[64];
     int        type;       /* 0=string, 1=int64, 2=float64, 3=bool */
-    InvHashMap *exact;     /* full value → bitmap */
-    InvHashMap *tokens;    /* individual tokens → bitmap (string fields only) */
+    InvHashMap *exact;     /* full value -> bitmap */
+    InvHashMap *tokens;    /* individual tokens -> bitmap (string fields only) */
     size_t      entry_count;
 } InvField;
 

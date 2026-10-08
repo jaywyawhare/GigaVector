@@ -29,7 +29,7 @@
 #define GCM_TAG_LEN 16
 /* Per-message GCM nonce (96-bit) and CBC IV lengths. A FRESH random value is
  * generated for every crypto_encrypt() call and prepended to the output, so the
- * (key, nonce) pair is never reused — the old code took the nonce from the fixed
+ * (key, nonce) pair is never reused - the old code took the nonce from the fixed
  * key->iv, which is catastrophic for GCM across multiple messages. */
 #define GCM_NONCE_LEN 12
 #define CBC_IV_LEN    16
@@ -633,7 +633,7 @@ int crypto_encrypt_file(GV_CryptoContext *ctx, const GV_CryptoKey *key,
     /* Each 64 KiB plaintext chunk is encrypted independently (crypto_encrypt now
      * embeds its own nonce/IV + tag/pad, so a chunk's ciphertext is larger than
      * its plaintext by a variable amount). Length-FRAME every chunk so the
-     * decryptor reads exactly cipher_len bytes — the old code re-read fixed 64 KiB
+     * decryptor reads exactly cipher_len bytes - the old code re-read fixed 64 KiB
      * chunks, which desynced after the first chunk for any file > 64 KiB. */
     int rc = 0;
     size_t nread;
@@ -818,7 +818,7 @@ int crypto_stream_final(GV_CryptoStream *stream,
         if (stream->buffer_len != 0) return -1;
         /* The held block is the last plaintext block; strip and validate its
          * PKCS7 padding. Without a held block the stream carried no data block
-         * (IV only / empty) — invalid, since encrypt always emits ≥1 padded block. */
+         * (IV only / empty) - invalid, since encrypt always emits ≥1 padded block. */
         if (!stream->have_held) return -1;
         unsigned char pad = stream->held[15];
         if (pad == 0 || pad > 16) return -1;
@@ -886,7 +886,7 @@ int crypto_hmac_sha256(const unsigned char *key, size_t key_len,
  *
  * Compares exactly `len` bytes of `a` and `b` in time independent of WHERE
  * they first differ (no early exit), to avoid leaking secret contents via a
- * timing side channel — important when comparing MACs/tags/tokens.
+ * timing side channel - important when comparing MACs/tags/tokens.
  *
  * Return semantics (unchanged): 0 iff the two buffers are equal over `len`
  * bytes; non-zero otherwise.  Note this is the OPPOSITE polarity of memcmp's

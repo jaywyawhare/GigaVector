@@ -133,7 +133,7 @@ int graph_personalized_pagerank(const GV_GraphDB *g,
                                 size_t iters, double damping,
                                 GV_GraphNodeScores *out);
 
-/** ArticleRank — PageRank variant that dampens the influence of low-degree nodes. */
+/** ArticleRank - PageRank variant that dampens the influence of low-degree nodes. */
 int graph_article_rank(const GV_GraphDB *g, size_t iters, double damping,
                        GV_GraphNodeScores *out);
 
@@ -144,7 +144,7 @@ int graph_hits(const GV_GraphDB *g, size_t iters, double tol,
 
 /* ── Matrix-native traversal (GraphBLAS-lite) ───────────────────────────────
  * Reachability and activation expressed as sparse linear algebra over the CSR
- * adjacency matrix (see graph_csr.h) — repeated boolean SpMV for variable-length
+ * adjacency matrix (see graph_csr.h) - repeated boolean SpMV for variable-length
  * reachability, weighted SpMV for spreading activation. */
 
 /** k-hop reachability from a seed set, via repeated boolean SpMV (matrix-based
@@ -155,7 +155,7 @@ int graph_khop_reachable(const GV_GraphDB *g, const uint64_t *sources, size_t nu
                          size_t k, int directed, GV_GraphNodeScores *out);
 
 /** Spreading activation via weighted SpMV: seeds start at activation 1.0 and
- *  propagate for `iters` rounds — each round adds decay·(A·a) to the accumulated
+ *  propagate for `iters` rounds - each round adds decay·(A·a) to the accumulated
  *  activation (A = in-adjacency so activation flows along edges toward targets).
  *  directed!=0 follows edges; weighted!=0 uses edge weights. out->scores = total
  *  accumulated activation per node. This is the linear-algebra form of a
@@ -178,7 +178,7 @@ int graph_louvain(const GV_GraphDB *g, size_t max_passes, GV_GraphNodeLabels *ou
 /** Leiden community detection: multi-level Louvain where each aggregation is
  *  preceded by a refinement phase that re-partitions communities into
  *  internally-connected sub-communities (restricted local moving with a
- *  cut-vertex guard), so every output community is guaranteed connected — the
+ *  cut-vertex guard), so every output community is guaranteed connected - the
  * known Louvain failure mode of disconnected communities cannot occur.
  * Deterministic. Treated as undirected. */
 int graph_leiden(const GV_GraphDB *g, size_t max_levels, GV_GraphNodeLabels *out);
