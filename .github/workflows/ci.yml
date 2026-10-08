@@ -5,6 +5,19 @@ on:
     branches: [master]
   pull_request:
 
+# Portable SIMD baseline for every Make build in CI. The Makefile defaults to
+# -march=native (correct locally: build host == run host), but ccache restores
+# objects across GitHub's heterogeneous x86 runners, so a native build can emit
+# AVX-512 that SIGILLs when a later job on a different CPU reuses the cached
+# object (seen as "Illegal instruction" / "signal arrived during cgo execution"
+# in the Go, formal/CBMC, and *-test jobs). AVX2 is baseline on all runners and
+# the fast kernels stay behind the in-code cpu_has_feature(AVX2) runtime gate,
+# so this is both safe and deterministic. make reads this via SIMD_FLAGS ?= ...;
+# a step may still override on the command line (macOS passes -march=native as
+# it is a single arm64 model where -mavx2 is invalid; valgrind passes empty).
+env:
+  SIMD_FLAGS: -mavx2 -mfma
+
 jobs:
   build-and-test:
     name: build & test (${{ matrix.os }})
