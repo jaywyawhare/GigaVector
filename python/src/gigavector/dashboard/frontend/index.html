@@ -289,37 +289,34 @@
 					<div class="viz-split">
 						<div class="viz-main">
 							<div class="viz-toolbar">
-								<label class="label-sm">Algorithm</label>
-								<select id="viz-algo">
+								<label class="label-sm" for="viz-algo">Projection</label>
+								<select id="viz-algo" title="PCA keeps the two directions of greatest variance; random projection is faster but noisier">
 									<option value="pca">PCA</option>
 									<option value="random">Random Projection
 									</option>
 								</select>
-								<label class="label-sm">Limit</label>
-								<input type="number" id="viz-limit" value="200" min="10"
+								<label class="label-sm" for="viz-limit">Sample</label>
+								<input type="number" id="viz-limit" title="How many vectors to load, starting from the first" value="200" min="10"
 									max="500" style="width:70px">
-								<label class="label-sm">Color by</label>
+								<label class="label-sm" for="viz-color">Color by</label>
 								<select id="viz-color" onchange="recolorScatter()"
 									title="Color points by k-means cluster or a metadata field">
 									<option value="">None</option>
 									<option value="__cluster__">K-means clusters</option>
 								</select>
-								<label class="label-sm">k</label>
+								<label class="label-sm" for="viz-k">Clusters</label>
 								<input type="number" id="viz-k" value="3" min="2" max="12"
 									style="width:48px" onchange="recolorScatter()"
 									title="Number of clusters (the 3 largest get a color, the rest fold into Other)">
 								<button class="btn btn-sm"
-									onclick="runVisualization()">Run</button>
-								<span id="viz-status" class="mono-sm"
-									style="margin-left:auto"></span>
+									onclick="runVisualization()">Project vectors</button>
+								<span id="viz-status" class="viz-status"></span>
 							</div>
 							<div class="viz-legend" id="viz-legend" hidden></div>
 							<canvas class="viz-canvas" id="scatter-canvas" width="900"
 								height="460" tabindex="0" role="img"
 								aria-label="2D projection of stored vectors. Use arrow keys to step through points, Enter to select. A table view is below."></canvas>
-							<div class="viz-info" id="scatter-info">Click <b>Run</b> to
-								project vectors into 2D space. Hover to preview, click
-								to inspect.</div>
+							<div class="viz-info" id="scatter-info">Nothing projected yet.</div>
 							<details class="viz-table">
 								<summary>Table view</summary>
 								<div class="viz-table-scroll">
@@ -333,11 +330,8 @@
 							</details>
 						</div>
 						<div class="viz-detail" id="scatter-detail">
-							<div class="viz-detail-header">Point Detail</div>
-							<div class="viz-detail-body" id="scatter-detail-body">
-								<div class="empty-state">Click a point on the scatter
-									plot to inspect it here.</div>
-							</div>
+							<div class="viz-detail-header">Selected point</div>
+							<div class="viz-detail-body" id="scatter-detail-body"></div>
 						</div>
 					</div>
 				</div>
@@ -348,7 +342,7 @@
 								<label class="label-sm">Seed</label>
 								<input type="number" id="graph-seed" value="0" min="0"
 									style="width:70px">
-								<label class="label-sm">k</label>
+								<label class="label-sm" for="viz-k">Clusters</label>
 								<input type="number" id="graph-k" value="5" min="1"
 									max="20" style="width:50px">
 								<label class="label-sm">Depth</label>
@@ -366,7 +360,7 @@
 								inspect.</div>
 						</div>
 						<div class="viz-detail" id="graph-detail">
-							<div class="viz-detail-header">Node Detail</div>
+							<div class="viz-detail-header">Selected node</div>
 							<div class="viz-detail-body" id="graph-detail-body">
 								<div class="empty-state">Click a node on the graph to
 									inspect it here.</div>

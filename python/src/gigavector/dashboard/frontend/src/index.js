@@ -281,26 +281,33 @@ async function runVisualization() {
   const limit = parseInt(document.getElementById("viz-limit").value) || 200;
   const algo = document.getElementById("viz-algo").value;
   const status = document.getElementById("viz-status");
-  status.textContent = "Loading...";
+  const info = document.getElementById("scatter-info");
+  status.textContent = "Loading vectors...";
   const r = await apiCall(`/vectors/scroll?offset=0&limit=${limit}`);
   if (!r.ok || !r.data.vectors || !r.data.vectors.length) {
-    status.textContent = "No data";
+    vizData = null;
+    status.textContent = "";
+    info.textContent = r.ok
+      ? "This collection has no vectors yet. Add some from the Vectors page, then project again."
+      : "Could not load vectors from the server. Check that it is running, then project again.";
+    drawScatter();
+    showScatterDetail(-1);
     return;
   }
   const vecs = r.data.vectors;
   const raw = vecs.map((v) => (Array.isArray(v.data) ? v.data : []));
   const indices = vecs.map((v) => v.index);
   const metas = vecs.map((v) => v.metadata || {});
+  const norms = raw.map((v) => Math.hypot(...v));
   const dim = raw[0].length;
   const pts = algo === "pca" ? pcaProject(raw) : randomProject(raw);
-  vizData = { pts, indices, raw, metas };
+  vizData = { pts, indices, raw, metas, norms };
   scatterHovered = -1;
   scatterSelected = -1;
   showScatterDetail(-1);
   populateColorByOptions(metas);
-  status.textContent = `${vecs.length} pts | ${algo.toUpperCase()}`;
-  document.getElementById("scatter-info").innerHTML =
-    `<b>${vecs.length}</b> vectors projected from <b>${dim}D</b> to 2D. Hover or focus and use arrow keys to inspect.`;
+  status.textContent = `${vecs.length} vectors, ${algo === "pca" ? "PCA" : "random projection"}`;
+  info.textContent = `${dim} dimensions flattened to 2. Points that sit close here are not always close in full dimension; select one to compare.`;
   recolorScatter();
 }
 
@@ -375,6 +382,60 @@ function randomProject(data) {
     }
     return [x, y];
   });
+}
+
+// Vector fingerprint: one column per component on a diverging scale (blue for
+// negative, gray at zero, red for positive), normalized to the vector's own
+// largest magnitude. Lets two vectors be compared by shape at a glance.
+const FP_NEG = [57, 135, 229],
+  FP_MID = [56, 56, 53],
+  FP_POS = [230, 103, 103];
+function fingerprintCanvas(vec, w, h) {
+  const c = document.createElement("canvas");
+  const dpr = window.devicePixelRatio || 1;
+  c.width = Math.round(w * dpr);
+  c.height = Math.round(h * dpr);
+  c.style.width = `${w}px`;
+  c.style.height = `${h}px`;
+  c.className = "fingerprint";
+  c.setAttribute("aria-hidden", "true");
+  const ctx = c.getContext("2d");
+  let max = 0;
+  for (const v of vec) max = Math.max(max, Math.abs(v));
+  max = max || 1;
+  const n = vec.length,
+    cw = c.width / n;
+  for (let i = 0; i < n; i++) {
+    const t = vec[i] / max,
+      pole = t < 0 ? FP_NEG : FP_POS,
+      a = Math.min(1, Math.abs(t));
+    const rgb = FP_MID.map((m, j) => Math.round(m + (pole[j] - m) * a));
+    ctx.fillStyle = `rgb(${rgb})`;
+    // Columns overlap by a pixel so wide vectors do not show seams.
+    ctx.fillRect(Math.floor(i * cw), 0, Math.ceil(cw) + 1, c.height);
+  }
+  return c;
+}
+
+// k nearest neighbors of point idx by cosine similarity in the original space
+// (not the 2D projection), over the loaded sample. Cached per point.
+function vizNeighbors(idx, k) {
+  const cache = vizData.nbrCache || (vizData.nbrCache = new Map());
+  if (cache.has(idx)) return cache.get(idx);
+  const { raw, norms } = vizData,
+    q = raw[idx],
+    qn = norms[idx] || 1;
+  const scored = [];
+  for (let i = 0; i < raw.length; i++) {
+    if (i === idx) continue;
+    let dot = 0;
+    for (let j = 0; j < q.length; j++) dot += q[j] * raw[i][j];
+    scored.push([i, dot / (qn * (norms[i] || 1))]);
+  }
+  scored.sort((a, b) => b[1] - a[1]);
+  const out = scored.slice(0, k);
+  cache.set(idx, out);
+  return out;
 }
 
 // Categorical slots validated (all pairs, normal + CVD, >= 3:1 contrast) against
@@ -574,7 +635,13 @@ function drawScatter() {
   ctx.scale(dpr, dpr);
   ctx.fillStyle = VIZ_SURFACE;
   ctx.fillRect(0, 0, w, h);
-  if (!vizData) return;
+  if (!vizData) {
+    ctx.fillStyle = VIZ_INK_SECONDARY;
+    ctx.font = '14px "Source Sans 3", sans-serif';
+    ctx.textAlign = "center";
+    ctx.fillText("Each dot will be one stored vector, placed by similarity.", w / 2, h / 2);
+    return;
+  }
   if (!vizData.coloring) vizData.coloring = computeVizGroups();
   const { pts, indices } = vizData;
   const padL = 36,
@@ -699,18 +766,13 @@ function showPointTooltip(idx, clientX, clientY) {
     id = vizData.indices[idx];
   const coloring = vizData.coloring || {};
   const group = coloring.groups ? coloring.groups[idx] : "";
-  const preview = `[${pt
-    .slice(0, 4)
-    .map((v) => v.toFixed(3))
-    .join(", ")}${pt.length > 4 ? ", ..." : ""}]`;
   const row = (cls, text) => {
     const d = document.createElement("div");
     d.className = cls;
     d.textContent = text;
     return d;
   };
-  const head = row("tt-id", `Point #${id}`);
-  const parts = [head, row("tt-dim", `${pt.length}-dimensional`)];
+  const parts = [row("tt-id", `#${id}`)];
   if (group) {
     const g = row("tt-group", group);
     const sw = document.createElement("span");
@@ -719,45 +781,89 @@ function showPointTooltip(idx, clientX, clientY) {
     g.prepend(sw);
     parts.push(g);
   }
-  parts.push(row("tt-data", preview));
+  parts.push(fingerprintCanvas(pt, 160, 12));
+  parts.push(row("tt-dim", `${pt.length} dimensions, norm ${vizData.norms[idx].toFixed(2)}`));
   vizTooltip.replaceChildren(...parts);
   vizTooltip.classList.add("visible");
   placeVizTooltip(clientX, clientY);
-  document.getElementById("scatter-info").textContent =
-    `Point #${id} | ${pt.length}D${group ? ` | ${group}` : ""} | ${preview}`;
 }
 function hideVizTooltip() {
   vizTooltip.classList.remove("visible");
 }
 
+const VIZ_NEIGHBORS = 5;
+
 function showScatterDetail(idx) {
   const body = document.getElementById("scatter-detail-body");
+  const el = (tag, cls, text) => {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  };
   if (idx < 0 || !vizData) {
-    body.innerHTML =
-      '<div style="color:var(--text-muted);font-size:13px">Click a point on the scatter plot to inspect it here.</div>';
+    body.replaceChildren(
+      el(
+        "p",
+        "viz-empty",
+        vizData
+          ? "Select a point to see its values and its nearest neighbors in full dimension."
+          : "Project vectors to start exploring.",
+      ),
+    );
     return;
   }
   const pt = vizData.raw[idx],
     id = vizData.indices[idx];
   const coloring = vizData.coloring || {};
   const group = coloring.groups ? coloring.groups[idx] : "";
+  const panelW = Math.max(160, body.clientWidth - 28);
+
+  const head = el("div", "viz-point-head");
+  head.append(el("span", "viz-point-id", `#${id}`));
+  if (group) {
+    const g = el("span", "viz-point-group", group);
+    const sw = el("span", "viz-legend-swatch");
+    sw.style.background = coloring.colors[idx];
+    g.prepend(sw);
+    head.append(g);
+  }
+
+  const scale = el("div", "fingerprint-scale");
+  scale.append(el("span", null, "negative"), el("span", null, "0"), el("span", null, "positive"));
+
+  const facts = el(
+    "p",
+    "viz-point-facts",
+    `${pt.length} dimensions, norm ${vizData.norms[idx].toFixed(3)}. Projected to (${vizData.pts[idx][0].toFixed(2)}, ${vizData.pts[idx][1].toFixed(2)}).`,
+  );
+
+  const nbrTitle = el("h4", "viz-subhead", "Nearest neighbors");
+  const nbrNote = el("p", "viz-note", "By cosine similarity in full dimension. Lines show where they landed on the plot.");
+  const list = el("ol", "viz-neighbors");
+  for (const [j, sim] of vizNeighbors(idx, VIZ_NEIGHBORS)) {
+    const li = el("li");
+    const btn = el("button", "viz-neighbor");
+    btn.type = "button";
+    btn.title = `Select #${vizData.indices[j]}`;
+    btn.append(
+      el("span", "viz-neighbor-id", `#${vizData.indices[j]}`),
+      fingerprintCanvas(vizData.raw[j], 96, 10),
+      el("span", "viz-neighbor-sim", sim.toFixed(3)),
+    );
+    btn.addEventListener("click", () => selectScatterPoint(j));
+    li.append(btn);
+    list.append(li);
+  }
+
   const vecStr = `[${pt.map((v) => v.toFixed(6)).join(", ")}]`;
-  body.innerHTML = `
-    <div class="detail-label">Point ID</div>
-    <div class="detail-value" style="font-size:16px;font-weight:600;color:var(--text)">#${id}</div>
-    ${
-      group
-        ? `<div class="detail-label">Group</div>
-    <div class="detail-value dim"><span class="viz-legend-swatch" style="background:${coloring.colors[idx]}"></span>${escapeHtml(group)}</div>`
-        : ""
-    }
-    <div class="detail-label">Dimension</div>
-    <div class="detail-value dim">${pt.length}</div>
-    <div class="detail-label">Projected (x, y)</div>
-    <div class="detail-value dim">${vizData.pts[idx][0].toFixed(4)}, ${vizData.pts[idx][1].toFixed(4)}</div>
-    <div class="detail-label">Vector Data</div>
-    <div class="detail-value" style="font-size:11px;line-height:1.6;max-height:220px;overflow-y:auto;background:var(--bg-input);padding:10px;border-radius:6px">${vecStr}</div>
-    <button class="btn btn-sm btn-outline" style="margin-top:4px" onclick="copyText('${escapeJsString(vecStr)}')">Copy Vector</button>`;
+  const raw = el("details", "viz-raw");
+  raw.append(el("summary", null, "Raw values"), el("pre", null, vecStr));
+  const copy = el("button", "btn btn-sm btn-outline", "Copy vector");
+  copy.type = "button";
+  copy.addEventListener("click", () => copyText(vecStr));
+
+  body.replaceChildren(head, fingerprintCanvas(pt, panelW, 28), scale, facts, nbrTitle, nbrNote, list, raw, copy);
 }
 
 function drawScatterWithHighlights() {
@@ -788,6 +894,25 @@ function drawScatterWithHighlights() {
     ctx.lineWidth = width;
     ctx.stroke();
   };
+  // Hairlines from the selection to its full-dimension neighbors: long lines
+  // mean the projection pulled true neighbors apart.
+  if (scatterSelected >= 0 && scatterSelected < pts.length) {
+    const [ox, oy] = toS(pts[scatterSelected][0], pts[scatterSelected][1]);
+    ctx.strokeStyle = VIZ_INK_SECONDARY;
+    ctx.globalAlpha = 0.55;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (const [j] of vizNeighbors(scatterSelected, VIZ_NEIGHBORS)) {
+      const [nx, ny] = toS(pts[j][0], pts[j][1]);
+      ctx.moveTo(ox, oy);
+      ctx.lineTo(nx, ny);
+    }
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+    for (const [j] of vizNeighbors(scatterSelected, VIZ_NEIGHBORS)) {
+      ring(j, 7, VIZ_INK_SECONDARY, 1);
+    }
+  }
   if (scatterHovered >= 0 && scatterHovered < pts.length && scatterHovered !== scatterSelected) {
     ring(scatterHovered, 8, VIZ_INK_SECONDARY, 1.5);
   }
@@ -2165,6 +2290,9 @@ const viewHooks = {
   monitoring: () => {
     refreshMonitoring();
     if (!monTimer) monTimer = setInterval(refreshMonitoring, 1000);
+  },
+  visualize: () => {
+    if (!vizData) runVisualization();
   },
   namespaces: loadNamespaces,
   cluster: loadCluster,
