@@ -1802,7 +1802,7 @@ async function consoleSend() {
   const statusCls =
     r.status >= 200 && r.status < 400 ? "status-ok" : "status-err";
   document.getElementById("con-meta").innerHTML =
-    `<span class="${statusCls}">${r.status}</span><span>${ms}ms</span>`;
+    `<span class="${statusCls}">${r.status}</span><span>${ms} ms</span>`;
   document.getElementById("con-result").innerHTML = jsonHighlight(r.data);
 }
 
@@ -2226,7 +2226,7 @@ async function runSQL() {
   });
   const ms = (performance.now() - t0).toFixed(1);
   document.getElementById("sql-meta").textContent = r.ok
-    ? `${r.data.row_count} rows in ${ms}ms`
+    ? `${r.data.row_count} rows in ${ms} ms`
     : `Error: ${r.data.message || JSON.stringify(r.data)}`;
   if (r.ok && r.data.columns) {
     const thead = document.getElementById("sql-thead");
