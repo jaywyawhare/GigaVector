@@ -41,7 +41,7 @@ async function apiCall(path, opts) {
 }
 
 function formatBytes(b) {
-  if (b == null) return "—";
+  if (b == null) return "-";
   if (b < 1024) return b + " B";
   if (b < 1048576) return (b / 1024).toFixed(1) + " KB";
   if (b < 1073741824) return (b / 1048576).toFixed(1) + " MB";
@@ -144,11 +144,11 @@ async function refreshOverview() {
     document.getElementById("ov-count").textContent = (
       info.data.vector_count ?? 0
     ).toLocaleString();
-    document.getElementById("ov-dim").textContent = info.data.dimension ?? "—";
+    document.getElementById("ov-dim").textContent = info.data.dimension ?? "-";
     document.getElementById("ov-index").textContent =
-      info.data.index_type ?? "—";
+      info.data.index_type ?? "-";
     document.getElementById("ov-version").textContent =
-      info.data.version ?? "—";
+      info.data.version ?? "-";
     document.getElementById("footer-version").textContent =
       "GigaVector v" + (info.data.version || "?");
     document.getElementById("footer-index").textContent =
@@ -163,7 +163,7 @@ async function refreshOverview() {
       (stats.data.total_inserts || 0) + (stats.data.total_queries || 0)
     ).toLocaleString();
     document.getElementById("ov-qps").textContent =
-      stats.data.queries_per_second ?? "—";
+      stats.data.queries_per_second ?? "-";
     document.getElementById("ov-errors").textContent = (
       stats.data.error_count ?? 0
     ).toLocaleString();
@@ -221,7 +221,7 @@ function renderPointsList() {
         ? `[${p.data
             .slice(0, 5)
             .map((v) => (typeof v === "number" ? v.toFixed(4) : v))
-            .join(", ")}${p.data.length > 5 ? ", …" : ""}]`
+            .join(", ")}${p.data.length > 5 ? ", ..." : ""}]`
         : JSON.stringify(p.data).slice(0, 60);
       return `<div class="point-item${
         selectedPointIdx === i ? " selected" : ""
@@ -281,7 +281,7 @@ async function runVisualization() {
   const limit = parseInt(document.getElementById("viz-limit").value) || 200;
   const algo = document.getElementById("viz-algo").value;
   const status = document.getElementById("viz-status");
-  status.textContent = "Loading…";
+  status.textContent = "Loading...";
   const r = await apiCall(`/vectors/scroll?offset=0&limit=${limit}`);
   if (!r.ok || !r.data.vectors || !r.data.vectors.length) {
     status.textContent = "No data";
@@ -290,12 +290,14 @@ async function runVisualization() {
   const vecs = r.data.vectors;
   const raw = vecs.map((v) => (Array.isArray(v.data) ? v.data : []));
   const indices = vecs.map((v) => v.index);
+  const metas = vecs.map((v) => v.metadata || {});
   const dim = raw[0].length;
   const pts = algo === "pca" ? pcaProject(raw) : randomProject(raw);
-  vizData = { pts, indices, raw };
+  vizData = { pts, indices, raw, metas };
+  populateColorByOptions(metas);
   status.textContent = `${vecs.length} pts · ${algo.toUpperCase()}`;
   document.getElementById("scatter-info").innerHTML =
-    `<b>${vecs.length}</b> vectors projected from <b>${dim}D</b> → 2D. Hover to inspect.`;
+    `<b>${vecs.length}</b> vectors projected from <b>${dim}D</b> -> 2D. Hover to inspect.`;
   drawScatter();
 }
 
@@ -372,6 +374,111 @@ function randomProject(data) {
   });
 }
 
+// Okabe-Ito categorical palette: colorblind-safe and legible on the dark theme.
+const VIZ_PALETTE = [
+  "#56B4E9", "#E69F00", "#009E73", "#F0E442",
+  "#D55E00", "#CC79A7", "#0072B2", "#999999",
+];
+const VIZ_DEFAULT_COLOR = "#2ee6c8";
+
+// Populate the "Color by" dropdown: keep the fixed None / K-means options, then
+// append any metadata keys found, preserving the current selection.
+function populateColorByOptions(metas) {
+  const sel = document.getElementById("viz-color");
+  if (!sel) return;
+  const prev = sel.value;
+  const keys = new Set();
+  for (const m of metas) for (const k of Object.keys(m || {})) keys.add(k);
+  const sorted = [...keys].sort();
+  sel.innerHTML =
+    '<option value="">None</option>' +
+    '<option value="__cluster__">K-means clusters</option>' +
+    sorted.map((k) => `<option value="${k}">${k}</option>`).join("");
+  sel.value = prev === "__cluster__" || sorted.includes(prev) ? prev : "";
+}
+
+// Deterministic k-means (fixed seed) over the raw vectors. Returns an int label
+// per row. Small k and point counts keep this well within interactive budget.
+function kmeansLabels(data, k) {
+  const n = data.length;
+  if (!n) return [];
+  const d = data[0].length;
+  k = Math.max(2, Math.min(k, n));
+  let seed = 1234567;
+  const rand = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+  const centroids = [];
+  const used = new Set();
+  while (centroids.length < k) {
+    const idx = Math.floor(rand() * n);
+    if (used.has(idx)) continue;
+    used.add(idx);
+    centroids.push(data[idx].slice());
+  }
+  const labels = new Int32Array(n);
+  for (let it = 0; it < 12; it++) {
+    for (let i = 0; i < n; i++) {
+      let best = 0,
+        bestDist = Infinity;
+      for (let c = 0; c < k; c++) {
+        let dist = 0;
+        for (let j = 0; j < d; j++) {
+          const diff = data[i][j] - centroids[c][j];
+          dist += diff * diff;
+        }
+        if (dist < bestDist) {
+          bestDist = dist;
+          best = c;
+        }
+      }
+      labels[i] = best;
+    }
+    const sums = Array.from({ length: k }, () => new Float64Array(d));
+    const counts = new Int32Array(k);
+    for (let i = 0; i < n; i++) {
+      counts[labels[i]]++;
+      const s = sums[labels[i]];
+      for (let j = 0; j < d; j++) s[j] += data[i][j];
+    }
+    for (let c = 0; c < k; c++) {
+      if (!counts[c]) continue;
+      for (let j = 0; j < d; j++) centroids[c][j] = sums[c][j] / counts[c];
+    }
+  }
+  return labels;
+}
+
+// Map each point to a color by k-means cluster or a metadata field. Returns
+// { colors, legend: [label,color][] }; legend empty when coloring is off.
+function vizColorMapping() {
+  const field = (document.getElementById("viz-color") || {}).value || "";
+  const metas = (vizData && vizData.metas) || [];
+  const raw = (vizData && vizData.raw) || [];
+  if (!field) {
+    return { colors: raw.map(() => VIZ_DEFAULT_COLOR), legend: [] };
+  }
+  const valueColor = new Map();
+  const assign = (key) => {
+    if (!valueColor.has(key)) {
+      valueColor.set(key, VIZ_PALETTE[valueColor.size % VIZ_PALETTE.length]);
+    }
+    return valueColor.get(key);
+  };
+  let colors;
+  if (field === "__cluster__") {
+    const k = parseInt((document.getElementById("viz-k") || {}).value) || 5;
+    const labels = kmeansLabels(raw, k);
+    colors = Array.from(labels, (l) => assign("Cluster " + l));
+  } else {
+    colors = metas.map((m) =>
+      assign(m && m[field] != null ? String(m[field]) : "(none)"),
+    );
+  }
+  return {
+    colors,
+    legend: [...valueColor.entries()].sort((a, b) => a[0].localeCompare(b[0])),
+  };
+}
+
 function drawScatter() {
   const canvas = document.getElementById("scatter-canvas");
   const w = canvas.parentElement.clientWidth,
@@ -438,18 +545,51 @@ function drawScatter() {
   ctx.fillText("PC2", 0, 0);
   ctx.restore();
 
-  // Points
+  // Points, colored by the selected metadata field (if any).
+  const { colors, legend } = vizColorMapping();
   for (let i = 0; i < pts.length; i++) {
     const [px, py] = toS(pts[i][0], pts[i][1]);
+    const selected = i === scatterSelected;
     ctx.beginPath();
-    ctx.arc(px, py, 4, 0, Math.PI * 2);
-    ctx.fillStyle = "#2ee6c8";
+    ctx.arc(px, py, selected ? 6 : 4, 0, Math.PI * 2);
+    ctx.fillStyle = colors[i] || VIZ_DEFAULT_COLOR;
+    ctx.globalAlpha = legend.length ? 0.85 : 1;
     ctx.fill();
+    ctx.globalAlpha = 1;
     ctx.beginPath();
-    ctx.arc(px, py, 4, 0, Math.PI * 2);
-    ctx.strokeStyle = "#fff";
-    ctx.lineWidth = 1.5;
+    ctx.arc(px, py, selected ? 6 : 4, 0, Math.PI * 2);
+    ctx.strokeStyle = selected ? "#fff" : "rgba(255,255,255,0.35)";
+    ctx.lineWidth = selected ? 2 : 1;
     ctx.stroke();
+  }
+
+  // Legend (top-right) when coloring by a field. Capped so it never overflows.
+  if (legend.length) {
+    ctx.font = '11px "IBM Plex Mono"';
+    ctx.textAlign = "left";
+    const rowH = 16,
+      shown = legend.slice(0, 12),
+      bw = 150,
+      bh = shown.length * rowH + 10,
+      bx = w - pad - bw,
+      by = pad + 6;
+    ctx.fillStyle = "rgba(12,17,24,0.85)";
+    ctx.strokeStyle = "#1e2b3b";
+    ctx.lineWidth = 1;
+    ctx.fillRect(bx, by, bw, bh);
+    ctx.strokeRect(bx, by, bw, bh);
+    shown.forEach(([val, col], i) => {
+      const ly = by + 8 + i * rowH;
+      ctx.fillStyle = col;
+      ctx.fillRect(bx + 8, ly, 10, 10);
+      ctx.fillStyle = "#c9d4e0";
+      const label = val.length > 16 ? val.slice(0, 15) + "..." : val;
+      ctx.fillText(label, bx + 24, ly + 9);
+    });
+    if (legend.length > 12) {
+      ctx.fillStyle = "#666";
+      ctx.fillText(`+${legend.length - 12} more`, bx + 8, by + bh - 2);
+    }
   }
 
   canvas._vizMap = { pts, indices, toS, w, h };
@@ -617,7 +757,7 @@ async function runGraph() {
   const k = parseInt(document.getElementById("graph-k").value) || 5;
   const depth = parseInt(document.getElementById("graph-depth").value) || 2;
   const status = document.getElementById("graph-status");
-  status.textContent = "Building…";
+  status.textContent = "Building...";
   graphNodes = [];
   graphEdges = [];
   const visited = new Set();
@@ -967,12 +1107,12 @@ function renderSearchResults(r, tbodyId, metaId, tableId, emptyId) {
     r.data.results.forEach((h, i) => {
       const dp = h.data
         ? `${JSON.stringify(h.data).slice(0, 50)}${
-            JSON.stringify(h.data).length > 50 ? "…" : ""
+            JSON.stringify(h.data).length > 50 ? "..." : ""
           }`
-        : "—";
+        : "-";
       const tr = document.createElement("tr");
-      tr.innerHTML = `<td>${i + 1}</td><td>${h.index ?? "—"}</td><td class="mono">${
-        h.distance != null ? h.distance.toFixed(6) : "—"
+      tr.innerHTML = `<td>${i + 1}</td><td>${h.index ?? "-"}</td><td class="mono">${
+        h.distance != null ? h.distance.toFixed(6) : "-"
       }</td><td class="mono">${dp}</td>`;
       tbody.appendChild(tr);
     });
@@ -1344,7 +1484,7 @@ async function runSQL() {
           const v = row ? row[c] : null;
           if (typeof v === "number") return `<td class="mono">${v}</td>`;
           return `<td class="mono">${escapeHtml(
-            v == null ? "—" : String(v),
+            v == null ? "-" : String(v),
           )}</td>`;
         })
         .join("");
@@ -1484,7 +1624,7 @@ function handleImportFile(file) {
           return obj;
         });
       }
-      dropZone.innerHTML = `<b>${file.name}</b> — ${importData.length} records`;
+      dropZone.innerHTML = `<b>${file.name}</b> - ${importData.length} records`;
       showImportPreview();
     } catch (err) {
       showToast(`Parse error: ${err.message}`, "error");
@@ -1713,7 +1853,7 @@ async function geShortestPath() {
   const r = await apiCall(`/api/graph/shortest-path?from=${from}&to=${to}`);
   if (r.ok && r.data.path !== null) {
     document.getElementById("ge-status").textContent =
-      `Path: ${r.data.node_ids.join(" → ")} (weight: ${r.data.total_weight.toFixed(2)})`;
+      `Path: ${r.data.node_ids.join(" -> ")} (weight: ${r.data.total_weight.toFixed(2)})`;
     showToast(`Path found: ${r.data.node_ids.length} nodes`, "success");
   } else {
     document.getElementById("ge-status").textContent =

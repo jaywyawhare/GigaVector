@@ -1,5 +1,5 @@
 /* ============================================================================
-   GigaVector Dashboard — "Graticule"
+   GigaVector Dashboard - "Graticule"
    A precision-instrument console for a high-dimensional vector database.
    Blue-slate ground + oscilloscope dual-signal palette (teal trace / amber
    channel) + a faint plotting graticule + monospace instrument readouts.
@@ -23,12 +23,12 @@
 	--text-secondary:#9fb1c8;
 	--text-muted:    #5c6d85;
 
-	/* Signal — primary trace (teal-cyan) */
+	/* Signal - primary trace (teal-cyan) */
 	--accent:        #2ee6c8;
 	--accent-light:  rgba(46, 230, 200, 0.10);
 	--accent-text:   #62f0d9;
 
-	/* Flux — second channel (amber) */
+	/* Flux - second channel (amber) */
 	--flux:          #ffb454;
 	--flux-bg:       rgba(255, 180, 84, 0.10);
 
@@ -57,7 +57,7 @@
 body {
 	font-family: var(--font);
 	background-color: var(--bg);
-	/* faint plotting graticule — reads through content gutters, covered by panels */
+	/* faint plotting graticule - reads through content gutters, covered by panels */
 	background-image:
 		linear-gradient(var(--grid) 1px, transparent 1px),
 		linear-gradient(90deg, var(--grid) 1px, transparent 1px);
@@ -425,7 +425,7 @@ td.mono { font-family: var(--mono); font-size: 11px }
 	color: var(--text);
 	letter-spacing: 0.1px;
 }
-/* small signal marker — an "instrument label" tick */
+/* small signal marker - an "instrument label" tick */
 .section-title::before {
 	content: "";
 	width: 7px; height: 7px;
