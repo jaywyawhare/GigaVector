@@ -20,11 +20,26 @@ const T = {
   critical: cssToken("--critical"),
 };
 const CHART_FONT = '11px "IBM Plex Sans", sans-serif';
+
+// Size for a canvas: fills its .chart-body when it has one, otherwise the
+// parent's width at a fixed fallback height.
+function canvasBox(canvas, fallbackH, padX = 0) {
+  const p = canvas.parentElement;
+  if (p.classList.contains("chart-body")) {
+    return [Math.max(120, p.clientWidth), Math.max(120, p.clientHeight)];
+  }
+  return [p.clientWidth - padX, fallbackH];
+}
 const CHART_FONT_MONO = '11px "IBM Plex Mono", monospace';
 
 // Render a flat object as a definition list. Nested values fall back to JSON.
 function renderKV(el, obj) {
-  const entries = Object.entries(obj || {});
+  const first = ["status", "uptime_seconds"];
+  const entries = Object.entries(obj || {}).sort(
+    ([a], [b]) =>
+      (first.includes(a) ? first.indexOf(a) : 99) -
+      (first.includes(b) ? first.indexOf(b) : 99),
+  );
   if (!entries.length) {
     el.innerHTML = '<p class="kv-empty">Nothing reported.</p>';
     return;
@@ -55,8 +70,10 @@ function renderKV(el, obj) {
   }
   el.replaceChildren(dl);
 }
+const KEY_ACRONYMS = { wal: "WAL", qps: "QPS", id: "ID", api: "API", tls: "TLS", gpu: "GPU", ms: "ms" };
 function humanizeKey(k) {
-  const s = k.replace(/_seconds$/, "").replace(/_/g, " ");
+  const words = k.replace(/_seconds$/, "").split("_");
+  const s = words.map((w) => KEY_ACRONYMS[w.toLowerCase()] || w).join(" ");
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
@@ -187,7 +204,7 @@ async function refreshOverview() {
     const s = health.data.status || "unknown";
     dot.className = "status-dot " + s;
     txt.textContent = s.charAt(0).toUpperCase() + s.slice(1);
-    renderKV(document.getElementById("ov-health-json"), health.data);
+    ovHealth = health.data;
     const up = health.data.uptime_seconds;
     document.getElementById("uptimeBadge").textContent =
       up != null ? "Up for " + formatUptime(up) : "";
@@ -211,7 +228,7 @@ async function refreshOverview() {
       "GigaVector v" + (info.data.version || "?");
     document.getElementById("footer-index").textContent =
       `${info.data.index_type || "Unknown index"}, ${info.data.dimension || "?"} dimensions`;
-    renderKV(document.getElementById("ov-server-info"), info.data);
+    ovInfo = info.data;
   }
   if (stats.ok && stats.data) {
     document.getElementById("ov-reqs").textContent = (
@@ -231,7 +248,76 @@ async function refreshOverview() {
         ? formatBytes(stats.data.total_bytes_received) + " received"
         : "";
   }
+  // Status panel: health and server fields, minus what the stat strip shows.
+  if (health.ok && health.data) {
+    const merged = { ...ovInfo, ...ovHealth };
+    for (const k of OV_STRIP_KEYS) delete merged[k];
+    renderKV(document.getElementById("ov-health-json"), merged);
+  }
+  const det = await apiCall("/api/detailed-stats");
+  const qps = Number(
+    det.ok && det.data?.queries_per_second != null
+      ? det.data.queries_per_second
+      : (stats.data?.queries_per_second ?? 0),
+  );
+  const lat = Number((det.ok && det.data?.search_latency) || 0);
+  pushRing(ovRing.qps, qps);
+  pushRing(ovRing.lat, lat);
+  drawOverviewCharts();
 }
+
+const OV_STRIP_KEYS = ["version", "index_type", "dimension", "vector_count"];
+const OV_SAMPLES = 120; // 5 minutes at the 2.5 s refresh interval
+const ovRing = { qps: [], lat: [] };
+let ovHealth = {},
+  ovInfo = {};
+function pushRing(arr, v) {
+  arr.push(Number.isFinite(v) ? v : 0);
+  if (arr.length > OV_SAMPLES) arr.shift();
+}
+function drawOverviewCharts() {
+  const q = ovRing.qps,
+    l = ovRing.lat;
+  drawLineChart(document.getElementById("ov-qps-chart"), q, { fill: true });
+  drawLineChart(document.getElementById("ov-lat-chart"), l, { fill: true });
+  const span = (n) => {
+    const secs = Math.round((n * 2.5) / 5) * 5;
+    return secs >= 60 ? `${Math.round(secs / 60)} min` : `${secs} s`;
+  };
+  if (q.length) {
+    const avg = q.reduce((a, b) => a + b, 0) / q.length;
+    document.getElementById("ov-qps-meta").innerHTML =
+      `<b>${q[q.length - 1].toFixed(1)}</b> now, ${avg.toFixed(1)} average over ${span(q.length)}`;
+  }
+  if (l.length) {
+    const peak = Math.max(...l);
+    document.getElementById("ov-lat-meta").innerHTML =
+      `<b>${l[l.length - 1].toFixed(2)} ms</b> now, ${peak.toFixed(2)} ms peak over ${span(l.length)}`;
+  }
+}
+
+// Redraw a canvas whenever its .chart-body changes size (view shown, window
+// resized, table view opened).
+const chartRedraw = {
+  "ov-qps-chart": drawOverviewCharts,
+  "ov-lat-chart": drawOverviewCharts,
+  "scatter-canvas": () => vizData && drawScatterWithHighlights(),
+};
+if (window.ResizeObserver) {
+  const pending = new Set();
+  const ro = new ResizeObserver((entries) => {
+    for (const e of entries) {
+      const fn = chartRedraw[e.target.querySelector("canvas")?.id];
+      if (fn) pending.add(fn);
+    }
+    requestAnimationFrame(() => {
+      for (const fn of pending) fn();
+      pending.clear();
+    });
+  });
+  document.querySelectorAll(".chart-body").forEach((el) => ro.observe(el));
+}
+
 function startRefresh() {
   refreshOverview();
   refreshTimer = setInterval(refreshOverview, 2500);
@@ -683,8 +769,7 @@ function renderVizTable() {
 
 function drawScatter() {
   const canvas = document.getElementById("scatter-canvas");
-  const w = canvas.parentElement.clientWidth,
-    h = 460;
+  const [w, h] = canvasBox(canvas, 460);
   const dpr = window.devicePixelRatio || 1;
   canvas.width = w * dpr;
   canvas.height = h * dpr;
@@ -1214,8 +1299,7 @@ const SIM_NODE_MARGIN = 24; // keep nodes this far from canvas edges (px)
 
 function simGraph() {
   const canvas = document.getElementById("graph-canvas");
-  const w = canvas.parentElement.clientWidth,
-    h = 460,
+  const [w, h] = canvasBox(canvas, 460),
     dpr = window.devicePixelRatio || 1;
   canvas.width = w * dpr;
   canvas.height = h * dpr;
@@ -1550,8 +1634,7 @@ document.getElementById("con-url").addEventListener("keydown", (e) => {
 // char primitives
 
 function drawLineChart(canvas, data, opts = {}) {
-  const w = canvas.parentElement.clientWidth - 32,
-    h = opts.height || 160,
+  const [w, h] = canvasBox(canvas, opts.height || 160, 32),
     dpr = window.devicePixelRatio || 1;
   canvas.width = w * dpr;
   canvas.height = h * dpr;
@@ -1559,7 +1642,7 @@ function drawLineChart(canvas, data, opts = {}) {
   canvas.style.height = `${h}px`;
   const ctx = canvas.getContext("2d");
   ctx.scale(dpr, dpr);
-  const pad = { t: 10, r: 10, b: 24, l: 50 },
+  const pad = { t: 8, r: 8, b: opts.label ? 24 : 8, l: 44 },
     pw = w - pad.l - pad.r,
     ph = h - pad.t - pad.b;
   if (!data.length) {
@@ -1577,10 +1660,16 @@ function drawLineChart(canvas, data, opts = {}) {
     if (v < mn) mn = v;
     if (v > mx) mx = v;
   }
-  if (mn === mx) {
+  // Rates and latencies are magnitudes: anchor at zero and round the top so
+  // small fluctuations do not read as large swings.
+  if (opts.zero !== false) {
+    mn = Math.min(0, mn);
+    mx = niceCeil(mx * 1.1);
+  } else if (mn === mx) {
     mn -= 1;
     mx += 1;
   }
+  const tickDigits = mx - mn >= 10 ? 0 : mx - mn >= 1 ? 1 : 2;
   ctx.fillStyle = T.surface;
   ctx.fillRect(0, 0, w, h);
   ctx.strokeStyle = T.grid;
@@ -1594,7 +1683,7 @@ function drawLineChart(canvas, data, opts = {}) {
     ctx.fillStyle = T.ink3;
     ctx.font = CHART_FONT;
     ctx.textAlign = "right";
-    ctx.fillText((mx - ((mx - mn) * i) / 4).toFixed(1), pad.l - 4, y + 3);
+    ctx.fillText((mx - ((mx - mn) * i) / 4).toFixed(tickDigits), pad.l - 6, y + 4);
   }
   ctx.beginPath();
   ctx.moveTo(pad.l, pad.t + ph - ((data[0] - mn) / (mx - mn)) * ph);
@@ -1621,9 +1710,15 @@ function drawLineChart(canvas, data, opts = {}) {
   }
 }
 
+function niceCeil(v) {
+  if (!(v > 0)) return 1;
+  const p = 10 ** Math.floor(Math.log10(v)),
+    n = v / p;
+  return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 2.5 ? 2.5 : n <= 5 ? 5 : 10) * p;
+}
+
 function drawBarChart(canvas, labels, values, opts = {}) {
-  const w = canvas.parentElement.clientWidth - 32,
-    h = opts.height || 180,
+  const [w, h] = canvasBox(canvas, opts.height || 180, 32),
     dpr = window.devicePixelRatio || 1;
   canvas.width = w * dpr;
   canvas.height = h * dpr;
@@ -1677,8 +1772,7 @@ function drawBarChart(canvas, labels, values, opts = {}) {
 }
 
 function drawGauge(canvas, value, max, opts = {}) {
-  const w = canvas.parentElement.clientWidth - 32,
-    h = opts.height || 160,
+  const [w, h] = canvasBox(canvas, opts.height || 160, 32),
     dpr = window.devicePixelRatio || 1;
   canvas.width = w * dpr;
   canvas.height = h * dpr;
@@ -1744,12 +1838,10 @@ async function refreshMonitoring() {
   drawLineChart(document.getElementById("mon-qps-chart"), monRing.qps, {
     color: T.s1,
     fill: true,
-    label: "Last 60 seconds",
   });
   drawLineChart(document.getElementById("mon-latency-chart"), monRing.latency, {
     color: T.s1,
     fill: true,
-    label: "Last 60 seconds",
   });
   drawGauge(document.getElementById("mon-mem-chart"), mem, 1073741824, {
     label: `${formatBytes(mem)} / 1 GB`,

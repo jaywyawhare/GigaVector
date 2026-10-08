@@ -151,8 +151,8 @@
 		<div class="content">
 
 			<!-- OVERVIEW -->
-			<div class="view active" id="view-overview">
-				<div class="cards" style="flex-shrink:0">
+			<div class="view view-fill active" id="view-overview">
+				<div class="cards">
 					<div class="card">
 						<div class="card-label">Vectors</div>
 						<div class="card-value" id="ov-vectors">-</div>
@@ -187,31 +187,43 @@
 						<div class="card-sub" id="ov-recv"></div>
 					</div>
 				</div>
-				<div class="overview-panels"
-					style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;align-items:start">
-					<div class="section" style="margin-bottom:0">
-						<div class="section-title">Health</div>
-						<div id="ov-health-json">
-							<p class="kv-empty">Waiting for the server.</p></div>
-					</div>
-					<div class="section" style="margin-bottom:0">
-						<div class="section-title">Server</div>
-						<div id="ov-server-info">
-							<p class="kv-empty">Waiting for the server.</p></div>
-					</div>
-					<div class="section" style="margin-bottom:0">
-						<div class="section-title">Actions</div>
-						<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-							<button class="btn btn-outline"
-								onclick="quickReq('POST','/compact')">Compact database</button>
-							<button class="btn btn-outline" onclick="quickBackup()">Save backup</button>
-							<button class="btn btn-outline"
-								onclick="quickReq('GET','/stats')">Refresh stats</button>
-							<button class="btn btn-outline"
-								onclick="quickReq('GET','/health')">Run health check</button>
+				<div class="ov-grid">
+					<div class="ov-charts">
+						<div class="chart-panel">
+							<div class="chart-head">
+								<div class="chart-title">Queries per second</div>
+								<div class="chart-meta" id="ov-qps-meta">Collecting samples</div>
+							</div>
+							<div class="chart-body"><canvas id="ov-qps-chart"></canvas></div>
 						</div>
-						<div class="json-view mt-sm" id="ov-action-result"
-							style="min-height:120px;max-height:280px">Responses from these actions appear here.</div>
+						<div class="chart-panel">
+							<div class="chart-head">
+								<div class="chart-title">Search latency</div>
+								<div class="chart-meta" id="ov-lat-meta">Collecting samples</div>
+							</div>
+							<div class="chart-body"><canvas id="ov-lat-chart"></canvas></div>
+						</div>
+					</div>
+					<div class="ov-side">
+						<div class="section">
+							<div class="section-title">Status</div>
+							<div id="ov-health-json">
+								<p class="kv-empty">Waiting for the server.</p>
+							</div>
+						</div>
+						<div class="section ov-actions">
+							<div class="section-title">Actions</div>
+							<div class="ov-action-buttons">
+								<button class="btn btn-outline"
+									onclick="quickReq('POST','/compact')">Compact database</button>
+								<button class="btn btn-outline" onclick="quickBackup()">Save backup</button>
+								<button class="btn btn-outline"
+									onclick="quickReq('GET','/stats')">Refresh stats</button>
+								<button class="btn btn-outline"
+									onclick="quickReq('GET','/health')">Run health check</button>
+							</div>
+							<div class="json-view mt-sm" id="ov-action-result">Responses from these actions appear here.</div>
+						</div>
 					</div>
 				</div>
 			</div>
@@ -275,7 +287,7 @@
 			</div>
 
 			<!-- VISUALIZE -->
-			<div class="view" id="view-visualize">
+			<div class="view view-fill" id="view-visualize">
 				<div class="tabs">
 					<button class="tab active" data-tab="viz-scatter">Scatter plot</button>
 					<button class="tab" data-tab="viz-graph">Similarity graph</button>
@@ -307,9 +319,8 @@
 								<span id="viz-status" class="viz-status"></span>
 							</div>
 							<div class="viz-legend" id="viz-legend" hidden></div>
-							<canvas class="viz-canvas" id="scatter-canvas" width="900"
-								height="460" tabindex="0" role="img"
-								aria-label="2D projection of stored vectors. Use arrow keys to step through points, Enter to select. A table view is below."></canvas>
+							<div class="chart-body viz-body"><canvas class="viz-canvas" id="scatter-canvas" tabindex="0" role="img"
+								aria-label="2D projection of stored vectors. Use arrow keys to step through points, Enter to select. A table view is below."></canvas></div>
 							<div class="viz-info" id="scatter-info">Nothing projected yet.</div>
 							<details class="viz-table">
 								<summary>Table view</summary>
@@ -346,8 +357,7 @@
 									onclick="runGraph()">Build graph</button>
 								<span id="graph-status" class="viz-status"></span>
 							</div>
-							<canvas class="viz-canvas" id="graph-canvas" width="900"
-								height="460"></canvas>
+							<div class="chart-body viz-body"><canvas class="viz-canvas" id="graph-canvas"></canvas></div>
 							<div class="viz-info" id="graph-info">Pick a starting vector and build a graph of its nearest neighbors, hop by hop. Hover a node to preview it, click to inspect.</div>
 						</div>
 						<div class="viz-detail" id="graph-detail">
@@ -577,7 +587,7 @@
 			</div>
 
 			<!-- MONITORING -->
-			<div class="view" id="view-monitoring">
+			<div class="view view-fill" id="view-monitoring">
 				<div class="cards" id="mon-cards">
 					<div class="card">
 						<div class="card-label">Queries per second</div>
@@ -596,26 +606,33 @@
 						<div class="card-value" id="mon-health">-</div>
 					</div>
 				</div>
-				<div class="monitor-grid">
-					<div class="monitor-chart">
-						<div class="monitor-chart-title">Queries per second</div>
-						<canvas id="mon-qps-chart" height="180"></canvas>
-					</div>
-					<div class="monitor-chart">
-						<div class="monitor-chart-title">Search latency (ms)</div>
-						<canvas id="mon-latency-chart" height="180"></canvas>
-					</div>
-				</div>
-				<div class="monitor-grid">
-					<div class="monitor-chart">
-						<div class="monitor-chart-title">Memory</div>
-						<canvas id="mon-mem-chart" height="180"></canvas>
-					</div>
-					<div class="monitor-chart">
-						<div class="monitor-chart-title">Raw statistics</div>
-						<div class="json-view" id="mon-detail-json"
-							style="max-height:180px;min-height:160px">-
+				<div class="mon-grid">
+					<div class="chart-panel">
+						<div class="chart-head">
+							<div class="chart-title">Queries per second</div>
+							<div class="chart-meta">Last 60 seconds</div>
 						</div>
+						<div class="chart-body"><canvas id="mon-qps-chart"></canvas></div>
+					</div>
+					<div class="chart-panel">
+						<div class="chart-head">
+							<div class="chart-title">Search latency (ms)</div>
+							<div class="chart-meta">Last 60 seconds</div>
+						</div>
+						<div class="chart-body"><canvas id="mon-latency-chart"></canvas></div>
+					</div>
+					<div class="chart-panel">
+						<div class="chart-head">
+							<div class="chart-title">Memory</div>
+							<div class="chart-meta">Of a 1 GB budget</div>
+						</div>
+						<div class="chart-body"><canvas id="mon-mem-chart"></canvas></div>
+					</div>
+					<div class="chart-panel">
+						<div class="chart-head">
+							<div class="chart-title">Raw statistics</div>
+						</div>
+						<div class="json-view" id="mon-detail-json" style="flex:1;max-height:none">-</div>
 					</div>
 				</div>
 			</div>

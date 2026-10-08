@@ -328,6 +328,62 @@ td.mono { font-family: var(--mono); font-size: 12px; color: var(--text-2) }
 .section-title { font-size: 15px; font-weight: 600; margin-bottom: 12px; color: var(--text) }
 .section-desc { font-size: 14px; color: var(--text-2); margin: -6px 0 16px; max-width: 72ch }
 
+/* ---- Full-height views ------------------------------------------------
+   Overview, Monitoring and Visualize fill the viewport; their charts take the
+   flexible space. Canvases sit absolutely inside .chart-body so drawing never
+   feeds back into layout. */
+.view-fill.active {
+	display: flex !important;
+	flex-direction: column;
+	height: calc(100vh - var(--header-h) - 48px);
+	min-height: 620px;
+}
+.view-fill > .cards { flex-shrink: 0 }
+
+.chart-panel {
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+	min-width: 0;
+	background: var(--panel);
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	padding: 14px 16px 12px;
+}
+.chart-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px }
+.chart-title { font-size: 14px; font-weight: 600 }
+.chart-meta { font-size: 13px; color: var(--text-2); font-variant-numeric: tabular-nums; white-space: nowrap }
+.chart-meta b { color: var(--text); font-weight: 500 }
+.chart-body { position: relative; flex: 1; min-height: 140px }
+.chart-body > canvas { position: absolute; top: 0; left: 0 }
+
+.ov-grid {
+	flex: 1;
+	min-height: 0;
+	display: grid;
+	grid-template-columns: minmax(0, 2fr) minmax(320px, 1fr);
+	gap: 16px;
+}
+.ov-charts { display: grid; grid-template-rows: 1fr 1fr; gap: 16px; min-height: 0 }
+.ov-side { display: flex; flex-direction: column; gap: 16px; min-height: 0; overflow-y: auto }
+.ov-side .section { margin-bottom: 0 }
+.ov-actions { flex: 1; display: flex; flex-direction: column; min-height: 0 }
+.ov-action-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 8px }
+.ov-actions .json-view { flex: 1; min-height: 72px; max-height: none }
+
+.mon-grid {
+	flex: 1;
+	min-height: 0;
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	grid-template-rows: 1fr 1fr;
+	gap: 16px;
+}
+
+#view-visualize > .tab-content { flex: 1; min-height: 0 }
+#view-visualize .viz-split { height: 100%; min-height: 0 }
+.viz-body { min-height: 300px; background: var(--chart-surface) }
+
 /* ---- Tabs ------------------------------------------------------------- */
 .tabs { display: flex; gap: 4px; margin-bottom: 16px; border-bottom: 1px solid var(--line) }
 .tab {
@@ -596,10 +652,6 @@ td.mono { font-family: var(--mono); font-size: 12px; color: var(--text-2) }
 .progress-bar-fill { height: 100%; background: var(--accent); transition: width 0.3s }
 
 /* ---- Monitoring ------------------------------------------------------- */
-.monitor-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px }
-.monitor-chart { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px 16px }
-.monitor-chart canvas { width: 100%; display: block }
-.monitor-chart-title { margin-bottom: 10px; font-size: 14px; font-weight: 600 }
 
 /* ---- Filters / SQL / utilities ---------------------------------------- */
 .filter-row { display: flex; gap: 8px; align-items: center; margin-bottom: 4px }
@@ -642,12 +694,12 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline-offs
 	*, *::before, *::after { transition-duration: 0.001ms !important; animation-duration: 0.001ms !important }
 }
 
-@media (max-width: 1100px) {
-	.overview-panels { grid-template-columns: 1fr 1fr !important }
-}
-@media (max-width: 900px) {
-	.monitor-grid { grid-template-columns: 1fr }
-	.overview-panels { grid-template-columns: 1fr !important }
+@media (max-width: 1000px), (max-height: 640px) {
+	.view-fill.active { height: auto; min-height: 0 }
+	.ov-grid, .mon-grid { grid-template-columns: 1fr; grid-template-rows: none }
+	.ov-charts { grid-template-rows: 260px 260px }
+	.mon-grid > .chart-panel { height: 280px }
+	#view-visualize .viz-split { height: 640px }
 }
 @media (max-width: 768px) {
 	.sidebar { width: 52px }
