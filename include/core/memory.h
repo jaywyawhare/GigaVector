@@ -2,6 +2,7 @@
 #define GV_MEMORY_H
 
 #include <stddef.h>
+#include <stdint.h>
 #include <pthread.h>
 
 #ifdef __cplusplus
@@ -34,6 +35,26 @@ void gv_memory_fini(GV_Memory *mem);
  */
 void gv_alloc_set_fail_after(long n);
 void gv_alloc_reset_fail(void);
+
+/*
+ * Allocation accounting (the profiler's memory hook). Every gv_alloc/calloc/
+ * realloc/free is counted at this single choke point. Live/peak bytes use the
+ * allocator's real block size (malloc_usable_size) so they match RSS, not just
+ * the requested size. Counting is compiled in only under -DGV_PROFILE_ALLOC;
+ * without it these read back zero and the alloc path pays nothing. Thread-safe
+ * (lock-free atomics), so a parallel HNSW build is attributed correctly.
+ */
+typedef struct GV_AllocStats {
+    size_t   live_bytes;   /**< currently-allocated bytes (usable size) */
+    size_t   peak_bytes;   /**< high-water mark of live_bytes */
+    size_t   total_bytes;  /**< cumulative bytes ever allocated */
+    uint64_t alloc_count;  /**< gv_alloc + gv_calloc calls that returned non-NULL */
+    uint64_t free_count;   /**< gv_free calls on non-NULL */
+    uint64_t realloc_count;/**< gv_realloc calls that returned non-NULL */
+} GV_AllocStats;
+
+void gv_alloc_stats(GV_AllocStats *out);
+int  gv_alloc_stats_enabled(void); /**< 1 if built with -DGV_PROFILE_ALLOC */
 
 /* Process heap - caller-owned and long-lived allocations without a DB context. */
 void *gv_alloc(size_t size);

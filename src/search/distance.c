@@ -13,6 +13,26 @@
 #include <immintrin.h>
 #endif
 
+/*
+ * Hot-path SIMD dispatch read. cpu_detect_features() is correct but does an
+ * atomic acquire load through a cross-TU call on every invocation; the distance
+ * kernels below ran it 2-3x per call, which cost ~6% of all instructions in an
+ * e2e search profile. The CPU feature set is immutable after first detection,
+ * so cache it in a file-local the first time and read it directly thereafter.
+ * The race on first use is benign (idempotent, same value), matching the
+ * contract cpu_detect_features already documents. Callers fetch it ONCE into a
+ * local and bit-test, instead of calling cpu_has_feature() per candidate kernel.
+ */
+static unsigned s_dist_feats = (unsigned)-1;
+static inline unsigned dist_features(void) {
+    unsigned f = s_dist_feats;
+    if (f == (unsigned)-1) {
+        f = cpu_detect_features();
+        s_dist_feats = f;
+    }
+    return f;
+}
+
 #ifdef __AVX512F__
 static float vector_dot_avx512(const float *a, const float *b, size_t dimension) {
     __m512 sum_vec = _mm512_setzero_ps();
@@ -176,18 +196,20 @@ static float vector_norm_scalar(const float *v, size_t dimension) {
 }
 
 static float vector_dot(const GV_Vector *a, const GV_Vector *b) {
+    unsigned feats = dist_features();
+    (void)feats;
 #ifdef __AVX512F__
-    if (cpu_has_feature(GV_CPU_FEATURE_AVX512F) && a->dimension >= 32 && (a->dimension % 16 == 0)) {
+    if ((feats & GV_CPU_FEATURE_AVX512F) && a->dimension >= 32 && (a->dimension % 16 == 0)) {
         return vector_dot_avx512(a->data, b->data, a->dimension);
     }
 #endif
 #ifdef __AVX2__
-    if (cpu_has_feature(GV_CPU_FEATURE_AVX2) && cpu_has_feature(GV_CPU_FEATURE_FMA) && a->dimension >= 16 && (a->dimension % 8 == 0)) {
+    if ((feats & GV_CPU_FEATURE_AVX2) && (feats & GV_CPU_FEATURE_FMA) && a->dimension >= 16 && (a->dimension % 8 == 0)) {
         return vector_dot_avx2(a->data, b->data, a->dimension);
     }
 #endif
 #ifdef __SSE4_2__
-    if (cpu_has_feature(GV_CPU_FEATURE_SSE4_2) && a->dimension >= 8 && (a->dimension % 4 == 0)) {
+    if ((feats & GV_CPU_FEATURE_SSE4_2) && a->dimension >= 8 && (a->dimension % 4 == 0)) {
         return vector_dot_sse(a->data, b->data, a->dimension);
     }
 #endif
@@ -195,18 +217,20 @@ static float vector_dot(const GV_Vector *a, const GV_Vector *b) {
 }
 
 static float vector_norm(const GV_Vector *v) {
+    unsigned feats = dist_features();
+    (void)feats;
 #ifdef __AVX512F__
-    if (cpu_has_feature(GV_CPU_FEATURE_AVX512F) && v->dimension >= 32 && (v->dimension % 16 == 0)) {
+    if ((feats & GV_CPU_FEATURE_AVX512F) && v->dimension >= 32 && (v->dimension % 16 == 0)) {
         return vector_norm_avx512(v->data, v->dimension);
     }
 #endif
 #ifdef __AVX2__
-    if (cpu_has_feature(GV_CPU_FEATURE_AVX2) && cpu_has_feature(GV_CPU_FEATURE_FMA) && v->dimension >= 16 && (v->dimension % 8 == 0)) {
+    if ((feats & GV_CPU_FEATURE_AVX2) && (feats & GV_CPU_FEATURE_FMA) && v->dimension >= 16 && (v->dimension % 8 == 0)) {
         return vector_norm_avx2(v->data, v->dimension);
     }
 #endif
 #ifdef __SSE4_2__
-    if (cpu_has_feature(GV_CPU_FEATURE_SSE4_2) && v->dimension >= 8 && (v->dimension % 4 == 0)) {
+    if ((feats & GV_CPU_FEATURE_SSE4_2) && v->dimension >= 8 && (v->dimension % 4 == 0)) {
         return vector_norm_sse(v->data, v->dimension);
     }
 #endif
@@ -313,18 +337,20 @@ float distance_euclidean(const GV_Vector *a, const GV_Vector *b) {
         return -1.0f;
     }
 
+    unsigned feats = dist_features();
+    (void)feats;
 #ifdef __AVX512F__
-    if (cpu_has_feature(GV_CPU_FEATURE_AVX512F) && a->dimension >= 16 && (a->dimension % 16 == 0)) {
+    if ((feats & GV_CPU_FEATURE_AVX512F) && a->dimension >= 16 && (a->dimension % 16 == 0)) {
         return distance_euclidean_avx512(a->data, b->data, a->dimension);
     }
 #endif
 #ifdef __AVX2__
-    if (cpu_has_feature(GV_CPU_FEATURE_AVX2) && cpu_has_feature(GV_CPU_FEATURE_FMA) && a->dimension >= 8 && (a->dimension % 8 == 0)) {
+    if ((feats & GV_CPU_FEATURE_AVX2) && (feats & GV_CPU_FEATURE_FMA) && a->dimension >= 8 && (a->dimension % 8 == 0)) {
         return distance_euclidean_avx2(a->data, b->data, a->dimension);
     }
 #endif
 #ifdef __SSE4_2__
-    if (cpu_has_feature(GV_CPU_FEATURE_SSE4_2) && a->dimension >= 4 && (a->dimension % 4 == 0)) {
+    if ((feats & GV_CPU_FEATURE_SSE4_2) && a->dimension >= 4 && (a->dimension % 4 == 0)) {
         return distance_euclidean_sse(a->data, b->data, a->dimension);
     }
 #endif
@@ -426,13 +452,15 @@ float distance_manhattan(const GV_Vector *a, const GV_Vector *b) {
         return -1.0f;
     }
 
+    unsigned feats = dist_features();
+    (void)feats;
 #ifdef __AVX2__
-    if (cpu_has_feature(GV_CPU_FEATURE_AVX2)) {
+    if (feats & GV_CPU_FEATURE_AVX2) {
         return distance_manhattan_avx2(a->data, b->data, a->dimension);
     }
 #endif
 #ifdef __SSE4_2__
-    if (cpu_has_feature(GV_CPU_FEATURE_SSE4_2)) {
+    if (feats & GV_CPU_FEATURE_SSE4_2) {
         return distance_manhattan_sse(a->data, b->data, a->dimension);
     }
 #endif

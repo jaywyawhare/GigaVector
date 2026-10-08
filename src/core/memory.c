@@ -5,6 +5,53 @@
 
 #include "storage/database.h"
 
+/* ---- Allocation accounting (see include/core/memory.h) ------------------- */
+#ifdef GV_PROFILE_ALLOC
+#include <malloc.h> /* malloc_usable_size (glibc) */
+
+static size_t   s_live_bytes;
+static size_t   s_peak_bytes;
+static size_t   s_total_bytes;
+static uint64_t s_alloc_count;
+static uint64_t s_free_count;
+static uint64_t s_realloc_count;
+
+/* usable block size, or 0 for NULL — the real cost the allocator reserved. */
+static inline size_t gv_block_size(void *p) {
+    return p ? malloc_usable_size(p) : 0;
+}
+
+static inline void gv_acct_add(size_t bytes) {
+    __atomic_add_fetch(&s_total_bytes, bytes, __ATOMIC_RELAXED);
+    size_t live = __atomic_add_fetch(&s_live_bytes, bytes, __ATOMIC_RELAXED);
+    size_t peak = __atomic_load_n(&s_peak_bytes, __ATOMIC_RELAXED);
+    while (live > peak &&
+           !__atomic_compare_exchange_n(&s_peak_bytes, &peak, live, 0,
+                                        __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {
+        /* peak reloaded into `peak`; retry until we win or someone set higher */
+    }
+}
+static inline void gv_acct_sub(size_t bytes) {
+    __atomic_sub_fetch(&s_live_bytes, bytes, __ATOMIC_RELAXED);
+}
+
+void gv_alloc_stats(GV_AllocStats *out) {
+    if (!out) return;
+    out->live_bytes    = __atomic_load_n(&s_live_bytes, __ATOMIC_RELAXED);
+    out->peak_bytes    = __atomic_load_n(&s_peak_bytes, __ATOMIC_RELAXED);
+    out->total_bytes   = __atomic_load_n(&s_total_bytes, __ATOMIC_RELAXED);
+    out->alloc_count   = __atomic_load_n(&s_alloc_count, __ATOMIC_RELAXED);
+    out->free_count    = __atomic_load_n(&s_free_count, __ATOMIC_RELAXED);
+    out->realloc_count = __atomic_load_n(&s_realloc_count, __ATOMIC_RELAXED);
+}
+int gv_alloc_stats_enabled(void) { return 1; }
+#else
+void gv_alloc_stats(GV_AllocStats *out) {
+    if (out) memset(out, 0, sizeof(*out));
+}
+int gv_alloc_stats_enabled(void) { return 0; }
+#endif /* GV_PROFILE_ALLOC */
+
 /* Test-only allocation-failure injection (see include/core/memory.h contract).
  * Disabled by default (fail_after < 0), so normal builds pay one predictable
  * compare per allocation. fail_after = index of the allocation to fail (0 = the
@@ -43,7 +90,14 @@ void *gv_alloc(size_t size) {
     if (gv_alloc_should_fail()) {
         return NULL;
     }
-    return malloc(size);
+    void *p = malloc(size);
+#ifdef GV_PROFILE_ALLOC
+    if (p) {
+        __atomic_add_fetch(&s_alloc_count, 1, __ATOMIC_RELAXED);
+        gv_acct_add(gv_block_size(p));
+    }
+#endif
+    return p;
 }
 
 void *gv_calloc(size_t nmemb, size_t size) {
@@ -56,7 +110,14 @@ void *gv_calloc(size_t nmemb, size_t size) {
     if (gv_alloc_should_fail()) {
         return NULL;
     }
-    return calloc(nmemb, size);
+    void *p = calloc(nmemb, size);
+#ifdef GV_PROFILE_ALLOC
+    if (p) {
+        __atomic_add_fetch(&s_alloc_count, 1, __ATOMIC_RELAXED);
+        gv_acct_add(gv_block_size(p));
+    }
+#endif
+    return p;
 }
 
 void *gv_realloc(void *ptr, size_t size) {
@@ -67,10 +128,28 @@ void *gv_realloc(void *ptr, size_t size) {
     if (gv_alloc_should_fail()) {
         return NULL;
     }
+#ifdef GV_PROFILE_ALLOC
+    size_t old_sz = gv_block_size(ptr);
+    void *p = realloc(ptr, size);
+    if (p) {
+        __atomic_add_fetch(&s_realloc_count, 1, __ATOMIC_RELAXED);
+        size_t new_sz = gv_block_size(p);
+        if (new_sz >= old_sz) gv_acct_add(new_sz - old_sz);
+        else                  gv_acct_sub(old_sz - new_sz);
+    }
+    return p;
+#else
     return realloc(ptr, size);
+#endif
 }
 
 void gv_free(void *ptr) {
+#ifdef GV_PROFILE_ALLOC
+    if (ptr) {
+        __atomic_add_fetch(&s_free_count, 1, __ATOMIC_RELAXED);
+        gv_acct_sub(gv_block_size(ptr));
+    }
+#endif
     free(ptr);
 }
 

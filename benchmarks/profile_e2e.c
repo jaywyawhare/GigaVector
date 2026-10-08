@@ -1,0 +1,399 @@
+/*
+ * profile_e2e - granular end-to-end profiler for the GigaVector stack.
+ *
+ * Walks the same four subsystems as tests/test_e2e.c (vector DB, graph+Cypher,
+ * SPLADE learned-sparse, hybrid dense+sparse) but at a configurable scale, and
+ * times every sub-operation with a nestable scope profiler that reports, per
+ * named scope:
+ *
+ *   calls | total(ms) | self(ms) | avg(ms) | max(ms) | self% | allocs | net(KB)
+ *
+ * "self" excludes nested scopes, so the report ranks the true hot spots rather
+ * than the outer phase that contains them. Allocation columns come from the
+ * gv_alloc choke point (gv_alloc_stats): build the library with
+ * -DGV_PROFILE_ALLOC to populate them (the `make profile-e2e` target does).
+ *
+ * Set GV_PROF_TRACE=path to also emit a chrome://tracing / Perfetto JSON of
+ * every scope span.
+ *
+ * Usage: profile_e2e [N_vectors] [dim] [queries] [N_docs] [text_queries]
+ *   defaults: 20000 128 500 3000 500
+ */
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+
+#include "gigavector.h"
+#include "core/memory.h"
+#include "features/cypher.h"
+#include "features/knowledge_graph.h"
+#include "multimodal/bm25.h"
+#include "multimodal/learned_sparse.h"
+#include "multimodal/splade.h"
+#include "search/distance.h"
+#include "search/hybrid_search.h"
+#include "storage/database.h"
+
+/* ------------------------------------------------------------- scope profiler */
+
+#define PROF_MAX_SCOPES 64
+#define PROF_MAX_DEPTH  32
+#define PROF_MAX_SPANS  (1 << 20)
+
+typedef struct {
+    const char *name;
+    uint64_t    calls;
+    double      total_ms;  /* inclusive */
+    double      self_ms;   /* inclusive minus direct children */
+    double      min_ms, max_ms;
+    uint64_t    allocs;    /* gv_alloc/calloc calls charged to this scope */
+    long long   net_bytes; /* live-byte delta charged to this scope */
+} ProfStat;
+
+typedef struct {
+    int      stat;       /* index into g_stats */
+    double   start_ms;
+    double   child_ms;   /* inclusive time of direct children */
+    GV_AllocStats a0;    /* alloc snapshot at scope entry */
+    double   span_t0;    /* for the chrome trace */
+} ProfFrame;
+
+typedef struct {
+    const char *name;
+    double      ts_us, dur_us;
+    int         depth;
+} ProfSpan;
+
+static ProfStat  g_stats[PROF_MAX_SCOPES];
+static int       g_stat_count;
+static ProfFrame g_stack[PROF_MAX_DEPTH];
+static int       g_depth;
+static ProfSpan *g_spans;
+static size_t    g_span_count;
+static double    g_t0_ms; /* program start, so trace timestamps begin near 0 */
+
+static double now_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec * 1000.0 + ts.tv_nsec / 1e6;
+}
+
+static int prof_stat_for(const char *name) {
+    for (int i = 0; i < g_stat_count; i++)
+        if (g_stats[i].name == name || strcmp(g_stats[i].name, name) == 0)
+            return i;
+    int i = g_stat_count++;
+    g_stats[i].name = name;
+    g_stats[i].min_ms = 1e30;
+    return i;
+}
+
+static void prof_begin(const char *name) {
+    if (g_depth >= PROF_MAX_DEPTH) return;
+    ProfFrame *f = &g_stack[g_depth++];
+    f->stat = prof_stat_for(name);
+    f->child_ms = 0.0;
+    gv_alloc_stats(&f->a0);
+    f->span_t0 = now_ms();
+    f->start_ms = f->span_t0; /* read clock last so setup above is not timed */
+}
+
+static void prof_end(void) {
+    double end_ms = now_ms(); /* read clock first */
+    if (g_depth <= 0) return;
+    ProfFrame *f = &g_stack[--g_depth];
+    double incl = end_ms - f->start_ms;
+
+    ProfStat *s = &g_stats[f->stat];
+    s->calls++;
+    s->total_ms += incl;
+    double self = incl - f->child_ms;
+    if (self < 0) self = 0;
+    s->self_ms += self;
+    if (incl < s->min_ms) s->min_ms = incl;
+    if (incl > s->max_ms) s->max_ms = incl;
+
+    GV_AllocStats a1;
+    gv_alloc_stats(&a1);
+    s->allocs    += a1.alloc_count - f->a0.alloc_count;
+    s->net_bytes += (long long)a1.live_bytes - (long long)f->a0.live_bytes;
+
+    if (g_depth > 0) g_stack[g_depth - 1].child_ms += incl;
+
+    if (g_spans && g_span_count < PROF_MAX_SPANS) {
+        ProfSpan *sp = &g_spans[g_span_count++];
+        sp->name = s->name;
+        sp->ts_us = (f->span_t0 - g_t0_ms) * 1000.0;
+        sp->dur_us = incl * 1000.0;
+        sp->depth = g_depth;
+    }
+}
+
+#define PROF_SCOPE(name) for (int _p = (prof_begin(name), 0); _p == 0; _p = 1, prof_end())
+
+static int prof_cmp_self(const void *a, const void *b) {
+    double x = ((const ProfStat *)a)->self_ms, y = ((const ProfStat *)b)->self_ms;
+    return (x < y) - (x > y);
+}
+
+static void prof_report(void) {
+    ProfStat sorted[PROF_MAX_SCOPES];
+    memcpy(sorted, g_stats, sizeof(ProfStat) * (size_t)g_stat_count);
+    qsort(sorted, (size_t)g_stat_count, sizeof(ProfStat), prof_cmp_self);
+
+    double total_self = 0;
+    for (int i = 0; i < g_stat_count; i++) total_self += sorted[i].self_ms;
+    if (total_self <= 0) total_self = 1;
+
+    printf("\n%-30s %8s %10s %10s %9s %9s %6s %9s %10s\n", "scope", "calls",
+           "total ms", "self ms", "avg ms", "max ms", "self%", "allocs", "net KB");
+    printf("------------------------------------------------------------------"
+           "------------------------------------------------------\n");
+    for (int i = 0; i < g_stat_count; i++) {
+        ProfStat *s = &sorted[i];
+        printf("%-30s %8llu %10.2f %10.2f %9.4f %9.4f %5.1f%% %9llu %10.1f\n",
+               s->name, (unsigned long long)s->calls, s->total_ms, s->self_ms,
+               s->calls ? s->total_ms / (double)s->calls : 0.0, s->max_ms,
+               100.0 * s->self_ms / total_self, (unsigned long long)s->allocs,
+               s->net_bytes / 1024.0);
+    }
+    printf("------------------------------------------------------------------"
+           "------------------------------------------------------\n");
+    printf("total self ms: %.2f\n", total_self);
+    if (!gv_alloc_stats_enabled())
+        printf("(alloc columns are zero: rebuild the library with -DGV_PROFILE_ALLOC)\n");
+}
+
+static void prof_write_trace(const char *path) {
+    FILE *f = fopen(path, "w");
+    if (!f) { fprintf(stderr, "could not open trace %s\n", path); return; }
+    fputs("{\"displayTimeUnit\":\"ns\",\"traceEvents\":[", f);
+    for (size_t i = 0; i < g_span_count; i++) {
+        ProfSpan *s = &g_spans[i];
+        fprintf(f, "%s{\"name\":\"%s\",\"ph\":\"X\",\"pid\":1,\"tid\":%d,"
+                   "\"ts\":%.3f,\"dur\":%.3f}",
+                i ? "," : "", s->name, s->depth, s->ts_us, s->dur_us);
+    }
+    fputs("]}\n", f);
+    fclose(f);
+    printf("wrote chrome trace: %s (%zu spans)\n", path, g_span_count);
+}
+
+/* ------------------------------------------------------------------ workload */
+
+static uint64_t rng = 0x9E3779B97F4A7C15ULL;
+static uint64_t next_u64(void) {
+    rng ^= rng >> 12; rng ^= rng << 25; rng ^= rng >> 27;
+    return rng * 2685821657736338717ULL;
+}
+static float next_unit(void) {
+    return (float)((next_u64() >> 40) / (double)(1 << 24)) - 0.5f;
+}
+static size_t rss_kb(void) {
+    FILE *f = fopen("/proc/self/status", "r");
+    if (!f) return 0;
+    char line[256];
+    size_t kb = 0;
+    while (fgets(line, sizeof(line), f))
+        if (sscanf(line, "VmRSS: %zu kB", &kb) == 1) break;
+    fclose(f);
+    return kb;
+}
+
+static const char *WORDS[] = {
+    "vector", "database", "search", "neural", "network", "embedding", "graph",
+    "raft", "consensus", "replication", "index", "query", "sparse", "dense",
+    "fusion", "ranking", "distance", "cosine", "cluster", "quantize", "token",
+    "semantic", "retrieval", "cache", "shard", "latency", "throughput", "kernel",
+};
+#define NWORDS (sizeof(WORDS) / sizeof(WORDS[0]))
+
+static void make_sentence(char *buf, size_t cap, int nwords) {
+    size_t off = 0;
+    for (int i = 0; i < nwords && off + 20 < cap; i++) {
+        const char *w = WORDS[next_u64() % NWORDS];
+        off += (size_t)snprintf(buf + off, cap - off, "%s%s", i ? " " : "", w);
+    }
+}
+
+static void phase_vector_db(size_t n, size_t dim, size_t queries) {
+    PROF_SCOPE("1.vectordb") {
+        GV_Database *db = db_open(NULL, dim, GV_INDEX_TYPE_FLAT);
+        if (!db) { fprintf(stderr, "db_open failed\n"); return; }
+
+        float *vec = (float *)malloc(dim * sizeof(float));
+        PROF_SCOPE("1.vectordb/add") {
+            for (size_t i = 0; i < n; i++) {
+                for (size_t d = 0; d < dim; d++) vec[d] = next_unit();
+                char val[16];
+                snprintf(val, sizeof(val), "b%zu", i % 8);
+                (void)db_add_vector_with_metadata(db, vec, dim, "bucket", val);
+            }
+        }
+
+        GV_SearchResult res[16];
+        PROF_SCOPE("1.vectordb/search") {
+            for (size_t q = 0; q < queries; q++) {
+                for (size_t d = 0; d < dim; d++) vec[d] = next_unit();
+                int nn = db_search(db, vec, 10, res, GV_DISTANCE_EUCLIDEAN);
+                if (nn > 0) gv_search_results_free(res, (size_t)nn);
+            }
+        }
+        PROF_SCOPE("1.vectordb/filter") {
+            for (size_t q = 0; q < queries / 4; q++) {
+                for (size_t d = 0; d < dim; d++) vec[d] = next_unit();
+                int nn = db_search_with_filter_expr(db, vec, 10, res,
+                                                    GV_DISTANCE_EUCLIDEAN,
+                                                    "bucket == \"b3\"");
+                if (nn > 0) gv_search_results_free(res, (size_t)nn);
+            }
+        }
+        PROF_SCOPE("1.vectordb/range") {
+            for (size_t q = 0; q < queries / 4; q++) {
+                for (size_t d = 0; d < dim; d++) vec[d] = next_unit();
+                int nn = db_range_search(db, vec, 5.0f, res, 16, GV_DISTANCE_EUCLIDEAN);
+                if (nn > 0) gv_search_results_free(res, (size_t)nn);
+            }
+        }
+        free(vec);
+        db_close(db);
+    }
+}
+
+static void phase_graph_cypher(size_t chain, size_t matches) {
+    PROF_SCOPE("2.graph") {
+        GV_KnowledgeGraph *kg = kg_create(NULL);
+        GV_CypherEngine *cy = kg ? cypher_create(kg) : NULL;
+        if (!cy) { if (kg) kg_destroy(kg); return; }
+        GV_CypherResult r;
+
+        PROF_SCOPE("2.graph/create") {
+            char q[256];
+            for (size_t i = 0; i + 1 < chain; i++) {
+                snprintf(q, sizeof(q),
+                         "CREATE (a:Doc {name:'n%zu', emb:'[%d,0,0]'})"
+                         "-[:CITES]->(b:Doc {name:'n%zu', emb:'[0,%d,0]'})",
+                         i, (int)(i % 3), i + 1, (int)(i % 3));
+                if (cypher_execute(cy, q, &r) == 0) cypher_free_result(&r);
+            }
+        }
+        PROF_SCOPE("2.graph/match") {
+            for (size_t m = 0; m < matches; m++) {
+                if (cypher_execute(cy, "MATCH (d:Doc) RETURN count(*)", &r) == 0)
+                    cypher_free_result(&r);
+            }
+        }
+        PROF_SCOPE("2.graph/varlen+vecpred") {
+            for (size_t m = 0; m < matches; m++) {
+                if (cypher_execute(cy,
+                        "MATCH (a:Doc {name:'n0'})-[:CITES*1..3]->(x) "
+                        "WHERE vector_distance(x.emb, '[1,0,0]') < 0.9 "
+                        "RETURN x.name ORDER BY x.name", &r) == 0)
+                    cypher_free_result(&r);
+            }
+        }
+        cypher_destroy(cy);
+        kg_destroy(kg);
+    }
+}
+
+static void phase_splade(size_t ndocs, size_t queries) {
+    PROF_SCOPE("3.splade") {
+        GV_SpladeConfig scfg;
+        splade_config_init(&scfg);
+        GV_SpladeEncoder *enc = splade_create(&scfg);
+        GV_LearnedSparseConfig icfg;
+        ls_config_init(&icfg);
+        icfg.vocab_size = scfg.vocab_size;
+        GV_LearnedSparseIndex *idx = ls_create(&icfg);
+        if (!enc || !idx) { if (enc) splade_destroy(enc); if (idx) ls_destroy(idx); return; }
+
+        char text[256];
+        PROF_SCOPE("3.splade/index") {
+            for (size_t i = 0; i < ndocs; i++) {
+                make_sentence(text, sizeof(text), 8);
+                (void)splade_index_add(enc, idx, text);
+            }
+        }
+        GV_LearnedSparseResult res[10];
+        PROF_SCOPE("3.splade/search") {
+            for (size_t q = 0; q < queries; q++) {
+                make_sentence(text, sizeof(text), 6);
+                (void)splade_index_search(enc, idx, text, 10, res);
+            }
+        }
+        ls_destroy(idx);
+        splade_destroy(enc);
+    }
+}
+
+static void phase_hybrid(size_t ndocs, size_t queries) {
+    PROF_SCOPE("4.hybrid") {
+        GV_Database *db = db_open(NULL, 16, GV_INDEX_TYPE_FLAT);
+        GV_BM25Config bcfg;
+        bm25_config_init(&bcfg);
+        GV_BM25Index *bm = bm25_create(&bcfg);
+        if (!db || !bm) { if (db) db_close(db); if (bm) bm25_destroy(bm); return; }
+
+        float vec[16];
+        char text[256];
+        PROF_SCOPE("4.hybrid/index") {
+            for (size_t i = 0; i < ndocs; i++) {
+                for (int d = 0; d < 16; d++) vec[d] = next_unit();
+                if (db_add_vector(db, vec, 16) != 0) {}
+                make_sentence(text, sizeof(text), 8);
+                (void)bm25_add_document(bm, i, text);
+            }
+        }
+        GV_HybridConfig hcfg;
+        hybrid_config_init(&hcfg);
+        GV_HybridSearcher *hs = hybrid_create(db, bm, &hcfg);
+        if (hs) {
+            GV_HybridResult res[10];
+            PROF_SCOPE("4.hybrid/search") {
+                for (size_t q = 0; q < queries; q++) {
+                    for (int d = 0; d < 16; d++) vec[d] = next_unit();
+                    make_sentence(text, sizeof(text), 4);
+                    (void)hybrid_search(hs, vec, text, 10, res);
+                }
+            }
+            hybrid_destroy(hs);
+        }
+        bm25_destroy(bm);
+        db_close(db);
+    }
+}
+
+int main(int argc, char **argv) {
+    size_t n_vec   = argc > 1 ? strtoul(argv[1], NULL, 10) : 20000;
+    size_t dim     = argc > 2 ? strtoul(argv[2], NULL, 10) : 128;
+    size_t queries = argc > 3 ? strtoul(argv[3], NULL, 10) : 500;
+    size_t n_docs  = argc > 4 ? strtoul(argv[4], NULL, 10) : 3000;
+    size_t q_text  = argc > 5 ? strtoul(argv[5], NULL, 10) : 500;
+
+    g_spans = (ProfSpan *)malloc(sizeof(ProfSpan) * PROF_MAX_SPANS);
+    g_t0_ms = now_ms();
+
+    printf("GigaVector e2e profiler\n");
+    printf("  vectors=%zu dim=%zu queries=%zu docs=%zu text_queries=%zu\n",
+           n_vec, dim, queries, n_docs, q_text);
+    printf("  alloc tracking: %s\n", gv_alloc_stats_enabled() ? "on" : "off");
+
+    double wall0 = now_ms();
+    phase_vector_db(n_vec, dim, queries);
+    phase_graph_cypher(n_docs / 20 + 2, queries / 4 + 1);
+    phase_splade(n_docs, q_text);
+    phase_hybrid(n_docs, q_text);
+    double wall = now_ms() - wall0;
+
+    prof_report();
+    printf("wall: %.2f ms   peak RSS: %.1f MB\n", wall, rss_kb() / 1024.0);
+
+    const char *trace = getenv("GV_PROF_TRACE");
+    if (trace && *trace) prof_write_trace(trace);
+
+    free(g_spans);
+    return 0;
+}

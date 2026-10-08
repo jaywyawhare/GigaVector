@@ -10,7 +10,8 @@ HARDENING_FLAGS ?=
 CURL_FLAGS ?=
 OPENSSL_FLAGS ?=
 ONNX_FLAGS ?=
-CFLAGS  := $(BASE_CFLAGS) $(SIMD_FLAGS) $(HARDENING_FLAGS) $(CURL_FLAGS) $(OPENSSL_FLAGS) $(ONNX_FLAGS)
+EXTRA_CFLAGS ?=
+CFLAGS  := $(BASE_CFLAGS) $(SIMD_FLAGS) $(HARDENING_FLAGS) $(CURL_FLAGS) $(OPENSSL_FLAGS) $(ONNX_FLAGS) $(EXTRA_CFLAGS)
 LDFLAGS := -lm -pthread $(if $(CURL_FLAGS),-lcurl,) $(if $(OPENSSL_FLAGS),-lssl -lcrypto,)
 
 BUILD_DIR   := build
@@ -150,6 +151,32 @@ $(BENCH_DIR)/bench_scale: benchmarks/bench_scale.c $(STATIC_LIB)
 	@mkdir -p $(BENCH_DIR)
 	$(CC) $(CFLAGS) $< -L$(LIB_DIR) -l$(LIB_NAME) $(LDFLAGS) -o $@
 	@echo "Built benchmark: $@"
+
+$(BENCH_DIR)/profile_e2e: benchmarks/profile_e2e.c $(STATIC_LIB)
+	@mkdir -p $(BENCH_DIR)
+	$(CC) $(CFLAGS) $< -L$(LIB_DIR) -l$(LIB_NAME) $(LDFLAGS) -o $@
+	@echo "Built profiler: $@"
+
+# Granular e2e profiler. Rebuilds the allocator TU with -DGV_PROFILE_ALLOC so
+# the per-scope alloc/net-bytes columns are populated (other TUs are unaffected),
+# using the portable AVX2 SIMD level. PROF_ARGS passes workload sizes through.
+.PHONY: profile-e2e
+profile-e2e:
+	@rm -f $(OBJ_DIR)/core/memory.o $(STATIC_LIB) $(SHARED_LIB)
+	@$(MAKE) lib EXTRA_CFLAGS=-DGV_PROFILE_ALLOC SIMD_FLAGS="-mavx2 -mfma"
+	@$(MAKE) $(BENCH_DIR)/profile_e2e EXTRA_CFLAGS=-DGV_PROFILE_ALLOC SIMD_FLAGS="-mavx2 -mfma"
+	@echo "=== e2e profiler ==="
+	@LD_LIBRARY_PATH=$(LIB_DIR) $(BENCH_DIR)/profile_e2e $(PROF_ARGS)
+
+# Symbol-level hot path via callgrind (no instrumentation needed). Smaller
+# default workload since callgrind is ~50x slower.
+.PHONY: profile-e2e-callgrind
+profile-e2e-callgrind: $(BENCH_DIR)/profile_e2e
+	@echo "=== callgrind (writes callgrind.out.e2e) ==="
+	@LD_LIBRARY_PATH=$(LIB_DIR) valgrind --tool=callgrind \
+		--callgrind-out-file=callgrind.out.e2e --dump-instr=yes \
+		$(BENCH_DIR)/profile_e2e $(if $(PROF_ARGS),$(PROF_ARGS),4000 128 100 500 100)
+	@echo "Open with: callgrind_annotate callgrind.out.e2e | head -40"
 
 .PHONY: clean
 clean:
