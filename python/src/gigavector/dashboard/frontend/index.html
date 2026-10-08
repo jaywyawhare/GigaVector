@@ -10,7 +10,7 @@
 	<link rel="icon" type="image/x-icon" href="/dashboard/assets/favicon.ico">
 	<link rel="preconnect" href="https://fonts.googleapis.com">
 	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-	<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Source+Sans+3:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap"
+	<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
 		rel="stylesheet">
 	<link rel="stylesheet" href="/dashboard/styles/style.css">
 	<script defer src="/dashboard/src/index.js"></script>
@@ -26,8 +26,8 @@
 		</div>
 
 		<div id="collectionPickerWrap"
-			style="padding:8px 10px;border-bottom:1px solid var(--border);display:none">
-			<select id="collectionPicker" style="width:100%;font-size:11px;padding:5px 6px">
+			style="padding:10px 12px;border-bottom:1px solid var(--line);display:none">
+			<select id="collectionPicker" aria-label="Collection" style="width:100%;font-size:13px;padding:5px 8px">
 				<option value="">Default</option>
 			</select>
 		</div>
@@ -73,7 +73,7 @@
 				</svg>
 				<span>Monitoring</span>
 			</a>
-			<div class="nav-section">DATA</div>
+			<div class="nav-section">Data</div>
 			<a href="#import" data-view="import">
 				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 					<path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
@@ -107,7 +107,7 @@
 				</svg>
 				<span>Graph</span>
 			</a>
-			<div class="nav-section">ADMIN</div>
+			<div class="nav-section">Admin</div>
 			<a href="#console" data-view="console">
 				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 					<polyline points="4 17 10 11 4 5" />
@@ -134,7 +134,7 @@
 			</a>
 		</nav>
 		<div class="sidebar-footer">
-			<span id="footer-version">GigaVector</span><br>
+			<span id="footer-version">GigaVector</span>
 			<span id="footer-index"></span>
 		</div>
 	</div>
@@ -145,7 +145,7 @@
 			<div class="header-right">
 				<div class="uptime-badge" id="uptimeBadge"></div>
 				<div class="status-badge"><span class="status-dot" id="statusDot"></span><span
-						id="statusText">Connecting...</span></div>
+						id="statusText">Connecting</span></div>
 			</div>
 		</div>
 		<div class="content">
@@ -155,67 +155,63 @@
 				<div class="cards" style="flex-shrink:0">
 					<div class="card">
 						<div class="card-label">Vectors</div>
-						<div class="card-value" id="ov-vectors">&mdash;</div>
+						<div class="card-value" id="ov-vectors">-</div>
 					</div>
 					<div class="card">
 						<div class="card-label">Dimension</div>
-						<div class="card-value" id="ov-dim">&mdash;</div>
+						<div class="card-value" id="ov-dim">-</div>
 					</div>
 					<div class="card">
-						<div class="card-label">Index</div>
-						<div class="card-value" id="ov-index">&mdash;</div>
+						<div class="card-label">Index type</div>
+						<div class="card-value" id="ov-index">-</div>
 					</div>
 					<div class="card">
 						<div class="card-label">Version</div>
-						<div class="card-value" id="ov-version">&mdash;</div>
+						<div class="card-value" id="ov-version">-</div>
 					</div>
 					<div class="card">
-						<div class="card-label">Requests</div>
-						<div class="card-value" id="ov-reqs">&mdash;</div>
+						<div class="card-label">Total requests</div>
+						<div class="card-value" id="ov-reqs">-</div>
 					</div>
 					<div class="card">
-						<div class="card-label">QPS</div>
-						<div class="card-value" id="ov-qps">&mdash;</div>
+						<div class="card-label">Queries per second</div>
+						<div class="card-value" id="ov-qps">-</div>
 					</div>
 					<div class="card">
 						<div class="card-label">Errors</div>
-						<div class="card-value" id="ov-errors">&mdash;</div>
+						<div class="card-value" id="ov-errors">-</div>
 					</div>
 					<div class="card">
-						<div class="card-label">Sent</div>
-						<div class="card-value" id="ov-sent">&mdash;</div>
+						<div class="card-label">Data sent</div>
+						<div class="card-value" id="ov-sent">-</div>
 						<div class="card-sub" id="ov-recv"></div>
 					</div>
 				</div>
-				<div
-					style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;flex:1;min-height:0">
-					<div class="section" style="margin-bottom:0;display:flex;flex-direction:column">
+				<div class="overview-panels"
+					style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;align-items:start">
+					<div class="section" style="margin-bottom:0">
 						<div class="section-title">Health</div>
-						<div class="json-view" id="ov-health-json" style="flex:1;min-height:0">
-							&mdash;</div>
+						<div id="ov-health-json">
+							<p class="kv-empty">Waiting for the server.</p></div>
 					</div>
-					<div class="section" style="margin-bottom:0;display:flex;flex-direction:column">
-						<div class="section-title">Server Info</div>
-						<div class="json-view" id="ov-server-info" style="flex:1;min-height:0">
-							&mdash;</div>
+					<div class="section" style="margin-bottom:0">
+						<div class="section-title">Server</div>
+						<div id="ov-server-info">
+							<p class="kv-empty">Waiting for the server.</p></div>
 					</div>
-					<div class="section" style="margin-bottom:0;display:flex;flex-direction:column">
+					<div class="section" style="margin-bottom:0">
 						<div class="section-title">Actions</div>
-						<div style="display:flex;flex-direction:column;gap:8px">
+						<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
 							<button class="btn btn-outline"
-								onclick="quickReq('POST','/compact')">Compact
-								Database</button>
-							<button class="btn btn-outline" onclick="quickBackup()">Save
-								Backup</button>
+								onclick="quickReq('POST','/compact')">Compact database</button>
+							<button class="btn btn-outline" onclick="quickBackup()">Save backup</button>
 							<button class="btn btn-outline"
-								onclick="quickReq('GET','/stats')">Refresh
-								Stats</button>
+								onclick="quickReq('GET','/stats')">Refresh stats</button>
 							<button class="btn btn-outline"
-								onclick="quickReq('GET','/health')">Run Health
-								Check</button>
+								onclick="quickReq('GET','/health')">Run health check</button>
 						</div>
 						<div class="json-view mt-sm" id="ov-action-result"
-							style="flex:1;min-height:60px">&mdash;</div>
+							style="min-height:120px;max-height:280px">Responses from these actions appear here.</div>
 					</div>
 				</div>
 			</div>
@@ -230,7 +226,7 @@
 					<div class="split-h">
 						<div class="split-panel">
 							<div class="split-panel-header">
-								Points
+								Vectors
 								<span id="points-count" class="mono-sm"></span>
 							</div>
 							<div class="form-row"
@@ -248,33 +244,32 @@
 								<button class="btn btn-sm"
 									onclick="loadPoints()">Load</button>
 								<button class="btn btn-sm btn-outline"
-									onclick="pointsPrev()">&larr;</button>
+									onclick="pointsPrev()" aria-label="Previous page">Previous</button>
 								<button class="btn btn-sm btn-outline"
-									onclick="pointsNext()">&rarr;</button>
+									onclick="pointsNext()" aria-label="Next page">Next</button>
 							</div>
 							<div class="points-list" id="points-list"></div>
 						</div>
 						<div class="split-panel-sm">
-							<div class="split-panel-header">Detail</div>
+							<div class="split-panel-header">Selected vector</div>
 							<div id="point-detail" style="padding:16px">
-								<div class="empty-state">Select a point from the list.
-								</div>
+								<div class="empty-state">Select a vector from the list to see its values.</div>
 							</div>
 						</div>
 					</div>
 				</div>
 				<div id="vec-add" class="tab-content" style="display:none">
 					<div class="section">
-						<div class="section-title">Add Vector</div>
+						<div class="section-title">Add vector</div>
 						<div class="section-desc">Provide vector components as a JSON array.
 							Dimension must match the database.</div>
-						<div class="form-group"><label>Vector Data (JSON array)</label><textarea
+						<div class="form-group"><label>Values (JSON array)</label><textarea
 								id="vec-add-data" rows="3" style="width:100%"
 								placeholder="[0.1, 0.2, 0.3, 0.4]"></textarea></div>
-						<div class="form-group"><label>Metadata (optional JSON)</label><textarea
+						<div class="form-group"><label>Metadata (JSON object, optional)</label><textarea
 								id="vec-add-meta" rows="2" style="width:100%"
 								placeholder='{"label": "example"}'></textarea></div>
-						<button class="btn" onclick="addVector()">Add Vector</button>
+						<button class="btn" onclick="addVector()">Add vector</button>
 					</div>
 				</div>
 			</div>
@@ -282,8 +277,8 @@
 			<!-- VISUALIZE -->
 			<div class="view" id="view-visualize">
 				<div class="tabs">
-					<button class="tab active" data-tab="viz-scatter">Scatter Plot</button>
-					<button class="tab" data-tab="viz-graph">Similarity Graph</button>
+					<button class="tab active" data-tab="viz-scatter">Scatter plot</button>
+					<button class="tab" data-tab="viz-graph">Similarity graph</button>
 				</div>
 				<div id="viz-scatter" class="tab-content">
 					<div class="viz-split">
@@ -292,8 +287,7 @@
 								<label class="label-sm" for="viz-algo">Projection</label>
 								<select id="viz-algo" title="PCA keeps the two directions of greatest variance; random projection is faster but noisier">
 									<option value="pca">PCA</option>
-									<option value="random">Random Projection
-									</option>
+									<option value="random">Random projection</option>
 								</select>
 								<label class="label-sm" for="viz-limit">Sample</label>
 								<input type="number" id="viz-limit" title="How many vectors to load, starting from the first" value="200" min="10"
@@ -339,31 +333,27 @@
 					<div class="viz-split">
 						<div class="viz-main">
 							<div class="viz-toolbar">
-								<label class="label-sm">Seed</label>
+								<label class="label-sm" for="graph-seed">Start at vector</label>
 								<input type="number" id="graph-seed" value="0" min="0"
 									style="width:70px">
-								<label class="label-sm" for="viz-k">Clusters</label>
+								<label class="label-sm" for="graph-k">Neighbors per node</label>
 								<input type="number" id="graph-k" value="5" min="1"
-									max="20" style="width:50px">
-								<label class="label-sm">Depth</label>
+									max="20" style="width:56px">
+								<label class="label-sm" for="graph-depth">Hops</label>
 								<input type="number" id="graph-depth" value="2" min="1"
-									max="4" style="width:50px">
+									max="4" style="width:56px">
 								<button class="btn btn-sm"
-									onclick="runGraph()">Build</button>
-								<span id="graph-status" class="mono-sm"
-									style="margin-left:auto"></span>
+									onclick="runGraph()">Build graph</button>
+								<span id="graph-status" class="viz-status"></span>
 							</div>
 							<canvas class="viz-canvas" id="graph-canvas" width="900"
 								height="460"></canvas>
-							<div class="viz-info" id="graph-info">Build a similarity graph
-								from a seed point. Hover nodes to preview, click to
-								inspect.</div>
+							<div class="viz-info" id="graph-info">Pick a starting vector and build a graph of its nearest neighbors, hop by hop. Hover a node to preview it, click to inspect.</div>
 						</div>
 						<div class="viz-detail" id="graph-detail">
 							<div class="viz-detail-header">Selected node</div>
 							<div class="viz-detail-body" id="graph-detail-body">
-								<div class="empty-state">Click a node on the graph to
-									inspect it here.</div>
+								<p class="viz-empty">Select a node to see its values and neighbors.</p>
 							</div>
 						</div>
 					</div>
@@ -373,14 +363,13 @@
 			<!-- SEARCH -->
 			<div class="view" id="view-search">
 				<div class="tabs">
-					<button class="tab active" data-tab="search-knn">k-NN Search</button>
-					<button class="tab" data-tab="search-range">Range Search</button>
+					<button class="tab active" data-tab="search-knn">Nearest neighbors</button>
+					<button class="tab" data-tab="search-range">Within radius</button>
 				</div>
 				<div id="search-knn" class="tab-content">
 					<div class="section">
-						<div class="section-title">k-NN Search</div>
-						<div class="form-group"><label>Query Vector (JSON
-								array)</label><textarea id="search-query" rows="2"
+						<div class="section-title">Nearest-neighbor search</div>
+						<div class="form-group"><label>Query vector (JSON array)</label><textarea id="search-query" rows="2"
 								style="width:100%"
 								placeholder="[0.1, 0.2, 0.3, 0.4]"></textarea></div>
 						<div class="form-row" style="margin-bottom:14px">
@@ -392,7 +381,7 @@
 								<label>Distance</label><select id="search-dist">
 									<option value="euclidean">Euclidean</option>
 									<option value="cosine">Cosine</option>
-									<option value="dot_product">Dot Product</option>
+									<option value="dot_product">Dot product</option>
 									<option value="manhattan">Manhattan</option>
 								</select>
 							</div>
@@ -405,14 +394,13 @@
 							<button class="btn" onclick="doSearch()">Search</button>
 						</div>
 						<div class="form-group">
-							<label>Metadata Filter (optional)</label>
+							<label>Metadata filter (optional)</label>
 							<div class="filter-row">
 								<input type="text" id="filter-key" placeholder="key"
 									style="width:120px">
 								<input type="text" id="filter-value" placeholder="value"
 									style="width:180px">
-								<span class="label-sm">Filters results where
-									metadata[key] == value</span>
+								<span class="label-sm">Only return vectors whose metadata key equals this value</span>
 							</div>
 						</div>
 						<div id="search-meta" class="mono-sm mb-sm"></div>
@@ -427,15 +415,13 @@
 							</thead>
 							<tbody id="search-tbody"></tbody>
 						</table>
-						<div id="search-empty" class="empty-state">Enter a query vector and
-							click Search.</div>
+						<div id="search-empty" class="empty-state">Paste a query vector and press Search.</div>
 					</div>
 				</div>
 				<div id="search-range" class="tab-content" style="display:none">
 					<div class="section">
-						<div class="section-title">Range Search</div>
-						<div class="form-group"><label>Query Vector (JSON
-								array)</label><textarea id="range-query" rows="2"
+						<div class="section-title">Radius search</div>
+						<div class="form-group"><label>Query vector (JSON array)</label><textarea id="range-query" rows="2"
 								style="width:100%"
 								placeholder="[0.1, 0.2, 0.3, 0.4]"></textarea></div>
 						<div class="form-row" style="margin-bottom:14px">
@@ -444,15 +430,14 @@
 									id="range-radius" value="1.0" step="0.1" min="0"
 									style="width:90px">
 							</div>
-							<div class="form-group" style="margin-bottom:0"><label>Max
-									Results</label><input type="number"
+							<div class="form-group" style="margin-bottom:0"><label>Max results</label><input type="number"
 									id="range-max" value="100" min="1"
 									style="width:90px"></div>
 							<div class="form-group" style="margin-bottom:0">
 								<label>Distance</label><select id="range-dist">
 									<option value="euclidean">Euclidean</option>
 									<option value="cosine">Cosine</option>
-									<option value="dot_product">Dot Product</option>
+									<option value="dot_product">Dot product</option>
 									<option value="manhattan">Manhattan</option>
 								</select>
 							</div>
@@ -470,8 +455,7 @@
 							</thead>
 							<tbody id="range-tbody"></tbody>
 						</table>
-						<div id="range-empty" class="empty-state">Enter a query vector and
-							radius, then click Search.</div>
+						<div id="range-empty" class="empty-state">Paste a query vector, set a radius and press Search.</div>
 					</div>
 				</div>
 			</div>
@@ -479,7 +463,7 @@
 			<!-- CONSOLE -->
 			<div class="view" id="view-console">
 				<div class="section">
-					<div class="section-title">API Console</div>
+					<div class="section-title">API console</div>
 					<div class="section-desc">Send HTTP requests to the GigaVector server.</div>
 					<div class="console-bar">
 						<select id="con-method">
@@ -491,7 +475,7 @@
 						<input type="text" id="con-url" value="/health" placeholder="/endpoint">
 						<button class="btn" onclick="consoleSend()">Send</button>
 					</div>
-					<div class="form-group"><label>Request Body (JSON)</label><textarea
+					<div class="form-group"><label>Request body (JSON)</label><textarea
 							id="con-body" rows="4" style="width:100%"
 							placeholder="{}"></textarea></div>
 					<div class="console-response">
@@ -504,17 +488,15 @@
 			<!-- IMPORT -->
 			<div class="view" id="view-import">
 				<div class="section">
-					<div class="section-title">Data Import Wizard</div>
-					<div class="section-desc">Import vectors from CSV or JSON files. Data is parsed
-						client-side.</div>
-					<div class="drop-zone" id="import-drop">
-						Drop a CSV or JSON file here, or click to browse<br>
-						<input type="file" id="import-file" accept=".csv,.json,.jsonl"
-							style="display:none">
-						<div class="label-sm mt-sm">Supported: .csv, .json, .jsonl</div>
+					<div class="section-title">Import vectors</div>
+					<div class="section-desc">Load vectors from a CSV, JSON or JSON Lines file. The file is parsed in your browser and sent in batches.</div>
+					<input type="file" id="import-file" accept=".csv,.json,.jsonl" hidden>
+					<div class="drop-zone" id="import-drop" role="button" tabindex="0">
+						<div id="import-drop-text">Drop a file here or click to choose one</div>
+						<div class="label-sm mt-sm">.csv, .json or .jsonl</div>
 					</div>
 					<div id="import-preview" style="display:none">
-						<div class="section-title">Column Mapping</div>
+						<div class="section-title">Map columns</div>
 						<div id="import-mappings"></div>
 						<div class="gap-row mt-sm">
 							<button class="btn" onclick="runImport()">Import</button>
@@ -534,7 +516,7 @@
 			<!-- NAMESPACES -->
 			<div class="view" id="view-namespaces">
 				<div class="section">
-					<div class="section-title">Namespace Browser</div>
+					<div class="section-title">Namespaces</div>
 					<div class="form-row" style="margin-bottom:14px">
 						<div class="form-group" style="margin-bottom:0">
 							<label>Name</label><input type="text" id="ns-name"
@@ -564,7 +546,7 @@
 						</thead>
 						<tbody id="ns-tbody"></tbody>
 					</table>
-					<div id="ns-empty" class="empty-state">Loading...</div>
+					<div id="ns-empty" class="empty-state">Loading namespaces</div>
 					<div id="ns-info" style="margin-top:14px;display:none" class="json-view"></div>
 				</div>
 			</div>
@@ -572,15 +554,15 @@
 			<!-- SQL -->
 			<div class="view" id="view-sql">
 				<div class="section">
-					<div class="section-title">SQL Query</div>
+					<div class="section-title">SQL query</div>
 					<div class="section-desc">Query vectors using SQL syntax. Example:
 						<code>SELECT * FROM vectors LIMIT 10</code>
 					</div>
 					<textarea class="sql-editor" id="sql-input"
 						placeholder="SELECT * FROM vectors LIMIT 10"></textarea>
 					<div class="gap-row mt-sm">
-						<button class="btn" onclick="runSQL()">Execute</button>
-						<button class="btn btn-outline" onclick="explainSQL()">Explain</button>
+						<button class="btn" onclick="runSQL()">Run query</button>
+						<button class="btn btn-outline" onclick="explainSQL()">Explain plan</button>
 					</div>
 					<div id="sql-meta" class="mono-sm mt-sm"></div>
 					<div id="sql-result" style="margin-top:10px;display:none;overflow-x:auto">
@@ -598,41 +580,41 @@
 			<div class="view" id="view-monitoring">
 				<div class="cards" id="mon-cards">
 					<div class="card">
-						<div class="card-label">QPS</div>
-						<div class="card-value" id="mon-qps">&mdash;</div>
+						<div class="card-label">Queries per second</div>
+						<div class="card-value" id="mon-qps">-</div>
 					</div>
 					<div class="card">
 						<div class="card-label">Vectors</div>
-						<div class="card-value" id="mon-vecs">&mdash;</div>
+						<div class="card-value" id="mon-vecs">-</div>
 					</div>
 					<div class="card">
 						<div class="card-label">Memory</div>
-						<div class="card-value" id="mon-mem">&mdash;</div>
+						<div class="card-value" id="mon-mem">-</div>
 					</div>
 					<div class="card">
 						<div class="card-label">Health</div>
-						<div class="card-value" id="mon-health">&mdash;</div>
+						<div class="card-value" id="mon-health">-</div>
 					</div>
 				</div>
 				<div class="monitor-grid">
 					<div class="monitor-chart">
-						<div class="monitor-chart-title">Queries Per Second</div>
+						<div class="monitor-chart-title">Queries per second</div>
 						<canvas id="mon-qps-chart" height="180"></canvas>
 					</div>
 					<div class="monitor-chart">
-						<div class="monitor-chart-title">Latency (ms)</div>
+						<div class="monitor-chart-title">Search latency (ms)</div>
 						<canvas id="mon-latency-chart" height="180"></canvas>
 					</div>
 				</div>
 				<div class="monitor-grid">
 					<div class="monitor-chart">
-						<div class="monitor-chart-title">Memory Usage</div>
+						<div class="monitor-chart-title">Memory</div>
 						<canvas id="mon-mem-chart" height="180"></canvas>
 					</div>
 					<div class="monitor-chart">
-						<div class="monitor-chart-title">Detailed Stats</div>
+						<div class="monitor-chart-title">Raw statistics</div>
 						<div class="json-view" id="mon-detail-json"
-							style="max-height:180px;min-height:160px;font-size:11px">&mdash;
+							style="max-height:180px;min-height:160px">-
 						</div>
 					</div>
 				</div>
@@ -642,12 +624,11 @@
 			<!-- GRAPH EXPLORER -->
 			<div class="view" id="view-graph">
 				<div class="section">
-					<div class="section-title">Graph Explorer</div>
+					<div class="section-title">Graph explorer</div>
 					<div class="form-row" style="margin-bottom:10px">
-						<div class="form-group" style="margin-bottom:0"><label>Node
-								Label</label><input type="text" id="ge-label"
+						<div class="form-group" style="margin-bottom:0"><label>Node label</label><input type="text" id="ge-label"
 								placeholder="Person" style="width:120px"></div>
-						<button class="btn btn-sm" onclick="geAddNode()">Add Node</button>
+						<button class="btn btn-sm" onclick="geAddNode()">Add node</button>
 					</div>
 					<div class="form-row" style="margin-bottom:10px">
 						<div class="form-group" style="margin-bottom:0">
@@ -662,13 +643,12 @@
 							<label>Label</label><input type="text" id="ge-elabel"
 								placeholder="knows" style="width:80px">
 						</div>
-						<button class="btn btn-sm" onclick="geAddEdge()">Add Edge</button>
+						<button class="btn btn-sm" onclick="geAddEdge()">Add edge</button>
 						<button class="btn btn-sm btn-outline" style="margin-left:auto"
 							onclick="geRefresh()">Refresh</button>
 					</div>
 					<div class="form-row" style="margin-bottom:10px">
-						<div class="form-group" style="margin-bottom:0"><label>BFS
-								Start</label><input type="number" id="ge-bfs-start"
+						<div class="form-group" style="margin-bottom:0"><label>BFS start node</label><input type="number" id="ge-bfs-start"
 								value="0" min="0" style="width:60px"></div>
 						<div class="form-group" style="margin-bottom:0">
 							<label>Depth</label><input type="number" id="ge-bfs-depth"
@@ -684,15 +664,13 @@
 						<div class="form-group" style="margin-bottom:0"><label>To</label><input
 								type="number" id="ge-sp-to" min="0" style="width:60px">
 						</div>
-						<button class="btn btn-sm" onclick="geShortestPath()">Shortest
-							Path</button>
+						<button class="btn btn-sm" onclick="geShortestPath()">Find shortest path</button>
 					</div>
 					<div id="ge-status" class="mono-sm mb-sm"></div>
 				</div>
 				<div class="viz-container">
 					<canvas class="viz-canvas" id="ge-canvas" width="900" height="460"></canvas>
-					<div class="viz-info" id="ge-info">Add nodes and edges, then click Refresh to
-						visualize the graph.</div>
+					<div class="viz-info" id="ge-info">Add nodes and edges, then press Refresh to draw the graph.</div>
 				</div>
 			</div>
 
@@ -701,26 +679,25 @@
 				<div class="section">
 					<div
 						style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
-						<div class="section-title" style="margin-bottom:0">Cluster Overview
-						</div>
+						<div class="section-title" style="margin-bottom:0">Cluster</div>
 						<button class="btn btn-outline btn-sm"
 							onclick="loadCluster()">Refresh</button>
 					</div>
 					<div class="cards" id="cluster-cards">
 						<div class="card">
-							<div class="card-label">Total Nodes</div>
+							<div class="card-label">Nodes</div>
 							<div class="card-value" id="cl-nodes">-</div>
 						</div>
 						<div class="card">
-							<div class="card-label">Active Nodes</div>
+							<div class="card-label">Active nodes</div>
 							<div class="card-value" id="cl-active">-</div>
 						</div>
 						<div class="card">
-							<div class="card-label">Total Shards</div>
+							<div class="card-label">Shards</div>
 							<div class="card-value" id="cl-shards">-</div>
 						</div>
 						<div class="card">
-							<div class="card-label">Total Vectors</div>
+							<div class="card-label">Vectors</div>
 							<div class="card-value" id="cl-vectors">-</div>
 						</div>
 						<div class="card">
@@ -734,8 +711,8 @@
 					<table id="cluster-shard-table" style="display:none">
 						<thead>
 							<tr>
-								<th>Shard ID</th>
-								<th>Node Address</th>
+								<th>Shard</th>
+								<th>Node address</th>
 								<th>State</th>
 								<th>Vectors</th>
 								<th>Replicas</th>
@@ -743,8 +720,7 @@
 						</thead>
 						<tbody id="cluster-shard-tbody"></tbody>
 					</table>
-					<div id="cluster-shard-empty" class="empty-state">Click Refresh to load shard
-						info.</div>
+					<div id="cluster-shard-empty" class="empty-state">No shard information yet. Press Refresh to load it.</div>
 				</div>
 			</div>
 
@@ -752,42 +728,38 @@
 			<!-- BACKUPS -->
 			<div class="view" id="view-backups">
 				<div class="section">
-					<div class="section-title">Backup &amp; Restore</div>
+					<div class="section-title">Backups</div>
 					<div class="tabs">
-						<button class="tab active" data-tab="bk-create">Create Backup</button>
+						<button class="tab active" data-tab="bk-create">Create</button>
 						<button class="tab" data-tab="bk-restore">Restore</button>
-						<button class="tab" data-tab="bk-header">Inspect</button>
+						<button class="tab" data-tab="bk-header">Inspect file</button>
 					</div>
 					<div id="bk-create" class="tab-content">
-						<div class="section-desc">Create a snapshot backup of the current
-							database.</div>
-						<div class="form-group"><label>Backup Path (optional)</label><input
+						<div class="section-desc">Write a snapshot of the current database to a file on the server.</div>
+						<div class="form-group"><label>File path (optional)</label><input
 								type="text" id="bk-path"
 								placeholder="/tmp/gv_backup.gvb" style="width:100%">
 						</div>
-						<button class="btn" onclick="createBackup()">Create Backup</button>
+						<button class="btn" onclick="createBackup()">Create backup</button>
 						<div id="bk-create-result" class="json-view mt-sm" style="display:none">
 						</div>
 					</div>
 					<div id="bk-restore" class="tab-content" style="display:none">
-						<div class="section-desc">Restore database from a backup file. This
-							replaces the current database.</div>
+						<div class="section-desc">Replace the current database with the contents of a backup file. Anything written since that backup is lost.</div>
 						<div class="form-group"><label>Backup Path</label><input type="text"
 								id="bk-restore-path" placeholder="/tmp/gv_backup.gvb"
 								style="width:100%"></div>
 						<button class="btn btn-danger"
-							onclick="restoreBackup()">Restore</button>
+							onclick="restoreBackup()">Restore from backup</button>
 						<div id="bk-restore-result" class="json-view mt-sm"
 							style="display:none"></div>
 					</div>
 					<div id="bk-header" class="tab-content" style="display:none">
-						<div class="section-desc">Read backup file header without restoring.
-						</div>
+						<div class="section-desc">Read a backup file's header without restoring it.</div>
 						<div class="form-group"><label>Backup Path</label><input type="text"
 								id="bk-header-path" placeholder="/tmp/gv_backup.gvb"
 								style="width:100%"></div>
-						<button class="btn btn-outline" onclick="readBackupHeader()">Read
-							Header</button>
+						<button class="btn btn-outline" onclick="readBackupHeader()">Read header</button>
 						<div id="bk-header-result" class="json-view mt-sm" style="display:none">
 						</div>
 					</div>

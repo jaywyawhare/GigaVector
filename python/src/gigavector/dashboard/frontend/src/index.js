@@ -1,5 +1,65 @@
 const API = window.location.origin;
 
+// Design tokens from style.css, so canvas drawing matches the CSS theme.
+const cssToken = (name) =>
+  getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const T = {
+  surface: cssToken("--chart-surface"),
+  grid: cssToken("--chart-grid"),
+  axis: cssToken("--chart-axis"),
+  ink: cssToken("--text"),
+  ink2: cssToken("--text-2"),
+  ink3: cssToken("--text-3"),
+  accent: cssToken("--accent"),
+  s1: cssToken("--series-1"),
+  s2: cssToken("--series-2"),
+  s3: cssToken("--series-3"),
+  other: cssToken("--series-other"),
+  good: cssToken("--good"),
+  warning: cssToken("--warning"),
+  critical: cssToken("--critical"),
+};
+const CHART_FONT = '11px "IBM Plex Sans", sans-serif';
+const CHART_FONT_MONO = '11px "IBM Plex Mono", monospace';
+
+// Render a flat object as a definition list. Nested values fall back to JSON.
+function renderKV(el, obj) {
+  const entries = Object.entries(obj || {});
+  if (!entries.length) {
+    el.innerHTML = '<p class="kv-empty">Nothing reported.</p>';
+    return;
+  }
+  const dl = document.createElement("dl");
+  dl.className = "kv";
+  for (const [k, v] of entries) {
+    const dt = document.createElement("dt");
+    dt.textContent = humanizeKey(k);
+    const dd = document.createElement("dd");
+    if (v !== null && typeof v === "object") {
+      dd.textContent = JSON.stringify(v);
+      dd.className = "machine";
+    } else if (k.endsWith("_seconds") && typeof v === "number") {
+      dd.textContent = formatUptime(v);
+    } else if (k.includes("bytes") && typeof v === "number") {
+      dd.textContent = formatBytes(v);
+    } else if (typeof v === "boolean") {
+      dd.textContent = v ? "Yes" : "No";
+    } else if (k === "status") {
+      const dot = document.createElement("span");
+      dot.className = `status-dot ${v}`;
+      dd.append(dot, String(v).charAt(0).toUpperCase() + String(v).slice(1));
+    } else {
+      dd.textContent = typeof v === "number" ? v.toLocaleString() : String(v);
+    }
+    dl.append(dt, dd);
+  }
+  el.replaceChildren(dl);
+}
+function humanizeKey(k) {
+  const s = k.replace(/_seconds$/, "").replace(/_/g, " ");
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
 // utils
 
 function jsonHighlight(obj) {
@@ -92,9 +152,9 @@ async function copyText(text) {
       document.body.removeChild(ta);
       if (!ok) throw new Error("copy failed");
     }
-    showToast("Copied!", "success");
+    showToast("Copied to clipboard", "success");
   } catch (_) {
-    showToast("Clipboard unavailable", "error");
+    showToast("Could not copy: the clipboard is not available in this browser", "error");
   }
 }
 
@@ -127,21 +187,19 @@ async function refreshOverview() {
     const s = health.data.status || "unknown";
     dot.className = "status-dot " + s;
     txt.textContent = s.charAt(0).toUpperCase() + s.slice(1);
-    document.getElementById("ov-health-json").innerHTML = jsonHighlight(
-      health.data,
-    );
+    renderKV(document.getElementById("ov-health-json"), health.data);
     const up = health.data.uptime_seconds;
     document.getElementById("uptimeBadge").textContent =
-      up != null ? "Up " + formatUptime(up) : "";
+      up != null ? "Up for " + formatUptime(up) : "";
   } else {
     dot.className = "status-dot unhealthy";
     txt.textContent = "Unreachable";
     document.getElementById("ov-health-json").innerHTML =
-      '<span class="json-null">Server unreachable</span>';
+      '<p class="kv-empty">The server is not responding. Check that it is running and reachable from this browser.</p>';
     document.getElementById("uptimeBadge").textContent = "";
   }
   if (info.ok && info.data) {
-    document.getElementById("ov-count").textContent = (
+    document.getElementById("ov-vectors").textContent = (
       info.data.vector_count ?? 0
     ).toLocaleString();
     document.getElementById("ov-dim").textContent = info.data.dimension ?? "-";
@@ -152,10 +210,8 @@ async function refreshOverview() {
     document.getElementById("footer-version").textContent =
       "GigaVector v" + (info.data.version || "?");
     document.getElementById("footer-index").textContent =
-      (info.data.index_type || "") + " | dim " + (info.data.dimension || "?");
-    document.getElementById("ov-server-info").innerHTML = jsonHighlight(
-      info.data,
-    );
+      `${info.data.index_type || "Unknown index"}, ${info.data.dimension || "?"} dimensions`;
+    renderKV(document.getElementById("ov-server-info"), info.data);
   }
   if (stats.ok && stats.data) {
     document.getElementById("ov-reqs").textContent = (
@@ -172,7 +228,7 @@ async function refreshOverview() {
     );
     document.getElementById("ov-recv").textContent =
       stats.data.total_bytes_received != null
-        ? "Recv: " + formatBytes(stats.data.total_bytes_received)
+        ? formatBytes(stats.data.total_bytes_received) + " received"
         : "";
   }
 }
@@ -192,7 +248,7 @@ async function loadPoints() {
   );
   if (!r.ok) return;
   currentPoints = r.data.vectors || [];
-  document.getElementById("points-count").textContent = `${r.data.total} total`;
+  document.getElementById("points-count").textContent = `${(r.data.total ?? 0).toLocaleString()} total`;
   selectedPointIdx = -1;
   renderPointsList();
 }
@@ -212,7 +268,7 @@ function renderPointsList() {
   const list = document.getElementById("points-list");
   if (!currentPoints.length) {
     list.innerHTML =
-      '<div style="padding:20px;font-size:12px;color:var(--text-muted)">No vectors found.</div>';
+      '<div class="empty-state">No vectors in this range. Lower the offset or add vectors.</div>';
     return;
   }
   list.innerHTML = currentPoints
@@ -228,7 +284,7 @@ function renderPointsList() {
       }" onclick="selectPoint(${i})">
         <div class="point-idx">${p.index}</div>
         <div class="point-data">${d}</div>
-        <div class="point-badge">${Array.isArray(p.data) ? `${p.data.length}d` : ""}</div>
+        <div class="point-badge">${Array.isArray(p.data) ? `${p.data.length} dims` : ""}</div>
       </div>`;
     })
     .join("");
@@ -239,15 +295,18 @@ function selectPoint(i) {
   renderPointsList();
   const p = currentPoints[i];
   document.getElementById("point-detail").innerHTML = `
-    <div style="font-family:var(--mono);font-size:12px;font-weight:600;color:var(--accent);margin-bottom:12px">Point #${p.index}</div>
+    <div class="viz-point-id" style="margin-bottom:12px">#${p.index}</div>
     <div class="json-view" style="max-height:300px;margin-bottom:12px">${jsonHighlight(p)}</div>
-    <button class="btn btn-sm btn-danger" onclick="deletePointFromBrowser(${p.index})">Delete</button>`;
+    <button class="btn btn-sm btn-danger" onclick="deletePointFromBrowser(${p.index})">Delete vector</button>`;
 }
 
 async function deletePointFromBrowser(id) {
-  if (!confirm(`Delete vector ${id}?`)) return;
+  if (!confirm(`Delete vector #${id}? This cannot be undone.`)) return;
   const r = await apiCall(`/vectors/${id}`, { method: "DELETE" });
-  showToast(r.ok ? `Deleted #${id}` : "Failed", r.ok ? "success" : "error");
+  showToast(
+    r.ok ? `Deleted vector #${id}` : `Could not delete vector #${id}`,
+    r.ok ? "success" : "error",
+  );
   if (r.ok) {
     selectedPointIdx = -1;
     loadPoints();
@@ -266,11 +325,11 @@ async function addVector() {
       body: JSON.stringify(body),
     });
     showToast(
-      r.ok ? "Vector added" : `Failed: ${JSON.stringify(r.data)}`,
+      r.ok ? "Vector added" : `Could not add vector: ${r.data?.message || JSON.stringify(r.data)}`,
       r.ok ? "success" : "error",
     );
   } catch (e) {
-    showToast(`Invalid JSON: ${e.message}`, "error");
+    showToast(`Values must be valid JSON. ${e.message}`, "error");
   }
 }
 
@@ -282,7 +341,7 @@ async function runVisualization() {
   const algo = document.getElementById("viz-algo").value;
   const status = document.getElementById("viz-status");
   const info = document.getElementById("scatter-info");
-  status.textContent = "Loading vectors...";
+  status.textContent = "Loading vectors";
   const r = await apiCall(`/vectors/scroll?offset=0&limit=${limit}`);
   if (!r.ok || !r.data.vectors || !r.data.vectors.length) {
     vizData = null;
@@ -439,16 +498,16 @@ function vizNeighbors(idx, k) {
 }
 
 // Categorical slots validated (all pairs, normal + CVD, >= 3:1 contrast) against
-// the #0c1118 surface. A scatter overlaps every pair, so only three hues pass;
+// the --chart-surface token. A scatter overlaps every pair, so only three hues pass;
 // further groups fold into a muted "Other" bucket instead of a generated hue.
-const VIZ_PALETTE = ["#3987e5", "#d95926", "#199e70"];
-const VIZ_OTHER_COLOR = "#898781";
-const VIZ_DEFAULT_COLOR = "#3987e5";
-const VIZ_SURFACE = "#0c1118";
-const VIZ_GRID = "#1a2430";
-const VIZ_AXIS = "#2c3a4b";
-const VIZ_INK_PRIMARY = "#e9eff8";
-const VIZ_INK_SECONDARY = "#9fb1c8";
+const VIZ_PALETTE = [T.s1, T.s2, T.s3];
+const VIZ_OTHER_COLOR = T.other;
+const VIZ_DEFAULT_COLOR = T.s1;
+const VIZ_SURFACE = T.surface;
+const VIZ_GRID = T.grid;
+const VIZ_AXIS = T.axis;
+const VIZ_INK_PRIMARY = T.ink;
+const VIZ_INK_SECONDARY = T.ink2;
 
 // Populate the "Color by" dropdown: keep the fixed None / K-means options, then
 // append any metadata keys found, preserving the current selection.
@@ -637,7 +696,7 @@ function drawScatter() {
   ctx.fillRect(0, 0, w, h);
   if (!vizData) {
     ctx.fillStyle = VIZ_INK_SECONDARY;
-    ctx.font = '14px "Source Sans 3", sans-serif';
+    ctx.font = '14px "IBM Plex Sans", sans-serif';
     ctx.textAlign = "center";
     ctx.fillText("Each dot will be one stored vector, placed by similarity.", w / 2, h / 2);
     return;
@@ -696,7 +755,7 @@ function drawScatter() {
   const algo = (document.getElementById("viz-algo") || {}).value;
   const [ax, ay] = algo === "pca" ? ["PC1", "PC2"] : ["Projection 1", "Projection 2"];
   ctx.fillStyle = VIZ_INK_SECONDARY;
-  ctx.font = '10px "IBM Plex Mono"';
+  ctx.font = CHART_FONT;
   ctx.textAlign = "right";
   ctx.fillText(ax, padL + pw, h - 10);
   ctx.save();
@@ -1001,7 +1060,7 @@ async function runGraph() {
   const k = parseInt(document.getElementById("graph-k").value) || 5;
   const depth = parseInt(document.getElementById("graph-depth").value) || 2;
   const status = document.getElementById("graph-status");
-  status.textContent = "Building...";
+  status.textContent = "Building graph";
   graphNodes = [];
   graphEdges = [];
   const visited = new Set();
@@ -1070,7 +1129,7 @@ async function runGraph() {
     }
     frontier = next;
   }
-  status.textContent = `${graphNodes.length} nodes | ${graphEdges.length} edges`;
+  status.textContent = `${graphNodes.length} nodes, ${graphEdges.length} edges`;
   document.getElementById("graph-info").innerHTML =
     `<b>${graphNodes.length}</b> nodes, <b>${graphEdges.length}</b> edges from seed <b>#${seed}</b>`;
   if (graphAnim) cancelAnimationFrame(graphAnim);
@@ -1113,34 +1172,32 @@ function showGraphDetail(idx) {
   const body = document.getElementById("graph-detail-body");
   if (idx < 0) {
     body.innerHTML =
-      '<div style="color:var(--text-muted);font-size:13px">Click a node on the graph to inspect it here.</div>';
+      '<p class="viz-empty">Select a node to see its values and neighbors.</p>';
     return;
   }
   const node = graphNodes[idx];
   const neighbors = getNodeNeighbors(idx);
   const vecStr = `[${node.data.map((v) => v.toFixed(6)).join(", ")}]`;
   let html = `
-    <div class="detail-label">Node ID</div>
-    <div class="detail-value" style="font-size:16px;font-weight:600;color:var(--accent)">#${node.id}</div>
-    <div class="detail-label">Depth</div>
+    <div class="viz-point-head"><span class="viz-point-id">#${node.id}</span></div>
+    <div class="detail-label">Hops from start</div>
     <div class="detail-value dim">${node.depth}</div>
     <div class="detail-label">Dimension</div>
     <div class="detail-value dim">${node.data.length}</div>
     <div class="detail-label">Neighbors (${neighbors.length})</div>`;
   if (neighbors.length) {
-    html += '<div style="margin-bottom:14px">';
+    html += '<ol class="viz-neighbors">';
     for (const nb of neighbors) {
-      html += `<div style="display:flex;justify-content:space-between;padding:3px 0;font-family:var(--mono);font-size:11px;border-bottom:1px solid var(--border-light)">
-        <span style="color:var(--text)">#${nb.id}</span>
-        <span style="color:var(--text-muted)">${nb.dist != null ? nb.dist.toFixed(4) : ""}</span>
-      </div>`;
+      html += `<li class="viz-neighbor" style="cursor:default;grid-template-columns:1fr auto">
+        <span class="viz-neighbor-id">#${nb.id}</span>
+        <span class="viz-neighbor-sim">${nb.dist != null ? nb.dist.toFixed(4) : ""}</span>
+      </li>`;
     }
-    html += "</div>";
+    html += "</ol>";
   }
   html += `
-    <div class="detail-label">Vector Data</div>
-    <div class="detail-value" style="font-size:11px;line-height:1.6;max-height:180px;overflow-y:auto;background:var(--bg-input);padding:10px;border-radius:6px">${vecStr}</div>
-    <button class="btn btn-sm btn-outline" style="margin-top:4px" onclick="copyText('${escapeJsString(vecStr)}')">Copy Vector</button>`;
+    <details class="viz-raw"><summary>Raw values</summary><pre>${vecStr}</pre></details>
+    <button class="btn btn-sm btn-outline" onclick="copyText('${escapeJsString(vecStr)}')">Copy vector</button>`;
   body.innerHTML = html;
 }
 
@@ -1168,7 +1225,7 @@ function simGraph() {
   function drawGraphFrame() {
     const ctx = canvas.getContext("2d");
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.fillStyle = "#0c1118";
+    ctx.fillStyle = T.surface;
     ctx.fillRect(0, 0, w, h);
 
     const hovNode = graphHovered >= 0 ? graphNodes[graphHovered] : null;
@@ -1194,13 +1251,13 @@ function simGraph() {
       ctx.beginPath();
       ctx.moveTo(a.x, a.y);
       ctx.lineTo(b.x, b.y);
-      ctx.strokeStyle = isHL ? "#2ee6c8" : "#d5d4cc";
-      ctx.lineWidth = isHL ? 2 : 1;
+      ctx.strokeStyle = isHL ? T.ink2 : T.axis;
+      ctx.lineWidth = isHL ? 1.5 : 1;
       ctx.globalAlpha = hovNode || selNode ? (isHL ? 1 : 0.25) : 1;
       ctx.stroke();
       if (e.dist != null) {
-        ctx.fillStyle = isHL ? "#2ee6c8" : "#999990";
-        ctx.font = '9px "IBM Plex Mono"';
+        ctx.fillStyle = isHL ? T.ink2 : T.ink3;
+        ctx.font = '10px "IBM Plex Sans", sans-serif';
         ctx.textAlign = "center";
         ctx.fillText(e.dist.toFixed(2), (a.x + b.x) / 2, (a.y + b.y) / 2 - 5);
       }
@@ -1218,33 +1275,28 @@ function simGraph() {
       // Selected outer ring
       if (isSel) {
         ctx.beginPath();
-        ctx.arc(n.x, n.y, r + 6, 0, Math.PI * 2);
-        ctx.strokeStyle = "rgba(46,230,200,0.22)";
-        ctx.lineWidth = 3;
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.arc(n.x, n.y, r + 3, 0, Math.PI * 2);
-        ctx.strokeStyle = "#2ee6c8";
-        ctx.lineWidth = 2.5;
+        ctx.arc(n.x, n.y, r + 4, 0, Math.PI * 2);
+        ctx.strokeStyle = T.ink;
+        ctx.lineWidth = 2;
         ctx.stroke();
       }
       // Hover ring
       if (isHov && !isSel) {
         ctx.beginPath();
         ctx.arc(n.x, n.y, r + 4, 0, Math.PI * 2);
-        ctx.strokeStyle = "#2ee6c8";
-        ctx.lineWidth = 2;
+        ctx.strokeStyle = T.ink2;
+        ctx.lineWidth = 1.5;
         ctx.stroke();
       }
       ctx.beginPath();
       ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
-      ctx.fillStyle = n.depth === 0 ? "#2ee6c8" : isSel ? "#2ee6c8" : "#555";
+      ctx.fillStyle = n.depth === 0 ? T.s1 : isSel ? T.ink : T.other;
       ctx.fill();
-      ctx.strokeStyle = "#fff";
+      ctx.strokeStyle = T.surface;
       ctx.lineWidth = 2;
       ctx.stroke();
-      ctx.fillStyle = "#a0a0a0";
-      ctx.font = '10px "IBM Plex Mono"';
+      ctx.fillStyle = T.ink2;
+      ctx.font = CHART_FONT_MONO;
       ctx.textAlign = "center";
       ctx.fillText(`#${n.id}`, n.x, n.y - 12);
     }
@@ -1345,7 +1397,7 @@ function renderSearchResults(r, tbodyId, metaId, tableId, emptyId) {
     empty = document.getElementById(emptyId);
   if (r.ok && r.data && r.data.results) {
     meta.textContent = `${r.data.results.length} results${
-      r.data.latency_ms ? ` in ${r.data.latency_ms}ms` : ""
+      r.data.latency_ms ? ` in ${r.data.latency_ms} ms` : ""
     }`;
     tbody.innerHTML = "";
     r.data.results.forEach((h, i) => {
@@ -1366,7 +1418,7 @@ function renderSearchResults(r, tbodyId, metaId, tableId, emptyId) {
     meta.textContent = "";
     tbody.innerHTML = "";
     tbl.style.display = "none";
-    empty.textContent = `Error: ${JSON.stringify(r.data)}`;
+    empty.textContent = `Search failed: ${r.data?.message || JSON.stringify(r.data)}`;
     empty.style.display = "block";
   }
 }
@@ -1465,15 +1517,18 @@ async function consoleSend() {
 
 async function quickReq(method, url) {
   const el = document.getElementById("ov-action-result");
-  if (el) el.innerHTML = '<span class="json-null">Loading...</span>';
+  if (el) el.innerHTML = '<span class="json-null">Waiting for response</span>';
   const r = await apiCall(url, { method });
   if (el) el.innerHTML = jsonHighlight(r.data);
-  showToast(r.ok ? `${method} ${url} OK` : "Error", r.ok ? "success" : "error");
+  showToast(
+    r.ok ? `${method} ${url} succeeded` : `${method} ${url} failed`,
+    r.ok ? "success" : "error",
+  );
 }
 
 async function quickBackup() {
   const el = document.getElementById("ov-action-result");
-  if (el) el.innerHTML = '<span class="json-null">Backing up...</span>';
+  if (el) el.innerHTML = '<span class="json-null">Saving backup</span>';
   const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
   const path = `/tmp/gigavector_backup_${ts}.gvb`;
   const r = await apiCall("/api/backups", {
@@ -1484,7 +1539,7 @@ async function quickBackup() {
   if (el) el.innerHTML = jsonHighlight(r.data);
   const ok = r.ok && (!r.data || r.data.success !== false);
   showToast(
-    ok ? `Backup saved to ${path}` : "Backup failed",
+    ok ? `Backup saved to ${path}` : "Backup failed. See the response for details.",
     ok ? "success" : "error",
   );
 }
@@ -1508,9 +1563,12 @@ function drawLineChart(canvas, data, opts = {}) {
     pw = w - pad.l - pad.r,
     ph = h - pad.t - pad.b;
   if (!data.length) {
-    ctx.fillStyle = "#999";
-    ctx.font = "12px sans-serif";
-    ctx.fillText("No data", w / 2 - 20, h / 2);
+    ctx.fillStyle = T.surface;
+    ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = T.ink3;
+    ctx.font = CHART_FONT;
+    ctx.textAlign = "center";
+    ctx.fillText("Waiting for samples", w / 2, h / 2);
     return;
   }
   let mn = Infinity,
@@ -1523,18 +1581,18 @@ function drawLineChart(canvas, data, opts = {}) {
     mn -= 1;
     mx += 1;
   }
-  ctx.fillStyle = "#0c1118";
+  ctx.fillStyle = T.surface;
   ctx.fillRect(0, 0, w, h);
-  ctx.strokeStyle = "#1e2b3b";
-  ctx.lineWidth = 0.5;
+  ctx.strokeStyle = T.grid;
+  ctx.lineWidth = 1;
   for (let i = 0; i <= 4; i++) {
     const y = pad.t + (ph * i) / 4;
     ctx.beginPath();
     ctx.moveTo(pad.l, y);
     ctx.lineTo(pad.l + pw, y);
     ctx.stroke();
-    ctx.fillStyle = "#999";
-    ctx.font = '10px "IBM Plex Mono"';
+    ctx.fillStyle = T.ink3;
+    ctx.font = CHART_FONT;
     ctx.textAlign = "right";
     ctx.fillText((mx - ((mx - mn) * i) / 4).toFixed(1), pad.l - 4, y + 3);
   }
@@ -1545,19 +1603,19 @@ function drawLineChart(canvas, data, opts = {}) {
       y = pad.t + ph - ((data[i] - mn) / (mx - mn)) * ph;
     ctx.lineTo(x, y);
   }
-  ctx.strokeStyle = opts.color || "#2ee6c8";
+  ctx.strokeStyle = opts.color || T.s1;
   ctx.lineWidth = 2;
   ctx.stroke();
   if (opts.fill) {
     ctx.lineTo(pad.l + pw, pad.t + ph);
     ctx.lineTo(pad.l, pad.t + ph);
     ctx.closePath();
-    ctx.fillStyle = opts.fillColor || "rgba(46,230,200,0.10)";
+    ctx.fillStyle = opts.fillColor || (opts.color || T.s1) + "26";
     ctx.fill();
   }
   if (opts.label) {
-    ctx.fillStyle = "#999";
-    ctx.font = '10px "IBM Plex Mono"';
+    ctx.fillStyle = T.ink3;
+    ctx.font = CHART_FONT;
     ctx.textAlign = "center";
     ctx.fillText(opts.label, w / 2, h - 4);
   }
@@ -1577,18 +1635,18 @@ function drawBarChart(canvas, labels, values, opts = {}) {
     pw = w - pad.l - pad.r,
     ph = h - pad.t - pad.b;
   const mx = Math.max(...values) * 1.15 || 1;
-  ctx.fillStyle = "#0c1118";
+  ctx.fillStyle = T.surface;
   ctx.fillRect(0, 0, w, h);
-  ctx.strokeStyle = "#1e2b3b";
-  ctx.lineWidth = 0.5;
+  ctx.strokeStyle = T.grid;
+  ctx.lineWidth = 1;
   for (let i = 0; i <= 4; i++) {
     const y = pad.t + (ph * i) / 4;
     ctx.beginPath();
     ctx.moveTo(pad.l, y);
     ctx.lineTo(pad.l + pw, y);
     ctx.stroke();
-    ctx.fillStyle = "#999";
-    ctx.font = '10px "IBM Plex Mono"';
+    ctx.fillStyle = T.ink3;
+    ctx.font = CHART_FONT;
     ctx.textAlign = "right";
     ctx.fillText(
       (mx - (mx * i) / 4).toFixed(opts.decimals ?? 1),
@@ -1596,7 +1654,7 @@ function drawBarChart(canvas, labels, values, opts = {}) {
       y + 3,
     );
   }
-  const colors = opts.colors || ["#2ee6c8", "#555", "#0369a1", "#16a34a"];
+  const colors = opts.colors || [T.s1, T.s2, T.s3, T.other];
   const gap = pw / (labels.length * 2 + 1),
     bw = gap * 1.5;
   for (let i = 0; i < labels.length; i++) {
@@ -1604,16 +1662,16 @@ function drawBarChart(canvas, labels, values, opts = {}) {
       bh = (values[i] / mx) * ph;
     ctx.fillStyle = colors[i % colors.length];
     ctx.fillRect(x, pad.t + ph - bh, bw, bh);
-    ctx.fillStyle = "#e5e5e5";
-    ctx.font = 'bold 11px "IBM Plex Mono"';
+    ctx.fillStyle = T.ink;
+    ctx.font = '500 11px "IBM Plex Sans", sans-serif';
     ctx.textAlign = "center";
     ctx.fillText(
       values[i].toFixed(opts.decimals ?? 1),
       x + bw / 2,
       pad.t + ph - bh - 4,
     );
-    ctx.fillStyle = "#a0a0a0";
-    ctx.font = '10px "IBM Plex Mono"';
+    ctx.fillStyle = T.ink2;
+    ctx.font = CHART_FONT;
     ctx.fillText(labels[i], x + bw / 2, h - 8);
   }
 }
@@ -1628,7 +1686,7 @@ function drawGauge(canvas, value, max, opts = {}) {
   canvas.style.height = `${h}px`;
   const ctx = canvas.getContext("2d");
   ctx.scale(dpr, dpr);
-  ctx.fillStyle = "#0c1118";
+  ctx.fillStyle = T.surface;
   ctx.fillRect(0, 0, w, h);
   const cx = w / 2,
     cy = h * 0.6,
@@ -1636,23 +1694,23 @@ function drawGauge(canvas, value, max, opts = {}) {
   const pct = Math.min(value / (max || 1), 1);
   ctx.beginPath();
   ctx.arc(cx, cy, r, Math.PI, 2 * Math.PI);
-  ctx.strokeStyle = "#1e2b3b";
-  ctx.lineWidth = 12;
-  ctx.lineCap = "round";
+  ctx.strokeStyle = T.grid;
+  ctx.lineWidth = 10;
+  ctx.lineCap = "butt";
   ctx.stroke();
   ctx.beginPath();
   ctx.arc(cx, cy, r, Math.PI, Math.PI + Math.PI * pct);
-  ctx.strokeStyle = pct > 0.85 ? "#dc2626" : pct > 0.6 ? "#eab308" : "#16a34a";
-  ctx.lineWidth = 12;
-  ctx.lineCap = "round";
+  ctx.strokeStyle = pct > 0.85 ? T.critical : pct > 0.6 ? T.warning : T.good;
+  ctx.lineWidth = 10;
+  ctx.lineCap = "butt";
   ctx.stroke();
-  ctx.fillStyle = "#e5e5e5";
-  ctx.font = 'bold 20px "IBM Plex Mono"';
+  ctx.fillStyle = T.ink;
+  ctx.font = '500 20px "IBM Plex Sans", sans-serif';
   ctx.textAlign = "center";
   ctx.fillText(`${(pct * 100).toFixed(0)}%`, cx, cy + 6);
   if (opts.label) {
-    ctx.fillStyle = "#999";
-    ctx.font = '10px "IBM Plex Mono"';
+    ctx.fillStyle = T.ink3;
+    ctx.font = CHART_FONT;
     ctx.fillText(opts.label, cx, cy + 22);
   }
 }
@@ -1680,16 +1738,18 @@ async function refreshMonitoring() {
     d.basic_stats?.total_vectors || 0
   ).toLocaleString();
   document.getElementById("mon-mem").textContent = formatBytes(mem);
-  document.getElementById("mon-health").textContent = d.health_status || "ok";
+  const hs = d.health_status || "ok";
+  document.getElementById("mon-health").textContent =
+    hs.charAt(0).toUpperCase() + hs.slice(1);
   drawLineChart(document.getElementById("mon-qps-chart"), monRing.qps, {
-    color: "#2ee6c8",
+    color: T.s1,
     fill: true,
-    label: "Last 60 samples",
+    label: "Last 60 seconds",
   });
   drawLineChart(document.getElementById("mon-latency-chart"), monRing.latency, {
-    color: "#0369a1",
+    color: T.s1,
     fill: true,
-    label: "Search latency (ms)",
+    label: "Last 60 seconds",
   });
   drawGauge(document.getElementById("mon-mem-chart"), mem, 1073741824, {
     label: `${formatBytes(mem)} / 1 GB`,
@@ -1777,14 +1837,17 @@ async function createBackup() {
   el.style.display = "block";
   el.innerHTML = jsonHighlight(r.data);
   const ok = r.ok && (!r.data || r.data.success !== false);
-  showToast(ok ? "Backup created" : "Backup failed", ok ? "success" : "error");
+  showToast(
+    ok ? "Backup created" : "Backup failed. See the response for details.",
+    ok ? "success" : "error",
+  );
 }
 
 async function restoreBackup() {
   const path = document.getElementById("bk-restore-path").value.trim();
 
   if (!path) {
-    showToast("Enter backup path", "error");
+    showToast("Enter the backup file path first", "error");
     return;
   }
   if (!confirm("This will replace the current database. Continue?")) return;
@@ -1798,7 +1861,7 @@ async function restoreBackup() {
   el.innerHTML = jsonHighlight(r.data);
   const ok = r.ok && (!r.data || r.data.success !== false);
   showToast(
-    ok ? "Restore complete" : "Restore failed",
+    ok ? "Restored from backup" : "Restore failed. See the response for details.",
     ok ? "success" : "error",
   );
 }
@@ -1806,7 +1869,7 @@ async function restoreBackup() {
 async function readBackupHeader() {
   const path = document.getElementById("bk-header-path").value.trim();
   if (!path) {
-    showToast("Enter backup path", "error");
+    showToast("Enter the backup file path first", "error");
     return;
   }
   const r = await apiCall(
@@ -1824,6 +1887,12 @@ const dropZone = document.getElementById("import-drop");
 const fileInput = document.getElementById("import-file");
 
 dropZone.addEventListener("click", () => fileInput.click());
+dropZone.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" || e.key === " ") {
+    e.preventDefault();
+    fileInput.click();
+  }
+});
 dropZone.addEventListener("dragover", (e) => {
   e.preventDefault();
   dropZone.classList.add("dragover");
@@ -1868,10 +1937,11 @@ function handleImportFile(file) {
           return obj;
         });
       }
-      dropZone.innerHTML = `<b>${file.name}</b> - ${importData.length} records`;
+      document.getElementById("import-drop-text").textContent =
+        `${file.name}: ${importData.length.toLocaleString()} records`;
       showImportPreview();
     } catch (err) {
-      showToast(`Parse error: ${err.message}`, "error");
+      showToast(`Could not read the file: ${err.message}`, "error");
     }
   };
   reader.readAsText(file);
@@ -1883,15 +1953,15 @@ function showImportPreview() {
   const keys = Object.keys(sample);
   const mappings = document.getElementById("import-mappings");
   mappings.innerHTML =
-    '<div class="section-desc">Map file columns to vector fields:</div>';
+    '<div class="section-desc">Choose which column holds the vector values and which become metadata.</div>';
   const dataOpts = keys
     .map((k) => `<option value="${k}">${k}</option>`)
     .join("");
-  mappings.innerHTML += `<div class="mapping-row"><span style="min-width:100px;font-weight:600">Vector Data</span>
+  mappings.innerHTML += `<div class="mapping-row"><span style="min-width:110px;color:var(--text-2)">Vector values</span>
     <select id="import-map-data"><option value="__auto__">Auto-detect</option>
     ${dataOpts}
     </select></div>
-    <div class="mapping-row"><span style="min-width:100px;font-weight:600">Metadata</span>
+    <div class="mapping-row"><span style="min-width:110px;color:var(--text-2)">Metadata</span>
     <select id="import-map-meta"><option value="__none__">None</option><option value="__all__">All remaining</option>
     ${dataOpts}
     </select></div>`;
@@ -1899,7 +1969,7 @@ function showImportPreview() {
 
 async function runImport() {
   if (!importData || !importData.length) {
-    showToast("No data to import", "error");
+    showToast("Choose a file to import first", "error");
     return;
   }
   const dataCol = document.getElementById("import-map-data").value;
@@ -1948,20 +2018,20 @@ async function runImport() {
       errors += r.data.errors;
     }
     fill.style.width = `${Math.min(100, ((i + batchSize) / importData.length) * 100).toFixed(0)}%`;
-    status.textContent = `${inserted} inserted, ${errors} errors`;
+    status.textContent = `${inserted.toLocaleString()} imported, ${errors.toLocaleString()} failed`;
   }
   fill.style.width = "100%";
   const el = document.getElementById("import-result");
   el.style.display = "block";
   el.innerHTML = jsonHighlight({ inserted, errors, total: importData.length });
-  showToast(`Import complete: ${inserted} vectors`, "success");
+  showToast(`Imported ${inserted.toLocaleString()} vectors`, "success");
 }
 
 function resetImport() {
   importData = null;
   importCols = [];
-  dropZone.innerHTML =
-    'Drop a CSV or JSON file here, or click to browse<br><div style="font-size:12px;color:var(--text-muted);margin-top:8px">Supported: .csv, .json, .jsonl</div>';
+  document.getElementById("import-drop-text").textContent =
+    "Drop a file here or click to choose one";
   document.getElementById("import-preview").style.display = "none";
   document.getElementById("import-result").style.display = "none";
   document.getElementById("import-progress-bar").style.display = "none";
@@ -1976,7 +2046,7 @@ async function loadNamespaces() {
   if (r.ok && r.data.namespaces) {
     if (!r.data.namespaces.length) {
       tbody.innerHTML = "";
-      empty.textContent = "No namespaces yet.";
+      empty.textContent = "No namespaces yet. Create one above.";
       empty.style.display = "block";
       return;
     }
@@ -2000,7 +2070,7 @@ async function loadNamespaces() {
 async function createNamespace() {
   const name = document.getElementById("ns-name").value.trim();
   if (!name) {
-    showToast("Enter namespace name", "error");
+    showToast("Enter a namespace name first", "error");
     return;
   }
   const r = await apiCall("/api/namespaces", {
@@ -2013,18 +2083,21 @@ async function createNamespace() {
     }),
   });
   showToast(
-    r.ok ? "Namespace created" : `Error: ${r.data.message || ""}`,
+    r.ok ? "Namespace created" : `Could not create namespace: ${r.data?.message || "unknown error"}`,
     r.ok ? "success" : "error",
   );
   if (r.ok) loadNamespaces();
 }
 
 async function deleteNamespace(name) {
-  if (!confirm(`Delete namespace "${name}"?`)) return;
+  if (!confirm(`Delete namespace "${name}" and all of its vectors? This cannot be undone.`)) return;
   const r = await apiCall(`/api/namespaces/${encodeURIComponent(name)}`, {
     method: "DELETE",
   });
-  showToast(r.ok ? "Deleted" : "Error", r.ok ? "success" : "error");
+  showToast(
+    r.ok ? `Deleted namespace "${name}"` : `Could not delete namespace "${name}"`,
+    r.ok ? "success" : "error",
+  );
   loadNamespaces();
 }
 
@@ -2051,7 +2124,7 @@ async function geAddNode() {
   document.getElementById("ge-status").textContent = r.ok
     ? `Node #${r.data.id} added`
     : `Error: ${r.data.message || ""}`;
-  if (r.ok) showToast(`Node #${r.data.id} created`, "success");
+  if (r.ok) showToast(`Added node #${r.data.id}`, "success");
 }
 
 async function geAddEdge() {
@@ -2098,7 +2171,7 @@ async function geShortestPath() {
   if (r.ok && r.data.path !== null) {
     document.getElementById("ge-status").textContent =
       `Path: ${r.data.node_ids.join(" -> ")} (weight: ${r.data.total_weight.toFixed(2)})`;
-    showToast(`Path found: ${r.data.node_ids.length} nodes`, "success");
+    showToast(`Shortest path has ${r.data.node_ids.length} nodes`, "success");
   } else {
     document.getElementById("ge-status").textContent =
       r.data.message || "No path found";
@@ -2108,7 +2181,7 @@ async function geShortestPath() {
 async function geRefresh() {
   const r = await apiCall("/api/graph/bfs?start=0&max_depth=10");
   if (!r.ok) {
-    document.getElementById("ge-status").textContent = "Graph empty or error";
+    document.getElementById("ge-status").textContent = "No graph data. Add a node first, or check the server.";
     return;
   }
   geNodes = r.data.nodes.map((n) => ({
@@ -2141,7 +2214,7 @@ function simGraphExplorer() {
   function draw() {
     const ctx = canvas.getContext("2d");
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.fillStyle = "#0c1118";
+    ctx.fillStyle = T.surface;
     ctx.fillRect(0, 0, w, h);
     for (const e of geEdges) {
       const ai = idMap.get(e.source),
@@ -2152,20 +2225,20 @@ function simGraphExplorer() {
       ctx.beginPath();
       ctx.moveTo(a.x, a.y);
       ctx.lineTo(b.x, b.y);
-      ctx.strokeStyle = "#333";
-      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = T.axis;
+      ctx.lineWidth = 1;
       ctx.stroke();
     }
     for (const n of geNodes) {
       ctx.beginPath();
       ctx.arc(n.x, n.y, 6, 0, Math.PI * 2);
-      ctx.fillStyle = "#2ee6c8";
+      ctx.fillStyle = T.s1;
       ctx.fill();
-      ctx.strokeStyle = "#fff";
+      ctx.strokeStyle = T.surface;
       ctx.lineWidth = 2;
       ctx.stroke();
-      ctx.fillStyle = "#a0a0a0";
-      ctx.font = '10px "IBM Plex Mono"';
+      ctx.fillStyle = T.ink2;
+      ctx.font = CHART_FONT;
       ctx.textAlign = "center";
       ctx.fillText(n.label || `#${n.id}`, n.x, n.y - 10);
     }
