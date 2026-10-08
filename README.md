@@ -44,6 +44,7 @@ metrics: Euclidean, Cosine, Dot Product, Manhattan, Hamming, all SIMD-optimized
 ## Capabilities
 
 - **Search** - k-NN, range, batch, filtered (metadata pre/post), hybrid (BM25 + vector fusion), SQL (`SELECT ... ORDER BY vector_distance(...)`), phased ranking, MMR diversity, grouped, geo-spatial, ColBERT late interaction, recommendations.
+- **Text search** - multilingual full-text with Porter stemming across 6 languages (English, German, French, Spanish, Italian, Portuguese) + auto-detect, BlockMax WAND, and phrase matching; SPLADE-style learned-sparse inverted index.
 - **Storage and durability** - crash-safe WAL with replay and size-based checkpointing, atomic snapshots, point-in-time snapshots, collection versioning, hot/warm/cold tiering, WiscKey value-log.
 - **Transactions** - MVCC snapshot isolation, crash-atomic commit (one WAL record per transaction), transactions over REST (`/txn/*`), automatic tombstone GC.
 - **Quantization** - PQ/OPQ, scalar (SQ8), TurboQuant/PolarQuant, binary, RaBitQ, 1.5/2/4/8-bit.
