@@ -56,6 +56,7 @@ typedef enum {
     GV_HTTP_403_FORBIDDEN = 403,
     GV_HTTP_404_NOT_FOUND = 404,
     GV_HTTP_405_METHOD_NOT_ALLOWED = 405,
+    GV_HTTP_409_CONFLICT = 409,
     GV_HTTP_413_PAYLOAD_TOO_LARGE = 413,
     GV_HTTP_429_TOO_MANY_REQUESTS = 429,
     GV_HTTP_500_INTERNAL_ERROR = 500,
@@ -81,6 +82,26 @@ typedef struct {
     const char *data_dir;              /**< Base directory that /save output is confined to (default: "./data"). */
     int allow_unauthenticated;         /**< INSECURE opt-in: when non-zero, allow mutating/admin endpoints
                                         *   without an api_key. Default 0 (fail closed). */
+    /**
+     * Optional authentication manager (see security/auth.h). When set, it takes
+     * precedence over @ref api_key and enables multiple API keys (with per-key
+     * expiry/revocation) and JWT bearer tokens: every request credential is
+     * validated via auth_authenticate(). NULL (default) keeps the single
+     * shared-secret @ref api_key behaviour.
+     */
+    struct GV_AuthManager *auth_manager;
+    /**
+     * TLS (HTTPS) — set BOTH to a PEM certificate chain and its private key to
+     * serve over HTTPS instead of plain HTTP. NULL (default) = plaintext HTTP.
+     * Requires libmicrohttpd built with TLS support; server_start fails if the
+     * handshake backend is unavailable.
+     */
+    const char *tls_cert_pem;          /**< PEM-encoded certificate chain. */
+    const char *tls_key_pem;           /**< PEM-encoded private key. */
+    int read_only;                     /**< When non-zero, reject all mutating endpoints
+                                        *   (writes/admin) with 403 — for read replicas or
+                                        *   a safe maintenance mode. Reads/search still serve.
+                                        *   Default 0. */
 } GV_ServerConfig;
 
 /**

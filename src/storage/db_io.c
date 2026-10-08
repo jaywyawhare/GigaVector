@@ -305,7 +305,7 @@ int db_save(const GV_Database *db, const char *filepath) {
      * so they persist across every index's save format. Checkpoint semantics: a
      * reloaded database has no older snapshots to serve, so the tombstone becomes
      * a permanent delete. (No-op unless transactions have run.) */
-    if (db->commit_version != 0 && db->soa_storage != NULL) {
+    if (__atomic_load_n(&db->commit_version, __ATOMIC_SEQ_CST) != 0 && db->soa_storage != NULL) {
         GV_Database *mdb = (GV_Database *)db;
         /* Snapshot the tombstoned indices UNDER the read lock so the scan doesn't
          * race a concurrent db_add_vector resizing delete_version[]/deleted[].
@@ -334,6 +334,27 @@ int db_save(const GV_Database *db, const char *filepath) {
     int status = db_save_locked(db, filepath);
     pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
     return status;
+}
+
+int db_wal_checkpoint(GV_Database *db) {
+    if (db == NULL || db->wal == NULL || db->filepath == NULL) {
+        return -1;  /* nothing to checkpoint (in-memory or no WAL) */
+    }
+    /* db_save snapshots to the backing file and truncates the WAL (see above). */
+    return db_save(db, db->filepath);
+}
+
+int db_wal_checkpoint_if_needed(GV_Database *db, size_t threshold_bytes) {
+    if (db == NULL || db->wal == NULL || db->filepath == NULL) {
+        return 0;  /* nothing to do */
+    }
+    pthread_mutex_lock(&db->wal_mutex);
+    uint64_t sz = wal_size(db->wal);
+    pthread_mutex_unlock(&db->wal_mutex);
+    if (sz < (uint64_t)threshold_bytes) {
+        return 0;
+    }
+    return (db_wal_checkpoint(db) == 0) ? 1 : -1;
 }
 
 int db_export_json(const GV_Database *db, const char *filepath) {

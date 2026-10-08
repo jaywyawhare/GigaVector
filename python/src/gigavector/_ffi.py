@@ -1215,6 +1215,7 @@ double gv_hybrid_normalize_score(double score, double min_score, double max_scor
 // Authentication
 typedef enum { GV_AUTH_NONE = 0, GV_AUTH_API_KEY = 1, GV_AUTH_JWT = 2 } GV_AuthType;
 typedef enum { GV_AUTH_SUCCESS = 0, GV_AUTH_INVALID_KEY = 1, GV_AUTH_EXPIRED = 2, GV_AUTH_INVALID_SIGNATURE = 3, GV_AUTH_INVALID_FORMAT = 4, GV_AUTH_MISSING = 5 } GV_AuthResult;
+typedef enum { GV_SCOPE_READ_WRITE = 0, GV_SCOPE_READ_ONLY = 1 } GV_AuthScope;
 
 typedef struct {
     char *key_id;
@@ -1223,6 +1224,7 @@ typedef struct {
     uint64_t created_at;
     uint64_t expires_at;
     int enabled;
+    GV_AuthScope scope;
 } GV_APIKey;
 
 typedef struct {
@@ -1244,6 +1246,7 @@ typedef struct {
     uint64_t auth_time;
     uint64_t expires_at;
     void *claims;
+    GV_AuthScope scope;
 } GV_Identity;
 
 typedef struct GV_AuthManager GV_AuthManager;

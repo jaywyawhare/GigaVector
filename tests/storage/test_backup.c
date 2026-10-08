@@ -4,6 +4,7 @@
 #include <string.h>
 #include <unistd.h>
 #include "storage/backup.h"
+#include "storage/database.h"
 #include "../test_tmp.h"
 
 #define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while(0)
@@ -158,8 +159,66 @@ static int test_header_struct(void) {
 typedef int (*test_fn)(void);
 typedef struct { const char *name; test_fn fn; } TestCase;
 
+/* Encrypted backup: V2 header, per-backup random salt, and a key round-trip. */
+static int test_encrypted_backup_salt(void) {
+    char srcdb[512], bakA[512], bakB[512], restored[512];
+    ASSERT(gv_test_make_temp_path(srcdb, sizeof(srcdb), "gv_enc_src", ".db") == 0, "src path");
+    ASSERT(gv_test_make_temp_path(bakA, sizeof(bakA), "gv_enc_a", ".bak") == 0, "bakA path");
+    ASSERT(gv_test_make_temp_path(bakB, sizeof(bakB), "gv_enc_b", ".bak") == 0, "bakB path");
+    ASSERT(gv_test_make_temp_path(restored, sizeof(restored), "gv_enc_rst", ".db") == 0, "restore path");
+    remove(srcdb); remove(bakA); remove(bakB); remove(restored);
+
+    GV_Database *db = db_open(srcdb, 4, GV_INDEX_TYPE_FLAT);
+    ASSERT(db != NULL, "open source db");
+    float v[4] = {1, 0, 0, 0};
+    { int _r = db_add_vector(db, v, 4); ASSERT(_r == 0, "add vector"); }
+
+    GV_BackupOptions opts;
+    backup_options_init(&opts);
+    opts.encryption_key = "correct horse battery staple";
+
+    GV_BackupResult *ra = backup_create(db, bakA, &opts, NULL, NULL);
+    ASSERT(ra && ra->success, "encrypted backup A succeeds");
+    backup_result_free(ra);
+    GV_BackupResult *rb = backup_create(db, bakB, &opts, NULL, NULL);
+    ASSERT(rb && rb->success, "encrypted backup B succeeds");
+    backup_result_free(rb);
+    db_close(db);
+
+    /* Both backups carry the V2 magic and a 16-byte salt that MUST differ, even
+     * though the passphrase is identical. */
+    unsigned char ha[24], hb[24];
+    FILE *fa = fopen(bakA, "rb"); ASSERT(fa != NULL, "open bakA");
+    ASSERT(fread(ha, 1, 24, fa) == 24, "read bakA header"); fclose(fa);
+    FILE *fb = fopen(bakB, "rb"); ASSERT(fb != NULL, "open bakB");
+    ASSERT(fread(hb, 1, 24, fb) == 24, "read bakB header"); fclose(fb);
+    ASSERT(memcmp(ha, "GVBKENC2", 8) == 0, "backup uses V2 (random-salt) magic");
+    ASSERT(memcmp(ha + 8, hb + 8, 16) != 0, "per-backup salts differ for same passphrase");
+
+    /* Restore with the correct key round-trips the data. */
+    GV_RestoreOptions ropts;
+    restore_options_init(&ropts);
+    ropts.decryption_key = "correct horse battery staple";
+    ropts.overwrite = 1;
+    GV_BackupResult *rr = backup_restore(bakA, restored, &ropts, NULL, NULL);
+    ASSERT(rr && rr->success, "restore with correct key succeeds");
+    backup_result_free(rr);
+
+    GV_Database *db2 = db_open(restored, 4, GV_INDEX_TYPE_FLAT);
+    ASSERT(db2 != NULL, "reopen restored db");
+    GV_SearchResult res[1];
+    int n = db_search(db2, v, 1, res, GV_DISTANCE_EUCLIDEAN);
+    ASSERT(n == 1, "restored vector searchable");
+    gv_search_results_free(res, (size_t)(n > 0 ? n : 0));
+    db_close(db2);
+
+    remove(srcdb); remove(bakA); remove(bakB); remove(restored);
+    return 0;
+}
+
 int main(void) {
     TestCase tests[] = {
+        {"Testing encrypted backup salt...",        test_encrypted_backup_salt},
         {"Testing backup options init...",          test_backup_options_init},
         {"Testing restore options init...",         test_restore_options_init},
         {"Testing compression string...",           test_compression_string},

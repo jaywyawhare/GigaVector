@@ -158,6 +158,25 @@ GV_BackupResult *backup_restore_to_db(const char *backup_path,
                                           const GV_RestoreOptions *options,
                                           GV_Database **db);
 
+/* Native object-store backup (no shelling out). GV_ObjectStore is from
+ * storage/object_store.h; a filesystem or S3/GCS backend both work. */
+struct GV_ObjectStore;
+
+/**
+ * @brief Back up @p db directly into an object store under @p key.
+ * @return Backup result (success=1 on success).
+ */
+GV_BackupResult *backup_to_object_store(GV_Database *db, struct GV_ObjectStore *os,
+                                        const char *key, const GV_BackupOptions *options);
+
+/**
+ * @brief Restore a database from an object store object @p key into @p db_path.
+ * @return Backup result (success=1 on success).
+ */
+GV_BackupResult *backup_restore_from_object_store(struct GV_ObjectStore *os, const char *key,
+                                                  const char *db_path,
+                                                  const GV_RestoreOptions *options);
+
 /**
  * @brief Read backup header without full restore.
  *

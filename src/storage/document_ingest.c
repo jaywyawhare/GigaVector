@@ -5,6 +5,7 @@
  *        each chunk's chunk_id.
  */
 #include "storage/document_ingest.h"
+#include "storage/document_extract.h"
 #include "storage/chunker.h"
 #include "core/memory.h"
 #include "core/utils.h"
@@ -153,5 +154,20 @@ int gv_ingest_document(GV_Database *db, GV_KnowledgeGraph *kg, GV_MemoryLayer *m
     gv_free((void *)done);
     gv_free(emb);
     gv_chunks_free(chunks, nchunks);
+    return rc;
+}
+
+int gv_ingest_document_bytes(GV_Database *db, GV_KnowledgeGraph *kg, GV_MemoryLayer *mem,
+                             int fmt, const void *data, size_t len, const char *doc_id,
+                             const GV_IngestConfig *cfg, GV_IngestStats *out) {
+    if (out) memset(out, 0, sizeof(*out));   /* zero stats even on the early returns below */
+    if (!data) return -1;
+
+    char *text = gv_document_extract_text((GV_DocFormat)fmt, data, len);
+    if (!text) return -1;
+    if (text[0] == '\0') { gv_free(text); return -1; } /* nothing extractable */
+
+    int rc = gv_ingest_document(db, kg, mem, text, doc_id, cfg, out);
+    gv_free(text);
     return rc;
 }

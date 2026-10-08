@@ -57,6 +57,12 @@
 static _Thread_local uint64_t g_txn_commit_stamp = 0;
 void db_set_commit_stamp(uint64_t stamp) { g_txn_commit_stamp = stamp; }
 
+/* When set on a thread, db_add_vector applies to the index but does NOT write
+ * its own per-insert WAL record — the transaction commit path writes one atomic
+ * TXN record for the whole batch instead. See transaction.c:db_commit. */
+static _Thread_local int g_txn_wal_suppress = 0;
+void db_set_wal_suppress(int on) { g_txn_wal_suppress = on; }
+
 int db_add_vector(GV_Database *db, const float *data, size_t dimension) {
     if (db == NULL || data == NULL || dimension == 0 || dimension != db->dimension) {
         return -1;
@@ -206,7 +212,7 @@ int db_add_vector(GV_Database *db, const float *data, size_t dimension) {
             size_t nh = 0;
             status = ivfdisk_insert_routed((GV_IVFDiskIndex *)db->hnsw_index, stored,
                                            dimension, vector_index, heads, &nh, 2);
-            if (status == 0 && db->wal != NULL) {
+            if (status == 0 && db->wal != NULL && !g_txn_wal_suppress) {
                 pthread_mutex_lock(&db->wal_mutex);
                 for (size_t hi = 0; hi < nh; ++hi) {
                     if (wal_append_ivfdisk_append(db->wal, heads[hi], (uint64_t)vector_index,
@@ -291,15 +297,22 @@ int db_add_vector(GV_Database *db, const float *data, size_t dimension) {
         return -1;
     }
 
-    /* Append-after-apply: the in-memory insert succeeded, so now durably
-     * record it in the WAL. Doing this under the held write lock guarantees
-     * the WAL order matches the in-memory (positional) order, and that no
-     * phantom insert is ever durably recorded for an apply that failed. */
-    if (db->wal != NULL && db->wal_replaying == 0) {
+    /* Append-after-apply: the in-memory insert succeeded, so now record it in
+     * the WAL. The record bytes are written+fflush'd UNDER the write lock (so
+     * WAL order matches the in-memory positional order, and no phantom insert is
+     * recorded for a failed apply), but the fsync durability barrier is DEFERRED
+     * until after the write lock is released — so a slow fsync no longer stalls
+     * concurrent readers. wal_fsync_deferred() is serialized against WAL
+     * truncation, and an un-fsync'd record that a checkpoint truncates is still
+     * durable via the snapshot (the checkpoint ran under the rwlock after this
+     * insert was applied). */
+    GV_WAL *deferred_wal = NULL;
+    if (db->wal != NULL && db->wal_replaying == 0 && !g_txn_wal_suppress) {
         pthread_mutex_lock(&db->wal_mutex);
-        int wal_res = wal_append_insert(db->wal, data, dimension, NULL, NULL);
+        int wal_res = wal_append_insert_deferred(db->wal, data, dimension, NULL, NULL);
         if (wal_res == 0) {
             db->total_wal_records += 1;
+            deferred_wal = db->wal;
         }
         pthread_mutex_unlock(&db->wal_mutex);
         if (wal_res != 0) {
@@ -327,6 +340,15 @@ int db_add_vector(GV_Database *db, const float *data, size_t dimension) {
     }
     size_t emit_index = db->count - 1;
     pthread_rwlock_unlock(&db->rwlock);
+
+    /* Durability barrier OUTSIDE the write lock: concurrent readers are not
+     * blocked during the fsync. Non-fatal on failure (bytes are already written
+     * and fflush'd; this forces them to stable storage). */
+    if (deferred_wal != NULL) {
+        if (wal_fsync_deferred(deferred_wal) != 0) {
+            GV_LOG_ERROR("db_add_vector: deferred WAL fsync failed - insert may not be durable");
+        }
+    }
 
     db_emit_change(db, GV_CDC_INSERT, GV_EVENT_INSERT, emit_index, data, dimension);
 
@@ -871,7 +893,7 @@ int db_add_vector_with_rich_metadata(GV_Database *db, const float *data, size_t 
             size_t nh = 0;
             status = ivfdisk_insert_routed((GV_IVFDiskIndex *)db->hnsw_index, stored,
                                            dimension, vector_index, heads, &nh, 2);
-            if (status == 0 && db->wal != NULL) {
+            if (status == 0 && db->wal != NULL && !g_txn_wal_suppress) {
                 pthread_mutex_lock(&db->wal_mutex);
                 for (size_t hi = 0; hi < nh; ++hi) {
                     if (wal_append_ivfdisk_append(db->wal, heads[hi], (uint64_t)vector_index,

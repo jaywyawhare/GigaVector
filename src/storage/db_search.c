@@ -185,7 +185,7 @@ int db_search_at_version(const GV_Database *db, const float *query_data, size_t 
                          GV_SearchResult *results, GV_DistanceType distance_type,
                          uint64_t snapshot) {
     if (db == NULL || query_data == NULL || results == NULL || k == 0) return -1;
-    if (db->commit_version == 0) return db_search_raw(db, query_data, k, results, distance_type);
+    if (__atomic_load_n(&db->commit_version, __ATOMIC_SEQ_CST) == 0) return db_search_raw(db, query_data, k, results, distance_type);
 
     /* Over-fetch so filtering still returns up to k visible neighbours. */
     size_t fetch = k * 2 + 16;
@@ -216,7 +216,7 @@ int db_search_at_version(const GV_Database *db, const float *query_data, size_t 
 int db_search(const GV_Database *db, const float *query_data, size_t k,
               GV_SearchResult *results, GV_DistanceType distance_type) {
     /* Non-transactional reads see the latest committed snapshot. */
-    uint64_t snap = db ? db->commit_version : 0;
+    uint64_t snap = db ? __atomic_load_n(&db->commit_version, __ATOMIC_SEQ_CST) : 0;
     int n = db_search_at_version(db, query_data, k, results, distance_type, snap);
     /* Phase 4: record accesses so the hot working set drives tier promotion. */
     if (n > 0 && db && db->tiering_enabled && db->tiered_storage) {

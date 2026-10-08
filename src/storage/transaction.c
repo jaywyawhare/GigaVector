@@ -1,8 +1,10 @@
 #include "storage/transaction.h"
 #include "storage/soa_storage.h"
 #include "storage/wal.h"
+#include "storage/db_internal.h"   /* db_estimate_vector_memory */
 #include "schema/vector.h"
 #include "core/memory.h"
+#include "core/log.h"
 
 #include <string.h>
 #include <pthread.h>
@@ -23,9 +25,19 @@ GV_DBTxn *db_begin(GV_Database *db) {
     t->db = db;
     t->dimension = db->dimension;
     t->state = GV_TXN_ACTIVE;
-    /* Snapshot under the commit lock so we pair cleanly with in-flight commits. */
+    /* Snapshot under the commit lock so we pair cleanly with in-flight commits,
+     * and register this snapshot's read_version so GC never reclaims a version
+     * still visible to us. */
     pthread_mutex_lock(&db->txn_mutex);
-    t->read_version = db->commit_version;
+    t->read_version = __atomic_load_n(&db->commit_version, __ATOMIC_SEQ_CST);
+    if (db->txn_active_count == db->txn_active_cap) {
+        size_t nc = db->txn_active_cap ? db->txn_active_cap * 2 : 8;
+        uint64_t *na = (uint64_t *)gv_realloc(db->txn_active_versions, nc * sizeof(uint64_t));
+        if (!na) { pthread_mutex_unlock(&db->txn_mutex); gv_free(t); return NULL; }
+        db->txn_active_versions = na;
+        db->txn_active_cap = nc;
+    }
+    db->txn_active_versions[db->txn_active_count++] = t->read_version;
     pthread_mutex_unlock(&db->txn_mutex);
     return t;
 }
@@ -65,7 +77,25 @@ static int txn_is_deleted_locally(const GV_DBTxn *t, size_t idx) {
     return 0;
 }
 
+/* Remove one occurrence of this txn's read_version from the active set. Called
+ * from txn_free on every terminal path (commit/rollback/conflict/abort), always
+ * without txn_mutex held. */
+static void txn_deregister(GV_DBTxn *t) {
+    GV_Database *db = t->db;
+    if (!db) return;
+    pthread_mutex_lock(&db->txn_mutex);
+    for (size_t i = 0; i < db->txn_active_count; i++) {
+        if (db->txn_active_versions[i] == t->read_version) {
+            db->txn_active_versions[i] = db->txn_active_versions[db->txn_active_count - 1];
+            db->txn_active_count--;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&db->txn_mutex);
+}
+
 static void txn_free(GV_DBTxn *t) {
+    txn_deregister(t);
     for (size_t i = 0; i < t->ins_n; i++) gv_free(t->ins_data[i]);
     gv_free(t->ins_data);
     gv_free(t->del_idx);
@@ -152,43 +182,85 @@ int db_commit(GV_DBTxn *t) {
         return GV_TXN_OK;
     }
 
-    uint64_t cv = ++db->commit_version;
+    /* Atomic admission control: reject the whole commit up front if applying
+     * every staged insert would breach a resource limit (max_vectors /
+     * max_memory). This makes the common, deterministic failure all-or-nothing
+     * instead of leaving a partially-applied transaction. (A rare mid-loop OOM
+     * is still reported as a hard failure below.) */
+    if (t->ins_n > 0) {
+        size_t per_vec = db_estimate_vector_memory(t->dimension);
+        if (db_check_resource_limits(db, t->ins_n, per_vec * t->ins_n) != 0) {
+            pthread_mutex_unlock(&db->txn_mutex);
+            t->state = GV_TXN_ABORTED;
+            txn_free(t);
+            return -1;
+        }
+    }
 
-    /* Apply staged inserts. db_add_vector stamps each inserted slot with `cv`
-     * atomically under its own write lock via the thread-local commit stamp, so
-     * the right slot is tagged even if a non-transactional insert interleaves.
-     * If any insert fails the commit is aborted (best-effort: earlier inserts of
-     * this transaction may remain — a hard failure is reported, not GV_TXN_OK). */
+    /* Allocate the delete-index buffer BEFORE applying anything: if this fails
+     * we must abort before any in-memory change, otherwise deletes would be
+     * applied but omitted from the atomic TXN record and lost on replay. */
+    uint64_t *txn_dels = NULL;
+    if (t->del_n > 0) {
+        txn_dels = (uint64_t *)gv_alloc(t->del_n * sizeof(uint64_t));
+        if (!txn_dels) {
+            pthread_mutex_unlock(&db->txn_mutex);
+            t->state = GV_TXN_ABORTED;
+            txn_free(t);
+            return -1;
+        }
+    }
+
+    uint64_t cv = __atomic_add_fetch(&db->commit_version, 1, __ATOMIC_SEQ_CST);
+
+    /* Apply staged inserts to the index ONLY: db_set_wal_suppress stops
+     * db_add_vector from writing its own per-insert WAL record, so the entire
+     * transaction is logged as a single atomic TXN record below (crash-atomic).
+     * db_add_vector still stamps each slot's MVCC create_version with `cv`. */
     db_set_commit_stamp(cv);
+    db_set_wal_suppress(1);
     int apply_ok = 1;
     for (size_t i = 0; i < t->ins_n; i++) {
         if (db_add_vector(db, t->ins_data[i], t->dimension) != 0) { apply_ok = 0; break; }
     }
+    db_set_wal_suppress(0);
     db_set_commit_stamp(0);
     if (!apply_ok) {
+        gv_free(txn_dels);
         pthread_mutex_unlock(&db->txn_mutex);
         t->state = GV_TXN_ABORTED;
         txn_free(t);
         return -1;
     }
 
-    /* Apply staged deletes as MVCC tombstones (older snapshots still see them).
-     * Also WAL-log each as a delete so a crash before the next snapshot replays it:
-     * post-recovery there are no older snapshots, so a hard delete is the correct
-     * materialisation of the tombstone. */
+    /* Apply staged deletes as MVCC tombstones (older snapshots still see them),
+     * collecting the indices we actually tombstoned so they go into the atomic
+     * TXN record. No per-delete WAL record is written here. */
+    size_t txn_del_n = 0;
     pthread_rwlock_wrlock(&db->rwlock);
     for (size_t i = 0; i < t->del_n; i++) {
         uint64_t dv = soa_storage_delete_version(db->soa_storage, t->del_idx[i]);
         if (dv == 0) {
             soa_storage_set_delete_version(db->soa_storage, t->del_idx[i], cv);
-            if (db->wal) {
-                pthread_mutex_lock(&db->wal_mutex);
-                wal_append_delete(db->wal, t->del_idx[i]);
-                pthread_mutex_unlock(&db->wal_mutex);
-            }
+            if (txn_dels) txn_dels[txn_del_n++] = (uint64_t)t->del_idx[i];
         }
     }
     pthread_rwlock_unlock(&db->rwlock);
+
+    /* One atomic WAL record for the whole transaction. A crash before this fsync
+     * loses the entire transaction (none replayed); a crash after replays it in
+     * full — crash-atomic. In-memory databases (no WAL) skip logging. */
+    if (db->wal != NULL) {
+        pthread_mutex_lock(&db->wal_mutex);
+        if (wal_append_txn(db->wal, (const float *const *)t->ins_data, t->dimension,
+                           t->ins_n, txn_dels, txn_del_n) != 0) {
+            /* Durability failure: the in-memory commit stands but is not logged
+             * (mirrors db_add_vector's non-fatal WAL-error semantics). Surface it. */
+            GV_LOG_ERROR("db_commit: wal_append_txn failed - transaction not durable");
+        }
+        pthread_mutex_unlock(&db->wal_mutex);
+    }
+    gv_free(txn_dels);
 
     pthread_mutex_unlock(&db->txn_mutex);
     t->state = GV_TXN_COMMITTED;
@@ -201,6 +273,35 @@ int db_rollback(GV_DBTxn *t) {
     t->state = GV_TXN_ABORTED;
     txn_free(t);
     return 0;
+}
+
+uint64_t db_txn_min_active_version(GV_Database *db) {
+    if (!db) return 0;
+    pthread_mutex_lock(&db->txn_mutex);
+    uint64_t min = 0; int have = 0;
+    for (size_t i = 0; i < db->txn_active_count; i++) {
+        uint64_t v = db->txn_active_versions[i];
+        if (!have || v < min) { min = v; have = 1; }
+    }
+    pthread_mutex_unlock(&db->txn_mutex);
+    return have ? min : 0;   /* 0 = no active transactions */
+}
+
+size_t db_txn_gc_auto(GV_Database *db) {
+    if (!db || !db->soa_storage) return 0;
+    /* Compute the safe point atomically: the smallest read_version any live
+     * snapshot holds (so tombstones deleted at <= that version are invisible to
+     * all of them), or commit_version+1 when no transaction is active. */
+    pthread_mutex_lock(&db->txn_mutex);
+    uint64_t cv = __atomic_load_n(&db->commit_version, __ATOMIC_SEQ_CST);
+    uint64_t min = 0; int have = 0;
+    for (size_t i = 0; i < db->txn_active_count; i++) {
+        uint64_t v = db->txn_active_versions[i];
+        if (!have || v < min) { min = v; have = 1; }
+    }
+    pthread_mutex_unlock(&db->txn_mutex);
+    uint64_t safe_below = have ? (min + 1) : (cv + 1);
+    return db_txn_gc(db, safe_below);
 }
 
 size_t db_txn_gc(GV_Database *db, uint64_t safe_below) {

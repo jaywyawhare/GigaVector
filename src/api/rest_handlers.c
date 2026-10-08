@@ -7,6 +7,8 @@
 #include "features/knowledge_graph.h"
 #include "features/graph_db.h"
 #include "core/memory.h"
+#include "core/utils.h"
+#include "api/txn_registry.h"
 #include "features/json.h"
 #include "storage/database.h"
 #include "core/types.h"
@@ -217,6 +219,176 @@ GV_HttpResponse *rest_handle_stats(const GV_HandlerContext *ctx,
     json_object_set(obj, "memory_bytes", json_number((double)memory));
     json_object_set(obj, "dimension", json_number((double)ctx->db->dimension));
 
+    return rest_response_json(obj);
+}
+
+GV_HttpResponse *rest_handle_metrics(const GV_HandlerContext *ctx,
+                                         const GV_HttpRequest *request) {
+    (void)request;
+    if (!ctx || !ctx->db) {
+        return rest_response_error(GV_HTTP_500_INTERNAL_ERROR, "internal_error",
+                                       "Database not available");
+    }
+
+    GV_DBStats stats;
+    db_get_stats(ctx->db, &stats);
+    size_t memory = db_get_memory_usage(ctx->db);
+    int health = db_health_check(ctx->db);          /* 0 = healthy */
+    int up = (health == 0) ? 1 : 0;
+
+    /* Prometheus text exposition format (version 0.0.4). */
+    char buf[2048];
+    int len = snprintf(buf, sizeof(buf),
+        "# HELP gigavector_up 1 when the database is healthy, 0 otherwise.\n"
+        "# TYPE gigavector_up gauge\n"
+        "gigavector_up %d\n"
+        "# HELP gigavector_vectors Vectors currently stored.\n"
+        "# TYPE gigavector_vectors gauge\n"
+        "gigavector_vectors %zu\n"
+        "# HELP gigavector_dimension Configured vector dimension.\n"
+        "# TYPE gigavector_dimension gauge\n"
+        "gigavector_dimension %zu\n"
+        "# HELP gigavector_memory_bytes Estimated resident memory in bytes.\n"
+        "# TYPE gigavector_memory_bytes gauge\n"
+        "gigavector_memory_bytes %zu\n"
+        "# HELP gigavector_inserts_total Total successful vector insertions.\n"
+        "# TYPE gigavector_inserts_total counter\n"
+        "gigavector_inserts_total %llu\n"
+        "# HELP gigavector_queries_total Total k-NN / filtered / batch queries.\n"
+        "# TYPE gigavector_queries_total counter\n"
+        "gigavector_queries_total %llu\n"
+        "# HELP gigavector_range_queries_total Total range-search calls.\n"
+        "# TYPE gigavector_range_queries_total counter\n"
+        "gigavector_range_queries_total %llu\n",
+        up,
+        ctx->db->count,
+        ctx->db->dimension,
+        memory,
+        (unsigned long long)stats.total_inserts,
+        (unsigned long long)stats.total_queries,
+        (unsigned long long)stats.total_range_queries);
+
+    if (len < 0 || (size_t)len >= sizeof(buf)) {
+        return rest_response_error(GV_HTTP_500_INTERNAL_ERROR, "internal_error",
+                                       "Failed to render metrics");
+    }
+
+    GV_HttpResponse *response = gv_calloc(1, sizeof(GV_HttpResponse));
+    if (!response) {
+        return rest_response_error(GV_HTTP_500_INTERNAL_ERROR, "internal_error",
+                                       "Out of memory");
+    }
+    response->body = gv_dup_cstr(buf);
+    if (!response->body) {
+        gv_free(response);
+        return rest_response_error(GV_HTTP_500_INTERNAL_ERROR, "internal_error",
+                                       "Out of memory");
+    }
+    response->body_length = (size_t)len;
+    response->status = GV_HTTP_200_OK;
+    response->content_type = "text/plain; version=0.0.4; charset=utf-8";
+    return response;
+}
+
+/* Extract "txn_id" from a JSON body; sets *body_out (caller frees) or NULL. */
+static const char *txn_id_from_body(const GV_HttpRequest *request, GV_JsonValue **body_out) {
+    *body_out = NULL;
+    if (request->body && request->body_length > 0) {
+        GV_JsonError err;
+        GV_JsonValue *body = rest_parse_body(request, &err);
+        if (body) {
+            *body_out = body;
+            return json_get_string_path(body, "txn_id");
+        }
+    }
+    return NULL;
+}
+
+GV_HttpResponse *rest_handle_txn_begin(const GV_HandlerContext *ctx,
+                                           const GV_HttpRequest *request) {
+    (void)request;
+    if (!ctx || !ctx->db) {
+        return rest_response_error(GV_HTTP_500_INTERNAL_ERROR, "internal_error",
+                                       "Database not available");
+    }
+    if (!ctx->txn_registry) {
+        return rest_response_error(GV_HTTP_503_SERVICE_UNAVAILABLE, "txn_unavailable",
+                                       "Transactions are not enabled on this server");
+    }
+    char token[GV_TXN_TOKEN_SIZE];
+    if (txn_registry_begin(ctx->txn_registry, ctx->db, token, sizeof(token)) != 0) {
+        return rest_response_error(GV_HTTP_500_INTERNAL_ERROR, "txn_begin_failed",
+                                       "Failed to begin transaction");
+    }
+    GV_JsonValue *obj = json_object();
+    json_object_set(obj, "txn_id", json_string(token));
+    return rest_response_json(obj);
+}
+
+GV_HttpResponse *rest_handle_txn_commit(const GV_HandlerContext *ctx,
+                                            const GV_HttpRequest *request) {
+    if (!ctx) {
+        return rest_response_error(GV_HTTP_500_INTERNAL_ERROR, "internal_error", "No context");
+    }
+    if (!ctx->txn_registry) {
+        return rest_response_error(GV_HTTP_503_SERVICE_UNAVAILABLE, "txn_unavailable",
+                                       "Transactions are not enabled on this server");
+    }
+    GV_JsonValue *body = NULL;
+    const char *tid = txn_id_from_body(request, &body);
+    if (!tid) {
+        if (body) json_free(body);
+        return rest_response_error(GV_HTTP_400_BAD_REQUEST, "missing_txn_id",
+                                       "Request must include 'txn_id'");
+    }
+    int rc = txn_registry_commit(ctx->txn_registry, tid);
+    if (body) json_free(body);
+
+    if (rc == -2) {
+        return rest_response_error(GV_HTTP_404_NOT_FOUND, "unknown_txn",
+                                       "No such transaction");
+    }
+    if (rc == GV_TXN_CONFLICT) {
+        return rest_response_error(GV_HTTP_409_CONFLICT, "txn_conflict",
+                                       "Transaction aborted due to a write-write conflict");
+    }
+    if (rc != GV_TXN_OK) {
+        return rest_response_error(GV_HTTP_500_INTERNAL_ERROR, "txn_commit_failed",
+                                       "Commit failed");
+    }
+    GV_JsonValue *obj = json_object();
+    json_object_set(obj, "status", json_string("committed"));
+    return rest_response_json(obj);
+}
+
+GV_HttpResponse *rest_handle_txn_rollback(const GV_HandlerContext *ctx,
+                                              const GV_HttpRequest *request) {
+    if (!ctx) {
+        return rest_response_error(GV_HTTP_500_INTERNAL_ERROR, "internal_error", "No context");
+    }
+    if (!ctx->txn_registry) {
+        return rest_response_error(GV_HTTP_503_SERVICE_UNAVAILABLE, "txn_unavailable",
+                                       "Transactions are not enabled on this server");
+    }
+    GV_JsonValue *body = NULL;
+    const char *tid = txn_id_from_body(request, &body);
+    if (!tid) {
+        if (body) json_free(body);
+        return rest_response_error(GV_HTTP_400_BAD_REQUEST, "missing_txn_id",
+                                       "Request must include 'txn_id'");
+    }
+    int rc = txn_registry_rollback(ctx->txn_registry, tid);
+    if (body) json_free(body);
+    if (rc == -2) {
+        return rest_response_error(GV_HTTP_404_NOT_FOUND, "unknown_txn",
+                                       "No such transaction");
+    }
+    if (rc != 0) {
+        return rest_response_error(GV_HTTP_500_INTERNAL_ERROR, "txn_rollback_failed",
+                                       "Rollback failed");
+    }
+    GV_JsonValue *obj = json_object();
+    json_object_set(obj, "status", json_string("rolled_back"));
     return rest_response_json(obj);
 }
 
@@ -1076,6 +1248,20 @@ GV_HttpResponse *rest_handle_save(const GV_HandlerContext *ctx,
     return rest_response_json(obj);
 }
 
+int rest_request_is_mutation(const char *url, GV_HttpMethod method) {
+    if (method == GV_HTTP_PUT || method == GV_HTTP_DELETE) return 1;
+    if (method == GV_HTTP_POST) {
+        /* Search endpoints are reads despite using POST (they carry a query body). */
+        if (url && (strcmp(url, "/search") == 0 ||
+                    strcmp(url, "/search/range") == 0 ||
+                    strcmp(url, "/search/batch") == 0)) {
+            return 0;
+        }
+        return 1;
+    }
+    return 0; /* GET / OPTIONS / HEAD */
+}
+
 GV_HttpResponse *rest_route(const GV_HandlerContext *ctx,
                                 const GV_HttpRequest *request) {
     if (!ctx || !request || !request->url) {
@@ -1095,12 +1281,33 @@ GV_HttpResponse *rest_route(const GV_HandlerContext *ctx,
         url = url_path;
     }
 
+    /* Read-only mode: reject any state-mutating endpoint before dispatch. */
+    if (ctx->config && ctx->config->read_only &&
+        rest_request_is_mutation(url, request->method)) {
+        return rest_response_error(GV_HTTP_403_FORBIDDEN, "read_only",
+                                       "Server is in read-only mode");
+    }
+
     if (strcmp(url, "/health") == 0 && request->method == GV_HTTP_GET) {
         return rest_handle_health(ctx, request);
     }
 
     if (strcmp(url, "/stats") == 0 && request->method == GV_HTTP_GET) {
         return rest_handle_stats(ctx, request);
+    }
+
+    if (strcmp(url, "/metrics") == 0 && request->method == GV_HTTP_GET) {
+        return rest_handle_metrics(ctx, request);
+    }
+
+    if (strcmp(url, "/txn/begin") == 0 && request->method == GV_HTTP_POST) {
+        return rest_handle_txn_begin(ctx, request);
+    }
+    if (strcmp(url, "/txn/commit") == 0 && request->method == GV_HTTP_POST) {
+        return rest_handle_txn_commit(ctx, request);
+    }
+    if (strcmp(url, "/txn/rollback") == 0 && request->method == GV_HTTP_POST) {
+        return rest_handle_txn_rollback(ctx, request);
     }
 
     if (strcmp(url, "/vectors") == 0 && request->method == GV_HTTP_POST) {

@@ -41,6 +41,10 @@ static void test_server_config_init(void) {
     TEST_ASSERT(config.enable_cors == 0, "CORS should be disabled by default");
     TEST_ASSERT(config.enable_logging == 1, "Logging should be enabled by default");
     TEST_ASSERT(config.api_key == NULL, "API key should be NULL by default");
+    TEST_ASSERT(config.auth_manager == NULL, "Auth manager should be NULL by default");
+    TEST_ASSERT(config.tls_cert_pem == NULL, "TLS cert should be NULL by default (plain HTTP)");
+    TEST_ASSERT(config.tls_key_pem == NULL, "TLS key should be NULL by default (plain HTTP)");
+    TEST_ASSERT(config.read_only == 0, "read_only should be 0 by default");
 
     TEST_PASS();
 }

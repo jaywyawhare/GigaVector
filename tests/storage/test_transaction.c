@@ -4,6 +4,7 @@
 #include <string.h>
 #include "storage/database.h"
 #include "storage/transaction.h"
+#include "../test_tmp.h"
 
 static int failures = 0;
 #define ASSERT(c, m) do { if (!(c)) { printf("FAIL: %s\n", (m)); failures++; } \
@@ -89,7 +90,93 @@ int main(void) {
     ASSERT(db_commit(G) == GV_TXN_OK, "G deletes index 2, commits");
     ASSERT(db_commit(H) == GV_TXN_CONFLICT, "H's conflicting delete is rejected");
 
+    /* ---- atomic admission: a resource-limit breach rejects the WHOLE commit
+     * with no partial application ---- */
+    {
+        GV_Database *ldb = db_open(NULL, D, GV_INDEX_TYPE_FLAT);
+        ASSERT(ldb != NULL, "open limited db");
+        { int _r = db_add_vector(ldb, v0, D); (void)_r; }   /* count = 1 */
+        GV_ResourceLimits lim;
+        memset(&lim, 0, sizeof(lim));
+        lim.max_vectors = 2;                                /* room for exactly 1 more */
+        ASSERT(db_set_resource_limits(ldb, &lim) == 0, "set max_vectors=2");
+
+        GV_DBTxn *T = db_begin(ldb);
+        ASSERT(db_txn_add_vector(T, v1, D) == 0, "stage insert 1");
+        ASSERT(db_txn_add_vector(T, v2, D) == 0, "stage insert 2");
+        ASSERT(db_txn_add_vector(T, v3, D) == 0, "stage insert 3 (would exceed limit)");
+        /* 1 existing + 3 staged = 4 > max_vectors(2): reject atomically. */
+        ASSERT(db_commit(T) == -1, "over-limit commit rejected");
+
+        GV_SearchResult lr[8];
+        int ln = db_search(ldb, v1, 8, lr, GV_DISTANCE_EUCLIDEAN);
+        ASSERT(ln == 1, "no staged inserts applied (count still 1)");
+        freeres(lr, ln);
+        db_close(ldb);
+    }
+
     db_close(db);
+
+    /* ---- auto-GC: tombstones reclaimed only when no live snapshot can see them ---- */
+    {
+        GV_Database *g = db_open(NULL, D, GV_INDEX_TYPE_FLAT);
+        ASSERT(g != NULL, "open gc db");
+        { int _r = db_add_vector(g, v0, D); (void)_r; }  /* index 0 */
+        { int _r = db_add_vector(g, v1, D); (void)_r; }  /* index 1 */
+
+        /* No active txns yet -> min active version is 0 (sentinel). */
+        ASSERT(db_txn_min_active_version(g) == 0, "no active txns => 0");
+
+        /* An old reader holds a snapshot BEFORE the delete commits. */
+        GV_DBTxn *reader = db_begin(g);                 /* read_version = 0 */
+        ASSERT(db_txn_min_active_version(g) == 0, "reader snapshot at version 0");
+
+        GV_DBTxn *del = db_begin(g);
+        ASSERT(db_txn_delete(del, 1) == 0, "stage delete of index 1");
+        ASSERT(db_commit(del) == GV_TXN_OK, "commit delete (tombstone at v1)");
+
+        /* GC must NOT reclaim the tombstone: the reader's snapshot (v0) still
+         * sees index 1 (deleted at v1 > 0). */
+        size_t reclaimed = db_txn_gc_auto(g);
+        ASSERT(reclaimed == 0, "tombstone preserved while old snapshot is live");
+
+        /* Reader finishes -> no active snapshots -> tombstone now reclaimable. */
+        ASSERT(db_rollback(reader) == 0, "finish reader");
+        ASSERT(db_txn_min_active_version(g) == 0, "no active txns after reader ends");
+        reclaimed = db_txn_gc_auto(g);
+        ASSERT(reclaimed == 1, "tombstone reclaimed once no snapshot can see it");
+
+        db_close(g);
+    }
+
+    /* ---- crash-atomic commit survives reopen via single-record WAL replay ---- */
+    {
+        char dbp[256], walp[512];
+        if (gv_test_make_temp_path(dbp, sizeof(dbp), "gv_txn_wal_db", ".bin") == 0) {
+            snprintf(walp, sizeof(walp), "%s.wal", dbp);
+            remove(dbp); remove(walp);
+
+            GV_Database *fdb = db_open(dbp, D, GV_INDEX_TYPE_FLAT);
+            ASSERT(fdb != NULL, "open file-backed db");
+            ASSERT(db_set_wal(fdb, walp) == 0, "enable wal");
+            { int _r = db_add_vector(fdb, v0, D); (void)_r; }   /* base vector -> WAL INSERT */
+            GV_DBTxn *tx = db_begin(fdb);
+            ASSERT(db_txn_add_vector(tx, v1, D) == 0, "stage t1");
+            ASSERT(db_txn_add_vector(tx, v2, D) == 0, "stage t2");
+            ASSERT(db_commit(tx) == GV_TXN_OK, "commit (one atomic WAL txn record)");
+            db_close(fdb);   /* no db_save -> recovery MUST replay the WAL */
+
+            GV_Database *rdb = db_open(dbp, D, GV_INDEX_TYPE_FLAT);
+            ASSERT(rdb != NULL, "reopen db (replays WAL)");
+            GV_SearchResult rr[8];
+            int rn = db_search(rdb, v1, 8, rr, GV_DISTANCE_EUCLIDEAN);
+            ASSERT(rn == 3, "base + 2 committed inserts recovered from the atomic txn record");
+            freeres(rr, rn);
+            db_close(rdb);
+            remove(dbp); remove(walp);
+        }
+    }
+
     printf(failures ? "\nSOME TESTS FAILED (%d)\n" : "\nALL TRANSACTION TESTS PASSED\n", failures);
     return failures ? 1 : 0;
 }

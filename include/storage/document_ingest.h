@@ -90,6 +90,22 @@ int gv_ingest_document(GV_Database *db, GV_KnowledgeGraph *kg, GV_MemoryLayer *m
                        const char *text, const char *doc_id,
                        const GV_IngestConfig *cfg, GV_IngestStats *out);
 
+/**
+ * @brief Ingest a document supplied as raw bytes in a given format.
+ *
+ * Extracts plain text from @p data according to @p fmt (see
+ * gv_document_extract_text) and forwards it to gv_ingest_document. Use
+ * GV_DOC_FORMAT_AUTO (0) to sniff the format from the content.
+ *
+ * @param fmt  Document format (int-compatible with GV_DocFormat).
+ * @param data Document bytes.
+ * @param len  Byte length of @p data.
+ * @return 0 on success, -1 on error (including extraction failure / empty text).
+ */
+int gv_ingest_document_bytes(GV_Database *db, GV_KnowledgeGraph *kg, GV_MemoryLayer *mem,
+                             int fmt, const void *data, size_t len, const char *doc_id,
+                             const GV_IngestConfig *cfg, GV_IngestStats *out);
+
 #ifdef __cplusplus
 }
 #endif

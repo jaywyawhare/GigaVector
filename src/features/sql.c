@@ -2186,6 +2186,96 @@ static int sql_having_pass(const GV_SQLStmt *stmt, const SqlGroup *g)
     }
 }
 
+/* Executor: SELECT agg1(...), agg2(...), ... with no GROUP BY. Produces a
+ * single row holding one column per projected aggregate, computed over all
+ * rows passing WHERE. Mixed aggregate/plain projections are rejected by the
+ * dispatcher before reaching here, so every projection has agg != NONE. */
+static int sql_exec_multi_aggregate(GV_SQLEngine *eng, const GV_SQLStmt *stmt,
+                                    GV_SQLResult *result)
+{
+    GV_Database *db = eng->db;
+    GV_SoAStorage *soa = db->soa_storage;
+    if (!soa) { sql_set_error(eng, "Database has no storage"); return -1; }
+
+    size_t pc = stmt->proj_count;
+    double *acc  = (double *)gv_calloc(pc, sizeof(double));
+    double *best = (double *)gv_calloc(pc, sizeof(double));
+    size_t *numn = (size_t *)gv_calloc(pc, sizeof(size_t));
+    int    *have = (int *)gv_calloc(pc, sizeof(int));
+    if (!acc || !best || !numn || !have) {
+        gv_free(acc); gv_free(best); gv_free(numn); gv_free(have);
+        sql_set_error(eng, "Out of memory");
+        return -1;
+    }
+
+    size_t total = soa->count;
+    size_t matched = 0;
+    for (size_t i = 0; i < total; i++) {
+        if (soa_storage_is_deleted(soa, i)) continue;
+        if (stmt->where) {
+            GV_Vector view;
+            if (soa_storage_get_vector_view(soa, i, &view) != 0) continue;
+            if (sql_eval_where(stmt->where, &view) != 1) continue;
+        }
+        matched++;
+
+        for (size_t p = 0; p < pc; p++) {
+            GV_SQLAggKind a = stmt->proj[p].agg;
+            if (a == GV_SQL_AGG_COUNT || !stmt->proj[p].column) continue;
+            char vbuf[4096];
+            if (sql_get_metadata_value(db, i, stmt->proj[p].column, vbuf, sizeof(vbuf)) != 0)
+                continue;
+            char *endp = NULL;
+            double v = strtod(vbuf, &endp);
+            if (endp == vbuf) continue; /* non-numeric: treated as SQL NULL */
+            sql_agg_fold(a, v, &acc[p], &best[p], &numn[p], &have[p]);
+        }
+    }
+
+    memset(result, 0, sizeof(*result));
+    result->row_count = 1;
+    result->column_count = pc;
+    result->column_names  = (char **)gv_calloc(pc, sizeof(char *));
+    result->column_values = (char **)gv_calloc(pc, sizeof(char *));
+    result->indices       = (size_t *)gv_calloc(1, sizeof(size_t));
+    if (!result->column_names || !result->column_values || !result->indices) {
+        gv_free(acc); gv_free(best); gv_free(numn); gv_free(have);
+        sql_free_result(result);
+        sql_set_error(eng, "Out of memory");
+        return -1;
+    }
+    result->indices[0] = matched;
+
+    int oom = 0;
+    for (size_t p = 0; p < pc && !oom; p++) {
+        GV_SQLAggKind a = stmt->proj[p].agg;
+        const char *name = stmt->proj[p].alias ? stmt->proj[p].alias : sql_agg_label(a);
+        result->column_names[p] = gv_dup_cstr(name);
+
+        int hv = 1;
+        double dv = sql_agg_finalize(a, matched, acc[p], best[p], numn[p], have[p], &hv);
+        char valbuf[64];
+        if (!hv) {
+            result->column_values[p] = gv_dup_cstr("NULL");
+        } else if (a == GV_SQL_AGG_COUNT) {
+            snprintf(valbuf, sizeof(valbuf), "%zu", matched);
+            result->column_values[p] = gv_dup_cstr(valbuf);
+        } else {
+            snprintf(valbuf, sizeof(valbuf), "%g", dv);
+            result->column_values[p] = gv_dup_cstr(valbuf);
+        }
+        if (!result->column_names[p] || !result->column_values[p]) oom = 1;
+    }
+
+    gv_free(acc); gv_free(best); gv_free(numn); gv_free(have);
+    if (oom) {
+        sql_free_result(result);
+        sql_set_error(eng, "Out of memory");
+        return -1;
+    }
+    return 0;
+}
+
 static void sql_group_free(SqlGroup *groups, size_t gn)
 {
     for (size_t i = 0; i < gn; i++) {
@@ -2581,16 +2671,15 @@ int sql_execute(GV_SQLEngine *eng, const char *query, GV_SQLResult *result)
             if (stmt->proj[i].agg != GV_SQL_AGG_NONE) sel_has_agg = 1;
             else sel_has_plain = 1;
         }
-        /* Without GROUP BY the only valid aggregate form is a SINGLE aggregate
-         * (proj_count==1, handled by agg_kind). Any aggregate in a multi-column
-         * projection — mixed agg+plain OR multiple aggregates — leaves neither
-         * select_columns nor agg_kind set, so the where-scan path would silently
-         * return raw rows. Reject both. */
-        if (stmt->group_by_count == 0 && sel_has_agg && stmt->proj_count > 1) {
-            sql_set_error(eng, sel_has_plain
-                ? "aggregate and non-aggregate columns cannot be mixed without GROUP BY"
-                : "multiple aggregates without GROUP BY are not supported");
+        /* Without GROUP BY a multi-column projection sets neither select_columns
+         * nor agg_kind. Mixing aggregate and plain columns is ill-defined and
+         * rejected; multiple aggregates over the whole table are computed by the
+         * dedicated multi-aggregate executor (one row, one column per aggregate). */
+        if (stmt->group_by_count == 0 && sel_has_agg && sel_has_plain && stmt->proj_count > 1) {
+            sql_set_error(eng, "aggregate and non-aggregate columns cannot be mixed without GROUP BY");
             rc = -1;
+        } else if (stmt->group_by_count == 0 && sel_has_agg && stmt->proj_count > 1) {
+            rc = sql_exec_multi_aggregate(eng, stmt, result);
         } else if (stmt->group_by_count > 0) {
             rc = sql_exec_group_by(eng, stmt, result);
         } else if (stmt->agg_kind != GV_SQL_AGG_NONE) {

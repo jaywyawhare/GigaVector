@@ -10,7 +10,9 @@
 #include "features/graph_db.h"
 #include "core/memory.h"
 #include "api/rest_handlers.h"
+#include "api/txn_registry.h"
 #include "security/crypto.h"
+#include "security/auth.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -286,6 +288,31 @@ static void add_cors_headers(struct MHD_Response *response, const GV_Server *ser
  * path. Only the OPTIONS (CORS preflight) method is additionally exempt, as
  * it carries no body and returns no data.
  */
+/* Copy `src` into `dst` (NUL-terminated, bounded) escaping characters that
+ * would break a JSON string: quote, backslash and control bytes. Used for the
+ * structured access log so an odd request path cannot corrupt a log line. */
+static void json_escape_field(const char *src, char *dst, size_t dst_size) {
+    size_t o = 0;
+    if (dst_size == 0) return;
+    for (size_t i = 0; src[i] != '\0' && o + 7 < dst_size; i++) {
+        unsigned char c = (unsigned char)src[i];
+        switch (c) {
+            case '"':  dst[o++] = '\\'; dst[o++] = '"'; break;
+            case '\\': dst[o++] = '\\'; dst[o++] = '\\'; break;
+            case '\n': dst[o++] = '\\'; dst[o++] = 'n'; break;
+            case '\r': dst[o++] = '\\'; dst[o++] = 'r'; break;
+            case '\t': dst[o++] = '\\'; dst[o++] = 't'; break;
+            default:
+                if (c < 0x20) {
+                    o += (size_t)snprintf(dst + o, dst_size - o, "\\u%04x", c);
+                } else {
+                    dst[o++] = (char)c;
+                }
+        }
+    }
+    dst[o] = '\0';
+}
+
 static int is_liveness_request(const char *url, const char *method) {
     if (!url || !method) {
         return 0;  /* Unknown -> not liveness (fail closed). */
@@ -313,8 +340,52 @@ static int is_liveness_request(const char *url, const char *method) {
  * When an api_key IS configured, all endpoints require a matching key
  * (constant-time compare), regardless of the opt-in flag.
  */
+/* Extract the presented credential: X-API-Key, else a Bearer Authorization
+ * token. Returns NULL when neither is present. */
+static const char *extract_credential(struct MHD_Connection *connection) {
+    const char *auth = MHD_lookup_connection_value(connection, MHD_HEADER_KIND, "X-API-Key");
+    if (!auth) {
+        auth = MHD_lookup_connection_value(connection, MHD_HEADER_KIND, "Authorization");
+        if (auth && strncmp(auth, "Bearer ", 7) == 0) {
+            auth += 7;
+        } else {
+            auth = NULL;  /* Only Bearer-scheme Authorization headers carry a token. */
+        }
+    }
+    return auth;
+}
+
+/* Returns 1 = allow, 0 = unauthenticated (401), -1 = forbidden (403, e.g. a
+ * read-only credential on a mutating endpoint). */
 static int check_auth(const GV_Server *server, struct MHD_Connection *connection,
                       const char *url, const char *method) {
+    /* An auth manager, when configured, takes precedence: it validates multiple
+     * API keys (with per-key expiry/revocation) and JWT bearer tokens, and
+     * enforces per-key authorization scope. Liveness probes remain exempt. */
+    if (server->config.auth_manager) {
+        if (is_liveness_request(url, method)) {
+            return 1;
+        }
+        const char *cred = extract_credential(connection);
+        if (!cred) {
+            return 0;
+        }
+        GV_Identity identity;
+        memset(&identity, 0, sizeof(identity));
+        GV_AuthResult r = auth_authenticate(server->config.auth_manager, cred, &identity);
+        GV_AuthScope scope = identity.scope;
+        auth_free_identity(&identity);
+        if (r != GV_AUTH_SUCCESS) {
+            return 0;
+        }
+        /* Authorization: a read-only key may not reach mutating endpoints. */
+        if (scope == GV_SCOPE_READ_ONLY &&
+            rest_request_is_mutation(url, parse_method(method))) {
+            return -1;
+        }
+        return 1;
+    }
+
     if (!server->config.api_key) {
         /* No credential configured. Deny everything except explicit liveness
          * probes unless the operator has opted into unauthenticated access. */
@@ -327,14 +398,7 @@ static int check_auth(const GV_Server *server, struct MHD_Connection *connection
         return 0;  /* Fail closed. */
     }
 
-    const char *auth = MHD_lookup_connection_value(connection, MHD_HEADER_KIND, "X-API-Key");
-    if (!auth) {
-        auth = MHD_lookup_connection_value(connection, MHD_HEADER_KIND, "Authorization");
-        if (auth && strncmp(auth, "Bearer ", 7) == 0) {
-            auth += 7;
-        }
-    }
-
+    const char *auth = extract_credential(connection);
     if (!auth) {
         return 0;
     }
@@ -469,13 +533,18 @@ static enum MHD_Result answer_to_connection(void *cls,
     }
 #endif /* HAVE_MICROHTTPD */
 
-    if (!check_auth(server, connection, url, method)) {
-        const char *error_json = "{\"error\":\"Unauthorized\",\"message\":\"Invalid or missing API key\"}";
+    int auth_rc = check_auth(server, connection, url, method);
+    if (auth_rc <= 0) {
+        /* auth_rc == 0 -> unauthenticated (401); < 0 -> forbidden by scope (403). */
+        const char *error_json = (auth_rc < 0)
+            ? "{\"error\":\"Forbidden\",\"message\":\"Credential lacks write scope\"}"
+            : "{\"error\":\"Unauthorized\",\"message\":\"Invalid or missing API key\"}";
+        unsigned int code = (auth_rc < 0) ? GV_HTTP_403_FORBIDDEN : MHD_HTTP_UNAUTHORIZED;
         struct MHD_Response *response = MHD_create_response_from_buffer(
             strlen(error_json), (void *)error_json, MHD_RESPMEM_PERSISTENT);
         MHD_add_response_header(response, "Content-Type", "application/json");
         add_cors_headers(response, server);
-        enum MHD_Result ret = MHD_queue_response(connection, MHD_HTTP_UNAUTHORIZED, response);
+        enum MHD_Result ret = MHD_queue_response(connection, code, response);
         MHD_destroy_response(response);
 
         pthread_mutex_lock(&server->stats_mutex);
@@ -508,9 +577,8 @@ static enum MHD_Result answer_to_connection(void *cls,
         }
     }
 
-    if (server->config.enable_logging) {
-        fprintf(stderr, "[GV_Server] %s %s\n", method, url);
-    }
+    struct timespec req_start;
+    clock_gettime(CLOCK_MONOTONIC, &req_start);
 
     GV_HttpResponse *http_response = rest_route(&server->handler_ctx, &request);
 
@@ -520,6 +588,24 @@ static enum MHD_Result answer_to_connection(void *cls,
         server->error_count++;
     }
     pthread_mutex_unlock(&server->stats_mutex);
+
+    if (server->config.enable_logging) {
+        struct timespec req_end;
+        clock_gettime(CLOCK_MONOTONIC, &req_end);
+        double latency_ms = (double)(req_end.tv_sec - req_start.tv_sec) * 1000.0 +
+                            (double)(req_end.tv_nsec - req_start.tv_nsec) / 1e6;
+        int log_status = http_response ? (int)http_response->status : 500;
+        size_t log_bytes = (http_response && http_response->body) ? http_response->body_length : 0;
+        /* Structured single-line JSON access log: timestamp, method, path,
+         * status, latency and response size — parseable by log shippers. */
+        char esc_url[1024];
+        json_escape_field(url ? url : "", esc_url, sizeof(esc_url));
+        fprintf(stderr,
+                "{\"ts\":%lld,\"method\":\"%s\",\"path\":\"%s\",\"status\":%d,"
+                "\"latency_ms\":%.3f,\"bytes\":%zu}\n",
+                (long long)time(NULL), method ? method : "", esc_url, log_status,
+                latency_ms, log_bytes);
+    }
 
     struct MHD_Response *mhd_response;
     unsigned int status_code = GV_HTTP_500_INTERNAL_ERROR;
@@ -587,6 +673,9 @@ GV_Server *server_create(GV_Database *db, const GV_ServerConfig *config) {
     server->handler_ctx.config = &server->config;
     server->handler_ctx.kg = NULL;
     server->handler_ctx.graph = NULL;
+    /* Enable stateful client transactions (BEGIN/COMMIT/ROLLBACK over REST). A
+     * NULL registry (allocation failure) simply disables the /txn endpoints. */
+    server->handler_ctx.txn_registry = txn_registry_create();
 
     return server;
 }
@@ -610,21 +699,49 @@ int server_start(GV_Server *server) {
     }
 
 #ifdef HAVE_MICROHTTPD
+    /* Older libmicrohttpd spells the TLS flag MHD_USE_SSL. */
+#ifndef MHD_USE_TLS
+#define MHD_USE_TLS MHD_USE_SSL
+#endif
     /* Use internal select with thread pool for handling connections.
      * Note: MHD_USE_THREAD_PER_CONNECTION and MHD_OPTION_THREAD_POOL_SIZE
      * are mutually exclusive - we use thread pool for better resource control. */
     unsigned int flags = MHD_USE_INTERNAL_POLLING_THREAD;
 
-    server->daemon = MHD_start_daemon(
-        flags,
-        server->config.port,
-        NULL, NULL,  /* Accept policy */
-        &answer_to_connection, server,
-        MHD_OPTION_NOTIFY_COMPLETED, request_completed_callback, NULL,
-        MHD_OPTION_CONNECTION_TIMEOUT, (unsigned int)(server->config.request_timeout_ms / 1000),
-        MHD_OPTION_CONNECTION_LIMIT, (unsigned int)server->config.max_connections,
-        MHD_OPTION_THREAD_POOL_SIZE, (unsigned int)server->config.thread_pool_size,
-        MHD_OPTION_END);
+    /* HTTPS when a cert+key pair is configured (both required). Refuse to start
+     * on a half-configured pair rather than silently falling back to plaintext,
+     * which would transmit credentials in the clear against the operator's intent. */
+    if ((server->config.tls_cert_pem != NULL) != (server->config.tls_key_pem != NULL)) {
+        fprintf(stderr, "[GV_Server] Error: both tls_cert_pem and tls_key_pem are required for HTTPS\n");
+        return GV_SERVER_ERROR_START_FAILED;
+    }
+    int use_tls = (server->config.tls_cert_pem != NULL && server->config.tls_key_pem != NULL);
+    if (use_tls) {
+        flags |= MHD_USE_TLS;
+        server->daemon = MHD_start_daemon(
+            flags,
+            server->config.port,
+            NULL, NULL,  /* Accept policy */
+            &answer_to_connection, server,
+            MHD_OPTION_NOTIFY_COMPLETED, request_completed_callback, NULL,
+            MHD_OPTION_CONNECTION_TIMEOUT, (unsigned int)(server->config.request_timeout_ms / 1000),
+            MHD_OPTION_CONNECTION_LIMIT, (unsigned int)server->config.max_connections,
+            MHD_OPTION_THREAD_POOL_SIZE, (unsigned int)server->config.thread_pool_size,
+            MHD_OPTION_HTTPS_MEM_CERT, server->config.tls_cert_pem,
+            MHD_OPTION_HTTPS_MEM_KEY, server->config.tls_key_pem,
+            MHD_OPTION_END);
+    } else {
+        server->daemon = MHD_start_daemon(
+            flags,
+            server->config.port,
+            NULL, NULL,  /* Accept policy */
+            &answer_to_connection, server,
+            MHD_OPTION_NOTIFY_COMPLETED, request_completed_callback, NULL,
+            MHD_OPTION_CONNECTION_TIMEOUT, (unsigned int)(server->config.request_timeout_ms / 1000),
+            MHD_OPTION_CONNECTION_LIMIT, (unsigned int)server->config.max_connections,
+            MHD_OPTION_THREAD_POOL_SIZE, (unsigned int)server->config.thread_pool_size,
+            MHD_OPTION_END);
+    }
 
     if (!server->daemon) {
         return GV_SERVER_ERROR_START_FAILED;
@@ -634,7 +751,8 @@ int server_start(GV_Server *server) {
     server->start_time = time(NULL);
 
     if (server->config.enable_logging) {
-        fprintf(stderr, "[GV_Server] Started on port %u\n", server->config.port);
+        fprintf(stderr, "[GV_Server] Started on port %u (%s)\n",
+                server->config.port, use_tls ? "https" : "http");
     }
 
     return GV_SERVER_OK;
@@ -683,6 +801,9 @@ void server_destroy(GV_Server *server) {
     if (server->running) {
         server_stop(server);
     }
+
+    /* Rolls back any transactions the client left open. */
+    txn_registry_destroy(server->handler_ctx.txn_registry);
 
     pthread_mutex_destroy(&server->stats_mutex);
     gv_free(server);

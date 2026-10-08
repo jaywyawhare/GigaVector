@@ -1,0 +1,15 @@
+[package]
+name = "gigavector"
+version = "0.1.0"
+edition = "2021"
+description = "Official Rust client for the GigaVector REST API, with protocol-level connection pooling."
+license = "MIT"
+repository = "https://github.com/jaywyawhare/GigaVector"
+
+# Intentionally dependency-free: the client speaks HTTP/1.1 and JSON over the
+# standard library only, so it builds and tests offline with a bare `cargo`.
+[dependencies]
+
+[lib]
+name = "gigavector"
+path = "src/lib.rs"

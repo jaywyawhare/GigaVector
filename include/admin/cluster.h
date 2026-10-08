@@ -48,6 +48,10 @@ typedef struct {
     GV_NodeRole role;               /**< This node's role. */
     uint32_t heartbeat_interval_ms; /**< Heartbeat interval. */
     uint32_t failure_timeout_ms;    /**< Node failure timeout. */
+    const char *raft_data_dir;      /**< If set, the Raft log/vote are persisted
+                                         under this directory (one file per node)
+                                         and reloaded on restart for durable HA.
+                                         NULL keeps the older in-memory behaviour. */
 } GV_ClusterConfig;
 
 typedef struct {
@@ -230,6 +234,22 @@ int cluster_assign_shard(GV_Cluster *cluster, uint64_t shard_id, int node_index)
  *        -1 if unassigned. Converges on all nodes once the assignment commits.
  */
 int cluster_shard_owner(GV_Cluster *cluster, uint64_t shard_id);
+
+/**
+ * @brief Online resharding: (leader-only) assign shards 0..num_shards-1 evenly
+ *        across the current raft node set, replicating each placement through
+ *        the raft log so every node converges on the new map.
+ *
+ * Shards are distributed round-robin over the participating nodes, so the
+ * assignment is balanced and deterministic. Safe to call repeatedly as the
+ * desired shard count changes; existing placements are upserted.
+ *
+ * @param cluster    Cluster instance with raft enabled.
+ * @param num_shards Number of shards to place (must be > 0).
+ * @return 0 if every assignment was accepted (this node is the leader), -1
+ *         otherwise (not leader, raft disabled, or a proposal was rejected).
+ */
+int cluster_rebalance_shards(GV_Cluster *cluster, uint64_t num_shards);
 
 /**
  * @brief Check if cluster is healthy.

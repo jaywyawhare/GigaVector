@@ -10,6 +10,7 @@
 #include "storage/backup.h"
 #include "core/memory.h"
 #include "storage/database.h"
+#include "storage/object_store.h"
 #include "core/utils.h"
 #include "security/auth.h"     /* For SHA-256 */
 #include "security/crypto.h"   /* For encryption */
@@ -37,11 +38,19 @@
 #define BACKUP_FLAG_INCREMENTAL 0x04
 
 /* Encryption is applied as a transparent OUTER wrapper around the whole plaintext
- * backup: [BACKUP_ENC_MAGIC][ per chunk: 4-byte LE cipher_len | cipher ]. The
- * inner backup format is untouched, so restore/verify just detect the magic,
- * decrypt to a temp plaintext file, and delegate to the normal code path. */
-#define BACKUP_ENC_MAGIC     "GVBKENC1"
+ * backup. The inner backup format is untouched, so restore/verify just detect the
+ * magic, decrypt to a temp plaintext file, and delegate to the normal code path.
+ *
+ *   V2 (current): [GVBKENC2][16-byte random KDF salt][ per chunk: 4-byte LE len | cipher ]
+ *   V1 (legacy):  [GVBKENC1][ per chunk: 4-byte LE len | cipher ]  (fixed zero salt)
+ *
+ * V2 derives the key from a per-backup random salt (stored in the header) so the
+ * same passphrase no longer yields the same key across backups — defeating
+ * precomputation and cross-backup key reuse. V1 backups remain restorable. */
+#define BACKUP_ENC_MAGIC     "GVBKENC1"   /* legacy (zero-salt) */
+#define BACKUP_ENC_MAGIC_V2  "GVBKENC2"   /* current (random per-backup salt) */
 #define BACKUP_ENC_MAGIC_LEN 8
+#define BACKUP_ENC_SALT_LEN  16
 #define BACKUP_ENC_CHUNK     (64 * 1024)
 
 static const GV_BackupOptions DEFAULT_BACKUP_OPTIONS = {
@@ -118,31 +127,36 @@ static int backup_fsync_parent_dir(const char *path) {
 #endif
 }
 
-/* Derive the backup encryption key from a passphrase. Uses a fixed (zero) salt so
- * the same passphrase deterministically yields the same key for encrypt/decrypt.
+/* Derive the backup encryption key from a passphrase and an explicit salt.
  * The derived key->iv is irrelevant — crypto_encrypt generates a fresh nonce/IV
  * per chunk and prepends it. */
-static int backup_derive_key(GV_CryptoContext *ctx, const char *pw, GV_CryptoKey *key) {
-    unsigned char salt[16] = {0};
-    return crypto_derive_key(ctx, pw, strlen(pw), salt, sizeof(salt), key);
+static int backup_derive_key(GV_CryptoContext *ctx, const char *pw,
+                             const unsigned char *salt, size_t salt_len,
+                             GV_CryptoKey *key) {
+    return crypto_derive_key(ctx, pw, strlen(pw), salt, salt_len, key);
 }
 
-/* True if the file begins with the encrypted-backup wrapper magic. */
+/* True if the file begins with either encrypted-backup wrapper magic (V1 or V2). */
 static int backup_file_is_encrypted(const char *path) {
     FILE *f = fopen(path, "rb");
     if (!f) return 0;
     char m[BACKUP_ENC_MAGIC_LEN];
     size_t n = fread(m, 1, BACKUP_ENC_MAGIC_LEN, f);
     fclose(f);
-    return (n == BACKUP_ENC_MAGIC_LEN && memcmp(m, BACKUP_ENC_MAGIC, BACKUP_ENC_MAGIC_LEN) == 0);
+    return (n == BACKUP_ENC_MAGIC_LEN &&
+            (memcmp(m, BACKUP_ENC_MAGIC, BACKUP_ENC_MAGIC_LEN) == 0 ||
+             memcmp(m, BACKUP_ENC_MAGIC_V2, BACKUP_ENC_MAGIC_LEN) == 0));
 }
 
 /* Encrypt plain_path into out_path as [magic][per-chunk: 4-byte LE len | cipher]. */
 static int backup_encrypt_wrap(const char *plain_path, const char *out_path, const char *pw) {
     GV_CryptoContext *ctx = crypto_create(NULL);
     if (!ctx) return -1;
+    /* Per-backup random salt so identical passphrases diverge across backups. */
+    unsigned char salt[BACKUP_ENC_SALT_LEN];
+    if (gv_secure_random_bytes(salt, sizeof(salt)) != 0) { crypto_destroy(ctx); return -1; }
     GV_CryptoKey key;
-    if (backup_derive_key(ctx, pw, &key) != 0) { crypto_destroy(ctx); return -1; }
+    if (backup_derive_key(ctx, pw, salt, sizeof(salt), &key) != 0) { crypto_destroy(ctx); return -1; }
     FILE *fin = fopen(plain_path, "rb");
     if (!fin) { crypto_wipe_key(&key); crypto_destroy(ctx); return -1; }
     FILE *fout = fopen(out_path, "wb");
@@ -152,7 +166,8 @@ static int backup_encrypt_wrap(const char *plain_path, const char *out_path, con
     unsigned char *buf = gv_alloc(BACKUP_ENC_CHUNK);
     unsigned char *cipher = gv_alloc(BACKUP_ENC_CHUNK + 48);
     if (!buf || !cipher) rc = -1;
-    if (rc == 0 && fwrite(BACKUP_ENC_MAGIC, 1, BACKUP_ENC_MAGIC_LEN, fout) != BACKUP_ENC_MAGIC_LEN) rc = -1;
+    if (rc == 0 && fwrite(BACKUP_ENC_MAGIC_V2, 1, BACKUP_ENC_MAGIC_LEN, fout) != BACKUP_ENC_MAGIC_LEN) rc = -1;
+    if (rc == 0 && fwrite(salt, 1, sizeof(salt), fout) != sizeof(salt)) rc = -1;
     size_t nread;
     while (rc == 0 && (nread = fread(buf, 1, BACKUP_ENC_CHUNK, fin)) > 0) {
         size_t clen = 0;
@@ -180,14 +195,28 @@ static int backup_encrypt_wrap(const char *plain_path, const char *out_path, con
 static int backup_decrypt_wrap(const char *enc_path, const char *out_path, const char *pw) {
     GV_CryptoContext *ctx = crypto_create(NULL);
     if (!ctx) return -1;
-    GV_CryptoKey key;
-    if (backup_derive_key(ctx, pw, &key) != 0) { crypto_destroy(ctx); return -1; }
     FILE *fin = fopen(enc_path, "rb");
-    if (!fin) { crypto_wipe_key(&key); crypto_destroy(ctx); return -1; }
+    if (!fin) { crypto_destroy(ctx); return -1; }
+
+    /* Read the magic, then the salt appropriate to the version. */
     char m[BACKUP_ENC_MAGIC_LEN];
-    if (fread(m, 1, BACKUP_ENC_MAGIC_LEN, fin) != BACKUP_ENC_MAGIC_LEN ||
-        memcmp(m, BACKUP_ENC_MAGIC, BACKUP_ENC_MAGIC_LEN) != 0) {
-        fclose(fin); crypto_wipe_key(&key); crypto_destroy(ctx); return -1;
+    unsigned char salt[BACKUP_ENC_SALT_LEN];
+    if (fread(m, 1, BACKUP_ENC_MAGIC_LEN, fin) != BACKUP_ENC_MAGIC_LEN) {
+        fclose(fin); crypto_destroy(ctx); return -1;
+    }
+    if (memcmp(m, BACKUP_ENC_MAGIC_V2, BACKUP_ENC_MAGIC_LEN) == 0) {
+        if (fread(salt, 1, sizeof(salt), fin) != sizeof(salt)) {
+            fclose(fin); crypto_destroy(ctx); return -1;
+        }
+    } else if (memcmp(m, BACKUP_ENC_MAGIC, BACKUP_ENC_MAGIC_LEN) == 0) {
+        memset(salt, 0, sizeof(salt));   /* legacy V1: fixed zero salt */
+    } else {
+        fclose(fin); crypto_destroy(ctx); return -1;
+    }
+
+    GV_CryptoKey key;
+    if (backup_derive_key(ctx, pw, salt, sizeof(salt), &key) != 0) {
+        fclose(fin); crypto_destroy(ctx); return -1;
     }
     FILE *fout = fopen(out_path, "wb");
     if (!fout) { fclose(fin); crypto_wipe_key(&key); crypto_destroy(ctx); return -1; }
@@ -1328,4 +1357,91 @@ const char *backup_compression_string(GV_BackupCompression compression) {
         case GV_BACKUP_COMPRESS_LZ4: return "lz4";
         default: return "unknown";
     }
+}
+
+/* ---- Native object-store backup (no shell-out) ---- */
+
+/* Build a unique temp path from the system temp dir + pid + a hash of key. */
+static int backup_tmp_path(char *buf, size_t n, const char *key) {
+    const char *dir = getenv("TMPDIR");
+#ifdef _WIN32
+    if (!dir) dir = getenv("TEMP");
+    if (!dir) dir = getenv("TMP");
+#endif
+    if (!dir || !dir[0]) dir = "/tmp";
+    uint32_t h = 2166136261u;
+    for (const char *p = key; p && *p; p++) { h ^= (unsigned char)*p; h *= 16777619u; }
+    /* Unpredictable per-call suffix so the staging path cannot be pre-created as
+     * a symlink and so concurrent backups for the same key never collide. */
+    unsigned char rnd[8];
+    if (gv_secure_random_bytes(rnd, sizeof(rnd)) != 0) return -1;
+    char rhex[17];
+    for (int i = 0; i < 8; i++) snprintf(rhex + i * 2, 3, "%02x", rnd[i]);
+    int w = snprintf(buf, n, "%s/gvbackup-%d-%08x-%s.tmp", dir, (int)getpid(), h, rhex);
+    return (w > 0 && (size_t)w < n) ? 0 : -1;
+}
+
+static int backup_read_whole_file(const char *path, void **out, size_t *len_out) {
+    FILE *f = fopen(path, "rb");
+    if (!f) return -1;
+    int rc = -1;
+    if (fseek(f, 0, SEEK_END) == 0) {
+        long sz = ftell(f);
+        if (sz >= 0 && fseek(f, 0, SEEK_SET) == 0) {
+            void *b = gv_alloc((size_t)sz ? (size_t)sz : 1);
+            if (b && ((size_t)sz == 0 || fread(b, 1, (size_t)sz, f) == (size_t)sz)) {
+                *out = b; *len_out = (size_t)sz; rc = 0;
+            } else { gv_free(b); }
+        }
+    }
+    fclose(f);
+    return rc;
+}
+
+GV_BackupResult *backup_to_object_store(GV_Database *db, struct GV_ObjectStore *os,
+                                        const char *key, const GV_BackupOptions *options) {
+    if (!db || !os || !key) return create_result(0, "Invalid parameters");
+    char tmp[4096];
+    if (backup_tmp_path(tmp, sizeof(tmp), key) != 0) return create_result(0, "Failed to build temp path");
+
+    GV_BackupResult *result = backup_create(db, tmp, options, NULL, NULL);
+    if (!result) { remove(tmp); return NULL; }
+    if (result->success) {
+        void *buf = NULL; size_t len = 0;
+        if (backup_read_whole_file(tmp, &buf, &len) != 0 ||
+            object_store_put((GV_ObjectStore *)os, key, buf, len) != 0) {
+            gv_free(buf);
+            remove(tmp);
+            backup_result_free(result);
+            return create_result(0, "Failed to write backup to object store");
+        }
+        gv_free(buf);
+    }
+    remove(tmp);
+    return result;
+}
+
+GV_BackupResult *backup_restore_from_object_store(struct GV_ObjectStore *os, const char *key,
+                                                  const char *db_path,
+                                                  const GV_RestoreOptions *options) {
+    if (!os || !key || !db_path) return create_result(0, "Invalid parameters");
+    void *buf = NULL; size_t len = 0;
+    if (object_store_get((GV_ObjectStore *)os, key, &buf, &len) != 0)
+        return create_result(0, "Object not found in store");
+
+    char tmp[4096];
+    if (backup_tmp_path(tmp, sizeof(tmp), key) != 0) { free(buf); return create_result(0, "Failed to build temp path"); }
+
+    int wrote = 0;
+    FILE *f = fopen(tmp, "wb");
+    if (f) {
+        wrote = (len == 0) || (fwrite(buf, 1, len, f) == len);
+        if (fclose(f) != 0) wrote = 0;
+    }
+    free(buf); /* object_store_get returns a malloc'd buffer */
+    if (!wrote) { remove(tmp); return create_result(0, "Failed to stage object for restore"); }
+
+    GV_BackupResult *result = backup_restore(tmp, db_path, options, NULL, NULL);
+    remove(tmp);
+    return result;
 }

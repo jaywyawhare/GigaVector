@@ -37,8 +37,12 @@ static void cpuid(unsigned int leaf, unsigned int subleaf,
 #endif /* GV_ARCH_X86 */
 
 unsigned int cpu_detect_features(void) {
-    if (s_features != (unsigned int)-1) {
-        return s_features;
+    /* Lazily detected once and cached. Accessed atomically so concurrent
+     * first-time callers (e.g. parallel searches) don't data-race the cache;
+     * detection is idempotent, so a rare concurrent recompute is harmless. */
+    unsigned int cached = __atomic_load_n(&s_features, __ATOMIC_ACQUIRE);
+    if (cached != (unsigned int)-1) {
+        return cached;
     }
 
     unsigned int features = GV_CPU_FEATURE_NONE;
@@ -84,7 +88,7 @@ unsigned int cpu_detect_features(void) {
     }
 #endif /* GV_ARCH_X86 */
 
-    s_features = features;
+    __atomic_store_n(&s_features, features, __ATOMIC_RELEASE);
     return features;
 }
 

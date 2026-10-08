@@ -36,6 +36,7 @@ typedef struct {
     uint64_t created_at;
     uint64_t expires_at;
     int enabled;
+    GV_AuthScope scope;
 } APIKeyEntry;
 
 /**
@@ -227,6 +228,13 @@ void auth_destroy(GV_AuthManager *auth) {
 
 int auth_generate_api_key(GV_AuthManager *auth, const char *description,
                               uint64_t expires_at, char *key_out, char *key_id_out) {
+    return auth_generate_api_key_scoped(auth, description, expires_at,
+                                        GV_SCOPE_READ_WRITE, key_out, key_id_out);
+}
+
+int auth_generate_api_key_scoped(GV_AuthManager *auth, const char *description,
+                                     uint64_t expires_at, GV_AuthScope scope,
+                                     char *key_out, char *key_id_out) {
     if (!auth || !key_out || !key_id_out) return -1;
 
     pthread_rwlock_wrlock(&auth->rwlock);
@@ -258,6 +266,7 @@ int auth_generate_api_key(GV_AuthManager *auth, const char *description,
     entry->created_at = (uint64_t)time(NULL);
     entry->expires_at = expires_at;
     entry->enabled = 1;
+    entry->scope = scope;
 
     auth->key_count++;
 
@@ -284,6 +293,7 @@ int auth_add_api_key(GV_AuthManager *auth, const char *key_id,
     entry->created_at = (uint64_t)time(NULL);
     entry->expires_at = expires_at;
     entry->enabled = 1;
+    entry->scope = GV_SCOPE_READ_WRITE;  /* pre-hashed keys default to full access */
 
     auth->key_count++;
 
@@ -333,6 +343,7 @@ int auth_list_api_keys(GV_AuthManager *auth, GV_APIKey **keys, size_t *count) {
         (*keys)[i].created_at = auth->keys[i].created_at;
         (*keys)[i].expires_at = auth->keys[i].expires_at;
         (*keys)[i].enabled = auth->keys[i].enabled;
+        (*keys)[i].scope = auth->keys[i].scope;
     }
 
     pthread_rwlock_unlock(&auth->rwlock);
@@ -392,6 +403,7 @@ GV_AuthResult auth_verify_api_key(GV_AuthManager *auth, const char *api_key,
                 identity->subject = gv_dup_cstr(auth->keys[i].key_id);
                 identity->auth_time = now;
                 identity->expires_at = auth->keys[i].expires_at;
+                identity->scope = auth->keys[i].scope;
             }
 
             pthread_rwlock_unlock(&auth->rwlock);

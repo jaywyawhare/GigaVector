@@ -93,6 +93,39 @@ int wal_append_ivfdisk_append(GV_WAL *wal, uint64_t head_id, uint64_t vector_id,
                               const float *data, size_t dimension);
 
 /**
+ * @brief Append a plain insert record WITHOUT the fsync durability barrier.
+ *
+ * Writes and fflush'es the record (so bytes reach the OS in order under the
+ * caller's lock) but does not fsync. The caller MUST invoke wal_fsync_deferred()
+ * afterwards — ideally after dropping the DB write lock, so the fsync does not
+ * stall concurrent readers. Same return contract as wal_append_insert.
+ */
+int wal_append_insert_deferred(GV_WAL *wal, const float *data, size_t dimension,
+                                   const char *metadata_key, const char *metadata_value);
+
+/**
+ * @brief Complete a deferred append by fsync'ing the WAL to disk.
+ *
+ * Safe to call off the DB write lock; it is serialized against wal_truncate so a
+ * concurrent checkpoint cannot swap the file out mid-fsync. Returns 0 on success.
+ */
+int wal_fsync_deferred(GV_WAL *wal);
+
+/**
+ * @brief Append a whole transaction as ONE atomic record.
+ *
+ * Writes @p n_inserts dense vectors (each of @p dimension floats, no metadata)
+ * and @p n_deletes committed-vector indices under a single trailing CRC. On
+ * replay the record is applied all-or-nothing: a torn or CRC-mismatched record
+ * at the tail is discarded in full, so a crash mid-commit never leaves a
+ * partially-applied transaction.
+ *
+ * @return 0 on success, -1 on error.
+ */
+int wal_append_txn(GV_WAL *wal, const float *const *inserts, size_t dimension,
+                   size_t n_inserts, const uint64_t *delete_indices, size_t n_deletes);
+
+/**
  * @brief Replay a WAL file by invoking a callback for every insert record.
  *
  * The callback is responsible for applying the operation to the in-memory
@@ -194,6 +227,13 @@ int wal_truncate(GV_WAL *wal);
  * @brief Count WAL records in a file (excluding header).
  */
 uint64_t wal_count_entries(const char *path);
+
+/**
+ * @brief Current on-disk size of the WAL in bytes (0 if closed/NULL).
+ *
+ * Used to drive size-based checkpointing.
+ */
+uint64_t wal_size(const GV_WAL *wal);
 
 /**
  * @brief Read one WAL record by zero-based entry index.

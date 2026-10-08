@@ -587,3 +587,24 @@ jobs:
         run: |
           go vet ./...
           go test -v ./...
+
+  # ── Rust client (REST; std-only, no server needed for unit tests) ─────
+  rust-client:
+    name: Rust client (REST)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4.2.2
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Build, lint and test Rust client
+        working-directory: clients/rust
+        run: |
+          cargo build --verbose
+          cargo clippy --all-targets -- -D warnings
+          cargo test --verbose

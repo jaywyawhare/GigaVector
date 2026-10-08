@@ -15,6 +15,7 @@
 #include "core/scope.h"
 #include "core/utils.h"
 #include "core/compat.h"   /* ftruncate (Windows _chsize_s shim) */
+#include <pthread.h>
 
 #define GV_WAL_MAGIC "GVW1"
 #define GV_WAL_VERSION 3u
@@ -22,6 +23,11 @@
 #define GV_WAL_TYPE_DELETE 2u
 #define GV_WAL_TYPE_UPDATE 3u
 #define GV_WAL_TYPE_IVFDISK_APPEND 4u
+/* A whole transaction as ONE atomic record: N dense inserts (no metadata) +
+ * M delete indices, a single trailing CRC. Replay applies all-or-nothing — a
+ * torn/mismatched record is discarded wholesale, making multi-op commits
+ * crash-atomic. */
+#define GV_WAL_TYPE_TXN 5u
 
 struct GV_WAL {
     FILE *file;
@@ -31,6 +37,11 @@ struct GV_WAL {
     uint32_t version;
     size_t sync_interval;   /* fsync every N appended records (1 = every record) */
     size_t since_sync;      /* records appended since the last fsync */
+    /* Coordinates a deferred fsync (held SHARED) against wal_truncate's
+     * fclose/reopen of `file` (held EXCLUSIVE), so a fsync that runs after its
+     * writer released the DB write lock can never touch a file pointer that a
+     * concurrent checkpoint is swapping out. */
+    pthread_rwlock_t sync_lock;
 };
 
 
@@ -368,11 +379,22 @@ GV_WAL *wal_open(const char *path, size_t dimension, uint32_t index_type) {
         gv_free(wal);
         return NULL;
     }
+    if (pthread_rwlock_init(&wal->sync_lock, NULL) != 0) {
+        fclose(f);
+        gv_free(wal->path);
+        gv_free(wal);
+        return NULL;
+    }
     return wal;
 }
 
-int wal_append_insert(GV_WAL *wal, const float *data, size_t dimension,
-                         const char *metadata_key, const char *metadata_value) {
+/* Shared body for the plain single-metadata insert record. When @p defer is
+ * non-zero the record is written and fflush'd to the OS but NOT fsync'd — the
+ * caller is responsible for a later wal_fsync_deferred() once it has dropped the
+ * DB write lock (so the fsync no longer blocks concurrent readers). */
+static int wal_append_insert_impl(GV_WAL *wal, const float *data, size_t dimension,
+                                  const char *metadata_key, const char *metadata_value,
+                                  int defer) {
     if (wal == NULL || wal->file == NULL || data == NULL || dimension == 0) {
         return -1;
     }
@@ -409,10 +431,35 @@ int wal_append_insert(GV_WAL *wal, const float *data, size_t dimension,
         if (write_u32(wal->file, crc) != 0) return -1;
     }
 
+    if (defer) {
+        /* Push bytes to the OS (ordered under the caller's write lock) but defer
+         * the durability barrier; wal_fsync_deferred() completes it off-lock. */
+        return (fflush(wal->file) != 0) ? -1 : 0;
+    }
     if (wal_maybe_sync(wal) != 0) {
         return -1;
     }
     return 0;
+}
+
+int wal_append_insert(GV_WAL *wal, const float *data, size_t dimension,
+                         const char *metadata_key, const char *metadata_value) {
+    return wal_append_insert_impl(wal, data, dimension, metadata_key, metadata_value, 0);
+}
+
+int wal_append_insert_deferred(GV_WAL *wal, const float *data, size_t dimension,
+                                   const char *metadata_key, const char *metadata_value) {
+    return wal_append_insert_impl(wal, data, dimension, metadata_key, metadata_value, 1);
+}
+
+int wal_fsync_deferred(GV_WAL *wal) {
+    if (wal == NULL) return -1;
+    /* SHARED with other deferred fsyncs; EXCLUDED against wal_truncate's reopen.
+     * wal->file is only read INSIDE the lock, since truncate reassigns it. */
+    pthread_rwlock_rdlock(&wal->sync_lock);
+    int rc = (wal->file != NULL && fsync(fileno(wal->file)) == 0) ? 0 : -1;
+    pthread_rwlock_unlock(&wal->sync_lock);
+    return rc;
 }
 
 int wal_append_insert_rich(GV_WAL *wal, const float *data, size_t dimension,
@@ -564,6 +611,46 @@ int wal_append_ivfdisk_append(GV_WAL *wal, uint64_t head_id, uint64_t vector_id,
     return wal_maybe_sync(wal);
 }
 
+int wal_append_txn(GV_WAL *wal, const float *const *inserts, size_t dimension,
+                   size_t n_inserts, const uint64_t *delete_indices, size_t n_deletes)
+{
+    if (!wal || !wal->file) return -1;
+    if (n_inserts > 0 && (inserts == NULL || dimension != wal->dimension || dimension == 0)) return -1;
+    if (n_deletes > 0 && delete_indices == NULL) return -1;
+    if (n_inserts > 0xFFFFFFFFu || n_deletes > 0xFFFFFFFFu) return -1;
+
+    uint32_t crc = gv_crc32_init();
+    if (write_u8(wal->file, GV_WAL_TYPE_TXN) != 0) return -1;
+    crc = gv_crc32_update(crc, &(uint8_t){GV_WAL_TYPE_TXN}, sizeof(uint8_t));
+
+    uint32_t ni = (uint32_t)n_inserts;
+    if (write_u32(wal->file, ni) != 0) return -1;
+    crc = gv_crc32_update(crc, &ni, sizeof(uint32_t));
+    for (size_t i = 0; i < n_inserts; i++) {
+        if (inserts[i] == NULL) return -1;
+        uint32_t dim_u32 = (uint32_t)dimension;
+        if (write_u32(wal->file, dim_u32) != 0) return -1;
+        crc = gv_crc32_update(crc, &dim_u32, sizeof(uint32_t));
+        if (write_floats(wal->file, inserts[i], dimension) != 0) return -1;
+        crc = gv_crc32_update(crc, inserts[i], dimension * sizeof(float));
+    }
+
+    uint32_t nd = (uint32_t)n_deletes;
+    if (write_u32(wal->file, nd) != 0) return -1;
+    crc = gv_crc32_update(crc, &nd, sizeof(uint32_t));
+    for (size_t i = 0; i < n_deletes; i++) {
+        uint64_t idx = delete_indices[i];
+        if (write_u64(wal->file, idx) != 0) return -1;
+        crc = gv_crc32_update(crc, &idx, sizeof(uint64_t));
+    }
+
+    if (wal->version >= 2) {
+        crc = gv_crc32_finish(crc);
+        if (write_u32(wal->file, crc) != 0) return -1;
+    }
+    return wal_maybe_sync(wal);
+}
+
 static int wal_skip_ivfdisk_append_record(FILE *f, int has_crc)
 {
     uint64_t head_id = 0, vector_id = 0;
@@ -613,6 +700,80 @@ static int wal_is_torn_tail(FILE *f, long record_start, int short_read) {
         }
     }
     return 1;
+}
+
+/* Parse a TXN record body (the file cursor is just past the type byte) into
+ * freshly-allocated buffers the caller must free. The whole record is validated
+ * (dims + CRC) BEFORE anything is returned, so the caller applies all-or-nothing.
+ * Returns 0 = parsed OK, 1 = torn tail (caller stops replay), -1 = fatal error. */
+static int wal_parse_txn_record(FILE *f, size_t expected_dimension, int has_crc,
+                                long record_start, float **out_ins, uint32_t *out_nins,
+                                uint64_t **out_dels, uint32_t *out_ndel) {
+    *out_ins = NULL; *out_dels = NULL; *out_nins = 0; *out_ndel = 0;
+    size_t dim = expected_dimension;
+
+    uint32_t crc = gv_crc32_init();
+    uint8_t type_byte = (uint8_t)GV_WAL_TYPE_TXN;
+    crc = gv_crc32_update(crc, &type_byte, sizeof(uint8_t));
+
+    uint32_t n_ins = 0;
+    if (read_u32(f, &n_ins) != 0) return wal_is_torn_tail(f, record_start, 1) ? 1 : -1;
+    crc = gv_crc32_update(crc, &n_ins, sizeof(uint32_t));
+
+    float *ins = NULL;
+    if (n_ins > 0) {
+        ins = (float *)gv_alloc((size_t)n_ins * dim * sizeof(float));
+        if (!ins) return -1;
+        for (uint32_t i = 0; i < n_ins; i++) {
+            uint32_t rdim = 0;
+            if (read_u32(f, &rdim) != 0 || rdim != (uint32_t)expected_dimension) {
+                int short_read = (rdim == 0);
+                gv_free(ins);
+                return wal_is_torn_tail(f, record_start, short_read) ? 1 : -1;
+            }
+            crc = gv_crc32_update(crc, &rdim, sizeof(uint32_t));
+            if (read_floats(f, ins + (size_t)i * dim, dim) != 0) {
+                gv_free(ins);
+                return wal_is_torn_tail(f, record_start, 1) ? 1 : -1;
+            }
+            crc = gv_crc32_update(crc, ins + (size_t)i * dim, dim * sizeof(float));
+        }
+    }
+
+    uint32_t n_del = 0;
+    if (read_u32(f, &n_del) != 0) {
+        gv_free(ins);
+        return wal_is_torn_tail(f, record_start, 1) ? 1 : -1;
+    }
+    crc = gv_crc32_update(crc, &n_del, sizeof(uint32_t));
+
+    uint64_t *dels = NULL;
+    if (n_del > 0) {
+        dels = (uint64_t *)gv_alloc((size_t)n_del * sizeof(uint64_t));
+        if (!dels) { gv_free(ins); return -1; }
+        for (uint32_t i = 0; i < n_del; i++) {
+            uint64_t idx = 0;
+            if (read_u64(f, &idx) != 0) {
+                gv_free(ins); gv_free(dels);
+                return wal_is_torn_tail(f, record_start, 1) ? 1 : -1;
+            }
+            dels[i] = idx;
+            crc = gv_crc32_update(crc, &idx, sizeof(uint64_t));
+        }
+    }
+
+    if (has_crc) {
+        crc = gv_crc32_finish(crc);
+        uint32_t stored = 0;
+        int rres = read_u32(f, &stored);
+        if (rres != 0 || stored != crc) {
+            gv_free(ins); gv_free(dels);
+            return wal_is_torn_tail(f, record_start, rres != 0) ? 1 : -1;
+        }
+    }
+
+    *out_ins = ins; *out_nins = n_ins; *out_dels = dels; *out_ndel = n_del;
+    return 0;
 }
 
 int wal_replay(const char *path, size_t expected_dimension,
@@ -814,6 +975,23 @@ int wal_replay(const char *path, size_t expected_dimension,
                 fclose(f);
                 return -1;
             }
+        } else if (type == GV_WAL_TYPE_TXN) {
+            gv_tls_arena_reset();
+            float *ins = NULL; uint64_t *dels = NULL;
+            uint32_t n_ins = 0, n_del = 0;
+            int pr = wal_parse_txn_record(f, expected_dimension, has_crc, record_start,
+                                          &ins, &n_ins, &dels, &n_del);
+            if (pr == 1) { break; }
+            if (pr < 0) { fclose(f); return -1; }
+            /* This simple replay path applies inserts and (like DELETE records)
+             * leaves deletes to the loader. */
+            int cb_fail = 0;
+            for (uint32_t i = 0; i < n_ins && !cb_fail; i++) {
+                if (on_insert(ctx, ins + (size_t)i * expected_dimension, expected_dimension,
+                              NULL, NULL) != 0) cb_fail = 1;
+            }
+            gv_free(ins); gv_free(dels);
+            if (cb_fail) { fclose(f); return -1; }
         } else {
             /* Unknown record type. If it is the very last byte in the file it
              * is a torn trailing record; otherwise the log is corrupt. */
@@ -1078,6 +1256,25 @@ int wal_replay_rich(const char *path, size_t expected_dimension,
                 fclose(f);
                 return -1;
             }
+        } else if (type == GV_WAL_TYPE_TXN) {
+            gv_tls_arena_reset();
+            float *ins = NULL; uint64_t *dels = NULL;
+            uint32_t n_ins = 0, n_del = 0;
+            int pr = wal_parse_txn_record(f, expected_dimension, has_crc, record_start,
+                                          &ins, &n_ins, &dels, &n_del);
+            if (pr == 1) { break; }            /* torn tail -> stop, nothing applied */
+            if (pr < 0) { fclose(f); return -1; }
+            /* Validated: apply all inserts then all deletes (atomic). */
+            int cb_fail = 0;
+            for (uint32_t i = 0; i < n_ins && !cb_fail; i++) {
+                if (on_insert(ctx, ins + (size_t)i * expected_dimension, expected_dimension,
+                              NULL, NULL, 0) != 0) cb_fail = 1;
+            }
+            for (uint32_t i = 0; i < n_del && !cb_fail; i++) {
+                if (on_delete != NULL && on_delete(ctx, (size_t)dels[i]) != 0) cb_fail = 1;
+            }
+            gv_free(ins); gv_free(dels);
+            if (cb_fail) { fclose(f); return -1; }
         } else {
             /* Unknown record type: torn trailing byte or mid-log corruption. */
             if (wal_is_torn_tail(f, record_start, 0)) break;
@@ -1202,6 +1399,7 @@ void wal_close(GV_WAL *wal) {
         wal_sync(wal->file);
         fclose(wal->file);
     }
+    pthread_rwlock_destroy(&wal->sync_lock);
     gv_free(wal->path);
     gv_free(wal);
 }
@@ -1218,11 +1416,9 @@ int wal_reset(const char *path) {
     return 0;
 }
 
-int wal_truncate(GV_WAL *wal) {
-    if (wal == NULL || wal->path == NULL) {
-        return -1;
-    }
-
+/* Reopen the WAL file as an empty, header-only log. MUST be called with
+ * wal->sync_lock held EXCLUSIVE so no deferred fsync observes the swap. */
+static int wal_truncate_locked(GV_WAL *wal) {
     if (wal->file != NULL) {
         wal_sync(wal->file);
         fclose(wal->file);
@@ -1259,8 +1455,34 @@ int wal_truncate(GV_WAL *wal) {
     }
 
     (void)fseek(wal->file, 0, SEEK_END);
-
     return 0;
+}
+
+int wal_truncate(GV_WAL *wal) {
+    if (wal == NULL || wal->path == NULL) {
+        return -1;
+    }
+    /* Exclude in-flight deferred fsyncs while we fclose/reopen wal->file. */
+    pthread_rwlock_wrlock(&wal->sync_lock);
+    int rc = wal_truncate_locked(wal);
+    pthread_rwlock_unlock(&wal->sync_lock);
+    return rc;
+}
+
+uint64_t wal_size(const GV_WAL *wal) {
+    if (wal == NULL || wal->file == NULL) {
+        return 0;
+    }
+    /* The stream is opened in append mode, so the current end offset is the
+     * on-disk size. Flush first so buffered appends are counted. */
+    FILE *f = wal->file;
+    fflush(f);
+    long cur = ftell(f);
+    if (fseek(f, 0, SEEK_END) != 0) {
+        return (cur >= 0) ? (uint64_t)cur : 0;
+    }
+    long end = ftell(f);
+    return (end >= 0) ? (uint64_t)end : 0;
 }
 
 static int wal_record_has_crc(uint32_t version) {
@@ -1301,6 +1523,20 @@ static int wal_skip_record_from_file(FILE *f, int has_crc, long *record_start, s
         uint32_t dim = 0;
         if (read_u32(f, &dim) != 0) return -1;
         if (fseek(f, (long)(dim * sizeof(float)), SEEK_CUR) != 0) return -1;
+        if (has_crc) {
+            if (fseek(f, (long)sizeof(uint32_t), SEEK_CUR) != 0) return -1;
+        }
+    } else if (type == GV_WAL_TYPE_TXN) {
+        uint32_t n_ins = 0;
+        if (read_u32(f, &n_ins) != 0) return -1;
+        for (uint32_t i = 0; i < n_ins; i++) {
+            uint32_t dim = 0;
+            if (read_u32(f, &dim) != 0) return -1;
+            if (fseek(f, (long)(dim * sizeof(float)), SEEK_CUR) != 0) return -1;
+        }
+        uint32_t n_del = 0;
+        if (read_u32(f, &n_del) != 0) return -1;
+        if (fseek(f, (long)((size_t)n_del * sizeof(uint64_t)), SEEK_CUR) != 0) return -1;
         if (has_crc) {
             if (fseek(f, (long)sizeof(uint32_t), SEEK_CUR) != 0) return -1;
         }

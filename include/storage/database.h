@@ -170,6 +170,9 @@ typedef struct GV_Database {
     /* MVCC transactions */
     uint64_t commit_version;           /**< Monotonic version stamped by each committed write txn (0 = no txns yet). */
     pthread_mutex_t txn_mutex;         /**< Serializes transaction commits (single-writer commit point). */
+    uint64_t *txn_active_versions;     /**< read_version of each live transaction (for GC safe-point). Guarded by txn_mutex. */
+    size_t txn_active_count;           /**< Number of live transactions. */
+    size_t txn_active_cap;             /**< Capacity of txn_active_versions. */
 } GV_Database;
 
 typedef struct {
@@ -709,6 +712,29 @@ int db_update_vector_metadata(GV_Database *db, size_t vector_index,
 GV_NODISCARD int db_save(const GV_Database *db, const char *filepath);
 
 /**
+ * @brief Checkpoint the WAL: snapshot the database to its backing file and
+ *        truncate the write-ahead log, bounding its growth.
+ *
+ * Equivalent to db_save(db, db->filepath) for a file-backed database. A
+ * no-op-failure (returns -1) for in-memory databases (no filepath/WAL).
+ *
+ * @return 0 on success, -1 on error or when there is nothing to checkpoint.
+ */
+int db_wal_checkpoint(GV_Database *db);
+
+/**
+ * @brief Checkpoint only if the WAL has grown to at least @p threshold_bytes.
+ *
+ * Call periodically (or after writes) to keep the WAL bounded without a full
+ * checkpoint on every mutation.
+ *
+ * @param db Database.
+ * @param threshold_bytes WAL size (bytes) at/above which to checkpoint.
+ * @return 1 if a checkpoint ran, 0 if below threshold / nothing to do, -1 on error.
+ */
+int db_wal_checkpoint_if_needed(GV_Database *db, size_t threshold_bytes);
+
+/**
  * @brief Search for k nearest neighbors to a query vector.
  *
  * @param db Database to search; must be non-NULL.
@@ -1016,6 +1042,11 @@ int db_value_store_gc(GV_Database *db);
 /* Internal (transaction commit path): set a thread-local MVCC create_version
  * stamp applied by the next db_add_vector call(s) on this thread. 0 clears it. */
 void db_set_commit_stamp(uint64_t stamp);
+
+/* Internal (transaction commit path): when set non-zero on this thread,
+ * db_add_vector applies to the index but suppresses its own per-insert WAL
+ * record so the commit can write a single atomic TXN record instead. 0 clears. */
+void db_set_wal_suppress(int on);
 
 /**
  * @brief Internal: compact SoA storage in place, removing deleted vectors and

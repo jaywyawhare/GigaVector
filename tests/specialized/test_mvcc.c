@@ -20,7 +20,7 @@ static int test_txn_begin_commit(void) {
 
     GV_Transaction *txn = gv_txn_begin(mgr);
     ASSERT(txn != NULL, "gv_txn_begin returned NULL");
-    ASSERT(gv_txn_status(txn) == GV_TXN_ACTIVE, "txn should be ACTIVE after begin");
+    ASSERT(gv_txn_status(txn) == GV_MVCC_TXN_ACTIVE, "txn should be ACTIVE after begin");
     ASSERT(gv_txn_id(txn) > 0, "txn id should be > 0");
     ASSERT(gv_mvcc_active_txn_count(mgr) >= 1, "active txn count should be >= 1");
 
@@ -37,7 +37,7 @@ static int test_txn_begin_rollback(void) {
 
     GV_Transaction *txn = gv_txn_begin(mgr);
     ASSERT(txn != NULL, "begin txn");
-    ASSERT(gv_txn_status(txn) == GV_TXN_ACTIVE, "txn should be active");
+    ASSERT(gv_txn_status(txn) == GV_MVCC_TXN_ACTIVE, "txn should be active");
 
     int rc = gv_txn_rollback(txn);
     ASSERT(rc == 0, "gv_txn_rollback should return 0");
