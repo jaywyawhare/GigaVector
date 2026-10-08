@@ -19,16 +19,19 @@
  * kernels below ran it 2-3x per call, which cost ~6% of all instructions in an
  * e2e search profile. The CPU feature set is immutable after first detection,
  * so cache it in a file-local the first time and read it directly thereafter.
- * The race on first use is benign (idempotent, same value), matching the
- * contract cpu_detect_features already documents. Callers fetch it ONCE into a
- * local and bit-test, instead of calling cpu_has_feature() per candidate kernel.
+ * Accessed with relaxed atomics so parallel searches don't data-race the cache
+ * (ThreadSanitizer-clean); on x86 a relaxed load/store is a plain mov with no
+ * barrier, so the fast path stays as cheap as a bare read. The first-use
+ * recompute is idempotent, matching the contract cpu_detect_features documents.
+ * Callers fetch it ONCE into a local and bit-test, instead of calling
+ * cpu_has_feature() per candidate kernel.
  */
 static unsigned s_dist_feats = (unsigned)-1;
 static inline unsigned dist_features(void) {
-    unsigned f = s_dist_feats;
+    unsigned f = __atomic_load_n(&s_dist_feats, __ATOMIC_RELAXED);
     if (f == (unsigned)-1) {
         f = cpu_detect_features();
-        s_dist_feats = f;
+        __atomic_store_n(&s_dist_feats, f, __ATOMIC_RELAXED);
     }
     return f;
 }
