@@ -79,6 +79,26 @@ uint64_t db_txn_read_version(const GV_DBTxn *txn);
  */
 size_t db_txn_gc(GV_Database *db, uint64_t safe_below);
 
+/**
+ * @brief Minimum read version among live transactions, or 0 if none are active.
+ *
+ * This is the GC safe-point: a tombstone with delete version <= this value is
+ * invisible to every live snapshot and can be reclaimed.
+ */
+uint64_t db_txn_min_active_version(GV_Database *db);
+
+/**
+ * @brief Reclaim all tombstones no live snapshot can observe, choosing the safe
+ *        point automatically from the live-transaction set.
+ *
+ * Equivalent to db_txn_gc() with safe_below derived from the minimum active read
+ * version (or commit_version + 1 when no transactions are active). Safe to call
+ * periodically to keep tombstones from accumulating.
+ *
+ * @return Number of tombstones reclaimed.
+ */
+size_t db_txn_gc_auto(GV_Database *db);
+
 #ifdef __cplusplus
 }
 #endif

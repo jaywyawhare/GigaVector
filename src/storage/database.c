@@ -740,6 +740,7 @@ static void db_free_open_failure(GV_Database *db) {
     pthread_mutex_destroy(&db->compaction_mutex);
     pthread_cond_destroy(&db->compaction_cond);
     pthread_mutex_destroy(&db->resource_mutex);
+    gv_free(db->txn_active_versions);
     pthread_mutex_destroy(&db->txn_mutex);
     pthread_mutex_destroy(&db->observability_mutex);
     pthread_mutex_destroy(&db->retrain_mutex);
@@ -1448,6 +1449,7 @@ void db_close(GV_Database *db) {
     pthread_mutex_destroy(&db->compaction_mutex);
     pthread_cond_destroy(&db->compaction_cond);
     pthread_mutex_destroy(&db->resource_mutex);
+    gv_free(db->txn_active_versions);
     pthread_mutex_destroy(&db->txn_mutex);
     pthread_mutex_destroy(&db->retrain_mutex);
     if (db->insert_latency_hist.buckets != NULL) {
@@ -1527,6 +1529,7 @@ static void db_open_from_memory_cleanup(GV_Database *db) {
     pthread_mutex_destroy(&db->compaction_mutex);
     pthread_cond_destroy(&db->compaction_cond);
     pthread_mutex_destroy(&db->resource_mutex);
+    gv_free(db->txn_active_versions);
     pthread_mutex_destroy(&db->txn_mutex);
     pthread_mutex_destroy(&db->retrain_mutex);
     pthread_mutex_destroy(&db->observability_mutex);
@@ -2060,6 +2063,7 @@ GV_Database *db_open_with_ivfpq_config(const char *filepath, size_t dimension,
     if (db->hnsw_index == NULL) {
         metadata_index_destroy(db->metadata_index);
         pthread_mutex_destroy(&db->resource_mutex);
+    gv_free(db->txn_active_versions);
     pthread_mutex_destroy(&db->txn_mutex);
         pthread_mutex_destroy(&db->observability_mutex);
     pthread_mutex_destroy(&db->ab_mutex);
@@ -2146,6 +2150,7 @@ GV_Database *db_open_with_ivfflat_config(const char *filepath, size_t dimension,
     if (db->hnsw_index == NULL) {
         metadata_index_destroy(db->metadata_index);
         pthread_mutex_destroy(&db->resource_mutex);
+    gv_free(db->txn_active_versions);
     pthread_mutex_destroy(&db->txn_mutex);
         pthread_mutex_destroy(&db->observability_mutex);
     pthread_mutex_destroy(&db->ab_mutex);
@@ -2217,6 +2222,7 @@ GV_Database *db_open_with_ivfdisk_config(const char *filepath, size_t dimension,
         gv_free(db->filepath);
         gv_free(db->wal_path);
         pthread_mutex_destroy(&db->resource_mutex);
+    gv_free(db->txn_active_versions);
     pthread_mutex_destroy(&db->txn_mutex);
         pthread_mutex_destroy(&db->observability_mutex);
     pthread_mutex_destroy(&db->ab_mutex);
@@ -2303,6 +2309,7 @@ GV_Database *db_open_with_ivfsq8_config(const char *filepath, size_t dimension,
     if (db->hnsw_index == NULL) {
         metadata_index_destroy(db->metadata_index);
         pthread_mutex_destroy(&db->resource_mutex);
+    gv_free(db->txn_active_versions);
     pthread_mutex_destroy(&db->txn_mutex);
         pthread_mutex_destroy(&db->observability_mutex);
     pthread_mutex_destroy(&db->ab_mutex);
@@ -2398,6 +2405,7 @@ GV_Database *db_open_with_ivfturboquant_config(const char *filepath, size_t dime
     if (db->hnsw_index == NULL) {
         metadata_index_destroy(db->metadata_index);
         pthread_mutex_destroy(&db->resource_mutex);
+    gv_free(db->txn_active_versions);
     pthread_mutex_destroy(&db->txn_mutex);
         pthread_mutex_destroy(&db->observability_mutex);
     pthread_mutex_destroy(&db->ab_mutex);
@@ -2483,6 +2491,7 @@ GV_Database *db_open_with_pq_config(const char *filepath, size_t dimension,
     if (db->hnsw_index == NULL) {
         metadata_index_destroy(db->metadata_index);
         pthread_mutex_destroy(&db->resource_mutex);
+    gv_free(db->txn_active_versions);
     pthread_mutex_destroy(&db->txn_mutex);
         pthread_mutex_destroy(&db->observability_mutex);
     pthread_mutex_destroy(&db->ab_mutex);
@@ -2559,6 +2568,7 @@ GV_Database *db_open_with_lsh_config(const char *filepath, size_t dimension,
     if (db->soa_storage == NULL) {
         metadata_index_destroy(db->metadata_index);
         pthread_mutex_destroy(&db->resource_mutex);
+    gv_free(db->txn_active_versions);
     pthread_mutex_destroy(&db->txn_mutex);
         pthread_mutex_destroy(&db->observability_mutex);
     pthread_mutex_destroy(&db->ab_mutex);
@@ -2585,6 +2595,7 @@ GV_Database *db_open_with_lsh_config(const char *filepath, size_t dimension,
         soa_storage_destroy(db->soa_storage);
         metadata_index_destroy(db->metadata_index);
         pthread_mutex_destroy(&db->resource_mutex);
+    gv_free(db->txn_active_versions);
     pthread_mutex_destroy(&db->txn_mutex);
         pthread_mutex_destroy(&db->observability_mutex);
     pthread_mutex_destroy(&db->ab_mutex);

@@ -115,6 +115,39 @@ int main(void) {
     }
 
     db_close(db);
+
+    /* ---- auto-GC: tombstones reclaimed only when no live snapshot can see them ---- */
+    {
+        GV_Database *g = db_open(NULL, D, GV_INDEX_TYPE_FLAT);
+        ASSERT(g != NULL, "open gc db");
+        { int _r = db_add_vector(g, v0, D); (void)_r; }  /* index 0 */
+        { int _r = db_add_vector(g, v1, D); (void)_r; }  /* index 1 */
+
+        /* No active txns yet -> min active version is 0 (sentinel). */
+        ASSERT(db_txn_min_active_version(g) == 0, "no active txns => 0");
+
+        /* An old reader holds a snapshot BEFORE the delete commits. */
+        GV_DBTxn *reader = db_begin(g);                 /* read_version = 0 */
+        ASSERT(db_txn_min_active_version(g) == 0, "reader snapshot at version 0");
+
+        GV_DBTxn *del = db_begin(g);
+        ASSERT(db_txn_delete(del, 1) == 0, "stage delete of index 1");
+        ASSERT(db_commit(del) == GV_TXN_OK, "commit delete (tombstone at v1)");
+
+        /* GC must NOT reclaim the tombstone: the reader's snapshot (v0) still
+         * sees index 1 (deleted at v1 > 0). */
+        size_t reclaimed = db_txn_gc_auto(g);
+        ASSERT(reclaimed == 0, "tombstone preserved while old snapshot is live");
+
+        /* Reader finishes -> no active snapshots -> tombstone now reclaimable. */
+        ASSERT(db_rollback(reader) == 0, "finish reader");
+        ASSERT(db_txn_min_active_version(g) == 0, "no active txns after reader ends");
+        reclaimed = db_txn_gc_auto(g);
+        ASSERT(reclaimed == 1, "tombstone reclaimed once no snapshot can see it");
+
+        db_close(g);
+    }
+
     printf(failures ? "\nSOME TESTS FAILED (%d)\n" : "\nALL TRANSACTION TESTS PASSED\n", failures);
     return failures ? 1 : 0;
 }

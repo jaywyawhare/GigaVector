@@ -170,6 +170,9 @@ typedef struct GV_Database {
     /* MVCC transactions */
     uint64_t commit_version;           /**< Monotonic version stamped by each committed write txn (0 = no txns yet). */
     pthread_mutex_t txn_mutex;         /**< Serializes transaction commits (single-writer commit point). */
+    uint64_t *txn_active_versions;     /**< read_version of each live transaction (for GC safe-point). Guarded by txn_mutex. */
+    size_t txn_active_count;           /**< Number of live transactions. */
+    size_t txn_active_cap;             /**< Capacity of txn_active_versions. */
 } GV_Database;
 
 typedef struct {
