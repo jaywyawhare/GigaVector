@@ -64,7 +64,7 @@ const rows = [
   { label: 'Embedded mode', gv: true, qd: false, mv: false, pc: false, wv: true },
   { label: 'Knowledge graph', gv: true, qd: false, mv: false, pc: false, wv: false },
   { label: 'LLM integration', gv: true, qd: false, mv: false, pc: true, wv: true },
-  { label: 'SIMD / GPU', gv: 'AVX-512 + CUDA', qd: 'AVX2', mv: 'AVX2', pc: '—', wv: '—' },
+  { label: 'SIMD / GPU', gv: 'AVX-512 + CUDA', qd: 'AVX2', mv: 'AVX2', pc: '-', wv: '-' },
   { label: 'Self-hosted', gv: true, qd: true, mv: true, pc: false, wv: true },
   { label: 'Graph traversal', gv: true, qd: false, mv: false, pc: false, wv: false },
   { label: 'SQL queries', gv: true, qd: false, mv: false, pc: false, wv: true },
@@ -91,7 +91,7 @@ const benchRows = [
 function Cell({ val, highlight }) {
   const cls = highlight ? 'cmp-cell cmp-hl' : 'cmp-cell'
   if (val === true) return <td className={cls}><span className="cmp-yes">Yes</span></td>
-  if (val === false) return <td className={cls}><span className="cmp-no">—</span></td>
+  if (val === false) return <td className={cls}><span className="cmp-no">-</span></td>
   return <td className={cls}>{val}</td>
 }
 
@@ -181,7 +181,7 @@ export default function Comparison() {
         </table>
       </div>
       <p className="cmp-footnote">
-        * Qdrant client uses exact (brute-force) search, not HNSW — recall is 100% but at significantly lower throughput.
+        * Qdrant client uses exact (brute-force) search, not HNSW - recall is 100% but at significantly lower throughput.
       </p>
     </section>
   )

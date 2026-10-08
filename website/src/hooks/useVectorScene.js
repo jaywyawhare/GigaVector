@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react'
 import * as THREE from 'three'
 
 /**
- * Minimal particle field — subtle floating dots, no connection lines,
+ * Minimal particle field - subtle floating dots, no connection lines,
  * no search rings. Just atmosphere.
  */
 export function useVectorScene() {
