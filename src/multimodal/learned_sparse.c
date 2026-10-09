@@ -262,15 +262,20 @@ static void ls_cursor_advance_to(GV_LSWandCursor *c, size_t target,
     }
 }
 
-/**
- * @brief Comparison for sorting cursors by current doc_id (ascending).
- */
-static int ls_cursor_cmp(const void *a, const void *b) {
-    size_t da = ls_cursor_doc((const GV_LSWandCursor *)a);
-    size_t db = ls_cursor_doc((const GV_LSWandCursor *)b);
-    if (da < db) return -1;
-    if (da > db) return 1;
-    return 0;
+/* Keep cursors sorted by current doc_id (ascending). WAND re-sorts every
+ * iteration, but num_cursors == query terms (small) and only a few cursors move
+ * each step, so insertion sort beats a full qsort and avoids its call overhead. */
+static void ls_cursor_sort(GV_LSWandCursor *c, size_t n) {
+    for (size_t i = 1; i < n; i++) {
+        GV_LSWandCursor key = c[i];
+        size_t kd = ls_cursor_doc(&key);
+        size_t j = i;
+        while (j > 0 && ls_cursor_doc(&c[j - 1]) > kd) {
+            c[j] = c[j - 1];
+            j--;
+        }
+        c[j] = key;
+    }
 }
 
 static float ls_posting_list_max_weight(const GV_LSPostingList *pl) {
@@ -325,7 +330,7 @@ static int ls_search_wand(const GV_LearnedSparseIndex *idx,
     size_t block_size = idx->config.wand_block_size;
 
     while (1) {
-        qsort(cursors, num_cursors, sizeof(GV_LSWandCursor), ls_cursor_cmp);
+        ls_cursor_sort(cursors, num_cursors);
 
         while (num_cursors > 0 &&
                ls_cursor_doc(&cursors[num_cursors - 1]) == SIZE_MAX) {

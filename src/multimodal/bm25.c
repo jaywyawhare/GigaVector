@@ -443,61 +443,76 @@ int bm25_search_terms(GV_BM25Index *index, const char **terms, size_t term_count
         return 0;
     }
 
-    DocScore *scores = gv_calloc(index->total_documents, sizeof(DocScore));
-    if (!scores) {
+    /* BM25 only scores documents that contain a query term, so accumulate into
+     * an open-addressing hash (doc_id -> score) in O(1) per posting. The old
+     * path pre-populated every document and then linearly scanned that whole
+     * array once per posting - O(postings * total_documents), the e2e search
+     * hot spot - and sorted all documents even those scoring zero. */
+    size_t total_postings = 0;
+    for (size_t t = 0; t < term_count; t++) {
+        GV_PostingList *pl = find_posting_list(index, terms[t]);
+        if (pl) total_postings += pl->count;
+    }
+    if (total_postings == 0) {
+        pthread_rwlock_unlock(&index->rwlock);
+        return 0;
+    }
+
+    /* Power-of-two table at <=50% load so linear probing stays cheap. doc_ids
+     * are assigned sequentially from 0, so SIZE_MAX is a safe empty sentinel. */
+    size_t cap = 16;
+    while (cap < total_postings * 2) cap <<= 1;
+    const size_t mask = cap - 1;
+    const size_t EMPTY = (size_t)-1;
+    DocScore *tab = gv_alloc(cap * sizeof(DocScore));
+    if (!tab) {
         pthread_rwlock_unlock(&index->rwlock);
         return -1;
     }
-
-    size_t score_count = 0;
-    for (size_t i = 0; i < DOC_HASH_BUCKETS; i++) {
-        GV_DocInfo *di = index->doc_buckets[i];
-        while (di) {
-            scores[score_count].doc_id = di->doc_id;
-            scores[score_count].score = 0.0;
-            score_count++;
-            di = di->next;
-        }
-    }
+    for (size_t i = 0; i < cap; i++) tab[i].doc_id = EMPTY;
 
     for (size_t t = 0; t < term_count; t++) {
         GV_PostingList *pl = find_posting_list(index, terms[t]);
         if (!pl) continue;
-
         size_t doc_freq = pl->count;
 
         for (size_t p = 0; p < pl->count; p++) {
             size_t doc_id = pl->postings[p].doc_id;
-            size_t term_freq = pl->postings[p].term_freq;
-
             GV_DocInfo *di = find_doc_info(index, doc_id);
             if (!di) continue;
 
-            double term_score = compute_bm25_term_score(index, term_freq,
-                                                         di->doc_length, doc_freq);
+            double term_score = compute_bm25_term_score(index,
+                    pl->postings[p].term_freq, di->doc_length, doc_freq);
 
-            for (size_t s = 0; s < score_count; s++) {
-                if (scores[s].doc_id == doc_id) {
-                    scores[s].score += term_score;
-                    break;
-                }
+            size_t h = doc_id & mask;
+            while (tab[h].doc_id != EMPTY && tab[h].doc_id != doc_id)
+                h = (h + 1) & mask;
+            if (tab[h].doc_id == EMPTY) {
+                tab[h].doc_id = doc_id;
+                tab[h].score = term_score;
+            } else {
+                tab[h].score += term_score;
             }
         }
     }
 
-    qsort(scores, score_count, sizeof(DocScore), compare_doc_scores);
+    /* Compact occupied slots to the front, rank, emit top-k with score > 0. */
+    size_t matched = 0;
+    for (size_t i = 0; i < cap; i++)
+        if (tab[i].doc_id != EMPTY) tab[matched++] = tab[i];
+    qsort(tab, matched, sizeof(DocScore), compare_doc_scores);
 
-    size_t result_count = score_count < k ? score_count : k;
+    size_t limit = matched < k ? matched : k;
     size_t actual_count = 0;
-    for (size_t i = 0; i < result_count; i++) {
-        if (scores[i].score > 0.0) {
-            results[actual_count].doc_id = scores[i].doc_id;
-            results[actual_count].score = scores[i].score;
+    for (size_t i = 0; i < limit; i++) {
+        if (tab[i].score > 0.0) {
+            results[actual_count].doc_id = tab[i].doc_id;
+            results[actual_count].score = tab[i].score;
             actual_count++;
         }
     }
 
-    gv_free(scores);
+    gv_free(tab);
     pthread_rwlock_unlock(&index->rwlock);
 
     return (int)actual_count;
