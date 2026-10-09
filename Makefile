@@ -170,6 +170,17 @@ profile-e2e:
 
 # Symbol-level hot path via callgrind (no instrumentation needed). Smaller
 # default workload since callgrind is ~50x slower.
+# As profile-e2e but builds the lib with the embedded REST server enabled
+# (-DHAVE_MICROHTTPD + -lmicrohttpd) so the "12.server" phase runs end-to-end
+# HTTP requests. Needs libmicrohttpd-dev installed.
+.PHONY: profile-e2e-server
+profile-e2e-server:
+	@rm -f $(OBJ_DIR)/core/memory.o $(OBJ_DIR)/api/server.o $(OBJ_DIR)/api/rest_handlers.o $(STATIC_LIB) $(SHARED_LIB)
+	@$(MAKE) lib EXTRA_CFLAGS="-DGV_PROFILE_ALLOC -DHAVE_MICROHTTPD" SIMD_FLAGS="-mavx2 -mfma" LDFLAGS="-lm -pthread -lmicrohttpd"
+	@$(MAKE) $(BENCH_DIR)/profile_e2e EXTRA_CFLAGS="-DGV_PROFILE_ALLOC -DHAVE_MICROHTTPD" SIMD_FLAGS="-mavx2 -mfma"
+	@echo "=== e2e profiler (with REST server) ==="
+	@LD_LIBRARY_PATH=$(LIB_DIR) $(BENCH_DIR)/profile_e2e $(PROF_ARGS)
+
 .PHONY: profile-e2e-callgrind
 profile-e2e-callgrind: $(BENCH_DIR)/profile_e2e
 	@echo "=== callgrind (writes callgrind.out.e2e) ==="

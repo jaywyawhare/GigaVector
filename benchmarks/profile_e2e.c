@@ -31,8 +31,12 @@
 #include <time.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 
 #include "gigavector.h"
+#include "api/server.h"
 #include "core/memory.h"
 #include "features/cypher.h"
 #include "features/knowledge_graph.h"
@@ -55,7 +59,7 @@
 
 /* ------------------------------------------------------------- scope profiler */
 
-#define PROF_MAX_SCOPES 64
+#define PROF_MAX_SCOPES 256
 #define PROF_MAX_DEPTH  32
 #define PROF_MAX_SPANS  (1 << 20)
 
@@ -101,6 +105,11 @@ static int prof_stat_for(const char *name) {
     for (int i = 0; i < g_stat_count; i++)
         if (g_stats[i].name == name || strcmp(g_stats[i].name, name) == 0)
             return i;
+    if (g_stat_count >= PROF_MAX_SCOPES) {
+        fprintf(stderr, "profiler: scope table full (%d); raise PROF_MAX_SCOPES\n",
+                PROF_MAX_SCOPES);
+        return PROF_MAX_SCOPES - 1; /* fold extras into the last slot, never OOB */
+    }
     int i = g_stat_count++;
     g_stats[i].name = name;
     g_stats[i].min_ms = 1e30;
@@ -653,6 +662,74 @@ static void phase_ivfdisk(size_t n, size_t dim, size_t queries) {
     }
 }
 
+/* ---- REST server (end-to-end HTTP: parse -> dispatch -> engine -> JSON) --- */
+
+/* Minimal blocking HTTP POST to localhost; reads and discards the response. */
+static int http_post(uint16_t port, const char *path, const char *body) {
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) return -1;
+    struct sockaddr_in sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sin_family = AF_INET;
+    sa.sin_port = htons(port);
+    sa.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    if (connect(fd, (struct sockaddr *)&sa, sizeof(sa)) != 0) { close(fd); return -1; }
+    char req[8192];
+    int blen = (int)strlen(body);
+    int n = snprintf(req, sizeof(req),
+                     "POST %s HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\n"
+                     "Content-Length: %d\r\nConnection: close\r\n\r\n%s",
+                     path, blen, body);
+    if (write(fd, req, (size_t)n) != n) { close(fd); return -1; }
+    char buf[4096];
+    while (read(fd, buf, sizeof(buf)) > 0) { /* drain response */ }
+    close(fd);
+    return 0;
+}
+
+static void phase_server(size_t n, size_t dim, size_t queries) {
+    PROF_SCOPE("12.server") {
+        GV_Database *db = db_open(NULL, dim, GV_INDEX_TYPE_FLAT);
+        if (!db) return;
+        float *v = (float *)malloc(dim * sizeof(float));
+        for (size_t i = 0; i < n; i++) {
+            for (size_t d = 0; d < dim; d++) v[d] = next_unit();
+            if (db_add_vector(db, v, dim)) {}
+        }
+
+        GV_ServerConfig cfg;
+        server_config_init(&cfg);
+        cfg.port = 18080;
+        cfg.enable_logging = 0;
+        GV_Server *srv = server_create(db, &cfg);
+        if (srv && server_start(srv) == 0) {
+            uint16_t port = server_get_port(srv);
+
+            /* Build a JSON search body for this dimension. */
+            char body[8192];
+            size_t off = (size_t)snprintf(body, sizeof(body), "{\"query\":[");
+            for (size_t d = 0; d < dim && off + 24 < sizeof(body); d++)
+                off += (size_t)snprintf(body + off, sizeof(body) - off, "%s%.4f", d ? "," : "", (double)next_unit());
+            snprintf(body + off, sizeof(body) - off, "],\"k\":10}");
+
+            PROF_SCOPE("server/search_http") {
+                for (size_t q = 0; q < queries; q++)
+                    (void)http_post(port, "/search", body);
+            }
+            PROF_SCOPE("server/health_http") {
+                for (size_t q = 0; q < queries; q++)
+                    (void)http_post(port, "/health", "");
+            }
+            server_stop(srv);
+        } else {
+            fprintf(stderr, "  server: not started (lib built without microhttpd) - skipped\n");
+        }
+        if (srv) server_destroy(srv);
+        free(v);
+        db_close(db);
+    }
+}
+
 int main(int argc, char **argv) {
     size_t n_vec   = argc > 1 ? strtoul(argv[1], NULL, 10) : 20000;
     size_t dim     = argc > 2 ? strtoul(argv[2], NULL, 10) : 128;
@@ -685,6 +762,7 @@ int main(int argc, char **argv) {
     phase_sparse(idx_n, dim < 1000 ? 1000 : dim, 16, queries);
     phase_diskann(idx_n, dim, queries);
     phase_ivfdisk(idx_n, dim, queries);
+    phase_server(idx_n, dim, queries);
     double wall = now_ms() - wall0;
 
     prof_report();
