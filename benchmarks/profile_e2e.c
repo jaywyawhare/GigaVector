@@ -506,6 +506,67 @@ static void phase_hnsw_metrics(size_t n, size_t dim, size_t queries) {
     }
 }
 
+/* ---- recall quality: ANN indexes vs exact (FLAT) ground truth ------------
+ * Speed numbers are meaningless without recall: an index that returns garbage
+ * fast is not faster. For each ANN index this builds it alongside an exact
+ * FLAT index on the same corpus, runs the same queries through both, and
+ * reports recall@k = |ANN top-k ∩ exact top-k| / k averaged over queries.
+ * Printed (not a PROF_SCOPE) since it is a quality metric, not a timing. */
+static double recall_vs_flat(GV_Database *flat, GV_Database *ann,
+                             const float *queries, size_t nq, size_t dim, size_t k) {
+    GV_SearchResult gt[32], an[32];
+    if (k > 32) k = 32;
+    double sum = 0.0;
+    size_t counted = 0;
+    for (size_t q = 0; q < nq; q++) {
+        const float *qv = queries + q * dim;
+        int ng = db_search(flat, qv, k, gt, GV_DISTANCE_EUCLIDEAN);
+        int na = db_search(ann,  qv, k, an, GV_DISTANCE_EUCLIDEAN);
+        if (ng <= 0) { if (ng > 0) gv_search_results_free(gt, (size_t)ng); if (na > 0) gv_search_results_free(an, (size_t)na); continue; }
+        size_t hit = 0;
+        for (int i = 0; i < na; i++)
+            for (int j = 0; j < ng; j++)
+                if (an[i].id == gt[j].id) { hit++; break; }
+        sum += (double)hit / (double)ng;
+        counted++;
+        gv_search_results_free(gt, (size_t)ng);
+        if (na > 0) gv_search_results_free(an, (size_t)na);
+    }
+    return counted ? sum / (double)counted : 0.0;
+}
+
+static void phase_recall(size_t n, size_t dim, size_t queries) {
+    PROF_SCOPE("6b.recall") {
+        const size_t k = 10;
+        float *data = (float *)malloc(n * dim * sizeof(float));
+        for (size_t i = 0; i < n * dim; i++) data[i] = next_unit();
+        float *qs = (float *)malloc(queries * dim * sizeof(float));
+        for (size_t i = 0; i < queries * dim; i++) qs[i] = next_unit();
+
+        GV_Database *flat = db_open(NULL, dim, GV_INDEX_TYPE_FLAT);
+        if (flat) for (size_t i = 0; i < n; i++) (void)db_add_vector(flat, data + i * dim, dim);
+
+        struct { const char *name; GV_IndexType type; } anns[] = {
+            { "hnsw",   GV_INDEX_TYPE_HNSW },
+            { "kdtree", GV_INDEX_TYPE_KDTREE },
+            { "lsh",    GV_INDEX_TYPE_LSH },
+            { "rabitq", GV_INDEX_TYPE_RABITQ },
+        };
+        printf("  recall@%zu vs exact (n=%zu dim=%zu q=%zu):\n", k, n, dim, queries);
+        for (size_t ai = 0; ai < sizeof(anns) / sizeof(anns[0]); ai++) {
+            GV_Database *ann = db_open(NULL, dim, anns[ai].type);
+            if (!ann || !flat) { printf("    %-8s n/a\n", anns[ai].name); if (ann) db_close(ann); continue; }
+            for (size_t i = 0; i < n; i++) (void)db_add_vector(ann, data + i * dim, dim);
+            double r = recall_vs_flat(flat, ann, qs, queries, dim, k);
+            printf("    %-8s %.3f\n", anns[ai].name, r);
+            db_close(ann);
+        }
+        if (flat) db_close(flat);
+        free(data);
+        free(qs);
+    }
+}
+
 /* ---- distance metrics: same FLAT corpus, each metric ---------------------- */
 
 static void phase_metrics(size_t n, size_t dim, size_t queries) {
@@ -913,6 +974,7 @@ int main(int argc, char **argv) {
     phase_hybrid(n_docs, q_text);
     phase_index_matrix(idx_n, dim, queries);
     phase_hnsw_metrics(idx_n, dim, queries);
+    phase_recall(idx_n, dim, queries / 4 + 1);
     phase_metrics(idx_n, dim, queries);
     phase_persistence(idx_n, dim, queries);
     phase_transactions(1000, dim);
