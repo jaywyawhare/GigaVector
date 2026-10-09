@@ -182,6 +182,34 @@ static inline int is_allowed(const GV_IdBitmap *allowed, size_t node_id) {
     return (allowed == NULL) || gv_id_bitmap_contains(allowed, (uint64_t)node_id);
 }
 
+/* Per-thread search scratch. gv_hnsw_search_filtered runs under the DB read
+ * (shared) lock, so using the per-index scratch (visited_epoch/current_epoch/
+ * search_*) raced across concurrent filtered queries and corrupted each
+ * other's visited table and beam heap. Mirror the non-filtered path's
+ * thread-local scratch so concurrent filtered searches are race-free. */
+static _Thread_local uint32_t *fts_visited = NULL;
+static _Thread_local size_t    fts_visited_cap = 0;
+static _Thread_local uint32_t  fts_epoch = 0;
+static _Thread_local float     *fts_dis = NULL;
+static _Thread_local size_t    *fts_ids = NULL;
+static _Thread_local uint8_t   *fts_proc = NULL;
+static _Thread_local size_t     fts_buf_size = 0;
+static void fts_cleanup(void *unused) {
+    (void)unused;
+    gv_free(fts_visited); fts_visited = NULL; fts_visited_cap = 0;
+    gv_free(fts_dis);  fts_dis  = NULL;
+    gv_free(fts_ids);  fts_ids  = NULL;
+    gv_free(fts_proc); fts_proc = NULL; fts_buf_size = 0;
+}
+GV_TLS_KEY_DEFINE(fts_key, fts_once, fts_key_make, fts_cleanup)
+static _Thread_local int fts_registered = 0;
+static void fts_register(void) {
+    if (fts_registered) return;
+    GV_TLS_KEY_ENSURE(fts_once, fts_key_make);
+    pthread_setspecific(fts_key, (void *)1); /* non-NULL -> destructor fires on thread exit */
+    fts_registered = 1;
+}
+
 int gv_hnsw_search_filtered(void *index_ptr, const float *query, size_t dimension,
                             size_t k, const GV_IdBitmap *allowed_set,
                             GV_SearchResult *results,
@@ -287,40 +315,48 @@ int gv_hnsw_search_filtered(void *index_ptr, const float *query, size_t dimensio
         }
     }
 
-    /* Level-0 beam search */
-    index->current_epoch++;
-    if (index->current_epoch == 0) {
-        memset(index->visited_epoch, 0, index->visited_capacity * sizeof(uint32_t));
-        index->current_epoch = 1;
+    /* Level-0 beam search, on per-thread scratch (race-free under read lock) */
+    fts_register();
+    if (index->visited_capacity > fts_visited_cap) {
+        uint32_t *nv = (uint32_t *)gv_realloc(fts_visited, index->visited_capacity * sizeof(uint32_t));
+        if (!nv) return -1;
+        memset(nv + fts_visited_cap, 0, (index->visited_capacity - fts_visited_cap) * sizeof(uint32_t));
+        fts_visited = nv;
+        fts_visited_cap = index->visited_capacity;
+    }
+    fts_epoch++;
+    if (fts_epoch == 0) {
+        memset(fts_visited, 0, fts_visited_cap * sizeof(uint32_t));
+        fts_epoch = 1;
     }
 
     size_t buf_need = ef;
-    if (buf_need > index->search_buf_size) {
-        float *nd  = (float *)  gv_realloc(index->search_dis,  buf_need * sizeof(float));
-        size_t *ni = (size_t *) gv_realloc(index->search_ids,  buf_need * sizeof(size_t));
-        uint8_t *np = (uint8_t*)gv_realloc(index->search_proc, buf_need * sizeof(uint8_t));
+    if (buf_need > fts_buf_size) {
+        float *nd  = (float *)  gv_realloc(fts_dis,  buf_need * sizeof(float));
+        size_t *ni = (size_t *) gv_realloc(fts_ids,  buf_need * sizeof(size_t));
+        uint8_t *np = (uint8_t*)gv_realloc(fts_proc, buf_need * sizeof(uint8_t));
         if (!nd || !ni || !np) {
-            if (nd) index->search_dis  = nd;
-            if (ni) index->search_ids  = ni;
-            if (np) index->search_proc = np;
+            if (nd) fts_dis  = nd;
+            if (ni) fts_ids  = ni;
+            if (np) fts_proc = np;
             return -1;
         }
-        index->search_dis  = nd;
-        index->search_ids  = ni;
-        index->search_proc = np;
-        index->search_buf_size = buf_need;
+        fts_dis  = nd;
+        fts_ids  = ni;
+        fts_proc = np;
+        fts_buf_size = buf_need;
     }
 
-    float  *heap_dis = index->search_dis;
-    size_t *heap_ids = index->search_ids;
-    uint8_t *heap_proc = index->search_proc;
+    float  *heap_dis = fts_dis;
+    size_t *heap_ids = fts_ids;
+    uint8_t *heap_proc = fts_proc;
     size_t heap_k = 0;
 
     /* Seed: the current node (guaranteed allowed after descent) */
     float cur_dist = hnsw_raw_distance_i(SF_VEC(index->nodes[cur].vector_index),
                                           query, soa_dim, dtype);
     mmheap_push_f(heap_dis, heap_ids, heap_proc, &heap_k, buf_need, cur, cur_dist);
-    index->visited_epoch[cur] = index->current_epoch;
+    fts_visited[cur] = fts_epoch;
 
     for (;;) {
         float cand_dist;
@@ -338,9 +374,9 @@ int gv_hnsw_search_filtered(void *index_ptr, const float *query, size_t dimensio
             if (nb < 0) break;
             if (index->nodes[nb].deleted) continue;
             if (!is_allowed(allowed_set, (size_t)nb)) continue;
-            if ((size_t)nb >= index->visited_capacity ||
-                index->visited_epoch[nb] == index->current_epoch) continue;
-            index->visited_epoch[nb] = index->current_epoch;
+            if ((size_t)nb >= fts_visited_cap ||
+                fts_visited[nb] == fts_epoch) continue;
+            fts_visited[nb] = fts_epoch;
 
             float dist = hnsw_raw_distance_i(SF_VEC(index->nodes[nb].vector_index),
                                               query, soa_dim, dtype);
