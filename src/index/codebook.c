@@ -6,6 +6,9 @@
 #include <float.h>
 #include <stdint.h>
 
+#if defined(__AVX2__)
+#include <immintrin.h>
+#endif
 #include "index/codebook.h"
 #include "core/utils.h"
 
@@ -16,8 +19,25 @@
 #define GV_CODEBOOK_VERSION  1
 
 static float subvec_dist_sq(const float *a, const float *b, size_t len) {
+    /* k-means assignment calls this count*ksub times per iteration per
+     * subquantizer - the dominant cost of PQ/IVFPQ training. Vectorized where
+     * the compiler has AVX2 (Makefile -mavx2/-march=native builds); the scalar
+     * tail/fallback keeps generic and non-x86 builds correct. */
     float sum = 0.0f;
-    for (size_t i = 0; i < len; i++) {
+    size_t i = 0;
+#if defined(__AVX2__)
+    __m256 acc = _mm256_setzero_ps();
+    for (; i + 8 <= len; i += 8) {
+        __m256 d = _mm256_sub_ps(_mm256_loadu_ps(a + i), _mm256_loadu_ps(b + i));
+        acc = _mm256_fmadd_ps(d, d, acc);
+    }
+    __m128 lo = _mm256_extractf128_ps(acc, 0), hi = _mm256_extractf128_ps(acc, 1);
+    __m128 s = _mm_add_ps(lo, hi);
+    s = _mm_hadd_ps(s, s);
+    s = _mm_hadd_ps(s, s);
+    sum = _mm_cvtss_f32(s);
+#endif
+    for (; i < len; i++) {
         float d = a[i] - b[i];
         sum += d * d;
     }
