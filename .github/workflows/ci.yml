@@ -332,6 +332,13 @@ jobs:
     name: formal (Quint + CBMC + lock order)
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # The Quint CLI fetches its evaluator backend from GitHub releases at
+    # runtime; unauthenticated that shares the 60-req/hr/IP limit across all
+    # jobs on the runner and intermittently fails with "rate limit exceeded"
+    # (seen flaking `quint test`). The auto-provisioned GITHUB_TOKEN raises the
+    # limit to 5000/hr, which the fetcher honors - no extra secret needed.
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4.2.2
