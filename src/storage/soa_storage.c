@@ -415,8 +415,12 @@ int soa_storage_load(GV_SoAStorage *storage, FILE *in, uint32_t version)
         }
     }
 
-    storage->count = (size_t)count;
-    for (size_t i = 0; i < storage->count; ++i) {
+    /* Advance count as each record is fully read, NOT up front: a truncated
+     * file would otherwise leave slots [i, count) with uninitialized data but
+     * deleted[i]==0 (grow does not zero the float array), i.e. live garbage
+     * vectors. On a mid-record failure, count reflects only what loaded. */
+    storage->count = 0;
+    for (size_t i = 0; i < (size_t)count; ++i) {
         uint32_t deleted = 0;
         if (read_u32(in, &deleted) != 0) return -1;
         storage->deleted[i] = (int)deleted;
@@ -427,6 +431,7 @@ int soa_storage_load(GV_SoAStorage *storage, FILE *in, uint32_t version)
         if (soa_read_metadata(in, &storage->metadata[i]) != 0) return -1;
         /* Timestamps are not persisted; initialize to 0 (oldest). */
         storage->insert_timestamps[i] = 0;
+        storage->count = i + 1;
     }
     return 0;
 }

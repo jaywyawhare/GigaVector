@@ -70,11 +70,16 @@ static void hashmap_grow(InvHashMap *hm) {
 static InvBucket *hashmap_get_or_insert(InvHashMap *hm, const char *key) {
     uint32_t h = gv_fnv1a(key, strlen(key));
     if (hm->count * 4 >= hm->capacity * 3) hashmap_grow(hm);
+    /* If hashmap_grow failed (OOM) at a full table, the open-addressing probe
+     * below would loop forever. Bound it to capacity probes and fail instead. */
+    if (hm->count >= hm->capacity) return NULL;
     size_t idx = h & (hm->capacity - 1);
+    size_t probes = 0;
     while (hm->buckets[idx].occupied) {
         if (hm->buckets[idx].hash == h && strcmp(hm->buckets[idx].key, key) == 0)
             return &hm->buckets[idx];
         idx = (idx + 1) & (hm->capacity - 1);
+        if (++probes >= hm->capacity) return NULL;
     }
     hm->buckets[idx].key      = gv_strdup(key);
     hm->buckets[idx].bitmap   = gv_id_bitmap_create();
@@ -254,10 +259,18 @@ static void record_add(InvVectorRecord *rec, const char *field, const char *valu
         char **nv = (char **)gv_realloc(rec->values, nc * sizeof(char *));
         if (nf) rec->field_names = nf;
         if (nv) rec->values = nv;
+        /* Only publish the larger capacity if BOTH arrays actually grew;
+         * otherwise a write at rec->count would run past the array that did
+         * not grow. If either realloc failed, drop this field rather than
+         * overflow. */
+        if (!nf || !nv) return;
         rec->capacity = nc;
     }
-    rec->field_names[rec->count] = gv_strdup(field);
-    rec->values[rec->count]      = gv_strdup(value);
+    char *f = gv_strdup(field);
+    char *v = gv_strdup(value);
+    if (!f || !v) { gv_free(f); gv_free(v); return; }
+    rec->field_names[rec->count] = f;
+    rec->values[rec->count]      = v;
     rec->count++;
 }
 
@@ -274,10 +287,13 @@ int payload_inverted_index(GV_PayloadInvertedIndex *idx, const char *field,
     InvField *f = find_field(idx, field);
     if (!f) return -1;
 
-    /* Add to exact-match inverted list */
+    /* Add to exact-match inverted list (NULL only if the map is full and a
+     * grow failed under OOM - skip rather than crash). */
     InvBucket *b = hashmap_get_or_insert(f->exact, value);
-    if (!b->bitmap) b->bitmap = gv_id_bitmap_create();
-    gv_id_bitmap_add(b->bitmap, vector_id);
+    if (b) {
+        if (!b->bitmap) b->bitmap = gv_id_bitmap_create();
+        gv_id_bitmap_add(b->bitmap, vector_id);
+    }
 
     /* For string fields, also tokenize and index each token */
     if (f->type == 0) {
@@ -285,8 +301,10 @@ int payload_inverted_index(GV_PayloadInvertedIndex *idx, const char *field,
         size_t ntok   = tokenize(value, &tokens);
         for (size_t i = 0; i < ntok; ++i) {
             InvBucket *tb = hashmap_get_or_insert(f->tokens, tokens[i]);
-            if (!tb->bitmap) tb->bitmap = gv_id_bitmap_create();
-            gv_id_bitmap_add(tb->bitmap, vector_id);
+            if (tb) {
+                if (!tb->bitmap) tb->bitmap = gv_id_bitmap_create();
+                gv_id_bitmap_add(tb->bitmap, vector_id);
+            }
         }
         free_tokens(tokens, ntok);
     }

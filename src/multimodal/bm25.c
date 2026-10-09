@@ -253,6 +253,9 @@ static void remove_doc_from_posting_list(GV_PostingList *pl, size_t doc_id) {
 
 int bm25_add_document(GV_BM25Index *index, size_t doc_id, const char *text) {
     if (!index || !text) return -1;
+    /* SIZE_MAX is the empty-slot sentinel of the score-accumulation hash; a
+     * real doc with that id would be dropped/mis-scored at query time. */
+    if (doc_id == SIZE_MAX) return -1;
 
     GV_TokenList tokens;
     if (tokenizer_tokenize(index->tokenizer, text, 0, &tokens) != 0) {
@@ -305,6 +308,7 @@ int bm25_add_document(GV_BM25Index *index, size_t doc_id, const char *text) {
 int bm25_add_document_terms(GV_BM25Index *index, size_t doc_id,
                                 const char **terms, size_t term_count) {
     if (!index || !terms || term_count == 0) return -1;
+    if (doc_id == SIZE_MAX) return -1; /* reserved as the score-hash empty sentinel */
 
     pthread_rwlock_wrlock(&index->rwlock);
 
