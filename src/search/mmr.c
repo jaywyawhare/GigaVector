@@ -327,6 +327,7 @@ int mmr_search(const void *db_ptr, const float *query, size_t dimension,
         valid++;
     }
 
+    if (found > 0) gv_search_results_free(search_res, (size_t)found);
     if (search_res_on_heap) {
         gv_free(search_res);
     }

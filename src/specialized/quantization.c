@@ -8,6 +8,7 @@
 
 #include "specialized/quantization.h"
 #include "core/utils.h"
+#include "core/config.h"   /* cpu_has_feature: POPCNT must be runtime-gated */
 
 #ifdef __POPCNT__
 #include <popcntintrin.h>
@@ -47,15 +48,20 @@ struct GV_QuantCodebook {
 /* Popcount helper */
 static size_t popcount64(uint64_t x) {
 #ifdef __POPCNT__
-    return (size_t)_mm_popcnt_u64(x);
-#else
-    size_t count = 0;
-    while (x) {
-        count += (x & 1);
-        x >>= 1;
+    /* POPCNT instruction - only legal if the RUNNING CPU advertises it.
+     * POPCNT ships with SSE4.2 on x86, so gate on that (matches binary_quant). */
+    if (cpu_has_feature(GV_CPU_FEATURE_SSE4_2)) {
+        return (size_t)_mm_popcnt_u64(x);
     }
-    return count;
 #endif
+    {
+        size_t count = 0;
+        while (x) {
+            count += (x & 1);
+            x >>= 1;
+        }
+        return count;
+    }
 }
 
 /* Simple xorshift64 PRNG (deterministic, no global state) */

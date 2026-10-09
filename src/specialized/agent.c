@@ -508,24 +508,21 @@ GV_AgentResult *agent_query(GV_Agent *agent, const char *natural_language_query,
             gv_free(result->result_distances);
             result->result_distances = NULL;
             result->result_count = 0;
+            if (found > 0) gv_search_results_free(sr, (size_t)found);
             gv_free(sr);
             pthread_mutex_unlock(&agent->mutex);
             return result_error(result, "memory allocation failed");
         }
 
         for (int i = 0; i < found; i++) {
-            /* Recover SoA index from vector pointer. */
-            const float *base = database_get_vector(agent->db, 0);
-            size_t dim = database_dimension(agent->db);
-            if (base != NULL && dim > 0 && sr[i].vector != NULL && sr[i].vector->data != NULL) {
-                ptrdiff_t diff = sr[i].vector->data - base;
-                result->result_indices[i] = (diff >= 0) ? (size_t)diff / dim : 0;
-            } else {
-                result->result_indices[i] = 0;
-            }
+            /* db_search returns a fresh heap copy in .vector unrelated to SoA
+             * storage; the canonical index is .id (subtracting the copy's
+             * pointer from the storage base is undefined and gives garbage). */
+            result->result_indices[i] = sr[i].id;
             result->result_distances[i] = sr[i].distance;
         }
 
+        if (found > 0) gv_search_results_free(sr, (size_t)found);
         gv_free(sr);
         result->success = 1;
     } else {
@@ -858,26 +855,20 @@ GV_AgentResult *agent_personalize(GV_Agent *agent, const char *query,
 
     PersonalizedEntry *entries = (PersonalizedEntry *)gv_alloc((size_t)found * sizeof(PersonalizedEntry));
     if (entries == NULL) {
+        if (found > 0) gv_search_results_free(sr, (size_t)found);
         gv_free(sr);
         json_free(root);
         pthread_mutex_unlock(&agent->mutex);
         return result_error(result, "memory allocation failed");
     }
 
-    const float *base = database_get_vector(agent->db, 0);
-    size_t dim = database_dimension(agent->db);
-
     for (int i = 0; i < found; i++) {
         entries[i].distance = sr[i].distance;
         entries[i].adjusted_distance = sr[i].distance;
 
-        /* Recover vector index */
-        if (base != NULL && dim > 0 && sr[i].vector != NULL && sr[i].vector->data != NULL) {
-            ptrdiff_t diff = sr[i].vector->data - base;
-            entries[i].index = (diff >= 0) ? (size_t)diff / dim : 0;
-        } else {
-            entries[i].index = 0;
-        }
+        /* .id is the canonical SoA index; the old pointer subtraction against
+         * storage base was undefined (db_search .vector is a detached copy). */
+        entries[i].index = sr[i].id;
 
         if (adjustments != NULL && json_is_array(adjustments)) {
             GV_Metadata *meta = sr[i].vector ? sr[i].vector->metadata : NULL;
@@ -910,6 +901,7 @@ GV_AgentResult *agent_personalize(GV_Agent *agent, const char *query,
         }
     }
 
+    if (found > 0) gv_search_results_free(sr, (size_t)found);
     gv_free(sr);
     json_free(root);
 

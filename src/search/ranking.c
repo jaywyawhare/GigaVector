@@ -781,6 +781,7 @@ int rank_search(const void *db, const float *query, size_t dimension,
                                                        signals, sig_count);
     }
 
+    if (found > 0) gv_search_results_free(search_results, (size_t)found);
     gv_tls_free_or_heap(search_results, search_on_heap);
 
     /* Step 3: Sort by final_score descending. */

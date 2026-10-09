@@ -1,5 +1,6 @@
 #include <stdlib.h>
 #include "core/memory.h"
+#include "core/config.h"   /* cpu_has_feature: SIMD paths must be runtime-gated */
 #include <string.h>
 #include <stdint.h>
 
@@ -85,15 +86,20 @@ static size_t popcount_sse(uint64_t x) {
 
 static size_t popcount(uint64_t x) {
 #ifdef __SSE4_2__
-    return popcount_sse(x);
-#else
+    /* _mm_popcnt_u64 is the POPCNT instruction - only legal if the RUNNING CPU
+     * has it, even though the binary was compiled with SSE4.2. Gate it. */
+    if (cpu_has_feature(GV_CPU_FEATURE_SSE4_2)) {
+        return popcount_sse(x);
+    }
+#endif
+    {
     size_t count = 0;
     while (x) {
         count += (x & 1);
         x >>= 1;
     }
     return count;
-#endif
+    }
 }
 
 size_t binary_hamming_distance(const GV_BinaryVector *a, const GV_BinaryVector *b) {
@@ -122,7 +128,7 @@ size_t binary_hamming_distance_fast(const GV_BinaryVector *a, const GV_BinaryVec
     (void)remaining_bytes;
 
 #ifdef __AVX2__
-    if (full_uint64s >= 4) {
+    if (full_uint64s >= 4 && cpu_has_feature(GV_CPU_FEATURE_AVX2)) {
         size_t avx_count = (full_uint64s / 4) * 4;
         for (size_t i = 0; i < avx_count; i += 4) {
             __m256i va = _mm256_loadu_si256((__m256i *)(a->bits + i * 8));

@@ -395,7 +395,7 @@ static size_t raft_msg_serialize(const GV_RaftMsg *m, uint8_t *b, size_t cap) {
 /* Deserialize into @p m; entry payloads point into @p b (borrowed during step). */
 static int raft_msg_deserialize(const uint8_t *b, size_t len, GV_RaftMsg *m,
                                 GV_RaftEntry *ebuf, size_t ecap) {
-    if (len < 68) return -1;
+    if (len < 76) return -1;  /* fixed header = 12 fields totalling 76 bytes */
     size_t o = 0;
     uint32_t t32;
     o = raft_get32(b, o, &t32); m->type = (GV_RaftMsgType)t32;
