@@ -466,6 +466,46 @@ static void phase_index_matrix(size_t n, size_t dim, size_t queries) {
     }
 }
 
+/* ---- HNSW build+search under non-euclidean metrics -----------------------
+ * The index matrix builds HNSW under the default (EUCLIDEAN) metric, which
+ * takes a different distance-batch path than COSINE/DOT_PRODUCT. Cosine is the
+ * dominant embedding metric, so profile its build+search too (and dot) to keep
+ * the batched non-euclidean kernels on the measured hot path, not just in unit
+ * tests. */
+static void phase_hnsw_metrics(size_t n, size_t dim, size_t queries) {
+    PROF_SCOPE("5b.hnsw_metrics") {
+        const GV_DistanceType metrics[2] = { GV_DISTANCE_COSINE, GV_DISTANCE_DOT_PRODUCT };
+        const char *names[2] = { "cosine", "dot" };
+        for (int mi = 0; mi < 2; mi++) {
+            GV_HNSWConfig cfg = {0};
+            cfg.M = 16; cfg.efConstruction = 200; cfg.efSearch = 50;
+            cfg.distance_type = metrics[mi];
+            GV_Database *db = db_open_with_hnsw_config(NULL, dim, GV_INDEX_TYPE_HNSW, &cfg);
+            if (!db) { fprintf(stderr, "  hnsw/%s: open failed\n", names[mi]); continue; }
+
+            float *data = (float *)malloc(n * dim * sizeof(float));
+            for (size_t i = 0; i < n * dim; i++) data[i] = next_unit();
+
+            char sb[48], ss[48];
+            snprintf(sb, sizeof(sb), "hnsw-%s/build", names[mi]);
+            snprintf(ss, sizeof(ss), "hnsw-%s/search", names[mi]);
+            prof_begin(strdup(sb));
+            for (size_t i = 0; i < n; i++) (void)db_add_vector(db, data + i * dim, dim);
+            prof_end();
+
+            GV_SearchResult res[16];
+            prof_begin(strdup(ss));
+            for (size_t q = 0; q < queries; q++) {
+                int nn = db_search(db, data + (q % n) * dim, 10, res, metrics[mi]);
+                if (nn > 0) gv_search_results_free(res, (size_t)nn);
+            }
+            prof_end();
+            free(data);
+            db_close(db);
+        }
+    }
+}
+
 /* ---- distance metrics: same FLAT corpus, each metric ---------------------- */
 
 static void phase_metrics(size_t n, size_t dim, size_t queries) {
@@ -872,6 +912,7 @@ int main(int argc, char **argv) {
     phase_splade(n_docs, q_text);
     phase_hybrid(n_docs, q_text);
     phase_index_matrix(idx_n, dim, queries);
+    phase_hnsw_metrics(idx_n, dim, queries);
     phase_metrics(idx_n, dim, queries);
     phase_persistence(idx_n, dim, queries);
     phase_transactions(1000, dim);
