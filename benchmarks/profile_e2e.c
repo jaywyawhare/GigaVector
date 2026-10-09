@@ -513,15 +513,16 @@ static void phase_hnsw_metrics(size_t n, size_t dim, size_t queries) {
  * reports recall@k = |ANN top-k ∩ exact top-k| / k averaged over queries.
  * Printed (not a PROF_SCOPE) since it is a quality metric, not a timing. */
 static double recall_vs_flat(GV_Database *flat, GV_Database *ann,
-                             const float *queries, size_t nq, size_t dim, size_t k) {
+                             const float *queries, size_t nq, size_t dim, size_t k,
+                             GV_DistanceType metric) {
     GV_SearchResult gt[32], an[32];
     if (k > 32) k = 32;
     double sum = 0.0;
     size_t counted = 0;
     for (size_t q = 0; q < nq; q++) {
         const float *qv = queries + q * dim;
-        int ng = db_search(flat, qv, k, gt, GV_DISTANCE_EUCLIDEAN);
-        int na = db_search(ann,  qv, k, an, GV_DISTANCE_EUCLIDEAN);
+        int ng = db_search(flat, qv, k, gt, metric);
+        int na = db_search(ann,  qv, k, an, metric);
         if (ng <= 0) { if (ng > 0) gv_search_results_free(gt, (size_t)ng); if (na > 0) gv_search_results_free(an, (size_t)na); continue; }
         size_t hit = 0;
         for (int i = 0; i < na; i++)
@@ -557,9 +558,23 @@ static void phase_recall(size_t n, size_t dim, size_t queries) {
             GV_Database *ann = db_open(NULL, dim, anns[ai].type);
             if (!ann || !flat) { printf("    %-8s n/a\n", anns[ai].name); if (ann) db_close(ann); continue; }
             for (size_t i = 0; i < n; i++) (void)db_add_vector(ann, data + i * dim, dim);
-            double r = recall_vs_flat(flat, ann, qs, queries, dim, k);
+            double r = recall_vs_flat(flat, ann, qs, queries, dim, k, GV_DISTANCE_EUCLIDEAN);
             printf("    %-8s %.3f\n", anns[ai].name, r);
             db_close(ann);
+        }
+        /* Cosine HNSW vs exact cosine: validates the batched cosine path finds
+         * the right neighbours, not just that it runs without crashing. */
+        if (flat) {
+            GV_HNSWConfig cfg = {0};
+            cfg.M = 16; cfg.efConstruction = 200; cfg.efSearch = 50;
+            cfg.distance_type = GV_DISTANCE_COSINE;
+            GV_Database *cann = db_open_with_hnsw_config(NULL, dim, GV_INDEX_TYPE_HNSW, &cfg);
+            if (cann) {
+                for (size_t i = 0; i < n; i++) (void)db_add_vector(cann, data + i * dim, dim);
+                double rc = recall_vs_flat(flat, cann, qs, queries, dim, k, GV_DISTANCE_COSINE);
+                printf("    %-8s %.3f (cosine)\n", "hnsw-cos", rc);
+                db_close(cann);
+            }
         }
         if (flat) db_close(flat);
         free(data);
