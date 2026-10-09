@@ -1,3 +1,4 @@
+#include <pthread.h>
 #include <stdlib.h>
 #include "core/memory.h"
 #include <string.h>
@@ -214,37 +215,63 @@ int scalar_dequantize(const GV_ScalarQuantVector *sqv, float *output) {
     return 0;
 }
 
+/* Reusable per-thread dequantization scratch. scalar_quant_distance runs once
+ * per candidate during IVFSQ8 search (hundreds per query); a malloc/free pair
+ * each time was ~400 allocations per query. A pthread key frees the buffer on
+ * thread exit, so it stays leak-clean under ASan/valgrind including worker
+ * threads. */
+typedef struct { float *buf; size_t cap; } SQScratch;
+static pthread_key_t sq_scratch_key;
+static pthread_once_t sq_scratch_once = PTHREAD_ONCE_INIT;
+static void sq_scratch_free(void *p) {
+    if (p) { SQScratch *s = (SQScratch *)p; gv_free(s->buf); gv_free(s); }
+}
+static void sq_scratch_init(void) { (void)pthread_key_create(&sq_scratch_key, sq_scratch_free); }
+
+static float *sq_scratch_get(size_t dim) {
+    pthread_once(&sq_scratch_once, sq_scratch_init);
+    SQScratch *s = (SQScratch *)pthread_getspecific(sq_scratch_key);
+    if (s == NULL) {
+        s = (SQScratch *)gv_calloc(1, sizeof(SQScratch));
+        if (s == NULL) return NULL;
+        (void)pthread_setspecific(sq_scratch_key, s);
+    }
+    if (dim > s->cap) {
+        float *nb = (float *)gv_realloc(s->buf, dim * sizeof(float));
+        if (nb == NULL) return NULL;
+        s->buf = nb;
+        s->cap = dim;
+    }
+    return s->buf;
+}
+
 float scalar_quant_distance(const float *query, const GV_ScalarQuantVector *sqv, int distance_type) {
     if (query == NULL || sqv == NULL || sqv->quantized == NULL) {
         return -1.0f;
     }
-    
-    float *dequantized = (float *)gv_alloc(sqv->dimension * sizeof(float));
+
+    float *dequantized = sq_scratch_get(sqv->dimension);
     if (dequantized == NULL) {
         return -1.0f;
     }
-    
+
     if (scalar_dequantize(sqv, dequantized) != 0) {
-        gv_free(dequantized);
         return -1.0f;
     }
-    
+
     GV_Vector query_vec = {
         .dimension = sqv->dimension,
         .data = (float *)query,
         .metadata = NULL
     };
-    
+
     GV_Vector dequant_vec = {
         .dimension = sqv->dimension,
         .data = dequantized,
         .metadata = NULL
     };
-    
-    float dist = distance(&query_vec, &dequant_vec, (GV_DistanceType)distance_type);
-    
-    gv_free(dequantized);
-    return dist;
+
+    return distance(&query_vec, &dequant_vec, (GV_DistanceType)distance_type);
 }
 
 void scalar_quant_vector_destroy(GV_ScalarQuantVector *sqv) {
