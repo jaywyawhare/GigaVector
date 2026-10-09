@@ -39,6 +39,7 @@
 #include "admin/raft_log.h"
 #include "admin/repl_sim.h"
 #include "api/server.h"
+#include "api/grpc.h"
 #include "core/memory.h"
 #include "features/cypher.h"
 #include "features/knowledge_graph.h"
@@ -774,6 +775,77 @@ static void phase_replication(size_t ops, size_t rec_len) {
     }
 }
 
+/* ---- gRPC: in-process request dispatch (no HTTP/2 socket transport) -------
+ *
+ * grpc_fuzz_dispatch_message drives the full server-side request path -
+ * dispatch -> protobuf-style payload decode -> engine op -> response encode ->
+ * send_message framing to a real fd - bypassing only the TCP/recv_message
+ * ingress (which is the kernel's job, not ours). The response fd is one end of
+ * a socketpair, drained after each call so send_message never blocks. This is
+ * the same harness the grpc fuzzer uses, so it exercises the real code path. */
+static void phase_grpc(size_t n, size_t dim, size_t queries) {
+    PROF_SCOPE("14.grpc") {
+        GV_Database *db = db_open(NULL, dim, GV_INDEX_TYPE_FLAT);
+        if (!db) return;
+        float *v = (float *)malloc(dim * sizeof(float));
+        for (size_t i = 0; i < n; i++) {
+            for (size_t d = 0; d < dim; d++) v[d] = next_unit();
+            if (db_add_vector(db, v, dim)) {}
+        }
+
+        GV_GrpcConfig cfg;
+        grpc_config_init(&cfg);
+        GV_GrpcServer *srv = grpc_create(db, &cfg);
+        int fds[2] = {-1, -1};
+        if (srv && socketpair(AF_UNIX, SOCK_STREAM, 0, fds) == 0) {
+            /* Encode a SEARCH request payload once (same wire layout a client
+             * sends): [dim u32][k u32][distance u32][dim * float32]. */
+            size_t pbuf_sz = 12 + dim * sizeof(float);
+            uint8_t *pbuf = (uint8_t *)malloc(pbuf_sz);
+            uint8_t drain[4096];
+
+            PROF_SCOPE("grpc/search_dispatch") {
+                for (size_t q = 0; q < queries; q++) {
+                    for (size_t d = 0; d < dim; d++) v[d] = next_unit();
+                    size_t plen = 0;
+                    if (grpc_encode_search_request(v, dim, 10, GV_DISTANCE_EUCLIDEAN,
+                                                   pbuf, pbuf_sz, &plen) != GV_GRPC_OK)
+                        continue;
+                    GV_GrpcMessage msg;
+                    memset(&msg, 0, sizeof(msg));
+                    msg.msg_type = GV_MSG_SEARCH;
+                    msg.request_id = (uint32_t)q;
+                    msg.payload = pbuf;
+                    msg.payload_len = plen;
+                    msg.length = (uint32_t)(1 + 4 + plen);
+                    (void)grpc_fuzz_dispatch_message(srv, fds[1], &msg);
+                    while (recv(fds[0], drain, sizeof(drain), MSG_DONTWAIT) > 0) {}
+                }
+            }
+
+            /* Cheap framing-only ops (health/stats): isolate the dispatch +
+             * encode + send cost from the engine search cost above. */
+            PROF_SCOPE("grpc/health_dispatch") {
+                for (size_t q = 0; q < queries; q++) {
+                    GV_GrpcMessage msg;
+                    memset(&msg, 0, sizeof(msg));
+                    msg.msg_type = GV_MSG_HEALTH;
+                    msg.request_id = (uint32_t)q;
+                    (void)grpc_fuzz_dispatch_message(srv, fds[1], &msg);
+                    while (recv(fds[0], drain, sizeof(drain), MSG_DONTWAIT) > 0) {}
+                }
+            }
+
+            free(pbuf);
+            close(fds[0]);
+            close(fds[1]);
+        }
+        if (srv) grpc_destroy(srv);
+        free(v);
+        db_close(db);
+    }
+}
+
 int main(int argc, char **argv) {
     size_t n_vec   = argc > 1 ? strtoul(argv[1], NULL, 10) : 20000;
     size_t dim     = argc > 2 ? strtoul(argv[2], NULL, 10) : 128;
@@ -808,6 +880,7 @@ int main(int argc, char **argv) {
     phase_ivfdisk(idx_n, dim, queries);
     phase_server(idx_n, dim, queries);
     phase_replication(idx_n * 2, 256);
+    phase_grpc(idx_n, dim, queries);
     double wall = now_ms() - wall0;
 
     prof_report();
