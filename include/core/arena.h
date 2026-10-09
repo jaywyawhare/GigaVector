@@ -19,6 +19,10 @@ typedef struct GV_Arena {
 } GV_Arena;
 
 int  gv_arena_init(GV_Arena *arena, size_t initial_capacity);
+/* Grow capacity to >= total_bytes up front so no later gv_arena_alloc moves the
+ * base (which would dangle any pointer already handed out). Call before taking
+ * a long-lived arena pointer that must survive subsequent allocations. */
+int  gv_arena_reserve(GV_Arena *arena, size_t total_bytes);
 int  gv_arena_init_static(GV_Arena *arena, void *backing, size_t capacity);
 void gv_arena_reset(GV_Arena *arena);
 void gv_arena_fini(GV_Arena *arena);

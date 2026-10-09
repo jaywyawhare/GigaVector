@@ -429,6 +429,17 @@ GV_HttpResponse *rest_handle_vectors_post(const GV_HandlerContext *ctx,
                 continue;
             }
 
+            /* Reserve vec + the three metadata pointer arrays up front so
+             * building them never reallocs the arena and dangles `vec` (the
+             * value strings are heap-allocated via json_stringify and freed
+             * below, so they do not grow the arena). Prevents a use-after-free
+             * reachable with a vector carrying many metadata keys. */
+            GV_JsonValue *metadata = json_object_get(vec_obj, "metadata");
+            size_t meta_n = (metadata && json_is_object(metadata))
+                                ? json_object_length(metadata) : 0;
+            gv_arena_reserve(&scratch,
+                             dim * sizeof(float) + meta_n * 3 * sizeof(void *) + 128);
+
             float *vec = (float *)gv_arena_alloc(&scratch, dim * sizeof(float), sizeof(float));
             if (!vec) continue;
 
@@ -440,7 +451,6 @@ GV_HttpResponse *rest_handle_vectors_post(const GV_HandlerContext *ctx,
                 }
             }
 
-            GV_JsonValue *metadata = json_object_get(vec_obj, "metadata");
             int result;
 
             if (metadata && json_is_object(metadata)) {
@@ -738,6 +748,26 @@ GV_HttpResponse *rest_handle_search(const GV_HandlerContext *ctx,
     }
 
     GV_WITH_ARENA(scratch, GV_REST_SEARCH_ARENA_BYTES) {
+        /* Parse k first, then reserve the arena for BOTH the query and the
+         * result buffer up front. Reserving before any gv_arena_alloc means no
+         * later allocation grows (reallocs) the arena, which would dangle the
+         * `query` pointer we hold across the `results` allocation (CVE-class
+         * use-after-free, reachable via a large k). */
+        GV_JsonValue *k_val = json_object_get(body, "k");
+        double k_num;
+        size_t k = 10;
+        if (k_val && json_get_number(k_val, &k_num) == GV_JSON_OK) {
+            if (k_num < 1 || k_num > (double)GV_REST_MAX_K) {
+                json_free(body);
+                return rest_response_error(GV_HTTP_400_BAD_REQUEST, "invalid_request",
+                                               "'k' must be between 1 and 65536");
+            }
+            k = (size_t)k_num;
+        }
+
+        gv_arena_reserve(&scratch,
+                         dim * sizeof(float) + k * sizeof(GV_SearchResult) + 128);
+
         float *query = (float *)gv_arena_alloc(
             &scratch, dim * sizeof(float), sizeof(float));
         if (!query) {
@@ -752,18 +782,6 @@ GV_HttpResponse *rest_handle_search(const GV_HandlerContext *ctx,
             if (json_get_number(v, &num) == GV_JSON_OK) {
                 query[i] = (float)num;
             }
-        }
-
-        GV_JsonValue *k_val = json_object_get(body, "k");
-        double k_num;
-        size_t k = 10;
-        if (k_val && json_get_number(k_val, &k_num) == GV_JSON_OK) {
-            if (k_num < 1 || k_num > (double)GV_REST_MAX_K) {
-                json_free(body);
-                return rest_response_error(GV_HTTP_400_BAD_REQUEST, "invalid_request",
-                                               "'k' must be between 1 and 65536");
-            }
-            k = (size_t)k_num;
         }
 
         const char *dist_str = json_get_string_path(body, "distance");
@@ -904,6 +922,24 @@ GV_HttpResponse *rest_handle_search_range(const GV_HandlerContext *ctx,
     }
 
     GV_WITH_ARENA(scratch, GV_REST_SEARCH_ARENA_BYTES) {
+        /* Parse max_results, then reserve the arena for query+results up front
+         * so the results allocation never reallocs (which would dangle query).
+         * See rest_handle_search for the use-after-free this prevents. */
+        GV_JsonValue *max_val = json_object_get(body, "max_results");
+        double max_num;
+        size_t max_results = 100;
+        if (max_val && json_get_number(max_val, &max_num) == GV_JSON_OK) {
+            if (max_num < 1 || max_num > (double)GV_REST_MAX_K) {
+                json_free(body);
+                return rest_response_error(GV_HTTP_400_BAD_REQUEST, "invalid_request",
+                                               "'max_results' must be between 1 and 65536");
+            }
+            max_results = (size_t)max_num;
+        }
+
+        gv_arena_reserve(&scratch,
+                         dim * sizeof(float) + max_results * sizeof(GV_SearchResult) + 128);
+
         float *query = (float *)gv_arena_alloc(
             &scratch, dim * sizeof(float), sizeof(float));
         if (!query) {
@@ -925,18 +961,6 @@ GV_HttpResponse *rest_handle_search_range(const GV_HandlerContext *ctx,
         float radius = 1.0f;
         if (radius_val && json_get_number(radius_val, &radius_num) == GV_JSON_OK) {
             radius = (float)radius_num;
-        }
-
-        GV_JsonValue *max_val = json_object_get(body, "max_results");
-        double max_num;
-        size_t max_results = 100;
-        if (max_val && json_get_number(max_val, &max_num) == GV_JSON_OK) {
-            if (max_num < 1 || max_num > (double)GV_REST_MAX_K) {
-                json_free(body);
-                return rest_response_error(GV_HTTP_400_BAD_REQUEST, "invalid_request",
-                                               "'max_results' must be between 1 and 65536");
-            }
-            max_results = (size_t)max_num;
         }
 
         const char *dist_str = json_get_string_path(body, "distance");
@@ -1053,6 +1077,22 @@ GV_HttpResponse *rest_handle_search_batch(const GV_HandlerContext *ctx,
 
     GV_WITH_ARENA(scratch, GV_REST_BATCH_ARENA_BYTES) {
         size_t total_floats = qcount * ctx->db->dimension;
+
+        /* Validate the result count and reserve query+result space up front, so
+         * neither allocation reallocs the arena and dangles the other (the
+         * use-after-free documented in rest_handle_search). */
+        size_t total_results;
+        if (__builtin_mul_overflow(qcount, k, &total_results) ||
+            total_results > (size_t)GV_REST_MAX_K) {
+            json_free(body);
+            return rest_response_error(GV_HTTP_400_BAD_REQUEST, "invalid_request",
+                                           "Batch result count (queries * k) exceeds maximum of 65536");
+        }
+
+        gv_arena_reserve(&scratch,
+                         total_floats * sizeof(float) +
+                         total_results * sizeof(GV_SearchResult) + 128);
+
         float *queries = (float *)gv_arena_alloc(
             &scratch, total_floats * sizeof(float), sizeof(float));
         if (!queries) {
@@ -1073,14 +1113,6 @@ GV_HttpResponse *rest_handle_search_batch(const GV_HandlerContext *ctx,
                     queries[q * ctx->db->dimension + i] = (float)num;
                 }
             }
-        }
-
-        size_t total_results;
-        if (__builtin_mul_overflow(qcount, k, &total_results) ||
-            total_results > (size_t)GV_REST_MAX_K) {
-            json_free(body);
-            return rest_response_error(GV_HTTP_400_BAD_REQUEST, "invalid_request",
-                                           "Batch result count (queries * k) exceeds maximum of 65536");
         }
 
         GV_SearchResult *results = (GV_SearchResult *)gv_arena_calloc(

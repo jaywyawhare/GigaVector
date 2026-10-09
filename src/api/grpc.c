@@ -657,6 +657,11 @@ static void handle_search(GV_GrpcServer *server, int fd,
     }
 
     GV_WITH_ARENA(scratch, GV_GRPC_SEARCH_ARENA_BYTES) {
+        /* Reserve query+results up front so the results allocation never
+         * reallocs the arena and dangles `query` (use-after-free on large k). */
+        gv_arena_reserve(&scratch,
+                         (size_t)dimension * sizeof(float) +
+                         search_k * sizeof(GV_SearchResult) + 128);
         float *query = (float *)gv_arena_alloc(
             &scratch, (size_t)dimension * sizeof(float), sizeof(float));
         if (!query) {
@@ -931,6 +936,10 @@ static void handle_batch_search(GV_GrpcServer *server, int fd,
     }
 
     GV_WITH_ARENA(scratch, GV_GRPC_BATCH_SEARCH_ARENA_BYTES) {
+        /* Reserve queries+results up front (prevents arena-realloc UAF). */
+        gv_arena_reserve(&scratch,
+                         total_floats * sizeof(float) +
+                         total_results * sizeof(GV_SearchResult) + 128);
         float *queries = (float *)gv_arena_alloc(
             &scratch, total_floats * sizeof(float), sizeof(float));
         if (!queries) {
@@ -1077,6 +1086,10 @@ static void handle_range_search(GV_GrpcServer *server, int fd,
     }
 
     GV_WITH_ARENA(scratch, GV_GRPC_SEARCH_ARENA_BYTES) {
+        /* Reserve query+results up front (prevents arena-realloc UAF of query). */
+        gv_arena_reserve(&scratch,
+                         (size_t)dimension * sizeof(float) +
+                         cap * sizeof(GV_SearchResult) + 128);
         float *query = (float *)gv_arena_alloc(&scratch, (size_t)dimension * sizeof(float), sizeof(float));
         if (!query) { send_error_response(fd, msg->request_id, -1, "out of memory"); GV_ATOMIC_INC(&server->errors); return; }
         for (uint32_t i = 0; i < dimension; i++) query[i] = read_float_be(msg->payload + 12 + i * 4);

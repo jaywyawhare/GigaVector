@@ -46,6 +46,21 @@ static int gv_arena_grow(GV_Arena *arena, size_t required) {
     return 0;
 }
 
+int gv_arena_reserve(GV_Arena *arena, size_t total_bytes) {
+    if (arena == NULL) {
+        return -1;
+    }
+    if (arena->capacity >= total_bytes) {
+        return 0;
+    }
+    /* Grow once, up front, to the caller's worst-case total. Reserving before
+     * any gv_arena_alloc guarantees no later allocation triggers gv_arena_grow,
+     * so pointers handed out earlier never move (a realloc here would
+     * invalidate them - the reason callers that hold a live arena pointer
+     * across a subsequent allocation must reserve first). */
+    return gv_arena_grow(arena, total_bytes);
+}
+
 int gv_arena_init(GV_Arena *arena, size_t initial_capacity) {
     if (arena == NULL) {
         return -1;
