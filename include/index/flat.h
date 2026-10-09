@@ -53,6 +53,17 @@ int flat_search(void *index, const GV_Vector *query, size_t k,
                    const char *filter_key, const char *filter_value);
 
 /**
+ * @brief Like flat_search but fills only results[i].id / .distance and leaves
+ *        results[i].vector = NULL, skipping the per-result vector + metadata
+ *        copy. For callers (e.g. hybrid dense fusion) that read id/distance
+ *        only; there is nothing to free afterwards.
+ * @return Number of neighbors found (0 to k), or -1 on error.
+ */
+int flat_search_scored(void *index, const GV_Vector *query, size_t k,
+                   GV_SearchResult *results, GV_DistanceType distance_type,
+                   const char *filter_key, const char *filter_value);
+
+/**
  * @brief Range search: find all vectors within a distance threshold.
  *
  * @param index Flat index instance; must be non-NULL.

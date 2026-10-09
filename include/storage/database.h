@@ -748,6 +748,16 @@ GV_NODISCARD int db_search(const GV_Database *db, const float *query_data, size_
                  GV_SearchResult *results, GV_DistanceType distance_type);
 
 /**
+ * @brief Like db_search but fills only id/distance; results[i].vector is always
+ *        NULL and there is nothing to free. For internal consumers (e.g. hybrid
+ *        dense fusion) that rank by id/distance and never read the vector. FLAT
+ *        skips the per-result copy; other index types fall back to db_search and
+ *        release the owned copies so the contract is uniform.
+ */
+GV_NODISCARD int db_search_scored(const GV_Database *db, const float *query_data,
+                 size_t k, GV_SearchResult *results, GV_DistanceType distance_type);
+
+/**
  * @brief MVCC snapshot search: return only vectors visible at commit version @p snapshot.
  *
  * A vector is visible when it was created at/before @p snapshot and not deleted

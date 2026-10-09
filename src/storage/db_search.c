@@ -226,6 +226,28 @@ int db_search(const GV_Database *db, const float *query_data, size_t k,
     return n;
 }
 
+int db_search_scored(const GV_Database *db, const float *query_data, size_t k,
+                     GV_SearchResult *results, GV_DistanceType distance_type) {
+    if (db == NULL || query_data == NULL || results == NULL || k == 0) return -1;
+    /* Fast path for FLAT: skip the per-result vector/metadata copy. Other index
+     * types take the full path, then we release the owned copies in place so the
+     * caller always gets the same "id+distance only, nothing to free" contract. */
+    if (db->index_type != GV_INDEX_TYPE_FLAT || db->hnsw_index == NULL) {
+        int n = db_search(db, query_data, k, results, distance_type);
+        if (n > 0) gv_search_results_free(results, (size_t)n);
+        return n;
+    }
+    pthread_rwlock_rdlock((pthread_rwlock_t *)&db->rwlock);
+    __atomic_add_fetch(&((GV_Database *)db)->total_queries, 1, __ATOMIC_RELAXED);
+    GV_Vector query_vec;
+    query_vec.data = (float *)query_data;
+    query_vec.dimension = db->dimension;
+    int r = flat_search_scored(db->hnsw_index, &query_vec, k, results, distance_type,
+                               NULL, NULL);
+    pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
+    return r;
+}
+
 int db_search_ivfpq_opts(const GV_Database *db, const float *query_data, size_t k,
                             GV_SearchResult *results, GV_DistanceType distance_type,
                             size_t nprobe_override, size_t rerank_top) {

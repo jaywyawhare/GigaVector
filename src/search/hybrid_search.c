@@ -176,7 +176,10 @@ int hybrid_search_with_stats(GV_HybridSearcher *searcher, const float *query_vec
         GV_SearchResult *vec_results = (GV_SearchResult *)gv_calloc(
             prefetch_k, sizeof(GV_SearchResult));
         if (vec_results) {
-            int vec_found = db_search(searcher->db, query_vector, prefetch_k,
+            /* Fusion ranks by id + distance only and never reads the result
+             * vector, so use the scored path that skips the per-hit vector +
+             * metadata copy (nothing to free afterwards). */
+            int vec_found = db_search_scored(searcher->db, query_vector, prefetch_k,
                                           vec_results, cfg->distance_type);
 
             for (int i = 0; i < vec_found; i++) {
@@ -196,9 +199,7 @@ int hybrid_search_with_stats(GV_HybridSearcher *searcher, const float *query_vec
                     entry->vector_rank = i + 1;
                 }
             }
-            /* db_search returns fresh heap copies of each result vector that the
-             * caller owns; free them before releasing the results array. */
-            gv_search_results_free(vec_results, vec_found);
+            /* db_search_scored leaves result vectors NULL - nothing to free. */
             gv_tls_free_or_heap(vec_results, vec_on_heap);
         }
 

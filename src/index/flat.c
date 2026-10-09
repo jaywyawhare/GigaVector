@@ -67,9 +67,15 @@ int flat_insert(void *index, GV_Vector *vector) {
 }
 
 
-int flat_search(void *index, const GV_Vector *query, size_t k,
+/* Shared scan+top-k. copy_vectors=1 materialises an owned GV_Vector per result
+ * (the db_search contract: caller frees via gv_search_results_free). scored
+ * callers that only read id/distance (e.g. hybrid_search's dense branch) pass 0
+ * to skip the per-result vector + metadata copy entirely - ~5 allocations per
+ * hit saved - leaving results[i].vector = NULL. */
+static int flat_search_impl(void *index, const GV_Vector *query, size_t k,
                    GV_SearchResult *results, GV_DistanceType distance_type,
-                   const char *filter_key, const char *filter_value) {
+                   const char *filter_key, const char *filter_value,
+                   int copy_vectors) {
     if (!index || !query || !results || k == 0) return -1;
     GV_FlatIndex *idx = (GV_FlatIndex *)index;
 
@@ -107,21 +113,21 @@ int flat_search(void *index, const GV_Vector *query, size_t k,
         size_t vi = heap[0].idx;
         float dist = heap[0].dist;
 
-        GV_Vector view;
-        soa_storage_get_vector_view(idx->storage, vi, &view);
-        results[i].vector = &view; /* Will be overwritten below */
         results[i].distance = dist;
         results[i].is_sparse = 0;
         results[i].sparse_vector = NULL;
         results[i].id = vi;
+        results[i].vector = NULL;
 
-        /* Copy vector so result outlives storage */
-        GV_Vector *copy = vector_create_from_data(view.dimension, view.data);
-        if (copy) {
-            vector_apply_metadata(copy, soa_storage_get_metadata(idx->storage, vi));
-            results[i].vector = copy;
-        } else {
-            results[i].vector = NULL;
+        if (copy_vectors) {
+            /* Copy vector + metadata so the result outlives storage. */
+            GV_Vector view;
+            soa_storage_get_vector_view(idx->storage, vi, &view);
+            GV_Vector *copy = vector_create_from_data(view.dimension, view.data);
+            if (copy) {
+                vector_apply_metadata(copy, soa_storage_get_metadata(idx->storage, vi));
+                results[i].vector = copy;
+            }
         }
 
         heap[0] = heap[heap_size - 1];
@@ -133,6 +139,20 @@ int flat_search(void *index, const GV_Vector *query, size_t k,
 
     gv_free(heap);
     return n;
+}
+
+int flat_search(void *index, const GV_Vector *query, size_t k,
+                   GV_SearchResult *results, GV_DistanceType distance_type,
+                   const char *filter_key, const char *filter_value) {
+    return flat_search_impl(index, query, k, results, distance_type,
+                            filter_key, filter_value, 1);
+}
+
+int flat_search_scored(void *index, const GV_Vector *query, size_t k,
+                   GV_SearchResult *results, GV_DistanceType distance_type,
+                   const char *filter_key, const char *filter_value) {
+    return flat_search_impl(index, query, k, results, distance_type,
+                            filter_key, filter_value, 0);
 }
 
 int flat_range_search(void *index, const GV_Vector *query, float radius,
