@@ -473,6 +473,7 @@ static void free_node_internals(GV_GraphNode *node);
 static void free_edge_internals(GV_GraphEdge *edge);
 static int adj_add(GV_GraphEdgeRef **arr, size_t *count, size_t *cap,
                    uint64_t edge_id, uint64_t neighbor_id);
+static void adj_remove(GV_GraphEdgeRef *arr, size_t *count, uint64_t edge_id);
 static int remove_edge_internal(GV_GraphDB *g, uint64_t edge_id);
 static int graph_remove_node_internal(GV_GraphDB *g, uint64_t node_id);
 
@@ -623,13 +624,17 @@ static int insert_edge_with_id(GV_GraphDB *g, uint64_t id, uint64_t source,
     g->edge_buckets[idx] = entry;
     g->edge_count++;
 
-    int adj_ok =
-        adj_add(&src_node->node.out_edges, &src_node->node.out_count,
-                &src_node->node.out_cap, id, target) == 0 &&
-        adj_add(&tgt_node->node.in_edges, &tgt_node->node.in_count,
-                &tgt_node->node.in_cap, id, source) == 0;
-    if (!adj_ok) {
-        if (tgt_node && tgt_node->node.in_count > 0) tgt_node->node.in_count--;
+    int out_ok = adj_add(&src_node->node.out_edges, &src_node->node.out_count,
+                         &src_node->node.out_cap, id, target) == 0;
+    int in_ok = out_ok &&
+                adj_add(&tgt_node->node.in_edges, &tgt_node->node.in_count,
+                        &tgt_node->node.in_cap, id, source) == 0;
+    if (!in_ok) {
+        /* Undo the out-edge if it was added (the old code decremented the
+         * target's in_count even though the failed in-edge add never
+         * incremented it, corrupting a legitimate in-edge and leaving a
+         * dangling out-edge ref to the about-to-be-freed entry). */
+        if (out_ok) adj_remove(src_node->node.out_edges, &src_node->node.out_count, id);
         g->edge_buckets[idx] = entry->next;
         g->edge_count--;
         edge_pool_free(g, entry);

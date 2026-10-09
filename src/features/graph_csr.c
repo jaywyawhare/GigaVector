@@ -134,7 +134,7 @@ GV_CSR *gv_csr_build(const GV_GraphDB *g, const GV_GAContext *ctx,
     if (external) graph_read_lock(g);
 
     GV_CSR *m = (GV_CSR *)gv_calloc(1, sizeof(GV_CSR));
-    if (!m) return NULL;
+    if (!m) { if (external) graph_read_unlock(g); return NULL; }
     m->n = N;
     m->row_ptr = (size_t *)gv_calloc(N + 1, sizeof(size_t));
     if (!m->row_ptr) { gv_csr_free(m); if (external) graph_read_unlock(g); return NULL; }

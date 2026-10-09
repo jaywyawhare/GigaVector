@@ -387,7 +387,12 @@ GV_AuthResult auth_verify_api_key(GV_AuthManager *auth, const char *api_key,
     uint64_t now = (uint64_t)time(NULL);
 
     for (size_t i = 0; i < auth->key_count; i++) {
-        if (strcmp(auth->keys[i].key_hash, hash_hex) == 0) {
+        /* Constant-time compare of the stored vs presented key hash (both are
+         * HASH_LEN*2 hex chars) so response timing can't leak how many leading
+         * digits of a stored hash a guess matched. */
+        if (crypto_constant_time_compare((const unsigned char *)auth->keys[i].key_hash,
+                                         (const unsigned char *)hash_hex,
+                                         HASH_LEN * 2) == 0) {
             if (!auth->keys[i].enabled) {
                 pthread_rwlock_unlock(&auth->rwlock);
                 return GV_AUTH_INVALID_KEY;

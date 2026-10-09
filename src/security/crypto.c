@@ -590,15 +590,22 @@ int crypto_decrypt(GV_CryptoContext *ctx, const GV_CryptoKey *key,
         memcpy(prev_block, ct + pos, 16);
     }
 
-    /* Remove and validate PKCS7 padding */
+    /* Remove and validate PKCS7 padding in CONSTANT TIME: the old early-exit
+     * loop leaked, via timing, how many trailing bytes matched - a classic
+     * CBC padding-oracle lever. Check all 16 trailing bytes unconditionally and
+     * fold the result into one flag. (This closes the timing channel; CBC here
+     * is still unauthenticated, so the GCM/AEAD path remains the recommended
+     * one for attacker-reachable ciphertext.) */
     unsigned char pad = plaintext[ct_len - 1];
-    if (pad == 0 || pad > 16) {
-        return -1;
+    unsigned int bad = (pad == 0) | (pad > 16);
+    unsigned int eff = (pad >= 1 && pad <= 16) ? pad : 1;
+    for (unsigned int i = 0; i < 16; i++) {
+        unsigned int in_pad = (i < eff) ? 1u : 0u;
+        unsigned int mism = (plaintext[ct_len - 1 - i] != pad) ? 1u : 0u;
+        bad |= (in_pad & mism);
     }
-    for (unsigned char pi = 1; pi < pad; pi++) {
-        if (plaintext[ct_len - 1 - pi] != pad) {
-            return -1;
-        }
+    if (bad) {
+        return -1;
     }
     *plaintext_len = ct_len - pad;
 
