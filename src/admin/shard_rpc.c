@@ -124,6 +124,14 @@ static void shard_rpc_handle_search(GV_ShardManager *mgr, int fd) {
     if (io_read_all(fd, &dim, sizeof(dim)) != 0) return;
     if (io_read_all(fd, &dist, sizeof(dist)) != 0) return;
     if (dim == 0 || dim > SHARD_RPC_MAX_DIM || k == 0 || k > SHARD_RPC_MAX_K) return;
+    /* The query buffer is sized by the client-supplied dim, but db_search reads
+     * db->dimension floats and writes back db->dimension floats per hit. If the
+     * two differ, that is an out-of-bounds read of the query and the result
+     * vectors. Reject any dim that does not match the local DB dimension. */
+    {
+        size_t expect = shard_manager_dimension(mgr);
+        if (expect != 0 && (size_t)dim != expect) return;
+    }
 
     float *query = (float *)gv_alloc((size_t)dim * sizeof(float));
     if (!query) return;

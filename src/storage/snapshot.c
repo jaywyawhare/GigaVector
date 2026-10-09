@@ -33,7 +33,11 @@ struct GV_SnapshotManager {
 };
 
 struct GV_Snapshot {
-    const GV_SnapshotEntry *entry;
+    /* Store the manager + id, NOT a raw pointer into mgr->entries: that array
+     * is gv_realloc-grown (moving it) and entries can be deleted, so a cached
+     * pointer becomes a use-after-free. Re-resolve on every access instead. */
+    const GV_SnapshotManager *mgr;
+    uint64_t snapshot_id;
 };
 
 #define SNAPSHOT_MAGIC      "GVSNAP"
@@ -168,7 +172,8 @@ GV_Snapshot *snapshot_open(GV_SnapshotManager *mgr, uint64_t snapshot_id)
     if (!snap) {
         return NULL;
     }
-    snap->entry = entry;
+    snap->mgr = mgr;
+    snap->snapshot_id = snapshot_id;
     return snap;
 }
 
@@ -179,29 +184,26 @@ void snapshot_close(GV_Snapshot *snap)
 
 size_t snapshot_count(const GV_Snapshot *snap)
 {
-    if (!snap || !snap->entry) {
-        return 0;
-    }
-    return snap->entry->vector_count;
+    if (!snap) return 0;
+    const GV_SnapshotEntry *entry = find_entry(snap->mgr, snap->snapshot_id);
+    return entry ? entry->vector_count : 0;
 }
 
 const float *snapshot_get_vector(const GV_Snapshot *snap, size_t index)
 {
-    if (!snap || !snap->entry) {
+    if (!snap) return NULL;
+    const GV_SnapshotEntry *entry = find_entry(snap->mgr, snap->snapshot_id);
+    if (!entry || !entry->data || index >= entry->vector_count) {
         return NULL;
     }
-    if (index >= snap->entry->vector_count) {
-        return NULL;
-    }
-    return snap->entry->data + (index * snap->entry->dimension);
+    return entry->data + (index * entry->dimension);
 }
 
 size_t snapshot_dimension(const GV_Snapshot *snap)
 {
-    if (!snap || !snap->entry) {
-        return 0;
-    }
-    return snap->entry->dimension;
+    if (!snap) return 0;
+    const GV_SnapshotEntry *entry = find_entry(snap->mgr, snap->snapshot_id);
+    return entry ? entry->dimension : 0;
 }
 
 int snapshot_list(const GV_SnapshotManager *mgr, GV_SnapshotInfo *infos,

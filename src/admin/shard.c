@@ -666,6 +666,20 @@ GV_Database *shard_get_local_db(GV_ShardManager *mgr, uint32_t shard_id) {
     return NULL;
 }
 
+size_t shard_manager_dimension(GV_ShardManager *mgr) {
+    if (!mgr) return 0;
+    pthread_rwlock_rdlock(&mgr->rwlock);
+    size_t dim = 0;
+    for (size_t i = 0; i < mgr->shard_count; i++) {
+        if (mgr->shards[i].local_db) {
+            dim = database_dimension(mgr->shards[i].local_db);
+            break;
+        }
+    }
+    pthread_rwlock_unlock(&mgr->rwlock);
+    return dim;
+}
+
 /** @brief Ascending distance order for the distributed top-k merge. */
 static int shard_result_cmp(const void *a, const void *b) {
     float da = ((const GV_SearchResult *)a)->distance;

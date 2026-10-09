@@ -213,6 +213,12 @@ int shard_attach_local(GV_ShardManager *mgr, uint32_t shard_id, GV_Database *db)
 GV_Database *shard_get_local_db(GV_ShardManager *mgr, uint32_t shard_id);
 
 /**
+ * @brief Dimension of this manager's local shard databases (0 if none).
+ * Used to validate a network-supplied query dimension before searching.
+ */
+size_t shard_manager_dimension(GV_ShardManager *mgr);
+
+/**
  * @brief Migrate vectors between attached local shard databases.
  *
  * Copies full vector metadata and inverted-index entries to the destination.
