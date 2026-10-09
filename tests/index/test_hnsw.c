@@ -206,6 +206,46 @@ static int test_hnsw_all_distances(void) {
     return 0;
 }
 
+/* Regression: the construction/search distance batch once reset its 4-slot
+ * accumulator only for EUCLIDEAN, so a COSINE/DOT index whose nodes have >4
+ * neighbours at a level (level 0 has ~2*M) overflowed the stack buffer on the
+ * 5th neighbour - in both hnsw_insert_impl (build) and gv_hnsw_search. This
+ * builds at M=16 with 300 vectors so nodes exceed 4 neighbours, exercising both
+ * paths for each metric; under ASan it caught the overflow every time. */
+static int test_hnsw_non_euclidean_batch_metrics(void) {
+    const GV_DistanceType metrics[2] = { GV_DISTANCE_COSINE, GV_DISTANCE_DOT_PRODUCT };
+    const size_t dim = 32, n = 300;
+
+    for (size_t mi = 0; mi < 2; ++mi) {
+        GV_HNSWConfig config = {0};
+        config.M = 16;             /* level 0 holds up to ~2*M = 32 neighbours */
+        config.efConstruction = 100;
+        config.efSearch = 50;
+        config.distance_type = metrics[mi];
+
+        GV_Database *db = db_open_with_hnsw_config(NULL, dim, GV_INDEX_TYPE_HNSW, &config);
+        if (db == NULL) {
+            return 0;
+        }
+
+        float v[32];
+        for (size_t i = 0; i < n; ++i) {
+            for (size_t d = 0; d < dim; ++d) v[d] = (float)rand() / (float)RAND_MAX - 0.5f;
+            ASSERT(db_add_vector(db, v, dim) == 0, "non-euclidean batch: add vector");
+        }
+
+        float q[32];
+        for (size_t d = 0; d < dim; ++d) q[d] = (float)rand() / (float)RAND_MAX - 0.5f;
+        GV_SearchResult res[10];
+        int got = db_search(db, q, 10, res, metrics[mi]);
+        ASSERT(got > 0, "non-euclidean batch: search returned results");
+        gv_search_results_free(res, (size_t)got);
+
+        db_close(db);
+    }
+    return 0;
+}
+
 int main(void) {
     int rc = 0;
     rc |= test_hnsw_basic_insert_search();
@@ -215,6 +255,7 @@ int main(void) {
     rc |= test_hnsw_range_search();
     rc |= test_hnsw_persistence();
     rc |= test_hnsw_all_distances();
+    rc |= test_hnsw_non_euclidean_batch_metrics();
     return rc;
 }
 
