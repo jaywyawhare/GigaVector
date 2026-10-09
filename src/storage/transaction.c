@@ -219,7 +219,6 @@ int db_commit(GV_DBTxn *t) {
      * db_add_vector still stamps each slot's MVCC create_version with `cv`. */
     db_set_commit_stamp(cv);
     db_set_wal_suppress(1);
-    size_t pre_count = db->count;  /* first slot this commit will append to */
     int apply_ok = 1;
     for (size_t i = 0; i < t->ins_n; i++) {
         if (db_add_vector(db, t->ins_data[i], t->dimension) != 0) { apply_ok = 0; break; }
@@ -227,14 +226,12 @@ int db_commit(GV_DBTxn *t) {
     db_set_wal_suppress(0);
     db_set_commit_stamp(0);
     if (!apply_ok) {
-        /* A mid-loop failure must not leave a PARTIAL commit visible: tombstone
-         * (MVCC delete_version = cv) every insert already applied this txn, the
-         * same invisibility mechanism staged deletes use below. */
-        pthread_rwlock_wrlock(&db->rwlock);
-        for (size_t s = pre_count; s < db->count; s++) {
-            soa_storage_set_delete_version(db->soa_storage, s, cv);
-        }
-        pthread_rwlock_unlock(&db->rwlock);
+        /* NOTE: a mid-loop apply failure leaves the already-applied inserts of
+         * this txn visible (partial commit). A correct rollback cannot identify
+         * "this txn's" slots by a db->count range because concurrent writers
+         * interleave their own appends, and reading db->count here unlocked
+         * races with them - so that is deferred to a design that applies the
+         * batch under a single held write lock or tracks each inserted slot. */
         gv_free(txn_dels);
         pthread_mutex_unlock(&db->txn_mutex);
         t->state = GV_TXN_ABORTED;
