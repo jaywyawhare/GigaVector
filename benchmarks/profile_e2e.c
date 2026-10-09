@@ -30,16 +30,21 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <sys/stat.h>
 
 #include "gigavector.h"
 #include "core/memory.h"
 #include "features/cypher.h"
 #include "features/knowledge_graph.h"
+#include "index/diskann.h"
+#include "index/ivfdisk.h"
 #include "index/ivfflat.h"
 #include "index/ivfpq.h"
 #include "index/ivfsq8.h"
 #include "index/ivfturboquant.h"
 #include "index/pq.h"
+#include "index/sparse_index.h"
+#include "storage/sparse_vector.h"
 #include "multimodal/bm25.h"
 #include "multimodal/learned_sparse.h"
 #include "multimodal/splade.h"
@@ -143,7 +148,12 @@ static void prof_end(void) {
     }
 }
 
-#define PROF_SCOPE(name) for (int _p = (prof_begin(name), 0); _p == 0; _p = 1, prof_end())
+/* cleanup attribute closes the scope even on an early return/break inside the
+ * body, so prof_end() always pairs with prof_begin(). */
+static inline void prof_scope_end_(int *unused) { (void)unused; prof_end(); }
+#define PROF_SCOPE(name) \
+    for (int _p __attribute__((cleanup(prof_scope_end_))) = (prof_begin(name), 0); \
+         _p == 0; _p = 1)
 
 static int prof_cmp_self(const void *a, const void *b) {
     double x = ((const ProfStat *)a)->self_ms, y = ((const ProfStat *)b)->self_ms;
@@ -541,6 +551,108 @@ static void phase_transactions(size_t ops, size_t dim) {
     }
 }
 
+/* ---- sparse index (raw API: not reachable via dense db_add_vector) -------- */
+
+static void phase_sparse(size_t n, size_t dim, size_t nnz, size_t queries) {
+    PROF_SCOPE("9.sparse") {
+        GV_SparseIndex *idx = sparse_index_create(dim);
+        if (!idx) return;
+        uint32_t *ix = (uint32_t *)malloc(nnz * sizeof(uint32_t));
+        float *vals = (float *)malloc(nnz * sizeof(float));
+
+        PROF_SCOPE("sparse/build") {
+            for (size_t i = 0; i < n; i++) {
+                for (size_t j = 0; j < nnz; j++) {
+                    ix[j] = (uint32_t)(next_u64() % dim);
+                    vals[j] = next_unit() + 0.5f;
+                }
+                GV_SparseVector *sv = sparse_vector_create(dim, ix, vals, nnz);
+                if (sv && sparse_index_add(idx, sv) != 0) sparse_vector_destroy(sv);
+            }
+        }
+        GV_SearchResult res[16];
+        PROF_SCOPE("sparse/search") {
+            for (size_t q = 0; q < queries; q++) {
+                for (size_t j = 0; j < nnz; j++) {
+                    ix[j] = (uint32_t)(next_u64() % dim);
+                    vals[j] = next_unit() + 0.5f;
+                }
+                GV_SparseVector *qv = sparse_vector_create(dim, ix, vals, nnz);
+                if (qv) {
+                    int nn = sparse_index_search(idx, qv, 10, res, GV_DISTANCE_DOT_PRODUCT);
+                    if (nn > 0) gv_search_results_free(res, (size_t)nn);
+                    sparse_vector_destroy(qv);
+                }
+            }
+        }
+        free(ix); free(vals);
+        sparse_index_destroy(idx);
+    }
+}
+
+/* ---- disk-backed indexes (raw API, own on-disk storage) ------------------- */
+
+static void phase_diskann(size_t n, size_t dim, size_t queries) {
+    PROF_SCOPE("10.diskann") {
+        char path[256];
+        snprintf(path, sizeof(path), "/tmp/gv_prof_diskann_%d.dat", (int)getpid());
+        GV_DiskANNConfig cfg;
+        diskann_config_init(&cfg);
+        cfg.data_path = path; /* DiskANN wants a file path, not a directory */
+        GV_DiskANNIndex *idx = diskann_create(dim, &cfg);
+        if (!idx) return;
+
+        float *data = (float *)malloc(n * dim * sizeof(float));
+        for (size_t i = 0; i < n * dim; i++) data[i] = next_unit();
+
+        int built = -1;
+        PROF_SCOPE("diskann/build") { built = diskann_build(idx, data, n, dim); }
+        if (built == 0) {
+            GV_DiskANNResult res[16];
+            PROF_SCOPE("diskann/search") {
+                for (size_t q = 0; q < queries; q++)
+                    (void)diskann_search(idx, data + (q % n) * dim, dim, 10, res);
+            }
+        }
+        free(data);
+        diskann_destroy(idx);
+        remove(path);
+    }
+}
+
+static void phase_ivfdisk(size_t n, size_t dim, size_t queries) {
+    PROF_SCOPE("11.ivfdisk") {
+        char dir[256];
+        snprintf(dir, sizeof(dir), "/tmp/gv_prof_ivfdisk_%d", (int)getpid());
+        mkdir(dir, 0700);
+        GV_IVFDiskConfig cfg;
+        ivfdisk_config_init(&cfg);
+        cfg.nlist = 64;
+        cfg.data_dir = dir;
+        GV_IVFDiskIndex *idx = ivfdisk_create(dim, &cfg);
+        if (!idx) return;
+
+        float *data = (float *)malloc(n * dim * sizeof(float));
+        for (size_t i = 0; i < n * dim; i++) data[i] = next_unit();
+
+        PROF_SCOPE("ivfdisk/train") {
+            (void)ivfdisk_train(idx, data, n / 2 < n ? (n / 2 ? n / 2 : n) : n);
+        }
+        PROF_SCOPE("ivfdisk/insert") {
+            for (size_t i = 0; i < n; i++) (void)ivfdisk_insert(idx, data + i * dim, dim, i);
+        }
+        GV_SearchResult res[16];
+        PROF_SCOPE("ivfdisk/search") {
+            for (size_t q = 0; q < queries; q++) {
+                int nn = ivfdisk_search(idx, data + (q % n) * dim, 10, res, GV_DISTANCE_EUCLIDEAN);
+                if (nn > 0) gv_search_results_free(res, (size_t)nn);
+            }
+        }
+        free(data);
+        ivfdisk_destroy(idx);
+    }
+}
+
 int main(int argc, char **argv) {
     size_t n_vec   = argc > 1 ? strtoul(argv[1], NULL, 10) : 20000;
     size_t dim     = argc > 2 ? strtoul(argv[2], NULL, 10) : 128;
@@ -570,6 +682,9 @@ int main(int argc, char **argv) {
     phase_metrics(idx_n, dim, queries);
     phase_persistence(idx_n, dim, queries);
     phase_transactions(1000, dim);
+    phase_sparse(idx_n, dim < 1000 ? 1000 : dim, 16, queries);
+    phase_diskann(idx_n, dim, queries);
+    phase_ivfdisk(idx_n, dim, queries);
     double wall = now_ms() - wall0;
 
     prof_report();
