@@ -162,7 +162,7 @@ $(BENCH_DIR)/profile_e2e: benchmarks/profile_e2e.c $(STATIC_LIB)
 # using the portable AVX2 SIMD level. PROF_ARGS passes workload sizes through.
 .PHONY: profile-e2e
 profile-e2e:
-	@rm -f $(OBJ_DIR)/core/memory.o $(STATIC_LIB) $(SHARED_LIB)
+	@rm -f $(OBJ_DIR)/core/memory.o $(OBJ_DIR)/api/server.o $(OBJ_DIR)/api/rest_handlers.o $(STATIC_LIB) $(SHARED_LIB)
 	@$(MAKE) lib EXTRA_CFLAGS=-DGV_PROFILE_ALLOC SIMD_FLAGS="-mavx2 -mfma"
 	@$(MAKE) $(BENCH_DIR)/profile_e2e EXTRA_CFLAGS=-DGV_PROFILE_ALLOC SIMD_FLAGS="-mavx2 -mfma"
 	@echo "=== e2e profiler ==="

@@ -36,6 +36,8 @@
 #include <arpa/inet.h>
 
 #include "gigavector.h"
+#include "admin/raft_log.h"
+#include "admin/repl_sim.h"
 #include "api/server.h"
 #include "core/memory.h"
 #include "features/cypher.h"
@@ -730,6 +732,48 @@ static void phase_server(size_t n, size_t dim, size_t queries) {
     }
 }
 
+/* ---- replication: durable Raft log + in-process WAL transport ------------- */
+
+static void phase_replication(size_t ops, size_t rec_len) {
+    PROF_SCOPE("13.replication") {
+        uint8_t *rec = (uint8_t *)malloc(rec_len);
+        memset(rec, 0xAB, rec_len);
+
+        /* Durable Raft log append (the replication durability hot path). */
+        char path[256];
+        snprintf(path, sizeof(path), "/tmp/gv_prof_raft_%d.log", (int)getpid());
+        GV_RaftLog *log = raft_log_open(path);
+        if (log) {
+            PROF_SCOPE("repl/raft_log_append") {
+                for (size_t i = 0; i < ops; i++)
+                    (void)raft_log_append(log, i + 1, 1, rec, rec_len);
+            }
+            raft_log_close(log);
+            remove(path);
+        }
+
+        /* In-process WAL replication transport (no network): enqueue to a
+         * follower, then deliver each message. */
+        GV_ReplSim *sim = repl_sim_create(42);
+        if (sim) {
+            const char *follower = "follower-1";
+            PROF_SCOPE("repl/enqueue") {
+                for (size_t i = 0; i < ops; i++)
+                    (void)repl_sim_enqueue_wal(sim, follower, i + 1, rec, rec_len);
+            }
+            PROF_SCOPE("repl/deliver") {
+                uint64_t idx;
+                uint8_t *out;
+                size_t olen;
+                while (repl_sim_deliver_wal(sim, follower, &idx, &out, &olen) == 0)
+                    gv_free(out); /* deliver transfers record ownership */
+            }
+            repl_sim_destroy(sim);
+        }
+        free(rec);
+    }
+}
+
 int main(int argc, char **argv) {
     size_t n_vec   = argc > 1 ? strtoul(argv[1], NULL, 10) : 20000;
     size_t dim     = argc > 2 ? strtoul(argv[2], NULL, 10) : 128;
@@ -763,6 +807,7 @@ int main(int argc, char **argv) {
     phase_diskann(idx_n, dim, queries);
     phase_ivfdisk(idx_n, dim, queries);
     phase_server(idx_n, dim, queries);
+    phase_replication(idx_n * 2, 256);
     double wall = now_ms() - wall0;
 
     prof_report();
