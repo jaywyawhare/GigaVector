@@ -325,7 +325,14 @@ if(BUILD_TESTS)
             target_link_libraries(test_${TEST_NAME} PRIVATE GigaVector m pthread)
         endif()
         add_test(NAME ${TEST_NAME} COMMAND test_${TEST_NAME})
-        set_tests_properties(${TEST_NAME} PROPERTIES TIMEOUT 120)
+        # Disk-backed indexes do heavy file I/O that is much slower on the
+        # Windows CI filesystem, where the 120s default intermittently times
+        # out (ivfdisk, diskann); give those headroom. All others stay at 120s.
+        if(TEST_NAME STREQUAL "ivfdisk" OR TEST_NAME STREQUAL "diskann")
+            set_tests_properties(${TEST_NAME} PROPERTIES TIMEOUT 300)
+        else()
+            set_tests_properties(${TEST_NAME} PROPERTIES TIMEOUT 120)
+        endif()
     endforeach()
 
     # repl_tcp/repl_tcp_fault are excluded on WIN32 and APPLE (see socket-test
