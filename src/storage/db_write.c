@@ -116,6 +116,15 @@ int db_add_vector(GV_Database *db, const float *data, size_t dimension) {
             return -1;
         }
         status = kdtree_insert(&(db->root), db->soa_storage, vector_index, 0);
+        if (status != 0) {
+            /* Roll back the SoA slot + metadata-index entries added above, so a
+             * failed kdtree_insert does not leave soa_storage->count ahead of
+             * db->count (a phantom vector soa_storage_save would persist) and
+             * stale metadata-index entries pointing at an orphaned slot. */
+            soa_storage_mark_deleted(db->soa_storage, vector_index);
+            if (db->metadata_index != NULL)
+                metadata_index_remove_vector(db->metadata_index, vector_index);
+        }
     } else if (db->index_type == GV_INDEX_TYPE_HNSW) {
         GV_Vector *vector = vector_create_from_data(dimension, data);
         if (vector == NULL) {
@@ -476,6 +485,15 @@ int db_add_vector_with_metadata(GV_Database *db, const float *data, size_t dimen
             }
         }
         status = kdtree_insert(&(db->root), db->soa_storage, vector_index, 0);
+        if (status != 0) {
+            /* Roll back the SoA slot + metadata-index entries added above, so a
+             * failed kdtree_insert does not leave soa_storage->count ahead of
+             * db->count (a phantom vector soa_storage_save would persist) and
+             * stale metadata-index entries pointing at an orphaned slot. */
+            soa_storage_mark_deleted(db->soa_storage, vector_index);
+            if (db->metadata_index != NULL)
+                metadata_index_remove_vector(db->metadata_index, vector_index);
+        }
     } else if (db->index_type == GV_INDEX_TYPE_HNSW) {
         GV_Vector *vector = vector_create_from_data(dimension, data);
         if (vector == NULL) {

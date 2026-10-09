@@ -33,6 +33,10 @@
 
 #define REPL_MAX_MSG_BYTES (16 * 1024 * 1024)
 #define REPL_MAX_CONNECTIONS 32
+/* Cap the per-connection pending-WAL queue so a stalled/slow follower can't
+ * grow the leader's memory without bound. A follower that falls this far behind
+ * is dropped-frame and must resync, which is the correct degradation. */
+#define REPL_MAX_PENDING_WAL 4096
 /* Generous headroom over REPL_MAX_CONNECTIONS: a connection is tracked here
  * from the instant accept() returns (before it has done any handshake I/O and
  * long before it might win a connections[] slot), so more of these can be
@@ -78,6 +82,7 @@ typedef struct {
      * follower with a silent, permanent gap. */
     PendingWal *wal_head;
     PendingWal *wal_tail;
+    size_t wal_pending;         /* queue length; bounded by REPL_MAX_PENDING_WAL */
     uint32_t last_wal_req_id;   /* req_id of the most recently flushed WAL frame */
     uint8_t pending_heartbeat[16];
     int pending_heartbeat_ready;
@@ -333,6 +338,7 @@ static void repl_clear_connection_pending(ReplConnection *conn) {
     while (p) { PendingWal *n = p->next; gv_free(p->data); gv_free(p); p = n; }
     conn->wal_head = NULL;
     conn->wal_tail = NULL;
+    conn->wal_pending = 0;
     conn->pending_heartbeat_ready = 0;
 }
 
@@ -343,6 +349,7 @@ static void repl_flush_connection_pending(GV_ReplTransport *transport, ReplConne
         PendingWal *p = conn->wal_head;
         conn->wal_head = p->next;
         if (!conn->wal_head) conn->wal_tail = NULL;
+        if (conn->wal_pending > 0) conn->wal_pending--;
         repl_transport_send(transport, conn->fd, REPL_MSG_WAL, p->req_id, p->data, p->len);
         conn->last_wal_req_id = p->req_id;
         gv_free(p->data);
@@ -1037,6 +1044,9 @@ int repl_transport_broadcast_entry(GV_ReplTransport *transport, GV_Database *db,
     for (int i = 0; i < REPL_MAX_CONNECTIONS; i++) {
         if (!transport->connections[i].active) continue;
         ReplConnection *conn = &transport->connections[i];
+        /* Bound the queue: drop this frame for a follower that is too far
+         * behind (it will resync) rather than grow leader memory unbounded. */
+        if (conn->wal_pending >= REPL_MAX_PENDING_WAL) continue;
         PendingWal *node = (PendingWal *)gv_alloc(sizeof(PendingWal));
         if (!node) continue;
         node->data = (uint8_t *)gv_alloc(payload_len);
@@ -1047,6 +1057,7 @@ int repl_transport_broadcast_entry(GV_ReplTransport *transport, GV_Database *db,
         node->next = NULL;
         if (conn->wal_tail) conn->wal_tail->next = node; else conn->wal_head = node;
         conn->wal_tail = node;
+        conn->wal_pending++;
         memcpy(conn->pending_heartbeat, heartbeat, sizeof(heartbeat));
         conn->pending_heartbeat_ready = 1;
     }
