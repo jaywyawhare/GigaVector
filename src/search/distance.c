@@ -36,6 +36,18 @@ static inline unsigned dist_features(void) {
     return f;
 }
 
+#ifdef __AVX2__
+/* Horizontal sum of an 8-lane vector. */
+static inline float hsum256_ps(__m256 v) {
+    __m128 lo = _mm256_extractf128_ps(v, 0);
+    __m128 hi = _mm256_extractf128_ps(v, 1);
+    __m128 s = _mm_add_ps(lo, hi);
+    s = _mm_hadd_ps(s, s);
+    s = _mm_hadd_ps(s, s);
+    return _mm_cvtss_f32(s);
+}
+#endif
+
 #ifdef __AVX512F__
 static float vector_dot_avx512(const float *a, const float *b, size_t dimension) {
     __m512 sum_vec = _mm512_setzero_ps();
@@ -482,6 +494,25 @@ float distance_dot_product(const GV_Vector *a, const GV_Vector *b) {
     return -dot;
 }
 
+#ifdef __AVX2__
+/* Binarize (>0) eight lanes at a time, XOR the sign masks, popcount the
+ * differing lanes. Replaces a per-element data-dependent branch that mispredicts
+ * ~50% of the time on real (sign-balanced) data - the dominant cost. */
+static float distance_hamming_avx2(const float *a, const float *b, size_t dimension) {
+    const __m256 zero = _mm256_setzero_ps();
+    int diff = 0;
+    size_t i = 0;
+    for (; i + 8 <= dimension; i += 8) {
+        int ma = _mm256_movemask_ps(_mm256_cmp_ps(_mm256_loadu_ps(&a[i]), zero, _CMP_GT_OQ));
+        int mb = _mm256_movemask_ps(_mm256_cmp_ps(_mm256_loadu_ps(&b[i]), zero, _CMP_GT_OQ));
+        diff += __builtin_popcount((unsigned)(ma ^ mb));
+    }
+    for (; i < dimension; i++)
+        diff += ((a[i] > 0.0f) ? 1 : 0) ^ ((b[i] > 0.0f) ? 1 : 0);
+    return (float)diff;
+}
+#endif
+
 float distance_hamming(const GV_Vector *a, const GV_Vector *b) {
     if (a == NULL || b == NULL || a->data == NULL || b->data == NULL) {
         return -1.0f;
@@ -490,14 +521,41 @@ float distance_hamming(const GV_Vector *a, const GV_Vector *b) {
         return -1.0f;
     }
 
-    float count = 0.0f;
-    for (size_t i = 0; i < a->dimension; i++) {
-        int bit_a = (a->data[i] > 0.0f) ? 1 : 0;
-        int bit_b = (b->data[i] > 0.0f) ? 1 : 0;
-        if (bit_a != bit_b) count += 1.0f;
+#ifdef __AVX2__
+    if (dist_features() & GV_CPU_FEATURE_AVX2) {
+        return distance_hamming_avx2(a->data, b->data, a->dimension);
     }
-    return count;
+#endif
+    /* Branchless scalar: XOR of the two sign bits, no mispredicting branch. */
+    int diff = 0;
+    for (size_t i = 0; i < a->dimension; i++) {
+        diff += ((a->data[i] > 0.0f) ? 1 : 0) ^ ((b->data[i] > 0.0f) ? 1 : 0);
+    }
+    return (float)diff;
 }
+
+#ifdef __AVX2__
+/* Fused single pass accumulating dot, |a|^2 and |b|^2 together (three FMAs per
+ * 8 lanes) instead of a scalar triple-accumulate loop. */
+static void jaccard_sums_avx2(const float *a, const float *b, size_t dimension,
+                              float *out_dot, float *out_na, float *out_nb) {
+    __m256 vdot = _mm256_setzero_ps(), vna = _mm256_setzero_ps(), vnb = _mm256_setzero_ps();
+    size_t i = 0;
+    for (; i + 8 <= dimension; i += 8) {
+        __m256 x = _mm256_loadu_ps(&a[i]);
+        __m256 y = _mm256_loadu_ps(&b[i]);
+        vdot = _mm256_fmadd_ps(x, y, vdot);
+        vna  = _mm256_fmadd_ps(x, x, vna);
+        vnb  = _mm256_fmadd_ps(y, y, vnb);
+    }
+    float dot = hsum256_ps(vdot), na = hsum256_ps(vna), nb = hsum256_ps(vnb);
+    for (; i < dimension; i++) {
+        float x = a[i], y = b[i];
+        dot += x * y; na += x * x; nb += y * y;
+    }
+    *out_dot = dot; *out_na = na; *out_nb = nb;
+}
+#endif
 
 float distance_jaccard(const GV_Vector *a, const GV_Vector *b) {
     if (a == NULL || b == NULL || a->data == NULL || b->data == NULL) {
@@ -510,6 +568,11 @@ float distance_jaccard(const GV_Vector *a, const GV_Vector *b) {
     /* Continuous Tanimoto: dot / (|a|^2 + |b|^2 - dot). For binary inputs this is
      * exactly intersection/union. Both-zero vectors are identical (distance 0). */
     float dot = 0.0f, na = 0.0f, nb = 0.0f;
+#ifdef __AVX2__
+    if ((dist_features() & GV_CPU_FEATURE_AVX2) && (dist_features() & GV_CPU_FEATURE_FMA)) {
+        jaccard_sums_avx2(a->data, b->data, a->dimension, &dot, &na, &nb);
+    } else
+#endif
     for (size_t i = 0; i < a->dimension; i++) {
         float x = a->data[i], y = b->data[i];
         dot += x * y;
