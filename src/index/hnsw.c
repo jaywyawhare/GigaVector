@@ -1338,17 +1338,40 @@ int gv_hnsw_search(void *index_ptr, const GV_Vector *query, size_t k,
     if (need > heap_k) need = heap_k;
 
     /* Copy heap data to temp arrays for extraction (don't modify the pre-allocated buffers) */
-    float tmp_dis[1024];
-    size_t tmp_ids[1024];
-    size_t cand_count = (heap_k < 1024) ? heap_k : 1024;
+    /* Extract the 'need' smallest of the beam. Use stack buffers for the common
+     * case but grow to the heap when the beam (heap_k) or the requested count
+     * (need, up to a large k/efSearch) exceeds them - the fixed 1024/512 caps
+     * previously SILENTLY truncated results for large k/efSearch. */
+    float  stack_dis[1024];
+    size_t stack_ids[1024];
+    GV_HNSWCandidate stack_sorted[512];
+    float  *tmp_dis = stack_dis;
+    size_t *tmp_ids = stack_ids;
+    GV_HNSWCandidate *sorted_cands = stack_sorted;
+    float  *heap_tmp_dis = NULL;
+    size_t *heap_tmp_ids = NULL;
+    GV_HNSWCandidate *heap_sorted = NULL;
+
+    size_t cand_count = heap_k;
+    if (cand_count > 1024) {
+        heap_tmp_dis = (float *)gv_alloc(cand_count * sizeof(float));
+        heap_tmp_ids = (size_t *)gv_alloc(cand_count * sizeof(size_t));
+        if (heap_tmp_dis && heap_tmp_ids) { tmp_dis = heap_tmp_dis; tmp_ids = heap_tmp_ids; }
+        else { gv_free(heap_tmp_dis); gv_free(heap_tmp_ids); heap_tmp_dis = NULL; heap_tmp_ids = NULL; cand_count = 1024; }
+    }
+    size_t sort_cap = need; /* need is already <= heap_k */
+    if (sort_cap > 512) {
+        heap_sorted = (GV_HNSWCandidate *)gv_alloc(sort_cap * sizeof(GV_HNSWCandidate));
+        if (heap_sorted) sorted_cands = heap_sorted;
+        else sort_cap = 512;
+    }
     memcpy(tmp_dis, heap_dis, cand_count * sizeof(float));
     memcpy(tmp_ids, heap_ids, cand_count * sizeof(size_t));
 
-    GV_HNSWCandidate sorted_cands[512]; /* enough for k + rerank */
     size_t sorted_count = 0;
 
     /* Extract 'need' smallest elements */
-    for (size_t e = 0; e < need && e < 512; ++e) {
+    for (size_t e = 0; e < need && e < sort_cap; ++e) {
         float best_d = FLT_MAX;
         size_t best_i = SIZE_MAX;
         for (size_t i = 0; i < cand_count; ++i) {
@@ -1402,6 +1425,9 @@ int gv_hnsw_search(void *index_ptr, const GV_Vector *query, size_t k,
     }
 
     if (query_binary) binary_vector_destroy(query_binary);
+    gv_free(heap_tmp_dis);
+    gv_free(heap_tmp_ids);
+    gv_free(heap_sorted);
     #undef SRCH_VEC
     return (int)result_count;
 }
