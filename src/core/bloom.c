@@ -281,6 +281,13 @@ int bloom_load(GV_BloomFilter **bf_ptr, FILE *in)
     if (num_bits == 0 || num_hashes == 0) {
         return -1;
     }
+    /* num_bits comes from the serialized blob; guard the (num_bits + 7) / 8
+     * byte-count math against integer wrap, which would under-allocate `bits`
+     * while num_bits stays huge -> every later bit_set/get indexes out of
+     * bounds. (A merely-large value fails the gv_alloc below gracefully.) */
+    if (num_bits > SIZE_MAX - 7) {
+        return -1;
+    }
 
     GV_BloomFilter *bf = (GV_BloomFilter *)gv_calloc(1, sizeof(GV_BloomFilter));
     if (bf == NULL) {

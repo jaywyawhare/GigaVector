@@ -1160,6 +1160,13 @@ GV_HNSWInlineIndex *hnsw_inline_load(const char *path) {
         /* idx->count was already incremented right after node_init above. */
     }
 
+    /* entry_point indexes nodes[] in search; reject a corrupt file whose
+     * entry_point is out of range (SIZE_MAX is the legitimate empty sentinel)
+     * before it causes an out-of-bounds read in hnsw_inline_search. */
+    if ((size_t)entry_point != SIZE_MAX && (size_t)entry_point >= idx->count) {
+        hnsw_inline_destroy(idx);
+        goto fail;
+    }
     idx->entry_point = (size_t)entry_point;
     idx->max_level_cur = (size_t)max_level_cur;
 
