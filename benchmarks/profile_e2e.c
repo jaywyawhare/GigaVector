@@ -16,25 +16,37 @@
  * Set GV_PROF_TRACE=path to also emit a chrome://tracing / Perfetto JSON of
  * every scope span.
  *
- * Usage: profile_e2e [N_vectors] [dim] [queries] [N_docs] [text_queries]
- *   defaults: 20000 128 500 3000 500
+ * Covers: the vector-DB lifecycle (FLAT), graph+Cypher, SPLADE, hybrid fusion,
+ * the full dense index matrix (FLAT/HNSW/KDTREE/LSH/RABITQ + trained
+ * IVFFLAT/IVFSQ8/IVFTURBOQUANT/PQ/IVFPQ: train+build+search), every distance
+ * metric, persistence (save+reopen), and transactions (commit+rollback).
+ *
+ * Usage: profile_e2e [N_vectors] [dim] [queries] [N_docs] [text_queries] [idx_N]
+ *   defaults: 20000 128 500 3000 500 (idx_N auto = min(N/4, 5000))
  */
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 #include "gigavector.h"
 #include "core/memory.h"
 #include "features/cypher.h"
 #include "features/knowledge_graph.h"
+#include "index/ivfflat.h"
+#include "index/ivfpq.h"
+#include "index/ivfsq8.h"
+#include "index/ivfturboquant.h"
+#include "index/pq.h"
 #include "multimodal/bm25.h"
 #include "multimodal/learned_sparse.h"
 #include "multimodal/splade.h"
 #include "search/distance.h"
 #include "search/hybrid_search.h"
 #include "storage/database.h"
+#include "storage/transaction.h"
 
 /* ------------------------------------------------------------- scope profiler */
 
@@ -366,6 +378,169 @@ static void phase_hybrid(size_t ndocs, size_t queries) {
     }
 }
 
+/* ---- index matrix: build + search for every reachable dense index --------- */
+
+typedef int (*train_fn)(void *index, const float *data, size_t count);
+
+/* One scoped build+search per index type. Trained types (IVF and PQ) are
+ * trained on the first train_n vectors first; incremental types pass NULL. */
+static void profile_one_index(const char *name, int index_type, train_fn train,
+                              size_t n, size_t dim, size_t queries, size_t train_n) {
+    char sb[64], ss[64], st[64];
+    snprintf(sb, sizeof(sb), "idx/%s/build", name);
+    snprintf(ss, sizeof(ss), "idx/%s/search", name);
+    snprintf(st, sizeof(st), "idx/%s/train", name);
+
+    GV_Database *db = db_open(NULL, dim, index_type);
+    if (!db) { fprintf(stderr, "  %s: open failed\n", name); return; }
+
+    float *data = (float *)malloc(n * dim * sizeof(float));
+    for (size_t i = 0; i < n * dim; i++) data[i] = next_unit();
+
+    if (train) {
+        /* interned scope name: the table keys by string identity or value */
+        prof_begin(strdup(st));
+        if (train(db->hnsw_index, data, train_n < n ? train_n : n) != 0)
+            fprintf(stderr, "  %s: train failed\n", name);
+        prof_end();
+    }
+
+    int added = 0;
+    prof_begin(strdup(sb));
+    for (size_t i = 0; i < n; i++)
+        if (db_add_vector(db, data + i * dim, dim) == 0) added++;
+    prof_end();
+
+    GV_SearchResult res[16];
+    int last = 0;
+    prof_begin(strdup(ss));
+    for (size_t q = 0; q < queries; q++) {
+        const float *qv = data + (q % n) * dim;
+        int nn = db_search(db, qv, 10, res, GV_DISTANCE_EUCLIDEAN);
+        if (nn > 0) { gv_search_results_free(res, (size_t)nn); last = nn; }
+    }
+    prof_end();
+
+    if (added == 0 || last == 0)
+        fprintf(stderr, "  %s: added=%d last_search=%d (skipped/unsupported)\n",
+                name, added, last);
+    free(data);
+    db_close(db);
+}
+
+static void phase_index_matrix(size_t n, size_t dim, size_t queries) {
+    PROF_SCOPE("5.index_matrix") {
+        profile_one_index("flat",   GV_INDEX_TYPE_FLAT,   NULL, n, dim, queries, 0);
+        profile_one_index("hnsw",   GV_INDEX_TYPE_HNSW,   NULL, n, dim, queries, 0);
+        profile_one_index("kdtree", GV_INDEX_TYPE_KDTREE, NULL, n, dim, queries, 0);
+        profile_one_index("lsh",    GV_INDEX_TYPE_LSH,    NULL, n, dim, queries, 0);
+        profile_one_index("rabitq", GV_INDEX_TYPE_RABITQ, NULL, n, dim, queries, 0);
+        size_t tn = n / 4 + 256;
+        profile_one_index("ivfflat", GV_INDEX_TYPE_IVFFLAT, ivfflat_train, n, dim, queries, tn);
+        profile_one_index("ivfsq8",  GV_INDEX_TYPE_IVFSQ8,  ivfsq8_train,  n, dim, queries, tn);
+        profile_one_index("ivfturbo", GV_INDEX_TYPE_IVFTURBOQUANT, ivfturboquant_train, n, dim, queries, tn);
+        profile_one_index("pq",     GV_INDEX_TYPE_PQ,     pq_train,     n, dim, queries, tn);
+        profile_one_index("ivfpq",  GV_INDEX_TYPE_IVFPQ,  gv_ivfpq_train, n, dim, queries, tn);
+    }
+}
+
+/* ---- distance metrics: same FLAT corpus, each metric ---------------------- */
+
+static void phase_metrics(size_t n, size_t dim, size_t queries) {
+    PROF_SCOPE("6.metrics") {
+        GV_Database *db = db_open(NULL, dim, GV_INDEX_TYPE_FLAT);
+        if (!db) return;
+        float *data = (float *)malloc(n * dim * sizeof(float));
+        for (size_t i = 0; i < n * dim; i++) data[i] = next_unit();
+        for (size_t i = 0; i < n; i++) if (db_add_vector(db, data + i * dim, dim)) {}
+
+        static const struct { const char *n; GV_DistanceType t; } M[] = {
+            {"euclidean", GV_DISTANCE_EUCLIDEAN}, {"cosine", GV_DISTANCE_COSINE},
+            {"dot", GV_DISTANCE_DOT_PRODUCT}, {"manhattan", GV_DISTANCE_MANHATTAN},
+            {"hamming", GV_DISTANCE_HAMMING}, {"jaccard", GV_DISTANCE_JACCARD},
+        };
+        GV_SearchResult res[16];
+        for (size_t m = 0; m < sizeof(M) / sizeof(M[0]); m++) {
+            char s[48]; snprintf(s, sizeof(s), "metric/%s", M[m].n);
+            int last = 0;
+            prof_begin(strdup(s));
+            for (size_t q = 0; q < queries; q++) {
+                int nn = db_search(db, data + (q % n) * dim, 10, res, M[m].t);
+                if (nn > 0) { gv_search_results_free(res, (size_t)nn); last = nn; }
+            }
+            prof_end();
+            if (last == 0) fprintf(stderr, "  metric %s unsupported on this data\n", M[m].n);
+        }
+        free(data);
+        db_close(db);
+    }
+}
+
+/* ---- persistence: save + reopen ------------------------------------------- */
+
+static void phase_persistence(size_t n, size_t dim, size_t queries) {
+    PROF_SCOPE("7.persist") {
+        char path[512];
+        snprintf(path, sizeof(path), "/tmp/gv_prof_%d.gvdb", (int)getpid());
+        GV_Database *db = db_open(path, dim, GV_INDEX_TYPE_FLAT);
+        if (!db) return;
+        float *data = (float *)malloc(n * dim * sizeof(float));
+        for (size_t i = 0; i < n * dim; i++) data[i] = next_unit();
+        for (size_t i = 0; i < n; i++) if (db_add_vector(db, data + i * dim, dim)) {}
+
+        PROF_SCOPE("persist/save") { if (db_save(db, path)) {} }
+        db_close(db);
+
+        GV_Database *db2 = NULL;
+        PROF_SCOPE("persist/reopen") { db2 = db_open(path, dim, GV_INDEX_TYPE_FLAT); }
+        if (db2) {
+            GV_SearchResult res[16];
+            PROF_SCOPE("persist/search") {
+                for (size_t q = 0; q < queries; q++) {
+                    int nn = db_search(db2, data + (q % n) * dim, 10, res, GV_DISTANCE_EUCLIDEAN);
+                    if (nn > 0) gv_search_results_free(res, (size_t)nn);
+                }
+            }
+            db_close(db2);
+        }
+        free(data);
+        remove(path);
+    }
+}
+
+/* ---- transactions: commit + rollback -------------------------------------- */
+
+static void phase_transactions(size_t ops, size_t dim) {
+    PROF_SCOPE("8.txn") {
+        GV_Database *db = db_open(NULL, dim, GV_INDEX_TYPE_FLAT);
+        if (!db) return;
+        float *v = (float *)malloc(dim * sizeof(float));
+
+        PROF_SCOPE("txn/commit") {
+            GV_DBTxn *tx = db_begin(db);
+            if (tx) {
+                for (size_t i = 0; i < ops; i++) {
+                    for (size_t d = 0; d < dim; d++) v[d] = next_unit();
+                    (void)db_txn_add_vector(tx, v, dim);
+                }
+                (void)db_commit(tx);
+            }
+        }
+        PROF_SCOPE("txn/rollback") {
+            GV_DBTxn *tx = db_begin(db);
+            if (tx) {
+                for (size_t i = 0; i < ops; i++) {
+                    for (size_t d = 0; d < dim; d++) v[d] = next_unit();
+                    (void)db_txn_add_vector(tx, v, dim);
+                }
+                (void)db_rollback(tx);
+            }
+        }
+        free(v);
+        db_close(db);
+    }
+}
+
 int main(int argc, char **argv) {
     size_t n_vec   = argc > 1 ? strtoul(argv[1], NULL, 10) : 20000;
     size_t dim     = argc > 2 ? strtoul(argv[2], NULL, 10) : 128;
@@ -381,11 +556,20 @@ int main(int argc, char **argv) {
            n_vec, dim, queries, n_docs, q_text);
     printf("  alloc tracking: %s\n", gv_alloc_stats_enabled() ? "on" : "off");
 
+    /* The index matrix builds 10 indexes (HNSW build is superlinear), so scale
+     * it down from the search corpus unless overridden. */
+    size_t idx_n = argc > 6 ? strtoul(argv[6], NULL, 10) : (n_vec / 4 < 5000 ? n_vec / 4 : 5000);
+    if (idx_n < 512) idx_n = 512;
+
     double wall0 = now_ms();
     phase_vector_db(n_vec, dim, queries);
     phase_graph_cypher(n_docs / 20 + 2, queries / 4 + 1);
     phase_splade(n_docs, q_text);
     phase_hybrid(n_docs, q_text);
+    phase_index_matrix(idx_n, dim, queries);
+    phase_metrics(idx_n, dim, queries);
+    phase_persistence(idx_n, dim, queries);
+    phase_transactions(1000, dim);
     double wall = now_ms() - wall0;
 
     prof_report();
