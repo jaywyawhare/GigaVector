@@ -848,6 +848,13 @@ GV_LearnedSparseIndex *ls_load(const char *path) {
                 fclose(fp);
                 return NULL;
             }
+            /* A posting doc_id beyond doc_count would index idx->docs[] out of
+             * bounds in every search path (ls_search_accumulate/_wand). Reject. */
+            if ((size_t)did >= idx->doc_count) {
+                ls_destroy(idx);
+                fclose(fp);
+                return NULL;
+            }
 
             if (ls_posting_append(&idx->posting_lists[tid], (size_t)did, w,
                                       block_size) != 0) {

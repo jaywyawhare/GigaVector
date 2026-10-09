@@ -101,6 +101,12 @@ static char *wal_read_string(FILE *f, int *on_heap) {
     if (read_u32(f, &len) != 0) {
         return NULL;
     }
+    /* Cap the on-disk length (matching wal_buf_read_string) so a corrupt WAL
+     * cannot force a ~4 GiB allocation, and so (size_t)len + 1u cannot wrap on
+     * 32-bit size_t into a tiny buffer followed by a large fread overflow. */
+    if (len > 1024u * 1024u) {
+        return NULL;
+    }
     char *s = (char *)wal_scratch_alloc((size_t)len + 1u, on_heap);
     if (s == NULL) {
         return NULL;

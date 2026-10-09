@@ -1693,6 +1693,7 @@ GV_FTIndex *ft_load(const char *path) {
         gv_free(term);
         if (!pl) break;
 
+        if (pcount > SIZE_MAX / sizeof(FT_Posting)) break; /* overflow guard (count from file) */
         if ((size_t)pcount > pl->capacity) {
             FT_Posting *buf = gv_realloc(pl->postings, (size_t)pcount * sizeof(FT_Posting));
             if (!buf) break;
@@ -1711,6 +1712,7 @@ GV_FTIndex *ft_load(const char *path) {
             p->doc_id = (size_t)did;
             p->term_freq = (size_t)tf;
 
+            if (pcnt > SIZE_MAX / sizeof(size_t)) goto done; /* overflow guard (count from file) */
             if (pcnt > 0) {
                 p->pos.positions = gv_alloc((size_t)pcnt * sizeof(size_t));
                 if (!p->pos.positions) goto done;

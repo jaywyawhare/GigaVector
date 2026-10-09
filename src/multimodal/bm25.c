@@ -751,6 +751,13 @@ GV_BM25Index *bm25_load(const char *filepath) {
         size_t term_len;
         if (fread(&term_len, sizeof(term_len), 1, fp) != 1) break;
         if (term_len == 0) break;
+        /* Cap the on-disk term length: prevents term_len+1 wrapping to 0 (then
+         * a large fread overflowing a tiny buffer) and absurd allocations. */
+        if (term_len > (1u << 20)) {
+            bm25_destroy(index);
+            fclose(fp);
+            return NULL;
+        }
 
         char *term = gv_alloc(term_len + 1);
         if (!term) break;
@@ -764,6 +771,14 @@ GV_BM25Index *bm25_load(const char *filepath) {
 
         size_t posting_count;
         if (fread(&posting_count, sizeof(posting_count), 1, fp) != 1) {
+            gv_free(term);
+            bm25_destroy(index);
+            fclose(fp);
+            return NULL;
+        }
+
+        /* Guard posting_count * sizeof(GV_Posting) against size_t overflow. */
+        if (posting_count > SIZE_MAX / sizeof(GV_Posting)) {
             gv_free(term);
             bm25_destroy(index);
             fclose(fp);

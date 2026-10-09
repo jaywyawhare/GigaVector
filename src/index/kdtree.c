@@ -410,7 +410,18 @@ recurse_children:
         knn_search_recursive(near, storage, query, ctx, storage_ctx);
     }
 
-    if (far != NULL && (ctx->count < ctx->capacity || axis_distance < ctx->worst_distance)) {
+    /* Only prune the far subtree when we can PROVE it holds nothing closer than
+     * the current k-th neighbour. axis_distance is the SQUARED coordinate gap,
+     * while worst_distance is a distance() value (sqrt'd for L2) - comparing
+     * them directly over-pruned and dropped true neighbours. The split-plane
+     * lower bound is valid only for EUCLIDEAN (compare against worst^2); for
+     * other metrics the coordinate gap is not a valid bound, so never prune. */
+    int prune_far = 0;
+    if (far != NULL && ctx->count >= ctx->capacity &&
+        ctx->distance_type == GV_DISTANCE_EUCLIDEAN) {
+        prune_far = (axis_distance >= ctx->worst_distance * ctx->worst_distance);
+    }
+    if (far != NULL && !prune_far) {
         knn_search_recursive(far, storage, query, ctx, storage_ctx);
     }
 }

@@ -613,6 +613,10 @@ static int deserialize_value(const uint8_t *buf, size_t len, size_t *pos, GV_Typ
             uint32_t count;
             memcpy(&count, buf + *pos, 4); *pos += 4;
             out->data.array_val.element_type = (GV_MetaType)buf[(*pos)++];
+            /* Each element consumes >=1 byte, so a count exceeding the bytes
+             * left is corrupt - reject before count*sizeof overflows (32-bit)
+             * or forces a multi-GB allocation. */
+            if (count > (uint32_t)(len - *pos)) return -1;
             out->data.array_val.count = count;
             out->data.array_val.capacity = count;
             if (count > 0) {
@@ -631,6 +635,9 @@ static int deserialize_value(const uint8_t *buf, size_t len, size_t *pos, GV_Typ
             if (*pos + 4 > len) return -1;
             uint32_t count;
             memcpy(&count, buf + *pos, 4); *pos += 4;
+            /* Each entry consumes >=4 bytes (key_len); a count beyond the bytes
+             * left is corrupt - reject before count*sizeof overflows/over-allocs. */
+            if (count > (uint32_t)(len - *pos)) return -1;
             out->data.object_val.count = count;
             out->data.object_val.capacity = count;
             if (count > 0) {

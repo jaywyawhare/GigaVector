@@ -328,6 +328,12 @@ int multivec_load(void **index_ptr, FILE *in, size_t dimension) {
         size_t floats = (size_t)num_chunks * (size_t)file_dim;
         float *chunks = NULL;
 
+        /* Guard floats * sizeof(float) against size_t overflow (both factors
+         * come from the file and are otherwise unbounded). */
+        if (floats > SIZE_MAX / sizeof(float)) {
+            multivec_destroy(index);
+            return -1;
+        }
         if (floats > 0) {
             chunks = (float *)gv_alloc(floats * sizeof(float));
             if (!chunks) {
