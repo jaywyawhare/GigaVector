@@ -427,6 +427,7 @@ int db_add_vector_with_metadata(GV_Database *db, const float *data, size_t dimen
             dimension * sizeof(float), sizeof(float), &normalized_on_heap);
         if (normalized_data == NULL) {
             pthread_rwlock_unlock(&db->rwlock);
+            db_decrement_concurrent_ops(db);
             return -1;
         }
         memcpy(normalized_data, data, dimension * sizeof(float));
@@ -464,6 +465,7 @@ int db_add_vector_with_metadata(GV_Database *db, const float *data, size_t dimen
                 vector_clear_metadata(&temp_vec);
             }
             pthread_rwlock_unlock(&db->rwlock);
+            db_decrement_concurrent_ops(db);
             return -1;
         }
         if (metadata != NULL && db->metadata_index != NULL) {
@@ -478,6 +480,7 @@ int db_add_vector_with_metadata(GV_Database *db, const float *data, size_t dimen
         GV_Vector *vector = vector_create_from_data(dimension, data);
         if (vector == NULL) {
             pthread_rwlock_unlock(&db->rwlock);
+            db_decrement_concurrent_ops(db);
             return -1;
         }
         if (db->cosine_normalized) {
@@ -487,6 +490,7 @@ int db_add_vector_with_metadata(GV_Database *db, const float *data, size_t dimen
             if (vector_set_metadata(vector, metadata_key, metadata_value) != 0) {
                 vector_destroy(vector);
                 pthread_rwlock_unlock(&db->rwlock);
+                db_decrement_concurrent_ops(db);
                 return -1;
             }
         }
@@ -510,6 +514,7 @@ int db_add_vector_with_metadata(GV_Database *db, const float *data, size_t dimen
         GV_Vector *vector = vector_create_from_data(dimension, data);
         if (vector == NULL) {
             pthread_rwlock_unlock(&db->rwlock);
+            db_decrement_concurrent_ops(db);
             return -1;
         }
         if (db->cosine_normalized) {
@@ -519,6 +524,7 @@ int db_add_vector_with_metadata(GV_Database *db, const float *data, size_t dimen
             if (vector_set_metadata(vector, metadata_key, metadata_value) != 0) {
                 vector_destroy(vector);
                 pthread_rwlock_unlock(&db->rwlock);
+                db_decrement_concurrent_ops(db);
                 return -1;
             }
         }
@@ -545,6 +551,7 @@ int db_add_vector_with_metadata(GV_Database *db, const float *data, size_t dimen
         GV_Vector *vector = vector_create_from_data(dimension, data);
         if (vector == NULL) {
             pthread_rwlock_unlock(&db->rwlock);
+            db_decrement_concurrent_ops(db);
             return -1;
         }
         if (db->cosine_normalized) {
@@ -554,6 +561,7 @@ int db_add_vector_with_metadata(GV_Database *db, const float *data, size_t dimen
             if (vector_set_metadata(vector, metadata_key, metadata_value) != 0) {
                 vector_destroy(vector);
                 pthread_rwlock_unlock(&db->rwlock);
+                db_decrement_concurrent_ops(db);
                 return -1;
             }
         }
@@ -590,6 +598,7 @@ int db_add_vector_with_metadata(GV_Database *db, const float *data, size_t dimen
 
     if (status != 0) {
         pthread_rwlock_unlock(&db->rwlock);
+        db_decrement_concurrent_ops(db);
         return -1;
     }
 
@@ -606,6 +615,7 @@ int db_add_vector_with_metadata(GV_Database *db, const float *data, size_t dimen
             GV_LOG_ERROR("db_add_vector_with_metadata: wal_append_insert failed (rc=%d) - insert not durable",
                          wal_res);
             pthread_rwlock_unlock(&db->rwlock);
+            db_decrement_concurrent_ops(db);
             return -1;
         }
     }
