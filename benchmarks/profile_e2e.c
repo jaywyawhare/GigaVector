@@ -523,7 +523,7 @@ static double recall_vs_flat(GV_Database *flat, GV_Database *ann,
         const float *qv = queries + q * dim;
         int ng = db_search(flat, qv, k, gt, metric);
         int na = db_search(ann,  qv, k, an, metric);
-        if (ng <= 0) { if (ng > 0) gv_search_results_free(gt, (size_t)ng); if (na > 0) gv_search_results_free(an, (size_t)na); continue; }
+        if (ng <= 0) { if (na > 0) gv_search_results_free(an, (size_t)na); continue; }
         size_t hit = 0;
         for (int i = 0; i < na; i++)
             for (int j = 0; j < ng; j++)

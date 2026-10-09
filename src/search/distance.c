@@ -666,7 +666,11 @@ void gv_distance_batch4(const float *q,
                         size_t dim, GV_DistanceType type,
                         float *d0, float *d1, float *d2, float *d3) {
 #ifdef __AVX2__
-    if (!(dist_features() & GV_CPU_FEATURE_AVX2) || dim < 8) {
+    unsigned feats = dist_features();
+    /* Require FMA as well as AVX2: the EUCLIDEAN/DOT/COSINE batches below use
+     * _mm256_fmadd_ps, so gating on AVX2 alone would SIGILL on an AVX2-without-
+     * FMA CPU - every other kernel in this file checks both. */
+    if (!((feats & GV_CPU_FEATURE_AVX2) && (feats & GV_CPU_FEATURE_FMA)) || dim < 8) {
         dist_batch4_fallback(q, v0, v1, v2, v3, dim, type, d0, d1, d2, d3);
         return;
     }
