@@ -319,6 +319,110 @@ static inline void hnsw_l2_batch4(const float *x,
     }
 }
 
+/* Compute new_vec's distance to four candidate vectors at once, for any
+ * metric, returning values identical to four hnsw_raw_distance() calls. Only
+ * EUCLIDEAN was batched before; COSINE/DOT_PRODUCT (the common embedding
+ * metrics) now get the same 4-wide AVX2 treatment, and MANHATTAN falls back to
+ * scalar per-lane. Callers MUST flush at exactly 4 for every metric - the old
+ * code only reset its 4-slot accumulator for EUCLIDEAN, so a 5th candidate
+ * overflowed the stack buffer on any other metric. */
+static inline void hnsw_dist_batch4(const float *x,
+                                    const float *y0, const float *y1,
+                                    const float *y2, const float *y3,
+                                    size_t dim, GV_DistanceType dtype,
+                                    float *d0, float *d1, float *d2, float *d3) {
+    switch (dtype) {
+    case GV_DISTANCE_EUCLIDEAN:
+    default:
+        hnsw_l2_batch4(x, y0, y1, y2, y3, dim, d0, d1, d2, d3);
+        return;
+    case GV_DISTANCE_DOT_PRODUCT: {
+        float p0 = 0, p1 = 0, p2 = 0, p3 = 0;
+#ifdef __AVX2__
+        if (hnsw_avx2_ok() && dim >= 8) {
+            __m256 a0 = _mm256_setzero_ps(), a1 = _mm256_setzero_ps();
+            __m256 a2 = _mm256_setzero_ps(), a3 = _mm256_setzero_ps();
+            size_t i = 0;
+            for (; i + 8 <= dim; i += 8) {
+                __m256 vx = _mm256_loadu_ps(x + i);
+                a0 = _mm256_fmadd_ps(vx, _mm256_loadu_ps(y0 + i), a0);
+                a1 = _mm256_fmadd_ps(vx, _mm256_loadu_ps(y1 + i), a1);
+                a2 = _mm256_fmadd_ps(vx, _mm256_loadu_ps(y2 + i), a2);
+                a3 = _mm256_fmadd_ps(vx, _mm256_loadu_ps(y3 + i), a3);
+            }
+            float t0[8], t1[8], t2[8], t3[8];
+            _mm256_storeu_ps(t0, a0); _mm256_storeu_ps(t1, a1);
+            _mm256_storeu_ps(t2, a2); _mm256_storeu_ps(t3, a3);
+            for (int j = 0; j < 8; ++j) { p0 += t0[j]; p1 += t1[j]; p2 += t2[j]; p3 += t3[j]; }
+            for (; i < dim; ++i) { p0 += x[i]*y0[i]; p1 += x[i]*y1[i]; p2 += x[i]*y2[i]; p3 += x[i]*y3[i]; }
+        } else
+#endif
+        { for (size_t i = 0; i < dim; ++i) { p0 += x[i]*y0[i]; p1 += x[i]*y1[i]; p2 += x[i]*y2[i]; p3 += x[i]*y3[i]; } }
+        *d0 = -p0; *d1 = -p1; *d2 = -p2; *d3 = -p3;
+        return;
+    }
+    case GV_DISTANCE_COSINE: {
+        float dt0 = 0, dt1 = 0, dt2 = 0, dt3 = 0;
+        float nx = 0, n0 = 0, n1 = 0, n2 = 0, n3 = 0;
+#ifdef __AVX2__
+        if (hnsw_avx2_ok() && dim >= 8) {
+            __m256 vdt0 = _mm256_setzero_ps(), vdt1 = _mm256_setzero_ps();
+            __m256 vdt2 = _mm256_setzero_ps(), vdt3 = _mm256_setzero_ps();
+            __m256 vnx = _mm256_setzero_ps(), vn0 = _mm256_setzero_ps();
+            __m256 vn1 = _mm256_setzero_ps(), vn2 = _mm256_setzero_ps(), vn3 = _mm256_setzero_ps();
+            size_t i = 0;
+            for (; i + 8 <= dim; i += 8) {
+                __m256 vx = _mm256_loadu_ps(x + i);
+                __m256 w0 = _mm256_loadu_ps(y0 + i), w1 = _mm256_loadu_ps(y1 + i);
+                __m256 w2 = _mm256_loadu_ps(y2 + i), w3 = _mm256_loadu_ps(y3 + i);
+                vdt0 = _mm256_fmadd_ps(vx, w0, vdt0); vdt1 = _mm256_fmadd_ps(vx, w1, vdt1);
+                vdt2 = _mm256_fmadd_ps(vx, w2, vdt2); vdt3 = _mm256_fmadd_ps(vx, w3, vdt3);
+                vnx = _mm256_fmadd_ps(vx, vx, vnx);
+                vn0 = _mm256_fmadd_ps(w0, w0, vn0); vn1 = _mm256_fmadd_ps(w1, w1, vn1);
+                vn2 = _mm256_fmadd_ps(w2, w2, vn2); vn3 = _mm256_fmadd_ps(w3, w3, vn3);
+            }
+            float a[8];
+            _mm256_storeu_ps(a, vdt0); for (int j=0;j<8;++j) dt0 += a[j];
+            _mm256_storeu_ps(a, vdt1); for (int j=0;j<8;++j) dt1 += a[j];
+            _mm256_storeu_ps(a, vdt2); for (int j=0;j<8;++j) dt2 += a[j];
+            _mm256_storeu_ps(a, vdt3); for (int j=0;j<8;++j) dt3 += a[j];
+            _mm256_storeu_ps(a, vnx); for (int j=0;j<8;++j) nx += a[j];
+            _mm256_storeu_ps(a, vn0); for (int j=0;j<8;++j) n0 += a[j];
+            _mm256_storeu_ps(a, vn1); for (int j=0;j<8;++j) n1 += a[j];
+            _mm256_storeu_ps(a, vn2); for (int j=0;j<8;++j) n2 += a[j];
+            _mm256_storeu_ps(a, vn3); for (int j=0;j<8;++j) n3 += a[j];
+            for (; i < dim; ++i) {
+                float vx = x[i];
+                dt0 += vx*y0[i]; dt1 += vx*y1[i]; dt2 += vx*y2[i]; dt3 += vx*y3[i];
+                nx += vx*vx; n0 += y0[i]*y0[i]; n1 += y1[i]*y1[i]; n2 += y2[i]*y2[i]; n3 += y3[i]*y3[i];
+            }
+        } else
+#endif
+        {
+            for (size_t i = 0; i < dim; ++i) {
+                float vx = x[i];
+                dt0 += vx*y0[i]; dt1 += vx*y1[i]; dt2 += vx*y2[i]; dt3 += vx*y3[i];
+                nx += vx*vx; n0 += y0[i]*y0[i]; n1 += y1[i]*y1[i]; n2 += y2[i]*y2[i]; n3 += y3[i]*y3[i];
+            }
+        }
+        float snx = sqrtf(nx);
+        float e0 = snx * sqrtf(n0), e1 = snx * sqrtf(n1);
+        float e2 = snx * sqrtf(n2), e3 = snx * sqrtf(n3);
+        *d0 = (e0 > 0.0f) ? (1.0f - dt0/e0) : 1.0f;
+        *d1 = (e1 > 0.0f) ? (1.0f - dt1/e1) : 1.0f;
+        *d2 = (e2 > 0.0f) ? (1.0f - dt2/e2) : 1.0f;
+        *d3 = (e3 > 0.0f) ? (1.0f - dt3/e3) : 1.0f;
+        return;
+    }
+    case GV_DISTANCE_MANHATTAN:
+        *d0 = hnsw_raw_distance(x, y0, dim, dtype);
+        *d1 = hnsw_raw_distance(x, y1, dim, dtype);
+        *d2 = hnsw_raw_distance(x, y2, dim, dtype);
+        *d3 = hnsw_raw_distance(x, y3, dim, dtype);
+        return;
+    }
+}
+
 static inline void prefetch_L2(const void *addr) {
 #if defined(__SSE4_2__) || defined(__AVX2__)
     _mm_prefetch((const char *)addr, _MM_HINT_T1);
@@ -909,11 +1013,11 @@ static int hnsw_insert_impl(GV_HNSWIndex *index, size_t vector_index, size_t dim
                 batch_ptrs[batch_buf_idx] = SOA_VEC_IMPL(index->nodes[nb].vector_index);
                 batch_buf_idx++;
 
-                if (batch_buf_idx == 4 && index->distance_type == GV_DISTANCE_EUCLIDEAN) {
+                if (batch_buf_idx == 4) {
                     float d0, d1, d2, d3;
-                    hnsw_l2_batch4(new_vec, batch_ptrs[0], batch_ptrs[1],
-                                       batch_ptrs[2], batch_ptrs[3], soa_dim,
-                                       &d0, &d1, &d2, &d3);
+                    hnsw_dist_batch4(new_vec, batch_ptrs[0], batch_ptrs[1],
+                                     batch_ptrs[2], batch_ptrs[3], soa_dim,
+                                     index->distance_type, &d0, &d1, &d2, &d3);
                     float thresh = (heap_k >= index->efConstruction) ? heap_dis[0] : FLT_MAX;
                     if (d0 < thresh) mmheap_push(heap_dis, heap_ids, heap_proc, &heap_k, index->efConstruction, batch_nodes[0], d0);
                     if (d1 < thresh) mmheap_push(heap_dis, heap_ids, heap_proc, &heap_k, index->efConstruction, batch_nodes[1], d1);
@@ -1166,11 +1270,11 @@ int gv_hnsw_search(void *index_ptr, const GV_Vector *query, size_t k,
             batch_ptrs[batch_cnt] = SRCH_VEC(index->nodes[nb].vector_index);
             batch_cnt++;
 
-            if (batch_cnt == 4 && distance_type == GV_DISTANCE_EUCLIDEAN) {
+            if (batch_cnt == 4) {
                 float d0, d1, d2, d3;
-                hnsw_l2_batch4(qdata, batch_ptrs[0], batch_ptrs[1],
-                                   batch_ptrs[2], batch_ptrs[3], soa_dim,
-                                   &d0, &d1, &d2, &d3);
+                hnsw_dist_batch4(qdata, batch_ptrs[0], batch_ptrs[1],
+                                 batch_ptrs[2], batch_ptrs[3], soa_dim,
+                                 distance_type, &d0, &d1, &d2, &d3);
                 /* Quick reject: skip heap push if distance >= max and heap full */
                 float thresh = (heap_k >= buf_need) ? heap_dis[0] : FLT_MAX;
                 if (d0 < thresh) mmheap_push(heap_dis, heap_ids, heap_proc, &heap_k, buf_need,
