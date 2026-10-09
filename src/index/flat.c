@@ -92,20 +92,49 @@ static int flat_search_impl(void *index, const GV_Vector *query, size_t k,
     tmp_vec.dimension = idx->dimension;
     tmp_vec.metadata = NULL;
 
-    for (size_t i = 0; i < count; i++) {
-        if (soa_storage_is_deleted(idx->storage, i) == 1) continue;
-
-        if (filter_key && filter_value) {
-            GV_Metadata *meta = soa_storage_get_metadata(idx->storage, i);
-            if (!metadata_match(meta, filter_key, filter_value)) continue;
+    if (idx->config.use_simd) {
+        /* Batch four candidates per distance call so the SIMD kernel runs four
+         * independent accumulators (hides FMA latency). The 4-slot buffer
+         * collects only live, filter-passing vectors, so deletions and filters
+         * are handled transparently; the tail (<4) falls back to distance(). */
+        const float *qd = query->data;
+        size_t bi = 0, bidx[4];
+        const float *bp[4];
+        for (size_t i = 0; i < count; i++) {
+            if (soa_storage_is_deleted(idx->storage, i) == 1) continue;
+            if (filter_key && filter_value) {
+                GV_Metadata *meta = soa_storage_get_metadata(idx->storage, i);
+                if (!metadata_match(meta, filter_key, filter_value)) continue;
+            }
+            bidx[bi] = i;
+            bp[bi] = soa_storage_get_data(idx->storage, i);
+            if (++bi == 4) {
+                float d0, d1, d2, d3;
+                gv_distance_batch4(qd, bp[0], bp[1], bp[2], bp[3],
+                                   idx->dimension, distance_type, &d0, &d1, &d2, &d3);
+                flat_heap_push(heap, &heap_size, k, (GV_FlatHeapItem){d0, bidx[0]});
+                flat_heap_push(heap, &heap_size, k, (GV_FlatHeapItem){d1, bidx[1]});
+                flat_heap_push(heap, &heap_size, k, (GV_FlatHeapItem){d2, bidx[2]});
+                flat_heap_push(heap, &heap_size, k, (GV_FlatHeapItem){d3, bidx[3]});
+                bi = 0;
+            }
         }
-
-        tmp_vec.data = (float *)soa_storage_get_data(idx->storage, i);
-        float dist = idx->config.use_simd
-                         ? distance(query, &tmp_vec, distance_type)
-                         : distance_scalar(query, &tmp_vec, distance_type);
-
-        flat_heap_push(heap, &heap_size, k, (GV_FlatHeapItem){dist, i});
+        for (size_t r = 0; r < bi; r++) {
+            tmp_vec.data = (float *)bp[r];
+            float dist = distance(query, &tmp_vec, distance_type);
+            flat_heap_push(heap, &heap_size, k, (GV_FlatHeapItem){dist, bidx[r]});
+        }
+    } else {
+        for (size_t i = 0; i < count; i++) {
+            if (soa_storage_is_deleted(idx->storage, i) == 1) continue;
+            if (filter_key && filter_value) {
+                GV_Metadata *meta = soa_storage_get_metadata(idx->storage, i);
+                if (!metadata_match(meta, filter_key, filter_value)) continue;
+            }
+            tmp_vec.data = (float *)soa_storage_get_data(idx->storage, i);
+            float dist = distance_scalar(query, &tmp_vec, distance_type);
+            flat_heap_push(heap, &heap_size, k, (GV_FlatHeapItem){dist, i});
+        }
     }
 
     int n = (int)heap_size;

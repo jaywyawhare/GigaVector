@@ -107,6 +107,22 @@ float distance(const GV_Vector *a, const GV_Vector *b, GV_DistanceType type);
  */
 float distance_scalar(const GV_Vector *a, const GV_Vector *b, GV_DistanceType type);
 
+/**
+ * @brief Compute one query's distance to four candidate vectors at once.
+ *
+ * Results are identical to four ::distance calls (same metric, same values),
+ * but EUCLIDEAN/COSINE/DOT_PRODUCT/MANHATTAN use four independent SIMD
+ * accumulators so FMA latency is hidden across the four candidates - a
+ * throughput win over four sequential calls. Metrics without a batched kernel
+ * (HAMMING/JACCARD) fall back to four ::distance calls, so the result is always
+ * correct. All pointers are raw contiguous float arrays of length @p dim.
+ */
+void gv_distance_batch4(const float *q,
+                        const float *v0, const float *v1,
+                        const float *v2, const float *v3,
+                        size_t dim, GV_DistanceType type,
+                        float *d0, float *d1, float *d2, float *d3);
+
 #ifdef __cplusplus
 }
 #endif

@@ -643,3 +643,122 @@ float distance_scalar(const GV_Vector *a, const GV_Vector *b, GV_DistanceType ty
     }
 }
 
+/* Fall back to four scalar ::distance calls for a metric without a batched
+ * kernel, or when AVX2 is unavailable - keeps gv_distance_batch4 correct for
+ * every metric. */
+static void dist_batch4_fallback(const float *q,
+                                 const float *v0, const float *v1,
+                                 const float *v2, const float *v3,
+                                 size_t dim, GV_DistanceType type,
+                                 float *d0, float *d1, float *d2, float *d3) {
+    GV_Vector qv = {0}, cv = {0};
+    qv.dimension = dim; qv.data = (float *)q;
+    cv.dimension = dim;
+    cv.data = (float *)v0; *d0 = distance(&qv, &cv, type);
+    cv.data = (float *)v1; *d1 = distance(&qv, &cv, type);
+    cv.data = (float *)v2; *d2 = distance(&qv, &cv, type);
+    cv.data = (float *)v3; *d3 = distance(&qv, &cv, type);
+}
+
+void gv_distance_batch4(const float *q,
+                        const float *v0, const float *v1,
+                        const float *v2, const float *v3,
+                        size_t dim, GV_DistanceType type,
+                        float *d0, float *d1, float *d2, float *d3) {
+#ifdef __AVX2__
+    if (!(dist_features() & GV_CPU_FEATURE_AVX2) || dim < 8) {
+        dist_batch4_fallback(q, v0, v1, v2, v3, dim, type, d0, d1, d2, d3);
+        return;
+    }
+    switch (type) {
+    case GV_DISTANCE_EUCLIDEAN:
+    case GV_DISTANCE_DOT_PRODUCT:
+    case GV_DISTANCE_COSINE:
+    case GV_DISTANCE_MANHATTAN:
+        break;
+    default:
+        dist_batch4_fallback(q, v0, v1, v2, v3, dim, type, d0, d1, d2, d3);
+        return;
+    }
+
+    /* Four independent accumulators hide FMA latency across candidates. For
+     * COSINE we also need each candidate's norm plus the shared query norm. */
+    __m256 a0 = _mm256_setzero_ps(), a1 = _mm256_setzero_ps();
+    __m256 a2 = _mm256_setzero_ps(), a3 = _mm256_setzero_ps();
+    __m256 nq = _mm256_setzero_ps();
+    __m256 n0 = _mm256_setzero_ps(), n1 = _mm256_setzero_ps();
+    __m256 n2 = _mm256_setzero_ps(), n3 = _mm256_setzero_ps();
+    const __m256 absmask = _mm256_castsi256_ps(_mm256_set1_epi32(0x7fffffff));
+
+    size_t i = 0;
+    for (; i + 8 <= dim; i += 8) {
+        __m256 vq = _mm256_loadu_ps(q + i);
+        __m256 w0 = _mm256_loadu_ps(v0 + i), w1 = _mm256_loadu_ps(v1 + i);
+        __m256 w2 = _mm256_loadu_ps(v2 + i), w3 = _mm256_loadu_ps(v3 + i);
+        if (type == GV_DISTANCE_EUCLIDEAN) {
+            __m256 e0 = _mm256_sub_ps(vq, w0), e1 = _mm256_sub_ps(vq, w1);
+            __m256 e2 = _mm256_sub_ps(vq, w2), e3 = _mm256_sub_ps(vq, w3);
+            a0 = _mm256_fmadd_ps(e0, e0, a0); a1 = _mm256_fmadd_ps(e1, e1, a1);
+            a2 = _mm256_fmadd_ps(e2, e2, a2); a3 = _mm256_fmadd_ps(e3, e3, a3);
+        } else if (type == GV_DISTANCE_MANHATTAN) {
+            a0 = _mm256_add_ps(a0, _mm256_and_ps(absmask, _mm256_sub_ps(vq, w0)));
+            a1 = _mm256_add_ps(a1, _mm256_and_ps(absmask, _mm256_sub_ps(vq, w1)));
+            a2 = _mm256_add_ps(a2, _mm256_and_ps(absmask, _mm256_sub_ps(vq, w2)));
+            a3 = _mm256_add_ps(a3, _mm256_and_ps(absmask, _mm256_sub_ps(vq, w3)));
+        } else { /* DOT_PRODUCT or COSINE: accumulate dot products */
+            a0 = _mm256_fmadd_ps(vq, w0, a0); a1 = _mm256_fmadd_ps(vq, w1, a1);
+            a2 = _mm256_fmadd_ps(vq, w2, a2); a3 = _mm256_fmadd_ps(vq, w3, a3);
+            if (type == GV_DISTANCE_COSINE) {
+                nq = _mm256_fmadd_ps(vq, vq, nq);
+                n0 = _mm256_fmadd_ps(w0, w0, n0); n1 = _mm256_fmadd_ps(w1, w1, n1);
+                n2 = _mm256_fmadd_ps(w2, w2, n2); n3 = _mm256_fmadd_ps(w3, w3, n3);
+            }
+        }
+    }
+    float s0 = hsum256_ps(a0), s1 = hsum256_ps(a1), s2 = hsum256_ps(a2), s3 = hsum256_ps(a3);
+    float q2 = 0, c0 = 0, c1 = 0, c2 = 0, c3 = 0;
+    if (type == GV_DISTANCE_COSINE) {
+        q2 = hsum256_ps(nq);
+        c0 = hsum256_ps(n0); c1 = hsum256_ps(n1); c2 = hsum256_ps(n2); c3 = hsum256_ps(n3);
+    }
+    for (; i < dim; ++i) { /* scalar tail (dim % 8) */
+        float x = q[i], y0 = v0[i], y1 = v1[i], y2 = v2[i], y3 = v3[i];
+        if (type == GV_DISTANCE_EUCLIDEAN) {
+            s0 += (x-y0)*(x-y0); s1 += (x-y1)*(x-y1); s2 += (x-y2)*(x-y2); s3 += (x-y3)*(x-y3);
+        } else if (type == GV_DISTANCE_MANHATTAN) {
+            s0 += fabsf(x-y0); s1 += fabsf(x-y1); s2 += fabsf(x-y2); s3 += fabsf(x-y3);
+        } else {
+            s0 += x*y0; s1 += x*y1; s2 += x*y2; s3 += x*y3;
+            if (type == GV_DISTANCE_COSINE) {
+                q2 += x*x; c0 += y0*y0; c1 += y1*y1; c2 += y2*y2; c3 += y3*y3;
+            }
+        }
+    }
+
+    switch (type) {
+    case GV_DISTANCE_EUCLIDEAN:
+        *d0 = sqrtf(s0); *d1 = sqrtf(s1); *d2 = sqrtf(s2); *d3 = sqrtf(s3);
+        return;
+    case GV_DISTANCE_MANHATTAN:
+        *d0 = s0; *d1 = s1; *d2 = s2; *d3 = s3;
+        return;
+    case GV_DISTANCE_DOT_PRODUCT:
+        *d0 = -s0; *d1 = -s1; *d2 = -s2; *d3 = -s3;
+        return;
+    case GV_DISTANCE_COSINE: {
+        float nqn = sqrtf(q2);
+        float e0 = nqn * sqrtf(c0), e1 = nqn * sqrtf(c1);
+        float e2 = nqn * sqrtf(c2), e3 = nqn * sqrtf(c3);
+        *d0 = (e0 == 0.0f) ? 1.0f : 1.0f - s0/e0;
+        *d1 = (e1 == 0.0f) ? 1.0f : 1.0f - s1/e1;
+        *d2 = (e2 == 0.0f) ? 1.0f : 1.0f - s2/e2;
+        *d3 = (e3 == 0.0f) ? 1.0f : 1.0f - s3/e3;
+        return;
+    }
+    default:
+        break;
+    }
+#endif
+    dist_batch4_fallback(q, v0, v1, v2, v3, dim, type, d0, d1, d2, d3);
+}
+
