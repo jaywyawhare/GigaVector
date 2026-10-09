@@ -240,11 +240,15 @@ static void radius_to_bbox(double lat, double lng, double radius_km,
     *min_lng = lng - dlng;
     *max_lng = lng + dlng;
 
-    /* Clamp latitude. */
+    /* Clamp latitude AND longitude to the valid range. A large radius makes
+     * dlng huge; leaving longitude unclamped let the cell enumeration below run
+     * for ~1e11 iterations (query-reachable hang) and overflowed the int cell
+     * cast. Clamping bounds both; a span wider than the grid is handled by the
+     * scan-all-buckets fallback in geo_scan_radius. */
     if (*min_lat < -90.0)  *min_lat = -90.0;
     if (*max_lat >  90.0)  *max_lat =  90.0;
-
-    /* Longitude wrapping is handled during cell enumeration. */
+    if (*min_lng < -180.0) *min_lng = -180.0;
+    if (*max_lng >  180.0) *max_lng =  180.0;
 }
 
 /**
@@ -274,6 +278,35 @@ static int geo_scan_radius(const GV_GeoIndex *index,
     geo_cell(max_lat, max_lng, &cell_max_lat, &cell_max_lng);
 
     size_t found = 0;
+
+    /* If the circle overlaps more grid cells than there are hash buckets, it is
+     * both cheaper and bounded to scan every bucket once rather than enumerate
+     * the cells (which, for a large radius, is astronomically many). */
+    int64_t lat_cells = (int64_t)cell_max_lat - cell_min_lat + 1;
+    int64_t lng_cells = (int64_t)cell_max_lng - cell_min_lng + 1;
+    if (lat_cells < 0) lat_cells = 0;
+    if (lng_cells < 0) lng_cells = 0;
+    if (lat_cells * lng_cells > (int64_t)GV_GEO_HASH_BUCKETS) {
+        for (size_t b = 0; b < GV_GEO_HASH_BUCKETS; b++) {
+            const GV_GeoEntry *entry = index->buckets[b].head;
+            while (entry != NULL) {
+                double d = geo_distance_km(lat, lng, entry->lat, entry->lng);
+                if (d <= radius_km) {
+                    if (results != NULL) {
+                        results[found].point_index = entry->point_index;
+                        results[found].lat = entry->lat;
+                        results[found].lng = entry->lng;
+                        results[found].distance_km = d;
+                    }
+                    if (out_indices != NULL) out_indices[found] = entry->point_index;
+                    found++;
+                    if (found >= max_count) return (int)found;
+                }
+                entry = entry->next;
+            }
+        }
+        return (int)found;
+    }
 
     /* Dedup scanned buckets: distinct grid cells can hash to the same bucket, and
      * scanning it more than once would emit its in-radius entries multiple times.

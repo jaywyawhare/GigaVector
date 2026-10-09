@@ -775,6 +775,12 @@ void migration_destroy(GV_Migration *mig)
         case MIG_INDEX_DISKANN:
             diskann_destroy((GV_DiskANNIndex *)mig->new_index);
             break;
+        case MIG_INDEX_SPARSE:
+            sparse_index_destroy((GV_SparseIndex *)mig->new_index);
+            break;
+        case MIG_INDEX_IVFDISK:
+            ivfdisk_destroy((GV_IVFDiskIndex *)mig->new_index);
+            break;
         default:
             /* Unknown type -- best effort: do nothing to avoid double gv_free */
             break;

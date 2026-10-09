@@ -476,6 +476,13 @@ GV_AuthResult auth_verify_jwt(GV_AuthManager *auth, const char *token,
     if (auth->config.jwt.secret == NULL) {
         return GV_AUTH_INVALID_SIGNATURE;
     }
+    /* Reject an empty secret: with key length 0 the HMAC key degenerates to the
+     * fixed ipad/opad constants, so anyone could forge a valid HS256 token. */
+    {
+        size_t slen = auth->config.jwt.secret_len;
+        if (slen == 0) slen = strlen(auth->config.jwt.secret);
+        if (slen == 0) return GV_AUTH_INVALID_SIGNATURE;
+    }
 
     /*
      * Pin the algorithm to HS256 (the only alg this verifier checks) BEFORE
@@ -671,6 +678,11 @@ int auth_generate_jwt(GV_AuthManager *auth, const char *subject,
                           uint64_t expires_in, char *token_out, size_t token_size) {
     if (!auth || !subject || !token_out || token_size < 256) return -1;
     if (!auth->config.jwt.secret) return -1;
+    {   /* Refuse to sign with an empty secret (forgeable - see auth_verify_jwt). */
+        size_t slen = auth->config.jwt.secret_len;
+        if (slen == 0) slen = strlen(auth->config.jwt.secret);
+        if (slen == 0) return -1;
+    }
 
     const char *header = "{\"alg\":\"HS256\",\"typ\":\"JWT\"}";
     char header_b64[128];
