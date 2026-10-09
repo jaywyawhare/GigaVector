@@ -414,12 +414,41 @@ static inline void hnsw_dist_batch4(const float *x,
         *d3 = (e3 > 0.0f) ? (1.0f - dt3/e3) : 1.0f;
         return;
     }
-    case GV_DISTANCE_MANHATTAN:
-        *d0 = hnsw_raw_distance(x, y0, dim, dtype);
-        *d1 = hnsw_raw_distance(x, y1, dim, dtype);
-        *d2 = hnsw_raw_distance(x, y2, dim, dtype);
-        *d3 = hnsw_raw_distance(x, y3, dim, dtype);
+    case GV_DISTANCE_MANHATTAN: {
+        float s0 = 0, s1 = 0, s2 = 0, s3 = 0;
+#ifdef __AVX2__
+        if (hnsw_avx2_ok() && dim >= 8) {
+            /* |a-b| via a sign-bit mask: andnot(signmask, x) clears the sign. */
+            const __m256 absmask = _mm256_castsi256_ps(_mm256_set1_epi32(0x7fffffff));
+            __m256 a0 = _mm256_setzero_ps(), a1 = _mm256_setzero_ps();
+            __m256 a2 = _mm256_setzero_ps(), a3 = _mm256_setzero_ps();
+            size_t i = 0;
+            for (; i + 8 <= dim; i += 8) {
+                __m256 vx = _mm256_loadu_ps(x + i);
+                a0 = _mm256_add_ps(a0, _mm256_and_ps(absmask, _mm256_sub_ps(vx, _mm256_loadu_ps(y0 + i))));
+                a1 = _mm256_add_ps(a1, _mm256_and_ps(absmask, _mm256_sub_ps(vx, _mm256_loadu_ps(y1 + i))));
+                a2 = _mm256_add_ps(a2, _mm256_and_ps(absmask, _mm256_sub_ps(vx, _mm256_loadu_ps(y2 + i))));
+                a3 = _mm256_add_ps(a3, _mm256_and_ps(absmask, _mm256_sub_ps(vx, _mm256_loadu_ps(y3 + i))));
+            }
+            float t0[8], t1[8], t2[8], t3[8];
+            _mm256_storeu_ps(t0, a0); _mm256_storeu_ps(t1, a1);
+            _mm256_storeu_ps(t2, a2); _mm256_storeu_ps(t3, a3);
+            for (int j = 0; j < 8; ++j) { s0 += t0[j]; s1 += t1[j]; s2 += t2[j]; s3 += t3[j]; }
+            for (; i < dim; ++i) {
+                float vx = x[i];
+                s0 += fabsf(vx-y0[i]); s1 += fabsf(vx-y1[i]); s2 += fabsf(vx-y2[i]); s3 += fabsf(vx-y3[i]);
+            }
+        } else
+#endif
+        {
+            for (size_t i = 0; i < dim; ++i) {
+                float vx = x[i];
+                s0 += fabsf(vx-y0[i]); s1 += fabsf(vx-y1[i]); s2 += fabsf(vx-y2[i]); s3 += fabsf(vx-y3[i]);
+            }
+        }
+        *d0 = s0; *d1 = s1; *d2 = s2; *d3 = s3;
         return;
+    }
     }
 }
 

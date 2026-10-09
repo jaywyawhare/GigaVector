@@ -213,10 +213,10 @@ static int test_hnsw_all_distances(void) {
  * builds at M=16 with 300 vectors so nodes exceed 4 neighbours, exercising both
  * paths for each metric; under ASan it caught the overflow every time. */
 static int test_hnsw_non_euclidean_batch_metrics(void) {
-    const GV_DistanceType metrics[2] = { GV_DISTANCE_COSINE, GV_DISTANCE_DOT_PRODUCT };
+    const GV_DistanceType metrics[3] = { GV_DISTANCE_COSINE, GV_DISTANCE_DOT_PRODUCT, GV_DISTANCE_MANHATTAN };
     const size_t dim = 32, n = 300;
 
-    for (size_t mi = 0; mi < 2; ++mi) {
+    for (size_t mi = 0; mi < 3; ++mi) {
         GV_HNSWConfig config = {0};
         config.M = 16;             /* level 0 holds up to ~2*M = 32 neighbours */
         config.efConstruction = 100;
