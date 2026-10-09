@@ -152,11 +152,18 @@ int authz_define_role(GV_AuthzManager *authz, const char *name,
 
     RoleEntry *role = &authz->roles[authz->role_count];
     role->name = gv_dup_cstr(name);
+    if (role->name == NULL) {
+        /* Don't commit a role with a NULL name: find_role/authz_check would
+         * strcmp(NULL,...) and crash. Fail the definition instead. */
+        pthread_rwlock_unlock(&authz->rwlock);
+        return -1;
+    }
     role->permissions = permissions;
     role->namespace_count = 0;
 
     for (size_t i = 0; i < namespace_count && i < MAX_NAMESPACES_PER_ROLE; i++) {
         role->namespaces[i] = gv_dup_cstr(namespaces[i]);
+        if (role->namespaces[i] == NULL) break; /* stop; don't count a NULL namespace */
         role->namespace_count++;
     }
 

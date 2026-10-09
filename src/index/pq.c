@@ -666,6 +666,10 @@ int pq_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version) {
 
     for (uint32_t i = 0; i < entry_count; i++) {
         GV_PQEntry *entry = &idx->entries[i];
+        /* Account for this entry NOW (the slot is zeroed, so its codes/raw_data/
+         * metadata are NULL until set) so a mid-entry error path's pq_destroy
+         * frees whatever was already allocated instead of leaking it. */
+        idx->entry_count = i + 1;
 
         uint32_t deleted = 0, id = 0;
         if (read_u32(in, &deleted) != 0) { pq_destroy(index); return -1; }
@@ -714,7 +718,7 @@ int pq_load(void **index_ptr, FILE *in, size_t dimension, uint32_t version) {
             entry->metadata = node;
         }
 
-        idx->entry_count++;
+        /* entry_count already advanced to i+1 at the top of the loop. */
     }
 
     *index_ptr = index;

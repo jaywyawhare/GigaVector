@@ -786,6 +786,7 @@ static void ft_build_block_maxes(FT_PostingList *pl, size_t block_size,
     pl->bmax.block_count = nblocks;
 
     double avgdl = total_docs > 0 ? (double)total_doc_length / (double)total_docs : 1.0;
+    if (!(avgdl > 0.0)) avgdl = 1.0; /* a loaded total_doc_length of 0 (or NaN) would make dl/avgdl Inf/NaN and poison top-k */
     double idf_val = log(((double)total_docs - (double)pl->count + 0.5) /
                           ((double)pl->count + 0.5) + 1.0);
 
@@ -820,6 +821,7 @@ static float ft_compute_bm25_term(size_t term_freq, size_t doc_length,
                                     size_t total_docs, size_t total_doc_length,
                                     size_t doc_freq) {
     double avgdl = total_docs > 0 ? (double)total_doc_length / (double)total_docs : 1.0;
+    if (!(avgdl > 0.0)) avgdl = 1.0; /* a loaded total_doc_length of 0 (or NaN) would make dl/avgdl Inf/NaN and poison top-k */
     double tf = (double)term_freq;
     double dl = (double)doc_length;
     double idf = (double)ft_compute_idf(total_docs, doc_freq);
