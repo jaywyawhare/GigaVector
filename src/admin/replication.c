@@ -178,6 +178,18 @@ static void replication_embedded_followers_catch_up_locked(GV_ReplicationManager
  * Caller must hold mgr->rwlock.
  */
 static int replication_candidate_has_quorum_locked(const GV_ReplicationManager *mgr) {
+    /* A node configured as a remote follower (leader_address set) with no
+     * registered in-process voting followers cannot solicit real votes over
+     * this ad-hoc path - the "quorum" would be a lone self-vote, so it would
+     * promote itself to leader while the real leader is still up, producing
+     * split-brain and divergent WALs. Refuse: safe automatic failover for a
+     * networked topology requires the real consensus path
+     * (replication_enable_raft), which solicits and persists real votes. A
+     * standalone node (no leader_address) and an in-process leader with
+     * registered follower DBs (replica_count > 0) are unaffected. */
+    if (mgr->config.leader_address != NULL && mgr->replica_count == 0 && mgr->raft == NULL) {
+        return 0;
+    }
     size_t votes = 1; /* self-vote */
     for (size_t i = 0; i < mgr->replica_count; i++) {
         if (mgr->follower_dbs[i] == NULL) continue;

@@ -376,6 +376,37 @@ static int test_replication_election_restriction(void) {
     return 0;
 }
 
+/*
+ * Split-brain guard: a node configured as a remote follower (leader_address
+ * set) with no registered in-process voting followers must NOT auto-promote
+ * itself to leader via the ad-hoc (non-Raft) election - that was a self-vote
+ * "quorum" of 1 and produced split-brain with the real leader. Safe failover
+ * for this topology requires replication_enable_raft.
+ */
+static int test_replication_follower_no_split_brain(void) {
+    GV_Database *db = db_open(NULL, 4, GV_INDEX_TYPE_FLAT);
+    ASSERT(db != NULL, "create database");
+
+    GV_ReplicationConfig config;
+    replication_config_init(&config);
+    config.node_id = "backup-1";
+    config.listen_address = "127.0.0.1:9120";
+    config.leader_address = "127.0.0.1:9121"; /* this node follows a remote leader */
+
+    GV_ReplicationManager *mgr = replication_create(db, &config);
+    ASSERT(mgr != NULL, "create manager");
+
+    /* No registered follower DBs: a lone remote follower must not seize leadership. */
+    int rc = replication_request_leadership(mgr);
+    ASSERT(rc != 0, "remote follower with no voting peers is denied ad-hoc leadership");
+    ASSERT(replication_get_role(mgr) != GV_REPL_LEADER,
+           "remote follower did not self-promote (no split-brain)");
+
+    replication_destroy(mgr);
+    db_close(db);
+    return 0;
+}
+
 static int test_replication_route_read_memory(void) {
     GV_Database *leader_db = db_open(NULL, 4, GV_INDEX_TYPE_FLAT);
     ASSERT(leader_db != NULL, "create leader database");
@@ -514,6 +545,7 @@ int main(void) {
         {"Testing replication_step_down_and_request...", test_replication_step_down_and_request},
         {"Testing replication_register_follower_db...", test_replication_register_follower_db},
         {"Testing replication_election_restriction...", test_replication_election_restriction},
+        {"Testing replication_follower_no_split_brain...", test_replication_follower_no_split_brain},
         {"Testing replication_route_read_memory...", test_replication_route_read_memory},
         {"Testing replication_set_max_read_lag...", test_replication_set_max_read_lag},
         {"Testing replication_leader_append_and_sync...", test_replication_leader_append_and_sync},
