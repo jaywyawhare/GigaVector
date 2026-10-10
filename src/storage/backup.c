@@ -164,7 +164,7 @@ static int backup_encrypt_wrap(const char *plain_path, const char *out_path, con
 
     int rc = 0;
     unsigned char *buf = gv_alloc(BACKUP_ENC_CHUNK);
-    unsigned char *cipher = gv_alloc(BACKUP_ENC_CHUNK + 48);
+    unsigned char *cipher = gv_alloc(BACKUP_ENC_CHUNK + 64); /* crypto_encrypt max overhead (CBC: IV+pad+MAC) */
     if (!buf || !cipher) rc = -1;
     if (rc == 0 && fwrite(BACKUP_ENC_MAGIC_V2, 1, BACKUP_ENC_MAGIC_LEN, fout) != BACKUP_ENC_MAGIC_LEN) rc = -1;
     if (rc == 0 && fwrite(salt, 1, sizeof(salt), fout) != sizeof(salt)) rc = -1;
@@ -222,7 +222,7 @@ static int backup_decrypt_wrap(const char *enc_path, const char *out_path, const
     if (!fout) { fclose(fin); crypto_wipe_key(&key); crypto_destroy(ctx); return -1; }
 
     int rc = 0;
-    size_t cap = BACKUP_ENC_CHUNK + 48;
+    size_t cap = BACKUP_ENC_CHUNK + 64; /* must hold a full encrypted chunk (IV+pad+MAC) */
     unsigned char *cbuf = gv_alloc(cap);
     unsigned char *plain = gv_alloc(cap);
     if (!cbuf || !plain) rc = -1;

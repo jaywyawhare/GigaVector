@@ -33,9 +33,16 @@
  * key->iv, which is catastrophic for GCM across multiple messages. */
 #define GCM_NONCE_LEN 12
 #define CBC_IV_LEN    16
-/* Max bytes crypto_encrypt adds over the plaintext: IV/nonce prefix + tag/pad.
- * (GCM: 12 nonce + 16 tag = 28; CBC: 16 IV + up-to-16 pad = 32.) */
-#define CRYPTO_MAX_OVERHEAD 48
+/* CBC is now authenticated via encrypt-then-MAC: an HMAC-SHA256 over
+ * IV||ciphertext is appended and verified (constant-time) BEFORE decryption,
+ * so a tampered/probed ciphertext is rejected without ever reaching the PKCS7
+ * unpadding - this closes the padding oracle (not just the timing side the
+ * constant-time check already covered). */
+#define CBC_MAC_LEN 32
+/* Max bytes crypto_encrypt adds over the plaintext: IV/nonce prefix + tag/pad
+ * (+ CBC MAC). GCM: 12 nonce + 16 tag = 28; CBC: 16 IV + up-to-16 pad + 32 MAC
+ * = 64. */
+#define CRYPTO_MAX_OVERHEAD 64
 
 struct GV_CryptoContext {
     GV_CryptoConfig config;
@@ -542,6 +549,13 @@ int crypto_encrypt(GV_CryptoContext *ctx, const GV_CryptoKey *key,
         pos += 16;
     }
 
+    /* Encrypt-then-MAC: append HMAC-SHA256(mac_key, IV||ciphertext). The MAC key
+     * is derived from the encryption key so the two are independent. */
+    unsigned char mac_key[32];
+    crypto_hmac_sha256(key->key, 32, (const unsigned char *)"GV-CBC-EtM-v1", 13, mac_key);
+    crypto_hmac_sha256(mac_key, 32, ciphertext, CBC_IV_LEN + total_len,
+                       ciphertext + CBC_IV_LEN + total_len);
+    *ciphertext_len = CBC_IV_LEN + total_len + CBC_MAC_LEN;
     return 0;
 }
 
@@ -563,11 +577,24 @@ int crypto_decrypt(GV_CryptoContext *ctx, const GV_CryptoKey *key,
         return -1;  /* unknown/unsupported algorithm */
     }
 
-    /* Layout: [16 IV][ciphertext]. */
-    if (ciphertext_len < CBC_IV_LEN) return -1;
+    /* Layout: [16 IV][ciphertext][32 MAC]. */
+    if (ciphertext_len < CBC_IV_LEN + CBC_MAC_LEN) return -1;
+
+    /* Encrypt-then-MAC verify FIRST: recompute HMAC over IV||ciphertext and
+     * constant-time compare the trailing tag. A mismatch rejects here, before
+     * any block decryption or PKCS7 unpadding - so an attacker who tampers with
+     * or probes the ciphertext learns nothing (no padding oracle). */
+    size_t maced_len = ciphertext_len - CBC_MAC_LEN;
+    unsigned char mac_key[32], expect_mac[32];
+    crypto_hmac_sha256(key->key, 32, (const unsigned char *)"GV-CBC-EtM-v1", 13, mac_key);
+    crypto_hmac_sha256(mac_key, 32, ciphertext, maced_len, expect_mac);
+    if (crypto_constant_time_compare(expect_mac, ciphertext + maced_len, CBC_MAC_LEN) != 0) {
+        return -1;
+    }
+
     const unsigned char *iv = ciphertext;
     const unsigned char *ct = ciphertext + CBC_IV_LEN;
-    size_t ct_len = ciphertext_len - CBC_IV_LEN;
+    size_t ct_len = maced_len - CBC_IV_LEN;
     if (ct_len == 0 || ct_len % 16 != 0) return -1;
 
     unsigned char roundkeys[240];

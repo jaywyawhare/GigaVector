@@ -133,8 +133,9 @@ void crypto_wipe_key(GV_CryptoKey *key);
  * @param key Encryption key.
  * @param plaintext Input data.
  * @param plaintext_len Input length.
- * @param ciphertext Output buffer (must be at least plaintext_len + 48 bytes:
- *        a per-message nonce/IV prefix plus GCM tag or PKCS7 padding).
+ * @param ciphertext Output buffer (must be at least plaintext_len + 64 bytes:
+ *        a per-message nonce/IV prefix plus GCM tag, or CBC PKCS7 padding plus
+ *        a 32-byte encrypt-then-MAC tag).
  * @param ciphertext_len Output length.
  * @return 0 on success, -1 on error.
  */
