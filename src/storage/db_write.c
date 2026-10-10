@@ -351,11 +351,19 @@ int db_add_vector(GV_Database *db, const float *data, size_t dimension) {
     pthread_rwlock_unlock(&db->rwlock);
 
     /* Durability barrier OUTSIDE the write lock: concurrent readers are not
-     * blocked during the fsync. Non-fatal on failure (bytes are already written
-     * and fflush'd; this forces them to stable storage). */
+     * blocked during the fsync (the bytes were already written + fflush'd under
+     * the lock, so they survive a process crash; this forces them to stable
+     * storage against power loss). If fsync fails the insert is NOT durable -
+     * surface that to the caller (return -1) and skip the downstream change
+     * emit, rather than silently acking a write that may be lost on power loss.
+     * The record stays applied in memory (a clean rollback would require a full
+     * index delete); on a real fsync EIO the DB is degraded and the caller
+     * should treat the error as such. */
     if (deferred_wal != NULL) {
         if (wal_fsync_deferred(deferred_wal) != 0) {
-            GV_LOG_ERROR("db_add_vector: deferred WAL fsync failed - insert may not be durable");
+            GV_LOG_ERROR("db_add_vector: deferred WAL fsync failed - insert not durable (returning error)");
+            db_decrement_concurrent_ops(db);
+            return -1;
         }
     }
 
