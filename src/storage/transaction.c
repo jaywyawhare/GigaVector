@@ -268,13 +268,37 @@ int db_commit(GV_DBTxn *t) {
      * full - crash-atomic. In-memory databases (no WAL) skip logging. */
     if (db->wal != NULL) {
         pthread_mutex_lock(&db->wal_mutex);
-        if (wal_append_txn(db->wal, (const float *const *)t->ins_data, t->dimension,
-                           t->ins_n, txn_dels, txn_del_n) != 0) {
-            /* Durability failure: the in-memory commit stands but is not logged
-             * (mirrors db_add_vector's non-fatal WAL-error semantics). Surface it. */
-            GV_LOG_ERROR("db_commit: wal_append_txn failed - transaction not durable");
-        }
+        int wal_rc = wal_append_txn(db->wal, (const float *const *)t->ins_data, t->dimension,
+                                    t->ins_n, txn_dels, txn_del_n);
         pthread_mutex_unlock(&db->wal_mutex);
+        if (wal_rc != 0) {
+            /* Durability failure: a committed transaction MUST be durable, so
+             * roll the in-memory changes back and report failure rather than
+             * leaving a non-durable "committed" txn visible. Undo this txn's
+             * inserts (create_version==cv) and restore its staged-delete
+             * tombstones (delete_version cv -> 0). cv is unique to this commit,
+             * so concurrent writers are untouched. */
+            GV_LOG_ERROR("db_commit: wal_append_txn failed - rolling back (not durable)");
+            pthread_rwlock_wrlock(&db->rwlock);
+            size_t sc = soa_storage_count(db->soa_storage);
+            for (size_t s = 0; s < sc; s++) {
+                if (soa_storage_create_version(db->soa_storage, s) == cv &&
+                    soa_storage_delete_version(db->soa_storage, s) == 0) {
+                    soa_storage_set_delete_version(db->soa_storage, s, cv);
+                }
+            }
+            for (size_t i = 0; i < txn_del_n; i++) {
+                if (soa_storage_delete_version(db->soa_storage, txn_dels[i]) == cv) {
+                    soa_storage_set_delete_version(db->soa_storage, txn_dels[i], 0);
+                }
+            }
+            pthread_rwlock_unlock(&db->rwlock);
+            gv_free(txn_dels);
+            pthread_mutex_unlock(&db->txn_mutex);
+            t->state = GV_TXN_ABORTED;
+            txn_free(t);
+            return -1;
+        }
     }
     gv_free(txn_dels);
 

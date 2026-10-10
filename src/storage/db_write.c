@@ -1220,7 +1220,7 @@ int db_delete_vector_by_index(GV_Database *db, size_t vector_index) {
      * WAL failure leaves the database unchanged. The WAL append is serialized
      * with wal_mutex (acquired after rwlock, matching the insert path's
      * ordering) so records from concurrent operations cannot interleave. */
-    if (db->wal != NULL) {
+    if (db->wal != NULL && db->wal_replaying == 0) {
         pthread_mutex_lock(&db->wal_mutex);
         int wal_res = wal_append_delete(db->wal, vector_index);
         pthread_mutex_unlock(&db->wal_mutex);
@@ -1333,7 +1333,7 @@ int db_update_vector(GV_Database *db, size_t vector_index, const float *new_data
     /* WAL-first: append the update record before mutating in-memory state so a
      * WAL failure leaves the database unchanged. Serialized with wal_mutex
      * (acquired after rwlock, matching the insert path's ordering). */
-    if (db->wal != NULL) {
+    if (db->wal != NULL && db->wal_replaying == 0) {
         pthread_mutex_lock(&db->wal_mutex);
         int wal_res = wal_append_update(db->wal, vector_index, new_data, dimension, NULL, NULL, 0);
         pthread_mutex_unlock(&db->wal_mutex);
