@@ -302,6 +302,19 @@ void crypto_config_init(GV_CryptoConfig *config) {
     *config = DEFAULT_CONFIG;
 }
 
+GV_CryptoAlgorithm crypto_preferred_aead(void) {
+    /* AES-256-GCM is the preferred AEAD: it is authenticated in a single pass by
+     * a dedicated cipher. It needs an OpenSSL provider, so when none is compiled
+     * in we fall back to the (also authenticated) portable CBC encrypt-then-MAC.
+     * Callers that persist ciphertext must record which one they used so a blob
+     * stays decryptable regardless of the restoring build's provider. */
+#ifdef GV_HAVE_OPENSSL
+    return GV_CRYPTO_AES_256_GCM;
+#else
+    return GV_CRYPTO_AES_256_CBC;
+#endif
+}
+
 GV_CryptoContext *crypto_create(const GV_CryptoConfig *config) {
     GV_CryptoContext *ctx = gv_calloc(1, sizeof(GV_CryptoContext));
     if (!ctx) return NULL;

@@ -61,6 +61,16 @@ void crypto_config_init(GV_CryptoConfig *config);
 GV_CryptoContext *crypto_create(const GV_CryptoConfig *config);
 
 /**
+ * @brief The preferred authenticated algorithm for NEW ciphertext in this build.
+ *
+ * Returns GV_CRYPTO_AES_256_GCM when an OpenSSL provider is compiled in (the
+ * preferred AEAD), otherwise GV_CRYPTO_AES_256_CBC (portable encrypt-then-MAC).
+ * A caller that persists ciphertext should record the returned algorithm so the
+ * blob remains decryptable on a build whose provider differs.
+ */
+GV_CryptoAlgorithm crypto_preferred_aead(void);
+
+/**
  * @brief Destroy a crypto context.
  *
  * Securely wipes keys from memory.

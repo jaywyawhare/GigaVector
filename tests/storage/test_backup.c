@@ -5,6 +5,7 @@
 #include <unistd.h>
 #include "storage/backup.h"
 #include "storage/database.h"
+#include "security/crypto.h"
 #include "../test_tmp.h"
 
 #define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while(0)
@@ -185,15 +186,20 @@ static int test_encrypted_backup_salt(void) {
     backup_result_free(rb);
     db_close(db);
 
-    /* Both backups carry the V3 magic (random salt + CBC encrypt-then-MAC) and
-     * a 16-byte salt that MUST differ, even though the passphrase is identical. */
-    unsigned char ha[24], hb[24];
+    /* Both backups carry the V4 magic (random salt + self-describing AEAD tag)
+     * and a 16-byte salt that MUST differ, even though the passphrase is
+     * identical. The byte after the salt is the AEAD tag (CBC=1 or GCM=2). */
+    unsigned char ha[25], hb[25];
     FILE *fa = fopen(bakA, "rb"); ASSERT(fa != NULL, "open bakA");
-    ASSERT(fread(ha, 1, 24, fa) == 24, "read bakA header"); fclose(fa);
+    ASSERT(fread(ha, 1, 25, fa) == 25, "read bakA header"); fclose(fa);
     FILE *fb = fopen(bakB, "rb"); ASSERT(fb != NULL, "open bakB");
-    ASSERT(fread(hb, 1, 24, fb) == 24, "read bakB header"); fclose(fb);
-    ASSERT(memcmp(ha, "GVBKENC3", 8) == 0, "backup uses V3 (random-salt, authenticated) magic");
+    ASSERT(fread(hb, 1, 25, fb) == 25, "read bakB header"); fclose(fb);
+    ASSERT(memcmp(ha, "GVBKENC4", 8) == 0, "backup uses V4 (random-salt, self-describing AEAD) magic");
     ASSERT(memcmp(ha + 8, hb + 8, 16) != 0, "per-backup salts differ for same passphrase");
+    /* The on-disk AEAD tag must equal this build's preferred AEAD: GCM when
+     * OpenSSL is present, else CBC encrypt-then-MAC. Both restore below. */
+    ASSERT(ha[24] == (unsigned char)crypto_preferred_aead(),
+           "V4 AEAD tag matches crypto_preferred_aead()");
 
     /* Restore with the correct key round-trips the data. */
     GV_RestoreOptions ropts;

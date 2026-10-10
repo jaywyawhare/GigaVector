@@ -41,15 +41,24 @@
  * backup. The inner backup format is untouched, so restore/verify just detect the
  * magic, decrypt to a temp plaintext file, and delegate to the normal code path.
  *
- *   V2 (current): [GVBKENC2][16-byte random KDF salt][ per chunk: 4-byte LE len | cipher ]
- *   V1 (legacy):  [GVBKENC1][ per chunk: 4-byte LE len | cipher ]  (fixed zero salt)
+ *   V4 (current): [GVBKENC4][16-byte random KDF salt][1-byte algo][ per chunk: 4-byte LE len | cipher ]
+ *   V3 (legacy):  [GVBKENC3][16-byte random KDF salt][ per chunk: 4-byte LE len | cipher ]  (CBC EtM)
+ *   V2 (legacy):  [GVBKENC2][16-byte random KDF salt][ per chunk: 4-byte LE len | cipher ]  (CBC, no MAC)
+ *   V1 (legacy):  [GVBKENC1][ per chunk: 4-byte LE len | cipher ]  (fixed zero salt, CBC no MAC)
  *
- * V2 derives the key from a per-backup random salt (stored in the header) so the
- * same passphrase no longer yields the same key across backups - defeating
- * precomputation and cross-backup key reuse. V1 backups remain restorable. */
+ * V4 records the AEAD it used in a 1-byte algorithm tag (GV_CryptoAlgorithm), so
+ * a backup written with AES-256-GCM (the preferred AEAD, when OpenSSL is present)
+ * is routed to GCM decrypt on restore, and one written with CBC encrypt-then-MAC
+ * (the portable fallback) is routed to CBC - regardless of the restoring build's
+ * provider. A GCM backup restored on a no-OpenSSL build fails closed with a clear
+ * error rather than silently; a CBC-EtM V4 backup restores everywhere. Earlier
+ * versions are read exactly as before: V3 is always CBC-EtM, V2/V1 unauthenticated
+ * CBC. The salt derivation (per-backup random, defeating cross-backup key reuse)
+ * is unchanged. All prior backups remain restorable. */
 #define BACKUP_ENC_MAGIC     "GVBKENC1"   /* legacy (zero-salt, unauthenticated CBC) */
 #define BACKUP_ENC_MAGIC_V2  "GVBKENC2"   /* legacy (random salt, unauthenticated CBC) */
-#define BACKUP_ENC_MAGIC_V3  "GVBKENC3"   /* current (random salt, CBC encrypt-then-MAC) */
+#define BACKUP_ENC_MAGIC_V3  "GVBKENC3"   /* legacy (random salt, CBC encrypt-then-MAC) */
+#define BACKUP_ENC_MAGIC_V4  "GVBKENC4"   /* current (random salt, self-describing AEAD tag) */
 #define BACKUP_ENC_MAGIC_LEN 8
 #define BACKUP_ENC_SALT_LEN  16
 #define BACKUP_ENC_CHUNK     (64 * 1024)
@@ -147,12 +156,25 @@ static int backup_file_is_encrypted(const char *path) {
     return (n == BACKUP_ENC_MAGIC_LEN &&
             (memcmp(m, BACKUP_ENC_MAGIC, BACKUP_ENC_MAGIC_LEN) == 0 ||
              memcmp(m, BACKUP_ENC_MAGIC_V2, BACKUP_ENC_MAGIC_LEN) == 0 ||
-             memcmp(m, BACKUP_ENC_MAGIC_V3, BACKUP_ENC_MAGIC_LEN) == 0));
+             memcmp(m, BACKUP_ENC_MAGIC_V3, BACKUP_ENC_MAGIC_LEN) == 0 ||
+             memcmp(m, BACKUP_ENC_MAGIC_V4, BACKUP_ENC_MAGIC_LEN) == 0));
+}
+
+/* Create a crypto context pinned to a specific algorithm (not the ambient
+ * default), so encrypt/decrypt routing follows the backup's own format tag. */
+static GV_CryptoContext *backup_crypto_for_algo(GV_CryptoAlgorithm algo) {
+    GV_CryptoConfig cfg;
+    crypto_config_init(&cfg);
+    cfg.algorithm = algo;
+    return crypto_create(&cfg);
 }
 
 /* Encrypt plain_path into out_path as [magic][per-chunk: 4-byte LE len | cipher]. */
 static int backup_encrypt_wrap(const char *plain_path, const char *out_path, const char *pw) {
-    GV_CryptoContext *ctx = crypto_create(NULL);
+    /* Prefer AES-256-GCM when available; fall back to CBC encrypt-then-MAC. The
+     * chosen algorithm is recorded in the V4 tag so restore routes correctly. */
+    GV_CryptoAlgorithm algo = crypto_preferred_aead();
+    GV_CryptoContext *ctx = backup_crypto_for_algo(algo);
     if (!ctx) return -1;
     /* Per-backup random salt so identical passphrases diverge across backups. */
     unsigned char salt[BACKUP_ENC_SALT_LEN];
@@ -166,10 +188,13 @@ static int backup_encrypt_wrap(const char *plain_path, const char *out_path, con
 
     int rc = 0;
     unsigned char *buf = gv_alloc(BACKUP_ENC_CHUNK);
-    unsigned char *cipher = gv_alloc(BACKUP_ENC_CHUNK + 64); /* crypto_encrypt max overhead (CBC: IV+pad+MAC) */
+    /* Max overhead per chunk: CBC IV+pad+MAC (64) or GCM nonce+tag (28). */
+    unsigned char *cipher = gv_alloc(BACKUP_ENC_CHUNK + 64);
     if (!buf || !cipher) rc = -1;
-    if (rc == 0 && fwrite(BACKUP_ENC_MAGIC_V3, 1, BACKUP_ENC_MAGIC_LEN, fout) != BACKUP_ENC_MAGIC_LEN) rc = -1;
+    unsigned char algo_byte = (unsigned char)algo;
+    if (rc == 0 && fwrite(BACKUP_ENC_MAGIC_V4, 1, BACKUP_ENC_MAGIC_LEN, fout) != BACKUP_ENC_MAGIC_LEN) rc = -1;
     if (rc == 0 && fwrite(salt, 1, sizeof(salt), fout) != sizeof(salt)) rc = -1;
+    if (rc == 0 && fwrite(&algo_byte, 1, 1, fout) != 1) rc = -1;
     size_t nread;
     while (rc == 0 && (nread = fread(buf, 1, BACKUP_ENC_CHUNK, fin)) > 0) {
         size_t clen = 0;
@@ -195,36 +220,50 @@ static int backup_encrypt_wrap(const char *plain_path, const char *out_path, con
 /* Decrypt a wrapped file (enc_path) into plaintext out_path. Returns -1 on a bad
  * magic, wrong key, or corruption (crypto_decrypt's GCM tag / PKCS7 check fails). */
 static int backup_decrypt_wrap(const char *enc_path, const char *out_path, const char *pw) {
-    GV_CryptoContext *ctx = crypto_create(NULL);
-    if (!ctx) return -1;
     FILE *fin = fopen(enc_path, "rb");
-    if (!fin) { crypto_destroy(ctx); return -1; }
+    if (!fin) return -1;
 
     /* Read the magic, then the salt appropriate to the version. */
     char m[BACKUP_ENC_MAGIC_LEN];
     unsigned char salt[BACKUP_ENC_SALT_LEN];
     if (fread(m, 1, BACKUP_ENC_MAGIC_LEN, fin) != BACKUP_ENC_MAGIC_LEN) {
-        fclose(fin); crypto_destroy(ctx); return -1;
+        fclose(fin); return -1;
     }
-    /* V3 (current) is CBC encrypt-then-MAC -> authenticated crypto_decrypt.
-     * V2/V1 are legacy unauthenticated CBC (no MAC) -> crypto_decrypt_cbc_legacy,
-     * so pre-upgrade backups still restore. */
+    /* Route by the backup's own format, NOT the ambient default:
+     *   V4 -> salt + 1-byte AEAD tag; crypto_decrypt with that algorithm (a GCM
+     *         tag on a no-OpenSSL build fails closed in crypto_decrypt).
+     *   V3 -> CBC encrypt-then-MAC (authenticated crypto_decrypt, pinned CBC).
+     *   V2/V1 -> legacy unauthenticated CBC (no MAC) via crypto_decrypt_cbc_legacy. */
     int legacy_cbc = 0;
-    if (memcmp(m, BACKUP_ENC_MAGIC_V3, BACKUP_ENC_MAGIC_LEN) == 0) {
+    GV_CryptoAlgorithm algo = GV_CRYPTO_AES_256_CBC;
+    if (memcmp(m, BACKUP_ENC_MAGIC_V4, BACKUP_ENC_MAGIC_LEN) == 0) {
+        unsigned char algo_byte;
+        if (fread(salt, 1, sizeof(salt), fin) != sizeof(salt) ||
+            fread(&algo_byte, 1, 1, fin) != 1) {
+            fclose(fin); return -1;
+        }
+        if (algo_byte != GV_CRYPTO_AES_256_CBC && algo_byte != GV_CRYPTO_AES_256_GCM) {
+            fclose(fin); return -1;   /* unknown AEAD tag */
+        }
+        algo = (GV_CryptoAlgorithm)algo_byte;
+    } else if (memcmp(m, BACKUP_ENC_MAGIC_V3, BACKUP_ENC_MAGIC_LEN) == 0) {
         if (fread(salt, 1, sizeof(salt), fin) != sizeof(salt)) {
-            fclose(fin); crypto_destroy(ctx); return -1;
+            fclose(fin); return -1;
         }
     } else if (memcmp(m, BACKUP_ENC_MAGIC_V2, BACKUP_ENC_MAGIC_LEN) == 0) {
         if (fread(salt, 1, sizeof(salt), fin) != sizeof(salt)) {
-            fclose(fin); crypto_destroy(ctx); return -1;
+            fclose(fin); return -1;
         }
         legacy_cbc = 1;
     } else if (memcmp(m, BACKUP_ENC_MAGIC, BACKUP_ENC_MAGIC_LEN) == 0) {
         memset(salt, 0, sizeof(salt));   /* legacy V1: fixed zero salt */
         legacy_cbc = 1;
     } else {
-        fclose(fin); crypto_destroy(ctx); return -1;
+        fclose(fin); return -1;
     }
+
+    GV_CryptoContext *ctx = backup_crypto_for_algo(algo);
+    if (!ctx) { fclose(fin); return -1; }
 
     GV_CryptoKey key;
     if (backup_derive_key(ctx, pw, salt, sizeof(salt), &key) != 0) {
