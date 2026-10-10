@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <pthread.h>
 #include "core/compat.h"
 
 typedef struct {
@@ -30,6 +31,12 @@ struct GV_SnapshotManager {
     size_t            capacity;
     size_t            max_snapshots;
     uint64_t          next_id;
+    /* Serializes all access to entries[]/count: the snapshot API is exposed via
+     * the Python FFI with no external lock, so a concurrent snapshot_create
+     * (which gv_realloc-grows entries[]) could otherwise race a snapshot_open/
+     * _get/_delete reading it. (The data pointer a get returns must still be
+     * used before a concurrent delete of that snapshot - an API contract.) */
+    pthread_mutex_t   lock;
 };
 
 struct GV_Snapshot {
@@ -88,6 +95,10 @@ GV_SnapshotManager *snapshot_manager_create(size_t max_snapshots)
     }
     mgr->max_snapshots = max_snapshots;
     mgr->next_id       = 1;
+    if (pthread_mutex_init(&mgr->lock, NULL) != 0) {
+        gv_free(mgr);
+        return NULL;
+    }
     return mgr;
 }
 
@@ -100,6 +111,7 @@ void snapshot_manager_destroy(GV_SnapshotManager *mgr)
         gv_free(mgr->entries[i].data);
     }
     gv_free(mgr->entries);
+    pthread_mutex_destroy(&mgr->lock);
     gv_free(mgr);
 }
 
@@ -111,6 +123,8 @@ uint64_t snapshot_create(GV_SnapshotManager *mgr, size_t vector_count,
         return 0;
     }
 
+    pthread_mutex_lock(&mgr->lock);
+
     size_t active_count = 0;
     for (size_t i = 0; i < mgr->count; i++) {
         if (mgr->entries[i].active) {
@@ -118,15 +132,18 @@ uint64_t snapshot_create(GV_SnapshotManager *mgr, size_t vector_count,
         }
     }
     if (active_count >= mgr->max_snapshots) {
+        pthread_mutex_unlock(&mgr->lock);
         return 0;
     }
 
     if (ensure_capacity(mgr) != 0) {
+        pthread_mutex_unlock(&mgr->lock);
         return 0;
     }
 
     if ((dimension != 0 && vector_count > SIZE_MAX / dimension) ||
         (vector_count * dimension) > SIZE_MAX / sizeof(float)) {
+        pthread_mutex_unlock(&mgr->lock);
         return 0;   /* size would overflow */
     }
     size_t total_floats = vector_count * dimension;
@@ -135,6 +152,7 @@ uint64_t snapshot_create(GV_SnapshotManager *mgr, size_t vector_count,
     if (total_floats > 0) {
         data_copy = gv_alloc(total_floats * sizeof(float));
         if (!data_copy) {
+            pthread_mutex_unlock(&mgr->lock);
             return 0;
         }
         memcpy(data_copy, vector_data, total_floats * sizeof(float));
@@ -154,7 +172,9 @@ uint64_t snapshot_create(GV_SnapshotManager *mgr, size_t vector_count,
     }
 
     mgr->count++;
-    return mgr->next_id++;
+    uint64_t id = mgr->next_id++;
+    pthread_mutex_unlock(&mgr->lock);
+    return id;
 }
 
 GV_Snapshot *snapshot_open(GV_SnapshotManager *mgr, uint64_t snapshot_id)
@@ -163,7 +183,9 @@ GV_Snapshot *snapshot_open(GV_SnapshotManager *mgr, uint64_t snapshot_id)
         return NULL;
     }
 
+    pthread_mutex_lock(&mgr->lock);
     GV_SnapshotEntry *entry = find_entry(mgr, snapshot_id);
+    pthread_mutex_unlock(&mgr->lock);
     if (!entry) {
         return NULL;
     }
@@ -185,25 +207,39 @@ void snapshot_close(GV_Snapshot *snap)
 size_t snapshot_count(const GV_Snapshot *snap)
 {
     if (!snap) return 0;
-    const GV_SnapshotEntry *entry = find_entry(snap->mgr, snap->snapshot_id);
-    return entry ? entry->vector_count : 0;
+    GV_SnapshotManager *mgr = (GV_SnapshotManager *)snap->mgr;
+    pthread_mutex_lock(&mgr->lock);
+    const GV_SnapshotEntry *entry = find_entry(mgr, snap->snapshot_id);
+    size_t n = entry ? entry->vector_count : 0;
+    pthread_mutex_unlock(&mgr->lock);
+    return n;
 }
 
 const float *snapshot_get_vector(const GV_Snapshot *snap, size_t index)
 {
     if (!snap) return NULL;
-    const GV_SnapshotEntry *entry = find_entry(snap->mgr, snap->snapshot_id);
-    if (!entry || !entry->data || index >= entry->vector_count) {
-        return NULL;
+    GV_SnapshotManager *mgr = (GV_SnapshotManager *)snap->mgr;
+    pthread_mutex_lock(&mgr->lock);
+    const GV_SnapshotEntry *entry = find_entry(mgr, snap->snapshot_id);
+    const float *ptr = NULL;
+    if (entry && entry->data && index < entry->vector_count) {
+        ptr = entry->data + (index * entry->dimension);
     }
-    return entry->data + (index * entry->dimension);
+    pthread_mutex_unlock(&mgr->lock);
+    /* NOTE: caller must use ptr before any concurrent delete of this snapshot
+     * (API contract); the lock only protects the entries[] lookup itself. */
+    return ptr;
 }
 
 size_t snapshot_dimension(const GV_Snapshot *snap)
 {
     if (!snap) return 0;
-    const GV_SnapshotEntry *entry = find_entry(snap->mgr, snap->snapshot_id);
-    return entry ? entry->dimension : 0;
+    GV_SnapshotManager *mgr = (GV_SnapshotManager *)snap->mgr;
+    pthread_mutex_lock(&mgr->lock);
+    const GV_SnapshotEntry *entry = find_entry(mgr, snap->snapshot_id);
+    size_t d = entry ? entry->dimension : 0;
+    pthread_mutex_unlock(&mgr->lock);
+    return d;
 }
 
 int snapshot_list(const GV_SnapshotManager *mgr, GV_SnapshotInfo *infos,
@@ -213,19 +249,22 @@ int snapshot_list(const GV_SnapshotManager *mgr, GV_SnapshotInfo *infos,
         return -1;
     }
 
+    GV_SnapshotManager *m = (GV_SnapshotManager *)mgr;
+    pthread_mutex_lock(&m->lock);
     size_t written = 0;
-    for (size_t i = 0; i < mgr->count && written < max_infos; i++) {
-        if (!mgr->entries[i].active) {
+    for (size_t i = 0; i < m->count && written < max_infos; i++) {
+        if (!m->entries[i].active) {
             continue;
         }
         GV_SnapshotInfo *info = &infos[written];
-        info->snapshot_id  = mgr->entries[i].snapshot_id;
-        info->timestamp_us = mgr->entries[i].timestamp_us;
-        info->vector_count = mgr->entries[i].vector_count;
+        info->snapshot_id  = m->entries[i].snapshot_id;
+        info->timestamp_us = m->entries[i].timestamp_us;
+        info->vector_count = m->entries[i].vector_count;
         memset(info->label, 0, sizeof(info->label));
-        memcpy(info->label, mgr->entries[i].label, sizeof(info->label));
+        memcpy(info->label, m->entries[i].label, sizeof(info->label));
         written++;
     }
+    pthread_mutex_unlock(&m->lock);
     return (int)written;
 }
 
@@ -235,14 +274,17 @@ int snapshot_delete(GV_SnapshotManager *mgr, uint64_t snapshot_id)
         return -1;
     }
 
+    pthread_mutex_lock(&mgr->lock);
     GV_SnapshotEntry *entry = find_entry(mgr, snapshot_id);
     if (!entry) {
+        pthread_mutex_unlock(&mgr->lock);
         return -1;
     }
 
     gv_free(entry->data);
     entry->data   = NULL;
     entry->active = 0;
+    pthread_mutex_unlock(&mgr->lock);
     return 0;
 }
 
@@ -252,62 +294,69 @@ int snapshot_save(const GV_SnapshotManager *mgr, FILE *out)
         return -1;
     }
 
-    if (fwrite(SNAPSHOT_MAGIC, 1, SNAPSHOT_MAGIC_LEN, out) != SNAPSHOT_MAGIC_LEN) {
-        return -1;
-    }
+    GV_SnapshotManager *m = (GV_SnapshotManager *)mgr;
+    pthread_mutex_lock(&m->lock);
+    int ret = -1;
     uint32_t version = SNAPSHOT_VERSION;
+    size_t active_count = 0;
+
+    if (fwrite(SNAPSHOT_MAGIC, 1, SNAPSHOT_MAGIC_LEN, out) != SNAPSHOT_MAGIC_LEN) {
+        goto done;
+    }
     if (write_u32(out, version) != 0) {
-        return -1;
+        goto done;
     }
 
-    size_t active_count = 0;
-    for (size_t i = 0; i < mgr->count; i++) {
-        if (mgr->entries[i].active) {
+    for (size_t i = 0; i < m->count; i++) {
+        if (m->entries[i].active) {
             active_count++;
         }
     }
 
     if (write_size(out, active_count) != 0) {
-        return -1;
+        goto done;
     }
-    if (write_size(out, mgr->max_snapshots) != 0) {
-        return -1;
+    if (write_size(out, m->max_snapshots) != 0) {
+        goto done;
     }
-    if (write_u64(out, mgr->next_id) != 0) {
-        return -1;
+    if (write_u64(out, m->next_id) != 0) {
+        goto done;
     }
 
-    for (size_t i = 0; i < mgr->count; i++) {
-        const GV_SnapshotEntry *e = &mgr->entries[i];
+    for (size_t i = 0; i < m->count; i++) {
+        const GV_SnapshotEntry *e = &m->entries[i];
         if (!e->active) {
             continue;
         }
 
         if (write_u64(out, e->snapshot_id) != 0) {
-            return -1;
+            goto done;
         }
         if (write_u64(out, e->timestamp_us) != 0) {
-            return -1;
+            goto done;
         }
         if (write_size(out, e->vector_count) != 0) {
-            return -1;
+            goto done;
         }
         if (write_size(out, e->dimension) != 0) {
-            return -1;
+            goto done;
         }
         if (fwrite(e->label, 1, sizeof(e->label), out) != sizeof(e->label)) {
-            return -1;
+            goto done;
         }
 
         size_t total_floats = e->vector_count * e->dimension;
         if (total_floats > 0) {
             if (write_floats(out, e->data, total_floats) != 0) {
-                return -1;
+                goto done;
             }
         }
     }
 
-    return 0;
+    ret = 0;
+done:
+    pthread_mutex_unlock(&m->lock);
+    return ret;
 }
 
 int snapshot_load(GV_SnapshotManager **mgr_ptr, FILE *in)
