@@ -185,14 +185,14 @@ static int test_encrypted_backup_salt(void) {
     backup_result_free(rb);
     db_close(db);
 
-    /* Both backups carry the V2 magic and a 16-byte salt that MUST differ, even
-     * though the passphrase is identical. */
+    /* Both backups carry the V3 magic (random salt + CBC encrypt-then-MAC) and
+     * a 16-byte salt that MUST differ, even though the passphrase is identical. */
     unsigned char ha[24], hb[24];
     FILE *fa = fopen(bakA, "rb"); ASSERT(fa != NULL, "open bakA");
     ASSERT(fread(ha, 1, 24, fa) == 24, "read bakA header"); fclose(fa);
     FILE *fb = fopen(bakB, "rb"); ASSERT(fb != NULL, "open bakB");
     ASSERT(fread(hb, 1, 24, fb) == 24, "read bakB header"); fclose(fb);
-    ASSERT(memcmp(ha, "GVBKENC2", 8) == 0, "backup uses V2 (random-salt) magic");
+    ASSERT(memcmp(ha, "GVBKENC3", 8) == 0, "backup uses V3 (random-salt, authenticated) magic");
     ASSERT(memcmp(ha + 8, hb + 8, 16) != 0, "per-backup salts differ for same passphrase");
 
     /* Restore with the correct key round-trips the data. */

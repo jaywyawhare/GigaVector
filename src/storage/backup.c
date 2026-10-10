@@ -47,8 +47,9 @@
  * V2 derives the key from a per-backup random salt (stored in the header) so the
  * same passphrase no longer yields the same key across backups - defeating
  * precomputation and cross-backup key reuse. V1 backups remain restorable. */
-#define BACKUP_ENC_MAGIC     "GVBKENC1"   /* legacy (zero-salt) */
-#define BACKUP_ENC_MAGIC_V2  "GVBKENC2"   /* current (random per-backup salt) */
+#define BACKUP_ENC_MAGIC     "GVBKENC1"   /* legacy (zero-salt, unauthenticated CBC) */
+#define BACKUP_ENC_MAGIC_V2  "GVBKENC2"   /* legacy (random salt, unauthenticated CBC) */
+#define BACKUP_ENC_MAGIC_V3  "GVBKENC3"   /* current (random salt, CBC encrypt-then-MAC) */
 #define BACKUP_ENC_MAGIC_LEN 8
 #define BACKUP_ENC_SALT_LEN  16
 #define BACKUP_ENC_CHUNK     (64 * 1024)
@@ -136,7 +137,7 @@ static int backup_derive_key(GV_CryptoContext *ctx, const char *pw,
     return crypto_derive_key(ctx, pw, strlen(pw), salt, salt_len, key);
 }
 
-/* True if the file begins with either encrypted-backup wrapper magic (V1 or V2). */
+/* True if the file begins with any encrypted-backup wrapper magic (V1/V2/V3). */
 static int backup_file_is_encrypted(const char *path) {
     FILE *f = fopen(path, "rb");
     if (!f) return 0;
@@ -145,7 +146,8 @@ static int backup_file_is_encrypted(const char *path) {
     fclose(f);
     return (n == BACKUP_ENC_MAGIC_LEN &&
             (memcmp(m, BACKUP_ENC_MAGIC, BACKUP_ENC_MAGIC_LEN) == 0 ||
-             memcmp(m, BACKUP_ENC_MAGIC_V2, BACKUP_ENC_MAGIC_LEN) == 0));
+             memcmp(m, BACKUP_ENC_MAGIC_V2, BACKUP_ENC_MAGIC_LEN) == 0 ||
+             memcmp(m, BACKUP_ENC_MAGIC_V3, BACKUP_ENC_MAGIC_LEN) == 0));
 }
 
 /* Encrypt plain_path into out_path as [magic][per-chunk: 4-byte LE len | cipher]. */
@@ -166,7 +168,7 @@ static int backup_encrypt_wrap(const char *plain_path, const char *out_path, con
     unsigned char *buf = gv_alloc(BACKUP_ENC_CHUNK);
     unsigned char *cipher = gv_alloc(BACKUP_ENC_CHUNK + 64); /* crypto_encrypt max overhead (CBC: IV+pad+MAC) */
     if (!buf || !cipher) rc = -1;
-    if (rc == 0 && fwrite(BACKUP_ENC_MAGIC_V2, 1, BACKUP_ENC_MAGIC_LEN, fout) != BACKUP_ENC_MAGIC_LEN) rc = -1;
+    if (rc == 0 && fwrite(BACKUP_ENC_MAGIC_V3, 1, BACKUP_ENC_MAGIC_LEN, fout) != BACKUP_ENC_MAGIC_LEN) rc = -1;
     if (rc == 0 && fwrite(salt, 1, sizeof(salt), fout) != sizeof(salt)) rc = -1;
     size_t nread;
     while (rc == 0 && (nread = fread(buf, 1, BACKUP_ENC_CHUNK, fin)) > 0) {
@@ -204,12 +206,22 @@ static int backup_decrypt_wrap(const char *enc_path, const char *out_path, const
     if (fread(m, 1, BACKUP_ENC_MAGIC_LEN, fin) != BACKUP_ENC_MAGIC_LEN) {
         fclose(fin); crypto_destroy(ctx); return -1;
     }
-    if (memcmp(m, BACKUP_ENC_MAGIC_V2, BACKUP_ENC_MAGIC_LEN) == 0) {
+    /* V3 (current) is CBC encrypt-then-MAC -> authenticated crypto_decrypt.
+     * V2/V1 are legacy unauthenticated CBC (no MAC) -> crypto_decrypt_cbc_legacy,
+     * so pre-upgrade backups still restore. */
+    int legacy_cbc = 0;
+    if (memcmp(m, BACKUP_ENC_MAGIC_V3, BACKUP_ENC_MAGIC_LEN) == 0) {
         if (fread(salt, 1, sizeof(salt), fin) != sizeof(salt)) {
             fclose(fin); crypto_destroy(ctx); return -1;
         }
+    } else if (memcmp(m, BACKUP_ENC_MAGIC_V2, BACKUP_ENC_MAGIC_LEN) == 0) {
+        if (fread(salt, 1, sizeof(salt), fin) != sizeof(salt)) {
+            fclose(fin); crypto_destroy(ctx); return -1;
+        }
+        legacy_cbc = 1;
     } else if (memcmp(m, BACKUP_ENC_MAGIC, BACKUP_ENC_MAGIC_LEN) == 0) {
         memset(salt, 0, sizeof(salt));   /* legacy V1: fixed zero salt */
+        legacy_cbc = 1;
     } else {
         fclose(fin); crypto_destroy(ctx); return -1;
     }
@@ -233,7 +245,10 @@ static int backup_decrypt_wrap(const char *enc_path, const char *out_path, const
         if (clen == 0 || clen > cap) { rc = -1; break; }
         if (fread(cbuf, 1, clen, fin) != clen) { rc = -1; break; }
         size_t plen = 0;
-        if (crypto_decrypt(ctx, &key, cbuf, clen, plain, &plen) != 0) { rc = -1; break; }
+        int drc = legacy_cbc
+                      ? crypto_decrypt_cbc_legacy(&key, cbuf, clen, plain, &plen)
+                      : crypto_decrypt(ctx, &key, cbuf, clen, plain, &plen);
+        if (drc != 0) { rc = -1; break; }
         if (fwrite(plain, 1, plen, fout) != plen) { rc = -1; break; }
     }
     if (rc == 0 && got != 0 && got != 4) rc = -1;   /* trailing partial length header */

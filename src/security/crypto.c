@@ -639,6 +639,46 @@ int crypto_decrypt(GV_CryptoContext *ctx, const GV_CryptoKey *key,
     return 0;
 }
 
+/* Legacy unauthenticated AES-256-CBC decrypt ([16 IV][ciphertext], NO MAC) for
+ * restoring backups written before the encrypt-then-MAC upgrade. Kept separate
+ * from crypto_decrypt (which now mandates a MAC) and used ONLY on trusted local
+ * backup files during restore - never on attacker-supplied ciphertext, so the
+ * padding-oracle concern that motivated EtM does not apply here. The PKCS7
+ * check is still constant-time. */
+int crypto_decrypt_cbc_legacy(const GV_CryptoKey *key,
+                              const unsigned char *ciphertext, size_t ciphertext_len,
+                              unsigned char *plaintext, size_t *plaintext_len) {
+    if (!key || !ciphertext || !plaintext || !plaintext_len) return -1;
+    if (ciphertext_len < CBC_IV_LEN) return -1;
+    const unsigned char *iv = ciphertext;
+    const unsigned char *ct = ciphertext + CBC_IV_LEN;
+    size_t ct_len = ciphertext_len - CBC_IV_LEN;
+    if (ct_len == 0 || ct_len % 16 != 0) return -1;
+
+    unsigned char roundkeys[240];
+    aes256_key_expansion(key->key, roundkeys);
+    unsigned char prev_block[16];
+    memcpy(prev_block, iv, CBC_IV_LEN);
+    for (size_t pos = 0; pos < ct_len; pos += 16) {
+        unsigned char block[16];
+        aes256_decrypt_block(ct + pos, block, roundkeys);
+        for (int i = 0; i < 16; i++) block[i] ^= prev_block[i];
+        memcpy(plaintext + pos, block, 16);
+        memcpy(prev_block, ct + pos, 16);
+    }
+    unsigned char pad = plaintext[ct_len - 1];
+    unsigned int bad = (pad == 0) | (pad > 16);
+    unsigned int eff = (pad >= 1 && pad <= 16) ? pad : 1;
+    for (unsigned int i = 0; i < 16; i++) {
+        unsigned int in_pad = (i < eff) ? 1u : 0u;
+        unsigned int mism = (plaintext[ct_len - 1 - i] != pad) ? 1u : 0u;
+        bad |= (in_pad & mism);
+    }
+    if (bad) return -1;
+    *plaintext_len = ct_len - pad;
+    return 0;
+}
+
 #define FILE_BUFFER_SIZE (64 * 1024)
 
 int crypto_encrypt_file(GV_CryptoContext *ctx, const GV_CryptoKey *key,

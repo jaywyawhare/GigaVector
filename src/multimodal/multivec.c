@@ -325,11 +325,17 @@ int multivec_load(void **index_ptr, FILE *in, size_t dimension) {
             return -1;
         }
 
+        /* Guard the num_chunks*file_dim product itself (it wraps before the
+         * float-size check below on 32-bit size_t, under-sizing the buffer vs.
+         * the subsequent fread), then guard floats*sizeof(float). Both factors
+         * come from the file and are otherwise unbounded. */
+        if (file_dim != 0 && (size_t)num_chunks > SIZE_MAX / (size_t)file_dim) {
+            multivec_destroy(index);
+            return -1;
+        }
         size_t floats = (size_t)num_chunks * (size_t)file_dim;
         float *chunks = NULL;
 
-        /* Guard floats * sizeof(float) against size_t overflow (both factors
-         * come from the file and are otherwise unbounded). */
         if (floats > SIZE_MAX / sizeof(float)) {
             multivec_destroy(index);
             return -1;

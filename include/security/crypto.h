@@ -159,6 +159,15 @@ int crypto_decrypt(GV_CryptoContext *ctx, const GV_CryptoKey *key,
                        unsigned char *plaintext, size_t *plaintext_len);
 
 /**
+ * @brief Legacy unauthenticated AES-256-CBC decrypt (no MAC), for restoring
+ *        backups written before the encrypt-then-MAC upgrade. Use ONLY on
+ *        trusted local files, never on attacker-supplied ciphertext.
+ */
+int crypto_decrypt_cbc_legacy(const GV_CryptoKey *key,
+                              const unsigned char *ciphertext, size_t ciphertext_len,
+                              unsigned char *plaintext, size_t *plaintext_len);
+
+/**
  * @brief Encrypt a file.
  *
  * @param ctx Crypto context.
