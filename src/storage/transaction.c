@@ -226,12 +226,22 @@ int db_commit(GV_DBTxn *t) {
     db_set_wal_suppress(0);
     db_set_commit_stamp(0);
     if (!apply_ok) {
-        /* NOTE: a mid-loop apply failure leaves the already-applied inserts of
-         * this txn visible (partial commit). A correct rollback cannot identify
-         * "this txn's" slots by a db->count range because concurrent writers
-         * interleave their own appends, and reading db->count here unlocked
-         * races with them - so that is deferred to a design that applies the
-         * batch under a single held write lock or tracks each inserted slot. */
+        /* Roll back this txn's already-applied inserts so a failed commit is
+         * not a partial commit. Isolate exactly our slots by their MVCC
+         * create_version == cv (cv is unique to this commit, so concurrent
+         * plain writers - stamped with their own version - are untouched);
+         * tombstone them (delete_version = cv), the same invisibility
+         * mechanism staged deletes use. Done under the write lock, reading the
+         * count via soa_storage_count (never db->count unlocked - that raced). */
+        pthread_rwlock_wrlock(&db->rwlock);
+        size_t sc = soa_storage_count(db->soa_storage);
+        for (size_t s = 0; s < sc; s++) {
+            if (soa_storage_create_version(db->soa_storage, s) == cv &&
+                soa_storage_delete_version(db->soa_storage, s) == 0) {
+                soa_storage_set_delete_version(db->soa_storage, s, cv);
+            }
+        }
+        pthread_rwlock_unlock(&db->rwlock);
         gv_free(txn_dels);
         pthread_mutex_unlock(&db->txn_mutex);
         t->state = GV_TXN_ABORTED;

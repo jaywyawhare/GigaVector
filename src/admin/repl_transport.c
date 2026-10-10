@@ -343,23 +343,43 @@ static void repl_clear_connection_pending(ReplConnection *conn) {
 }
 
 static void repl_flush_connection_pending(GV_ReplTransport *transport, ReplConnection *conn) {
-    if (!conn || !conn->active || conn->fd < 0) return;
-    /* Send every queued WAL frame in order (not just the latest). */
-    while (conn->wal_head) {
-        PendingWal *p = conn->wal_head;
-        conn->wal_head = p->next;
-        if (!conn->wal_head) conn->wal_tail = NULL;
-        if (conn->wal_pending > 0) conn->wal_pending--;
-        repl_transport_send(transport, conn->fd, REPL_MSG_WAL, p->req_id, p->data, p->len);
-        conn->last_wal_req_id = p->req_id;
+    if (!conn) return;
+    /* Detach the pending queue + heartbeat under conn_mutex, then do the
+     * (possibly blocking) network sends OUTSIDE the lock. Holding conn_mutex
+     * across a slow/stalled follower's send was a head-of-line stall: it
+     * blocked repl_transport_broadcast_entry (the leader write path, which
+     * takes conn_mutex) for every other follower. Frames enqueued during the
+     * send land in a fresh queue and flush on the next poll iteration. */
+    pthread_mutex_lock(&transport->conn_mutex);
+    if (!conn->active || conn->fd < 0) { pthread_mutex_unlock(&transport->conn_mutex); return; }
+    int fd = conn->fd;
+    PendingWal *head = conn->wal_head;
+    conn->wal_head = NULL;
+    conn->wal_tail = NULL;
+    conn->wal_pending = 0;
+    int hb_ready = conn->pending_heartbeat_ready;
+    uint8_t hb[16];
+    memcpy(hb, conn->pending_heartbeat, sizeof(hb));
+    conn->pending_heartbeat_ready = 0;
+    uint32_t last_req = conn->last_wal_req_id;
+    pthread_mutex_unlock(&transport->conn_mutex);
+
+    /* Send every detached WAL frame in order, lock-free. */
+    while (head) {
+        PendingWal *p = head;
+        head = p->next;
+        repl_transport_send(transport, fd, REPL_MSG_WAL, p->req_id, p->data, p->len);
+        last_req = p->req_id;
         gv_free(p->data);
         gv_free(p);
     }
-    if (conn->pending_heartbeat_ready) {
-        repl_transport_send(transport, conn->fd, REPL_MSG_HEARTBEAT, conn->last_wal_req_id + 1,
-                          conn->pending_heartbeat, sizeof(conn->pending_heartbeat));
-        conn->pending_heartbeat_ready = 0;
+    if (hb_ready) {
+        repl_transport_send(transport, fd, REPL_MSG_HEARTBEAT, last_req + 1, hb, sizeof(hb));
     }
+
+    pthread_mutex_lock(&transport->conn_mutex);
+    conn->last_wal_req_id = last_req;
+    pthread_mutex_unlock(&transport->conn_mutex);
 }
 
 static void repl_update_replica_ack(GV_ReplicationManager *mgr, const char *node_id,
@@ -513,9 +533,11 @@ static void repl_handle_client(GV_ReplTransport *transport, int fd, int tslot) {
     }
 
     while (!atomic_load(&transport->stop_requested)) {
-        pthread_mutex_lock(&transport->conn_mutex);
+        /* flush locks conn_mutex ITSELF (just long enough to detach the queue)
+         * and sends outside the lock - see its comment. Holding conn_mutex
+         * across the blocking sends here was a head-of-line stall: one slow
+         * follower blocked the leader's broadcast to every other follower. */
         repl_flush_connection_pending(transport, &transport->connections[slot]);
-        pthread_mutex_unlock(&transport->conn_mutex);
 
         struct pollfd pfd = {.fd = fd, .events = POLLIN};
         int prc = poll(&pfd, 1, 100);

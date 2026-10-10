@@ -239,7 +239,7 @@ int gv_hnsw_search_filtered(void *index_ptr, const float *query, size_t dimensio
     /* If entry point itself is not in the filter, try to find an allowed one
      * by descending through the graph. If none found, fall back to brute-force
      * scan for the closest allowed node. */
-    if (!is_allowed(allowed_set, cur)) {
+    if (!is_allowed(allowed_set, index->nodes[cur].vector_index)) {
         int found = 0;
         /* Greedy descent: at each level, scan all neighbors of current node */
         for (int lc = (int)curLevel; lc >= 0; --lc) {
@@ -255,7 +255,7 @@ int gv_hnsw_search_filtered(void *index_ptr, const float *query, size_t dimensio
                     int32_t nb = nbs[i];
                     if (nb < 0) break;
                     if (index->nodes[nb].deleted) continue;
-                    if (!is_allowed(allowed_set, (size_t)nb)) continue;
+                    if (!is_allowed(allowed_set, index->nodes[nb].vector_index)) continue;
                     float dist = hnsw_raw_distance_i(SF_VEC(index->nodes[nb].vector_index),
                                                       query, soa_dim, dtype);
                     if (dist < cur_dist) {
@@ -274,7 +274,7 @@ int gv_hnsw_search_filtered(void *index_ptr, const float *query, size_t dimensio
             size_t best_idx = SIZE_MAX;
             for (size_t i = 0; i < index->count; ++i) {
                 if (index->nodes[i].deleted) continue;
-                if (!is_allowed(allowed_set, i)) continue;
+                if (!is_allowed(allowed_set, index->nodes[i].vector_index)) continue;
                 float dist = hnsw_raw_distance_i(SF_VEC(index->nodes[i].vector_index),
                                                   query, soa_dim, dtype);
                 if (dist < best_dist) {
@@ -303,7 +303,7 @@ int gv_hnsw_search_filtered(void *index_ptr, const float *query, size_t dimensio
                 int32_t nb = nbs[i];
                 if (nb < 0) break;
                 if (index->nodes[nb].deleted) continue;
-                if (!is_allowed(allowed_set, (size_t)nb)) continue;
+                if (!is_allowed(allowed_set, index->nodes[nb].vector_index)) continue;
                 float dist = hnsw_raw_distance_i(SF_VEC(index->nodes[nb].vector_index),
                                                   query, soa_dim, dtype);
                 if (dist < cur_dist) {
@@ -363,7 +363,7 @@ int gv_hnsw_search_filtered(void *index_ptr, const float *query, size_t dimensio
         size_t cand_node = mmheap_pop_min_f(heap_dis, heap_ids, heap_proc, heap_k, &cand_dist);
         if (cand_node == SIZE_MAX) break;
         if (index->nodes[cand_node].deleted) continue;
-        if (!is_allowed(allowed_set, cand_node)) continue;
+        if (!is_allowed(allowed_set, index->nodes[cand_node].vector_index)) continue;
         if (heap_k >= ef && cand_dist > heap_dis[0]) break;
 
         int32_t *nbs  = nb_begin_i(index, cand_node, 0);
@@ -373,7 +373,7 @@ int gv_hnsw_search_filtered(void *index_ptr, const float *query, size_t dimensio
             int32_t nb = nbs[i];
             if (nb < 0) break;
             if (index->nodes[nb].deleted) continue;
-            if (!is_allowed(allowed_set, (size_t)nb)) continue;
+            if (!is_allowed(allowed_set, index->nodes[nb].vector_index)) continue;
             if ((size_t)nb >= fts_visited_cap ||
                 fts_visited[nb] == fts_epoch) continue;
             fts_visited[nb] = fts_epoch;
