@@ -142,6 +142,7 @@ static void db_init_common_fields(GV_Database *db) {
     db->current_memory_bytes = 0;
     db->current_concurrent_ops = 0;
     __atomic_store_n(&db->commit_version, 0, __ATOMIC_SEQ_CST);
+    db->checkpoint_gen = 0;
     pthread_mutex_init(&db->resource_mutex, NULL);
     pthread_mutex_init(&db->txn_mutex, NULL);
     memset(&db->insert_latency_hist, 0, sizeof(GV_LatencyHistogram));
@@ -443,7 +444,8 @@ int db_delete_by_doc(GV_Database *db, const char *doc_id) {
     return deleted;
 }
 
-int db_write_header(FILE *out, uint32_t dimension, uint64_t count, uint32_t version) {
+int db_write_header(FILE *out, uint32_t dimension, uint64_t count, uint32_t version,
+                    uint64_t checkpoint_gen) {
     const uint32_t magic = 0x47564442; /* "GVDB" in hex */
     if (write_u32(out, magic) != 0) {
         GV_LOG_ERROR("db_write_header: failed to write magic (errno=%d)", errno);
@@ -458,10 +460,17 @@ int db_write_header(FILE *out, uint32_t dimension, uint64_t count, uint32_t vers
     if (write_u64(out, count) != 0) {
         return -1;
     }
+    /* v7+: checkpoint generation, used to detect a WAL that predates this
+     * snapshot (crash between snapshot publish and WAL truncate) so recovery
+     * skips already-checkpointed records instead of double-applying them. */
+    if (version >= 7 && write_u64(out, checkpoint_gen) != 0) {
+        return -1;
+    }
     return 0;
 }
 
-static int db_read_header(FILE *in, uint32_t *dimension_out, uint64_t *count_out, uint32_t *version_out) {
+static int db_read_header(FILE *in, uint32_t *dimension_out, uint64_t *count_out, uint32_t *version_out,
+                          uint64_t *checkpoint_gen_out) {
     uint32_t magic = 0;
     uint32_t version = 0;
     if (read_u32(in, &magic) != 0) {
@@ -480,6 +489,16 @@ static int db_read_header(FILE *in, uint32_t *dimension_out, uint64_t *count_out
     }
     if (read_u64(in, count_out) != 0) {
         return -1;
+    }
+    /* v7+ carries a checkpoint generation right after count. Older snapshots
+     * have none -> generation 0 (which makes recovery behave exactly as before:
+     * a WAL whose generation (0) is not < the snapshot's (0) is still replayed). */
+    {
+        uint64_t gen = 0;
+        if (version >= 7 && read_u64(in, &gen) != 0) {
+            return -1;
+        }
+        if (checkpoint_gen_out) *checkpoint_gen_out = gen;
     }
 
     /* Corrupt-snapshot allocation guard. The 64-bit count is attacker/
@@ -1038,7 +1057,7 @@ GV_Database *db_open(const char *filepath, size_t dimension, GV_IndexType index_
     uint32_t file_dim = 0;
     uint64_t file_count = 0;
     uint32_t file_version = 0;
-    if (db_read_header(in, &file_dim, &file_count, &file_version) != 0) {
+    if (db_read_header(in, &file_dim, &file_count, &file_version, &db->checkpoint_gen) != 0) {
         /* db->hnsw_index is NULL here (all in-memory create branches are
          * guarded by filepath==NULL and did not run on this load path), so
          * db_free_open_failure's db_destroy_indexes is a no-op; the helper also
@@ -1060,11 +1079,11 @@ GV_Database *db_open(const char *filepath, size_t dimension, GV_IndexType index_
 
     db->dimension = (size_t)file_dim;
 
-    if (file_version < 1 || file_version > 6) {
+    if (file_version < 1 || file_version > 7) {
         /* db->hnsw_index is NULL on the load path (create branches guarded by
          * filepath==NULL); db_free_open_failure is a safe no-op for indexes and
          * frees soa_storage that the old manual cleanup leaked. */
-        GV_LOG_ERROR("db_open: unsupported snapshot version %u in '%s' (supported: 1-6)",
+        GV_LOG_ERROR("db_open: unsupported snapshot version %u in '%s' (supported: 1-7)",
                      file_version, filepath);
         fclose(in);
         db_free_open_failure(db);
@@ -1337,7 +1356,16 @@ GV_Database *db_open(const char *filepath, size_t dimension, GV_IndexType index_
             return NULL;
         }
 
-        if (db_replay_wal(db) != 0) {
+        uint64_t wal_gen = wal_read_ckpt_gen(db->wal_path);
+        if (wal_gen < db->checkpoint_gen) {
+            /* The WAL predates this snapshot (crash between snapshot publish and
+             * WAL truncate): its records are already folded into the snapshot.
+             * Skip replay so they are not silently duplicated. (wal_gen and
+             * checkpoint_gen are both 0 for pre-v7 snapshots / un-checkpointed
+             * WALs, so this never triggers there - behaviour is unchanged.) */
+            GV_LOG_WARN("db_open: stale WAL (gen %llu < snapshot gen %llu) not replayed",
+                        (unsigned long long)wal_gen, (unsigned long long)db->checkpoint_gen);
+        } else if (db_replay_wal(db) != 0) {
             wal_close(db->wal);
             db->wal = NULL;
             db_free_open_failure(db);
@@ -1615,7 +1643,7 @@ static GV_Database *db_open_from_memory_impl(const void *data, size_t size,
     uint32_t file_dim = 0;
     uint64_t file_count = 0;
     uint32_t file_version = 0;
-    if (db_read_header(in, &file_dim, &file_count, &file_version) != 0) {
+    if (db_read_header(in, &file_dim, &file_count, &file_version, &db->checkpoint_gen) != 0) {
         fclose(in);
         db_open_from_memory_cleanup(db);
         return NULL;
@@ -1628,7 +1656,7 @@ static GV_Database *db_open_from_memory_impl(const void *data, size_t size,
     }
     db->dimension = (size_t)file_dim;
 
-    if (file_version < 1 || file_version > 6) {
+    if (file_version < 1 || file_version > 7) {
         fclose(in);
         db_open_from_memory_cleanup(db);
         return NULL;

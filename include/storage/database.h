@@ -169,6 +169,7 @@ typedef struct GV_Database {
     GV_PointIDMap *id_map;             /**< String primary-key (chunk_id) -> internal index. Persisted to a "{filepath}.ids" sidecar. */
     /* MVCC transactions */
     uint64_t commit_version;           /**< Monotonic version stamped by each committed write txn (0 = no txns yet). */
+    uint64_t checkpoint_gen;           /**< Monotonic checkpoint generation (snapshot<->WAL handoff); 0 = never checkpointed. */
     pthread_mutex_t txn_mutex;         /**< Serializes transaction commits (single-writer commit point). */
     uint64_t *txn_active_versions;     /**< read_version of each live transaction (for GC safe-point). Guarded by txn_mutex. */
     size_t txn_active_count;           /**< Number of live transactions. */

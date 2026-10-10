@@ -28,7 +28,10 @@ char *db_build_wal_path(const char *filepath);
 int   db_replay_wal(GV_Database *db);
 
 int db_write_header(FILE *out, uint32_t dimension, uint64_t count,
-                    uint32_t version);
+                    uint32_t version, uint64_t checkpoint_gen);
+/* Read the WAL checkpoint-generation sidecar next to @p wal_path; 0 if
+ * missing/corrupt. Recovery skips WAL replay when this is < the snapshot's. */
+uint64_t wal_read_ckpt_gen(const char *wal_path);
 void db_fill_ivfdisk_search_vectors(GV_Database *db, GV_SearchResult *results,
                                     int n);
 

@@ -59,6 +59,45 @@ static int write_uint32(FILE *out, uint32_t value) {
 }
 
 
+/* WAL checkpoint-generation sidecar: a tiny crash-atomic file next to the WAL
+ * recording the generation the WAL was last truncated for. Recovery compares it
+ * to the snapshot's generation; if the WAL's generation is older than the
+ * snapshot's (a crash between snapshot publish and WAL truncate), its records
+ * are already in the snapshot and must NOT be replayed on top of it. Missing or
+ * corrupt sidecar => generation 0 (recovery then behaves exactly as before). */
+#define WAL_CKPT_GEN_MAGIC 0x434B5047u /* "CKPG" */
+
+static int wal_write_ckpt_gen(const char *wal_path, uint64_t gen) {
+    char path[1100], tmp[1130];
+    if (snprintf(path, sizeof(path), "%s.ckptgen", wal_path) >= (int)sizeof(path)) return -1;
+    if (snprintf(tmp, sizeof(tmp), "%s.tmp", path) >= (int)sizeof(tmp)) return -1;
+    FILE *f = fopen(tmp, "wb");
+    if (!f) return -1;
+    int ok = (write_u32(f, WAL_CKPT_GEN_MAGIC) == 0 && write_u64(f, gen) == 0);
+    if (ok) {
+        fflush(f);
+#ifndef _WIN32
+        if (fsync(fileno(f)) != 0) ok = 0;
+#endif
+    }
+    if (fclose(f) != 0) ok = 0;
+    if (!ok) { remove(tmp); return -1; }
+    return gv_rename_replace(tmp, path);
+}
+
+uint64_t wal_read_ckpt_gen(const char *wal_path) {
+    char path[1100];
+    if (!wal_path) return 0;
+    if (snprintf(path, sizeof(path), "%s.ckptgen", wal_path) >= (int)sizeof(path)) return 0;
+    FILE *f = fopen(path, "rb");
+    if (!f) return 0;
+    uint32_t magic = 0;
+    uint64_t gen = 0;
+    int ok = (read_u32(f, &magic) == 0 && magic == WAL_CKPT_GEN_MAGIC && read_u64(f, &gen) == 0);
+    fclose(f);
+    return ok ? gen : 0;
+}
+
 int db_save_locked(const GV_Database *db, const char *filepath) {
     if (db == NULL) {
         return -1;
@@ -84,9 +123,12 @@ int db_save_locked(const GV_Database *db, const char *filepath) {
         return -1;
     }
 
-    /* v5 adds the per-vector deleted flag to the sparse-index payload. */
-    const uint32_t version = 6;
-    int status = db_write_header(out, (uint32_t)db->dimension, db->count, version);
+    /* v5 adds the per-vector deleted flag to the sparse-index payload; v7 adds
+     * the checkpoint generation (see wal_write_ckpt_gen). The snapshot being
+     * published represents generation checkpoint_gen+1. */
+    const uint32_t version = 7;
+    uint64_t new_gen = db->checkpoint_gen + 1;
+    int status = db_write_header(out, (uint32_t)db->dimension, db->count, version, new_gen);
     if (status == 0) {
         uint32_t index_type_u32 = (uint32_t)db->index_type;
         if (write_uint32(out, index_type_u32) != 0) {
@@ -268,6 +310,15 @@ int db_save_locked(const GV_Database *db, const char *filepath) {
         int truncate_status = wal_truncate(db->wal);
         if (truncate_status == 0) {
             ((GV_Database *)db)->total_wal_records = 0;
+            /* Record that the WAL is now truncated for this checkpoint
+             * generation. Written AFTER the snapshot is durable and the WAL is
+             * truncated: a crash before this leaves the sidecar's generation
+             * below the snapshot's, so recovery skips the (already-snapshotted)
+             * WAL instead of double-applying it. */
+            if (db->wal_path != NULL) {
+                (void)wal_write_ckpt_gen(db->wal_path, new_gen);
+            }
+            ((GV_Database *)db)->checkpoint_gen = new_gen;
         }
         pthread_mutex_unlock((pthread_mutex_t *)&db->wal_mutex);
     } else if (db->wal_path != NULL) {
