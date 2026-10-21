@@ -216,14 +216,21 @@ int tls_get_peer_cn(void *tls_conn, char *buf, size_t buf_size) {
     X509 *cert = SSL_get_peer_certificate(ssl);
     if (!cert) return -1;
 
-    X509_NAME *subject = X509_get_subject_name(cert);
+    /* LibreSSL returns a const X509_NAME*; the cast keeps this portable to the
+     * OpenSSL prototype (non-const) without discarding-qualifiers warnings. */
+    X509_NAME *subject = (X509_NAME *)X509_get_subject_name(cert);
     if (!subject) {
         X509_free(cert);
         return -1;
     }
 
+    /* X509_NAME_get_text_by_NID is deprecated on LibreSSL but still the portable
+     * way to read a single CN; silence only that note, not the whole build. */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
     int idx = X509_NAME_get_text_by_NID(subject, NID_commonName,
                                          buf, (int)buf_size);
+#pragma GCC diagnostic pop
     X509_free(cert);
     return (idx < 0) ? -1 : 0;
 }

@@ -62,12 +62,6 @@ typedef struct {
 
 /* ---- Internal helpers (mirrored from hnsw.c) ---- */
 
-static inline size_t nb_slots_for_level_i(const GV_HNSWIndex *index, size_t level) {
-    if (level + 1 <= index->max_level_alloc)
-        return index->cum_nb_per_level[level + 1];
-    return 2 * index->M + level * index->M;
-}
-
 static inline int32_t *nb_begin_i(const GV_HNSWIndex *index, size_t node_idx, size_t level) {
     return index->neighbors + index->offsets[node_idx] + index->cum_nb_per_level[level];
 }

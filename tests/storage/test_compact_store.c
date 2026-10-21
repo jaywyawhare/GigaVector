@@ -14,7 +14,7 @@ int main(void) {
     float maxerr = 0.0f;
     srand(7);
     for (int i = 0; i < 20000; i++) {
-        float f = ((float)rand() / RAND_MAX - 0.5f) * 4.0f;
+        float f = ((float)rand() / (float)RAND_MAX - 0.5f) * 4.0f;
         float g = gv_f16_to_f32(gv_f32_to_f16(f));
         float e = fabsf(f - g) / (fabsf(f) + 1e-6f);
         if (e > maxerr) maxerr = e;
@@ -23,7 +23,7 @@ int main(void) {
 
     const size_t N = 2000, D = 48, K = 10;
     float *v = (float *)malloc(N * D * sizeof(float));
-    for (size_t i = 0; i < N * D; i++) v[i] = (float)rand() / RAND_MAX;
+    for (size_t i = 0; i < N * D; i++) v[i] = (float)rand() / (float)RAND_MAX;
 
     GV_CompactStore *f16 = compact_store_create(D, GV_COMPACT_F16);
     GV_CompactStore *i8 = compact_store_create(D, GV_COMPACT_I8);

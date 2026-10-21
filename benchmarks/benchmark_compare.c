@@ -94,9 +94,12 @@ int main(void) {
         total += distance_cosine(&a, &b);
     }
     simd_time = get_time_ms() - start;
-    printf("SIMD:      %.2f ms (%.2f ops/sec)\n", 
+    printf("SIMD:      %.2f ms (%.2f ops/sec)\n",
            simd_time, (ITERATIONS / simd_time) * 1000.0);
     printf("Speedup:   %.2fx\n\n", scalar_time / simd_time);
+
+    /* Consume the accumulator so the benchmarked loops aren't optimized away. */
+    printf("Checksum:  %.6f\n\n", total);
 
     gv_free(a_data);
     gv_free(b_data);

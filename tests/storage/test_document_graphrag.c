@@ -79,7 +79,8 @@ int main(void) {
     ASSERT(rc == 0 && nres >= 2, "search returns results");
 
     /* sanity: A is the direct match and carries its triple */
-    ASSERT(res[0].chunk_id && strstr(res[0].chunk_id, "docA") != NULL,
+    /* chunk_id is a fixed char[64], never NULL, so only the content check matters. */
+    ASSERT(strstr(res[0].chunk_id, "docA") != NULL,
            "docA ranks first (direct match)");
     ASSERT(res[0].graph_neighbor_hits > 0 || res[0].triplet_hit_count > 0,
            "docA has graph signal");

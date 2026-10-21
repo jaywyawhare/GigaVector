@@ -16,10 +16,10 @@ static int failures = 0;
 static float *make_data(size_t N, size_t D) {
     float *data = (float *)malloc(N * D * sizeof(float));
     for (size_t i = 0; i < N; i++) {
-        float lat[4]; for (int a = 0; a < 4; a++) lat[a] = ((float)rand() / RAND_MAX - 0.5f);
+        float lat[4]; for (int a = 0; a < 4; a++) lat[a] = ((float)rand() / (float)RAND_MAX - 0.5f);
         for (size_t d = 0; d < D; d++) {
             float v = 0; for (int a = 0; a < 4; a++) v += lat[a] * sinf((float)(d * 7 + a * 13));
-            v += ((float)rand() / RAND_MAX - 0.5f) * 0.05f;
+            v += ((float)rand() / (float)RAND_MAX - 0.5f) * 0.05f;
             data[i * D + d] = v;
         }
     }
