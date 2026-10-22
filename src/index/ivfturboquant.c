@@ -483,6 +483,14 @@ size_t ivfturboquant_count(const void *index) {
     return count;
 }
 
+void ivfturboquant_set_nprobe(void *index, size_t nprobe) {
+    if (index) ((GV_IVFTurboQuantIndex *)index)->config.nprobe = nprobe;
+}
+
+size_t ivfturboquant_get_nprobe(const void *index) {
+    return index ? ((const GV_IVFTurboQuantIndex *)index)->config.nprobe : 0;
+}
+
 int ivfturboquant_delete(void *index, size_t entry_index) {
     if (!index) {
         return -1;

@@ -13,6 +13,11 @@
 #include <immintrin.h>
 #endif
 
+#if defined(__aarch64__) && defined(__ARM_NEON)
+#include <arm_neon.h>
+#define GV_HAVE_NEON 1
+#endif
+
 /*
  * Hot-path SIMD dispatch read. cpu_detect_features() is correct but does an
  * atomic acquire load through a cross-TU call on every invocation; the distance
@@ -47,6 +52,84 @@ static inline float hsum256_ps(__m256 v) {
     return _mm_cvtss_f32(s);
 }
 #endif
+
+#ifdef GV_HAVE_NEON
+static float vector_dot_neon(const float *a, const float *b, size_t dimension) {
+    float32x4_t acc = vdupq_n_f32(0.0f);
+    size_t i = 0;
+    for (; i + 4 <= dimension; i += 4) {
+        acc = vfmaq_f32(acc, vld1q_f32(&a[i]), vld1q_f32(&b[i]));
+    }
+    float sum = vaddvq_f32(acc);
+    for (; i < dimension; ++i) {
+        sum += a[i] * b[i];
+    }
+    return sum;
+}
+
+static float vector_norm_neon(const float *v, size_t dimension) {
+    float32x4_t acc = vdupq_n_f32(0.0f);
+    size_t i = 0;
+    for (; i + 4 <= dimension; i += 4) {
+        float32x4_t vv = vld1q_f32(&v[i]);
+        acc = vfmaq_f32(acc, vv, vv);
+    }
+    float sum_sq = vaddvq_f32(acc);
+    for (; i < dimension; ++i) {
+        sum_sq += v[i] * v[i];
+    }
+    return sqrtf(sum_sq);
+}
+
+static float distance_euclidean_neon(const float *a, const float *b, size_t dimension) {
+    float32x4_t acc = vdupq_n_f32(0.0f);
+    size_t i = 0;
+    for (; i + 4 <= dimension; i += 4) {
+        float32x4_t diff = vsubq_f32(vld1q_f32(&a[i]), vld1q_f32(&b[i]));
+        acc = vfmaq_f32(acc, diff, diff);
+    }
+    float sum_sq_diff = vaddvq_f32(acc);
+    for (; i < dimension; ++i) {
+        float diff = a[i] - b[i];
+        sum_sq_diff += diff * diff;
+    }
+    return sqrtf(sum_sq_diff);
+}
+
+static float distance_manhattan_neon(const float *a, const float *b, size_t dimension) {
+    float32x4_t acc = vdupq_n_f32(0.0f);
+    size_t i = 0;
+    for (; i + 4 <= dimension; i += 4) {
+        float32x4_t diff = vsubq_f32(vld1q_f32(&a[i]), vld1q_f32(&b[i]));
+        acc = vaddq_f32(acc, vabsq_f32(diff));
+    }
+    float sum = vaddvq_f32(acc);
+    for (; i < dimension; ++i) {
+        float diff = a[i] - b[i];
+        sum += (diff < 0.0f) ? -diff : diff;
+    }
+    return sum;
+}
+
+static void jaccard_sums_neon(const float *a, const float *b, size_t dimension,
+                              float *out_dot, float *out_na, float *out_nb) {
+    float32x4_t vdot = vdupq_n_f32(0.0f), vna = vdupq_n_f32(0.0f), vnb = vdupq_n_f32(0.0f);
+    size_t i = 0;
+    for (; i + 4 <= dimension; i += 4) {
+        float32x4_t x = vld1q_f32(&a[i]);
+        float32x4_t y = vld1q_f32(&b[i]);
+        vdot = vfmaq_f32(vdot, x, y);
+        vna  = vfmaq_f32(vna, x, x);
+        vnb  = vfmaq_f32(vnb, y, y);
+    }
+    float dot = vaddvq_f32(vdot), na = vaddvq_f32(vna), nb = vaddvq_f32(vnb);
+    for (; i < dimension; i++) {
+        float x = a[i], y = b[i];
+        dot += x * y; na += x * x; nb += y * y;
+    }
+    *out_dot = dot; *out_na = na; *out_nb = nb;
+}
+#endif /* GV_HAVE_NEON */
 
 #ifdef __AVX512F__
 static float vector_dot_avx512(const float *a, const float *b, size_t dimension) {
@@ -228,6 +311,11 @@ static float vector_dot(const GV_Vector *a, const GV_Vector *b) {
         return vector_dot_sse(a->data, b->data, a->dimension);
     }
 #endif
+#ifdef GV_HAVE_NEON
+    if ((feats & GV_CPU_FEATURE_NEON) && a->dimension >= 4) {
+        return vector_dot_neon(a->data, b->data, a->dimension);
+    }
+#endif
     return vector_dot_scalar(a->data, b->data, a->dimension);
 }
 
@@ -247,6 +335,11 @@ static float vector_norm(const GV_Vector *v) {
 #ifdef __SSE4_2__
     if ((feats & GV_CPU_FEATURE_SSE4_2) && v->dimension >= 8 && (v->dimension % 4 == 0)) {
         return vector_norm_sse(v->data, v->dimension);
+    }
+#endif
+#ifdef GV_HAVE_NEON
+    if ((feats & GV_CPU_FEATURE_NEON) && v->dimension >= 4) {
+        return vector_norm_neon(v->data, v->dimension);
     }
 #endif
     return vector_norm_scalar(v->data, v->dimension);
@@ -344,13 +437,17 @@ static float distance_euclidean_scalar(const float *a, const float *b, size_t di
     return sqrtf(sum_sq_diff);
 }
 
+/**
+ * @brief Validate a dense vector pair for a distance computation: both non-NULL
+ *        with data, and equal non-zero dimension.
+ */
+static inline int dist_args_ok(const GV_Vector *a, const GV_Vector *b) {
+    return a != NULL && b != NULL && a->data != NULL && b->data != NULL &&
+           a->dimension == b->dimension && a->dimension != 0;
+}
+
 float distance_euclidean(const GV_Vector *a, const GV_Vector *b) {
-    if (a == NULL || b == NULL || a->data == NULL || b->data == NULL) {
-        return -1.0f;
-    }
-    if (a->dimension != b->dimension || a->dimension == 0) {
-        return -1.0f;
-    }
+    if (!dist_args_ok(a, b)) return -1.0f;
 
     unsigned feats = dist_features();
     (void)feats;
@@ -369,16 +466,16 @@ float distance_euclidean(const GV_Vector *a, const GV_Vector *b) {
         return distance_euclidean_sse(a->data, b->data, a->dimension);
     }
 #endif
+#ifdef GV_HAVE_NEON
+    if ((feats & GV_CPU_FEATURE_NEON) && a->dimension >= 4) {
+        return distance_euclidean_neon(a->data, b->data, a->dimension);
+    }
+#endif
     return distance_euclidean_scalar(a->data, b->data, a->dimension);
 }
 
 float distance_cosine(const GV_Vector *a, const GV_Vector *b) {
-    if (a == NULL || b == NULL || a->data == NULL || b->data == NULL) {
-        return -2.0f;
-    }
-    if (a->dimension != b->dimension || a->dimension == 0) {
-        return -2.0f;
-    }
+    if (!dist_args_ok(a, b)) return -2.0f;
 
     float dot_product = vector_dot(a, b);
     float norm_a = vector_norm(a);
@@ -460,12 +557,7 @@ static float distance_manhattan_scalar(const float *a, const float *b, size_t di
 }
 
 float distance_manhattan(const GV_Vector *a, const GV_Vector *b) {
-    if (a == NULL || b == NULL || a->data == NULL || b->data == NULL) {
-        return -1.0f;
-    }
-    if (a->dimension != b->dimension || a->dimension == 0) {
-        return -1.0f;
-    }
+    if (!dist_args_ok(a, b)) return -1.0f;
 
     unsigned feats = dist_features();
     (void)feats;
@@ -479,16 +571,16 @@ float distance_manhattan(const GV_Vector *a, const GV_Vector *b) {
         return distance_manhattan_sse(a->data, b->data, a->dimension);
     }
 #endif
+#ifdef GV_HAVE_NEON
+    if ((feats & GV_CPU_FEATURE_NEON) && a->dimension >= 4) {
+        return distance_manhattan_neon(a->data, b->data, a->dimension);
+    }
+#endif
     return distance_manhattan_scalar(a->data, b->data, a->dimension);
 }
 
 float distance_dot_product(const GV_Vector *a, const GV_Vector *b) {
-    if (a == NULL || b == NULL || a->data == NULL || b->data == NULL) {
-        return -1.0f;
-    }
-    if (a->dimension != b->dimension || a->dimension == 0) {
-        return -1.0f;
-    }
+    if (!dist_args_ok(a, b)) return -1.0f;
 
     float dot = vector_dot(a, b);
     return -dot;
@@ -514,12 +606,7 @@ static float distance_hamming_avx2(const float *a, const float *b, size_t dimens
 #endif
 
 float distance_hamming(const GV_Vector *a, const GV_Vector *b) {
-    if (a == NULL || b == NULL || a->data == NULL || b->data == NULL) {
-        return -1.0f;
-    }
-    if (a->dimension != b->dimension || a->dimension == 0) {
-        return -1.0f;
-    }
+    if (!dist_args_ok(a, b)) return -1.0f;
 
 #ifdef __AVX2__
     if (dist_features() & GV_CPU_FEATURE_AVX2) {
@@ -558,12 +645,7 @@ static void jaccard_sums_avx2(const float *a, const float *b, size_t dimension,
 #endif
 
 float distance_jaccard(const GV_Vector *a, const GV_Vector *b) {
-    if (a == NULL || b == NULL || a->data == NULL || b->data == NULL) {
-        return -1.0f;
-    }
-    if (a->dimension != b->dimension || a->dimension == 0) {
-        return -1.0f;
-    }
+    if (!dist_args_ok(a, b)) return -1.0f;
 
     /* Continuous Tanimoto: dot / (|a|^2 + |b|^2 - dot). For binary inputs this is
      * exactly intersection/union. Both-zero vectors are identical (distance 0). */
@@ -571,6 +653,11 @@ float distance_jaccard(const GV_Vector *a, const GV_Vector *b) {
 #ifdef __AVX2__
     if ((dist_features() & GV_CPU_FEATURE_AVX2) && (dist_features() & GV_CPU_FEATURE_FMA)) {
         jaccard_sums_avx2(a->data, b->data, a->dimension, &dot, &na, &nb);
+    } else
+#endif
+#ifdef GV_HAVE_NEON
+    if ((dist_features() & GV_CPU_FEATURE_NEON) && a->dimension >= 4) {
+        jaccard_sums_neon(a->data, b->data, a->dimension, &dot, &na, &nb);
     } else
 #endif
     for (size_t i = 0; i < a->dimension; i++) {
@@ -610,12 +697,7 @@ float distance(const GV_Vector *a, const GV_Vector *b, GV_DistanceType type) {
 }
 
 float distance_scalar(const GV_Vector *a, const GV_Vector *b, GV_DistanceType type) {
-    if (a == NULL || b == NULL || a->data == NULL || b->data == NULL) {
-        return -1.0f;
-    }
-    if (a->dimension != b->dimension || a->dimension == 0) {
-        return -1.0f;
-    }
+    if (!dist_args_ok(a, b)) return -1.0f;
 
     switch (type) {
         case GV_DISTANCE_EUCLIDEAN:
@@ -659,6 +741,66 @@ static void dist_batch4_fallback(const float *q,
     cv.data = (float *)v2; *d2 = distance(&qv, &cv, type);
     cv.data = (float *)v3; *d3 = distance(&qv, &cv, type);
 }
+
+#if defined(__AVX2__) || defined(GV_HAVE_NEON)
+/**
+ * @brief Fold the [i, dim) scalar remainder of the four candidates into the
+ *        sums the SIMD body accumulated; COSINE also folds the query and
+ *        candidate norms. Shared by the AVX2 and NEON batch bodies.
+ */
+static void batch4_scalar_tail(const float *q,
+                               const float *v0, const float *v1,
+                               const float *v2, const float *v3,
+                               size_t i, size_t dim, GV_DistanceType type,
+                               float *s0, float *s1, float *s2, float *s3,
+                               float *q2, float *c0, float *c1, float *c2, float *c3) {
+    for (; i < dim; ++i) {
+        float x = q[i], y0 = v0[i], y1 = v1[i], y2 = v2[i], y3 = v3[i];
+        if (type == GV_DISTANCE_EUCLIDEAN) {
+            *s0 += (x-y0)*(x-y0); *s1 += (x-y1)*(x-y1); *s2 += (x-y2)*(x-y2); *s3 += (x-y3)*(x-y3);
+        } else if (type == GV_DISTANCE_MANHATTAN) {
+            *s0 += fabsf(x-y0); *s1 += fabsf(x-y1); *s2 += fabsf(x-y2); *s3 += fabsf(x-y3);
+        } else {
+            *s0 += x*y0; *s1 += x*y1; *s2 += x*y2; *s3 += x*y3;
+            if (type == GV_DISTANCE_COSINE) {
+                *q2 += x*x; *c0 += y0*y0; *c1 += y1*y1; *c2 += y2*y2; *c3 += y3*y3;
+            }
+        }
+    }
+}
+
+/**
+ * @brief Convert the four accumulated sums (plus norms for COSINE) into the
+ *        final per-candidate distances. Shared by the AVX2 and NEON batch bodies.
+ */
+static void batch4_finalize(GV_DistanceType type,
+                            float s0, float s1, float s2, float s3,
+                            float q2, float c0, float c1, float c2, float c3,
+                            float *d0, float *d1, float *d2, float *d3) {
+    switch (type) {
+    case GV_DISTANCE_MANHATTAN:
+        *d0 = s0; *d1 = s1; *d2 = s2; *d3 = s3;
+        return;
+    case GV_DISTANCE_DOT_PRODUCT:
+        *d0 = -s0; *d1 = -s1; *d2 = -s2; *d3 = -s3;
+        return;
+    case GV_DISTANCE_COSINE: {
+        float nqn = sqrtf(q2);
+        float e0 = nqn * sqrtf(c0), e1 = nqn * sqrtf(c1);
+        float e2 = nqn * sqrtf(c2), e3 = nqn * sqrtf(c3);
+        *d0 = (e0 == 0.0f) ? 1.0f : 1.0f - s0/e0;
+        *d1 = (e1 == 0.0f) ? 1.0f : 1.0f - s1/e1;
+        *d2 = (e2 == 0.0f) ? 1.0f : 1.0f - s2/e2;
+        *d3 = (e3 == 0.0f) ? 1.0f : 1.0f - s3/e3;
+        return;
+    }
+    case GV_DISTANCE_EUCLIDEAN:
+    default:
+        *d0 = sqrtf(s0); *d1 = sqrtf(s1); *d2 = sqrtf(s2); *d3 = sqrtf(s3);
+        return;
+    }
+}
+#endif /* __AVX2__ || GV_HAVE_NEON */
 
 void gv_distance_batch4(const float *q,
                         const float *v0, const float *v1,
@@ -725,42 +867,59 @@ void gv_distance_batch4(const float *q,
         q2 = hsum256_ps(nq);
         c0 = hsum256_ps(n0); c1 = hsum256_ps(n1); c2 = hsum256_ps(n2); c3 = hsum256_ps(n3);
     }
-    for (; i < dim; ++i) { /* scalar tail (dim % 8) */
-        float x = q[i], y0 = v0[i], y1 = v1[i], y2 = v2[i], y3 = v3[i];
-        if (type == GV_DISTANCE_EUCLIDEAN) {
-            s0 += (x-y0)*(x-y0); s1 += (x-y1)*(x-y1); s2 += (x-y2)*(x-y2); s3 += (x-y3)*(x-y3);
-        } else if (type == GV_DISTANCE_MANHATTAN) {
-            s0 += fabsf(x-y0); s1 += fabsf(x-y1); s2 += fabsf(x-y2); s3 += fabsf(x-y3);
-        } else {
-            s0 += x*y0; s1 += x*y1; s2 += x*y2; s3 += x*y3;
-            if (type == GV_DISTANCE_COSINE) {
-                q2 += x*x; c0 += y0*y0; c1 += y1*y1; c2 += y2*y2; c3 += y3*y3;
-            }
-        }
-    }
+    batch4_scalar_tail(q, v0, v1, v2, v3, i, dim, type,
+                       &s0, &s1, &s2, &s3, &q2, &c0, &c1, &c2, &c3);
+    batch4_finalize(type, s0, s1, s2, s3, q2, c0, c1, c2, c3, d0, d1, d2, d3);
+    return;
+#endif
+#ifdef GV_HAVE_NEON
+    {
+        unsigned feats = dist_features();
+        int supported = (type == GV_DISTANCE_EUCLIDEAN || type == GV_DISTANCE_DOT_PRODUCT ||
+                         type == GV_DISTANCE_COSINE || type == GV_DISTANCE_MANHATTAN);
+        if ((feats & GV_CPU_FEATURE_NEON) && dim >= 4 && supported) {
+            float32x4_t a0 = vdupq_n_f32(0.0f), a1 = vdupq_n_f32(0.0f);
+            float32x4_t a2 = vdupq_n_f32(0.0f), a3 = vdupq_n_f32(0.0f);
+            float32x4_t nq = vdupq_n_f32(0.0f);
+            float32x4_t n0 = vdupq_n_f32(0.0f), n1 = vdupq_n_f32(0.0f);
+            float32x4_t n2 = vdupq_n_f32(0.0f), n3 = vdupq_n_f32(0.0f);
 
-    switch (type) {
-    case GV_DISTANCE_EUCLIDEAN:
-        *d0 = sqrtf(s0); *d1 = sqrtf(s1); *d2 = sqrtf(s2); *d3 = sqrtf(s3);
-        return;
-    case GV_DISTANCE_MANHATTAN:
-        *d0 = s0; *d1 = s1; *d2 = s2; *d3 = s3;
-        return;
-    case GV_DISTANCE_DOT_PRODUCT:
-        *d0 = -s0; *d1 = -s1; *d2 = -s2; *d3 = -s3;
-        return;
-    case GV_DISTANCE_COSINE: {
-        float nqn = sqrtf(q2);
-        float e0 = nqn * sqrtf(c0), e1 = nqn * sqrtf(c1);
-        float e2 = nqn * sqrtf(c2), e3 = nqn * sqrtf(c3);
-        *d0 = (e0 == 0.0f) ? 1.0f : 1.0f - s0/e0;
-        *d1 = (e1 == 0.0f) ? 1.0f : 1.0f - s1/e1;
-        *d2 = (e2 == 0.0f) ? 1.0f : 1.0f - s2/e2;
-        *d3 = (e3 == 0.0f) ? 1.0f : 1.0f - s3/e3;
-        return;
-    }
-    default:
-        break;
+            size_t i = 0;
+            for (; i + 4 <= dim; i += 4) {
+                float32x4_t vq = vld1q_f32(q + i);
+                float32x4_t w0 = vld1q_f32(v0 + i), w1 = vld1q_f32(v1 + i);
+                float32x4_t w2 = vld1q_f32(v2 + i), w3 = vld1q_f32(v3 + i);
+                if (type == GV_DISTANCE_EUCLIDEAN) {
+                    float32x4_t e0 = vsubq_f32(vq, w0), e1 = vsubq_f32(vq, w1);
+                    float32x4_t e2 = vsubq_f32(vq, w2), e3 = vsubq_f32(vq, w3);
+                    a0 = vfmaq_f32(a0, e0, e0); a1 = vfmaq_f32(a1, e1, e1);
+                    a2 = vfmaq_f32(a2, e2, e2); a3 = vfmaq_f32(a3, e3, e3);
+                } else if (type == GV_DISTANCE_MANHATTAN) {
+                    a0 = vaddq_f32(a0, vabsq_f32(vsubq_f32(vq, w0)));
+                    a1 = vaddq_f32(a1, vabsq_f32(vsubq_f32(vq, w1)));
+                    a2 = vaddq_f32(a2, vabsq_f32(vsubq_f32(vq, w2)));
+                    a3 = vaddq_f32(a3, vabsq_f32(vsubq_f32(vq, w3)));
+                } else {
+                    a0 = vfmaq_f32(a0, vq, w0); a1 = vfmaq_f32(a1, vq, w1);
+                    a2 = vfmaq_f32(a2, vq, w2); a3 = vfmaq_f32(a3, vq, w3);
+                    if (type == GV_DISTANCE_COSINE) {
+                        nq = vfmaq_f32(nq, vq, vq);
+                        n0 = vfmaq_f32(n0, w0, w0); n1 = vfmaq_f32(n1, w1, w1);
+                        n2 = vfmaq_f32(n2, w2, w2); n3 = vfmaq_f32(n3, w3, w3);
+                    }
+                }
+            }
+            float s0 = vaddvq_f32(a0), s1 = vaddvq_f32(a1), s2 = vaddvq_f32(a2), s3 = vaddvq_f32(a3);
+            float q2 = 0, c0 = 0, c1 = 0, c2 = 0, c3 = 0;
+            if (type == GV_DISTANCE_COSINE) {
+                q2 = vaddvq_f32(nq);
+                c0 = vaddvq_f32(n0); c1 = vaddvq_f32(n1); c2 = vaddvq_f32(n2); c3 = vaddvq_f32(n3);
+            }
+            batch4_scalar_tail(q, v0, v1, v2, v3, i, dim, type,
+                               &s0, &s1, &s2, &s3, &q2, &c0, &c1, &c2, &c3);
+            batch4_finalize(type, s0, s1, s2, s3, q2, c0, c1, c2, c3, d0, d1, d2, d3);
+            return;
+        }
     }
 #endif
     dist_batch4_fallback(q, v0, v1, v2, v3, dim, type, d0, d1, d2, d3);

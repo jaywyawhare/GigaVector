@@ -44,6 +44,12 @@ void ivfsq8_destroy(void *index);
 
 size_t ivfsq8_count(const void *index);
 
+/** @brief Set the number of lists probed at search time (no clamping). */
+void ivfsq8_set_nprobe(void *index, size_t nprobe);
+
+/** @brief Get the number of lists probed at search time; 0 if index is NULL. */
+size_t ivfsq8_get_nprobe(const void *index);
+
 int ivfsq8_delete(void *index, size_t entry_index);
 
 int ivfsq8_update(void *index, size_t entry_index, const float *new_data, size_t dimension);

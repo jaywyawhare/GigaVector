@@ -92,6 +92,12 @@ void ivfflat_destroy(void *index);
  */
 size_t ivfflat_count(const void *index);
 
+/** @brief Set the number of lists probed at search time (no clamping). */
+void ivfflat_set_nprobe(void *index, size_t nprobe);
+
+/** @brief Get the number of lists probed at search time; 0 if index is NULL. */
+size_t ivfflat_get_nprobe(const void *index);
+
 /**
  * @brief Delete an item.
  *

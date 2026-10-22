@@ -175,8 +175,12 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang|AppleClang" AND NOT WIN32)
         set_source_files_properties(${GV_SIMD_SRCS} PROPERTIES
             COMPILE_FLAGS "-mavx2 -mfma")
         message(STATUS "  SIMD (distance + hnsw): AVX2 enabled")
+    elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
+        # On aarch64 (e.g. Apple Silicon) NEON is baseline - no extra flag needed;
+        # the distance + hnsw kernels pick it up via their __ARM_NEON code paths.
+        message(STATUS "  SIMD (distance + hnsw): ARM NEON enabled")
     else()
-        message(STATUS "  SIMD: Scalar fallback (no AVX2)")
+        message(STATUS "  SIMD: Scalar fallback (no AVX2/NEON)")
     endif()
 endif()
 

@@ -22,14 +22,6 @@ static const char *schema_type_to_string(GV_SchemaFieldType type) {
     }
 }
 
-__attribute__((unused))
-static GV_SchemaFieldType schema_type_from_string(const char *s) {
-    if (strcmp(s, "int") == 0)    return GV_SCHEMA_INT;
-    if (strcmp(s, "float") == 0)  return GV_SCHEMA_FLOAT;
-    if (strcmp(s, "bool") == 0)   return GV_SCHEMA_BOOL;
-    return GV_SCHEMA_STRING;
-}
-
 static int schema_find_field_index(const GV_Schema *schema, const char *name) {
     if (!schema || !name) return -1;
     for (size_t i = 0; i < schema->field_count; i++) {

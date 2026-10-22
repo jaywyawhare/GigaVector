@@ -2646,24 +2646,6 @@ typedef struct {
     /* ... rest not needed */
 } GV_HNSWIndexPartial;
 
-typedef struct {
-    size_t dimension;
-    GV_IVFFlatConfig config;
-    /* ... rest not needed */
-} GV_IVFFlatIndexPartial;
-
-typedef struct {
-    size_t dimension;
-    GV_IVFSQ8Config config;
-    /* ... rest not needed */
-} GV_IVFSQ8IndexPartial;
-
-typedef struct {
-    size_t dimension;
-    GV_IVFTurboQuantConfig config;
-    /* ... rest not needed */
-} GV_IVFTurboQuantIndexPartial;
-
 /*
  * Serializes the save/set/search/restore sequence that temporarily overrides
  * shared index params (HNSW efSearch, IVF nprobe) for one query. We can't wrap
@@ -2696,13 +2678,23 @@ int db_search_with_params(const GV_Database *db, const float *query_data, size_t
         return r;
     }
 
-    if (db->index_type == GV_INDEX_TYPE_IVFFLAT && params->nprobe > 0 && db->hnsw_index != NULL) {
-        GV_IVFFlatIndexPartial *idx = (GV_IVFFlatIndexPartial *)db->hnsw_index;
+    if ((db->index_type == GV_INDEX_TYPE_IVFFLAT ||
+         db->index_type == GV_INDEX_TYPE_IVFSQ8 ||
+         db->index_type == GV_INDEX_TYPE_IVFTURBOQUANT) &&
+        params->nprobe > 0 && db->hnsw_index != NULL) {
+        size_t (*get_np)(const void *) =
+            db->index_type == GV_INDEX_TYPE_IVFFLAT ? ivfflat_get_nprobe :
+            db->index_type == GV_INDEX_TYPE_IVFSQ8  ? ivfsq8_get_nprobe  :
+                                                      ivfturboquant_get_nprobe;
+        void (*set_np)(void *, size_t) =
+            db->index_type == GV_INDEX_TYPE_IVFFLAT ? ivfflat_set_nprobe :
+            db->index_type == GV_INDEX_TYPE_IVFSQ8  ? ivfsq8_set_nprobe  :
+                                                      ivfturboquant_set_nprobe;
         pthread_mutex_lock(&g_search_params_mutex);
-        size_t saved_nprobe = idx->config.nprobe;
-        idx->config.nprobe = params->nprobe;
+        size_t saved_nprobe = get_np(db->hnsw_index);
+        set_np(db->hnsw_index, params->nprobe);
         int r = db_search(db, query_data, k, results, distance_type);
-        idx->config.nprobe = saved_nprobe;
+        set_np(db->hnsw_index, saved_nprobe);
         pthread_mutex_unlock(&g_search_params_mutex);
         return r;
     }
@@ -2714,28 +2706,6 @@ int db_search_with_params(const GV_Database *db, const float *query_data, size_t
         ivfdisk_set_nprobe(idx, params->nprobe);
         int r = db_search(db, query_data, k, results, distance_type);
         ivfdisk_set_nprobe(idx, saved_nprobe);
-        pthread_mutex_unlock(&g_search_params_mutex);
-        return r;
-    }
-
-    if (db->index_type == GV_INDEX_TYPE_IVFSQ8 && params->nprobe > 0 && db->hnsw_index != NULL) {
-        GV_IVFSQ8IndexPartial *idx = (GV_IVFSQ8IndexPartial *)db->hnsw_index;
-        pthread_mutex_lock(&g_search_params_mutex);
-        size_t saved_nprobe = idx->config.nprobe;
-        idx->config.nprobe = params->nprobe;
-        int r = db_search(db, query_data, k, results, distance_type);
-        idx->config.nprobe = saved_nprobe;
-        pthread_mutex_unlock(&g_search_params_mutex);
-        return r;
-    }
-
-    if (db->index_type == GV_INDEX_TYPE_IVFTURBOQUANT && params->nprobe > 0 && db->hnsw_index != NULL) {
-        GV_IVFTurboQuantIndexPartial *idx = (GV_IVFTurboQuantIndexPartial *)db->hnsw_index;
-        pthread_mutex_lock(&g_search_params_mutex);
-        size_t saved_nprobe = idx->config.nprobe;
-        idx->config.nprobe = params->nprobe;
-        int r = db_search(db, query_data, k, results, distance_type);
-        idx->config.nprobe = saved_nprobe;
         pthread_mutex_unlock(&g_search_params_mutex);
         return r;
     }

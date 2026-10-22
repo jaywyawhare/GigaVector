@@ -18,7 +18,8 @@ typedef enum {
     GV_CPU_FEATURE_AVX = 1 << 5,
     GV_CPU_FEATURE_AVX2 = 1 << 6,
     GV_CPU_FEATURE_FMA = 1 << 7,
-    GV_CPU_FEATURE_AVX512F = 1 << 8
+    GV_CPU_FEATURE_AVX512F = 1 << 8,
+    GV_CPU_FEATURE_NEON = 1 << 9
 } GV_CPUFeature;
 
 /**

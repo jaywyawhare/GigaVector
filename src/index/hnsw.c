@@ -12,6 +12,10 @@
 #elif defined(__SSE4_2__)
 #include <nmmintrin.h>
 #endif
+#if defined(__aarch64__) && defined(__ARM_NEON)
+#include <arm_neon.h>
+#define GV_HNSW_HAVE_NEON 1
+#endif
 
 #include "index/hnsw.h"
 #include "search/distance.h"
@@ -217,6 +221,43 @@ static inline float hnsw_dot_avx2(const float *a, const float *b, size_t dim) {
 }
 #endif
 
+#ifdef GV_HNSW_HAVE_NEON
+static inline float hnsw_l2_neon(const float *a, const float *b, size_t dim) {
+    float32x4_t acc = vdupq_n_f32(0.0f);
+    size_t i = 0;
+    for (; i + 4 <= dim; i += 4) {
+        float32x4_t diff = vsubq_f32(vld1q_f32(a + i), vld1q_f32(b + i));
+        acc = vfmaq_f32(acc, diff, diff);
+    }
+    float sum = vaddvq_f32(acc);
+    for (; i < dim; ++i) { float d = a[i] - b[i]; sum += d * d; }
+    return sum;
+}
+
+static inline float hnsw_dot_neon(const float *a, const float *b, size_t dim) {
+    float32x4_t acc = vdupq_n_f32(0.0f);
+    size_t i = 0;
+    for (; i + 4 <= dim; i += 4) {
+        acc = vfmaq_f32(acc, vld1q_f32(a + i), vld1q_f32(b + i));
+    }
+    float sum = vaddvq_f32(acc);
+    for (; i < dim; ++i) sum += a[i] * b[i];
+    return sum;
+}
+#endif
+
+/**
+ * @brief NEON is baseline on aarch64, so availability is implied by the compile
+ *        guard; mirrors hnsw_avx2_ok() for a uniform call site.
+ */
+static int hnsw_neon_ok(void) {
+#ifdef GV_HNSW_HAVE_NEON
+    return 1;
+#else
+    return 0;
+#endif
+}
+
 /* Cached runtime AVX2+FMA availability (0/1); -1 = not yet probed. */
 static int hnsw_avx2_ok(void) {
 #ifdef __AVX2__
@@ -231,12 +272,17 @@ static int hnsw_avx2_ok(void) {
 static float hnsw_raw_distance(const float *a, const float *b, size_t dim,
                                    GV_DistanceType dtype) {
     int use_avx = hnsw_avx2_ok() && dim >= 8; /* compile-guarded impls only exist under __AVX2__ */
+    int use_neon = hnsw_neon_ok() && dim >= 4;
     (void)use_avx;
+    (void)use_neon;
     switch (dtype) {
     case GV_DISTANCE_EUCLIDEAN:
     default:
 #ifdef __AVX2__
         if (use_avx) return hnsw_l2_avx2(a, b, dim);
+#endif
+#ifdef GV_HNSW_HAVE_NEON
+        if (use_neon) return hnsw_l2_neon(a, b, dim);
 #endif
         return hnsw_l2_scalar(a, b, dim);
     case GV_DISTANCE_COSINE: {
@@ -258,6 +304,21 @@ static float hnsw_raw_distance(const float *a, const float *b, size_t dim,
             for (; i < dim; ++i) { dot += a[i]*b[i]; na += a[i]*a[i]; nb += b[i]*b[i]; }
         } else
 #endif
+#ifdef GV_HNSW_HAVE_NEON
+        if (use_neon) {
+            float32x4_t vdot = vdupq_n_f32(0.0f), vna = vdupq_n_f32(0.0f), vnb = vdupq_n_f32(0.0f);
+            size_t i = 0;
+            for (; i + 4 <= dim; i += 4) {
+                float32x4_t va = vld1q_f32(a + i);
+                float32x4_t vb = vld1q_f32(b + i);
+                vdot = vfmaq_f32(vdot, va, vb);
+                vna = vfmaq_f32(vna, va, va);
+                vnb = vfmaq_f32(vnb, vb, vb);
+            }
+            dot += vaddvq_f32(vdot); na += vaddvq_f32(vna); nb += vaddvq_f32(vnb);
+            for (; i < dim; ++i) { dot += a[i]*b[i]; na += a[i]*a[i]; nb += b[i]*b[i]; }
+        } else
+#endif
         { for (size_t i = 0; i < dim; ++i) { dot += a[i]*b[i]; na += a[i]*a[i]; nb += b[i]*b[i]; } }
         float denom = sqrtf(na) * sqrtf(nb);
         return (denom > 0.0f) ? (1.0f - dot / denom) : 1.0f;
@@ -265,6 +326,9 @@ static float hnsw_raw_distance(const float *a, const float *b, size_t dim,
     case GV_DISTANCE_DOT_PRODUCT:
 #ifdef __AVX2__
         if (use_avx) return -hnsw_dot_avx2(a, b, dim);
+#endif
+#ifdef GV_HNSW_HAVE_NEON
+        if (use_neon) return -hnsw_dot_neon(a, b, dim);
 #endif
         { float d = 0; for (size_t i = 0; i < dim; ++i) d += a[i]*b[i]; return -d; }
     case GV_DISTANCE_MANHATTAN: {
@@ -305,6 +369,29 @@ static inline void hnsw_l2_batch4(const float *x,
         *d1 = t1[0]+t1[1]+t1[2]+t1[3]+t1[4]+t1[5]+t1[6]+t1[7];
         *d2 = t2[0]+t2[1]+t2[2]+t2[3]+t2[4]+t2[5]+t2[6]+t2[7];
         *d3 = t3[0]+t3[1]+t3[2]+t3[3]+t3[4]+t3[5]+t3[6]+t3[7];
+        for (; i < dim; ++i) {
+            float q0 = x[i]-y0[i], q1 = x[i]-y1[i], q2 = x[i]-y2[i], q3 = x[i]-y3[i];
+            *d0 += q0*q0; *d1 += q1*q1; *d2 += q2*q2; *d3 += q3*q3;
+        }
+        return;
+    }
+#endif
+#ifdef GV_HNSW_HAVE_NEON
+    if (hnsw_neon_ok() && dim >= 4) {
+        float32x4_t acc0 = vdupq_n_f32(0.0f), acc1 = vdupq_n_f32(0.0f);
+        float32x4_t acc2 = vdupq_n_f32(0.0f), acc3 = vdupq_n_f32(0.0f);
+        size_t i = 0;
+        for (; i + 4 <= dim; i += 4) {
+            float32x4_t vx = vld1q_f32(x + i);
+            float32x4_t v0 = vsubq_f32(vx, vld1q_f32(y0 + i));
+            float32x4_t v1 = vsubq_f32(vx, vld1q_f32(y1 + i));
+            float32x4_t v2 = vsubq_f32(vx, vld1q_f32(y2 + i));
+            float32x4_t v3 = vsubq_f32(vx, vld1q_f32(y3 + i));
+            acc0 = vfmaq_f32(acc0, v0, v0); acc1 = vfmaq_f32(acc1, v1, v1);
+            acc2 = vfmaq_f32(acc2, v2, v2); acc3 = vfmaq_f32(acc3, v3, v3);
+        }
+        *d0 = vaddvq_f32(acc0); *d1 = vaddvq_f32(acc1);
+        *d2 = vaddvq_f32(acc2); *d3 = vaddvq_f32(acc3);
         for (; i < dim; ++i) {
             float q0 = x[i]-y0[i], q1 = x[i]-y1[i], q2 = x[i]-y2[i], q3 = x[i]-y3[i];
             *d0 += q0*q0; *d1 += q1*q1; *d2 += q2*q2; *d3 += q3*q3;
@@ -357,6 +444,22 @@ static inline void hnsw_dist_batch4(const float *x,
             for (; i < dim; ++i) { p0 += x[i]*y0[i]; p1 += x[i]*y1[i]; p2 += x[i]*y2[i]; p3 += x[i]*y3[i]; }
         } else
 #endif
+#ifdef GV_HNSW_HAVE_NEON
+        if (hnsw_neon_ok() && dim >= 4) {
+            float32x4_t a0 = vdupq_n_f32(0.0f), a1 = vdupq_n_f32(0.0f);
+            float32x4_t a2 = vdupq_n_f32(0.0f), a3 = vdupq_n_f32(0.0f);
+            size_t i = 0;
+            for (; i + 4 <= dim; i += 4) {
+                float32x4_t vx = vld1q_f32(x + i);
+                a0 = vfmaq_f32(a0, vx, vld1q_f32(y0 + i));
+                a1 = vfmaq_f32(a1, vx, vld1q_f32(y1 + i));
+                a2 = vfmaq_f32(a2, vx, vld1q_f32(y2 + i));
+                a3 = vfmaq_f32(a3, vx, vld1q_f32(y3 + i));
+            }
+            p0 += vaddvq_f32(a0); p1 += vaddvq_f32(a1); p2 += vaddvq_f32(a2); p3 += vaddvq_f32(a3);
+            for (; i < dim; ++i) { p0 += x[i]*y0[i]; p1 += x[i]*y1[i]; p2 += x[i]*y2[i]; p3 += x[i]*y3[i]; }
+        } else
+#endif
         { for (size_t i = 0; i < dim; ++i) { p0 += x[i]*y0[i]; p1 += x[i]*y1[i]; p2 += x[i]*y2[i]; p3 += x[i]*y3[i]; } }
         *d0 = -p0; *d1 = -p1; *d2 = -p2; *d3 = -p3;
         return;
@@ -391,6 +494,35 @@ static inline void hnsw_dist_batch4(const float *x,
             _mm256_storeu_ps(a, vn1); for (int j=0;j<8;++j) n1 += a[j];
             _mm256_storeu_ps(a, vn2); for (int j=0;j<8;++j) n2 += a[j];
             _mm256_storeu_ps(a, vn3); for (int j=0;j<8;++j) n3 += a[j];
+            for (; i < dim; ++i) {
+                float vx = x[i];
+                dt0 += vx*y0[i]; dt1 += vx*y1[i]; dt2 += vx*y2[i]; dt3 += vx*y3[i];
+                nx += vx*vx; n0 += y0[i]*y0[i]; n1 += y1[i]*y1[i]; n2 += y2[i]*y2[i]; n3 += y3[i]*y3[i];
+            }
+        } else
+#endif
+#ifdef GV_HNSW_HAVE_NEON
+        if (hnsw_neon_ok() && dim >= 4) {
+            float32x4_t vdt0 = vdupq_n_f32(0.0f), vdt1 = vdupq_n_f32(0.0f);
+            float32x4_t vdt2 = vdupq_n_f32(0.0f), vdt3 = vdupq_n_f32(0.0f);
+            float32x4_t vnx = vdupq_n_f32(0.0f), vn0 = vdupq_n_f32(0.0f);
+            float32x4_t vn1 = vdupq_n_f32(0.0f), vn2 = vdupq_n_f32(0.0f), vn3 = vdupq_n_f32(0.0f);
+            size_t i = 0;
+            for (; i + 4 <= dim; i += 4) {
+                float32x4_t vx = vld1q_f32(x + i);
+                float32x4_t w0 = vld1q_f32(y0 + i), w1 = vld1q_f32(y1 + i);
+                float32x4_t w2 = vld1q_f32(y2 + i), w3 = vld1q_f32(y3 + i);
+                vdt0 = vfmaq_f32(vdt0, vx, w0); vdt1 = vfmaq_f32(vdt1, vx, w1);
+                vdt2 = vfmaq_f32(vdt2, vx, w2); vdt3 = vfmaq_f32(vdt3, vx, w3);
+                vnx = vfmaq_f32(vnx, vx, vx);
+                vn0 = vfmaq_f32(vn0, w0, w0); vn1 = vfmaq_f32(vn1, w1, w1);
+                vn2 = vfmaq_f32(vn2, w2, w2); vn3 = vfmaq_f32(vn3, w3, w3);
+            }
+            dt0 += vaddvq_f32(vdt0); dt1 += vaddvq_f32(vdt1);
+            dt2 += vaddvq_f32(vdt2); dt3 += vaddvq_f32(vdt3);
+            nx += vaddvq_f32(vnx);
+            n0 += vaddvq_f32(vn0); n1 += vaddvq_f32(vn1);
+            n2 += vaddvq_f32(vn2); n3 += vaddvq_f32(vn3);
             for (; i < dim; ++i) {
                 float vx = x[i];
                 dt0 += vx*y0[i]; dt1 += vx*y1[i]; dt2 += vx*y2[i]; dt3 += vx*y3[i];
@@ -434,6 +566,25 @@ static inline void hnsw_dist_batch4(const float *x,
             _mm256_storeu_ps(t0, a0); _mm256_storeu_ps(t1, a1);
             _mm256_storeu_ps(t2, a2); _mm256_storeu_ps(t3, a3);
             for (int j = 0; j < 8; ++j) { s0 += t0[j]; s1 += t1[j]; s2 += t2[j]; s3 += t3[j]; }
+            for (; i < dim; ++i) {
+                float vx = x[i];
+                s0 += fabsf(vx-y0[i]); s1 += fabsf(vx-y1[i]); s2 += fabsf(vx-y2[i]); s3 += fabsf(vx-y3[i]);
+            }
+        } else
+#endif
+#ifdef GV_HNSW_HAVE_NEON
+        if (hnsw_neon_ok() && dim >= 4) {
+            float32x4_t a0 = vdupq_n_f32(0.0f), a1 = vdupq_n_f32(0.0f);
+            float32x4_t a2 = vdupq_n_f32(0.0f), a3 = vdupq_n_f32(0.0f);
+            size_t i = 0;
+            for (; i + 4 <= dim; i += 4) {
+                float32x4_t vx = vld1q_f32(x + i);
+                a0 = vaddq_f32(a0, vabsq_f32(vsubq_f32(vx, vld1q_f32(y0 + i))));
+                a1 = vaddq_f32(a1, vabsq_f32(vsubq_f32(vx, vld1q_f32(y1 + i))));
+                a2 = vaddq_f32(a2, vabsq_f32(vsubq_f32(vx, vld1q_f32(y2 + i))));
+                a3 = vaddq_f32(a3, vabsq_f32(vsubq_f32(vx, vld1q_f32(y3 + i))));
+            }
+            s0 += vaddvq_f32(a0); s1 += vaddvq_f32(a1); s2 += vaddvq_f32(a2); s3 += vaddvq_f32(a3);
             for (; i < dim; ++i) {
                 float vx = x[i];
                 s0 += fabsf(vx-y0[i]); s1 += fabsf(vx-y1[i]); s2 += fabsf(vx-y2[i]); s3 += fabsf(vx-y3[i]);

@@ -567,6 +567,14 @@ size_t ivfsq8_count(const void *index) {
     return count;
 }
 
+void ivfsq8_set_nprobe(void *index, size_t nprobe) {
+    if (index) ((GV_IVFSQ8Index *)index)->config.nprobe = nprobe;
+}
+
+size_t ivfsq8_get_nprobe(const void *index) {
+    return index ? ((const GV_IVFSQ8Index *)index)->config.nprobe : 0;
+}
+
 int ivfsq8_delete(void *index, size_t entry_index) {
     if (!index) {
         return -1;

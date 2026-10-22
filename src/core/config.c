@@ -88,6 +88,10 @@ unsigned int cpu_detect_features(void) {
     }
 #endif /* GV_ARCH_X86 */
 
+#if defined(__aarch64__) && defined(__ARM_NEON)
+    features |= GV_CPU_FEATURE_NEON;
+#endif
+
     __atomic_store_n(&s_features, features, __ATOMIC_RELEASE);
     return features;
 }
