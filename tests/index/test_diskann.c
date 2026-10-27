@@ -455,12 +455,6 @@ static int test_diskann_ooc_recall(void) {
     /* Deletes still work out-of-core (tombstone in the retained node array). */
     ASSERT(diskann_delete(idx, 0) == 0, "ooc delete failed");
 
-    /* Incremental insert is rejected once the graph is flushed. */
-    float extra[LARGE_DIM];
-    fill_vector(extra, LARGE_DIM, 999.0f);
-    ASSERT(diskann_insert(idx, extra, LARGE_DIM) == -1,
-           "ooc insert rejected after flush");
-
     diskann_destroy(idx);
     remove(graph_path);
     remove(data_path);
@@ -612,6 +606,58 @@ static int test_diskann_ooc_rebuild(void) {
     return 0;
 }
 
+/* Incremental insert after an out-of-core flush: the new node's adjacency and
+ * its neighbours' back-edges are patched on disk (no RAM graph). The inserted
+ * vector must then be findable as the nearest neighbour of itself. */
+static int test_diskann_ooc_insert(void) {
+    char data_path[512];
+    gv_test_make_temp_path(data_path, sizeof(data_path), "gv_diskann_ooc_ins", ".bin");
+
+    GV_DiskANNConfig config;
+    diskann_config_init(&config);
+    config.data_path = data_path;
+    config.graph_on_disk = 1;
+
+    GV_DiskANNIndex *idx = diskann_create(LARGE_DIM, &config);
+    ASSERT(idx != NULL, "ooc ins create failed");
+
+    float data[LARGE_COUNT * LARGE_DIM];
+    generate_random_batch(data, LARGE_COUNT, LARGE_DIM);
+    ASSERT(diskann_build(idx, data, LARGE_COUNT, LARGE_DIM) == 0, "ooc ins build failed");
+
+    /* Insert a fresh vector into the already-flushed index. */
+    float extra[LARGE_DIM];
+    generate_random_batch(extra, 1, LARGE_DIM);
+    ASSERT(diskann_insert(idx, extra, LARGE_DIM) == 0, "ooc insert after flush failed");
+    ASSERT(diskann_count(idx) == LARGE_COUNT + 1, "ooc count grows after insert");
+
+    /* The graph file must have grown to hold the new node's slot. */
+    char graph_path[600];
+    snprintf(graph_path, sizeof(graph_path), "%s.graph", data_path);
+    struct stat st;
+    ASSERT(stat(graph_path, &st) == 0, "graph file present after ooc insert");
+    size_t expected = (size_t)(LARGE_COUNT + 1) * (size_t)(1 + 64) * sizeof(uint32_t);
+    ASSERT((size_t)st.st_size == expected, "graph grew by one slot after insert");
+
+    /* Query with the inserted vector itself: it should come back top-1. */
+    GV_DiskANNResult results[5];
+    memset(results, 0, sizeof(results));
+    int found = diskann_search(idx, extra, LARGE_DIM, 5, results);
+    ASSERT(found > 0, "search after ooc insert returned results");
+    ASSERT(results[0].index == (size_t)LARGE_COUNT, "inserted vector is its own NN");
+    ASSERT(results[0].distance < 1e-4f, "inserted vector distance ~0");
+
+    /* A second insert must keep working too. */
+    generate_random_batch(extra, 1, LARGE_DIM);
+    ASSERT(diskann_insert(idx, extra, LARGE_DIM) == 0, "second ooc insert failed");
+    ASSERT(diskann_count(idx) == LARGE_COUNT + 2, "ooc count grows after 2nd insert");
+
+    diskann_destroy(idx);
+    remove(graph_path);
+    remove(data_path);
+    return 0;
+}
+
 /* ---------- runner ---------- */
 
 typedef int (*test_fn)(void);
@@ -634,6 +680,7 @@ int main(void) {
         {"Testing diskann out-of-core save/load...", test_diskann_ooc_save_load},
         {"Testing diskann out-of-core load from RAM save...", test_diskann_ooc_load_from_ram_save},
         {"Testing diskann out-of-core rebuild...",    test_diskann_ooc_rebuild},
+        {"Testing diskann out-of-core insert...",     test_diskann_ooc_insert},
     };
     int n = sizeof(tests) / sizeof(tests[0]);
     int passed = 0;

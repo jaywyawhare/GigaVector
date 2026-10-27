@@ -174,6 +174,8 @@ static int diskann_graph_open(GV_DiskANNIndex *index);
 static int diskann_graph_write_node(GV_DiskANNIndex *index, size_t node_id);
 static int diskann_graph_read_node(const GV_DiskANNIndex *index, size_t node_id,
                                    uint32_t *slot_buf, size_t *out_ids, size_t *out_count);
+static int diskann_graph_append_neighbor(GV_DiskANNIndex *index, size_t node_id,
+                                         size_t new_id, uint32_t *slot_buf);
 static int diskann_flush_graph(GV_DiskANNIndex *index);
 static const size_t *diskann_node_neighbors(const GV_DiskANNIndex *index, size_t node_id,
                                             uint32_t *slot_buf, size_t *scratch, size_t *out_count);
@@ -777,6 +779,38 @@ static int diskann_graph_read_node(const GV_DiskANNIndex *index, size_t node_id,
 
     ((GV_DiskANNIndex *)index)->disk_reads++;
     return 0;
+}
+
+/**
+ * @brief Append a neighbour id to a node's on-disk adjacency slot (no-op if present or full).
+ * @param index Index instance.
+ * @param node_id Node whose slot is updated.
+ * @param new_id Neighbour id to append.
+ * @param slot_buf Caller-owned scratch of (1 + max_degree) uint32_t.
+ * @return 0 on success, -1 on error.
+ */
+static int diskann_graph_append_neighbor(GV_DiskANNIndex *index, size_t node_id,
+                                         size_t new_id, uint32_t *slot_buf) {
+    if (index->graph_fd < 0 || index->graph_slot_bytes == 0) return -1;
+
+    ssize_t got = diskann_pread_all(index->graph_fd, slot_buf, index->graph_slot_bytes,
+                                    (off_t)(node_id * index->graph_slot_bytes));
+    if (got < 0) return -1;
+    if ((size_t)got < index->graph_slot_bytes) {
+        memset(slot_buf, 0, index->graph_slot_bytes); /* unwritten slot */
+    }
+
+    size_t count = (size_t)slot_buf[0];
+    if (count > index->max_degree) count = index->max_degree;
+    for (size_t i = 0; i < count; i++) {
+        if (slot_buf[1 + i] == (uint32_t)new_id) return 0; /* already a neighbour */
+    }
+    if (count >= index->max_degree) return 0; /* full: skip back-edge as in RAM mode */
+
+    slot_buf[1 + count] = (uint32_t)new_id;
+    slot_buf[0] = (uint32_t)(count + 1);
+    return diskann_pwrite_all(index->graph_fd, slot_buf, index->graph_slot_bytes,
+                              (off_t)(node_id * index->graph_slot_bytes));
 }
 
 /**
@@ -1420,8 +1454,10 @@ int diskann_build(GV_DiskANNIndex *index, const float *data, size_t count, size_
 int diskann_insert(GV_DiskANNIndex *index, const float *data, size_t dimension) {
     if (!index || !data) return -1;
     if (dimension != index->dimension) return -1;
-    /* Out-of-core is build-then-serve: no incremental insert after flush. */
-    if (index->graph_on_disk && index->graph_flushed) return -1;
+
+    /* Out-of-core: the new node's own adjacency and its neighbours' back-edges
+     * are written straight to disk, so RAM stays bounded by the PQ codes. */
+    int flushed = (index->graph_on_disk && index->graph_flushed);
 
     if (index->count >= index->capacity) {
         size_t new_cap = index->capacity * 2;
@@ -1453,6 +1489,7 @@ int diskann_insert(GV_DiskANNIndex *index, const float *data, size_t dimension) 
         index->medoid = 0;
         node->neighbors = NULL;
         node->neighbor_count = 0;
+        if (flushed) return diskann_graph_write_node(index, new_id); /* empty slot */
         return 0;
     }
 
@@ -1506,9 +1543,26 @@ int diskann_insert(GV_DiskANNIndex *index, const float *data, size_t dimension) 
         node->neighbor_count = 0;
     }
 
+    /* Scratch for patching neighbours' on-disk slots; unused in RAM mode. */
+    uint32_t *slot_buf = NULL;
+    if (flushed && node->neighbor_count > 0) {
+        slot_buf = (uint32_t *)gv_alloc((index->max_degree + 1) * sizeof(uint32_t));
+        if (!slot_buf) {
+            gv_free(search_results);
+            gv_free(search_distances);
+            return -1;
+        }
+    }
+
     for (size_t ni = 0; ni < node->neighbor_count; ni++) {
         size_t nb = node->neighbors[ni];
         if (nb >= index->count) continue;
+
+        if (flushed) {
+            diskann_graph_append_neighbor(index, nb, new_id, slot_buf);
+            continue;
+        }
+
         DiskANN_Node *nb_node = &index->nodes[nb];
 
         int exists = 0;
@@ -1530,8 +1584,17 @@ int diskann_insert(GV_DiskANNIndex *index, const float *data, size_t dimension) 
         }
     }
 
+    gv_free(slot_buf);
     gv_free(search_results);
     gv_free(search_distances);
+
+    /* Persist the new node's adjacency and drop its RAM copy to stay out-of-core. */
+    if (flushed) {
+        int rc = diskann_graph_write_node(index, new_id);
+        gv_free(node->neighbors);
+        node->neighbors = NULL; /* neighbor_count retained */
+        if (rc != 0) return -1;
+    }
 
     return 0;
 }

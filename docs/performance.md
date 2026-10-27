@@ -459,10 +459,11 @@ graph in RAM and `diskann_load()` reconstructs it in RAM before the flush, so
 peak memory during build/load is still `O(count × max_degree)` — size build/load
 hosts for that peak, not the serving figure. Each search hop reads one small fixed-size slot
 (`(1 + max_degree) × 4` bytes) via `pread` (OS page cache amortizes hot nodes).
-The mode is **build-then-serve**: `diskann_insert()` is rejected once the graph
-is flushed (rebuild to add vectors); `diskann_delete()` (tombstone) and search
-remain available. `diskann_save()`/`diskann_load()` persist the mode (format v2;
-v1 files still load as in-RAM).
+Insert, delete and search all work after the flush: `diskann_insert()` writes the
+new node's slot and patches its neighbours' back-edges directly on disk (RAM stays
+bounded by the PQ codes), `diskann_delete()` tombstones in the retained node array,
+and search reads slots on demand. `diskann_save()`/`diskann_load()` persist the mode
+(format v2; v1 files still load as in-RAM).
 
 **Trade-off vs IVFDisk:** DiskANN favors unstructured global ANN; IVFDisk favors partition-aware, append-heavy ingestion and filtered search.
 

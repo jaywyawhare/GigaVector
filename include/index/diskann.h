@@ -21,8 +21,8 @@ typedef struct {
     size_t sector_size;       /* Disk sector alignment (default: 4096) */
     int graph_on_disk;        /* Out-of-core graph (default 0): flush adjacency to
                                * "{data_path}.graph" after build/load and free it
-                               * from RAM. Build-then-serve: insert rejected after
-                               * flush; delete/search still work. */
+                               * from RAM. Insert/delete/search all work after the
+                               * flush; inserts patch adjacency slots on disk. */
 } GV_DiskANNConfig;
 
 typedef struct GV_DiskANNIndex GV_DiskANNIndex;
