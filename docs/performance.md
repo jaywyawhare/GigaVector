@@ -444,8 +444,25 @@ GigaVector supports two deployment modes for vector search. Use `index_suggest_w
 | `search_list_size` | 50-400 | Beam width during build; larger -> slower build, better recall |
 | `ef_search` | 32-256 | Query-time beam; raise for recall at higher latency |
 | `num_threads` | 1-hardware | Parallel graph construction |
+| `graph_on_disk` | 0 / 1 | Out-of-core adjacency: keep neighbour lists on disk, not RAM |
 
 **When to use:** datasets that exceed RAM but need graph-quality ANN on SSD. Pair with `db_open_mmap()` for read-only replicas.
+
+**Out-of-core graph (`graph_on_disk`):** by default DiskANN keeps the Vamana
+adjacency (`O(count × max_degree)` ids) in RAM while full vectors live on disk.
+Set `GV_DiskANNConfig.graph_on_disk = 1` to flush the adjacency to
+`{data_path}.graph` after build/load and free it from memory. Serving RAM then
+scales with the PQ codes + page cache instead of the graph degree — e.g. at
+`max_degree = 64` this removes ~512 bytes/vector of resident graph state (~512 GB
+at 1 B vectors). This bound is **serving-only**: `diskann_build()` builds the full
+graph in RAM and `diskann_load()` reconstructs it in RAM before the flush, so
+peak memory during build/load is still `O(count × max_degree)` — size build/load
+hosts for that peak, not the serving figure. Each search hop reads one small fixed-size slot
+(`(1 + max_degree) × 4` bytes) via `pread` (OS page cache amortizes hot nodes).
+The mode is **build-then-serve**: `diskann_insert()` is rejected once the graph
+is flushed (rebuild to add vectors); `diskann_delete()` (tombstone) and search
+remain available. `diskann_save()`/`diskann_load()` persist the mode (format v2;
+v1 files still load as in-RAM).
 
 **Trade-off vs IVFDisk:** DiskANN favors unstructured global ANN; IVFDisk favors partition-aware, append-heavy ingestion and filtered search.
 

@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 #include <math.h>
 #include "index/diskann.h"
 #include "../test_tmp.h"
@@ -384,6 +385,233 @@ static int test_diskann_save_load(void) {
     return 0;
 }
 
+/* ---------- out-of-core (graph_on_disk) tests ---------- */
+
+/* Recall parity + on-disk adjacency: an out-of-core index must flush its
+ * adjacency to "{data_path}.graph" (freeing it from RAM) yet still read it back
+ * during search well enough to match the in-RAM recall bar. */
+static int test_diskann_ooc_recall(void) {
+    char data_path[512];
+    gv_test_make_temp_path(data_path, sizeof(data_path), "gv_diskann_ooc_data", ".bin");
+
+    GV_DiskANNConfig config;
+    diskann_config_init(&config);
+    config.data_path = data_path;
+    config.graph_on_disk = 1;
+
+    GV_DiskANNIndex *idx = diskann_create(LARGE_DIM, &config);
+    ASSERT(idx != NULL, "ooc create failed");
+
+    float data[LARGE_COUNT * LARGE_DIM];
+    generate_random_batch(data, LARGE_COUNT, LARGE_DIM);
+    ASSERT(diskann_build(idx, data, LARGE_COUNT, LARGE_DIM) == 0, "ooc build failed");
+
+    /* The graph file must exist and hold one fixed slot per node. */
+    char graph_path[600];
+    snprintf(graph_path, sizeof(graph_path), "%s.graph", data_path);
+    struct stat st;
+    ASSERT(stat(graph_path, &st) == 0, "graph file created after build");
+    size_t expected = (size_t)LARGE_COUNT * (size_t)(1 + 64) * sizeof(uint32_t);
+    ASSERT((size_t)st.st_size == expected, "graph file sized one slot per node");
+
+    size_t k = 10;
+    size_t num_queries = 20;
+    size_t total_found = 0;
+    for (size_t q = 0; q < num_queries; q++) {
+        float query[LARGE_DIM];
+        size_t qi = (q * 7) % LARGE_COUNT;
+        memcpy(query, &data[qi * LARGE_DIM], LARGE_DIM * sizeof(float));
+
+        size_t exact_idx[LARGE_COUNT];
+        float exact_dist[LARGE_COUNT];
+        for (size_t i = 0; i < LARGE_COUNT; i++) {
+            exact_idx[i] = i;
+            exact_dist[i] = brute_force_l2(query, &data[i * LARGE_DIM], LARGE_DIM);
+        }
+        for (size_t i = 0; i < k && i < LARGE_COUNT; i++) {
+            size_t min_j = i;
+            for (size_t j = i + 1; j < LARGE_COUNT; j++) {
+                if (exact_dist[j] < exact_dist[min_j]) min_j = j;
+            }
+            size_t ti = exact_idx[i]; exact_idx[i] = exact_idx[min_j]; exact_idx[min_j] = ti;
+            float td = exact_dist[i]; exact_dist[i] = exact_dist[min_j]; exact_dist[min_j] = td;
+        }
+
+        GV_DiskANNResult results[16];
+        memset(results, 0, sizeof(results));
+        int found = diskann_search(idx, query, LARGE_DIM, k, results);
+        ASSERT(found > 0, "ooc search returned results");
+        for (int r = 0; r < found && r < (int)k; r++) {
+            for (size_t e = 0; e < k; e++) {
+                if (results[r].index == exact_idx[e]) { total_found++; break; }
+            }
+        }
+    }
+
+    double recall = (double)total_found / ((double)num_queries * (double)k);
+    fprintf(stderr, "  ooc recall@%zu = %.2f%%\n", k, recall * 100.0);
+    ASSERT(recall > 0.80, "ooc recall@10 should be > 80%");
+
+    /* Deletes still work out-of-core (tombstone in the retained node array). */
+    ASSERT(diskann_delete(idx, 0) == 0, "ooc delete failed");
+
+    /* Incremental insert is rejected once the graph is flushed. */
+    float extra[LARGE_DIM];
+    fill_vector(extra, LARGE_DIM, 999.0f);
+    ASSERT(diskann_insert(idx, extra, LARGE_DIM) == -1,
+           "ooc insert rejected after flush");
+
+    diskann_destroy(idx);
+    remove(graph_path);
+    remove(data_path);
+    return 0;
+}
+
+/* OOC save/load: an out-of-core index round-trips, and a saved index can be
+ * loaded either out-of-core (stored flag) or forced back into RAM, producing
+ * identical results. */
+static int test_diskann_ooc_save_load(void) {
+    char data_path[512], save_path[512];
+    gv_test_make_temp_path(data_path, sizeof(data_path), "gv_diskann_ooc_sl_data", ".bin");
+    gv_test_make_temp_path(save_path, sizeof(save_path), "gv_diskann_ooc_sl_save", ".bin");
+
+    GV_DiskANNConfig config;
+    diskann_config_init(&config);
+    config.data_path = data_path;
+    config.graph_on_disk = 1;
+
+    GV_DiskANNIndex *idx = diskann_create(DIM, &config);
+    ASSERT(idx != NULL, "ooc sl create failed");
+
+    float data[BUILD_COUNT * DIM];
+    generate_batch(data, BUILD_COUNT, DIM);
+    ASSERT(diskann_build(idx, data, BUILD_COUNT, DIM) == 0, "ooc sl build failed");
+    ASSERT(diskann_save(idx, save_path) == 0, "ooc save failed (reads adjacency from disk)");
+
+    float query[DIM];
+    fill_vector(query, DIM, 5.0f);
+    GV_DiskANNResult r0[5];
+    memset(r0, 0, sizeof(r0));
+    int f0 = diskann_search(idx, query, DIM, 5, r0);
+    ASSERT(f0 > 0, "ooc base search returned results");
+
+    /* diskann_save() persists graph + PQ + metadata, not the vectors: those live
+     * in the data_path file, which must persist alongside the save. Close the
+     * base index first, then load sharing the same data_path. The out-of-core
+     * flag is recovered from the saved v2 header (no config override needed). */
+    diskann_destroy(idx);
+
+    GV_DiskANNConfig cfg_ooc;
+    diskann_config_init(&cfg_ooc);
+    cfg_ooc.data_path = data_path; /* same vector file */
+    GV_DiskANNIndex *loaded_ooc = diskann_load(save_path, &cfg_ooc);
+    ASSERT(loaded_ooc != NULL, "ooc load returned NULL");
+    ASSERT(diskann_count(loaded_ooc) == BUILD_COUNT, "ooc loaded count matches");
+
+    GV_DiskANNResult r1[5];
+    memset(r1, 0, sizeof(r1));
+    int f1 = diskann_search(loaded_ooc, query, DIM, 5, r1);
+    ASSERT(f1 == f0, "ooc loaded same result count");
+    for (int i = 0; i < f1; i++) {
+        ASSERT(r1[i].index == r0[i].index, "ooc loaded result matches base");
+    }
+    diskann_destroy(loaded_ooc);
+
+    char g[600];
+    snprintf(g, sizeof(g), "%s.graph", data_path); remove(g);
+    remove(data_path); remove(save_path);
+    return 0;
+}
+
+/* A RAM-built index (graph_on_disk=0) can be served out-of-core by force-enabling
+ * the flag on load: the reconstructed adjacency is flushed to disk and freed. */
+static int test_diskann_ooc_load_from_ram_save(void) {
+    char data_path[512], save_path[512];
+    gv_test_make_temp_path(data_path, sizeof(data_path), "gv_diskann_ram2ooc_data", ".bin");
+    gv_test_make_temp_path(save_path, sizeof(save_path), "gv_diskann_ram2ooc_save", ".bin");
+
+    GV_DiskANNConfig config;
+    diskann_config_init(&config);
+    config.data_path = data_path;
+    config.graph_on_disk = 0; /* built in RAM */
+
+    GV_DiskANNIndex *idx = diskann_create(DIM, &config);
+    ASSERT(idx != NULL, "ram create failed");
+    float data[BUILD_COUNT * DIM];
+    generate_batch(data, BUILD_COUNT, DIM);
+    ASSERT(diskann_build(idx, data, BUILD_COUNT, DIM) == 0, "ram build failed");
+    ASSERT(diskann_save(idx, save_path) == 0, "ram save failed");
+
+    float query[DIM];
+    fill_vector(query, DIM, 5.0f);
+    GV_DiskANNResult r0[5];
+    memset(r0, 0, sizeof(r0));
+    int f0 = diskann_search(idx, query, DIM, 5, r0);
+    ASSERT(f0 > 0, "ram base search returned results");
+    diskann_destroy(idx);
+
+    GV_DiskANNConfig cfg;
+    diskann_config_init(&cfg);
+    cfg.data_path = data_path;  /* same vector file */
+    cfg.graph_on_disk = 1;      /* force out-of-core serving */
+    GV_DiskANNIndex *loaded = diskann_load(save_path, &cfg);
+    ASSERT(loaded != NULL, "ram->ooc load returned NULL");
+
+    char graph_path[600];
+    snprintf(graph_path, sizeof(graph_path), "%s.graph", data_path);
+    struct stat st;
+    ASSERT(stat(graph_path, &st) == 0, "ooc graph file created on load");
+
+    GV_DiskANNResult r1[5];
+    memset(r1, 0, sizeof(r1));
+    int f1 = diskann_search(loaded, query, DIM, 5, r1);
+    ASSERT(f1 == f0, "ram->ooc loaded same result count");
+    for (int i = 0; i < f1; i++) {
+        ASSERT(r1[i].index == r0[i].index, "ram->ooc result matches base");
+    }
+    diskann_destroy(loaded);
+
+    remove(graph_path);
+    remove(data_path); remove(save_path);
+    return 0;
+}
+
+/* Rebuilding an already-flushed out-of-core index must reconstruct the graph in
+ * RAM and still search correctly (no stale neighbor_count with NULL neighbors). */
+static int test_diskann_ooc_rebuild(void) {
+    char data_path[512];
+    gv_test_make_temp_path(data_path, sizeof(data_path), "gv_diskann_ooc_rebuild", ".bin");
+
+    GV_DiskANNConfig config;
+    diskann_config_init(&config);
+    config.data_path = data_path;
+    config.graph_on_disk = 1;
+
+    GV_DiskANNIndex *idx = diskann_create(DIM, &config);
+    ASSERT(idx != NULL, "ooc rebuild create failed");
+
+    float data[BUILD_COUNT * DIM];
+    generate_batch(data, BUILD_COUNT, DIM);
+    ASSERT(diskann_build(idx, data, BUILD_COUNT, DIM) == 0, "first ooc build failed");
+
+    /* Rebuild the same (flushed) index with fresh data. */
+    generate_random_batch(data, BUILD_COUNT, DIM);
+    ASSERT(diskann_build(idx, data, BUILD_COUNT, DIM) == 0, "ooc rebuild failed");
+
+    float query[DIM];
+    memcpy(query, &data[3 * DIM], DIM * sizeof(float));
+    GV_DiskANNResult results[5];
+    memset(results, 0, sizeof(results));
+    int found = diskann_search(idx, query, DIM, 5, results);
+    ASSERT(found > 0, "search after ooc rebuild returned results");
+
+    diskann_destroy(idx);
+    char g[600];
+    snprintf(g, sizeof(g), "%s.graph", data_path); remove(g);
+    remove(data_path);
+    return 0;
+}
+
 /* ---------- runner ---------- */
 
 typedef int (*test_fn)(void);
@@ -402,6 +630,10 @@ int main(void) {
         {"Testing diskann recall...",                test_diskann_recall},
         {"Testing diskann delete+rebuild...",        test_diskann_delete_rebuild},
         {"Testing diskann save/load...",             test_diskann_save_load},
+        {"Testing diskann out-of-core recall...",    test_diskann_ooc_recall},
+        {"Testing diskann out-of-core save/load...", test_diskann_ooc_save_load},
+        {"Testing diskann out-of-core load from RAM save...", test_diskann_ooc_load_from_ram_save},
+        {"Testing diskann out-of-core rebuild...",    test_diskann_ooc_rebuild},
     };
     int n = sizeof(tests) / sizeof(tests[0]);
     int passed = 0;

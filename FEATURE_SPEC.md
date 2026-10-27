@@ -335,7 +335,7 @@ targets:
 | Foundation (typed props, multi-label, indexes, schema) | Done | - |
 | Search pipeline (filtered HNSW, inverted payload, cross-encoder, sparse-dense fusion) | Done | ONNX cross-encoder/model serving optional (built when ONNX Runtime is present) |
 | Cypher extensions (vector distance, variable-length paths) | Done | Variable-length paths and vector-distance predicates wired; broad Cypher subset supported |
-| DiskANN graph index | Done (in-memory) | In-memory Vamana graph + page cache; full out-of-core Vamana remains future work |
+| DiskANN graph index | Done | In-memory Vamana by default; opt-in out-of-core mode (`GV_DiskANNConfig.graph_on_disk`) stores adjacency lists on disk so serving RAM is bounded by PQ codes + page cache rather than graph degree. Out-of-core is a build-then-serve artifact (incremental insert rejected after flush; delete/search supported). Vectors already live on disk via page cache. |
 | Multi-GPU fan-out | Done | `GV_GPUMultiContext` shards a query batch across N per-device contexts (CUDA; CPU-fallback safe) |
 | Document ingestion (Markdown / HTML / PDF) | Done | Plain-text extraction via `gv_document_extract_text`; DOCX and FlateDecode-only PDF need a decompression lib (out of scope) |
 | Transactions over REST | Done | `POST /txn/begin\|commit\|rollback` with crash-atomic WAL commit |
