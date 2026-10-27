@@ -3,6 +3,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <math.h>
+#include <pthread.h>
 #include "index/diskann.h"
 #include "../test_tmp.h"
 
@@ -772,10 +773,118 @@ static int test_diskann_insert_into_all_deleted(void) {
     memset(r, 0, sizeof(r));
     int found = diskann_search(idx, nv, DIM, 3, r);
     ASSERT(found == 1, "search finds the re-seeded node");
-    ASSERT(r[0].index == BUILD_COUNT, "found the inserted node id");
+    /* The slot is recycled from the free list, so the id is a reused one, not a
+     * fresh append; what matters is the self-query returns it at distance ~0. */
+    ASSERT(r[0].index < BUILD_COUNT, "re-seeded node reused a freed slot");
     ASSERT(r[0].distance < 1e-4f, "self-query distance ~0");
 
     diskann_destroy(idx);
+    return 0;
+}
+
+/* Deleted slots must be reclaimed by later inserts: deleting then re-inserting
+ * the same number of vectors leaves the total slot count (disk usage) unchanged
+ * rather than growing the index. */
+static int test_diskann_slot_reclaim(void) {
+    GV_DiskANNConfig config;
+    diskann_config_init(&config);
+    config.data_path = NULL;
+
+    GV_DiskANNIndex *idx = diskann_create(DIM, &config);
+    ASSERT(idx != NULL, "create failed");
+
+    float data[BUILD_COUNT * DIM];
+    generate_batch(data, BUILD_COUNT, DIM);
+    ASSERT(diskann_build(idx, data, BUILD_COUNT, DIM) == 0, "build failed");
+
+    GV_DiskANNStats s0;
+    ASSERT(diskann_get_stats(idx, &s0) == 0, "stats before");
+
+    const size_t n = 5;
+    for (size_t i = 0; i < n; i++) ASSERT(diskann_delete(idx, i) == 0, "delete failed");
+    ASSERT(diskann_count(idx) == BUILD_COUNT - n, "active count drops after delete");
+
+    for (size_t i = 0; i < n; i++) {
+        float nv[DIM];
+        fill_vector(nv, DIM, 500.0f + (float)i);
+        ASSERT(diskann_insert(idx, nv, DIM) == 0, "reinsert failed");
+    }
+
+    GV_DiskANNStats s1;
+    ASSERT(diskann_get_stats(idx, &s1) == 0, "stats after");
+    ASSERT(diskann_count(idx) == BUILD_COUNT, "active count restored");
+    ASSERT(s1.disk_usage_bytes == s0.disk_usage_bytes,
+           "reinserts reused freed slots (no total growth)");
+
+    diskann_destroy(idx);
+    return 0;
+}
+
+/* Concurrency: the index serializes its public API with an internal lock, so
+ * concurrent searches and inserts must not corrupt it or trip the race detector
+ * (run this suite under TSAN). */
+#define CONC_ITERS 60
+#define CONC_INSERTERS 2
+
+typedef struct { GV_DiskANNIndex *idx; int iters; } ConcArg;
+
+static void *conc_search_worker(void *p) {
+    ConcArg *a = (ConcArg *)p;
+    float q[LARGE_DIM];
+    GV_DiskANNResult r[5];
+    for (int i = 0; i < a->iters; i++) {
+        fill_vector(q, LARGE_DIM, (float)(i % 50));
+        memset(r, 0, sizeof(r));
+        diskann_search(a->idx, q, LARGE_DIM, 5, r);
+    }
+    return NULL;
+}
+
+static void *conc_insert_worker(void *p) {
+    ConcArg *a = (ConcArg *)p;
+    float v[LARGE_DIM];
+    for (int i = 0; i < a->iters; i++) {
+        fill_vector(v, LARGE_DIM, 1000.0f + (float)i);
+        diskann_insert(a->idx, v, LARGE_DIM);
+    }
+    return NULL;
+}
+
+static int test_diskann_concurrent(void) {
+    char data_path[512];
+    gv_test_make_temp_path(data_path, sizeof(data_path), "gv_diskann_conc", ".bin");
+
+    GV_DiskANNConfig config;
+    diskann_config_init(&config);
+    config.data_path = data_path;
+
+    GV_DiskANNIndex *idx = diskann_create(LARGE_DIM, &config);
+    ASSERT(idx != NULL, "conc create failed");
+    float data[LARGE_COUNT * LARGE_DIM];
+    generate_random_batch(data, LARGE_COUNT, LARGE_DIM);
+    ASSERT(diskann_build(idx, data, LARGE_COUNT, LARGE_DIM) == 0, "conc build failed");
+
+    pthread_t searchers[4], inserters[CONC_INSERTERS];
+    ConcArg sa = { idx, CONC_ITERS }, ia = { idx, CONC_ITERS };
+    for (int i = 0; i < 4; i++)
+        ASSERT(pthread_create(&searchers[i], NULL, conc_search_worker, &sa) == 0, "spawn searcher");
+    for (int i = 0; i < CONC_INSERTERS; i++)
+        ASSERT(pthread_create(&inserters[i], NULL, conc_insert_worker, &ia) == 0, "spawn inserter");
+    for (int i = 0; i < 4; i++) pthread_join(searchers[i], NULL);
+    for (int i = 0; i < CONC_INSERTERS; i++) pthread_join(inserters[i], NULL);
+
+    /* Serialized inserts are deterministic: every one committed. */
+    ASSERT(diskann_count(idx) == LARGE_COUNT + CONC_INSERTERS * CONC_ITERS,
+           "all concurrent inserts committed exactly once");
+
+    float q[LARGE_DIM];
+    memcpy(q, &data[0], LARGE_DIM * sizeof(float));
+    GV_DiskANNResult r[5];
+    memset(r, 0, sizeof(r));
+    ASSERT(diskann_search(idx, q, LARGE_DIM, 5, r) > 0, "search works after concurrency");
+
+    diskann_destroy(idx);
+    remove(data_path);
     return 0;
 }
 
@@ -804,6 +913,8 @@ int main(void) {
         {"Testing diskann out-of-core insert...",     test_diskann_ooc_insert},
         {"Testing diskann insert into all-deleted...", test_diskann_insert_into_all_deleted},
         {"Testing diskann force_in_memory load...",    test_diskann_force_in_memory_load},
+        {"Testing diskann slot reclamation...",        test_diskann_slot_reclaim},
+        {"Testing diskann concurrent access...",        test_diskann_concurrent},
     };
     int n = sizeof(tests) / sizeof(tests[0]);
     int passed = 0;

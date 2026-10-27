@@ -34,17 +34,19 @@ typedef struct {
 } GV_DiskANNConfig;
 
 /*
- * Concurrency: a GV_DiskANNIndex is not internally synchronized, matching the
- * rest of the index layer. Callers serialize access with the owning collection's
- * read/write lock (db->rwlock): a read lock around diskann_search, a write lock
- * around diskann_build/insert/delete/save. Search is not read-only internally
- * (it mutates the LRU page cache and latency counters), so it needs the write
- * lock, not a shared read lock, when run concurrently with other searches.
+ * Concurrency: each GV_DiskANNIndex serializes its public API (build, insert,
+ * search, delete, get_stats, save, count, attach_page_cache) with an internal
+ * mutex, so concurrent calls are safe. Search is not read-only internally (it
+ * mutates the LRU page cache and latency counters), so all calls take the same
+ * exclusive lock rather than a shared read lock. diskann_create/diskann_load are
+ * constructors and diskann_destroy must not race with other calls on the index.
  *
- * Deletion is lazy (tombstone): diskann_delete flags the node; search skips it.
- * On-disk slots and positional ids are never reclaimed, because result.index and
- * diskann_delete(vector_index) are stable positions that compaction would
- * renumber. Reclaim space by rebuilding (diskann_build) over the live vectors.
+ * Deletion is lazy (tombstone): diskann_delete flags the node and records its
+ * slot; search skips tombstones. A later diskann_insert reuses a freed slot
+ * before appending, so space is reclaimed without renumbering live positional
+ * ids (result.index / diskann_delete(vector_index) stay stable). A reused slot
+ * may keep stale incoming edges, which only cost a few extra candidates since
+ * search re-ranks by exact distance. diskann_build fully rebuilds and reclaims.
  */
 
 typedef struct GV_DiskANNIndex GV_DiskANNIndex;

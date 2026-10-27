@@ -53,6 +53,8 @@ static ssize_t pwrite(int fd, const void *buf, size_t count, long long offset) {
 #include <unistd.h>
 #endif
 
+#include <pthread.h>
+
 #include "index/diskann.h"
 #include "storage/disk_page_cache.h"
 #include "core/utils.h"
@@ -126,6 +128,12 @@ struct GV_DiskANNIndex {
     size_t capacity;
     size_t medoid;           /* Entry point: vector closest to centroid */
 
+    /* Tombstoned slots available for reuse by a later insert (reclaims space
+     * without renumbering live positional ids). */
+    size_t *free_ids;
+    size_t free_count;
+    size_t free_cap;
+
     /* PQ for in-memory navigation */
     DiskANN_PQ pq;
 
@@ -149,6 +157,10 @@ struct GV_DiskANNIndex {
     size_t disk_reads;
     double total_search_latency_us;
     size_t total_searches;
+
+    /* Serializes public API calls; the index is otherwise lock-free (see the
+     * concurrency note in diskann.h). */
+    pthread_mutex_t lock;
 };
 
 static float diskann_l2_distance(const float *a, const float *b, size_t dim);
@@ -1247,6 +1259,8 @@ GV_DiskANNIndex *diskann_create(size_t dimension, const GV_DiskANNConfig *config
     index->count = 0;
     index->medoid = 0;
 
+    pthread_mutex_init(&index->lock, NULL);
+
     return index;
 }
 
@@ -1258,6 +1272,7 @@ void diskann_destroy(GV_DiskANNIndex *index) {
         gv_free(index->nodes[i].pq_code);
     }
     gv_free(index->nodes);
+    gv_free(index->free_ids);
 
     diskann_pq_destroy(&index->pq);
 
@@ -1268,11 +1283,29 @@ void diskann_destroy(GV_DiskANNIndex *index) {
     if (index->graph_fd >= 0) close(index->graph_fd);
     gv_free(index->graph_path);
 
+    pthread_mutex_destroy(&index->lock);
+
     gv_free(index->data_path);
     gv_free(index);
 }
 
-int diskann_build(GV_DiskANNIndex *index, const float *data, size_t count, size_t dimension) {
+/**
+ * @brief Record a tombstoned slot id for reuse by a later insert.
+ * @param index Index instance.
+ * @param id Slot id to recycle.
+ */
+static void diskann_freelist_push(GV_DiskANNIndex *index, size_t id) {
+    if (index->free_count == index->free_cap) {
+        size_t nc = index->free_cap ? index->free_cap * 2 : 16;
+        size_t *nf = (size_t *)gv_realloc(index->free_ids, nc * sizeof(size_t));
+        if (!nf) return; /* best-effort: slot just won't be reclaimed */
+        index->free_ids = nf;
+        index->free_cap = nc;
+    }
+    index->free_ids[index->free_count++] = id;
+}
+
+static int diskann_build_locked(GV_DiskANNIndex *index, const float *data, size_t count, size_t dimension) {
     if (!index || !data || count == 0) return -1;
     if (dimension != index->dimension) return -1;
 
@@ -1296,6 +1329,7 @@ int diskann_build(GV_DiskANNIndex *index, const float *data, size_t count, size_
     }
     index->count = count;
     index->graph_flushed = 0; /* rebuild reconstructs the graph in RAM */
+    index->free_count = 0;    /* every slot is live again after a rebuild */
 
     for (size_t i = 0; i < count; i++) {
         if (diskann_disk_write_vector(index, i, &data[i * dimension]) != 0) {
@@ -1455,7 +1489,7 @@ int diskann_build(GV_DiskANNIndex *index, const float *data, size_t count, size_
     return 0;
 }
 
-int diskann_insert(GV_DiskANNIndex *index, const float *data, size_t dimension) {
+static int diskann_insert_locked(GV_DiskANNIndex *index, const float *data, size_t dimension) {
     if (!index || !data) return -1;
     if (dimension != index->dimension) return -1;
 
@@ -1463,25 +1497,14 @@ int diskann_insert(GV_DiskANNIndex *index, const float *data, size_t dimension) 
      * are written straight to disk, so RAM stays bounded by the PQ codes. */
     int flushed = (index->graph_on_disk && index->graph_flushed);
 
-    if (index->count >= index->capacity) {
-        size_t new_cap = index->capacity * 2;
-        DiskANN_Node *new_nodes = (DiskANN_Node *)gv_realloc(index->nodes, new_cap * sizeof(DiskANN_Node));
-        if (!new_nodes) return -1;
-        memset(&new_nodes[index->capacity], 0, (new_cap - index->capacity) * sizeof(DiskANN_Node));
-        index->nodes = new_nodes;
-        index->capacity = new_cap;
-    }
-
-    size_t new_id = index->count;
-
     /* First vector: store it, no graph work. Commit index state only once every
      * fallible step (vector write, empty-slot write) has succeeded. */
     if (index->count == 0) {
-        if (diskann_disk_write_vector(index, new_id, data) != 0) return -1;
-        DiskANN_Node *first = &index->nodes[new_id];
+        if (diskann_disk_write_vector(index, 0, data) != 0) return -1;
+        DiskANN_Node *first = &index->nodes[0];
         memset(first, 0, sizeof(DiskANN_Node));
         index->count = 1;
-        if (flushed && diskann_graph_write_node(index, new_id) != 0) { /* empty slot */
+        if (flushed && diskann_graph_write_node(index, 0) != 0) { /* empty slot */
             index->count = 0;
             return -1;
         }
@@ -1513,15 +1536,38 @@ int diskann_insert(GV_DiskANNIndex *index, const float *data, size_t dimension) 
     }
     if (pq_code) diskann_pq_encode(&index->pq, data, pq_code);
 
+    /* Reuse a tombstoned slot if one is free, else append (growing capacity).
+     * Reuse reclaims space without renumbering live ids; stale incoming edges to
+     * a recycled slot are harmless since search re-ranks by exact distance.
+     * Chosen after the allocations so a failure never disturbs the free list. */
+    size_t new_id;
+    int reused = 0;
+    if (index->free_count > 0) {
+        new_id = index->free_ids[--index->free_count];
+        reused = 1;
+    } else {
+        if (index->count >= index->capacity) {
+            size_t new_cap = index->capacity * 2;
+            DiskANN_Node *new_nodes = (DiskANN_Node *)gv_realloc(index->nodes, new_cap * sizeof(DiskANN_Node));
+            if (!new_nodes) { gv_free(pq_code); goto cleanup; }
+            memset(&new_nodes[index->capacity], 0, (new_cap - index->capacity) * sizeof(DiskANN_Node));
+            index->nodes = new_nodes;
+            index->capacity = new_cap;
+        }
+        new_id = index->count;
+    }
+
     if (diskann_disk_write_vector(index, new_id, data) != 0) {
+        if (reused) diskann_freelist_push(index, new_id);
         gv_free(pq_code);
         goto cleanup;
     }
 
     DiskANN_Node *node = &index->nodes[new_id];
+    if (reused) { gv_free(node->neighbors); gv_free(node->pq_code); }
     memset(node, 0, sizeof(DiskANN_Node));
     node->pq_code = pq_code;
-    index->count++;
+    if (!reused) index->count++;
 
     size_t visited_count = 0;
     diskann_greedy_search(index, data, index->build_beam_width,
@@ -1580,7 +1626,12 @@ int diskann_insert(GV_DiskANNIndex *index, const float *data, size_t dimension) 
         node->neighbors = NULL;
         gv_free(node->pq_code);
         node->pq_code = NULL;
-        index->count--;
+        if (reused) {
+            node->deleted = 1;                     /* re-tombstone and recycle */
+            diskann_freelist_push(index, new_id);
+        } else {
+            index->count--;
+        }
         goto cleanup;
     }
 
@@ -1631,7 +1682,7 @@ cleanup:
     return rc;
 }
 
-int diskann_search(const GV_DiskANNIndex *index, const float *query, size_t dimension,
+static int diskann_search_locked(const GV_DiskANNIndex *index, const float *query, size_t dimension,
                        size_t k, GV_DiskANNResult *results) {
     if (!index || !query || !results || k == 0) return -1;
     if (dimension != index->dimension) return -1;
@@ -1705,12 +1756,13 @@ int diskann_search(const GV_DiskANNIndex *index, const float *query, size_t dime
     return (int)result_count;
 }
 
-int diskann_delete(GV_DiskANNIndex *index, size_t vector_index) {
+static int diskann_delete_locked(GV_DiskANNIndex *index, size_t vector_index) {
     if (!index) return -1;
     if (vector_index >= index->count) return -1;
     if (index->nodes[vector_index].deleted) return -1;
 
     index->nodes[vector_index].deleted = 1;
+    diskann_freelist_push(index, vector_index); /* slot available for reuse */
 
     if (vector_index == index->medoid) {
         for (size_t i = 0; i < index->count; i++) {
@@ -1724,7 +1776,7 @@ int diskann_delete(GV_DiskANNIndex *index, size_t vector_index) {
     return 0;
 }
 
-int diskann_get_stats(const GV_DiskANNIndex *index, GV_DiskANNStats *stats) {
+static int diskann_get_stats_locked(const GV_DiskANNIndex *index, GV_DiskANNStats *stats) {
     if (!index || !stats) return -1;
 
     memset(stats, 0, sizeof(GV_DiskANNStats));
@@ -1776,10 +1828,12 @@ int diskann_get_stats(const GV_DiskANNIndex *index, GV_DiskANNStats *stats) {
 void diskann_attach_page_cache(GV_DiskANNIndex *index, GV_DiskPageCache *cache)
 {
     if (!index) return;
+    pthread_mutex_lock(&index->lock);
     index->shared_page_cache = cache;
+    pthread_mutex_unlock(&index->lock);
 }
 
-size_t diskann_count(const GV_DiskANNIndex *index) {
+static size_t diskann_count_locked(const GV_DiskANNIndex *index) {
     if (!index) return 0;
     size_t active = 0;
     for (size_t i = 0; i < index->count; i++) {
@@ -1788,7 +1842,7 @@ size_t diskann_count(const GV_DiskANNIndex *index) {
     return active;
 }
 
-int diskann_save(const GV_DiskANNIndex *index, const char *filepath) {
+static int diskann_save_locked(const GV_DiskANNIndex *index, const char *filepath) {
     if (!index || !filepath) return -1;
 
     FILE *f = fopen(filepath, "wb");
@@ -2089,6 +2143,7 @@ GV_DiskANNIndex *diskann_load(const char *filepath, const GV_DiskANNConfig *conf
         index->nodes[i].pq_code = temp_nodes[i].pq_code;
         temp_nodes[i].neighbors = NULL; /* Ownership transferred */
         temp_nodes[i].pq_code = NULL;
+        if (index->nodes[i].deleted) diskann_freelist_push(index, i); /* reclaimable */
     }
 
     gv_free(temp_nodes);
@@ -2112,4 +2167,72 @@ fail_temp:
 fail:
     if (f) fclose(f);
     return NULL;
+}
+
+/*
+ * Public API wrappers. Each takes the per-index lock so concurrent callers are
+ * serialized (search is not read-only internally: it mutates the LRU cache and
+ * latency counters, so it also needs the exclusive lock). diskann_create and
+ * diskann_load are constructors with no shared state to guard, and
+ * diskann_destroy must not race with any other call on the same index.
+ */
+int diskann_build(GV_DiskANNIndex *index, const float *data, size_t count, size_t dimension) {
+    if (!index) return -1;
+    pthread_mutex_lock(&index->lock);
+    int rc = diskann_build_locked(index, data, count, dimension);
+    pthread_mutex_unlock(&index->lock);
+    return rc;
+}
+
+int diskann_insert(GV_DiskANNIndex *index, const float *data, size_t dimension) {
+    if (!index) return -1;
+    pthread_mutex_lock(&index->lock);
+    int rc = diskann_insert_locked(index, data, dimension);
+    pthread_mutex_unlock(&index->lock);
+    return rc;
+}
+
+int diskann_search(const GV_DiskANNIndex *index, const float *query, size_t dimension,
+                   size_t k, GV_DiskANNResult *results) {
+    if (!index) return -1;
+    pthread_mutex_t *lock = &((GV_DiskANNIndex *)index)->lock;
+    pthread_mutex_lock(lock);
+    int rc = diskann_search_locked(index, query, dimension, k, results);
+    pthread_mutex_unlock(lock);
+    return rc;
+}
+
+int diskann_delete(GV_DiskANNIndex *index, size_t vector_index) {
+    if (!index) return -1;
+    pthread_mutex_lock(&index->lock);
+    int rc = diskann_delete_locked(index, vector_index);
+    pthread_mutex_unlock(&index->lock);
+    return rc;
+}
+
+int diskann_get_stats(const GV_DiskANNIndex *index, GV_DiskANNStats *stats) {
+    if (!index) return -1;
+    pthread_mutex_t *lock = &((GV_DiskANNIndex *)index)->lock;
+    pthread_mutex_lock(lock);
+    int rc = diskann_get_stats_locked(index, stats);
+    pthread_mutex_unlock(lock);
+    return rc;
+}
+
+int diskann_save(const GV_DiskANNIndex *index, const char *filepath) {
+    if (!index) return -1;
+    pthread_mutex_t *lock = &((GV_DiskANNIndex *)index)->lock;
+    pthread_mutex_lock(lock);
+    int rc = diskann_save_locked(index, filepath);
+    pthread_mutex_unlock(lock);
+    return rc;
+}
+
+size_t diskann_count(const GV_DiskANNIndex *index) {
+    if (!index) return 0;
+    pthread_mutex_t *lock = &((GV_DiskANNIndex *)index)->lock;
+    pthread_mutex_lock(lock);
+    size_t n = diskann_count_locked(index);
+    pthread_mutex_unlock(lock);
+    return n;
 }
