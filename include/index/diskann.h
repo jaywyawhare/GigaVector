@@ -26,7 +26,26 @@ typedef struct {
                                * The flush happens in build/load, so an index only
                                * ever grown by insert (never built/loaded) keeps
                                * its adjacency in RAM until the first flush. */
+    int force_in_memory;      /* On load (default 0): keep the reconstructed graph
+                               * in RAM even if the saved index used graph_on_disk.
+                               * Overrides the stored flag and graph_on_disk. Lets
+                               * an out-of-core-saved index be served from RAM.
+                               * Ignored by create/build. */
 } GV_DiskANNConfig;
+
+/*
+ * Concurrency: a GV_DiskANNIndex is not internally synchronized, matching the
+ * rest of the index layer. Callers serialize access with the owning collection's
+ * read/write lock (db->rwlock): a read lock around diskann_search, a write lock
+ * around diskann_build/insert/delete/save. Search is not read-only internally
+ * (it mutates the LRU page cache and latency counters), so it needs the write
+ * lock, not a shared read lock, when run concurrently with other searches.
+ *
+ * Deletion is lazy (tombstone): diskann_delete flags the node; search skips it.
+ * On-disk slots and positional ids are never reclaimed, because result.index and
+ * diskann_delete(vector_index) are stable positions that compaction would
+ * renumber. Reclaim space by rebuilding (diskann_build) over the live vectors.
+ */
 
 typedef struct GV_DiskANNIndex GV_DiskANNIndex;
 

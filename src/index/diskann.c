@@ -1149,6 +1149,7 @@ void diskann_config_init(GV_DiskANNConfig *config) {
     config->cache_size_mb = DISKANN_DEFAULT_CACHE_MB;
     config->sector_size = gv_disk_default_sector_size();
     config->graph_on_disk = 0;
+    config->force_in_memory = 0;
 }
 
 GV_DiskANNIndex *diskann_create(size_t dimension, const GV_DiskANNConfig *config) {
@@ -1919,8 +1920,10 @@ GV_DiskANNIndex *diskann_load(const char *filepath, const GV_DiskANNConfig *conf
         if (config->data_path) load_config.data_path = config->data_path;
         if (config->cache_size_mb > 0) load_config.cache_size_mb = config->cache_size_mb;
         if (config->search_beam_width > 0) load_config.search_beam_width = config->search_beam_width;
-        /* A caller may opt a RAM-saved index into out-of-core serving on load. */
+        /* A caller may opt a RAM-saved index into out-of-core serving on load,
+         * or force an out-of-core-saved index back into RAM (force_in_memory wins). */
         if (config->graph_on_disk) load_config.graph_on_disk = 1;
+        if (config->force_in_memory) load_config.graph_on_disk = 0;
     }
 
     uint32_t pq_trained = 0;

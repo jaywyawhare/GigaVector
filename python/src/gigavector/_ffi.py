@@ -1920,6 +1920,7 @@ typedef struct {
     size_t cache_size_mb;
     size_t sector_size;
     int graph_on_disk;
+    int force_in_memory;
 } GV_DiskANNConfig;
 
 typedef struct GV_DiskANNIndex GV_DiskANNIndex;

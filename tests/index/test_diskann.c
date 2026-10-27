@@ -679,6 +679,73 @@ static int test_diskann_ooc_insert(void) {
     return 0;
 }
 
+/* force_in_memory: an out-of-core-saved index can be loaded back into RAM
+ * serving. Results match the out-of-core load, and the RAM load keeps the
+ * adjacency resident (higher memory, no reliance on the .graph file). */
+static int test_diskann_force_in_memory_load(void) {
+    char data_path[512], save_path[512];
+    gv_test_make_temp_path(data_path, sizeof(data_path), "gv_diskann_fim_data", ".bin");
+    gv_test_make_temp_path(save_path, sizeof(save_path), "gv_diskann_fim_save", ".bin");
+
+    GV_DiskANNConfig config;
+    diskann_config_init(&config);
+    config.data_path = data_path;
+    config.graph_on_disk = 1;
+
+    GV_DiskANNIndex *idx = diskann_create(DIM, &config);
+    ASSERT(idx != NULL, "fim create failed");
+    float data[BUILD_COUNT * DIM];
+    generate_batch(data, BUILD_COUNT, DIM);
+    ASSERT(diskann_build(idx, data, BUILD_COUNT, DIM) == 0, "fim build failed");
+    ASSERT(diskann_save(idx, save_path) == 0, "fim save failed");
+
+    float query[DIM];
+    fill_vector(query, DIM, 5.0f);
+    GV_DiskANNResult r0[5];
+    memset(r0, 0, sizeof(r0));
+    int f0 = diskann_search(idx, query, DIM, 5, r0);
+    ASSERT(f0 > 0, "fim base search returned results");
+    diskann_destroy(idx);
+
+    /* Out-of-core load (stored flag): adjacency freed from RAM. */
+    GV_DiskANNConfig cfg_ooc;
+    diskann_config_init(&cfg_ooc);
+    cfg_ooc.data_path = data_path;
+    GV_DiskANNIndex *ooc = diskann_load(save_path, &cfg_ooc);
+    ASSERT(ooc != NULL, "ooc load returned NULL");
+    GV_DiskANNStats s_ooc;
+    ASSERT(diskann_get_stats(ooc, &s_ooc) == 0, "ooc stats");
+
+    /* Forced RAM load: adjacency reconstructed and kept resident. */
+    GV_DiskANNConfig cfg_ram;
+    diskann_config_init(&cfg_ram);
+    cfg_ram.data_path = data_path;
+    cfg_ram.force_in_memory = 1;
+    GV_DiskANNIndex *ram = diskann_load(save_path, &cfg_ram);
+    ASSERT(ram != NULL, "force_in_memory load returned NULL");
+    GV_DiskANNStats s_ram;
+    ASSERT(diskann_get_stats(ram, &s_ram) == 0, "ram stats");
+
+    /* Resident adjacency makes the RAM load use strictly more memory. */
+    ASSERT(s_ram.memory_usage_bytes > s_ooc.memory_usage_bytes,
+           "force_in_memory keeps the graph resident");
+
+    GV_DiskANNResult r1[5];
+    memset(r1, 0, sizeof(r1));
+    int f1 = diskann_search(ram, query, DIM, 5, r1);
+    ASSERT(f1 == f0, "ram load same result count");
+    for (int i = 0; i < f1; i++) {
+        ASSERT(r1[i].index == r0[i].index, "ram load result matches base");
+    }
+
+    diskann_destroy(ooc);
+    diskann_destroy(ram);
+    char g[600];
+    snprintf(g, sizeof(g), "%s.graph", data_path); remove(g);
+    remove(data_path); remove(save_path);
+    return 0;
+}
+
 /* Inserting into an index whose nodes were all deleted must re-seed the entry
  * point so the fresh vector is searchable rather than orphaned. */
 static int test_diskann_insert_into_all_deleted(void) {
@@ -736,6 +803,7 @@ int main(void) {
         {"Testing diskann out-of-core rebuild...",    test_diskann_ooc_rebuild},
         {"Testing diskann out-of-core insert...",     test_diskann_ooc_insert},
         {"Testing diskann insert into all-deleted...", test_diskann_insert_into_all_deleted},
+        {"Testing diskann force_in_memory load...",    test_diskann_force_in_memory_load},
     };
     int n = sizeof(tests) / sizeof(tests[0]);
     int passed = 0;
