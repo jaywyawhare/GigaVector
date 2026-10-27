@@ -652,7 +652,28 @@ static int test_diskann_ooc_insert(void) {
     ASSERT(diskann_insert(idx, extra, LARGE_DIM) == 0, "second ooc insert failed");
     ASSERT(diskann_count(idx) == LARGE_COUNT + 2, "ooc count grows after 2nd insert");
 
+    /* The live edge count must match a fresh reload's, which rebuilds each
+     * node's count from its on-disk slot. This fails if a post-flush insert's
+     * back-edges were written to disk but not reflected in the RAM count. */
+    GV_DiskANNStats s_live;
+    ASSERT(diskann_get_stats(idx, &s_live) == 0, "live stats");
+    char save_path[640];
+    snprintf(save_path, sizeof(save_path), "%s.save", data_path);
+    ASSERT(diskann_save(idx, save_path) == 0, "ooc save after insert");
     diskann_destroy(idx);
+
+    GV_DiskANNConfig cfg;
+    diskann_config_init(&cfg);
+    cfg.data_path = data_path;
+    GV_DiskANNIndex *re = diskann_load(save_path, &cfg);
+    ASSERT(re != NULL, "reload after ooc insert");
+    GV_DiskANNStats s_re;
+    ASSERT(diskann_get_stats(re, &s_re) == 0, "reload stats");
+    ASSERT(s_re.graph_edges == s_live.graph_edges,
+           "live graph_edges match reload (back-edge counts synced on disk)");
+    diskann_destroy(re);
+
+    remove(save_path);
     remove(graph_path);
     remove(data_path);
     return 0;

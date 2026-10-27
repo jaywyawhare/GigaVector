@@ -22,7 +22,10 @@ typedef struct {
     int graph_on_disk;        /* Out-of-core graph (default 0): flush adjacency to
                                * "{data_path}.graph" after build/load and free it
                                * from RAM. Insert/delete/search all work after the
-                               * flush; inserts patch adjacency slots on disk. */
+                               * flush; inserts patch adjacency slots on disk.
+                               * The flush happens in build/load, so an index only
+                               * ever grown by insert (never built/loaded) keeps
+                               * its adjacency in RAM until the first flush. */
 } GV_DiskANNConfig;
 
 typedef struct GV_DiskANNIndex GV_DiskANNIndex;
