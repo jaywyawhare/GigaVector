@@ -1491,6 +1491,7 @@ int diskann_insert(GV_DiskANNIndex *index, const float *data, size_t dimension) 
     /* Pre-allocate every fallible buffer before mutating index state, so an
      * allocation failure leaves the index untouched (no half-inserted node).
      * slot_buf patches neighbours' on-disk slots and is unused in RAM mode. */
+    int rc = -1;
     size_t max_results = index->build_beam_width * 2;
     if (max_results > index->count + 1) max_results = index->count + 1;
 
@@ -1502,17 +1503,14 @@ int diskann_insert(GV_DiskANNIndex *index, const float *data, size_t dimension) 
     uint8_t *pq_code = index->pq.trained ? (uint8_t *)gv_alloc(index->pq.m) : NULL;
     if (!search_results || !search_distances || !vec_buf ||
         (flushed && !slot_buf) || (index->pq.trained && !pq_code)) {
-        gv_free(pq_code); gv_free(slot_buf);
-        gv_free(vec_buf); gv_free(search_distances); gv_free(search_results);
-        return -1;
+        gv_free(pq_code);
+        goto cleanup;
     }
     if (pq_code) diskann_pq_encode(&index->pq, data, pq_code);
 
-    /* All allocations succeeded; commit the vector and node slot. */
     if (diskann_disk_write_vector(index, new_id, data) != 0) {
-        gv_free(pq_code); gv_free(slot_buf);
-        gv_free(vec_buf); gv_free(search_distances); gv_free(search_results);
-        return -1;
+        gv_free(pq_code);
+        goto cleanup;
     }
 
     DiskANN_Node *node = &index->nodes[new_id];
@@ -1573,9 +1571,7 @@ int diskann_insert(GV_DiskANNIndex *index, const float *data, size_t dimension) 
         gv_free(node->pq_code);
         node->pq_code = NULL;
         index->count--;
-        gv_free(slot_buf); gv_free(vec_buf);
-        gv_free(search_distances); gv_free(search_results);
-        return -1;
+        goto cleanup;
     }
 
     for (size_t ni = 0; ni < node->neighbor_count; ni++) {
@@ -1615,12 +1611,14 @@ int diskann_insert(GV_DiskANNIndex *index, const float *data, size_t dimension) 
         gv_free(node->neighbors);
         node->neighbors = NULL; /* neighbor_count retained */
     }
+    rc = 0;
 
+cleanup:
     gv_free(slot_buf);
     gv_free(vec_buf);
     gv_free(search_distances);
     gv_free(search_results);
-    return 0;
+    return rc;
 }
 
 int diskann_search(const GV_DiskANNIndex *index, const float *query, size_t dimension,
