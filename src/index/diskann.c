@@ -58,7 +58,8 @@ static ssize_t pwrite(int fd, const void *buf, size_t count, long long offset) {
 #include "core/utils.h"
 
 #define DISKANN_MAGIC           0x44414E4E  /* "DANN" */
-#define DISKANN_VERSION         1
+#define DISKANN_VERSION         2  /* v2 adds the graph_on_disk flag; v1 still loads */
+#define DISKANN_VERSION_MIN     1
 #define DISKANN_DEFAULT_DEGREE  64
 #define DISKANN_DEFAULT_ALPHA   1.2f
 #define DISKANN_DEFAULT_BUILD_BW  128
@@ -133,6 +134,13 @@ struct GV_DiskANNIndex {
     int data_fd;             /* File descriptor for on-disk vector storage */
     size_t vectors_per_page; /* How many vectors fit in one sector-aligned page */
 
+    /* Out-of-core graph (opt-in): adjacency lists live on disk, not RAM. */
+    int graph_on_disk;       /* Config flag: keep adjacency out of RAM. */
+    int graph_flushed;       /* Adjacency currently resides on disk (RAM freed). */
+    char *graph_path;        /* "{data_path}.graph" */
+    int graph_fd;            /* fd for the on-disk adjacency file. */
+    size_t graph_slot_bytes; /* Fixed per-node slot: (1 + max_degree) * u32. */
+
     /* LRU cache */
     DiskANN_Cache cache;
     GV_DiskPageCache *shared_page_cache;
@@ -161,6 +169,14 @@ static int diskann_disk_open(GV_DiskANNIndex *index);
 static int diskann_disk_write_vector(GV_DiskANNIndex *index, size_t vec_index, const float *data);
 static int diskann_disk_read_vector(GV_DiskANNIndex *index, size_t vec_index, float *out);
 static void diskann_disk_close(GV_DiskANNIndex *index);
+
+static int diskann_graph_open(GV_DiskANNIndex *index);
+static int diskann_graph_write_node(GV_DiskANNIndex *index, size_t node_id);
+static int diskann_graph_read_node(const GV_DiskANNIndex *index, size_t node_id,
+                                   uint32_t *slot_buf, size_t *out_ids, size_t *out_count);
+static int diskann_flush_graph(GV_DiskANNIndex *index);
+static const size_t *diskann_node_neighbors(const GV_DiskANNIndex *index, size_t node_id,
+                                            uint32_t *slot_buf, size_t *scratch, size_t *out_count);
 
 static size_t diskann_compute_medoid(const float *data, size_t count, size_t dimension);
 static int diskann_greedy_search(const GV_DiskANNIndex *index, const float *query,
@@ -225,6 +241,9 @@ static int diskann_pq_train(DiskANN_PQ *pq, const float *data, size_t count,
         pq->ksub = count;
     }
 
+    gv_free(pq->codebooks); /* free any codebooks from a prior train (rebuild) */
+    pq->codebooks = NULL;
+    pq->trained = 0;        /* a failed retrain must not look trained */
     pq->codebooks = (float *)gv_calloc(pq->m * pq->ksub * pq->dsub, sizeof(float));
     if (!pq->codebooks) return -1;
 
@@ -556,6 +575,50 @@ static void diskann_cache_destroy(DiskANN_Cache *cache) {
     cache->count = 0;
 }
 
+/**
+ * @brief Write a whole buffer at a file offset, retrying short/interrupted writes.
+ * @param fd File descriptor.
+ * @param buf Source buffer.
+ * @param len Bytes to write.
+ * @param offset Absolute file offset.
+ * @return 0 on success, -1 on error.
+ */
+static int diskann_pwrite_all(int fd, const void *buf, size_t len, off_t offset) {
+    const char *p = (const char *)buf;
+    size_t done = 0;
+    while (done < len) {
+        ssize_t ret = pwrite(fd, p + done, len - done, offset + (off_t)done);
+        if (ret < 0) { if (errno == EINTR) continue; return -1; }
+        done += (size_t)ret;
+    }
+    return 0;
+}
+
+/**
+ * @brief Read up to len bytes at a file offset, retrying interrupted reads, stopping at EOF.
+ * @param fd File descriptor.
+ * @param buf Destination buffer.
+ * @param len Bytes requested.
+ * @param offset Absolute file offset.
+ * @return Bytes read (may be < len at EOF) on success, -1 on error.
+ */
+static ssize_t diskann_pread_all(int fd, void *buf, size_t len, off_t offset) {
+    char *p = (char *)buf;
+    size_t done = 0;
+    while (done < len) {
+        ssize_t ret = pread(fd, p + done, len - done, offset + (off_t)done);
+        if (ret < 0) { if (errno == EINTR) continue; return -1; }
+        if (ret == 0) break;
+        done += (size_t)ret;
+    }
+    return (ssize_t)done;
+}
+
+/**
+ * @brief Open (create if absent) the on-disk vector data file.
+ * @param index Index instance.
+ * @return 0 on success, -1 on error.
+ */
 static int diskann_disk_open(GV_DiskANNIndex *index) {
     if (!index->data_path) return -1;
 
@@ -572,16 +635,7 @@ static int diskann_disk_write_vector(GV_DiskANNIndex *index, size_t vec_index, c
     size_t slot_size = ((vec_bytes + index->sector_size - 1) / index->sector_size) * index->sector_size;
     off_t offset = (off_t)(vec_index * slot_size);
 
-    size_t written = 0;
-    while (written < vec_bytes) {
-        ssize_t ret = pwrite(index->data_fd, (const char *)data + written,
-                             vec_bytes - written, offset + (off_t)written);
-        if (ret < 0) {
-            if (errno == EINTR) continue;
-            return -1;
-        }
-        written += (size_t)ret;
-    }
+    if (diskann_pwrite_all(index->data_fd, data, vec_bytes, offset) != 0) return -1;
 
     /* Invalidate the cached page holding this vector so a subsequent read does
      * not return the stale pre-write contents. */
@@ -613,37 +667,19 @@ static int diskann_disk_read_vector(GV_DiskANNIndex *index, size_t vec_index, fl
 
     float *page_buf = (float *)gv_calloc(page_data_floats, sizeof(float));
     if (!page_buf) {
-        off_t file_offset = (off_t)(vec_index * slot_size);
-        size_t nread = 0;
-        while (nread < vec_bytes) {
-            ssize_t ret = pread(index->data_fd, (char *)out + nread,
-                                vec_bytes - nread, file_offset + (off_t)nread);
-            if (ret < 0) {
-                if (errno == EINTR) continue;
-                return -1;
-            }
-            if (ret == 0) break; /* EOF */
-            nread += (size_t)ret;
-        }
-        return (nread >= vec_bytes) ? 0 : -1;
+        ssize_t got = diskann_pread_all(index->data_fd, out, vec_bytes,
+                                        (off_t)(vec_index * slot_size));
+        return (got >= 0 && (size_t)got >= vec_bytes) ? 0 : -1;
     }
 
     for (size_t vi = 0; vi < page_vectors; vi++) {
         size_t global_vi = page_id * page_vectors + vi;
         if (global_vi >= index->count) break;
 
-        off_t file_offset = (off_t)(global_vi * slot_size);
-        size_t nread = 0;
-        while (nread < vec_bytes) {
-            ssize_t ret = pread(index->data_fd, (char *)&page_buf[vi * index->dimension] + nread,
-                                vec_bytes - nread, file_offset + (off_t)nread);
-            if (ret < 0) {
-                if (errno == EINTR) continue;
-                gv_free(page_buf);
-                return -1;
-            }
-            if (ret == 0) break;
-            nread += (size_t)ret;
+        if (diskann_pread_all(index->data_fd, &page_buf[vi * index->dimension], vec_bytes,
+                              (off_t)(global_vi * slot_size)) < 0) {
+            gv_free(page_buf);
+            return -1;
         }
     }
 
@@ -661,6 +697,127 @@ static void diskann_disk_close(GV_DiskANNIndex *index) {
         close(index->data_fd);
         index->data_fd = -1;
     }
+}
+
+/**
+ * @brief Open "{data_path}.graph" and size the per-node adjacency slot.
+ *
+ * Each node occupies node_id * graph_slot_bytes, laid out as
+ * [uint32 count][uint32 ids[max_degree]]. Host-endian runtime artifact co-located
+ * with the vector data file; the portable diskann_save() format is unaffected.
+ *
+ * @param index Index instance.
+ * @return 0 on success (including when out-of-core is disabled), -1 on error.
+ */
+static int diskann_graph_open(GV_DiskANNIndex *index) {
+    if (!index->graph_on_disk) return 0;
+    if (index->graph_fd >= 0) return 0;
+    if (!index->data_path) return -1;
+
+    if (!index->graph_path) {
+        size_t n = strlen(index->data_path) + sizeof(".graph");
+        index->graph_path = (char *)gv_alloc(n);
+        if (!index->graph_path) return -1;
+        snprintf(index->graph_path, n, "%s.graph", index->data_path);
+    }
+    index->graph_slot_bytes = (size_t)(1 + index->max_degree) * sizeof(uint32_t);
+
+    index->graph_fd = open(index->graph_path, O_RDWR | O_CREAT, 0644);
+    if (index->graph_fd < 0) return -1;
+    return 0;
+}
+
+/**
+ * @brief Write one node's adjacency list to its disk slot.
+ * @param index Index instance.
+ * @param node_id Node position.
+ * @return 0 on success, -1 on error.
+ */
+static int diskann_graph_write_node(GV_DiskANNIndex *index, size_t node_id) {
+    if (index->graph_fd < 0 || index->graph_slot_bytes == 0) return -1;
+
+    const DiskANN_Node *node = &index->nodes[node_id];
+    size_t count = node->neighbor_count;
+    if (count > index->max_degree) count = index->max_degree;
+
+    uint32_t *buf = (uint32_t *)gv_calloc(1 + index->max_degree, sizeof(uint32_t));
+    if (!buf) return -1;
+    buf[0] = (uint32_t)count;
+    for (size_t i = 0; i < count; i++) buf[1 + i] = (uint32_t)node->neighbors[i];
+
+    int rc = diskann_pwrite_all(index->graph_fd, buf, index->graph_slot_bytes,
+                                (off_t)(node_id * index->graph_slot_bytes));
+    gv_free(buf);
+    return rc;
+}
+
+/**
+ * @brief Read one node's adjacency list from its disk slot.
+ * @param index Index instance.
+ * @param node_id Node position.
+ * @param slot_buf Caller-owned scratch of (1 + max_degree) uint32_t.
+ * @param out_ids Caller buffer of at least max_degree ids.
+ * @param out_count Receives the neighbour count (0 for an unwritten slot).
+ * @return 0 on success, -1 on error.
+ */
+static int diskann_graph_read_node(const GV_DiskANNIndex *index, size_t node_id,
+                                   uint32_t *slot_buf, size_t *out_ids, size_t *out_count) {
+    *out_count = 0;
+    if (index->graph_fd < 0 || index->graph_slot_bytes == 0) return -1;
+
+    ssize_t got = diskann_pread_all(index->graph_fd, slot_buf, index->graph_slot_bytes,
+                                    (off_t)(node_id * index->graph_slot_bytes));
+    if (got < 0) return -1;
+    if ((size_t)got < index->graph_slot_bytes) return 0; /* unwritten slot */
+
+    size_t count = (size_t)slot_buf[0];
+    if (count > index->max_degree) count = index->max_degree;
+    for (size_t i = 0; i < count; i++) out_ids[i] = (size_t)slot_buf[1 + i];
+    *out_count = count;
+
+    ((GV_DiskANNIndex *)index)->disk_reads++;
+    return 0;
+}
+
+/**
+ * @brief Flush all in-RAM adjacency lists to disk and free them (neighbor_count kept).
+ * @param index Index instance.
+ * @return 0 on success (no-op if already flushed or out-of-core is off), -1 on error.
+ */
+static int diskann_flush_graph(GV_DiskANNIndex *index) {
+    if (!index->graph_on_disk || index->graph_flushed) return 0;
+    if (diskann_graph_open(index) != 0) return -1;
+
+    for (size_t i = 0; i < index->count; i++) {
+        if (diskann_graph_write_node(index, i) != 0) return -1;
+    }
+    for (size_t i = 0; i < index->count; i++) {
+        gv_free(index->nodes[i].neighbors);
+        index->nodes[i].neighbors = NULL; /* neighbor_count retained */
+    }
+    index->graph_flushed = 1;
+    return 0;
+}
+
+/**
+ * @brief Return a node's adjacency list (RAM pointer, or disk slot read into scratch).
+ * @param index Index instance.
+ * @param node_id Node position.
+ * @param slot_buf Caller-owned uint32_t scratch (used only out-of-core).
+ * @param scratch Caller buffer of at least max_degree ids (used only out-of-core).
+ * @param out_count Receives the neighbour count.
+ * @return Pointer to the neighbour ids (scratch when flushed, live array otherwise).
+ */
+static const size_t *diskann_node_neighbors(const GV_DiskANNIndex *index, size_t node_id,
+                                            uint32_t *slot_buf, size_t *scratch, size_t *out_count) {
+    if (!index->graph_flushed) {
+        *out_count = index->nodes[node_id].neighbor_count;
+        return index->nodes[node_id].neighbors;
+    }
+    if (diskann_graph_read_node(index, node_id, slot_buf, scratch, out_count) != 0) {
+        *out_count = 0;
+    }
+    return scratch;
 }
 
 static size_t diskann_compute_medoid(const float *data, size_t count, size_t dimension) {
@@ -725,6 +882,22 @@ static int diskann_greedy_search(const GV_DiskANNIndex *index, const float *quer
         return -1;
     }
 
+    /* Scratch for out-of-core adjacency reads; unused (and unallocated) in RAM mode. */
+    size_t *nbr_scratch = NULL;
+    uint32_t *slot_buf = NULL;
+    if (index->graph_flushed) {
+        nbr_scratch = (size_t *)gv_alloc((index->max_degree + 1) * sizeof(size_t));
+        slot_buf = (uint32_t *)gv_alloc((index->max_degree + 1) * sizeof(uint32_t));
+        if (!nbr_scratch || !slot_buf) {
+            gv_free(slot_buf);
+            gv_free(nbr_scratch);
+            gv_free(vec_buf);
+            gv_free(candidates);
+            gv_free(seen);
+            return -1;
+        }
+    }
+
     size_t start = index->medoid;
     if (start >= index->count) start = 0;
 
@@ -768,9 +941,10 @@ static int diskann_greedy_search(const GV_DiskANNIndex *index, const float *quer
 
         visited[result_count++] = curr;
 
-        const DiskANN_Node *node = &index->nodes[curr];
-        for (size_t ni = 0; ni < node->neighbor_count; ni++) {
-            size_t neighbor = node->neighbors[ni];
+        size_t nbr_count = 0;
+        const size_t *nbrs = diskann_node_neighbors(index, curr, slot_buf, nbr_scratch, &nbr_count);
+        for (size_t ni = 0; ni < nbr_count; ni++) {
+            size_t neighbor = nbrs[ni];
             if (neighbor >= index->count) continue;
 
             if (seen[neighbor / 64] & (1ULL << (neighbor % 64))) continue;
@@ -825,6 +999,8 @@ static int diskann_greedy_search(const GV_DiskANNIndex *index, const float *quer
 
     *visited_count = result_count;
 
+    gv_free(slot_buf);
+    gv_free(nbr_scratch);
     gv_free(vec_buf);
     gv_free(candidates);
     gv_free(seen);
@@ -935,6 +1111,7 @@ void diskann_config_init(GV_DiskANNConfig *config) {
     config->data_path = NULL;
     config->cache_size_mb = DISKANN_DEFAULT_CACHE_MB;
     config->sector_size = gv_disk_default_sector_size();
+    config->graph_on_disk = 0;
 }
 
 GV_DiskANNIndex *diskann_create(size_t dimension, const GV_DiskANNConfig *config) {
@@ -945,6 +1122,8 @@ GV_DiskANNIndex *diskann_create(size_t dimension, const GV_DiskANNConfig *config
 
     index->dimension = dimension;
     index->data_fd = -1;
+    index->graph_fd = -1;
+    index->graph_on_disk = (config && config->graph_on_disk) ? 1 : 0;
 
     if (config) {
         index->max_degree = config->max_degree > 0 ? config->max_degree : DISKANN_DEFAULT_DEGREE;
@@ -1003,6 +1182,14 @@ GV_DiskANNIndex *diskann_create(size_t dimension, const GV_DiskANNConfig *config
         return NULL;
     }
 
+    if (index->graph_on_disk && diskann_graph_open(index) != 0) {
+        diskann_disk_close(index);
+        gv_free(index->graph_path);
+        gv_free(index->data_path);
+        gv_free(index);
+        return NULL;
+    }
+
     size_t cache_mb = (config && config->cache_size_mb > 0) ? config->cache_size_mb : DISKANN_DEFAULT_CACHE_MB;
     diskann_cache_init(&index->cache, cache_mb, index->vectors_per_page, dimension);
 
@@ -1012,6 +1199,8 @@ GV_DiskANNIndex *diskann_create(size_t dimension, const GV_DiskANNConfig *config
     index->nodes = (DiskANN_Node *)gv_calloc(index->capacity, sizeof(DiskANN_Node));
     if (!index->nodes) {
         diskann_disk_close(index);
+        if (index->graph_fd >= 0) close(index->graph_fd);
+        gv_free(index->graph_path);
         gv_free(index->data_path);
         gv_free(index);
         return NULL;
@@ -1038,6 +1227,9 @@ void diskann_destroy(GV_DiskANNIndex *index) {
 
     diskann_disk_close(index);
 
+    if (index->graph_fd >= 0) close(index->graph_fd);
+    gv_free(index->graph_path);
+
     gv_free(index->data_path);
     gv_free(index);
 }
@@ -1054,7 +1246,18 @@ int diskann_build(GV_DiskANNIndex *index, const float *data, size_t count, size_
         index->capacity = count;
     }
 
+    /* Free any per-node state from a prior build before reconstructing, so a
+     * rebuild neither leaks the old neighbours/PQ codes nor (after an out-of-core
+     * flush left neighbors==NULL with a retained count) crashes on a later read. */
+    for (size_t i = 0; i < index->count; i++) {
+        gv_free(index->nodes[i].neighbors);
+        index->nodes[i].neighbors = NULL;
+        gv_free(index->nodes[i].pq_code);
+        index->nodes[i].pq_code = NULL;
+        index->nodes[i].neighbor_count = 0;
+    }
     index->count = count;
+    index->graph_flushed = 0; /* rebuild reconstructs the graph in RAM */
 
     for (size_t i = 0; i < count; i++) {
         if (diskann_disk_write_vector(index, i, &data[i * dimension]) != 0) {
@@ -1206,12 +1409,19 @@ int diskann_build(GV_DiskANNIndex *index, const float *data, size_t count, size_
     gv_free(search_distances);
     gv_free(vec_buf);
 
+    /* Push the freshly-built adjacency out of RAM when running out-of-core. */
+    if (index->graph_on_disk && diskann_flush_graph(index) != 0) {
+        return -1;
+    }
+
     return 0;
 }
 
 int diskann_insert(GV_DiskANNIndex *index, const float *data, size_t dimension) {
     if (!index || !data) return -1;
     if (dimension != index->dimension) return -1;
+    /* Out-of-core is build-then-serve: no incremental insert after flush. */
+    if (index->graph_on_disk && index->graph_flushed) return -1;
 
     if (index->count >= index->capacity) {
         size_t new_cap = index->capacity * 2;
@@ -1444,7 +1654,10 @@ int diskann_get_stats(const GV_DiskANNIndex *index, GV_DiskANNStats *stats) {
 
     size_t mem = index->count * sizeof(DiskANN_Node);
     for (size_t i = 0; i < index->count; i++) {
-        mem += index->nodes[i].neighbor_count * sizeof(size_t);
+        /* Freed out-of-core (neighbors == NULL); count only resident memory. */
+        if (index->nodes[i].neighbors) {
+            mem += index->nodes[i].neighbor_count * sizeof(size_t);
+        }
         if (index->nodes[i].pq_code && index->pq.trained) {
             mem += index->pq.m;
         }
@@ -1458,6 +1671,9 @@ int diskann_get_stats(const GV_DiskANNIndex *index, GV_DiskANNStats *stats) {
     size_t vec_bytes = index->dimension * sizeof(float);
     size_t slot_size = ((vec_bytes + index->sector_size - 1) / index->sector_size) * index->sector_size;
     stats->disk_usage_bytes = index->count * slot_size;
+    if (index->graph_flushed) {
+        stats->disk_usage_bytes += index->count * index->graph_slot_bytes;
+    }
 
     return 0;
 }
@@ -1493,6 +1709,7 @@ int diskann_save(const GV_DiskANNIndex *index, const char *filepath) {
     if (write_u64(f, (uint64_t)index->search_beam_width) != 0) goto fail;
     if (write_u64(f, (uint64_t)index->sector_size) != 0) goto fail;
     if (write_u64(f, (uint64_t)index->medoid) != 0) goto fail;
+    if (write_u32(f, (uint32_t)index->graph_on_disk) != 0) goto fail; /* v2 */
 
     if (write_u32(f, (uint32_t)index->pq.trained) != 0) goto fail;
     if (index->pq.trained) {
@@ -1504,22 +1721,47 @@ int diskann_save(const GV_DiskANNIndex *index, const char *filepath) {
         if (write_floats(f, index->pq.codebooks, cb_size) != 0) goto fail;
     }
 
+    /* Scratch to materialise one out-of-core node's neighbours during save. */
+    size_t *nbr_scratch = NULL;
+    uint32_t *slot_buf = NULL;
+    if (index->graph_flushed) {
+        nbr_scratch = (size_t *)gv_alloc((index->max_degree + 1) * sizeof(size_t));
+        slot_buf = (uint32_t *)gv_alloc((index->max_degree + 1) * sizeof(uint32_t));
+        if (!nbr_scratch || !slot_buf) { gv_free(slot_buf); gv_free(nbr_scratch); goto fail; }
+    }
+
     for (size_t i = 0; i < index->count; i++) {
         const DiskANN_Node *node = &index->nodes[i];
 
-        if (write_u32(f, (uint32_t)node->deleted) != 0) goto fail;
-        if (write_u64(f, (uint64_t)node->neighbor_count) != 0) goto fail;
+        size_t nbr_count;
+        const size_t *nbrs;
+        if (index->graph_flushed) {
+            /* Read from disk directly: a read error must abort the save, not
+             * silently persist an empty adjacency list (a corrupt index). */
+            if (diskann_graph_read_node(index, i, slot_buf, nbr_scratch, &nbr_count) != 0) {
+                gv_free(slot_buf); gv_free(nbr_scratch); goto fail;
+            }
+            nbrs = nbr_scratch;
+        } else {
+            nbr_count = node->neighbor_count;
+            nbrs = node->neighbors;
+        }
 
-        for (size_t j = 0; j < node->neighbor_count; j++) {
-            if (write_u64(f, (uint64_t)node->neighbors[j]) != 0) goto fail;
+        if (write_u32(f, (uint32_t)node->deleted) != 0) { gv_free(slot_buf); gv_free(nbr_scratch); goto fail; }
+        if (write_u64(f, (uint64_t)nbr_count) != 0) { gv_free(slot_buf); gv_free(nbr_scratch); goto fail; }
+
+        for (size_t j = 0; j < nbr_count; j++) {
+            if (write_u64(f, (uint64_t)nbrs[j]) != 0) { gv_free(slot_buf); gv_free(nbr_scratch); goto fail; }
         }
 
         uint32_t has_pq = (node->pq_code && index->pq.trained) ? 1 : 0;
-        if (write_u32(f, has_pq) != 0) goto fail;
+        if (write_u32(f, has_pq) != 0) { gv_free(slot_buf); gv_free(nbr_scratch); goto fail; }
         if (has_pq) {
-            if (write_bytes(f, node->pq_code, index->pq.m) != 0) goto fail;
+            if (write_bytes(f, node->pq_code, index->pq.m) != 0) { gv_free(slot_buf); gv_free(nbr_scratch); goto fail; }
         }
     }
+    gv_free(slot_buf);
+    gv_free(nbr_scratch);
 
     if (index->data_path) {
         uint32_t path_len = (uint32_t)strlen(index->data_path);
@@ -1545,7 +1787,8 @@ GV_DiskANNIndex *diskann_load(const char *filepath, const GV_DiskANNConfig *conf
 
     uint32_t magic = 0, version = 0;
     if (read_u32(f, &magic) != 0 || magic != DISKANN_MAGIC) goto fail;
-    if (read_u32(f, &version) != 0 || version != DISKANN_VERSION) goto fail;
+    if (read_u32(f, &version) != 0 ||
+        version < DISKANN_VERSION_MIN || version > DISKANN_VERSION) goto fail;
 
     uint64_t dimension = 0, count = 0, max_degree = 0;
     uint64_t build_bw = 0, search_bw = 0, sector_size = 0, medoid = 0;
@@ -1560,6 +1803,11 @@ GV_DiskANNIndex *diskann_load(const char *filepath, const GV_DiskANNConfig *conf
     if (read_u64(f, &sector_size) != 0) goto fail;
     if (read_u64(f, &medoid) != 0) goto fail;
 
+    uint32_t graph_on_disk = 0;
+    if (version >= 2) {
+        if (read_u32(f, &graph_on_disk) != 0) goto fail;
+    }
+
     if (dimension == 0) goto fail;
 
     /* Build a config from the file data, overridden by user config where provided */
@@ -1570,12 +1818,15 @@ GV_DiskANNIndex *diskann_load(const char *filepath, const GV_DiskANNConfig *conf
     load_config.build_beam_width = (size_t)build_bw;
     load_config.search_beam_width = (size_t)search_bw;
     load_config.sector_size = (size_t)sector_size;
+    load_config.graph_on_disk = (int)graph_on_disk;
 
     /* Use caller-provided data_path and cache_size if available */
     if (config) {
         if (config->data_path) load_config.data_path = config->data_path;
         if (config->cache_size_mb > 0) load_config.cache_size_mb = config->cache_size_mb;
         if (config->search_beam_width > 0) load_config.search_beam_width = config->search_beam_width;
+        /* A caller may opt a RAM-saved index into out-of-core serving on load. */
+        if (config->graph_on_disk) load_config.graph_on_disk = 1;
     }
 
     uint32_t pq_trained = 0;
@@ -1744,6 +1995,12 @@ GV_DiskANNIndex *diskann_load(const char *filepath, const GV_DiskANNConfig *conf
     }
 
     gv_free(temp_nodes);
+
+    if (index->graph_on_disk && diskann_flush_graph(index) != 0) {
+        diskann_destroy(index);
+        return NULL;
+    }
+
     return index;
 
 fail_temp:
