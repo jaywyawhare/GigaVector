@@ -1289,6 +1289,16 @@ void diskann_destroy(GV_DiskANNIndex *index) {
     gv_free(index);
 }
 
+/** @brief Acquire the index's API lock (const-safe). @param index Index instance. */
+static void diskann_lock(const GV_DiskANNIndex *index) {
+    pthread_mutex_lock(&((GV_DiskANNIndex *)index)->lock);
+}
+
+/** @brief Release the index's API lock (const-safe). @param index Index instance. */
+static void diskann_unlock(const GV_DiskANNIndex *index) {
+    pthread_mutex_unlock(&((GV_DiskANNIndex *)index)->lock);
+}
+
 /**
  * @brief Record a tombstoned slot id for reuse by a later insert.
  * @param index Index instance.
@@ -1828,9 +1838,9 @@ static int diskann_get_stats_locked(const GV_DiskANNIndex *index, GV_DiskANNStat
 void diskann_attach_page_cache(GV_DiskANNIndex *index, GV_DiskPageCache *cache)
 {
     if (!index) return;
-    pthread_mutex_lock(&index->lock);
+    diskann_lock(index);
     index->shared_page_cache = cache;
-    pthread_mutex_unlock(&index->lock);
+    diskann_unlock(index);
 }
 
 static size_t diskann_count_locked(const GV_DiskANNIndex *index) {
@@ -2178,61 +2188,57 @@ fail:
  */
 int diskann_build(GV_DiskANNIndex *index, const float *data, size_t count, size_t dimension) {
     if (!index) return -1;
-    pthread_mutex_lock(&index->lock);
+    diskann_lock(index);
     int rc = diskann_build_locked(index, data, count, dimension);
-    pthread_mutex_unlock(&index->lock);
+    diskann_unlock(index);
     return rc;
 }
 
 int diskann_insert(GV_DiskANNIndex *index, const float *data, size_t dimension) {
     if (!index) return -1;
-    pthread_mutex_lock(&index->lock);
+    diskann_lock(index);
     int rc = diskann_insert_locked(index, data, dimension);
-    pthread_mutex_unlock(&index->lock);
+    diskann_unlock(index);
     return rc;
 }
 
 int diskann_search(const GV_DiskANNIndex *index, const float *query, size_t dimension,
                    size_t k, GV_DiskANNResult *results) {
     if (!index) return -1;
-    pthread_mutex_t *lock = &((GV_DiskANNIndex *)index)->lock;
-    pthread_mutex_lock(lock);
+    diskann_lock(index);
     int rc = diskann_search_locked(index, query, dimension, k, results);
-    pthread_mutex_unlock(lock);
+    diskann_unlock(index);
     return rc;
 }
 
 int diskann_delete(GV_DiskANNIndex *index, size_t vector_index) {
     if (!index) return -1;
-    pthread_mutex_lock(&index->lock);
+    diskann_lock(index);
     int rc = diskann_delete_locked(index, vector_index);
-    pthread_mutex_unlock(&index->lock);
+    diskann_unlock(index);
     return rc;
 }
 
 int diskann_get_stats(const GV_DiskANNIndex *index, GV_DiskANNStats *stats) {
     if (!index) return -1;
-    pthread_mutex_t *lock = &((GV_DiskANNIndex *)index)->lock;
-    pthread_mutex_lock(lock);
+    diskann_lock(index);
     int rc = diskann_get_stats_locked(index, stats);
-    pthread_mutex_unlock(lock);
+    diskann_unlock(index);
     return rc;
 }
 
 int diskann_save(const GV_DiskANNIndex *index, const char *filepath) {
     if (!index) return -1;
-    pthread_mutex_t *lock = &((GV_DiskANNIndex *)index)->lock;
-    pthread_mutex_lock(lock);
+    diskann_lock(index);
     int rc = diskann_save_locked(index, filepath);
-    pthread_mutex_unlock(lock);
+    diskann_unlock(index);
     return rc;
 }
 
 size_t diskann_count(const GV_DiskANNIndex *index) {
     if (!index) return 0;
-    pthread_mutex_t *lock = &((GV_DiskANNIndex *)index)->lock;
-    pthread_mutex_lock(lock);
+    diskann_lock(index);
     size_t n = diskann_count_locked(index);
-    pthread_mutex_unlock(lock);
+    diskann_unlock(index);
     return n;
 }
