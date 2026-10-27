@@ -1473,18 +1473,22 @@ int diskann_insert(GV_DiskANNIndex *index, const float *data, size_t dimension) 
 
     size_t new_id = index->count;
 
-    /* First vector: store it, no graph work. */
+    /* First vector: store it, no graph work. Commit index state only once every
+     * fallible step (vector write, empty-slot write) has succeeded. */
     if (index->count == 0) {
         if (diskann_disk_write_vector(index, new_id, data) != 0) return -1;
         DiskANN_Node *first = &index->nodes[new_id];
         memset(first, 0, sizeof(DiskANN_Node));
+        index->count = 1;
+        if (flushed && diskann_graph_write_node(index, new_id) != 0) { /* empty slot */
+            index->count = 0;
+            return -1;
+        }
         if (index->pq.trained) {
             first->pq_code = (uint8_t *)gv_alloc(index->pq.m);
             if (first->pq_code) diskann_pq_encode(&index->pq, data, first->pq_code);
         }
         index->medoid = 0;
-        index->count = 1;
-        if (flushed) return diskann_graph_write_node(index, new_id); /* empty slot */
         return 0;
     }
 
@@ -1543,8 +1547,7 @@ int diskann_insert(GV_DiskANNIndex *index, const float *data, size_t dimension) 
 
     /* Greedy search found nothing usable (e.g. every visited node deleted): link
      * to the medoid so the new node stays reachable rather than an orphan. */
-    if (valid_count == 0 && index->medoid != new_id &&
-        !index->nodes[index->medoid].deleted) {
+    if (valid_count == 0 && !index->nodes[index->medoid].deleted) {
         float dist = 0.0f;
         if (index->pq.trained && index->nodes[index->medoid].pq_code) {
             dist = diskann_pq_distance(&index->pq, data, index->nodes[index->medoid].pq_code);
@@ -1554,6 +1557,12 @@ int diskann_insert(GV_DiskANNIndex *index, const float *data, size_t dimension) 
         search_results[0] = index->medoid;
         search_distances[0] = dist;
         valid_count = 1;
+    }
+
+    /* Medoid is deleted only when every prior node was tombstoned; the fresh
+     * node then becomes the entry point so the index stays searchable. */
+    if (index->nodes[index->medoid].deleted) {
+        index->medoid = new_id;
     }
 
     if (valid_count > 0) {

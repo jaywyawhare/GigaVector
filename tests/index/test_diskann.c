@@ -679,6 +679,39 @@ static int test_diskann_ooc_insert(void) {
     return 0;
 }
 
+/* Inserting into an index whose nodes were all deleted must re-seed the entry
+ * point so the fresh vector is searchable rather than orphaned. */
+static int test_diskann_insert_into_all_deleted(void) {
+    GV_DiskANNConfig config;
+    diskann_config_init(&config);
+    config.data_path = NULL;
+
+    GV_DiskANNIndex *idx = diskann_create(DIM, &config);
+    ASSERT(idx != NULL, "create failed");
+
+    float data[BUILD_COUNT * DIM];
+    generate_batch(data, BUILD_COUNT, DIM);
+    ASSERT(diskann_build(idx, data, BUILD_COUNT, DIM) == 0, "build failed");
+
+    for (size_t i = 0; i < BUILD_COUNT; i++) diskann_delete(idx, i);
+    ASSERT(diskann_count(idx) == 0, "all nodes deleted");
+
+    float nv[DIM];
+    fill_vector(nv, DIM, 123.0f);
+    ASSERT(diskann_insert(idx, nv, DIM) == 0, "insert into all-deleted failed");
+    ASSERT(diskann_count(idx) == 1, "one live node after re-seed insert");
+
+    GV_DiskANNResult r[3];
+    memset(r, 0, sizeof(r));
+    int found = diskann_search(idx, nv, DIM, 3, r);
+    ASSERT(found == 1, "search finds the re-seeded node");
+    ASSERT(r[0].index == BUILD_COUNT, "found the inserted node id");
+    ASSERT(r[0].distance < 1e-4f, "self-query distance ~0");
+
+    diskann_destroy(idx);
+    return 0;
+}
+
 /* ---------- runner ---------- */
 
 typedef int (*test_fn)(void);
@@ -702,6 +735,7 @@ int main(void) {
         {"Testing diskann out-of-core load from RAM save...", test_diskann_ooc_load_from_ram_save},
         {"Testing diskann out-of-core rebuild...",    test_diskann_ooc_rebuild},
         {"Testing diskann out-of-core insert...",     test_diskann_ooc_insert},
+        {"Testing diskann insert into all-deleted...", test_diskann_insert_into_all_deleted},
     };
     int n = sizeof(tests) / sizeof(tests[0]);
     int passed = 0;
