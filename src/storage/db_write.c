@@ -65,13 +65,18 @@ static _Thread_local int g_txn_wal_suppress = 0;
 void db_set_wal_suppress(int on) { g_txn_wal_suppress = on; }
 
 /**
- * @brief Store one vector in a DiskANN collection: SoA (id-aligned) + graph.
+ * @brief Store one vector in a DiskANN collection: SoA (id-aligned) + graph + metadata.
  * @param db Database instance.
  * @param data Vector data.
  * @param dimension Vector dimensionality.
+ * @param metadata_keys Metadata keys (NULL or count 0 for none).
+ * @param metadata_values Metadata values parallel to @p metadata_keys.
+ * @param metadata_count Number of metadata pairs.
  * @return 0 on success, -1 on error (SoA slot rolled back on graph-insert failure).
  */
-static int db_diskann_add(GV_Database *db, const float *data, size_t dimension) {
+static int db_diskann_add(GV_Database *db, const float *data, size_t dimension,
+                          const char *const *metadata_keys, const char *const *metadata_values,
+                          size_t metadata_count) {
     int on_heap = 0;
     float *nd = (float *)gv_tls_alloc_or_heap(dimension * sizeof(float), sizeof(float), &on_heap);
     if (nd == NULL) return -1;
@@ -84,13 +89,45 @@ static int db_diskann_add(GV_Database *db, const float *data, size_t dimension) 
             for (size_t i = 0; i < dimension; ++i) nd[i] *= inv;
         }
     }
-    size_t vi = soa_storage_add(db->soa_storage, nd, NULL);
-    if (vi == (size_t)-1) { gv_tls_free_or_heap(nd, on_heap); return -1; }
+
+    GV_Metadata *metadata = NULL;
+    if (metadata_count > 0) {
+        GV_Vector tmp = { dimension, NULL, NULL };
+        for (size_t i = 0; i < metadata_count; i++) {
+            if (metadata_keys[i] != NULL && metadata_values[i] != NULL &&
+                vector_set_metadata(&tmp, metadata_keys[i], metadata_values[i]) != 0) {
+                vector_clear_metadata(&tmp);
+                gv_tls_free_or_heap(nd, on_heap);
+                return -1;
+            }
+        }
+        metadata = tmp.metadata;
+    }
+
+    size_t vi = soa_storage_add(db->soa_storage, nd, metadata);
+    if (vi == (size_t)-1) {
+        if (metadata != NULL) {
+            GV_Vector tmp = { dimension, NULL, metadata };
+            vector_clear_metadata(&tmp);
+        }
+        gv_tls_free_or_heap(nd, on_heap);
+        return -1;
+    }
     const float *stored = soa_storage_get_data(db->soa_storage, vi);
     int st = diskann_insert((GV_DiskANNIndex *)db->hnsw_index, stored, dimension);
     gv_tls_free_or_heap(nd, on_heap);
-    if (st != 0) soa_storage_mark_deleted(db->soa_storage, vi);
-    return st;
+    if (st != 0) {
+        soa_storage_mark_deleted(db->soa_storage, vi);
+        return st;
+    }
+    if (metadata_count > 0 && db->metadata_index != NULL) {
+        for (size_t i = 0; i < metadata_count; i++) {
+            if (metadata_keys[i] != NULL && metadata_values[i] != NULL) {
+                metadata_index_add(db->metadata_index, metadata_keys[i], metadata_values[i], vi);
+            }
+        }
+    }
+    return 0;
 }
 
 int db_add_vector(GV_Database *db, const float *data, size_t dimension) {
@@ -209,7 +246,7 @@ int db_add_vector(GV_Database *db, const float *data, size_t dimension) {
             vector_destroy(vector);
         }
     } else if (db->index_type == GV_INDEX_TYPE_DISKANN) {
-        status = db_diskann_add(db, data, dimension);
+        status = db_diskann_add(db, data, dimension, NULL, NULL, 0);
     } else if (db->index_type == GV_INDEX_TYPE_IVFDISK) {
         if (ivfdisk_is_trained((GV_IVFDiskIndex *)db->hnsw_index) == 0) {
             pthread_rwlock_unlock(&db->rwlock);
@@ -599,6 +636,8 @@ int db_add_vector_with_metadata(GV_Database *db, const float *data, size_t dimen
         if (status != 0) {
             vector_destroy(vector);
         }
+    } else if (db->index_type == GV_INDEX_TYPE_DISKANN) {
+        status = db_diskann_add(db, data, dimension, &metadata_key, &metadata_value, 1);
     } else if (db->index_type == GV_INDEX_TYPE_FLAT ||
                db->index_type == GV_INDEX_TYPE_IVFFLAT ||
                db->index_type == GV_INDEX_TYPE_IVFSQ8 ||
@@ -889,7 +928,7 @@ int db_add_vector_with_rich_metadata(GV_Database *db, const float *data, size_t 
             vector_destroy(vector);
         }
     } else if (db->index_type == GV_INDEX_TYPE_DISKANN) {
-        status = db_diskann_add(db, data, dimension);
+        status = db_diskann_add(db, data, dimension, metadata_keys, metadata_values, metadata_count);
     } else if (db->index_type == GV_INDEX_TYPE_IVFDISK) {
         if (ivfdisk_is_trained((GV_IVFDiskIndex *)db->hnsw_index) == 0) {
             pthread_rwlock_unlock(&db->rwlock);
@@ -1362,6 +1401,7 @@ int db_update_vector(GV_Database *db, size_t vector_index, const float *new_data
             }
             break;
         case GV_INDEX_TYPE_IVFDISK:
+        case GV_INDEX_TYPE_DISKANN:
             if (db->hnsw_index == NULL || db->soa_storage == NULL) {
                 pthread_rwlock_unlock(&db->rwlock);
                 return -1;
@@ -1426,6 +1466,14 @@ int db_update_vector(GV_Database *db, size_t vector_index, const float *new_data
         if (status == 0) {
             status = ivfdisk_update((GV_IVFDiskIndex *)db->hnsw_index, vector_index,
                                     new_data, dimension);
+        }
+    } else if (db->index_type == GV_INDEX_TYPE_DISKANN) {
+        status = soa_storage_update_data(db->soa_storage, vector_index, new_data);
+        if (status == 0) {
+            /* Re-link against the stored copy so the graph matches SoA exactly. */
+            const float *stored = soa_storage_get_data(db->soa_storage, vector_index);
+            status = diskann_update((GV_DiskANNIndex *)db->hnsw_index, vector_index,
+                                    stored, dimension);
         }
     }
 

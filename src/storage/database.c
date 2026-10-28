@@ -159,15 +159,48 @@ static int db_diskann_create_index(GV_Database *db, size_t dimension, const char
  * @param query Query vector data.
  * @param k Neighbours requested.
  * @param results Output array of at least k results.
+ * @param distance_type Metric for the exact rerank.
+ * @param allowed Optional id allow-list for metadata-filtered search (NULL = none).
  * @return Number of results, or -1 on error.
  */
 int db_diskann_search(GV_Database *db, const float *query, size_t k,
-                      GV_SearchResult *results)
+                      GV_SearchResult *results, GV_DistanceType distance_type,
+                      const GV_IdBitmap *allowed)
 {
     if (!db || !db->hnsw_index || !query || k == 0) return -1;
     GV_DiskANNResult *tmp = (GV_DiskANNResult *)gv_alloc(k * sizeof(GV_DiskANNResult));
     if (!tmp) return -1;
-    int n = diskann_search((GV_DiskANNIndex *)db->hnsw_index, query, db->dimension, k, tmp);
+    int n = diskann_search_metric((GV_DiskANNIndex *)db->hnsw_index, query, db->dimension, k,
+                                  tmp, allowed, 0, distance_type);
+    for (int i = 0; i < n; i++) {
+        memset(&results[i], 0, sizeof(results[i]));
+        results[i].id = tmp[i].index;
+        results[i].distance = tmp[i].distance;
+    }
+    gv_free(tmp);
+    return n;
+}
+
+/**
+ * @brief Run a DiskANN radius search and project results onto GV_SearchResult ids.
+ *
+ * @param db Database instance.
+ * @param query Query vector data.
+ * @param radius Inclusive distance threshold.
+ * @param results Output array of at least max_results entries.
+ * @param max_results Capacity of @p results.
+ * @param distance_type Metric for the radius comparison.
+ * @return Number of results, or -1 on error.
+ */
+int db_diskann_range_search(GV_Database *db, const float *query, float radius,
+                            GV_SearchResult *results, size_t max_results,
+                            GV_DistanceType distance_type)
+{
+    if (!db || !db->hnsw_index || !query || max_results == 0) return -1;
+    GV_DiskANNResult *tmp = (GV_DiskANNResult *)gv_alloc(max_results * sizeof(GV_DiskANNResult));
+    if (!tmp) return -1;
+    int n = diskann_range_search((GV_DiskANNIndex *)db->hnsw_index, query, db->dimension, radius,
+                                 tmp, max_results, distance_type);
     for (int i = 0; i < n; i++) {
         memset(&results[i], 0, sizeof(results[i]));
         results[i].id = tmp[i].index;
@@ -191,6 +224,28 @@ static int db_diskann_rebuild_from_soa(GV_Database *db)
     if (!db || !db->hnsw_index || !db->soa_storage) return -1;
     size_t n = soa_storage_count(db->soa_storage);
     GV_DiskANNIndex *idx = (GV_DiskANNIndex *)db->hnsw_index;
+    if (n == 0) return 0;
+
+    /* Build the whole graph in one parallel pass instead of n serial inserts:
+     * ids stay 0..n-1 (aligned with soa_storage), then tombstoned slots are
+     * re-deleted. Falls back to incremental insert if the batch buffer can't be
+     * allocated. */
+    float *batch = (float *)gv_alloc(n * db->dimension * sizeof(float));
+    if (batch) {
+        for (size_t i = 0; i < n; i++) {
+            const float *v = soa_storage_get_data(db->soa_storage, i);
+            if (v == NULL) { gv_free(batch); return -1; }
+            memcpy(&batch[i * db->dimension], v, db->dimension * sizeof(float));
+        }
+        int rc = diskann_build_parallel(idx, batch, n, db->dimension, (size_t)gv_get_cpu_count());
+        gv_free(batch);
+        if (rc != 0) return -1;
+        for (size_t i = 0; i < n; i++) {
+            if (soa_storage_is_deleted(db->soa_storage, i) == 1) diskann_delete(idx, i);
+        }
+        return 0;
+    }
+
     for (size_t i = 0; i < n; i++) {
         const float *v = soa_storage_get_data(db->soa_storage, i);
         if (v == NULL) return -1;

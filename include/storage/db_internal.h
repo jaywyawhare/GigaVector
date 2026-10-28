@@ -8,6 +8,7 @@
 #include <stdint.h>
 #include "admin/cdc.h"
 #include "admin/webhook.h"
+#include "core/id_bitmap.h"
 
 /* db_stats.c */
 size_t db_estimate_vector_memory(size_t dimension);
@@ -35,7 +36,11 @@ uint64_t wal_read_ckpt_gen(const char *wal_path);
 void db_fill_ivfdisk_search_vectors(GV_Database *db, GV_SearchResult *results,
                                     int n);
 int db_diskann_search(GV_Database *db, const float *query, size_t k,
-                      GV_SearchResult *results);
+                      GV_SearchResult *results, GV_DistanceType distance_type,
+                      const GV_IdBitmap *allowed);
+int db_diskann_range_search(GV_Database *db, const float *query, float radius,
+                            GV_SearchResult *results, size_t max_results,
+                            GV_DistanceType distance_type);
 
 void db_normalize_vector(GV_Vector *vector);
 void db_emit_change(GV_Database *db, GV_CDCEventType cdc_type,

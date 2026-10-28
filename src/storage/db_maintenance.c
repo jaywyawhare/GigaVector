@@ -41,6 +41,7 @@ typedef SSIZE_T ssize_t;
 #include "index/flat.h"
 #include "index/ivfflat.h"
 #include "index/ivfdisk.h"
+#include "index/diskann.h"
 #include "index/ivfsq8.h"
 #include "index/ivfturboquant.h"
 #include "index/pq.h"
@@ -575,6 +576,11 @@ int db_compact(GV_Database *db) {
         GV_IVFDiskMaintenanceConfig mcfg;
         ivfdisk_maintenance_config_init(&mcfg);
         ivfdisk_maintenance_run((GV_IVFDiskIndex *)db->hnsw_index, &mcfg, NULL);
+    }
+
+    /* Scrub tombstoned ids from the Vamana adjacency lists under churn. */
+    if (db->index_type == GV_INDEX_TYPE_DISKANN && db->hnsw_index != NULL) {
+        diskann_consolidate((GV_DiskANNIndex *)db->hnsw_index);
     }
 
     pthread_rwlock_unlock(&db->rwlock);

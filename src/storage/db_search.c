@@ -146,7 +146,7 @@ static int db_search_raw(const GV_Database *db, const float *query_data, size_t 
         r = ivfdisk_search((GV_IVFDiskIndex *)db->hnsw_index, query_data, k, results, distance_type);
         if (r > 0) db_fill_ivfdisk_search_vectors((GV_Database *)db, results, r);
     } else if (db->index_type == GV_INDEX_TYPE_DISKANN) {
-        r = db_diskann_search((GV_Database *)db, query_data, k, results);
+        r = db_diskann_search((GV_Database *)db, query_data, k, results, distance_type, NULL);
         if (r > 0) db_fill_ivfdisk_search_vectors((GV_Database *)db, results, r);
     } else if (db->index_type == GV_INDEX_TYPE_IVFSQ8) {
         r = ivfsq8_search(db->hnsw_index, &query_vec, k, results, distance_type, NULL, NULL);
@@ -544,6 +544,25 @@ int db_search_filtered(const GV_Database *db, const float *query_data, size_t k,
         gv_tls_free_or_heap(tmp, tmp_on_heap);
         pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
         return out;
+    } else if (db->index_type == GV_INDEX_TYPE_DISKANN) {
+        /* Native pre-filter: resolve the key=value posting to an id allow-list
+         * and let the graph walk collect only matching ids. */
+        const GV_IdBitmap *allowed = NULL;
+        if (filter_key != NULL && filter_value != NULL) {
+            if (db->metadata_index == NULL) {
+                pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
+                return 0;
+            }
+            allowed = metadata_index_query_bitmap(db->metadata_index, filter_key, filter_value);
+            if (allowed == NULL) {
+                pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
+                return 0;
+            }
+        }
+        int r = db_diskann_search((GV_Database *)db, query_data, k, results, distance_type, allowed);
+        if (r > 0) db_fill_ivfdisk_search_vectors((GV_Database *)db, results, r);
+        pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
+        return r;
     }
     pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
     return -1;
@@ -703,6 +722,18 @@ int db_search_with_filter_expr(const GV_Database *db, const float *query_data, s
         n = pq_search(db->hnsw_index, &query_vec, max_candidates, tmp, distance_type, NULL, NULL);
     } else if (db->index_type == GV_INDEX_TYPE_LSH) {
         n = lsh_search(db->hnsw_index, &query_vec, max_candidates, tmp, distance_type, NULL, NULL);
+    } else if (db->index_type == GV_INDEX_TYPE_DISKANN) {
+        /* Over-fetch, then attach each candidate's SoA metadata so the shared
+         * filter_eval loop below sees it (the expression may be arbitrary). */
+        n = db_diskann_search((GV_Database *)db, query_data, max_candidates, tmp, distance_type, NULL);
+        for (int i = 0; i < n; ++i) {
+            GV_Vector view;
+            memset(&view, 0, sizeof(view));
+            if (soa_storage_get_vector_view(db->soa_storage, tmp[i].id, &view) == 0 && view.data) {
+                tmp[i].vector = vector_create_from_data(view.dimension, view.data);
+                if (tmp[i].vector) vector_copy_metadata((GV_Vector *)tmp[i].vector, &view);
+            }
+        }
     } else {
         gv_tls_free_or_heap(tmp, tmp_on_heap);
         pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
@@ -847,11 +878,14 @@ int db_range_search(const GV_Database *db, const float *query_data, float radius
         r = lsh_range_search(db->hnsw_index, &query_vec, radius, results, max_results, distance_type, NULL, NULL);
     } else if (db->index_type == GV_INDEX_TYPE_RABITQ) {
         r = rabitq_range_search(db->hnsw_index, &query_vec, radius, results, max_results, distance_type, NULL, NULL);
+    } else if (db->index_type == GV_INDEX_TYPE_DISKANN) {
+        r = db_diskann_range_search((GV_Database *)db, query_data, radius, results, max_results, distance_type);
+        if (r > 0) db_fill_ivfdisk_search_vectors((GV_Database *)db, results, r);
     } else {
         pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
         return -1;
     }
-    
+
     pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
     return r;
 }
@@ -958,11 +992,26 @@ int db_range_search_filtered(const GV_Database *db, const float *query_data, flo
             }
             r = out;
         }
+    } else if (db->index_type == GV_INDEX_TYPE_DISKANN) {
+        r = db_diskann_range_search((GV_Database *)db, query_data, radius, results, max_results, distance_type);
+        if (r > 0 && filter_key != NULL && filter_value != NULL) {
+            const GV_IdBitmap *allowed = db->metadata_index
+                ? metadata_index_query_bitmap(db->metadata_index, filter_key, filter_value) : NULL;
+            int out = 0;
+            for (int i = 0; i < r; ++i) {
+                if (allowed && gv_id_bitmap_contains(allowed, results[i].id)) {
+                    if (out != i) results[out] = results[i];
+                    out++;
+                }
+            }
+            r = out;
+        }
+        if (r > 0) db_fill_ivfdisk_search_vectors((GV_Database *)db, results, r);
     } else {
         pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
         return -1;
     }
-    
+
     pthread_rwlock_unlock((pthread_rwlock_t *)&db->rwlock);
     return r;
 }
