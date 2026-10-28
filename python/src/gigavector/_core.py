@@ -982,6 +982,10 @@ class Database:
             n = lib.gv_db_search(self._db, qbuf, k, results, int(distance))
         if n < 0:
             raise RuntimeError("gv_db_search failed")
+        return self._build_hits(results, n)
+
+    def _build_hits(self, results: CData, n: int) -> list[SearchHit]:
+        """Copy a ``GV_SearchResult[n]`` into SearchHits, then free the results."""
         out: list[SearchHit] = []
         for i in range(n):
             res = results[i]
@@ -998,6 +1002,48 @@ class Database:
                 continue
         lib.gv_search_results_free(results, n)
         return out
+
+    # ---- A/B testing (shadow index + traffic split) ----
+
+    def ab_test_start(self, name: str, index_b: "IndexType" = None, split: float = 0.5) -> None:
+        """Start an A/B test: shadow a second index type behind a traffic split.
+
+        Args:
+            name: Descriptive test name (truncated to 63 chars).
+            index_b: Shadow index type (defaults to the primary's type).
+            split: Fraction of queries routed to the shadow, in [0, 1].
+
+        Raises:
+            RuntimeError: If a test is already running or start fails.
+        """
+        type_b = int(index_b) if index_b is not None else int(self._db.index_type)
+        rc = lib.gv_db_ab_test_start(self._db, name.encode(), type_b, float(split))
+        if rc != 0:
+            raise RuntimeError("gv_db_ab_test_start failed (already running?)")
+
+    def ab_test_search(self, query: Sequence[float], k: int,
+                       distance: "DistanceType" = None) -> list[SearchHit]:
+        """Run a search routed through the active A/B test (falls back to the
+        primary index when no test is running)."""
+        if distance is None:
+            distance = DistanceType.EUCLIDEAN
+        self._check_dimension(query)
+        qbuf = ffi.new("float[]", list(query))
+        results = ffi.new("GV_SearchResult[]", k)
+        n = lib.gv_db_ab_test_search(self._db, qbuf, k, results, int(distance))
+        if n < 0:
+            raise RuntimeError("gv_db_ab_test_search failed")
+        return self._build_hits(results, n)
+
+    def ab_test_report(self) -> str:
+        """Return the active A/B test's JSON report, or ``""`` if none is active."""
+        buf = ffi.new("char[]", 1024)
+        rc = lib.gv_db_ab_test_report(self._db, buf, 1024)
+        return ffi.string(buf).decode() if rc == 0 else ""
+
+    def ab_test_stop(self) -> None:
+        """Stop the active A/B test and free its shadow index (no-op if none)."""
+        lib.gv_db_ab_test_stop(self._db)
 
     # ---- warm-up / recall / bulk import / transactions ----
 

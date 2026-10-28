@@ -317,6 +317,15 @@ class _Handler(BaseHTTPRequestHandler):
                     loop("update", max(n // 4, 1), lambda i: db.update_vector(i, vec()))
                     loop("delete", max(n // 8, 1), lambda i: db.delete_vector(n // 2 + i))
                 loop("compact", 1, lambda i: db.compact())
+                with prof.scope("ab_test"):
+                    try:
+                        with prof.scope("ab_start"):
+                            db.ab_test_start("profiler", IndexType.FLAT, 0.5)
+                        loop("ab_search", queries, lambda i: db.ab_test_search(vec(), 10))
+                        with prof.scope("ab_stop"):
+                            db.ab_test_stop()
+                    except Exception as e:
+                        errors["ab_test"] = str(e)
         finally:
             try:
                 db.close()

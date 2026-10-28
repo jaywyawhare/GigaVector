@@ -267,6 +267,11 @@ int gv_db_search_batch(const GV_Database *db, const float *queries, size_t qcoun
 int gv_db_search_with_filter_expr(const GV_Database *db, const float *query_data, size_t k,
                                    GV_SearchResult *results, GV_DistanceType distance_type,
                                    const char *filter_expr);
+int gv_db_ab_test_start(GV_Database *db, const char *name, int type_b, float split);
+int gv_db_ab_test_search(GV_Database *db, const float *query, size_t k,
+                         GV_SearchResult *results, GV_DistanceType distance_type);
+int gv_db_ab_test_report(const GV_Database *db, char *buf, size_t len);
+void gv_db_ab_test_stop(GV_Database *db);
 int gv_db_search_ivfpq_opts(const GV_Database *db, const float *query_data, size_t k,
                   GV_SearchResult *results, GV_DistanceType distance_type,
                   size_t nprobe_override, size_t rerank_top);

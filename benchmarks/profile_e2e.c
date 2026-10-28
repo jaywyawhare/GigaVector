@@ -36,6 +36,7 @@
 #include <arpa/inet.h>
 
 #include "gigavector.h"
+#include "admin/ab_test.h"
 #include "admin/raft_log.h"
 #include "admin/repl_sim.h"
 #include "api/server.h"
@@ -1107,6 +1108,42 @@ static void phase_grpc(size_t n, size_t dim, size_t queries) {
     }
 }
 
+/* A/B testing: shadow a second index type behind a traffic split and route
+ * searches through it, timing populate/start/routed-search/report/stop. */
+static void phase_ab_test(size_t n, size_t dim, size_t queries) {
+    PROF_SCOPE("15.ab_test") {
+        GV_Database *db = db_open(NULL, dim, GV_INDEX_TYPE_FLAT);
+        if (!db) return;
+        float *v = (float *)malloc(dim * sizeof(float));
+
+        PROF_SCOPE("ab/populate") {
+            for (size_t i = 0; i < n; i++) {
+                for (size_t d = 0; d < dim; d++) v[d] = next_unit();
+                if (db_add_vector(db, v, dim)) {}
+            }
+        }
+        int started = -1;
+        PROF_SCOPE("ab/start") {
+            started = gv_db_ab_test_start(db, "profiler", GV_INDEX_TYPE_HNSW, 0.5f);
+        }
+        if (started == 0) {
+            GV_SearchResult res[16];
+            PROF_SCOPE("ab/routed_search") {
+                for (size_t q = 0; q < queries; q++) {
+                    for (size_t d = 0; d < dim; d++) v[d] = next_unit();
+                    int f = gv_db_ab_test_search(db, v, 10, res, GV_DISTANCE_EUCLIDEAN);
+                    if (f > 0) gv_search_results_free(res, (size_t)f);
+                }
+            }
+            char buf[512];
+            PROF_SCOPE("ab/report") { if (gv_db_ab_test_report(db, buf, sizeof(buf))) {} }
+            PROF_SCOPE("ab/stop") { gv_db_ab_test_stop(db); }
+        }
+        free(v);
+        db_close(db);
+    }
+}
+
 int main(int argc, char **argv) {
     size_t n_vec   = argc > 1 ? strtoul(argv[1], NULL, 10) : 20000;
     size_t dim     = argc > 2 ? strtoul(argv[2], NULL, 10) : 128;
@@ -1146,6 +1183,7 @@ int main(int argc, char **argv) {
     phase_server(idx_n, dim, queries);
     phase_replication(idx_n * 2, 256);
     phase_grpc(idx_n, dim, queries);
+    phase_ab_test(idx_n, dim, queries);
     double wall = now_ms() - wall0;
 
     prof_report();
