@@ -73,6 +73,14 @@
 				</svg>
 				<span>Monitoring</span>
 			</a>
+			<a href="#profiler" data-view="profiler">
+				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+					<circle cx="12" cy="13" r="8" />
+					<line x1="12" y1="13" x2="12" y2="9" />
+					<line x1="9" y1="2" x2="15" y2="2" />
+				</svg>
+				<span>Profiler</span>
+			</a>
 			<div class="nav-section">Data</div>
 			<a href="#import" data-view="import">
 				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -729,6 +737,52 @@
 				</div>
 			</div>
 
+
+			<!-- PROFILER -->
+			<div class="view" id="view-profiler">
+				<div class="page-head">
+					<div>
+						<h1 class="page-title">Profiler</h1>
+						<p class="page-desc">End-to-end per-operation timing and allocator accounting, run against a throwaway database (the live collection is never touched).</p>
+					</div>
+				</div>
+				<section class="card">
+					<div class="form-row" style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
+						<label>Index
+							<select id="prof-index">
+								<option value="FLAT">FLAT</option>
+								<option value="HNSW">HNSW</option>
+								<option value="KDTREE">KDTREE</option>
+								<option value="DISKANN">DISKANN</option>
+								<option value="LSH">LSH</option>
+								<option value="RABITQ">RABITQ</option>
+							</select>
+						</label>
+						<label>Vectors <input id="prof-n" type="number" value="1000" min="1" max="50000" style="width:100px"></label>
+						<label>Dim <input id="prof-dim" type="number" value="64" min="2" max="2048" style="width:90px"></label>
+						<label>Queries <input id="prof-q" type="number" value="200" min="1" max="10000" style="width:90px"></label>
+						<button class="btn" id="prof-run" onclick="runProfiler()">Run profiler</button>
+					</div>
+				</section>
+				<div class="cards" id="prof-alloc-cards">
+					<div class="card"><div class="card-label">Allocations</div><div class="card-value" id="prof-alloc-count">-</div></div>
+					<div class="card"><div class="card-label">Frees</div><div class="card-value" id="prof-free-count">-</div></div>
+					<div class="card"><div class="card-label">Reallocations</div><div class="card-value" id="prof-realloc-count">-</div></div>
+					<div class="card"><div class="card-label">Peak memory</div><div class="card-value" id="prof-peak">-</div></div>
+					<div class="card"><div class="card-label">Total allocated</div><div class="card-value" id="prof-total">-</div></div>
+				</div>
+				<section class="card card-flush">
+					<table class="data-table" id="prof-table">
+						<thead><tr>
+							<th>Scope</th><th>Calls</th><th>Total ms</th><th>Avg ms</th>
+							<th>Ops/sec</th><th>Allocs</th><th>Net KB</th>
+						</tr></thead>
+						<tbody id="prof-table-body">
+							<tr><td colspan="7" class="table-empty">Run the profiler to see per-operation timings.</td></tr>
+						</tbody>
+					</table>
+				</section>
+			</div>
 
 			<!-- GRAPH EXPLORER -->
 			<div class="view" id="view-graph">

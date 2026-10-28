@@ -17,6 +17,18 @@ ffi: FFIType = FFI()
 ffi.cdef(
     """
 typedef long long time_t;
+
+typedef struct GV_AllocStats {
+    size_t   live_bytes;
+    size_t   peak_bytes;
+    size_t   total_bytes;
+    uint64_t alloc_count;
+    uint64_t free_count;
+    uint64_t realloc_count;
+} GV_AllocStats;
+void gv_alloc_stats(GV_AllocStats *out);
+int gv_alloc_stats_enabled(void);
+
 typedef enum { GV_INDEX_TYPE_KDTREE = 0, GV_INDEX_TYPE_HNSW = 1, GV_INDEX_TYPE_IVFPQ = 2, GV_INDEX_TYPE_SPARSE = 3, GV_INDEX_TYPE_FLAT = 4, GV_INDEX_TYPE_IVFFLAT = 5, GV_INDEX_TYPE_PQ = 6, GV_INDEX_TYPE_LSH = 7, GV_INDEX_TYPE_IVFSQ8 = 8, GV_INDEX_TYPE_IVFTURBOQUANT = 9, GV_INDEX_TYPE_DISKANN = 10, GV_INDEX_TYPE_IVFDISK = 11, GV_INDEX_TYPE_RABITQ = 12 } GV_IndexType;
 typedef enum { GV_DISTANCE_EUCLIDEAN = 0, GV_DISTANCE_COSINE = 1, GV_DISTANCE_DOT_PRODUCT = 2, GV_DISTANCE_MANHATTAN = 3, GV_DISTANCE_HAMMING = 4, GV_DISTANCE_JACCARD = 5 } GV_DistanceType;
 

@@ -2810,6 +2810,94 @@ async function loadCluster() {
   }
 }
 
+// profiler
+
+async function runProfiler() {
+  const btn = document.getElementById("prof-run");
+  const body = document.getElementById("prof-table-body");
+  const index = document.getElementById("prof-index").value;
+  const n = document.getElementById("prof-n").value;
+  const dim = document.getElementById("prof-dim").value;
+  const q = document.getElementById("prof-q").value;
+  btn.disabled = true;
+  btn.textContent = "Running…";
+  body.innerHTML =
+    '<tr><td colspan="7" class="table-empty">Running profiler…</td></tr>';
+  const r = await apiCall(
+    "/api/profiler/run?index=" +
+      encodeURIComponent(index) +
+      "&n=" +
+      n +
+      "&dim=" +
+      dim +
+      "&queries=" +
+      q,
+    { method: "POST" },
+  );
+  btn.disabled = false;
+  btn.textContent = "Run profiler";
+  if (!r.ok) {
+    const msg = (r.data && (r.data.message || r.data.error)) || "error";
+    body.innerHTML =
+      '<tr><td colspan="7" class="table-empty">Profiler failed: ' +
+      escapeHtml(msg) +
+      "</td></tr>";
+    return;
+  }
+  const d = r.data;
+  const a = d.allocator || {};
+  document.getElementById("prof-alloc-count").textContent = Number(
+    a.alloc_count || 0,
+  ).toLocaleString();
+  document.getElementById("prof-free-count").textContent = Number(
+    a.free_count || 0,
+  ).toLocaleString();
+  document.getElementById("prof-realloc-count").textContent = Number(
+    a.realloc_count || 0,
+  ).toLocaleString();
+  document.getElementById("prof-peak").textContent = formatBytes(
+    a.peak_bytes || 0,
+  );
+  document.getElementById("prof-total").textContent = formatBytes(
+    a.total_bytes || 0,
+  );
+  const rows = (d.scopes || [])
+    .map((s) => {
+      const err = s.error
+        ? ' <span style="color:#e5484d;font-size:11px">(' +
+          escapeHtml(s.error) +
+          ")</span>"
+        : "";
+      return (
+        "<tr><td>" +
+        escapeHtml(s.name) +
+        err +
+        '</td><td class="mono">' +
+        s.calls +
+        '</td><td class="mono">' +
+        s.total_ms.toFixed(2) +
+        '</td><td class="mono">' +
+        s.avg_ms.toFixed(4) +
+        '</td><td class="mono">' +
+        Math.round(s.ops_per_sec).toLocaleString() +
+        '</td><td class="mono">' +
+        Number(s.allocs).toLocaleString() +
+        '</td><td class="mono">' +
+        (s.net_bytes / 1024).toFixed(1) +
+        "</td></tr>"
+      );
+    })
+    .join("");
+  body.innerHTML =
+    rows || '<tr><td colspan="7" class="table-empty">No scopes.</td></tr>';
+  if (!a.enabled) {
+    showToast(
+      "Allocator counters are zero: rebuild the library with -DGV_PROFILE_ALLOC",
+      "",
+    );
+  }
+}
+
 // navigation/ routing
 
 const viewHooks = {

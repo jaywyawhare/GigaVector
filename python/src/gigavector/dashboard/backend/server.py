@@ -52,6 +52,7 @@ _GET_ROUTES: list[tuple[re.Pattern[str], str]] = [
 _POST_ROUTES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^/vectors$"), "_handle_vectors_post"),
     (re.compile(r"^/search$"), "_handle_search"),
+    (re.compile(r"^/api/profiler/run$"), "_handle_profiler_run"),
     (re.compile(r"^/search/range$"), "_handle_search_range"),
     (re.compile(r"^/compact$"), "_handle_compact"),
     (re.compile(r"^/save$"), "_handle_save"),
@@ -244,6 +245,111 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_json(stats)
         except Exception as e:
             self._send_error_json(500, "stats_failed", str(e))
+
+    def _handle_profiler_run(self) -> None:
+        """Run the e2e op profiler against a throwaway db and return a per-scope
+        table (timing + allocator deltas). Never touches the live collection.
+
+        Query params: n, dim, queries, index (FLAT/HNSW/DISKANN/...)."""
+        import random
+
+        from gigavector._core import (
+            Database,
+            DistanceType,
+            IndexType,
+            allocator_stats,
+        )
+
+        qs = self._qs()
+        n = min(max(int(qs.get("n", ["1000"])[0]), 1), 50000)
+        dim = min(max(int(qs.get("dim", ["64"])[0]), 2), 2048)
+        queries = min(max(int(qs.get("queries", ["200"])[0]), 1), 10000)
+        try:
+            itype = IndexType[qs.get("index", ["FLAT"])[0].upper()]
+        except KeyError:
+            itype = IndexType.FLAT
+
+        tmp_path = None
+        if itype in (IndexType.DISKANN, IndexType.IVFDISK):
+            fd, tmp_path = tempfile.mkstemp(suffix=".gvprof")
+            os.close(fd)
+            os.remove(tmp_path)
+            # Disk graphs insert one-at-a-time; keep the harness quick.
+            n = min(n, 1500)
+
+        try:
+            db = Database.open(tmp_path, dim, itype)
+        except Exception as e:
+            self._send_error_json(500, "profiler_open_failed", str(e))
+            return
+
+        rng = random.Random(42)
+
+        def vec() -> list[float]:
+            return [rng.uniform(-0.5, 0.5) for _ in range(dim)]
+
+        def s64(x: int) -> int:
+            # live_bytes is an unsigned 64-bit counter; a delta that should be
+            # negative (frees of allocations made before the snapshot) wraps near
+            # 2**64, so reinterpret the high half as signed for display.
+            return x - (1 << 64) if x >= (1 << 63) else x
+
+        scopes: list[dict[str, Any]] = []
+
+        def run(name: str, count: int, fn: Any) -> None:
+            a0 = allocator_stats()
+            t0 = time.perf_counter()
+            ok = 0
+            err = None
+            for i in range(count):
+                try:
+                    fn(i)
+                    ok += 1
+                except Exception as e:  # unsupported op for this index type
+                    err = str(e)
+                    break
+            dt_ms = (time.perf_counter() - t0) * 1000.0
+            a1 = allocator_stats()
+            scopes.append({
+                "name": name,
+                "calls": ok,
+                "total_ms": dt_ms,
+                "avg_ms": (dt_ms / ok) if ok else 0.0,
+                "ops_per_sec": (ok / (dt_ms / 1000.0)) if dt_ms > 0 else 0.0,
+                "allocs": a1["alloc_count"] - a0["alloc_count"],
+                "net_bytes": s64(a1["live_bytes"] - a0["live_bytes"]),
+                "error": err,
+            })
+
+        try:
+            run("add", n, lambda i: db.add_vector(vec(), {"bucket": "b%d" % (i % 8)}))
+            run("search", queries, lambda i: db.search(vec(), 10, DistanceType.EUCLIDEAN))
+            run("search_cosine", queries, lambda i: db.search(vec(), 10, DistanceType.COSINE))
+            run("search_filtered", queries,
+                lambda i: db.search(vec(), 10, DistanceType.EUCLIDEAN, filter_metadata=("bucket", "b3")))
+            run("range", max(queries // 4, 1), lambda i: db.range_search(vec(), 5.0, 16))
+            run("update", max(n // 4, 1), lambda i: db.update_vector(i, vec()))
+            run("delete", max(n // 8, 1), lambda i: db.delete_vector(n // 2 + i))
+            run("compact", 1, lambda i: db.compact())
+        finally:
+            try:
+                db.close()
+            except Exception:
+                pass
+            for suffix in ("", ".diskann", ".diskann.graph", ".wal"):
+                if tmp_path:
+                    try:
+                        os.remove(tmp_path + suffix)
+                    except OSError:
+                        pass
+
+        alloc = allocator_stats()
+        alloc["live_bytes"] = s64(alloc["live_bytes"])
+        self._send_json({
+            "params": {"index": itype.name, "n": n, "dim": dim, "queries": queries},
+            "scopes": scopes,
+            "allocator": alloc,
+        })
 
     def _handle_vectors_scroll(self) -> None:
         qs = self._qs()

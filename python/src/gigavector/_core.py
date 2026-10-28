@@ -25,6 +25,27 @@ def _cstr(s: str | bytes | None, keepalive: list) -> CData:
     return p
 
 
+def allocator_stats() -> dict:
+    """Return the process-wide allocator counters from the gv_alloc choke point.
+
+    The ``enabled`` flag is ``False`` unless the library was built with
+    ``-DGV_PROFILE_ALLOC`` (byte/count fields are then all zero). Keys:
+    ``enabled, live_bytes, peak_bytes, total_bytes, alloc_count, free_count,
+    realloc_count``.
+    """
+    s = ffi.new("GV_AllocStats *")
+    lib.gv_alloc_stats(s)
+    return {
+        "enabled": bool(lib.gv_alloc_stats_enabled()),
+        "live_bytes": int(s.live_bytes),
+        "peak_bytes": int(s.peak_bytes),
+        "total_bytes": int(s.total_bytes),
+        "alloc_count": int(s.alloc_count),
+        "free_count": int(s.free_count),
+        "realloc_count": int(s.realloc_count),
+    }
+
+
 class IndexType(IntEnum):
     KDTREE = 0
     HNSW = 1
