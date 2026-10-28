@@ -27,6 +27,7 @@
 #include "multimodal/bm25.h"
 #include "search/hybrid_search.h"
 #include "storage/database.h"
+#include "admin/ab_test.h"
 #include "schema/metadata.h"
 #include "test_tmp.h"
 
@@ -247,12 +248,139 @@ static void phase_hybrid(void) {
     db_close(db);
 }
 
+/* ---------------------------------------------------------------- phase 5 */
+
+static void phase_ab_test(void) {
+    PHASE("5. A/B testing (shadow index, traffic split, routed search, report)");
+
+    GV_Database *db = db_open(NULL, 4, GV_INDEX_TYPE_FLAT);
+    CHECK(db != NULL, "open FLAT primary");
+    if (!db) return;
+
+    int add_ok = 1;
+    for (int i = 0; i < 60; i++) {
+        float v[4] = {(float)(i % 7), (float)((i * 3) % 5),
+                      (float)((i * 2) % 4), (float)(i % 3)};
+        if (db_add_vector(db, v, 4) != 0) add_ok = 0;
+    }
+    CHECK(add_ok, "populate primary with 60 vectors");
+
+    /* Shadow a different index type (HNSW) behind a 50/50 split. */
+    CHECK(gv_db_ab_test_start(db, "e2e_ab", GV_INDEX_TYPE_HNSW, 0.5f) == 0,
+          "start A/B test (FLAT primary vs HNSW shadow)");
+
+    GV_SearchResult res[5];
+    const int total = 200;
+    int min_found = 5;
+    for (int i = 0; i < total; i++) {
+        float q[4] = {(float)(i % 5), (float)((i * 2) % 6),
+                      (float)(i % 3), (float)((i * 7) % 4)};
+        int f = gv_db_ab_test_search(db, q, 5, res, GV_DISTANCE_EUCLIDEAN);
+        if (f < min_found) min_found = f;
+        if (f > 0) gv_search_results_free(res, (size_t)f);
+    }
+    CHECK(min_found == 5, "every routed search returned k=5");
+
+    GV_ABTest *t = (GV_ABTest *)db->ab_test;
+    CHECK(t != NULL && t->queries_a > 0 && t->queries_b > 0,
+          "traffic reached both variants");
+    CHECK(t != NULL && (t->queries_a + t->queries_b) == (uint64_t)total,
+          "all queries accounted across A and B");
+
+    char buf[512];
+    CHECK(gv_db_ab_test_report(db, buf, sizeof(buf)) == 0, "render A/B report");
+    CHECK(strstr(buf, "\"queries_a\"") && strstr(buf, "\"queries_b\"") &&
+          strstr(buf, "\"avg_latency_b_us\""), "report carries per-variant stats");
+
+    gv_db_ab_test_stop(db);
+    CHECK(db->ab_test == NULL, "stop detaches the test");
+    db_close(db);
+}
+
+/* ---------------------------------------------------------------- phase 6 */
+
+static void phase_diskann(void) {
+    PHASE("6. DiskANN collection (add/metadata/search/filter/range/update/delete/persist)");
+
+    char path[512];
+    gv_test_make_temp_path(path, sizeof(path), "e2e_diskann", ".gvdb");
+
+    GV_Database *db = db_open(path, 8, GV_INDEX_TYPE_DISKANN);
+    CHECK(db != NULL, "open DISKANN collection");
+    if (!db) return;
+
+    int add_ok = 1;
+    for (int i = 0; i < 120; i++) {
+        float v[8];
+        for (int d = 0; d < 8; d++) v[d] = sinf((float)(i + d) * 0.3f);
+        const char *parity = (i % 2 == 0) ? "even" : "odd";
+        if (db_add_vector_with_metadata(db, v, 8, "parity", parity) != 0) add_ok = 0;
+    }
+    CHECK(add_ok, "add 120 vectors with metadata");
+
+    float q[8];
+    for (int d = 0; d < 8; d++) q[d] = sinf((float)(10 + d) * 0.3f); /* == vector 10 */
+
+    GV_SearchResult res[8];
+    int n = db_search(db, q, 5, res, GV_DISTANCE_EUCLIDEAN);
+    CHECK(n > 0 && res[0].id == 10, "self-query returns its own id (10)");
+    gv_search_results_free(res, (size_t)n);
+
+    /* Metadata-filtered search: every hit is an even id (parity "even"). */
+    int nf = db_search_filtered(db, q, 5, res, GV_DISTANCE_EUCLIDEAN, "parity", "even");
+    int all_even = nf > 0;
+    for (int i = 0; i < nf; i++) if (res[i].id % 2 != 0) all_even = 0;
+    CHECK(all_even, "filtered search returns only even (parity=even) ids");
+    gv_search_results_free(res, (size_t)nf);
+
+    int nr = db_range_search(db, q, 1.0f, res, 8, GV_DISTANCE_EUCLIDEAN);
+    CHECK(nr > 0, "range search returns in-radius hits");
+    gv_search_results_free(res, (size_t)nr);
+
+    /* Update id 0 onto the query point, then delete id 10. */
+    CHECK(db_update_vector(db, 0, q, 8) == 0, "update id 0 to the query vector");
+    CHECK(db_delete_vector_by_index(db, 10) == 0, "delete id 10");
+    int nd = db_search(db, q, 5, res, GV_DISTANCE_EUCLIDEAN);
+    int found10 = 0, found0 = 0;
+    for (int i = 0; i < nd; i++) {
+        if (res[i].id == 10) found10 = 1;
+        if (res[i].id == 0) found0 = 1;
+    }
+    CHECK(!found10, "deleted id 10 absent");
+    CHECK(found0, "updated id 0 now matches the query");
+    gv_search_results_free(res, (size_t)nd);
+
+    /* Persist and reopen: the Vamana graph is rebuilt from the stored vectors. */
+    CHECK(db_save(db, path) == 0, "save DISKANN collection");
+    db_close(db);
+
+    GV_Database *db2 = db_open(path, 8, GV_INDEX_TYPE_DISKANN);
+    CHECK(db2 != NULL, "reopen (graph rebuilt from vectors)");
+    if (db2) {
+        int n2 = db_search(db2, q, 5, res, GV_DISTANCE_EUCLIDEAN);
+        CHECK(n2 > 0, "search works after reopen");
+        int re_found10 = 0;
+        for (int i = 0; i < n2; i++) if (res[i].id == 10) re_found10 = 1;
+        CHECK(!re_found10, "deleted id stays deleted after reopen");
+        gv_search_results_free(res, (size_t)n2);
+        db_close(db2);
+    }
+
+    remove(path);
+    char side[600];
+    snprintf(side, sizeof(side), "%s.diskann", path);       remove(side);
+    snprintf(side, sizeof(side), "%s.diskann.graph", path); remove(side);
+    snprintf(side, sizeof(side), "%s.wal", path);           remove(side);
+}
+
 int main(void) {
     printf("GigaVector end-to-end integration test\n");
     phase_vector_db();
     phase_graph_cypher();
     phase_splade();
     phase_hybrid();
+    phase_ab_test();
+    phase_diskann();
 
     printf("\n%s\n", g_fail ? "E2E: SOME CHECKS FAILED" : "E2E: ALL CHECKS PASSED");
     return g_fail ? 1 : 0;
