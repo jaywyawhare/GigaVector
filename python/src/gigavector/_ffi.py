@@ -1935,6 +1935,8 @@ typedef struct {
 typedef struct {
     size_t total_vectors;
     size_t graph_edges;
+    size_t deleted_vectors;
+    size_t free_slots;
     size_t cache_hits;
     size_t cache_misses;
     size_t disk_reads;

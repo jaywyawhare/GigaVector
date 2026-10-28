@@ -213,16 +213,29 @@ static float diskann_l2_distance(const float *a, const float *b, size_t dim) {
 }
 
 /**
- * @brief Full-vector distance under the index metric via the shared SIMD kernels.
+ * @brief Full-vector distance under a given metric via the shared SIMD kernels.
+ * @param index Index instance.
+ * @param a First vector (length index->dimension).
+ * @param b Second vector (length index->dimension).
+ * @param metric Distance metric to score under.
+ * @return Distance (smaller is closer) for @p metric.
+ */
+static float diskann_distance_m(const GV_DiskANNIndex *index, const float *a, const float *b,
+                                GV_DistanceType metric) {
+    GV_Vector va = { index->dimension, (float *)a, NULL };
+    GV_Vector vb = { index->dimension, (float *)b, NULL };
+    return distance(&va, &vb, metric);
+}
+
+/**
+ * @brief Full-vector distance under the index's configured metric.
  * @param index Index instance.
  * @param a First vector (length index->dimension).
  * @param b Second vector (length index->dimension).
  * @return Distance (smaller is closer) for the configured metric.
  */
 static float diskann_distance(const GV_DiskANNIndex *index, const float *a, const float *b) {
-    GV_Vector va = { index->dimension, (float *)a, NULL };
-    GV_Vector vb = { index->dimension, (float *)b, NULL };
-    return distance(&va, &vb, index->metric);
+    return diskann_distance_m(index, a, b, index->metric);
 }
 
 typedef struct {
@@ -1203,7 +1216,9 @@ GV_DiskANNIndex *diskann_create(size_t dimension, const GV_DiskANNConfig *config
 
     if (config) {
         index->max_degree = config->max_degree > 0 ? config->max_degree : DISKANN_DEFAULT_DEGREE;
-        index->alpha = config->alpha > 0.0f ? config->alpha : DISKANN_DEFAULT_ALPHA;
+        /* Vamana robust pruning requires alpha >= 1.0; a sub-1 value under-prunes,
+         * so fall back to the default rather than silently accept it. */
+        index->alpha = config->alpha >= 1.0f ? config->alpha : DISKANN_DEFAULT_ALPHA;
         index->build_beam_width = config->build_beam_width > 0 ? config->build_beam_width : DISKANN_DEFAULT_BUILD_BW;
         index->search_beam_width = config->search_beam_width > 0 ? config->search_beam_width : DISKANN_DEFAULT_SEARCH_BW;
         index->sector_size = gv_disk_normalize_sector_size(config->sector_size);
@@ -1818,7 +1833,7 @@ cleanup:
 
 static int diskann_search_locked(const GV_DiskANNIndex *index, const float *query, size_t dimension,
                        size_t k, GV_DiskANNResult *results, size_t beam_width,
-                       const GV_IdBitmap *allowed) {
+                       const GV_IdBitmap *allowed, GV_DistanceType metric) {
     if (!index || !query || !results || k == 0) return -1;
     if (dimension != index->dimension) return -1;
     if (index->count == 0) return 0;
@@ -1864,7 +1879,7 @@ static int diskann_search_locked(const GV_DiskANNIndex *index, const float *quer
 
         if (diskann_disk_read_vector((GV_DiskANNIndex *)index, vid, vec_buf) != 0) continue;
 
-        float dist = diskann_distance(index, query, vec_buf);
+        float dist = diskann_distance_m(index, query, vec_buf, metric);
         refined[refined_count].index = vid;
         refined[refined_count].distance = dist;
         refined_count++;
@@ -1894,6 +1909,126 @@ static int diskann_search_locked(const GV_DiskANNIndex *index, const float *quer
     return (int)result_count;
 }
 
+static int diskann_range_search_locked(const GV_DiskANNIndex *index, const float *query,
+                                       size_t dimension, float radius, GV_DiskANNResult *results,
+                                       size_t max_results, GV_DistanceType metric) {
+    if (!index || !query || !results || max_results == 0) return -1;
+    if (dimension != index->dimension) return -1;
+    if (index->count == 0) return 0;
+
+    size_t beam = index->search_beam_width;
+    size_t max_visited = beam * 4;
+    if (max_visited < max_results) max_visited = max_results;
+    if (max_visited > index->count) max_visited = index->count;
+
+    size_t *visited = (size_t *)gv_alloc(max_visited * sizeof(size_t));
+    if (!visited) return -1;
+    size_t visited_count = 0;
+    if (diskann_greedy_search(index, query, beam, visited, &visited_count, max_visited, NULL) != 0) {
+        gv_free(visited);
+        return -1;
+    }
+
+    DiskANN_Candidate *refined = (DiskANN_Candidate *)gv_alloc(visited_count * sizeof(DiskANN_Candidate));
+    float *vec_buf = (float *)gv_alloc(dimension * sizeof(float));
+    if ((visited_count && !refined) || !vec_buf) {
+        gv_free(vec_buf);
+        gv_free(refined);
+        gv_free(visited);
+        return -1;
+    }
+
+    size_t within = 0;
+    for (size_t i = 0; i < visited_count; i++) {
+        size_t vid = visited[i];
+        if (vid >= index->count || index->nodes[vid].deleted) continue;
+        if (diskann_disk_read_vector((GV_DiskANNIndex *)index, vid, vec_buf) != 0) continue;
+        float d = diskann_distance_m(index, query, vec_buf, metric);
+        if (d <= radius) {
+            refined[within].index = vid;
+            refined[within].distance = d;
+            within++;
+        }
+    }
+    gv_free(vec_buf);
+    gv_free(visited);
+
+    qsort(refined, within, sizeof(DiskANN_Candidate), diskann_cand_compare);
+    size_t out = within < max_results ? within : max_results;
+    for (size_t i = 0; i < out; i++) {
+        results[i].index = refined[i].index;
+        results[i].distance = refined[i].distance;
+    }
+    gv_free(refined);
+    return (int)out;
+}
+
+static int diskann_update_locked(GV_DiskANNIndex *index, size_t id, const float *data,
+                                 size_t dimension) {
+    if (!index || !data) return -1;
+    if (dimension != index->dimension) return -1;
+    if (id >= index->count || index->nodes[id].deleted) return -1;
+
+    if (diskann_disk_write_vector(index, id, data) != 0) return -1;
+
+    if (index->pq.trained) {
+        uint8_t *code = (uint8_t *)gv_alloc(index->pq.m);
+        if (!code) return -1;
+        diskann_pq_encode(&index->pq, data, code);
+        gv_free(index->nodes[id].pq_code);
+        index->nodes[id].pq_code = code;
+    }
+
+    /* Out-of-core graphs keep their existing edges: the moved vector stays
+     * reachable and search re-ranks exactly. Only the RAM graph is re-linked. */
+    if (index->graph_flushed) return 0;
+
+    size_t max_results = index->build_beam_width * 2;
+    if (max_results > index->count) max_results = index->count;
+    size_t *sr = (size_t *)gv_alloc(max_results * sizeof(size_t));
+    float *sd = (float *)gv_alloc(max_results * sizeof(float));
+    float *vb = (float *)gv_alloc(dimension * sizeof(float));
+    if (!sr || !sd || !vb) { gv_free(vb); gv_free(sd); gv_free(sr); return -1; }
+
+    size_t vc = 0;
+    diskann_greedy_search(index, data, index->build_beam_width, sr, &vc, max_results, NULL);
+    size_t valid = 0;
+    for (size_t i = 0; i < vc; i++) {
+        if (sr[i] == id || index->nodes[sr[i]].deleted) continue;
+        float d;
+        if (index->pq.trained && index->nodes[sr[i]].pq_code) {
+            d = diskann_pq_distance(&index->pq, data, index->nodes[sr[i]].pq_code);
+        } else if (diskann_disk_read_vector(index, sr[i], vb) == 0) {
+            d = diskann_distance(index, data, vb);
+        } else {
+            continue;
+        }
+        sr[valid] = sr[i];
+        sd[valid] = d;
+        valid++;
+    }
+    if (valid > 0) diskann_robust_prune(index, id, sr, sd, valid);
+
+    DiskANN_Node *node = &index->nodes[id];
+    for (size_t ni = 0; ni < node->neighbor_count; ni++) {
+        size_t nb = node->neighbors[ni];
+        if (nb >= index->count) continue;
+        DiskANN_Node *nbn = &index->nodes[nb];
+        int exists = 0;
+        for (size_t j = 0; j < nbn->neighbor_count; j++)
+            if (nbn->neighbors[j] == id) { exists = 1; break; }
+        if (!exists && nbn->neighbor_count < index->max_degree) {
+            size_t *nn = (size_t *)gv_realloc(nbn->neighbors,
+                                              (nbn->neighbor_count + 1) * sizeof(size_t));
+            if (nn) { nbn->neighbors = nn; nbn->neighbors[nbn->neighbor_count++] = id; }
+        }
+    }
+    gv_free(vb);
+    gv_free(sd);
+    gv_free(sr);
+    return 0;
+}
+
 static int diskann_delete_locked(GV_DiskANNIndex *index, size_t vector_index) {
     if (!index) return -1;
     if (vector_index >= index->count) return -1;
@@ -1921,8 +2056,11 @@ static int diskann_get_stats_locked(const GV_DiskANNIndex *index, GV_DiskANNStat
 
     size_t active = 0;
     size_t edges = 0;
+    size_t deleted = 0;
     for (size_t i = 0; i < index->count; i++) {
-        if (!index->nodes[i].deleted) {
+        if (index->nodes[i].deleted) {
+            deleted++;
+        } else {
             active++;
             edges += index->nodes[i].neighbor_count;
         }
@@ -1930,6 +2068,8 @@ static int diskann_get_stats_locked(const GV_DiskANNIndex *index, GV_DiskANNStat
 
     stats->total_vectors = active;
     stats->graph_edges = edges;
+    stats->deleted_vectors = deleted;
+    stats->free_slots = index->free_count;
     stats->cache_hits = index->cache.hits;
     stats->cache_misses = index->cache.misses;
     stats->disk_reads = index->disk_reads;
@@ -2395,7 +2535,7 @@ int diskann_search(const GV_DiskANNIndex *index, const float *query, size_t dime
                    size_t k, GV_DiskANNResult *results) {
     if (!index) return -1;
     diskann_lock(index);
-    int rc = diskann_search_locked(index, query, dimension, k, results, 0, NULL);
+    int rc = diskann_search_locked(index, query, dimension, k, results, 0, NULL, index->metric);
     diskann_unlock(index);
     return rc;
 }
@@ -2404,7 +2544,7 @@ int diskann_search_ex(const GV_DiskANNIndex *index, const float *query, size_t d
                       size_t k, GV_DiskANNResult *results, size_t beam_width) {
     if (!index) return -1;
     diskann_lock(index);
-    int rc = diskann_search_locked(index, query, dimension, k, results, beam_width, NULL);
+    int rc = diskann_search_locked(index, query, dimension, k, results, beam_width, NULL, index->metric);
     diskann_unlock(index);
     return rc;
 }
@@ -2414,7 +2554,35 @@ int diskann_search_filtered(const GV_DiskANNIndex *index, const float *query, si
                             const GV_IdBitmap *allowed, size_t beam_width) {
     if (!index) return -1;
     diskann_lock(index);
-    int rc = diskann_search_locked(index, query, dimension, k, results, beam_width, allowed);
+    int rc = diskann_search_locked(index, query, dimension, k, results, beam_width, allowed, index->metric);
+    diskann_unlock(index);
+    return rc;
+}
+
+int diskann_search_metric(const GV_DiskANNIndex *index, const float *query, size_t dimension,
+                          size_t k, GV_DiskANNResult *results, const GV_IdBitmap *allowed,
+                          size_t beam_width, GV_DistanceType metric) {
+    if (!index) return -1;
+    diskann_lock(index);
+    int rc = diskann_search_locked(index, query, dimension, k, results, beam_width, allowed, metric);
+    diskann_unlock(index);
+    return rc;
+}
+
+int diskann_range_search(const GV_DiskANNIndex *index, const float *query, size_t dimension,
+                         float radius, GV_DiskANNResult *results, size_t max_results,
+                         GV_DistanceType metric) {
+    if (!index) return -1;
+    diskann_lock(index);
+    int rc = diskann_range_search_locked(index, query, dimension, radius, results, max_results, metric);
+    diskann_unlock(index);
+    return rc;
+}
+
+int diskann_update(GV_DiskANNIndex *index, size_t id, const float *data, size_t dimension) {
+    if (!index) return -1;
+    diskann_lock(index);
+    int rc = diskann_update_locked(index, id, data, dimension);
     diskann_unlock(index);
     return rc;
 }

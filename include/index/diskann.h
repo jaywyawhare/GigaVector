@@ -68,6 +68,8 @@ typedef struct {
 typedef struct {
     size_t total_vectors;
     size_t graph_edges;
+    size_t deleted_vectors;   /* Tombstoned nodes (reclaimable via consolidate/reuse). */
+    size_t free_slots;        /* Freed slots awaiting reuse by a later insert. */
     size_t cache_hits;
     size_t cache_misses;
     size_t disk_reads;
@@ -158,6 +160,55 @@ int diskann_search_ex(const GV_DiskANNIndex *index, const float *query, size_t d
 int diskann_search_filtered(const GV_DiskANNIndex *index, const float *query, size_t dimension,
                             size_t k, GV_DiskANNResult *results,
                             const GV_IdBitmap *allowed, size_t beam_width);
+/**
+ * @brief Search honouring a caller-supplied metric for the exact rerank.
+ *
+ * The general entry point behind diskann_search/_ex/_filtered: graph navigation
+ * uses the index's PQ/L2 approximation while the final rerank scores candidates
+ * under @p metric, so the top-k ordering matches the requested distance.
+ *
+ * @param index Index instance.
+ * @param query Query vector.
+ * @param dimension Vector dimensionality.
+ * @param k Number of neighbours requested.
+ * @param results Output array of at least k results.
+ * @param allowed Bitmap of permitted ids (NULL = no filter).
+ * @param beam_width Beam width for this query (0 = configured default).
+ * @param metric Distance metric for the exact rerank.
+ * @return Number of results written, or -1 on error.
+ */
+int diskann_search_metric(const GV_DiskANNIndex *index, const float *query, size_t dimension,
+                          size_t k, GV_DiskANNResult *results, const GV_IdBitmap *allowed,
+                          size_t beam_width, GV_DistanceType metric);
+/**
+ * @brief Radius search: all neighbours within @p radius of the query.
+ *
+ * @param index Index instance.
+ * @param query Query vector.
+ * @param dimension Vector dimensionality.
+ * @param radius Inclusive distance threshold under @p metric.
+ * @param results Output array of at least max_results entries.
+ * @param max_results Capacity of @p results.
+ * @param metric Distance metric for the radius comparison.
+ * @return Number of results written (distance-sorted), or -1 on error.
+ */
+int diskann_range_search(const GV_DiskANNIndex *index, const float *query, size_t dimension,
+                         float radius, GV_DiskANNResult *results, size_t max_results,
+                         GV_DistanceType metric);
+/**
+ * @brief Replace a live node's vector in place, keeping its id stable.
+ *
+ * Rewrites the stored vector and PQ code, then re-links the node's graph edges
+ * (RAM graph). Out-of-core graphs keep their existing edges (search still
+ * re-ranks exactly), updating only the vector and PQ code.
+ *
+ * @param index Index instance.
+ * @param id Positional id to update.
+ * @param data New vector data.
+ * @param dimension Vector dimensionality.
+ * @return 0 on success, -1 on error.
+ */
+int diskann_update(GV_DiskANNIndex *index, size_t id, const float *data, size_t dimension);
 /**
  * @brief Delete an item.
  *

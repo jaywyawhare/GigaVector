@@ -1072,6 +1072,69 @@ static int test_diskann_cosine_metric(void) {
     return 0;
 }
 
+/* Radius search: every hit is within the radius and distance-sorted, and the
+ * query vector (a stored copy) is present at distance ~0. */
+static int test_diskann_range_search(void) {
+    GV_DiskANNConfig config;
+    diskann_config_init(&config);
+    config.data_path = NULL;
+
+    GV_DiskANNIndex *idx = diskann_create(LARGE_DIM, &config);
+    ASSERT(idx != NULL, "range create failed");
+    float data[LARGE_COUNT * LARGE_DIM];
+    generate_random_batch(data, LARGE_COUNT, LARGE_DIM);
+    ASSERT(diskann_build(idx, data, LARGE_COUNT, LARGE_DIM) == 0, "range build failed");
+
+    size_t target = 17;
+    float query[LARGE_DIM];
+    memcpy(query, &data[target * LARGE_DIM], LARGE_DIM * sizeof(float));
+
+    GV_DiskANNResult results[32];
+    memset(results, 0, sizeof(results));
+    int found = diskann_range_search(idx, query, LARGE_DIM, 5.0f, results, 32,
+                                     GV_DISTANCE_EUCLIDEAN);
+    ASSERT(found > 0, "range search returned results");
+    int saw_self = 0;
+    for (int i = 0; i < found; i++) {
+        ASSERT(results[i].distance <= 5.0f, "result within radius");
+        if (i > 0) ASSERT(results[i].distance >= results[i - 1].distance, "range results sorted");
+        if (results[i].index == target) saw_self = 1;
+    }
+    ASSERT(saw_self, "range search includes the query vector");
+
+    diskann_destroy(idx);
+    return 0;
+}
+
+/* In-place update: the moved vector keeps its id and is retrievable at its new
+ * location via a self-query, while the id stays stable. */
+static int test_diskann_update(void) {
+    GV_DiskANNConfig config;
+    diskann_config_init(&config);
+    config.data_path = NULL;
+
+    GV_DiskANNIndex *idx = diskann_create(LARGE_DIM, &config);
+    ASSERT(idx != NULL, "update create failed");
+    float data[LARGE_COUNT * LARGE_DIM];
+    generate_random_batch(data, LARGE_COUNT, LARGE_DIM);
+    ASSERT(diskann_build(idx, data, LARGE_COUNT, LARGE_DIM) == 0, "update build failed");
+
+    size_t id = 11, src = 3;
+    ASSERT(diskann_update(idx, id, &data[src * LARGE_DIM], LARGE_DIM) == 0, "update failed");
+
+    GV_DiskANNResult results[10];
+    memset(results, 0, sizeof(results));
+    int found = diskann_search(idx, &data[src * LARGE_DIM], LARGE_DIM, 5, results);
+    ASSERT(found > 0, "search after update");
+    int saw = 0;
+    for (int i = 0; i < found; i++) if (results[i].index == id) saw = 1;
+    ASSERT(saw, "updated id found at its new location");
+    ASSERT(diskann_count(idx) == LARGE_COUNT, "update keeps the vector count stable");
+
+    diskann_destroy(idx);
+    return 0;
+}
+
 /* ---------- runner ---------- */
 
 typedef int (*test_fn)(void);
@@ -1103,6 +1166,8 @@ int main(void) {
         {"Testing diskann filtered search...",          test_diskann_filtered_search},
         {"Testing diskann consolidate...",              test_diskann_consolidate},
         {"Testing diskann parallel build...",           test_diskann_parallel_build},
+        {"Testing diskann range search...",             test_diskann_range_search},
+        {"Testing diskann update...",                   test_diskann_update},
     };
     int n = sizeof(tests) / sizeof(tests[0]);
     int passed = 0;
