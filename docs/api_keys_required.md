@@ -1,6 +1,6 @@
 # API Keys Required
 
-GigaVector integrates with external LLM and embedding providers. API keys are passed in code/config at runtime - environment variables are used by tests and optional dashboard fallbacks.
+GigaVector integrates with external LLM and embedding providers. API keys are passed in code/config at runtime; environment variables are used by tests and optional dashboard fallbacks.
 
 ## Environment Variables
 
@@ -45,7 +45,7 @@ embedder = AutoEmbedder(AutoEmbedConfig(
 
 ## Azure OpenAI and Custom Providers
 
-Azure OpenAI and custom OpenAI-compatible endpoints require `base_url` and `api_key` in code/config - not environment variables.
+Azure OpenAI and custom OpenAI-compatible endpoints require `base_url` and `api_key` in code/config, not environment variables.
 
 ## CI
 

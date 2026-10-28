@@ -844,7 +844,7 @@ int gv_db_get_detailed_stats(const GV_Database *db, GV_DetailedStats *out);
 void gv_db_free_detailed_stats(GV_DetailedStats *stats);
 ```
 
-Returns comprehensive database metrics including latency histograms, throughput, memory breakdown, recall metrics, and health indicators.
+Returns database metrics including latency histograms, throughput, memory breakdown, recall metrics, and health indicators.
 
 **Detailed Statistics Structure:**
 ```c
@@ -1316,7 +1316,7 @@ relation's `chunk_id` also updates the chunk index. Both are WAL-logged.
 int memory_delete_by_source(GV_MemoryLayer *layer, const char *source);
 ```
 
-Deletes every memory whose provenance (`source` metadata) matches - the third
+Deletes every memory whose provenance (`source` metadata) matches; the third
 leg of cross-layer rollback alongside `db_delete_by_id` and
 `kg_remove_relations_by_chunk`.
 
@@ -1454,9 +1454,9 @@ int gv_db_health_check(const GV_Database *db);
 Checks database integrity, index consistency, and resource usage.
 
 **Returns:**
-- `0` -- healthy
-- `-1` -- degraded (e.g., high deleted ratio, approaching resource limits)
-- `-2` -- unhealthy (e.g., corrupt index, exceeded limits)
+- `0`: healthy
+- `-1`: degraded (e.g., high deleted ratio, approaching resource limits)
+- `-2`: unhealthy (e.g., corrupt index, exceeded limits)
 
 ### Memory-Mapped Loading
 
@@ -1487,7 +1487,7 @@ gv_db_close(db);
 int gv_db_compact(GV_Database *db);
 ```
 
-Triggers immediate compaction -- reclaims space from deleted vectors and compacts the WAL.
+Triggers immediate compaction: reclaims space from deleted vectors and compacts the WAL.
 
 **Returns:** 0 on success, -1 on error
 
@@ -1522,7 +1522,7 @@ Sets the WAL size threshold that triggers compaction. Default: 10 MB.
 void gv_db_set_deleted_ratio_threshold(GV_Database *db, double ratio);
 ```
 
-Sets the ratio of deleted vectors (0.0--1.0) that triggers compaction. Default: 0.1.
+Sets the ratio of deleted vectors (0.0 to 1.0) that triggers compaction. Default: 0.1.
 
 ### Exact Search Control
 

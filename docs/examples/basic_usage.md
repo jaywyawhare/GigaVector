@@ -1,6 +1,6 @@
 # Basic Usage Examples
 
-This page provides practical starter examples for common GigaVector workflows.
+Starter examples for common GigaVector workflows.
 
 ## Python: create, insert, search
 

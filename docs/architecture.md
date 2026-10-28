@@ -10,7 +10,7 @@
 
 ## Overview
 
-GigaVector is a high-performance vector database library written in C, designed for:
+GigaVector is a vector database library written in C, designed for:
 
 - **Approximate Nearest Neighbor (ANN) Search**: Multiple algorithms (HNSW, IVF-PQ, K-D Tree)
 - **Semantic Memory**: Store, retrieve, and consolidate memories with importance scoring
@@ -243,7 +243,7 @@ if (gv_cpu_has_feature(GV_CPU_AVX2)) {
 
 **File**: `include/gigavector/gv_memory_layer.h`, `src/gv_memory_layer.c`
 
-The memory layer provides semantic memory storage with intelligent retrieval, extraction, and consolidation.
+The memory layer provides semantic memory storage with retrieval, extraction, and consolidation.
 
 The pipeline is: **Extraction** (LLM parses memories from text) &rarr; **Importance Scoring** (multi-factor ranking) &rarr; **Consolidation** (merge duplicates). Memories are stored in the vector database and linked to entities in the context graph.
 
@@ -419,16 +419,16 @@ Multi-factor importance scoring based on cognitive science and ML ranking resear
 **NO hardcoded keyword lists**. All scoring uses statistical and structural analysis:
 - Language-agnostic (works for any language)
 - Based on SOTA research on memory scoring and retrieval
-- Combines multiple signals for robust scoring
+- Combines multiple signals for scoring
 
 ### Scoring Components
 
 The final score is a weighted sum of four signals:
 
-- **Content (30%)** -- informativeness, specificity, salience
-- **Temporal (25%)** -- Ebbinghaus forgetting curve decay
-- **Access (20%)** -- SM-2 style retrieval pattern analysis
-- **Structural (10%)** -- graph link density and relationship count
+- **Content (30%)**: informativeness, specificity, salience
+- **Temporal (25%)**: Ebbinghaus forgetting curve decay
+- **Access (20%)**: SM-2 style retrieval pattern analysis
+- **Structural (10%)**: graph link density and relationship count
 
 ### Component Weights
 
@@ -801,12 +801,12 @@ The knowledge graph (`gv_knowledge_graph.h`) adds semantic capabilities on top o
 Internally the KG stores entities and relations in hash tables, with three SPO indexes (subject, object, predicate) for fast triple-pattern matching. An embedding store (flat float array with cosine similarity) enables semantic search over entities.
 
 **Key capabilities:**
-- **SPO Triple Store** -- subject/predicate/object indexes for fast pattern matching with wildcard support
-- **Semantic Search** -- cosine similarity over entity embeddings for finding similar entities
-- **Entity Resolution** -- deduplicate entities using name matching + embedding similarity
-- **Link Prediction** -- predict missing relations via embedding similarity + shared-neighbor patterns
-- **Hybrid Search** -- combine embedding similarity with type and predicate filters
-- **Subgraph Extraction** -- BFS-based k-hop neighborhood with entity and relation ID collection
+- **SPO Triple Store**: subject/predicate/object indexes for fast pattern matching with wildcard support
+- **Semantic Search**: cosine similarity over entity embeddings for finding similar entities
+- **Entity Resolution**: deduplicate entities using name matching + embedding similarity
+- **Link Prediction**: predict missing relations via embedding similarity + shared-neighbor patterns
+- **Hybrid Search**: combine embedding similarity with type and predicate filters
+- **Subgraph Extraction**: BFS-based k-hop neighborhood with entity and relation ID collection
 
 ### Persistence Formats
 
@@ -817,7 +817,7 @@ Both layers use binary persistence:
 | Graph DB | `GVGR` | Version, counts, ID counters, serialized nodes (label + properties), serialized edges (endpoints + label + weight + properties) |
 | Knowledge Graph | `GVKG` | Version, config, counts, ID counters, entities (name + type + embedding + properties), relations (SPO + weight + properties) |
 
-Thread safety is provided via `pthread_rwlock_t` -- concurrent reads, exclusive writes.
+Thread safety is provided via `pthread_rwlock_t`: concurrent reads, exclusive writes.
 
 ---
 

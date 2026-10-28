@@ -1,6 +1,6 @@
 # GigaVector
 
-High-performance vector database written in C with Python bindings. Zero external dependencies. One library. Everything you need.
+Vector database written in C with Python bindings. Zero external dependencies.
 
 ```bash
 pip install gigavector
