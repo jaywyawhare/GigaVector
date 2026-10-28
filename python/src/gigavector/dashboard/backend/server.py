@@ -247,8 +247,10 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_error_json(500, "stats_failed", str(e))
 
     def _handle_profiler_run(self) -> None:
-        """Run the e2e op profiler against a throwaway db and return a per-scope
-        table (timing + allocator deltas). Never touches the live collection.
+        """Run the nested e2e op profiler against a throwaway db and return the
+        aggregated per-scope stats (inclusive/self/min/max time + allocator
+        deltas) plus a flat span list for the flamegraph. Never touches the live
+        collection.
 
         Query params: n, dim, queries, index (FLAT/HNSW/DISKANN/...)."""
         import random
@@ -259,6 +261,8 @@ class _Handler(BaseHTTPRequestHandler):
             IndexType,
             allocator_stats,
         )
+
+        from .profiler import Profiler, _s64
 
         qs = self._qs()
         n = min(max(int(qs.get("n", ["1000"])[0]), 1), 50000)
@@ -288,49 +292,31 @@ class _Handler(BaseHTTPRequestHandler):
         def vec() -> list[float]:
             return [rng.uniform(-0.5, 0.5) for _ in range(dim)]
 
-        def s64(x: int) -> int:
-            # live_bytes is an unsigned 64-bit counter; a delta that should be
-            # negative (frees of allocations made before the snapshot) wraps near
-            # 2**64, so reinterpret the high half as signed for display.
-            return x - (1 << 64) if x >= (1 << 63) else x
+        prof = Profiler(allocator_stats)
+        errors: dict[str, str] = {}
 
-        scopes: list[dict[str, Any]] = []
-
-        def run(name: str, count: int, fn: Any) -> None:
-            a0 = allocator_stats()
-            t0 = time.perf_counter()
-            ok = 0
-            err = None
-            for i in range(count):
-                try:
-                    fn(i)
-                    ok += 1
-                except Exception as e:  # unsupported op for this index type
-                    err = str(e)
-                    break
-            dt_ms = (time.perf_counter() - t0) * 1000.0
-            a1 = allocator_stats()
-            scopes.append({
-                "name": name,
-                "calls": ok,
-                "total_ms": dt_ms,
-                "avg_ms": (dt_ms / ok) if ok else 0.0,
-                "ops_per_sec": (ok / (dt_ms / 1000.0)) if dt_ms > 0 else 0.0,
-                "allocs": a1["alloc_count"] - a0["alloc_count"],
-                "net_bytes": s64(a1["live_bytes"] - a0["live_bytes"]),
-                "error": err,
-            })
+        def loop(name: str, count: int, fn: Any) -> None:
+            with prof.scope(name, ops=count):
+                for i in range(count):
+                    try:
+                        fn(i)
+                    except Exception as e:  # unsupported op for this index type
+                        errors[name] = str(e)
+                        break
 
         try:
-            run("add", n, lambda i: db.add_vector(vec(), {"bucket": "b%d" % (i % 8)}))
-            run("search", queries, lambda i: db.search(vec(), 10, DistanceType.EUCLIDEAN))
-            run("search_cosine", queries, lambda i: db.search(vec(), 10, DistanceType.COSINE))
-            run("search_filtered", queries,
-                lambda i: db.search(vec(), 10, DistanceType.EUCLIDEAN, filter_metadata=("bucket", "b3")))
-            run("range", max(queries // 4, 1), lambda i: db.range_search(vec(), 5.0, 16))
-            run("update", max(n // 4, 1), lambda i: db.update_vector(i, vec()))
-            run("delete", max(n // 8, 1), lambda i: db.delete_vector(n // 2 + i))
-            run("compact", 1, lambda i: db.compact())
+            with prof.scope("e2e"):
+                loop("add", n, lambda i: db.add_vector(vec(), {"bucket": "b%d" % (i % 8)}))
+                with prof.scope("search"):
+                    loop("knn", queries, lambda i: db.search(vec(), 10, DistanceType.EUCLIDEAN))
+                    loop("knn_cosine", queries, lambda i: db.search(vec(), 10, DistanceType.COSINE))
+                    loop("knn_filtered", queries,
+                         lambda i: db.search(vec(), 10, DistanceType.EUCLIDEAN, filter_metadata=("bucket", "b3")))
+                    loop("range", max(queries // 4, 1), lambda i: db.range_search(vec(), 5.0, 16))
+                with prof.scope("mutate"):
+                    loop("update", max(n // 4, 1), lambda i: db.update_vector(i, vec()))
+                    loop("delete", max(n // 8, 1), lambda i: db.delete_vector(n // 2 + i))
+                loop("compact", 1, lambda i: db.compact())
         finally:
             try:
                 db.close()
@@ -343,11 +329,15 @@ class _Handler(BaseHTTPRequestHandler):
                     except OSError:
                         pass
 
+        scopes = prof.scopes()
+        for s in scopes:
+            s["error"] = errors.get(s["name"])
         alloc = allocator_stats()
-        alloc["live_bytes"] = s64(alloc["live_bytes"])
+        alloc["live_bytes"] = _s64(alloc["live_bytes"])
         self._send_json({
             "params": {"index": itype.name, "n": n, "dim": dim, "queries": queries},
             "scopes": scopes,
+            "spans": prof.spans(),
             "allocator": alloc,
         })
 

@@ -448,6 +448,9 @@ th.num, td.num { text-align: right; font-variant-numeric: tabular-nums }
 }
 .chart-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px }
 .chart-title { font-size: 14px; font-weight: 600 }
+.flame-label { font-size: 11px; fill: #11181c; pointer-events: none; font-family: var(--mono) }
+.flame-frame rect { transition: opacity .1s }
+.flame-frame:hover rect { opacity: .82 }
 .chart-meta { font-size: 13px; color: var(--text-2); font-variant-numeric: tabular-nums; white-space: nowrap }
 .chart-meta b { color: var(--text); font-weight: 500 }
 .chart-body { position: relative; flex: 1; min-height: 140px }

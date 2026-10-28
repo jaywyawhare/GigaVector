@@ -2812,6 +2812,106 @@ async function loadCluster() {
 
 // profiler
 
+let profSpans = null;
+let profFocus = null;
+
+function profColor(name) {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+  return "hsl(" + (h % 360) + " 62% 56%)";
+}
+
+function renderFlame(spans) {
+  const wrap = document.getElementById("prof-flame-wrap");
+  if (!spans || !spans.length) {
+    wrap.innerHTML = '<div class="table-empty">No spans.</div>';
+    return;
+  }
+  const root = spans.find((s) => s.depth === 0) || spans[0];
+  const focus = profFocus || { ts: root.ts_ms, dur: root.dur_ms, depth: root.depth };
+  const maxDepth = spans.reduce((m, s) => Math.max(m, s.depth), 0);
+  const rowH = 26;
+  const W = 1000;
+  const H = (maxDepth - focus.depth + 1) * rowH;
+  const t0 = focus.ts;
+  const span = focus.dur || 1;
+  let rects = "";
+  for (const s of spans) {
+    if (s.depth < focus.depth) continue;
+    const end = s.ts_ms + s.dur_ms;
+    if (end <= t0 || s.ts_ms >= t0 + span) continue;
+    const x = Math.max(0, (s.ts_ms - t0) / span) * W;
+    const vis = Math.min(end, t0 + span) - Math.max(s.ts_ms, t0);
+    const w = Math.max((vis / span) * W, 0.5);
+    const y = (s.depth - focus.depth) * rowH;
+    const label =
+      w > 42
+        ? '<text x="' +
+          (x + 4).toFixed(1) +
+          '" y="' +
+          (y + 17) +
+          '" class="flame-label">' +
+          escapeHtml(s.name) +
+          " " +
+          s.dur_ms.toFixed(1) +
+          "ms</text>"
+        : "";
+    const tip =
+      s.name +
+      "\ntotal " +
+      s.dur_ms.toFixed(3) +
+      " ms\nself " +
+      s.self_ms.toFixed(3) +
+      " ms\nallocs " +
+      s.allocs +
+      "\nnet " +
+      (s.net_bytes / 1024).toFixed(1) +
+      " KB";
+    rects +=
+      '<g class="flame-frame" data-ts="' +
+      s.ts_ms +
+      '" data-dur="' +
+      s.dur_ms +
+      '" data-depth="' +
+      s.depth +
+      '"><rect x="' +
+      x.toFixed(2) +
+      '" y="' +
+      y +
+      '" width="' +
+      w.toFixed(2) +
+      '" height="' +
+      (rowH - 2) +
+      '" rx="2" fill="' +
+      profColor(s.name) +
+      '" stroke="rgba(0,0,0,0.18)"><title>' +
+      escapeHtml(tip) +
+      "</title></rect>" +
+      label +
+      "</g>";
+  }
+  wrap.innerHTML =
+    '<svg viewBox="0 0 ' +
+    W +
+    " " +
+    H +
+    '" width="100%" height="' +
+    H +
+    '" preserveAspectRatio="none" style="display:block">' +
+    rects +
+    "</svg>";
+  wrap.querySelectorAll(".flame-frame").forEach((g) => {
+    g.addEventListener("click", () => {
+      profFocus = {
+        ts: +g.dataset.ts,
+        dur: +g.dataset.dur,
+        depth: +g.dataset.depth,
+      };
+      renderFlame(profSpans);
+    });
+  });
+}
+
 async function runProfiler() {
   const btn = document.getElementById("prof-run");
   const body = document.getElementById("prof-table-body");
@@ -2822,7 +2922,7 @@ async function runProfiler() {
   btn.disabled = true;
   btn.textContent = "Running…";
   body.innerHTML =
-    '<tr><td colspan="7" class="table-empty">Running profiler…</td></tr>';
+    '<tr><td colspan="9" class="table-empty">Running profiler…</td></tr>';
   const r = await apiCall(
     "/api/profiler/run?index=" +
       encodeURIComponent(index) +
@@ -2839,7 +2939,7 @@ async function runProfiler() {
   if (!r.ok) {
     const msg = (r.data && (r.data.message || r.data.error)) || "error";
     body.innerHTML =
-      '<tr><td colspan="7" class="table-empty">Profiler failed: ' +
+      '<tr><td colspan="9" class="table-empty">Profiler failed: ' +
       escapeHtml(msg) +
       "</td></tr>";
     return;
@@ -2868,6 +2968,9 @@ async function runProfiler() {
           escapeHtml(s.error) +
           ")</span>"
         : "";
+      const ops = s.ops_per_sec
+        ? Math.round(s.ops_per_sec).toLocaleString()
+        : "-";
       return (
         "<tr><td>" +
         escapeHtml(s.name) +
@@ -2877,9 +2980,13 @@ async function runProfiler() {
         '</td><td class="mono">' +
         s.total_ms.toFixed(2) +
         '</td><td class="mono">' +
-        s.avg_ms.toFixed(4) +
+        s.self_ms.toFixed(2) +
         '</td><td class="mono">' +
-        Math.round(s.ops_per_sec).toLocaleString() +
+        s.min_ms.toFixed(3) +
+        '</td><td class="mono">' +
+        s.max_ms.toFixed(3) +
+        '</td><td class="mono">' +
+        ops +
         '</td><td class="mono">' +
         Number(s.allocs).toLocaleString() +
         '</td><td class="mono">' +
@@ -2889,7 +2996,12 @@ async function runProfiler() {
     })
     .join("");
   body.innerHTML =
-    rows || '<tr><td colspan="7" class="table-empty">No scopes.</td></tr>';
+    rows || '<tr><td colspan="9" class="table-empty">No scopes.</td></tr>';
+
+  profSpans = d.spans || [];
+  profFocus = null;
+  renderFlame(profSpans);
+
   if (!a.enabled) {
     showToast(
       "Allocator counters are zero: rebuild the library with -DGV_PROFILE_ALLOC",

@@ -743,7 +743,7 @@
 				<div class="page-head">
 					<div>
 						<h1 class="page-title">Profiler</h1>
-						<p class="page-desc">End-to-end per-operation timing and allocator accounting, run against a throwaway database (the live collection is never touched).</p>
+						<p class="page-desc">Nested end-to-end profiling (inclusive vs self time, min/max, allocator deltas) with a flamegraph, run against a throwaway database — the live collection is never touched.</p>
 					</div>
 				</div>
 				<section class="card">
@@ -771,17 +771,34 @@
 					<div class="card"><div class="card-label">Peak memory</div><div class="card-value" id="prof-peak">-</div></div>
 					<div class="card"><div class="card-label">Total allocated</div><div class="card-value" id="prof-total">-</div></div>
 				</div>
-				<section class="card card-flush">
-					<table class="data-table" id="prof-table">
-						<thead><tr>
-							<th>Scope</th><th>Calls</th><th>Total ms</th><th>Avg ms</th>
-							<th>Ops/sec</th><th>Allocs</th><th>Net KB</th>
-						</tr></thead>
-						<tbody id="prof-table-body">
-							<tr><td colspan="7" class="table-empty">Run the profiler to see per-operation timings.</td></tr>
-						</tbody>
-					</table>
-				</section>
+				<div class="tabs">
+					<button class="tab active" data-tab="prof-flame">Flamegraph</button>
+					<button class="tab" data-tab="prof-tbl">Table</button>
+				</div>
+				<div id="prof-flame" class="tab-content">
+					<section class="card card-flush">
+						<div class="chart-head" style="padding:12px 16px 0">
+							<div class="chart-title">Flamegraph <span class="mono-sm">(click a frame to zoom, click the root to reset)</span></div>
+						</div>
+						<div id="prof-flame-wrap" style="position:relative;padding:12px 16px 16px">
+							<div class="table-empty">Run the profiler to see the flamegraph.</div>
+						</div>
+						<div id="prof-flame-tip" class="viz-tooltip" style="display:none"></div>
+					</section>
+				</div>
+				<div id="prof-tbl" class="tab-content" style="display:none">
+					<section class="card card-flush">
+						<table class="data-table" id="prof-table">
+							<thead><tr>
+								<th>Scope</th><th>Calls</th><th>Total ms</th><th>Self ms</th>
+								<th>Min ms</th><th>Max ms</th><th>Ops/sec</th><th>Allocs</th><th>Net KB</th>
+							</tr></thead>
+							<tbody id="prof-table-body">
+								<tr><td colspan="9" class="table-empty">Run the profiler to see per-scope timings.</td></tr>
+							</tbody>
+						</table>
+					</section>
+				</div>
 			</div>
 
 			<!-- GRAPH EXPLORER -->
