@@ -55,12 +55,13 @@ static ssize_t pwrite(int fd, const void *buf, size_t count, long long offset) {
 
 #include <pthread.h>
 
+#include "core/id_bitmap.h"
 #include "index/diskann.h"
 #include "storage/disk_page_cache.h"
 #include "core/utils.h"
 
 #define DISKANN_MAGIC           0x44414E4E  /* "DANN" */
-#define DISKANN_VERSION         2  /* v2 adds the graph_on_disk flag; v1 still loads */
+#define DISKANN_VERSION         3  /* v3 adds metric; v2 graph_on_disk flag; v1 still loads */
 #define DISKANN_VERSION_MIN     1
 #define DISKANN_DEFAULT_DEGREE  64
 #define DISKANN_DEFAULT_ALPHA   1.2f
@@ -115,6 +116,7 @@ typedef struct {
 struct GV_DiskANNIndex {
     /* Configuration */
     size_t dimension;
+    GV_DistanceType metric;
     size_t max_degree;
     float alpha;
     size_t build_beam_width;
@@ -195,7 +197,7 @@ static const size_t *diskann_node_neighbors(const GV_DiskANNIndex *index, size_t
 static size_t diskann_compute_medoid(const float *data, size_t count, size_t dimension);
 static int diskann_greedy_search(const GV_DiskANNIndex *index, const float *query,
                                   size_t beam_width, size_t *visited, size_t *visited_count,
-                                  size_t max_visited);
+                                  size_t max_visited, const GV_IdBitmap *allowed);
 static void diskann_robust_prune(GV_DiskANNIndex *index, size_t node_id,
                                   size_t *candidates, float *distances, size_t cand_count);
 
@@ -206,6 +208,19 @@ static float diskann_l2_distance(const float *a, const float *b, size_t dim) {
         sum += diff * diff;
     }
     return sum;
+}
+
+/**
+ * @brief Full-vector distance under the index metric via the shared SIMD kernels.
+ * @param index Index instance.
+ * @param a First vector (length index->dimension).
+ * @param b Second vector (length index->dimension).
+ * @return Distance (smaller is closer) for the configured metric.
+ */
+static float diskann_distance(const GV_DiskANNIndex *index, const float *a, const float *b) {
+    GV_Vector va = { index->dimension, (float *)a, NULL };
+    GV_Vector vb = { index->dimension, (float *)b, NULL };
+    return distance(&va, &vb, index->metric);
 }
 
 typedef struct {
@@ -905,7 +920,7 @@ static size_t diskann_compute_medoid(const float *data, size_t count, size_t dim
  */
 static int diskann_greedy_search(const GV_DiskANNIndex *index, const float *query,
                                   size_t beam_width, size_t *visited, size_t *visited_count,
-                                  size_t max_visited) {
+                                  size_t max_visited, const GV_IdBitmap *allowed) {
     if (index->count == 0) {
         *visited_count = 0;
         return 0;
@@ -956,7 +971,7 @@ static int diskann_greedy_search(const GV_DiskANNIndex *index, const float *quer
     } else {
         /* Read from disk */
         if (diskann_disk_read_vector((GV_DiskANNIndex *)index, start, vec_buf) == 0) {
-            start_dist = diskann_l2_distance(query, vec_buf, index->dimension);
+            start_dist = diskann_distance(index, query, vec_buf);
         } else {
             start_dist = FLT_MAX;
         }
@@ -988,7 +1003,12 @@ static int diskann_greedy_search(const GV_DiskANNIndex *index, const float *quer
 
         if (index->nodes[curr].deleted) continue;
 
-        visited[result_count++] = curr;
+        /* Expand every node for graph connectivity, but only collect ids that
+         * pass the filter (NULL = no filter). Filtered walks keep traversing
+         * through non-matching nodes until enough matches are gathered. */
+        if (!allowed || gv_id_bitmap_contains(allowed, (uint64_t)curr)) {
+            visited[result_count++] = curr;
+        }
 
         size_t nbr_count = 0;
         const size_t *nbrs = diskann_node_neighbors(index, curr, slot_buf, nbr_scratch, &nbr_count);
@@ -1006,7 +1026,7 @@ static int diskann_greedy_search(const GV_DiskANNIndex *index, const float *quer
                 dist = diskann_pq_distance(&index->pq, query, index->nodes[neighbor].pq_code);
             } else {
                 if (diskann_disk_read_vector((GV_DiskANNIndex *)index, neighbor, vec_buf) == 0) {
-                    dist = diskann_l2_distance(query, vec_buf, index->dimension);
+                    dist = diskann_distance(index, query, vec_buf);
                 } else {
                     continue;
                 }
@@ -1129,7 +1149,7 @@ static void diskann_robust_prune(GV_DiskANNIndex *index, size_t node_id,
             } else {
                 if (diskann_disk_read_vector(index, candidates[i], vec_a) == 0 &&
                     diskann_disk_read_vector(index, candidates[j], vec_b) == 0) {
-                    inter_dist = diskann_l2_distance(vec_a, vec_b, index->dimension);
+                    inter_dist = diskann_distance(index, vec_a, vec_b);
                 } else {
                     continue;
                 }
@@ -1152,6 +1172,7 @@ static void diskann_robust_prune(GV_DiskANNIndex *index, size_t node_id,
 
 void diskann_config_init(GV_DiskANNConfig *config) {
     if (!config) return;
+    config->metric = GV_DISTANCE_EUCLIDEAN;
     config->max_degree = DISKANN_DEFAULT_DEGREE;
     config->alpha = DISKANN_DEFAULT_ALPHA;
     config->build_beam_width = DISKANN_DEFAULT_BUILD_BW;
@@ -1171,6 +1192,7 @@ GV_DiskANNIndex *diskann_create(size_t dimension, const GV_DiskANNConfig *config
     if (!index) return NULL;
 
     index->dimension = dimension;
+    index->metric = config ? config->metric : GV_DISTANCE_EUCLIDEAN;
     index->data_fd = -1;
     index->graph_fd = -1;
     index->graph_on_disk = (config && config->graph_on_disk) ? 1 : 0;
@@ -1315,7 +1337,179 @@ static void diskann_freelist_push(GV_DiskANNIndex *index, size_t id) {
     index->free_ids[index->free_count++] = id;
 }
 
-static int diskann_build_locked(GV_DiskANNIndex *index, const float *data, size_t count, size_t dimension) {
+/**
+ * @brief Prune a build node's candidates and wire its edges (the serial link step).
+ * @param index Index instance.
+ * @param data Full vector data.
+ * @param dimension Vector dimensionality.
+ * @param i Node being linked.
+ * @param results Candidate ids from the greedy search (compacted in place).
+ * @param visited_count Number of candidates in results.
+ * @param distances Scratch of at least visited_count floats.
+ */
+static void diskann_build_link_node(GV_DiskANNIndex *index, const float *data, size_t dimension,
+                                    size_t i, size_t *results, size_t visited_count,
+                                    float *distances) {
+    const float *query = &data[i * dimension];
+    size_t valid_count = 0;
+    for (size_t vi = 0; vi < visited_count; vi++) {
+        if (results[vi] == i) continue;
+        if (index->nodes[results[vi]].deleted) continue;
+
+        float dist;
+        if (index->pq.trained && index->nodes[results[vi]].pq_code) {
+            dist = diskann_pq_distance(&index->pq, query, index->nodes[results[vi]].pq_code);
+        } else {
+            dist = diskann_distance(index, query, &data[results[vi] * dimension]);
+        }
+        results[valid_count] = results[vi];
+        distances[valid_count] = dist;
+        valid_count++;
+    }
+    if (valid_count == 0) return;
+
+    DiskANN_Node *node = &index->nodes[i];
+    size_t total_cand = valid_count + node->neighbor_count;
+    size_t *all_cands = (size_t *)gv_alloc(total_cand * sizeof(size_t));
+    float *all_dists = (float *)gv_alloc(total_cand * sizeof(float));
+    if (!all_cands || !all_dists) { gv_free(all_cands); gv_free(all_dists); return; }
+
+    memcpy(all_cands, results, valid_count * sizeof(size_t));
+    memcpy(all_dists, distances, valid_count * sizeof(float));
+
+    size_t ac = valid_count;
+    for (size_t ni = 0; ni < node->neighbor_count; ni++) {
+        size_t nb = node->neighbors[ni];
+        int dup = 0;
+        for (size_t ci = 0; ci < ac; ci++) if (all_cands[ci] == nb) { dup = 1; break; }
+        if (dup || nb == i) continue;
+
+        float dist;
+        if (index->pq.trained && index->nodes[nb].pq_code) {
+            dist = diskann_pq_distance(&index->pq, query, index->nodes[nb].pq_code);
+        } else {
+            dist = diskann_distance(index, query, &data[nb * dimension]);
+        }
+        all_cands[ac] = nb;
+        all_dists[ac] = dist;
+        ac++;
+    }
+
+    diskann_robust_prune(index, i, all_cands, all_dists, ac);
+    gv_free(all_cands);
+    gv_free(all_dists);
+
+    for (size_t ni = 0; ni < node->neighbor_count; ni++) {
+        size_t nb = node->neighbors[ni];
+        DiskANN_Node *nb_node = &index->nodes[nb];
+        int exists = 0;
+        for (size_t j = 0; j < nb_node->neighbor_count; j++)
+            if (nb_node->neighbors[j] == i) { exists = 1; break; }
+        if (!exists && nb_node->neighbor_count < index->max_degree) {
+            size_t *nn = (size_t *)gv_realloc(nb_node->neighbors,
+                                              (nb_node->neighbor_count + 1) * sizeof(size_t));
+            if (nn) { nb_node->neighbors = nn; nb_node->neighbors[nb_node->neighbor_count++] = i; }
+        }
+    }
+}
+
+typedef struct {
+    const GV_DiskANNIndex *index;
+    const float *data;
+    size_t dimension, base, beam, max_results, start, end;
+    size_t *results;   /* row r (length max_results) holds node (base+r)'s candidates */
+    size_t *vcounts;   /* row r holds node (base+r)'s candidate count */
+} DiskANN_BuildWork;
+
+/**
+ * @brief Worker: run the read-only greedy search for a slice of a build batch.
+ * @param arg DiskANN_BuildWork describing the slice.
+ * @return NULL.
+ */
+static void *diskann_build_search_worker(void *arg) {
+    DiskANN_BuildWork *w = (DiskANN_BuildWork *)arg;
+    for (size_t r = w->start; r < w->end; r++) {
+        size_t node = w->base + r;
+        size_t visited = 0;
+        if (diskann_greedy_search(w->index, &w->data[node * w->dimension], w->beam,
+                                  &w->results[r * w->max_results], &visited,
+                                  w->max_results, NULL) != 0) {
+            visited = 0;
+        }
+        w->vcounts[r] = visited;
+    }
+    return NULL;
+}
+
+/**
+ * @brief One Vamana pass with parallel greedy search and a serial link step.
+ *
+ * The search phase is read-only over a stable graph (PQ codes resolve all
+ * distances from RAM, so no disk or cache access), making it race-free; all
+ * graph mutation happens serially in the link step.
+ *
+ * @param index Index instance.
+ * @param data Full vector data.
+ * @param dimension Vector dimensionality.
+ * @param count Node count.
+ * @param num_threads Worker thread count (>= 1).
+ */
+static void diskann_build_pass_parallel(GV_DiskANNIndex *index, const float *data,
+                                        size_t dimension, size_t count, size_t num_threads) {
+    size_t max_results = index->build_beam_width * 2;
+    if (max_results > count) max_results = count;
+    if (max_results == 0) return;
+
+    size_t batch = num_threads * 64;
+    if (batch < 64) batch = 64;
+    if (batch > count) batch = count;
+
+    size_t *results = (size_t *)gv_alloc(batch * max_results * sizeof(size_t));
+    size_t *vcounts = (size_t *)gv_alloc(batch * sizeof(size_t));
+    float *dist_scratch = (float *)gv_alloc(max_results * sizeof(float));
+    pthread_t *th = (pthread_t *)gv_alloc(num_threads * sizeof(pthread_t));
+    DiskANN_BuildWork *wk = (DiskANN_BuildWork *)gv_alloc(num_threads * sizeof(DiskANN_BuildWork));
+    if (!results || !vcounts || !dist_scratch || !th || !wk) {
+        /* Fall back to a fully serial pass. */
+        if (results && vcounts && dist_scratch) {
+            for (size_t i = 0; i < count; i++) {
+                size_t visited = 0;
+                if (diskann_greedy_search(index, &data[i * dimension], index->build_beam_width,
+                                          results, &visited, max_results, NULL) == 0)
+                    diskann_build_link_node(index, data, dimension, i, results, visited, dist_scratch);
+            }
+        }
+        gv_free(wk); gv_free(th); gv_free(dist_scratch); gv_free(vcounts); gv_free(results);
+        return;
+    }
+
+    for (size_t base = 0; base < count; base += batch) {
+        size_t bsz = (count - base < batch) ? count - base : batch;
+
+        size_t nt = num_threads > bsz ? bsz : num_threads;
+        size_t per = (bsz + nt - 1) / nt;
+        size_t spawned = 0;
+        for (size_t t = 0; t < nt; t++) {
+            size_t s = t * per, e = (s + per > bsz) ? bsz : s + per;
+            if (s >= e) break;
+            wk[t] = (DiskANN_BuildWork){ index, data, dimension, base,
+                                         index->build_beam_width, max_results, s, e,
+                                         results, vcounts };
+            if (pthread_create(&th[t], NULL, diskann_build_search_worker, &wk[t]) == 0) spawned++;
+            else diskann_build_search_worker(&wk[t]); /* inline on spawn failure */
+        }
+        for (size_t t = 0; t < spawned; t++) pthread_join(th[t], NULL);
+
+        for (size_t r = 0; r < bsz; r++)
+            diskann_build_link_node(index, data, dimension, base + r,
+                                    &results[r * max_results], vcounts[r], dist_scratch);
+    }
+
+    gv_free(wk); gv_free(th); gv_free(dist_scratch); gv_free(vcounts); gv_free(results);
+}
+
+static int diskann_build_locked(GV_DiskANNIndex *index, const float *data, size_t count,
+                                size_t dimension, size_t num_threads) {
     if (!index || !data || count == 0) return -1;
     if (dimension != index->dimension) return -1;
 
@@ -1383,113 +1577,39 @@ static int diskann_build_locked(GV_DiskANNIndex *index, const float *data, size_
         index->nodes[i].deleted = 0;
     }
 
-    size_t *search_results = (size_t *)gv_alloc(index->build_beam_width * 2 * sizeof(size_t));
-    float *search_distances = (float *)gv_alloc(index->build_beam_width * 2 * sizeof(float));
-    float *vec_buf = (float *)gv_alloc(dimension * sizeof(float));
-    if (!search_results || !search_distances || !vec_buf) {
+    size_t max_results = index->build_beam_width * 2;
+    if (max_results > count) max_results = count;
+    size_t *search_results = (size_t *)gv_alloc(max_results * sizeof(size_t));
+    float *search_distances = (float *)gv_alloc(max_results * sizeof(float));
+    if (!search_results || !search_distances) {
         gv_free(search_results);
         gv_free(search_distances);
-        gv_free(vec_buf);
         return -1;
     }
 
-    /* Two passes for better graph quality as per the Vamana paper */
+    /* Parallel search is race-free only with PQ (all distances resolve from RAM,
+     * no disk/cache access during the read-only search phase). */
+    int parallel = (num_threads > 1 && index->pq.trained);
+
+    /* Two passes for better graph quality as per the Vamana paper. */
     for (int pass = 0; pass < 2; pass++) {
+        if (parallel) {
+            diskann_build_pass_parallel(index, data, dimension, count, num_threads);
+            continue;
+        }
         for (size_t i = 0; i < count; i++) {
-            const float *query = &data[i * dimension];
-
             size_t visited_count = 0;
-            size_t max_results = index->build_beam_width * 2;
-            if (max_results > count) max_results = count;
-
-            if (diskann_greedy_search(index, query, index->build_beam_width,
-                                       search_results, &visited_count, max_results) != 0) {
+            if (diskann_greedy_search(index, &data[i * dimension], index->build_beam_width,
+                                       search_results, &visited_count, max_results, NULL) != 0) {
                 continue;
             }
-
-            if (visited_count == 0) continue;
-
-            size_t valid_count = 0;
-            for (size_t vi = 0; vi < visited_count; vi++) {
-                if (search_results[vi] == i) continue; /* Skip self */
-                if (index->nodes[search_results[vi]].deleted) continue;
-
-                float dist;
-                if (index->pq.trained && index->nodes[search_results[vi]].pq_code) {
-                    dist = diskann_pq_distance(&index->pq, query, index->nodes[search_results[vi]].pq_code);
-                } else {
-                    dist = diskann_l2_distance(query, &data[search_results[vi] * dimension], dimension);
-                }
-
-                search_results[valid_count] = search_results[vi];
-                search_distances[valid_count] = dist;
-                valid_count++;
-            }
-
-            if (valid_count == 0) continue;
-
-            DiskANN_Node *node = &index->nodes[i];
-            size_t total_cand = valid_count + node->neighbor_count;
-            size_t *all_cands = (size_t *)gv_alloc(total_cand * sizeof(size_t));
-            float *all_dists = (float *)gv_alloc(total_cand * sizeof(float));
-            if (!all_cands || !all_dists) {
-                gv_free(all_cands);
-                gv_free(all_dists);
-                continue;
-            }
-
-            memcpy(all_cands, search_results, valid_count * sizeof(size_t));
-            memcpy(all_dists, search_distances, valid_count * sizeof(float));
-
-            size_t ac = valid_count;
-            for (size_t ni = 0; ni < node->neighbor_count; ni++) {
-                size_t nb = node->neighbors[ni];
-                int dup = 0;
-                for (size_t ci = 0; ci < ac; ci++) {
-                    if (all_cands[ci] == nb) { dup = 1; break; }
-                }
-                if (dup || nb == i) continue;
-
-                float dist;
-                if (index->pq.trained && index->nodes[nb].pq_code) {
-                    dist = diskann_pq_distance(&index->pq, query, index->nodes[nb].pq_code);
-                } else {
-                    dist = diskann_l2_distance(query, &data[nb * dimension], dimension);
-                }
-                all_cands[ac] = nb;
-                all_dists[ac] = dist;
-                ac++;
-            }
-
-            diskann_robust_prune(index, i, all_cands, all_dists, ac);
-
-            gv_free(all_cands);
-            gv_free(all_dists);
-
-            for (size_t ni = 0; ni < node->neighbor_count; ni++) {
-                size_t nb = node->neighbors[ni];
-                DiskANN_Node *nb_node = &index->nodes[nb];
-
-                int exists = 0;
-                for (size_t j = 0; j < nb_node->neighbor_count; j++) {
-                    if (nb_node->neighbors[j] == i) { exists = 1; break; }
-                }
-
-                if (!exists && nb_node->neighbor_count < index->max_degree) {
-                    size_t *new_neighbors = (size_t *)gv_realloc(nb_node->neighbors,
-                                                               (nb_node->neighbor_count + 1) * sizeof(size_t));
-                    if (new_neighbors) {
-                        nb_node->neighbors = new_neighbors;
-                        nb_node->neighbors[nb_node->neighbor_count++] = i;
-                    }
-                }
-            }
+            diskann_build_link_node(index, data, dimension, i,
+                                    search_results, visited_count, search_distances);
         }
     }
 
     gv_free(search_results);
     gv_free(search_distances);
-    gv_free(vec_buf);
 
     /* Push the freshly-built adjacency out of RAM when running out-of-core. */
     if (index->graph_on_disk && diskann_flush_graph(index) != 0) {
@@ -1581,7 +1701,7 @@ static int diskann_insert_locked(GV_DiskANNIndex *index, const float *data, size
 
     size_t visited_count = 0;
     diskann_greedy_search(index, data, index->build_beam_width,
-                           search_results, &visited_count, max_results);
+                           search_results, &visited_count, max_results, NULL);
 
     size_t valid_count = 0;
     for (size_t vi = 0; vi < visited_count; vi++) {
@@ -1592,7 +1712,7 @@ static int diskann_insert_locked(GV_DiskANNIndex *index, const float *data, size
         if (index->pq.trained && index->nodes[search_results[vi]].pq_code) {
             dist = diskann_pq_distance(&index->pq, data, index->nodes[search_results[vi]].pq_code);
         } else if (diskann_disk_read_vector(index, search_results[vi], vec_buf) == 0) {
-            dist = diskann_l2_distance(data, vec_buf, dimension);
+            dist = diskann_distance(index, data, vec_buf);
         } else {
             continue;
         }
@@ -1609,7 +1729,7 @@ static int diskann_insert_locked(GV_DiskANNIndex *index, const float *data, size
         if (index->pq.trained && index->nodes[index->medoid].pq_code) {
             dist = diskann_pq_distance(&index->pq, data, index->nodes[index->medoid].pq_code);
         } else if (diskann_disk_read_vector(index, index->medoid, vec_buf) == 0) {
-            dist = diskann_l2_distance(data, vec_buf, dimension);
+            dist = diskann_distance(index, data, vec_buf);
         }
         search_results[0] = index->medoid;
         search_distances[0] = dist;
@@ -1693,15 +1813,19 @@ cleanup:
 }
 
 static int diskann_search_locked(const GV_DiskANNIndex *index, const float *query, size_t dimension,
-                       size_t k, GV_DiskANNResult *results) {
+                       size_t k, GV_DiskANNResult *results, size_t beam_width,
+                       const GV_IdBitmap *allowed) {
     if (!index || !query || !results || k == 0) return -1;
     if (dimension != index->dimension) return -1;
     if (index->count == 0) return 0;
 
+    /* Per-query beam (0 = use the configured default) trades recall vs latency. */
+    size_t beam = beam_width ? beam_width : index->search_beam_width;
+
     struct timespec ts_start, ts_end;
     clock_gettime(CLOCK_MONOTONIC, &ts_start);
 
-    size_t max_visited = index->search_beam_width * 4;
+    size_t max_visited = beam * 4;
     if (max_visited > index->count) max_visited = index->count;
     if (max_visited < k) max_visited = k;
 
@@ -1709,8 +1833,8 @@ static int diskann_search_locked(const GV_DiskANNIndex *index, const float *quer
     if (!visited) return -1;
 
     size_t visited_count = 0;
-    if (diskann_greedy_search(index, query, index->search_beam_width,
-                               visited, &visited_count, max_visited) != 0) {
+    if (diskann_greedy_search(index, query, beam,
+                               visited, &visited_count, max_visited, allowed) != 0) {
         gv_free(visited);
         return -1;
     }
@@ -1736,7 +1860,7 @@ static int diskann_search_locked(const GV_DiskANNIndex *index, const float *quer
 
         if (diskann_disk_read_vector((GV_DiskANNIndex *)index, vid, vec_buf) != 0) continue;
 
-        float dist = diskann_l2_distance(query, vec_buf, dimension);
+        float dist = diskann_distance(index, query, vec_buf);
         refined[refined_count].index = vid;
         refined[refined_count].distance = dist;
         refined_count++;
@@ -1835,6 +1959,50 @@ static int diskann_get_stats_locked(const GV_DiskANNIndex *index, GV_DiskANNStat
     return 0;
 }
 
+static int diskann_consolidate_locked(GV_DiskANNIndex *index) {
+    if (!index) return -1;
+    if (index->count == 0) return 0;
+
+    if (!index->graph_flushed) {
+        for (size_t i = 0; i < index->count; i++) {
+            DiskANN_Node *n = &index->nodes[i];
+            if (n->deleted || !n->neighbors) continue;
+            size_t w = 0;
+            for (size_t j = 0; j < n->neighbor_count; j++) {
+                size_t nb = n->neighbors[j];
+                if (nb < index->count && !index->nodes[nb].deleted) n->neighbors[w++] = nb;
+            }
+            n->neighbor_count = w;
+        }
+        return 0;
+    }
+
+    /* Out-of-core: rewrite each live node's on-disk slot without deleted ids. */
+    uint32_t *slot = (uint32_t *)gv_alloc((index->max_degree + 1) * sizeof(uint32_t));
+    size_t *ids = (size_t *)gv_alloc(index->max_degree * sizeof(size_t));
+    if (!slot || !ids) { gv_free(slot); gv_free(ids); return -1; }
+
+    int rc = 0;
+    for (size_t i = 0; i < index->count; i++) {
+        if (index->nodes[i].deleted) continue;
+        size_t cnt = 0;
+        if (diskann_graph_read_node(index, i, slot, ids, &cnt) != 0) { rc = -1; break; }
+        size_t w = 0;
+        for (size_t j = 0; j < cnt; j++)
+            if (ids[j] < index->count && !index->nodes[ids[j]].deleted) ids[w++] = ids[j];
+        slot[0] = (uint32_t)w;
+        for (size_t j = 0; j < w; j++) slot[1 + j] = (uint32_t)ids[j];
+        if (diskann_pwrite_all(index->graph_fd, slot, index->graph_slot_bytes,
+                               (long long)i * (long long)index->graph_slot_bytes) != 0) {
+            rc = -1; break;
+        }
+        index->nodes[i].neighbor_count = w;
+    }
+    gv_free(ids);
+    gv_free(slot);
+    return rc;
+}
+
 void diskann_attach_page_cache(GV_DiskANNIndex *index, GV_DiskPageCache *cache)
 {
     if (!index) return;
@@ -1869,6 +2037,7 @@ static int diskann_save_locked(const GV_DiskANNIndex *index, const char *filepat
     if (write_u64(f, (uint64_t)index->sector_size) != 0) goto fail;
     if (write_u64(f, (uint64_t)index->medoid) != 0) goto fail;
     if (write_u32(f, (uint32_t)index->graph_on_disk) != 0) goto fail; /* v2 */
+    if (write_u32(f, (uint32_t)index->metric) != 0) goto fail;        /* v3 */
 
     if (write_u32(f, (uint32_t)index->pq.trained) != 0) goto fail;
     if (index->pq.trained) {
@@ -1967,11 +2136,17 @@ GV_DiskANNIndex *diskann_load(const char *filepath, const GV_DiskANNConfig *conf
         if (read_u32(f, &graph_on_disk) != 0) goto fail;
     }
 
+    uint32_t metric = (uint32_t)GV_DISTANCE_EUCLIDEAN;
+    if (version >= 3) {
+        if (read_u32(f, &metric) != 0) goto fail;
+    }
+
     if (dimension == 0) goto fail;
 
     /* Build a config from the file data, overridden by user config where provided */
     GV_DiskANNConfig load_config;
     diskann_config_init(&load_config);
+    load_config.metric = (GV_DistanceType)metric;
     load_config.max_degree = (size_t)max_degree;
     load_config.alpha = alpha;
     load_config.build_beam_width = (size_t)build_bw;
@@ -2189,7 +2364,17 @@ fail:
 int diskann_build(GV_DiskANNIndex *index, const float *data, size_t count, size_t dimension) {
     if (!index) return -1;
     diskann_lock(index);
-    int rc = diskann_build_locked(index, data, count, dimension);
+    int rc = diskann_build_locked(index, data, count, dimension, 1);
+    diskann_unlock(index);
+    return rc;
+}
+
+int diskann_build_parallel(GV_DiskANNIndex *index, const float *data, size_t count,
+                           size_t dimension, size_t num_threads) {
+    if (!index) return -1;
+    if (num_threads == 0) num_threads = 1;
+    diskann_lock(index);
+    int rc = diskann_build_locked(index, data, count, dimension, num_threads);
     diskann_unlock(index);
     return rc;
 }
@@ -2206,7 +2391,26 @@ int diskann_search(const GV_DiskANNIndex *index, const float *query, size_t dime
                    size_t k, GV_DiskANNResult *results) {
     if (!index) return -1;
     diskann_lock(index);
-    int rc = diskann_search_locked(index, query, dimension, k, results);
+    int rc = diskann_search_locked(index, query, dimension, k, results, 0, NULL);
+    diskann_unlock(index);
+    return rc;
+}
+
+int diskann_search_ex(const GV_DiskANNIndex *index, const float *query, size_t dimension,
+                      size_t k, GV_DiskANNResult *results, size_t beam_width) {
+    if (!index) return -1;
+    diskann_lock(index);
+    int rc = diskann_search_locked(index, query, dimension, k, results, beam_width, NULL);
+    diskann_unlock(index);
+    return rc;
+}
+
+int diskann_search_filtered(const GV_DiskANNIndex *index, const float *query, size_t dimension,
+                            size_t k, GV_DiskANNResult *results,
+                            const GV_IdBitmap *allowed, size_t beam_width) {
+    if (!index) return -1;
+    diskann_lock(index);
+    int rc = diskann_search_locked(index, query, dimension, k, results, beam_width, allowed);
     diskann_unlock(index);
     return rc;
 }
@@ -2241,4 +2445,12 @@ size_t diskann_count(const GV_DiskANNIndex *index) {
     size_t n = diskann_count_locked(index);
     diskann_unlock(index);
     return n;
+}
+
+int diskann_consolidate(GV_DiskANNIndex *index) {
+    if (!index) return -1;
+    diskann_lock(index);
+    int rc = diskann_consolidate_locked(index);
+    diskann_unlock(index);
+    return rc;
 }

@@ -1911,6 +1911,7 @@ void gv_auto_embed_clear_cache(GV_AutoEmbedder *embedder);
 /* --- DiskANN On-Disk Index --- */
 
 typedef struct {
+    GV_DistanceType metric;
     size_t max_degree;
     float alpha;
     size_t build_beam_width;

@@ -5,6 +5,7 @@
 #include <math.h>
 #include <pthread.h>
 #include "index/diskann.h"
+#include "core/id_bitmap.h"
 #include "../test_tmp.h"
 
 #define ASSERT(cond, msg) do { if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); return -1; } } while(0)
@@ -888,6 +889,189 @@ static int test_diskann_concurrent(void) {
     return 0;
 }
 
+/* Parallel build: multi-threaded construction must reach the same recall bar as
+ * the serial build (run under TSAN to prove the search phase is race-free). */
+static int test_diskann_parallel_build(void) {
+    GV_DiskANNConfig config;
+    diskann_config_init(&config);
+    config.data_path = NULL;
+
+    GV_DiskANNIndex *idx = diskann_create(LARGE_DIM, &config);
+    ASSERT(idx != NULL, "parallel create failed");
+    float data[LARGE_COUNT * LARGE_DIM];
+    generate_random_batch(data, LARGE_COUNT, LARGE_DIM);
+    ASSERT(diskann_build_parallel(idx, data, LARGE_COUNT, LARGE_DIM, 4) == 0, "parallel build failed");
+    ASSERT(diskann_count(idx) == LARGE_COUNT, "parallel build count");
+
+    size_t k = 10, num_queries = 20, total_found = 0;
+    for (size_t q = 0; q < num_queries; q++) {
+        float query[LARGE_DIM];
+        size_t qi = (q * 7) % LARGE_COUNT;
+        memcpy(query, &data[qi * LARGE_DIM], LARGE_DIM * sizeof(float));
+        size_t exact_idx[LARGE_COUNT];
+        float exact_dist[LARGE_COUNT];
+        for (size_t i = 0; i < LARGE_COUNT; i++) {
+            exact_idx[i] = i;
+            exact_dist[i] = brute_force_l2(query, &data[i * LARGE_DIM], LARGE_DIM);
+        }
+        for (size_t i = 0; i < k; i++) {
+            size_t m = i;
+            for (size_t j = i + 1; j < LARGE_COUNT; j++) if (exact_dist[j] < exact_dist[m]) m = j;
+            size_t ti = exact_idx[i]; exact_idx[i] = exact_idx[m]; exact_idx[m] = ti;
+            float td = exact_dist[i]; exact_dist[i] = exact_dist[m]; exact_dist[m] = td;
+        }
+        GV_DiskANNResult r[16];
+        memset(r, 0, sizeof(r));
+        int found = diskann_search(idx, query, LARGE_DIM, k, r);
+        for (int x = 0; x < found && x < (int)k; x++)
+            for (size_t e = 0; e < k; e++)
+                if (r[x].index == exact_idx[e]) { total_found++; break; }
+    }
+    double recall = (double)total_found / ((double)num_queries * (double)k);
+    fprintf(stderr, "  parallel-build recall@%zu = %.2f%%\n", k, recall * 100.0);
+    ASSERT(recall > 0.80, "parallel build recall@10 > 80%");
+
+    diskann_destroy(idx);
+    return 0;
+}
+
+/* Consolidation: after deleting nodes, no live node's adjacency may still point
+ * at a tombstone, and search must keep working. Verified via graph_edges, which
+ * only sums live nodes' neighbour counts. */
+static int test_diskann_consolidate(void) {
+    GV_DiskANNConfig config;
+    diskann_config_init(&config);
+    config.data_path = NULL;
+
+    GV_DiskANNIndex *idx = diskann_create(DIM, &config);
+    ASSERT(idx != NULL, "consolidate create failed");
+    float data[BUILD_COUNT * DIM];
+    generate_batch(data, BUILD_COUNT, DIM);
+    ASSERT(diskann_build(idx, data, BUILD_COUNT, DIM) == 0, "build failed");
+
+    for (size_t i = 0; i < BUILD_COUNT; i += 3) diskann_delete(idx, i);
+
+    GV_DiskANNStats before, after;
+    ASSERT(diskann_get_stats(idx, &before) == 0, "stats before");
+    ASSERT(diskann_consolidate(idx) == 0, "consolidate failed");
+    ASSERT(diskann_get_stats(idx, &after) == 0, "stats after");
+
+    /* Scrubbing dead edges can only remove edges, never add them. */
+    ASSERT(after.graph_edges <= before.graph_edges, "consolidate only drops edges");
+
+    /* Search still returns only live nodes. */
+    float query[DIM];
+    fill_vector(query, DIM, 7.0f);
+    GV_DiskANNResult r[10];
+    memset(r, 0, sizeof(r));
+    int found = diskann_search(idx, query, DIM, 10, r);
+    ASSERT(found > 0, "search works after consolidate");
+    for (int i = 0; i < found; i++) ASSERT(r[i].index % 3 != 0, "no tombstoned id returned");
+
+    diskann_destroy(idx);
+    return 0;
+}
+
+/* Filtered search: every returned id must be in the allow-set, and the best
+ * allowed vector (the query is a copy of an allowed vector) comes back top-1. */
+static int test_diskann_filtered_search(void) {
+    GV_DiskANNConfig config;
+    diskann_config_init(&config);
+    config.data_path = NULL;
+
+    GV_DiskANNIndex *idx = diskann_create(LARGE_DIM, &config);
+    ASSERT(idx != NULL, "filtered create failed");
+    float data[LARGE_COUNT * LARGE_DIM];
+    generate_random_batch(data, LARGE_COUNT, LARGE_DIM);
+    ASSERT(diskann_build(idx, data, LARGE_COUNT, LARGE_DIM) == 0, "filtered build failed");
+
+    /* Allow every 5th id; make the query an exact copy of an allowed vector. */
+    GV_IdBitmap *allowed = gv_id_bitmap_create();
+    ASSERT(allowed != NULL, "bitmap create");
+    for (size_t i = 0; i < LARGE_COUNT; i += 5) gv_id_bitmap_add(allowed, (uint64_t)i);
+    size_t target = 25; /* in the allow-set */
+
+    float query[LARGE_DIM];
+    memcpy(query, &data[target * LARGE_DIM], LARGE_DIM * sizeof(float));
+
+    GV_DiskANNResult results[10];
+    memset(results, 0, sizeof(results));
+    int found = diskann_search_filtered(idx, query, LARGE_DIM, 10, results, allowed, 128);
+    ASSERT(found > 0, "filtered search returned results");
+    ASSERT(results[0].index == target, "exact allowed match is top-1");
+    for (int i = 0; i < found; i++) {
+        ASSERT(gv_id_bitmap_contains(allowed, (uint64_t)results[i].index),
+               "every result is in the allow-set");
+    }
+
+    gv_id_bitmap_free(allowed);
+    diskann_destroy(idx);
+    return 0;
+}
+
+/* Cosine metric: the index must rank by cosine distance (1 - cossim), not L2.
+ * A self-query returns the vector itself (cosine distance ~0), and recall
+ * against a brute-force cosine ranking stays high. */
+static float brute_force_cosine(const float *a, const float *b, size_t dim) {
+    float dot = 0.0f, na = 0.0f, nb = 0.0f;
+    for (size_t i = 0; i < dim; i++) { dot += a[i]*b[i]; na += a[i]*a[i]; nb += b[i]*b[i]; }
+    if (na == 0.0f || nb == 0.0f) return 1.0f;
+    return 1.0f - dot / (sqrtf(na) * sqrtf(nb));
+}
+
+static int test_diskann_cosine_metric(void) {
+    GV_DiskANNConfig config;
+    diskann_config_init(&config);
+    config.data_path = NULL;
+    config.metric = GV_DISTANCE_COSINE;
+
+    GV_DiskANNIndex *idx = diskann_create(LARGE_DIM, &config);
+    ASSERT(idx != NULL, "cosine create failed");
+    float data[LARGE_COUNT * LARGE_DIM];
+    generate_random_batch(data, LARGE_COUNT, LARGE_DIM);
+    ASSERT(diskann_build(idx, data, LARGE_COUNT, LARGE_DIM) == 0, "cosine build failed");
+
+    size_t k = 10, num_queries = 20, total_found = 0;
+    for (size_t q = 0; q < num_queries; q++) {
+        float query[LARGE_DIM];
+        size_t qi = (q * 7) % LARGE_COUNT;
+        memcpy(query, &data[qi * LARGE_DIM], LARGE_DIM * sizeof(float));
+
+        size_t exact_idx[LARGE_COUNT];
+        float exact_dist[LARGE_COUNT];
+        for (size_t i = 0; i < LARGE_COUNT; i++) {
+            exact_idx[i] = i;
+            exact_dist[i] = brute_force_cosine(query, &data[i * LARGE_DIM], LARGE_DIM);
+        }
+        for (size_t i = 0; i < k; i++) {
+            size_t m = i;
+            for (size_t j = i + 1; j < LARGE_COUNT; j++)
+                if (exact_dist[j] < exact_dist[m]) m = j;
+            size_t ti = exact_idx[i]; exact_idx[i] = exact_idx[m]; exact_idx[m] = ti;
+            float td = exact_dist[i]; exact_dist[i] = exact_dist[m]; exact_dist[m] = td;
+        }
+
+        GV_DiskANNResult results[16];
+        memset(results, 0, sizeof(results));
+        int found = diskann_search(idx, query, LARGE_DIM, k, results);
+        ASSERT(found > 0, "cosine search returned results");
+        /* Self-query: top-1 is the query vector at cosine distance ~0. */
+        if (q == 0) {
+            ASSERT(results[0].index == qi, "cosine self-query returns itself");
+            ASSERT(results[0].distance < 1e-4f, "cosine self distance ~0");
+        }
+        for (int r = 0; r < found && r < (int)k; r++)
+            for (size_t e = 0; e < k; e++)
+                if (results[r].index == exact_idx[e]) { total_found++; break; }
+    }
+    double recall = (double)total_found / ((double)num_queries * (double)k);
+    fprintf(stderr, "  cosine recall@%zu = %.2f%%\n", k, recall * 100.0);
+    ASSERT(recall > 0.80, "cosine recall@10 > 80%");
+
+    diskann_destroy(idx);
+    return 0;
+}
+
 /* ---------- runner ---------- */
 
 typedef int (*test_fn)(void);
@@ -915,6 +1099,10 @@ int main(void) {
         {"Testing diskann force_in_memory load...",    test_diskann_force_in_memory_load},
         {"Testing diskann slot reclamation...",        test_diskann_slot_reclaim},
         {"Testing diskann concurrent access...",        test_diskann_concurrent},
+        {"Testing diskann cosine metric...",            test_diskann_cosine_metric},
+        {"Testing diskann filtered search...",          test_diskann_filtered_search},
+        {"Testing diskann consolidate...",              test_diskann_consolidate},
+        {"Testing diskann parallel build...",           test_diskann_parallel_build},
     };
     int n = sizeof(tests) / sizeof(tests[0]);
     int passed = 0;

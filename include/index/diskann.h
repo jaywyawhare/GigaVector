@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "search/distance.h"
+#include "core/id_bitmap.h"
 
 struct GV_DiskPageCache;
 
@@ -11,6 +12,10 @@ extern "C" {
 #endif
 
 typedef struct {
+    GV_DistanceType metric;   /* Distance metric (default: GV_DISTANCE_EUCLIDEAN).
+                               * Full-vector comparisons and the exact rerank use
+                               * it via the shared SIMD kernels; PQ navigation is
+                               * an L2 approximation refined by the exact rerank. */
     size_t max_degree;        /* Max graph degree R (default: 64) */
     float alpha;              /* Pruning parameter alpha (default: 1.2) */
     size_t build_beam_width;  /* Beam width during build (default: 128) */
@@ -92,6 +97,22 @@ void diskann_destroy(GV_DiskANNIndex *index);
  */
 int diskann_build(GV_DiskANNIndex *index, const float *data, size_t count, size_t dimension);
 /**
+ * @brief Build the graph using multiple threads (parallel search, serial link).
+ *
+ * Same result shape as diskann_build; the two Vamana passes run their greedy
+ * searches across @p num_threads workers. Falls back to serial when PQ is
+ * untrained (parallel search requires PQ for race-free RAM-only distances).
+ *
+ * @param index Index instance.
+ * @param data Input data buffer (count * dimension floats).
+ * @param count Number of vectors.
+ * @param dimension Vector dimensionality.
+ * @param num_threads Worker thread count (0 or 1 = serial).
+ * @return 0 on success, -1 on error.
+ */
+int diskann_build_parallel(GV_DiskANNIndex *index, const float *data, size_t count,
+                           size_t dimension, size_t num_threads);
+/**
  * @brief Perform the operation.
  *
  * @param index Index instance.
@@ -102,6 +123,37 @@ int diskann_build(GV_DiskANNIndex *index, const float *data, size_t count, size_
 int diskann_insert(GV_DiskANNIndex *index, const float *data, size_t dimension);
 int diskann_search(const GV_DiskANNIndex *index, const float *query, size_t dimension,
                        size_t k, GV_DiskANNResult *results);
+/**
+ * @brief Search with a per-query beam width (recall/latency override).
+ *
+ * @param index Index instance.
+ * @param query Query vector.
+ * @param dimension Vector dimensionality.
+ * @param k Number of neighbours requested.
+ * @param results Output array of at least k results.
+ * @param beam_width Beam width for this query (0 = configured default).
+ * @return Number of results written, or -1 on error.
+ */
+int diskann_search_ex(const GV_DiskANNIndex *index, const float *query, size_t dimension,
+                      size_t k, GV_DiskANNResult *results, size_t beam_width);
+/**
+ * @brief Pre-filtered search: only ids in @p allowed are returned.
+ *
+ * The graph walk still traverses non-matching nodes for connectivity but
+ * collects only allowed ids, so it keeps searching until k matches are found.
+ *
+ * @param index Index instance.
+ * @param query Query vector.
+ * @param dimension Vector dimensionality.
+ * @param k Number of neighbours requested.
+ * @param results Output array of at least k results.
+ * @param allowed Bitmap of permitted ids (NULL = no filter).
+ * @param beam_width Beam width for this query (0 = configured default).
+ * @return Number of results written, or -1 on error.
+ */
+int diskann_search_filtered(const GV_DiskANNIndex *index, const float *query, size_t dimension,
+                            size_t k, GV_DiskANNResult *results,
+                            const GV_IdBitmap *allowed, size_t beam_width);
 /**
  * @brief Delete an item.
  *
@@ -138,6 +190,17 @@ void diskann_attach_page_cache(GV_DiskANNIndex *index, struct GV_DiskPageCache *
  * @return Count value.
  */
 size_t diskann_count(const GV_DiskANNIndex *index);
+
+/**
+ * @brief Remove tombstoned ids from all adjacency lists (cheap compaction).
+ *
+ * Keeps recall high under churn without a full rebuild; does not renumber ids
+ * or reclaim vector slots (those stay available via the insert free list).
+ *
+ * @param index Index instance.
+ * @return 0 on success, -1 on error.
+ */
+int diskann_consolidate(GV_DiskANNIndex *index);
 
 #ifdef __cplusplus
 }
