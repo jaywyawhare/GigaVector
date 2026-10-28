@@ -1921,6 +1921,7 @@ typedef struct {
     size_t cache_size_mb;
     size_t sector_size;
     int graph_on_disk;
+    int disable_slot_reuse;
     int force_in_memory;
 } GV_DiskANNConfig;
 

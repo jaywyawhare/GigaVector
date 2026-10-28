@@ -34,6 +34,8 @@ int db_write_header(FILE *out, uint32_t dimension, uint64_t count,
 uint64_t wal_read_ckpt_gen(const char *wal_path);
 void db_fill_ivfdisk_search_vectors(GV_Database *db, GV_SearchResult *results,
                                     int n);
+int db_diskann_search(GV_Database *db, const float *query, size_t k,
+                      GV_SearchResult *results);
 
 void db_normalize_vector(GV_Vector *vector);
 void db_emit_change(GV_Database *db, GV_CDCEventType cdc_type,

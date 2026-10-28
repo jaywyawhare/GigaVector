@@ -31,6 +31,10 @@ typedef struct {
                                * The flush happens in build/load, so an index only
                                * ever grown by insert (never built/loaded) keeps
                                * its adjacency in RAM until the first flush. */
+    int disable_slot_reuse;   /* If set (default 0), insert never recycles a freed
+                               * slot and always appends, keeping positional ids
+                               * stable and contiguous. Used when an outer layer
+                               * (the db) maps ids 1:1 to its own storage. */
     int force_in_memory;      /* On load (default 0): keep the reconstructed graph
                                * in RAM even if the saved index used graph_on_disk.
                                * Overrides the stored flag and graph_on_disk. Lets

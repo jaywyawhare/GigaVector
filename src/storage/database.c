@@ -64,6 +64,7 @@ static FILE *fmemopen(void *buf, size_t size, const char *mode) {
 #include "index/flat.h"
 #include "index/ivfflat.h"
 #include "index/ivfdisk.h"
+#include "index/diskann.h"
 #include "index/index_maintenance.h"
 #include "index/ivfsq8.h"
 #include "index/ivfturboquant.h"
@@ -120,6 +121,85 @@ static int db_ivfdisk_create_index(GV_Database *db, size_t dimension, const char
     }
     db->hnsw_index = ivfdisk_create(dimension, &cfg);
     return db->hnsw_index ? 0 : -1;
+}
+
+/**
+ * @brief Create a DiskANN index for a collection (vectors on disk at {path}.diskann).
+ *
+ * Slot reuse is disabled so DiskANN positional ids stay 1:1 with soa_storage
+ * ids; the graph is a derived index rebuilt incrementally via WAL replay.
+ *
+ * @param db Database instance.
+ * @param dimension Vector dimensionality.
+ * @param filepath Database file path (NULL for an in-memory db).
+ * @return 0 on success, -1 on error.
+ */
+static int db_diskann_create_index(GV_Database *db, size_t dimension, const char *filepath)
+{
+    char data_path[1024];
+    const char *base = (filepath && *filepath) ? filepath : "gigavector_mem";
+    if (snprintf(data_path, sizeof(data_path), "%s.diskann", base) >= (int)sizeof(data_path)) {
+        return -1;
+    }
+    GV_DiskANNConfig cfg;
+    diskann_config_init(&cfg);
+    cfg.data_path = data_path;
+    cfg.disable_slot_reuse = 1; /* keep ids aligned with soa_storage */
+    db->hnsw_index = diskann_create(dimension, &cfg);
+    return db->hnsw_index ? 0 : -1;
+}
+
+/**
+ * @brief Run a DiskANN search and project results onto GV_SearchResult ids.
+ *
+ * DiskANN positional ids equal soa_storage ids (slot reuse disabled), so each
+ * result index is used directly as the vector id for db_fill_*_search_vectors.
+ *
+ * @param db Database instance.
+ * @param query Query vector data.
+ * @param k Neighbours requested.
+ * @param results Output array of at least k results.
+ * @return Number of results, or -1 on error.
+ */
+int db_diskann_search(GV_Database *db, const float *query, size_t k,
+                      GV_SearchResult *results)
+{
+    if (!db || !db->hnsw_index || !query || k == 0) return -1;
+    GV_DiskANNResult *tmp = (GV_DiskANNResult *)gv_alloc(k * sizeof(GV_DiskANNResult));
+    if (!tmp) return -1;
+    int n = diskann_search((GV_DiskANNIndex *)db->hnsw_index, query, db->dimension, k, tmp);
+    for (int i = 0; i < n; i++) {
+        memset(&results[i], 0, sizeof(results[i]));
+        results[i].id = tmp[i].index;
+        results[i].distance = tmp[i].distance;
+    }
+    gv_free(tmp);
+    return n;
+}
+
+/**
+ * @brief Rebuild the derived DiskANN graph from the restored SoA vectors on load.
+ *
+ * Every slot is inserted so positional ids stay aligned with soa_storage ids
+ * (reuse is disabled); tombstoned slots are re-inserted then re-deleted.
+ *
+ * @param db Database instance (db->hnsw_index is a fresh empty DiskANN index).
+ * @return 0 on success, -1 on error.
+ */
+static int db_diskann_rebuild_from_soa(GV_Database *db)
+{
+    if (!db || !db->hnsw_index || !db->soa_storage) return -1;
+    size_t n = soa_storage_count(db->soa_storage);
+    GV_DiskANNIndex *idx = (GV_DiskANNIndex *)db->hnsw_index;
+    for (size_t i = 0; i < n; i++) {
+        const float *v = soa_storage_get_data(db->soa_storage, i);
+        if (v == NULL) return -1;
+        if (diskann_insert(idx, v, db->dimension) != 0) return -1;
+        if (soa_storage_is_deleted(db->soa_storage, i) == 1) {
+            diskann_delete(idx, i);
+        }
+    }
+    return 0;
 }
 
 static void db_attach_soa_storage(GV_Database *db) {
@@ -734,6 +814,11 @@ static void db_destroy_indexes(GV_Database *db) {
             ivfdisk_destroy((GV_IVFDiskIndex *)db->hnsw_index);
             db->hnsw_index = NULL;
         }
+    } else if (db->index_type == GV_INDEX_TYPE_DISKANN) {
+        if (db->hnsw_index) {
+            diskann_destroy((GV_DiskANNIndex *)db->hnsw_index);
+            db->hnsw_index = NULL;
+        }
     }
 }
 
@@ -826,7 +911,8 @@ GV_Database *db_open(const char *filepath, size_t dimension, GV_IndexType index_
 
     if (index_type == GV_INDEX_TYPE_KDTREE || index_type == GV_INDEX_TYPE_HNSW ||
         index_type == GV_INDEX_TYPE_FLAT || index_type == GV_INDEX_TYPE_LSH ||
-        index_type == GV_INDEX_TYPE_RABITQ || index_type == GV_INDEX_TYPE_IVFDISK) {
+        index_type == GV_INDEX_TYPE_RABITQ || index_type == GV_INDEX_TYPE_IVFDISK ||
+        index_type == GV_INDEX_TYPE_DISKANN) {
         db->soa_storage = soa_storage_create(dimension, 0);
         if (db->soa_storage == NULL) {
             db_free_open_failure(db);
@@ -1024,6 +1110,11 @@ GV_Database *db_open(const char *filepath, size_t dimension, GV_IndexType index_
                     /* On failure db->hnsw_index is NULL (ivfdisk_create returned
                      * NULL or an early return before assignment), so the
                      * helper's index destroy is a safe no-op. */
+                    db_free_open_failure(db);
+                    return NULL;
+                }
+            } else if (index_type == GV_INDEX_TYPE_DISKANN) {
+                if (db_diskann_create_index(db, dimension, filepath) != 0) {
                     db_free_open_failure(db);
                     return NULL;
                 }
@@ -1311,6 +1402,16 @@ GV_Database *db_open(const char *filepath, size_t dimension, GV_IndexType index_
         }
         db->hnsw_index = loaded_index;
         db->count = soa_storage_count(db->soa_storage);
+    } else if (db->index_type == GV_INDEX_TYPE_DISKANN) {
+        if (db->soa_storage == NULL ||
+            soa_storage_load(db->soa_storage, in, file_version) != 0 ||
+            db_diskann_create_index(db, db->dimension, db->filepath) != 0 ||
+            db_diskann_rebuild_from_soa(db) != 0) {
+            fclose(in);
+            db_free_open_failure(db);
+            return NULL;
+        }
+        db->count = soa_storage_count(db->soa_storage);
     } else {
         fclose(in);
         db_free_open_failure(db);
@@ -1463,6 +1564,8 @@ void db_close(GV_Database *db) {
         rabitq_destroy(db->hnsw_index);
     } else if (db->index_type == GV_INDEX_TYPE_IVFDISK) {
         ivfdisk_destroy((GV_IVFDiskIndex *)db->hnsw_index);
+    } else if (db->index_type == GV_INDEX_TYPE_DISKANN) {
+        diskann_destroy((GV_DiskANNIndex *)db->hnsw_index);
     }
     if (db->soa_storage != NULL) {
         soa_storage_destroy(db->soa_storage);
@@ -1544,6 +1647,8 @@ static void db_open_from_memory_cleanup(GV_Database *db) {
         rabitq_destroy(db->hnsw_index);
     } else if (db->index_type == GV_INDEX_TYPE_IVFDISK) {
         ivfdisk_destroy((GV_IVFDiskIndex *)db->hnsw_index);
+    } else if (db->index_type == GV_INDEX_TYPE_DISKANN) {
+        diskann_destroy((GV_DiskANNIndex *)db->hnsw_index);
     }
     if (db->soa_storage != NULL) {
         soa_storage_destroy(db->soa_storage);
@@ -1625,7 +1730,8 @@ static GV_Database *db_open_from_memory_impl(const void *data, size_t size,
 
     if (index_type == GV_INDEX_TYPE_KDTREE || index_type == GV_INDEX_TYPE_HNSW ||
         index_type == GV_INDEX_TYPE_FLAT || index_type == GV_INDEX_TYPE_LSH ||
-        index_type == GV_INDEX_TYPE_RABITQ || index_type == GV_INDEX_TYPE_IVFDISK) {
+        index_type == GV_INDEX_TYPE_RABITQ || index_type == GV_INDEX_TYPE_IVFDISK ||
+        index_type == GV_INDEX_TYPE_DISKANN) {
         db->soa_storage = soa_storage_create(dimension, 0);
         if (db->soa_storage == NULL) {
             db_open_from_memory_cleanup(db);
@@ -1834,6 +1940,16 @@ static GV_Database *db_open_from_memory_impl(const void *data, size_t size,
             return NULL;
         }
         db->hnsw_index = loaded_index;
+        db->count = soa_storage_count(db->soa_storage);
+    } else if (db->index_type == GV_INDEX_TYPE_DISKANN) {
+        if (db->soa_storage == NULL ||
+            soa_storage_load(db->soa_storage, in, file_version) != 0 ||
+            db_diskann_create_index(db, db->dimension, db->filepath) != 0 ||
+            db_diskann_rebuild_from_soa(db) != 0) {
+            fclose(in);
+            db_free_open_failure(db);
+            return NULL;
+        }
         db->count = soa_storage_count(db->soa_storage);
     } else {
         fclose(in);

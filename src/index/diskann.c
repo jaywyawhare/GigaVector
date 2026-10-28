@@ -144,6 +144,8 @@ struct GV_DiskANNIndex {
     int data_fd;             /* File descriptor for on-disk vector storage */
     size_t vectors_per_page; /* How many vectors fit in one sector-aligned page */
 
+    int disable_slot_reuse;  /* Insert always appends (ids stay contiguous). */
+
     /* Out-of-core graph (opt-in): adjacency lists live on disk, not RAM. */
     int graph_on_disk;       /* Config flag: keep adjacency out of RAM. */
     int graph_flushed;       /* Adjacency currently resides on disk (RAM freed). */
@@ -1182,6 +1184,7 @@ void diskann_config_init(GV_DiskANNConfig *config) {
     config->cache_size_mb = DISKANN_DEFAULT_CACHE_MB;
     config->sector_size = gv_disk_default_sector_size();
     config->graph_on_disk = 0;
+    config->disable_slot_reuse = 0;
     config->force_in_memory = 0;
 }
 
@@ -1193,6 +1196,7 @@ GV_DiskANNIndex *diskann_create(size_t dimension, const GV_DiskANNConfig *config
 
     index->dimension = dimension;
     index->metric = config ? config->metric : GV_DISTANCE_EUCLIDEAN;
+    index->disable_slot_reuse = (config && config->disable_slot_reuse) ? 1 : 0;
     index->data_fd = -1;
     index->graph_fd = -1;
     index->graph_on_disk = (config && config->graph_on_disk) ? 1 : 0;
@@ -1672,7 +1676,7 @@ static int diskann_insert_locked(GV_DiskANNIndex *index, const float *data, size
      * Chosen after the allocations so a failure never disturbs the free list. */
     size_t new_id;
     int reused = 0;
-    if (index->free_count > 0) {
+    if (index->free_count > 0 && !index->disable_slot_reuse) {
         new_id = index->free_ids[--index->free_count];
         reused = 1;
     } else {

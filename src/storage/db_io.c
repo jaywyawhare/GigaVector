@@ -168,6 +168,11 @@ int db_save_locked(const GV_Database *db, const char *filepath) {
                     status = soa_storage_save(db->soa_storage, out, version);
                 }
             }
+        } else if (db->index_type == GV_INDEX_TYPE_DISKANN) {
+            /* The Vamana graph is a derived index rebuilt from the vectors on
+             * load, so only the SoA vectors are persisted here. */
+            status = (db->soa_storage == NULL) ? -1
+                     : soa_storage_save(db->soa_storage, out, version);
         } else {
             status = -1;
         }

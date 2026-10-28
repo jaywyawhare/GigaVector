@@ -33,6 +33,7 @@
 #include "index/flat.h"
 #include "index/ivfflat.h"
 #include "index/ivfdisk.h"
+#include "index/diskann.h"
 #include "index/index_maintenance.h"
 #include "index/ivfsq8.h"
 #include "index/ivfturboquant.h"
@@ -143,6 +144,9 @@ static int db_search_raw(const GV_Database *db, const float *query_data, size_t 
         r = ivfflat_search(db->hnsw_index, &query_vec, k, results, distance_type, NULL, NULL);
     } else if (db->index_type == GV_INDEX_TYPE_IVFDISK) {
         r = ivfdisk_search((GV_IVFDiskIndex *)db->hnsw_index, query_data, k, results, distance_type);
+        if (r > 0) db_fill_ivfdisk_search_vectors((GV_Database *)db, results, r);
+    } else if (db->index_type == GV_INDEX_TYPE_DISKANN) {
+        r = db_diskann_search((GV_Database *)db, query_data, k, results);
         if (r > 0) db_fill_ivfdisk_search_vectors((GV_Database *)db, results, r);
     } else if (db->index_type == GV_INDEX_TYPE_IVFSQ8) {
         r = ivfsq8_search(db->hnsw_index, &query_vec, k, results, distance_type, NULL, NULL);

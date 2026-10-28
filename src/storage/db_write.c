@@ -41,6 +41,7 @@
 #include "index/flat.h"
 #include "index/ivfflat.h"
 #include "index/ivfdisk.h"
+#include "index/diskann.h"
 #include "index/index_maintenance.h"
 #include "index/ivfsq8.h"
 #include "index/ivfturboquant.h"
@@ -177,6 +178,37 @@ int db_add_vector(GV_Database *db, const float *data, size_t dimension) {
         status = ivfflat_insert(db->hnsw_index, vector);
         if (status != 0) {
             vector_destroy(vector);
+        }
+    } else if (db->index_type == GV_INDEX_TYPE_DISKANN) {
+        int dann_on_heap = 0;
+        float *dann_data = (float *)gv_tls_alloc_or_heap(
+            dimension * sizeof(float), sizeof(float), &dann_on_heap);
+        if (dann_data == NULL) {
+            pthread_rwlock_unlock(&db->rwlock);
+            db_decrement_concurrent_ops(db);
+            return -1;
+        }
+        memcpy(dann_data, data, dimension * sizeof(float));
+        if (db->cosine_normalized) {
+            float norm_sq = 0.0f;
+            for (size_t i = 0; i < dimension; ++i) norm_sq += dann_data[i] * dann_data[i];
+            if (norm_sq > 0.0f) {
+                float inv = 1.0f / sqrtf(norm_sq);
+                for (size_t i = 0; i < dimension; ++i) dann_data[i] *= inv;
+            }
+        }
+        size_t vector_index = soa_storage_add(db->soa_storage, dann_data, NULL);
+        if (vector_index == (size_t)-1) {
+            gv_tls_free_or_heap(dann_data, dann_on_heap);
+            pthread_rwlock_unlock(&db->rwlock);
+            db_decrement_concurrent_ops(db);
+            return -1;
+        }
+        const float *stored = soa_storage_get_data(db->soa_storage, vector_index);
+        status = diskann_insert((GV_DiskANNIndex *)db->hnsw_index, stored, dimension);
+        gv_tls_free_or_heap(dann_data, dann_on_heap);
+        if (status != 0) {
+            soa_storage_mark_deleted(db->soa_storage, vector_index);
         }
     } else if (db->index_type == GV_INDEX_TYPE_IVFDISK) {
         if (ivfdisk_is_trained((GV_IVFDiskIndex *)db->hnsw_index) == 0) {
@@ -856,6 +888,37 @@ int db_add_vector_with_rich_metadata(GV_Database *db, const float *data, size_t 
         if (status != 0) {
             vector_destroy(vector);
         }
+    } else if (db->index_type == GV_INDEX_TYPE_DISKANN) {
+        int dann_on_heap = 0;
+        float *dann_data = (float *)gv_tls_alloc_or_heap(
+            dimension * sizeof(float), sizeof(float), &dann_on_heap);
+        if (dann_data == NULL) {
+            pthread_rwlock_unlock(&db->rwlock);
+            db_decrement_concurrent_ops(db);
+            return -1;
+        }
+        memcpy(dann_data, data, dimension * sizeof(float));
+        if (db->cosine_normalized) {
+            float norm_sq = 0.0f;
+            for (size_t i = 0; i < dimension; ++i) norm_sq += dann_data[i] * dann_data[i];
+            if (norm_sq > 0.0f) {
+                float inv = 1.0f / sqrtf(norm_sq);
+                for (size_t i = 0; i < dimension; ++i) dann_data[i] *= inv;
+            }
+        }
+        size_t vector_index = soa_storage_add(db->soa_storage, dann_data, NULL);
+        if (vector_index == (size_t)-1) {
+            gv_tls_free_or_heap(dann_data, dann_on_heap);
+            pthread_rwlock_unlock(&db->rwlock);
+            db_decrement_concurrent_ops(db);
+            return -1;
+        }
+        const float *stored = soa_storage_get_data(db->soa_storage, vector_index);
+        status = diskann_insert((GV_DiskANNIndex *)db->hnsw_index, stored, dimension);
+        gv_tls_free_or_heap(dann_data, dann_on_heap);
+        if (status != 0) {
+            soa_storage_mark_deleted(db->soa_storage, vector_index);
+        }
     } else if (db->index_type == GV_INDEX_TYPE_IVFDISK) {
         if (ivfdisk_is_trained((GV_IVFDiskIndex *)db->hnsw_index) == 0) {
             pthread_rwlock_unlock(&db->rwlock);
@@ -1209,6 +1272,7 @@ int db_delete_vector_by_index(GV_Database *db, size_t vector_index) {
             }
             break;
         case GV_INDEX_TYPE_IVFDISK:
+        case GV_INDEX_TYPE_DISKANN:
             if (db->hnsw_index == NULL || db->soa_storage == NULL) {
                 pthread_rwlock_unlock(&db->rwlock);
                 return -1;
@@ -1267,6 +1331,11 @@ int db_delete_vector_by_index(GV_Database *db, size_t vector_index) {
     } else if (db->index_type == GV_INDEX_TYPE_IVFDISK) {
         const float *stored = soa_storage_get_data(db->soa_storage, vector_index);
         status = ivfdisk_delete((GV_IVFDiskIndex *)db->hnsw_index, vector_index, stored);
+        if (status == 0) {
+            status = soa_storage_mark_deleted(db->soa_storage, vector_index);
+        }
+    } else if (db->index_type == GV_INDEX_TYPE_DISKANN) {
+        status = diskann_delete((GV_DiskANNIndex *)db->hnsw_index, vector_index);
         if (status == 0) {
             status = soa_storage_mark_deleted(db->soa_storage, vector_index);
         }
