@@ -296,6 +296,56 @@ static void phase_vector_db(size_t n, size_t dim, size_t queries) {
     }
 }
 
+/* The db CRUD + maintenance surface the search phase doesn't touch (update,
+ * delete, metadata-filtered, range-filtered, compact) on an in-memory index, so
+ * these paths carry per-scope timing + alloc accounting too. */
+static void phase_db_crud(size_t n, size_t dim, size_t queries) {
+    PROF_SCOPE("1c.db_crud") {
+        GV_Database *db = db_open(NULL, dim, GV_INDEX_TYPE_FLAT);
+        if (!db) return;
+        float *vec = (float *)malloc(dim * sizeof(float));
+
+        PROF_SCOPE("db_crud/add") {
+            for (size_t i = 0; i < n; i++) {
+                for (size_t d = 0; d < dim; d++) vec[d] = next_unit();
+                char val[16];
+                snprintf(val, sizeof(val), "b%zu", i % 8);
+                (void)db_add_vector_with_metadata(db, vec, dim, "bucket", val);
+            }
+        }
+        PROF_SCOPE("db_crud/update") {
+            for (size_t i = 0; i < n; i += 4) {
+                for (size_t d = 0; d < dim; d++) vec[d] = next_unit();
+                (void)db_update_vector(db, i, vec, dim);
+            }
+        }
+        GV_SearchResult res[16];
+        PROF_SCOPE("db_crud/search_filtered") {
+            for (size_t q = 0; q < queries; q++) {
+                for (size_t d = 0; d < dim; d++) vec[d] = next_unit();
+                int nn = db_search_filtered(db, vec, 10, res, GV_DISTANCE_EUCLIDEAN,
+                                            "bucket", "b3");
+                if (nn > 0) gv_search_results_free(res, (size_t)nn);
+            }
+        }
+        PROF_SCOPE("db_crud/range_filtered") {
+            for (size_t q = 0; q < queries / 4; q++) {
+                for (size_t d = 0; d < dim; d++) vec[d] = next_unit();
+                int nn = db_range_search_filtered(db, vec, 5.0f, res, 16,
+                                                  GV_DISTANCE_EUCLIDEAN, "bucket", "b3");
+                if (nn > 0) gv_search_results_free(res, (size_t)nn);
+            }
+        }
+        PROF_SCOPE("db_crud/delete") {
+            for (size_t i = 1; i < n; i += 3) (void)db_delete_vector_by_index(db, i);
+        }
+        PROF_SCOPE("db_crud/compact") { (void)db_compact(db); }
+
+        free(vec);
+        db_close(db);
+    }
+}
+
 static void phase_graph_cypher(size_t chain, size_t matches) {
     PROF_SCOPE("2.graph") {
         GV_KnowledgeGraph *kg = kg_create(NULL);
@@ -748,6 +798,101 @@ static void phase_diskann(size_t n, size_t dim, size_t queries) {
     }
 }
 
+/* Full db-layer DiskANN integration (GV_INDEX_TYPE_DISKANN collection): the
+ * metric-aware, metadata-filtered, filter-expression, range, update, delete,
+ * consolidate, and save + parallel-rebuild-on-reopen paths, each with its own
+ * alloc/timing scope. Capped corpus: db adds insert one-at-a-time into the graph. */
+static void phase_diskann_db(size_t n, size_t dim, size_t queries) {
+    PROF_SCOPE("10b.diskann_db") {
+        size_t dn = n < 1500 ? n : 1500;
+        char path[256];
+        snprintf(path, sizeof(path), "/tmp/gv_prof_diskanndb_%d.db", (int)getpid());
+        GV_Database *db = db_open(path, dim, GV_INDEX_TYPE_DISKANN);
+        if (!db) return;
+
+        float *vec = (float *)malloc(dim * sizeof(float));
+        PROF_SCOPE("diskann_db/add") {
+            for (size_t i = 0; i < dn; i++) {
+                for (size_t d = 0; d < dim; d++) vec[d] = next_unit();
+                char val[16];
+                snprintf(val, sizeof(val), "b%zu", i % 8);
+                (void)db_add_vector_with_metadata(db, vec, dim, "bucket", val);
+            }
+        }
+        GV_SearchResult res[16];
+        PROF_SCOPE("diskann_db/search") {
+            for (size_t q = 0; q < queries; q++) {
+                for (size_t d = 0; d < dim; d++) vec[d] = next_unit();
+                int nn = db_search(db, vec, 10, res, GV_DISTANCE_EUCLIDEAN);
+                if (nn > 0) gv_search_results_free(res, (size_t)nn);
+            }
+        }
+        PROF_SCOPE("diskann_db/search_cosine") {
+            for (size_t q = 0; q < queries; q++) {
+                for (size_t d = 0; d < dim; d++) vec[d] = next_unit();
+                int nn = db_search(db, vec, 10, res, GV_DISTANCE_COSINE);
+                if (nn > 0) gv_search_results_free(res, (size_t)nn);
+            }
+        }
+        PROF_SCOPE("diskann_db/filtered") {
+            for (size_t q = 0; q < queries; q++) {
+                for (size_t d = 0; d < dim; d++) vec[d] = next_unit();
+                int nn = db_search_filtered(db, vec, 10, res, GV_DISTANCE_EUCLIDEAN,
+                                            "bucket", "b3");
+                if (nn > 0) gv_search_results_free(res, (size_t)nn);
+            }
+        }
+        PROF_SCOPE("diskann_db/filter_expr") {
+            for (size_t q = 0; q < queries; q++) {
+                for (size_t d = 0; d < dim; d++) vec[d] = next_unit();
+                int nn = db_search_with_filter_expr(db, vec, 10, res,
+                                                    GV_DISTANCE_EUCLIDEAN,
+                                                    "bucket == \"b3\"");
+                if (nn > 0) gv_search_results_free(res, (size_t)nn);
+            }
+        }
+        PROF_SCOPE("diskann_db/range") {
+            for (size_t q = 0; q < queries / 4; q++) {
+                for (size_t d = 0; d < dim; d++) vec[d] = next_unit();
+                int nn = db_range_search(db, vec, 5.0f, res, 16, GV_DISTANCE_EUCLIDEAN);
+                if (nn > 0) gv_search_results_free(res, (size_t)nn);
+            }
+        }
+        PROF_SCOPE("diskann_db/update") {
+            for (size_t i = 0; i < dn; i += 8) {
+                for (size_t d = 0; d < dim; d++) vec[d] = next_unit();
+                (void)db_update_vector(db, i, vec, dim);
+            }
+        }
+        PROF_SCOPE("diskann_db/delete") {
+            for (size_t i = 1; i < dn; i += 16) (void)db_delete_vector_by_index(db, i);
+        }
+        PROF_SCOPE("diskann_db/consolidate") { (void)db_compact(db); }
+        PROF_SCOPE("diskann_db/save") { if (db_save(db, path)) {} }
+        db_close(db);
+
+        GV_Database *db2 = NULL;
+        PROF_SCOPE("diskann_db/reopen_rebuild") { db2 = db_open(path, dim, GV_INDEX_TYPE_DISKANN); }
+        if (db2) {
+            PROF_SCOPE("diskann_db/search_after_reopen") {
+                for (size_t q = 0; q < queries / 4; q++) {
+                    for (size_t d = 0; d < dim; d++) vec[d] = next_unit();
+                    int nn = db_search(db2, vec, 10, res, GV_DISTANCE_EUCLIDEAN);
+                    if (nn > 0) gv_search_results_free(res, (size_t)nn);
+                }
+            }
+            db_close(db2);
+        }
+        free(vec);
+
+        remove(path);
+        char side[300];
+        snprintf(side, sizeof(side), "%s.diskann", path);       remove(side);
+        snprintf(side, sizeof(side), "%s.diskann.graph", path); remove(side);
+        snprintf(side, sizeof(side), "%s.wal", path);           remove(side);
+    }
+}
+
 static void phase_ivfdisk(size_t n, size_t dim, size_t queries) {
     PROF_SCOPE("11.ivfdisk") {
         char dir[256];
@@ -984,6 +1129,7 @@ int main(int argc, char **argv) {
 
     double wall0 = now_ms();
     phase_vector_db(n_vec, dim, queries);
+    phase_db_crud(idx_n, dim, queries);
     phase_graph_cypher(n_docs / 20 + 2, queries / 4 + 1);
     phase_splade(n_docs, q_text);
     phase_hybrid(n_docs, q_text);
@@ -995,6 +1141,7 @@ int main(int argc, char **argv) {
     phase_transactions(1000, dim);
     phase_sparse(idx_n, dim < 1000 ? 1000 : dim, 16, queries);
     phase_diskann(idx_n, dim, queries);
+    phase_diskann_db(idx_n, dim, queries);
     phase_ivfdisk(idx_n, dim, queries);
     phase_server(idx_n, dim, queries);
     phase_replication(idx_n * 2, 256);
@@ -1002,6 +1149,20 @@ int main(int argc, char **argv) {
     double wall = now_ms() - wall0;
 
     prof_report();
+
+    /* Process-wide allocator totals from the gv_alloc choke point: the whole-run
+     * view behind the per-scope alloc/net-KB columns. */
+    GV_AllocStats atot;
+    gv_alloc_stats(&atot);
+    if (gv_alloc_stats_enabled()) {
+        printf("allocator totals: alloc=%llu free=%llu realloc=%llu | "
+               "peak=%.1f MB total=%.1f MB live=%.1f KB\n",
+               (unsigned long long)atot.alloc_count,
+               (unsigned long long)atot.free_count,
+               (unsigned long long)atot.realloc_count,
+               atot.peak_bytes / 1048576.0, atot.total_bytes / 1048576.0,
+               atot.live_bytes / 1024.0);
+    }
     printf("wall: %.2f ms   peak RSS: %.1f MB\n", wall, rss_kb() / 1024.0);
 
     const char *trace = getenv("GV_PROF_TRACE");
