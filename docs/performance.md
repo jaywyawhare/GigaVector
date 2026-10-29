@@ -292,6 +292,36 @@ if (gv_cpu_has_feature(GV_CPU_FEATURE_AVX2)) {
 }
 ```
 
+## Custom Allocator (gv_tcalloc)
+
+Every allocation in the library funnels through `gv_alloc`/`gv_calloc`/`gv_realloc`/
+`gv_free`. Behind that choke point is an optional thread-caching slab allocator
+(`gv_tcalloc`). Small requests are served from per-thread free lists carved out of
+1 MiB slabs, so the hot path is a lock-free pop or push. Each size class has its own
+central free list behind a sharded lock, and larger requests go straight to `mmap`.
+
+It is opt-in so the default build and test suite are unchanged:
+
+- `GV_ALLOC=tc` enables it for the whole process (set before launch).
+- `GV_ALLOC=libc` forces the libc path (the default, and what the valgrind gates use).
+- Build with `-DGV_TCALLOC_DEFAULT_ON` to make the custom allocator the default.
+- It compiles to libc forwarders under AddressSanitizer/ThreadSanitizer so those
+  tools keep intercepting allocations.
+
+When to expect a win: workloads that hold many live same-size objects and churn them
+under concurrency (parallel HNSW/DiskANN build, candidate heaps, result sets). There
+the deep per-thread free lists beat glibc's small per-bin tcache, which overflows
+into its locked arena. On a 12-core machine, `make bench-alloc` shows roughly 1.8x to
+2x the throughput of glibc malloc at 8 threads in that regime. For tiny transient
+allocations that fit entirely inside glibc's tcache, glibc is comparable or faster.
+
+Measure it on your workload:
+
+```bash
+make bench-alloc                 # default: 1s x 8 threads
+make bench-alloc PROF_ARGS="2 12"  # 2s x 12 threads
+```
+
 ## Memory Usage Optimization
 
 ### Structure-of-Arrays (SoA) Layout
