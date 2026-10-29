@@ -3,11 +3,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "core/tcalloc.h"
 #include "storage/database.h"
 
 /* ---- Allocation accounting (see include/core/memory.h) ------------------- */
 #ifdef GV_PROFILE_ALLOC
-#include <malloc.h> /* malloc_usable_size (glibc) */
 
 static size_t   s_live_bytes;
 static size_t   s_peak_bytes;
@@ -16,9 +16,10 @@ static uint64_t s_alloc_count;
 static uint64_t s_free_count;
 static uint64_t s_realloc_count;
 
-/* usable block size, or 0 for NULL — the real cost the allocator reserved. */
+/* usable block size, or 0 for NULL — the real cost the allocator reserved
+ * (size class / large payload for gv_tcalloc, malloc_usable_size under libc). */
 static inline size_t gv_block_size(void *p) {
-    return p ? malloc_usable_size(p) : 0;
+    return gv_tc_usable_size(p);
 }
 
 static inline void gv_acct_add(size_t bytes) {
@@ -90,7 +91,7 @@ void *gv_alloc(size_t size) {
     if (gv_alloc_should_fail()) {
         return NULL;
     }
-    void *p = malloc(size);
+    void *p = gv_tc_malloc(size);
 #ifdef GV_PROFILE_ALLOC
     if (p) {
         __atomic_add_fetch(&s_alloc_count, 1, __ATOMIC_RELAXED);
@@ -110,7 +111,7 @@ void *gv_calloc(size_t nmemb, size_t size) {
     if (gv_alloc_should_fail()) {
         return NULL;
     }
-    void *p = calloc(nmemb, size);
+    void *p = gv_tc_calloc(nmemb, size);
 #ifdef GV_PROFILE_ALLOC
     if (p) {
         __atomic_add_fetch(&s_alloc_count, 1, __ATOMIC_RELAXED);
@@ -130,7 +131,7 @@ void *gv_realloc(void *ptr, size_t size) {
     }
 #ifdef GV_PROFILE_ALLOC
     size_t old_sz = gv_block_size(ptr);
-    void *p = realloc(ptr, size);
+    void *p = gv_tc_realloc(ptr, size);
     if (p) {
         __atomic_add_fetch(&s_realloc_count, 1, __ATOMIC_RELAXED);
         size_t new_sz = gv_block_size(p);
@@ -139,7 +140,7 @@ void *gv_realloc(void *ptr, size_t size) {
     }
     return p;
 #else
-    return realloc(ptr, size);
+    return gv_tc_realloc(ptr, size);
 #endif
 }
 
@@ -150,7 +151,7 @@ void gv_free(void *ptr) {
         gv_acct_sub(gv_block_size(ptr));
     }
 #endif
-    free(ptr);
+    gv_tc_free(ptr);
 }
 
 char *gv_strdup(const char *s) {
