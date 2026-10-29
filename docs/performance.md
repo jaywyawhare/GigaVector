@@ -335,6 +335,14 @@ and safe in the mixed-allocator codebase. Pointers from it must be released with
 `gv_aligned_free` (and grown with `gv_aligned_realloc`), never `gv_free`, because the
 returned pointer is offset into a larger block.
 
+The SoA vector store aligns its data buffer to 64 bytes (`storage->data_alloc` holds
+the raw base, `storage->data` the aligned view; preserved across growth and
+compaction). When the dimension is a multiple of 16, every vector then starts on a
+64-byte boundary, so an AVX-512 load of vector data never straddles two cache lines.
+The distance kernels use unaligned loads, so this is a best-effort speedup, not a
+correctness requirement; the gain is largest for high-dimensional vectors (768, 1536)
+where split loads would otherwise double the cache-line fetches.
+
 ## Memory Usage Optimization
 
 ### Structure-of-Arrays (SoA) Layout
