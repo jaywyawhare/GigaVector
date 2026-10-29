@@ -180,11 +180,11 @@ static int test_relation_with_props(void) {
         if (strcmp(p->key, "chunk_id") == 0) {
             char *v = gv_prop_to_string(p->value);
             seen_chunk = v && strcmp(v, "doc_abc:0042") == 0;
-            free(v);
+            gv_free(v);
         } else if (strcmp(p->key, "source") == 0) {
             char *v = gv_prop_to_string(p->value);
             seen_source = v && strcmp(v, "wiki") == 0;
-            free(v);
+            gv_free(v);
         }
     }
     ASSERT(seen_chunk, "chunk_id prop stored");

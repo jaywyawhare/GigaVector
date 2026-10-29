@@ -50,7 +50,8 @@ void gv_prop_free(GV_PropValue *v);
 /* Compare: returns <0, 0, >0 */
 int gv_prop_compare(GV_PropValue a, GV_PropValue b);
 
-/* String conversion (caller frees result) */
+/* String conversion; result is heap-allocated via gv_alloc, so the caller must
+ * release it with gv_free (not libc free). */
 char *gv_prop_to_string(GV_PropValue v);
 
 /* Parse string into typed value using type hint */
