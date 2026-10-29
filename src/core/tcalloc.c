@@ -40,7 +40,7 @@ void   gv_tc_set_enabled(int on) { (void)on; }
 #define GV_TC_SLAB_SIZE   (1u << 20) /* 1 MiB, also the slab alignment */
 #define GV_TC_SLAB_MASK   ((uintptr_t)(GV_TC_SLAB_SIZE - 1))
 #define GV_TC_MAX_SMALL   (64u * 1024u) /* above this -> direct mmap */
-#define GV_TC_MAX_CLASSES 64
+#define GV_TC_MAX_CLASSES 80            /* ladder is 65 classes; leaves headroom */
 #define GV_TC_ALIGN       16u           /* matches malloc's min alignment */
 
 /* Slab header at every slab base (GV_TC_SLAB_SIZE-aligned). The size class lives
@@ -140,22 +140,30 @@ static inline size_t gv_tc_align_up(size_t v, size_t a) {
     return (v + (a - 1)) & ~(a - 1);
 }
 
-/* Build the size-class table: 16..128 in 16-byte steps, then ~1.25x geometric
- * growth (rounded to 16) up to GV_TC_MAX_SMALL. All sizes are multiples of 16 so
- * every object stays 16-byte aligned. */
+/* Explicit size-class ladder (ported from C-ML's cml_allocator): 16-byte
+ * granularity for tiny sizes, widening in stages up to GV_TC_MAX_SMALL. Every
+ * value is a multiple of 16 so objects stay 16-byte aligned, and the fine low end
+ * keeps internal fragmentation small for the many small allocations a vector DB
+ * makes (graph adjacency, metadata, candidate heaps). */
+static const uint32_t GV_TC_SIZE_CLASSES[] = {
+    16,   32,   48,   64,   80,   96,   112,  128,  144,  160, 176,  192,
+    208,  224,  240,  256,  /* 16B steps */
+    288,  320,  352,  384,  416,  448,  480,  512,  /* 32B steps */
+    576,  640,  704,  768,  832,  896,              /* 64B steps */
+    1024, 1152, 1280, 1408,                         /* 128B steps */
+    1536, 1792, 2048, 2304,                         /* 256B steps */
+    2560, 3072, 3584, 4096,                         /* 512B steps */
+    4608, 5120, 5632, 6144, 6656, 7168, 7680, 8192,
+    9216, 10240, 11264, 12288,                      /* 1KiB steps */
+    14336, 16384, 18432, 20480, 22528, 24576,       /* 2KiB steps */
+    28672, 32768, 40960,                            /* medium */
+    49152, 65536};                                  /* up to GV_TC_MAX_SMALL */
+
+/* Install the ladder into g_class_size and build the request->class lookup. */
 static void gv_tc_build_classes(void) {
-    uint32_t n = 0;
-    for (uint32_t s = GV_TC_ALIGN; s <= 128; s += GV_TC_ALIGN) {
-        g_class_size[n++] = s;
-    }
-    uint32_t s = 128;
-    while (n < GV_TC_MAX_CLASSES) {
-        uint32_t next = (uint32_t)gv_tc_align_up(s + s / 4, GV_TC_ALIGN);
-        if (next <= s) next = s + GV_TC_ALIGN;
-        if (next > GV_TC_MAX_SMALL) break;
-        g_class_size[n++] = next;
-        s = next;
-    }
+    uint32_t n = sizeof(GV_TC_SIZE_CLASSES) / sizeof(GV_TC_SIZE_CLASSES[0]);
+    if (n > GV_TC_MAX_CLASSES) n = GV_TC_MAX_CLASSES;
+    for (uint32_t i = 0; i < n; ++i) g_class_size[i] = GV_TC_SIZE_CLASSES[i];
     g_class_count = n;
 
     /* size_to_class[k] maps a request of k*16 bytes to its class index. */
