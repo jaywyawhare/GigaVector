@@ -94,8 +94,8 @@ GV_VLog *vlog_open(const char *path) {
 
     FILE *fp = fopen(path, "r+b");
     if (fp) {
-        if (vlog_check_header(fp) != 0) { fclose(fp); free(vl->path); free(vl); return NULL; }
-        if (fseek(fp, 0, SEEK_END) != 0) { fclose(fp); free(vl->path); free(vl); return NULL; }
+        if (vlog_check_header(fp) != 0) { fclose(fp); gv_free(vl->path); free(vl); return NULL; }
+        if (fseek(fp, 0, SEEK_END) != 0) { fclose(fp); gv_free(vl->path); free(vl); return NULL; }
         long sz = ftell(fp);
         if (sz < (long)VLOG_HEADER_SIZE) sz = (long)VLOG_HEADER_SIZE;
         uint64_t valid_end = VLOG_HEADER_SIZE;
@@ -114,8 +114,8 @@ GV_VLog *vlog_open(const char *path) {
         vl->write_pos = valid_end;
     } else {
         fp = fopen(path, "w+b");
-        if (!fp) { free(vl->path); free(vl); return NULL; }
-        if (vlog_write_header(fp) != 0) { fclose(fp); free(vl->path); free(vl); return NULL; }
+        if (!fp) { gv_free(vl->path); free(vl); return NULL; }
+        if (vlog_write_header(fp) != 0) { fclose(fp); gv_free(vl->path); free(vl); return NULL; }
         vl->write_pos = VLOG_HEADER_SIZE;
         vl->record_count = 0;
     }
@@ -299,6 +299,6 @@ void vlog_close(GV_VLog *vl) {
     if (!vl) return;
     if (vl->fp) fclose(vl->fp);
     pthread_mutex_destroy(&vl->mutex);
-    free(vl->path);
+    gv_free(vl->path);
     free(vl);
 }
