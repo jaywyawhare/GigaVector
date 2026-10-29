@@ -316,15 +316,18 @@ int db_compact_soa_storage_locked(GV_Database *db) {
     size_t new_count = storage->count - deleted_count;
     if (dimension == 0 || new_count > SIZE_MAX / dimension / sizeof(float)) return -1;
 
-    float *new_data = NULL;
     GV_Metadata **new_metadata = NULL;
     int *new_deleted = NULL;
-    new_data = (float *)gv_db_alloc(db, new_count * dimension * sizeof(float));
+    /* Over-allocate so the compacted vector buffer keeps the 64-byte alignment
+     * the SoA storage promises; new_data_base is the raw block that is tracked,
+     * freed, and stored back into storage->data_alloc. */
+    void *new_data_base = gv_db_alloc(db, new_count * dimension * sizeof(float) + GV_SOA_VEC_ALIGN);
+    float *new_data = new_data_base ? soa_align_data(new_data_base) : NULL;
     new_metadata = (GV_Metadata **)gv_db_calloc(db, new_count, sizeof(GV_Metadata *));
     new_deleted = (int *)gv_db_calloc(db, new_count, sizeof(int));
-    
+
     if (new_data == NULL || new_metadata == NULL || new_deleted == NULL) {
-        if (new_data != NULL) gv_db_free(db, new_data);
+        if (new_data_base != NULL) gv_db_free(db, new_data_base);
         if (new_metadata != NULL) gv_db_free(db, new_metadata);
         if (new_deleted != NULL) gv_db_free(db, new_deleted);
         return -1;
@@ -334,7 +337,7 @@ int db_compact_soa_storage_locked(GV_Database *db) {
     size_t *index_map = (size_t *)gv_tls_alloc_or_heap(
         storage->count * sizeof(size_t), sizeof(size_t), &map_on_heap);
     if (index_map == NULL) {
-        gv_db_free(db, new_data);
+        gv_db_free(db, new_data_base);
         gv_db_free(db, new_metadata);
         gv_db_free(db, new_deleted);
         return -1;
@@ -364,10 +367,11 @@ int db_compact_soa_storage_locked(GV_Database *db) {
         }
     }
 
-    gv_db_free(db, storage->data);
+    gv_db_free(db, storage->data_alloc);
     gv_db_free(db, storage->metadata);
     gv_db_free(db, storage->deleted);
 
+    storage->data_alloc = new_data_base;
     storage->data = new_data;
     storage->metadata = new_metadata;
     storage->deleted = new_deleted;

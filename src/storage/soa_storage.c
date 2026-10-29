@@ -12,6 +12,12 @@
 
 #define GV_SOA_SAVE_MAGIC 0x534F4153u /* "SOAS" */
 
+/* GV_SOA_VEC_ALIGN and soa_align_data() live in soa_storage.h so compaction in
+ * db_maintenance.c keeps the same alignment contract. Distance kernels use
+ * unaligned loads, so alignment is a best-effort speedup, never a correctness
+ * requirement (a partial-OOM grow may leave data briefly unaligned until the next
+ * successful grow). */
+
 static void *soa_realloc(GV_SoAStorage *storage, void *ptr, size_t size) {
     GV_Database *db = storage != NULL ? storage->owner_db : NULL;
     return gv_pool_realloc(db, ptr, size);
@@ -66,7 +72,14 @@ static int soa_storage_grow(GV_SoAStorage *storage, size_t min_capacity)
         return -1;
     }
     size_t new_data_size = new_capacity * storage->dimension * sizeof(float);
-    float *tmp_data = (float *)soa_realloc(storage, storage->data, new_data_size);
+    /* Capture the old alignment offset and live byte count before reallocating:
+     * realloc copies the whole old block, so live data lands at new_base+old_off
+     * and may need a short memmove to the new block's aligned offset. */
+    size_t old_off = storage->data_alloc
+                         ? (size_t)((uintptr_t)storage->data - (uintptr_t)storage->data_alloc)
+                         : 0;
+    size_t used_bytes = storage->count * storage->dimension * sizeof(float);
+    void *tmp_base = soa_realloc(storage, storage->data_alloc, new_data_size + GV_SOA_VEC_ALIGN);
     GV_Metadata **tmp_meta =
         (GV_Metadata **)soa_realloc(storage, storage->metadata, new_capacity * sizeof(GV_Metadata *));
     int *tmp_del = (int *)soa_realloc(storage, storage->deleted, new_capacity * sizeof(int));
@@ -74,14 +87,19 @@ static int soa_storage_grow(GV_SoAStorage *storage, size_t min_capacity)
                                             new_capacity * sizeof(uint64_t));
     uint64_t *tmp_cv = (uint64_t *)realloc(storage->create_version, new_capacity * sizeof(uint64_t));
     uint64_t *tmp_dv = (uint64_t *)realloc(storage->delete_version, new_capacity * sizeof(uint64_t));
-    if (!tmp_data || !tmp_meta || !tmp_del || !tmp_ts || !tmp_cv || !tmp_dv) {
+    if (!tmp_base || !tmp_meta || !tmp_del || !tmp_ts || !tmp_cv || !tmp_dv) {
         /* Partial-failure recovery: realloc leaves the original block intact on
          * failure. Adopt the new pointer for arrays that succeeded (so the larger
          * block isn't leaked) but do NOT advance storage->capacity - it must stay
          * at the old value for self-consistency. Succeeded arrays being larger than
          * capacity claims is harmless (the tail is never indexed); a later grow
-         * retry re-reallocs every array from the unchanged capacity, so no desync. */
-        if (tmp_data) storage->data = tmp_data;
+         * retry re-reallocs every array from the unchanged capacity, so no desync.
+         * The data block keeps its old alignment offset (content is valid there);
+         * re-alignment happens on the next successful grow. */
+        if (tmp_base) {
+            storage->data_alloc = tmp_base;
+            storage->data = (float *)((char *)tmp_base + old_off);
+        }
         if (tmp_meta) storage->metadata = tmp_meta;
         if (tmp_del) storage->deleted = tmp_del;
         if (tmp_ts) storage->insert_timestamps = tmp_ts;
@@ -99,7 +117,14 @@ static int soa_storage_grow(GV_SoAStorage *storage, size_t min_capacity)
         memset(tmp_cv + storage->capacity, 0, (new_capacity - storage->capacity) * sizeof(uint64_t));
         memset(tmp_dv + storage->capacity, 0, (new_capacity - storage->capacity) * sizeof(uint64_t));
     }
-    storage->data = tmp_data;
+    /* Re-align the live data within the (possibly moved) block. */
+    float *new_data = soa_align_data(tmp_base);
+    size_t new_off = (size_t)((uintptr_t)new_data - (uintptr_t)tmp_base);
+    if (new_off != old_off && used_bytes > 0) {
+        memmove(new_data, (char *)tmp_base + old_off, used_bytes);
+    }
+    storage->data_alloc = tmp_base;
+    storage->data = new_data;
     storage->metadata = tmp_meta;
     storage->deleted = tmp_del;
     storage->insert_timestamps = tmp_ts;
@@ -134,15 +159,16 @@ GV_SoAStorage *soa_storage_create(size_t dimension, size_t initial_capacity) {
         return NULL;
     }
     size_t data_size = storage->capacity * dimension * sizeof(float);
-    storage->data = (float *)gv_alloc(data_size);
-    if (storage->data == NULL) {
+    storage->data_alloc = gv_alloc(data_size + GV_SOA_VEC_ALIGN);
+    if (storage->data_alloc == NULL) {
         gv_free(storage);
         return NULL;
     }
+    storage->data = soa_align_data(storage->data_alloc);
 
     storage->metadata = (GV_Metadata **)gv_calloc(storage->capacity, sizeof(GV_Metadata *));
     if (storage->metadata == NULL) {
-        gv_free(storage->data);
+        gv_free(storage->data_alloc);
         gv_free(storage);
         return NULL;
     }
@@ -150,7 +176,7 @@ GV_SoAStorage *soa_storage_create(size_t dimension, size_t initial_capacity) {
     storage->deleted = (int *)gv_calloc(storage->capacity, sizeof(int));
     if (storage->deleted == NULL) {
         gv_free(storage->metadata);
-        gv_free(storage->data);
+        gv_free(storage->data_alloc);
         gv_free(storage);
         return NULL;
     }
@@ -165,7 +191,7 @@ GV_SoAStorage *soa_storage_create(size_t dimension, size_t initial_capacity) {
         free(storage->delete_version);
         gv_free(storage->deleted);
         gv_free(storage->metadata);
-        gv_free(storage->data);
+        gv_free(storage->data_alloc);
         gv_free(storage);
         return NULL;
     }
@@ -178,19 +204,20 @@ void soa_storage_bind_database(GV_SoAStorage *storage, GV_Database *db) {
         return;
     }
     size_t data_bytes = storage->capacity * storage->dimension * sizeof(float);
-    float *data = (float *)gv_db_alloc(db, data_bytes);
+    void *data_base = gv_db_alloc(db, data_bytes + GV_SOA_VEC_ALIGN);
     GV_Metadata **meta = (GV_Metadata **)gv_db_calloc(
         db, storage->capacity, sizeof(GV_Metadata *));
     int *del = (int *)gv_db_calloc(db, storage->capacity, sizeof(int));
-    if (data == NULL || meta == NULL || del == NULL) {
-        if (data != NULL) gv_db_free(db, data);
+    if (data_base == NULL || meta == NULL || del == NULL) {
+        if (data_base != NULL) gv_db_free(db, data_base);
         if (meta != NULL) gv_db_free(db, meta);
         if (del != NULL) gv_db_free(db, del);
         return;
     }
+    float *data = soa_align_data(data_base);
     if (storage->data != NULL) {
         memcpy(data, storage->data, storage->count * storage->dimension * sizeof(float));
-        gv_free(storage->data);
+        gv_free(storage->data_alloc);
     }
     if (storage->metadata != NULL) {
         memcpy(meta, storage->metadata, storage->capacity * sizeof(GV_Metadata *));
@@ -200,6 +227,7 @@ void soa_storage_bind_database(GV_SoAStorage *storage, GV_Database *db) {
         memcpy(del, storage->deleted, storage->capacity * sizeof(int));
         gv_free(storage->deleted);
     }
+    storage->data_alloc = data_base;
     storage->data = data;
     storage->metadata = meta;
     storage->deleted = del;
@@ -228,10 +256,12 @@ void soa_storage_destroy(GV_SoAStorage *storage) {
 
     if (storage->owner_db == NULL) {
         soa_free(storage, storage->deleted);
-        soa_free(storage, storage->data);
+        soa_free(storage, storage->data_alloc);
     } else {
-        /* Arrays are owned by GV_Memory; db_close tears them down via gv_memory_fini. */
+        /* Arrays are owned by GV_Memory; db_close tears them down via gv_memory_fini
+         * (it frees the tracked base, i.e. data_alloc). */
         storage->data = NULL;
+        storage->data_alloc = NULL;
         storage->metadata = NULL;
         storage->deleted = NULL;
         storage->owner_db = NULL;

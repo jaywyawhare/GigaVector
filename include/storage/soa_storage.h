@@ -12,6 +12,18 @@ struct GV_Database;
 extern "C" {
 #endif
 
+/* Vector data buffers are over-allocated by GV_SOA_VEC_ALIGN and handed out
+ * aligned to it, so each vector (dimension a multiple of 16) sits on a 64-byte
+ * boundary and AVX loads of vector data avoid cache-line splits. Callers that
+ * reallocate storage->data must keep storage->data_alloc (the raw base) in step
+ * and re-derive storage->data via soa_align_data(). */
+#define GV_SOA_VEC_ALIGN 64u
+
+static inline float *soa_align_data(void *base) {
+    return (float *)(((uintptr_t)base + (GV_SOA_VEC_ALIGN - 1)) &
+                     ~(uintptr_t)(GV_SOA_VEC_ALIGN - 1));
+}
+
 /**
  * @brief Structure-of-Arrays storage for dense vectors.
  * 
@@ -22,7 +34,8 @@ typedef struct {
     size_t dimension;              /**< Dimensionality of all vectors. */
     size_t count;                  /**< Current number of vectors stored. */
     size_t capacity;               /**< Allocated capacity (number of vectors). */
-    float *data;                   /**< Contiguous array: [vec0_dim0, vec0_dim1, ..., vec1_dim0, ...]. */
+    float *data;                   /**< Contiguous array: [vec0_dim0, vec0_dim1, ..., vec1_dim0, ...]. 64-byte aligned view into data_alloc. */
+    void  *data_alloc;             /**< Raw base of the data allocation (what is freed/reallocated); data is aligned up from it. */
     GV_Metadata **metadata;        /**< Array of metadata pointers, one per vector (may be NULL). */
     int *deleted;                  /**< Array of deletion flags: 1 if deleted, 0 if active. */
     uint64_t *insert_timestamps;   /**< Parallel array of insertion timestamps (ms since epoch). */
