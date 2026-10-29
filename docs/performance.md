@@ -315,12 +315,25 @@ into its locked arena. On a 12-core machine, `make bench-alloc` shows roughly 1.
 2x the throughput of glibc malloc at 8 threads in that regime. For tiny transient
 allocations that fit entirely inside glibc's tcache, glibc is comparable or faster.
 
+Size classes follow a fine ladder (16-byte granularity for small sizes, widening in
+stages up to 64 KiB) to keep internal fragmentation low for the many small
+allocations a vector DB makes.
+
 Measure it on your workload:
 
 ```bash
 make bench-alloc                 # default: 1s x 8 threads
 make bench-alloc PROF_ARGS="2 12"  # 2s x 12 threads
 ```
+
+### Over-aligned allocation for SIMD
+
+For buffers that feed AVX-512 distance kernels, `gv_aligned_alloc(size, alignment)`
+returns memory aligned to any power-of-two boundary (e.g. 64 bytes) so the kernels
+can use aligned loads. It is layered on `gv_alloc`, so it is counted by the profiler
+and safe in the mixed-allocator codebase. Pointers from it must be released with
+`gv_aligned_free` (and grown with `gv_aligned_realloc`), never `gv_free`, because the
+returned pointer is offset into a larger block.
 
 ## Memory Usage Optimization
 
