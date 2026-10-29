@@ -63,6 +63,20 @@ void *gv_realloc(void *ptr, size_t size);
 void  gv_free(void *ptr);
 char *gv_strdup(const char *s);
 
+/*
+ * Over-aligned allocation for SIMD-hot buffers (e.g. 64-byte alignment so AVX-512
+ * distance kernels can use aligned loads on vector data). @p alignment must be a
+ * power of two; values below 16 are rounded up to 16. Layered on gv_alloc, so it
+ * is counted by the profiler and safe in the mixed-allocator codebase.
+ *
+ * IMPORTANT: pointers from gv_aligned_alloc/gv_aligned_realloc MUST be released
+ * with gv_aligned_free, never gv_free (the returned pointer is offset into a
+ * larger block). Likewise never pass a gv_alloc pointer to gv_aligned_free.
+ */
+void *gv_aligned_alloc(size_t size, size_t alignment);
+void *gv_aligned_realloc(void *ptr, size_t size, size_t alignment);
+void  gv_aligned_free(void *ptr);
+
 struct GV_Database;
 
 /* Route through gv_db_* when @p db is non-NULL, else process heap. */

@@ -167,6 +167,61 @@ char *gv_strdup(const char *s) {
     return copy;
 }
 
+/* Aligned allocations carry a 16-byte prefix just before the returned pointer:
+ * the base gv_alloc block to free, and the requested size (for aligned realloc).
+ * 16 bytes keeps the prefix itself aligned for any alignment >= 16. */
+void *gv_aligned_alloc(size_t size, size_t alignment) {
+    if (size == 0) {
+        return NULL;
+    }
+    if (alignment < 16) {
+        alignment = 16;
+    }
+    if ((alignment & (alignment - 1)) != 0) {
+        return NULL; /* alignment must be a power of two */
+    }
+    size_t slack = alignment > 16 ? alignment : 16;
+    if (size > SIZE_MAX - slack - 16) {
+        return NULL;
+    }
+    void *base = gv_alloc(size + slack + 16);
+    if (base == NULL) {
+        return NULL;
+    }
+    uintptr_t user = ((uintptr_t)base + 16 + (alignment - 1)) & ~(uintptr_t)(alignment - 1);
+    ((void **)user)[-1] = base;
+    ((size_t *)user)[-2] = size;
+    return (void *)user;
+}
+
+void *gv_aligned_realloc(void *ptr, size_t size, size_t alignment) {
+    if (ptr == NULL) {
+        return gv_aligned_alloc(size, alignment);
+    }
+    if (size == 0) {
+        gv_aligned_free(ptr);
+        return NULL;
+    }
+    size_t old = ((size_t *)ptr)[-2];
+    if (size <= old) {
+        return ptr; /* already large enough and still aligned */
+    }
+    void *next = gv_aligned_alloc(size, alignment);
+    if (next == NULL) {
+        return NULL;
+    }
+    memcpy(next, ptr, old < size ? old : size);
+    gv_aligned_free(ptr);
+    return next;
+}
+
+void gv_aligned_free(void *ptr) {
+    if (ptr == NULL) {
+        return;
+    }
+    gv_free(((void **)ptr)[-1]);
+}
+
 void *gv_pool_alloc(GV_Database *db, size_t size) {
     if (db != NULL) {
         return gv_db_alloc(db, size);

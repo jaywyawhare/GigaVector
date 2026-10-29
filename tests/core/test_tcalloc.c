@@ -7,6 +7,7 @@
  * to libc rather than mishandled (the codebase mixes allocators).
  */
 #include "core/tcalloc.h"
+#include "core/memory.h"
 
 #include <assert.h>
 #include <stdint.h>
@@ -137,6 +138,37 @@ static void test_stress(void) {
     CHECK(ok, "400k-op checksum stress clean");
 }
 
+/* gv_aligned_alloc must honour the requested alignment, preserve content across
+ * aligned realloc, and survive free; it layers on gv_alloc so it works under both
+ * the custom allocator and libc. */
+static void test_aligned(void) {
+    printf("== 64-byte aligned alloc/realloc/free ==\n");
+    size_t aligns[] = {16, 32, 64, 128, 256, 4096};
+    int all_aligned = 1;
+    for (size_t a = 0; a < sizeof(aligns) / sizeof(aligns[0]); a++) {
+        for (size_t sz = 1; sz <= 9000; sz = sz * 2 + 1) {
+            void *p = gv_aligned_alloc(sz, aligns[a]);
+            if (!p || ((uintptr_t)p & (aligns[a] - 1)) != 0) { all_aligned = 0; }
+            memset(p, 0xCD, sz);
+            gv_aligned_free(p);
+        }
+    }
+    CHECK(all_aligned, "every alignment/size combination is correctly aligned");
+
+    unsigned char *p = (unsigned char *)gv_aligned_alloc(100, 64);
+    for (int i = 0; i < 100; i++) p[i] = (unsigned char)(i + 3);
+    p = (unsigned char *)gv_aligned_realloc(p, 5000, 64);
+    int ok = (((uintptr_t)p & 63u) == 0);
+    for (int i = 0; i < 100; i++)
+        if (p[i] != (unsigned char)(i + 3)) { ok = 0; break; }
+    CHECK(ok, "aligned realloc keeps alignment and content");
+    gv_aligned_free(p);
+
+    CHECK(gv_aligned_alloc(16, 24) == NULL, "non-power-of-two alignment -> NULL");
+    gv_aligned_free(NULL); /* no-op */
+    CHECK(1, "aligned_free(NULL) survives");
+}
+
 int main(void) {
     gv_tc_set_enabled(1);
     printf("gv_tcalloc tests (active=%d)\n", gv_tc_active());
@@ -144,6 +176,7 @@ int main(void) {
     test_large();
     test_calloc();
     test_realloc();
+    test_aligned();
     test_foreign_pointer();
     test_stress();
     if (g_fails) {
