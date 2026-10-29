@@ -69,6 +69,11 @@ bench-hnsw-build: $(BENCH_DIR)/bench_hnsw_build
 	@echo "=== HNSW build benchmark (20k x 128) ==="
 	@LD_LIBRARY_PATH=$(LIB_DIR) $(BENCH_DIR)/bench_hnsw_build 20000 128
 
+.PHONY: bench-alloc
+bench-alloc: $(BENCH_DIR)/bench_alloc
+	@echo "=== custom allocator (gv_tcalloc) vs libc malloc ==="
+	@LD_LIBRARY_PATH=$(LIB_DIR) $(BENCH_DIR)/bench_alloc $(if $(PROF_ARGS),$(PROF_ARGS),1 8)
+
 .PHONY: bench-scale
 bench-scale: $(BENCH_DIR)/bench_scale
 	@echo "=== Scale benchmark (1M x 128, HNSW) ==="
@@ -143,6 +148,11 @@ $(BENCH_DIR)/bench_ivfdisk: benchmarks/bench_ivfdisk.c $(STATIC_LIB)
 	@echo "Built benchmark: $@"
 
 $(BENCH_DIR)/bench_hnsw_build: benchmarks/bench_hnsw_build.c $(STATIC_LIB)
+	@mkdir -p $(BENCH_DIR)
+	$(CC) $(CFLAGS) $< -L$(LIB_DIR) -l$(LIB_NAME) $(LDFLAGS) -o $@
+	@echo "Built benchmark: $@"
+
+$(BENCH_DIR)/bench_alloc: benchmarks/bench_alloc.c $(STATIC_LIB)
 	@mkdir -p $(BENCH_DIR)
 	$(CC) $(CFLAGS) $< -L$(LIB_DIR) -l$(LIB_NAME) $(LDFLAGS) -o $@
 	@echo "Built benchmark: $@"
