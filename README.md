@@ -53,7 +53,7 @@ metrics: Euclidean, Cosine, Dot Product, Manhattan, Hamming, all SIMD-optimized
 - **Graph and knowledge graph** - property graph with traversal/analytics, knowledge graph with entity embeddings, a broad Cypher subset, GraphRAG context expansion, graph WAL + transactions.
 - **AI integration** - LLM (OpenAI/Anthropic/Gemini), embedding services + auto-embedding, semantic memory layer, ONNX model serving, document ingestion (Markdown/HTML/PDF).
 - **Observability** - Prometheus `/metrics`, structured JSON access logs, query tracing, health checks, latency histograms.
-- **Acceleration** - SIMD distance kernels, optional CUDA GPU with multi-GPU batch fan-out, optional thread-caching slab allocator (`GV_ALLOC=tc`, see [performance](docs/performance.md#custom-allocator-gv_tcalloc)).
+- **Acceleration** - SIMD distance kernels, optional CUDA GPU with multi-GPU batch fan-out, thread-caching slab allocator on by default (`GV_ALLOC=libc` opts out, see [performance](docs/performance.md#custom-allocator-gv_tcalloc)).
 
 ## Build
 

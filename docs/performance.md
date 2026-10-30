@@ -295,16 +295,17 @@ if (gv_cpu_has_feature(GV_CPU_FEATURE_AVX2)) {
 ## Custom Allocator (gv_tcalloc)
 
 Every allocation in the library funnels through `gv_alloc`/`gv_calloc`/`gv_realloc`/
-`gv_free`. Behind that choke point is an optional thread-caching slab allocator
+`gv_free`. Behind that choke point is a thread-caching slab allocator
 (`gv_tcalloc`). Small requests are served from per-thread free lists carved out of
 1 MiB slabs, so the hot path is a lock-free pop or push. Each size class has its own
 central free list behind a sharded lock, and larger requests go straight to `mmap`.
 
-It is opt-in so the default build and test suite are unchanged:
+It is the default (`-DGV_TCALLOC_DEFAULT_ON`, set by the Makefile); the full suite is
+green with it on:
 
-- `GV_ALLOC=tc` enables it for the whole process (set before launch).
-- `GV_ALLOC=libc` forces the libc path (the default, and what the valgrind gates use).
-- Build with `-DGV_TCALLOC_DEFAULT_ON` to make the custom allocator the default.
+- `GV_ALLOC=libc` opts out at runtime (what the valgrind gates use); build with
+  `ALLOC_FLAGS=` to ship libc instead.
+- `GV_ALLOC=tc` forces it on when the build flag is absent.
 - It compiles to libc forwarders under AddressSanitizer/ThreadSanitizer so those
   tools keep intercepting allocations.
 

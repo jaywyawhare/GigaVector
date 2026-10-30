@@ -178,10 +178,9 @@ static void gv_tc_build_classes(void) {
 static void gv_tc_tcache_destroy(void *arg);
 
 static void gv_tc_init(void) {
-    /* Opt-in: default to libc so the whole DB and its test suite are unaffected
-     * until a user asks for the custom allocator. GV_ALLOC=tc (or gv/custom)
-     * routes the gv_alloc choke point through the slab cache; GV_ALLOC=libc is
-     * the explicit default. Compile with -DGV_TCALLOC_DEFAULT_ON to flip it. */
+    /* Default build routes the gv_alloc choke point through the slab cache
+     * (-DGV_TCALLOC_DEFAULT_ON, set by the Makefile). GV_ALLOC=libc opts out at
+     * runtime; GV_ALLOC=tc/gv/custom forces it on when compiled without the flag. */
 #ifdef GV_TCALLOC_DEFAULT_ON
     g_use_libc = 0;
 #else

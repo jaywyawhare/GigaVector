@@ -11,7 +11,10 @@ CURL_FLAGS ?=
 OPENSSL_FLAGS ?=
 ONNX_FLAGS ?=
 EXTRA_CFLAGS ?=
-CFLAGS  := $(BASE_CFLAGS) $(SIMD_FLAGS) $(HARDENING_FLAGS) $(CURL_FLAGS) $(OPENSSL_FLAGS) $(ONNX_FLAGS) $(EXTRA_CFLAGS)
+# Memory allocator: the custom slab allocator (gv_tcalloc) is the default. Build
+# with ALLOC_FLAGS= to ship libc instead, or override at runtime with GV_ALLOC=libc.
+ALLOC_FLAGS ?= -DGV_TCALLOC_DEFAULT_ON
+CFLAGS  := $(BASE_CFLAGS) $(SIMD_FLAGS) $(HARDENING_FLAGS) $(CURL_FLAGS) $(OPENSSL_FLAGS) $(ONNX_FLAGS) $(ALLOC_FLAGS) $(EXTRA_CFLAGS)
 LDFLAGS := -lm -pthread $(if $(CURL_FLAGS),-lcurl,) $(if $(OPENSSL_FLAGS),-lssl -lcrypto,)
 
 BUILD_DIR   := build
