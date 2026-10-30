@@ -5,6 +5,20 @@
 #include <stdint.h>
 #include <pthread.h>
 
+/* The system allocator's usable-size query is spelled differently per platform:
+ * malloc_usable_size on glibc, malloc_size on macOS, _msize on Windows. Both the
+ * real allocator and the libc forwarder route through GV_TC_USABLE. */
+#if defined(__APPLE__)
+#include <malloc/malloc.h>
+#define GV_TC_USABLE(p) malloc_size(p)
+#elif defined(_WIN32)
+#include <malloc.h>
+#define GV_TC_USABLE(p) _msize(p)
+#else
+#include <malloc.h>
+#define GV_TC_USABLE(p) malloc_usable_size(p)
+#endif
+
 /* AddressSanitizer / ThreadSanitizer instrument libc malloc to catch bugs; a
  * custom allocator hides those allocations from them. Compile to libc forwarders
  * so the sanitizer gates keep their coverage. */
@@ -17,15 +31,23 @@
 #endif
 #endif
 
+/* The slab path is built on mmap/munmap; Windows has no POSIX memory mapping, so
+ * fall back to libc there rather than porting the slab layer to VirtualAlloc. */
+#if defined(_WIN32) && !defined(GV_TC_FORCE_LIBC)
+#define GV_TC_FORCE_LIBC 1
+#endif
+
 #ifdef GV_TC_FORCE_LIBC
 
 /* Sanitizer builds: stay on libc so the tools keep intercepting allocations. */
-#include <malloc.h>
 void  *gv_tc_malloc(size_t size) { return size ? malloc(size) : NULL; }
-void  *gv_tc_calloc(size_t n, size_t s) { return (n && s) ? calloc(n, s) : NULL; }
+void  *gv_tc_calloc(size_t n, size_t s) {
+    if (!n || !s || n > SIZE_MAX / s) return NULL; /* match the slab path's overflow guard */
+    return calloc(n, s);
+}
 void  *gv_tc_realloc(void *p, size_t s) { return realloc(p, s); }
 void   gv_tc_free(void *p) { free(p); }
-size_t gv_tc_usable_size(void *p) { return p ? malloc_usable_size(p) : 0; }
+size_t gv_tc_usable_size(void *p) { return p ? GV_TC_USABLE(p) : 0; }
 int    gv_tc_active(void) { return 0; }
 void   gv_tc_set_enabled(int on) { (void)on; }
 size_t gv_tc_release(void) { return 0; }
@@ -85,8 +107,6 @@ static size_t         g_page;
  * (t_last_base/tag) cannot misclassify a pointer landing in a freed-then-reused
  * slab address. The memo is valid only while t_last_epoch == g_epoch. */
 static uint32_t       g_epoch;
-
-#include <malloc.h> /* libc fallback path (GV_ALLOC=libc) */
 
 /*
  * Ownership + class registry. The codebase mixes raw libc malloc with gv_alloc,
@@ -399,7 +419,7 @@ size_t gv_tc_usable_size(void *ptr) {
     if (!ptr) return 0;
     gv_tc_ensure();
     uint8_t tag = g_use_libc ? 0 : gv_tc_tag(ptr);
-    if (tag == 0) return malloc_usable_size(ptr);
+    if (tag == 0) return GV_TC_USABLE(ptr);
     if (tag == GV_TC_TAG_LARGE) {
         GV_Slab *slab = (GV_Slab *)((uintptr_t)ptr & ~GV_TC_SLAB_MASK);
         return slab->map_len - GV_TC_HDR_BYTES;
@@ -452,7 +472,8 @@ void gv_tc_free(void *ptr) {
         for (uint32_t i = 1; i < keep; ++i) p = *(void **)p;
         void *spill_head = *(void **)p;
         *(void **)p = NULL; /* new tail of the kept portion */
-        void *tail = spill_head;
+        void *tail = spill_head; /* count > batch*2 >= keep+1, so spill_head is non-NULL */
+        /* cppcheck-suppress nullPointer */
         while (*(void **)tail) tail = *(void **)tail;
         gv_tc_flush_list(ci, spill_head, tail);
         c->count[ci] = keep;
