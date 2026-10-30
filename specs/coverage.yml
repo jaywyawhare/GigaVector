@@ -244,6 +244,7 @@ tiers:
         - admin/raft_log.c
         - admin/shard_rpc.c
         - core/prop_value.c
+        - core/tcalloc.c
         - features/cypher_vector.c
         - storage/object_store.c
         - storage/document_extract.c
