@@ -18,6 +18,7 @@ cat > "$GEN_SRC" <<'EOF'
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include "core/memory.h"
 #include "api/grpc.h"
 #include "admin/repl_transport.h"
 #include "storage/wal.h"
@@ -110,7 +111,7 @@ int main(int argc, char **argv) {
                 }
                 free(payload);
             }
-            free(record);
+            gv_free(record); /* wal_read_entry_at returns a gv_alloc'd buffer */
         }
 
         char wal_path[512];
@@ -141,7 +142,7 @@ int main(int argc, char **argv) {
             snprintf(posting_path, sizeof(posting_path),
                      "%s/tests/fuzz/corpus/posting/valid_segment.bin", root);
             write_file(posting_path, seg, seg_len);
-            free(seg);
+            gv_free(seg); /* posting_segment_encode returns a gv_alloc'd buffer */
         }
 
         GV_PostingSegmentParams sq8 = { .payload_type = GV_POSTING_PAYLOAD_SQ8 };
@@ -150,7 +151,7 @@ int main(int argc, char **argv) {
             snprintf(sq8_path, sizeof(sq8_path),
                      "%s/tests/fuzz/corpus/posting/valid_sq8_segment.bin", root);
             write_file(sq8_path, seg, seg_len);
-            free(seg);
+            gv_free(seg);
         }
     }
     return 0;

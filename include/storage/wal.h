@@ -238,6 +238,9 @@ uint64_t wal_size(const GV_WAL *wal);
 /**
  * @brief Read one WAL record by zero-based entry index.
  *
+ * On success @p out_buf receives a gv_alloc'd buffer the caller must release
+ * with gv_free (not libc free).
+ *
  * @return 0 on success, -1 on error or if index out of range.
  */
 int wal_read_entry_at(const char *path, uint64_t entry_index, uint8_t *out_type,

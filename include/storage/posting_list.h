@@ -195,6 +195,7 @@ int posting_segment_read_file(const char *path, GV_PostingVisitFn fn, void *ctx)
 int posting_segment_parse_buffer(const uint8_t *data, size_t len, size_t max_dimension,
                                  GV_PostingVisitFn fn, void *ctx);
 
+/* On success @p out_buf receives a gv_alloc'd buffer; release it with gv_free. */
 int posting_segment_encode(uint64_t head_id, uint64_t sequence,
                            const GV_PostingWriteEntry *entries, size_t entry_count,
                            size_t dimension, size_t sector_size,
