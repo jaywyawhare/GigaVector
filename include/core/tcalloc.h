@@ -44,6 +44,18 @@ size_t gv_tc_usable_size(void *ptr);
 int gv_tc_active(void);
 
 /**
+ * Return fully-idle small slabs to the OS and report the bytes released.
+ *
+ * Small slabs are otherwise retained for reuse (tcmalloc-style), so peak RSS
+ * persists after a burst. This munmaps every slab whose objects are all back in
+ * the central free list (none live, none cached in any thread), so it is safe to
+ * call at an idle checkpoint (e.g. after compaction/vacuum). It never touches a
+ * slab holding a live or thread-cached object, and large allocations already
+ * return to the OS on free. O(free objects); returns 0 under the libc path.
+ */
+size_t gv_tc_release(void);
+
+/**
  * Enable (@p on != 0) or disable the custom allocator at runtime, overriding the
  * GV_ALLOC default. Safe to flip after allocations: foreign pointers are routed
  * back to libc by the ownership registry. No-op under sanitizer builds.

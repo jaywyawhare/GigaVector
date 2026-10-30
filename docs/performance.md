@@ -320,6 +320,13 @@ Size classes follow a fine ladder (16-byte granularity for small sizes, widening
 stages up to 64 KiB) to keep internal fragmentation low for the many small
 allocations a vector DB makes.
 
+Returning memory to the OS: like tcmalloc, small slabs are retained for reuse, so
+peak RSS persists after a churn-heavy burst (large allocations always `munmap` on
+free). `gv_release()` (core/memory.h) unmaps every slab whose objects are all back
+in the central free list — none live, none thread-cached — and returns the bytes
+freed. It is safe to call at any idle checkpoint; `vacuum_run` calls it after
+compaction so a vacuum sheds the allocator's high-water mark too.
+
 Measure it on your workload:
 
 ```bash

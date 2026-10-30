@@ -28,6 +28,7 @@ void   gv_tc_free(void *p) { free(p); }
 size_t gv_tc_usable_size(void *p) { return p ? malloc_usable_size(p) : 0; }
 int    gv_tc_active(void) { return 0; }
 void   gv_tc_set_enabled(int on) { (void)on; }
+size_t gv_tc_release(void) { return 0; }
 
 #else /* real allocator */
 
@@ -80,6 +81,10 @@ static pthread_key_t  g_tcache_key;
 static int            g_use_libc; /* GV_ALLOC=libc opt-out, decided once at init */
 static int            g_check;    /* GV_TC_CHECK=1: poison + verify freed objects */
 static size_t         g_page;
+/* Bumped by gv_tc_release when it unmaps a slab, so the per-thread free-memo
+ * (t_last_base/tag) cannot misclassify a pointer landing in a freed-then-reused
+ * slab address. The memo is valid only while t_last_epoch == g_epoch. */
+static uint32_t       g_epoch;
 
 #include <malloc.h> /* libc fallback path (GV_ALLOC=libc) */
 
@@ -290,6 +295,7 @@ static __thread int        t_armed;
  * entirely - and consecutive frees cluster in a handful of slabs. */
 static __thread uintptr_t  t_last_base;
 static __thread uint8_t    t_last_tag;
+static __thread uint32_t   t_last_epoch;
 
 static inline GV_TCache *gv_tc_get_cache(void) {
     if (!t_armed) {
@@ -413,11 +419,15 @@ void gv_tc_free(void *ptr) {
         return;
     }
     uintptr_t base = (uintptr_t)ptr & ~GV_TC_SLAB_MASK;
-    if (base == t_last_base && t_last_tag) {
-        tag = t_last_tag; /* memo hit: immutable small-slab class, no registry load */
+    if (base == t_last_base && t_last_tag &&
+        t_last_epoch == __atomic_load_n(&g_epoch, __ATOMIC_RELAXED)) {
+        tag = t_last_tag; /* memo hit: small-slab class unchanged since this epoch */
     } else {
         tag = gv_tc_tag(ptr);
-        if (tag != 0 && tag != GV_TC_TAG_LARGE) { t_last_base = base; t_last_tag = tag; }
+        if (tag != 0 && tag != GV_TC_TAG_LARGE) {
+            t_last_base = base; t_last_tag = tag;
+            t_last_epoch = __atomic_load_n(&g_epoch, __ATOMIC_RELAXED);
+        }
     }
     if (tag == 0) { free(ptr); return; }
     if (tag == GV_TC_TAG_LARGE) {
@@ -478,6 +488,66 @@ void *gv_tc_realloc(void *ptr, size_t size) {
     memcpy(np, ptr, old < size ? old : size);
     gv_tc_free(ptr);
     return np;
+}
+
+static int gv_tc_ptr_cmp(const void *a, const void *b) {
+    uintptr_t x = (uintptr_t)(*(void *const *)a);
+    uintptr_t y = (uintptr_t)(*(void *const *)b);
+    return (x > y) - (x < y);
+}
+
+size_t gv_tc_release(void) {
+    gv_tc_ensure();
+    if (g_use_libc) return 0;
+    size_t released = 0;
+    int unmapped_any = 0;
+
+    for (uint32_t ci = 0; ci < g_class_count; ++ci) {
+        uint32_t obj = g_class_size[ci];
+        uint32_t per_slab = (GV_TC_SLAB_SIZE - (uint32_t)GV_TC_HDR_BYTES) / obj;
+        if (per_slab == 0) continue;
+
+        pthread_mutex_lock(&g_central[ci].lock);
+
+        uint32_t len = 0;
+        for (void *p = g_central[ci].free_list; p; p = *(void **)p) len++;
+        if (len < per_slab) { pthread_mutex_unlock(&g_central[ci].lock); continue; }
+
+        /* Snapshot the free list and sort by address so a slab's objects form one
+         * contiguous run; a run of exactly per_slab means the slab is fully idle. */
+        void **arr = (void **)malloc((size_t)len * sizeof(void *));
+        if (!arr) { pthread_mutex_unlock(&g_central[ci].lock); continue; }
+        uint32_t n = 0;
+        for (void *p = g_central[ci].free_list; p; p = *(void **)p) arr[n++] = p;
+        qsort(arr, n, sizeof(void *), gv_tc_ptr_cmp);
+
+        /* Rebuild the free list from objects whose slab is NOT fully idle, and
+         * unmap each fully-idle slab. */
+        void *keep = NULL;
+        for (uint32_t i = 0; i < n; ) {
+            uintptr_t sbase = (uintptr_t)arr[i] & ~GV_TC_SLAB_MASK;
+            uint32_t j = i;
+            while (j < n && ((uintptr_t)arr[j] & ~GV_TC_SLAB_MASK) == sbase) j++;
+            uint32_t run = j - i;
+            if (run == per_slab) {
+                gv_tc_mark((void *)sbase, 0);
+                munmap((void *)sbase, GV_TC_SLAB_SIZE);
+                released += GV_TC_SLAB_SIZE;
+                unmapped_any = 1;
+            } else {
+                for (uint32_t k = i; k < j; ++k) { *(void **)arr[k] = keep; keep = arr[k]; }
+            }
+            i = j;
+        }
+        g_central[ci].free_list = keep;
+        pthread_mutex_unlock(&g_central[ci].lock);
+        free(arr);
+    }
+
+    /* Invalidate every thread's free-memo: an unmapped address may be remapped to
+     * a different class before that thread next frees. */
+    if (unmapped_any) __atomic_fetch_add(&g_epoch, 1, __ATOMIC_RELEASE);
+    return released;
 }
 
 int gv_tc_active(void) {

@@ -10,6 +10,7 @@
 #include "core/memory.h"
 
 #include <assert.h>
+#include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -169,6 +170,85 @@ static void test_aligned(void) {
     CHECK(1, "aligned_free(NULL) survives");
 }
 
+/* Allocate many same-size objects (several slabs' worth) then free them all, so
+ * on thread exit the destructor flushes every object to central and the slabs
+ * become fully idle. */
+#define REL_N 70000      /* > 4 slabs of the 64-byte class (~16383 objs/slab) */
+static void *release_worker(void *arg) {
+    (void)arg;
+    void **ptrs = (void **)malloc(REL_N * sizeof(void *));
+    for (int i = 0; i < REL_N; i++) {
+        ptrs[i] = gv_tc_malloc(64);
+        memset(ptrs[i], 0x5A, 64);
+    }
+    for (int i = 0; i < REL_N; i++) gv_tc_free(ptrs[i]);
+    free(ptrs);
+    return NULL;
+}
+
+static void test_release(void) {
+    printf("== slab reclamation (gv_tc_release) ==\n");
+    pthread_t th;
+    pthread_create(&th, NULL, release_worker, NULL);
+    pthread_join(th, NULL); /* join: destructor flushes the worker's cache to central */
+
+    size_t freed = gv_tc_release();
+    CHECK(freed >= 3u * (1u << 20), "release reclaimed multiple idle slabs");
+
+    size_t again = gv_tc_release();
+    CHECK(again == 0, "second release is a no-op (nothing idle)");
+
+    /* Allocator still correct after reclamation: reuse the address space and
+     * verify content integrity (catches a corrupted central list or stale memo). */
+    uint64_t s = 0x9E3779B97F4A7C15ull;
+    void *keep[2000];
+    for (int i = 0; i < 2000; i++) {
+        size_t sz = 16 + (xs(&s) % 1024);
+        keep[i] = gv_tc_malloc(sz);
+        memset(keep[i], (int)(i & 0xFF), sz);
+    }
+    int ok = 1;
+    for (int i = 0; i < 2000; i++) {
+        unsigned char *b = (unsigned char *)keep[i];
+        if (b[0] != (unsigned char)(i & 0xFF)) ok = 0;
+        gv_tc_free(keep[i]);
+    }
+    CHECK(ok, "allocations after release are intact");
+}
+
+/* Churn worker that races gv_tc_release: holds a rotating live set so some slabs
+ * stay pinned while others go idle, exercising the lock between free and release. */
+static volatile int g_rel_stop;
+static void *churn_worker(void *arg) {
+    uint64_t s = 0x1234567u ^ (uint64_t)(uintptr_t)arg;
+    void *ring[256] = {0};
+    while (!g_rel_stop) {
+        for (int i = 0; i < 4000; i++) {
+            uint32_t idx = (uint32_t)(xs(&s) % 256);
+            if (ring[idx]) gv_tc_free(ring[idx]);
+            size_t sz = 16 + (xs(&s) % 2048);
+            ring[idx] = gv_tc_malloc(sz);
+            if (ring[idx]) *(unsigned char *)ring[idx] = (unsigned char)idx;
+        }
+    }
+    for (int i = 0; i < 256; i++) if (ring[i]) gv_tc_free(ring[i]);
+    return NULL;
+}
+
+static void test_release_concurrent(void) {
+    printf("== gv_tc_release racing concurrent churn ==\n");
+    pthread_t th[4];
+    g_rel_stop = 0;
+    for (int i = 0; i < 4; i++) pthread_create(&th[i], NULL, churn_worker, (void *)(uintptr_t)i);
+    size_t total = 0;
+    for (int r = 0; r < 200; r++) total += gv_tc_release();
+    g_rel_stop = 1;
+    for (int i = 0; i < 4; i++) pthread_join(th[i], NULL);
+    gv_tc_release();
+    CHECK(1, "no crash/deadlock under release + churn");
+    (void)total;
+}
+
 int main(void) {
     gv_tc_set_enabled(1);
     printf("gv_tcalloc tests (active=%d)\n", gv_tc_active());
@@ -178,6 +258,8 @@ int main(void) {
     test_realloc();
     test_aligned();
     test_foreign_pointer();
+    test_release();
+    test_release_concurrent();
     test_stress();
     if (g_fails) {
         printf("FAILED: %d check(s)\n", g_fails);

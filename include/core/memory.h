@@ -63,6 +63,13 @@ void *gv_realloc(void *ptr, size_t size);
 void  gv_free(void *ptr);
 char *gv_strdup(const char *s);
 
+/**
+ * Return fully-idle allocator slabs to the OS; returns the bytes released.
+ * Call at an idle checkpoint (e.g. after vacuum/compaction) to shed the peak
+ * RSS a churn-heavy burst left behind. No-op on the libc path. See gv_tc_release.
+ */
+size_t gv_release(void);
+
 /*
  * Over-aligned allocation for SIMD-hot buffers (e.g. 64-byte alignment so AVX-512
  * distance kernels can use aligned loads on vector data). @p alignment must be a

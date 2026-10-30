@@ -193,6 +193,10 @@ static int vacuum_run_internal(GV_VacuumManager *mgr) {
     mgr->stats.total_runs++;
     pthread_mutex_unlock(&mgr->mutex);
 
+    /* Compaction freed the old SoA buffer and whatever churned during the pass;
+     * hand fully-idle allocator slabs back to the OS now that we are at rest. */
+    gv_release();
+
     return 0;
 }
 

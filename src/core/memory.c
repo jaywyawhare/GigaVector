@@ -154,6 +154,10 @@ void gv_free(void *ptr) {
     gv_tc_free(ptr);
 }
 
+size_t gv_release(void) {
+    return gv_tc_release();
+}
+
 char *gv_strdup(const char *s) {
     if (s == NULL) {
         return NULL;
