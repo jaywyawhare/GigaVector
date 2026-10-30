@@ -53,6 +53,8 @@ struct GV_StreamConsumer {
     /* Threading */
     pthread_t consumer_thread;
     int thread_running;
+    /* The consumer loop polls these between batches without holding the mutex, so
+     * every access goes through __atomic_* to stay race-free with stop/pause. */
     int stop_requested;
     int pause_requested;
 
@@ -231,7 +233,7 @@ static void stream_process_kafka_batch(GV_StreamConsumer *consumer) {
     size_t batch = consumer->config.batch_size;
     if (batch == 0) batch = 1;
 
-    for (size_t i = 0; i < batch && !consumer->stop_requested; i++) {
+    for (size_t i = 0; i < batch && !__atomic_load_n(&consumer->stop_requested, __ATOMIC_SEQ_CST); i++) {
         rd_kafka_message_t *rkmsg = rd_kafka_consumer_poll(consumer->rk, timeout_ms);
         if (!rkmsg) break;
 
@@ -307,10 +309,10 @@ static void *consumer_thread_func(void *arg) {
     pthread_cond_broadcast(&consumer->state_cond);
     pthread_mutex_unlock(&consumer->mutex);
 
-    while (!consumer->stop_requested) {
+    while (!__atomic_load_n(&consumer->stop_requested, __ATOMIC_SEQ_CST)) {
         /* Check for pause */
         pthread_mutex_lock(&consumer->mutex);
-        while (consumer->pause_requested && !consumer->stop_requested) {
+        while (__atomic_load_n(&consumer->pause_requested, __ATOMIC_SEQ_CST) && !__atomic_load_n(&consumer->stop_requested, __ATOMIC_SEQ_CST)) {
             consumer->state = GV_STREAM_PAUSED;
             pthread_cond_wait(&consumer->state_cond, &consumer->mutex);
         }
@@ -319,7 +321,7 @@ static void *consumer_thread_func(void *arg) {
         }
         pthread_mutex_unlock(&consumer->mutex);
 
-        if (consumer->stop_requested) break;
+        if (__atomic_load_n(&consumer->stop_requested, __ATOMIC_SEQ_CST)) break;
 
         pthread_mutex_lock(&consumer->mutex);
 #ifdef HAVE_RDKAFKA
@@ -333,7 +335,7 @@ static void *consumer_thread_func(void *arg) {
 #endif
 
         /* Interruptible sleep: wake early on pause/stop signal */
-        if (!consumer->stop_requested && !consumer->pause_requested) {
+        if (!__atomic_load_n(&consumer->stop_requested, __ATOMIC_SEQ_CST) && !__atomic_load_n(&consumer->pause_requested, __ATOMIC_SEQ_CST)) {
             struct timespec deadline;
             clock_gettime(CLOCK_REALTIME, &deadline);
             long ms = (long)consumer->config.batch_timeout_ms;
@@ -484,8 +486,8 @@ int stream_start(GV_StreamConsumer *consumer) {
         return -1;
     }
 
-    consumer->stop_requested = 0;
-    consumer->pause_requested = 0;
+    __atomic_store_n(&consumer->stop_requested, 0, __ATOMIC_SEQ_CST);
+    __atomic_store_n(&consumer->pause_requested, 0, __ATOMIC_SEQ_CST);
     consumer->thread_running = 1;
 
     pthread_mutex_unlock(&consumer->mutex);
@@ -510,8 +512,8 @@ int stream_stop(GV_StreamConsumer *consumer) {
         return 0;
     }
 
-    consumer->stop_requested = 1;
-    consumer->pause_requested = 0;
+    __atomic_store_n(&consumer->stop_requested, 1, __ATOMIC_SEQ_CST);
+    __atomic_store_n(&consumer->pause_requested, 0, __ATOMIC_SEQ_CST);
     pthread_cond_broadcast(&consumer->state_cond);
 
     pthread_mutex_unlock(&consumer->mutex);
@@ -535,7 +537,7 @@ int stream_pause(GV_StreamConsumer *consumer) {
         return -1;
     }
 
-    consumer->pause_requested = 1;
+    __atomic_store_n(&consumer->pause_requested, 1, __ATOMIC_SEQ_CST);
     pthread_cond_broadcast(&consumer->state_cond);
 
     pthread_mutex_unlock(&consumer->mutex);
@@ -552,7 +554,7 @@ int stream_resume(GV_StreamConsumer *consumer) {
         return -1;
     }
 
-    consumer->pause_requested = 0;
+    __atomic_store_n(&consumer->pause_requested, 0, __ATOMIC_SEQ_CST);
     pthread_cond_broadcast(&consumer->state_cond);
 
     pthread_mutex_unlock(&consumer->mutex);
