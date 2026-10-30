@@ -2129,13 +2129,13 @@ GV_Database *db_open_with_hnsw_config(const char *filepath, size_t dimension,
     if (filepath != NULL) {
         db->filepath = gv_dup_cstr(filepath);
         if (db->filepath == NULL) {
-            free(db);
+            gv_free(db);
             return NULL;
         }
         db->wal_path = db_build_wal_path(filepath);
         if (db->wal_path == NULL) {
-            free(db->filepath);
-            free(db);
+            gv_free(db->filepath);
+            gv_free(db);
             return NULL;
         }
     }
