@@ -18,6 +18,7 @@
 #include <stdlib.h>
 
 #include "core/id_bitmap.h"
+#include "core/memory.h"
 
 #if defined(__CPROVER__) || defined(__CPROVER)
 uint64_t nondet_u64(void);
@@ -137,7 +138,7 @@ static void check_serialize_roundtrip(void) {
                 assert(gv_id_bitmap_contains(a, id) == gv_id_bitmap_contains(b, id));
             gv_id_bitmap_free(b);
         }
-        free(buf);
+        gv_free(buf); /* serialize allocates via gv_alloc */
     }
     gv_id_bitmap_free(a);
 }
