@@ -16,6 +16,7 @@ option(BUILD_PYTHON_BINDINGS "Build Python bindings" OFF)
 option(ENABLE_SANITIZERS "Enable AddressSanitizer + UBSan (use ENABLE_TSAN for thread sanitizer)" OFF)
 option(ENABLE_COVERAGE "Enable code coverage" OFF)
 option(ENABLE_NATIVE_OPTIMIZATIONS "Enable CPU-specific optimizations (-march=native -mtune=native)" OFF)
+option(ENABLE_TCALLOC "Make the custom slab allocator the default (GV_ALLOC=libc opts out)" ON)
 
 # Compiler flags
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
@@ -40,6 +41,11 @@ endif()
 # CPU tuning is opt-in to avoid shipping binaries with unsupported instruction sets.
 if(ENABLE_NATIVE_OPTIMIZATIONS)
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -march=native -mtune=native")
+endif()
+
+# Custom slab allocator is on by default, matching the Makefile build.
+if(ENABLE_TCALLOC)
+    add_compile_definitions(GV_TCALLOC_DEFAULT_ON)
 endif()
 
 # Position Independent Code for shared libraries
