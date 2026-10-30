@@ -250,6 +250,48 @@ jobs:
         # runners lacking it.
         run: make test-tsan CC="ccache gcc" SIMD_FLAGS="-mavx2 -mfma"
 
+  # ── Custom allocator (gv_tcalloc) ─────────────────────────────────────
+  # gv_tcalloc is the default allocator, but ASan/TSan/valgrind all fall back
+  # to libc forwarders, so no other job exercises its own slab/registry/free-list
+  # bookkeeping. This job runs the whole suite through it with GV_TC_CHECK=1
+  # (poison-on-free + verify-on-reuse), then re-runs with GV_ALLOC=libc to keep
+  # the opt-out path from rotting.
+  allocator:
+    name: custom allocator (gv_tcalloc)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4.2.2
+
+      - name: Install dependencies
+        timeout-minutes: 10
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake \
+            libcurl4-openssl-dev \
+            libssl-dev \
+            libmicrohttpd-dev
+
+      - name: Set up ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: allocator
+          max-size: 500M
+
+      - name: Run C tests through gv_tcalloc with poison checking
+        timeout-minutes: 20
+        env:
+          GV_TC_CHECK: "1"
+        run: make c-test CC="ccache gcc" SIMD_FLAGS="-mavx2 -mfma"
+
+      - name: Re-run C tests on the libc opt-out path
+        timeout-minutes: 20
+        env:
+          GV_ALLOC: libc
+        run: make c-test CC="ccache gcc" SIMD_FLAGS="-mavx2 -mfma"
+
   # ── libFuzzer + DST (clang, Linux only) ───────────────────────────────
   fuzz:
     name: libFuzzer + DST

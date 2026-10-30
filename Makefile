@@ -424,9 +424,11 @@ test-valgrind-core: lib $(VALGRIND_CORE_BINS)
 	@if ! command -v valgrind >/dev/null 2>&1; then \
 		echo "Valgrind not found, skipping..."; exit 0; \
 	fi
+	@# Force libc: gv_tcalloc carves objects from its own mmap'd slabs, which
+	@# valgrind sees as opaque regions, so it would miss object-level leaks.
 	@for test in $(VALGRIND_CORE_BINS); do \
 		echo "==> valgrind $$test"; \
-		LD_LIBRARY_PATH=$(LIB_DIR):$$LD_LIBRARY_PATH \
+		GV_ALLOC=libc LD_LIBRARY_PATH=$(LIB_DIR):$$LD_LIBRARY_PATH \
 			valgrind --leak-check=full --error-exitcode=1 \
 			--errors-for-leak-kinds=definite,indirect \
 			$$test || exit 1; \
