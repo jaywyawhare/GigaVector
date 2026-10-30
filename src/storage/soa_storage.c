@@ -98,7 +98,7 @@ static int soa_storage_grow(GV_SoAStorage *storage, size_t min_capacity)
          * re-alignment happens on the next successful grow. */
         if (tmp_base) {
             storage->data_alloc = tmp_base;
-            storage->data = (float *)((char *)tmp_base + old_off);
+            storage->data = (float *)((uintptr_t)tmp_base + old_off);
         }
         if (tmp_meta) storage->metadata = tmp_meta;
         if (tmp_del) storage->deleted = tmp_del;
