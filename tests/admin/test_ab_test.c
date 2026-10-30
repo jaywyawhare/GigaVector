@@ -443,7 +443,7 @@ static int test_ab_test_routing_deterministic(void) {
 typedef struct {
     GV_Database *db;
     int iters;
-    volatile int *stop;
+    int *stop; /* read/written atomically: main stops the workers concurrently */
 } ABWorker;
 
 static void *ab_search_worker(void *arg) {
@@ -451,7 +451,7 @@ static void *ab_search_worker(void *arg) {
     unsigned int seed = 123;
     float query[DIM];
     GV_SearchResult results[5];
-    for (int i = 0; i < w->iters && !*w->stop; i++) {
+    for (int i = 0; i < w->iters && !__atomic_load_n(w->stop, __ATOMIC_SEQ_CST); i++) {
         make_random_vec(query, DIM, &seed);
         int f = gv_db_ab_test_search(w->db, query, 5, results, GV_DISTANCE_EUCLIDEAN);
         if (f > 0) gv_search_results_free(results, (size_t)f);
@@ -472,7 +472,7 @@ static int test_ab_test_concurrent_stop(void) {
     }
     ASSERT(gv_db_ab_test_start(db, "concurrent", GV_INDEX_TYPE_HNSW, 0.5f) == 0, "start ok");
 
-    volatile int stop = 0;
+    int stop = 0;
     const int NT = 4;
     pthread_t th[4];
     ABWorker w[4];
@@ -482,7 +482,7 @@ static int test_ab_test_concurrent_stop(void) {
     }
     /* Let searches get in flight, then stop concurrently. */
     gv_db_ab_test_stop(db);
-    stop = 1;
+    __atomic_store_n(&stop, 1, __ATOMIC_SEQ_CST);
     for (int i = 0; i < NT; i++) pthread_join(th[i], NULL);
     ASSERT(db->ab_test == NULL, "test detached after stop");
 

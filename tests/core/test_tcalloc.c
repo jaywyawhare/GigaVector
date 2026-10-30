@@ -193,10 +193,15 @@ static void test_release(void) {
     pthread_join(th, NULL); /* join: destructor flushes the worker's cache to central */
 
     size_t freed = gv_tc_release();
-    CHECK(freed >= 3u * (1u << 20), "release reclaimed multiple idle slabs");
-
     size_t again = gv_tc_release();
-    CHECK(again == 0, "second release is a no-op (nothing idle)");
+    /* Reclamation only happens with the slab allocator on; under GV_ALLOC=libc
+     * and the sanitizer/Windows forwarders gv_tc_release is a no-op by design. */
+    if (gv_tc_active()) {
+        CHECK(freed >= 3u * (1u << 20), "release reclaimed multiple idle slabs");
+        CHECK(again == 0, "second release is a no-op (nothing idle)");
+    } else {
+        CHECK(freed == 0 && again == 0, "release is a no-op on the libc path");
+    }
 
     /* Allocator still correct after reclamation: reuse the address space and
      * verify content integrity (catches a corrupted central list or stale memo). */
@@ -218,11 +223,11 @@ static void test_release(void) {
 
 /* Churn worker that races gv_tc_release: holds a rotating live set so some slabs
  * stay pinned while others go idle, exercising the lock between free and release. */
-static volatile int g_rel_stop;
+static int g_rel_stop; /* read/written atomically: main stops the churn workers */
 static void *churn_worker(void *arg) {
     uint64_t s = 0x1234567u ^ (uint64_t)(uintptr_t)arg;
     void *ring[256] = {0};
-    while (!g_rel_stop) {
+    while (!__atomic_load_n(&g_rel_stop, __ATOMIC_SEQ_CST)) {
         for (int i = 0; i < 4000; i++) {
             uint32_t idx = (uint32_t)(xs(&s) % 256);
             if (ring[idx]) gv_tc_free(ring[idx]);
@@ -238,11 +243,11 @@ static void *churn_worker(void *arg) {
 static void test_release_concurrent(void) {
     printf("== gv_tc_release racing concurrent churn ==\n");
     pthread_t th[4];
-    g_rel_stop = 0;
+    __atomic_store_n(&g_rel_stop, 0, __ATOMIC_SEQ_CST);
     for (int i = 0; i < 4; i++) pthread_create(&th[i], NULL, churn_worker, (void *)(uintptr_t)i);
     size_t total = 0;
     for (int r = 0; r < 200; r++) total += gv_tc_release();
-    g_rel_stop = 1;
+    __atomic_store_n(&g_rel_stop, 1, __ATOMIC_SEQ_CST);
     for (int i = 0; i < 4; i++) pthread_join(th[i], NULL);
     gv_tc_release();
     CHECK(1, "no crash/deadlock under release + churn");
