@@ -9,3 +9,10 @@
 # real leak, only a shutdown-ordering artifact of the fuzzing driver.
 leak:gv_arena_init
 leak:gv_tls_arena
+
+# fuzz_grpc_dispatch keeps a singleton server+DB alive for the whole run (set up
+# once, reused across inputs). Same _Exit()-before-atexit artifact as above.
+# db_init_latency_histogram is listed separately because inlining drops the
+# fuzz_setup_once frame from its allocation stack.
+leak:fuzz_setup_once
+leak:db_init_latency_histogram

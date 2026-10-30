@@ -23,6 +23,11 @@ static GV_Database *g_db = NULL;
 static GV_GrpcServer *g_server = NULL;
 static char g_db_path[256];
 
+/* The server/DB are a persistent singleton, set up once and reused across every
+ * input for speed; they stay reachable for the whole run. libFuzzer exits via
+ * _Exit() before any atexit teardown, so LSan sees them as leaked -- suppressed
+ * in tests/fuzz/lsan.supp (leak:fuzz_setup_once), the same shutdown-ordering
+ * artifact documented there for the TLS arena. */
 static void fuzz_setup_once(void) {
     if (g_server) return;
 
