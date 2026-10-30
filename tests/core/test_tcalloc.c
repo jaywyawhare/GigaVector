@@ -77,7 +77,9 @@ static void test_calloc(void) {
 
 static void test_realloc(void) {
     printf("== realloc grow/shrink preserves content ==\n");
-    CHECK(gv_tc_realloc(NULL, 64) != NULL, "realloc(NULL, n) acts as malloc");
+    void *rn = gv_tc_realloc(NULL, 64);
+    CHECK(rn != NULL, "realloc(NULL, n) acts as malloc");
+    gv_tc_free(rn);
 
     size_t n = 50;
     unsigned char *p = (unsigned char *)gv_tc_malloc(n);
