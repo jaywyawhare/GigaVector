@@ -13,6 +13,7 @@
 #include <string.h>
 
 #include "admin/raft.h"
+#include "core/memory.h"
 
 struct GV_Raft {
     int      id;
@@ -93,13 +94,13 @@ static int log_append_ex(GV_Raft *r, uint64_t term, const void *data, size_t len
                          int do_persist) {
     if (r->log_len == r->log_cap) {
         size_t nc = r->log_cap ? r->log_cap * 2 : 16;
-        GV_RaftEntry *nl = (GV_RaftEntry *)realloc(r->log, nc * sizeof(GV_RaftEntry));
+        GV_RaftEntry *nl = (GV_RaftEntry *)gv_realloc(r->log, nc * sizeof(GV_RaftEntry));
         if (!nl) return -1;
         r->log = nl; r->log_cap = nc;
     }
     void *copy = NULL;
     if (len) {
-        copy = malloc(len);
+        copy = gv_alloc(len);
         if (!copy) return -1;
         memcpy(copy, data, len);
     }
@@ -112,7 +113,7 @@ static int log_append_ex(GV_Raft *r, uint64_t term, const void *data, size_t len
         /* Durable write failed: roll the entry back so it is never acknowledged
          * or committed (an un-acked entry cannot be lost). */
         r->log_len--;
-        free(copy);
+        gv_free(copy);
         r->log[r->log_len].data = NULL;
         return -1;
     }
@@ -131,7 +132,7 @@ static int log_truncate(GV_Raft *r, uint64_t keep) { /* drop entries after index
         return -1;
     while (r->log_len > keep) {
         r->log_len--;
-        free(r->log[r->log_len].data);
+        gv_free(r->log[r->log_len].data);
         r->log[r->log_len].data = NULL;
     }
     return 0;
@@ -364,18 +365,18 @@ void raft_config_init(GV_RaftConfig *cfg) {
 GV_Raft *raft_create(int id, const int *peers, size_t n_peers,
                      const GV_RaftConfig *cfg, const GV_RaftCallbacks *cb) {
     if (!cb || !cb->send || !cb->apply) return NULL;
-    GV_Raft *r = (GV_Raft *)calloc(1, sizeof(GV_Raft));
+    GV_Raft *r = (GV_Raft *)gv_calloc(1, sizeof(GV_Raft));
     if (!r) return NULL;
     r->id = id;
     r->n_peers = n_peers;
     if (n_peers) {
-        r->peers       = (int *)malloc(n_peers * sizeof(int));
-        r->next_index  = (uint64_t *)calloc(n_peers, sizeof(uint64_t));
-        r->match_index = (uint64_t *)calloc(n_peers, sizeof(uint64_t));
-        r->voted_by    = (uint8_t *)calloc(n_peers, sizeof(uint8_t));
+        r->peers       = (int *)gv_alloc(n_peers * sizeof(int));
+        r->next_index  = (uint64_t *)gv_calloc(n_peers, sizeof(uint64_t));
+        r->match_index = (uint64_t *)gv_calloc(n_peers, sizeof(uint64_t));
+        r->voted_by    = (uint8_t *)gv_calloc(n_peers, sizeof(uint8_t));
         if (!r->peers || !r->next_index || !r->match_index || !r->voted_by) {
-            free(r->peers); free(r->next_index); free(r->match_index);
-            free(r->voted_by); free(r);
+            gv_free(r->peers); gv_free(r->next_index); gv_free(r->match_index);
+            gv_free(r->voted_by); gv_free(r);
             return NULL;
         }
         memcpy(r->peers, peers, n_peers * sizeof(int));
@@ -461,11 +462,11 @@ uint64_t    raft_log_term_at(const GV_Raft *r, uint64_t index) { return r ? log_
 
 void raft_destroy(GV_Raft *r) {
     if (!r) return;
-    for (size_t i = 0; i < r->log_len; i++) free(r->log[i].data);
-    free(r->log);
-    free(r->peers);
-    free(r->next_index);
-    free(r->match_index);
-    free(r->voted_by);
-    free(r);
+    for (size_t i = 0; i < r->log_len; i++) gv_free(r->log[i].data);
+    gv_free(r->log);
+    gv_free(r->peers);
+    gv_free(r->next_index);
+    gv_free(r->match_index);
+    gv_free(r->voted_by);
+    gv_free(r);
 }

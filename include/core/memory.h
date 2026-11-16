@@ -5,6 +5,19 @@
 #include <stdint.h>
 #include <pthread.h>
 
+/*
+ * Compiler requirement. GigaVector's hot paths use GCC/Clang intrinsics
+ * (__builtin_mul_overflow / __builtin_add_overflow for safe size math,
+ * __builtin_popcountll / __builtin_ctzll in the distance and bitmap kernels,
+ * __builtin_prefetch in the index scanners) with no portable fallback. Every
+ * supported toolchain provides them: GCC and Clang on Linux/macOS, and MinGW-w64
+ * GCC on Windows (MSVC is not a target). Fail fast with a clear message rather
+ * than emit cryptic errors at each intrinsic if built with something else.
+ */
+#if !defined(__GNUC__) && !defined(__clang__)
+#error "GigaVector requires a GCC/Clang-compatible compiler (needs __builtin_* overflow and bit intrinsics). MinGW-w64 GCC is the supported Windows toolchain; MSVC is not supported."
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
