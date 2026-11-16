@@ -5,7 +5,7 @@
 ### Including Headers
 
 ```c
-#include "gigavector/gigavector.h"
+#include "gigavector.h"
 ```
 
 This includes all necessary headers:
@@ -36,7 +36,7 @@ export LD_LIBRARY_PATH=build/lib:$LD_LIBRARY_PATH
 
 ## Core Concepts
 
-The database is represented by an opaque `GV_Database *` handle. Vectors are plain `float` arrays. Always close handles with `gv_db_close()` when done.
+The database is represented by an opaque `GV_Database *` handle. Vectors are plain `float` arrays. Always close handles with `db_close()` when done.
 
 ```c
 typedef enum {
@@ -60,7 +60,7 @@ typedef enum {
 
 ```c
 // Basic creation
-GV_Database *db = gv_db_open("example.db", 128, GV_INDEX_TYPE_HNSW);
+GV_Database *db = db_open("example.db", 128, GV_INDEX_TYPE_HNSW);
 if (!db) {
     fprintf(stderr, "Failed to create database\n");
     return 1;
@@ -74,7 +74,7 @@ GV_HNSWConfig hnsw_config = {
     .use_binary_quant = 1,
     .quant_rerank = 20
 };
-GV_Database *db = gv_db_open_with_hnsw_config(
+GV_Database *db = db_open_with_hnsw_config(
     "hnsw.db", 128, GV_INDEX_TYPE_HNSW, &hnsw_config
 );
 
@@ -86,12 +86,12 @@ GV_IVFPQConfig ivfpq_config = {
     .nprobe = 16,
     .default_rerank = 32
 };
-GV_Database *db = gv_db_open_with_ivfpq_config(
+GV_Database *db = db_open_with_ivfpq_config(
     "ivfpq.db", 128, GV_INDEX_TYPE_IVFPQ, &ivfpq_config
 );
 
 // Memory-mapped read-only
-GV_Database *db = gv_db_open_mmap("readonly.db", 128, GV_INDEX_TYPE_KDTREE);
+GV_Database *db = db_open_mmap("readonly.db", 128, GV_INDEX_TYPE_KDTREE);
 ```
 
 ### Adding Vectors
@@ -100,27 +100,27 @@ GV_Database *db = gv_db_open_mmap("readonly.db", 128, GV_INDEX_TYPE_KDTREE);
 // Simple vector
 float data[128];
 // ... populate data ...
-int rc = gv_db_add_vector(db, data, 128);
+int rc = db_add_vector(db, data, 128);
 
 // With single metadata entry
-rc = gv_db_add_vector_with_metadata(
+rc = db_add_vector_with_metadata(
     db, data, 128, "id", "12345"
 );
 
 // With multiple metadata entries
 const char *keys[] = {"id", "category", "price"};
 const char *values[] = {"12345", "electronics", "99.99"};
-rc = gv_db_add_vector_with_rich_metadata(
+rc = db_add_vector_with_rich_metadata(
     db, data, 128, keys, values, 3
 );
 
 // Batch insertion
 float batch_data[1000 * 128];  // 1000 vectors of 128 dimensions
 // ... populate batch_data ...
-rc = gv_db_add_vectors(db, batch_data, 1000, 128);
+rc = db_add_vectors(db, batch_data, 1000, 128);
 ```
 
-Prefer `gv_db_add_vectors` over a loop of `gv_db_add_vector` when loading many
+Prefer `db_add_vectors` over a loop of `db_add_vector` when loading many
 vectors at once: for HNSW indexes it reserves capacity for the whole batch and
 uses the raw-insert path, avoiding repeated reallocation and per-vector
 allocation (see
@@ -135,7 +135,7 @@ committed count.
 // Basic search
 float query[128];
 GV_SearchResult results[10];
-int found = gv_db_search(
+int found = db_search(
     db, query, 10, results, GV_DISTANCE_EUCLIDEAN
 );
 
@@ -144,26 +144,26 @@ for (int i = 0; i < found; i++) {
 }
 
 // Filtered search
-found = gv_db_search_filtered(
+found = db_search_filtered(
     db, query, 10, results, GV_DISTANCE_EUCLIDEAN,
     "category", "electronics"
 );
 
 // Advanced filter expression
-found = gv_db_search_with_filter_expr(
+found = db_search_with_filter_expr(
     db, query, 10, results, GV_DISTANCE_EUCLIDEAN,
     "category == \"electronics\" AND price >= \"50\""
 );
 
 // Range search
-found = gv_db_range_search(
+found = db_range_search(
     db, query, 0.5f, results, 100, GV_DISTANCE_EUCLIDEAN
 );
 
 // Batch search
 float queries[10 * 128];  // 10 queries
 GV_SearchResult batch_results[10 * 5];  // 10 queries, k=5
-int total_found = gv_db_search_batch(
+int total_found = db_search_batch(
     db, queries, 10, 5, batch_results, GV_DISTANCE_EUCLIDEAN
 );
 ```
@@ -173,43 +173,43 @@ int total_found = gv_db_search_batch(
 ```c
 // Update vector data
 float new_data[128];
-int rc = gv_db_update_vector(db, 0, new_data, 128);
+int rc = db_update_vector(db, 0, new_data, 128);
 
 // Update metadata
 const char *keys[] = {"price", "updated"};
 const char *values[] = {"149.99", "true"};
-rc = gv_db_update_vector_metadata(db, 0, keys, values, 2);
+rc = db_update_vector_metadata(db, 0, keys, values, 2);
 
 // Delete vector
-rc = gv_db_delete_vector_by_index(db, 0);
+rc = db_delete_vector_by_index(db, 0);
 ```
 
 ### Saving and Loading
 
 ```c
-int rc = gv_db_save(db, "backup.db");
-gv_db_close(db);
+int rc = db_save(db, "backup.db");
+db_close(db);
 
 // Reopen (WAL is automatically replayed)
-db = gv_db_open("backup.db", 128, GV_INDEX_TYPE_HNSW);
+db = db_open("backup.db", 128, GV_INDEX_TYPE_HNSW);
 ```
 
 ### IVFPQ Training
 
 ```c
-GV_Database *db = gv_db_open("ivfpq.db", 128, GV_INDEX_TYPE_IVFPQ);
+GV_Database *db = db_open("ivfpq.db", 128, GV_INDEX_TYPE_IVFPQ);
 
 float training_data[1000 * 128];
 // ... populate training_data ...
 
-int rc = gv_db_ivfpq_train(db, training_data, 1000, 128);
+int rc = db_ivfpq_train(db, training_data, 1000, 128);
 if (rc != 0) {
     fprintf(stderr, "Training failed\n");
 }
 
 // Now can add vectors
 float vector[128];
-gv_db_add_vector(db, vector, 128);
+db_add_vector(db, vector, 128);
 ```
 
 ## Advanced Usage
@@ -258,11 +258,11 @@ GV_ResourceLimits limits = {
     .max_concurrent_operations = 100
 };
 
-int rc = gv_db_set_resource_limits(db, &limits);
+int rc = db_set_resource_limits(db, &limits);
 
 // Get current limits
 GV_ResourceLimits current;
-gv_db_get_resource_limits(db, &current);
+db_get_resource_limits(db, &current);
 printf("Max memory: %zu bytes\n", current.max_memory_bytes);
 ```
 
@@ -270,11 +270,11 @@ printf("Max memory: %zu bytes\n", current.max_memory_bytes);
 
 ```c
 GV_DBStats stats;
-gv_db_get_stats(db, &stats);
+db_get_stats(db, &stats);
 printf("Total inserts: %lu\n", stats.total_inserts);
 printf("Total queries: %lu\n", stats.total_queries);
 
-size_t memory = gv_db_get_memory_usage(db);
+size_t memory = db_get_memory_usage(db);
 printf("Memory usage: %.2f MB\n", memory / 1024.0 / 1024.0);
 ```
 
@@ -282,18 +282,18 @@ printf("Memory usage: %.2f MB\n", memory / 1024.0 / 1024.0);
 
 ```c
 // Start background compaction
-int rc = gv_db_start_background_compaction(db);
+int rc = db_start_background_compaction(db);
 
 // Configure compaction
-gv_db_set_compaction_interval(db, 300);  // 5 minutes
-gv_db_set_wal_compaction_threshold(db, 10 * 1024 * 1024);  // 10MB
-gv_db_set_deleted_ratio_threshold(db, 0.1);  // 10%
+db_set_compaction_interval(db, 300);  // 5 minutes
+db_set_wal_compaction_threshold(db, 10 * 1024 * 1024);  // 10MB
+db_set_deleted_ratio_threshold(db, 0.1);  // 10%
 
 // Manual compaction
-rc = gv_db_compact(db);
+rc = db_compact(db);
 
 // Stop background compaction
-gv_db_stop_background_compaction(db);
+db_stop_background_compaction(db);
 ```
 
 ### MVCC Transactions
@@ -323,7 +323,7 @@ The WiscKey value store (`db_value_store_*`), access-aware storage tiers
 - Most functions return `0` on success, `-1` on error, `NULL` for pointer returns on error
 - Input vectors and metadata strings are copied on add; safe to free after the call
 - Search result vectors are owned by the database; do not free them
-- Use batch operations (`gv_db_add_vectors`, `gv_db_search_batch`) for throughput
+- Use batch operations (`db_add_vectors`, `db_search_batch`) for throughput
 - Pre-allocate `GV_SearchResult` buffers and reuse across searches
 - Graph and knowledge graph APIs are documented in [api_reference.md](api_reference.md)
 - Thread safety details are documented in [api_reference.md](api_reference.md)

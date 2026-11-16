@@ -44,28 +44,28 @@ with Database.open("my_db.db", dimension=128, index=IndexType.HNSW) as db:
 
 **C:**
 ```c
-#include "gigavector/gigavector.h"
+#include "gigavector.h"
 
 // Create database
-GV_Database *db = gv_db_open("my_db.db", 128, GV_INDEX_TYPE_HNSW);
+GV_Database *db = db_open("my_db.db", 128, GV_INDEX_TYPE_HNSW);
 
 // Add vector
 float data[128];
 for (int i = 0; i < 128; i++) data[i] = 0.1f;
-gv_db_add_vector_with_metadata(db, data, 128, "id", "1");
+db_add_vector_with_metadata(db, data, 128, "id", "1");
 
 // Search
 float query[128];
 for (int i = 0; i < 128; i++) query[i] = 0.1f;
 GV_SearchResult results[5];
-int found = gv_db_search(db, query, 5, results, GV_DISTANCE_EUCLIDEAN);
+int found = db_search(db, query, 5, results, GV_DISTANCE_EUCLIDEAN);
 
 // Process results
 for (int i = 0; i < found; i++) {
     printf("Distance: %f\n", results[i].distance);
 }
 
-gv_db_close(db);
+db_close(db);
 ```
 
 ## Choosing the Right Index
@@ -242,13 +242,13 @@ health = db.health_check()
 ### Basic Operations
 
 ```c
-#include "gigavector/gigavector.h"
+#include "gigavector.h"
 #include <stdio.h>
 #include <stdlib.h>
 
 int main() {
     // Create database
-    GV_Database *db = gv_db_open("example.db", 128, GV_INDEX_TYPE_HNSW);
+    GV_Database *db = db_open("example.db", 128, GV_INDEX_TYPE_HNSW);
     if (!db) {
         fprintf(stderr, "Failed to create database\n");
         return 1;
@@ -260,12 +260,12 @@ int main() {
         data[i] = (float)rand() / RAND_MAX;
     }
 
-    int rc = gv_db_add_vector_with_metadata(
+    int rc = db_add_vector_with_metadata(
         db, data, 128, "id", "1"
     );
     if (rc != 0) {
         fprintf(stderr, "Failed to add vector\n");
-        gv_db_close(db);
+        db_close(db);
         return 1;
     }
 
@@ -276,7 +276,7 @@ int main() {
     }
 
     GV_SearchResult results[10];
-    int found = gv_db_search(
+    int found = db_search(
         db, query, 10, results, GV_DISTANCE_EUCLIDEAN
     );
 
@@ -288,8 +288,8 @@ int main() {
     }
 
     // Save and close
-    gv_db_save(db, "example.db");
-    gv_db_close(db);
+    db_save(db, "example.db");
+    db_close(db);
     return 0;
 }
 ```
@@ -297,18 +297,18 @@ int main() {
 ### Error Handling
 
 ```c
-GV_Database *db = gv_db_open("db.db", 128, GV_INDEX_TYPE_HNSW);
+GV_Database *db = db_open("db.db", 128, GV_INDEX_TYPE_HNSW);
 if (!db) {
     // Handle error - check errno or log message
-    perror("gv_db_open");
+    perror("db_open");
     return 1;
 }
 
-int rc = gv_db_add_vector(db, data, 128);
+int rc = db_add_vector(db, data, 128);
 if (rc != 0) {
     // Handle error
     fprintf(stderr, "Failed to add vector\n");
-    gv_db_close(db);
+    db_close(db);
     return 1;
 }
 ```
@@ -321,7 +321,7 @@ if (rc != 0) {
 // The database owns all vector data
 
 // Always close the database when done
-gv_db_close(db);
+db_close(db);
 ```
 
 ### Configuration
@@ -336,7 +336,7 @@ GV_HNSWConfig hnsw_config = {
     .quant_rerank = 20
 };
 
-GV_Database *db = gv_db_open_with_hnsw_config(
+GV_Database *db = db_open_with_hnsw_config(
     "db.db", 128, GV_INDEX_TYPE_HNSW, &hnsw_config
 );
 
@@ -349,14 +349,14 @@ GV_IVFPQConfig ivfpq_config = {
     .default_rerank = 32
 };
 
-GV_Database *db_ivfpq = gv_db_open_with_ivfpq_config(
+GV_Database *db_ivfpq = db_open_with_ivfpq_config(
     "ivfpq.db", 128, GV_INDEX_TYPE_IVFPQ, &ivfpq_config
 );
 
 // Train IVFPQ
 float training_data[1000 * 128];
 // ... populate training data ...
-gv_db_ivfpq_train(db_ivfpq, training_data, 1000, 128);
+db_ivfpq_train(db_ivfpq, training_data, 1000, 128);
 ```
 
 ## HTTP REST Server
@@ -367,9 +367,9 @@ Start GigaVector as an HTTP server for language-agnostic access.
 
 **C:**
 ```c
-#include "gigavector/gv_server.h"
+#include "api/server.h"
 
-GV_Database *db = gv_db_open("vectors.db", 128, GV_INDEX_TYPE_HNSW);
+GV_Database *db = db_open("vectors.db", 128, GV_INDEX_TYPE_HNSW);
 
 GV_ServerConfig config;
 gv_server_config_init(&config);
@@ -382,7 +382,7 @@ gv_server_start(server);
 // Server runs until stopped
 gv_server_stop(server);
 gv_server_destroy(server);
-gv_db_close(db);
+db_close(db);
 ```
 
 **Python (with dashboard):**
@@ -549,15 +549,15 @@ predictions = kg.predict_links(e1, k=5)
 
 ```c
 // C API equivalent
-GV_GraphDB *g = gv_graph_create(NULL);
-uint64_t n1 = gv_graph_add_node(g, "Person");
-uint64_t n2 = gv_graph_add_node(g, "Person");
-gv_graph_add_edge(g, n1, n2, "KNOWS", 1.0f);
+GV_GraphDB *g = graph_create(NULL);
+uint64_t n1 = graph_add_node(g, "Person");
+uint64_t n2 = graph_add_node(g, "Person");
+graph_add_edge(g, n1, n2, "KNOWS", 1.0f);
 
 GV_GraphPath path;
-gv_graph_shortest_path(g, n1, n2, &path);
-gv_graph_free_path(&path);
-gv_graph_destroy(g);
+graph_shortest_path(g, n1, n2, &path);
+graph_free_path(&path);
+graph_destroy(g);
 ```
 
 ---

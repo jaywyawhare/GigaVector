@@ -86,7 +86,7 @@ CMD ["python3", "app.py"]
 
 ```c
 // WAL is automatically enabled when filepath is provided
-GV_Database *db = gv_db_open("/data/vectors.gvdb", 128, GV_INDEX_TYPE_HNSW);
+GV_Database *db = db_open("/data/vectors.gvdb", 128, GV_INDEX_TYPE_HNSW);
 
 // Custom WAL directory
 setenv("GV_WAL_DIR", "/var/lib/gigavector/wal", 1);
@@ -139,7 +139,7 @@ GV_IVFPQConfig config = {
 
 ### Memory Optimization
 
-- **Cosine normalization**: `gv_db_set_cosine_normalized(db, 1);`
+- **Cosine normalization**: `db_set_cosine_normalized(db, 1);`
 - **Scalar quantization**: 4 bytes to 1 byte (75% reduction)
 - **Binary quantization**: 4 bytes to 1 bit (96% reduction)
 - **SoA storage**: Automatically enabled for cache locality
@@ -150,7 +150,7 @@ GV_IVFPQConfig config = {
 
 ```c
 GV_DetailedStats stats;
-if (gv_db_get_detailed_stats(db, &stats) == 0) {
+if (db_get_detailed_stats(db, &stats) == 0) {
     printf("Vector count: %zu\n", stats.vector_count);
     printf("Memory usage: %.2f GB\n", stats.memory.total_bytes / 1e9);
     printf("QPS: %.2f\n", stats.qps);
@@ -176,7 +176,7 @@ int save_snapshot(GV_Database *db, const char *backup_path) {
     snprintf(snapshot_path, sizeof(snapshot_path), "%s/snapshot_%s.gvdb",
              backup_path, timestamp);
 
-    return gv_db_save(db, snapshot_path);
+    return db_save(db, snapshot_path);
 }
 ```
 
@@ -184,11 +184,11 @@ int save_snapshot(GV_Database *db, const char *backup_path) {
 
 ```c
 // Restore from snapshot; WAL is automatically replayed on open
-GV_Database *db = gv_db_open("/backup/snapshot_20240115_120000.gvdb",
+GV_Database *db = db_open("/backup/snapshot_20240115_120000.gvdb",
                               dimension, index_type);
 
 GV_DBStats stats;
-gv_db_get_stats(db, &stats);
+db_get_stats(db, &stats);
 printf("Recovered %zu vectors\n", stats.vector_count);
 ```
 

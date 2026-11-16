@@ -8,7 +8,6 @@ theme:
   name: material
   logo: gigavector-logo.png
   favicon: gigavector-logo.png
-  custom_dir: docs/overrides
   palette:
     - scheme: slate
       primary: black
@@ -79,4 +78,4 @@ nav:
       - Deployment: deployment.md
       - Security: security.md
       - Troubleshooting: troubleshooting.md
-  - Contributing: contributing.md
+  - Contributing: https://github.com/jaywyawhare/GigaVector/blob/master/CONTRIBUTING.md

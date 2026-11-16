@@ -146,20 +146,20 @@ wins avoid unnecessary overhead when loading a known number of vectors:
    float array straight into SoA storage, skipping the `GV_Vector` allocation
    that `gv_hnsw_insert` performs.
 
-At the database layer, `gv_db_add_vectors()` already applies both optimizations
+At the database layer, `db_add_vectors()` already applies both optimizations
 automatically for HNSW indexes (it reserves for the whole batch, then uses the
-raw insert path), so prefer it over a loop of `gv_db_add_vector()` calls:
+raw insert path), so prefer it over a loop of `db_add_vector()` calls:
 
 ```c
 // Fast: one reservation, raw inserts, single write-lock acquisition.
-int rc = gv_db_add_vectors(db, data, count, dimension);
+int rc = db_add_vectors(db, data, count, dimension);
 // rc == 0 on full success; -1 if any insert failed (partial commit may remain).
 ```
 
 Notes:
 - The fast batch path is used when the index is HNSW, no WAL is attached, and
   cosine normalization is off; otherwise it falls back to per-vector inserts.
-- `gv_db_add_vectors` returns `-1` if any vector fails but does **not** roll
+- `db_add_vectors` returns `-1` if any vector fails but does **not** roll
   back already-committed vectors. Callers that need the exact committed count
   should insert one at a time.
 - Reserving is a hint, not a hard cap: further inserts beyond `n` still grow
@@ -391,7 +391,7 @@ GigaVector uses SoA storage for efficient memory access patterns:
 Monitor memory usage:
 ```c
 // Get current memory usage
-size_t memory_bytes = gv_db_get_memory_usage(db);
+size_t memory_bytes = db_get_memory_usage(db);
 printf("Memory usage: %zu bytes\n", memory_bytes);
 ```
 
@@ -410,7 +410,7 @@ printf("Memory usage: %zu bytes\n", memory_bytes);
 - Insertion: 0.1-1ms per vector
 - Bulk build: ~0.5ms per vector at 20K x 128, M=16, efConstruction=200
   (single thread, AVX2); scales roughly with `efConstruction * M` and grows
-  slowly with index size. Use `gv_db_add_vectors()` / `gv_hnsw_reserve()` to hit
+  slowly with index size. Use `db_add_vectors()` / `gv_hnsw_reserve()` to hit
   this path -- see [Fast Index Construction](#fast-index-construction-bulk-loading).
 - Memory: Moderate overhead (M * 8 bytes per vector)
 - Recall: 95-99% (with proper efSearch tuning)
@@ -546,8 +546,6 @@ and search reads slots on demand. `diskann_save()`/`diskann_load()` persist the 
 **gRPC:** `GV_MSG_IVFDISK_TRAIN` (13) trains centroids on an IVFDisk database (payload: count, dimension, train vectors).
 
 **Benchmark:** `make bench-ivfdisk` (10k smoke, recall≥90%). Full 1M×128: `make bench-ivfdisk-full` (brute-force recall, 256MB cache; long runtime).
-
-See also: [larger_than_ram_plan.md](larger_than_ram_plan.md).
 
 ---
 

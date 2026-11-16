@@ -4,7 +4,7 @@
 
 ```c
 GV_DetailedStats stats;
-if (gv_db_get_detailed_stats(db, &stats) == 0) {
+if (db_get_detailed_stats(db, &stats) == 0) {
     printf("Health: %s\n",
            stats.health_status == 0 ? "Healthy" :
            stats.health_status == -1 ? "Degraded" : "Unhealthy");
@@ -92,8 +92,8 @@ GV_HNSWConfig config = {
 
 Other levers:
 - **Enable SIMD:** `make clean && make lib` (uses `-march=native` by default)
-- **Cosine normalization:** `gv_db_set_cosine_normalized(db, 1);` avoids redundant normalization per query
-- **Use IVFPQ for large datasets:** `gv_index_suggest(dimension, expected_count)` picks an appropriate index
+- **Cosine normalization:** `db_set_cosine_normalized(db, 1);` avoids redundant normalization per query
+- **Use IVFPQ for large datasets:** `index_suggest(dimension, expected_count)` picks an appropriate index
 - **Retrain IVFPQ with more clusters** if recall is still low (e.g. `n_clusters = 512`)
 
 ### High Memory Usage
@@ -108,7 +108,7 @@ Other levers:
    ```
 4. **Use memory-mapped files:**
    ```c
-   GV_Database *db = gv_db_open_mmap("db.gvdb", dimension, index_type);
+   GV_Database *db = db_open_mmap("db.gvdb", dimension, index_type);
    ```
 
 ---
@@ -131,7 +131,7 @@ rm db.gvdb.wal
 ### Missing Vectors
 
 - WAL should replay automatically on open -- verify the WAL file exists and is readable
-- Always check return values from `gv_db_add_vector`; a non-zero return means the insert failed
+- Always check return values from `db_add_vector`; a non-zero return means the insert failed
 
 ---
 
@@ -146,4 +146,4 @@ rm db.gvdb.wal
 | SSL certificate error | `sudo apt-get install ca-certificates` |
 | Connection failure behind proxy | `curl_easy_setopt(curl, CURLOPT_PROXY, "http://proxy:port")` |
 
-**Memory leak note:** Always call `gv_llm_response_free(&response)` after using an LLM response, and `gv_db_close(db)` when done with a database.
+**Memory leak note:** Always call `gv_llm_response_free(&response)` after using an LLM response, and `db_close(db)` when done with a database.

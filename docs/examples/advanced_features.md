@@ -81,7 +81,7 @@ float radius = 0.5f;
 GV_SearchResult results[1000];
 size_t max_results = 1000;
 
-int found = gv_db_range_search(
+int found = db_range_search(
     db, query, radius, results, max_results,
     GV_DISTANCE_EUCLIDEAN
 );
@@ -89,7 +89,7 @@ int found = gv_db_range_search(
 printf("Found %d vectors within radius %f\n", found, radius);
 for (int i = 0; i < found; i++) {
     printf("  Distance: %f, Index: %zu\n",
-           results[i].distance, results[i].vector_index);
+           results[i].distance, results[i].id);
 }
 ```
 
@@ -129,15 +129,15 @@ size_t nnz = 3;
 size_t dimension = 1000;
 
 // Add to sparse index
-GV_Database *db = gv_db_open("sparse.db", 1000, GV_INDEX_TYPE_SPARSE);
-gv_db_add_sparse_vector(db, indices, values, nnz, dimension, NULL, NULL);
+GV_Database *db = db_open("sparse.db", 1000, GV_INDEX_TYPE_SPARSE);
+db_add_sparse_vector(db, indices, values, nnz, dimension, NULL, NULL);
 
 // Search
 uint32_t query_indices[] = {10, 50};
 float query_values[] = {0.6f, 0.4f};
 
 GV_SearchResult results[10];
-int found = gv_db_search_sparse(db, query_indices, query_values, 2, 10,
+int found = db_search_sparse(db, query_indices, query_values, 2, 10,
                                 results, GV_DISTANCE_DOT_PRODUCT);
 ```
 
@@ -167,41 +167,41 @@ GigaVector includes a full property graph database and a knowledge graph layer w
 ### Building a Social Graph
 
 ```c
-#include "gigavector/gv_graph_db.h"
+#include "features/graph_db.h"
 
-GV_GraphDB *g = gv_graph_create(NULL);
+GV_GraphDB *g = graph_create(NULL);
 
 // Create nodes
-uint64_t alice = gv_graph_add_node(g, "Person");
-uint64_t bob = gv_graph_add_node(g, "Person");
-uint64_t charlie = gv_graph_add_node(g, "Person");
-gv_graph_set_node_prop(g, alice, "name", "Alice");
-gv_graph_set_node_prop(g, bob, "name", "Bob");
-gv_graph_set_node_prop(g, charlie, "name", "Charlie");
+uint64_t alice = graph_add_node(g, "Person");
+uint64_t bob = graph_add_node(g, "Person");
+uint64_t charlie = graph_add_node(g, "Person");
+graph_set_node_prop(g, alice, "name", "Alice");
+graph_set_node_prop(g, bob, "name", "Bob");
+graph_set_node_prop(g, charlie, "name", "Charlie");
 
 // Create relationships
-gv_graph_add_edge(g, alice, bob, "KNOWS", 1.0f);
-gv_graph_add_edge(g, bob, charlie, "KNOWS", 1.0f);
-gv_graph_add_edge(g, alice, charlie, "FRIENDS", 0.5f);
+graph_add_edge(g, alice, bob, "KNOWS", 1.0f);
+graph_add_edge(g, bob, charlie, "KNOWS", 1.0f);
+graph_add_edge(g, alice, charlie, "FRIENDS", 0.5f);
 
 // Find shortest path
 GV_GraphPath path;
-if (gv_graph_shortest_path(g, alice, charlie, &path) == 0) {
+if (graph_shortest_path(g, alice, charlie, &path) == 0) {
     printf("Path length: %zu, weight: %.2f\n", path.length, path.total_weight);
-    gv_graph_free_path(&path);
+    graph_free_path(&path);
 }
 
 // Compute PageRank
-float pr = gv_graph_pagerank(g, alice, 20, 0.85f);
+float pr = graph_pagerank(g, alice, 20, 0.85f);
 printf("Alice PageRank: %.4f\n", pr);
 
 // Connected components
 uint64_t comps[3];
-int num_comps = gv_graph_connected_components(g, comps, 3);
+int num_comps = graph_connected_components(g, comps, 3);
 printf("Components: %d\n", num_comps);
 
-gv_graph_save(g, "social.gvgr");
-gv_graph_destroy(g);
+graph_save(g, "social.gvgr");
+graph_destroy(g);
 ```
 
 ### Knowledge Graph with Semantic Search

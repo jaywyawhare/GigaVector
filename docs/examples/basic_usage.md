@@ -30,16 +30,16 @@ hits = db.search(
 ## C: open database and add vector
 
 ```c
-#include "gigavector/gigavector.h"
+#include "gigavector.h"
 
 int main(void) {
-    GV_Database *db = gv_db_open("demo.db", 4, GV_INDEX_TYPE_FLAT);
+    GV_Database *db = db_open("demo.db", 4, GV_INDEX_TYPE_FLAT);
     if (!db) return 1;
 
     float v[4] = {1.0f, 0.0f, 0.0f, 0.0f};
-    gv_db_add_vector_with_metadata(db, v, 4, "category", "science");
+    db_add_vector_with_metadata(db, v, 4, "category", "science");
 
-    gv_db_close(db);
+    db_close(db);
     return 0;
 }
 ```

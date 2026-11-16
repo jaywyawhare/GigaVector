@@ -4,10 +4,10 @@
 
 ### Opening and Closing Databases
 
-#### `gv_db_open`
+#### `db_open`
 
 ```c
-GV_Database *gv_db_open(const char *filepath, size_t dimension, GV_IndexType index_type);
+GV_Database *db_open(const char *filepath, size_t dimension, GV_IndexType index_type);
 ```
 
 Creates or opens a vector database.
@@ -21,17 +21,17 @@ Creates or opens a vector database.
 
 **Example:**
 ```c
-GV_Database *db = gv_db_open("vectors.db", 128, GV_INDEX_TYPE_HNSW);
+GV_Database *db = db_open("vectors.db", 128, GV_INDEX_TYPE_HNSW);
 if (db == NULL) {
     fprintf(stderr, "Failed to open database\n");
     return 1;
 }
 ```
 
-#### `gv_db_open_with_hnsw_config`
+#### `db_open_with_hnsw_config`
 
 ```c
-GV_Database *gv_db_open_with_hnsw_config(const char *filepath, size_t dimension,
+GV_Database *db_open_with_hnsw_config(const char *filepath, size_t dimension,
                                          GV_IndexType index_type, const GV_HNSWConfig *hnsw_config);
 ```
 
@@ -55,10 +55,10 @@ typedef struct {
 } GV_HNSWConfig;
 ```
 
-#### `gv_db_open_with_ivfpq_config`
+#### `db_open_with_ivfpq_config`
 
 ```c
-GV_Database *gv_db_open_with_ivfpq_config(const char *filepath, size_t dimension,
+GV_Database *db_open_with_ivfpq_config(const char *filepath, size_t dimension,
                                           GV_IndexType index_type, const GV_IVFPQConfig *ivfpq_config);
 ```
 
@@ -80,10 +80,10 @@ typedef struct {
 } GV_IVFPQConfig;
 ```
 
-#### `gv_db_close`
+#### `db_close`
 
 ```c
-void gv_db_close(GV_Database *db);
+void db_close(GV_Database *db);
 ```
 
 Closes database and releases all resources. Safe to call with NULL.
@@ -109,29 +109,29 @@ gv_free(json);
 
 ### Adding Vectors
 
-#### `gv_db_add_vector`
+#### `db_add_vector`
 
 ```c
-int gv_db_add_vector(GV_Database *db, const float *data, size_t dimension);
+int db_add_vector(GV_Database *db, const float *data, size_t dimension);
 ```
 
 Adds a dense vector to the database.
 
 **Returns:** 0 on success, -1 on error
 
-#### `gv_db_add_vector_with_metadata`
+#### `db_add_vector_with_metadata`
 
 ```c
-int gv_db_add_vector_with_metadata(GV_Database *db, const float *data, size_t dimension,
+int db_add_vector_with_metadata(GV_Database *db, const float *data, size_t dimension,
                                    const char *metadata_key, const char *metadata_value);
 ```
 
 Adds vector with single metadata key-value pair.
 
-#### `gv_db_add_vector_with_rich_metadata`
+#### `db_add_vector_with_rich_metadata`
 
 ```c
-int gv_db_add_vector_with_rich_metadata(GV_Database *db, const float *data, size_t dimension,
+int db_add_vector_with_rich_metadata(GV_Database *db, const float *data, size_t dimension,
                                        const char *const *metadata_keys,
                                        const char *const *metadata_values,
                                        size_t metadata_count);
@@ -143,13 +143,13 @@ Adds vector with multiple metadata entries.
 ```c
 const char *keys[] = {"category", "author", "date"};
 const char *values[] = {"article", "John Doe", "2024-01-15"};
-int result = gv_db_add_vector_with_rich_metadata(db, vector, 128, keys, values, 3);
+int result = db_add_vector_with_rich_metadata(db, vector, 128, keys, values, 3);
 ```
 
-#### `gv_db_add_sparse_vector`
+#### `db_add_sparse_vector`
 
 ```c
-int gv_db_add_sparse_vector(GV_Database *db, const uint32_t *indices, const float *values,
+int db_add_sparse_vector(GV_Database *db, const uint32_t *indices, const float *values,
                            size_t nnz, size_t dimension,
                            const char *metadata_key, const char *metadata_value);
 ```
@@ -167,10 +167,10 @@ Adds a sparse vector (only for `GV_INDEX_TYPE_SPARSE`).
 
 ### Nearest Neighbor Search
 
-#### `gv_db_search`
+#### `db_search`
 
 ```c
-int gv_db_search(const GV_Database *db, const float *query_data, size_t k,
+int db_search(const GV_Database *db, const float *query_data, size_t k,
                  GV_SearchResult *results, GV_DistanceType distance_type);
 ```
 
@@ -187,16 +187,16 @@ Performs k-nearest neighbor search.
 **Example:**
 ```c
 GV_SearchResult results[10];
-int count = gv_db_search(db, query_vector, 10, results, GV_DISTANCE_COSINE);
+int count = db_search(db, query_vector, 10, results, GV_DISTANCE_COSINE);
 for (int i = 0; i < count; i++) {
     printf("Distance: %f, ID: %zu\n", results[i].distance, results[i].id);
 }
 ```
 
-#### `gv_db_search_filtered`
+#### `db_search_filtered`
 
 ```c
-int gv_db_search_filtered(const GV_Database *db, const float *query_data, size_t k,
+int db_search_filtered(const GV_Database *db, const float *query_data, size_t k,
                           GV_SearchResult *results, GV_DistanceType distance_type,
                           const char *filter_key, const char *filter_value);
 ```
@@ -205,14 +205,14 @@ Search with simple key-value metadata filtering.
 
 **Example:**
 ```c
-int count = gv_db_search_filtered(db, query, 10, results, GV_DISTANCE_COSINE,
+int count = db_search_filtered(db, query, 10, results, GV_DISTANCE_COSINE,
                                   "category", "article");
 ```
 
-#### `gv_db_search_with_filter_expr`
+#### `db_search_with_filter_expr`
 
 ```c
-int gv_db_search_with_filter_expr(const GV_Database *db, const float *query_data, size_t k,
+int db_search_with_filter_expr(const GV_Database *db, const float *query_data, size_t k,
                                   GV_SearchResult *results, GV_DistanceType distance_type,
                                   const char *filter_expr);
 ```
@@ -221,10 +221,10 @@ Search with a filter expression string (e.g., `category == "article" AND price >
 
 ### Range Search
 
-#### `gv_db_range_search`
+#### `db_range_search`
 
 ```c
-int gv_db_range_search(const GV_Database *db, const float *query_data, float radius,
+int db_range_search(const GV_Database *db, const float *query_data, float radius,
                        GV_SearchResult *results, size_t max_results, GV_DistanceType distance_type);
 ```
 
@@ -244,11 +244,11 @@ GigaVector supports metadata filtering via simple key-value matching or filter e
 
 ```c
 // Simple key-value filter
-int count = gv_db_search_filtered(db, query, 10, results, GV_DISTANCE_COSINE,
+int count = db_search_filtered(db, query, 10, results, GV_DISTANCE_COSINE,
                                   "category", "article");
 
 // Complex filter expression
-int count = gv_db_search_with_filter_expr(db, query, 10, results, GV_DISTANCE_COSINE,
+int count = db_search_with_filter_expr(db, query, 10, results, GV_DISTANCE_COSINE,
                                           "category == \"article\" AND date >= \"2024-01-01\"");
 ```
 
@@ -478,154 +478,154 @@ int gv_context_graph_get_related(const GV_ContextGraph *graph, const char *entit
 
 ### Configuration
 
-#### `gv_graph_config_init`
+#### `graph_config_init`
 
 ```c
-void gv_graph_config_init(GV_GraphDBConfig *config);
+void graph_config_init(GV_GraphDBConfig *config);
 ```
 
 Initialize a graph database configuration with default values (node_bucket_count=4096, edge_bucket_count=8192, enforce_referential_integrity=1).
 
 ### Creating and Destroying
 
-#### `gv_graph_create`
+#### `graph_create`
 
 ```c
-GV_GraphDB *gv_graph_create(const GV_GraphDBConfig *config);
+GV_GraphDB *graph_create(const GV_GraphDBConfig *config);
 ```
 
 Create a new graph database. Pass NULL for default configuration. Returns NULL on error.
 
-#### `gv_graph_destroy`
+#### `graph_destroy`
 
 ```c
-void gv_graph_destroy(GV_GraphDB *g);
+void graph_destroy(GV_GraphDB *g);
 ```
 
 ### Node Operations
 
-#### `gv_graph_add_node`
+#### `graph_add_node`
 
 ```c
-uint64_t gv_graph_add_node(GV_GraphDB *g, const char *label);
+uint64_t graph_add_node(GV_GraphDB *g, const char *label);
 ```
 
 Add a node with the given label. Returns node_id (>0) on success, 0 on error.
 
-#### `gv_graph_remove_node`
+#### `graph_remove_node`
 
 ```c
-int gv_graph_remove_node(GV_GraphDB *g, uint64_t node_id);
+int graph_remove_node(GV_GraphDB *g, uint64_t node_id);
 ```
 
 Remove a node and cascade-delete all incident edges. Returns 0 on success.
 
-#### `gv_graph_get_node`
+#### `graph_get_node`
 
 ```c
-const GV_GraphNode *gv_graph_get_node(const GV_GraphDB *g, uint64_t node_id);
+const GV_GraphNode *graph_get_node(const GV_GraphDB *g, uint64_t node_id);
 ```
 
 Look up a node by ID. Returns pointer valid until next mutation, or NULL.
 
-#### `gv_graph_set_node_prop` / `gv_graph_get_node_prop`
+#### `graph_set_node_prop` / `graph_get_node_prop`
 
 ```c
-int gv_graph_set_node_prop(GV_GraphDB *g, uint64_t node_id, const char *key, const char *value);
-const char *gv_graph_get_node_prop(const GV_GraphDB *g, uint64_t node_id, const char *key);
+int graph_set_node_prop(GV_GraphDB *g, uint64_t node_id, const char *key, const char *value);
+const char *graph_get_node_prop(const GV_GraphDB *g, uint64_t node_id, const char *key);
 ```
 
-#### `gv_graph_find_nodes_by_label`
+#### `graph_find_nodes_by_label`
 
 ```c
-int gv_graph_find_nodes_by_label(const GV_GraphDB *g, const char *label,
+int graph_find_nodes_by_label(const GV_GraphDB *g, const char *label,
                                  uint64_t *out_ids, size_t max_count);
 ```
 
 ### Edge Operations
 
-#### `gv_graph_add_edge`
+#### `graph_add_edge`
 
 ```c
-uint64_t gv_graph_add_edge(GV_GraphDB *g, uint64_t source, uint64_t target,
+uint64_t graph_add_edge(GV_GraphDB *g, uint64_t source, uint64_t target,
                            const char *label, float weight);
 ```
 
 Add a directed weighted edge. Returns edge_id (>0) on success, 0 on error.
 
-#### `gv_graph_remove_edge`
+#### `graph_remove_edge`
 
 ```c
-int gv_graph_remove_edge(GV_GraphDB *g, uint64_t edge_id);
+int graph_remove_edge(GV_GraphDB *g, uint64_t edge_id);
 ```
 
-#### `gv_graph_get_edges_out` / `gv_graph_get_edges_in` / `gv_graph_get_neighbors`
+#### `graph_get_edges_out` / `graph_get_edges_in` / `graph_get_neighbors`
 
 ```c
-int gv_graph_get_edges_out(const GV_GraphDB *g, uint64_t node_id, uint64_t *out_ids, size_t max_count);
-int gv_graph_get_edges_in(const GV_GraphDB *g, uint64_t node_id, uint64_t *out_ids, size_t max_count);
-int gv_graph_get_neighbors(const GV_GraphDB *g, uint64_t node_id, uint64_t *out_ids, size_t max_count);
+int graph_get_edges_out(const GV_GraphDB *g, uint64_t node_id, uint64_t *out_ids, size_t max_count);
+int graph_get_edges_in(const GV_GraphDB *g, uint64_t node_id, uint64_t *out_ids, size_t max_count);
+int graph_get_neighbors(const GV_GraphDB *g, uint64_t node_id, uint64_t *out_ids, size_t max_count);
 ```
 
 ### Traversal
 
-#### `gv_graph_bfs` / `gv_graph_dfs`
+#### `graph_bfs` / `graph_dfs`
 
 ```c
-int gv_graph_bfs(const GV_GraphDB *g, uint64_t start, size_t max_depth,
+int graph_bfs(const GV_GraphDB *g, uint64_t start, size_t max_depth,
                  uint64_t *out_ids, size_t max_count);
-int gv_graph_dfs(const GV_GraphDB *g, uint64_t start, size_t max_depth,
+int graph_dfs(const GV_GraphDB *g, uint64_t start, size_t max_depth,
                  uint64_t *out_ids, size_t max_count);
 ```
 
-#### `gv_graph_shortest_path`
+#### `graph_shortest_path`
 
 ```c
-int gv_graph_shortest_path(const GV_GraphDB *g, uint64_t from, uint64_t to, GV_GraphPath *path);
+int graph_shortest_path(const GV_GraphDB *g, uint64_t from, uint64_t to, GV_GraphPath *path);
 ```
 
-Dijkstra's algorithm. Caller must free result with `gv_graph_free_path()`.
+Dijkstra's algorithm. Caller must free result with `graph_free_path()`.
 
-#### `gv_graph_all_paths`
+#### `graph_all_paths`
 
 ```c
-int gv_graph_all_paths(const GV_GraphDB *g, uint64_t from, uint64_t to,
+int graph_all_paths(const GV_GraphDB *g, uint64_t from, uint64_t to,
                        size_t max_depth, GV_GraphPath *paths, size_t max_paths);
 ```
 
 ### Analytics
 
-#### `gv_graph_pagerank`
+#### `graph_pagerank`
 
 ```c
-float gv_graph_pagerank(const GV_GraphDB *g, uint64_t node_id, size_t iterations, float damping);
+float graph_pagerank(const GV_GraphDB *g, uint64_t node_id, size_t iterations, float damping);
 ```
 
 Iterative power method PageRank. Typical values: iterations=20, damping=0.85.
 
-#### `gv_graph_connected_components`
+#### `graph_connected_components`
 
 ```c
-int gv_graph_connected_components(const GV_GraphDB *g, uint64_t *component_ids, size_t max_count);
+int graph_connected_components(const GV_GraphDB *g, uint64_t *component_ids, size_t max_count);
 ```
 
 Returns number of distinct components. Array indexed by enumeration order.
 
-#### `gv_graph_clustering_coefficient`
+#### `graph_clustering_coefficient`
 
 ```c
-float gv_graph_clustering_coefficient(const GV_GraphDB *g, uint64_t node_id);
+float graph_clustering_coefficient(const GV_GraphDB *g, uint64_t node_id);
 ```
 
 Local clustering coefficient in [0.0, 1.0].
 
 ### Persistence
 
-#### `gv_graph_save` / `gv_graph_load`
+#### `graph_save` / `graph_load`
 
 ```c
-int gv_graph_save(const GV_GraphDB *g, const char *path);
-GV_GraphDB *gv_graph_load(const char *path);
+int graph_save(const GV_GraphDB *g, const char *path);
+GV_GraphDB *graph_load(const char *path);
 ```
 
 Binary format with magic "GVGR".
@@ -788,10 +788,10 @@ Binary format with magic "GVKG".
 
 ### Index Selection
 
-#### `gv_index_suggest`
+#### `index_suggest`
 
 ```c
-GV_IndexType gv_index_suggest(size_t dimension, size_t expected_count);
+GV_IndexType index_suggest(size_t dimension, size_t expected_count);
 ```
 
 Suggests optimal index type based on dimension and expected size.
@@ -803,10 +803,10 @@ Suggests optimal index type based on dimension and expected size.
 
 ### Cosine Normalization
 
-#### `gv_db_set_cosine_normalized`
+#### `db_set_cosine_normalized`
 
 ```c
-void gv_db_set_cosine_normalized(GV_Database *db, int enabled);
+void db_set_cosine_normalized(GV_Database *db, int enabled);
 ```
 
 Enables L2 normalization for cosine distance optimization.
@@ -817,10 +817,10 @@ Enables L2 normalization for cosine distance optimization.
 
 ### Basic Statistics
 
-#### `gv_db_get_stats`
+#### `db_get_stats`
 
 ```c
-void gv_db_get_stats(const GV_Database *db, GV_DBStats *out);
+void db_get_stats(const GV_Database *db, GV_DBStats *out);
 ```
 
 **Statistics Structure:**
@@ -837,11 +837,11 @@ typedef struct {
 
 ### Detailed Statistics
 
-#### `gv_db_get_detailed_stats`
+#### `db_get_detailed_stats`
 
 ```c
-int gv_db_get_detailed_stats(const GV_Database *db, GV_DetailedStats *out);
-void gv_db_free_detailed_stats(GV_DetailedStats *stats);
+int db_get_detailed_stats(const GV_Database *db, GV_DetailedStats *out);
+void db_free_detailed_stats(GV_DetailedStats *stats);
 ```
 
 Returns database metrics including latency histograms, throughput, memory breakdown, recall metrics, and health indicators.
@@ -865,12 +865,12 @@ typedef struct {
 **Example:**
 ```c
 GV_DetailedStats stats;
-if (gv_db_get_detailed_stats(db, &stats) == 0) {
+if (db_get_detailed_stats(db, &stats) == 0) {
     printf("QPS: %.1f, Memory: %zu bytes\n",
            stats.queries_per_second, stats.memory.total_bytes);
     printf("Health: %d, Recall: %.2f\n",
            stats.health_status, stats.recall.avg_recall);
-    gv_db_free_detailed_stats(&stats);
+    db_free_detailed_stats(&stats);
 }
 ```
 
@@ -1172,24 +1172,39 @@ gv_authz_destroy(authz);
 
 ## GPU Acceleration
 
-Requires CUDA. Enabled automatically when available.
+Requires CUDA. The GPU API lives in `include/specialized/gpu.h` and is a
+standalone context/index layer rather than flags on `GV_Database`.
 
 ```c
+#include "specialized/gpu.h"
+
 // Check GPU availability
-if (gv_gpu_available()) {
-    GV_GPUInfo info;
-    gv_gpu_get_info(&info);
-    printf("GPU: %s, Memory: %zu MB\n", info.name, info.memory_mb);
+if (gpu_available()) {
+    GV_GPUDeviceInfo info;
+    gpu_get_device_info(0, &info);  // device 0
+    printf("GPU: %s, Memory: %zu MB\n", info.name, info.total_memory / (1024 * 1024));
 }
 
-// Enable GPU for database
-gv_db_enable_gpu(db, 0);  // Device 0
+// Create a GPU context
+GV_GPUConfig cfg;
+gpu_config_init(&cfg);
+cfg.device_id = 0;  // -1 for auto
+GV_GPUContext *ctx = gpu_create(&cfg);
 
-// GPU-accelerated search
-gv_db_search_gpu(db, query, k, distance_type, results);
+// Upload an existing database to the GPU
+GV_GPUIndex *gi = gpu_index_from_db(ctx, db);
 
-// Batch search on GPU
-gv_db_search_batch_gpu(db, queries, num_queries, k, distance_type, all_results);
+// GPU-accelerated k-NN search
+GV_GPUSearchParams params = { .metric = GV_GPU_EUCLIDEAN, .k = k };
+size_t indices[K];
+float distances[K];
+gpu_index_search(gi, query, &params, indices, distances);
+
+// Batch search (num_queries x k results)
+gpu_index_knn_search(gi, queries, num_queries, &params, all_indices, all_distances);
+
+gpu_index_destroy(gi);
+gpu_destroy(ctx);
 ```
 
 ---
@@ -1398,34 +1413,34 @@ typedef struct {
 } GV_ResourceLimits;
 ```
 
-#### `gv_db_set_resource_limits`
+#### `db_set_resource_limits`
 
 ```c
-int gv_db_set_resource_limits(GV_Database *db, const GV_ResourceLimits *limits);
+int db_set_resource_limits(GV_Database *db, const GV_ResourceLimits *limits);
 ```
 
 Applies resource constraints to the database. Inserts and operations will be rejected when limits are exceeded.
 
 **Returns:** 0 on success, -1 on error
 
-#### `gv_db_get_resource_limits`
+#### `db_get_resource_limits`
 
 ```c
-void gv_db_get_resource_limits(const GV_Database *db, GV_ResourceLimits *limits);
+void db_get_resource_limits(const GV_Database *db, GV_ResourceLimits *limits);
 ```
 
-#### `gv_db_get_memory_usage`
+#### `db_get_memory_usage`
 
 ```c
-size_t gv_db_get_memory_usage(const GV_Database *db);
+size_t db_get_memory_usage(const GV_Database *db);
 ```
 
 Returns estimated memory usage in bytes.
 
-#### `gv_db_get_concurrent_operations`
+#### `db_get_concurrent_operations`
 
 ```c
-size_t gv_db_get_concurrent_operations(const GV_Database *db);
+size_t db_get_concurrent_operations(const GV_Database *db);
 ```
 
 Returns the number of currently active operations.
@@ -1437,18 +1452,18 @@ GV_ResourceLimits limits = {
     .max_vectors = 1000000,
     .max_concurrent_operations = 100
 };
-gv_db_set_resource_limits(db, &limits);
+db_set_resource_limits(db, &limits);
 
-size_t mem = gv_db_get_memory_usage(db);
+size_t mem = db_get_memory_usage(db);
 printf("Memory usage: %zu bytes\n", mem);
 ```
 
 ### Health Check
 
-#### `gv_db_health_check`
+#### `db_health_check`
 
 ```c
-int gv_db_health_check(const GV_Database *db);
+int db_health_check(const GV_Database *db);
 ```
 
 Checks database integrity, index consistency, and resource usage.
@@ -1460,10 +1475,10 @@ Checks database integrity, index consistency, and resource usage.
 
 ### Memory-Mapped Loading
 
-#### `gv_db_open_mmap`
+#### `db_open_mmap`
 
 ```c
-GV_Database *gv_db_open_mmap(const char *filepath, size_t dimension, GV_IndexType index_type);
+GV_Database *db_open_mmap(const char *filepath, size_t dimension, GV_IndexType index_type);
 ```
 
 Opens a database by memory-mapping an existing snapshot file. The database is **read-only**: WAL is disabled and modifications are not persisted. Useful for fast startup and sharing data across processes.
@@ -1472,82 +1487,82 @@ Opens a database by memory-mapping an existing snapshot file. The database is **
 
 **Example:**
 ```c
-GV_Database *db = gv_db_open_mmap("snapshot.db", 128, GV_INDEX_TYPE_HNSW);
+GV_Database *db = db_open_mmap("snapshot.db", 128, GV_INDEX_TYPE_HNSW);
 // Search works normally
-int count = gv_db_search(db, query, 10, GV_DISTANCE_COSINE, results);
+int count = db_search(db, query, 10, GV_DISTANCE_COSINE, results);
 // Writes are not persisted
-gv_db_close(db);
+db_close(db);
 ```
 
 ### Compaction Control
 
-#### `gv_db_compact`
+#### `db_compact`
 
 ```c
-int gv_db_compact(GV_Database *db);
+int db_compact(GV_Database *db);
 ```
 
 Triggers immediate compaction: reclaims space from deleted vectors and compacts the WAL.
 
 **Returns:** 0 on success, -1 on error
 
-#### `gv_db_start_background_compaction` / `gv_db_stop_background_compaction`
+#### `db_start_background_compaction` / `db_stop_background_compaction`
 
 ```c
-int gv_db_start_background_compaction(GV_Database *db);
-void gv_db_stop_background_compaction(GV_Database *db);
+int db_start_background_compaction(GV_Database *db);
+void db_stop_background_compaction(GV_Database *db);
 ```
 
 Starts or stops a background thread that runs compaction periodically.
 
-#### `gv_db_set_compaction_interval`
+#### `db_set_compaction_interval`
 
 ```c
-void gv_db_set_compaction_interval(GV_Database *db, size_t interval_sec);
+void db_set_compaction_interval(GV_Database *db, size_t interval_sec);
 ```
 
 Sets the interval (in seconds) between background compaction runs. Default: 300.
 
-#### `gv_db_set_wal_compaction_threshold`
+#### `db_set_wal_compaction_threshold`
 
 ```c
-void gv_db_set_wal_compaction_threshold(GV_Database *db, size_t threshold_bytes);
+void db_set_wal_compaction_threshold(GV_Database *db, size_t threshold_bytes);
 ```
 
 Sets the WAL size threshold that triggers compaction. Default: 10 MB.
 
-#### `gv_db_set_deleted_ratio_threshold`
+#### `db_set_deleted_ratio_threshold`
 
 ```c
-void gv_db_set_deleted_ratio_threshold(GV_Database *db, double ratio);
+void db_set_deleted_ratio_threshold(GV_Database *db, double ratio);
 ```
 
 Sets the ratio of deleted vectors (0.0 to 1.0) that triggers compaction. Default: 0.1.
 
 ### Exact Search Control
 
-#### `gv_db_set_exact_search_threshold`
+#### `db_set_exact_search_threshold`
 
 ```c
-void gv_db_set_exact_search_threshold(GV_Database *db, size_t threshold);
+void db_set_exact_search_threshold(GV_Database *db, size_t threshold);
 ```
 
 Sets the maximum collection size below which search falls back to brute-force exact scan (bypassing the index). Useful for small collections where index overhead is wasteful.
 
-#### `gv_db_set_force_exact_search`
+#### `db_set_force_exact_search`
 
 ```c
-void gv_db_set_force_exact_search(GV_Database *db, int enabled);
+void db_set_force_exact_search(GV_Database *db, int enabled);
 ```
 
 When enabled (non-zero), all searches use brute-force exact scan regardless of collection size.
 
 ### IVF-PQ Per-Query Tuning
 
-#### `gv_db_search_ivfpq_opts`
+#### `db_search_ivfpq_opts`
 
 ```c
-int gv_db_search_ivfpq_opts(const GV_Database *db, const float *query_data, size_t k,
+int db_search_ivfpq_opts(const GV_Database *db, const float *query_data, size_t k,
                             GV_SearchResult *results, GV_DistanceType distance_type,
                             size_t nprobe_override, size_t rerank_top);
 ```
@@ -1562,10 +1577,10 @@ Performs IVF-PQ search with per-query overrides for nprobe and rerank pool size.
 
 ### Persistence
 
-#### `gv_db_save`
+#### `db_save`
 
 ```c
-int gv_db_save(const GV_Database *db, const char *filepath);
+int db_save(const GV_Database *db, const char *filepath);
 ```
 
 Saves database snapshot. WAL is automatically replayed on next open.

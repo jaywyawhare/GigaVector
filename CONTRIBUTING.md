@@ -81,16 +81,32 @@ make CFLAGS="-g -O0" lib
 - Editor: VS Code, Vim, or your preferred editor
 - Debugger: GDB
 - Memory checker: Valgrind
-- Static analysis: cppcheck, clang static analyzer
+- Static analysis: cppcheck, clang-tidy, clang static analyzer
+- Formatting/linting: `pre-commit` (drives `clang-format`, `ruff`, `ruff-format`)
 
 **Setup:**
 ```bash
 # Install development tools
-sudo apt-get install gdb valgrind cppcheck
+sudo apt-get install gdb valgrind cppcheck clang-format clang-tidy
 
-# Run static analysis
+# Install and enable the pre-commit hooks (run once per clone)
+pip install pre-commit
+pre-commit install
+
+# Run the hooks against everything without committing
+pre-commit run --all-files
+
+# Run static analysis manually
 cppcheck --enable=all src/
 ```
+
+The enforced hooks are defined in `.pre-commit-config.yaml`:
+
+- `ruff` (`--fix`) and `ruff-format` — Python lint + formatting for `python/`.
+- `clang-format` — C/C++ formatting.
+
+CI re-runs the equivalent checks, so running `pre-commit` locally keeps your
+pull request green.
 
 ---
 
@@ -103,7 +119,7 @@ cppcheck --enable=all src/
 - Consistent indentation throughout
 
 **Naming Conventions:**
-- Functions: `snake_case` with `gv_` prefix (e.g., `gv_db_open`)
+- Functions: `snake_case` (e.g., `db_open`, `graph_create`); a few subsystems keep a `gv_` prefix (e.g., `gv_db_record_vector_access`)
 - Types: `PascalCase` with `GV_` prefix (e.g., `GV_Database`)
 - Constants: `UPPER_SNAKE_CASE` (e.g., `MAX_RESPONSE_SIZE`)
 - Variables: `snake_case` (e.g., `vector_count`)
@@ -128,7 +144,7 @@ int gv_example_function(int param1, const char *param2);
 **Code Formatting:**
 ```c
 // Good: Clear spacing and alignment
-int gv_db_add_vector(GV_Database *db, const float *data, size_t dimension) {
+int db_add_vector(GV_Database *db, const float *data, size_t dimension) {
     if (db == NULL || data == NULL) {
         return -1;
     }
@@ -138,7 +154,7 @@ int gv_db_add_vector(GV_Database *db, const float *data, size_t dimension) {
 }
 
 // Bad: Inconsistent spacing
-int gv_db_add_vector(GV_Database*db,const float*data,size_t dimension){
+int db_add_vector(GV_Database*db,const float*data,size_t dimension){
 if(db==NULL||data==NULL){return -1;}
 // Implementation
 return 0;}
@@ -149,7 +165,7 @@ return 0;}
 **1. Error Handling:**
 ```c
 // Always check return values
-int result = gv_db_add_vector(db, vector, dimension);
+int result = db_add_vector(db, vector, dimension);
 if (result != 0) {
     fprintf(stderr, "Failed to add vector\n");
     return -1;
@@ -160,7 +176,7 @@ if (result != 0) {
 
 Ephemeral scratch inside API handlers and search paths should use `GV_WITH_ARENA` or
 `gv_tls_alloc`. Use `gv_alloc`/`gv_free` for caller-owned or long-lived data without
-a DB context; use `gv_db_*` / `gv_pool_*` for SoA and other DB-bound allocations.
+a DB context; use `db_*` / `gv_pool_*` for SoA and other DB-bound allocations.
 
 ```c
 // Heap-owned buffer (caller or long-lived state)
@@ -176,7 +192,7 @@ buffer = NULL;  // Prevent use-after-free
 **3. Input Validation:**
 ```c
 // Validate all inputs
-int gv_db_add_vector(GV_Database *db, const float *data, size_t dimension) {
+int db_add_vector(GV_Database *db, const float *data, size_t dimension) {
     if (db == NULL || data == NULL) {
         return -1;
     }
@@ -192,7 +208,7 @@ int gv_db_add_vector(GV_Database *db, const float *data, size_t dimension) {
 // Document thread safety
 // This function is thread-safe for concurrent reads
 // Writes require external synchronization
-int gv_db_search(const GV_Database *db, ...);
+int db_search(const GV_Database *db, ...);
 ```
 
 ---
@@ -212,27 +228,27 @@ GV_DST_SEED=42 make c-test-single TEST=dst/test_repl_oracle
 
 **Test Structure:**
 ```c
-#include "gigavector/gigavector.h"
+#include "gigavector.h"
 #include <assert.h>
 #include <stdio.h>
 
 void test_basic_operations(void) {
     // Setup
-    GV_Database *db = gv_db_open(NULL, 4, GV_INDEX_TYPE_KDTREE);
+    GV_Database *db = db_open(NULL, 4, GV_INDEX_TYPE_KDTREE);
     assert(db != NULL);
     
     // Test
     float vector[] = {1.0f, 2.0f, 3.0f, 4.0f};
-    int result = gv_db_add_vector(db, vector, 4);
+    int result = db_add_vector(db, vector, 4);
     assert(result == 0);
     
     // Verify
     GV_DBStats stats;
-    gv_db_get_stats(db, &stats);
+    db_get_stats(db, &stats);
     assert(stats.vector_count == 1);
     
     // Cleanup
-    gv_db_close(db);
+    db_close(db);
 }
 
 int main(void) {
@@ -245,17 +261,24 @@ int main(void) {
 ### Running Tests
 
 ```bash
-# Run all tests
+# Run all C tests
 make c-test
 
-# Run specific test
+# Run a specific test
 make c-test-single TEST=test_db
+
+# Run the Python binding test suite
+make python-test
 
 # Run with valgrind
 make test-valgrind
 
 # Run with sanitizers
-make test-asan
+make test-asan   # ASAN + UBSAN
+make test-tsan   # ThreadSanitizer
+
+# Strict build (what CI's -Werror gate runs)
+make strict
 ```
 
 ### Test Coverage
@@ -299,7 +322,7 @@ make test-coverage-html
  * @note This function is thread-safe for concurrent reads.
  * @note Results are sorted by distance (closest first).
  */
-int gv_db_search(const GV_Database *db, const float *query, size_t k,
+int db_search(const GV_Database *db, const float *query, size_t k,
                 GV_DistanceType distance_type, GV_SearchResult *results);
 ```
 
@@ -307,8 +330,8 @@ int gv_db_search(const GV_Database *db, const float *query, size_t k,
 
 **When to update:**
 - Adding new features: Update relevant docs in `docs/`
-- Changing APIs: Update `docs/API_REFERENCE.md`
-- Fixing bugs: Update `docs/TROUBLESHOOTING.md` if relevant
+- Changing APIs: Update `docs/api_reference.md`
+- Fixing bugs: Update `docs/troubleshooting.md` if relevant
 
 **Documentation Style:**
 - Clear, concise language
@@ -367,19 +390,38 @@ int gv_db_search(const GV_Database *db, const float *query, size_t k,
 - How were they tested?
 
 **Checklist:**
+- [ ] `pre-commit run --all-files` passes (clang-format, ruff, ruff-format)
 - [ ] Code follows style guidelines
-- [ ] Tests added/updated and passing
+- [ ] Tests added/updated and passing (`make c-test`, `make python-test`)
 - [ ] Documentation updated
 - [ ] No memory leaks (valgrind clean)
-- [ ] No compiler warnings
+- [ ] No compiler warnings (`make strict` is clean)
 
 ### Review Process
 
-1. **Automated checks** run on PR
+1. **Automated checks** run on every PR (see CI gates below)
 2. **Maintainers review** code and tests
 3. **Feedback provided** if changes needed
 4. **Approval** when ready
 5. **Merge** by maintainer
+
+### CI Gates
+
+The GitHub Actions workflow (`.github/workflows/ci.yml`) must pass before a PR
+can merge. The gates are:
+
+- **build & test** — builds with both Make and CMake across Linux/macOS/Windows,
+  runs the C test suite and the Python tests, and lints Python with `ruff`/`mypy`.
+- **strict warnings** — `make strict` (`-Werror`) must compile clean.
+- **static analysis (cppcheck)** and **static analysis (clang-tidy)**.
+- **sanitizers** — ASAN + UBSAN, plus a separate **TSAN** (ThreadSanitizer) job.
+- **valgrind** — a curated memcheck run.
+- **custom allocator** — the test suite under `gv_tcalloc` and the `libc` opt-out path.
+- **coverage gate** — tests run with coverage and an enforced threshold.
+- **formal** — Quint + CBMC model checking and lock-order verification.
+- **fuzz** — libFuzzer + deterministic simulation testing (DST), including
+  corrupt-input resilience for the WAL and snapshots.
+- **go-client** / **rust-client** — build, lint, and test the language clients.
 
 ---
 
@@ -470,7 +512,7 @@ Other approaches you've thought about.
 ## Recognition
 
 Contributors will be:
-- Listed in CONTRIBUTORS.md
+- Shown on the repository's [contributors graph](https://github.com/jaywyawhare/GigaVector/graphs/contributors)
 - Credited in release notes
 - Acknowledged in documentation
 

@@ -6,14 +6,14 @@ Standalone stdlib-only client for talking to a remote `gvserver` over HTTP.
 ```python
 from gigavector import GigaVector, Distance
 
-c = GigaVector("http://localhost:8080", api_key="secret")
+c = GigaVector("http://localhost:6969", api_key="secret")
 c.add_vector([1, 0, 0, 0], {"tag": "a"})
 for hit in c.search([1, 0, 0, 0], k=5, distance=Distance.COSINE):
     print(hit["id"], hit["distance"])
 ```
 
 Run tests: `python3 -m unittest` (mock server, no C server needed). End-to-end:
-`GIGAVECTOR_TEST_ADDR=http://localhost:8080 python3 -m unittest -k Integration`.
+`GIGAVECTOR_TEST_ADDR=http://localhost:6969 python3 -m unittest -k Integration`.
 
 ## LangChain
 
@@ -28,7 +28,7 @@ from gigavector_langchain import GigaVectorStore
 
 store = GigaVectorStore.from_texts(
     ["hello", "world"], OpenAIEmbeddings(),
-    base_url="http://localhost:8080", api_key="secret",
+    base_url="http://localhost:6969", api_key="secret",
 )
 docs = store.similarity_search("hello", k=3)
 ```

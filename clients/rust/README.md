@@ -17,7 +17,7 @@ use gigavector::{Client, Distance};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Default pool: up to 8 idle keep-alive connections.
-    let client = Client::new("http://localhost:8080")?;
+    let client = Client::new("http://localhost:6969")?;
 
     client.add_vector(&[0.1, 0.2, 0.3, 0.4], &[("tag", "red")])?;
 
@@ -38,7 +38,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 use std::time::Duration;
 use gigavector::Client;
 
-let client = Client::builder("http://localhost:8080")
+let client = Client::builder("http://localhost:6969")
     .api_key("secret")               // sent as X-API-Key
     .max_idle_connections(32)        // pool cap (default 8)
     .timeout(Duration::from_secs(5)) // per-socket read/write timeout

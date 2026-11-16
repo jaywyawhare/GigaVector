@@ -1,7 +1,11 @@
 # GigaVector
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/jaywyawhare/GigaVector/master/docs/gigavector-logo.png" alt="GigaVector Logo" width="200" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/jaywyawhare/GigaVector/master/assets/banner-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/jaywyawhare/GigaVector/master/assets/banner-light.svg">
+    <img alt="GigaVector: find the one in a billion. Vector database in C." src="https://raw.githubusercontent.com/jaywyawhare/GigaVector/master/assets/banner-dark.svg" width="100%" />
+  </picture>
 </p>
 
 <p align="center">
@@ -15,8 +19,8 @@ A high-performance vector database library for Python. GigaVector provides effic
 ## Features
 
 **Core Database:**
-- Index types: KD-tree, HNSW, Flat, IVF-PQ, IVF-Flat, IVF-SQ8, IVF-TurboQuant, PQ, LSH, Sparse
-- Distance metrics: Euclidean and Cosine similarity
+- Index types: KD-tree, HNSW, Flat, IVF-PQ, IVF-Flat, IVF-SQ8, IVF-TurboQuant, PQ, LSH, Sparse, DiskANN, IVFDisk, RaBitQ
+- Distance metrics: Euclidean, Cosine, Dot Product, Manhattan, Hamming
 - Rich metadata support with key-value pairs
 - Metadata filtering in search queries
 - Persistent storage with snapshot and WAL (Write-Ahead Log)
@@ -471,11 +475,11 @@ from gigavector import Database, Server, ServerConfig, IndexType
 
 # Create database and server
 db = Database.open(None, dimension=128, index=IndexType.HNSW)
-config = ServerConfig(port=8080, enable_cors=True)
+config = ServerConfig(port=6969, enable_cors=True)
 
 with Server(db, config) as server:
     server.start()
-    print("Server running on http://localhost:8080")
+    print("Server running on http://localhost:6969")
     # Server handles REST API requests:
     # GET  /health - Health check
     # POST /vectors - Add vector
@@ -568,7 +572,7 @@ config = TTLConfig(
 ttl = TTLManager(config)
 
 # Set TTL for vectors
-ttl.set_ttl(vector_index=0, ttl_seconds=1800)  # 30 minutes
+ttl.set(vector_index=0, ttl_seconds=1800)  # 30 minutes
 
 # Get stats
 stats = ttl.get_stats()
@@ -636,7 +640,7 @@ bundles the MinGW runtime DLLs so no extra software is needed at runtime.
 
 ## License
 
-Licensed under the DBaJ-NC-CFL License. See [LICENCE.md](LICENCE.md) for details.
+Licensed under the DBaJ-GPL (The "Don't Be A Jerk" General Public License). See [LICENCE](https://github.com/jaywyawhare/GigaVector/blob/master/LICENCE) for details.
 
 ## Links
 

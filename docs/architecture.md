@@ -5,8 +5,8 @@
 > `src/admin/`, etc. It also predates several subsystems - MVCC snapshot-isolation transactions
 > (`src/storage/transaction.c`), access-aware storage tiers (`src/storage/tiered_storage.c`), the
 > WiscKey value-log (`src/storage/vlog.c` + `src/storage/value_store.c`), and the Raft consensus
-> core (`src/admin/raft.c`). See `docs/api_reference.md` and `docs/combined-architecture.md` for
-> those. The concepts below remain accurate; only the file paths and subsystem list are dated.
+> core (`src/admin/raft.c`). See `docs/api_reference.md` for those. The concepts below remain
+> accurate; only the file paths and subsystem list are dated.
 
 ## Overview
 
@@ -31,7 +31,7 @@ GigaVector is a vector database library written in C, designed for:
 
 ### HNSW (Hierarchical Navigable Small Worlds)
 
-**File**: `include/gigavector/gv_hnsw.h`, `src/gv_hnsw.c`
+**File**: `include/index/hnsw.h`, `src/index/hnsw.c`
 
 HNSW is a graph-based approximate nearest neighbor algorithm that builds a hierarchical structure of navigable small world graphs.
 
@@ -75,7 +75,7 @@ typedef struct {
 
 ### IVF-PQ (Inverted File with Product Quantization)
 
-**File**: `include/gigavector/gv_ivfpq.h`, `src/gv_ivfpq.c`
+**File**: `include/index/ivfpq.h`, `src/index/ivfpq.c`
 
 IVF-PQ combines coarse quantization with product quantization for memory-efficient search on very large datasets.
 
@@ -137,7 +137,7 @@ Memory = n_vectors * (m * nbits / 8) + codebook_size
 
 ### K-D Tree
 
-**File**: `include/gigavector/gv_kdtree.h`, `src/gv_kdtree.c`
+**File**: `include/index/kdtree.h`, `src/index/kdtree.c`
 
 K-D Tree is a space-partitioning data structure for exact nearest neighbor search in low dimensions.
 
@@ -161,7 +161,7 @@ Each level of the tree splits space along alternating dimensions. For example, t
 
 ### Sparse Index
 
-**File**: `include/gigavector/gv_sparse_index.h`, `src/gv_sparse_index.c`
+**File**: `include/index/sparse_index.h`, `src/index/sparse_index.c`
 
 Inverted index for sparse vectors (BM25, TF-IDF, high-dimensional feature vectors).
 
@@ -209,7 +209,7 @@ GV_SparseVector doc = {
 
 ## Distance Metrics
 
-**File**: `include/gigavector/gv_distance.h`, `src/gv_distance.c`
+**File**: `include/search/distance.h`, `src/search/distance.c`
 
 ### Supported Metrics
 
@@ -241,7 +241,7 @@ if (gv_cpu_has_feature(GV_CPU_AVX2)) {
 
 ### Memory Layer Architecture
 
-**File**: `include/gigavector/gv_memory_layer.h`, `src/gv_memory_layer.c`
+**File**: `include/storage/memory_layer.h`, `src/storage/memory_layer.c`
 
 The memory layer provides semantic memory storage with retrieval, extraction, and consolidation.
 
@@ -340,7 +340,7 @@ When creating a link A->B, a reciprocal link B->A is automatically created with:
 
 ### Memory Extraction
 
-**File**: `include/gigavector/gv_memory_extraction.h`, `src/gv_memory_extraction.c`
+**File**: `include/storage/memory_extraction.h`, `src/storage/memory_extraction.c`
 
 Extract factual memories from conversations and text.
 
@@ -378,7 +378,7 @@ typedef struct {
 
 ### Memory Consolidation
 
-**File**: `include/gigavector/gv_memory_consolidation.h`, `src/gv_memory_consolidation.c`
+**File**: `include/storage/memory_consolidation.h`, `src/storage/memory_consolidation.c`
 
 Merge similar memories to reduce duplication.
 
@@ -410,7 +410,7 @@ for (int i = 0; i < pair_count; i++) {
 
 ## Importance Scoring System
 
-**File**: `include/gigavector/gv_importance.h`, `src/gv_importance.c`
+**File**: `include/search/importance.h`, `src/search/importance.c`
 
 Multi-factor importance scoring based on cognitive science and ML ranking research.
 
@@ -558,7 +558,7 @@ printf("Final score: %.2f (confidence: %.2f)\n",
 
 ## LLM Integration
 
-**File**: `include/gigavector/gv_llm.h`, `src/gv_llm.c`
+**File**: `include/multimodal/llm.h`, `src/multimodal/llm.c`
 
 ### Supported Providers
 
@@ -620,7 +620,7 @@ gv_llm_destroy(llm);
 
 ## Embedding System
 
-**File**: `include/gigavector/gv_embedding.h`, `src/gv_embedding.c`
+**File**: `include/multimodal/embedding.h`, `src/multimodal/embedding.c`
 
 ### Supported Providers
 
@@ -676,7 +676,7 @@ printf("Hit rate: %.2f%%\n", 100.0 * stats.hits / (stats.hits + stats.misses));
 
 ## Context Graph
 
-**File**: `include/gigavector/gv_context_graph.h`, `src/gv_context_graph.c`
+**File**: `include/features/context_graph.h`, `src/features/context_graph.c`
 
 Build knowledge graphs of entities and their relationships.
 
@@ -764,7 +764,7 @@ GigaVector includes a full property-graph database and a knowledge graph layer t
 
 ### Property Graph Model
 
-The graph database (`gv_graph_db.h`) implements a directed property graph:
+The graph database (`graph_db.h`) implements a directed property graph:
 
 - **Nodes** have a label (e.g. "Person"), key-value properties, and adjacency lists (in/out edges)
 - **Edges** are directed and weighted, with a label (e.g. "KNOWS") and key-value properties
@@ -831,7 +831,7 @@ See [API Reference](api_reference.md) for complete type definitions.
 
 ### Structure-of-Arrays (SoA) Storage
 
-**File**: `include/gigavector/gv_soa_storage.h`
+**File**: `include/storage/soa_storage.h`
 
 Optimized for cache efficiency:
 
@@ -851,7 +851,7 @@ Benefits:
 
 ### Write-Ahead Log (WAL)
 
-**File**: `include/gigavector/gv_wal.h`, `src/gv_wal.c`
+**File**: `include/storage/wal.h`, `src/storage/wal.c`
 
 Durability through transaction logging:
 
@@ -894,7 +894,7 @@ float *restored = gv_scalar_dequantize(quantized, dimension, min, max, 8);
 ### Index Selection Heuristic
 
 ```c
-GV_IndexType type = gv_index_suggest(dimension, expected_count);
+GV_IndexType type = index_suggest(dimension, expected_count);
 
 // Logic:
 // - Small (<=20k) + low dim (<=64): KD-Tree
@@ -910,7 +910,7 @@ GV_IndexType type = gv_index_suggest(dimension, expected_count);
 
 ```c
 // 1. Initialize components
-GV_Database *db = gv_db_open("memories.db", 1536, GV_INDEX_TYPE_HNSW);
+GV_Database *db = db_open("memories.db", 1536, GV_INDEX_TYPE_HNSW);
 
 GV_EmbeddingConfig embed_config = {
     .provider = GV_EMBEDDING_PROVIDER_OPENAI,
@@ -981,7 +981,7 @@ for (int i = 0; i < pair_count; i++) {
 gv_memory_layer_destroy(memory);
 gv_llm_destroy(llm);
 gv_embedding_service_destroy(embeddings);
-gv_db_close(db);
+db_close(db);
 ```
 
 ---
@@ -1000,7 +1000,7 @@ gv_db_close(db);
 
 ## Hybrid Search
 
-**Files**: `gv_tokenizer.h/c`, `gv_bm25.h/c`, `gv_hybrid_search.h/c`
+**Files**: `multimodal/tokenizer.{h,c}`, `multimodal/bm25.{h,c}`, `search/hybrid_search.{h,c}`
 
 Combines BM25 text ranking with vector similarity for improved relevance. A query is tokenized for BM25 scoring and embedded for vector search in parallel; the two result lists are merged via Reciprocal Rank Fusion (RRF).
 
@@ -1019,13 +1019,13 @@ GigaVector distinguishes **fast in-memory** indexes from **large on-disk** index
 
 **IVFDisk** (Phase 2) combines an in-memory IVF/HNSW head with Phase 1 posting lists per partition. **DiskANN** stores the Vamana graph and vectors on disk with an LRU page cache (`src/index/diskann.c`).
 
-RAM-aware selection returns `GV_INDEX_TYPE_IVFDISK` or `GV_INDEX_TYPE_DISKANN` when estimated dataset size exceeds 70% of the caller's memory budget. See [performance.md](performance.md#dual-mode-index-selection-in-memory-vs-on-disk) and [larger_than_ram_plan.md](larger_than_ram_plan.md).
+RAM-aware selection returns `GV_INDEX_TYPE_IVFDISK` or `GV_INDEX_TYPE_DISKANN` when estimated dataset size exceeds 70% of the caller's memory budget. See [performance.md](performance.md#dual-mode-index-selection-in-memory-vs-on-disk).
 
 ---
 
 ## Distributed Architecture
 
-**Files**: `gv_shard.h/c`, `gv_cluster.h/c`, `gv_replication.h/c`
+**Files**: `admin/shard.{h,c}`, `admin/cluster.{h,c}`, `admin/replication.{h,c}`
 
 ### Sharding
 
@@ -1040,7 +1040,7 @@ Horizontal partitioning across multiple nodes. A router assigns vectors to shard
 
 ## GPU Acceleration
 
-**Files**: `gv_gpu.h/c`, `gv_gpu_kernels.cu`
+**Files**: `specialized/gpu.{h,c}`, `specialized/gpu_kernels.cu`
 
 CUDA-accelerated distance computation and batch search.
 

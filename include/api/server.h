@@ -67,7 +67,7 @@ typedef enum {
  * @brief Server configuration.
  */
 typedef struct {
-    uint16_t port;                     /**< Port to listen on (default: 8080). */
+    uint16_t port;                     /**< Port to listen on (default: 6969). */
     const char *bind_address;          /**< Address to bind to (default: "0.0.0.0"). */
     size_t thread_pool_size;           /**< Number of worker threads (default: 4). */
     size_t max_connections;            /**< Maximum concurrent connections (default: 100). */
