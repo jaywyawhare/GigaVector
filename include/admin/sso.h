@@ -52,7 +52,11 @@ typedef struct {
                                      *   it equals this configured cert.  When
                                      *   NULL/empty, SAML assertions are rejected
                                      *   (fail closed).  May be NULL. */
-    int verify_ssl;                 /**< Verify TLS certificates (default: 1). */
+    int disable_tls_verify;         /**< Set non-zero to DISABLE TLS certificate
+                                     *   verification (insecure; local testing
+                                     *   only). Default 0 means verify, so a
+                                     *   zero-initialized config is secure by
+                                     *   default. */
     size_t token_ttl;               /**< Token time-to-live in seconds (default: 3600). */
     const char *allowed_groups;     /**< Comma-separated list of allowed groups. */
     const char *admin_groups;       /**< Comma-separated list of admin groups. */

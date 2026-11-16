@@ -13,7 +13,7 @@ static int test_create_oidc(void) {
     cfg.client_id = "test-client-id";
     cfg.client_secret = "test-secret";
     cfg.redirect_uri = "http://localhost:8080/callback";
-    cfg.verify_ssl = 1;
+    cfg.disable_tls_verify = 0;
     cfg.token_ttl = 3600;
 
     GV_SSOManager *mgr = sso_create(&cfg);
@@ -28,7 +28,7 @@ static int test_create_saml(void) {
     cfg.provider = GV_SSO_SAML;
     cfg.saml_metadata_url = "https://idp.example.com/saml/metadata";
     cfg.saml_entity_id = "urn:gigavector:sp";
-    cfg.verify_ssl = 0;
+    cfg.disable_tls_verify = 1;
     cfg.token_ttl = 7200;
 
     GV_SSOManager *mgr = sso_create(&cfg);
@@ -45,7 +45,7 @@ static int test_create_with_groups(void) {
     cfg.client_id = "test-client";
     cfg.client_secret = "secret";
     cfg.redirect_uri = "http://localhost/cb";
-    cfg.verify_ssl = 1;
+    cfg.disable_tls_verify = 0;
     cfg.token_ttl = 1800;
     cfg.allowed_groups = "users,editors";
     cfg.admin_groups = "admins,superadmins";
@@ -69,7 +69,7 @@ static int test_discover_no_idp(void) {
     cfg.client_id = "test";
     cfg.client_secret = "secret";
     cfg.redirect_uri = "http://localhost/cb";
-    cfg.verify_ssl = 0;
+    cfg.disable_tls_verify = 1;
     cfg.token_ttl = 3600;
 
     GV_SSOManager *mgr = sso_create(&cfg);
@@ -90,7 +90,7 @@ static int test_validate_token_null(void) {
     cfg.client_id = "test";
     cfg.client_secret = "secret";
     cfg.redirect_uri = "http://localhost/cb";
-    cfg.verify_ssl = 0;
+    cfg.disable_tls_verify = 1;
     cfg.token_ttl = 3600;
 
     GV_SSOManager *mgr = sso_create(&cfg);
@@ -111,7 +111,7 @@ static int test_validate_token_invalid(void) {
     cfg.client_id = "test";
     cfg.client_secret = "secret";
     cfg.redirect_uri = "http://localhost/cb";
-    cfg.verify_ssl = 0;
+    cfg.disable_tls_verify = 1;
     cfg.token_ttl = 3600;
 
     GV_SSOManager *mgr = sso_create(&cfg);
@@ -168,7 +168,7 @@ static int test_get_auth_url(void) {
     cfg.client_id = "test-client";
     cfg.client_secret = "secret";
     cfg.redirect_uri = "http://localhost:8080/callback";
-    cfg.verify_ssl = 0;
+    cfg.disable_tls_verify = 1;
     cfg.token_ttl = 3600;
 
     GV_SSOManager *mgr = sso_create(&cfg);
@@ -194,7 +194,7 @@ static int test_get_auth_url_small_buffer(void) {
     cfg.client_id = "test-client";
     cfg.client_secret = "secret";
     cfg.redirect_uri = "http://localhost:8080/callback";
-    cfg.verify_ssl = 0;
+    cfg.disable_tls_verify = 1;
     cfg.token_ttl = 3600;
 
     GV_SSOManager *mgr = sso_create(&cfg);
@@ -217,7 +217,7 @@ static int test_exchange_code_invalid(void) {
     cfg.client_id = "test";
     cfg.client_secret = "secret";
     cfg.redirect_uri = "http://localhost/cb";
-    cfg.verify_ssl = 0;
+    cfg.disable_tls_verify = 1;
     cfg.token_ttl = 3600;
 
     GV_SSOManager *mgr = sso_create(&cfg);
@@ -241,7 +241,7 @@ static int test_refresh_token_invalid(void) {
     cfg.client_id = "test";
     cfg.client_secret = "secret";
     cfg.redirect_uri = "http://localhost/cb";
-    cfg.verify_ssl = 0;
+    cfg.disable_tls_verify = 1;
     cfg.token_ttl = 3600;
 
     GV_SSOManager *mgr = sso_create(&cfg);

@@ -17,8 +17,14 @@ extern "C" {
 
 typedef enum {
     GV_CRYPTO_NONE = 0,             /**< No encryption. */
-    GV_CRYPTO_AES_256_CBC = 1,      /**< AES-256 CBC mode. */
-    GV_CRYPTO_AES_256_GCM = 2       /**< AES-256 GCM mode (authenticated). */
+    GV_CRYPTO_AES_256_CBC = 1,      /**< AES-256 CBC (encrypt-then-MAC). In builds
+                                     *   WITHOUT OpenSSL this uses a portable
+                                     *   software block cipher that is NOT
+                                     *   constant-time (cache-timing side channel);
+                                     *   prefer GCM for attacker-reachable data and
+                                     *   build with OpenSSL. */
+    GV_CRYPTO_AES_256_GCM = 2       /**< AES-256 GCM (authenticated AEAD, preferred).
+                                     *   Requires OpenSSL; fails closed otherwise. */
 } GV_CryptoAlgorithm;
 
 typedef enum {

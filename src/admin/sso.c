@@ -164,10 +164,8 @@ GV_SSOManager *sso_create(const GV_SSOConfig *config) {
 
     mgr->config = *config;
 
-    /* Apply defaults */
-    if (mgr->config.verify_ssl != 0 && mgr->config.verify_ssl != 1) {
-        mgr->config.verify_ssl = 1;
-    }
+    /* Apply defaults. TLS verification is on unless explicitly disabled, so a
+     * zero-initialized config is secure by default (no MITM window). */
     if (mgr->config.token_ttl == 0) {
         mgr->config.token_ttl = 3600;
     }
@@ -200,7 +198,7 @@ int sso_discover(GV_SSOManager *mgr) {
     char *response = NULL;
     size_t response_len = 0;
 
-    if (http_get(discovery_url, mgr->config.verify_ssl,
+    if (http_get(discovery_url, !mgr->config.disable_tls_verify,
                  &response, &response_len) != 0) {
         return -1;
     }
@@ -314,7 +312,7 @@ GV_SSOToken *sso_exchange_code(GV_SSOManager *mgr, const char *auth_code) {
     strncpy(token_endpoint, mgr->endpoints.token_endpoint,
             MAX_ENDPOINT_LEN - 1);
     token_endpoint[MAX_ENDPOINT_LEN - 1] = '\0';
-    int verify_ssl = mgr->config.verify_ssl;
+    int verify_ssl = !mgr->config.disable_tls_verify;
 
     pthread_mutex_unlock(&mgr->mutex);
 
@@ -434,7 +432,7 @@ GV_SSOToken *sso_refresh_token(GV_SSOManager *mgr, const char *refresh_token) {
     strncpy(token_endpoint, mgr->endpoints.token_endpoint,
             MAX_ENDPOINT_LEN - 1);
     token_endpoint[MAX_ENDPOINT_LEN - 1] = '\0';
-    int verify_ssl = mgr->config.verify_ssl;
+    int verify_ssl = !mgr->config.disable_tls_verify;
 
     pthread_mutex_unlock(&mgr->mutex);
 
@@ -990,7 +988,7 @@ static int verify_jwt_signature_rs256(const GV_SSOManager *mgr,
 #ifdef HAVE_CURL
     if (mgr->endpoints.jwks_uri[0]) {
         EVP_PKEY *pkey = rsa_pkey_from_jwks(mgr->endpoints.jwks_uri,
-                                            mgr->config.verify_ssl, kid);
+                                            !mgr->config.disable_tls_verify, kid);
         if (pkey) {
             result = rs256_verify_with_pkey(pkey, (const unsigned char *)jwt,
                                             signed_len, decoded_sig,

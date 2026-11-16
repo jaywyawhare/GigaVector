@@ -68,12 +68,15 @@ static int expand_template(const char *tmpl, const char *file, const char *objec
 int gv_backup_command_put(void *ctx, const char *object_name, const char *local_path) {
     const char *tmpl = (const char *)ctx;
     if (!tmpl || !object_name || !local_path) return -1;
+    /* Validate BOTH substitutions: %o (object_name) and %f (local_path) land
+     * unquoted in the shell command, so each must be injection-safe. */
     if (!name_is_safe(object_name)) return -1;
+    if (!name_is_safe(local_path)) return -1;
 
     char cmd[4096];
     if (expand_template(tmpl, local_path, object_name, cmd, sizeof(cmd)) != 0) return -1;
 
-    /* NOLINTNEXTLINE(cert-env33-c): operator-configured backup command; object_name is validated by name_is_safe(). */
+    /* NOLINTNEXTLINE(cert-env33-c): operator-configured backup command; both %o and %f are validated by name_is_safe(). */
     int rc = system(cmd);
     if (rc == -1) return -1;
 #ifdef WIFEXITED

@@ -13,6 +13,19 @@
 #include "core/utils.h"
 #include "storage/database.h"
 #include "schema/vector.h"   /* vector_destroy() for freeing search-result vectors */
+#include <stdint.h>          /* SIZE_MAX for overflow-safe wire-length checks */
+
+/* Overflow-safe base + n*elem, for validating wire payload lengths against
+ * attacker-controlled counts/dimensions. Returns SIZE_MAX on overflow so the
+ * subsequent `payload_len < expected` check fails closed (SIZE_MAX is never a
+ * legitimate payload length, so the request is rejected rather than
+ * under-allocating and over-reading). Matters on ILP32 where u32*4 can wrap. */
+static inline size_t gv_wire_span(size_t base, size_t n, size_t elem) {
+    size_t prod, total;
+    if (__builtin_mul_overflow(n, elem, &prod)) return SIZE_MAX;
+    if (__builtin_add_overflow(base, prod, &total)) return SIZE_MAX;
+    return total;
+}
 
 #ifdef _WIN32
 /* The gRPC-style socket server relies on POSIX socket headers that are not
@@ -141,7 +154,7 @@ int grpc_decode_search_request(const uint8_t *buf, size_t len,
     *dimension = (size_t)gv_get_u32_be(buf);
     *k = (size_t)gv_get_u32_be(buf + 4);
     *distance_type = (int)gv_get_u32_be(buf + 8);
-    if (len < 12 + (*dimension) * sizeof(float)) return GV_GRPC_ERROR_CONFIG;
+    if (len < gv_wire_span(12, *dimension, sizeof(float))) return GV_GRPC_ERROR_CONFIG;
     *query = gv_alloc((*dimension) * sizeof(float));
     if (!*query) return GV_GRPC_ERROR_MEMORY;
     for (size_t i = 0; i < *dimension; i++) (*query)[i] = read_float_be(buf + 12 + i * 4);
@@ -575,7 +588,7 @@ static void handle_add_vector(GV_GrpcServer *server, int fd,
     }
 
     uint32_t dimension = gv_get_u32_be(msg->payload);
-    size_t expected = 4 + (size_t)dimension * sizeof(float);
+    size_t expected = gv_wire_span(4, (size_t)dimension, sizeof(float));
     if (msg->payload_len < expected) {
         send_error_response(fd, msg->request_id, -1, "incomplete vector data");
         GV_ATOMIC_INC(&server->errors);
@@ -649,7 +662,7 @@ static void handle_search(GV_GrpcServer *server, int fd,
         return;
     }
 
-    size_t expected = 12 + (size_t)dimension * sizeof(float);
+    size_t expected = gv_wire_span(12, (size_t)dimension, sizeof(float));
     if (msg->payload_len < expected) {
         send_error_response(fd, msg->request_id, -1, "incomplete query data");
         GV_ATOMIC_INC(&server->errors);
@@ -752,7 +765,7 @@ static void handle_update(GV_GrpcServer *server, int fd,
     uint32_t index = gv_get_u32_be(msg->payload);
     uint32_t dimension = gv_get_u32_be(msg->payload + 4);
 
-    size_t expected = 8 + (size_t)dimension * sizeof(float);
+    size_t expected = gv_wire_span(8, (size_t)dimension, sizeof(float));
     if (msg->payload_len < expected) {
         send_error_response(fd, msg->request_id, -1, "incomplete vector data");
         GV_ATOMIC_INC(&server->errors);
@@ -856,13 +869,13 @@ static void handle_batch_add(GV_GrpcServer *server, int fd,
         GV_ATOMIC_INC(&server->errors);
         return;
     }
-    size_t total_floats = (size_t)count * (size_t)dimension;
-    if (total_floats > (SIZE_MAX - 8) / sizeof(float)) {
+    size_t total_floats;
+    if (__builtin_mul_overflow((size_t)count, (size_t)dimension, &total_floats)) {
         send_error_response(fd, msg->request_id, -1, "batch add size overflow");
         GV_ATOMIC_INC(&server->errors);
         return;
     }
-    size_t expected = 8 + total_floats * sizeof(float);
+    size_t expected = gv_wire_span(8, total_floats, sizeof(float));
     if (msg->payload_len < expected) {
         send_error_response(fd, msg->request_id, -1, "incomplete batch data");
         GV_ATOMIC_INC(&server->errors);
@@ -927,8 +940,13 @@ static void handle_batch_search(GV_GrpcServer *server, int fd,
         return;
     }
 
-    size_t total_floats = (size_t)qcount * (size_t)dimension;
-    size_t expected = 16 + total_floats * sizeof(float);
+    size_t total_floats;
+    if (__builtin_mul_overflow((size_t)qcount, (size_t)dimension, &total_floats)) {
+        send_error_response(fd, msg->request_id, -1, "batch search size overflow");
+        GV_ATOMIC_INC(&server->errors);
+        return;
+    }
+    size_t expected = gv_wire_span(16, total_floats, sizeof(float));
     if (msg->payload_len < expected) {
         send_error_response(fd, msg->request_id, -1, "incomplete batch query data");
         GV_ATOMIC_INC(&server->errors);
@@ -1078,7 +1096,7 @@ static void handle_range_search(GV_GrpcServer *server, int fd,
         GV_ATOMIC_INC(&server->errors);
         return;
     }
-    size_t expected = 12 + (size_t)dimension * sizeof(float) + sizeof(float);
+    size_t expected = gv_wire_span(12 + sizeof(float), (size_t)dimension, sizeof(float));
     if (msg->payload_len < expected) {
         send_error_response(fd, msg->request_id, -1, "incomplete query data");
         GV_ATOMIC_INC(&server->errors);
@@ -1739,7 +1757,7 @@ int grpc_decode_search_request(const uint8_t *buf, size_t len,
     *k = (size_t)gv_get_u32_be(buf + 4);
     *distance_type = (int)gv_get_u32_be(buf + 8);
 
-    size_t expected = 12 + (*dimension) * sizeof(float);
+    size_t expected = gv_wire_span(12, *dimension, sizeof(float));
     if (len < expected) return GV_GRPC_ERROR_CONFIG;
 
     *query = gv_alloc((*dimension) * sizeof(float));

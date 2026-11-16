@@ -61,7 +61,17 @@ struct GV_CryptoStream {
     int have_held;
 };
 
-/* AES S-box */
+/* Software AES-256 (table-based) used ONLY on the AES-256-CBC path, and ONLY in
+ * builds WITHOUT OpenSSL (GV_HAVE_OPENSSL undefined). SECURITY CAVEAT: these
+ * S-box table lookups are indexed by key/data-dependent bytes, so this software
+ * block cipher is NOT constant-time and is exposed to cache-timing key recovery.
+ * It exists purely as a portability fallback for environments that lack OpenSSL.
+ *   - Preferred: build with OpenSSL (CMake auto-detects it; Makefile: pass
+ *     OPENSSL_FLAGS=-DGV_HAVE_OPENSSL). Then AES-256-GCM via OpenSSL's
+ *     constant-time (AES-NI) implementation is selected automatically.
+ *   - Do NOT use this software CBC fallback for attacker-reachable ciphertext.
+ *     GCM already fails closed without OpenSSL (crypto_encrypt/decrypt).
+ * AES S-box */
 static const unsigned char sbox[256] = {
     0x63, 0x7c, 0x77, 0x7b, 0xf2, 0x6b, 0x6f, 0xc5, 0x30, 0x01, 0x67, 0x2b, 0xfe, 0xd7, 0xab, 0x76,
     0xca, 0x82, 0xc9, 0x7d, 0xfa, 0x59, 0x47, 0xf0, 0xad, 0xd4, 0xa2, 0xaf, 0x9c, 0xa4, 0x72, 0xc0,
