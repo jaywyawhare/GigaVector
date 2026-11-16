@@ -11,12 +11,8 @@
 #include <time.h>
 #include <pthread.h>
 
-#ifdef HAVE_CURL
-#include <curl/curl.h>
-#endif
-
 #include "multimodal/embedding.h"
-#include "multimodal/http_buffer.h"
+#include "core/http_client.h"
 #include "core/utils.h"
 
 #define MAX_RESPONSE_SIZE (10 * 1024 * 1024)  // 10MB for batch responses
@@ -50,9 +46,6 @@ struct GV_EmbeddingCache {
 struct GV_EmbeddingService {
     GV_EmbeddingConfig config;
     GV_EmbeddingCache *cache;
-#ifdef HAVE_CURL
-    void *curl_handle;            /* CURL handle for HTTP requests */
-#endif
     char *last_error;             /* Last error message */
 };
 
@@ -328,6 +321,9 @@ void embedding_config_free(GV_EmbeddingConfig *config) {
     }
 }
 
+/* Network-backed embedding generators compile only with an HTTP transport;
+ * the dispatchers below gate on HAVE_CURL so a no-libcurl build degrades to
+ * the same failure path these functions would return. */
 #ifdef HAVE_CURL
 
 static int generate_huggingface_embedding(GV_EmbeddingService *service,
@@ -348,6 +344,37 @@ static int generate_google_embedding_batch(GV_EmbeddingService *service,
                                           size_t text_count,
                                           size_t **embedding_dims,
                                           float ***embeddings);
+
+/**
+ * POST request_json to url with a JSON content-type and optional auth header,
+ * returning the response body (gv_alloc'd, caller gv_free) in *out_body.
+ * Returns 0 on transport success, -1 otherwise.
+ */
+static int embedding_http_post(GV_EmbeddingService *service, const char *url,
+                               const char *request_json, const char *auth_header,
+                               char **out_body) {
+    const char *hdrs[2];
+    size_t num_hdrs = 0;
+    hdrs[num_hdrs++] = "Content-Type: application/json";
+    if (auth_header) hdrs[num_hdrs++] = auth_header;
+
+    GV_HttpRequest req = {
+        .method = GV_HTTP_POST,
+        .url = url,
+        .headers = hdrs,
+        .num_headers = num_hdrs,
+        .body = request_json,
+        .body_len = strlen(request_json),
+        .timeout_ms = (long)(service->config.timeout_seconds > 0 ?
+                             service->config.timeout_seconds : DEFAULT_TIMEOUT) * 1000L,
+        .verify_tls = 1,
+        .max_response_bytes = MAX_RESPONSE_SIZE,
+    };
+    GV_HttpResponse resp;
+    if (gv_http_perform(&req, &resp) != GV_HTTP_OK) return -1;
+    *out_body = resp.body;
+    return 0;
+}
 
 static int parse_openai_embedding_response(const char *json, float **embedding, size_t *dim) {
 
@@ -412,11 +439,6 @@ static int generate_openai_embedding(GV_EmbeddingService *service,
                                      const char *text,
                                      size_t *embedding_dim,
                                      float **embedding) {
-    CURL *curl = (CURL *)service->curl_handle;
-    if (curl == NULL) {
-        return -1;
-    }
-
     char escaped_text[3072];
     gv_json_escape(escaped_text, sizeof(escaped_text), text);
 
@@ -433,43 +455,19 @@ static int generate_openai_embedding(GV_EmbeddingService *service,
                 "{\"input\":\"%s\",\"model\":\"%s\"}",
                 escaped_text, model);
     }
-    
+
     const char *url = service->config.base_url ? service->config.base_url : "https://api.openai.com/v1/embeddings";
-    
-    GV_HttpBuffer buf;
-    buf.data = (char *)gv_alloc(4096);
-    buf.size = 0;
-    buf.capacity = 4096;
-    buf.max_size = MAX_RESPONSE_SIZE;
-    if (buf.data == NULL) {
-        return -1;
-    }
-    
-    struct curl_slist *headers = NULL;
-    headers = curl_slist_append(headers, "Content-Type: application/json");
-    
+
     char auth_buf[1024];
     snprintf(auth_buf, sizeof(auth_buf), "Authorization: Bearer %s", service->config.api_key);
-    headers = curl_slist_append(headers, auth_buf);
-    
-    curl_easy_setopt(curl, CURLOPT_URL, url);
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, request_json);
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, gv_http_write_callback);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buf);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, service->config.timeout_seconds > 0 ?
-                     service->config.timeout_seconds : DEFAULT_TIMEOUT);
-    
-    CURLcode res = curl_easy_perform(curl);
-    curl_slist_free_all(headers);
-    
-    if (res != CURLE_OK) {
-        gv_free(buf.data);
+
+    char *body = NULL;
+    if (embedding_http_post(service, url, request_json, auth_buf, &body) != 0) {
         return -1;
     }
-    
-    int result = parse_openai_embedding_response(buf.data, embedding, embedding_dim);
-    gv_free(buf.data);
+
+    int result = parse_openai_embedding_response(body, embedding, embedding_dim);
+    gv_free(body);
 
     return result;
 }
@@ -524,12 +522,6 @@ static int generate_google_embedding(GV_EmbeddingService *service,
                                     const char *text,
                                     size_t *embedding_dim,
                                     float **embedding) {
-#ifdef HAVE_CURL
-    CURL *curl = (CURL *)service->curl_handle;
-    if (curl == NULL) {
-        return -1;
-    }
-    
     const char *model = service->config.model ? service->config.model : "text-embedding-004";
     int dim = service->config.embedding_dimension > 0 ? (int)service->config.embedding_dimension : 768;
     char request_json[16384];
@@ -580,49 +572,18 @@ static int generate_google_embedding(GV_EmbeddingService *service,
         }
     }
     
-    GV_HttpBuffer buf;
-    buf.data = (char *)gv_alloc(4096);
-    buf.size = 0;
-    buf.capacity = 4096;
-    buf.max_size = MAX_RESPONSE_SIZE;
-    if (buf.data == NULL) {
-        return -1;
-    }
-    
-    struct curl_slist *headers = NULL;
-    headers = curl_slist_append(headers, "Content-Type: application/json");
-    
     char auth_buf[1024];
     snprintf(auth_buf, sizeof(auth_buf), "x-goog-api-key: %s", service->config.api_key);
-    headers = curl_slist_append(headers, auth_buf);
-    
-    curl_easy_setopt(curl, CURLOPT_URL, url);
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, request_json);
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, gv_http_write_callback);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buf);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, service->config.timeout_seconds > 0 ?
-                     service->config.timeout_seconds : DEFAULT_TIMEOUT);
-    
-    CURLcode res = curl_easy_perform(curl);
-    curl_slist_free_all(headers);
-    
-    if (res != CURLE_OK) {
-        gv_free(buf.data);
+
+    char *body = NULL;
+    if (embedding_http_post(service, url, request_json, auth_buf, &body) != 0) {
         return -1;
     }
-    
-    int result = parse_google_embedding_response(buf.data, embedding, embedding_dim);
-    gv_free(buf.data);
+
+    int result = parse_google_embedding_response(body, embedding, embedding_dim);
+    gv_free(body);
 
     return result;
-#else
-    (void)service;
-    (void)text;
-    (void)embedding_dim;
-    (void)embedding;
-    return -1;
-#endif
 }
 
 static int generate_google_embedding_batch(GV_EmbeddingService *service,
@@ -630,12 +591,6 @@ static int generate_google_embedding_batch(GV_EmbeddingService *service,
                                           size_t text_count,
                                           size_t **embedding_dims,
                                           float ***embeddings) {
-#ifdef HAVE_CURL
-    CURL *curl = (CURL *)service->curl_handle;
-    if (curl == NULL) {
-        return -1;
-    }
-    
     /* Google batch API uses batchEmbedContents endpoint */
     const char *model = service->config.model ? service->config.model : "text-embedding-004";
     int dim = service->config.embedding_dimension > 0 ? (int)service->config.embedding_dimension : 768;
@@ -704,50 +659,26 @@ static int generate_google_embedding_batch(GV_EmbeddingService *service,
         }
     }
     
-    GV_HttpBuffer buf;
-    buf.data = (char *)gv_alloc(262144);
-    buf.size = 0;
-    buf.capacity = 262144;
-    buf.max_size = MAX_RESPONSE_SIZE;
-    if (buf.data == NULL) {
-        gv_free(request_json);
-        return -1;
-    }
-    
-    struct curl_slist *headers = NULL;
-    headers = curl_slist_append(headers, "Content-Type: application/json");
-    
     char auth_buf[1024];
     snprintf(auth_buf, sizeof(auth_buf), "x-goog-api-key: %s", service->config.api_key);
-    headers = curl_slist_append(headers, auth_buf);
-    
-    curl_easy_setopt(curl, CURLOPT_URL, url);
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, request_json);
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, gv_http_write_callback);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buf);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, service->config.timeout_seconds > 0 ?
-                     service->config.timeout_seconds : DEFAULT_TIMEOUT);
-    
-    CURLcode res = curl_easy_perform(curl);
-    curl_slist_free_all(headers);
+
+    char *body = NULL;
+    int post_rc = embedding_http_post(service, url, request_json, auth_buf, &body);
     gv_free(request_json);
-    
-    if (res != CURLE_OK) {
-        gv_free(buf.data);
+    if (post_rc != 0) {
         return -1;
     }
-    
+
     /* Parse batch response - Google format: {"embeddings": [{"values": [...]}, {"values": [...]}, ...]} */
-    const char *embeddings_start = strstr(buf.data, "\"embeddings\"");
+    const char *embeddings_start = strstr(body, "\"embeddings\"");
     if (embeddings_start == NULL) {
-        gv_free(buf.data);
+        gv_free(body);
         return -1;
     }
-    
+
     embeddings_start = strchr(embeddings_start, '[');
     if (embeddings_start == NULL) {
-        gv_free(buf.data);
+        gv_free(body);
         return -1;
     }
     embeddings_start++;
@@ -838,29 +769,15 @@ static int generate_google_embedding_batch(GV_EmbeddingService *service,
             break;
         }
     }
-    
-    gv_free(buf.data);
+
+    gv_free(body);
     return (int)success_count;
-#else
-    (void)service;
-    (void)texts;
-    (void)text_count;
-    (void)embedding_dims;
-    (void)embeddings;
-    return -1;
-#endif
 }
 
 static int generate_huggingface_embedding(GV_EmbeddingService *service,
                                          const char *text,
                                          size_t *embedding_dim,
                                          float **embedding) {
-#ifdef HAVE_CURL
-    CURL *curl = (CURL *)service->curl_handle;
-    if (curl == NULL) {
-        return -1;
-    }
-    
     char request_json[4096];
     snprintf(request_json, sizeof(request_json),
             "{\"input\":\"%s\"}", text);
@@ -874,51 +791,22 @@ static int generate_huggingface_embedding(GV_EmbeddingService *service,
         url = full_url;
     }
     
-    GV_HttpBuffer buf;
-    buf.data = (char *)gv_alloc(4096);
-    buf.size = 0;
-    buf.capacity = 4096;
-    buf.max_size = MAX_RESPONSE_SIZE;
-    if (buf.data == NULL) {
-        return -1;
-    }
-    
-    struct curl_slist *headers = NULL;
-    headers = curl_slist_append(headers, "Content-Type: application/json");
-    
+    char auth_buf[1024];
+    const char *auth_header = NULL;
     if (service->config.api_key) {
-        char auth_buf[1024];
         snprintf(auth_buf, sizeof(auth_buf), "Authorization: Bearer %s", service->config.api_key);
-        headers = curl_slist_append(headers, auth_buf);
+        auth_header = auth_buf;
     }
-    
-    curl_easy_setopt(curl, CURLOPT_URL, url);
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, request_json);
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, gv_http_write_callback);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buf);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, service->config.timeout_seconds > 0 ?
-                     service->config.timeout_seconds : DEFAULT_TIMEOUT);
-    
-    CURLcode res = curl_easy_perform(curl);
-    curl_slist_free_all(headers);
-    
-    if (res != CURLE_OK) {
-        gv_free(buf.data);
+
+    char *body = NULL;
+    if (embedding_http_post(service, url, request_json, auth_header, &body) != 0) {
         return -1;
     }
-    
-    int result = parse_openai_embedding_response(buf.data, embedding, embedding_dim);
-    gv_free(buf.data);
+
+    int result = parse_openai_embedding_response(body, embedding, embedding_dim);
+    gv_free(body);
 
     return result;
-#else
-    (void)service;
-    (void)text;
-    (void)embedding_dim;
-    (void)embedding;
-    return -1;
-#endif
 }
 
 /* Generate batch embeddings using HuggingFace TEI API */
@@ -927,12 +815,6 @@ static int generate_huggingface_embedding_batch(GV_EmbeddingService *service,
                                                size_t text_count,
                                                size_t **embedding_dims,
                                                float ***embeddings) {
-#ifdef HAVE_CURL
-    CURL *curl = (CURL *)service->curl_handle;
-    if (curl == NULL) {
-        return -1;
-    }
-    
     size_t json_size = 4096 + text_count * 256;
     char *request_json = (char *)gv_alloc(json_size);
     if (request_json == NULL) {
@@ -956,9 +838,9 @@ static int generate_huggingface_embedding_batch(GV_EmbeddingService *service,
         }
         request_json[pos++] = '"';
     }
-    
+
     snprintf(request_json + pos, json_size - pos, "]}");
-    
+
     const char *url = service->config.base_url ?
                      service->config.base_url :
                      "http://localhost:3000/v1/embeddings";
@@ -967,46 +849,24 @@ static int generate_huggingface_embedding_batch(GV_EmbeddingService *service,
         snprintf(full_url, sizeof(full_url), "%s/embeddings", url);
         url = full_url;
     }
-    
-    GV_HttpBuffer buf;
-    buf.data = (char *)gv_alloc(8192);
-    buf.size = 0;
-    buf.capacity = 8192;
-    buf.max_size = MAX_RESPONSE_SIZE;
-    if (buf.data == NULL) {
-        gv_free(request_json);
-        return -1;
-    }
-    
-    struct curl_slist *headers = NULL;
-    headers = curl_slist_append(headers, "Content-Type: application/json");
-    
+
+    char auth_buf[1024];
+    const char *auth_header = NULL;
     if (service->config.api_key) {
-        char auth_buf[1024];
         snprintf(auth_buf, sizeof(auth_buf), "Authorization: Bearer %s", service->config.api_key);
-        headers = curl_slist_append(headers, auth_buf);
+        auth_header = auth_buf;
     }
-    
-    curl_easy_setopt(curl, CURLOPT_URL, url);
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, request_json);
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, gv_http_write_callback);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buf);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, service->config.timeout_seconds > 0 ?
-                     service->config.timeout_seconds : DEFAULT_TIMEOUT);
-    
-    CURLcode res = curl_easy_perform(curl);
-    curl_slist_free_all(headers);
+
+    char *body = NULL;
+    int post_rc = embedding_http_post(service, url, request_json, auth_header, &body);
     gv_free(request_json);
-    
-    if (res != CURLE_OK) {
-        gv_free(buf.data);
+    if (post_rc != 0) {
         return -1;
     }
-    
-    const char *data_start = strstr(buf.data, "\"data\":[");
+
+    const char *data_start = strstr(body, "\"data\":[");
     if (data_start == NULL) {
-        gv_free(buf.data);
+        gv_free(body);
         return -1;
     }
 
@@ -1055,16 +915,8 @@ static int generate_huggingface_embedding_batch(GV_EmbeddingService *service,
         if (p) p++;
     }
 
-    gv_free(buf.data);
+    gv_free(body);
     return (int)success_count;
-#else
-    (void)service;
-    (void)texts;
-    (void)text_count;
-    (void)embedding_dims;
-    (void)embeddings;
-    return -1;
-#endif
 }
 
 static int generate_openai_embedding_batch(GV_EmbeddingService *service,
@@ -1072,11 +924,6 @@ static int generate_openai_embedding_batch(GV_EmbeddingService *service,
                                            size_t text_count,
                                            size_t **embedding_dims,
                                            float ***embeddings) {
-    CURL *curl = (CURL *)service->curl_handle;
-    if (curl == NULL) {
-        return -1;
-    }
-    
     size_t json_size = 4096 + text_count * 256;
     char *request_json = (char *)gv_alloc(json_size);
     if (request_json == NULL) {
@@ -1111,44 +958,20 @@ static int generate_openai_embedding_batch(GV_EmbeddingService *service,
     }
     
     const char *url = service->config.base_url ? service->config.base_url : "https://api.openai.com/v1/embeddings";
-    
-    GV_HttpBuffer buf;
-    buf.data = (char *)gv_alloc(8192);
-    buf.size = 0;
-    buf.capacity = 8192;
-    buf.max_size = MAX_RESPONSE_SIZE;
-    if (buf.data == NULL) {
-        gv_free(request_json);
-        return -1;
-    }
-    
-    struct curl_slist *headers = NULL;
-    headers = curl_slist_append(headers, "Content-Type: application/json");
-    
+
     char auth_buf[1024];
     snprintf(auth_buf, sizeof(auth_buf), "Authorization: Bearer %s", service->config.api_key);
-    headers = curl_slist_append(headers, auth_buf);
-    
-    curl_easy_setopt(curl, CURLOPT_URL, url);
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, request_json);
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, gv_http_write_callback);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buf);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, service->config.timeout_seconds > 0 ?
-                     service->config.timeout_seconds : DEFAULT_TIMEOUT);
-    
-    CURLcode res = curl_easy_perform(curl);
-    curl_slist_free_all(headers);
+
+    char *body = NULL;
+    int post_rc = embedding_http_post(service, url, request_json, auth_buf, &body);
     gv_free(request_json);
-    
-    if (res != CURLE_OK) {
-        gv_free(buf.data);
+    if (post_rc != 0) {
         return -1;
     }
-    
-    const char *data_start = strstr(buf.data, "\"data\":[");
+
+    const char *data_start = strstr(body, "\"data\":[");
     if (data_start == NULL) {
-        gv_free(buf.data);
+        gv_free(body);
         return -1;
     }
 
@@ -1197,7 +1020,7 @@ static int generate_openai_embedding_batch(GV_EmbeddingService *service,
         if (p) p++;
     }
 
-    gv_free(buf.data);
+    gv_free(body);
     return (int)success_count;
 }
 
@@ -1233,29 +1056,17 @@ GV_EmbeddingService *embedding_service_create(const GV_EmbeddingConfig *config) 
         service->cache = embedding_cache_create(config->cache_size);
     }
     
-#ifdef HAVE_CURL
-    if (config->provider == GV_EMBEDDING_PROVIDER_OPENAI || 
-        config->provider == GV_EMBEDDING_PROVIDER_CUSTOM ||
-        config->provider == GV_EMBEDDING_PROVIDER_GOOGLE) {
-        service->curl_handle = curl_easy_init();
-        if (service->curl_handle == NULL) {
-            embedding_cache_destroy(service->cache);
-            embedding_config_free(&service->config);
-            gv_free(service);
-            return NULL;
-        }
-    }
-#else
-    if (config->provider == GV_EMBEDDING_PROVIDER_OPENAI || 
-        config->provider == GV_EMBEDDING_PROVIDER_CUSTOM ||
-        config->provider == GV_EMBEDDING_PROVIDER_GOOGLE) {
+    /* Providers that reach the network require an HTTP transport. */
+    if ((config->provider == GV_EMBEDDING_PROVIDER_OPENAI ||
+         config->provider == GV_EMBEDDING_PROVIDER_CUSTOM ||
+         config->provider == GV_EMBEDDING_PROVIDER_GOOGLE) &&
+        !gv_http_available()) {
         embedding_cache_destroy(service->cache);
         embedding_config_free(&service->config);
         gv_free(service);
         return NULL;
     }
-#endif
-    
+
     return service;
 }
 
@@ -1265,13 +1076,7 @@ void embedding_service_destroy(GV_EmbeddingService *service) {
     }
     
     embedding_cache_destroy(service->cache);
-    
-#ifdef HAVE_CURL
-    if (service->curl_handle) {
-        curl_easy_cleanup((CURL *)service->curl_handle);
-    }
-#endif
-    
+
     embedding_config_free(&service->config);
     if (service->last_error) {
         gv_free(service->last_error);

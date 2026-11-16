@@ -15,6 +15,7 @@
 #include "admin/sso.h"
 #include "security/crypto.h"
 #include "core/memory.h"
+#include "core/http_client.h"
 #include "core/utils.h"
 
 #include <stdlib.h>
@@ -23,10 +24,6 @@
 #include <time.h>
 #include <ctype.h>
 #include <pthread.h>
-
-#ifdef HAVE_CURL
-#include <curl/curl.h>
-#endif
 
 /*
  * RS256 (RSA-SHA256) JWT verification requires OpenSSL, using the same
@@ -63,15 +60,6 @@ typedef struct {
     char userinfo_endpoint[MAX_ENDPOINT_LEN];
     int discovered;
 } OIDCEndpoints;
-
-/**
- * @brief Dynamic buffer for HTTP response accumulation.
- */
-typedef struct {
-    char *data;
-    size_t size;
-    size_t capacity;
-} ResponseBuffer;
 
 /**
  * @brief SSO manager internal structure.
@@ -2007,150 +1995,54 @@ static GV_SSOToken *parse_saml_assertion(const GV_SSOConfig *config,
     return token;
 }
 
-#ifdef HAVE_CURL
-
-/**
- * libcurl write callback that accumulates data into a ResponseBuffer.
- */
-static size_t curl_write_cb(void *ptr, size_t size, size_t nmemb, void *userdata) {
-    ResponseBuffer *buf = (ResponseBuffer *)userdata;
-    size_t total = size * nmemb;
-
-    if (buf->size + total >= MAX_RESPONSE_SIZE) return 0;
-
-    if (buf->size + total >= buf->capacity) {
-        size_t new_cap = buf->capacity ? buf->capacity * 2 : 4096;
-        while (new_cap < buf->size + total + 1) new_cap *= 2;
-        char *new_data = gv_realloc(buf->data, new_cap);
-        if (!new_data) return 0;
-        buf->data = new_data;
-        buf->capacity = new_cap;
-    }
-
-    memcpy(buf->data + buf->size, ptr, total);
-    buf->size += total;
-    buf->data[buf->size] = '\0';
-
-    return total;
-}
-
+/** HTTP GET following redirects; returns the 2xx body (caller gv_free). */
 static int http_get(const char *url, int verify_ssl,
                     char **response, size_t *response_len) {
     if (!url || !response || !response_len) return -1;
 
-    CURL *curl = curl_easy_init();
-    if (!curl) return -1;
-
-    ResponseBuffer buf;
-    memset(&buf, 0, sizeof(buf));
-
-    curl_easy_setopt(curl, CURLOPT_URL, url);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_cb);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buf);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
-    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-
-    if (!verify_ssl) {
-        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
-        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
-    }
-
-    CURLcode res = curl_easy_perform(curl);
-
-    if (res != CURLE_OK) {
-        gv_free(buf.data);
-        curl_easy_cleanup(curl);
+    GV_HttpRequest req = {
+        .method = GV_HTTP_GET,
+        .url = url,
+        .timeout_ms = 30000,
+        .verify_tls = verify_ssl,
+        .follow_redirects = 1,
+        .max_response_bytes = MAX_RESPONSE_SIZE,
+    };
+    GV_HttpResponse resp;
+    if (gv_http_perform(&req, &resp) != GV_HTTP_OK) return -1;
+    if (resp.status < 200 || resp.status >= 300) {
+        gv_free(resp.body);
         return -1;
     }
-
-    long http_code = 0;
-    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
-    curl_easy_cleanup(curl);
-
-    if (http_code < 200 || http_code >= 300) {
-        gv_free(buf.data);
-        return -1;
-    }
-
-    *response = buf.data;
-    *response_len = buf.size;
+    *response = resp.body;
+    *response_len = resp.body_len;
     return 0;
 }
 
+/** HTTP POST of form-encoded fields; returns the 2xx body (caller gv_free). */
 static int http_post_form(const char *url, const char *post_fields,
                           int verify_ssl, char **response, size_t *response_len) {
     if (!url || !post_fields || !response || !response_len) return -1;
 
-    CURL *curl = curl_easy_init();
-    if (!curl) return -1;
-
-    ResponseBuffer buf;
-    memset(&buf, 0, sizeof(buf));
-
-    curl_easy_setopt(curl, CURLOPT_URL, url);
-    curl_easy_setopt(curl, CURLOPT_POST, 1L);
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, post_fields);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_cb);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buf);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
-
-    struct curl_slist *headers = NULL;
-    headers = curl_slist_append(headers,
-        "Content-Type: application/x-www-form-urlencoded");
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-
-    if (!verify_ssl) {
-        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
-        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
-    }
-
-    CURLcode res = curl_easy_perform(curl);
-
-    curl_slist_free_all(headers);
-
-    if (res != CURLE_OK) {
-        gv_free(buf.data);
-        curl_easy_cleanup(curl);
+    const char *hdrs[] = { "Content-Type: application/x-www-form-urlencoded" };
+    GV_HttpRequest req = {
+        .method = GV_HTTP_POST,
+        .url = url,
+        .headers = hdrs,
+        .num_headers = 1,
+        .body = post_fields,
+        .body_len = strlen(post_fields),
+        .timeout_ms = 30000,
+        .verify_tls = verify_ssl,
+        .max_response_bytes = MAX_RESPONSE_SIZE,
+    };
+    GV_HttpResponse resp;
+    if (gv_http_perform(&req, &resp) != GV_HTTP_OK) return -1;
+    if (resp.status < 200 || resp.status >= 300) {
+        gv_free(resp.body);
         return -1;
     }
-
-    long http_code = 0;
-    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
-    curl_easy_cleanup(curl);
-
-    if (http_code < 200 || http_code >= 300) {
-        gv_free(buf.data);
-        return -1;
-    }
-
-    *response = buf.data;
-    *response_len = buf.size;
+    *response = resp.body;
+    *response_len = resp.body_len;
     return 0;
 }
-
-#else /* !HAVE_CURL -- stub implementation */
-
-static int http_get(const char *url, int verify_ssl,
-                    char **response, size_t *response_len) {
-    (void)url;
-    (void)verify_ssl;
-    (void)response;
-    (void)response_len;
-
-    fprintf(stderr, "[sso] HTTP GET unavailable: compiled without libcurl\n");
-    return -1;
-}
-
-static int http_post_form(const char *url, const char *post_fields,
-                          int verify_ssl, char **response, size_t *response_len) {
-    (void)url;
-    (void)post_fields;
-    (void)verify_ssl;
-    (void)response;
-    (void)response_len;
-
-    fprintf(stderr, "[sso] HTTP POST unavailable: compiled without libcurl\n");
-    return -1;
-}
-
-#endif /* HAVE_CURL */

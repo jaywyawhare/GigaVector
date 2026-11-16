@@ -12,6 +12,7 @@
 
 #include "admin/otlp.h"
 #include "storage/database.h"
+#include "core/http_client.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -318,56 +319,26 @@ oom:
     return NULL;
 }
 
-/* HTTP delivery (libcurl or stub) */
-
-#ifdef HAVE_CURL
-#include <curl/curl.h>
-
-static size_t otlp_discard_cb(void *ptr, size_t size, size_t nmemb, void *ud) {
-    (void)ptr; (void)ud;
-    return size * nmemb;
-}
-
+/** POST OTLP JSON and report success on a 2xx response. */
 static int otlp_post_json(const char *url, const char *json, int timeout_ms) {
     if (!url || !url[0] || !json) return -1;
 
-    CURL *curl = curl_easy_init();
-    if (!curl) return -1;
-
-    struct curl_slist *headers = NULL;
-    headers = curl_slist_append(headers, "Content-Type: application/json");
-
-    curl_easy_setopt(curl, CURLOPT_URL, url);
-    curl_easy_setopt(curl, CURLOPT_POST, 1L);
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, json);
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, (long)(timeout_ms > 0 ? timeout_ms : 5000));
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, otlp_discard_cb);
-
-    CURLcode res = curl_easy_perform(curl);
-    int success = 0;
-    if (res == CURLE_OK) {
-        long http_code = 0;
-        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
-        success = (http_code >= 200 && http_code < 300);
-    }
-
-    curl_slist_free_all(headers);
-    curl_easy_cleanup(curl);
-
-    return success ? 0 : -1;
+    const char *hdrs[] = { "Content-Type: application/json" };
+    GV_HttpRequest req = {
+        .method = GV_HTTP_POST,
+        .url = url,
+        .headers = hdrs,
+        .num_headers = 1,
+        .body = json,
+        .body_len = strlen(json),
+        .timeout_ms = (long)(timeout_ms > 0 ? timeout_ms : 5000),
+        .verify_tls = 1,
+        .discard_body = 1,
+    };
+    GV_HttpResponse resp;
+    if (gv_http_perform(&req, &resp) != GV_HTTP_OK) return -1;
+    return (resp.status >= 200 && resp.status < 300) ? 0 : -1;
 }
-
-#else /* !HAVE_CURL */
-
-static int otlp_post_json(const char *url, const char *json, int timeout_ms) {
-    (void)timeout_ms;
-    fprintf(stderr, "[otlp] stub: would POST to %s (body=%zu bytes)\n",
-            url ? url : "(null)", json ? strlen(json) : 0);
-    return -1;
-}
-
-#endif /* HAVE_CURL */
 
 int otlp_export_trace(const GV_OtlpConfig *config, const GV_QueryTrace *trace) {
     if (!config || !config->enabled || !config->endpoint[0]) return -1;

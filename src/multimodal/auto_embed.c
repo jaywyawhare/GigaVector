@@ -16,9 +16,7 @@
 #include <pthread.h>
 
 #include "core/compat.h"
-#ifdef HAVE_CURL
-#include <curl/curl.h>
-#endif
+#include "core/http_client.h"
 
 #include "multimodal/auto_embed.h"
 #include "storage/database.h"
@@ -66,10 +64,6 @@ struct GV_AutoEmbedder {
 
     AE_Cache            *cache;
 
-#ifdef HAVE_CURL
-    CURL                *curl;
-#endif
-
     uint64_t             total_embeddings;
     uint64_t             cache_hits;
     uint64_t             cache_misses;
@@ -88,61 +82,6 @@ static size_t ae_default_dimension(GV_AutoEmbedProvider provider) {
         return AE_DEFAULT_DIMENSION;
     }
 }
-
-#ifdef HAVE_CURL
-typedef struct {
-    char   *data;
-    size_t  size;
-    size_t  capacity;
-} AE_ResponseBuf;
-
-static size_t ae_curl_write_cb(void *contents, size_t size, size_t nmemb,
-                               void *userp) {
-    size_t realsize = size * nmemb;
-    AE_ResponseBuf *buf = (AE_ResponseBuf *)userp;
-
-    if (buf->size + realsize > AE_MAX_RESPONSE_SIZE) {
-        return 0;
-    }
-
-    if (buf->size + realsize >= buf->capacity) {
-        size_t new_cap = buf->capacity * 2;
-        if (new_cap < buf->size + realsize + 1) {
-            new_cap = buf->size + realsize + 1;
-        }
-        if (new_cap > AE_MAX_RESPONSE_SIZE) {
-            new_cap = AE_MAX_RESPONSE_SIZE;
-        }
-        char *tmp = (char *)gv_realloc(buf->data, new_cap);
-        if (!tmp) {
-            return 0;
-        }
-        buf->data     = tmp;
-        buf->capacity = new_cap;
-    }
-
-    memcpy(buf->data + buf->size, contents, realsize);
-    buf->size += realsize;
-    buf->data[buf->size] = '\0';
-    return realsize;
-}
-
-static void ae_response_buf_init(AE_ResponseBuf *buf) {
-    buf->capacity = 4096;
-    buf->size     = 0;
-    buf->data     = (char *)gv_alloc(buf->capacity);
-    if (buf->data) {
-        buf->data[0] = '\0';
-    }
-}
-
-static void ae_response_buf_free(AE_ResponseBuf *buf) {
-    gv_free(buf->data);
-    buf->data     = NULL;
-    buf->size     = 0;
-    buf->capacity = 0;
-}
-#endif /* HAVE_CURL */
 
 static AE_Cache *ae_cache_create(size_t max_entries) {
     AE_Cache *c = (AE_Cache *)gv_calloc(1, sizeof(AE_Cache));
@@ -339,8 +278,6 @@ static void ae_cache_destroy(AE_Cache *c) {
     pthread_mutex_destroy(&c->mutex);
     gv_free(c);
 }
-
-#ifdef HAVE_CURL
 
 /**
  * Build a single-text OpenAI-compatible JSON request body.
@@ -695,13 +632,7 @@ static int ae_parse_google_batch(const char *body, size_t count,
     return success;
 }
 
-#endif /* HAVE_CURL */
-
-#ifdef HAVE_CURL
-
-/* Provider default model name.  Only used by the HTTP request/URL builders,
- * which are themselves compiled only under HAVE_CURL; defined here so the
- * function is not flagged as unused when HAVE_CURL is not set. */
+/* Provider default model name, used by the HTTP request/URL builders. */
 static const char *ae_default_model(GV_AutoEmbedProvider provider) {
     switch (provider) {
     case GV_EMBED_PROVIDER_GOOGLE:
@@ -770,65 +701,44 @@ static void ae_resolve_batch_url(const GV_AutoEmbedder *em, char *url,
 }
 
 /**
- * Build auth + content-type headers.  Returns a curl_slist that must be
- * freed with curl_slist_free_all().
+ * POST req_body to url and return the 2xx response body in *out_body
+ * (gv_alloc'd, caller must gv_free).  Returns 0 on success, -1 otherwise.
  */
-static struct curl_slist *ae_build_headers(const GV_AutoEmbedder *em) {
-    struct curl_slist *hdrs = NULL;
-    hdrs = curl_slist_append(hdrs, "Content-Type: application/json");
-
+static int ae_http_post(GV_AutoEmbedder *em, const char *url,
+                        const char *req_body, char **out_body) {
+    char auth[AE_AUTH_BUFSIZE];
+    const char *hdrs[2];
+    size_t num_hdrs = 0;
+    hdrs[num_hdrs++] = "Content-Type: application/json";
     if (em->api_key && em->api_key[0]) {
-        char auth[AE_AUTH_BUFSIZE];
         if (em->provider == GV_EMBED_PROVIDER_GOOGLE) {
             snprintf(auth, sizeof(auth), "x-goog-api-key: %s", em->api_key);
         } else {
             snprintf(auth, sizeof(auth), "Authorization: Bearer %s", em->api_key);
         }
-        hdrs = curl_slist_append(hdrs, auth);
+        hdrs[num_hdrs++] = auth;
     }
-    return hdrs;
-}
 
-/**
- * Perform a POST request and return the response body.
- * On success, buf->data is NUL-terminated.  Caller must gv_free buf.
- * Returns 0 on success, -1 on network/curl error.
- */
-static int ae_http_post(GV_AutoEmbedder *em, const char *url,
-                        const char *req_body, AE_ResponseBuf *buf) {
-    ae_response_buf_init(buf);
-    if (!buf->data) return -1;
-
-    struct curl_slist *hdrs = ae_build_headers(em);
-
-    curl_easy_reset(em->curl);
-    curl_easy_setopt(em->curl, CURLOPT_URL, url);
-    curl_easy_setopt(em->curl, CURLOPT_POSTFIELDS, req_body);
-    curl_easy_setopt(em->curl, CURLOPT_HTTPHEADER, hdrs);
-    curl_easy_setopt(em->curl, CURLOPT_WRITEFUNCTION, ae_curl_write_cb);
-    curl_easy_setopt(em->curl, CURLOPT_WRITEDATA, buf);
-    curl_easy_setopt(em->curl, CURLOPT_TIMEOUT, (long)AE_DEFAULT_TIMEOUT_SEC);
-    curl_easy_setopt(em->curl, CURLOPT_NOSIGNAL, 1L);
-
-    CURLcode res = curl_easy_perform(em->curl);
-    curl_slist_free_all(hdrs);
-
-    if (res != CURLE_OK) {
-        ae_response_buf_free(buf);
+    GV_HttpRequest req = {
+        .method = GV_HTTP_POST,
+        .url = url,
+        .headers = hdrs,
+        .num_headers = num_hdrs,
+        .body = req_body,
+        .body_len = strlen(req_body),
+        .timeout_ms = (long)AE_DEFAULT_TIMEOUT_SEC * 1000L,
+        .verify_tls = 1,
+        .max_response_bytes = AE_MAX_RESPONSE_SIZE,
+    };
+    GV_HttpResponse resp;
+    if (gv_http_perform(&req, &resp) != GV_HTTP_OK) return -1;
+    if (resp.status < 200 || resp.status >= 300) {
+        gv_free(resp.body);
         return -1;
     }
-
-    long http_code = 0;
-    curl_easy_getinfo(em->curl, CURLINFO_RESPONSE_CODE, &http_code);
-    if (http_code < 200 || http_code >= 300) {
-        ae_response_buf_free(buf);
-        return -1;
-    }
-
+    *out_body = resp.body;
     return 0;
 }
-
-#endif /* HAVE_CURL */
 
 static double ae_time_ms(void) {
     struct timespec ts;
@@ -842,9 +752,6 @@ static double ae_time_ms(void) {
  */
 static int ae_embed_single_http(GV_AutoEmbedder *em, const char *text,
                                 float **out_vec, size_t *out_dim) {
-#ifdef HAVE_CURL
-    if (!em->curl) return -1;
-
     const char *model = em->model_name ? em->model_name : ae_default_model(em->provider);
     char *req_body = NULL;
 
@@ -866,8 +773,8 @@ static int ae_embed_single_http(GV_AutoEmbedder *em, const char *text,
     char url[AE_URL_BUFSIZE];
     ae_resolve_url(em, url, sizeof(url));
 
-    AE_ResponseBuf resp;
-    int rc = ae_http_post(em, url, req_body, &resp);
+    char *resp_body = NULL;
+    int rc = ae_http_post(em, url, req_body, &resp_body);
     gv_free(req_body);
     if (rc != 0) return -1;
 
@@ -876,19 +783,15 @@ static int ae_embed_single_http(GV_AutoEmbedder *em, const char *text,
     case GV_EMBED_PROVIDER_OPENAI:
     case GV_EMBED_PROVIDER_CUSTOM:
     case GV_EMBED_PROVIDER_HUGGINGFACE:
-        parse_rc = ae_parse_openai_single(resp.data, out_vec, out_dim);
+        parse_rc = ae_parse_openai_single(resp_body, out_vec, out_dim);
         break;
     case GV_EMBED_PROVIDER_GOOGLE:
-        parse_rc = ae_parse_google_single(resp.data, out_vec, out_dim);
+        parse_rc = ae_parse_google_single(resp_body, out_vec, out_dim);
         break;
     }
 
-    ae_response_buf_free(&resp);
+    gv_free(resp_body);
     return parse_rc;
-#else
-    (void)em; (void)text; (void)out_vec; (void)out_dim;
-    return -1;
-#endif
 }
 
 /**
@@ -899,9 +802,6 @@ static int ae_embed_single_http(GV_AutoEmbedder *em, const char *text,
 static int ae_embed_batch_http(GV_AutoEmbedder *em, const char *const *texts,
                                size_t count, float **out_vecs,
                                size_t *out_dims) {
-#ifdef HAVE_CURL
-    if (!em->curl) return -1;
-
     const char *model = em->model_name ? em->model_name : ae_default_model(em->provider);
     char *req_body = NULL;
 
@@ -923,8 +823,8 @@ static int ae_embed_batch_http(GV_AutoEmbedder *em, const char *const *texts,
     char url[AE_URL_BUFSIZE];
     ae_resolve_batch_url(em, url, sizeof(url));
 
-    AE_ResponseBuf resp;
-    int rc = ae_http_post(em, url, req_body, &resp);
+    char *resp_body = NULL;
+    int rc = ae_http_post(em, url, req_body, &resp_body);
     gv_free(req_body);
     if (rc != 0) return -1;
 
@@ -933,19 +833,15 @@ static int ae_embed_batch_http(GV_AutoEmbedder *em, const char *const *texts,
     case GV_EMBED_PROVIDER_OPENAI:
     case GV_EMBED_PROVIDER_CUSTOM:
     case GV_EMBED_PROVIDER_HUGGINGFACE:
-        parsed = ae_parse_openai_batch(resp.data, count, out_vecs, out_dims);
+        parsed = ae_parse_openai_batch(resp_body, count, out_vecs, out_dims);
         break;
     case GV_EMBED_PROVIDER_GOOGLE:
-        parsed = ae_parse_google_batch(resp.data, count, out_vecs, out_dims);
+        parsed = ae_parse_google_batch(resp_body, count, out_vecs, out_dims);
         break;
     }
 
-    ae_response_buf_free(&resp);
+    gv_free(resp_body);
     return parsed;
-#else
-    (void)em; (void)texts; (void)count; (void)out_vecs; (void)out_dims;
-    return -1;
-#endif
 }
 
 void auto_embed_config_init(GV_AutoEmbedConfig *config) {
@@ -991,30 +887,11 @@ GV_AutoEmbedder *auto_embed_create(const GV_AutoEmbedConfig *config) {
         return NULL;
     }
 
-#ifdef HAVE_CURL
-    em->curl = curl_easy_init();
-    if (!em->curl) {
-        pthread_mutex_destroy(&em->mutex);
-        ae_cache_destroy(em->cache);
-        gv_free(em->api_key);
-        gv_free(em->model_name);
-        gv_free(em->base_url);
-        gv_free(em);
-        return NULL;
-    }
-#endif
-
     return em;
 }
 
 void auto_embed_destroy(GV_AutoEmbedder *embedder) {
     if (!embedder) return;
-
-#ifdef HAVE_CURL
-    if (embedder->curl) {
-        curl_easy_cleanup(embedder->curl);
-    }
-#endif
 
     ae_cache_destroy(embedder->cache);
     pthread_mutex_destroy(&embedder->mutex);

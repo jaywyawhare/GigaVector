@@ -5,13 +5,9 @@
 #include <time.h>
 #include <stdarg.h>
 #include "core/utils.h"
-
-#ifdef HAVE_CURL
-#include <curl/curl.h>
-#endif
+#include "core/http_client.h"
 
 #include "multimodal/llm.h"
-#include "multimodal/http_buffer.h"
 #include "features/json.h"
 
 #define MAX_RESPONSE_SIZE (1024 * 1024)  // 1MB max response
@@ -21,7 +17,6 @@
 // Define struct before helper functions that use it
 struct GV_LLM {
     GV_LLMConfig config;
-    void *curl_handle;  // CURL handle for HTTP requests
     char *last_error;   // Last error message
 };
 
@@ -74,9 +69,6 @@ static int validate_url(const char *url) {
     // Basic URL validation: must start with http:// or https://
     return (strncmp(url, "http://", 7) == 0 || strncmp(url, "https://", 8) == 0);
 }
-
-#ifdef HAVE_CURL
-
 
 static size_t json_escape_size(const char *str) {
     size_t size = 0;
@@ -678,8 +670,6 @@ static int parse_anthropic_response(const char *response_json, GV_LLMResponse *o
     return 0;
 }
 
-#endif  // HAVE_CURL
-
 GV_LLM *llm_create(const GV_LLMConfig *config) {
     if (config == NULL) {
         return NULL;
@@ -702,12 +692,11 @@ GV_LLM *llm_create(const GV_LLMConfig *config) {
         return NULL;
     }
 
-#ifdef HAVE_CURL
     GV_LLM *llm = (GV_LLM *)gv_alloc(sizeof(GV_LLM));
     if (llm == NULL) {
         return NULL;
     }
-    
+
     memset(llm, 0, sizeof(GV_LLM));
     llm->config = *config;
     llm->last_error = NULL;
@@ -746,10 +735,9 @@ GV_LLM *llm_create(const GV_LLMConfig *config) {
             return NULL;
         }
     }
-    
-    llm->curl_handle = curl_easy_init();
-    if (llm->curl_handle == NULL) {
-        set_error(llm, "Failed to initialize CURL");
+
+    /* No HTTP transport means the service can never issue a request. */
+    if (!gv_http_available()) {
         gv_free(llm->config.api_key);
         gv_free(llm->config.model);
         gv_free(llm->config.base_url);
@@ -758,24 +746,15 @@ GV_LLM *llm_create(const GV_LLMConfig *config) {
         gv_free(llm);
         return NULL;
     }
-    
+
     return llm;
-#else
-    return NULL;
-#endif
 }
 
 void llm_destroy(GV_LLM *llm) {
     if (llm == NULL) {
         return;
     }
-    
-#ifdef HAVE_CURL
-    if (llm->curl_handle) {
-        curl_easy_cleanup((CURL *)llm->curl_handle);
-    }
-#endif
-    
+
     // Securely clear API key from memory
     if (llm->config.api_key) {
         secure_memclear(llm->config.api_key, strlen(llm->config.api_key));
@@ -809,14 +788,7 @@ int llm_generate_response(GV_LLM *llm, const GV_LLMMessage *messages, size_t mes
     }
     
     memset(response, 0, sizeof(GV_LLMResponse));
-    
-#ifdef HAVE_CURL
-    CURL *curl = (CURL *)llm->curl_handle;
-    if (curl == NULL) {
-        set_error(llm, "CURL handle is NULL");
-        return GV_LLM_ERROR_CURL_INIT;
-    }
-    
+
     char *request_json = NULL;
     const char *url = NULL;
     const char *auth_header = NULL;
@@ -869,73 +841,62 @@ int llm_generate_response(GV_LLM *llm, const GV_LLMMessage *messages, size_t mes
         return GV_LLM_ERROR_MEMORY_ALLOCATION;
     }
     
-    GV_HttpBuffer buf;
-    buf.data = (char *)gv_alloc(4096);
-    buf.size = 0;
-    buf.capacity = 4096;
-    buf.max_size = MAX_RESPONSE_SIZE;
-    if (buf.data == NULL) {
-        gv_free(request_json);
-        set_error(llm, "Failed to allocate response buffer");
-        return GV_LLM_ERROR_MEMORY_ALLOCATION;
-    }
-    
-    struct curl_slist *headers = NULL;
-    headers = curl_slist_append(headers, "Content-Type: application/json");
-
-    if (llm->config.provider == GV_LLM_PROVIDER_ANTHROPIC) {
-        headers = curl_slist_append(headers, "anthropic-version: 2023-06-01");
-    }
-
     if (llm->config.api_key == NULL) {
-        gv_free(buf.data);
         gv_free(request_json);
-        curl_slist_free_all(headers);
         set_error(llm, "API key is NULL");
         return GV_LLM_ERROR_INVALID_API_KEY;
     }
-    
+
     char auth_buf[1024];  // Increased size for longer API keys
-    if (llm->config.provider == GV_LLM_PROVIDER_GOOGLE) {
-        // Google uses x-goog-api-key header (no Bearer prefix)
-        snprintf(auth_buf, sizeof(auth_buf), "%s%s", auth_header, llm->config.api_key);
-    } else {
-        snprintf(auth_buf, sizeof(auth_buf), "%s%s", auth_header, llm->config.api_key);
+    snprintf(auth_buf, sizeof(auth_buf), "%s%s", auth_header, llm->config.api_key);
+
+    const char *headers[3];
+    size_t num_headers = 0;
+    headers[num_headers++] = "Content-Type: application/json";
+    if (llm->config.provider == GV_LLM_PROVIDER_ANTHROPIC) {
+        headers[num_headers++] = "anthropic-version: 2023-06-01";
     }
-    headers = curl_slist_append(headers, auth_buf);
-    
-    curl_easy_setopt(curl, CURLOPT_URL, url);
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, request_json);
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, gv_http_write_callback);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buf);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, llm->config.timeout_seconds > 0 ? 
-                     llm->config.timeout_seconds : DEFAULT_TIMEOUT);
-    
-    CURLcode res = curl_easy_perform(curl);
-    
-    curl_slist_free_all(headers);
+    headers[num_headers++] = auth_buf;
+
+    GV_HttpRequest req = {
+        .method = GV_HTTP_POST,
+        .url = url,
+        .headers = headers,
+        .num_headers = num_headers,
+        .body = request_json,
+        .body_len = strlen(request_json),
+        .timeout_ms = (long)(llm->config.timeout_seconds > 0 ?
+                             llm->config.timeout_seconds : DEFAULT_TIMEOUT) * 1000L,
+        .verify_tls = 1,
+        .max_response_bytes = MAX_RESPONSE_SIZE,
+    };
+    GV_HttpResponse resp;
+    GV_HttpResult http_rc = gv_http_perform(&req, &resp);
+
     gv_free(request_json);
-    
-    if (res != CURLE_OK) {
-        gv_free(buf.data);
-        if (res == CURLE_OPERATION_TIMEDOUT) {
-            set_error(llm, "Request timeout: %s", curl_easy_strerror(res));
-            return GV_LLM_ERROR_TIMEOUT;
-        } else {
-            set_error(llm, "Network error: %s", curl_easy_strerror(res));
-            return GV_LLM_ERROR_NETWORK;
+
+    if (http_rc != GV_HTTP_OK) {
+        switch (http_rc) {
+            case GV_HTTP_ERR_TIMEOUT:
+                set_error(llm, "Request timeout");
+                return GV_LLM_ERROR_TIMEOUT;
+            case GV_HTTP_ERR_NO_CURL:
+                set_error(llm, "CURL support not compiled in");
+                return GV_LLM_ERROR_CURL_INIT;
+            default:
+                set_error(llm, "Network error");
+                return GV_LLM_ERROR_NETWORK;
         }
     }
-    
-    if (buf.size >= MAX_RESPONSE_SIZE) {
-        gv_free(buf.data);
+
+    if (resp.body_len >= MAX_RESPONSE_SIZE) {
+        gv_free(resp.body);
         set_error(llm, "Response exceeds maximum size (%d bytes)", MAX_RESPONSE_SIZE);
         return GV_LLM_ERROR_RESPONSE_TOO_LARGE;
     }
-    
-    if (strstr(buf.data, "\"error\"") != NULL) {
-        const char *error_msg = strstr(buf.data, "\"message\":\"");
+
+    if (strstr(resp.body, "\"error\"") != NULL) {
+        const char *error_msg = strstr(resp.body, "\"message\":\"");
         if (error_msg) {
             error_msg += 11;  // Skip past "\"message\":\""
             const char *error_end = strstr(error_msg, "\"");
@@ -952,48 +913,41 @@ int llm_generate_response(GV_LLM *llm, const GV_LLMMessage *messages, size_t mes
         } else {
             set_error(llm, "API returned an error response");
         }
-        gv_free(buf.data);
+        gv_free(resp.body);
         return GV_LLM_ERROR_INVALID_RESPONSE;
     }
-    
+
     int parse_result = GV_LLM_ERROR_PARSE_FAILED;
     switch (llm->config.provider) {
         case GV_LLM_PROVIDER_OPENAI:
         case GV_LLM_PROVIDER_CUSTOM:
             // OpenAI and custom providers use OpenAI-compatible format
-            parse_result = parse_openai_response(buf.data, response);
+            parse_result = parse_openai_response(resp.body, response);
             break;
         case GV_LLM_PROVIDER_ANTHROPIC:
-            parse_result = parse_anthropic_response(buf.data, response);
+            parse_result = parse_anthropic_response(resp.body, response);
             break;
         case GV_LLM_PROVIDER_GOOGLE:
-            parse_result = parse_gemini_response(buf.data, response);
+            parse_result = parse_gemini_response(resp.body, response);
             break;
         default:
             set_error(llm, "Unsupported provider for parsing");
             break;
     }
-    
-    gv_free(buf.data);
-    
+
+    gv_free(resp.body);
+
     if (parse_result != 0) {
         set_error(llm, "Failed to parse LLM response");
         return GV_LLM_ERROR_PARSE_FAILED;
     }
-    
+
     if (response->content == NULL) {
         set_error(llm, "Response content is NULL");
         return GV_LLM_ERROR_INVALID_RESPONSE;
     }
-    
+
     return GV_LLM_SUCCESS;
-#else
-    (void)response_format;
-    if (llm) {
-        set_error(llm, "CURL support not compiled in");
-    }
-    return GV_LLM_ERROR_CURL_INIT;
-#endif
 }
 
 const char *llm_get_last_error(GV_LLM *llm) {

@@ -15,6 +15,7 @@
 
 #include "admin/webhook.h"
 #include "core/memory.h"
+#include "core/http_client.h"
 #include "security/crypto.h"
 #include "core/utils.h"
 
@@ -506,58 +507,48 @@ static int compute_signature(const char *secret, const char *body,
     return 0;
 }
 
-/* HTTP delivery (libcurl or stub) */
-
-#ifdef HAVE_CURL
-#include <curl/curl.h>
-
-/* Discard response body */
-static size_t discard_write_cb(void *ptr, size_t size, size_t nmemb, void *ud) {
-    (void)ptr; (void)ud;
-    return size * nmemb;
-}
-
+/** POST the payload with HMAC signing and exponential-backoff retries. */
 static int deliver_webhook(const DeliveryWork *work) {
     if (!work || !work->url || !work->json_body) return -1;
 
-    CURL *curl = curl_easy_init();
-    if (!curl) return -1;
-
-    struct curl_slist *headers = NULL;
-    headers = curl_slist_append(headers, "Content-Type: application/json");
+    const char *hdrs[2];
+    size_t num_hdrs = 0;
+    hdrs[num_hdrs++] = "Content-Type: application/json";
 
     /* Compute HMAC signature if a secret is configured */
+    char sig_header[128];
     char sig_hex[65];
     if (work->secret && work->secret[0]) {
         if (compute_signature(work->secret, work->json_body,
-                               sig_hex, sizeof(sig_hex)) == 0) {
-            char sig_header[128];
+                              sig_hex, sizeof(sig_hex)) == 0) {
             snprintf(sig_header, sizeof(sig_header),
                      "X-Webhook-Signature: sha256=%s", sig_hex);
-            headers = curl_slist_append(headers, sig_header);
+            hdrs[num_hdrs++] = sig_header;
         }
     }
 
-    curl_easy_setopt(curl, CURLOPT_URL, work->url);
-    curl_easy_setopt(curl, CURLOPT_POST, 1L);
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, work->json_body);
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, (long)work->timeout_ms);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, discard_write_cb);
+    GV_HttpRequest req = {
+        .method = GV_HTTP_POST,
+        .url = work->url,
+        .headers = hdrs,
+        .num_headers = num_hdrs,
+        .body = work->json_body,
+        .body_len = strlen(work->json_body),
+        .timeout_ms = (long)work->timeout_ms,
+        .verify_tls = 1,
+        .discard_body = 1,
+    };
 
-    int success = 0;
     int attempts = work->max_retries > 0 ? work->max_retries : DEFAULT_MAX_RETRIES;
-
     for (int attempt = 0; attempt < attempts; attempt++) {
-        CURLcode res = curl_easy_perform(curl);
-        if (res == CURLE_OK) {
-            long http_code = 0;
-            curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
-            if (http_code >= 200 && http_code < 300) {
-                success = 1;
-                break;
-            }
+        GV_HttpResponse resp;
+        GV_HttpResult r = gv_http_perform(&req, &resp);
+        if (r == GV_HTTP_OK && resp.status >= 200 && resp.status < 300) {
+            return 0;
         }
+        /* No libcurl means no POST is possible, so every retry fails the same
+         * way; bail rather than sleeping through backoff that cannot succeed. */
+        if (r == GV_HTTP_ERR_NO_CURL) break;
 
         /* Exponential backoff: 1s, 2s, 4s, ... */
         if (attempt + 1 < attempts) {
@@ -566,38 +557,8 @@ static int deliver_webhook(const DeliveryWork *work) {
         }
     }
 
-    curl_slist_free_all(headers);
-    curl_easy_cleanup(curl);
-
-    return success ? 0 : -1;
-}
-
-#else /* !HAVE_CURL -- stub implementation */
-
-static int deliver_webhook(const DeliveryWork *work) {
-    if (!work || !work->url || !work->json_body) return -1;
-
-    /* Compute signature so the code path is exercised even without curl */
-    char sig_hex[65];
-    if (work->secret && work->secret[0]) {
-        compute_signature(work->secret, work->json_body,
-                          sig_hex, sizeof(sig_hex));
-    }
-
-    /*
-     * Without libcurl we cannot actually POST.  Log for diagnostics
-     * and report failure so that stats reflect undelivered hooks.
-     */
-    fprintf(stderr, "[webhook] stub: would POST to %s (body=%zu bytes)\n",
-            work->url, strlen(work->json_body));
-
-    /* No libcurl means no POST is possible, so every retry would fail the same
-     * way. Fail immediately rather than sleeping with exponential backoff
-     * between attempts that can never succeed (which just blocks the worker). */
     return -1;
 }
-
-#endif /* HAVE_CURL */
 
 /**
  * Enqueue a delivery work item.  Caller must hold mgr->mutex.
