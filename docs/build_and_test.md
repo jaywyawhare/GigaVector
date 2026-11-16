@@ -172,6 +172,62 @@ chmod +x build_and_test.sh
 ./build_and_test.sh
 ```
 
+## CMake Build
+
+```bash
+cmake -B build-cmake -DCMAKE_BUILD_TYPE=Release
+cmake --build build-cmake
+cd build-cmake && ctest
+```
+
+Options (pass as `-D<OPTION>=ON|OFF`):
+
+| Option | Default | Effect |
+|--------|---------|--------|
+| `BUILD_SHARED_LIBS` | ON | Build the shared library |
+| `BUILD_TESTS` | ON | Build the test executables |
+| `BUILD_BENCHMARKS` | ON | Build the benchmark executables |
+| `ENABLE_SANITIZERS` | OFF | AddressSanitizer and UBSan |
+| `ENABLE_TSAN` | OFF | ThreadSanitizer (not combinable with ASAN) |
+| `ENABLE_COVERAGE` | OFF | Code coverage instrumentation |
+| `ENABLE_NATIVE_OPTIMIZATIONS` | OFF | `-march=native -mtune=native` |
+| `ENABLE_TCALLOC` | ON | Make the built-in slab allocator the default (`GV_ALLOC=libc` opts out at runtime) |
+
+The HTTP REST server is compiled in only when CMake finds libmicrohttpd
+(`libmicrohttpd-dev` on Debian/Ubuntu); the configure step prints whether it is enabled.
+The plain `make lib` build does not enable it.
+
+## Using a Local Build from Python
+
+The Python package looks for the shared library in this order:
+
+1. The path in `GIGAVECTOR_LIB`
+2. `libGigaVector.so` next to the package (`python/src/gigavector/`), left there by a
+   wheel or editable build
+3. Repository build outputs: `build/lib/`, `build/`, `build-cmake/Release/`, `build-cmake/`
+
+After changing C code, run `make lib` again. If an older `libGigaVector.so` sits next to
+the package, it wins over `build/lib/`, so either delete it or point at the fresh build:
+
+```bash
+GIGAVECTOR_LIB=$PWD/build/lib/libGigaVector.so PYTHONPATH=python/src python3 your_script.py
+```
+
+## Environment Variables
+
+```bash
+cp .env.example .env   # then fill in your keys
+```
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `OPENAI_API_KEY` | For LLM and embedding tests | OpenAI API key |
+| `ANTHROPIC_API_KEY` | For Anthropic tests | Anthropic API key |
+| `GOOGLE_API_KEY` | Optional | Google Gemini (`GEMINI_API_KEY` is accepted as an alias) |
+| `GV_WAL_DIR` | Optional | Override the WAL directory |
+| `GIGAVECTOR_LIB` | Optional | Path to the shared library the Python package loads |
+| `GV_ALLOC` | Optional | Set to `libc` to use the system allocator instead of the slab allocator |
+
 ## Python Tests
 
 To run Python bindings tests:
