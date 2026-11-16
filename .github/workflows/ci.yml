@@ -454,19 +454,19 @@ jobs:
           make quint-replay
 
       # Apalache symbolic model checking. Bounded (--max-steps): a pass means
-      # no counterexample within the bound, not a proof.
+      # no counterexample within the bound, not a proof. Gates every push and PR
+      # (not just nightly): run_quint_verify.py applies a per-check timeout and
+      # reports a check that cannot finish as INTRACTABLE instead of hanging.
       - name: Quint model checking (Apalache)
-        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         timeout-minutes: 25
         run: make quint-verify
 
       # UNBOUNDED proofs: inductive invariants hold in every initial state, are
       # preserved by every step, and imply the target -- so they hold for ALL
-      # reachable states, with no step bound. Runs Apalache (JVM + Z3), so it is
-      # scheduled/dispatch-only like quint-verify rather than gating every push;
-      # the `auth` invariant is not yet inductive (needs strengthening lemmas).
+      # reachable states, with no step bound. Runs Apalache (JVM + Z3); gates
+      # every push and PR so a regression in a proved protocol is caught at the
+      # merge, not at the next scheduled run.
       - name: Quint inductive invariants (unbounded)
-        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         timeout-minutes: 15
         run: make quint-induct
 
@@ -475,8 +475,8 @@ jobs:
       # PROVED/FAILED/INTRACTABLE separately -- INTRACTABLE is not a proof.
       # z3 is required by harnesses declaring CBMC-SOLVER (e.g. grpc_frame's
       # --smt2 --fpa route); run_cbmc.py skips those cleanly if it is absent.
+      # Gates every push and PR; CBMC_TIMEOUT bounds each harness.
       - name: CBMC bounded proofs
-        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         timeout-minutes: 40
         run: |
           # Pin the exact solver build the grpc_frame proof was discharged

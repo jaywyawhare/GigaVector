@@ -72,6 +72,10 @@ CHECKS = [
     # restriction, so this is the one check that catches interaction bugs
     # between the two subsystems.
     ("specs/quint/repl_wal_crash.qnt",  "repl_wal_crash",  "safety", 6),
+    # Also have UNBOUNDED inductive proofs (`make quint-induct`); the bounded
+    # run is a cheap smoke check kept small.
+    ("specs/quint/quiesce_resize.qnt",  "quiesce_resize",  "safety", 6),
+    ("specs/quint/stream_lifecycle.qnt","stream_lifecycle","safety", 6),
 ]
 
 # `ttl` remains absent: its `safety` is still FALSE by design

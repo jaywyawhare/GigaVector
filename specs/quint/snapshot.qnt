@@ -9,6 +9,10 @@
 
 module snapshot_proto {
   const MAX_WRITES: int
+  /// Caps the snapshot generation counter so the state space is finite and an
+  /// inductive invariant can be enumerated. Without it `snapshotVersion` grows
+  /// without bound across snapBegin/snapFinish cycles.
+  const MAX_SNAPS: int
 
   var committed: Set[int]           // writes durably in the database
   var nextId: int
@@ -79,6 +83,7 @@ module snapshot_proto {
 
   action snapFinish = all {
     snapping,
+    snapshotVersion < MAX_SNAPS,
     snapCopied == snapCut,
     snapshotContents' = snapCopied,
     haveSnapshot' = true,
@@ -123,10 +128,37 @@ module snapshot_proto {
   val safety: bool = and {
     snapshotIsConsistentCut, restoreRoundTrip, noPhantomAfterRestore,
   }
+
+  // ---- inductive invariant -------------------------------------------------
+  val typeOk: bool = and {
+    committed.in((1.to(MAX_WRITES)).powerset()),
+    snapCut.in((1.to(MAX_WRITES)).powerset()),
+    snapCopied.in((1.to(MAX_WRITES)).powerset()),
+    snapshotContents.in((1.to(MAX_WRITES)).powerset()),
+    restored.in((1.to(MAX_WRITES)).powerset()),
+    nextId.in(1.to(MAX_WRITES + 1)),
+    snapping.in(Set(false, true)),
+    haveSnapshot.in(Set(false, true)),
+    haveRestored.in(Set(false, true)),
+    snapshotVersion.in(0.to(MAX_SNAPS)),
+    restoredVersion.in((-1).to(MAX_SNAPS)),
+  }
+
+  /// The in-progress snapshot invariants that keep the finished-snapshot and
+  /// restore properties closed under step: the cut never exceeds what had
+  /// committed, and only cut records get copied.
+  val indInv: bool = and {
+    typeOk,
+    snapshotIsConsistentCut,
+    restoreRoundTrip,
+    noPhantomAfterRestore,
+    snapping implies and { snapCut.subseteq(committed), snapCopied.subseteq(snapCut) },
+    restoredVersion <= snapshotVersion,
+  }
 }
 
 module snapshot {
-  import snapshot_proto(MAX_WRITES = 3).*
+  import snapshot_proto(MAX_WRITES = 3, MAX_SNAPS = 2).*
 
   /// A write landing mid-snapshot is excluded from the cut, and the restore
   /// still round-trips exactly what was captured.

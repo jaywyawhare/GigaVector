@@ -640,7 +640,9 @@ QUINT_TEST_MODULES := \
   specs/quint/memory_layer.qnt:memory_layer \
   specs/quint/bulk_import.qnt:bulk_import \
   specs/quint/ab_test.qnt:ab_test \
-  specs/quint/repl_wal_crash.qnt:repl_wal_crash
+  specs/quint/repl_wal_crash.qnt:repl_wal_crash \
+  specs/quint/quiesce_resize.qnt:quiesce_resize \
+  specs/quint/stream_lifecycle.qnt:stream_lifecycle
 
 # Model-checking runs: "file:module:invariant:max-steps".
 # ttl and quota are deliberately absent: their `safety` invariant is currently
@@ -766,7 +768,10 @@ QUINT_INDUCTIVE := \
   specs/quint/versioning.qnt:versioning \
   specs/quint/cluster.qnt:cluster \
   specs/quint/bulk_import.qnt:bulk_import \
-  specs/quint/namespace.qnt:namespace
+  specs/quint/namespace.qnt:namespace \
+  specs/quint/snapshot.qnt:snapshot \
+  specs/quint/quiesce_resize.qnt:quiesce_resize \
+  specs/quint/stream_lifecycle.qnt:stream_lifecycle
 
 .PHONY: quint-induct
 quint-induct:
@@ -839,3 +844,11 @@ cbmc:
 .PHONY: formal
 formal: formal-lint formal-coverage quint-typecheck quint-test quint-witness quint-induct cbmc-smoke
 	@echo "Formal checks (fast tier) passed."
+
+# Deep tier: the Apalache model check and real CBMC bounded proofs on top of the
+# fast tier. This is what CI now runs on every push and PR (not just nightly).
+# Slow (JVM + Z3); run_quint_verify.py / run_cbmc.py bound each check and report
+# INTRACTABLE rather than hanging. cbmc is skipped cleanly when not installed.
+.PHONY: formal-deep
+formal-deep: formal quint-verify cbmc
+	@echo "Formal checks (deep tier) passed."
