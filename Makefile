@@ -524,6 +524,10 @@ endif
 	$(FUZZ_CC) $(FUZZ_CFLAGS) tests/fuzz/fuzz_sql.c $(FUZZ_LDFLAGS) -o $(FUZZ_DIR)/fuzz_sql
 	$(FUZZ_CC) $(FUZZ_CFLAGS) tests/fuzz/fuzz_cypher.c $(FUZZ_LDFLAGS) -o $(FUZZ_DIR)/fuzz_cypher
 	$(FUZZ_CC) $(FUZZ_CFLAGS) -D_GNU_SOURCE tests/fuzz/fuzz_graph_wal.c $(FUZZ_LDFLAGS) -o $(FUZZ_DIR)/fuzz_graph_wal
+	$(FUZZ_CC) $(FUZZ_CFLAGS) tests/fuzz/fuzz_compression.c $(FUZZ_LDFLAGS) -o $(FUZZ_DIR)/fuzz_compression
+	$(FUZZ_CC) $(FUZZ_CFLAGS) -D_GNU_SOURCE tests/fuzz/fuzz_backup_restore.c $(FUZZ_LDFLAGS) -o $(FUZZ_DIR)/fuzz_backup_restore
+	$(FUZZ_CC) $(FUZZ_CFLAGS) tests/fuzz/fuzz_rest_decode.c $(FUZZ_LDFLAGS) -o $(FUZZ_DIR)/fuzz_rest_decode
+	$(FUZZ_CC) $(FUZZ_CFLAGS) -D_GNU_SOURCE tests/fuzz/fuzz_vlog_open.c $(FUZZ_LDFLAGS) -o $(FUZZ_DIR)/fuzz_vlog_open
 	@echo "Built fuzzers in $(FUZZ_DIR)"
 
 # Crash / leak / oom / timeout reproducers land under build/ (via
@@ -573,6 +577,18 @@ fuzz-run: fuzz
 	@echo "Running fuzz_graph_wal..."
 	@$(FUZZ_DIR)/fuzz_graph_wal $(FUZZ_CORPUS_ARGS) $(FUZZ_ARTIFACT_PREFIX) -max_total_time=30 -rss_limit_mb=512 -print_final_stats=1
 	@$(FUZZ_DIR)/fuzz_cypher $(FUZZ_CORPUS_ARGS) tests/fuzz/corpus/cypher $(FUZZ_ARTIFACT_PREFIX) -max_total_time=30 -rss_limit_mb=512 -print_final_stats=1
+	@echo "Running fuzz_compression..."
+	@mkdir -p tests/fuzz/corpus/compression
+	@$(FUZZ_DIR)/fuzz_compression $(FUZZ_CORPUS_ARGS) tests/fuzz/corpus/compression $(FUZZ_ARTIFACT_PREFIX) -max_total_time=30 -rss_limit_mb=512 -print_final_stats=1
+	@echo "Running fuzz_backup_restore..."
+	@mkdir -p tests/fuzz/corpus/backup
+	@$(FUZZ_DIR)/fuzz_backup_restore $(FUZZ_CORPUS_ARGS) tests/fuzz/corpus/backup $(FUZZ_ARTIFACT_PREFIX) -max_total_time=30 -rss_limit_mb=512 -print_final_stats=1
+	@echo "Running fuzz_rest_decode..."
+	@mkdir -p tests/fuzz/corpus/rest
+	@$(FUZZ_DIR)/fuzz_rest_decode $(FUZZ_CORPUS_ARGS) tests/fuzz/corpus/rest $(FUZZ_ARTIFACT_PREFIX) -max_total_time=30 -rss_limit_mb=512 -print_final_stats=1
+	@echo "Running fuzz_vlog_open..."
+	@mkdir -p tests/fuzz/corpus/vlog
+	@$(FUZZ_DIR)/fuzz_vlog_open $(FUZZ_CORPUS_ARGS) tests/fuzz/corpus/vlog $(FUZZ_ARTIFACT_PREFIX) -max_total_time=30 -rss_limit_mb=512 -print_final_stats=1
 
 fuzz-corpus: lib
 	@bash tests/fuzz/gen_corpus.sh

@@ -4,7 +4,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 mkdir -p "$ROOT/tests/fuzz/corpus/grpc" "$ROOT/tests/fuzz/corpus/wal" \
          "$ROOT/tests/fuzz/corpus/repl" "$ROOT/tests/fuzz/corpus/wal_files" \
-         "$ROOT/tests/fuzz/corpus/posting"
+         "$ROOT/tests/fuzz/corpus/posting" "$ROOT/tests/fuzz/corpus/compression" \
+         "$ROOT/tests/fuzz/corpus/backup" "$ROOT/tests/fuzz/corpus/rest" \
+         "$ROOT/tests/fuzz/corpus/vlog"
 
 make -C "$ROOT" lib >/dev/null
 
@@ -23,6 +25,10 @@ cat > "$GEN_SRC" <<'EOF'
 #include "admin/repl_transport.h"
 #include "storage/wal.h"
 #include "storage/posting_list.h"
+#include "storage/compression.h"
+#include "storage/backup.h"
+#include "storage/vlog.h"
+#include "storage/database.h"
 
 static void write_u32_be(uint8_t *buf, uint32_t val) {
     buf[0] = (uint8_t)(val >> 24);
@@ -41,6 +47,24 @@ static void write_file(const char *path, const uint8_t *data, size_t len) {
     if (!f) { perror(path); exit(1); }
     fwrite(data, 1, len, f);
     fclose(f);
+}
+
+/* Copy an existing file's raw bytes into a corpus path (libc malloc/free only;
+ * these are our own buffers, never gv_alloc'd). */
+static void copy_file(const char *src, const char *dst) {
+    FILE *in = fopen(src, "rb");
+    if (!in) return;
+    fseek(in, 0, SEEK_END);
+    long sz = ftell(in);
+    fseek(in, 0, SEEK_SET);
+    if (sz > 0) {
+        uint8_t *data = (uint8_t *)malloc((size_t)sz);
+        if (data && fread(data, 1, (size_t)sz, in) == (size_t)sz) {
+            write_file(dst, data, (size_t)sz);
+        }
+        free(data);
+    }
+    fclose(in);
 }
 
 static void make_wal_tmp(char *buf, size_t size) {
@@ -154,6 +178,72 @@ int main(int argc, char **argv) {
             gv_free(seg);
         }
     }
+
+    /* compression: a real compressor-produced blob decompress() accepts. */
+    {
+        GV_CompressionConfig ccfg;
+        compression_config_init(&ccfg);
+        ccfg.type = GV_COMPRESS_LZ4;
+        GV_Compressor *comp = compression_create(&ccfg);
+        if (comp) {
+            uint8_t in[512];
+            for (size_t i = 0; i < sizeof(in); i++) in[i] = (uint8_t)(i & 0x3f);
+            uint8_t outbuf[1024];
+            size_t clen = compress(comp, in, sizeof(in), outbuf, sizeof(outbuf));
+            if (clen > 0) {
+                char cpath[512];
+                snprintf(cpath, sizeof(cpath),
+                         "%s/tests/fuzz/corpus/compression/valid_blob.bin", root);
+                write_file(cpath, outbuf, clen);
+            }
+            compression_destroy(comp);
+        }
+    }
+
+    /* backup: a real backup file (valid header + body) via backup_create. */
+    {
+        char bdb[512], bbk[512];
+        snprintf(bdb, sizeof(bdb), "%s/gv_corpus_backup_src_%lu.gv",
+                 getenv("TMPDIR") && *getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp",
+                 (unsigned long)getpid());
+        snprintf(bbk, sizeof(bbk), "%s/gv_corpus_backup_%lu.gvbk",
+                 getenv("TMPDIR") && *getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp",
+                 (unsigned long)getpid());
+        remove(bdb); remove(bbk);
+        GV_Database *bdbh = db_open(bdb, 4, GV_INDEX_TYPE_FLAT);
+        if (bdbh) {
+            GV_BackupResult *br = backup_create(bdbh, bbk, NULL, NULL, NULL);
+            if (br) backup_result_free(br);
+            db_close(bdbh);
+            char bpath[512];
+            snprintf(bpath, sizeof(bpath),
+                     "%s/tests/fuzz/corpus/backup/valid_backup.bin", root);
+            copy_file(bbk, bpath);
+        }
+        remove(bdb); remove(bbk);
+    }
+
+    /* vlog: a tiny valid value log (header + one record). */
+    {
+        char vlp[512];
+        snprintf(vlp, sizeof(vlp), "%s/gv_corpus_vlog_%lu.gvvl",
+                 getenv("TMPDIR") && *getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp",
+                 (unsigned long)getpid());
+        remove(vlp);
+        GV_VLog *vl = vlog_open(vlp);
+        if (vl) {
+            uint64_t off = 0;
+            vlog_append(vl, "seed-value", 10, &off);
+            vlog_sync(vl);
+            vlog_close(vl);
+            char vpath[512];
+            snprintf(vpath, sizeof(vpath),
+                     "%s/tests/fuzz/corpus/vlog/valid.bin", root);
+            copy_file(vlp, vpath);
+        }
+        remove(vlp);
+    }
+
     return 0;
 }
 EOF
@@ -173,6 +263,19 @@ open(os.path.join(out, "d_set_prop"), "wb").write(frame(5, struct.pack("<Q", 1) 
 open(os.path.join(out, "e_torn"), "wb").write(bytes([5]) + struct.pack("<I", 500) + b"x" * 10)
 open(os.path.join(out, "f_junk"), "wb").write(bytes(range(64)))
 print("graph WAL corpus written")
+PYEOF
+
+# ── REST seed corpus: method byte + URL, optional '\n' + JSON body ─────────
+python3 - "$ROOT/tests/fuzz/corpus/rest" << 'PYEOF'
+import sys, os
+out = sys.argv[1]
+# byte 0 = method index mod 6 (GET=0, POST=1); then URL, then '\n' + body.
+open(os.path.join(out, "a_health"), "wb").write(b"\x00/health")
+open(os.path.join(out, "b_stats"), "wb").write(b"\x00/stats")
+open(os.path.join(out, "c_search"), "wb").write(b"\x01/search\n" + b'{"vector":[0,0,0,0],"k":1}')
+open(os.path.join(out, "d_vectors"), "wb").write(b"\x01/vectors\n" + b'{"vector":[1,2,3,4]}')
+open(os.path.join(out, "e_vec_get"), "wb").write(b"\x00/vectors/0")
+print("REST corpus written")
 PYEOF
 
 gcc -O2 -I"$ROOT/include" "$GEN_SRC" -L"$ROOT/build/lib" -lGigaVector -lm -pthread \
