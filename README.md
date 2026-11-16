@@ -1,7 +1,10 @@
-# GigaVector
-
+<!-- GigaVector README header: switches with the viewer's GitHub theme -->
 <p align="center">
-  <img src="https://raw.githubusercontent.com/jaywyawhare/GigaVector/master/docs/gigavector-logo.png" alt="GigaVector Logo" width="200" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/banner-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="assets/banner-light.svg">
+    <img alt="GigaVector: find the one in a billion. Vector database in C." src="assets/banner-dark.svg" width="100%">
+  </picture>
 </p>
 
 <p align="center">
