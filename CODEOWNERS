@@ -1,0 +1,19 @@
+# Code owners for GigaVector.
+# These owners are requested for review on pull requests that touch matching
+# paths. See https://docs.github.com/articles/about-code-owners.
+
+# Default owner for everything in the repo.
+*                       @jaywyawhare
+
+# Security-sensitive subsystems — always review carefully.
+/src/security/          @jaywyawhare
+/include/security/      @jaywyawhare
+SECURITY.md             @jaywyawhare
+
+# Build, CI, and release machinery.
+/.github/               @jaywyawhare
+/Makefile               @jaywyawhare
+/CMakeLists.txt         @jaywyawhare
+
+# Formal specs and verification harnesses.
+/specs/                 @jaywyawhare

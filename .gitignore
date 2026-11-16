@@ -88,6 +88,8 @@ asan_test_*.log
 *.db.wal
 tmp_*.wal
 tmp_*.bin.wal
+*.ckptgen
+*.wal.ckptgen
 
 # Formal-methods (Apalache/TLA+) output
 _apalache-out/
