@@ -551,6 +551,7 @@ jobs:
           set -o pipefail
           cppcheck \
             --enable=warning,performance,portability \
+            -D__GNUC__ \
             '-DWIFEXITED(status)=(((status)&0x7f)==0)' \
             '-DWEXITSTATUS(status)=(((status)>>8)&0xff)' \
             --error-exitcode=1 \
