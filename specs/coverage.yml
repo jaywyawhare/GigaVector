@@ -306,8 +306,12 @@ tiers:
       files:
         - features/context_graph.c
         - features/graph_classify.c
+        - features/graph_db_persist.c
+        - features/graph_db_traverse.c
         - features/graph_linkpred.c
         - features/knowledge_graph.c
+        - features/knowledge_graph_persist.c
+        - features/knowledge_graph_query.c
         - features/recommend.c
     - ref: "tests + harness_grpc_frame.c"
       why: "shares its contract with the representative verified in harness_grpc_frame.c, but is NOT itself symbolically executed -- covered by unit/differential tests only"
@@ -326,8 +330,11 @@ tiers:
       why: "shares its contract with the representative verified in harness_parsers.c, but is NOT itself symbolically executed -- covered by unit/differential tests only"
       files:
         - features/cypher.c
+        - features/cypher_frontend.c
         - features/json_index.c
         - features/sql.c
+        - features/sql_lexer.c
+        - features/sql_parser.c
     - ref: "tests + harness_posting.c"
       why: "shares its contract with the representative verified in harness_posting.c, but is NOT itself symbolically executed -- covered by unit/differential tests only"
       files:
@@ -383,6 +390,10 @@ tiers:
       files:
         - admin/sso.c
         - security/tls.c
+    - ref: "-"
+      why: "thin libcurl HTTP transport wrapper shared by the network-integration modules; correctness is libcurl's, no independently verifiable logic"
+      files:
+        - core/http_client.c
     - ref: "-"
       why: "observability and configuration plumbing; no state machine or memory-safety surface beyond compiler checks"
       files:
